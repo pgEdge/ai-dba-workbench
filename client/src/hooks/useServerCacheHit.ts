@@ -12,6 +12,10 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { useAuth } from '../contexts/useAuth';
 import { apiFetch } from '../utils/apiClient';
 import { logger } from '../utils/logger';
+import {
+    appendTimeRangeParams,
+    isTimeRangeQueryable,
+} from '../utils/timeRangeParams';
 import type { SparklinePoint, TimeRangeState } from '../components/Dashboard/types';
 import type { ServerCacheHitSummary } from '../components/Dashboard/ServerDashboard/types';
 
@@ -41,17 +45,13 @@ const buildSummaryUrl = (
     connectionId: number,
     timeRange: TimeRangeState,
 ): string | null => {
-    const { range, customStart, customEnd } = timeRange;
-    if (range === 'custom' && (!customStart || !customEnd)) { return null; }
+    if (!isTimeRangeQueryable(timeRange)) { return null; }
 
     const searchParams = new URLSearchParams({
         connection_id: connectionId.toString(),
-        time_range: range,
     });
-    if (range === 'custom' && customStart && customEnd) {
-        searchParams.append('time_start', customStart);
-        searchParams.append('time_end', customEnd);
-    }
+    appendTimeRangeParams(searchParams, timeRange);
+
     return `/api/v1/metrics/performance-summary?${searchParams.toString()}`;
 };
 

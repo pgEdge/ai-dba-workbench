@@ -13,6 +13,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import DatabaseSummariesSection from '../DatabaseSummariesSection';
 import type { DatabaseSummary } from '../types';
+import type { TimeRangeState } from '../../types';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -24,10 +25,12 @@ vi.mock('../../../../utils/apiClient', () => ({
 }));
 
 const mockPushOverlay = vi.fn();
+let mockTimeRange: TimeRangeState = { range: '24h' };
 vi.mock('../../../../contexts/useDashboard', () => ({
     useDashboard: () => ({
         refreshTrigger: 0,
         pushOverlay: mockPushOverlay,
+        timeRange: mockTimeRange,
     }),
 }));
 
@@ -113,6 +116,60 @@ describe('DatabaseSummariesSection', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         vi.mocked(localStorage.getItem).mockReturnValue(null);
+        mockTimeRange = { range: '24h' };
+    });
+
+    it('follows the selected preset window', async () => {
+        mockApiFetch.mockResolvedValue(
+            okResponse({ databases: [makeDatabase()] }),
+        );
+        mockTimeRange = { range: '7d' };
+
+        renderSection();
+
+        await waitFor(() => {
+            expect(mockApiFetch).toHaveBeenCalledWith(
+                '/api/v1/metrics/database-summaries'
+                + '?connection_id=1&time_range=7d',
+            );
+        });
+    });
+
+    it('sends both bounds for a custom window', async () => {
+        mockApiFetch.mockResolvedValue(
+            okResponse({ databases: [makeDatabase()] }),
+        );
+        mockTimeRange = {
+            range: 'custom',
+            customStart: '2026-09-01T00:00:00Z',
+            customEnd: '2026-09-02T00:00:00Z',
+        };
+
+        renderSection();
+
+        await waitFor(() => {
+            expect(mockApiFetch).toHaveBeenCalledTimes(1);
+        });
+        const url = mockApiFetch.mock.calls[0][0] as string;
+        expect(url).toContain('time_range=custom');
+        expect(url).toContain('time_start=');
+        expect(url).toContain('time_end=');
+    });
+
+    it('makes no request when a custom bound is missing', async () => {
+        mockApiFetch.mockResolvedValue(
+            okResponse({ databases: [makeDatabase()] }),
+        );
+        mockTimeRange = {
+            range: 'custom',
+            customEnd: '2026-09-02T00:00:00Z',
+        };
+
+        renderSection();
+
+        await waitFor(() => {
+            expect(mockApiFetch).not.toHaveBeenCalled();
+        });
     });
 
     it('renders the Sparkline when time_series is populated', async () => {

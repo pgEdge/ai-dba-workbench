@@ -58,16 +58,53 @@ describe('useDatabaseSummaries', () => {
         );
     });
 
-    it('honours a custom time range', async () => {
+    it('honours a preset time range', async () => {
         mockApiFetch.mockResolvedValue(okResponse({ databases: [] }));
 
-        renderHook(() => useDatabaseSummaries(3, 0, '1h'));
+        renderHook(() => useDatabaseSummaries(3, 0, { range: '1h' }));
 
         await waitFor(() => {
             expect(mockApiFetch).toHaveBeenCalledWith(
-                expect.stringContaining('time_range=1h'),
+                '/api/v1/metrics/database-summaries'
+                + '?connection_id=3&time_range=1h',
             );
         });
+    });
+
+    it('sends both bounds for a custom time range', async () => {
+        mockApiFetch.mockResolvedValue(okResponse({ databases: [] }));
+
+        renderHook(() => useDatabaseSummaries(3, 0, {
+            range: 'custom',
+            customStart: '2026-09-01T00:00:00Z',
+            customEnd: '2026-09-02T00:00:00Z',
+        }));
+
+        await waitFor(() => {
+            expect(mockApiFetch).toHaveBeenCalledTimes(1);
+        });
+        const url = mockApiFetch.mock.calls[0][0] as string;
+        expect(url).toContain('time_range=custom');
+        expect(url).toContain(
+            `time_start=${encodeURIComponent('2026-09-01T00:00:00Z')}`,
+        );
+        expect(url).toContain(
+            `time_end=${encodeURIComponent('2026-09-02T00:00:00Z')}`,
+        );
+    });
+
+    it('skips the request when a custom bound is missing', async () => {
+        mockApiFetch.mockResolvedValue(okResponse({ databases: [] }));
+
+        const { result } = renderHook(() => useDatabaseSummaries(3, 0, {
+            range: 'custom',
+            customStart: '2026-09-01T00:00:00Z',
+        }));
+
+        await waitFor(() => {
+            expect(result.current.loading).toBe(false);
+        });
+        expect(mockApiFetch).not.toHaveBeenCalled();
     });
 
     it('treats a missing databases field as an empty list', async () => {

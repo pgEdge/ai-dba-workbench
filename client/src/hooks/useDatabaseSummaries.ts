@@ -12,6 +12,11 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { useAuth } from '../contexts/useAuth';
 import { apiFetch } from '../utils/apiClient';
 import { logger } from '../utils/logger';
+import {
+    appendTimeRangeParams,
+    isTimeRangeQueryable,
+} from '../utils/timeRangeParams';
+import type { TimeRangeState } from '../components/Dashboard/types';
 import type {
     DatabaseSummary,
     ServerPerformanceSummary,
@@ -27,14 +32,21 @@ export interface UseDatabaseSummariesResult {
     error: string | null;
 }
 
+/** The window used when the caller does not follow the selector. */
+const DEFAULT_TIME_RANGE: TimeRangeState = { range: '24h' };
+
 /** Build the database-summaries endpoint URL for a connection. */
 const buildSummariesUrl = (
     connectionId: number,
-    timeRange: string,
-): string => (
-    `/api/v1/metrics/database-summaries`
-    + `?connection_id=${connectionId}&time_range=${timeRange}`
-);
+    timeRange: TimeRangeState,
+): string => {
+    const params = new URLSearchParams({
+        connection_id: connectionId.toString(),
+    });
+    appendTimeRangeParams(params, timeRange);
+
+    return `/api/v1/metrics/database-summaries?${params.toString()}`;
+};
 
 /**
  * Throw a descriptive error when the response reports a failure.
@@ -88,11 +100,15 @@ const toErrorMessage = (err: unknown): string => (
  * defaults whilst disabled, including when a caller disables the hook
  * after it has already loaded: anything in flight at that point is
  * invalidated rather than allowed to land afterwards.
+ *
+ * `timeRange` is the dashboard's selected window, including the bounds
+ * of a custom one; callers that only want the database names can omit
+ * it and take the fixed 24-hour default.
  */
 export const useDatabaseSummaries = (
     connectionId: number,
     refreshKey = 0,
-    timeRange = '24h',
+    timeRange: TimeRangeState = DEFAULT_TIME_RANGE,
     enabled = true,
 ): UseDatabaseSummariesResult => {
     const { user } = useAuth();
@@ -115,10 +131,26 @@ export const useDatabaseSummaries = (
 
     const isLoggedIn = !!user;
 
+    // Destructured so that the fetch depends on the window's values
+    // rather than on the identity of the object the caller passes,
+    // which a parent re-render would otherwise change on every pass.
+    const { range, customStart, customEnd } = timeRange;
+
     const fetchData = useCallback(async (): Promise<void> => {
         if (!userRef.current) { return; }
 
-        const url = buildSummariesUrl(connectionId, timeRange);
+        const selectedWindow: TimeRangeState = {
+            range, customStart, customEnd,
+        };
+
+        /*
+         * A custom range without both bounds is a transient state the
+         * server rejects with a 400, so skip the request entirely and
+         * leave whatever data and error state is already in place.
+         */
+        if (!isTimeRangeQueryable(selectedWindow)) { return; }
+
+        const url = buildSummariesUrl(connectionId, selectedWindow);
 
         if (!initialLoadDoneRef.current) {
             setLoading(true);
@@ -157,7 +189,7 @@ export const useDatabaseSummaries = (
                 setLoading(false);
             }
         }
-    }, [connectionId, timeRange]);
+    }, [connectionId, range, customStart, customEnd]);
 
     useEffect(() => {
         initialLoadDoneRef.current = false;

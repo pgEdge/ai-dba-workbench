@@ -307,9 +307,10 @@ LLM. The rules are as follows:
   `/api/v1/metrics/performance-summary` instead, where the server
   differences per database before summing; the
   `useServerCacheHit` hook in `client/src/hooks/` does this for the
-  server dashboard's `PostgresOverviewSection`, sending `time_start`
-  and `time_end` for a custom range and making no request whilst a
-  custom range still lacks a bound, as `useConnectionGroups` does.
+  server dashboard's `PostgresOverviewSection`, building its window
+  parameters with the `utils/timeRangeParams.ts` helpers so that a
+  custom range sends both bounds and a half-specified one sends no
+  request at all.
 
 - An idle bucket is null, never 0% and never 100%; a headline value
   is the latest non-null bucket of the ratio series, shown as `--`
@@ -384,21 +385,29 @@ the question is what landed on the canvas.
 
 Every dashboard request that has a time dimension takes its window
 from `useDashboard().timeRange`, a `TimeRangeState` of `range` plus
-an optional `customStart` and `customEnd`. There is no shared helper
-yet, so each call site repeats the same two-part pattern that
-`useMetrics` (`client/src/hooks/useMetrics.ts`) establishes:
+an optional `customStart` and `customEnd`. The two rules that turn
+that state into query parameters live in
+`client/src/utils/timeRangeParams.ts`, which is the only place they
+should be written; it is deliberately separate from
+`utils/timelineRange.ts`, which resolves the Event Timeline's own
+`TimelineTimeRange` into absolute `Date` bounds.
 
-- Always send `time_range`, and send `time_start` and `time_end`
-  only when the range is `custom` and both bounds are present; the
-  server accepts the bounds for no other range.
+- `appendTimeRangeParams(params, timeRange)` always sends
+  `time_range`, and sends `time_start` and `time_end` only when the
+  range is `custom` and both bounds are present; the server accepts
+  the bounds for no other range. It mutates and returns the
+  `URLSearchParams` it is given, so build the endpoint's own
+  parameters first and append the window last.
 
-- Skip the request entirely whilst a custom range has only one
-  bound, leaving the existing data and error state alone. A
-  half-specified custom window is a transient state the user passes
-  through in the picker, and sending it earns a 400 and a visible
-  error for no benefit. `useMetrics`, `useServerCacheHit`,
-  `useConnectionGroups`, `useQueryStats`, `TopQueriesSection` and
-  `QueryDetail` all do this.
+- `isTimeRangeQueryable(timeRange)` is false whilst a custom range
+  has only one bound; skip the request entirely in that case,
+  leaving the existing data and error state alone. A half-specified
+  custom window is a transient state the user passes through in the
+  picker, and sending it earns a 400 and a visible error for no
+  benefit. `useMetrics`, `useServerCacheHit`, `useQueryStats`,
+  `useDatabaseSummaries`, `TopQueriesSection`, `QueryDetail`,
+  `KpiTilesSection` and `ComparativeChartsSection` all go through
+  the helper; `useConnectionGroups` still carries its own copy.
 
 - Put `range`, `customStart` and `customEnd` in the fetch callback's
   dependency list, so that moving the selector refetches.
@@ -471,11 +480,19 @@ pending fetch is handled once for the whole component, as the error
 message or the spinner. Keep any future windowed tile on that same
 footing rather than reintroducing per-tile state.
 
-Five summary-tile call sites still hardcode `time_range=24h`
-(`usePerformanceSummary`, `useDatabaseCacheHit`,
-`DatabaseSummariesSection`, `KpiTilesSection` and
-`ComparativeChartsSection`); that is deliberate for now and is being
-reviewed separately, so do not sweep them into an unrelated change.
+Two call sites still hardcode `time_range=24h` by decision, both in
+`components/StatusPanel/PerformanceTiles/`: `usePerformanceSummary`
+and `useDatabaseCacheHit`. They render above the Monitoring section
+that holds the selector, so a user looking at them cannot see the
+control that would be changing the numbers, and they are a fixed
+at-a-glance 24-hour summary instead. A comment at each says so; do
+not sweep them into a change that wires up the selector.
+
+`useDatabaseSummaries` takes the window as a `TimeRangeState` third
+argument and defaults to a fixed `24h`. `DatabaseSummariesSection`
+passes the selected window; `TopQueriesSection` deliberately does
+not, because it uses the hook only for the database filter list and
+that list should not shrink as the user narrows the period.
 
 ## TypeScript Standards
 

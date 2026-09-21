@@ -107,11 +107,13 @@ const DatabaseSummariesSection: React.FC<ServerSectionProps> = ({
     connectionId,
     connectionName,
 }) => {
-    const { refreshTrigger, pushOverlay } = useDashboard();
+    const { refreshTrigger, pushOverlay, timeRange } = useDashboard();
     const theme = useTheme();
 
+    // The summaries are period-scoped, so this panel follows the
+    // dashboard time selector rather than a fixed window.
     const { databases, loading, error } = useDatabaseSummaries(
-        connectionId, refreshTrigger
+        connectionId, refreshTrigger, timeRange
     );
 
     const tileSx = useMemo(() => getDashboardTileSx(theme), [theme]);

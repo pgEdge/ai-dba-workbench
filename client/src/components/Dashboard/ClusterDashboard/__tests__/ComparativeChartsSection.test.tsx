@@ -12,6 +12,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import ComparativeChartsSection from '../ComparativeChartsSection';
+import type { TimeRangeState } from '../../types';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -32,6 +33,11 @@ vi.mock('../../../../contexts/useAuth', () => ({
 
 vi.mock('../../../../contexts/useClusterData', () => ({
     useClusterData: () => ({ lastRefresh: 0 }),
+}));
+
+let mockTimeRange: TimeRangeState = { range: '24h' };
+vi.mock('../../../../contexts/useDashboard', () => ({
+    useDashboard: () => ({ timeRange: mockTimeRange }),
 }));
 
 interface CapturedChart {
@@ -108,6 +114,7 @@ describe('ComparativeChartsSection', () => {
         vi.clearAllMocks();
         capturedCharts.length = 0;
         mockUser = { id: 1, username: 'testuser' };
+        mockTimeRange = { range: '24h' };
     });
 
     it('shows the loading spinner while the initial fetch is pending', () => {
@@ -128,8 +135,61 @@ describe('ComparativeChartsSection', () => {
         await waitFor(() => {
             expect(mockApiFetch).toHaveBeenCalledWith(
                 '/api/v1/metrics/performance-summary'
-                + '?connection_ids=3,4&time_range=24h',
+                + '?connection_ids=3%2C4&time_range=24h',
             );
+        });
+    });
+
+    it('follows the selected preset window', async () => {
+        mockApiFetch.mockResolvedValue(
+            okResponse({ connections: [makeConnection()] }),
+        );
+        mockTimeRange = { range: '6h' };
+
+        renderSection([3]);
+
+        await waitFor(() => {
+            expect(mockApiFetch).toHaveBeenCalledWith(
+                '/api/v1/metrics/performance-summary'
+                + '?connection_ids=3&time_range=6h',
+            );
+        });
+    });
+
+    it('sends both bounds for a custom window', async () => {
+        mockApiFetch.mockResolvedValue(
+            okResponse({ connections: [makeConnection()] }),
+        );
+        mockTimeRange = {
+            range: 'custom',
+            customStart: '2026-09-01T00:00:00Z',
+            customEnd: '2026-09-02T00:00:00Z',
+        };
+
+        renderSection([3]);
+
+        await waitFor(() => {
+            expect(mockApiFetch).toHaveBeenCalledTimes(1);
+        });
+        const url = mockApiFetch.mock.calls[0][0] as string;
+        expect(url).toContain('time_range=custom');
+        expect(url).toContain('time_start=');
+        expect(url).toContain('time_end=');
+    });
+
+    it('makes no request when a custom bound is missing', async () => {
+        mockApiFetch.mockResolvedValue(
+            okResponse({ connections: [makeConnection()] }),
+        );
+        mockTimeRange = {
+            range: 'custom',
+            customStart: '2026-09-01T00:00:00Z',
+        };
+
+        renderSection([3]);
+
+        await waitFor(() => {
+            expect(mockApiFetch).not.toHaveBeenCalled();
         });
     });
 

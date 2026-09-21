@@ -14,6 +14,7 @@ import { ThemeProvider, createTheme } from '@mui/material/styles';
 import KpiTilesSection from '../KpiTilesSection';
 import { DEFAULT_RETRY_BASE_DELAY_MS } from '../../../../hooks/useRetryingFetch';
 import type { EstateSelection } from '../../../../types/selection';
+import type { TimeRangeState } from '../../types';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -35,6 +36,12 @@ let mockLastRefresh = 0;
 
 vi.mock('../../../../contexts/useClusterData', () => ({
     useClusterData: () => ({ lastRefresh: mockLastRefresh }),
+}));
+
+let mockTimeRange: TimeRangeState = { range: '24h' };
+
+vi.mock('../../../../contexts/useDashboard', () => ({
+    useDashboard: () => ({ timeRange: mockTimeRange }),
 }));
 
 // Stub KpiTile to a plain element so the test does not depend on the
@@ -112,10 +119,74 @@ describe('KpiTilesSection', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mockLastRefresh = 0;
+        mockTimeRange = { range: '24h' };
     });
 
     afterEach(() => {
         vi.useRealTimers();
+    });
+
+    it('requests the summary for the selected preset window', async () => {
+        mockApiFetch.mockImplementation((url: string) =>
+            url.includes('/alerts')
+                ? Promise.resolve(okResponse(alertsBody))
+                : Promise.resolve(okResponse(perfBody)),
+        );
+        mockTimeRange = { range: '7d' };
+
+        renderSection([1, 2]);
+
+        await waitFor(() => {
+            expect(mockApiFetch).toHaveBeenCalledWith(
+                '/api/v1/metrics/performance-summary'
+                + '?connection_ids=1%2C2&time_range=7d',
+            );
+        });
+    });
+
+    it('sends both bounds for a custom window', async () => {
+        mockApiFetch.mockImplementation((url: string) =>
+            url.includes('/alerts')
+                ? Promise.resolve(okResponse(alertsBody))
+                : Promise.resolve(okResponse(perfBody)),
+        );
+        mockTimeRange = {
+            range: 'custom',
+            customStart: '2026-09-01T00:00:00Z',
+            customEnd: '2026-09-02T00:00:00Z',
+        };
+
+        renderSection([1]);
+
+        await waitFor(() => {
+            expect(mockApiFetch).toHaveBeenCalledWith(
+                expect.stringContaining('time_range=custom'),
+            );
+        });
+        const url = mockApiFetch.mock.calls
+            .map(call => call[0] as string)
+            .find(candidate => candidate.includes('performance-summary'));
+        expect(url).toContain('time_start=');
+        expect(url).toContain('time_end=');
+    });
+
+    it('makes no request when a custom bound is missing', async () => {
+        mockApiFetch.mockImplementation((url: string) =>
+            url.includes('/alerts')
+                ? Promise.resolve(okResponse(alertsBody))
+                : Promise.resolve(okResponse(perfBody)),
+        );
+        mockTimeRange = {
+            range: 'custom',
+            customEnd: '2026-09-02T00:00:00Z',
+        };
+
+        renderSection([1]);
+
+        await waitFor(() => {
+            expect(screen.getByText('Total Servers')).toBeInTheDocument();
+        });
+        expect(mockApiFetch).not.toHaveBeenCalled();
     });
 
     it('renders aggregated KPI tiles after fetching', async () => {

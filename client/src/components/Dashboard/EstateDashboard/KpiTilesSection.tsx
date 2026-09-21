@@ -16,6 +16,11 @@ import Typography from '@mui/material/Typography';
 import { useAuth } from '../../../contexts/useAuth';
 import { apiFetch } from '../../../utils/apiClient';
 import { useClusterData } from '../../../contexts/useClusterData';
+import { useDashboard } from '../../../contexts/useDashboard';
+import {
+    appendTimeRangeParams,
+    isTimeRangeQueryable,
+} from '../../../utils/timeRangeParams';
 import KpiTile from '../KpiTile';
 import { formatNumber } from '../../../utils/formatters';
 import { KPI_GRID_SX } from '../styles';
@@ -58,6 +63,10 @@ const ERROR_SX = {
 const KpiTilesSection: React.FC<KpiTilesSectionProps> = ({ selection, serverIds }) => {
     const { user } = useAuth();
     const { lastRefresh } = useClusterData();
+    // These tiles render inside the Monitoring section alongside the
+    // time selector, so they follow the selected window.
+    const { timeRange } = useDashboard();
+    const { range, customStart, customEnd } = timeRange;
     const [aggregate, setAggregate] = useState<PerformanceAggregate | null>(null);
     const [loading, setLoading] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
@@ -74,6 +83,21 @@ const KpiTilesSection: React.FC<KpiTilesSectionProps> = ({ selection, serverIds 
     const fetchAggregateData = useCallback(async (): Promise<boolean> => {
         if (!user || serverIds.length === 0) { return true; }
 
+        /*
+         * A custom range without both bounds is a transient state the
+         * server rejects with a 400, so skip the request entirely and
+         * leave whatever data and error state is already in place.
+         * Reported as a success so the retry controller does not
+         * reschedule a fetch that is not actually failing.
+         */
+        const selectedWindow = { range, customStart, customEnd };
+        if (!isTimeRangeQueryable(selectedWindow)) { return true; }
+
+        const perfParams = new URLSearchParams({
+            connection_ids: serverIds.join(','),
+        });
+        appendTimeRangeParams(perfParams, selectedWindow);
+
         if (!initialLoadDoneRef.current) {
             setLoading(true);
         }
@@ -82,7 +106,8 @@ const KpiTilesSection: React.FC<KpiTilesSectionProps> = ({ selection, serverIds 
         try {
             const [perfResponse, alertsResponse] = await Promise.all([
                 apiFetch(
-                    `/api/v1/metrics/performance-summary?connection_ids=${serverIds.join(',')}&time_range=24h`,
+                    '/api/v1/metrics/performance-summary'
+                    + `?${perfParams.toString()}`,
                 ),
                 apiFetch(
                     '/api/v1/alerts?exclude_cleared=true&limit=200',
@@ -143,7 +168,7 @@ const KpiTilesSection: React.FC<KpiTilesSectionProps> = ({ selection, serverIds 
                 setLoading(false);
             }
         }
-    }, [user, serverIds, totalServers]);
+    }, [user, serverIds, totalServers, range, customStart, customEnd]);
 
     useEffect(() => {
         initialLoadDoneRef.current = false;

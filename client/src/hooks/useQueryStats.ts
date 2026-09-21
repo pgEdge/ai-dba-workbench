@@ -14,6 +14,10 @@ import { useDashboard } from '../contexts/useDashboard';
 import type { TimeRange } from '../components/Dashboard/types';
 import { apiFetch } from '../utils/apiClient';
 import { logger } from '../utils/logger';
+import {
+    appendTimeRangeParams,
+    isTimeRangeQueryable,
+} from '../utils/timeRangeParams';
 
 /** Parameters identifying the statement and period to summarise. */
 export interface QueryStatsParams {
@@ -93,7 +97,10 @@ export const useQueryStats = (
          * server rejects with a 400, so skip the request entirely and
          * leave whatever stats and error state is already in place.
          */
-        if (timeRange === 'custom' && (!customStart || !customEnd)) {
+        const selectedWindow = {
+            range: timeRange, customStart, customEnd,
+        };
+        if (!isTimeRangeQueryable(selectedWindow)) {
             return;
         }
 
@@ -101,12 +108,8 @@ export const useQueryStats = (
             connection_id: connectionId.toString(),
             queryid: queryId,
             database_name: databaseName,
-            time_range: timeRange,
         });
-        if (timeRange === 'custom' && customStart && customEnd) {
-            searchParams.append('time_start', customStart);
-            searchParams.append('time_end', customEnd);
-        }
+        appendTimeRangeParams(searchParams, selectedWindow);
         const url =
             `/api/v1/metrics/query-stats?${searchParams.toString()}`;
 

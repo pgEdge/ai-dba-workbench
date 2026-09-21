@@ -16,6 +16,11 @@ import CircularProgress from '@mui/material/CircularProgress';
 import { useAuth } from '../../../contexts/useAuth';
 import { apiFetch } from '../../../utils/apiClient';
 import { useClusterData } from '../../../contexts/useClusterData';
+import { useDashboard } from '../../../contexts/useDashboard';
+import {
+    appendTimeRangeParams,
+    isTimeRangeQueryable,
+} from '../../../utils/timeRangeParams';
 import { Chart } from '../../Chart';
 import { CHART_SECTION_SX } from '../styles';
 import { logger } from '../../../utils/logger';
@@ -63,6 +68,10 @@ const ERROR_SX = {
 const ComparativeChartsSection: React.FC<ComparativeChartsSectionProps> = ({ serverIds }) => {
     const { user } = useAuth();
     const { lastRefresh } = useClusterData();
+    // These charts render inside the Monitoring section alongside the
+    // time selector, so they follow the selected window.
+    const { timeRange } = useDashboard();
+    const { range, customStart, customEnd } = timeRange;
     const [metrics, setMetrics] = useState<ConnectionMetrics[]>([]);
     const [loading, setLoading] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
@@ -73,6 +82,19 @@ const ComparativeChartsSection: React.FC<ComparativeChartsSectionProps> = ({ ser
     const fetchMetrics = useCallback(async (): Promise<void> => {
         if (!user || serverIds.length === 0) { return; }
 
+        /*
+         * A custom range without both bounds is a transient state the
+         * server rejects with a 400, so skip the request entirely and
+         * leave whatever data and error state is already in place.
+         */
+        const selectedWindow = { range, customStart, customEnd };
+        if (!isTimeRangeQueryable(selectedWindow)) { return; }
+
+        const params = new URLSearchParams({
+            connection_ids: serverIds.join(','),
+        });
+        appendTimeRangeParams(params, selectedWindow);
+
         if (!initialLoadDoneRef.current) {
             setLoading(true);
         }
@@ -80,7 +102,7 @@ const ComparativeChartsSection: React.FC<ComparativeChartsSectionProps> = ({ ser
 
         try {
             const response = await apiFetch(
-                `/api/v1/metrics/performance-summary?connection_ids=${serverIds.join(',')}&time_range=24h`,
+                `/api/v1/metrics/performance-summary?${params.toString()}`,
             );
 
             if (!response.ok) {
@@ -133,7 +155,7 @@ const ComparativeChartsSection: React.FC<ComparativeChartsSectionProps> = ({ ser
                 setLoading(false);
             }
         }
-    }, [user, serverIds]);
+    }, [user, serverIds, range, customStart, customEnd]);
 
     useEffect(() => {
         initialLoadDoneRef.current = false;

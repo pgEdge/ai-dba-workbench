@@ -31,6 +31,10 @@ import { useMetrics } from '../../../hooks/useMetrics';
 import { useQueryOverview } from '../../../hooks/useQueryOverview';
 import { logger } from '../../../utils/logger';
 import {
+    appendTimeRangeParams,
+    isTimeRangeQueryable,
+} from '../../../utils/timeRangeParams';
+import {
     SERVER_INFO_LABEL_BASE_SX,
     SERVER_INFO_VALUE_BASE_SX,
 } from '../../../theme/tokens';
@@ -245,7 +249,10 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
          * server rejects with a 400, so skip the request entirely and
          * leave whatever data and error state is already in place.
          */
-        if (selectedRange === 'custom' && (!customStart || !customEnd)) {
+        const selectedWindow = {
+            range: selectedRange, customStart, customEnd,
+        };
+        if (!isTimeRangeQueryable(selectedWindow)) {
             return;
         }
 
@@ -253,12 +260,8 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
             connection_id: connectionId.toString(),
             queryid: objectName,
             limit: '1',
-            time_range: selectedRange,
         });
-        if (selectedRange === 'custom' && customStart && customEnd) {
-            params.set('time_start', customStart);
-            params.set('time_end', customEnd);
-        }
+        appendTimeRangeParams(params, selectedWindow);
 
         const url = `/api/v1/metrics/top-queries?${params.toString()}`;
 

@@ -11,6 +11,7 @@ package database
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -93,12 +94,26 @@ func (d *Datastore) CreateConnectionAlert(ctx context.Context, connectionID int,
 	return alert, nil
 }
 
-// UpdateConnectionAlertDescription updates the description of a connection alert
-func (d *Datastore) UpdateConnectionAlertDescription(ctx context.Context, alertID int64, description string) error {
+// UpdateAlertDescription rewrites an alert's description and stamps
+// last_updated, leaving every other column alone, and the title in
+// particular, so that anyone following the alert through notification
+// history still sees the same alert rather than what looks like a new
+// one. It applies to any alert, whatever its type; callers that rewrite a
+// description repeatedly should only call it when the text has actually
+// changed, so that an unchanged alert does not have its last_updated
+// bumped on every pass.
+func (d *Datastore) UpdateAlertDescription(ctx context.Context, alertID int64, description string) error {
 	_, err := d.pool.Exec(ctx, `
 		UPDATE alerts SET description = $1, last_updated = NOW() WHERE id = $2
 	`, description, alertID)
 	return err
+}
+
+// UpdateConnectionAlertDescription updates the description of a connection
+// alert. It is a named alias for UpdateAlertDescription, kept because the
+// connection monitor reads better for it.
+func (d *Datastore) UpdateConnectionAlertDescription(ctx context.Context, alertID int64, description string) error {
+	return d.UpdateAlertDescription(ctx, alertID, description)
 }
 
 // GetAlerterSettings retrieves the global alerter settings
@@ -352,16 +367,25 @@ func (d *Datastore) GetActiveConnections(ctx context.Context) ([]int, error) {
 
 // GetProbeStalenessByConnection retrieves staleness ratios for all enabled probes
 // on monitored connections. The caller decides which entries exceed the threshold.
+//
+// Unavailable probes are returned rather than filtered out, with their
+// is_available flag and unavailable_reason, so that callers can tell a
+// fault apart from operator action: a probe whose availability has gone
+// false has stopped collecting through no decision of the operator's, and
+// a staleness alert must not clear on that. The remaining predicates stay,
+// including the non-null last_collected the ratio divides by, which
+// UpsertProbeAvailability coalesces so that it never returns to NULL once
+// a probe has collected at all. See GitHub issue #465.
 func (d *Datastore) GetProbeStalenessByConnection(ctx context.Context) ([]ProbeStaleness, error) {
 	rows, err := d.pool.Query(ctx, `
 		SELECT c.id, c.name, pa.probe_name, pc.collection_interval_seconds,
 		       EXTRACT(EPOCH FROM (NOW() - pa.last_collected)) / pc.collection_interval_seconds AS staleness_ratio,
-		       EXTRACT(EPOCH FROM (NOW() - pa.last_collected)) AS seconds_since_collected
+		       EXTRACT(EPOCH FROM (NOW() - pa.last_collected)) AS seconds_since_collected,
+		       pa.is_available, pa.unavailable_reason
 		FROM probe_availability pa
 		JOIN probe_configs pc ON pc.name = pa.probe_name AND pc.connection_id IS NULL
 		JOIN connections c ON c.id = pa.connection_id
-		WHERE pa.is_available = TRUE
-		  AND pc.is_enabled = TRUE
+		WHERE pc.is_enabled = TRUE
 		  AND c.is_monitored = TRUE
 		  AND pa.last_collected IS NOT NULL
 	`)
@@ -375,7 +399,8 @@ func (d *Datastore) GetProbeStalenessByConnection(ctx context.Context) ([]ProbeS
 		var ps ProbeStaleness
 		var sinceCollected float64
 		if err := rows.Scan(&ps.ConnectionID, &ps.ConnectionName, &ps.ProbeName,
-			&ps.CollectionInterval, &ps.StalenessRatio, &sinceCollected); err != nil {
+			&ps.CollectionInterval, &ps.StalenessRatio, &sinceCollected,
+			&ps.IsAvailable, &ps.UnavailableReason); err != nil {
 			return nil, fmt.Errorf("failed to scan probe staleness: %w", err)
 		}
 		ps.SinceCollected = time.Duration(sinceCollected * float64(time.Second))
@@ -387,6 +412,34 @@ func (d *Datastore) GetProbeStalenessByConnection(ctx context.Context) ([]ProbeS
 	}
 
 	return results, nil
+}
+
+// GetProbeStalenessContext returns the connection name and the configured
+// collection interval for one probe on one connection. It exists for a
+// caller that must phrase a staleness alert for a probe the staleness
+// view no longer reports: GetProbeStalenessByConnection drops a probe the
+// operator has disabled, a connection they have stopped monitoring and a
+// probe whose availability row has gone, whilst the connection row and
+// the probe's global config survive all three, so this lookup still
+// answers for the cases that clear a held alert. found is false only when
+// the connection itself or the probe's config has actually been deleted.
+// See GitHub issue #465.
+func (d *Datastore) GetProbeStalenessContext(ctx context.Context, connectionID int,
+	probeName string) (connectionName string, collectionInterval int, found bool, err error) {
+	err = d.pool.QueryRow(ctx, `
+		SELECT c.name, pc.collection_interval_seconds
+		FROM connections c
+		JOIN probe_configs pc ON pc.name = $2 AND pc.connection_id IS NULL
+		WHERE c.id = $1
+	`, connectionID, probeName).Scan(&connectionName, &collectionInterval)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", 0, false, nil
+		}
+		return "", 0, false, fmt.Errorf("failed to get probe staleness context: %w", err)
+	}
+
+	return connectionName, collectionInterval, true, nil
 }
 
 // GetAlertRuleByName retrieves an alert rule by its unique name

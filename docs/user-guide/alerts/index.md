@@ -73,6 +73,31 @@ the condition holds, such as an inactive replication slot
 or a blocked session, still clear as soon as the metric
 goes quiet.
 
+A metric staleness alert that has already fired follows
+the same principle. When the probe behind such an alert
+becomes unavailable, because a monitored server no longer
+offers the extension the probe needs or because the probe
+run timed out, the alert stays active and its description
+changes to report that collection has stopped and why. The
+alert title does not change, so the alert remains
+recognisable in notification history, and the original
+description returns once the probe collects again. When an
+operator disables the probe, or stops monitoring the
+connection, the alerter clears the staleness alert,
+because both actions are deliberate, and it restores the
+original description as the alert clears so that the
+cleared alert does not report that collection has
+stopped.
+
+This behaviour holds an existing alert open; it does not
+raise one. A probe that goes unavailable before its
+staleness alert has fired produces no alert at all,
+because the alerter does not evaluate staleness for an
+unavailable probe, and on a probe that collects every
+minute the staleness threshold is nowhere near reached by
+the time the probe stops. Alerting on a probe that stops
+being available is tracked in [issue 512](https://github.com/pgEdge/ai-dba-workbench/issues/512).
+
 ### False Positive
 
 An operator can mark an alert as a false positive to

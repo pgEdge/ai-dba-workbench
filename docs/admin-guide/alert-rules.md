@@ -294,6 +294,46 @@ condition holds, such as an inactive replication slot or a
 blocked session, the absence of a value is the recovery
 signal and the alerter clears the alert.
 
+The `metric_staleness` rule is cleared on the same basis.
+A probe that has become unavailable, whether because the
+monitored server no longer offers the extension the probe
+reads or because the probe run timed out, keeps a
+staleness alert that has already fired for it; the alerter
+rewrites the alert description to report that collection
+has stopped and to name the reason the collector recorded,
+and leaves the alert title alone so that the alert stays
+recognisable in notification history. The alerter restores
+the evaluator's original wording once the probe collects
+again, so the clear notification and the stored history
+describe the recovery rather than the outage. A probe that
+an operator has disabled, and a probe on a connection that
+is no longer monitored, both clear the alert, because each
+represents a deliberate change rather than a fault; the
+alerter restores the original wording on that path too,
+rebuilding it from the connection and probe configuration,
+so a cleared alert does not report that collection has
+stopped. Where the connection and its probe configuration
+have gone as well, there is nothing left to rebuild the
+wording from and the alert clears as it stands. The
+alerter logs whichever decision it takes at the normal log
+level, once when the decision changes rather than on every
+cleanup cycle.
+
+This hold preserves an alert that is already active; it
+does not raise a new one. The staleness rule itself never
+fires for an unavailable probe, because an unavailable
+probe is the normal steady state on a server that lacks
+the extension a probe reads, and firing on one would leave
+a permanent alert against every such probe. A probe that
+stops collecting before its staleness ratio reaches the
+rule's threshold therefore raises no alert at all, and the
+hold has nothing to preserve. The seeded rule illustrates
+the gap: it fires on a ratio above 3, and a probe that
+runs every 60 seconds is still at a ratio of 1.0 at the
+moment the collector records the probe as unavailable.
+Alerting on a probe that moves from available to
+unavailable is tracked separately in [issue 512](https://github.com/pgEdge/ai-dba-workbench/issues/512).
+
 ## Blackout Interaction
 
 During an active blackout period, the alerter

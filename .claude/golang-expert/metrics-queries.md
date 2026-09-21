@@ -729,14 +729,15 @@ last collection against the metric's own window holds at any interval.
 The query reports `SinceCollected` alongside `StalenessRatio` for this;
 `probeFreshnessRatioLimit` is gone.
 
-A stalled probe, a probe missing from the view (the query filters on
-`is_available`, `is_enabled`, `is_monitored` and a non-NULL
-`last_collected`, so a disabled or unmonitored one disappears entirely),
-an entry with no `probeName` or no `absenceWindow`, or a failed staleness
-read all leave the alert active and log at operator level rather than
-debug. The trade-off is deliberate: disabling a probe or unmonitoring a
-connection keeps the alert until someone clears or acknowledges it, which
-beats announcing a resolution nobody observed.
+A stalled probe, an unavailable probe, a probe missing from the view (the
+query filters on `is_enabled`, `is_monitored` and a non-NULL
+`last_collected`, so a disabled or unmonitored one disappears entirely,
+whilst an unavailable one is returned with `IsAvailable` false since
+issue #465), an entry with no `probeName` or no `absenceWindow`, or a
+failed staleness read all leave the alert active and log at operator
+level rather than debug. The trade-off is deliberate: disabling a probe
+or unmonitoring a connection keeps the alert until someone clears or
+acknowledges it, which beats announcing a resolution nobody observed.
 `TestMetricRegistryProbeName` requires every entry to name a probe its
 latest SQL actually reads, `TestMetricRegistryAbsenceWindowMatchesSQL`
 requires the declared window to equal the shortest `collected_at` cutoff
@@ -744,7 +745,81 @@ in that SQL, `TestMetricRegistryAbsenceWindowCoversProbeInterval`
 requires it to span at least three of the probe's seeded intervals (the
 map of seeded intervals is itself checked against the collector's
 `schema.go` by `TestSeededProbeIntervalsMatchCollector`), and
-`TestClassifyAbsentMetric` pins the five verdicts.
+`TestClassifyAbsentMetric` pins the five verdicts, including the
+unavailable probe whose `last_collected` still sits inside the window,
+which must stay `absentMetricProbeNotReporting` now that the row reaches
+the gate at all.
+
+Probe availability is carried rather than filtered, so the three ways a
+probe can leave the staleness view are no longer one signal (issue #465).
+`GetProbeStalenessByConnection` selects `pa.is_available` and
+`pa.unavailable_reason` into `ProbeStaleness.IsAvailable` and
+`UnavailableReason`, and the three readers each treat them differently:
+`evaluateMetricStaleness` skips unavailable entries entirely, because
+`is_available = FALSE` is a normal steady state for a probe whose
+extension is absent and firing on it would pin a permanent staleness
+alert to every such probe; `classifyAbsentMetric` returns
+`absentMetricProbeNotReporting` for them whatever their `SinceCollected`,
+preserving the issue #407 gate exactly; and
+`checkStalenessAlertResolved` holds the alert active and rewrites only
+the alert's description through `Datastore.UpdateAlertDescription`,
+leaving the title alone so the alert reads as the same one across
+notification history. Both the rewrite and the operator-level line
+naming the probe, connection and `unavailable_reason` are skipped when
+the text already matches, since the cleaner runs every cycle and would
+otherwise bump `last_updated` and log a line every thirty seconds; an
+operator gets one line when collection stops and another only if the
+reason changes. Absence from the view now means only deliberate operator
+action (probe disabled, connection unmonitored, row gone) and still
+clears, but at operator level rather than debug.
+`UpdateConnectionAlertDescription` delegates to
+`UpdateAlertDescription`; the SQL is unchanged.
+
+The hold is undone on both ways out, because otherwise the clear
+notification and the stored history would announce the resolution in the
+words of the hold. Every held description opens with
+`unavailableProbeDescriptionPrefix` ("Collection has stopped: "), which
+is the only record that the cleaner wrote it, and
+`restoreStalenessAlertDescription` replaces a description carrying that
+prefix with the evaluator's own wording. The wording comes from
+`stalenessAlertDescription` and `stalenessMinutes` in `thresholds.go`,
+shared with `evaluateMetricStaleness` so the two cannot drift, and is
+rebuilt from `Alert.MetricValue`, the ratio the alert was raised or last
+updated on, falling back to the ratio the caller passes when the alert
+carries no value. A description the evaluator wrote is left alone, so
+the write happens once rather than on every pass.
+
+The probe collecting again is one way out, and `checkStalenessAlertResolved`
+restores the wording there from the view entry, before the threshold is
+checked and the alert possibly cleared. The other is the probe leaving
+the view whilst the alert is still held, which clears it, and
+`restoreHeldDescriptionBeforeClear` restores the wording there instead.
+That path has no view entry to read, so it takes the connection name and
+the collection interval from `Datastore.GetProbeStalenessContext`, a
+lookup of the `connections` and global `probe_configs` rows the view
+joins against: both survive a disabled probe, an unmonitored connection
+and a deleted availability row, which are exactly the three ways the
+probe can leave the view. When the lookup finds nothing, because the
+connection or the probe config has actually been deleted, or fails, the
+alert clears carrying the held wording, on the same reasoning the hold
+uses for a failed write: retiring the alert matters more than its text,
+and unlike the hold there is no next pass to retry in.
+
+`TestStalenessAlertHeldWhenProbeGoesUnavailable`,
+`TestStalenessEvaluatorSkipsUnavailableProbes`,
+`TestStalenessAlertClearLoggedAtNormalLevel`,
+`TestStalenessAlertHeldLoggedOnce`,
+`TestStalenessAlertDescriptionRestoredWhenProbeRecovers`,
+`TestStalenessAlertDescriptionRestoreFailureKeepsAlert`,
+`TestHeldStalenessAlertClearsWithoutTheHeldWording`,
+`TestHeldStalenessAlertClearsWhenItsConnectionHasGone` and
+`TestRestoreHeldDescriptionBeforeClearSurvivesALookupFailure`
+(`alerter/src/internal/engine/staleness_unavailable_probe_integration_test.go`)
+pin these behaviours, with `TestGetProbeStalenessContext`,
+`TestGetProbeStalenessContextMissingRows` and
+`TestGetProbeStalenessContextQueryError`
+(`alerter/src/internal/database/queries_full_integration_test.go`)
+covering the lookup itself.
 
 `cleanResolvedAlerts` resolves the probe staleness snapshot at most once
 per pass, lazily, through `probeStalenessSnapshot`; both

@@ -954,6 +954,164 @@ func TestGetProbeStalenessByConnection(t *testing.T) {
 	}
 }
 
+// TestGetProbeStalenessByConnectionReportsUnavailableProbes covers the
+// change issue #465 made to the query: an unavailable probe stays in the
+// result set, carrying its flag and reason, so the alert cleaner can tell
+// a fault apart from an operator disabling the probe. A probe whose
+// config is disabled is still filtered out, because that is deliberate
+// operator action.
+func TestGetProbeStalenessByConnectionReportsUnavailableProbes(t *testing.T) {
+	ds, pool, cleanup := newFullTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	connID := insertTestConnection(t, pool, "unavailable-probe-conn")
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO probe_configs (name, collection_interval_seconds, is_enabled, connection_id)
+		VALUES ('probe_down', 60, TRUE, NULL), ('probe_off', 60, FALSE, NULL)
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO probe_availability
+			(connection_id, probe_name, is_available, last_collected, unavailable_reason)
+		VALUES ($1, 'probe_down', FALSE, NOW() - INTERVAL '120 seconds', 'extension missing'),
+		       ($1, 'probe_off', FALSE, NOW() - INTERVAL '120 seconds', 'extension missing')
+	`, connID); err != nil {
+		t.Fatal(err)
+	}
+
+	results, err := ds.GetProbeStalenessByConnection(ctx)
+	if err != nil {
+		t.Fatalf("GetProbeStalenessByConnection: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("results = %d, want 1; the unavailable probe must be reported and "+
+			"the disabled one filtered out", len(results))
+	}
+	if results[0].ProbeName != "probe_down" {
+		t.Errorf("probe name = %q, want probe_down", results[0].ProbeName)
+	}
+	if results[0].IsAvailable {
+		t.Error("IsAvailable = true, want false for a probe the collector cannot run")
+	}
+	if results[0].UnavailableReason == nil || *results[0].UnavailableReason != "extension missing" {
+		t.Errorf("UnavailableReason = %v, want \"extension missing\"",
+			results[0].UnavailableReason)
+	}
+}
+
+// TestGetProbeStalenessContext covers the lookup the alert cleaner uses
+// to phrase a staleness alert whose probe has left the staleness view.
+// The probe is disabled and its connection unmonitored, which is exactly
+// when GetProbeStalenessByConnection stops reporting it, and the context
+// must still come back so the alert can be reworded on the way out. See
+// GitHub issue #465.
+func TestGetProbeStalenessContext(t *testing.T) {
+	ds, pool, cleanup := newFullTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	connID := insertTestConnection(t, pool, "context-conn")
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO probe_configs (name, collection_interval_seconds, is_enabled, connection_id)
+		VALUES ('probe_ctx', 90, FALSE, NULL)
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx,
+		`UPDATE connections SET is_monitored = FALSE WHERE id = $1`, connID); err != nil {
+		t.Fatal(err)
+	}
+
+	name, interval, found, err := ds.GetProbeStalenessContext(ctx, connID, "probe_ctx")
+	if err != nil {
+		t.Fatalf("GetProbeStalenessContext: %v", err)
+	}
+	if !found {
+		t.Fatal("found = false, want the context of a disabled probe on an unmonitored connection")
+	}
+	if name != "context-conn" {
+		t.Errorf("connection name = %q, want context-conn", name)
+	}
+	if interval != 90 {
+		t.Errorf("collection interval = %d, want 90", interval)
+	}
+}
+
+// TestGetProbeStalenessContextMissingRows covers the two ways the lookup
+// finds nothing: a probe with no global config, and a connection that has
+// been deleted. Neither is an error, because the caller simply leaves the
+// alert's wording as it stands.
+func TestGetProbeStalenessContextMissingRows(t *testing.T) {
+	ds, pool, cleanup := newFullTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	connID := insertTestConnection(t, pool, "context-missing-conn")
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO probe_configs (name, collection_interval_seconds, is_enabled, connection_id)
+		VALUES ('probe_ctx', 60, TRUE, NULL)
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, found, err := ds.GetProbeStalenessContext(ctx, connID, "probe_gone"); err != nil {
+		t.Fatalf("GetProbeStalenessContext for an unknown probe: %v", err)
+	} else if found {
+		t.Error("found = true for a probe with no config, want false")
+	}
+
+	if _, _, found, err := ds.GetProbeStalenessContext(ctx, connID+9999, "probe_ctx"); err != nil {
+		t.Fatalf("GetProbeStalenessContext for an unknown connection: %v", err)
+	} else if found {
+		t.Error("found = true for a connection that does not exist, want false")
+	}
+}
+
+// TestGetProbeStalenessContextQueryError covers the error return: a
+// canceled context is what an alerter shutting down mid-pass hands the
+// query.
+func TestGetProbeStalenessContextQueryError(t *testing.T) {
+	ds, pool, cleanup := newFullTestDatastore(t)
+	defer cleanup()
+
+	connID := insertTestConnection(t, pool, "context-error-conn")
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if _, _, found, err := ds.GetProbeStalenessContext(canceled, connID, "probe_ctx"); err == nil {
+		t.Error("err = nil on a canceled context, want a failure")
+	} else if found {
+		t.Error("found = true alongside an error, want false")
+	}
+}
+
+// TestGetProbeStalenessByConnectionReportsAvailableProbes pins the other
+// half of the same change: an available probe reports its flag as true
+// and carries no reason.
+func TestGetProbeStalenessByConnectionReportsAvailableProbes(t *testing.T) {
+	ds, pool, cleanup := newFullTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	seedProbeStalenessRow(t, pool, "available-probe-conn", 60)
+
+	results, err := ds.GetProbeStalenessByConnection(ctx)
+	if err != nil {
+		t.Fatalf("GetProbeStalenessByConnection: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("results = %d, want 1", len(results))
+	}
+	if !results[0].IsAvailable {
+		t.Error("IsAvailable = false, want true for a collecting probe")
+	}
+	if results[0].UnavailableReason != nil {
+		t.Errorf("UnavailableReason = %q, want nil", *results[0].UnavailableReason)
+	}
+}
+
 // TestGetProbeStalenessByConnectionScanError covers the scan branch of
 // GetProbeStalenessByConnection. Retyping connections.name to a text
 // array leaves the query valid but its second column unscannable into a

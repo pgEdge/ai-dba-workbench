@@ -276,6 +276,21 @@ func (e *Engine) evaluateMetricStaleness(ctx context.Context) {
 			return
 		}
 
+		// Unavailable probes are in the snapshot for the alert cleaner's
+		// benefit, but they must not raise staleness alerts here. A probe
+		// whose extension is not installed, or that the server will never
+		// support, sits at is_available = FALSE indefinitely, and it is a
+		// perfectly normal steady state rather than a fault to report; if
+		// this loop evaluated those entries it would raise a permanent
+		// staleness alert for every such probe on every connection. Do
+		// not "fix" this skip: the alert cleaner, not the evaluator, is
+		// what issue #465 changed.
+		if !entry.IsAvailable {
+			e.debugLog("Skipping staleness check for probe %s on connection %d: probe is unavailable",
+				entry.ProbeName, entry.ConnectionID)
+			continue
+		}
+
 		// Check if there's a blackout active for this connection
 		connID := entry.ConnectionID
 		active, err := e.datastore.IsBlackoutActive(ctx, &connID, nil)
@@ -296,13 +311,12 @@ func (e *Engine) evaluateMetricStaleness(ctx context.Context) {
 
 		violated := e.checkThreshold(entry.StalenessRatio, operator, threshold)
 		if violated {
-			elapsedMinutes := float64(entry.CollectionInterval) * entry.StalenessRatio / 60.0
-			thresholdMinutes := float64(entry.CollectionInterval) * threshold / 60.0
+			elapsedMinutes := stalenessMinutes(entry.CollectionInterval, entry.StalenessRatio)
+			thresholdMinutes := stalenessMinutes(entry.CollectionInterval, threshold)
 
 			title := fmt.Sprintf("Stale metrics: %s on %s", entry.ProbeName, entry.ConnectionName)
-			description := fmt.Sprintf(
-				"The %s probe on %s has not collected data for %.0f minutes (threshold: %.0f minutes). Dashboards may show outdated data.",
-				entry.ProbeName, entry.ConnectionName, elapsedMinutes, thresholdMinutes)
+			description := stalenessAlertDescription(entry.ProbeName, entry.ConnectionName,
+				elapsedMinutes, thresholdMinutes)
 
 			metricName := rule.MetricName
 			probeName := entry.ProbeName
@@ -366,6 +380,26 @@ func (e *Engine) evaluateMetricStaleness(ctx context.Context) {
 			e.queueNotification(alert, database.NotificationTypeAlertFire)
 		}
 	}
+}
+
+// stalenessMinutes converts a staleness ratio into the number of minutes
+// it stands for at a probe's collection interval, which is how both the
+// evaluator and the alert cleaner phrase staleness to an operator.
+func stalenessMinutes(collectionInterval int, ratio float64) float64 {
+	return float64(collectionInterval) * ratio / 60.0
+}
+
+// stalenessAlertDescription is the wording a metric_staleness alert
+// carries whilst its probe is merely late rather than gone. It is shared
+// with the alert cleaner, which puts this text back when a probe that had
+// gone unavailable starts collecting again, so that the alert does not
+// resolve in the words of the hold. See GitHub issue #465.
+func stalenessAlertDescription(probeName, connectionName string,
+	elapsedMinutes, thresholdMinutes float64) string {
+	return fmt.Sprintf(
+		"The %s probe on %s has not collected data for %.0f minutes "+
+			"(threshold: %.0f minutes). Dashboards may show outdated data.",
+		probeName, connectionName, elapsedMinutes, thresholdMinutes)
 }
 
 // evaluateConnectionErrors checks monitored connections for error states

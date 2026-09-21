@@ -2015,6 +2015,8 @@ func TestAuditRetentionDaysNilPointerDefaultsTo90(t *testing.T) {
 	}
 }
 
+// TestMaxFailedAttemptsBeforeLockoutDefault checks that a config built
+// from the defaults alone locks an account after ten failed attempts.
 func TestMaxFailedAttemptsBeforeLockoutDefault(t *testing.T) {
 	cfg := defaultConfig()
 	if got := cfg.HTTP.Auth.MaxFailedAttemptsBeforeLockout(); got != 10 {
@@ -2052,6 +2054,9 @@ http:
 	}
 }
 
+// TestMaxFailedAttemptsBeforeLockoutMergeDoesNotClobber checks that
+// merging a source config that never named the key leaves the
+// destination default in place.
 func TestMaxFailedAttemptsBeforeLockoutMergeDoesNotClobber(t *testing.T) {
 	dest := defaultConfig()
 	src := &Config{}
@@ -2067,6 +2072,8 @@ func TestMaxFailedAttemptsBeforeLockoutMergeDoesNotClobber(t *testing.T) {
 	}
 }
 
+// TestMaxFailedAttemptsBeforeLockoutYAMLOverride checks that a value
+// given in the config file replaces the default.
 func TestMaxFailedAttemptsBeforeLockoutYAMLOverride(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.yaml")
@@ -2089,6 +2096,9 @@ http:
 	}
 }
 
+// TestMaxFailedAttemptsBeforeLockoutYAMLZeroDisables checks that an
+// explicit zero is honoured as a deliberate request to disable account
+// lockout rather than being treated as an omitted key.
 func TestMaxFailedAttemptsBeforeLockoutYAMLZeroDisables(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.yaml")
@@ -2111,6 +2121,9 @@ http:
 	}
 }
 
+// TestMaxFailedAttemptsBeforeLockoutNegativeDefaultsTo10 checks that a
+// negative attempt count, which cannot mean anything sensible, falls
+// back to the default.
 func TestMaxFailedAttemptsBeforeLockoutNegativeDefaultsTo10(t *testing.T) {
 	a := AuthConfig{MaxFailedAttemptsBeforeLockoutPtr: intPtr(-3)}
 	if got := a.MaxFailedAttemptsBeforeLockout(); got != 10 {
@@ -2118,6 +2131,8 @@ func TestMaxFailedAttemptsBeforeLockoutNegativeDefaultsTo10(t *testing.T) {
 	}
 }
 
+// TestMaxFailedAttemptsBeforeLockoutNilPointerDefaultsTo10 checks that
+// the accessor applies the default when the setting was never set.
 func TestMaxFailedAttemptsBeforeLockoutNilPointerDefaultsTo10(t *testing.T) {
 	var a AuthConfig
 	if got := a.MaxFailedAttemptsBeforeLockout(); got != 10 {

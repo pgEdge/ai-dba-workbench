@@ -84,7 +84,10 @@ recognisable in notification history, and the original
 description returns once the probe collects again. When an
 operator disables the probe, or stops monitoring the
 connection, the alerter clears the staleness alert,
-because both actions are deliberate.
+because both actions are deliberate, and it restores the
+original description as the alert clears so that the
+cleared alert does not report that collection has
+stopped.
 
 This behaviour holds an existing alert open; it does not
 raise one. A probe that goes unavailable before its

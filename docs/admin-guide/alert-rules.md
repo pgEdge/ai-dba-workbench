@@ -308,7 +308,13 @@ again, so the clear notification and the stored history
 describe the recovery rather than the outage. A probe that
 an operator has disabled, and a probe on a connection that
 is no longer monitored, both clear the alert, because each
-represents a deliberate change rather than a fault. The
+represents a deliberate change rather than a fault; the
+alerter restores the original wording on that path too,
+rebuilding it from the connection and probe configuration,
+so a cleared alert does not report that collection has
+stopped. Where the connection and its probe configuration
+have gone as well, there is nothing left to rebuild the
+wording from and the alert clears as it stands. The
 alerter logs whichever decision it takes at the normal log
 level, once when the decision changes rather than on every
 cleanup cycle.

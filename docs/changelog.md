@@ -1178,9 +1178,15 @@ project adheres to
   to say that collection has stopped and to give the recorded reason;
   the title is unchanged, so the alert stays recognisable in
   notification history. The rewritten description reverts to the
-  evaluator's own wording once the probe collects again, so the clear
-  notification and the stored alert history no longer announce the
-  resolution in the words "Collection has stopped ...". The line
+  evaluator's own wording once the probe collects again, and also on
+  the way out when a held alert clears because an operator disabled
+  the probe or because its connection is no longer monitored, so
+  neither the clear notification nor the stored alert history
+  announces the resolution in the words "Collection has stopped ...".
+  On that clearing path the wording is rebuilt from the connection and
+  probe configuration rows the staleness view joins against, so a held
+  alert whose connection has gone altogether, or whose lookup fails,
+  still clears carrying the held text. The line
   reporting the hold is logged once, when the decision or the recorded
   reason changes, rather than on each 30 second cleanup cycle. A probe
   that is absent because an operator disabled it, or because its

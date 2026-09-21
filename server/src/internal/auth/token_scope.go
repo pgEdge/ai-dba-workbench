@@ -28,6 +28,20 @@ func (s *AuthStore) SetTokenConnectionScope(tokenID int64, connections []ScopedC
 func (s *AuthStore) setTokenConnectionScope(actor Actor, tokenID int64,
 	connections []ScopedConnection) (err error) {
 
+	// The stored access level is checked here rather than left to the
+	// SQLite CHECK constraint, so that a bad level is reported as what
+	// it is instead of an opaque insert failure, and so that the rule
+	// is visible to a reader of this code.
+	for _, conn := range connections {
+		if conn.AccessLevel != AccessLevelRead &&
+			conn.AccessLevel != AccessLevelReadWrite {
+			return fmt.Errorf(
+				"invalid access level %q for connection %d: must be %q or %q",
+				conn.AccessLevel, conn.ConnectionID, AccessLevelRead,
+				AccessLevelReadWrite)
+		}
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

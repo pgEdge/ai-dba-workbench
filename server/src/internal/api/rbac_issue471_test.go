@@ -68,9 +68,9 @@ func TestRequireSuperuserRejectsScopedSuperuserToken(t *testing.T) {
 		"wildcard token": wildcard,
 		"session":        0,
 	} {
-		if rec := groupPermissionsRequest(handler, tokenID); rec.Code == http.StatusForbidden {
-			t.Errorf("%s: expected the request to pass the superuser gate, got %s",
-				name, rec.Body.String())
+		if rec := groupPermissionsRequest(handler, tokenID); rec.Code != http.StatusOK {
+			t.Errorf("%s: expected 200, got %d: %s", name, rec.Code,
+				rec.Body.String())
 		}
 	}
 }

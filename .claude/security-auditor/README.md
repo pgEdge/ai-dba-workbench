@@ -72,8 +72,27 @@ moved.
 - `IsConnectionInTokenScope` treats a token with no scope rows as
   unrestricted, so an unscoped token inherits its owner's access in
   full.
-- Token scope does not constrain a superuser: the superuser bypass
-  returns before any scope check. That is deliberate, not an oversight.
+- Token scope constrains a superuser too, since issues `#471` and
+  `#482`. Each check intersects the owner's superuser rights with the
+  acting token's scope for the surface being reached, and a superuser
+  holds everything, so the intersection is the scope itself: a token
+  scoped to one admin permission, one connection or one tool may use
+  exactly that, with no group grant on the owning account, and nothing
+  else. A scope kind the token leaves empty, or scopes with the
+  wildcard, is unrestricted on that surface, and a narrowed scope of
+  one kind never narrows another.
+- A blanket superuser gate is the exception, because it names nothing
+  to intersect against: `RBACChecker.IsSuperuser` returns false for a
+  token whose admin scope has been narrowed, which is what
+  `requireSuperuser` and the MCP listing filters use. So
+  `GetEffectivePrivileges` reporting `IsSuperuser: false` alongside a
+  populated `AdminPermissions` map is correct and deliberate, not a
+  contradiction: the token may exercise the permissions it names, but
+  cannot pass a gate that would hand it every permission at once.
+- Everything on these paths fails closed: an unreadable scope denies
+  (and withdraws `IsSuperuser` in the report), and an API-token
+  context carrying no token id denies. Session callers carry no token
+  and are unaffected throughout.
 - `http.auth.local.enabled` is enforced in exactly one place:
   `handleLogin` in `api/auth_handlers.go`, which refuses before the body
   is parsed when the flag is false. `AuthStore.AuthenticateUser`

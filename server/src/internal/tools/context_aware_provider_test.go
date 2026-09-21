@@ -344,11 +344,15 @@ func TestGetClient_TokenScopeEnforcement(t *testing.T) {
 			t.Fatal("Expected non-nil rbacChecker even with nil authStore")
 		}
 
-		// With nil authStore the checker denies, even for a context that
-		// claims superuser
+		// With nil authStore the checker denies: a caller the context
+		// does not mark as a superuser is refused, and so is one that
+		// claims superuser.
 		ctx := context.WithValue(context.Background(), auth.TokenHashContextKey, "any-token")
-		ctx = context.WithValue(ctx, auth.IsSuperuserContextKey, true)
 		if provider.rbacChecker.IsSuperuser(ctx) {
+			t.Error("Expected IsSuperuser to be false without the context flag")
+		}
+		superuserCtx := context.WithValue(ctx, auth.IsSuperuserContextKey, true)
+		if provider.rbacChecker.IsSuperuser(superuserCtx) {
 			t.Error("Expected IsSuperuser to return false with nil authStore")
 		}
 	})

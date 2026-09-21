@@ -312,10 +312,13 @@ var rbacExemptTools = map[string]bool{
 func (p *ContextAwareProvider) ListForContext(ctx context.Context) []mcp.Tool {
 	allTools := p.baseRegistry.List()
 
-	// If auth is disabled or user is superuser, return all tools
-	if p.rbacChecker.IsSuperuser(ctx) {
-		return allTools
-	}
+	// Every caller goes through the per-tool filter, superuser or not.
+	// The old superuser short-circuit read the admin scope, which says
+	// nothing about tools, so a token narrowed on its MCP scope alone
+	// still listed every tool and was then refused on execution
+	// (issue #482). CanAccessMCPItem already returns true for a
+	// session, an unscoped token, a wildcard scope and a disabled auth
+	// store, and rbacExemptTools is applied below as before.
 
 	// Filter tools based on user's privileges
 	var filtered []mcp.Tool

@@ -314,20 +314,68 @@ go test -v -run TestMigrate
 
 ### Test Environment
 
-Tests require a PostgreSQL database. In the following
-example, the environment variable configures the test
-database:
+The schema tests need a PostgreSQL server they can create databases on.
+They do not run against the database named in the connection string;
+instead, `TestMain` calls `setupTestDatabase()`, which connects as an
+administrator, creates a database named
+`ai_workbench_test_<YYYYMMDD_HHMMSS>_<microseconds>`, and points every
+test in the package at that generated database.
+
+#### Selecting a Server
+
+The tests read `TEST_AI_WORKBENCH_SERVER` first and fall back to
+`TEST_DB_CONN`, which remains supported for older checkouts. Set the
+preferred variable to either a connection URL or a libpq key-value
+string, because `replaceDatabase()` accepts both forms. In the following
+example, the variable points the tests at the local PostgreSQL server:
 
 ```bash
-export TEST_DB_CONN="host=localhost port=5432 \
-    user=testuser dbname=testdb sslmode=disable"
+export TEST_AI_WORKBENCH_SERVER=postgresql://postgres@127.0.0.1:5432/ai_workbench
 ```
 
-To skip database tests, set the following variable:
+The database name in the value, whether given as the URL path or as a
+`dbname=` field, is ignored for the tests themselves; the helpers rewrite
+the name to `postgres` for the administrative connection and to the
+generated name for the tests. The role in the connection string
+therefore needs the `CREATEDB` privilege, or superuser rights.
+
+If neither variable is set, the helpers fall back to
+`host=localhost port=5432 user=postgres sslmode=disable` rather than
+skipping the tests. Always set `TEST_AI_WORKBENCH_SERVER` explicitly, so
+that the run resolves to the loopback server you intend.
+
+#### Keeping or Skipping Databases
+
+Two further variables control what the run does with the database. In
+the following example, the variable keeps the generated database after
+the tests finish, which helps when a migration test fails and the
+resulting schema needs inspection:
+
+```bash
+export TEST_AI_WORKBENCH_KEEP_DB=1
+```
+
+The variable also accepts the value `true`. In the following example,
+the variable skips the database tests altogether:
 
 ```bash
 export SKIP_DB_TESTS=1
 ```
+
+Teardown drops the generated database only when the run reaches teardown
+and `TEST_AI_WORKBENCH_KEEP_DB` is unset, so an interrupted run leaves a
+database behind. Leftover `ai_workbench_test_*` databases on a server
+come from those runs and are safe to drop.
+
+#### Confirming the Tests Ran
+
+A passing run is not by itself evidence that the tests ran. When
+`setupTestDatabase()` fails for any reason, `TestMain` prints
+`Skipping database tests` and calls `os.Exit(0)`, so the package reports
+success having run nothing; a wrong connection string produces a pass
+rather than an error. Run the tests with `go test -v` and check the
+output for that message, and for the individual test results, whenever a
+connection setting changes.
 
 ### Writing Migration Tests
 

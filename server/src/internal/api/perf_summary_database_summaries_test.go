@@ -868,19 +868,23 @@ func TestDatabaseSummaries_TransactionBeginFailure(t *testing.T) {
 	}
 }
 
-// installTransactionRatesView replaces metrics.pg_stat_database with a base
-// table of the same shape plus a view that projects datname through the
-// caller's expression, so that a query over the view can be made to fail in
-// a chosen way. The returned function restores the plain table.
-func installTransactionRatesView(
-	t *testing.T,
-	pool *pgxpool.Pool,
-	datnameExpr string,
-) func() {
-	t.Helper()
-	ctx := context.Background()
+// transactionRatesProjection selects which deliberately broken projection
+// of datname installTransactionRatesView installs over the base table.
+type transactionRatesProjection int
 
-	if _, err := pool.Exec(ctx, `
+const (
+	// datnameAsTextArray projects datname as a text array, so that scanning
+	// the column into a string fails.
+	datnameAsTextArray transactionRatesProjection = iota
+	// datnameAsDivisionByZero projects datname as a division by zero that
+	// cannot be folded to a constant, so the statement prepares cleanly and
+	// fails only when the rows are produced.
+	datnameAsDivisionByZero
+)
+
+// transactionRatesBaseTable replaces metrics.pg_stat_database with a base
+// table of the same shape, ready for one of the views below to project.
+const transactionRatesBaseTable = `
         DROP TABLE IF EXISTS metrics.pg_stat_database CASCADE;
         CREATE TABLE metrics.pg_stat_database_base (
             connection_id  integer     NOT NULL,
@@ -891,12 +895,53 @@ func installTransactionRatesView(
             blks_read      bigint      NOT NULL DEFAULT 0,
             xact_commit    bigint      NOT NULL DEFAULT 0,
             xact_rollback  bigint      NOT NULL DEFAULT 0
-        );
+        );`
+
+// transactionRatesTextArrayView projects datname as a one-element text
+// array.
+const transactionRatesTextArrayView = `
         CREATE VIEW metrics.pg_stat_database AS
-            SELECT connection_id, collected_at, `+datnameExpr+` AS datname,
+            SELECT connection_id, collected_at, ARRAY[datname] AS datname,
                    numbackends, blks_hit, blks_read, xact_commit,
                    xact_rollback
-            FROM metrics.pg_stat_database_base;`); err != nil {
+            FROM metrics.pg_stat_database_base;`
+
+// transactionRatesDivisionView projects datname as a division by zero that
+// the planner cannot fold away.
+const transactionRatesDivisionView = `
+        CREATE VIEW metrics.pg_stat_database AS
+            SELECT connection_id, collected_at,
+                   (1 / (numbackends - numbackends))::text AS datname,
+                   numbackends, blks_hit, blks_read, xact_commit,
+                   xact_rollback
+            FROM metrics.pg_stat_database_base;`
+
+// installTransactionRatesView replaces metrics.pg_stat_database with a base
+// table of the same shape plus a view that projects datname through the
+// chosen broken expression, so that a query over the view can be made to
+// fail in a chosen way. The returned function restores the plain table.
+func installTransactionRatesView(
+	t *testing.T,
+	pool *pgxpool.Pool,
+	projection transactionRatesProjection,
+) func() {
+	t.Helper()
+	ctx := context.Background()
+
+	var viewDDL string
+	switch projection {
+	case datnameAsTextArray:
+		viewDDL = transactionRatesTextArrayView
+	case datnameAsDivisionByZero:
+		viewDDL = transactionRatesDivisionView
+	default:
+		t.Fatalf("unknown transaction rates projection: %d", projection)
+	}
+
+	if _, err := pool.Exec(ctx, transactionRatesBaseTable); err != nil {
+		t.Fatalf("failed to install pg_stat_database base table: %v", err)
+	}
+	if _, err := pool.Exec(ctx, viewDDL); err != nil {
 		t.Fatalf("failed to install pg_stat_database view: %v", err)
 	}
 
@@ -960,7 +1005,7 @@ func TestDatabaseSummaries_TransactionRatesScanError(t *testing.T) {
 	h, pool, cleanup := newDatabaseSummariesTestHandler(t)
 	defer cleanup()
 
-	restore := installTransactionRatesView(t, pool, "ARRAY[datname]")
+	restore := installTransactionRatesView(t, pool, datnameAsTextArray)
 	defer restore()
 
 	const connID = 608
@@ -984,8 +1029,7 @@ func TestDatabaseSummaries_TransactionRatesRowsError(t *testing.T) {
 	h, pool, cleanup := newDatabaseSummariesTestHandler(t)
 	defer cleanup()
 
-	restore := installTransactionRatesView(t, pool,
-		"(1 / (numbackends - numbackends))::text")
+	restore := installTransactionRatesView(t, pool, datnameAsDivisionByZero)
 	defer restore()
 
 	const connID = 609

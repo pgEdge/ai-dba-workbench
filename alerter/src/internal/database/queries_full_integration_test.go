@@ -1001,6 +1001,92 @@ func TestGetProbeStalenessByConnectionReportsUnavailableProbes(t *testing.T) {
 	}
 }
 
+// TestGetProbeStalenessContext covers the lookup the alert cleaner uses
+// to phrase a staleness alert whose probe has left the staleness view.
+// The probe is disabled and its connection unmonitored, which is exactly
+// when GetProbeStalenessByConnection stops reporting it, and the context
+// must still come back so the alert can be reworded on the way out. See
+// GitHub issue #465.
+func TestGetProbeStalenessContext(t *testing.T) {
+	ds, pool, cleanup := newFullTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	connID := insertTestConnection(t, pool, "context-conn")
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO probe_configs (name, collection_interval_seconds, is_enabled, connection_id)
+		VALUES ('probe_ctx', 90, FALSE, NULL)
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx,
+		`UPDATE connections SET is_monitored = FALSE WHERE id = $1`, connID); err != nil {
+		t.Fatal(err)
+	}
+
+	name, interval, found, err := ds.GetProbeStalenessContext(ctx, connID, "probe_ctx")
+	if err != nil {
+		t.Fatalf("GetProbeStalenessContext: %v", err)
+	}
+	if !found {
+		t.Fatal("found = false, want the context of a disabled probe on an unmonitored connection")
+	}
+	if name != "context-conn" {
+		t.Errorf("connection name = %q, want context-conn", name)
+	}
+	if interval != 90 {
+		t.Errorf("collection interval = %d, want 90", interval)
+	}
+}
+
+// TestGetProbeStalenessContextMissingRows covers the two ways the lookup
+// finds nothing: a probe with no global config, and a connection that has
+// been deleted. Neither is an error, because the caller simply leaves the
+// alert's wording as it stands.
+func TestGetProbeStalenessContextMissingRows(t *testing.T) {
+	ds, pool, cleanup := newFullTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	connID := insertTestConnection(t, pool, "context-missing-conn")
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO probe_configs (name, collection_interval_seconds, is_enabled, connection_id)
+		VALUES ('probe_ctx', 60, TRUE, NULL)
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, found, err := ds.GetProbeStalenessContext(ctx, connID, "probe_gone"); err != nil {
+		t.Fatalf("GetProbeStalenessContext for an unknown probe: %v", err)
+	} else if found {
+		t.Error("found = true for a probe with no config, want false")
+	}
+
+	if _, _, found, err := ds.GetProbeStalenessContext(ctx, connID+9999, "probe_ctx"); err != nil {
+		t.Fatalf("GetProbeStalenessContext for an unknown connection: %v", err)
+	} else if found {
+		t.Error("found = true for a connection that does not exist, want false")
+	}
+}
+
+// TestGetProbeStalenessContextQueryError covers the error return: a
+// canceled context is what an alerter shutting down mid-pass hands the
+// query.
+func TestGetProbeStalenessContextQueryError(t *testing.T) {
+	ds, pool, cleanup := newFullTestDatastore(t)
+	defer cleanup()
+
+	connID := insertTestConnection(t, pool, "context-error-conn")
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if _, _, found, err := ds.GetProbeStalenessContext(canceled, connID, "probe_ctx"); err == nil {
+		t.Error("err = nil on a canceled context, want a failure")
+	} else if found {
+		t.Error("found = true alongside an error, want false")
+	}
+}
+
 // TestGetProbeStalenessByConnectionReportsAvailableProbes pins the other
 // half of the same change: an available probe reports its flag as true
 // and carries no reason.

@@ -44,6 +44,17 @@ const (
            SET is_available = TRUE, unavailable_reason = NULL
          WHERE connection_id = $1 AND probe_name = $2
     `
+
+	probeConfigDisableSQL = `
+        UPDATE probe_configs
+           SET is_enabled = FALSE
+         WHERE name = $1 AND connection_id IS NULL
+    `
+
+	probeConfigDeleteSQL = `
+        DELETE FROM probe_configs
+         WHERE name = $1 AND connection_id IS NULL
+    `
 )
 
 // markProbeUnavailable flips a seeded probe's availability and records a
@@ -434,9 +445,12 @@ func TestStalenessAlertDescriptionRestoredWhenProbeRecovers(t *testing.T) {
 }
 
 // TestStalenessAlertDescriptionRestoreFailureKeepsAlert covers the failed
-// write on the restore path: the alert must still be judged on its
-// staleness, so a probe that has caught up clears even though its wording
-// could not be put back.
+// write on the restore path. The probe becomes available again but is
+// still 30 minutes stale, so the threshold keeps the alert active, and
+// the trigger rejects every UPDATE on alerts, so the restore cannot be
+// written. What the test proves is that the failure is survivable: the
+// alert keeps the held wording rather than losing its description, and
+// the next pass is free to retry the write.
 func TestStalenessAlertDescriptionRestoreFailureKeepsAlert(t *testing.T) {
 	engine, _, pool, cleanup := newEngineSpockTestEnv(t)
 	defer cleanup()
@@ -594,5 +608,175 @@ func TestStalenessAlertClearLoggedAtNormalLevel(t *testing.T) {
 	alerts := readStalenessAlertsForRule(t, pool, ruleID)
 	if len(alerts) != 1 || alerts[0].status != "cleared" {
 		t.Errorf("alerts = %+v, want one cleared alert", alerts)
+	}
+}
+
+// drainClearDescriptions reads every job the capture has collected and
+// returns the description carried by each AlertClear notification, which
+// is what an operator receiving the notification actually reads.
+func drainClearDescriptions(t *testing.T, capture *stalenessNotificationCapture) []string {
+	t.Helper()
+
+	var descriptions []string
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case job := <-capture.jobs:
+			if job.notifTyp == database.NotificationTypeAlertClear {
+				descriptions = append(descriptions, job.alert.Description)
+			}
+		case <-time.After(300 * time.Millisecond):
+			return descriptions
+		case <-deadline:
+			return descriptions
+		}
+	}
+}
+
+// TestHeldStalenessAlertClearsWithoutTheHeldWording covers the other way
+// a held alert ends. The probe never comes back: the operator disables it
+// instead, so it leaves the staleness view and the alert clears. Before
+// this the alert cleared carrying "Collection has stopped ... This alert
+// stays active until the probe collects again", which both the AlertClear
+// notification and the stored alert history would then repeat, so the
+// cleaner puts the evaluator's wording back on the way out as well.
+func TestHeldStalenessAlertClearsWithoutTheHeldWording(t *testing.T) {
+	engine, _, pool, cleanup := newEngineSpockTestEnv(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	capture := installStalenessNotificationCapture(t, engine)
+	ruleID := seedStalenessRule(t, pool)
+	connID := insertTestConnection(t, pool, "staleness-disabled-while-held")
+	seedStaleProbe(t, pool, connID, "pg_stat_activity", "30 minutes")
+
+	engine.evaluateThresholds(ctx)
+	alerts := readStalenessAlertsForRule(t, pool, ruleID)
+	if len(alerts) != 1 {
+		t.Fatalf("alert rows = %d, want 1", len(alerts))
+	}
+	alertID := alerts[0].id
+	raised := readAlertNarrative(t, pool, alertID)
+
+	markProbeUnavailable(t, pool, connID, "pg_stat_activity", "extension missing")
+	engine.cleanResolvedAlerts(ctx)
+
+	held := readAlertNarrative(t, pool, alertID)
+	if !strings.Contains(held.description, "Collection has stopped") {
+		t.Fatalf("alert description = %q, want the held wording before the probe is disabled",
+			held.description)
+	}
+
+	// The operator disables the probe whilst the alert is held, which
+	// takes it out of the staleness view and retires the alert.
+	if _, err := pool.Exec(ctx, probeConfigDisableSQL, "pg_stat_activity"); err != nil {
+		t.Fatalf("failed to disable the probe: %v", err)
+	}
+	engine.cleanResolvedAlerts(ctx)
+
+	alerts = readStalenessAlertsForRule(t, pool, ruleID)
+	if len(alerts) != 1 || alerts[0].status != "cleared" {
+		t.Fatalf("alerts = %+v, want one cleared alert once the probe is disabled", alerts)
+	}
+
+	cleared := readAlertNarrative(t, pool, alertID)
+	if strings.Contains(cleared.description, "Collection has stopped") {
+		t.Errorf("cleared alert description = %q, want the held wording gone from the "+
+			"stored history", cleared.description)
+	}
+	if cleared.description != raised.description {
+		t.Errorf("cleared alert description = %q, want the wording it was raised with, %q",
+			cleared.description, raised.description)
+	}
+	if cleared.title != raised.title {
+		t.Errorf("alert title = %q, want it unchanged at %q", cleared.title, raised.title)
+	}
+
+	descriptions := drainClearDescriptions(t, capture)
+	if len(descriptions) != 1 {
+		t.Fatalf("clear notifications = %d, want 1", len(descriptions))
+	}
+	if descriptions[0] != raised.description {
+		t.Errorf("clear notification description = %q, want the wording the alert was "+
+			"raised with, %q", descriptions[0], raised.description)
+	}
+}
+
+// TestHeldStalenessAlertClearsWhenItsConnectionHasGone covers the branch
+// where the wording cannot be rebuilt. The connection row is deleted
+// whilst the alert is held, so there is no connection name or collection
+// interval left to phrase the evaluator's wording from, and the alert
+// clears as it stands rather than the cleaner refusing to retire it.
+func TestHeldStalenessAlertClearsWhenItsConnectionHasGone(t *testing.T) {
+	engine, _, pool, cleanup := newEngineSpockTestEnv(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	installStalenessNotificationCapture(t, engine)
+	ruleID := seedStalenessRule(t, pool)
+	connID := insertTestConnection(t, pool, "staleness-connection-gone")
+	seedStaleProbe(t, pool, connID, "pg_stat_activity", "30 minutes")
+
+	engine.evaluateThresholds(ctx)
+	alerts := readStalenessAlertsForRule(t, pool, ruleID)
+	if len(alerts) != 1 {
+		t.Fatalf("alert rows = %d, want 1", len(alerts))
+	}
+	alertID := alerts[0].id
+
+	markProbeUnavailable(t, pool, connID, "pg_stat_activity", "extension missing")
+	engine.cleanResolvedAlerts(ctx)
+	if held := readAlertNarrative(t, pool, alertID); !strings.Contains(
+		held.description, "Collection has stopped") {
+		t.Fatalf("alert description = %q, want the held wording first", held.description)
+	}
+
+	// Take the connection's name and interval out of reach without
+	// deleting the alert with them, which a foreign key would do.
+	if _, err := pool.Exec(ctx, probeConfigDeleteSQL, "pg_stat_activity"); err != nil {
+		t.Fatalf("failed to delete the probe config: %v", err)
+	}
+	engine.cleanResolvedAlerts(ctx)
+
+	alerts = readStalenessAlertsForRule(t, pool, ruleID)
+	if len(alerts) != 1 || alerts[0].status != "cleared" {
+		t.Errorf("alerts = %+v, want the alert cleared even though its wording could "+
+			"not be rebuilt", alerts)
+	}
+}
+
+// TestRestoreHeldDescriptionBeforeClearSurvivesALookupFailure covers the
+// error return of the context lookup. A canceled context is what an
+// alerter shutting down mid-pass hands it, and the alert must keep the
+// description it has rather than losing it to a half-finished rewrite.
+func TestRestoreHeldDescriptionBeforeClearSurvivesALookupFailure(t *testing.T) {
+	engine, _, pool, cleanup := newEngineSpockTestEnv(t)
+	defer cleanup()
+
+	connID := insertTestConnection(t, pool, "staleness-lookup-failure")
+	probeName := "pg_stat_activity"
+	threshold := 3.0
+	value := 30.0
+	held := unavailableProbeDescription(database.ProbeStaleness{
+		ProbeName:          probeName,
+		ConnectionName:     "staleness-lookup-failure",
+		CollectionInterval: 60,
+	}, "extension missing")
+	alert := &database.Alert{
+		ID:             1,
+		ConnectionID:   connID,
+		ProbeName:      &probeName,
+		ThresholdValue: &threshold,
+		MetricValue:    &value,
+		Description:    held,
+	}
+
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	engine.restoreHeldDescriptionBeforeClear(canceled, alert)
+
+	if alert.Description != held {
+		t.Errorf("description = %q, want the held wording kept when the lookup fails",
+			alert.Description)
 	}
 }

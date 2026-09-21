@@ -775,29 +775,51 @@ clears, but at operator level rather than debug.
 `UpdateConnectionAlertDescription` delegates to
 `UpdateAlertDescription`; the SQL is unchanged.
 
-The hold is undone when the probe collects again, because otherwise the
-clear notification and the stored history would announce the resolution
-in the words of the hold. Every held description opens with
+The hold is undone on both ways out, because otherwise the clear
+notification and the stored history would announce the resolution in the
+words of the hold. Every held description opens with
 `unavailableProbeDescriptionPrefix` ("Collection has stopped: "), which
 is the only record that the cleaner wrote it, and
 `restoreStalenessAlertDescription` replaces a description carrying that
-prefix with the evaluator's own wording before the threshold is checked
-and the alert possibly cleared. The wording comes from
+prefix with the evaluator's own wording. The wording comes from
 `stalenessAlertDescription` and `stalenessMinutes` in `thresholds.go`,
 shared with `evaluateMetricStaleness` so the two cannot drift, and is
 rebuilt from `Alert.MetricValue`, the ratio the alert was raised or last
-updated on, falling back to the current ratio when the alert carries no
-value. A description the evaluator wrote is left alone, so the write
-happens once on recovery rather than on every pass.
+updated on, falling back to the ratio the caller passes when the alert
+carries no value. A description the evaluator wrote is left alone, so
+the write happens once rather than on every pass.
+
+The probe collecting again is one way out, and `checkStalenessAlertResolved`
+restores the wording there from the view entry, before the threshold is
+checked and the alert possibly cleared. The other is the probe leaving
+the view whilst the alert is still held, which clears it, and
+`restoreHeldDescriptionBeforeClear` restores the wording there instead.
+That path has no view entry to read, so it takes the connection name and
+the collection interval from `Datastore.GetProbeStalenessContext`, a
+lookup of the `connections` and global `probe_configs` rows the view
+joins against: both survive a disabled probe, an unmonitored connection
+and a deleted availability row, which are exactly the three ways the
+probe can leave the view. When the lookup finds nothing, because the
+connection or the probe config has actually been deleted, or fails, the
+alert clears carrying the held wording, on the same reasoning the hold
+uses for a failed write: retiring the alert matters more than its text,
+and unlike the hold there is no next pass to retry in.
 
 `TestStalenessAlertHeldWhenProbeGoesUnavailable`,
 `TestStalenessEvaluatorSkipsUnavailableProbes`,
 `TestStalenessAlertClearLoggedAtNormalLevel`,
 `TestStalenessAlertHeldLoggedOnce`,
-`TestStalenessAlertDescriptionRestoredWhenProbeRecovers` and
-`TestStalenessAlertDescriptionRestoreFailureKeepsAlert`
+`TestStalenessAlertDescriptionRestoredWhenProbeRecovers`,
+`TestStalenessAlertDescriptionRestoreFailureKeepsAlert`,
+`TestHeldStalenessAlertClearsWithoutTheHeldWording`,
+`TestHeldStalenessAlertClearsWhenItsConnectionHasGone` and
+`TestRestoreHeldDescriptionBeforeClearSurvivesALookupFailure`
 (`alerter/src/internal/engine/staleness_unavailable_probe_integration_test.go`)
-pin these behaviours.
+pin these behaviours, with `TestGetProbeStalenessContext`,
+`TestGetProbeStalenessContextMissingRows` and
+`TestGetProbeStalenessContextQueryError`
+(`alerter/src/internal/database/queries_full_integration_test.go`)
+covering the lookup itself.
 
 `cleanResolvedAlerts` resolves the probe staleness snapshot at most once
 per pass, lazily, through `probeStalenessSnapshot`; both

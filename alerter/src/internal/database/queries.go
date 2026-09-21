@@ -11,6 +11,7 @@ package database
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -411,6 +412,34 @@ func (d *Datastore) GetProbeStalenessByConnection(ctx context.Context) ([]ProbeS
 	}
 
 	return results, nil
+}
+
+// GetProbeStalenessContext returns the connection name and the configured
+// collection interval for one probe on one connection. It exists for a
+// caller that must phrase a staleness alert for a probe the staleness
+// view no longer reports: GetProbeStalenessByConnection drops a probe the
+// operator has disabled, a connection they have stopped monitoring and a
+// probe whose availability row has gone, whilst the connection row and
+// the probe's global config survive all three, so this lookup still
+// answers for the cases that clear a held alert. found is false only when
+// the connection itself or the probe's config has actually been deleted.
+// See GitHub issue #465.
+func (d *Datastore) GetProbeStalenessContext(ctx context.Context, connectionID int,
+	probeName string) (connectionName string, collectionInterval int, found bool, err error) {
+	err = d.pool.QueryRow(ctx, `
+		SELECT c.name, pc.collection_interval_seconds
+		FROM connections c
+		JOIN probe_configs pc ON pc.name = $2 AND pc.connection_id IS NULL
+		WHERE c.id = $1
+	`, connectionID, probeName).Scan(&connectionName, &collectionInterval)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", 0, false, nil
+		}
+		return "", 0, false, fmt.Errorf("failed to get probe staleness context: %w", err)
+	}
+
+	return connectionName, collectionInterval, true, nil
 }
 
 // GetAlertRuleByName retrieves an alert rule by its unique name

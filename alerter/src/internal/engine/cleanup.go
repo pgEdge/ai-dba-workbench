@@ -269,8 +269,9 @@ func (e *Engine) checkAlertResolved(ctx context.Context, alert *database.Alert,
 // went quiet. Such an alert is held open and its description rewritten to
 // say why, whilst its title stays as it was so that it reads as the same
 // alert across notification history; the description is put back once the
-// probe collects again, so that the alert does not go on to clear in the
-// words of the hold. See GitHub issue #465.
+// probe collects again, and again on the way out if the alert clears
+// whilst still held, so that the alert never resolves in the words of the
+// hold. See GitHub issue #465.
 func (e *Engine) checkStalenessAlertResolved(ctx context.Context, alert *database.Alert,
 	staleness *probeStalenessSnapshot) {
 	entries, err := staleness.get(ctx, e)
@@ -294,7 +295,8 @@ func (e *Engine) checkStalenessAlertResolved(ctx context.Context, alert *databas
 		// clear notification and the stored alert history would carry.
 		// Put the staleness wording back before deciding whether the
 		// alert clears.
-		e.restoreStalenessAlertDescription(ctx, alert, entry, ratio)
+		e.restoreStalenessAlertDescription(ctx, alert, entry.ProbeName,
+			entry.ConnectionName, entry.CollectionInterval, ratio)
 
 		if !e.checkThreshold(ratio, *alert.Operator, *alert.ThresholdValue) {
 			e.clearResolvedAlert(ctx, alert, ratio)
@@ -310,6 +312,7 @@ func (e *Engine) checkStalenessAlertResolved(ctx context.Context, alert *databas
 	// operator can see which of their changes retired the alert.
 	e.log("Probe %s on connection %d is no longer reported; clearing alert %d",
 		*alert.ProbeName, alert.ConnectionID, alert.ID)
+	e.restoreHeldDescriptionBeforeClear(ctx, alert)
 	e.clearResolvedAlert(ctx, alert, 0)
 }
 
@@ -380,23 +383,32 @@ func unavailableProbeDescription(entry database.ProbeStaleness, reason string) s
 		entry.ProbeName, entry.ConnectionName, reason)
 }
 
-// restoreStalenessAlertDescription undoes the hold once the probe is
-// collecting again. Without it the alert would keep the wording of the
-// hold for the rest of its life, so the clear notification and the stored
-// history would both announce the resolution in the words "Collection has
-// stopped ... This alert stays active until the probe collects again",
-// which is precisely untrue at that point.
+// restoreStalenessAlertDescription undoes the hold, either because the
+// probe is collecting again or because the alert is about to clear.
+// Without it the alert would keep the wording of the hold for the rest of
+// its life, so the clear notification and the stored history would both
+// announce the resolution in the words "Collection has stopped ... This
+// alert stays active until the probe collects again", which is precisely
+// untrue at that point.
 //
 // Only a description the cleaner itself wrote is replaced, matched on
 // its prefix, so an alert the evaluator worded is left alone and the write
 // happens once on recovery rather than on every pass. The replacement is
 // the evaluator's own wording, rebuilt from the ratio recorded on the
 // alert, which is the measurement the alert was raised or last updated on
-// and so reproduces the text the evaluator would have written; the current
-// ratio stands in if the alert carries no value. A failed write leaves the
-// held text in place and is retried next pass, as the hold's own write is.
+// and so reproduces the text the evaluator would have written; the ratio
+// the caller passes stands in if the alert carries no value. A failed
+// write leaves the held text in place and is retried next pass, as the
+// hold's own write is; on the clear path there is no next pass, so the
+// alert clears with the held wording in the case the write fails, which
+// is the same trade-off the hold itself makes.
+//
+// The probe name, connection name and collection interval are passed in
+// rather than read from a staleness entry, because the clear path has no
+// entry to read: its whole premise is that the probe has left the view.
 func (e *Engine) restoreStalenessAlertDescription(ctx context.Context,
-	alert *database.Alert, entry database.ProbeStaleness, ratio float64) {
+	alert *database.Alert, probeName, connectionName string,
+	collectionInterval int, ratio float64) {
 	if !strings.HasPrefix(alert.Description, unavailableProbeDescriptionPrefix) {
 		return
 	}
@@ -404,21 +416,60 @@ func (e *Engine) restoreStalenessAlertDescription(ctx context.Context,
 		ratio = *alert.MetricValue
 	}
 
-	description := stalenessAlertDescription(entry.ProbeName, entry.ConnectionName,
-		stalenessMinutes(entry.CollectionInterval, ratio),
-		stalenessMinutes(entry.CollectionInterval, *alert.ThresholdValue))
+	description := stalenessAlertDescription(probeName, connectionName,
+		stalenessMinutes(collectionInterval, ratio),
+		stalenessMinutes(collectionInterval, *alert.ThresholdValue))
 	if description == alert.Description {
 		return
 	}
 
-	e.log("Probe %s on connection %d is collecting again; restoring the description of staleness alert %d",
-		entry.ProbeName, alert.ConnectionID, alert.ID)
+	e.log("Restoring the staleness wording of alert %d for probe %s on %s",
+		alert.ID, probeName, connectionName)
 
 	if err := e.datastore.UpdateAlertDescription(ctx, alert.ID, description); err != nil {
 		e.log("ERROR: Failed to restore description of alert %d: %v", alert.ID, err)
 		return
 	}
 	alert.Description = description
+}
+
+// restoreHeldDescriptionBeforeClear puts the evaluator's wording back on
+// a held alert that is about to clear because its probe has left the
+// staleness view. An operator who disables a held probe, or stops
+// monitoring its connection, would otherwise retire the alert carrying
+// "Collection has stopped: ...", so both the AlertClear notification and
+// the stored alert history would describe a resolved alert in the words
+// of the hold. An alert the evaluator worded is left alone, exactly as on
+// the recovery path.
+//
+// The wording needs the connection name and the probe's collection
+// interval, which the staleness view no longer reports for this probe, so
+// they are read from the connection and probe_configs rows the view joins
+// against; those survive both a disabled probe and an unmonitored
+// connection. When they have genuinely gone, along with the connection
+// itself, there is nothing to rebuild the wording from and the alert
+// clears as it stands.
+func (e *Engine) restoreHeldDescriptionBeforeClear(ctx context.Context,
+	alert *database.Alert) {
+	if !strings.HasPrefix(alert.Description, unavailableProbeDescriptionPrefix) {
+		return
+	}
+
+	connectionName, interval, found, err := e.datastore.GetProbeStalenessContext(
+		ctx, alert.ConnectionID, *alert.ProbeName)
+	if err != nil {
+		e.log("ERROR: Cannot read the staleness context of alert %d, clearing it with the held description: %v",
+			alert.ID, err)
+		return
+	}
+	if !found {
+		e.debugLog("No connection or probe config remains for alert %d; clearing it with the held description",
+			alert.ID)
+		return
+	}
+
+	e.restoreStalenessAlertDescription(ctx, alert, *alert.ProbeName,
+		connectionName, interval, 0)
 }
 
 // resolveAbsentMetric decides what to do with an active alert whose metric

@@ -48,7 +48,7 @@ func TestLoadServerSecret_ExplicitFile(t *testing.T) {
 	}
 	s := newServerWithSecretFile(path)
 
-	got, err := s.loadServerSecret("/ignored/exec/path")
+	got, err := s.loadServerSecret()
 	if err != nil {
 		t.Fatalf("loadServerSecret: %v", err)
 	}
@@ -85,7 +85,7 @@ func TestLoadServerSecret_DefaultUserDir(t *testing.T) {
 	}
 
 	s := newServerWithSecretFile("")
-	got, err := s.loadServerSecret("/ignored/exec/path")
+	got, err := s.loadServerSecret()
 	if err != nil {
 		t.Fatalf("loadServerSecret: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestLoadServerSecret_NoneFound(t *testing.T) {
 	fileutil.SetSystemConfigDirForTest(t, filepath.Join(base, "absent-etc-pgedge"))
 
 	s := newServerWithSecretFile("")
-	_, err := s.loadServerSecret("/ignored/exec/path")
+	_, err := s.loadServerSecret()
 	if err == nil {
 		t.Fatal("expected error when no secret file is reachable")
 	}
@@ -130,7 +130,7 @@ func TestLoadServerSecret_EmptyFile(t *testing.T) {
 	}
 	s := newServerWithSecretFile(path)
 
-	_, err := s.loadServerSecret("/ignored/exec/path")
+	_, err := s.loadServerSecret()
 	if err == nil {
 		t.Fatal("expected error when secret file is empty")
 	}
@@ -208,7 +208,7 @@ func TestVerifySchemaHealth_DelegatesToDatastore(t *testing.T) {
 func TestLoadServerSecret_ExplicitMissing(t *testing.T) {
 	s := newServerWithSecretFile("/definitely/not/a/real/path.secret")
 
-	_, err := s.loadServerSecret("/ignored/exec/path")
+	_, err := s.loadServerSecret()
 	if err == nil {
 		t.Fatal("expected error for missing explicit secret file")
 	}
@@ -367,7 +367,7 @@ func countAuditEvents(t *testing.T, store *auth.AuthStore) int {
 
 func TestPurgeAuditEventsZeroDaysKeepsForever(t *testing.T) {
 	dir := t.TempDir()
-	store, err := auth.NewAuthStore(dir, 0, 10)
+	store, err := auth.NewAuthStore(dir, 0, 10, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("failed to create auth store: %v", err)
 	}
@@ -395,7 +395,7 @@ func TestPurgeAuditEventsZeroDaysKeepsForever(t *testing.T) {
 
 func TestPurgeAuditEventsRemovesOldEvents(t *testing.T) {
 	dir := t.TempDir()
-	store, err := auth.NewAuthStore(dir, 0, 10)
+	store, err := auth.NewAuthStore(dir, 0, 10, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("failed to create auth store: %v", err)
 	}
@@ -430,7 +430,7 @@ func TestPurgeAuditEventsNoAuthStore(t *testing.T) {
 
 func TestPurgeAuditEventsLogsError(t *testing.T) {
 	dir := t.TempDir()
-	store, err := auth.NewAuthStore(dir, 0, 10)
+	store, err := auth.NewAuthStore(dir, 0, 10, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("failed to create auth store: %v", err)
 	}

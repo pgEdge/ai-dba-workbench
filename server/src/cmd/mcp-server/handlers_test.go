@@ -23,7 +23,7 @@ import (
 func newWrapperTestStore(t *testing.T) (*auth.AuthStore, string) {
 	t.Helper()
 
-	store, err := auth.NewAuthStore(t.TempDir(), 0, 0)
+	store, err := auth.NewAuthStore(t.TempDir(), 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("failed to create auth store: %v", err)
 	}

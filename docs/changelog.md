@@ -281,8 +281,9 @@ project adheres to
   event's hash length-prefixes every field it covers, so a value
   containing a separator character cannot be made to stand for a
   different pair of columns, and records the version of that encoding
-  in a `hash_version` field so that a later format change leaves
-  earlier events verifiable. `prev_hash` carries a unique index, so no
+  in a `hash_version` field, which verification reads so that an event
+  relabelled to an encoding this server will not compute is reported as
+  tampering rather than skipped. `prev_hash` carries a unique index, so no
   two events can claim the same predecessor and the chain cannot fork;
   the server re-creates that index and the append-only trigger every
   time it opens the store, and `-verify-audit-log` refuses to pass a
@@ -334,6 +335,112 @@ project adheres to
   not vanish as the window narrows. The dashboard pages in the User's
   Guide record which panels follow the selector and which do not.
   (#387)
+
+- Key the RBAC audit log's hash chain. New events are hashed
+  with HMAC-SHA256 under a key derived from the server secret
+  rather than with an unkeyed SHA-256, so rewriting the log
+  undetected now needs read access to the secret file as well
+  as write access to `auth.db`. The version each event was
+  hashed under is covered by the hash itself and may never
+  fall as the chain advances, so an event cannot be relabelled
+  into an encoding the verifier will not check. Every server
+  command-line subcommand now requires the server secret, the
+  read-only ones included, because the key is resolved before
+  the store is opened, and they report the paths they searched
+  when they cannot find one. A successful read of
+  `GET /api/v1/rbac/audit` is now noted in the server log,
+  naming the reader, the filters in effect and the number of
+  events returned.
+
+    **Breaking change for the command line.** Every
+    subcommand, `-add-user`, `-add-token`, `-set-superuser`,
+    `-list-audit` and the rest, now fails without the server
+    secret file: the mutating ones write an audit event and
+    cannot extend the chain without the key, and the
+    read-only ones need it too, because the key is resolved
+    before the store is opened. An installation that has
+    never created one will see those commands stop working
+    at this upgrade; create the secret file at
+    `/etc/pgedge/ai-dba-server.secret`, or wherever
+    `secret_file` names, with the same contents the server
+    and collector use, and they work again.
+
+    **Upgrade step for an existing installation.** The server
+    will not open a database holding events hashed under the
+    old unkeyed encoding, because anyone able to write
+    `auth.db` can compute those hashes, which makes an
+    inherited log and a forged one indistinguishable. The
+    refusal names the events and says what to do. Treat such
+    a database as suspect and restore `auth.db` from a
+    known-good copy; only where this is the first start after
+    upgrading, and the file is believed intact, re-hash the
+    inherited events under the server secret:
+
+    ```bash
+    ./bin/ai-dba-server -rechain-audit-log
+    ```
+
+    The command prints the size and span of the log, how much
+    of it is unkeyed and whether it recomputes under its own
+    rules, then asks for confirmation before writing anything;
+    `-confirm-rechain` answers in advance for an unattended
+    run. It re-hashes every event in one transaction and
+    records an `audit.rechain` event at the end of the log.
+    Every stored hash changes as a result, so a hash recorded
+    out of band, or a verification report taken before the
+    re-chain, cannot be reconciled against the log afterwards;
+    keep a copy of the old file if you need to.
+    Be clear about what it asserts: it attests the log exactly
+    as the file holds it at that moment, so it proves nothing
+    about the period before it ran. Verify with
+    `-verify-audit-log` straight afterwards. A database
+    created at this release or later needs no such step.
+
+    The command writes nothing in three cases. It refuses a log
+    holding keyed and unkeyed events together, in whatever
+    order, because an upgraded database holds inherited
+    unkeyed events and nothing else; a log holding both means
+    unkeyed events were written into a log that was already
+    keyed, and re-chaining would sign them. The start-up
+    refusal names that case in its own terms rather than
+    suggesting the re-chain. It refuses an unattended run,
+    under `-confirm-rechain`, of a log that does not recompute
+    under its own unkeyed rules, since the warning that log
+    earns is addressed to an operator who can weigh it; a
+    re-chain of it has to be run interactively. It also
+    abandons the rewrite when the number of events or the
+    range of identifiers has changed between the figures it
+    showed and the transaction that would rewrite them, so
+    events appended whilst the prompt waited are never signed.
+
+    **Retention now deletes by identifier.** The purge finds
+    the oldest event inside the retention window and removes
+    everything below it, so it can only ever remove a run of
+    the oldest events. An event's timestamp is a value in the
+    database and so can be altered by anyone able to write
+    `auth.db`, whereas its identifier is assigned by SQLite in
+    insertion order and no server path writes one; deleting by
+    timestamp alone let a backdated event steer the purge into
+    removing the newest events instead, which relinked the
+    chain and, through the `audit.purge` event the purge
+    appends, restored the agreement between the newest
+    identifier and SQLite's record of the highest one issued
+    that verification reads. On a log the server wrote itself
+    the two orderings agree and the behaviour is unchanged,
+    with one exception worth knowing about: where no event at
+    all falls inside the retention window, as on a server idle
+    for longer than the retention period, the purge now
+    removes nothing rather than emptying the log, and the
+    backlog clears once the next event is recorded.
+
+- Report a mislaid or rotated server secret separately from
+  tampering in `-verify-audit-log`. A log in which nothing
+  verifies is far more often the wrong secret than a rewrite
+  that began at the first event, so it is now reported in
+  those words and exits with status 3, whilst a log that
+  verified as far as one event and then failed, or that holds
+  an event hashed under the old unkeyed encoding, exits with
+  status 2. Any other failure keeps status 1.
 
 - Change the alerter's default Gemini reasoning model from
   `gemini-2.5-flash` to `gemini-3.6-flash`. Google no longer offers

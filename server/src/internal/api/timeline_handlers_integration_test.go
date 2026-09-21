@@ -149,7 +149,7 @@ func newTimelineTestEnv(t *testing.T) *timelineTestEnv {
 		t.Fatalf("MkdirTemp: %v", err)
 	}
 	t.Cleanup(func() { os.RemoveAll(tmpDir) })
-	store, err := auth.NewAuthStore(tmpDir, 0, 0)
+	store, err := auth.NewAuthStore(tmpDir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("NewAuthStore: %v", err)
 	}

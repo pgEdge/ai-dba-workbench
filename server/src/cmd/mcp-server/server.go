@@ -149,16 +149,19 @@ func NewServer(sc *ServerConfig) (*Server, error) {
 		return nil, err
 	}
 
-	if err := s.initAuthStore(); err != nil {
+	// The secret is loaded before the auth store rather than after it,
+	// because the store hashes every audit row it writes under a key
+	// derived from the secret and so cannot be opened without it.
+	serverSecret, err := s.loadServerSecret()
+	if err != nil {
+		return nil, err
+	}
+
+	if err := s.initAuthStore(serverSecret); err != nil {
 		return nil, err
 	}
 
 	if err := s.initRateLimiter(); err != nil {
-		return nil, err
-	}
-
-	serverSecret, err := s.loadServerSecret(sc.ExecPath)
-	if err != nil {
 		return nil, err
 	}
 
@@ -222,11 +225,19 @@ func (s *Server) validateTLS() error {
 	return nil
 }
 
-// initAuthStore initializes the authentication store
-func (s *Server) initAuthStore() error {
+// initAuthStore initializes the authentication store. serverSecret is
+// the secret loadServerSecret found; the audit chain key is derived
+// from it, so an empty secret is refused here rather than allowed to
+// produce a store whose first mutation fails.
+func (s *Server) initAuthStore(serverSecret string) error {
 	// Create data directory if it doesn't exist
 	if err := os.MkdirAll(s.dataDir, 0750); err != nil {
 		return fmt.Errorf("failed to create data directory: %w", err)
+	}
+
+	auditKey := auth.DeriveAuditKey(serverSecret)
+	if len(auditKey) == 0 {
+		return fmt.Errorf("cannot derive the audit chain key: the server secret is empty")
 	}
 
 	// Initialize auth store (SQLite database)
@@ -235,6 +246,7 @@ func (s *Server) initAuthStore() error {
 		s.dataDir,
 		s.cfg.HTTP.Auth.MaxUserTokenDays,
 		s.cfg.HTTP.Auth.MaxFailedAttemptsBeforeLockout(),
+		auditKey,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to initialize auth store: %w", err)
@@ -290,15 +302,29 @@ func (s *Server) initRateLimiter() error {
 	return nil
 }
 
-// loadServerSecret loads the server secret for password decryption.
-// Search order: explicit s.cfg.SecretFile > per-user config dir
-// (e.g. ~/.config/pgedge/ai-dba-server.secret) > /etc/pgedge/
-// ai-dba-server.secret. Falling out of all three is a fatal error
-// because the server cannot decrypt stored passwords without it.
-func (s *Server) loadServerSecret(execPath string) (string, error) {
-	secretPath := s.cfg.SecretFile
+// loadServerSecret loads the server secret for password decryption and
+// for the keys derived from it. Falling out of the search order is a
+// fatal error because the server can neither decrypt stored passwords
+// nor extend the audit chain without it.
+func (s *Server) loadServerSecret() (string, error) {
+	return loadServerSecretFile(s.cfg.SecretFile)
+}
+
+// loadServerSecretFile resolves and reads the server secret. Search
+// order: an explicit secret_file from the configuration, then the
+// per-user config directory (e.g. ~/.config/pgedge/
+// ai-dba-server.secret), then /etc/pgedge/ai-dba-server.secret.
+//
+// It is a plain function rather than a method so that the command line,
+// which runs before the configuration is loaded and so has no *Server
+// to hang it off, resolves the secret by exactly the same rules the
+// server does. The two must agree: a command that failed to find the
+// secret the server uses would write audit rows the server cannot
+// verify.
+func loadServerSecretFile(configuredPath string) (string, error) {
+	secretPath := configuredPath
 	if secretPath == "" {
-		secretPath = config.GetDefaultSecretPath(execPath)
+		secretPath = config.GetDefaultSecretPath()
 	}
 
 	if secretPath == "" {

@@ -69,14 +69,25 @@ func main() {
 		configPath = defaultConfigPath
 	}
 
-	// Load data_dir from config file early (before resolving data directory)
-	// This allows the config file's data_dir to be used if no CLI flag is set
+	// Load data_dir from the config file early, before resolving the
+	// data directory, so that the file's setting applies when no CLI
+	// flag was given.
+	//
+	// A config file that cannot be read is fatal rather than a warning,
+	// for the same reason as loadCLISecretFile below: on a warning,
+	// configDataDir stays empty, the default search order takes over,
+	// and every command then operates on a different auth.db from the
+	// one the server uses. A user added to the wrong database, or an
+	// audit log verified in the wrong place, is a worse outcome than a
+	// refusal to start, and a malformed config is no reason to guess.
 	var configDataDir string
 	if config.ConfigFileExists(configPath) {
 		var err error
 		configDataDir, err = config.LoadConfigDataDir(configPath)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "WARNING: failed to read data_dir from config: %v\n", err)
+			fmt.Fprintf(os.Stderr, "ERROR: failed to read data_dir from "+
+				"the configuration file %s: %v\n", configPath, err)
+			os.Exit(1)
 		}
 	}
 
@@ -86,8 +97,18 @@ func main() {
 	// 3. Default relative to executable (lowest)
 	dataDir := flags.ResolveDataDir(execPath, configDataDir)
 
+	// Read secret_file the same way data_dir was read above, and for
+	// the same reason: the commands below run before the full
+	// configuration is loaded, and each of them writes an audit row
+	// whose hash chain is keyed by the server secret.
+	configSecretFile, err := loadCLISecretFile(configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+		os.Exit(1)
+	}
+
 	// Handle CLI commands (token, user, group, privilege management)
-	if RunCLICommands(flags, dataDir) {
+	if RunCLICommands(flags, dataDir, configSecretFile) {
 		return
 	}
 

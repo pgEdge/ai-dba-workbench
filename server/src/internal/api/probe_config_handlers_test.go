@@ -124,7 +124,7 @@ func TestProbeConfigHandler_UpdateRequiresPermission(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	authStore, err := auth.NewAuthStore(tmpDir, 0, 0)
+	authStore, err := auth.NewAuthStore(tmpDir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("Failed to create auth store: %v", err)
 	}

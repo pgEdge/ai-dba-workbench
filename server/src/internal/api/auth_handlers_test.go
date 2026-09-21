@@ -31,7 +31,7 @@ func TestAuthHandler_HandleLogin(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	// Create auth store
-	authStore, err := auth.NewAuthStore(tmpDir, 30, 5)
+	authStore, err := auth.NewAuthStore(tmpDir, 30, 5, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
@@ -319,7 +319,7 @@ func TestAuthHandler_RateLimiting(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	// Create auth store
-	authStore, err := auth.NewAuthStore(filepath.Join(tmpDir, "auth"), 30, 0)
+	authStore, err := auth.NewAuthStore(filepath.Join(tmpDir, "auth"), 30, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
@@ -386,7 +386,7 @@ func TestAuthHandler_SecureCookieFlag(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	// Create auth store
-	authStore, err := auth.NewAuthStore(tmpDir, 30, 0)
+	authStore, err := auth.NewAuthStore(tmpDir, 30, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
@@ -461,7 +461,7 @@ func TestAuthHandler_SecureCookieAutoDetect(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	authStore, err := auth.NewAuthStore(tmpDir, 30, 0)
+	authStore, err := auth.NewAuthStore(tmpDir, 30, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
@@ -624,7 +624,7 @@ func TestAuthHandler_LogoutRejectsNonPOST(t *testing.T) {
 // that actually ends the session: clearing the cookie alone would leave
 // a stolen token valid until it expired.
 func TestAuthHandler_LogoutInvalidatesTheServerSideSession(t *testing.T) {
-	authStore, err := auth.NewAuthStore(t.TempDir(), 30, 5)
+	authStore, err := auth.NewAuthStore(t.TempDir(), 30, 5, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("Failed to create auth store: %v", err)
 	}

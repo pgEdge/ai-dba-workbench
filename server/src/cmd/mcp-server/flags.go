@@ -110,8 +110,19 @@ type Flags struct {
 	ScopeTools         string
 
 	// Audit log commands
-	ListAuditCmd    bool
-	VerifyAuditCmd  bool
+	ListAuditCmd   bool
+	VerifyAuditCmd bool
+	// RechainAuditCmd re-hashes an existing audit log as keyed version
+	// 2 rows, which is the one-time upgrade step for a database written
+	// by a release predating the keyed chain. It is a separate command
+	// rather than something a start-up does because it attests whatever
+	// the log says at the moment it runs.
+	RechainAuditCmd bool
+	// ConfirmRechain is the non-interactive answer to the confirmation
+	// RechainAuditCmd asks for. It is a second flag rather than part of
+	// the first so that the command cannot be run to completion by
+	// copying one word out of an error message.
+	ConfirmRechain  bool
 	AuditActor      string
 	AuditAction     string
 	AuditTargetType string
@@ -224,6 +235,10 @@ func ParseFlags(defaultConfigPath string) *Flags {
 	// Audit log commands
 	flag.BoolVar(&f.ListAuditCmd, "list-audit", false, "List RBAC audit log events")
 	flag.BoolVar(&f.VerifyAuditCmd, "verify-audit-log", false, "Verify the audit log hash chain")
+	flag.BoolVar(&f.RechainAuditCmd, "rechain-audit-log", false,
+		"Re-hash an existing audit log under the server secret, once, after upgrading an existing installation")
+	flag.BoolVar(&f.ConfirmRechain, "confirm-rechain", false,
+		"Confirm -rechain-audit-log without an interactive prompt")
 	flag.StringVar(&f.AuditActor, "audit-actor", "", "Filter audit events by actor name")
 	flag.StringVar(&f.AuditAction, "audit-action", "", "Filter audit events by action (e.g. group.create)")
 	flag.StringVar(&f.AuditTargetType, "audit-target-type", "", "Filter audit events by target type (user, group, token)")
@@ -354,7 +369,7 @@ func (f *Flags) HasTokenScopeCommand() bool {
 
 // HasAuditCommand returns true if any audit log command was specified
 func (f *Flags) HasAuditCommand() bool {
-	return f.ListAuditCmd || f.VerifyAuditCmd
+	return f.ListAuditCmd || f.VerifyAuditCmd || f.RechainAuditCmd
 }
 
 // HasCLICommand returns true if any CLI command (not server mode) was specified
@@ -410,6 +425,6 @@ func GetDefaultPaths() (execPath, configPath, secretPath string, err error) {
 		return "", "", "", err
 	}
 	configPath = config.GetDefaultConfigPath(execPath)
-	secretPath = config.GetDefaultSecretPath(execPath)
+	secretPath = config.GetDefaultSecretPath()
 	return execPath, configPath, secretPath, nil
 }

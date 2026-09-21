@@ -32,7 +32,7 @@ func createTestAuthStoreForStore(t *testing.T) (*AuthStore, func()) {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
 
-	store, err := NewAuthStore(tmpDir, 0, 0)
+	store, err := NewAuthStore(tmpDir, 0, 0, AuditKeyForTesting())
 	if err != nil {
 		os.RemoveAll(tmpDir)
 		t.Fatalf("Failed to create auth store: %v", err)
@@ -59,7 +59,7 @@ func TestNewAuthStore(t *testing.T) {
 		}
 		defer os.RemoveAll(tmpDir)
 
-		store, err := NewAuthStore(tmpDir, 30, 5)
+		store, err := NewAuthStore(tmpDir, 30, 5, AuditKeyForTesting())
 		if err != nil {
 			t.Fatalf("Failed to create auth store: %v", err)
 		}
@@ -78,7 +78,7 @@ func TestNewAuthStore(t *testing.T) {
 		defer os.RemoveAll(tmpDir)
 
 		newDir := tmpDir + "/subdir"
-		store, err := NewAuthStore(newDir, 0, 0)
+		store, err := NewAuthStore(newDir, 0, 0, AuditKeyForTesting())
 		if err != nil {
 			t.Fatalf("Failed to create auth store: %v", err)
 		}
@@ -96,7 +96,7 @@ func TestNewAuthStore(t *testing.T) {
 		}
 		defer os.RemoveAll(tmpDir)
 
-		store, err := NewAuthStore(tmpDir, 0, 0)
+		store, err := NewAuthStore(tmpDir, 0, 0, AuditKeyForTesting())
 		if err != nil {
 			t.Fatalf("Failed to create auth store: %v", err)
 		}
@@ -115,14 +115,14 @@ func TestNewAuthStore(t *testing.T) {
 		defer os.RemoveAll(tmpDir)
 
 		// Create and close the first store to establish the database
-		store1, err := NewAuthStore(tmpDir, 0, 0)
+		store1, err := NewAuthStore(tmpDir, 0, 0, AuditKeyForTesting())
 		if err != nil {
 			t.Fatalf("Failed to create initial auth store: %v", err)
 		}
 		store1.Close()
 
 		// Open the existing database
-		store2, err := NewAuthStore(tmpDir, 0, 0)
+		store2, err := NewAuthStore(tmpDir, 0, 0, AuditKeyForTesting())
 		if err != nil {
 			t.Fatalf("Failed to open existing auth store: %v", err)
 		}
@@ -174,7 +174,7 @@ func TestNewAuthStore_FilePermissions(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
-	store, err := NewAuthStore(tmpDir, 0, 0)
+	store, err := NewAuthStore(tmpDir, 0, 0, AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("NewAuthStore returned error: %v", err)
 	}
@@ -439,7 +439,7 @@ func TestNewAuthStore_UnsafePermissionsAbortStartup(t *testing.T) {
 	t.Cleanup(func() { authDBStat = prevStat })
 
 	tmpDir := t.TempDir()
-	store, err := NewAuthStore(tmpDir, 0, 0)
+	store, err := NewAuthStore(tmpDir, 0, 0, AuditKeyForTesting())
 	if store != nil {
 		// Defensive cleanup so we do not leak a handle if the test
 		// fails to assert correctly; the contract is that store must
@@ -495,7 +495,7 @@ func TestNewAuthStore_UnsafePermissionsAbortStartup(t *testing.T) {
 	authDBChmod = prevChmod
 	authDBStat = prevStat
 
-	store2, err := NewAuthStore(tmpDir, 0, 0)
+	store2, err := NewAuthStore(tmpDir, 0, 0, AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("re-open after aborted NewAuthStore failed (handle may have leaked): %v", err)
 	}
@@ -522,7 +522,7 @@ func TestAuthStorePath(t *testing.T) {
 		}
 		defer os.RemoveAll(tmpDir)
 
-		store, err := NewAuthStore(tmpDir, 0, 0)
+		store, err := NewAuthStore(tmpDir, 0, 0, AuditKeyForTesting())
 		if err != nil {
 			t.Fatalf("Failed to create auth store: %v", err)
 		}
@@ -859,7 +859,7 @@ func TestAuthenticateUserResetsFailedAttempts(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	store, err := NewAuthStore(tmpDir, 0, 5)
+	store, err := NewAuthStore(tmpDir, 0, 5, AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
@@ -898,7 +898,7 @@ func TestAuthenticateUserAccountLockout(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	maxAttempts := 3
-	store, err := NewAuthStore(tmpDir, 0, maxAttempts)
+	store, err := NewAuthStore(tmpDir, 0, maxAttempts, AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
@@ -1150,7 +1150,7 @@ func TestCreateTokenWithMaxDays(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	maxDays := 30
-	store, err := NewAuthStore(tmpDir, maxDays, 0)
+	store, err := NewAuthStore(tmpDir, maxDays, 0, AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
@@ -1660,7 +1660,7 @@ func TestResetFailedAttemptsStore(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	store, err := NewAuthStore(tmpDir, 0, 5)
+	store, err := NewAuthStore(tmpDir, 0, 5, AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("Failed to create auth store: %v", err)
 	}

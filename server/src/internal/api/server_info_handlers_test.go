@@ -1062,7 +1062,7 @@ func TestHandleServerInfoAI(t *testing.T) {
 		// connection as private makes the RBAC check deny an
 		// unauthenticated caller before any analysis happens.
 		tmpDir := t.TempDir()
-		store, err := auth.NewAuthStore(tmpDir, 0, 0)
+		store, err := auth.NewAuthStore(tmpDir, 0, 0, auth.AuditKeyForTesting())
 		if err != nil {
 			t.Fatalf("failed to create auth store: %v", err)
 		}

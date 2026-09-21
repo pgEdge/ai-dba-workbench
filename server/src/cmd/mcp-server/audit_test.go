@@ -13,6 +13,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os/user"
 	"path/filepath"
 	"strconv"
@@ -30,7 +31,7 @@ import (
 func lastAuditEvent(t *testing.T, dataDir string) auth.AuditEvent {
 	t.Helper()
 
-	store, err := auth.NewAuthStore(dataDir, 0, 0)
+	store, err := auth.NewAuthStore(dataDir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("failed to reopen auth store: %v", err)
 	}
@@ -51,7 +52,7 @@ func lastAuditEvent(t *testing.T, dataDir string) auth.AuditEvent {
 func seedAuditEvents(t *testing.T, dataDir string) {
 	t.Helper()
 
-	store, err := auth.NewAuthStore(dataDir, 0, 0)
+	store, err := auth.NewAuthStore(dataDir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("failed to create auth store: %v", err)
 	}
@@ -374,11 +375,143 @@ func TestVerifyAuditLogCommand(t *testing.T) {
 		}
 	})
 
-	t.Run("unopenable data dir returns error", func(t *testing.T) {
-		if err := verifyAuditLogCommand(blockingDataDir(t)); err == nil {
-			t.Fatal("expected an error when the auth store cannot be opened")
+	t.Run("tampering exits with its own status", func(t *testing.T) {
+		dataDir := t.TempDir()
+		seedAuditEvents(t, dataDir)
+		tamperAuditRow(t, dataDir)
+
+		err := verifyAuditLogCommand(dataDir)
+		if err == nil {
+			t.Fatal("expected an error after tampering")
+		}
+		if got := auditVerifyExitCode(err); got != auditExitTampered {
+			t.Errorf("expected exit status %d for tampering, got %d",
+				auditExitTampered, got)
 		}
 	})
+
+	t.Run("unopenable data dir returns error", func(t *testing.T) {
+		err := verifyAuditLogCommand(blockingDataDir(t))
+		if err == nil {
+			t.Fatal("expected an error when the auth store cannot be opened")
+		}
+		if got := auditVerifyExitCode(err); got != 1 {
+			t.Errorf("expected the general-purpose exit status 1, got %d", got)
+		}
+	})
+}
+
+// TestDescribeAuditVerifyFailure checks that the three outcomes an
+// operator has to act on differently are reported differently. A key
+// mismatch means find the right secret file; a broken chain or an
+// unkeyed row means an incident; anything else keeps the
+// general-purpose status the other commands use.
+func TestDescribeAuditVerifyFailure(t *testing.T) {
+	tests := []struct {
+		name     string
+		rows     int
+		firstBad int64
+		err      error
+		wantCode int
+		wantText string
+	}{
+		{
+			name:     "key mismatch",
+			rows:     4,
+			firstBad: 1,
+			err:      fmt.Errorf("%w: nothing verified", auth.ErrAuditKeyMismatch),
+			wantCode: auditExitKeyMismatch,
+			wantText: "server secret file",
+		},
+		{
+			name:     "broken chain",
+			rows:     4,
+			firstBad: 3,
+			err:      fmt.Errorf("%w at row 3", auth.ErrAuditChainBroken),
+			wantCode: auditExitTampered,
+			wantText: "failed at row 3",
+		},
+		{
+			name:     "downgrade",
+			rows:     4,
+			firstBad: 3,
+			err:      fmt.Errorf("%w at row 3", auth.ErrAuditChainDowngraded),
+			wantCode: auditExitTampered,
+			wantText: "failed at row 3",
+		},
+		{
+			name:     "unkeyed row",
+			rows:     4,
+			firstBad: 3,
+			err:      fmt.Errorf("%w: row 3", auth.ErrAuditUnkeyedRow),
+			wantCode: auditExitTampered,
+			wantText: "failed at row 3",
+		},
+		{
+			name:     "anything else",
+			rows:     2,
+			firstBad: 2,
+			err:      errors.New("unknown audit hash version 99"),
+			wantCode: 1,
+			wantText: "failed at row 2",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := describeAuditVerifyFailure(tc.rows, tc.firstBad, tc.err)
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			if got := auditVerifyExitCode(err); got != tc.wantCode {
+				t.Errorf("expected exit status %d, got %d", tc.wantCode, got)
+			}
+			if !strings.Contains(err.Error(), tc.wantText) {
+				t.Errorf("expected the message to contain %q, got: %v",
+					tc.wantText, err)
+			}
+			if !errors.Is(err, tc.err) {
+				t.Error("expected the cause to remain unwrappable")
+			}
+		})
+	}
+
+	if got := auditVerifyExitCode(nil); got != 1 {
+		t.Errorf("expected a nil error to map to 1, got %d", got)
+	}
+}
+
+// TestVerifyAuditLogCommandReportsKeyMismatch checks the whole command
+// against a store whose rows were written under a different secret,
+// which is what an operator sees after rotating or mislaying one.
+func TestVerifyAuditLogCommandReportsKeyMismatch(t *testing.T) {
+	dataDir := t.TempDir()
+
+	store, err := auth.NewAuthStore(dataDir, 0, 0,
+		auth.DeriveAuditKey("the secret these rows were written under"))
+	if err != nil {
+		t.Fatalf("failed to create auth store: %v", err)
+	}
+	if err := store.CreateUser("alice", "correct horse battery staple",
+		"", "Alice", "alice@example.com"); err != nil {
+		t.Fatalf("failed to create a user: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("failed to close the store: %v", err)
+	}
+
+	// openAuthStoreCLI uses the test key, which is not the one above.
+	err = verifyAuditLogCommand(dataDir)
+	if err == nil {
+		t.Fatal("expected verification to fail under a different key")
+	}
+	if got := auditVerifyExitCode(err); got != auditExitKeyMismatch {
+		t.Errorf("expected exit status %d for a key mismatch, got %d",
+			auditExitKeyMismatch, got)
+	}
+	if !strings.Contains(err.Error(), "secret_file") {
+		t.Errorf("expected the message to point at secret_file, got: %v", err)
+	}
 }
 
 // tamperAuditRow edits the action of the newest audit row in place,

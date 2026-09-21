@@ -38,7 +38,7 @@ func createTestAuthStoreForAudit(t *testing.T) (*AuthStore, func()) {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
 
-	store, err := NewAuthStore(tmpDir, 0, 0)
+	store, err := NewAuthStore(tmpDir, 0, 0, AuditKeyForTesting())
 	if err != nil {
 		os.RemoveAll(tmpDir)
 		t.Fatalf("Failed to create auth store: %v", err)
@@ -82,7 +82,7 @@ func mustHash(t *testing.T, ev *AuditEvent) string {
 	if ev.HashVersion == 0 {
 		ev.HashVersion = auditHashVersion
 	}
-	hash, err := auditHash(ev)
+	hash, err := auditHash(ev, AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("auditHash failed: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestAuditSchemaV5Migration(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	store, err := NewAuthStore(tmpDir, 0, 0)
+	store, err := NewAuthStore(tmpDir, 0, 0, AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestAuditSchemaV5Migration(t *testing.T) {
 		t.Fatalf("Failed to close store: %v", err)
 	}
 
-	reopened, err := NewAuthStore(tmpDir, 0, 0)
+	reopened, err := NewAuthStore(tmpDir, 0, 0, AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("Failed to reopen auth store: %v", err)
 	}
@@ -796,12 +796,12 @@ func TestVerifyAuditTailSurvivesConcurrentWriter(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	verifier, err := NewAuthStore(tmpDir, 0, 0)
+	verifier, err := NewAuthStore(tmpDir, 0, 0, AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("Failed to create the verifying store: %v", err)
 	}
 	defer verifier.Close()
-	writer, err := NewAuthStore(tmpDir, 0, 0)
+	writer, err := NewAuthStore(tmpDir, 0, 0, AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("Failed to create the writing store: %v", err)
 	}
@@ -1541,7 +1541,7 @@ func TestNewAuthStoreReportsV5MigrationFailure(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	store, err := NewAuthStore(tmpDir, 0, 0)
+	store, err := NewAuthStore(tmpDir, 0, 0, AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
@@ -1560,7 +1560,7 @@ func TestNewAuthStoreReportsV5MigrationFailure(t *testing.T) {
 		t.Fatalf("Failed to close store: %v", err)
 	}
 
-	reopened, err := NewAuthStore(tmpDir, 0, 0)
+	reopened, err := NewAuthStore(tmpDir, 0, 0, AuditKeyForTesting())
 	if err == nil {
 		reopened.Close()
 		t.Fatal("Expected NewAuthStore to fail when the migration fails")
@@ -1721,13 +1721,13 @@ func TestAuditChainSurvivesTwoStores(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	first, err := NewAuthStore(tmpDir, 0, 0)
+	first, err := NewAuthStore(tmpDir, 0, 0, AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("Failed to create the first auth store: %v", err)
 	}
 	defer first.Close()
 
-	second, err := NewAuthStore(tmpDir, 0, 0)
+	second, err := NewAuthStore(tmpDir, 0, 0, AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("Failed to create the second auth store: %v", err)
 	}
@@ -1937,6 +1937,13 @@ func TestAuditChainCannotFork(t *testing.T) {
 // leaves the next event free to become the genesis row again, which the
 // unique index must permit now that the earlier empty prev_hash is
 // gone.
+//
+// The retention purge no longer produces this shape: it deletes a
+// prefix of ids and stops at the oldest row inside the window, so with
+// every row outside the window it removes nothing. An emptied table is
+// still reachable, by an operator clearing the log by hand or by a
+// database restored from one, and the index has to admit a fresh
+// genesis row when it happens, so the table is emptied here directly.
 func TestAuditChainGenesisAfterFullPurge(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAudit(t)
 	defer cleanup()
@@ -1953,11 +1960,19 @@ func TestAuditChainGenesisAfterFullPurge(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PurgeAuditEvents failed: %v", err)
 	}
-	if removed != 3 {
-		t.Fatalf("Expected 3 rows removed, got %d", removed)
+	if removed != 0 {
+		t.Fatalf("Expected the purge to keep a log with no row inside the "+
+			"window, got %d removed", removed)
 	}
 
-	// The purge event itself is the new genesis row.
+	if _, err := store.db.Exec("DELETE FROM audit_events"); err != nil {
+		t.Fatalf("Failed to empty the audit log: %v", err)
+	}
+
+	mustRecord(t, store, newEvent(systemActor, "user.create", "user",
+		int64Ptr(9), "carol", nil))
+
+	// The next event written is the new genesis row.
 	var prevHash string
 	if err := store.db.QueryRow(
 		"SELECT prev_hash FROM audit_events ORDER BY id LIMIT 1").
@@ -1968,9 +1983,6 @@ func TestAuditChainGenesisAfterFullPurge(t *testing.T) {
 		t.Errorf("Expected an empty prev_hash on the new genesis row, got %q",
 			prevHash)
 	}
-
-	mustRecord(t, store, newEvent(systemActor, "user.create", "user",
-		int64Ptr(9), "carol", nil))
 
 	if _, firstBad, err := store.VerifyAuditChain(); err != nil || firstBad != 0 {
 		t.Errorf("Chain should verify after a full purge: firstBad=%d err=%v",
@@ -2007,6 +2019,12 @@ func TestPurgeAuditEventsDeleteFailure(t *testing.T) {
 // version of the encoding it was computed under, so that a later change
 // to the rendering can be told from this one rather than reporting every
 // older row as broken.
+//
+// It works on the unkeyed version 1 rendering because that one is a
+// plain SHA-256 and so can be reconstructed here field by field. Nothing
+// in this build computes it for a stored row any more; only
+// verifyLegacyAuditChain does, when reporting on a log it is about to
+// re-chain.
 func TestAuditHashCarriesFormatVersion(t *testing.T) {
 	ev := &AuditEvent{
 		OccurredAt:  time.Date(2026, 9, 15, 10, 0, 0, 0, time.UTC),
@@ -2016,13 +2034,10 @@ func TestAuditHashCarriesFormatVersion(t *testing.T) {
 		Outcome:     OutcomeSuccess,
 		HashVersion: 1,
 	}
-	before, err := auditHash(ev)
-	if err != nil {
-		t.Fatalf("auditHash failed: %v", err)
-	}
+	before := auditHashV1(ev)
 
-	if auditHashVersion != 1 {
-		t.Fatalf("Expected the shipped version to be 1, got %d",
+	if auditHashVersion != 2 {
+		t.Fatalf("Expected the shipped version to be 2, got %d",
 			auditHashVersion)
 	}
 
@@ -2033,7 +2048,7 @@ func TestAuditHashCarriesFormatVersion(t *testing.T) {
 	withPrefix := func(version string) string {
 		var canonical strings.Builder
 		for _, field := range []string{
-			version, ev.PrevHash,
+			version, strconv.Itoa(ev.HashVersion), ev.PrevHash,
 			ev.OccurredAt.UTC().Format(auditTimeLayout),
 			string(ev.ActorType), "", ev.ActorName, ev.ActorIP,
 			ev.Action, ev.TargetType, "", ev.TargetName,
@@ -2055,14 +2070,22 @@ func TestAuditHashCarriesFormatVersion(t *testing.T) {
 		t.Error("A different format version produced the same digest")
 	}
 
+	// The keyed entry point refuses the unkeyed rendering outright, so
+	// no caller can be talked into computing a digest anyone able to
+	// write auth.db could have produced.
+	if _, err := auditHash(ev, AuditKeyForTesting()); !errors.Is(err,
+		ErrAuditUnkeyedRow) {
+		t.Errorf("Expected ErrAuditUnkeyedRow for version 1, got %v", err)
+	}
+
 	// A version this build has no rendering for is an error, not a
 	// digest, so a verifier can tell it apart from a broken hash.
-	ev.HashVersion = 2
-	if _, err := auditHash(ev); !errors.Is(err, errUnknownAuditHashVersion) {
-		t.Errorf("Expected errUnknownAuditHashVersion for version 2, got %v", err)
+	ev.HashVersion = 3
+	if _, err := auditHash(ev, AuditKeyForTesting()); !errors.Is(err, errUnknownAuditHashVersion) {
+		t.Errorf("Expected errUnknownAuditHashVersion for version 3, got %v", err)
 	}
 	ev.HashVersion = 0
-	if _, err := auditHash(ev); !errors.Is(err, errUnknownAuditHashVersion) {
+	if _, err := auditHash(ev, AuditKeyForTesting()); !errors.Is(err, errUnknownAuditHashVersion) {
 		t.Errorf("Expected errUnknownAuditHashVersion for version 0, got %v", err)
 	}
 }
@@ -2102,8 +2125,8 @@ func TestRecordAuditStoresHashVersion(t *testing.T) {
 }
 
 // TestVerifyAuditChainReportsUnknownHashVersion checks that a row
-// written under a format this build does not know is reported as such,
-// naming the row and the version, rather than as a broken chain.
+// written under a format this build does not know is reported as
+// tampering, naming the row and the version.
 func TestVerifyAuditChainReportsUnknownHashVersion(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAudit(t)
 	defer cleanup()
@@ -2136,8 +2159,12 @@ func TestVerifyAuditChainReportsUnknownHashVersion(t *testing.T) {
 			t.Errorf("Expected the error to mention %q, got %v", want, err)
 		}
 	}
-	if strings.Contains(err.Error(), "chain broken") {
-		t.Errorf("An unknown version must not be reported as a broken chain: %v", err)
+	// A row relabelled out of reach of the verifier is tampering: only
+	// something with write access to the file produces it, and the
+	// sentinel is what maps it to the tampered exit status.
+	if !errors.Is(err, ErrAuditChainBroken) {
+		t.Errorf("Expected an unknown version to be reported as tampering: %v",
+			err)
 	}
 }
 
@@ -2155,7 +2182,7 @@ func TestReopenRestoresAuditSchemaObjects(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	store, err := NewAuthStore(tmpDir, 0, 0)
+	store, err := NewAuthStore(tmpDir, 0, 0, AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
@@ -2185,7 +2212,7 @@ func TestReopenRestoresAuditSchemaObjects(t *testing.T) {
 		t.Fatalf("Failed to close store: %v", err)
 	}
 
-	reopened, err := NewAuthStore(tmpDir, 0, 0)
+	reopened, err := NewAuthStore(tmpDir, 0, 0, AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("Failed to reopen auth store: %v", err)
 	}
@@ -2237,7 +2264,7 @@ func TestReopenRefusesForkedChain(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	store, err := NewAuthStore(tmpDir, 0, 0)
+	store, err := NewAuthStore(tmpDir, 0, 0, AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
@@ -2258,7 +2285,7 @@ func TestReopenRefusesForkedChain(t *testing.T) {
 		t.Fatalf("Failed to close store: %v", err)
 	}
 
-	reopened, err := NewAuthStore(tmpDir, 0, 0)
+	reopened, err := NewAuthStore(tmpDir, 0, 0, AuditKeyForTesting())
 	if err == nil {
 		reopened.Close()
 		t.Fatal("Expected NewAuthStore to refuse a forked chain")
@@ -2341,13 +2368,17 @@ func TestAuditSchemaV5ToV6Migration(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	store, err := NewAuthStore(tmpDir, 0, 0)
+	store, err := NewAuthStore(tmpDir, 0, 0, AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
+	// The rows must be genuine version 1 rows: a v5 build predates the
+	// keyed chain, so a database it left behind cannot hold a row the
+	// migration would then default to version 1 whilst its hash says
+	// otherwise.
 	for i := 1; i <= 3; i++ {
-		mustRecord(t, store, newEvent(systemActor, "user.create", "user",
-			int64Ptr(int64(i)), "alice", nil))
+		insertAuditRowAsV1(t, store, newEvent(systemActor, "user.create",
+			"user", int64Ptr(int64(i)), "alice", nil))
 	}
 	if _, err := store.db.Exec(`
         ALTER TABLE audit_events DROP COLUMN hash_version;
@@ -2359,7 +2390,24 @@ func TestAuditSchemaV5ToV6Migration(t *testing.T) {
 		t.Fatalf("Failed to close store: %v", err)
 	}
 
-	reopened, err := NewAuthStore(tmpDir, 0, 0)
+	// The migration brings the schema forward and defaults the existing
+	// rows to hash version 1, which this build will not open: the
+	// unkeyed rows have to be re-hashed under the key first, and that
+	// is an operator's decision because it attests them.
+	if refused, err := NewAuthStore(tmpDir, 0, 0,
+		AuditKeyForTesting()); !errors.Is(err, ErrAuditUnkeyedRow) {
+		if refused != nil {
+			refused.Close()
+		}
+		t.Fatalf("Expected the upgrade to stop for the unkeyed rows, got %v",
+			err)
+	}
+	if _, err := RechainAuditLog(tmpDir, AuditKeyForTesting(), systemActor,
+		alwaysConfirmRechain); err != nil {
+		t.Fatalf("Failed to re-chain the log: %v", err)
+	}
+
+	reopened, err := NewAuthStore(tmpDir, 0, 0, AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("Failed to reopen a v5 auth store: %v", err)
 	}
@@ -2370,23 +2418,29 @@ func TestAuditSchemaV5ToV6Migration(t *testing.T) {
 		"SELECT MAX(version) FROM schema_version").Scan(&version); err != nil {
 		t.Fatalf("Failed to read schema version: %v", err)
 	}
-	if version != 6 {
-		t.Errorf("Expected schema version 6, got %d", version)
+	if version != schemaVersion {
+		t.Errorf("Expected schema version %d, got %d", schemaVersion, version)
 	}
 
+	// The rows the migration defaulted to version 1 have all been
+	// re-hashed under the key, so none is left claiming the unkeyed
+	// rendering.
 	var versions int
 	if err := reopened.db.QueryRow(
 		"SELECT COUNT(*) FROM audit_events WHERE hash_version = 1").
 		Scan(&versions); err != nil {
 		t.Fatalf("Failed to read hash_version: %v", err)
 	}
-	if versions != 3 {
-		t.Errorf("Expected 3 rows defaulted to hash version 1, got %d", versions)
+	if versions != 0 {
+		t.Errorf("Expected no unkeyed rows after the re-chain, got %d",
+			versions)
 	}
 
+	// Three migrated rows plus the audit.rechain event the re-chain
+	// records for itself.
 	rows, firstBad, err := reopened.VerifyAuditChain()
-	if err != nil || firstBad != 0 || rows != 3 {
-		t.Errorf("Expected the migrated log to verify 3 rows, got rows %d "+
+	if err != nil || firstBad != 0 || rows != 4 {
+		t.Errorf("Expected the migrated log to verify 4 rows, got rows %d "+
 			"firstBad %d err %v", rows, firstBad, err)
 	}
 
@@ -2406,7 +2460,7 @@ func TestNewAuthStoreReportsV6MigrationFailure(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	store, err := NewAuthStore(tmpDir, 0, 0)
+	store, err := NewAuthStore(tmpDir, 0, 0, AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
@@ -2422,7 +2476,7 @@ func TestNewAuthStoreReportsV6MigrationFailure(t *testing.T) {
 		t.Fatalf("Failed to close store: %v", err)
 	}
 
-	reopened, err := NewAuthStore(tmpDir, 0, 0)
+	reopened, err := NewAuthStore(tmpDir, 0, 0, AuditKeyForTesting())
 	if err == nil {
 		reopened.Close()
 		t.Fatal("Expected NewAuthStore to fail when the migration fails")

@@ -1466,7 +1466,7 @@ func newAuthStoreForChannelTests(t *testing.T) (*auth.AuthStore, func()) {
 	if err != nil {
 		t.Fatalf("MkdirTemp: %v", err)
 	}
-	store, err := auth.NewAuthStore(tmpDir, 0, 0)
+	store, err := auth.NewAuthStore(tmpDir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		os.RemoveAll(tmpDir)
 		t.Fatalf("NewAuthStore: %v", err)

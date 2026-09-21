@@ -43,7 +43,7 @@ func seedLinkTestUser(t *testing.T, username string) string {
 func reopenStore(t *testing.T, dataDir string) *auth.AuthStore {
 	t.Helper()
 
-	store, err := auth.NewAuthStore(dataDir, 0, 0)
+	store, err := auth.NewAuthStore(dataDir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("failed to reopen auth store: %v", err)
 	}
@@ -166,14 +166,14 @@ func TestRunCLICommandsDispatchesOIDCLinking(t *testing.T) {
 		OIDCSubject:     cliTestSubject,
 	}
 	captureStdout(t, func() {
-		if !RunCLICommands(link, dataDir) {
+		if !RunCLICommands(link, dataDir, "") {
 			t.Error("RunCLICommands did not handle -link-oidc-user")
 		}
 	})
 
 	unlink := &Flags{UnlinkOIDCUserCmd: true, Username: "alice", RestorePassword: true}
 	captureStdout(t, func() {
-		if !RunCLICommands(unlink, dataDir) {
+		if !RunCLICommands(unlink, dataDir, "") {
 			t.Error("RunCLICommands did not handle -unlink-oidc-user")
 		}
 	})

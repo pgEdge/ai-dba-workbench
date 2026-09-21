@@ -15,9 +15,11 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
+	"github.com/pgedge/ai-workbench/server/internal/logging"
 )
 
 // handleAudit serves GET /api/v1/rbac/audit, the read side of the RBAC
@@ -65,8 +67,74 @@ func (h *RBACHandler) handleAudit(w http.ResponseWriter, r *http.Request) {
 		events = []auth.AuditEvent{}
 	}
 
+	// A successful read is deliberately not written to audit_events
+	// itself: reading the log is not a change, and recording every
+	// read in the same append-only table would let anyone with the
+	// superuser right grow it without bound. The server log is where
+	// the read is accounted for instead, so that "who has been
+	// reading the audit log, and for what" is answerable after the
+	// fact. Every value here comes from the request, so it goes
+	// through the log sanitiser; none of them can carry a secret,
+	// since the filter is a set of names, types and timestamps.
+	log.Printf("[AUDIT] Audit log read by %s: filter %s, %d row(s) returned of %d matching",
+		logging.SanitizeForLog(auth.ActorFromContext(r.Context()).Name),
+		logging.SanitizeForLog(describeAuditFilter(filter)),
+		len(events), total)
+
 	w.Header().Set(headerTotalCount, strconv.Itoa(total))
 	RespondJSON(w, http.StatusOK, events)
+}
+
+// describeAuditFilter renders the filters in effect for the log line
+// above, in a stable order and naming only the ones actually set, so
+// that an unfiltered read is visibly a read of everything rather than a
+// row of empty values. Timestamps are rendered in RFC 3339 UTC, which
+// is how they arrived.
+//
+// Values are quoted with strconv.Quote, because the pairs are separated
+// by spaces and an actor name may contain one: ?actor=alice+action=x
+// would otherwise render as two filters where only one was applied, and
+// anything reading the line back would believe the second. Quoting also
+// escapes the quote character itself, so a value cannot close its own
+// quoting to fabricate a second filter. Newlines are already handled
+// upstream by logging.SanitizeForLog, which keeps the whole of this to
+// one line; this is confusion between fields within that line, not
+// injection of another.
+func describeAuditFilter(f auth.AuditFilter) string {
+	var parts []string
+
+	add := func(name, value string) {
+		if value != "" {
+			parts = append(parts, name+"="+strconv.Quote(value))
+		}
+	}
+
+	add("actor", f.ActorName)
+	add("actor_type", f.ActorType)
+	add("action", f.Action)
+	add("target_type", f.TargetType)
+	if f.TargetID != nil {
+		add("target_id", strconv.FormatInt(*f.TargetID, 10))
+	}
+	add("outcome", f.Outcome)
+	if f.Since != nil {
+		add("since", f.Since.UTC().Format(time.RFC3339))
+	}
+	if f.Until != nil {
+		add("until", f.Until.UTC().Format(time.RFC3339))
+	}
+	if f.Limit > 0 {
+		add("limit", strconv.Itoa(f.Limit))
+	}
+	if f.Offset > 0 {
+		add("offset", strconv.Itoa(f.Offset))
+	}
+
+	if len(parts) == 0 {
+		return "none"
+	}
+
+	return strings.Join(parts, " ")
 }
 
 // auditScopeDenied is the message returned to a token whose admin

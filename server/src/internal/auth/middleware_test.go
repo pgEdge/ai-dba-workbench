@@ -31,7 +31,7 @@ func createTestAuthStore(t *testing.T) (*AuthStore, func()) {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
 
-	store, err := NewAuthStore(tmpDir, 0, 0)
+	store, err := NewAuthStore(tmpDir, 0, 0, AuditKeyForTesting())
 	if err != nil {
 		os.RemoveAll(tmpDir)
 		t.Fatalf("Failed to create auth store: %v", err)
@@ -245,7 +245,7 @@ func TestAuthMiddleware_ExpiredToken(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	store, err := NewAuthStore(tmpDir, 0, 0)
+	store, err := NewAuthStore(tmpDir, 0, 0, AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
@@ -319,7 +319,7 @@ func TestAuthMiddleware_ValidSessionToken(t *testing.T) {
 	os.MkdirAll(tmpDir, 0750)
 	defer os.RemoveAll(tmpDir)
 
-	store, err := NewAuthStore(tmpDir, 0, 0)
+	store, err := NewAuthStore(tmpDir, 0, 0, AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
@@ -817,7 +817,7 @@ func TestAuthMiddleware_SessionCookie(t *testing.T) {
 	os.MkdirAll(tmpDir, 0750)
 	defer os.RemoveAll(tmpDir)
 
-	store, err := NewAuthStore(tmpDir, 0, 0)
+	store, err := NewAuthStore(tmpDir, 0, 0, AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
@@ -893,7 +893,7 @@ func TestAuthMiddleware_APITokenWithOwner(t *testing.T) {
 	os.MkdirAll(tmpDir, 0750)
 	defer os.RemoveAll(tmpDir)
 
-	store, err := NewAuthStore(tmpDir, 0, 0)
+	store, err := NewAuthStore(tmpDir, 0, 0, AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
@@ -942,7 +942,7 @@ func TestAuthMiddleware_SuperuserToken(t *testing.T) {
 	os.MkdirAll(tmpDir, 0750)
 	defer os.RemoveAll(tmpDir)
 
-	store, err := NewAuthStore(tmpDir, 0, 0)
+	store, err := NewAuthStore(tmpDir, 0, 0, AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
@@ -987,7 +987,7 @@ func TestAuthMiddleware_SuperuserSessionUser(t *testing.T) {
 	os.MkdirAll(tmpDir, 0750)
 	defer os.RemoveAll(tmpDir)
 
-	store, err := NewAuthStore(tmpDir, 0, 0)
+	store, err := NewAuthStore(tmpDir, 0, 0, AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("Failed to create auth store: %v", err)
 	}

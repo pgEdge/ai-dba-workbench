@@ -303,7 +303,7 @@ func TestContextAwareRegistry_DefaultNilConfig(t *testing.T) {
 func TestGetClient_TokenScopeEnforcement(t *testing.T) {
 	// Create a temporary auth store
 	tmpDir := t.TempDir()
-	authStore, err := auth.NewAuthStore(tmpDir, 0, 0)
+	authStore, err := auth.NewAuthStore(tmpDir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("NewAuthStore: %v", err)
 	}
@@ -400,7 +400,7 @@ func TestGetClient_TokenScopeEnforcement(t *testing.T) {
 // calls get a clean "no connection selected" error.
 func TestGetClient_SessionClearedOnRBACDenial(t *testing.T) {
 	tmpDir := t.TempDir()
-	authStore, err := auth.NewAuthStore(tmpDir, 0, 0)
+	authStore, err := auth.NewAuthStore(tmpDir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("NewAuthStore: %v", err)
 	}
@@ -458,7 +458,7 @@ func TestGetClient_SessionClearedOnRBACDenial(t *testing.T) {
 // token scope restriction would bypass RBAC checks at use-time.
 func TestGetClient_RBACDenialClearsSession(t *testing.T) {
 	tmpDir := t.TempDir()
-	authStore, err := auth.NewAuthStore(tmpDir, 0, 0)
+	authStore, err := auth.NewAuthStore(tmpDir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("NewAuthStore: %v", err)
 	}
@@ -539,7 +539,7 @@ func TestGetClient_RBACDenialClearsSession(t *testing.T) {
 // getClient() code path when RBAC allows access.
 func TestGetClient_RBACAllowsAccessProceedsToDatastore(t *testing.T) {
 	tmpDir := t.TempDir()
-	authStore, err := auth.NewAuthStore(tmpDir, 0, 0)
+	authStore, err := auth.NewAuthStore(tmpDir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("NewAuthStore: %v", err)
 	}
@@ -625,7 +625,7 @@ func TestGetClient_RBACAllowsAccessProceedsToDatastore(t *testing.T) {
 // bypasses RBAC checks even when a sharing lookup would deny access.
 func TestGetClient_SuperuserBypassesRBAC(t *testing.T) {
 	tmpDir := t.TempDir()
-	authStore, err := auth.NewAuthStore(tmpDir, 0, 0)
+	authStore, err := auth.NewAuthStore(tmpDir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("NewAuthStore: %v", err)
 	}

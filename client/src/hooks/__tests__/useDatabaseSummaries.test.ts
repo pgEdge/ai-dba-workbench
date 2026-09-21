@@ -228,6 +228,44 @@ describe('useDatabaseSummaries', () => {
             });
         });
 
+    it('clears loaded state and discards a late response when disabled',
+        async () => {
+            let resolve: (rows: string[]) => void = () => { /* unset */ };
+            mockApiFetch.mockImplementation(() => new Promise(res => {
+                resolve = (rows: string[]) => {
+                    res(okResponse({
+                        databases: rows.map(name => ({
+                            database_name: name,
+                        })),
+                    }));
+                };
+            }));
+
+            const { result, rerender } = renderHook(
+                ({ on }: { on: boolean }) =>
+                    useDatabaseSummaries(1, 0, '24h', on),
+                { initialProps: { on: true } },
+            );
+
+            await waitFor(() => {
+                expect(mockApiFetch).toHaveBeenCalledTimes(1);
+            });
+
+            rerender({ on: false });
+
+            expect(result.current.databases).toEqual([]);
+            expect(result.current.loading).toBe(false);
+            expect(result.current.error).toBeNull();
+
+            // The request started whilst enabled must not repopulate
+            // state after the caller has switched the hook off.
+            resolve(['analytics']);
+            await waitFor(() => {
+                expect(result.current.loading).toBe(false);
+            });
+            expect(result.current.databases).toEqual([]);
+        });
+
     it('refetches when the refresh key changes', async () => {
         mockApiFetch.mockResolvedValue(okResponse({ databases: [] }));
 

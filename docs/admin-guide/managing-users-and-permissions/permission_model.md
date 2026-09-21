@@ -18,8 +18,9 @@ pieces with the Administration console or the command line.
 
 !!! hint
 
-    Superusers bypass every permission check and hold full access to all
-    operations.
+    A superuser bypasses every permission check and holds full access to
+    all operations. An API token that a superuser owns is still limited
+    by the scope of that token.
 
 ## How the Pieces Interact
 
@@ -42,8 +43,12 @@ request:
 4. The Workbench grants the request only when the resulting permissions allow
    the requested operation.
 
-A superuser short-circuits this sequence; the Workbench grants every request
-from a superuser account regardless of group or scope.
+A superuser short-circuits the group lookup in this sequence; the Workbench
+grants a superuser every privilege without regard to group membership. Step
+three still applies, so a request that a superuser makes with a scoped API
+token succeeds only where the token scope allows the operation. A superuser
+working in a browser session holds every privilege unconditionally, because
+a session carries no token scope.
 
 ## Accounts and Roles
 
@@ -59,9 +64,12 @@ hold the privileges the account needs.
 
 A superuser holds a special role that bypasses all permission checks. This
 allows a superuser to reach every connection, invoke every MCP tool, and
-perform every administrative operation. An administrator may grant the
-superuser role when they create or edit an account. For details on creating
-and managing accounts, see [Account Management](accounts.md).
+perform every administrative operation. An API token that a superuser owns
+is bound by the scope of that token, so the token reaches only the
+connections, tools, and administrative permissions its scope names. An
+administrator may grant the superuser role when they create or edit an
+account. For details on creating and managing accounts, see
+[Account Management](accounts.md).
 
 ## Groups and Privileges
 
@@ -137,7 +145,9 @@ the owner holds `read_write` access through a group.
 !!! hint
 
     The effective access for a scoped token equals the intersection of the
-    owner's group access and the token scope.
+    owner's access and the token scope. The same rule covers a superuser's
+    token; a superuser holds every privilege, so the intersection is the
+    token scope itself.
 
 Administrators [manage token scopes](tokens.md) with the `Administration`
 console or at the command line. The following flags control token scopes:
@@ -161,7 +171,11 @@ Administrative (or `ADMIN`) permissions control access to management
 operations in the Workbench's `Administration` console and the REST API.
 Privileged users assign these permissions through groups, alongside connection
 and MCP privileges. A superuser bypasses these checks and holds every
-administrative permission automatically.
+administrative permission automatically, although an API token that a
+superuser owns holds only the permissions its admin scope names, unless
+that scope is unset or holds the `*` wildcard. An endpoint reserved for
+superusers that names no permission, such as the RBAC audit log, refuses
+any token whose admin scope names specific permissions.
 
 The Workbench defines the following ten ADMIN permissions:
 

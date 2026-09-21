@@ -496,6 +496,37 @@ project adheres to
   an event hashed under the old unkeyed encoding, exits with
   status 2. Any other failure keeps status 1.
 
+- Bind an API token owned by a superuser to the token's own
+  scope. The authorisation check previously short-circuited on
+  the owner's superuser flag before it looked at the scope, so
+  a token minted for one narrow job reached every connection,
+  every MCP tool and every administrative permission in the
+  installation, whatever scope it carried. Each check now
+  intersects the owner's rights with the token's scope for the
+  surface being reached, and because a superuser holds
+  everything, the intersection is the scope itself: a token
+  scoped to one administrative permission, one connection or
+  one tool may use exactly that and nothing else, with no
+  group grant needed on the owning account. A scope kind left
+  unset, or holding the relevant wildcard, stays unrestricted
+  as before, and a session login is unaffected throughout,
+  because a session carries no token. An endpoint reserved for
+  superusers that names no permission, such as the RBAC audit
+  log at `GET /api/v1/rbac/audit`, refuses a token whose admin
+  scope has been narrowed, because a gate that names no
+  permission has nothing to intersect against. Everything
+  fails closed: a scope that cannot be read, and an API-token
+  request that carries no token identifier, are denied. This
+  is a breaking change for existing integrations, because a
+  superuser-owned token that carries an explicit scope will
+  start receiving `403 Forbidden` where it previously
+  succeeded, and there is no configuration option that
+  restores the old behaviour. Review every token owned by a
+  superuser before upgrading; where one is refused afterwards,
+  either clear the token's scope, add the relevant wildcard to
+  the scope, or narrow what the token is asked to do so that
+  it matches the scope the token holds. (#471)
+
 - Change the alerter's default Gemini reasoning model from
   `gemini-2.5-flash` to `gemini-3.6-flash`. Google no longer offers
   `gemini-2.5-flash` to new API keys, answering every request with a
@@ -537,14 +568,11 @@ project adheres to
   an ungrouped connection outside its scope, or reaching one
   at `read_write` whilst scoped to `read`, will now be
   refused or capped. Review the scope of every token that
-  touches a connection with no group before upgrading. The
-  change does not reach a token owned by a superuser: the
-  superuser check returns before the scope is consulted, so
-  such a token still reaches every connection at `read_write`
-  whatever its scope says, which is the pre-existing bypass
-  tracked in #482. A narrow automation credential should
-  therefore be minted from a service account or an ordinary
-  user, not from an administrator. (#261)
+  touches a connection with no group before upgrading. A token
+  owned by a superuser was left out at the time, because the
+  superuser check returned before the scope was consulted;
+  that bypass is closed separately, so such a token is now
+  held to its connection scope as well. (#261)
 
 - Serve `GET /api/v1/capabilities` without authentication. The
   endpoint previously required a session or API token, although

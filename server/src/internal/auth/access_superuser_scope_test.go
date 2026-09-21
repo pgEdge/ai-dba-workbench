@@ -103,9 +103,7 @@ func unidentifiedTokenCtx() context.Context {
 func (f *superuserScopeFixture) dropScopeTable(t *testing.T, table string) {
 	t.Helper()
 
-	if _, err := f.store.db.Exec("DROP TABLE " + table); err != nil {
-		t.Fatalf("Failed to drop %s: %v", table, err)
-	}
+	dropAuthTable(t, f.store.db, table)
 }
 
 // setAdminScope narrows the fixture token's admin scope.

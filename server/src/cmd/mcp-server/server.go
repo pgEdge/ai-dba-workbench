@@ -234,7 +234,7 @@ func (s *Server) initAuthStore() error {
 	s.authStore, err = auth.NewAuthStore(
 		s.dataDir,
 		s.cfg.HTTP.Auth.MaxUserTokenDays,
-		s.cfg.HTTP.Auth.MaxFailedAttemptsBeforeLockout,
+		s.cfg.HTTP.Auth.MaxFailedAttemptsBeforeLockout(),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to initialize auth store: %w", err)
@@ -270,9 +270,9 @@ func (s *Server) initRateLimiter() error {
 	)
 	fmt.Fprintf(os.Stderr, "Rate limiting enabled: %d attempts per %d minutes per IP\n",
 		s.cfg.HTTP.Auth.RateLimitMaxAttempts, s.cfg.HTTP.Auth.RateLimitWindowMinutes)
-	if s.cfg.HTTP.Auth.MaxFailedAttemptsBeforeLockout > 0 {
+	if maxFailed := s.cfg.HTTP.Auth.MaxFailedAttemptsBeforeLockout(); maxFailed > 0 {
 		fmt.Fprintf(os.Stderr, "Account lockout enabled: %d failed attempts before lockout\n",
-			s.cfg.HTTP.Auth.MaxFailedAttemptsBeforeLockout)
+			maxFailed)
 	}
 	return nil
 }

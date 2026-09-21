@@ -182,10 +182,9 @@ type HTTPConfig struct {
 
 // AuthConfig holds authentication settings
 type AuthConfig struct {
-	MaxUserTokenDays               int `yaml:"max_user_token_days"`                // Maximum lifetime for user-created tokens in days (0 = unlimited)
-	MaxFailedAttemptsBeforeLockout int `yaml:"max_failed_attempts_before_lockout"` // Number of failed login attempts before account lockout (0 = disabled)
-	RateLimitWindowMinutes         int `yaml:"rate_limit_window_minutes"`          // Time window in minutes for rate limiting (default: 15)
-	RateLimitMaxAttempts           int `yaml:"rate_limit_max_attempts"`            // Maximum failed attempts per IP in the time window (default: 10)
+	MaxUserTokenDays       int `yaml:"max_user_token_days"`       // Maximum lifetime for user-created tokens in days (0 = unlimited)
+	RateLimitWindowMinutes int `yaml:"rate_limit_window_minutes"` // Time window in minutes for rate limiting (default: 15)
+	RateLimitMaxAttempts   int `yaml:"rate_limit_max_attempts"`   // Maximum failed attempts per IP in the time window (default: 10)
 
 	// AuditRetentionDaysPtr is the raw configured value for how many
 	// days of RBAC audit events to keep; nil means the setting was
@@ -194,6 +193,15 @@ type AuthConfig struct {
 	// Use AuditRetentionDays() to read the effective value, which
 	// applies the 90-day default when this is nil.
 	AuditRetentionDaysPtr *int `yaml:"audit_retention_days"`
+
+	// MaxFailedAttemptsBeforeLockoutPtr is the raw configured number of
+	// failed login attempts before an account is locked out; nil means
+	// the setting was omitted from the config file. An explicit 0
+	// disables account lockout altogether, and a negative value falls
+	// back to the default. Use MaxFailedAttemptsBeforeLockout() to read
+	// the effective value, which applies the default of 10 when this is
+	// nil or negative.
+	MaxFailedAttemptsBeforeLockoutPtr *int `yaml:"max_failed_attempts_before_lockout"`
 
 	// Local holds settings for local username/password authentication.
 	Local LocalAuthConfig `yaml:"local"`
@@ -333,6 +341,18 @@ func (a AuthConfig) AuditRetentionDays() int {
 		return 90
 	}
 	return *a.AuditRetentionDaysPtr
+}
+
+// MaxFailedAttemptsBeforeLockout returns the effective number of
+// failed login attempts before an account is locked out, defaulting to
+// 10 when the setting was not configured or was given a negative
+// value, which no attempt count can mean. An explicit 0 disables
+// account lockout.
+func (a AuthConfig) MaxFailedAttemptsBeforeLockout() int {
+	if a.MaxFailedAttemptsBeforeLockoutPtr == nil || *a.MaxFailedAttemptsBeforeLockoutPtr < 0 {
+		return 10
+	}
+	return *a.MaxFailedAttemptsBeforeLockoutPtr
 }
 
 // TLSConfig holds TLS/HTTPS settings
@@ -761,10 +781,9 @@ func defaultConfig() *Config {
 				ChainFile: "",
 			},
 			Auth: AuthConfig{
-				MaxUserTokenDays:               0,  // Unlimited by default
-				MaxFailedAttemptsBeforeLockout: 10, // Lock account after 10 failed attempts
-				RateLimitWindowMinutes:         15, // 15 minute window for rate limiting
-				RateLimitMaxAttempts:           10, // 10 attempts per IP per window
+				MaxUserTokenDays:       0,  // Unlimited by default
+				RateLimitWindowMinutes: 15, // 15 minute window for rate limiting
+				RateLimitMaxAttempts:   10, // 10 attempts per IP per window
 				// Local.Enabled is left nil so LocalEnabled() defaults to true.
 				OIDC: OIDCConfig{
 					Scopes:           []string{"openid", "email", "profile"},
@@ -774,6 +793,8 @@ func defaultConfig() *Config {
 					ButtonLabel:      "Sign in with your identity provider",
 				},
 				AuditRetentionDaysPtr: intPtr(90), // Keep audit events for 90 days by default
+				// Lock an account after 10 failed login attempts by default.
+				MaxFailedAttemptsBeforeLockoutPtr: intPtr(10),
 			},
 		},
 		Database: nil, // No database configured by default
@@ -867,8 +888,8 @@ func mergeConfig(dest, src *Config) {
 	if src.HTTP.Auth.MaxUserTokenDays > 0 {
 		dest.HTTP.Auth.MaxUserTokenDays = src.HTTP.Auth.MaxUserTokenDays
 	}
-	if src.HTTP.Auth.MaxFailedAttemptsBeforeLockout >= 0 {
-		dest.HTTP.Auth.MaxFailedAttemptsBeforeLockout = src.HTTP.Auth.MaxFailedAttemptsBeforeLockout
+	if src.HTTP.Auth.MaxFailedAttemptsBeforeLockoutPtr != nil {
+		dest.HTTP.Auth.MaxFailedAttemptsBeforeLockoutPtr = src.HTTP.Auth.MaxFailedAttemptsBeforeLockoutPtr
 	}
 	if src.HTTP.Auth.RateLimitWindowMinutes > 0 {
 		dest.HTTP.Auth.RateLimitWindowMinutes = src.HTTP.Auth.RateLimitWindowMinutes

@@ -2014,3 +2014,330 @@ func TestAuditRetentionDaysNilPointerDefaultsTo90(t *testing.T) {
 		t.Errorf("expected 90 when AuditRetentionDaysPtr is nil, got %d", got)
 	}
 }
+
+func TestMaxFailedAttemptsBeforeLockoutDefault(t *testing.T) {
+	cfg := defaultConfig()
+	if got := cfg.HTTP.Auth.MaxFailedAttemptsBeforeLockout(); got != 10 {
+		t.Errorf("expected default lockout threshold of 10, got %d", got)
+	}
+}
+
+// TestMaxFailedAttemptsBeforeLockoutOmittedKeepsDefault is the
+// regression test for issue #473: a config file that omits the key
+// must not overwrite the default of 10 with a zero value, which would
+// silently disable account lockout.
+func TestMaxFailedAttemptsBeforeLockoutOmittedKeepsDefault(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+
+	configContent := `
+http:
+    address: ":9999"
+    auth:
+        rate_limit_max_attempts: 5
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	cfg, err := LoadConfig(configPath, CLIFlags{ConfigFileSet: true, ConfigFile: configPath})
+	if err != nil {
+		t.Fatalf("failed to load config: %v", err)
+	}
+	if cfg.HTTP.Auth.MaxFailedAttemptsBeforeLockoutPtr == nil {
+		t.Fatal("expected an omitted key to leave the default pointer in place")
+	}
+	if got := cfg.HTTP.Auth.MaxFailedAttemptsBeforeLockout(); got != 10 {
+		t.Errorf("expected an omitted key to keep the default of 10, got %d", got)
+	}
+}
+
+func TestMaxFailedAttemptsBeforeLockoutMergeDoesNotClobber(t *testing.T) {
+	dest := defaultConfig()
+	src := &Config{}
+	mergeConfig(dest, src)
+	if got := dest.HTTP.Auth.MaxFailedAttemptsBeforeLockout(); got != 10 {
+		t.Errorf("expected merging an empty config to keep 10, got %d", got)
+	}
+
+	src.HTTP.Auth.MaxFailedAttemptsBeforeLockoutPtr = intPtr(0)
+	mergeConfig(dest, src)
+	if got := dest.HTTP.Auth.MaxFailedAttemptsBeforeLockout(); got != 0 {
+		t.Errorf("expected an explicit 0 to disable lockout, got %d", got)
+	}
+}
+
+func TestMaxFailedAttemptsBeforeLockoutYAMLOverride(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+
+	configContent := `
+http:
+    auth:
+        max_failed_attempts_before_lockout: 3
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	cfg, err := LoadConfig(configPath, CLIFlags{ConfigFileSet: true, ConfigFile: configPath})
+	if err != nil {
+		t.Fatalf("failed to load config: %v", err)
+	}
+	if got := cfg.HTTP.Auth.MaxFailedAttemptsBeforeLockout(); got != 3 {
+		t.Errorf("expected a lockout threshold of 3 from YAML, got %d", got)
+	}
+}
+
+func TestMaxFailedAttemptsBeforeLockoutYAMLZeroDisables(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+
+	configContent := `
+http:
+    auth:
+        max_failed_attempts_before_lockout: 0
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	cfg, err := LoadConfig(configPath, CLIFlags{ConfigFileSet: true, ConfigFile: configPath})
+	if err != nil {
+		t.Fatalf("failed to load config: %v", err)
+	}
+	if got := cfg.HTTP.Auth.MaxFailedAttemptsBeforeLockout(); got != 0 {
+		t.Errorf("expected an explicit 0 to disable lockout, got %d", got)
+	}
+}
+
+func TestMaxFailedAttemptsBeforeLockoutNegativeDefaultsTo10(t *testing.T) {
+	a := AuthConfig{MaxFailedAttemptsBeforeLockoutPtr: intPtr(-3)}
+	if got := a.MaxFailedAttemptsBeforeLockout(); got != 10 {
+		t.Errorf("expected 10 when the pointer is negative, got %d", got)
+	}
+}
+
+func TestMaxFailedAttemptsBeforeLockoutNilPointerDefaultsTo10(t *testing.T) {
+	var a AuthConfig
+	if got := a.MaxFailedAttemptsBeforeLockout(); got != 10 {
+		t.Errorf("expected 10 when the pointer is nil, got %d", got)
+	}
+}
+
+// TestMergeConfigOverridesEveryField populates every field mergeConfig
+// knows about and checks that each one reaches the destination, so
+// that the per-field guards are all exercised rather than only the
+// handful a typical config file sets.
+func TestMergeConfigOverridesEveryField(t *testing.T) {
+	dest := defaultConfig()
+	src := &Config{
+		HTTP: HTTPConfig{
+			Address: ":9443",
+			TLS: TLSConfig{
+				Enabled:   true,
+				CertFile:  "/tmp/cert.pem",
+				KeyFile:   "/tmp/key.pem",
+				ChainFile: "/tmp/chain.pem",
+			},
+			TrustedProxies: []string{"192.0.2.0/24"},
+			CORSOrigin:     "https://app.example.com",
+			HSTSEnabled:    true,
+			Auth: AuthConfig{
+				MaxUserTokenDays:       30,
+				RateLimitWindowMinutes: 5,
+				RateLimitMaxAttempts:   3,
+			},
+		},
+		Embedding: EmbeddingConfig{
+			Enabled:          true,
+			Provider:         "voyage",
+			Model:            "voyage-3",
+			VoyageAPIKey:     "vk",
+			VoyageAPIKeyFile: "/tmp/vk",
+			OpenAIAPIKey:     "ok",
+			OpenAIAPIKeyFile: "/tmp/ok",
+			VoyageBaseURL:    "https://voyage.example.com",
+			OpenAIBaseURL:    "https://openai.example.com",
+			GeminiAPIKey:     "gk",
+			GeminiAPIKeyFile: "/tmp/gk",
+			GeminiBaseURL:    "https://gemini.example.com",
+			OllamaURL:        "https://ollama.example.com",
+		},
+		LLM: LLMConfig{
+			Provider:                "anthropic",
+			Model:                   "test-model",
+			AnthropicAPIKey:         "ak",
+			AnthropicAPIKeyFile:     "/tmp/ak",
+			AnthropicBaseURL:        "https://anthropic.example.com",
+			OpenAIAPIKey:            "ok",
+			OpenAIAPIKeyFile:        "/tmp/ok",
+			OpenAIBaseURL:           "https://openai.example.com",
+			GeminiAPIKey:            "gk",
+			GeminiAPIKeyFile:        "/tmp/gk",
+			GeminiBaseURL:           "https://gemini.example.com",
+			OllamaURL:               "https://ollama.example.com",
+			MaxTokens:               1234,
+			MaxIterations:           7,
+			Temperature:             0.5,
+			TimeoutSeconds:          99,
+			CompactToolDescriptions: "always",
+		},
+		Knowledgebase: KnowledgebaseConfig{
+			Enabled:                   true,
+			DatabasePath:              "/tmp/kb.db",
+			EmbeddingProvider:         "openai",
+			EmbeddingModel:            "text-embedding-3-small",
+			EmbeddingVoyageAPIKey:     "vk",
+			EmbeddingVoyageAPIKeyFile: "/tmp/vk",
+			EmbeddingOpenAIAPIKey:     "ok",
+			EmbeddingOpenAIAPIKeyFile: "/tmp/ok",
+			EmbeddingVoyageBaseURL:    "https://voyage.example.com",
+			EmbeddingOpenAIBaseURL:    "https://openai.example.com",
+			EmbeddingGeminiAPIKey:     "gk",
+			EmbeddingGeminiAPIKeyFile: "/tmp/gk",
+			EmbeddingGeminiBaseURL:    "https://gemini.example.com",
+			EmbeddingOllamaURL:        "https://ollama.example.com",
+		},
+		Memory:                MemoryConfig{Enabled: BoolPtr(false)},
+		SecretFile:            "/tmp/secret",
+		CustomDefinitionsPath: "/tmp/defs",
+		DataDir:               "/tmp/data",
+		TraceFile:             "/tmp/trace.log",
+		ConnectionSecurity: ConnectionSecurityConfig{
+			AllowInternalNetworks: true,
+			AllowedHosts:          []string{"db.example.com"},
+			BlockedHosts:          []string{"169.254.169.254"},
+		},
+		Builtins: BuiltinsConfig{
+			Tools: ToolsConfig{
+				QueryDatabase:       BoolPtr(false),
+				GetSchemaInfo:       BoolPtr(false),
+				SimilaritySearch:    BoolPtr(false),
+				ExecuteExplain:      BoolPtr(false),
+				GenerateEmbedding:   BoolPtr(false),
+				SearchKnowledgebase: BoolPtr(false),
+				CountRows:           BoolPtr(false),
+				ListProbes:          BoolPtr(false),
+				DescribeProbe:       BoolPtr(false),
+				QueryMetrics:        BoolPtr(false),
+				StoreMemory:         BoolPtr(false),
+				RecallMemories:      BoolPtr(false),
+				DeleteMemory:        BoolPtr(false),
+			},
+			Resources: ResourcesConfig{
+				SystemInfo:     BoolPtr(false),
+				ConnectionInfo: BoolPtr(false),
+			},
+		},
+	}
+
+	mergeConfig(dest, src)
+
+	checks := []struct {
+		name string
+		got  interface{}
+		want interface{}
+	}{
+		{"address", dest.HTTP.Address, ":9443"},
+		{"tls enabled", dest.HTTP.TLS.Enabled, true},
+		{"tls cert", dest.HTTP.TLS.CertFile, "/tmp/cert.pem"},
+		{"tls key", dest.HTTP.TLS.KeyFile, "/tmp/key.pem"},
+		{"tls chain", dest.HTTP.TLS.ChainFile, "/tmp/chain.pem"},
+		{"cors origin", dest.HTTP.CORSOrigin, "https://app.example.com"},
+		{"hsts", dest.HTTP.HSTSEnabled, true},
+		{"max user token days", dest.HTTP.Auth.MaxUserTokenDays, 30},
+		{"rate limit window", dest.HTTP.Auth.RateLimitWindowMinutes, 5},
+		{"rate limit attempts", dest.HTTP.Auth.RateLimitMaxAttempts, 3},
+		{"embedding provider", dest.Embedding.Provider, "voyage"},
+		{"embedding model", dest.Embedding.Model, "voyage-3"},
+		{"embedding voyage key", dest.Embedding.VoyageAPIKey, "vk"},
+		{"embedding voyage key file", dest.Embedding.VoyageAPIKeyFile, "/tmp/vk"},
+		{"embedding openai key", dest.Embedding.OpenAIAPIKey, "ok"},
+		{"embedding openai key file", dest.Embedding.OpenAIAPIKeyFile, "/tmp/ok"},
+		{"embedding voyage url", dest.Embedding.VoyageBaseURL, "https://voyage.example.com"},
+		{"embedding openai url", dest.Embedding.OpenAIBaseURL, "https://openai.example.com"},
+		{"embedding gemini key", dest.Embedding.GeminiAPIKey, "gk"},
+		{"embedding gemini key file", dest.Embedding.GeminiAPIKeyFile, "/tmp/gk"},
+		{"embedding gemini url", dest.Embedding.GeminiBaseURL, "https://gemini.example.com"},
+		{"embedding ollama url", dest.Embedding.OllamaURL, "https://ollama.example.com"},
+		{"llm provider", dest.LLM.Provider, "anthropic"},
+		{"llm model", dest.LLM.Model, "test-model"},
+		{"llm anthropic key", dest.LLM.AnthropicAPIKey, "ak"},
+		{"llm anthropic key file", dest.LLM.AnthropicAPIKeyFile, "/tmp/ak"},
+		{"llm anthropic url", dest.LLM.AnthropicBaseURL, "https://anthropic.example.com"},
+		{"llm openai key", dest.LLM.OpenAIAPIKey, "ok"},
+		{"llm openai key file", dest.LLM.OpenAIAPIKeyFile, "/tmp/ok"},
+		{"llm openai url", dest.LLM.OpenAIBaseURL, "https://openai.example.com"},
+		{"llm gemini key", dest.LLM.GeminiAPIKey, "gk"},
+		{"llm gemini key file", dest.LLM.GeminiAPIKeyFile, "/tmp/gk"},
+		{"llm gemini url", dest.LLM.GeminiBaseURL, "https://gemini.example.com"},
+		{"llm ollama url", dest.LLM.OllamaURL, "https://ollama.example.com"},
+		{"llm max tokens", dest.LLM.MaxTokens, 1234},
+		{"llm max iterations", dest.LLM.MaxIterations, 7},
+		{"llm timeout", dest.LLM.TimeoutSeconds, 99},
+		{"llm compact tool descriptions", dest.LLM.CompactToolDescriptions, "always"},
+		{"kb path", dest.Knowledgebase.DatabasePath, "/tmp/kb.db"},
+		{"kb provider", dest.Knowledgebase.EmbeddingProvider, "openai"},
+		{"kb model", dest.Knowledgebase.EmbeddingModel, "text-embedding-3-small"},
+		{"kb voyage key", dest.Knowledgebase.EmbeddingVoyageAPIKey, "vk"},
+		{"kb voyage key file", dest.Knowledgebase.EmbeddingVoyageAPIKeyFile, "/tmp/vk"},
+		{"kb openai key", dest.Knowledgebase.EmbeddingOpenAIAPIKey, "ok"},
+		{"kb openai key file", dest.Knowledgebase.EmbeddingOpenAIAPIKeyFile, "/tmp/ok"},
+		{"kb voyage url", dest.Knowledgebase.EmbeddingVoyageBaseURL, "https://voyage.example.com"},
+		{"kb openai url", dest.Knowledgebase.EmbeddingOpenAIBaseURL, "https://openai.example.com"},
+		{"kb gemini key", dest.Knowledgebase.EmbeddingGeminiAPIKey, "gk"},
+		{"kb gemini key file", dest.Knowledgebase.EmbeddingGeminiAPIKeyFile, "/tmp/gk"},
+		{"kb gemini url", dest.Knowledgebase.EmbeddingGeminiBaseURL, "https://gemini.example.com"},
+		{"kb ollama url", dest.Knowledgebase.EmbeddingOllamaURL, "https://ollama.example.com"},
+		{"secret file", dest.SecretFile, "/tmp/secret"},
+		{"custom definitions", dest.CustomDefinitionsPath, "/tmp/defs"},
+		{"data dir", dest.DataDir, "/tmp/data"},
+		{"trace file", dest.TraceFile, "/tmp/trace.log"},
+		{"allow internal networks", dest.ConnectionSecurity.AllowInternalNetworks, true},
+	}
+	for _, c := range checks {
+		if c.got != c.want {
+			t.Errorf("%s: got %v, want %v", c.name, c.got, c.want)
+		}
+	}
+
+	if dest.LLM.Temperature != 0.5 {
+		t.Errorf("llm temperature: got %v, want 0.5", dest.LLM.Temperature)
+	}
+	if len(dest.HTTP.TrustedProxies) != 1 || dest.HTTP.TrustedProxies[0] != "192.0.2.0/24" {
+		t.Errorf("trusted proxies: got %v", dest.HTTP.TrustedProxies)
+	}
+	if len(dest.ConnectionSecurity.AllowedHosts) != 1 {
+		t.Errorf("allowed hosts: got %v", dest.ConnectionSecurity.AllowedHosts)
+	}
+	if len(dest.ConnectionSecurity.BlockedHosts) != 1 {
+		t.Errorf("blocked hosts: got %v", dest.ConnectionSecurity.BlockedHosts)
+	}
+	if dest.Memory.Enabled == nil || *dest.Memory.Enabled {
+		t.Error("memory enabled: expected an explicit false to be carried over")
+	}
+
+	boolPtrs := map[string]*bool{
+		"query_database":       dest.Builtins.Tools.QueryDatabase,
+		"get_schema_info":      dest.Builtins.Tools.GetSchemaInfo,
+		"similarity_search":    dest.Builtins.Tools.SimilaritySearch,
+		"execute_explain":      dest.Builtins.Tools.ExecuteExplain,
+		"generate_embedding":   dest.Builtins.Tools.GenerateEmbedding,
+		"search_knowledgebase": dest.Builtins.Tools.SearchKnowledgebase,
+		"count_rows":           dest.Builtins.Tools.CountRows,
+		"list_probes":          dest.Builtins.Tools.ListProbes,
+		"describe_probe":       dest.Builtins.Tools.DescribeProbe,
+		"query_metrics":        dest.Builtins.Tools.QueryMetrics,
+		"store_memory":         dest.Builtins.Tools.StoreMemory,
+		"recall_memories":      dest.Builtins.Tools.RecallMemories,
+		"delete_memory":        dest.Builtins.Tools.DeleteMemory,
+		"system_info":          dest.Builtins.Resources.SystemInfo,
+		"connection_info":      dest.Builtins.Resources.ConnectionInfo,
+	}
+	for name, ptr := range boolPtrs {
+		if ptr == nil || *ptr {
+			t.Errorf("builtin %s: expected an explicit false to be carried over", name)
+		}
+	}
+}

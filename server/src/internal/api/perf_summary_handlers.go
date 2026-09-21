@@ -717,7 +717,12 @@ func (h *PerfSummaryHandler) queryCacheHit(
 // Elapsed time is derived from the distinct sample timestamps rather
 // than from the per-database rows, because summing an elapsed value
 // carried on every row would multiply it by the number of databases and
-// collapse commits_per_sec accordingly.
+// collapse commits_per_sec accordingly. A per-database delta is only
+// admitted when its own predecessor row is the sample immediately
+// before it, which the join on both collected_at and
+// previous_collected_at enforces: a database missing from an
+// intermediate sample would otherwise have its delta span two intervals
+// whilst being divided by the elapsed time of only the last one.
 func (h *PerfSummaryHandler) queryTransactions(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -728,6 +733,8 @@ func (h *PerfSummaryHandler) queryTransactions(
 	rows, err := tx.Query(ctx, `
         WITH sample_elapsed AS (
             SELECT collected_at,
+                   LAG(collected_at) OVER (ORDER BY collected_at)
+                       AS previous_collected_at,
                    EXTRACT(EPOCH FROM collected_at - LAG(collected_at) OVER (
                        ORDER BY collected_at
                    )) AS elapsed_sec
@@ -742,6 +749,7 @@ func (h *PerfSummaryHandler) queryTransactions(
         deltas AS (
             SELECT
                 collected_at,
+                LAG(collected_at) OVER w AS previous_collected_at,
                 xact_commit - LAG(xact_commit) OVER w AS delta_commit,
                 xact_rollback - LAG(xact_rollback) OVER w AS delta_rollback,
                 stats_reset IS DISTINCT FROM LAG(stats_reset) OVER w
@@ -753,13 +761,17 @@ func (h *PerfSummaryHandler) queryTransactions(
             WINDOW w AS (PARTITION BY datname ORDER BY collected_at)
         ),
         valid_deltas AS (
-            SELECT collected_at, delta_commit, delta_rollback
-            FROM deltas
-            WHERE delta_commit IS NOT NULL
-              AND delta_rollback IS NOT NULL
-              AND delta_commit >= 0
-              AND delta_rollback >= 0
-              AND NOT reset_changed
+            SELECT d.collected_at, d.delta_commit, d.delta_rollback
+            FROM deltas d
+            JOIN sample_elapsed s
+              ON s.collected_at = d.collected_at
+             AND s.previous_collected_at = d.previous_collected_at
+            WHERE d.delta_commit IS NOT NULL
+              AND d.delta_rollback IS NOT NULL
+              AND d.delta_commit >= 0
+              AND d.delta_rollback >= 0
+              AND NOT d.reset_changed
+              AND s.elapsed_sec > 0
         ),
         bucket_deltas AS (
             SELECT date_bin($1::interval, collected_at, $2) AS bucket,

@@ -245,6 +245,45 @@ func TestQueryTransactions_ElapsedIsPerSampleNotPerDatabase(t *testing.T) {
 	}
 }
 
+// TestQueryTransactions_GappySampleDiscardsOnlyThatDatabase seeds a
+// database that is missing from an intermediate sample whilst another is
+// present throughout. The gappy database's own previous row is two
+// samples back, so its delta spans two intervals whilst the bucket is
+// credited with the elapsed time of only the last one; the join on
+// previous_collected_at must drop that interval and keep the contiguous
+// database's.
+func TestQueryTransactions_GappySampleDiscardsOnlyThatDatabase(t *testing.T) {
+	h, pool, cleanup := newDatabaseSummariesTestHandler(t)
+	defer cleanup()
+
+	const connID = 530
+	seedTxnSamples(t, pool, connID, []txnSample{
+		// "gappy" is absent from the minute 1 sample, and by minute 2
+		// has accumulated two intervals' worth of commits.
+		{minute: 0, datname: "gappy", commit: 0},
+		{minute: 2, datname: "gappy", commit: 6000},
+		{minute: 0, datname: "steady", commit: 0},
+		{minute: 1, datname: "steady", commit: 60},
+		{minute: 2, datname: "steady", commit: 120},
+	})
+
+	cps, _, points := runQueryTransactions(t, h, pool, connID)
+
+	if len(points) != 2 {
+		t.Fatalf("len(points) = %d, want 2: %#v", len(points), points)
+	}
+	for i, pt := range points {
+		if pt.CommitsPerSec != 1.0 {
+			t.Errorf("points[%d].CommitsPerSec = %v, want 1 "+
+				"(only the contiguous database counts)",
+				i, pt.CommitsPerSec)
+		}
+	}
+	if cps != 1.0 {
+		t.Errorf("current commits_per_sec = %v, want 1", cps)
+	}
+}
+
 // TestQueryTransactions_MultipleBuckets checks that several consecutive
 // intervals each land in their own bucket with their own rate, and that
 // the returned "current" values come from the latest bucket.
@@ -346,14 +385,30 @@ func TestQueryTransactions_QueryError(t *testing.T) {
 // constant, so the query prepares cleanly and only fails at execution,
 // which is the path that reaches rows.Err rather than the tx.Query error
 // return. Samples are seeded so that the failing expression is actually
-// evaluated. The returned function restores the schema.
+// evaluated.
+//
+// The restore is registered with t.Cleanup before the first mutation, so
+// a setup statement that fails part way through still leaves the schema
+// as it found it rather than stranding the view and the renamed table
+// for every later test and run against the same database.
 func installFailingTransactionView(
 	t *testing.T,
 	pool *pgxpool.Pool,
 	connID int,
-) func() {
+) {
 	t.Helper()
 	ctx := context.Background()
+	t.Cleanup(func() {
+		for _, stmt := range []string{
+			`DROP VIEW IF EXISTS metrics.pg_stat_database`,
+			`ALTER TABLE IF EXISTS metrics.pg_stat_database_src
+                RENAME TO pg_stat_database`,
+		} {
+			if _, err := pool.Exec(context.Background(), stmt); err != nil {
+				t.Errorf("restore schema: %v", err)
+			}
+		}
+	})
 	stmts := []string{
 		`ALTER TABLE metrics.pg_stat_database RENAME TO pg_stat_database_src`,
 		`CREATE VIEW metrics.pg_stat_database AS
@@ -377,16 +432,6 @@ func installFailingTransactionView(
 			t.Fatalf("install failing view: %v", err)
 		}
 	}
-	return func() {
-		for _, stmt := range []string{
-			`DROP VIEW IF EXISTS metrics.pg_stat_database`,
-			`ALTER TABLE metrics.pg_stat_database_src RENAME TO pg_stat_database`,
-		} {
-			if _, err := pool.Exec(ctx, stmt); err != nil {
-				t.Errorf("restore schema: %v", err)
-			}
-		}
-	}
 }
 
 // TestQueryTransactions_ExecutionErrorReturnsNoData drives the rows.Err
@@ -396,11 +441,12 @@ func installFailingTransactionView(
 // execution-time failure is the only way into the loop's error handling.
 func TestQueryTransactions_ExecutionErrorReturnsNoData(t *testing.T) {
 	h, pool, cleanup := newDatabaseSummariesTestHandler(t)
-	defer cleanup()
+	// Registered with t.Cleanup rather than deferred so that it runs
+	// after the schema restore below, whilst the pool is still open.
+	t.Cleanup(cleanup)
 
 	const connID = 529
-	restore := installFailingTransactionView(t, pool, connID)
-	defer restore()
+	installFailingTransactionView(t, pool, connID)
 
 	cps, rbPct, points := runQueryTransactions(t, h, pool, connID)
 

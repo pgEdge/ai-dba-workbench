@@ -104,7 +104,12 @@ a rate, elapsed time has to come from the distinct sample timestamps
 (a `sample_elapsed` CTE over `SELECT DISTINCT collected_at`, LAG over
 that, joined back to the bucket) rather than from a value carried on
 every per-database row, which summing would multiply by the number of
-databases and divide `commits_per_sec` down accordingly. The gap-bound
+databases and divide `commits_per_sec` down accordingly. That join is on
+both `collected_at` and `previous_collected_at`, because a database
+missing from an intermediate sample has its own previous row two samples
+back: its delta would span two intervals whilst the bucket is credited
+with the elapsed time of only the last one, so the interval is dropped
+for that database alone. The gap-bound
 rejection of a long collection outage is deliberately not here; it needs
 the probe interval and belongs to #402. The cases are pinned in
 `perf_summary_transactions_test.go`.

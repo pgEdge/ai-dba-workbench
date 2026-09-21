@@ -118,10 +118,10 @@ func describeAuditFilter(f auth.AuditFilter) string {
 	}
 	add("outcome", f.Outcome)
 	if f.Since != nil {
-		add("since", f.Since.UTC().Format(time.RFC3339))
+		add("since", f.Since.UTC().Format(time.RFC3339Nano))
 	}
 	if f.Until != nil {
-		add("until", f.Until.UTC().Format(time.RFC3339))
+		add("until", f.Until.UTC().Format(time.RFC3339Nano))
 	}
 	if f.Limit > 0 {
 		add("limit", strconv.Itoa(f.Limit))

@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -2512,6 +2513,12 @@ http:
 // through to the default search order there would look for the secret
 // somewhere the operator did not put it.
 func TestLoadConfigSecretFileUnreadable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// Windows maps only the owner-write bit, so a mode of 0000
+		// still leaves the file readable, and os.Geteuid returns
+		// -1 there rather than 0, so the check below cannot skip.
+		t.Skip("mode 0000 does not prevent a read on Windows")
+	}
 	if os.Geteuid() == 0 {
 		t.Skip("root can read a 0000 file")
 	}

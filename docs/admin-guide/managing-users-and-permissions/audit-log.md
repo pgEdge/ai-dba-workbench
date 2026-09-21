@@ -302,10 +302,39 @@ one operator made since the start of the month, as JSON:
 
 Each line of the JSON output is one complete event, including the
 `details` object and both hashes, so the output pipes straight into
-`jq` or a log shipper:
+`jq` or a log shipper. The example below is one such line, indented
+here so that it fits the page:
 
 ```json
-{"id":2,"occurred_at":"2026-09-15T11:09:17.648856224Z","actor_type":"cli","actor_id":null,"actor_name":"dba-ops","action":"user.create","target_type":"user","target_id":1,"target_name":"jane.doe","outcome":"success","details":{"after":{"id":1,"username":"jane.doe","display_name":"","email":"","annotation":"","enabled":true,"is_superuser":false,"is_service_account":false}},"prev_hash":"76bed6cc892595f6035701e0b68b3c112088d4a14b2e2db9173043735f9f85e7","hash":"5438335f26c3c01a4f42976957dca65f25b48cf44c637ff38ac8bd042736a092","hash_version":2}
+{
+  "id": 2,
+  "occurred_at": "2026-09-15T11:09:17.648856224Z",
+  "actor_type": "cli",
+  "actor_id": null,
+  "actor_name": "dba-ops",
+  "action": "user.create",
+  "target_type": "user",
+  "target_id": 1,
+  "target_name": "jane.doe",
+  "outcome": "success",
+  "details": {
+    "after": {
+      "id": 1,
+      "username": "jane.doe",
+      "display_name": "",
+      "email": "",
+      "annotation": "",
+      "enabled": true,
+      "is_superuser": false,
+      "is_service_account": false
+    }
+  },
+  "prev_hash":
+    "76bed6cc892595f6035701e0b68b3c112088d4a14b2e2db9173043735f9f85e7",
+  "hash":
+    "5438335f26c3c01a4f42976957dca65f25b48cf44c637ff38ac8bd042736a092",
+  "hash_version": 2
+}
 ```
 
 ## Tamper Evidence
@@ -557,7 +586,9 @@ into removing the newest events instead of the oldest. One consequence
 is worth knowing about, since it shows up on a server that has been idle
 for longer than the retention period: when no event at all falls inside
 the window, the purge removes nothing rather than emptying the log, and
-the backlog clears as soon as the next event is recorded.
+the backlog clears at the first purge to run once an event falls
+inside the window again, which is to say within five minutes of that
+event, or at the next start of the server.
 
 If you must keep audit events for longer than the server retains them,
 export them to external storage before the purge removes them, either

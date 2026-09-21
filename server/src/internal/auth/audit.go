@@ -601,9 +601,7 @@ func forEachAuditEvent(q auditQuerier, fn func(AuditEvent) error) error {
 // auditEventPage reads up to auditPageSize rows with an id above after,
 // in id order.
 func auditEventPage(q auditQuerier, after int64) ([]AuditEvent, error) {
-	rows, err := q.Query("SELECT "+auditColumns+
-		" FROM audit_events WHERE id > ? ORDER BY id LIMIT ?",
-		after, auditPageSize)
+	rows, err := q.Query(auditSelectPage, after, auditPageSize)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query audit events: %w", err)
 	}
@@ -1470,6 +1468,21 @@ const auditColumns = `id, occurred_at, actor_type, actor_id, actor_name,
     actor_ip, action, target_type, target_id, target_name, outcome,
     error, details, prev_hash, hash, hash_version`
 
+// The audit_events reads whose text is fixed are assembled here, once,
+// rather than concatenated at each call site: every one of them is a
+// compile-time constant, so folding them keeps the call sites reading
+// as the plain parameterised queries they are.
+const (
+	auditSelectAll = "SELECT " + auditColumns + " FROM audit_events"
+
+	auditSelectPage = auditSelectAll +
+		" WHERE id > ? ORDER BY id LIMIT ?"
+
+	auditSelectByID = auditSelectAll + " WHERE id = ?"
+
+	auditSelectInIDOrder = auditSelectAll + " ORDER BY id"
+)
+
 // ListAuditEvents returns a page of audit events, newest first, along
 // with the total number of events matching the filter.
 func (s *AuthStore) ListAuditEvents(f AuditFilter) ([]AuditEvent, int, error) {
@@ -1492,9 +1505,9 @@ func (s *AuthStore) ListAuditEvents(f AuditFilter) ([]AuditEvent, int, error) {
 		effectiveAuditLimit(f.Limit), offset)
 
 	//nolint:gosec // G202: the concatenated fragments are compile-time
-	// constants (auditColumns) and a WHERE clause built solely from
+	// constants (auditSelectAll) and a WHERE clause built solely from
 	// fixed literals by auditWhere; every filter value is bound.
-	rows, err := s.db.Query("SELECT "+auditColumns+" FROM audit_events"+where+
+	rows, err := s.db.Query(auditSelectAll+where+
 		" ORDER BY id DESC LIMIT ? OFFSET ?", pageArgs...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to query audit events: %w", err)
@@ -1551,8 +1564,7 @@ func (s *AuthStore) VerifyAuditChain() (int, int64, error) {
 		return 0, 0, fmt.Errorf("%w: %w", ErrAuditChainBroken, err)
 	}
 
-	rows, err := s.db.Query("SELECT " + auditColumns +
-		" FROM audit_events ORDER BY id")
+	rows, err := s.db.Query(auditSelectInIDOrder)
 	if err != nil {
 		return 0, 0, fmt.Errorf("failed to query audit events: %w", err)
 	}

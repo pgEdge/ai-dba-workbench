@@ -431,7 +431,8 @@ project adheres to
     all falls inside the retention window, as on a server idle
     for longer than the retention period, the purge now
     removes nothing rather than emptying the log, and the
-    backlog clears once the next event is recorded.
+    backlog clears at the first purge to run once an event
+    falls inside the window again.
 
 - Report a mislaid or rotated server secret separately from
   tampering in `-verify-audit-log`. A log in which nothing

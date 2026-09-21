@@ -192,8 +192,7 @@ func assertRawUpdatesRefused(t *testing.T, db *sql.DB) {
 func corruptAuditRow(t *testing.T, s *AuthStore, id int64) {
 	t.Helper()
 
-	row := s.db.QueryRow("SELECT "+auditColumns+
-		" FROM audit_events WHERE id = ?", id)
+	row := s.db.QueryRow(auditSelectByID, id)
 	ev, err := scanAuditEvent(row.Scan)
 	if err != nil {
 		t.Fatalf("Failed to read audit row %d: %v", id, err)
@@ -841,6 +840,14 @@ func TestVerifyAcceptsAWhollyPurgedPrefix(t *testing.T) {
 	}
 }
 
+// The statements that remove the two schema objects the chain rests
+// on, folded here so the names stay compile-time constants rather than
+// being assembled at the point they are executed.
+const (
+	dropAuditNoUpdateTrigger = "DROP TRIGGER " + auditNoUpdateTrigger
+	dropAuditChainIndex      = "DROP INDEX " + auditChainIndexName
+)
+
 // TestVerifyReportsSchemaDamageAsTampering checks the two schema
 // objects the chain's guarantees rest on are themselves checked: a
 // database with either removed accepts a forked chain or a rewritten
@@ -851,8 +858,8 @@ func TestVerifyReportsSchemaDamageAsTampering(t *testing.T) {
 		name string
 		drop string
 	}{
-		{"trigger dropped", "DROP TRIGGER " + auditNoUpdateTrigger},
-		{"index dropped", "DROP INDEX " + auditChainIndexName},
+		{"trigger dropped", dropAuditNoUpdateTrigger},
+		{"index dropped", dropAuditChainIndex},
 	}
 
 	for _, tt := range tests {

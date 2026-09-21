@@ -11,8 +11,8 @@ package auth
 
 import (
 	"database/sql"
+	"encoding/hex"
 	"errors"
-	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -70,6 +70,17 @@ func insertAuditRowAsV1(t *testing.T, s *AuthStore, ev *AuditEvent) {
 	}
 }
 
+// distinctPrevHash renders id as a 64 character hexadecimal string, so
+// that every row a test plants below the genuine ones carries a
+// prev_hash of its own; the chain index admits one row per predecessor,
+// and the value is otherwise arbitrary.
+func distinctPrevHash(id int64) string {
+	var digest [32]byte
+	digest[30] = byte(id >> 8)
+	digest[31] = byte(id)
+	return hex.EncodeToString(digest[:])
+}
+
 // insertAuditRowAsV1AtID writes an unkeyed row at an id of the caller's
 // choosing, which is what someone with write access to auth.db can do
 // and what the id-prefix reasoning VULN-307 retired assumed away:
@@ -89,7 +100,7 @@ func insertAuditRowAsV1AtID(t *testing.T, s *AuthStore, ev *AuditEvent,
 		ev.Outcome = OutcomeSuccess
 	}
 	ev.ID = id
-	ev.PrevHash = fmt.Sprintf("%064x", id&0xffff)
+	ev.PrevHash = distinctPrevHash(id)
 	ev.HashVersion = 1
 	ev.Hash = auditHashV1(ev)
 
@@ -155,8 +166,7 @@ func inheritV1Rows(t *testing.T, s *AuthStore, n int) {
 func rewriteRowAsV1(t *testing.T, s *AuthStore, id int64) {
 	t.Helper()
 
-	row := s.db.QueryRow("SELECT "+auditColumns+
-		" FROM audit_events WHERE id = ?", id)
+	row := s.db.QueryRow(auditSelectByID, id)
 	ev, err := scanAuditEvent(row.Scan)
 	if err != nil {
 		t.Fatalf("Failed to read audit row %d: %v", id, err)

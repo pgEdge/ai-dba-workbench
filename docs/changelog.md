@@ -304,6 +304,28 @@ project adheres to
 
 ### Changed
 
+- Follow the dashboard time range selector in the database summaries
+  section of the server dashboard, the KPI tiles of the estate
+  dashboard and the comparative charts of the cluster dashboard. All
+  three asked for a fixed twenty-four hours and so ignored the
+  selector sitting on the header of the Monitoring section that holds
+  them. The `/api/v1/metrics/database-summaries` endpoint now resolves
+  its window through the same rules as every other windowed endpoint,
+  accepting `time_range=custom` with `time_start` and `time_end`
+  alongside the existing presets and still defaulting to `24h`. Every
+  figure the endpoint returns is bounded by that window, so a window
+  ending in the past reports the database sizes, connection counts,
+  dead tuple ratios and transaction rates of that moment rather than
+  of the present one; a window ending now is unchanged. The
+  performance tiles in the status panel deliberately keep a fixed
+  twenty-four hour window, because those tiles render above the
+  Monitoring section and a user reading one cannot see the control
+  that would be changing the figure, and the database filter on the
+  Top Queries panel keeps one too, so that the available choices do
+  not vanish as the window narrows. The dashboard pages in the User's
+  Guide record which panels follow the selector and which do not.
+  (#387)
+
 - Change the alerter's default Gemini reasoning model from
   `gemini-2.5-flash` to `gemini-3.6-flash`. Google no longer offers
   `gemini-2.5-flash` to new API keys, answering every request with a

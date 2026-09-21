@@ -43,4 +43,6 @@ a gap for intervals with no block access; because only
 `shared_buffers` hits count, a lower ratio does not by
 itself indicate slow I/O. Users can click a server entry
 to navigate to the [server dashboard](server.md) for that
-server.
+server. The section follows the dashboard time range
+selector, so every chart compares the members over the
+selected window.

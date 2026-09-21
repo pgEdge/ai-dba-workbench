@@ -20,6 +20,10 @@ that show recent trends. Each tile presents a single
 metric value alongside a miniature time-series chart
 for context.
 
+The tiles follow the dashboard time range selector, so
+each value and sparkline covers the selected window
+across every server in the estate.
+
 ## Cluster Cards
 
 The cluster cards section shows a summary card for each

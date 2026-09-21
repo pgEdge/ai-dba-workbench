@@ -433,7 +433,7 @@ func TestHandleDatabaseSummaries_RejectsInvalidRequests(t *testing.T) {
 			method: http.MethodGet,
 			url:    "/api/v1/metrics/database-summaries?connection_id=1&time_range=99z",
 			status: http.StatusBadRequest,
-			want:   "Invalid time_range: must be one of 1h, 6h, 24h, 7d, 30d",
+			want:   `invalid time range "99z": must be one of 1h, 6h, 24h, 7d, 30d, custom`,
 		},
 	}
 

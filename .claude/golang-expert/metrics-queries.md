@@ -1219,16 +1219,18 @@ checks inline in a handler; the `api` package already depends on
 `metrics`, so there is no cycle.
 
 `GET /api/v1/metrics/query`, `GET /api/v1/metrics/connection-groups`,
+`GET /api/v1/metrics/database-summaries`,
 `GET /api/v1/metrics/performance-summary`,
 `GET /api/v1/metrics/query-stats` and
 `GET /api/v1/metrics/top-queries` accept `time_range=custom` alongside
 `time_start` and `time_end`, resolve the window through
 `ResolveTimeWindow` and map any resolution error to `400`;
-`performance-summary` derives its bucket width from the resolved
-window (span / 60, 10 second floor). The database-summaries handler
-in `perf_summary_handlers.go` still uses the inline `validTimeRanges`
-map and accepts presets only; consolidating that is deliberately
-deferred.
+`performance-summary` and `database-summaries` both derive their bucket
+width from the resolved window (span / 60, 10 second floor). No handler
+keeps a private preset table any more: the `validTimeRanges` map that
+`database-summaries` used was deleted with issue #387, so
+`ResolveTimeWindow` is the only place that decides what a valid window
+is, and the 400 wording is the resolver's own on every endpoint.
 
 Every handler that accepts a `queryid` parameter (`/metrics/query`,
 `/metrics/latest`, `/metrics/top-queries` and `/metrics/query-stats`)
@@ -1450,6 +1452,32 @@ buffer counts were the same either way (`shared hit=13`), because runtime
 pruning already stopped the executor from touching the irrelevant
 partitions; the win is in plan size and per-execution node setup, and it
 grows with the partition count.
+
+### Every sub-query of a summary endpoint shares one window
+
+`GET /api/v1/metrics/database-summaries`
+(`handleDatabaseSummaries` in `perf_summary_handlers.go`) fans one window
+out across five sub-queries, and since issue #387 all five are bounded by
+it. Four pin to a snapshot (`queryDatabaseSizes`, `queryDatabaseStats`
+and `queryDeadTupleRatios` each select
+`collected_at = (SELECT MAX(collected_at) ... )`, whilst
+`queryTransactionRates` takes a `latest_two` CTE) and one,
+`queryDatabaseCacheHitTimeSeries`, is a bucketed series. Leaving the
+snapshot pins unbounded would have made a historical custom window return
+today's sizes, connection counts and dead tuple ratios beside a
+historical cache-hit chart, which reads as a bug rather than as a
+deliberate mixture. Bounding them instead means a historical window
+reports the estate as it stood at the end of that window, and the
+present-day answer is unchanged because the newest snapshot is inside any
+window ending now.
+
+Each of those sub-queries repeats the window bounds in both the inner and
+the outer predicate, for the partition-pruning reason set out above; a
+window with no samples yields an empty response rather than an error, the
+same "no data" behaviour the sibling endpoints have.
+`perf_summary_database_summaries_test.go` pins the behaviour with a
+fixture holding two eras of samples whose every metric differs, so a
+window that selects one era cannot silently report the other's figures.
 
 ### Bound group cardinality
 

@@ -3719,7 +3719,12 @@ func buildPaths() map[string]OpenAPIPathItem {
 				Security:    bearerAuth,
 				Parameters: []OpenAPIParameter{
 					queryParamIntRequired("connection_id", "Connection ID"),
-					queryParamString("time_range", "Time range (1h, 6h, 24h, 7d, 30d)"),
+					queryParamString("time_range",
+						"Time range (1h, 6h, 24h, 7d, 30d, custom; default: 24h); custom requires time_start and time_end"),
+					queryParamString("time_start",
+						"Window start as an RFC 3339 timestamp; required when time_range is custom"),
+					queryParamString("time_end",
+						"Window end as an RFC 3339 timestamp; required when time_range is custom"),
 				},
 				Responses: map[string]OpenAPIResponse{
 					"200": jsonResponse("DatabaseSummaryResponse", "Database summaries"),

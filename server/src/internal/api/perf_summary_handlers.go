@@ -80,15 +80,6 @@ const excludeWorkbenchQueriesClause = "AND (pss.query IS NULL OR (" +
 	"strpos(pss.query, '" + probeMarkerAlias + "') = 0 AND " +
 	"strpos(pss.query, '" + sqlmarker.Marker + "') = 0))"
 
-// validTimeRanges maps time_range parameter values to their duration.
-var validTimeRanges = map[string]time.Duration{
-	"1h":  1 * time.Hour,
-	"6h":  6 * time.Hour,
-	"24h": 24 * time.Hour,
-	"7d":  7 * 24 * time.Hour,
-	"30d": 30 * 24 * time.Hour,
-}
-
 // PerfSummaryHandler handles GET /api/v1/metrics/performance-summary
 type PerfSummaryHandler struct {
 	datastore *database.Datastore
@@ -965,25 +956,30 @@ func (h *PerfSummaryHandler) handleDatabaseSummaries(
 		return
 	}
 
+	// Parse time_range (default "24h"). A time_range of "custom" resolves
+	// against the explicit time_start and time_end timestamps, exactly as
+	// /metrics/query does; ResolveTimeWindow is the single source of truth
+	// for what counts as a valid window, so its error message is returned
+	// verbatim.
 	timeRange := ParseQueryString(r, "time_range")
 	if timeRange == "" {
 		timeRange = "24h"
 	}
-	duration, ok := validTimeRanges[timeRange]
-	if !ok {
-		RespondError(w, http.StatusBadRequest,
-			"Invalid time_range: must be one of 1h, 6h, 24h, 7d, 30d")
+	window, err := metrics.ResolveTimeWindow(timeRange,
+		ParseQueryString(r, "time_start"),
+		ParseQueryString(r, "time_end"))
+	if err != nil {
+		RespondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	bucketSeconds := int(duration.Seconds()) / 60
+	// Sixty buckets across the window, floored at ten seconds so that a
+	// very short custom window cannot ask for a sub-probe-interval bucket.
+	bucketSeconds := int(window.End.Sub(window.Start).Seconds()) / 60
 	if bucketSeconds < 10 {
 		bucketSeconds = 10
 	}
 	bucketInterval := fmt.Sprintf("%d seconds", bucketSeconds)
-
-	now := time.Now().UTC()
-	startTime := now.Add(-duration)
 
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
@@ -1002,21 +998,27 @@ func (h *PerfSummaryHandler) handleDatabaseSummaries(
 
 	dbMap := make(map[string]*DatabaseSummary)
 
+	// Every sub-query is bounded by the resolved window, so a historical
+	// custom window reports the estate as it stood at the end of that
+	// window rather than mixing today's sizes and counts with a historical
+	// cache hit series.
+
 	// Query 1: Database sizes from metrics.pg_database
-	h.queryDatabaseSizes(ctx, tx, connID, dbMap)
+	h.queryDatabaseSizes(ctx, tx, connID, window.Start, window.End, dbMap)
 
 	// Query 2: Stats from metrics.pg_stat_database
-	h.queryDatabaseStats(ctx, tx, connID, dbMap)
+	h.queryDatabaseStats(ctx, tx, connID, window.Start, window.End, dbMap)
 
 	// Query 3: Dead tuple ratio from metrics.pg_stat_all_tables
-	h.queryDeadTupleRatios(ctx, tx, connID, dbMap)
+	h.queryDeadTupleRatios(ctx, tx, connID, window.Start, window.End, dbMap)
 
-	// Query 4: Transaction rate (delta between latest two collections)
-	h.queryTransactionRates(ctx, tx, connID, dbMap)
+	// Query 4: Transaction rate (delta between the latest two collections
+	// inside the window)
+	h.queryTransactionRates(ctx, tx, connID, window.Start, window.End, dbMap)
 
 	// Query 5: Cache hit ratio time series per database
-	h.queryDatabaseCacheHitTimeSeries(ctx, tx, connID, startTime, now,
-		bucketInterval, dbMap)
+	h.queryDatabaseCacheHitTimeSeries(ctx, tx, connID, window.Start,
+		window.End, bucketInterval, dbMap)
 
 	if err := tx.Commit(ctx); err != nil {
 		log.Printf("[ERROR] Failed to commit read-only transaction: %v", err)
@@ -1036,23 +1038,35 @@ func (h *PerfSummaryHandler) handleDatabaseSummaries(
 }
 
 // queryDatabaseSizes populates database size information from pg_database.
+//
+// The snapshot is the newest one inside the requested window, so a
+// historical window reports the sizes as they stood then. The window bounds
+// are repeated in the inner and the outer predicate: the repetition is
+// semantically a no-op given the equality join on collected_at, but
+// metrics.pg_database is partitioned by range on collected_at and without a
+// direct bound on the partition key the planner cannot prune.
 func (h *PerfSummaryHandler) queryDatabaseSizes(
 	ctx context.Context,
 	tx pgx.Tx,
 	connectionID int,
+	startTime, endTime time.Time,
 	dbMap map[string]*DatabaseSummary,
 ) {
 	rows, err := tx.Query(ctx, `
         SELECT datname, database_size_bytes
         FROM metrics.pg_database
         WHERE connection_id = $1
+          AND collected_at >= $2
+          AND collected_at <= $3
           AND collected_at = (
               SELECT MAX(collected_at)
               FROM metrics.pg_database
               WHERE connection_id = $1
+                AND collected_at >= $2
+                AND collected_at <= $3
           )
           AND datistemplate = false
-    `, connectionID)
+    `, connectionID, startTime, endTime)
 	if err != nil {
 		log.Printf("[DEBUG] No database size data for connection %d: %s", connectionID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connectionID is an integer and err is sanitized via logging.SanitizeForLog
 		return
@@ -1080,24 +1094,31 @@ func (h *PerfSummaryHandler) queryDatabaseSizes(
 	}
 }
 
-// queryDatabaseStats populates the connection count from the latest
-// pg_stat_database snapshot.
+// queryDatabaseStats populates the connection count from the newest
+// pg_stat_database snapshot inside the requested window. The window bounds
+// are repeated in the inner and the outer predicate to let the planner prune
+// partitions, as in queryDatabaseSizes.
 func (h *PerfSummaryHandler) queryDatabaseStats(
 	ctx context.Context,
 	tx pgx.Tx,
 	connectionID int,
+	startTime, endTime time.Time,
 	dbMap map[string]*DatabaseSummary,
 ) {
 	rows, err := tx.Query(ctx, `
         SELECT datname, numbackends
         FROM metrics.pg_stat_database
         WHERE connection_id = $1
+          AND collected_at >= $2
+          AND collected_at <= $3
           AND collected_at = (
               SELECT MAX(collected_at)
               FROM metrics.pg_stat_database
               WHERE connection_id = $1
+                AND collected_at >= $2
+                AND collected_at <= $3
           )
-    `, connectionID)
+    `, connectionID, startTime, endTime)
 	if err != nil {
 		log.Printf("[DEBUG] No pg_stat_database data for connection %d: %s", connectionID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connectionID is an integer and err is sanitized via logging.SanitizeForLog
 		return
@@ -1127,11 +1148,15 @@ func (h *PerfSummaryHandler) queryDatabaseStats(
 	}
 }
 
-// queryDeadTupleRatios populates dead tuple ratios from pg_stat_all_tables.
+// queryDeadTupleRatios populates dead tuple ratios from the newest
+// pg_stat_all_tables snapshot inside the requested window. The window bounds
+// are repeated in the inner and the outer predicate to let the planner prune
+// partitions, as in queryDatabaseSizes.
 func (h *PerfSummaryHandler) queryDeadTupleRatios(
 	ctx context.Context,
 	tx pgx.Tx,
 	connectionID int,
+	startTime, endTime time.Time,
 	dbMap map[string]*DatabaseSummary,
 ) {
 	rows, err := tx.Query(ctx, `
@@ -1142,13 +1167,17 @@ func (h *PerfSummaryHandler) queryDeadTupleRatios(
                END AS dead_tuple_ratio
         FROM metrics.pg_stat_all_tables
         WHERE connection_id = $1
+          AND collected_at >= $2
+          AND collected_at <= $3
           AND collected_at = (
               SELECT MAX(collected_at)
               FROM metrics.pg_stat_all_tables
               WHERE connection_id = $1
+                AND collected_at >= $2
+                AND collected_at <= $3
           )
         GROUP BY database_name
-    `, connectionID)
+    `, connectionID, startTime, endTime)
 	if err != nil {
 		log.Printf("[DEBUG] No dead tuple data for connection %d: %s", connectionID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connectionID is an integer and err is sanitized via logging.SanitizeForLog
 		return
@@ -1176,11 +1205,15 @@ func (h *PerfSummaryHandler) queryDeadTupleRatios(
 }
 
 // queryTransactionRates computes transaction rate per database as the delta
-// between the latest two collections.
+// between the latest two collections inside the requested window, so a
+// historical window reports the rate as it stood at the end of that window.
+// The window bounds are repeated in both CTEs to let the planner prune
+// partitions, as in queryDatabaseSizes.
 func (h *PerfSummaryHandler) queryTransactionRates(
 	ctx context.Context,
 	tx pgx.Tx,
 	connectionID int,
+	startTime, endTime time.Time,
 	dbMap map[string]*DatabaseSummary,
 ) {
 	rows, err := tx.Query(ctx, `
@@ -1188,6 +1221,8 @@ func (h *PerfSummaryHandler) queryTransactionRates(
             SELECT DISTINCT collected_at
             FROM metrics.pg_stat_database
             WHERE connection_id = $1
+              AND collected_at >= $2
+              AND collected_at <= $3
             ORDER BY collected_at DESC
             LIMIT 2
         ),
@@ -1198,6 +1233,8 @@ func (h *PerfSummaryHandler) queryTransactionRates(
                    xact_rollback
             FROM metrics.pg_stat_database
             WHERE connection_id = $1
+              AND collected_at >= $2
+              AND collected_at <= $3
               AND collected_at IN (SELECT collected_at FROM latest_two)
         )
         SELECT p1.datname,
@@ -1211,7 +1248,7 @@ func (h *PerfSummaryHandler) queryTransactionRates(
           ON p1.datname = p2.datname
          AND p1.collected_at > p2.collected_at
         WHERE (p1.xact_commit - p2.xact_commit) >= 0
-    `, connectionID)
+    `, connectionID, startTime, endTime)
 	if err != nil {
 		log.Printf("[DEBUG] No transaction rate data for connection %d: %s", connectionID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connectionID is an integer and err is sanitized via logging.SanitizeForLog
 		return

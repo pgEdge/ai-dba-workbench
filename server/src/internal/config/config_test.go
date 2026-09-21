@@ -2610,16 +2610,34 @@ func TestToolsConfig_IsToolEnabledHonoursEveryField(t *testing.T) {
 	}
 }
 
-// TestToolsConfig_IsToolEnabledBlackoutsAndTestQuery pins the two tools
-// this change added fields for, both of which the documentation and the
-// example configuration already advertised as switchable whilst
-// IsToolEnabled had no case for either.
-func TestToolsConfig_IsToolEnabledBlackoutsAndTestQuery(t *testing.T) {
-	cfg := ToolsConfig{GetBlackouts: boolPtr(false), TestQuery: boolPtr(false)}
+// TestToolsConfig_IsToolEnabledBlackoutsAndRequiredTestQuery pins the two
+// tools the documentation and the example configuration advertised whilst
+// IsToolEnabled had no case for either: get_blackouts is switchable and must
+// respect a false value, whereas test_query is required and must stay enabled
+// however it is configured, including through a configuration file.
+func TestToolsConfig_IsToolEnabledBlackoutsAndRequiredTestQuery(t *testing.T) {
+	cfg := ToolsConfig{GetBlackouts: boolPtr(false)}
 	if cfg.IsToolEnabled("get_blackouts") {
 		t.Error("IsToolEnabled(\"get_blackouts\") = true, want false")
 	}
-	if cfg.IsToolEnabled("test_query") {
-		t.Error("IsToolEnabled(\"test_query\") = true, want false")
+
+	if !cfg.IsToolEnabled("test_query") {
+		t.Error("IsToolEnabled(\"test_query\") = false, want true: test_query is required")
+	}
+
+	// A YAML round-trip guards against someone reintroducing a
+	// test_query field on ToolsConfig: an operator switching it off in the
+	// configuration file must not be able to disable the tool.
+	var fromFile Config
+	yamlSrc := "builtins:\n  tools:\n    test_query: false\n    get_blackouts: false\n"
+	if err := yaml.Unmarshal([]byte(yamlSrc), &fromFile); err != nil {
+		t.Fatalf("yaml.Unmarshal() error = %v", err)
+	}
+	if !fromFile.Builtins.Tools.IsToolEnabled("test_query") {
+		t.Error("IsToolEnabled(\"test_query\") = false after test_query: false in YAML, " +
+			"want true: test_query must not be configurable")
+	}
+	if fromFile.Builtins.Tools.IsToolEnabled("get_blackouts") {
+		t.Error("IsToolEnabled(\"get_blackouts\") = true after get_blackouts: false in YAML, want false")
 	}
 }

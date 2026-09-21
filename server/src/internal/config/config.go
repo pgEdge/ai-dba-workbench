@@ -69,7 +69,11 @@ type BuiltinsConfig struct {
 
 // ToolsConfig holds configuration for enabling/disabling built-in tools
 // All tools are enabled by default
-// Note: read_resource tool is always enabled as it's used to list resources
+// Note: the read_resource tool is always enabled as it's used to list
+// resources, and test_query is always enabled because it only validates
+// SQL without returning data and the chat assistant is instructed to
+// validate every statement through it before showing it to the user;
+// neither has a field here.
 type ToolsConfig struct {
 	QueryDatabase       *bool `yaml:"query_database"`       // Execute SQL queries (default: true)
 	GetSchemaInfo       *bool `yaml:"get_schema_info"`      // Get detailed schema information (default: true)
@@ -78,7 +82,6 @@ type ToolsConfig struct {
 	GenerateEmbedding   *bool `yaml:"generate_embedding"`   // Generate text embeddings (default: true)
 	SearchKnowledgebase *bool `yaml:"search_knowledgebase"` // Search knowledgebase (default: true)
 	CountRows           *bool `yaml:"count_rows"`           // Count table rows (default: true)
-	TestQuery           *bool `yaml:"test_query"`           // Validate SQL without executing it (default: true)
 	ListProbes          *bool `yaml:"list_probes"`          // List available metrics probes (default: true)
 	DescribeProbe       *bool `yaml:"describe_probe"`       // Describe metrics in a probe (default: true)
 	QueryMetrics        *bool `yaml:"query_metrics"`        // Query collected metrics (default: true)
@@ -125,7 +128,10 @@ func (c *ToolsConfig) IsToolEnabled(toolName string) bool {
 	case "count_rows":
 		return c.CountRows == nil || *c.CountRows
 	case "test_query":
-		return c.TestQuery == nil || *c.TestQuery
+		// Always enabled: it only validates SQL and never returns data, and
+		// the chat assistant validates every statement through it, so
+		// disabling it would leave the assistant calling an unregistered tool.
+		return true
 	case "list_probes":
 		return c.ListProbes == nil || *c.ListProbes
 	case "describe_probe":
@@ -1170,9 +1176,6 @@ func mergeConfig(dest, src *Config) {
 	}
 	if src.Builtins.Tools.CountRows != nil {
 		dest.Builtins.Tools.CountRows = src.Builtins.Tools.CountRows
-	}
-	if src.Builtins.Tools.TestQuery != nil {
-		dest.Builtins.Tools.TestQuery = src.Builtins.Tools.TestQuery
 	}
 	if src.Builtins.Tools.ListProbes != nil {
 		dest.Builtins.Tools.ListProbes = src.Builtins.Tools.ListProbes

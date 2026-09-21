@@ -195,9 +195,10 @@ func (p *ContextAwareProvider) registerDatabaseTools(registry *Registry, client 
 	if p.cfg.Builtins.Tools.IsToolEnabled("count_rows") {
 		registry.Register("count_rows", CountRowsTool(client, p.resolver))
 	}
-	if p.cfg.Builtins.Tools.IsToolEnabled("test_query") {
-		registry.Register("test_query", TestQueryTool(client, p.resolver))
-	}
+	// The test_query tool is always enabled: it only validates SQL without
+	// returning data, and the chat assistant is instructed to validate every
+	// statement through it before showing it to the user.
+	registry.Register("test_query", TestQueryTool(client, p.resolver))
 }
 
 // NewContextAwareProvider creates a new context-aware tool provider

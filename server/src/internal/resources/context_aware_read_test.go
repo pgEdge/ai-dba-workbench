@@ -85,8 +85,19 @@ func dropAuthTableForTest(t *testing.T, dataDir, table string) {
 	}
 	defer db.Close()
 
-	if _, err := db.Exec("DROP TABLE " + table); err != nil {
-		t.Fatalf("Failed to drop %s: %v", table, err)
+	// The one table these tests drop has its own arm holding a fully
+	// literal statement, so that no table name is ever interpolated
+	// into SQL, and a name that is not on the list fails the test
+	// where it was asked for rather than as an opaque SQL error.
+	var execErr error
+	switch table {
+	case "connection_sessions":
+		_, execErr = db.Exec("DROP TABLE connection_sessions")
+	default:
+		t.Fatalf("dropAuthTableForTest: %q is not a droppable table", table)
+	}
+	if execErr != nil {
+		t.Fatalf("Failed to drop %s: %v", table, execErr)
 	}
 }
 

@@ -10,6 +10,7 @@
 package auth
 
 import (
+	"database/sql"
 	"strings"
 	"testing"
 )
@@ -30,14 +31,40 @@ func newTokenScopeFailureStore(t *testing.T) (*AuthStore, int64) {
 	return store, token.ID
 }
 
-// dropScopeTable removes one table from the live auth database so that the
-// next query against it fails. The scope tables are children of tokens, and
-// mcp_privilege_identifiers is referenced by identifier rather than by a
-// foreign key, so no other table's integrity depends on any of them.
+// dropScopeTable removes one table from the live auth database so that
+// the next query against it fails. The scope tables are children of
+// tokens, and mcp_privilege_identifiers is referenced by identifier
+// rather than by a foreign key, so no other table's integrity depends
+// on any of them.
 func dropScopeTable(t *testing.T, store *AuthStore, table string) {
 	t.Helper()
 
-	if _, err := store.db.Exec("DROP TABLE " + table); err != nil {
+	dropAuthTable(t, store.db, table)
+}
+
+// dropAuthTable drops one named table from an open auth database.
+//
+// Each permitted name has its own arm holding a fully literal
+// statement, so that no table name is ever interpolated into SQL, and
+// a name that is not on the list fails the test where it was asked for
+// rather than as an opaque SQL error at the driver.
+func dropAuthTable(t *testing.T, db *sql.DB, table string) {
+	t.Helper()
+
+	var err error
+	switch table {
+	case "token_connection_scope":
+		_, err = db.Exec("DROP TABLE token_connection_scope")
+	case "token_mcp_scope":
+		_, err = db.Exec("DROP TABLE token_mcp_scope")
+	case "token_admin_scope":
+		_, err = db.Exec("DROP TABLE token_admin_scope")
+	case "mcp_privilege_identifiers":
+		_, err = db.Exec("DROP TABLE mcp_privilege_identifiers")
+	default:
+		t.Fatalf("dropAuthTable: %q is not a droppable table", table)
+	}
+	if err != nil {
 		t.Fatalf("Failed to drop %s: %v", table, err)
 	}
 }

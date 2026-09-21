@@ -2,6 +2,7 @@
 .claude/settings.local.json
 .claude/plans/
 .claude/specs/
+.claude/local-notes/
 .claude/worktrees/
 .claude/*.lock
 .playwright-cli/

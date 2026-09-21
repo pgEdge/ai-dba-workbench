@@ -353,6 +353,18 @@ explanatory message when a request breaks one:
 - The start must fall before the present moment.
 - The span must not exceed 366 days.
 
+Three endpoints apply a tighter limit of 30 days on top of
+that, because their cost grows with the window rather than
+being absorbed by a wider bucket:
+`/api/v1/metrics/top-queries`,
+`/api/v1/metrics/performance-summary` and
+`/api/v1/metrics/database-summaries`. A span longer than 30
+days but no longer than 366 days is rejected with
+`invalid time range: span must not exceed 30 days`, and a
+span longer than 366 days with the 366 day message above.
+Thirty days is the longest preset, so no preset is
+affected.
+
 The server clamps an end time in the future to the
 present moment rather than rejecting the request,
 because a picker set to the current day often overshoots
@@ -420,8 +432,8 @@ sample. The behaviour that follows from that is:
   altogether.
 - A custom window may span at most 30 days, which is the
   longest preset; the endpoint rejects a longer span with
-  `span must not exceed 30 days`, whereas the other
-  windowed endpoints accept up to 366 days.
+  `span must not exceed 30 days`, as described under
+  Metric Time Windows below.
 - On a server with `pg_stat_statements` installed in more
   than one database, the collector stores each counter
   once per such database. The endpoint counts each

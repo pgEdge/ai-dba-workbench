@@ -744,10 +744,21 @@ func TestDatabaseSummaries_CustomWindowRejections(t *testing.T) {
 			wantErr: "invalid time_start: must not be in the future",
 		},
 		{
+			// Well past both the shared 366-day resolver cap and this
+			// endpoint's own 30-day cap; the tighter one wins, because
+			// ResolveTimeWindow's own rejection fires first only when the
+			// span also exceeds 366 days, and the messages differ.
 			name: "span beyond the cap",
 			query: "&time_range=custom&time_start=" +
 				iso(now.Add(-400*24*time.Hour)) + "&time_end=" + iso(now),
 			wantErr: "span must not exceed 366 days",
+		},
+		{
+			name: "span just beyond the endpoint cap",
+			query: "&time_range=custom&time_start=" +
+				iso(now.Add(-maxAggregationTimeSpan-time.Minute)) +
+				"&time_end=" + iso(now),
+			wantErr: "invalid time range: span must not exceed 30 days",
 		},
 	}
 
@@ -763,6 +774,28 @@ func TestDatabaseSummaries_CustomWindowRejections(t *testing.T) {
 				t.Errorf("error = %q, want it to contain %q", got, tt.wantErr)
 			}
 		})
+	}
+}
+
+// TestDatabaseSummaries_AcceptsWindowJustInsideCap pins the accepted side
+// of the per-endpoint span cap. Before issue #387 this handler validated
+// time_range against the preset map, which capped the window at 30 days by
+// construction; the explicit check restores that bound now that custom
+// windows resolve through metrics.ResolveTimeWindow.
+func TestDatabaseSummaries_AcceptsWindowJustInsideCap(t *testing.T) {
+	h, _, cleanup := newDatabaseSummariesTestHandler(t)
+	defer cleanup()
+
+	now := time.Now().UTC()
+	iso := func(ts time.Time) string { return ts.Format(time.RFC3339) }
+
+	rec := doDatabaseSummariesRequest(h, "connection_id=607"+
+		"&time_range=custom&time_start="+
+		iso(now.Add(-maxAggregationTimeSpan+time.Minute))+
+		"&time_end="+iso(now))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code,
+			rec.Body.String())
 	}
 }
 

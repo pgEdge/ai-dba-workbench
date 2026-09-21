@@ -5774,7 +5774,7 @@
           {
             "name": "time_range",
             "in": "query",
-            "description": "Time range (1h, 6h, 24h, 7d, 30d, custom; default: 24h); custom requires time_start and time_end",
+            "description": "Time range (1h, 6h, 24h, 7d, 30d, custom; default: 24h); custom requires time_start and time_end, and the span must not exceed 30 days",
             "schema": {
               "type": "string"
             }
@@ -5982,7 +5982,7 @@
           {
             "name": "time_range",
             "in": "query",
-            "description": "Time range (1h, 6h, 24h, 7d, 30d, custom; default: 1h); custom requires time_start and time_end",
+            "description": "Time range (1h, 6h, 24h, 7d, 30d, custom; default: 1h); custom requires time_start and time_end, and the span must not exceed 30 days",
             "schema": {
               "type": "string"
             }

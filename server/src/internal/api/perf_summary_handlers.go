@@ -360,6 +360,16 @@ func (h *PerfSummaryHandler) handlePerfSummary(
 		return
 	}
 
+	// The shared 366-day cap is far too generous here: this endpoint runs
+	// five sub-queries for every connection in connection_ids inside one
+	// read-only transaction, so the work is linear in both the window and
+	// the size of the estate. See maxAggregationTimeSpan. Presets are
+	// unaffected, because the longest of them is exactly 30 days.
+	if err := checkAggregationTimeSpan(window); err != nil {
+		RespondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
 	// Calculate bucket interval: window / 60, minimum 10 seconds
 	bucketSeconds := int(window.End.Sub(window.Start).Seconds()) / 60
 	if bucketSeconds < 10 {
@@ -973,6 +983,16 @@ func (h *PerfSummaryHandler) handleDatabaseSummaries(
 		return
 	}
 
+	// The shared 366-day cap is far too generous for an aggregation whose
+	// cost is linear in the window; see maxAggregationTimeSpan. This
+	// endpoint previously validated time_range against the preset map,
+	// which capped the window at 30 days by construction, so the explicit
+	// check restores that bound now that custom windows are accepted.
+	if err := checkAggregationTimeSpan(window); err != nil {
+		RespondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
 	// Sixty buckets across the window, floored at ten seconds so that a
 	// very short custom window cannot ask for a sub-probe-interval bucket.
 	bucketSeconds := int(window.End.Sub(window.Start).Seconds()) / 60
@@ -1372,45 +1392,6 @@ const (
 	defaultTopQueryOrderBy = "total_exec_time"
 	defaultTopQueryOrder   = "desc"
 )
-
-// maxTopQueriesTimeSpan caps the window this endpoint will aggregate
-// over. It is deliberately tighter than metrics.MaxCustomTimeSpan, which
-// stays at 366 days for /metrics/query, where the bucket width is derived
-// from the span and so the work stays bounded however long the window is.
-// Nothing damps the cost here: the aggregation is linear in the window and
-// the whole CTE runs twice per request, once for the count and once for the
-// page, against a datastore pool with only a handful of connections. The
-// pool's statement_timeout (database.DefaultDatastoreStatementTimeout,
-// 30 seconds unless configured) is the backstop that stops a runaway
-// statement holding a connection indefinitely; this cap is what keeps an
-// ordinary request well inside it, so that an unbounded window is not a
-// cheap authenticated denial of service.
-//
-// Thirty days is the largest preset in metrics.ValidTimeRanges, so it is
-// the longest window the web client can ask for, and it is the shape
-// idx_pg_stat_statements_identity_time (collector migration 15) was
-// benchmarked against. Anyone raising this figure needs to re-measure the
-// aggregation at the new span, including the exclude_collector=true case,
-// which cannot use the index-only scan and so carries the query text
-// through a sort.
-const maxTopQueriesTimeSpan = 30 * 24 * time.Hour
-
-// topQueriesTimeSpanError is the 400 message returned when a custom window
-// exceeds maxTopQueriesTimeSpan. The wording follows the span error from
-// metrics.ResolveCustomWindow so that the two read alike.
-const topQueriesTimeSpanError = "invalid time range: span must not exceed 30 days"
-
-// checkTopQueriesTimeSpan reports whether an already-resolved window is
-// short enough for this endpoint to aggregate. It is applied per endpoint,
-// immediately after metrics.ResolveTimeWindow returns, rather than by
-// tightening the shared constant, because the other endpoints that resolve
-// a custom window legitimately need the full 366 days.
-func checkTopQueriesTimeSpan(window metrics.TimeWindow) error {
-	if window.End.Sub(window.Start) > maxTopQueriesTimeSpan {
-		return errors.New(topQueriesTimeSpanError)
-	}
-	return nil
-}
 
 // safeTopQueryOrdering maps an already-resolved ORDER BY column and
 // direction on to a pair that is safe to interpolate into SQL,
@@ -1973,9 +1954,9 @@ func (h *PerfSummaryHandler) handleTopQueries(
 		return
 	}
 	// The shared 366-day cap is far too generous for an aggregation whose
-	// cost is linear in the window; see maxTopQueriesTimeSpan. Presets are
+	// cost is linear in the window; see maxAggregationTimeSpan. Presets are
 	// unaffected, because the longest of them is exactly 30 days.
-	if err := checkTopQueriesTimeSpan(window); err != nil {
+	if err := checkAggregationTimeSpan(window); err != nil {
 		RespondError(w, http.StatusBadRequest, err.Error())
 		return
 	}

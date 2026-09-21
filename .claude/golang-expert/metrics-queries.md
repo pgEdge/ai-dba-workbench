@@ -1191,21 +1191,33 @@ large scan.
 
 That shared cap is calibrated for `/metrics/query`, where the bucket
 width absorbs a longer span; it is far too generous for an endpoint
-whose cost is linear in the window. `/metrics/top-queries` therefore
-applies its own `maxTopQueriesTimeSpan` of 30 days, in
-`checkTopQueriesTimeSpan` (`perf_summary_handlers.go`), immediately
-after `ResolveTimeWindow` returns and before any SQL is built, because
-the aggregation runs twice per request and the only backstop behind it
-is the datastore pool's `statement_timeout`
+whose cost is linear in the window. `/metrics/top-queries`,
+`/metrics/performance-summary` and `/metrics/database-summaries`
+therefore apply a tighter `maxAggregationTimeSpan` of 30 days, through
+the shared `checkAggregationTimeSpan` in
+`server/src/internal/api/time_span.go`, immediately after
+`ResolveTimeWindow` returns and before any SQL is built. The only
+backstop behind them is the datastore pool's `statement_timeout`
 (`database.DefaultDatastoreStatementTimeout`, 30 seconds unless the
 `database.statement_timeout` setting says otherwise), which the cap is
-meant to keep an ordinary request well inside. Thirty days is the
+meant to keep an ordinary request well inside: top-queries runs its
+whole CTE twice per request, once for the count and once for the page,
+and performance-summary runs five sub-queries for every connection in
+`connection_ids` inside one read-only transaction, so its cost is
+linear in the estate as well as in the window. Thirty days is the
 longest preset in `ValidTimeRanges` and the window shape
 `idx_pg_stat_statements_identity_time` (collector migration 15) was
 benchmarked against, so raising it means re-measuring, in particular the
 `exclude_collector=true` path that cannot use the index-only scan. Add
 such a cap per endpoint rather than by tightening `MaxCustomTimeSpan`,
 which the other endpoints legitimately need at 366 days.
+
+Because the resolver's own 366-day check fires first, a span longer
+than 366 days still gets the resolver's `span must not exceed 366 days`
+wording; anything between 30 and 366 days gets
+`invalid time range: span must not exceed 30 days` from
+`checkAggregationTimeSpan`. Tests that pin the boundary need to pick
+their span accordingly.
 
 The rules are shared, not metrics-only. `GET /api/v1/timeline/events`
 takes absolute `start_time` and `end_time` values; `resolveTimelineWindow`
@@ -1230,7 +1242,8 @@ width from the resolved window (span / 60, 10 second floor). No handler
 keeps a private preset table any more: the `validTimeRanges` map that
 `database-summaries` used was deleted with issue #387, so
 `ResolveTimeWindow` is the only place that decides what a valid window
-is, and the 400 wording is the resolver's own on every endpoint.
+is, and the 400 wording is the resolver's own on every endpoint except
+where `checkAggregationTimeSpan` adds the 30-day cap described above.
 
 Every handler that accepts a `queryid` parameter (`/metrics/query`,
 `/metrics/latest`, `/metrics/top-queries` and `/metrics/query-stats`)

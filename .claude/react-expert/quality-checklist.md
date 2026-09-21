@@ -408,18 +408,40 @@ should be written; it is deliberately separate from
   `useDatabaseSummaries`, `TopQueriesSection`, `QueryDetail`,
   `KpiTilesSection` and `ComparativeChartsSection` all go through
   the helper; `useConnectionGroups` still carries its own copy.
+  That early return must also abandon whatever request is in
+  flight, and clear the loading flag, or the response for the
+  previous window lands afterwards and is displayed as though it
+  described the new selection.
 
 - Put `range`, `customStart` and `customEnd` in the fetch callback's
   dependency list, so that moving the selector refetches.
 
 - Guard the fetch against out-of-order responses with a request
-  sequence number, as `TopQueriesSection` and `QueryDetail` do: take
-  `++requestIdRef.current` at the start of each fetch and apply the
-  response only when the ref still holds that number (and the
-  component is still mounted). An `isMountedRef` cleared in the
-  effect cleanup is not enough on its own, because the next effect
-  run sets it straight back to `true`, so a slow `30d` response can
-  land after a quick `1h` one and overwrite it.
+  sequence number. An `isMountedRef` cleared in the effect cleanup
+  is not enough on its own, because the next effect run sets it
+  straight back to `true`, so a slow `30d` response can land after a
+  quick `1h` one and overwrite it. This has been the most frequent
+  bug in the windowed panels, so the guard now lives in the
+  `useRequestSequence` hook, in
+  `client/src/hooks/useRequestSequence.ts`: call `beginRequest()`
+  immediately before the fetch, consult the predicate it returns
+  before parsing the response and again before every state update
+  derived from it, and call `supersedeRequest()` on an early return
+  that deliberately skips a fetch. The hook tracks the mounted flag
+  itself on a mount-only effect, so a consumer needs no
+  `isMountedRef` and must not reset one on each dependency change.
+  `useDatabaseSummaries`, `KpiTilesSection` and
+  `ComparativeChartsSection` use the hook; `useServerCacheHit`,
+  `useQueryStats`, `useConnectionGroups`, `TopQueriesSection`,
+  `QueryDetail` and `AdminAuditLog` still have the sequence number
+  written out inline, and should move across when next touched.
+
+- `useRetryingFetch`'s own attempt generation does not substitute
+  for this. It compares generations only after the supplied fetch
+  has returned, by which point that fetch has already written its
+  state, so a panel that wraps its fetch in `run()` still needs
+  `useRequestSequence` inside the fetch itself. `KpiTilesSection`
+  is the worked example.
 
 - Where the view is paged, treat the window as a filter that changes
   the size of the result set and reset the offset when it moves, or

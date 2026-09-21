@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, act, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import ComparativeChartsSection from '../ComparativeChartsSection';
@@ -192,6 +192,99 @@ describe('ComparativeChartsSection', () => {
             expect(mockApiFetch).not.toHaveBeenCalled();
         });
     });
+
+    it('discards a response for a superseded time range', async () => {
+        // Hold each request open so that the window can be changed
+        // whilst the first one is still in flight.
+        const resolvers: Record<string, (body: unknown) => void> = {};
+        mockApiFetch.mockImplementation((url: string) => {
+            const range = new URLSearchParams(url.split('?')[1] ?? '')
+                .get('time_range') ?? '';
+            return new Promise(resolve => {
+                resolvers[range] = (body: unknown) => resolve(
+                    okResponse(body) as Response,
+                );
+            });
+        });
+
+        mockTimeRange = { range: '24h' };
+        const { rerender } = renderSection([3]);
+        await waitFor(() => {
+            expect(resolvers['24h']).toBeDefined();
+        });
+
+        mockTimeRange = { range: '1h' };
+        rerender(
+            <ThemeProvider theme={theme}>
+                <ComparativeChartsSection serverIds={[3]} />
+            </ThemeProvider>,
+        );
+        await waitFor(() => {
+            expect(resolvers['1h']).toBeDefined();
+        });
+
+        // The newly selected window answers first.
+        await act(async () => {
+            resolvers['1h']({
+                connections: [makeConnection({ connection_name: 'hour' })],
+            });
+        });
+        await waitFor(() => {
+            expect(chartByTitle('Connection Count').data.categories)
+                .toEqual(['hour']);
+        });
+
+        // The superseded request then arrives late and must not
+        // overwrite the metrics belonging to the current window.
+        await act(async () => {
+            resolvers['24h']({
+                connections: [makeConnection({ connection_name: 'day' })],
+            });
+        });
+        expect(chartByTitle('Connection Count').data.categories)
+            .toEqual(['hour']);
+    });
+
+    it('discards a pending response when a custom bound is cleared',
+        async () => {
+            let resolvePending: ((body: unknown) => void) | null = null;
+            mockApiFetch.mockImplementation(() => new Promise(resolve => {
+                resolvePending = (body: unknown) => resolve(
+                    okResponse(body) as Response,
+                );
+            }));
+
+            mockTimeRange = { range: '24h' };
+            const { rerender } = renderSection([3]);
+            await waitFor(() => {
+                expect(resolvePending).not.toBeNull();
+            });
+
+            // A half-entered custom range makes no request of its own,
+            // so the in-flight one has to be abandoned explicitly.
+            mockTimeRange = {
+                range: 'custom',
+                customStart: '2026-09-01T00:00:00Z',
+            };
+            rerender(
+                <ThemeProvider theme={theme}>
+                    <ComparativeChartsSection serverIds={[3]} />
+                </ThemeProvider>,
+            );
+            await waitFor(() => {
+                expect(mockApiFetch).toHaveBeenCalledTimes(1);
+            });
+
+            await act(async () => {
+                resolvePending!({
+                    connections: [makeConnection({ connection_name: 'day' })],
+                });
+            });
+
+            expect(screen.getByText(
+                'No performance data available for comparison.',
+            )).toBeInTheDocument();
+        });
 
     it('plots the reported connection count for each server', async () => {
         mockApiFetch.mockResolvedValue(okResponse({

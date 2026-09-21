@@ -21,6 +21,7 @@ import {
     appendTimeRangeParams,
     isTimeRangeQueryable,
 } from '../../../utils/timeRangeParams';
+import { useRequestSequence } from '../../../hooks/useRequestSequence';
 import { Chart } from '../../Chart';
 import { CHART_SECTION_SX } from '../styles';
 import { logger } from '../../../utils/logger';
@@ -75,7 +76,10 @@ const ComparativeChartsSection: React.FC<ComparativeChartsSectionProps> = ({ ser
     const [metrics, setMetrics] = useState<ConnectionMetrics[]>([]);
     const [loading, setLoading] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
-    const isMountedRef = useRef<boolean>(true);
+    // Orders overlapping fetches so that a response for a superseded
+    // window cannot overwrite the metrics for the current one; see
+    // useRequestSequence for why a mounted flag alone cannot do this.
+    const { beginRequest, supersedeRequest } = useRequestSequence();
     const initialLoadDoneRef = useRef<boolean>(false);
     const serverIdsKey = serverIds.join(',');
 
@@ -88,7 +92,14 @@ const ComparativeChartsSection: React.FC<ComparativeChartsSectionProps> = ({ ser
          * leave whatever data and error state is already in place.
          */
         const selectedWindow = { range, customStart, customEnd };
-        if (!isTimeRangeQueryable(selectedWindow)) { return; }
+        if (!isTimeRangeQueryable(selectedWindow)) {
+            // Abandon any request still in flight for the previous
+            // window, so its response cannot land and be shown as
+            // though it described the newly selected one.
+            supersedeRequest();
+            setLoading(false);
+            return;
+        }
 
         const params = new URLSearchParams({
             connection_ids: serverIds.join(','),
@@ -100,6 +111,10 @@ const ComparativeChartsSection: React.FC<ComparativeChartsSectionProps> = ({ ser
         }
         setError(null);
 
+        // A response is only applied if the component is still mounted
+        // and no newer request has been started since.
+        const isCurrent = beginRequest();
+
         try {
             const response = await apiFetch(
                 `/api/v1/metrics/performance-summary?${params.toString()}`,
@@ -110,7 +125,10 @@ const ComparativeChartsSection: React.FC<ComparativeChartsSectionProps> = ({ ser
                 throw new Error(errorData.error || `Failed to fetch data: ${response.status}`);
             }
 
-            if (isMountedRef.current) {
+            // Checked before parsing as well as after, so that a
+            // response for a superseded window is not parsed at all,
+            // and so that a request started during the parse wins.
+            if (isCurrent()) {
                 const data = await response.json();
                 const connections = data.connections || [];
 
@@ -142,35 +160,34 @@ const ComparativeChartsSection: React.FC<ComparativeChartsSectionProps> = ({ ser
                     }
                 );
 
-                setMetrics(parsed);
-                initialLoadDoneRef.current = true;
+                if (isCurrent()) {
+                    setMetrics(parsed);
+                    initialLoadDoneRef.current = true;
+                }
             }
         } catch (err) {
             logger.error('Error fetching comparative metrics:', err);
-            if (isMountedRef.current) {
+            if (isCurrent()) {
                 setError((err as Error).message || 'Failed to fetch metrics');
             }
         } finally {
-            if (isMountedRef.current) {
+            if (isCurrent()) {
                 setLoading(false);
             }
         }
-    }, [user, serverIds, range, customStart, customEnd]);
+    }, [
+        user, serverIds, range, customStart, customEnd,
+        beginRequest, supersedeRequest,
+    ]);
 
     useEffect(() => {
         initialLoadDoneRef.current = false;
     }, [serverIdsKey]);
 
     useEffect(() => {
-        isMountedRef.current = true;
-
         if (user && serverIds.length > 0) {
             void fetchMetrics();
         }
-
-        return () => {
-            isMountedRef.current = false;
-        };
     }, [user, serverIds.length, fetchMetrics, lastRefresh]);
 
     const serverNames = useMemo(

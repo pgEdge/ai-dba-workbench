@@ -77,30 +77,31 @@ function errorResponse(): Response {
 
 const theme = createTheme();
 
-const renderSection = (serverIds: number[]) => {
-    const selection = {
-        type: 'estate',
-        name: 'Estate',
-        status: 'online',
-        groups: [
-            {
-                name: 'group-1',
-                clusters: [
-                    {
-                        name: 'c1',
-                        servers: serverIds.map(id => ({ id, name: `s${id}` })),
-                    },
-                ],
-            },
-        ],
-    } as unknown as EstateSelection;
+const estateSelection = (serverIds: number[]): EstateSelection => ({
+    type: 'estate',
+    name: 'Estate',
+    status: 'online',
+    groups: [
+        {
+            name: 'group-1',
+            clusters: [
+                {
+                    name: 'c1',
+                    servers: serverIds.map(id => ({ id, name: `s${id}` })),
+                },
+            ],
+        },
+    ],
+} as unknown as EstateSelection);
 
-    return render(
-        <ThemeProvider theme={theme}>
-            <KpiTilesSection selection={selection} serverIds={serverIds} />
-        </ThemeProvider>,
-    );
-};
+const renderSection = (serverIds: number[]) => render(
+    <ThemeProvider theme={theme}>
+        <KpiTilesSection
+            selection={estateSelection(serverIds)}
+            serverIds={serverIds}
+        />
+    </ThemeProvider>,
+);
 
 const perfBody = {
     connections: [
@@ -188,6 +189,105 @@ describe('KpiTilesSection', () => {
         });
         expect(mockApiFetch).not.toHaveBeenCalled();
     });
+
+
+    it('discards a response for a superseded time range', async () => {
+        // Hold the performance-summary request open so that the window
+        // can be changed whilst the first one is still in flight; the
+        // alerts request answers immediately either way.
+        const resolvers: Record<string, (body: unknown) => void> = {};
+        mockApiFetch.mockImplementation((url: string) => {
+            if (url.includes('/alerts')) {
+                return Promise.resolve(okResponse(alertsBody));
+            }
+            const range = new URLSearchParams(url.split('?')[1] ?? '')
+                .get('time_range') ?? '';
+            return new Promise(resolve => {
+                resolvers[range] = (body: unknown) => resolve(
+                    okResponse(body),
+                );
+            });
+        });
+
+        mockTimeRange = { range: '24h' };
+        const { rerender } = renderSection([1]);
+        await waitFor(() => {
+            expect(resolvers['24h']).toBeDefined();
+        });
+
+        mockTimeRange = { range: '1h' };
+        rerender(
+            <ThemeProvider theme={theme}>
+                <KpiTilesSection selection={estateSelection([1])} serverIds={[1]} />
+            </ThemeProvider>,
+        );
+        await waitFor(() => {
+            expect(resolvers['1h']).toBeDefined();
+        });
+
+        // The newly selected window answers first.
+        await act(async () => {
+            resolvers['1h'](perfBody);
+        });
+        await waitFor(() => {
+            expect(screen.getByText('4.75 tx/s')).toBeInTheDocument();
+        });
+
+        // The superseded request then arrives late and must not
+        // overwrite the KPI values belonging to the current window.
+        await act(async () => {
+            resolvers['24h']({
+                connections: [{ transactions: { commits_per_sec: 99 } }],
+            });
+        });
+        expect(screen.getByText('4.75 tx/s')).toBeInTheDocument();
+        expect(screen.queryByText('99 tx/s')).not.toBeInTheDocument();
+    });
+
+    it('discards a pending response when a custom bound is cleared',
+        async () => {
+            let resolvePending: ((body: unknown) => void) | null = null;
+            mockApiFetch.mockImplementation((url: string) => {
+                if (url.includes('/alerts')) {
+                    return Promise.resolve(okResponse(alertsBody));
+                }
+                return new Promise(resolve => {
+                    resolvePending = (body: unknown) => resolve(
+                        okResponse(body),
+                    );
+                });
+            });
+
+            mockTimeRange = { range: '24h' };
+            const { rerender } = renderSection([1]);
+            await waitFor(() => {
+                expect(resolvePending).not.toBeNull();
+            });
+
+            // A half-entered custom range makes no request of its own,
+            // so the in-flight one has to be abandoned explicitly.
+            mockTimeRange = {
+                range: 'custom',
+                customStart: '2026-09-01T00:00:00Z',
+            };
+            rerender(
+                <ThemeProvider theme={theme}>
+                    <KpiTilesSection
+                        selection={estateSelection([1])}
+                        serverIds={[1]}
+                    />
+                </ThemeProvider>,
+            );
+
+            await act(async () => {
+                resolvePending!(perfBody);
+            });
+
+            // The tiles keep their placeholder zeroes rather than
+            // showing figures for the abandoned window.
+            expect(screen.getByText('0 tx/s')).toBeInTheDocument();
+            expect(screen.queryByText('4.75 tx/s')).not.toBeInTheDocument();
+        });
 
     it('renders aggregated KPI tiles after fetching', async () => {
         mockApiFetch.mockImplementation((url: string) =>

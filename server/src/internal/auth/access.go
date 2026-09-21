@@ -537,32 +537,60 @@ func (rc *RBACChecker) applySuperuserTokenScope(
 	}
 	result.TokenScope = scope
 
-	if len(scope.Connections) > 0 && !scopeHasConnectionWildcard(scope) {
-		for _, sc := range scope.Connections {
-			// The stored access level is constrained to read or
-			// read_write, and a superuser's own ceiling is read_write,
-			// so the scope's level is the effective one.
-			result.ConnectionPrivileges[sc.ConnectionID] = sc.AccessLevel
-		}
+	applyScopedConnections(scope, result)
+	rc.applyScopedMCPPrivileges(scope, result)
+	applyScopedAdminPermissions(scope, result)
+}
+
+// applyScopedConnections narrows the reported connection privileges to
+// the token's connection scope. A token that scopes no connection, or
+// scopes them with a wildcard, leaves the map empty, which is the
+// unchanged "superuser, no limits" answer.
+func applyScopedConnections(scope *TokenScope, result *EffectivePrivileges) {
+	if len(scope.Connections) == 0 || scopeHasConnectionWildcard(scope) {
+		return
 	}
 
-	if len(scope.MCPPrivileges) > 0 && !scopeHasMCPWildcard(scope) {
-		for _, privID := range scope.MCPPrivileges {
-			priv, privErr := rc.authStore.GetMCPPrivilegeByID(privID)
-			if privErr == nil && priv != nil {
-				result.MCPPrivileges[priv.Identifier] = true
-			}
-		}
+	for _, sc := range scope.Connections {
+		// The stored access level is constrained to read or
+		// read_write, and a superuser's own ceiling is read_write,
+		// so the scope's level is the effective one.
+		result.ConnectionPrivileges[sc.ConnectionID] = sc.AccessLevel
+	}
+}
+
+// applyScopedMCPPrivileges narrows the reported MCP privileges to the
+// token's MCP scope, resolving each scoped privilege id to the
+// identifier the checks in this file compare against. A privilege that
+// no longer resolves is left out rather than reported unnamed.
+func (rc *RBACChecker) applyScopedMCPPrivileges(
+	scope *TokenScope, result *EffectivePrivileges,
+) {
+	if len(scope.MCPPrivileges) == 0 || scopeHasMCPWildcard(scope) {
+		return
 	}
 
-	if len(scope.AdminPermissions) > 0 && !scopeHasAdminWildcard(scope) {
-		// The owner holds every admin permission, so the scope is the
-		// intersection, and it is reported here even though a narrowed
-		// admin scope also sets IsSuperuser false: HasAdminPermission
-		// will allow exactly these, and the report must say so.
-		for _, permission := range scope.AdminPermissions {
-			result.AdminPermissions[permission] = true
+	for _, privID := range scope.MCPPrivileges {
+		priv, privErr := rc.authStore.GetMCPPrivilegeByID(privID)
+		if privErr == nil && priv != nil {
+			result.MCPPrivileges[priv.Identifier] = true
 		}
+	}
+}
+
+// applyScopedAdminPermissions narrows the reported admin permissions to
+// the token's admin scope.
+func applyScopedAdminPermissions(scope *TokenScope, result *EffectivePrivileges) {
+	if len(scope.AdminPermissions) == 0 || scopeHasAdminWildcard(scope) {
+		return
+	}
+
+	// The owner holds every admin permission, so the scope is the
+	// intersection, and it is reported here even though a narrowed
+	// admin scope also sets IsSuperuser false: HasAdminPermission
+	// will allow exactly these, and the report must say so.
+	for _, permission := range scope.AdminPermissions {
+		result.AdminPermissions[permission] = true
 	}
 }
 

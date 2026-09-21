@@ -68,8 +68,25 @@ func dropAuthTable(t *testing.T, dataDir, table string) {
 	}
 	defer db.Close()
 
-	if _, err := db.Exec("DROP TABLE " + table); err != nil {
-		t.Fatalf("Failed to drop %s: %v", table, err)
+	// Each permitted name has its own arm holding a fully literal
+	// statement, so that no table name is ever interpolated into SQL,
+	// and a name that is not on the list fails the test where it was
+	// asked for rather than as an opaque SQL error at the driver.
+	var execErr error
+	switch table {
+	case "tokens":
+		_, execErr = db.Exec("DROP TABLE tokens")
+	case "token_connection_scope":
+		_, execErr = db.Exec("DROP TABLE token_connection_scope")
+	case "token_mcp_scope":
+		_, execErr = db.Exec("DROP TABLE token_mcp_scope")
+	case "token_admin_scope":
+		_, execErr = db.Exec("DROP TABLE token_admin_scope")
+	default:
+		t.Fatalf("dropAuthTable: %q is not a droppable table", table)
+	}
+	if execErr != nil {
+		t.Fatalf("Failed to drop %s: %v", table, execErr)
 	}
 }
 

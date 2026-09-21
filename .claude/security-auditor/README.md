@@ -84,7 +84,10 @@ moved.
 - A blanket superuser gate is the exception, because it names nothing
   to intersect against: `RBACChecker.IsSuperuser` returns false for a
   token whose admin scope has been narrowed, which is what
-  `requireSuperuser` and the MCP listing filters use. So
+  `requireSuperuser` in `internal/api/rbac_handlers.go` uses. The MCP
+  listing filters are not blanket gates: since `#482` they name each
+  item and go through `CanAccessMCPItem`, so a scoped superuser token
+  is listed exactly the items it may call. So
   `GetEffectivePrivileges` reporting `IsSuperuser: false` alongside a
   populated `AdminPermissions` map is correct and deliberate, not a
   contradiction: the token may exercise the permissions it names, but

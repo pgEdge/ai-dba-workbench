@@ -328,9 +328,9 @@ Two shapes, and the difference matters:
   when the token's admin scope has been narrowed, meaning it names
   specific permissions rather than being empty or holding `*`, because
   there is nothing to intersect against. `requireSuperuser` in
-  `internal/api/rbac_handlers.go` and the registry filters in
-  `internal/resources/context_aware_registry.go` and
-  `internal/tools/context_aware_provider.go` use this.
+  `internal/api/rbac_handlers.go` is the blanket gate; the MCP listing
+  filters are not, since they name each item and go through
+  `CanAccessMCPItem` per item.
 
 The apparent inconsistency, `IsSuperuser` false whilst
 `HasAdminPermission` allows the scoped permission, is deliberate and

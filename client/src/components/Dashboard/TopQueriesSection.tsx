@@ -249,6 +249,22 @@ const readTotalCount = (headers?: Headers): number | null => {
 };
 
 /**
+ * Run `reset` during render whenever `key` changes.
+ *
+ * This is React's documented "adjust state when a prop changes"
+ * pattern rather than an effect, because the reset has to land before
+ * the fetch effect runs: an effect would let one request go out
+ * against the stale value first.
+ */
+const useResetOnChange = (key: string, reset: () => void): void => {
+    const [rendered, setRendered] = useState<string>(key);
+    if (rendered !== key) {
+        setRendered(key);
+        reset();
+    }
+};
+
+/**
  * Top Queries section displays the most resource-intensive queries
  * from pg_stat_statements, sorted by total execution time. Results
  * are paged server-side and can be filtered to a single database.
@@ -300,43 +316,30 @@ const TopQueriesSection: React.FC<TopQueriesSectionProps> = ({
     const isScoped = scopedDatabase !== ALL_DATABASES;
     const effectiveDatabase = isScoped ? scopedDatabase : databaseFilter;
 
-    // Reset the paging and filter state during render when the
-    // selected connection changes, so the next fetch never runs with
-    // an offset or database name belonging to the previous server.
-    const [renderedConnectionId, setRenderedConnectionId] =
-        useState<number>(connectionId);
-    if (renderedConnectionId !== connectionId) {
-        setRenderedConnectionId(connectionId);
+    // Every filter below shrinks the result set, so a stale offset
+    // would strand the user on a page that no longer exists.
+    const resetPaging = useCallback((): void => {
         setPage(0);
-        setDatabaseFilter(ALL_DATABASES);
         setTotalCount(null);
-    }
+    }, []);
 
-    // The selected window is a filter like any other here, and
-    // narrowing it shrinks the result set, so a stale offset would
-    // strand the user on an empty page. Reset paging during render for
-    // the same reason the connection change does, and key on the
-    // bounds as well as the range, because a custom window can be
-    // narrowed without the range ever leaving 'custom'.
+    // A new connection invalidates the chosen database as well as the
+    // offset, because the database belonged to the previous server.
+    useResetOnChange(String(connectionId), (): void => {
+        setDatabaseFilter(ALL_DATABASES);
+        resetPaging();
+    });
+
+    // The window is keyed on its bounds as well as its range, because
+    // a custom window can be narrowed without the range ever leaving
+    // 'custom'.
     const windowKey =
         `${selectedRange}|${customStart ?? ''}|${customEnd ?? ''}`;
-    const [renderedWindowKey, setRenderedWindowKey] =
-        useState<string>(windowKey);
-    if (renderedWindowKey !== windowKey) {
-        setRenderedWindowKey(windowKey);
-        setPage(0);
-        setTotalCount(null);
-    }
+    useResetOnChange(windowKey, resetPaging);
 
     // Switching the pinned database narrows the result set exactly as
-    // the filter control would, so paging resets for the same reason.
-    const [renderedScope, setRenderedScope] =
-        useState<string>(scopedDatabase);
-    if (renderedScope !== scopedDatabase) {
-        setRenderedScope(scopedDatabase);
-        setPage(0);
-        setTotalCount(null);
-    }
+    // the filter control would.
+    useResetOnChange(scopedDatabase, resetPaging);
 
     // The database list drives the filter control only, so it tracks
     // the connection rather than the dashboard refresh cycle, and it

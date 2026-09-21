@@ -278,12 +278,6 @@ const TopQueriesSection: React.FC<TopQueriesSectionProps> = ({
     const [page, setPage] = useState<number>(0);
     const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
     const [databaseFilter, setDatabaseFilter] = useState<string>(ALL_DATABASES);
-    // The database the requests are actually filtered by: the pinned
-    // one when the caller supplied it, otherwise whatever the filter
-    // control is set to.
-    const scopedDatabase = databaseName ?? ALL_DATABASES;
-    const isScoped = scopedDatabase !== ALL_DATABASES;
-    const effectiveDatabase = isScoped ? scopedDatabase : databaseFilter;
     const [totalCount, setTotalCount] = useState<number | null>(null);
     const isMountedRef = useRef<boolean>(true);
     // Identifies the most recently started request. isMountedRef alone
@@ -298,6 +292,13 @@ const TopQueriesSection: React.FC<TopQueriesSectionProps> = ({
     userRef.current = user;
 
     const isLoggedIn = !!user;
+
+    // The database the requests are actually filtered by: the pinned
+    // one when the caller supplied it, otherwise whatever the filter
+    // control is set to.
+    const scopedDatabase = databaseName ?? ALL_DATABASES;
+    const isScoped = scopedDatabase !== ALL_DATABASES;
+    const effectiveDatabase = isScoped ? scopedDatabase : databaseFilter;
 
     // Reset the paging and filter state during render when the
     // selected connection changes, so the next fetch never runs with

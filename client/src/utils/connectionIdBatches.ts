@@ -43,14 +43,26 @@ export const MAX_CONNECTION_IDS_PER_REQUEST = 100;
  *
  * @param ids   The connection IDs to batch.
  * @param size  The maximum batch length; defaults to the server's cap.
- *              Values below one are treated as one, since a zero or
- *              negative batch size would never consume the list.
+ *              A finite value is floored and clamped to the range one to
+ *              the cap, since a zero or negative batch size would never
+ *              consume the list and one above the cap would yield batches
+ *              the server rejects with a 400. A non-finite value throws a
+ *              `RangeError`, rather than silently dropping every ID the
+ *              caller asked about.
+ * @throws {RangeError} If `size` is `NaN` or infinite.
  */
 export const chunkConnectionIds = (
     ids: number[],
     size: number = MAX_CONNECTION_IDS_PER_REQUEST,
 ): number[][] => {
-    const batchSize = size < 1 ? 1 : Math.floor(size);
+    if (!Number.isFinite(size)) {
+        throw new RangeError('Batch size must be finite');
+    }
+
+    const batchSize = Math.min(
+        MAX_CONNECTION_IDS_PER_REQUEST,
+        Math.max(1, Math.floor(size)),
+    );
     const batches: number[][] = [];
 
     for (let i = 0; i < ids.length; i += batchSize) {

@@ -67,6 +67,28 @@ describe('chunkConnectionIds', () => {
         expect(chunkConnectionIds([1, 2, 3], 2.9)).toEqual([[1, 2], [3]]);
     });
 
+    it('clamps a batch size above the cap to the cap', () => {
+        const ids = range(MAX_CONNECTION_IDS_PER_REQUEST + 1);
+        const batches = chunkConnectionIds(
+            ids,
+            MAX_CONNECTION_IDS_PER_REQUEST + 50,
+        );
+
+        expect(batches).toHaveLength(2);
+        expect(batches[0]).toHaveLength(MAX_CONNECTION_IDS_PER_REQUEST);
+        expect(batches[1]).toEqual([MAX_CONNECTION_IDS_PER_REQUEST + 1]);
+    });
+
+    it('throws rather than dropping ids for a non-finite batch size', () => {
+        expect(() => chunkConnectionIds([1, 2, 3], NaN)).toThrow(RangeError);
+        expect(() => chunkConnectionIds([1, 2, 3], Infinity)).toThrow(
+            RangeError,
+        );
+        expect(() => chunkConnectionIds([1, 2, 3], -Infinity)).toThrow(
+            RangeError,
+        );
+    });
+
     it('does not mutate the list it is given', () => {
         const ids = range(5);
 

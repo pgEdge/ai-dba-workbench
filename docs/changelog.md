@@ -1613,6 +1613,28 @@ project adheres to
   webhook `http_method` other than `GET`, `POST`, `PUT` or `PATCH` when
   a channel is created or updated. (#498)
 
+- Classify an `EXPLAIN` statement by the statement it explains, so that
+  `EXPLAIN ANALYZE` over a data-modifying statement goes through the
+  write-access check and the write-confirmation prompt.
+  `POST /api/v1/connections/{id}/query` previously classified any
+  statement whose text began with `EXPLAIN` as read-only without
+  looking at what was being explained, so `EXPLAIN ANALYZE` over a
+  `DELETE` ran without either of those guards and, where the statement
+  also contained something shaped like a `$1` placeholder, outside the
+  read-only transaction that the read path otherwise opens. That
+  defeated a connection scope of `read` on a token whose owner holds
+  `read_write`, and would equally defeat a plain read-only account. The
+  classification now follows the inner statement whenever the options
+  mention `ANALYZE`; a plain `EXPLAIN`, which only plans and executes
+  nothing, remains read-only. The test for a `$N` placeholder now
+  ignores one that appears inside a quoted string, a dollar-quoted body
+  or a comment, so an `EXPLAIN` over a query containing a literal `$1`
+  is no longer misrouted. Statements that do run over the simple query
+  protocol are now held inside the same read-only transaction as the
+  rest of the read path, so a statement that ever slips through
+  classification still cannot write. The fix needs no restart beyond
+  the upgrade itself and no database migration. (#530)
+
 - Fix a configuration file that omits
   `http.auth.max_failed_attempts_before_lockout` silently disabling
   account lockout. The setting was a plain integer, so an omitted key

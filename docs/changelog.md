@@ -738,6 +738,44 @@ project adheres to
   acknowledged alert was kept for the life of the installation. It
   now falls back to the time the alert was raised. (#500)
 
+- Fix the AI analysis offering a Run button on generated SQL that
+  could not be executed, so that a query naming a hallucinated
+  column, a mistyped catalog reference or a role that does not
+  exist failed only once the user had run it. Every SQL block in
+  an analysis report is now checked as the report renders, through
+  a new read-only endpoint,
+  `POST /api/v1/connections/{id}/query/validate`, that plans each
+  statement with `EXPLAIN` inside a read-only transaction and rolls
+  that transaction back; the endpoint never executes the statement
+  itself. Run is unavailable whilst the check is in flight. A
+  statement PostgreSQL rejects shows the error beneath the block
+  and keeps Run disabled behind a Run anyway button, and a
+  statement outside the kinds the check plans, which are `SELECT`,
+  `WITH`, `INSERT`, `UPDATE`, `DELETE`, `MERGE`, `VALUES` and
+  `TABLE`, stays runnable under a "Not validated" notice giving the
+  reason; the DDL statements, `ALTER SYSTEM`, `VACUUM`, `SET`,
+  `SHOW`, `GRANT`, `REINDEX`, `CLUSTER` and `ANALYZE` all fall into
+  that group. A block carrying `$1`-style parameter
+  placeholders is labelled a query template and offers no Run
+  button at all, because such a query cannot run as written. The
+  analysis prompts now require the model to call `get_schema_info`
+  before naming a user object or a catalog column outside the
+  built-in crib sheet, and forbid parameter placeholders in
+  runnable blocks; alert analysis gained the `get_schema_info`
+  tool, which it previously lacked. Where a finished report still
+  contains a statement that fails validation, the analysis runs one
+  repair round, feeding the validation errors back to the model
+  before the report is shown. (#532)
+
+- Fix the `test_query` MCP tool rejecting valid parameterised
+  queries and reporting every statement of a multiple-statement
+  query as invalid. The tool now plans a parameterised query with
+  `EXPLAIN (GENERIC_PLAN)` on PostgreSQL 16 and later, rather than
+  failing it for the missing parameter values, and it rolls the
+  transaction back before retrying each statement individually, so
+  that the per-statement results are no longer produced by an
+  already aborted transaction. (#532)
+
 - Fix the transaction throughput chart on the Performance Summary
   page counting a database's whole lifetime transaction count into
   one interval. The commits and rollbacks per second were derived by

@@ -20,6 +20,8 @@ import type {
     ToolResult,
 } from '../types/llm';
 import { LLM_CHAT_PATH, buildChatRequestInit } from './llmChat';
+import { extractSqlCodeBlocks } from './sqlValidation';
+import type { SqlBlockValidator } from './sqlValidation';
 
 export interface AgenticLoopOptions {
     /** Initial messages (typically a single user message). */
@@ -34,6 +36,121 @@ export interface AgenticLoopOptions {
     onActiveTools?: (toolNames: string[]) => void;
     /** Called with a human-readable progress message. */
     onProgress?: (message: string) => void;
+    /**
+     * Optional validator used for a single SQL self-repair round once
+     * the loop has produced its final text. Omitting it, or having it
+     * resolve to null, leaves the text untouched.
+     */
+    validateSqlBlocks?: SqlBlockValidator;
+}
+
+/**
+ * Prompt used for the single SQL self-repair round.
+ */
+export const SQL_REPAIR_INSTRUCTION =
+    'Some of the SQL in your report failed validation against the target '
+    + 'database. PostgreSQL reported the errors below when planning it '
+    + 'with EXPLAIN. Correct every failing statement, verifying object '
+    + 'and column names with get_schema_info where one is needed, and '
+    + 'reply with the COMPLETE corrected report in the same format. Do '
+    + 'not comment on the corrections or apologise; return the report '
+    + 'only.';
+
+/**
+ * Validate the SQL blocks in `text` and, when any fail, ask the model
+ * once for a corrected report.
+ *
+ * Exactly one extra LLM round-trip is made, deliberately outside the
+ * `maxIterations` budget: that budget bounds the tool-calling loop, and
+ * a repair round that could be starved by it would leave the user with
+ * the broken SQL the feature exists to prevent. If the model answers
+ * with tool calls instead of text, or with nothing at all, the original
+ * text is returned unchanged.
+ */
+async function repairInvalidSql(
+    text: string,
+    options: AgenticLoopOptions,
+): Promise<string> {
+    const { validateSqlBlocks, messages, tools, systemPrompt, onProgress } =
+        options;
+
+    if (!validateSqlBlocks || !text.trim()) {
+        return text;
+    }
+
+    const blocks = extractSqlCodeBlocks(text);
+    if (blocks.length === 0) {
+        return text;
+    }
+
+    const results = await Promise.all(
+        blocks.map(block =>
+            Promise.resolve()
+                .then(() => validateSqlBlocks(block))
+                .catch(() => null),
+        ),
+    );
+
+    const failures: string[] = [];
+    results.forEach((result, index) => {
+        if (!result) {
+            return;
+        }
+        const errors = result.statements
+            .filter(statement => statement.status === 'invalid')
+            .map(statement =>
+                `  ${statement.query}\n    ERROR: ${statement.error}`);
+        if (errors.length > 0) {
+            failures.push(
+                `Block ${index + 1}:\n${errors.join('\n')}`,
+            );
+        }
+    });
+
+    if (failures.length === 0) {
+        return text;
+    }
+
+    onProgress?.('Correcting SQL...');
+
+    const repairMessages: Message[] = [
+        ...messages,
+        { role: 'assistant', content: text },
+        {
+            role: 'user',
+            content: `${SQL_REPAIR_INSTRUCTION}\n\n${failures.join('\n\n')}`,
+        },
+    ];
+
+    try {
+        const response = await apiFetch(
+            LLM_CHAT_PATH,
+            buildChatRequestInit({
+                messages: repairMessages,
+                tools,
+                systemPrompt,
+            }),
+        );
+        if (!response.ok) {
+            return text;
+        }
+
+        const data: LLMResponse = await response.json();
+        const usedTools = data.content?.some(c => c.type === 'tool_use');
+        if (usedTools) {
+            return text;
+        }
+
+        const repaired = data.content
+            ?.filter(c => c.type === 'text')
+            .map(c => c.text)
+            .join('\n') || '';
+
+        return repaired.trim() ? stripPreamble(repaired) : text;
+    } catch {
+        // A failing repair round must never lose the analysis.
+        return text;
+    }
 }
 
 /**
@@ -82,8 +199,10 @@ export async function runAgenticLoop(
                 ?.filter(c => c.type === 'text')
                 .map(c => c.text)
                 .join('\n') || '';
+            const finalText = stripPreamble(textContent);
+            const repaired = await repairInvalidSql(finalText, options);
             onActiveTools?.([]);
-            return stripPreamble(textContent);
+            return repaired;
         }
 
         // Add assistant message with tool-use blocks

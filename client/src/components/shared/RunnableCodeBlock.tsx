@@ -11,7 +11,7 @@
  */
 
 import type React from 'react';
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import {
     Box,
     Typography,
@@ -27,10 +27,12 @@ import {
     Error as ErrorIcon,
     Warning as WarningIcon,
     PlayArrow as PlayArrowIcon,
+    InfoOutlined as InfoOutlinedIcon,
 } from '@mui/icons-material';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { apiFetch } from '../../utils/apiClient';
-import { extractExecutableSQL } from './sqlDetection';
+import { useSqlValidation } from '../../hooks/useSqlValidation';
+import { extractExecutableSQL, hasSqlParameters } from './sqlDetection';
 import CopyCodeButton from './CopyCodeButton';
 import {
     sxMonoFont,
@@ -82,6 +84,16 @@ export interface QueryState {
 // Component
 // ---------------------------------------------------------------------------
 
+/** Label shown for a block that carries `$N` parameter placeholders. */
+export const SQL_TEMPLATE_MESSAGE =
+    'This is a query template: it uses $1-style parameter placeholders, '
+    + 'so it needs parameter values substituted in before it can be run.';
+
+/** Hint shown when PostgreSQL cannot plan the statement for validation. */
+export const SQL_UNVALIDATED_MESSAGE =
+    'Not validated: PostgreSQL cannot plan this kind of statement in '
+    + 'advance. Review it before running it.';
+
 export interface RunnableCodeBlockProps {
     codeContent: string;
     language: string;
@@ -121,10 +133,39 @@ const RunnableCodeBlock: React.FC<RunnableCodeBlockProps> = ({
     // re-send the same payload with confirmed=true.
     const [cleanedSQL, setCleanedSQL] = useState<string>('');
 
+    // The SQL that would actually be sent to the server, which is also
+    // what gets validated.
+    const executableSQL = useMemo(
+        () => extractExecutableSQL(codeContent),
+        [codeContent],
+    );
+
+    // A block with `$N` placeholders is a template rather than a query:
+    // it cannot be run without parameter values, so it gets no Run
+    // button and is never sent for validation.
+    const isTemplate = isSql && hasSqlParameters(codeContent);
+
+    const validation = useSqlValidation({
+        sql: executableSQL,
+        connectionId,
+        databaseName,
+        enabled: isSql && !isTemplate,
+    });
+
+    // Escape hatch: a reviewer who disagrees with the validation result
+    // can still run the query. Reset whenever the target changes.
+    const [runAnyway, setRunAnyway] = useState(false);
+    useEffect(() => {
+        setRunAnyway(false);
+    }, [executableSQL, connectionId, databaseName]);
+
+    const validating = validation.status === 'pending';
+    const blockedByValidation = validation.status === 'invalid' && !runAnyway;
+
     const handleRun = useCallback(async (confirmed = false) => {
         // On the initial run, extract executable SQL from the code block.
         // When re-running after confirmation, reuse the previously cleaned SQL.
-        const sql = confirmed ? cleanedSQL : extractExecutableSQL(codeContent);
+        const sql = confirmed ? cleanedSQL : executableSQL;
         if (!confirmed) {
             setCleanedSQL(sql);
         }
@@ -212,7 +253,7 @@ const RunnableCodeBlock: React.FC<RunnableCodeBlockProps> = ({
                 writeStatements: [],
             });
         }
-    }, [codeContent, connectionId, databaseName, cleanedSQL]);
+    }, [executableSQL, connectionId, databaseName, cleanedSQL]);
 
     const handleDismiss = useCallback(() => {
         setQueryState({
@@ -224,20 +265,35 @@ const RunnableCodeBlock: React.FC<RunnableCodeBlockProps> = ({
         });
     }, []);
 
-    const tooltipTitle = serverName
+    const targetLabel = serverName
         ? databaseName
             ? `Run on ${serverName}/${databaseName}`
             : `Run on ${serverName}`
         : 'Run query';
+
+    let tooltipTitle = targetLabel;
+    if (validating) {
+        tooltipTitle = 'Validating query...';
+    } else if (blockedByValidation) {
+        tooltipTitle = 'This query failed validation';
+    } else if (validation.status === 'unsupported') {
+        tooltipTitle = `${targetLabel} (not validated)`;
+    }
+
+    // Notices render directly beneath the code block, so the block keeps
+    // its square bottom corners when one is showing.
+    const showNotice = isTemplate
+        || validation.status === 'invalid'
+        || validation.status === 'unsupported';
 
     return (
         <>
             <Box sx={{
                 ...getCodeBlockWrapperSx(theme),
                 position: 'relative',
-                // Remove bottom border radius when results, errors, or
-                // a confirmation prompt are showing
-                ...((queryState.response || queryState.error || queryState.pendingConfirmation) ? {
+                // Remove bottom border radius when results, errors, a
+                // confirmation prompt or a validation notice are showing
+                ...((queryState.response || queryState.error || queryState.pendingConfirmation || showNotice) ? {
                     borderBottomLeftRadius: 0,
                     borderBottomRightRadius: 0,
                     mb: 0,
@@ -257,20 +313,31 @@ const RunnableCodeBlock: React.FC<RunnableCodeBlockProps> = ({
                 </SyntaxHighlighter>
                 <Box sx={getCodeBlockButtonGroupSx()}>
                     <CopyCodeButton code={codeContent} theme={theme} />
-                    {isSql && (
+                    {isSql && !isTemplate && (
                         <Tooltip title={tooltipTitle} placement="left">
-                            <span>
+                            {/* The label stays stable across validation
+                                states so assistive technology announces
+                                the action, not its transient status. */}
+                            <span aria-label={targetLabel}>
                                 <IconButton
                                     size="small"
                                     onClick={() => handleRun()}
-                                    disabled={queryState.loading}
+                                    disabled={
+                                        queryState.loading
+                                        || validating
+                                        || blockedByValidation
+                                    }
                                     sx={getCopyButtonSx(theme)}
                                 >
-                                    {queryState.loading ? (
+                                    {(queryState.loading || validating) ? (
                                         <CircularProgress
                                             size={14}
                                             sx={{ color: alpha(theme.palette.secondary.main, 0.7) }}
-                                            aria-label="Running query"
+                                            aria-label={
+                                                validating
+                                                    ? 'Validating query'
+                                                    : 'Running query'
+                                            }
                                         />
                                     ) : (
                                         <PlayArrowIcon sx={{ fontSize: 18 }} />
@@ -281,6 +348,92 @@ const RunnableCodeBlock: React.FC<RunnableCodeBlockProps> = ({
                     )}
                 </Box>
             </Box>
+
+            {/* Parameter template: not runnable without values */}
+            {isTemplate && (
+                <Box sx={getQueryResultWrapperSx(theme)}>
+                    <Box sx={getQueryErrorSx(theme)}>
+                        <InfoOutlinedIcon sx={{
+                            fontSize: 16,
+                            color: theme.palette.info.main,
+                            mt: 0.25,
+                            flexShrink: 0,
+                        }} />
+                        <Typography
+                            data-testid="sql-template-notice"
+                            sx={{
+                                fontSize: '0.875rem',
+                                color: 'text.secondary',
+                                flex: 1,
+                            }}
+                        >
+                            {SQL_TEMPLATE_MESSAGE}
+                        </Typography>
+                    </Box>
+                </Box>
+            )}
+
+            {/* Validation failure: Run is disabled, with an escape hatch */}
+            {!isTemplate && validation.status === 'invalid' && (
+                <Box sx={getQueryResultWrapperSx(theme)}>
+                    <Box sx={getQueryErrorSx(theme)}>
+                        <WarningIcon sx={{
+                            fontSize: 16,
+                            color: theme.palette.warning.main,
+                            mt: 0.25,
+                            flexShrink: 0,
+                        }} />
+                        <Box sx={{ flex: 1 }}>
+                            <Typography
+                                data-testid="sql-validation-error"
+                                sx={{
+                                    fontSize: '0.875rem',
+                                    color: theme.palette.mode === 'dark'
+                                        ? theme.palette.error.light
+                                        : theme.palette.error.dark,
+                                    ...sxMonoFont,
+                                    wordBreak: 'break-word',
+                                }}
+                            >
+                                This query did not validate: {validation.error}
+                            </Typography>
+                            {!runAnyway && (
+                                <Button
+                                    size="small"
+                                    onClick={() => setRunAnyway(true)}
+                                    sx={{ textTransform: 'none', mt: 0.5 }}
+                                >
+                                    Run anyway
+                                </Button>
+                            )}
+                        </Box>
+                    </Box>
+                </Box>
+            )}
+
+            {/* Statement kind that EXPLAIN cannot plan in advance */}
+            {!isTemplate && validation.status === 'unsupported' && (
+                <Box sx={getQueryResultWrapperSx(theme)}>
+                    <Box sx={getQueryErrorSx(theme)}>
+                        <InfoOutlinedIcon sx={{
+                            fontSize: 16,
+                            color: theme.palette.info.main,
+                            mt: 0.25,
+                            flexShrink: 0,
+                        }} />
+                        <Typography
+                            data-testid="sql-unvalidated-notice"
+                            sx={{
+                                fontSize: '0.875rem',
+                                color: 'text.secondary',
+                                flex: 1,
+                            }}
+                        >
+                            {SQL_UNVALIDATED_MESSAGE}
+                        </Typography>
+                    </Box>
+                </Box>
+            )}
 
             {/* Write-statement confirmation prompt */}
             {queryState.pendingConfirmation && (

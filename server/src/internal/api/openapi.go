@@ -1885,6 +1885,30 @@ func buildSchemas() map[string]*OpenAPISchema {
 				"admin_permissions": {Type: "array", Items: &OpenAPISchema{Type: "string"}, Description: "Admin permission names"},
 			},
 		},
+		"QueryValidateRequest": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"query":         {Type: "string", Description: "SQL to validate; may contain several statements"},
+				"database_name": {Type: "string", Description: "Database to validate against; defaults to the connection's database"},
+			},
+			Required: []string{"query"},
+		},
+		"QueryValidateResponse": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"valid":            {Type: "boolean", Description: "True when no statement was rejected; an unsupported statement does not make the request invalid"},
+				"total_statements": {Type: "integer", Description: "Number of statements the SQL was split into"},
+				"statements":       {Type: "array", Items: &OpenAPISchema{Ref: "#/components/schemas/QueryValidationStatement"}, Description: "Per-statement validation results, in the order the statements appeared"},
+			},
+		},
+		"QueryValidationStatement": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"query":  {Type: "string", Description: "The statement as it was submitted"},
+				"status": {Type: "string", Enum: []string{"valid", "invalid", "unsupported"}, Description: "valid when EXPLAIN planned the statement, invalid when EXPLAIN rejected it, unsupported when EXPLAIN cannot plan this kind of statement"},
+				"error":  {Type: "string", Description: "The sanitized PostgreSQL message when the status is invalid, or the reason validation was not possible when the status is unsupported"},
+			},
+		},
 		"TokenScopeRequest": {
 			Type: "object",
 			Properties: map[string]*OpenAPISchema{
@@ -2107,6 +2131,26 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"403": jsonResponse("ErrorResponse", "Access denied"),
 					"404": jsonResponse("ErrorResponse", "Connection not found"),
 					"500": jsonResponse("ErrorResponse", "Failed to list databases"),
+				},
+			},
+		},
+
+		"/connections/{id}/query/validate": {
+			Post: &OpenAPIOperation{
+				Summary:     "Validate SQL without executing it",
+				Description: "Plans each statement of the supplied SQL with EXPLAIN inside a read-only transaction that is always rolled back, so nothing is executed. Statements are split with a SQL-aware tokeniser. A statement carrying $N parameter placeholders is planned with EXPLAIN (GENERIC_PLAN) on PostgreSQL 16 and later, and reported as unsupported on older servers. Requires read access to the connection; no write permission is needed and no confirmation is involved.",
+				OperationID: "validateConnectionQuery",
+				Tags:        []string{"Connections"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{pathParamInt("id", "Connection ID")},
+				RequestBody: jsonRequestBody("QueryValidateRequest", "SQL to validate", true),
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonResponse("QueryValidateResponse", "Validation result for every statement"),
+					"400": jsonResponse("ErrorResponse", "Query is required"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Permission denied: you do not have access to this connection"),
+					"404": jsonResponse("ErrorResponse", "Connection not found"),
+					"500": jsonResponse("ErrorResponse", "Failed to validate query"),
 				},
 			},
 		},

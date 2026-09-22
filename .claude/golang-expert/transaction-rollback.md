@@ -49,8 +49,14 @@ Savepoint unwinds use `rollback.ToSavepoint(ctx, tx, name)`, which
 issues `ROLLBACK TO SAVEPOINT <name>` on the same bounded context and
 rejects any name that is not a plain unquoted SQL identifier. The
 matching `SAVEPOINT` and `RELEASE SAVEPOINT` statements are the
-caller's work and keep the caller's `ctx`; `runSavepointed` in
-`collector/src/database/schema.go` is the one user.
+caller's work and keep the caller's `ctx`. There are three users:
+`runSavepointed` in `collector/src/database/schema.go`;
+`validateStatement` in `server/src/internal/api/query_handlers.go`,
+which takes a savepoint around each `EXPLAIN` so that one rejected
+statement does not abort validation of the rest; and `TestQueryTool` in
+`server/src/internal/tools/test_query.go`, which unwinds to a savepoint
+after the whole-query `EXPLAIN` fails on a multiple-statement query
+before retrying statement by statement.
 
 The statements inside the transaction keep using the request-derived
 `ctx`; only the rollback changes. Rollbacks that take no context (the

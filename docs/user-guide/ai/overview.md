@@ -76,6 +76,19 @@ button. Read-only queries execute immediately when the
 user clicks Run. Write statements display a confirmation
 dialog before the system executes the query.
 
+The Workbench validates each generated SQL block as the
+report renders, by planning the statement with `EXPLAIN`
+in a read-only transaction that is rolled back; the check
+never executes anything. A block that fails the check
+shows the error and replaces Run with a Run anyway
+button, a statement that PostgreSQL cannot plan in
+advance stays runnable under a "Not validated" notice,
+and a block that uses `$1`-style parameter placeholders
+is labelled a template and offers no Run button, because
+it needs parameter values before it can run. The
+[AI Alert Analysis](../alerts/ai-analysis.md) document
+describes these states in more detail.
+
 An amber brain icon indicates that a cached analysis is
 available. The system caches analyses for 30 minutes
 before requiring a new analysis run.

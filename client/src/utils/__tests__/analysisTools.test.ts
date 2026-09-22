@@ -89,13 +89,27 @@ describe('ALERT_ANALYSIS_TOOLS', () => {
         expect(ALERT_ANALYSIS_TOOLS).toContain(TOOL_GET_BLACKOUTS);
     });
 
-    it('includes exactly 6 tools', () => {
-        expect(ALERT_ANALYSIS_TOOLS).toHaveLength(6);
+    it('includes exactly 7 tools', () => {
+        expect(ALERT_ANALYSIS_TOOLS).toHaveLength(7);
     });
 
     it('is a subset of SERVER_ANALYSIS_TOOLS', () => {
         for (const tool of ALERT_ANALYSIS_TOOLS) {
             expect(SERVER_ANALYSIS_TOOLS).toContain(tool);
         }
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Schema discovery for alert analysis (issue #532)
+// ---------------------------------------------------------------------------
+
+describe('ALERT_ANALYSIS_TOOLS schema discovery', () => {
+    it('includes get_schema_info so remediation SQL can be grounded', () => {
+        expect(ALERT_ANALYSIS_TOOLS).toContain(TOOL_GET_SCHEMA_INFO);
+    });
+
+    it('still includes test_query', () => {
+        expect(ALERT_ANALYSIS_TOOLS).toContain(TOOL_TEST_QUERY);
     });
 });

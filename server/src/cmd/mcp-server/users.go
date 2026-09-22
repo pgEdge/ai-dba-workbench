@@ -15,6 +15,7 @@ import (
 	"os"
 	"strings"
 	"syscall"
+	"unicode/utf8"
 
 	"golang.org/x/term"
 
@@ -359,12 +360,18 @@ const (
 	listUsersAuthWidth      = 28
 	listUsersNotesWidth     = 20
 
-	listUsersRowFormat = "%-20s %-17s %-17s %-20s %-28s %s\n"
-
 	listUsersRuleWidth = listUsersUsernameWidth + listUsersCreatedWidth +
 		listUsersLastLoginWidth + listUsersStatusWidth + listUsersAuthWidth +
 		listUsersNotesWidth + 5
 )
+
+// listUsersRowFormat lays out one row of the -list-users table. It is built
+// from the width constants above rather than written out, so that the header,
+// the rules and the rows cannot drift apart when a column is resized. The last
+// column is unpadded because nothing follows it.
+var listUsersRowFormat = fmt.Sprintf("%%-%ds %%-%ds %%-%ds %%-%ds %%-%ds %%s\n",
+	listUsersUsernameWidth, listUsersCreatedWidth, listUsersLastLoginWidth,
+	listUsersStatusWidth, listUsersAuthWidth)
 
 // describeUserAuth renders how an account signs in, for the authentication
 // column of the -list-users table.
@@ -386,11 +393,29 @@ func describeUserAuth(user *auth.StoredUser) string {
 
 // truncateColumn fits a value into a fixed-width column, marking a value that
 // did not fit with a trailing ellipsis.
+//
+// The cut is made on a rune boundary, because an annotation is free text an
+// administrator typed and may well hold multi-byte characters that a byte
+// slice would cut in half, emitting a replacement character. This fixes the
+// encoding rather than the display width: a full-width character still
+// occupies two terminal cells, so a row holding one prints narrower than the
+// rule, and correcting that would mean taking on a width-measuring dependency
+// for a cosmetic gain in an administrative table.
 func truncateColumn(value string, width int) string {
 	if len(value) <= width {
 		return value
 	}
-	return value[:width-3] + "..."
+
+	const ellipsis = "..."
+
+	var b strings.Builder
+	for _, r := range value {
+		if b.Len()+utf8.RuneLen(r) > width-len(ellipsis) {
+			break
+		}
+		b.WriteRune(r)
+	}
+	return b.String() + ellipsis
 }
 
 // enableUserCommand handles the enable-user command

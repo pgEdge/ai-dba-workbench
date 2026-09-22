@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"golang.org/x/crypto/bcrypt"
@@ -279,5 +280,74 @@ func TestListUsersCommandStatusColumns(t *testing.T) {
 	erin := rowFor(t, output, "erin")
 	if !strings.Contains(erin, "DISABLED (1 fails)") {
 		t.Fatalf("row %q does not report the lockout", erin)
+	}
+}
+
+// TestTruncateColumnMultiByte checks that a value is cut on a rune boundary.
+// An annotation is free text an administrator typed, so it can hold multi-byte
+// characters, and a byte-wise slice would leave a partial rune behind and print
+// a replacement character.
+func TestTruncateColumnMultiByte(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		width int
+		want  string
+	}{
+		{
+			// Thirty two-byte runes, so the value is truncated; seven bytes
+			// are left once the ellipsis is allowed for, which holds three
+			// whole runes and not a fourth.
+			name:  "two-byte runes are not split",
+			value: strings.Repeat("\u00e6\u00f8\u00e5", 10),
+			width: 10,
+			want:  "\u00e6\u00f8\u00e5...",
+		},
+		{
+			// A four-byte rune does not fit in the remaining budget at all,
+			// so nothing but the ellipsis survives.
+			name:  "a four-byte rune that does not fit is dropped whole",
+			value: strings.Repeat("\U0001F600", 4),
+			width: 6,
+			want:  "...",
+		},
+		{
+			name:  "a value that fits is untouched whatever its encoding",
+			value: "caf\u00e9",
+			width: 5,
+			want:  "caf\u00e9",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := truncateColumn(tt.value, tt.width)
+			if got != tt.want {
+				t.Fatalf("truncateColumn(%q, %d) = %q, want %q",
+					tt.value, tt.width, got, tt.want)
+			}
+			if len(got) > tt.width {
+				t.Fatalf("truncateColumn(%q, %d) = %q, which overruns the column",
+					tt.value, tt.width, got)
+			}
+			if !utf8.ValidString(got) {
+				t.Fatalf("truncateColumn(%q, %d) = %q, which is not valid UTF-8",
+					tt.value, tt.width, got)
+			}
+			if strings.ContainsRune(got, utf8.RuneError) {
+				t.Fatalf("truncateColumn(%q, %d) = %q, which split a rune",
+					tt.value, tt.width, got)
+			}
+		})
+	}
+}
+
+// TestListUsersRowFormatIsStable pins the format string the width constants
+// generate, so that a change to the layout has to be made deliberately rather
+// than by accident.
+func TestListUsersRowFormatIsStable(t *testing.T) {
+	const want = "%-20s %-17s %-17s %-20s %-28s %s\n"
+	if listUsersRowFormat != want {
+		t.Fatalf("listUsersRowFormat = %q, want %q", listUsersRowFormat, want)
 	}
 }

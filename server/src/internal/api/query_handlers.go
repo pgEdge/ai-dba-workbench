@@ -137,9 +137,9 @@ func hasOnlyComments(s string) bool {
 }
 
 // splitStatements splits a SQL string into individual statements by
-// scanning for semicolons that are outside of single-quoted strings,
-// dollar-quoted strings, line comments, and block comments (with
-// nesting). It trims whitespace and filters out empty or
+// scanning for semicolons that are outside of quoted strings, quoted
+// identifiers, dollar-quoted strings, line comments, and block comments
+// (with nesting). It trims whitespace and filters out empty or
 // comment-only statements.
 func splitStatements(sql string) []string {
 	var statements []string
@@ -149,21 +149,10 @@ func splitStatements(sql string) []string {
 	for i < len(sql) {
 		ch := sql[i]
 
-		// Single-quoted string
-		if ch == '\'' {
-			i++
-			for i < len(sql) {
-				if sql[i] == '\'' {
-					if i+1 < len(sql) && sql[i+1] == '\'' {
-						i += 2 // escaped quote ''
-					} else {
-						i++ // closing quote
-						break
-					}
-				} else {
-					i++
-				}
-			}
+		// Quoted string or quoted identifier, including the prefixed
+		// forms E'...', U&'...' and U&"...".
+		if isQuoteStart(sql, i) {
+			i = skipQuoted(sql, i)
 			continue
 		}
 
@@ -356,7 +345,11 @@ func (h *ConnectionHandler) executeQuery(w http.ResponseWriter, r *http.Request,
 	// The confirmation prompt and the write-access gate above have
 	// already run for these statements, and runSimpleStatements applies
 	// the same read-only transaction the pgx path uses, so this branch
-	// is no shortcut past either check (issue #530).
+	// is no shortcut past either check (issue #530). The classification
+	// above is what decides whether a statement is treated as a write;
+	// the read-only transaction narrows what a misclassified statement
+	// can do, but it does not catch every case (see
+	// runSimpleStatements).
 	if needsSimpleProtocol(statements) {
 		poolConn, err := pool.Acquire(ctx)
 		if err != nil {
@@ -530,9 +523,10 @@ const maxExplainDepth = 8
 
 // isReadOnlyStatement returns true if the SQL statement (after stripping
 // leading comments) begins with a read-only keyword: SELECT, WITH, SHOW,
-// EXPLAIN, or TABLE. Writable CTEs (WITH ... INSERT/UPDATE/DELETE) are
-// classified as non-read-only, as is an EXPLAIN whose options include
-// ANALYZE and whose inner statement writes (issue #530).
+// EXPLAIN, or TABLE. Writable CTEs (WITH ... INSERT/UPDATE/DELETE/MERGE)
+// are classified as non-read-only, as are a query with a writing clause
+// (see hasWritingSelectClause) and an EXPLAIN that may execute a writing
+// inner statement (issue #530).
 func isReadOnlyStatement(sql string) bool {
 	return isReadOnlyStatementAtDepth(sql, 0)
 }
@@ -541,41 +535,128 @@ func isReadOnlyStatement(sql string) bool {
 // nesting depth reached so far.
 func isReadOnlyStatementAtDepth(sql string, depth int) bool {
 	body := strings.TrimSpace(stripLeadingComments(sql))
-	upper := strings.ToUpper(body)
 
-	if hasKeywordPrefix(upper, "EXPLAIN") {
+	// The EXPLAIN test runs against the original text rather than an
+	// uppercased copy, because strings.ToUpper is not length-preserving
+	// for every input (U+0131 gets shorter), so an offset measured on
+	// the copy cannot safely slice the original.
+	if hasKeywordPrefix(body, "EXPLAIN") {
 		return isReadOnlyExplain(body, depth)
 	}
+
+	upper := strings.ToUpper(body)
 
 	if strings.HasPrefix(upper, "WITH") {
 		// Writable CTEs can perform data modification, e.g.
 		// WITH deleted AS (DELETE FROM t RETURNING *) SELECT * FROM deleted.
 		// Check for DML keywords as standalone words in the body.
-		dmlKeywords := []string{"INSERT", "UPDATE", "DELETE"}
+		dmlKeywords := []string{"INSERT", "UPDATE", "DELETE", "MERGE"}
 		for _, kw := range dmlKeywords {
 			if containsSQLKeyword(upper, kw) {
 				return false
 			}
 		}
-		return true
+		return !hasWritingSelectClause(upper)
 	}
 
-	return strings.HasPrefix(upper, "SELECT") ||
-		strings.HasPrefix(upper, "SHOW") ||
-		strings.HasPrefix(upper, "TABLE ")
+	if strings.HasPrefix(upper, "SELECT") || strings.HasPrefix(upper, "TABLE ") {
+		return !hasWritingSelectClause(upper)
+	}
+
+	return strings.HasPrefix(upper, "SHOW")
+}
+
+// hasWritingSelectClause reports whether an otherwise reading query
+// carries a clause that writes: SELECT ... INTO, which creates a table,
+// or a row-locking clause (FOR UPDATE, FOR NO KEY UPDATE, FOR SHARE,
+// FOR KEY SHARE), which stamps the lock onto every row it returns.
+// PostgreSQL refuses both inside a read-only transaction, so classifying
+// them as writes makes this gate agree with the database rather than
+// leaving the transaction to reject them later. upperSQL must already be
+// uppercased. Like the writable-CTE scan, this reads keywords wherever
+// they appear, a string literal included, so it can only over-report,
+// which is the safe direction.
+func hasWritingSelectClause(upperSQL string) bool {
+	return containsSQLKeyword(upperSQL, "INTO") ||
+		containsLockingClause(upperSQL)
+}
+
+// containsLockingClause reports whether upperSQL contains a row-locking
+// clause: the word FOR followed by UPDATE or SHARE, with the optional NO
+// and KEY qualifiers in between.
+func containsLockingClause(upperSQL string) bool {
+	words := sqlWords(upperSQL)
+	for i, word := range words {
+		if word != "FOR" {
+			continue
+		}
+		for j := i + 1; j < len(words); j++ {
+			switch words[j] {
+			case "NO", "KEY":
+				continue
+			case "UPDATE", "SHARE":
+				return true
+			}
+			break
+		}
+	}
+	return false
+}
+
+// sqlWords splits s into its runs of identifier characters, discarding
+// everything else.
+func sqlWords(s string) []string {
+	var words []string
+	i := 0
+	for i < len(s) {
+		if !isIdentChar(s[i]) {
+			i++
+			continue
+		}
+		start := i
+		for i < len(s) && isIdentChar(s[i]) {
+			i++
+		}
+		words = append(words, s[start:i])
+	}
+	return words
+}
+
+// explainNonExecutingOptions are the EXPLAIN option names that only
+// change how the plan is reported. Every other name, ANALYZE included,
+// means the inner statement may really run.
+var explainNonExecutingOptions = map[string]bool{
+	"VERBOSE":      true,
+	"COSTS":        true,
+	"SETTINGS":     true,
+	"GENERIC_PLAN": true,
+	"BUFFERS":      true,
+	"WAL":          true,
+	"TIMING":       true,
+	"SUMMARY":      true,
+	"MEMORY":       true,
+	"SERIALIZE":    true,
+	"FORMAT":       true,
 }
 
 // isReadOnlyExplain classifies an EXPLAIN statement by what it explains.
 // body must already start with the EXPLAIN keyword and have had its
 // leading comments stripped. Without ANALYZE, EXPLAIN only plans the
-// inner statement and executes nothing, so it is read-only; with
-// ANALYZE the inner statement really runs and decides the answer. Any
-// mention of ANALYZE counts as enabled: EXPLAIN (ANALYZE false) is
-// treated as an execution rather than trusting the option's value.
+// inner statement and executes nothing, so it is read-only; with ANALYZE
+// the inner statement really runs and decides the answer.
+//
+// ANALYZE is detected by an allow-list that fails closed rather than by
+// searching for the word, because an EXPLAIN option name is a ColId:
+// PostgreSQL accepts it as a quoted identifier and decodes its Unicode
+// escapes before comparing, so EXPLAIN (U&"\0061nalyze") DELETE ...
+// turns ANALYZE on without the text ever appearing. Only a bare,
+// unquoted, recognized option name counts as non-executing; anything
+// quoted, escaped or unrecognized is taken as an execution, and the
+// inner statement then decides the classification.
 func isReadOnlyExplain(body string, depth int) bool {
 	rest := strings.TrimSpace(stripLeadingComments(body[len("EXPLAIN"):]))
 
-	analyze := false
+	executes := false
 	if strings.HasPrefix(rest, "(") {
 		// Parenthesised form: EXPLAIN ( option [, ...] ) statement.
 		options, remainder, ok := splitExplainOptions(rest)
@@ -584,36 +665,105 @@ func isReadOnlyExplain(body string, depth int) bool {
 			// fail closed rather than guess at the option list.
 			return false
 		}
-		upperOptions := strings.ToUpper(options)
-		analyze = containsSQLKeyword(upperOptions, "ANALYZE") ||
-			containsSQLKeyword(upperOptions, "ANALYSE") //nolint:misspell // British spelling accepted by PostgreSQL
+		executes = explainOptionsExecute(options)
 		rest = strings.TrimSpace(stripLeadingComments(remainder))
 	} else {
 		// Legacy form: EXPLAIN [ANALYZE] [VERBOSE] statement, in either
-		// order.
+		// order. ANALYZE and VERBOSE are the only option words this form
+		// takes, so any other word is taken as an execution and the
+		// statement starting there is classified on its own merits,
+		// rather than being trusted because EXPLAIN preceded it.
 	keywords:
 		for {
 			word, remainder := nextSQLWord(rest)
 			switch strings.ToUpper(word) {
 			case "ANALYZE", "ANALYSE": //nolint:misspell // British spelling accepted by PostgreSQL
-				analyze = true
+				executes = true
 			case "VERBOSE":
 			default:
-				// Not an EXPLAIN keyword, so the inner statement starts
-				// here.
+				if word != "" {
+					executes = true
+				}
 				break keywords
 			}
 			rest = strings.TrimSpace(stripLeadingComments(remainder))
 		}
 	}
 
-	if !analyze {
+	if !executes {
 		return true
 	}
 	if rest == "" || depth >= maxExplainDepth {
 		return false
 	}
 	return isReadOnlyStatementAtDepth(rest, depth+1)
+}
+
+// explainOptionsExecute reports whether a parenthesised EXPLAIN option
+// list may cause the inner statement to run. It inspects option names
+// only, never their values, and treats a name it cannot read as a bare
+// recognized identifier as an execution.
+func explainOptionsExecute(options string) bool {
+	entries := splitExplainOptionEntries(options)
+	if len(entries) == 0 {
+		// EXPLAIN () is not valid SQL, so fail closed.
+		return true
+	}
+	for _, entry := range entries {
+		name, _ := nextSQLWord(strings.TrimSpace(stripLeadingComments(entry)))
+		if !explainNonExecutingOptions[strings.ToUpper(name)] {
+			return true
+		}
+	}
+	return false
+}
+
+// splitExplainOptionEntries splits an EXPLAIN option list on the commas
+// that separate its entries. Quoted strings, quoted identifiers,
+// comments and nested parentheses are skipped so that a comma inside one
+// does not start an entry. The result is nil for an empty list.
+func splitExplainOptionEntries(options string) []string {
+	var entries []string
+	depth := 0
+	start := 0
+	i := 0
+
+	for i < len(options) {
+		ch := options[i]
+
+		if isQuoteStart(options, i) {
+			i = skipQuoted(options, i)
+			continue
+		}
+		if ch == '-' && i+1 < len(options) && options[i+1] == '-' {
+			for i < len(options) && options[i] != '\n' {
+				i++
+			}
+			continue
+		}
+		if ch == '/' && i+1 < len(options) && options[i+1] == '*' {
+			i = skipBlockComment(options, i)
+			continue
+		}
+
+		switch {
+		case ch == '(':
+			depth++
+		case ch == ')':
+			depth--
+		case ch == ',' && depth == 0:
+			entries = append(entries, options[start:i])
+			start = i + 1
+		}
+		i++
+	}
+	entries = append(entries, options[start:])
+
+	if len(entries) == 1 &&
+		strings.TrimSpace(stripLeadingComments(entries[0])) == "" {
+		return nil
+	}
+	return entries
 }
 
 // splitExplainOptions splits an EXPLAIN option list from the statement
@@ -628,7 +778,7 @@ func splitExplainOptions(s string) (options, remainder string, ok bool) {
 	for i < len(s) {
 		ch := s[i]
 
-		if ch == '\'' || ch == '"' {
+		if isQuoteStart(s, i) {
 			i = skipQuoted(s, i)
 			continue
 		}
@@ -656,22 +806,83 @@ func splitExplainOptions(s string) (options, remainder string, ok bool) {
 	return "", "", false
 }
 
+// literalPrefix reports the length of the string-literal prefix at s[i]
+// and whether a backslash escapes the following character inside that
+// literal. PostgreSQL accepts E'...' (backslash escapes), U&'...' and
+// U&"..." (Unicode escapes), and the B'...', X'...' and N'...' forms,
+// each of which introduces a literal that a bare quote scan would start
+// one or two bytes late. The length is zero when no prefix starts here.
+func literalPrefix(s string, i int) (length int, backslashEscapes bool) {
+	if i+1 >= len(s) {
+		return 0, false
+	}
+	switch s[i] {
+	case 'E', 'e':
+		if s[i+1] == '\'' {
+			return 1, true
+		}
+	case 'B', 'b', 'X', 'x', 'N', 'n':
+		if s[i+1] == '\'' {
+			return 1, false
+		}
+	case 'U', 'u':
+		if s[i+1] == '&' && i+2 < len(s) &&
+			(s[i+2] == '\'' || s[i+2] == '"') {
+			return 2, false
+		}
+	}
+	return 0, false
+}
+
+// isQuoteStart reports whether a quoted string or quoted identifier
+// starts at s[i], either with the quote itself or with one of the
+// literal prefixes literalPrefix recognizes. A prefix letter only counts
+// when it does not continue an identifier, so the trailing e of a column
+// name is not mistaken for an E'...' literal.
+func isQuoteStart(s string, i int) bool {
+	if s[i] == '\'' || s[i] == '"' {
+		return true
+	}
+	if i > 0 && isIdentChar(s[i-1]) {
+		return false
+	}
+	length, _ := literalPrefix(s, i)
+	return length > 0
+}
+
 // skipQuoted returns the index just past the quoted string or quoted
-// identifier starting at s[i], which must be a single or double quote.
-// A doubled quote inside the literal is an escaped quote rather than a
-// terminator. An unterminated literal runs to the end of the string.
+// identifier starting at s[i], which must be a single or double quote or
+// the first character of a literal prefix (see literalPrefix). A doubled
+// quote inside the literal is an escaped quote rather than a terminator,
+// and inside an E'...' literal a backslash escapes the character that
+// follows it, so a backslash-escaped quote does not terminate it.
+// An unterminated literal runs to the end of the string.
 func skipQuoted(s string, i int) int {
+	escapes := false
+	if s[i] != '\'' && s[i] != '"' {
+		length, backslashEscapes := literalPrefix(s, i)
+		if length == 0 {
+			return i + 1
+		}
+		escapes = backslashEscapes
+		i += length
+	}
+
 	quote := s[i]
 	i++
 	for i < len(s) {
-		if s[i] == quote {
+		switch {
+		case escapes && s[i] == '\\':
+			i += 2
+		case s[i] == quote:
 			if i+1 < len(s) && s[i+1] == quote {
 				i += 2
 				continue
 			}
 			return i + 1
+		default:
+			i++
 		}
-		i++
 	}
 	return len(s)
 }
@@ -706,15 +917,17 @@ func nextSQLWord(s string) (word, rest string) {
 	return s[:i], s[i:]
 }
 
-// hasKeywordPrefix reports whether upperSQL starts with keyword followed
-// by a non-identifier character, so that EXPLAINABLE does not match
-// EXPLAIN.
-func hasKeywordPrefix(upperSQL, keyword string) bool {
-	if !strings.HasPrefix(upperSQL, keyword) {
+// hasKeywordPrefix reports whether sql starts with keyword, ignoring
+// case, followed by a non-identifier character, so that EXPLAINABLE does
+// not match EXPLAIN. The comparison is made on the caller's own string
+// rather than an uppercased copy, so that the keyword's length is a
+// valid offset into it.
+func hasKeywordPrefix(sql, keyword string) bool {
+	if len(sql) < len(keyword) ||
+		!strings.EqualFold(sql[:len(keyword)], keyword) {
 		return false
 	}
-	return len(upperSQL) == len(keyword) ||
-		!isIdentChar(upperSQL[len(keyword)])
+	return len(sql) == len(keyword) || !isIdentChar(sql[len(keyword)])
 }
 
 // containsSQLKeyword checks whether a SQL keyword appears as a standalone
@@ -747,7 +960,7 @@ func containsSQLKeyword(upperSQL, keyword string) bool {
 // placeholders as bind parameters.
 func needsSimpleProtocol(statements []string) bool {
 	for _, stmt := range statements {
-		body := strings.ToUpper(strings.TrimSpace(stripLeadingComments(stmt)))
+		body := strings.TrimSpace(stripLeadingComments(stmt))
 		if hasKeywordPrefix(body, "EXPLAIN") && containsDollarParam(stmt) {
 			return true
 		}
@@ -757,9 +970,10 @@ func needsSimpleProtocol(statements []string) bool {
 
 // containsDollarParam checks whether the string contains a $N parameter
 // placeholder (e.g. $1, $2) as real SQL. A $N inside a single-quoted
-// literal, a dollar-quoted literal, a double-quoted identifier, a line
-// comment or a block comment is text rather than a placeholder and does
-// not count (issue #530). An unterminated literal or comment swallows
+// literal (including the prefixed E'...' and U&'...' forms), a
+// dollar-quoted literal, a double-quoted identifier, a line comment or a
+// block comment is text rather than a placeholder and does not count
+// (issue #530). An unterminated literal or comment swallows
 // the rest of the string, so the scan ends and reports no placeholder
 // rather than reading the quoted text as SQL.
 func containsDollarParam(s string) bool {
@@ -768,7 +982,7 @@ func containsDollarParam(s string) bool {
 		ch := s[i]
 
 		switch {
-		case ch == '\'' || ch == '"':
+		case isQuoteStart(s, i):
 			i = skipQuoted(s, i)
 		case ch == '-' && i+1 < len(s) && s[i+1] == '-':
 			for i < len(s) && s[i] != '\n' {
@@ -973,13 +1187,22 @@ func runStatement(ctx context.Context, q queryable, stmt string, limit int, conn
 
 // runSimpleStatements executes statements over the simple query
 // protocol. When readOnly is true they run inside a read-only
-// transaction, matching the discipline the pgx path applies: a
-// statement that slipped through classification as read-only still
-// cannot write, because PostgreSQL refuses it (issue #530). A statement
-// error rolls the transaction back and a clean run commits. A failure
-// of the transaction control itself is reported as a result of its own
-// and no statement runs, so the read-only guarantee holds even when the
-// transaction cannot be opened.
+// transaction, matching the discipline the pgx path applies (issue
+// #530). A statement error rolls the transaction back and a clean run
+// commits. A failure of the transaction control itself is reported as a
+// result of its own and no statement runs, so a batch classified as
+// read-only never runs outside the transaction it asked for.
+//
+// SET TRANSACTION READ ONLY prevents writes to database objects within
+// the transaction, so a misclassified INSERT, UPDATE, DELETE, TRUNCATE,
+// CREATE TABLE AS, SELECT ... INTO, SELECT ... FOR UPDATE, sequence
+// advance or EXPLAIN ANALYZE of any of those is refused. It is not an
+// authorisation boundary and it does not reach side effects a function
+// performs outside the transaction's own writes: pg_terminate_backend,
+// pg_reload_conf, pg_switch_wal, pg_create_restore_point, pg_read_file,
+// the advisory-lock functions and dblink_exec all remain permitted
+// inside it. Classification, not this transaction, is what keeps such
+// statements behind the write gate.
 func runSimpleStatements(
 	ctx context.Context,
 	pgConn *pgconn.PgConn,
@@ -1011,6 +1234,10 @@ func runSimpleStatementsWith(
 ) []statementResult {
 	if readOnly {
 		if err := exec(ctx, "BEGIN"); err != nil {
+			// No rollback here: a BEGIN that failed part-way leaves the
+			// connection in a transaction that nothing else will use,
+			// because the pool is built per request and pgxpool destroys
+			// a connection released with a non-idle transaction status.
 			return []statementResult{controlFailure("BEGIN", err, connectionID)}
 		}
 		if err := exec(ctx, "SET TRANSACTION READ ONLY"); err != nil {

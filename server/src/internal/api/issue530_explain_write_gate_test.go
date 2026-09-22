@@ -36,8 +36,11 @@ func TestIssue530_IsReadOnlyStatementExplain(t *testing.T) {
 		readOnly bool
 	}{
 		{"explain select", "EXPLAIN SELECT * FROM t", true},
-		{"explain delete plans only", "EXPLAIN DELETE FROM t", true},
-		{"explain verbose delete plans only", "EXPLAIN VERBOSE DELETE FROM t", true},
+		{"legacy explain delete classifies by the inner statement",
+			"EXPLAIN DELETE FROM t", false},
+		{"legacy explain verbose delete classifies by the inner statement",
+			"EXPLAIN VERBOSE DELETE FROM t", false},
+		{"legacy explain verbose select", "EXPLAIN VERBOSE SELECT 1", true},
 		{"explain analyze select", "EXPLAIN ANALYZE SELECT 1", true},
 		{"explain analyze delete", "EXPLAIN ANALYZE DELETE FROM t", false},
 		{"explain analyse update", "EXPLAIN ANALYSE UPDATE t SET a = 1", false}, //nolint:misspell // British spelling accepted by PostgreSQL
@@ -62,13 +65,13 @@ func TestIssue530_IsReadOnlyStatementExplain(t *testing.T) {
 			"EXPLAIN /* opts */ (ANALYZE) DELETE FROM t", false},
 		{"analyze hidden behind a comment containing a paren",
 			"EXPLAIN (/* ) */ ANALYZE) DELETE FROM t", false},
-		{"analyze inside a quoted option value is conservative",
-			"EXPLAIN (FORMAT 'analyze') DELETE FROM t", false},
+		{"analyze in an option value is a value, not a name",
+			"EXPLAIN (FORMAT 'analyze') DELETE FROM t", true},
 		{"unbalanced options fail closed", "EXPLAIN (ANALYZE DELETE FROM t", false},
 		{"nested parentheses in the options",
 			"EXPLAIN (ANALYZE (on)) DELETE FROM t", false},
-		{"analyze inside an option comment is conservative",
-			"EXPLAIN (FORMAT JSON -- ANALYZE\n) DELETE FROM t", false},
+		{"analyze inside an option comment is not an option name",
+			"EXPLAIN (FORMAT JSON -- ANALYZE\n) DELETE FROM t", true},
 		{"explain with no statement", "EXPLAIN", true},
 		{"explain analyze with no statement", "EXPLAIN ANALYZE", false},
 		{"explainable identifier is not explain", "EXPLAINABLE SELECT 1", false},
@@ -78,8 +81,37 @@ func TestIssue530_IsReadOnlyStatementExplain(t *testing.T) {
 			"EXPLAIN ANALYZE EXPLAIN ANALYZE DELETE FROM t", false},
 		{"pathological nesting fails closed",
 			strings.Repeat("EXPLAIN ANALYZE ", 64) + "SELECT 1", false},
-		{"no-analyze nesting stays read-only",
-			strings.Repeat("EXPLAIN ", 64) + "DELETE FROM t", true},
+		{"nesting beyond the depth limit fails closed",
+			strings.Repeat("EXPLAIN ", 64) + "DELETE FROM t", false},
+		{"unicode-escaped analyze option name",
+			`EXPLAIN (U&"\0061nalyze") DELETE FROM t WHERE id = 99`, false},
+		{"lowercase unicode-escaped analyze option name",
+			`EXPLAIN (u&"\0061nalyze") DELETE FROM t WHERE id = 99`, false},
+		{"unicode escape at the end of the option name",
+			`EXPLAIN (U&"analyz\0065") DELETE FROM t WHERE id = 99`, false},
+		{"unicode-escaped analyze option name with a value",
+			`EXPLAIN (U&"\0061nalyze" true) DELETE FROM t WHERE id = 99`, false},
+		{"unicode-escaped option name after a recognized one",
+			`EXPLAIN (VERBOSE, U&"\0061nalyze") DELETE FROM t`, false},
+		{"unicode-escaped name of a recognized option still fails closed",
+			`EXPLAIN (U&"verbose") DELETE FROM t`, false},
+		{"quoted analyze option name",
+			`EXPLAIN ("analyze") DELETE FROM t`, false},
+		{"quoted analyze option name with a value",
+			`EXPLAIN ("analyze" true) DELETE FROM t`, false},
+		{"quoted recognized option name still fails closed",
+			`EXPLAIN ("verbose") DELETE FROM t`, false},
+		{"unrecognized option name fails closed",
+			"EXPLAIN (FUTURE_OPTION) DELETE FROM t", false},
+		{"empty option list fails closed", "EXPLAIN () DELETE FROM t", false},
+		{"trailing empty option entry fails closed",
+			"EXPLAIN (VERBOSE,) DELETE FROM t", false},
+		{"every recognized option name is non-executing",
+			"EXPLAIN (VERBOSE, COSTS off, SETTINGS on, GENERIC_PLAN on, " +
+				"BUFFERS off, WAL off, TIMING off, SUMMARY off, MEMORY off, " +
+				"SERIALIZE none, FORMAT JSON) DELETE FROM t", true},
+		{"recognized options lowercase",
+			"explain (verbose, format json) delete from t", true},
 	}
 
 	for _, tt := range tests {
@@ -120,6 +152,19 @@ func TestIssue530_ContainsDollarParam(t *testing.T) {
 		{"unterminated dollar quote", "SELECT $tag$ oops $1", false},
 		{"trailing dollar", "SELECT 1 $", false},
 		{"empty", "", false},
+		{"backslash-escaped quote in an E literal",
+			`EXPLAIN SELECT E'\'' , $1`, true},
+		{"placeholder text inside an E literal", `SELECT E'\'$1'`, false},
+		{"E literal with a trailing backslash", `SELECT E'oops\`, false},
+		{"unicode literal then a placeholder", `SELECT U&'\0024', $1`, true},
+		{"placeholder text inside a unicode identifier",
+			`SELECT U&"$1" FROM t`, false},
+		{"bit-string literal then a placeholder", "SELECT B'1010', $1", true},
+		{"hex literal then a placeholder", "SELECT X'ff', $1", true},
+		{"national literal then a placeholder", "SELECT N'x', $1", true},
+		{"identifier ending in e is not an E literal",
+			"SELECT code'$1", false},
+		{"lone e before a placeholder", "SELECT e, $1", true},
 	}
 
 	for _, tt := range tests {
@@ -444,5 +489,123 @@ func TestIssue530_RollbackSimpleLogsFailure(t *testing.T) {
 		}, 1)
 	if !called {
 		t.Error("rollbackSimple did not issue the rollback")
+	}
+}
+
+// TestIssue530_SplitStatementsQuoting covers the statement splitter's
+// handling of quoted identifiers and prefixed string literals, where a
+// semicolon is part of the literal rather than a split point.
+func TestIssue530_SplitStatementsQuoting(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  []string
+	}{
+		{"semicolon in a quoted identifier", `SELECT "a;b"`,
+			[]string{`SELECT "a;b"`}},
+		{"semicolon in an escaped E literal", `SELECT E'\';'`,
+			[]string{`SELECT E'\';'`}},
+		{"semicolon in a unicode literal", `SELECT U&'a;b'`,
+			[]string{`SELECT U&'a;b'`}},
+		{"semicolon in a unicode identifier", `SELECT U&"a;b"`,
+			[]string{`SELECT U&"a;b"`}},
+		{"real split after a quoted identifier", `SELECT "a;b"; SELECT 2`,
+			[]string{`SELECT "a;b"`, "SELECT 2"}},
+		{"plain literal still splits after it", `SELECT 'a;b'; SELECT 2`,
+			[]string{`SELECT 'a;b'`, "SELECT 2"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := splitStatements(tt.input)
+			if len(got) != len(tt.want) {
+				t.Fatalf("splitStatements(%q) = %q, want %q",
+					tt.input, got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("splitStatements(%q)[%d] = %q, want %q",
+						tt.input, i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+// TestIssue530_SkipQuoted covers the literal scanner directly, including
+// the prefixed forms and the unterminated cases that run to the end.
+func TestIssue530_SkipQuoted(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  int
+	}{
+		{"plain literal", "'abc' rest", 5},
+		{"doubled quote", "'a''b' rest", 6},
+		{"quoted identifier", `"a b" rest`, 5},
+		{"doubled double quote", `"a""b" rest`, 6},
+		{"escape literal", `E'\'' rest`, 5},
+		{"escape literal lowercase", `e'\'' rest`, 5},
+		{"unicode literal", `U&'ab' rest`, 6},
+		{"unicode identifier", `U&"ab" rest`, 6},
+		{"bit string", "B'10' rest", 5},
+		{"hex string", "x'ff' rest", 5},
+		{"national string", "N'ab' rest", 5},
+		{"unterminated literal", "'abc", 4},
+		{"not a literal prefix", "abc", 1},
+		{"prefix letter at the end", "E", 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := skipQuoted(tt.input, 0); got != tt.want {
+				t.Errorf("skipQuoted(%q, 0) = %d, want %d",
+					tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestIssue530_WritingSelectClauses covers the statements that read at
+// first glance but write: a writable CTE using MERGE, SELECT ... INTO,
+// which creates a table, and the row-locking clauses, which stamp the
+// lock onto every row they return.
+func TestIssue530_WritingSelectClauses(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		readOnly bool
+	}{
+		{"writable CTE MERGE",
+			"WITH c AS (SELECT 1) MERGE INTO t USING s ON t.id = s.id " +
+				"WHEN MATCHED THEN DO NOTHING", false},
+		{"select into", "SELECT * INTO x FROM t", false},
+		{"select into lowercase", "select a into x from t", false},
+		{"select for update", "SELECT * FROM t FOR UPDATE", false},
+		{"select for no key update", "SELECT * FROM t FOR NO KEY UPDATE", false},
+		{"select for share", "SELECT * FROM t FOR SHARE", false},
+		{"select for key share", "SELECT * FROM t FOR KEY SHARE", false},
+		{"select for update lowercase", "select * from t for update", false},
+		{"table shorthand for update", "TABLE t FOR UPDATE", false},
+		{"explain analyze select for update",
+			"EXPLAIN ANALYZE SELECT * FROM t FOR UPDATE", false},
+		{"cte with a locking clause",
+			"WITH c AS (SELECT 1 FOR UPDATE) SELECT * FROM c", false},
+		{"plain select is unaffected", "SELECT * FROM t", true},
+		{"substring for is not a locking clause",
+			"SELECT substring(a FROM 1 FOR 2) FROM t", true},
+		{"a column called format is not a locking clause",
+			"SELECT format FROM t", true},
+		{"a column called information is not INTO",
+			"SELECT information FROM t", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isReadOnlyStatement(tt.input); got != tt.readOnly {
+				t.Errorf("isReadOnlyStatement(%q) = %v, want %v",
+					tt.input, got, tt.readOnly)
+			}
+		})
 	}
 }

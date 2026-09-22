@@ -357,7 +357,8 @@ func TestExecuteQuery_ConfirmedWriteFailureReported(t *testing.T) {
 
 // TestExecuteQuery_ExplainWithParametersUsesSimpleProtocol covers the
 // simple-protocol branch taken by EXPLAIN statements that contain $N
-// placeholders, which bypasses the transaction path entirely.
+// placeholders, which runs its own read-only transaction rather than
+// the pgx one (issue #530).
 func TestExecuteQuery_ExplainWithParametersUsesSimpleProtocol(t *testing.T) {
 	h, pool, target, cleanup := newQueryExecTestHandler(t)
 	defer cleanup()

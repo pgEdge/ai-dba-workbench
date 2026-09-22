@@ -1624,16 +1624,23 @@ project adheres to
   read-only transaction that the read path otherwise opens. That
   defeated a connection scope of `read` on a token whose owner holds
   `read_write`, and would equally defeat a plain read-only account. The
-  classification now follows the inner statement whenever the options
-  mention `ANALYZE`; a plain `EXPLAIN`, which only plans and executes
-  nothing, remains read-only. The test for a `$N` placeholder now
-  ignores one that appears inside a quoted string, a dollar-quoted body
-  or a comment, so an `EXPLAIN` over a query containing a literal `$1`
-  is no longer misrouted. Statements that do run over the simple query
-  protocol are now held inside the same read-only transaction as the
-  rest of the read path, so a statement that ever slips through
-  classification still cannot write. The fix needs no restart beyond
-  the upgrade itself and no database migration. (#530)
+  classification now follows the inner statement unless the option list
+  consists entirely of bare, recognized options that only change how the
+  plan is reported, so a quoted or Unicode-escaped spelling of
+  `ANALYZE`, such as `EXPLAIN (U&"\0061nalyze")`, no longer passes as
+  read-only. `EXPLAIN` in the legacy `ANALYZE`/`VERBOSE` form is now
+  classified by the statement it explains, so `EXPLAIN DELETE ...`
+  prompts for confirmation and needs write access even though it only
+  plans. `SELECT ... INTO`, a row-locking `SELECT ... FOR UPDATE` or
+  `FOR SHARE`, and a `WITH` query containing `MERGE` are now classified
+  as writes as well, matching what a read-only transaction will accept.
+  The test for a `$N` placeholder now ignores one that appears inside a
+  quoted string, a dollar-quoted body or a comment, and understands the
+  `E'...'` and `U&'...'` literal forms, so an `EXPLAIN` over a query
+  containing a literal `$1` is no longer misrouted. Statements that do
+  run over the simple query protocol are now held inside the same
+  read-only transaction as the rest of the read path. The fix needs no
+  restart beyond the upgrade itself and no database migration. (#530)
 
 - Fix a configuration file that omits
   `http.auth.max_failed_attempts_before_lockout` silently disabling

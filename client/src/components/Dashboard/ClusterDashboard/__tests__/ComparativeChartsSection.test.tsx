@@ -455,3 +455,65 @@ describe('ComparativeChartsSection', () => {
         expect(mockApiFetch).not.toHaveBeenCalled();
     });
 });
+
+describe('ComparativeChartsSection connection_ids batching', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        capturedCharts.length = 0;
+        mockUser = { id: 1, username: 'testuser' };
+    });
+
+    const ids = (count: number): number[] =>
+        Array.from({ length: count }, (_, i) => i + 1);
+
+    const requestedIds = (url: string): number[] =>
+        (new URLSearchParams(url.split('?')[1]).get('connection_ids') ?? '')
+            .split(',')
+            .map(Number);
+
+    it('batches an over-cap cluster and merges the members', async () => {
+        mockApiFetch.mockImplementation((url: string) => Promise.resolve(
+            okResponse({
+                connections: requestedIds(url).map(id => makeConnection({
+                    connection_id: id,
+                    connection_name: `node-${id}`,
+                })),
+            }),
+        ));
+
+        renderSection(ids(250));
+
+        await waitFor(() => {
+            expect(mockApiFetch).toHaveBeenCalledTimes(3);
+        });
+
+        const urls = mockApiFetch.mock.calls.map(call => call[0] as string);
+        expect(requestedIds(urls[0])).toEqual(ids(250).slice(0, 100));
+        expect(requestedIds(urls[1])).toEqual(ids(250).slice(100, 200));
+        expect(requestedIds(urls[2])).toEqual(ids(250).slice(200));
+
+        await waitFor(() => {
+            expect(chartByTitle('Transaction Rate (commits/sec)').data.categories)
+                .toHaveLength(250);
+        });
+        expect(chartByTitle('Transaction Rate (commits/sec)').data.categories[0])
+            .toBe('node-1');
+        expect(chartByTitle('Transaction Rate (commits/sec)').data.categories[249])
+            .toBe('node-250');
+    });
+
+    it('shows an error when one batch fails', async () => {
+        mockApiFetch.mockImplementation((url: string) =>
+            Promise.resolve(requestedIds(url)[0] === 101
+                ? errorResponse(500, { error: 'batch failed' })
+                : okResponse({ connections: [makeConnection()] })),
+        );
+
+        renderSection(ids(250));
+
+        await waitFor(() => {
+            expect(screen.getByText('batch failed')).toBeInTheDocument();
+        });
+        expect(screen.queryByTestId('chart')).not.toBeInTheDocument();
+    });
+});

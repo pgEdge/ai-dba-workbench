@@ -16,7 +16,36 @@ import type { PerformanceSummaryData } from './types';
 import { extractEstateServerIds } from '../../../utils/clusterHelpers';
 import { logger } from '../../../utils/logger';
 import { useRetryingFetch } from '../../../hooks/useRetryingFetch';
+import { chunkConnectionIds } from '../../../utils/connectionIdBatches';
 import type { Selection } from '../../../types/selection';
+
+/**
+ * Merge the responses to a batched request into the shape a single
+ * response has. A single response is returned verbatim, so the common
+ * path is unchanged; otherwise the `connections` arrays are
+ * concatenated in batch order, which reproduces the order the server
+ * would have returned for the unbatched list.
+ *
+ * The optional top-level `aggregate` is dropped from a merged result:
+ * its weighted cache hit average cannot be recomputed from the response
+ * fields alone. Nothing in the client reads it, so leaving it out is
+ * honest rather than lossy; a consumer that needs it must either read
+ * it from an unbatched response or have the server provide the weights.
+ */
+const mergeSummaries = async (
+    responses: Response[],
+): Promise<PerformanceSummaryData> => {
+    const results: PerformanceSummaryData[] = await Promise.all(
+        responses.map(r => r.json()),
+    );
+
+    if (results.length === 1) {return results[0];}
+
+    return {
+        time_range: results[0]?.time_range ?? '',
+        connections: results.flatMap(r => r.connections ?? []),
+    };
+};
 
 interface UsePerformanceSummaryReturn {
     data: PerformanceSummaryData | null;
@@ -53,26 +82,35 @@ export const usePerformanceSummary = (
      * them cannot see the control that would be changing the numbers;
      * a fixed at-a-glance summary is the more honest reading. The
      * panels inside the Monitoring section do follow the selector.
+     *
+     * Build the URLs for the selection, or null when no request should
+     * be made. A cluster or estate can hold more servers than one
+     * request may name, so its ID list is batched to the server's cap
+     * and the responses merged; a list within the cap still yields the
+     * single URL it always did.
      */
-    const buildUrl = useCallback((): string | null => {
+    const buildUrls = useCallback((): string[] | null => {
         if (!selection) {return null;}
 
         const base = '/api/v1/metrics/performance-summary';
+        const batchUrls = (ids: number[]): string[] | null => {
+            if (!ids.length) {return null;}
+            return chunkConnectionIds(ids).map(
+                batch => `${base}?connection_ids=${batch.join(',')}&time_range=24h`,
+            );
+        };
 
         if (selection.type === 'server') {
             if (selection.id === undefined || selection.id === null) {return null;}
-            return `${base}?connection_id=${selection.id}&time_range=24h`;
+            return [`${base}?connection_id=${selection.id}&time_range=24h`];
         }
 
         if (selection.type === 'cluster') {
-            if (!selection.serverIds?.length) {return null;}
-            return `${base}?connection_ids=${selection.serverIds.join(',')}&time_range=24h`;
+            return batchUrls(selection.serverIds ?? []);
         }
 
         if (selection.type === 'estate') {
-            const serverIds = extractEstateServerIds(selection);
-            if (!serverIds.length) {return null;}
-            return `${base}?connection_ids=${serverIds.join(',')}&time_range=24h`;
+            return batchUrls(extractEstateServerIds(selection));
         }
 
         return null;
@@ -81,8 +119,8 @@ export const usePerformanceSummary = (
     const fetchData = useCallback(async (): Promise<boolean> => {
         if (!user) {return true;}
 
-        const url = buildUrl();
-        if (!url) {
+        const urls = buildUrls();
+        if (!urls) {
             setData(null);
             return true;
         }
@@ -93,14 +131,16 @@ export const usePerformanceSummary = (
         setError(null);
 
         try {
-            const response = await apiFetch(url);
+            const responses = await Promise.all(urls.map(u => apiFetch(u)));
 
-            if (!response.ok) {
-                const errorData = await response.json().catch(() => ({})) as { error?: string };
-                throw new Error(errorData.error || `Failed to fetch performance data: ${response.status}`);
+            for (const response of responses) {
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({})) as { error?: string };
+                    throw new Error(errorData.error || `Failed to fetch performance data: ${response.status}`);
+                }
             }
 
-            const result: PerformanceSummaryData = await response.json();
+            const result = await mergeSummaries(responses);
             // Re-check mount state after the final await so a late
             // resolution cannot call setState on an unmounted component.
             if (isMountedRef.current) {
@@ -120,7 +160,7 @@ export const usePerformanceSummary = (
                 setLoading(false);
             }
         }
-    }, [user, buildUrl]);
+    }, [user, buildUrls]);
 
     // Reset initial load state when selection changes
     const selectionId = selection && 'id' in selection ? selection.id : undefined;

@@ -12,6 +12,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, waitFor, act } from '@testing-library/react';
 import { useMetrics, useBaselines } from '../useMetrics';
 import type { MetricQueryParams } from '../../components/Dashboard/types';
+import { MAX_CONNECTION_IDS_PER_REQUEST } from '../../utils/connectionIdBatches';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -964,5 +965,116 @@ describe('useBaselines', () => {
 
         const url = mockApiGet.mock.calls[1][0];
         expect(url).toContain('probe_name=probe2');
+    });
+});
+
+describe('useMetrics connection_ids batching', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockRefreshTrigger = 0;
+        mockTimeRange = { range: '24h' };
+    });
+
+    afterEach(() => {
+        vi.resetAllMocks();
+    });
+
+    const ids = (count: number): number[] =>
+        Array.from({ length: count }, (_, i) => i + 1);
+
+    const requestedIds = (url: string): number[] =>
+        (new URLSearchParams(url.split('?')[1]).get('connection_ids') ?? '')
+            .split(',')
+            .map(Number);
+
+    it('sends one request for a list within the cap', async () => {
+        mockApiGet.mockResolvedValue({ series: makeMetricSeries() });
+
+        const params: MetricQueryParams = {
+            probeName: 'pg_stat_activity',
+            timeRange: '24h',
+            connectionIds: ids(MAX_CONNECTION_IDS_PER_REQUEST),
+        };
+
+        renderHook(() => useMetrics(params));
+
+        await waitFor(() => {
+            expect(mockApiGet).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    it('batches an over-cap list and concatenates the series', async () => {
+        // One series per batch, named after its first connection id, so
+        // the merge order is visible in the result.
+        mockApiGet.mockImplementation((url: string) => Promise.resolve({
+            series: [{ name: `batch-${requestedIds(url)[0]}`, data: [1] }],
+            time_start: '2026-05-01T00:00:00.000Z',
+            time_end: '2026-05-02T00:00:00.000Z',
+            bucket_seconds: 60,
+        }));
+
+        const params: MetricQueryParams = {
+            probeName: 'pg_stat_activity',
+            timeRange: '24h',
+            connectionIds: ids(250),
+        };
+
+        const { result } = renderHook(() => useMetrics(params));
+
+        await waitFor(() => {
+            expect(result.current.data).not.toBeNull();
+        });
+
+        const urls = mockApiGet.mock.calls.map(call => call[0] as string);
+        expect(urls).toHaveLength(3);
+        expect(requestedIds(urls[0])).toEqual(ids(250).slice(0, 100));
+        expect(requestedIds(urls[1])).toEqual(ids(250).slice(100, 200));
+        expect(requestedIds(urls[2])).toEqual(ids(250).slice(200));
+
+        expect(result.current.data?.map(s => s.name)).toEqual([
+            'batch-1', 'batch-101', 'batch-201',
+        ]);
+        // The window is taken from the first batch that reported one.
+        expect(result.current.window?.bucketSeconds).toBe(60);
+    });
+
+    it('reports an error when one batch fails', async () => {
+        mockApiGet.mockImplementation((url: string) =>
+            requestedIds(url)[0] === 101
+                ? Promise.reject(new Error('batch failed'))
+                : Promise.resolve({ series: makeMetricSeries() }),
+        );
+
+        const params: MetricQueryParams = {
+            probeName: 'pg_stat_activity',
+            timeRange: '24h',
+            connectionIds: ids(250),
+        };
+
+        const { result } = renderHook(() => useMetrics(params));
+
+        await waitFor(() => {
+            expect(result.current.error).toBe('batch failed');
+        });
+        expect(result.current.data).toBeNull();
+        expect(result.current.window).toBeNull();
+    });
+
+    it('returns a null series when no batch carried one', async () => {
+        mockApiGet.mockResolvedValue(null);
+
+        const params: MetricQueryParams = {
+            probeName: 'pg_stat_activity',
+            timeRange: '24h',
+            connectionIds: ids(150),
+        };
+
+        const { result } = renderHook(() => useMetrics(params));
+
+        await waitFor(() => {
+            expect(mockApiGet).toHaveBeenCalledTimes(2);
+        });
+        expect(result.current.data).toBeNull();
+        expect(result.current.window).toBeNull();
     });
 });

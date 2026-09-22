@@ -42,9 +42,11 @@ func (m *mockSessionProvider) ClearConnectionSession(tokenHash string) error {
 type mockAccessChecker struct {
 	canAccess   bool
 	accessLevel string
+	checkCalled bool
 }
 
 func (m *mockAccessChecker) CanAccessConnection(ctx context.Context, connectionID int) (bool, string) {
+	m.checkCalled = true
 	return m.canAccess, m.accessLevel
 }
 
@@ -55,9 +57,11 @@ type mockConnInfoProvider struct {
 	getError                 error
 	builtConnStr             string
 	receivedDatabaseOverride string
+	getCalled                bool
 }
 
 func (m *mockConnInfoProvider) GetConnectionWithPassword(ctx context.Context, connectionID int) (*MonitoredConnection, string, error) {
+	m.getCalled = true
 	if m.getError != nil {
 		return nil, "", m.getError
 	}
@@ -552,5 +556,59 @@ func TestClientResolver_ResolveClient_RejectsInvalidDatabaseOverride(t *testing.
 	if connInfo.receivedDatabaseOverride != "" {
 		t.Errorf("connection string was built with %q",
 			connInfo.receivedDatabaseOverride)
+	}
+}
+
+// TestClientResolver_ResolveClient_ValidatesOverrideBeforeAccessAndPassword
+// pins the ordering: an invalid database override is refused before the
+// RBAC check runs and before the connection password is fetched. The
+// access checker here would deny access, so an access-denied error would
+// show that the check ran first (issue #530).
+func TestClientResolver_ResolveClient_ValidatesOverrideBeforeAccessAndPassword(t *testing.T) {
+	dbName := "custom\x00db"
+	connID := 42
+	sessions := &mockSessionProvider{
+		session: &ConnectionSession{
+			ConnectionID: connID,
+			DatabaseName: &dbName,
+		},
+	}
+	access := &mockAccessChecker{canAccess: false}
+	connInfo := &mockConnInfoProvider{
+		conn: &MonitoredConnection{
+			ID:           connID,
+			Host:         "localhost",
+			Port:         5432,
+			DatabaseName: "default_db",
+			Username:     "testuser",
+		},
+		password: "testpass",
+	}
+	clientManager := NewClientManager(nil)
+	defer clientManager.CloseAll()
+
+	resolver := &ClientResolver{
+		TokenExtractor: func(ctx context.Context) string { return "test-token-hash" },
+		Sessions:       sessions,
+		Access:         access,
+		ConnInfo:       connInfo,
+		ClientManager:  clientManager,
+	}
+
+	_, err := resolver.ResolveClient(context.Background())
+	if err == nil {
+		t.Fatal("expected an error for an invalid database override")
+	}
+	if !strings.Contains(err.Error(), "invalid database name") {
+		t.Errorf("expected an invalid database name error, got: %v", err)
+	}
+	if access.checkCalled {
+		t.Error("the access check ran before the override was validated")
+	}
+	if connInfo.getCalled {
+		t.Error("the password was fetched before the override was validated")
+	}
+	if sessions.clearCalled {
+		t.Error("the session was cleared for an invalid override")
 	}
 }

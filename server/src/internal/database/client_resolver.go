@@ -114,6 +114,20 @@ func (r *ClientResolver) ResolveClient(ctx context.Context) (*Client, error) {
 		}
 
 		if session != nil {
+			// Validate the optional database override before anything
+			// else, so an invalid name is rejected on its own terms
+			// rather than after an access check and a password fetch;
+			// see ValidateDatabaseName.
+			var databaseOverride string
+			if session.DatabaseName != nil {
+				databaseOverride = *session.DatabaseName
+			}
+			if databaseOverride != "" {
+				if err := ValidateDatabaseName(databaseOverride); err != nil {
+					return nil, fmt.Errorf("invalid database name in the selected session: %w", err)
+				}
+			}
+
 			// Verify RBAC access if checker is available
 			if r.Access != nil {
 				canAccess, _ := r.Access.CanAccessConnection(ctx, session.ConnectionID)
@@ -132,17 +146,7 @@ func (r *ClientResolver) ResolveClient(ctx context.Context) (*Client, error) {
 				return nil, fmt.Errorf("failed to get connection info: %w", err)
 			}
 
-			// Build connection string with optional database override,
-			// validating the override first; see ValidateDatabaseName.
-			var databaseOverride string
-			if session.DatabaseName != nil {
-				databaseOverride = *session.DatabaseName
-			}
-			if databaseOverride != "" {
-				if err := ValidateDatabaseName(databaseOverride); err != nil {
-					return nil, fmt.Errorf("invalid database name in the selected session: %w", err)
-				}
-			}
+			// Build connection string with the validated override.
 			connStr := r.ConnInfo.BuildConnectionString(conn, password, databaseOverride)
 
 			// Get or create client using the session helper

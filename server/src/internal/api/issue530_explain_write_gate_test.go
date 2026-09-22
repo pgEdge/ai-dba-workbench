@@ -607,3 +607,84 @@ func TestIssue530_WritingSelectClauses(t *testing.T) {
 		})
 	}
 }
+
+// TestIssue530_KeywordScansIgnoreNonCode pins that the write-clause and
+// writable-CTE scans read code only, so a keyword sitting in a string
+// literal, a quoted identifier or a comment no longer classifies an
+// ordinary read as a write.
+func TestIssue530_KeywordScansIgnoreNonCode(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		readOnly bool
+	}{
+		{"into inside a string literal",
+			"SELECT * FROM audit WHERE msg LIKE '%signed into%'", true},
+		{"into inside a trailing line comment",
+			"SELECT * FROM t -- copy into x", true},
+		{"into inside a block comment",
+			"SELECT * FROM t /* select into x */ WHERE a = 1", true},
+		{"locking clause inside a string literal",
+			"SELECT * FROM t WHERE note = 'FOR UPDATE'", true},
+		{"into as a quoted identifier",
+			`SELECT "into" FROM t`, true},
+		{"locking clause as a quoted identifier",
+			`SELECT "for", "update" FROM t`, true},
+		{"delete inside a literal in a CTE",
+			"WITH c AS (SELECT 'delete' AS a) SELECT * FROM c", true},
+		{"insert inside a comment in a CTE",
+			"WITH c AS (SELECT 1) /* insert */ SELECT * FROM c", true},
+		{"escape literal containing into",
+			`SELECT * FROM t WHERE a = E'signed into\n'`, true},
+		{"unicode literal containing for update",
+			`SELECT * FROM t WHERE a = U&'for update'`, true},
+		{"genuine into beside a masking literal",
+			"SELECT 'into' AS a INTO x FROM t", false},
+		{"genuine locking clause beside a comment",
+			"SELECT * FROM t -- nothing here\nFOR UPDATE", false},
+		{"genuine writable CTE beside a literal",
+			"WITH c AS (DELETE FROM t WHERE a = 'delete' RETURNING *) " +
+				"SELECT * FROM c", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isReadOnlyStatement(tt.input); got != tt.readOnly {
+				t.Errorf("isReadOnlyStatement(%q) = %v, want %v",
+					tt.input, got, tt.readOnly)
+			}
+		})
+	}
+}
+
+// TestIssue530_MaskNonCode pins the masking helper itself: every masked
+// region becomes spaces and the result keeps the original byte length.
+func TestIssue530_MaskNonCode(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"plain code is untouched", "SELECT a FROM t", "SELECT a FROM t"},
+		{"string literal", "SELECT 'into' FROM t", "SELECT        FROM t"},
+		{"quoted identifier", `SELECT "into" FROM t`, "SELECT        FROM t"},
+		{"line comment", "SELECT a -- into\nFROM t", "SELECT a        \nFROM t"},
+		{"block comment", "SELECT /* into */ a", "SELECT            a"},
+		{"unterminated literal", "SELECT 'into", "SELECT      "},
+		{"empty", "", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := maskNonCode(tt.input)
+			if got != tt.want {
+				t.Errorf("maskNonCode(%q) = %q, want %q",
+					tt.input, got, tt.want)
+			}
+			if len(got) != len(tt.input) {
+				t.Errorf("maskNonCode(%q) changed length: %d, want %d",
+					tt.input, len(got), len(tt.input))
+			}
+		})
+	}
+}

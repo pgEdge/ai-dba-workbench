@@ -18,7 +18,7 @@ import type { TopQueryRow } from '../types';
 // ---------------------------------------------------------------------------
 
 const mockApiFetch = vi.fn();
-vi.mock('../../../../utils/apiClient', () => ({
+vi.mock('../../../utils/apiClient', () => ({
     apiFetch: (...args: unknown[]) => mockApiFetch(...args),
 }));
 
@@ -26,7 +26,7 @@ const mockPushOverlay = vi.fn();
 let mockTimeRange = '1h';
 let mockCustomStart: string | undefined;
 let mockCustomEnd: string | undefined;
-vi.mock('../../../../contexts/useDashboard', () => ({
+vi.mock('../../../contexts/useDashboard', () => ({
     useDashboard: () => ({
         refreshTrigger: 0,
         pushOverlay: mockPushOverlay,
@@ -38,7 +38,7 @@ vi.mock('../../../../contexts/useDashboard', () => ({
     }),
 }));
 
-vi.mock('../../../../contexts/useAuth', () => ({
+vi.mock('../../../contexts/useAuth', () => ({
     useAuth: () => ({
         user: { id: 1, username: 'testuser' },
     }),
@@ -150,6 +150,20 @@ const renderSection = () => render(
         connectionName="Test Server"
     />,
 );
+
+/** Render the section pinned to a single database. */
+const renderScopedSection = (databaseName = 'analytics') => render(
+    <TopQueriesSection
+        connectionId={1}
+        connectionName="Test Server"
+        databaseName={databaseName}
+    />,
+);
+
+/** All database-summaries request URLs seen so far. */
+const summariesUrls = (): string[] => mockApiFetch.mock.calls
+    .map(call => call[0] as string)
+    .filter(url => url.includes('database-summaries'));
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -696,6 +710,91 @@ describe('TopQueriesSection', () => {
         });
     });
 
+    it('resets to the first page when the database filter changes',
+        async () => {
+            setupFetch({
+                pages: {
+                    '0': makeRows(20, 'a'),
+                    '20': makeRows(20, 'b'),
+                },
+                totalCount: '90',
+                databases: ['analytics', 'reporting'],
+            });
+
+            renderSection();
+
+            await waitFor(() => {
+                expect(
+                    screen.getByRole('button', {
+                        name: 'Next page of queries',
+                    }),
+                ).toBeEnabled();
+            });
+            fireEvent.click(
+                screen.getByRole('button', { name: 'Next page of queries' }),
+            );
+            await waitFor(() => {
+                expect(paramOf(lastTopQueryUrl(), 'offset')).toBe('20');
+            });
+
+            fireEvent.mouseDown(screen.getByRole('combobox'));
+            fireEvent.click(
+                screen.getByRole('option', { name: 'reporting' }),
+            );
+
+            await waitFor(() => {
+                expect(paramOf(lastTopQueryUrl(), 'database_name')).toBe(
+                    'reporting',
+                );
+            });
+            expect(paramOf(lastTopQueryUrl(), 'offset')).toBe('0');
+        });
+
+    it('clears the stale total whilst a reset request is in flight',
+        async () => {
+            // The pager keeps the previous page's rows on screen whilst
+            // the next response is outstanding, so a total left over
+            // from the old filter would be shown against the new one.
+            let resolveSecond: (() => void) | undefined;
+            let seenTopQueries = 0;
+            mockApiFetch.mockImplementation((url: string) => {
+                if (url.includes('database-summaries')) {
+                    return Promise.resolve(okResponse({ databases: [] }));
+                }
+                seenTopQueries += 1;
+                if (seenTopQueries === 1) {
+                    return Promise.resolve(okResponse(makeRows(20), '90'));
+                }
+                return new Promise(resolve => {
+                    resolveSecond = () =>
+                        resolve(okResponse(makeRows(20), '90'));
+                });
+            });
+
+            renderSection();
+            await waitFor(() => {
+                expect(
+                    screen.getByText('Showing 1–20 of 90'),
+                ).toBeInTheDocument();
+            });
+
+            fireEvent.click(
+                screen.getByRole('button', { name: 'Show 50 rows per page' }),
+            );
+
+            await waitFor(() => {
+                expect(screen.getByText('Showing 1–20')).toBeInTheDocument();
+            });
+            expect(screen.queryByText('Showing 1–20 of 90')).toBeNull();
+
+            resolveSecond?.();
+            await waitFor(() => {
+                expect(
+                    screen.getByText('Showing 1–20 of 90'),
+                ).toBeInTheDocument();
+            });
+        });
+
     // -----------------------------------------------------------------
     it('ignores a stale response that resolves after a newer one', async () => {
         // Hold each offset's response open so they can be resolved out
@@ -1087,6 +1186,113 @@ describe('TopQueriesSection', () => {
             expect(paramOf(lastTopQueryUrl(), 'connection_id')).toBe('2');
         });
         expect(paramOf(lastTopQueryUrl(), 'offset')).toBe('0');
+    });
+
+    // -----------------------------------------------------------------
+    // Pinned to a single database
+    // -----------------------------------------------------------------
+
+    describe('when pinned to a database', () => {
+        it('sends the pinned database as the database_name filter',
+            async () => {
+                setupFetch({ rows: makeRows(1) });
+
+                renderScopedSection('analytics');
+
+                await waitFor(() => {
+                    expect(paramOf(lastTopQueryUrl(), 'database_name'))
+                        .toBe('analytics');
+                });
+            });
+
+        it('does not render the database filter control', async () => {
+            setupFetch({
+                rows: makeRows(1),
+                databases: ['analytics', 'reporting', 'staging'],
+            });
+
+            renderScopedSection('analytics');
+
+            await waitFor(() => {
+                expect(screen.getByText('SELECT 0')).toBeInTheDocument();
+            });
+            expect(screen.queryByLabelText('Database')).not.toBeInTheDocument();
+        });
+
+        it('does not fetch the database list', async () => {
+            setupFetch({ rows: makeRows(1), databases: ['analytics'] });
+
+            renderScopedSection('analytics');
+
+            await waitFor(() => {
+                expect(screen.getByText('SELECT 0')).toBeInTheDocument();
+            });
+            expect(summariesUrls()).toHaveLength(0);
+        });
+
+        it('drops the Database column', async () => {
+            setupFetch({ rows: makeRows(1) });
+
+            renderScopedSection('analytics');
+
+            await waitFor(() => {
+                expect(screen.getByText('SELECT 0')).toBeInTheDocument();
+            });
+            expect(screen.queryByText('Database')).not.toBeInTheDocument();
+            expect(screen.getByText('Query')).toBeInTheDocument();
+        });
+
+        it('names the database in the empty state', async () => {
+            setupFetch({ rows: [] });
+
+            renderScopedSection('analytics');
+
+            await waitFor(() => {
+                expect(
+                    screen.getByText(
+                        'No query statistics available for analytics.',
+                    ),
+                ).toBeInTheDocument();
+            });
+        });
+
+        it('resets paging when the pinned database changes', async () => {
+            setupFetch({
+                pages: {
+                    '0': makeRows(20, 'a'),
+                    '20': makeRows(20, 'b'),
+                },
+                totalCount: '90',
+            });
+
+            const { rerender } = renderScopedSection('analytics');
+
+            await waitFor(() => {
+                expect(
+                    screen.getByText('Showing 1–20 of 90'),
+                ).toBeInTheDocument();
+            });
+            fireEvent.click(
+                screen.getByRole('button', { name: 'Next page of queries' }),
+            );
+            await waitFor(() => {
+                expect(paramOf(lastTopQueryUrl(), 'offset')).toBe('20');
+            });
+
+            rerender(
+                <TopQueriesSection
+                    connectionId={1}
+                    connectionName="Test Server"
+                    databaseName="reporting"
+                />,
+            );
+
+            await waitFor(() => {
+                expect(paramOf(lastTopQueryUrl(), 'database_name'))
+                    .toBe('reporting');
+            });
+            expect(paramOf(lastTopQueryUrl(), 'offset')).toBe('0');
+        });
     });
 
     it('renders no rows when the response is not an array', async () => {

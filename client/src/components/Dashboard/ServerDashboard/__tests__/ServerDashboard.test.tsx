@@ -72,7 +72,7 @@ vi.mock('../ConnectionsSection', () => ({
     ),
 }));
 
-vi.mock('../TopQueriesSection', () => ({
+vi.mock('../../TopQueriesSection', () => ({
     default: ({ connectionId }: { connectionId: number }) => (
         <div data-testid="top-queries-section" data-connection-id={connectionId}>
             Top Queries Content

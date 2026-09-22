@@ -15,6 +15,7 @@ import Typography from '@mui/material/Typography';
 import TimeRangeSelector from '../TimeRangeSelector';
 import PerformanceSection from './PerformanceSection';
 import TableLeaderboardSection from './TableLeaderboardSection';
+import TopQueriesSection from '../TopQueriesSection';
 import IndexLeaderboardSection from './IndexLeaderboardSection';
 import VacuumStatusSection from './VacuumStatusSection';
 
@@ -55,8 +56,9 @@ const DB_META_SX = {
 /**
  * DatabaseDashboard provides database-specific performance and health
  * information organized in collapsible sections. It displays a
- * performance overview, table and index leaderboards, and vacuum
- * status for the selected database.
+ * performance overview, table and index leaderboards, the top
+ * queries seen on this database, and vacuum status for the selected
+ * database.
  */
 const DatabaseDashboard: React.FC<DatabaseDashboardProps> = ({
     connectionId,
@@ -99,6 +101,11 @@ const DatabaseDashboard: React.FC<DatabaseDashboardProps> = ({
             />
             <TableLeaderboardSection
                 connectionId={connectionId}
+                databaseName={databaseName}
+            />
+            <TopQueriesSection
+                connectionId={connectionId}
+                connectionName={connectionName}
                 databaseName={databaseName}
             />
             <IndexLeaderboardSection

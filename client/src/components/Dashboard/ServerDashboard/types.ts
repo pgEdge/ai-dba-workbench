@@ -14,6 +14,11 @@
 
 import type { MetricDataPoint } from '../types';
 
+// TopQueriesSection is shared by the server and database dashboards
+// and now lives one level up, so its row type does too; re-exported
+// here because this module is the server dashboard's type barrel.
+export type { TopQueryRow } from '../types';
+
 /** Props shared by all server dashboard section components */
 export interface ServerSectionProps {
     connectionId: number;
@@ -58,27 +63,6 @@ export interface DatabaseSummary {
 /** Performance summary response for a single server */
 export interface ServerPerformanceSummary {
     databases: DatabaseSummary[];
-}
-
-/** Top query row from pg_stat_statements */
-export interface TopQueryRow {
-    query: string;
-    queryid: string;
-    calls: number;
-    total_exec_time: number;
-    mean_exec_time: number;
-    rows: number;
-    shared_blks_hit: number;
-    shared_blks_read: number;
-    database_name: string;
-    /**
-     * Last observed client, from the pg_stat_activity snapshot join;
-     * each is null when the client was never observed. Optional
-     * because this section does not render them.
-     */
-    client_addr?: string | null;
-    client_hostname?: string | null;
-    client_observed_at?: string | null;
 }
 
 /** The groupings supported by the connection-groups endpoint */

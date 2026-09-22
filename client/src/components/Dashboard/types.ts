@@ -214,3 +214,40 @@ export interface MetricQueryParams {
     aggregation?: 'avg' | 'sum' | 'min' | 'max' | 'last';
     metrics?: string[];
 }
+
+/** Top query row from pg_stat_statements */
+export interface TopQueryRow {
+    query: string;
+    queryid: string;
+    calls: number;
+    total_exec_time: number;
+    mean_exec_time: number;
+    rows: number;
+    shared_blks_hit: number;
+    shared_blks_read: number;
+    database_name: string;
+    /**
+     * Last observed client, from the pg_stat_activity snapshot join;
+     * each is null when the client was never observed. Optional
+     * because this section does not render them.
+     */
+    client_addr?: string | null;
+    client_hostname?: string | null;
+    client_observed_at?: string | null;
+}
+
+/**
+ * Props for the shared Top Queries section.
+ *
+ * The section serves both the server dashboard, where it spans every
+ * database on the connection and offers a database filter, and the
+ * database dashboard, where `databaseName` pins it to the one database
+ * the dashboard is already scoped to. When pinned, the filter control
+ * and the Database column both disappear, because neither has anything
+ * left to say.
+ */
+export interface TopQueriesSectionProps {
+    connectionId: number;
+    connectionName?: string;
+    databaseName?: string;
+}

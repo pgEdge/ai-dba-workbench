@@ -659,9 +659,11 @@ session.
 
 An account either holds a password in the Workbench or signs in through
 the identity provider, and the console, the server command line and the
-REST API each report which. The provider subject is never reported
-anywhere: the value is a long opaque identifier that tells an
-administrator nothing, so only the issuer is shown.
+REST API each report which. None of the three reports the provider
+subject, which is a long opaque identifier that tells an administrator
+nothing, so only the issuer is shown; the subject appears only in the
+output of `-link-oidc-user`, which echoes back the value the operator
+has just supplied on the command line.
 
 ### In the Console
 

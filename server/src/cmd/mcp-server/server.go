@@ -270,9 +270,22 @@ func (s *Server) initRateLimiter() error {
 	)
 	fmt.Fprintf(os.Stderr, "Rate limiting enabled: %d attempts per %d minutes per IP\n",
 		s.cfg.HTTP.Auth.RateLimitMaxAttempts, s.cfg.HTTP.Auth.RateLimitWindowMinutes)
+	// Lockout is the only per-account protection against password guessing:
+	// the rate limiter above is keyed on the client address, is reset by
+	// any single successful login, and is not shared between replicas.
+	// A deployment that has switched lockout off should say so out loud
+	// at every start, in the same way an empty trusted proxy list does,
+	// rather than leaving the operator to infer it from a line that is
+	// simply absent.
 	if maxFailed := s.cfg.HTTP.Auth.MaxFailedAttemptsBeforeLockout(); maxFailed > 0 {
 		fmt.Fprintf(os.Stderr, "Account lockout enabled: %d failed attempts before lockout\n",
 			maxFailed)
+	} else {
+		fmt.Fprintf(os.Stderr,
+			"WARNING: http.auth.max_failed_attempts_before_lockout is 0, so account lockout is\n"+
+				"         disabled and repeated password guesses against a single account are\n"+
+				"         limited only per client address. Set it to a positive number of\n"+
+				"         attempts unless lockout is deliberately switched off.\n")
 	}
 	return nil
 }

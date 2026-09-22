@@ -273,7 +273,10 @@ The following properties control lockout behavior:
 - The `max_failed_attempts_before_lockout` setting controls the number of
   failed authentication attempts before locking an account; the default is
   `10`, which applies whenever the key is omitted, and an explicit value of
-  `0` disables account lockout.
+  `0` disables account lockout; the server treats a negative value as
+  unset and applies the default. The server reads this setting once, at
+  start-up, so a restart is required to apply a change to the setting; a
+  `SIGHUP` reload reports the change and warns that a restart is needed.
 - `max_user_token_days` controls the maximum lifetime in days for user-created
   tokens; a value of `0` allows you to use tokens with unlimited lifetime.
 

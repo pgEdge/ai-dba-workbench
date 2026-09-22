@@ -91,6 +91,8 @@ http:
   #
   auth:
     # Account lockout after N failed login attempts (0 = disabled)
+    # Omitting this key keeps the default; a restart is required to
+    # apply a change, because the value is read once at start-up
     # Default: 10
     max_failed_attempts_before_lockout: 10
 

@@ -574,18 +574,6 @@ project adheres to
   lower, accurate rates where they previously showed a spike or a
   gap. (#469)
 
-- Fix a configuration file that omits
-  `http.auth.max_failed_attempts_before_lockout` silently
-  disabling account lockout. The setting was a plain integer, so
-  an omitted key arrived at the merge step as `0`, which passed
-  the `>= 0` test and overwrote the default of `10`; every
-  installation whose configuration did not name the key was
-  therefore running with lockout turned off. The setting is now
-  held as a pointer, in the same way as
-  `http.auth.audit_retention_days`, so that an omitted key keeps
-  the default of `10` whilst an explicit `0` still disables
-  lockout deliberately. (#473)
-
 - Fix the `pg_stat_statements` collector probe discarding the block
   timing columns on every modern server. The probe chose its query
   shape by looking for the version-specific columns in
@@ -1328,6 +1316,26 @@ project adheres to
   remains available to API consumers. (#387)
 
 ### Security
+
+- Fix a configuration file that omits
+  `http.auth.max_failed_attempts_before_lockout` silently disabling
+  account lockout. The setting was a plain integer, so an omitted key
+  arrived at the merge step as `0`, which passed the `>= 0` test and
+  overwrote the default of `10`; every installation whose configuration
+  did not name the key was therefore running with lockout turned off,
+  leaving `POST /api/v1/auth/login`, which is unauthenticated by
+  design, defended against password guessing only by rate limiting
+  keyed on the client address: the failed-attempt allowance is cleared
+  by any successful login, a cap of 20 login requests a minute for the
+  address remains, and neither count is shared between server
+  instances. The setting is now held as a pointer, in the same way as
+  `http.auth.audit_retention_days`, so that an omitted key keeps the
+  default of `10` whilst an explicit `0` still disables lockout
+  deliberately. Restart the server to apply the fix: the threshold is
+  read once at start-up, so a `SIGHUP` reload leaves the running server
+  with the value it started with, and a reload that changes the setting
+  now says so. A server that starts with lockout switched off warns at
+  every start. (#473)
 
 - Stop following HTTP redirects when the alerter delivers a
   notification. This changes the behaviour of every existing Slack,

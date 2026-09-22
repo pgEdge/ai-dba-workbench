@@ -2140,6 +2140,76 @@ func TestMaxFailedAttemptsBeforeLockoutNilPointerDefaultsTo10(t *testing.T) {
 	}
 }
 
+// TestReloadWarnsOnLockoutThresholdChange covers the restart warning
+// for the account lockout threshold. NewAuthStore reads the effective
+// value once at start-up and the store keeps its own copy, so a SIGHUP
+// that changes it applies nothing; without this warning an operator
+// switching lockout on, or tightening it during an attack, is told the
+// reload succeeded whilst every login goes on being counted against the
+// value the server started with.
+func TestReloadWarnsOnLockoutThresholdChange(t *testing.T) {
+	const warning = "WARNING: http.auth.max_failed_attempts_before_lockout changed - requires restart"
+
+	tests := map[string]struct {
+		oldRaw   *int
+		newRaw   *int
+		wantWarn bool
+	}{
+		"enabling lockout warns": {
+			oldRaw:   intPtr(0),
+			newRaw:   intPtr(10),
+			wantWarn: true,
+		},
+		"disabling lockout warns": {
+			oldRaw:   intPtr(10),
+			newRaw:   intPtr(0),
+			wantWarn: true,
+		},
+		"tightening the threshold warns": {
+			oldRaw:   intPtr(10),
+			newRaw:   intPtr(3),
+			wantWarn: true,
+		},
+		"an unchanged threshold is silent": {
+			oldRaw:   intPtr(5),
+			newRaw:   intPtr(5),
+			wantWarn: false,
+		},
+		// The comparison is of effective values, so omitting the key
+		// and spelling out the default are the same configuration and
+		// must not produce a warning an operator would chase.
+		"omitting the key matches the spelled-out default": {
+			oldRaw:   nil,
+			newRaw:   intPtr(10),
+			wantWarn: false,
+		},
+		"a negative value matches the default it falls back to": {
+			oldRaw:   intPtr(10),
+			newRaw:   intPtr(-1),
+			wantWarn: false,
+		},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			oldCfg := defaultConfig()
+			oldCfg.HTTP.Auth.MaxFailedAttemptsBeforeLockoutPtr = tc.oldRaw
+			newCfg := defaultConfig()
+			newCfg.HTTP.Auth.MaxFailedAttemptsBeforeLockoutPtr = tc.newRaw
+
+			rc := &ReloadableConfig{config: oldCfg}
+			out := captureStderr(t, func() {
+				rc.logRestartRequiredSettings(newCfg)
+			})
+
+			if got := strings.Contains(out, warning); got != tc.wantWarn {
+				t.Errorf("warning present = %v, want %v; output:\n%s",
+					got, tc.wantWarn, out)
+			}
+		})
+	}
+}
+
 // TestMergeConfigOverridesEveryField populates every field mergeConfig
 // knows about and checks that each one reaches the destination, so
 // that the per-field guards are all exercised rather than only the

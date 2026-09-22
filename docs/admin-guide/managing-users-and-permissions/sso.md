@@ -333,7 +333,9 @@ where the issuer and subject come from:
 
 The command reports the account, the issuer, the subject and the stored
 external subject key, and notes that password login is refused for the
-account from that moment.
+account from that moment. Run `-list-users` afterwards to confirm the
+link: the account's `Authentication` column now reads the issuer rather
+than `Local`.
 
 ### Linking Leaves Existing Credentials Working
 
@@ -479,7 +481,9 @@ exist today; disabling the account refuses everything the account
 tries, including a session that was issued before either command ran.
 
 The unlink command reports which branch ran, including how many tokens
-it revoked, and the server log records the same.
+it revoked, and the server log records the same. The account's
+`Authentication` column reads `Local` again once the command has run,
+which is the quickest confirmation that the identity is detached.
 
 ### Sessions and the Command Line
 
@@ -651,6 +655,107 @@ A session lasts 24 hours, and each user may hold at most ten
 simultaneous sessions; an eleventh login evicts that user's oldest
 session.
 
+## Identifying Federated Accounts
+
+An account either holds a password in the Workbench or signs in through
+the identity provider, and the console, the server command line and the
+REST API each report which. The provider subject is never reported
+anywhere: the value is a long opaque identifier that tells an
+administrator nothing, so only the issuer is shown.
+
+### In the Console
+
+The `Users` page of the `Administration` console marks a federated
+account in its `Type` column.
+
+Such an account carries a `Federated` chip, with the issuer on one line
+beneath the chip; a long issuer is shortened to fit the column and the
+full value appears in a tooltip. A local account shows its usual type,
+exactly as before.
+
+Opening a federated account in the `Edit user` dialog replaces the
+password field with a notice explaining why the field is absent. The
+notice names the provider the account signs in through, says that the
+account has to be unlinked before it can sign in locally, and warns that
+the account's group membership, along with its superuser flag wherever
+`superuser_group` grants one, is reconciled at every sign-in. The
+`Superuser` toggle stays available, because an administrator may still
+grant the flag, subject to the reconciliation described below.
+
+### At the Command Line
+
+The `-list-users` command reports the same thing in its `Authentication`
+column, which is the quickest way to audit every account at once.
+
+The following listing shows two federated accounts and four local ones:
+
+```console
+./bin/ai-dba-server -list-users
+Auth store: /var/lib/ai-workbench/data/auth.db
+
+Users:
+===============================================================================================================================
+Username             Created           Last Login        Status               Authentication               Notes
+-------------------------------------------------------------------------------------------------------------------------------
+Alice                2026-06-10 13:24  Never             Enabled              https://idp.example.com      Developer
+Bob                  2026-06-10 13:31  Never             DISABLED             Local                        developer
+Carol                2026-06-10 13:32  Never             Enabled              https://idp.example.com      Management
+Dan                  2026-06-10 13:37  Never             Enabled              Local                        sales
+admin                2026-06-09 11:59  2026-06-10 12:27  Enabled              Local                        management
+inventory            2026-06-10 13:31  Never             Enabled              Local                        Software
+===============================================================================================================================
+```
+
+The column reads `Local` for an account that authenticates here, and the
+issuer for an account the provider owns. An issuer too long for the
+column is elided with a trailing `...`, in the same way as a long note.
+The column reads `OIDC` in the rare case of an account marked as
+federated whose stored identity cannot be parsed, which is worth
+investigating because a login can no longer match such an account.
+
+### Through the REST API
+
+The user objects returned by `GET /api/v1/rbac/users` and by
+`GET /api/v1/rbac/users/{id}/privileges` carry the same information in
+two fields.
+
+The following table describes the two fields:
+
+| Field | Description |
+|-------|-------------|
+| `auth_source` | Always present; reads `local` for an account that authenticates here and `oidc` for one the provider owns. |
+| `auth_issuer` | Present only for a federated account; holds the issuer URL of the identity provider. |
+
+An account stored before the `users.auth_source` column existed reports
+as `local`, so the field is safe to branch on without a fallback.
+
+### Why a Superuser Flag Keeps Reverting
+
+A superuser flag that an administrator grants and that is gone again
+shortly afterwards belongs to a federated account whilst
+`superuser_group` is configured.
+
+The flag is reconciled at every federated login from the provider group
+named by `superuser_group`, as described in Granting Superuser from a
+Provider Group above, so a grant made in the console or with
+`-update-user` survives only until the person next signs in. Check the
+`Authentication` column or the `Federated` chip first: where the account
+is federated, grant the flag by adding the person to the provider group,
+and where the account is local, the flag stays as it was set.
+
+### Who Still Signs In Locally
+
+Every account whose authentication reads `Local` depends on
+`http.auth.local.enabled`, so review that list before setting the option
+to `false`.
+
+Turning local login off locks out every such account, including the
+break-glass administrator described below, and the setting takes effect
+only at a restart, so the mistake is discovered at the worst moment.
+Note that a service account also reports as `Local` although the account
+never signs in interactively; a service account reaches the Workbench
+with an API token, which federated login does not change.
+
 ## Federated Accounts in the Console
 
 Federated accounts appear on the
@@ -658,12 +763,11 @@ Federated accounts appear on the
 administered there in the same way: they can be disabled, enabled,
 deleted, added to groups and given API tokens.
 
-Two differences matter. A federated account cannot be given a working
+One difference matters. A federated account cannot be given a working
 password, because password authentication is refused for any account
-whose identity the provider owns, so setting a password on one has no
-effect. The account listing also does not report which accounts are
-federated, so use the provider as the record of who holds one until
-that information is exposed.
+whose identity the provider owns, so the `Edit user` dialog offers no
+password field for one. Unlink the account, as described in Unlinking
+an Account above, to return the account to local login.
 
 ## Troubleshooting
 

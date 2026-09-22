@@ -302,6 +302,26 @@ project adheres to
   Queries section is unchanged, and keeps its database filter.
   (#369)
 
+- Report how each account authenticates in the API, the server
+  command line and the console, so that an administrator can
+  tell a federated account from a local one without asking the
+  identity provider. The user objects returned by
+  `GET /api/v1/rbac/users` and by the user privileges endpoint
+  carry `auth_source`, which is always present and reads
+  `local` or `oidc`, and `auth_issuer`, which names the
+  identity provider and is omitted for a local account; the
+  provider subject is deliberately never exposed. The
+  `-list-users` command gains an `Authentication` column
+  showing `Local` or the issuer, and the Users page of the
+  Administration console marks a federated account with a
+  `Federated` chip and the issuer in its Type column. The edit
+  dialog for such an account replaces the password field with a
+  notice explaining that the account signs in through the
+  provider, that it must be unlinked before it can sign in
+  locally, and that its group membership and superuser flag are
+  reconciled at every sign-in, which is the usual explanation
+  for a superuser flag that keeps reverting. (#483)
+
 ### Changed
 
 - Follow the dashboard time range selector in the database summaries

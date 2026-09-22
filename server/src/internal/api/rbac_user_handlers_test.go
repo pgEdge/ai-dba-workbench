@@ -1339,3 +1339,256 @@ func TestRBACHandler_GetUserPrivileges_PermissionDenied(t *testing.T) {
 			http.StatusForbidden, rec.Code, rec.Body.String())
 	}
 }
+
+// =============================================================================
+// Authentication Source Tests
+// =============================================================================
+
+// TestDescribeAuthSource covers the mapping from a stored row to the pair of
+// fields every user object carries, including the two rows a handler test
+// cannot easily produce: one with no auth_source at all, and a federated one
+// whose stored identity does not parse.
+func TestDescribeAuthSource(t *testing.T) {
+	tests := []struct {
+		name       string
+		user       auth.StoredUser
+		wantSource string
+		wantIssuer string
+	}{
+		{
+			name:       "local account",
+			user:       auth.StoredUser{AuthSource: auth.AuthSourceLocal},
+			wantSource: auth.AuthSourceLocal,
+		},
+		{
+			name:       "empty auth source reports as local",
+			user:       auth.StoredUser{},
+			wantSource: auth.AuthSourceLocal,
+		},
+		{
+			name: "a local row never reports an issuer",
+			user: auth.StoredUser{
+				AuthSource:      auth.AuthSourceLocal,
+				ExternalSubject: auth.ExternalSubjectKey("https://idp.example.com", "subject-1"),
+			},
+			wantSource: auth.AuthSourceLocal,
+		},
+		{
+			name: "federated account reports its issuer",
+			user: auth.StoredUser{
+				AuthSource:      auth.AuthSourceOIDC,
+				ExternalSubject: auth.ExternalSubjectKey("https://idp.example.com", "subject-1"),
+			},
+			wantSource: auth.AuthSourceOIDC,
+			wantIssuer: "https://idp.example.com",
+		},
+		{
+			name: "unparsable identity yields no issuer",
+			user: auth.StoredUser{
+				AuthSource:      auth.AuthSourceOIDC,
+				ExternalSubject: "nonsense",
+			},
+			wantSource: auth.AuthSourceOIDC,
+		},
+		{
+			name: "missing identity yields no issuer",
+			user: auth.StoredUser{
+				AuthSource: auth.AuthSourceOIDC,
+			},
+			wantSource: auth.AuthSourceOIDC,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			user := tt.user
+			source, issuer := describeAuthSource(&user)
+			if source != tt.wantSource || issuer != tt.wantIssuer {
+				t.Fatalf("describeAuthSource = (%q, %q), want (%q, %q)",
+					source, issuer, tt.wantSource, tt.wantIssuer)
+			}
+		})
+	}
+}
+
+// findUserInList picks one user out of a listUsers response body.
+func findUserInList(t *testing.T, rec *httptest.ResponseRecorder, username string) map[string]any {
+	t.Helper()
+
+	var resp struct {
+		Users []map[string]any `json:"users"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+	for _, u := range resp.Users {
+		if u["username"] == username {
+			return u
+		}
+	}
+	t.Fatalf("user %q is not in the listing", username)
+	return nil
+}
+
+// TestRBACHandler_ListUsers_ReportsAuthSource checks an administrator can tell
+// a federated account from a local one, and that the listing names the issuer
+// without ever naming the provider subject.
+func TestRBACHandler_ListUsers_ReportsAuthSource(t *testing.T) {
+	handler, store, adminID, cleanup := adminRBACHandler(t)
+	defer cleanup()
+
+	const issuer = "https://idp.example.com"
+	const subject = "subject-483"
+
+	if err := store.CreateUser("localuser", "Password1234", "", "", ""); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if err := store.CreateUser("feduser", "Password1234", "", "", ""); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if _, err := store.LinkFederatedIdentity("feduser", issuer, subject, false); err != nil {
+		t.Fatalf("LinkFederatedIdentity: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/rbac/users", nil)
+	req = withUser(req, adminID)
+	rec := httptest.NewRecorder()
+
+	handler.listUsers(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected status %d, got %d. Body: %s",
+			http.StatusOK, rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	rec.Body = bytes.NewBufferString(body)
+
+	local := findUserInList(t, rec, "localuser")
+	if local["auth_source"] != auth.AuthSourceLocal {
+		t.Errorf("local auth_source = %v, want %q", local["auth_source"], auth.AuthSourceLocal)
+	}
+	if _, ok := local["auth_issuer"]; ok {
+		t.Errorf("local account carries an auth_issuer: %v", local["auth_issuer"])
+	}
+
+	rec.Body = bytes.NewBufferString(body)
+	federated := findUserInList(t, rec, "feduser")
+	if federated["auth_source"] != auth.AuthSourceOIDC {
+		t.Errorf("federated auth_source = %v, want %q", federated["auth_source"], auth.AuthSourceOIDC)
+	}
+	if federated["auth_issuer"] != issuer {
+		t.Errorf("federated auth_issuer = %v, want %q", federated["auth_issuer"], issuer)
+	}
+
+	// The provider subject is an identifier the response has no business
+	// carrying, in either half of the stored key.
+	if strings.Contains(body, subject) {
+		t.Errorf("the listing leaked the provider subject: %s", body)
+	}
+}
+
+// TestRBACHandler_GetUserPrivileges_ReportsAuthSource checks the privileges
+// view names the identity provider too, since a superuser flag that keeps
+// reverting is usually the provider reconciling the account.
+func TestRBACHandler_GetUserPrivileges_ReportsAuthSource(t *testing.T) {
+	handler, store, adminID, cleanup := adminRBACHandler(t)
+	defer cleanup()
+
+	const issuer = "https://idp.example.com"
+	const subject = "subject-privileges"
+
+	if err := store.CreateUser("fedpriv", "Password1234", "", "", ""); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if _, err := store.LinkFederatedIdentity("fedpriv", issuer, subject, false); err != nil {
+		t.Fatalf("LinkFederatedIdentity: %v", err)
+	}
+	targetID, _ := store.GetUserID("fedpriv")
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/rbac/users/"+strconv.FormatInt(targetID, 10)+"/privileges", nil)
+	req = withUser(req, adminID)
+	rec := httptest.NewRecorder()
+
+	handler.getUserPrivileges(rec, req, targetID)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected status %d, got %d. Body: %s",
+			http.StatusOK, rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+
+	var resp map[string]any
+	if err := json.Unmarshal([]byte(body), &resp); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+	if resp["auth_source"] != auth.AuthSourceOIDC {
+		t.Errorf("auth_source = %v, want %q", resp["auth_source"], auth.AuthSourceOIDC)
+	}
+	if resp["auth_issuer"] != issuer {
+		t.Errorf("auth_issuer = %v, want %q", resp["auth_issuer"], issuer)
+	}
+	if strings.Contains(body, subject) {
+		t.Errorf("the privileges view leaked the provider subject: %s", body)
+	}
+}
+
+// TestRBACHandler_GetUserPrivileges_LocalUser checks the local case reports a
+// source and omits the issuer, so the field is never blank and never invented.
+func TestRBACHandler_GetUserPrivileges_LocalUser(t *testing.T) {
+	handler, store, adminID, cleanup := adminRBACHandler(t)
+	defer cleanup()
+
+	if err := store.CreateUser("localpriv", "Password1234", "", "", ""); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	targetID, _ := store.GetUserID("localpriv")
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/rbac/users/"+strconv.FormatInt(targetID, 10)+"/privileges", nil)
+	req = withUser(req, adminID)
+	rec := httptest.NewRecorder()
+
+	handler.getUserPrivileges(rec, req, targetID)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected status %d, got %d. Body: %s",
+			http.StatusOK, rec.Code, rec.Body.String())
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+	if resp["auth_source"] != auth.AuthSourceLocal {
+		t.Errorf("auth_source = %v, want %q", resp["auth_source"], auth.AuthSourceLocal)
+	}
+	if _, ok := resp["auth_issuer"]; ok {
+		t.Errorf("local account carries an auth_issuer: %v", resp["auth_issuer"])
+	}
+}
+
+// TestRBACHandler_ListUsers_StoreFailure covers the error branch the listing
+// takes when the auth store cannot be read, which must report a generic
+// failure rather than anything about the underlying store.
+func TestRBACHandler_ListUsers_StoreFailure(t *testing.T) {
+	handler, store, cleanup := createTestRBACHandler(t)
+	defer cleanup()
+
+	// A superuser passes the permission gate on the request context alone,
+	// so closing the store leaves the listing as the first thing to fail.
+	store.Close()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/rbac/users", nil)
+	req = withSuperuser(req)
+	rec := httptest.NewRecorder()
+
+	handler.handleUsers(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected status %d, got %d. Body: %s",
+			http.StatusInternalServerError, rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Failed to list users") {
+		t.Fatalf("body %q does not report the failure", rec.Body.String())
+	}
+}

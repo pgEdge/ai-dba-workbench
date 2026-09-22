@@ -17,6 +17,8 @@ import (
 	"syscall"
 
 	"golang.org/x/term"
+
+	"github.com/pgedge/ai-workbench/server/internal/auth"
 )
 
 // addUserCommand handles the add-user command
@@ -309,9 +311,10 @@ func listUsersCommand(dataDir string) error {
 	}
 
 	fmt.Println("\nUsers:")
-	fmt.Println(strings.Repeat("=", 90))
-	fmt.Printf("%-20s %-25s %-20s %-10s %s\n", "Username", "Created", "Last Login", "Status", "Notes")
-	fmt.Println(strings.Repeat("-", 90))
+	fmt.Println(strings.Repeat("=", listUsersRuleWidth))
+	fmt.Printf(listUsersRowFormat,
+		"Username", "Created", "Last Login", "Status", "Authentication", "Notes")
+	fmt.Println(strings.Repeat("-", listUsersRuleWidth))
 
 	for _, user := range users {
 		status := "Enabled"
@@ -329,21 +332,65 @@ func listUsersCommand(dataDir string) error {
 
 		created := user.CreatedAt.Format("2006-01-02 15:04")
 
-		annotation := user.Annotation
-		if len(annotation) > 20 {
-			annotation = annotation[:17] + "..."
-		}
+		annotation := truncateColumn(user.Annotation, listUsersNotesWidth)
 
-		fmt.Printf("%-20s %-25s %-20s %-10s %s\n",
+		fmt.Printf(listUsersRowFormat,
 			user.Username,
 			created,
 			lastLogin,
 			status,
+			truncateColumn(describeUserAuth(user), listUsersAuthWidth),
 			annotation)
 	}
-	fmt.Println(strings.Repeat("=", 90) + "\n")
+	fmt.Println(strings.Repeat("=", listUsersRuleWidth) + "\n")
 
 	return nil
+}
+
+// Column widths for the -list-users table. The authentication column is the
+// widest of the fixed ones because it usually holds an issuer URL, and the
+// rule width is the sum of the columns plus the single space between each
+// pair, so that the rules span exactly one full row.
+const (
+	listUsersUsernameWidth  = 20
+	listUsersCreatedWidth   = 17
+	listUsersLastLoginWidth = 17
+	listUsersStatusWidth    = 20
+	listUsersAuthWidth      = 28
+	listUsersNotesWidth     = 20
+
+	listUsersRowFormat = "%-20s %-17s %-17s %-20s %-28s %s\n"
+
+	listUsersRuleWidth = listUsersUsernameWidth + listUsersCreatedWidth +
+		listUsersLastLoginWidth + listUsersStatusWidth + listUsersAuthWidth +
+		listUsersNotesWidth + 5
+)
+
+// describeUserAuth renders how an account signs in, for the authentication
+// column of the -list-users table.
+//
+// A federated account is shown by its issuer, which is what an operator needs
+// in order to answer "which provider owns this account?"; the subject is
+// deliberately never printed. An account whose stored external subject cannot
+// be parsed still reports as federated, under the generic "OIDC" label, since
+// the important fact is that it does not sign in locally.
+func describeUserAuth(user *auth.StoredUser) string {
+	if user.AuthSource == "" || user.AuthSource == auth.AuthSourceLocal {
+		return "Local"
+	}
+	if issuer := auth.IssuerFromExternalSubject(user.ExternalSubject); issuer != "" {
+		return issuer
+	}
+	return "OIDC"
+}
+
+// truncateColumn fits a value into a fixed-width column, marking a value that
+// did not fit with a trailing ellipsis.
+func truncateColumn(value string, width int) string {
+	if len(value) <= width {
+		return value
+	}
+	return value[:width-3] + "..."
 }
 
 // enableUserCommand handles the enable-user command

@@ -1039,3 +1039,33 @@ func TestExplainUnlinkRefusalLocked(t *testing.T) {
 		t.Fatalf("a live account gave %v, want a changed-identity error", err)
 	}
 }
+
+// TestIssuerFromExternalSubject covers the accessor the API and the CLI use to
+// name the provider that owns a federated account, including its refusal to
+// guess at a key it cannot parse.
+func TestIssuerFromExternalSubject(t *testing.T) {
+	tests := []struct {
+		name string
+		key  string
+		want string
+	}{
+		{"round trip", ExternalSubjectKey(linkTestIssuer, linkTestSubject), linkTestIssuer},
+		{"empty subject", ExternalSubjectKey(linkTestIssuer, ""), linkTestIssuer},
+		{"separator in subject", ExternalSubjectKey("https://a", "b|c"), "https://a"},
+		{"empty key", "", ""},
+		{"unparsable key", "nonsense", ""},
+		{"length overruns", "99|short|s", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IssuerFromExternalSubject(tt.key); got != tt.want {
+				t.Fatalf("IssuerFromExternalSubject(%q) = %q, want %q", tt.key, got, tt.want)
+			}
+		})
+	}
+
+	// The subject must not appear in what an unwary caller might print.
+	if got := IssuerFromExternalSubject(ExternalSubjectKey(linkTestIssuer, linkTestSubject)); strings.Contains(got, linkTestSubject) {
+		t.Fatalf("IssuerFromExternalSubject returned the subject: %q", got)
+	}
+}

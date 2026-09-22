@@ -1688,6 +1688,13 @@ func buildSchemas() map[string]*OpenAPISchema {
 				"is_superuser":       {Type: "boolean", Description: "Whether the user is a superuser"},
 				"is_service_account": {Type: "boolean", Description: "Whether the user is a service account"},
 				"annotation":         {Type: "string", Description: "User annotation"},
+				"auth_source": {Type: "string", Enum: []string{"local", "oidc"},
+					Description: "How the account signs in: local for a password held by the Workbench, " +
+						"oidc for an account federated to an identity provider"},
+				"auth_issuer": {Type: "string",
+					Description: "Issuer of the identity provider that owns a federated account. Absent " +
+						"for a local account, and for a federated account whose stored identity cannot " +
+						"be parsed. The provider subject is never reported"},
 			},
 		},
 		"AuditEvent": {
@@ -1743,8 +1750,15 @@ func buildSchemas() map[string]*OpenAPISchema {
 		"UserPrivilegesResponse": {
 			Type: "object",
 			Properties: map[string]*OpenAPISchema{
-				"username":              {Type: "string", Description: "Username"},
-				"is_superuser":          {Type: "boolean", Description: "Whether the user is a superuser"},
+				"username":     {Type: "string", Description: "Username"},
+				"is_superuser": {Type: "boolean", Description: "Whether the user is a superuser"},
+				"auth_source": {Type: "string", Enum: []string{"local", "oidc"},
+					Description: "How the account signs in: local for a password held by the Workbench, " +
+						"oidc for an account federated to an identity provider"},
+				"auth_issuer": {Type: "string",
+					Description: "Issuer of the identity provider that owns a federated account. Absent " +
+						"for a local account, and for a federated account whose stored identity cannot " +
+						"be parsed. The provider subject is never reported"},
 				"groups":                {Type: "array", Items: &OpenAPISchema{Type: "string"}, Description: "Group names"},
 				"mcp_privileges":        {Type: "array", Items: &OpenAPISchema{Type: "string"}, Description: "MCP privilege identifiers"},
 				"connection_privileges": {Type: "object", Description: "Connection ID to access level mapping", AdditionalProperties: &OpenAPISchema{Type: "string"}},

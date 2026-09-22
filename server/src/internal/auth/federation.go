@@ -663,6 +663,27 @@ func parseExternalSubjectKey(key string) (issuer, subject string, ok bool) {
 	return rest[:length], rest[length+1:], true
 }
 
+// IssuerFromExternalSubject returns the issuer half of a stored
+// users.external_subject key, so that an administrator reading a user list
+// can tell which identity provider owns a federated account.
+//
+// The subject half is deliberately not returned. It is a long opaque string
+// that means nothing to a human reading a list, and it is an identifier there
+// is no reason to spread through API responses and CLI tables when nothing
+// reading them needs it; the few callers that genuinely need both halves, such
+// as the messages -link-oidc-user prints, build them from the parts they
+// already hold.
+//
+// An empty key, or one that does not parse, yields "" rather than a guess, so
+// that a caller can fall back to a generic label.
+func IssuerFromExternalSubject(key string) string {
+	issuer, _, ok := parseExternalSubjectKey(key)
+	if !ok {
+		return ""
+	}
+	return issuer
+}
+
 // describeSubjectKey renders a stored external subject for an operator,
 // falling back to the raw key when it does not parse.
 func describeSubjectKey(key string) string {

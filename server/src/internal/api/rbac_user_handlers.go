@@ -57,10 +57,13 @@ func (h *RBACHandler) listUsers(w http.ResponseWriter, r *http.Request) {
 		IsSuperuser      bool   `json:"is_superuser"`
 		IsServiceAccount bool   `json:"is_service_account"`
 		Annotation       string `json:"annotation,omitempty"`
+		AuthSource       string `json:"auth_source"`
+		AuthIssuer       string `json:"auth_issuer,omitempty"`
 	}
 
 	result := make([]userResponse, len(users))
 	for i, u := range users {
+		source, issuer := describeAuthSource(u)
 		result[i] = userResponse{
 			ID:               u.ID,
 			Username:         u.Username,
@@ -70,6 +73,8 @@ func (h *RBACHandler) listUsers(w http.ResponseWriter, r *http.Request) {
 			IsSuperuser:      u.IsSuperuser,
 			IsServiceAccount: u.IsServiceAccount,
 			Annotation:       u.Annotation,
+			AuthSource:       source,
+			AuthIssuer:       issuer,
 		}
 	}
 
@@ -326,15 +331,26 @@ func (h *RBACHandler) getUserPrivileges(w http.ResponseWriter, r *http.Request, 
 	type privilegeResponse struct {
 		Username             string         `json:"username"`
 		IsSuperuser          bool           `json:"is_superuser"`
+		AuthSource           string         `json:"auth_source"`
+		AuthIssuer           string         `json:"auth_issuer,omitempty"`
 		Groups               []string       `json:"groups"`
 		MCPPrivileges        []string       `json:"mcp_privileges"`
 		ConnectionPrivileges map[int]string `json:"connection_privileges"`
 		AdminPermissions     []string       `json:"admin_permissions"`
 	}
 
+	// The authentication source belongs in this response as much as in the
+	// user list: a superuser flag or a group membership that keeps reverting
+	// is usually an identity provider reconciling the account on each login,
+	// and an administrator looking at the privileges of one user is exactly
+	// the person who needs to know that.
+	source, issuer := describeAuthSource(user)
+
 	resp := privilegeResponse{
 		Username:    user.Username,
 		IsSuperuser: user.IsSuperuser,
+		AuthSource:  source,
+		AuthIssuer:  issuer,
 	}
 
 	// Get groups
@@ -390,6 +406,29 @@ func (h *RBACHandler) getUserPrivileges(w http.ResponseWriter, r *http.Request, 
 	}
 
 	RespondJSON(w, http.StatusOK, resp)
+}
+
+// describeAuthSource reports how a stored account signs in, as the pair of
+// values every user object in this package carries: the authentication source
+// itself, and the issuer of the identity provider that owns the account.
+//
+// A row with an empty auth_source is reported as local, so the field is never
+// blank in a response: the column was added with federation, and any row that
+// predates it, or that some other path left empty, is by definition an account
+// that signs in with a password here.
+//
+// The issuer is empty for a local account, and also for a federated one whose
+// stored external subject cannot be parsed; a caller renders its own fallback
+// rather than being handed a half-parsed key. The subject is never reported.
+func describeAuthSource(user *auth.StoredUser) (source, issuer string) {
+	source = user.AuthSource
+	if source == "" {
+		source = auth.AuthSourceLocal
+	}
+	if source == auth.AuthSourceLocal {
+		return source, ""
+	}
+	return source, auth.IssuerFromExternalSubject(user.ExternalSubject)
 }
 
 // capitalizeFirst returns the string with its first character uppercased.

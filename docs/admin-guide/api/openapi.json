@@ -13271,6 +13271,18 @@
             "type": "string",
             "description": "User annotation"
           },
+          "auth_issuer": {
+            "type": "string",
+            "description": "Issuer of the identity provider that owns a federated account. Absent for a local account, and for a federated account whose stored identity cannot be parsed. The provider subject is never reported"
+          },
+          "auth_source": {
+            "type": "string",
+            "description": "How the account signs in: local for a password held by the Workbench, oidc for an account federated to an identity provider",
+            "enum": [
+              "local",
+              "oidc"
+            ]
+          },
           "display_name": {
             "type": "string",
             "description": "Display name"
@@ -13952,6 +13964,18 @@
             "items": {
               "type": "string"
             }
+          },
+          "auth_issuer": {
+            "type": "string",
+            "description": "Issuer of the identity provider that owns a federated account. Absent for a local account, and for a federated account whose stored identity cannot be parsed. The provider subject is never reported"
+          },
+          "auth_source": {
+            "type": "string",
+            "description": "How the account signs in: local for a password held by the Workbench, oidc for an account federated to an identity provider",
+            "enum": [
+              "local",
+              "oidc"
+            ]
           },
           "connection_privileges": {
             "type": "object",

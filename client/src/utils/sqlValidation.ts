@@ -36,11 +36,26 @@ export interface SqlValidationResponse {
 }
 
 /**
+ * Narrows a decoded response body to a validation response.
+ *
+ * The body is decoded as unknown rather than asserted, so that a
+ * malformed or unexpected payload is rejected here instead of
+ * surfacing as an undefined statement list further down.
+ */
+const isSqlValidationResponse = (
+    value: unknown,
+): value is SqlValidationResponse => (
+    typeof value === 'object'
+    && value !== null
+    && Array.isArray((value as { statements?: unknown }).statements)
+);
+
+/**
  * Validates a block of SQL, resolving to null when validation could not
  * be attempted at all (no connection, request failure).
  */
 export type SqlBlockValidator =
-    (sql: string) => Promise<SqlValidationResponse | null>;
+    (_sql: string) => Promise<SqlValidationResponse | null>;
 
 /**
  * Maximum number of validation requests in flight at once.
@@ -52,7 +67,7 @@ export type SqlBlockValidator =
 export const MAX_CONCURRENT_VALIDATIONS = 3;
 
 let inFlight = 0;
-const waiting: Array<() => void> = [];
+const waiting: (() => void)[] = [];
 
 /** Take a slot in the concurrency window, queueing when it is full. */
 const acquireSlot = (): Promise<void> => {
@@ -118,8 +133,8 @@ const requestValidation = async (
             return null;
         }
 
-        const data = await response.json() as SqlValidationResponse;
-        if (!data || !Array.isArray(data.statements)) {
+        const data: unknown = await response.json();
+        if (!isSqlValidationResponse(data)) {
             return null;
         }
         return data;

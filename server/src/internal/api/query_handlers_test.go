@@ -1198,7 +1198,7 @@ func TestExecuteQuery_RejectsInvalidDatabaseOverride(t *testing.T) {
 // TestExecuteQuery_DatabaseOverrideInjectionIsEscaped covers the payload
 // from the connection-parameter injection report. The validator is
 // deliberately narrow and does not reject it, because PostgreSQL would
-// accept it as a database name; the defence is that
+// accept it as a database name; the protection is that
 // BuildConnectionString escapes it, so it names a (missing) database
 // instead of adding host and sslmode parameters. The handler test shows
 // it is not turned away at the gate, and

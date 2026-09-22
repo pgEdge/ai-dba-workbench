@@ -340,7 +340,7 @@ that read and verify the log:
 | `trusted_proxies` | list | `[]` | Trusted proxy CIDRs |
 | `cors_origin` | string | `""` | Allowed CORS origin |
 | `hsts_enabled` | bool | `false` | Send the Strict-Transport-Security header |
-| `auth.max_failed_attempts_before_lockout` | int | `10` | Lock after N failures |
+| `auth.max_failed_attempts_before_lockout` | int | `10` | Lock after N failures (`0` disables); restart required |
 | `auth.max_user_token_days` | int | `0` | Max token lifetime |
 | `auth.rate_limit_window_minutes` | int | `15` | Rate limit window |
 | `auth.rate_limit_max_attempts` | int | `10` | Max attempts per window |
@@ -1049,4 +1049,10 @@ A `SIGHUP` signal reloads the following settings:
 - Knowledgebase settings.
 
 Authentication settings and HTTP server settings
-require a full restart.
+require a full restart. A reload keeps the value the
+server started with and warns about each of the
+settings whose change it detects, among them
+`http.auth.max_failed_attempts_before_lockout`, which
+the authentication store reads once at start-up, so
+account lockout stays as configured at the last
+restart until the server is restarted again.

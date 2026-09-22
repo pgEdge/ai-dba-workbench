@@ -202,6 +202,19 @@ func (rc *ReloadableConfig) logRestartRequiredSettings(newConfig *Config) {
 	if old.HTTP.Auth.LocalEnabled() != newConfig.HTTP.Auth.LocalEnabled() {
 		fmt.Fprintf(os.Stderr, "  WARNING: http.auth.local.enabled changed - requires restart\n")
 	}
+
+	// The account lockout threshold is read once, when NewAuthStore is
+	// constructed at startup, and the store keeps its own copy: a reload
+	// swaps the pointer inside this wrapper and never reaches it. An
+	// operator switching lockout on, or tightening the threshold after
+	// an attack, would otherwise be told the reload succeeded whilst
+	// every login went on being counted against the value the server
+	// started with, which for an installation predating the fix to the
+	// omitted-key default meant no lockout at all.
+	if old.HTTP.Auth.MaxFailedAttemptsBeforeLockout() != newConfig.HTTP.Auth.MaxFailedAttemptsBeforeLockout() {
+		fmt.Fprintf(os.Stderr,
+			"  WARNING: http.auth.max_failed_attempts_before_lockout changed - requires restart\n")
+	}
 }
 
 // OnReload registers a callback to be called when configuration is reloaded

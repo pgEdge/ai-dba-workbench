@@ -317,10 +317,19 @@ func (e *Engine) checkAlertResolved(ctx context.Context, alert *database.Alert,
 		return
 	}
 
-	// Probe-scoped alerts (metric_staleness) are raised by a bespoke
-	// evaluator and their metric has no registry entry, so they need a
-	// bespoke resolution check too.
+	// Probe-scoped alerts (metric_staleness and probe_unavailable) are
+	// raised by bespoke evaluators and neither metric has a registry
+	// entry, so they need bespoke resolution checks too. Both carry a
+	// probe name, so the metric name is what tells them apart: they
+	// resolve on entirely different conditions, and routing a
+	// probe_unavailable alert through the staleness check would judge it
+	// on a staleness ratio it was never raised on and rewrite its
+	// description with the hold wording issue #465 added.
 	if alert.ProbeName != nil {
+		if *alert.MetricName == probeUnavailableMetricName {
+			e.checkProbeUnavailableAlertResolved(ctx, alert, staleness)
+			return
+		}
 		e.checkStalenessAlertResolved(ctx, alert, staleness)
 		return
 	}
@@ -449,6 +458,58 @@ func (e *Engine) checkStalenessAlertResolved(ctx context.Context, alert *databas
 		*alert.ProbeName, alert.ConnectionID, alert.ID)
 	e.restoreHeldDescriptionBeforeClear(ctx, alert)
 	e.clearResolvedAlert(ctx, alert, 0)
+}
+
+// checkProbeUnavailableAlertResolved checks whether a probe_unavailable
+// alert has resolved. The rule is evaluated by evaluateProbeUnavailable
+// rather than through metricRegistry, so the check reads the same
+// probe_availability source the evaluator does, and it is deliberately
+// separate from the staleness check: a probe_unavailable alert says the
+// probe has stopped collecting, and the only thing that resolves it is
+// the probe collecting again.
+//
+// The three cases are:
+//
+//   - the probe is in the staleness view and available again, so
+//     collection has resumed and the alert clears on a value of 1;
+//   - the probe is in the view and still unavailable, so the alert stays
+//     active;
+//   - the probe has left the view altogether, which means only deliberate
+//     operator action (the probe was disabled, the connection is no
+//     longer monitored, or the availability row has gone), so the alert
+//     clears, logged at operator level rather than debug so that the
+//     operator can see which of their changes retired it, exactly as
+//     issue #465 established for the equivalent staleness case.
+//
+// A held metric_staleness alert and a probe_unavailable alert may both be
+// open on the same probe at once, which is intended: one says the data
+// went stale, the other says why, and each resolves on its own terms.
+func (e *Engine) checkProbeUnavailableAlertResolved(ctx context.Context,
+	alert *database.Alert, staleness *probeStalenessSnapshot) {
+	entries, err := staleness.get(ctx, e)
+	if err != nil {
+		e.log("ERROR: Failed to get probe staleness for alert %d: %v", alert.ID, err)
+		return
+	}
+
+	for _, entry := range entries {
+		if entry.ConnectionID != alert.ConnectionID || entry.ProbeName != *alert.ProbeName {
+			continue
+		}
+		if !entry.IsAvailable {
+			e.debugLog("Probe %s on connection %d is still unavailable; leaving alert %d active",
+				entry.ProbeName, alert.ConnectionID, alert.ID)
+			return
+		}
+		e.log("Probe %s on connection %d is available again; clearing alert %d",
+			entry.ProbeName, alert.ConnectionID, alert.ID)
+		e.clearResolvedAlert(ctx, alert, probeAvailableValue)
+		return
+	}
+
+	e.log("Probe %s on connection %d is no longer reported; clearing alert %d",
+		*alert.ProbeName, alert.ConnectionID, alert.ID)
+	e.clearResolvedAlert(ctx, alert, probeUnavailableValue)
 }
 
 // holdStalenessAlertForUnavailableProbe leaves a staleness alert active

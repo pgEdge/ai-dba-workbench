@@ -381,6 +381,47 @@ probe is configured. The `metric_staleness` rule still works in
 ratios, because what counts as a late probe does depend on how often
 it is meant to run.
 
+### Rules Evaluated Outside the Registry
+
+Two built-in rules are evaluated by bespoke code in the engine
+rather than through `metricRegistry`, because neither metric comes
+from a metrics table. Both rules are probe-scoped: each alert
+names the probe it was raised for.
+
+The following table describes the two rules and the engine
+functions that evaluate them:
+
+| Rule | Metric | Evaluator | Condition |
+|------|--------|-----------|-----------|
+| `metric_staleness` | `probe_staleness_ratio` | `evaluateMetricStaleness` | A probe that is still available has not collected for more than the configured number of collection intervals. |
+| `probe_unavailable` | `probe_available` | `evaluateProbeUnavailable` | A probe that had collected at least once is no longer available. |
+
+Both evaluators read `GetProbeStalenessByConnection`, and the view
+behind that call filters on a non-`NULL` `last_collected`, so an
+entry whose availability flag is false belongs to a probe that
+collected before and has stopped. A probe whose extension was never
+installed does not appear in the view at all, which is why
+`evaluateProbeUnavailable` needs no stored record of the previous
+availability; do not add one.
+
+The two rules also need bespoke resolution checks, and the alert
+cleaner tells them apart by metric name. Every alert either
+evaluator raises carries a probe name, so `checkAlertResolved`
+routes an alert whose metric name is `probe_available` to
+`checkProbeUnavailableAlertResolved` and every other probe-scoped
+alert to `checkStalenessAlertResolved`. The two checks resolve on
+different conditions: a `probe_unavailable` alert clears only when
+the probe collects again or when an operator retires the probe,
+whereas a staleness alert is held open whilst its probe is
+unavailable. Routing one through the other's check would judge the
+alert on a condition it was never raised on.
+
+Because neither metric has a registry entry, neither clears on
+absent data, and neither supports anomaly detection. A rule added
+in this style therefore needs its own evaluator, its own resolution
+check, and a branch in `checkAlertResolved` that reaches the new
+check by metric name.
+
 ## Choosing Thresholds
 
 Select thresholds based on your operational requirements.

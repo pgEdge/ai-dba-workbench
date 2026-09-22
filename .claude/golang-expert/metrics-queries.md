@@ -795,11 +795,16 @@ Probe availability is carried rather than filtered, so the three ways a
 probe can leave the staleness view are no longer one signal (issue #465).
 `GetProbeStalenessByConnection` selects `pa.is_available` and
 `pa.unavailable_reason` into `ProbeStaleness.IsAvailable` and
-`UnavailableReason`, and the three readers each treat them differently:
+`UnavailableReason`, and the four readers each treat them differently:
 `evaluateMetricStaleness` skips unavailable entries entirely, because
 `is_available = FALSE` is a normal steady state for a probe whose
 extension is absent and firing on it would pin a permanent staleness
-alert to every such probe; `classifyAbsentMetric` returns
+alert to every such probe; `evaluateProbeUnavailable` (issue #512) is
+handed the same entries and raises the `probe_unavailable` rule on
+exactly those the staleness evaluator skips, relying on
+`last_collected` being sticky and `IS NOT NULL`-filtered so that an
+entry with `IsAvailable == false` is by construction a probe that
+collected before and has stopped; `classifyAbsentMetric` returns
 `absentMetricProbeNotReporting` for them whatever their `SinceCollected`,
 preserving the issue #407 gate exactly; and
 `checkStalenessAlertResolved` holds the alert active and rewrites only
@@ -906,15 +911,30 @@ with no time window; a connection with no rows at all is treated as
 lacking the extension on both paths. See GitHub issue #409.
 
 Probe-scoped alerts (those with a non-NULL `probe_name`) never reach the
-registry path at all: `checkAlertResolved` routes them to
-`checkStalenessAlertResolved`, which re-reads
+registry path at all: `checkAlertResolved` routes them by metric name,
+since both probe-scoped rules carry a probe name and neither metric has
+a registry entry. A `probe_available` alert goes to
+`checkProbeUnavailableAlertResolved`, and everything else probe-scoped
+to `checkStalenessAlertResolved`, which re-reads
 `GetProbeStalenessByConnection` and clears the alert when the probe's
 staleness ratio no longer violates the stored threshold, or when the
-probe stops being reported. Their evaluator,
-`evaluateMetricStaleness` (`alerter/src/internal/engine/thresholds.go`),
-keys both the active-alert lookup and the cooldown check by probe via
+probe stops being reported. `checkProbeUnavailableAlertResolved` reads
+the same snapshot and has three outcomes: available again clears with
+value 1, still unavailable leaves the alert active and logs at debug
+level, and absence from the view is deliberate operator action, so it
+clears and logs at operator level as issue #509 established. A held
+`metric_staleness` alert and a `probe_unavailable` alert may legitimately
+both be open on one probe, so neither check may assume it owns the probe.
+
+Their evaluators, `evaluateMetricStaleness` and
+`evaluateProbeUnavailable` (`alerter/src/internal/engine/thresholds.go`),
+are both driven by `evaluateProbeScopedRules`, which reads
+`GetProbeStalenessByConnection` once per evaluation pass and hands the
+same entries to each: neither evaluator queries the view itself, and a
+failed read is logged once and skips both passes. They key both the
+active-alert lookup and the cooldown check by probe via
 `GetActiveThresholdAlertForProbe` and `GetRecentlyClearedAlertForProbe`,
-so several stale probes on one connection raise one alert each.
+so several affected probes on one connection raise one alert each.
 
 ## Alerter Metric Registry (alerter)
 
@@ -1700,3 +1720,7 @@ run.
 - #401: Cache hit ratios computed from per-database counter deltas in
   `queryCacheHit` and `queryDatabaseCacheHitTimeSeries`; nullable
   ratio fields.
+- #512: The `probe_unavailable` built-in rule (collector migration 16),
+  its evaluator `evaluateProbeUnavailable` and its resolution check
+  `checkProbeUnavailableAlertResolved`; no new state, because
+  `probe_availability.last_collected` is sticky.

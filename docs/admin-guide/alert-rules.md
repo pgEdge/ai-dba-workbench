@@ -67,8 +67,8 @@ categories:
   maintenance.
 - System rules monitor CPU, memory, and system
   resources.
-- Availability rules monitor whether the collector
-  is still gathering metrics on schedule.
+- Availability rules monitor the collection itself,
+  reporting probes that fall behind or stop collecting.
 
 ## Replication Rules
 
@@ -122,6 +122,50 @@ alerter fires a rule when any single slot's retained
 WAL reaches the threshold. Both rules read only samples
 collected in the last 15 minutes, so neither rule fires
 on stale data after a collector stops.
+
+## Availability Rules
+
+The availability category includes two built-in rules that
+report on the collection itself rather than on the state of
+a monitored database. Neither rule requires an extension,
+and both are enabled by default at warning severity.
+
+The following table describes the built-in availability
+rules:
+
+| Rule | Metric | Condition | Description |
+|------|--------|-----------|-------------|
+| `metric_staleness` | `probe_staleness_ratio` | Greater than 3 | A probe is collecting, but the newest sample is more than three collection intervals old. |
+| `probe_unavailable` | `probe_available` | Less than 1 | A probe that had been collecting has stopped being available, so collection for that probe has stopped. |
+
+The `probe_unavailable` rule reports the transition from
+collecting to unavailable. The collector records a probe as
+unavailable on the first probe run after the extension the
+probe reads, the privilege the probe needs, or the
+connection itself goes away. The metric is the availability
+flag: the alerter reports 0 whilst the probe is unavailable
+and 1 whilst the probe collects, so the default condition of
+less than 1 holds for as long as collection stays stopped.
+
+The rule fires only for a probe that has collected at least
+once. A probe whose extension was never installed has never
+collected, so the rule never fires for one and no permanent
+alert is pinned to it.
+
+The alerter clears a `probe_unavailable` alert when the
+probe collects again. The alerter also clears the alert when
+an operator retires the probe, whether by disabling the
+probe, by no longer monitoring the connection, or by
+removing the availability row, because each of those is a
+deliberate change rather than a fault. A held
+`metric_staleness` alert and a `probe_unavailable` alert can
+be active on the same probe at the same time; the first
+records that the data went stale and the second records why,
+and each clears on its own terms.
+
+Per-connection threshold overrides, blackout windows, and
+the alert cooldown apply to `probe_unavailable` exactly as
+they apply to `metric_staleness`.
 
 ## Hierarchical Overrides
 
@@ -327,13 +371,17 @@ probe is the normal steady state on a server that lacks
 the extension a probe reads, and firing on one would leave
 a permanent alert against every such probe. A probe that
 stops collecting before its staleness ratio reaches the
-rule's threshold therefore raises no alert at all, and the
-hold has nothing to preserve. The seeded rule illustrates
-the gap: it fires on a ratio above 3, and a probe that
-runs every 60 seconds is still at a ratio of 1.0 at the
-moment the collector records the probe as unavailable.
-Alerting on a probe that moves from available to
-unavailable is tracked separately in [issue 512](https://github.com/pgEdge/ai-dba-workbench/issues/512).
+rule's threshold is instead reported by the
+`probe_unavailable` rule described above. The seeded
+staleness rule shows why the second rule is needed: the
+staleness rule fires on a ratio above 3, and a probe that
+runs every 60 seconds is still at a ratio of about 1.0 at
+the moment the collector records the probe as unavailable.
+
+The alert cleaner checks a `probe_unavailable` alert
+against the same probe availability data the evaluator
+reads, rather than against the staleness ratio, so the two
+probe-scoped rules resolve independently of each other.
 
 ## Alerts on a Server You Stop Monitoring
 

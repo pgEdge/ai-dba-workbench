@@ -12,6 +12,36 @@ project adheres to
 
 ### Added
 
+- Add the `probe_unavailable` built-in alert rule, which
+  reports a probe that had been collecting and has stopped
+  being available. Collector schema migration 16 seeds the
+  rule in the `availability` category on the new
+  `probe_available` metric, comparing with `<` against a
+  threshold of 1 at warning severity, enabled by default and
+  requiring no extension; the metric is the availability flag
+  itself, reported as 0 whilst the probe is unavailable and 1
+  whilst the probe collects. Before this change such a probe
+  raised nothing at all: the collector records the probe as
+  unavailable on the first run after the extension, the
+  privilege or the connection goes, whilst the staleness ratio
+  is still about 1, so no `metric_staleness` alert has fired
+  for the hold added in #465 to preserve, and the staleness
+  evaluator skips unavailable probes deliberately, because a
+  probe whose extension will never be installed would
+  otherwise carry a permanent staleness alert. The new rule
+  fires only for a probe that has collected at least once, so
+  a probe whose extension was never installed never raises
+  one. The alerter clears the alert when the probe collects
+  again, and also when an operator retires the probe by
+  disabling it, by no longer monitoring the connection, or by
+  removing the availability row. A held `metric_staleness`
+  alert and a `probe_unavailable` alert may be active on the
+  same probe at once, one reporting that the data went stale
+  and the other reporting why, and each clears on its own
+  terms. Per-connection threshold overrides, blackouts and the
+  alert cooldown apply to the new rule as they do to
+  `metric_staleness`. (#512)
+
 - Add federated login through an OpenID Connect identity
   provider, configured in the new `http.auth.oidc` section
   and offered as a second button on the login page. The

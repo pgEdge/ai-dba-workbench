@@ -98,8 +98,9 @@ own (issue #469). It also discards an interval whose `stats_reset`
 `IS DISTINCT FROM` that database's previous sample, because a reset that
 overshoots the old value inside one sample interval yields a positive
 delta the negative-delta guard cannot see; `IS DISTINCT FROM` rather
-than `<>` so a NULL-on-both-sides pair stays valid, matching
-`ResetColumnFor` in `internal/metrics/query.go`. And because it reports
+than `<>` so a NULL-on-both-sides pair stays valid, matching the
+`IS NOT DISTINCT FROM` reset guard that `BuildDerivedMetricsQuery`
+builds in `internal/metrics/query.go`. And because it reports
 a rate, elapsed time has to come from the distinct sample timestamps
 (a `sample_elapsed` CTE over `SELECT DISTINCT collected_at`, LAG over
 that, joined back to the bucket) rather than from a value carried on
@@ -113,6 +114,16 @@ for that database alone. The gap-bound
 rejection of a long collection outage is deliberately not here; it needs
 the probe interval and belongs to #402. The cases are pinned in
 `perf_summary_transactions_test.go`.
+
+Per-database differencing is measurably slower, and deliberately so.
+`PARTITION BY datname` cannot use the collected_at ordering of the
+partition's index, so a wide range sorts externally: over 864,000
+seeded rows a 30-day window took 1443ms against 272ms for the old
+whole-cluster differencing (a 35MB external merge sort), and a
+24-hour window 44.7ms against 12.3ms. Do not treat that 5.3x as a
+regression to optimise by differencing summed counters again; the
+same note sits beside `queryTransactions` in
+`internal/api/perf_summary_handlers.go`.
 
 Two consequences for callers. A bucket whose deltas are all valid but
 sum to zero block accesses is emitted with a NULL ratio rather than 0%,

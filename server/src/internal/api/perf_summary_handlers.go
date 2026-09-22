@@ -723,6 +723,15 @@ func (h *PerfSummaryHandler) queryCacheHit(
 // previous_collected_at enforces: a database missing from an
 // intermediate sample would otherwise have its delta span two intervals
 // whilst being divided by the elapsed time of only the last one.
+//
+// Correctness here is not free: the PARTITION BY datname window cannot
+// use the collected_at ordering of the partition's index, so a wide
+// range sorts externally. Measured over 864,000 seeded rows, a 30-day
+// window took 1443ms against 272ms for the old whole-cluster
+// differencing (a 35MB external merge sort), and a 24-hour window
+// 44.7ms against 12.3ms. That 5.3x is the price of not reporting a
+// created or dropped database as a spike, so do not trade it back by
+// differencing the summed counters again.
 func (h *PerfSummaryHandler) queryTransactions(
 	ctx context.Context,
 	tx pgx.Tx,

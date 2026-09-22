@@ -101,12 +101,15 @@ which keeps a permanent alert off every probe that has
 simply never run.
 
 The alerter clears a probe unavailable alert when the
-probe collects again, and also when an operator retires
-the probe by disabling it or by no longer monitoring the
-connection. A held staleness alert and a probe unavailable
-alert can be open on the same probe at the same time; the
-first reports that the data went stale and the second
-reports why, and each one clears on its own terms.
+probe collects again. The alerter also clears the alert
+when an operator retires the probe by disabling it or by
+no longer monitoring the connection, and when the probe
+no longer reports its availability for that connection.
+
+A held staleness alert and a probe unavailable alert can
+be open on the same probe at the same time; the first
+reports that the data went stale and the second reports
+why, and each one clears on its own terms.
 
 ### False Positive
 

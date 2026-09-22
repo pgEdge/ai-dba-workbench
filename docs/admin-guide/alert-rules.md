@@ -130,13 +130,17 @@ report on the collection itself rather than on the state of
 a monitored database. Neither rule requires an extension,
 and both are enabled by default at warning severity.
 
-The following table describes the built-in availability
-rules:
+The following table shows the built-in availability rules
+and their default conditions:
 
-| Rule | Metric | Condition | Description |
-|------|--------|-----------|-------------|
-| `metric_staleness` | `probe_staleness_ratio` | Greater than 3 | A probe is collecting, but the newest sample is more than three collection intervals old. |
-| `probe_unavailable` | `probe_available` | Less than 1 | A probe that had been collecting has stopped being available, so collection for that probe has stopped. |
+| Rule | Metric | Condition |
+|------|--------|-----------|
+| `metric_staleness` | `probe_staleness_ratio` | Greater than 3 |
+| `probe_unavailable` | `probe_available` | Less than 1 |
+
+The `metric_staleness` rule reports a probe that is still
+collecting but whose newest sample is more than three
+collection intervals old.
 
 The `probe_unavailable` rule reports the transition from
 collecting to unavailable. The collector records a probe as

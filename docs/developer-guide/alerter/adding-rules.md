@@ -388,13 +388,19 @@ rather than through `metricRegistry`, because neither metric comes
 from a metrics table. Both rules are probe-scoped: each alert
 names the probe it was raised for.
 
-The following table describes the two rules and the engine
+The following table shows the two rules and the engine
 functions that evaluate them:
 
-| Rule | Metric | Evaluator | Condition |
-|------|--------|-----------|-----------|
-| `metric_staleness` | `probe_staleness_ratio` | `evaluateMetricStaleness` | A probe that is still available has not collected for more than the configured number of collection intervals. |
-| `probe_unavailable` | `probe_available` | `evaluateProbeUnavailable` | A probe that had collected at least once is no longer available. |
+| Rule | Metric | Evaluator |
+|------|--------|-----------|
+| `metric_staleness` | `probe_staleness_ratio` | `evaluateMetricStaleness` |
+| `probe_unavailable` | `probe_available` | `evaluateProbeUnavailable` |
+
+`evaluateMetricStaleness` raises an alert when a probe that is
+still available has not collected for more than the configured
+number of collection intervals, and `evaluateProbeUnavailable`
+raises one when a probe that had collected at least once is no
+longer available.
 
 Both evaluators read `GetProbeStalenessByConnection`, and the view
 behind that call filters on a non-`NULL` `last_collected`, so an

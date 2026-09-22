@@ -1356,9 +1356,9 @@ project adheres to
   carry one in its path or query string, yet a routine transport
   failure produced an error that quoted the URL in full. Such errors
   now name only the operation, the host and the cause, and a failing
-  endpoint's response body is stripped of control characters and capped
-  at 256 bytes before it is echoed, as the Telegram channel's already
-  was. (#498)
+  endpoint's response body has its control characters replaced with
+  spaces and is capped at 256 bytes before it is echoed, as the
+  Telegram channel's already was. (#498)
 
 - Fix a configuration file that omits
   `http.auth.max_failed_attempts_before_lockout` silently disabling

@@ -146,6 +146,18 @@ it will not parse) and, in `webhook.go`, the SSRF-block error, which
 wraps `hostvalidation.ValidateURLHost` and so inherits `url.Parse`'s
 quoted URL.
 
+**Never echo a `url.Parse` failure, sanitised or not.** The first two
+sites go through the helpers, but the last two do not echo at all: they
+return a fixed "the URL is malformed" message. `(*url.Error).Error`
+renders `%s %q: %s` over the *raw input string* rather than a parsed
+URL, so on a parse failure the text is whatever the operator stored,
+and nothing validates that a stored `webhook_url` or `endpoint_url`
+carries a scheme. `redactURLPath` anchors on `://`, so a scheme-less
+stored URL would pass straight through it. In `webhook.go` the parse
+failure is picked out with `errors.As(err, &urlErr)`; every other
+`ValidateURLHost` failure names the host and nothing else, and is
+still worth echoing.
+
 **`redactURLPath` treats everything after the host as sensitive.** There
 is no `/bot`-style marker to anchor on, so the host is all that
 survives; keeping the host is deliberate, since an operator needs to
@@ -161,10 +173,18 @@ because `url.Parse` quotes a raw URL back when it rejects one for
 holding a control character, and stopping the host there would leave
 the path after it unredacted.
 
-Text with no `://` passes through untouched, which is safe only because
-every string these helpers are applied to comes from `net/http` or
-`url.Parse` and so always carries a scheme. Check that before applying
-`redactURLPath` at a new call site.
+The redactor masks userinfo as well as the path, splitting the
+authority at the *last* `@` (a literal `@` inside userinfo must be
+written `%40`, so the last one is always the delimiter) and keeping
+only the host after it; the generic webhook channel supports basic
+auth, so the userinfo may hold a password.
+
+Two limits are the call site's responsibility rather than the
+redactor's: text with no `://` passes through untouched, and a run ends
+at ASCII whitespace, so a path holding a space is masked only up to it.
+Both are reachable only from a `url.Parse` failure, which is why no
+call site echoes one. Check that before applying `redactURLPath` at a
+new call site.
 
 ## The Shared HTTP Client Refuses Redirects
 

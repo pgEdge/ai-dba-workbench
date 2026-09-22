@@ -64,9 +64,36 @@ func TestRedactURLPath(t *testing.T) {
 			want: `Post "https://hooks.slack.com": dial tcp: lookup failed`,
 		},
 		{
+			// A documented limit, not a wanted behavior: without a
+			// scheme there is nothing to anchor the host on. Nothing
+			// reaches the redactor in this shape, because the senders
+			// never echo a url.Parse failure, which is the only thing
+			// that renders a raw stored URL. See redactURLPath.
 			name: "bare host with no scheme is left alone",
 			in:   "hooks.slack.com/services/T0/B0/XYZ unreachable",
 			want: "hooks.slack.com/services/T0/B0/XYZ unreachable",
+		},
+		{
+			// The other documented limit, kept honest for the same
+			// reason: whitespace inside a stored path ends the run.
+			name: "whitespace inside the path ends the run early",
+			in:   "https://hooks.example.com/services/T0 B0/XYZ",
+			want: "https://hooks.example.com<redacted> B0/XYZ",
+		},
+		{
+			name: "userinfo is replaced and the host kept",
+			in:   `Post "https://svc:hunter2@hooks.example.com/services/T0/B0": EOF`,
+			want: `Post "https://<redacted>@hooks.example.com<redacted> EOF`,
+		},
+		{
+			name: "userinfo is replaced when there is no path",
+			in:   `Post "https://svc:hunter2@hooks.example.com": EOF`,
+			want: `Post "https://<redacted>@hooks.example.com": EOF`,
+		},
+		{
+			name: "an encoded at sign inside userinfo does not split it early",
+			in:   "https://sv%40c:hunter2@hooks.example.com/services/T0",
+			want: "https://<redacted>@hooks.example.com<redacted>",
 		},
 		{
 			name: "several urls in one string",
@@ -183,6 +210,26 @@ func TestRedactURLPathNeverEmitsAPathCharacter(t *testing.T) {
 	}
 }
 
+// TestRedactURLPathNeverEmitsUserinfo is the property for the other
+// half of the credential: the generic webhook channel supports basic
+// authentication, so an operator may store the password in the URL.
+func TestRedactURLPathNeverEmitsUserinfo(t *testing.T) {
+	for _, c := range webhookRedactionContexts {
+		t.Run(c.name, func(t *testing.T) {
+			in := strings.ReplaceAll(c.format, "hooks.slack.com",
+				"svc:hunter2@hooks.slack.com")
+			in = strings.ReplaceAll(in, "%s", webhookSecretPath)
+			got := redactURLPath(in)
+			if strings.Contains(got, "hunter2") || strings.Contains(got, "svc:") {
+				t.Errorf("redactURLPath(%q) = %q, want the userinfo replaced", in, got)
+			}
+			if !strings.Contains(got, "hooks.slack.com") {
+				t.Errorf("redactURLPath(%q) = %q, want the host kept", in, got)
+			}
+		})
+	}
+}
+
 func TestSanitizeWebhookEcho(t *testing.T) {
 	t.Run("ordinary text is unchanged", func(t *testing.T) {
 		if got := sanitizeWebhookEcho("connection refused"); got != "connection refused" {
@@ -208,6 +255,24 @@ func TestSanitizeWebhookEcho(t *testing.T) {
 		}
 		if !strings.Contains(got, "forged") {
 			t.Errorf("sanitizeWebhookEcho() = %q", got)
+		}
+	})
+
+	// A response body is wholly attacker-controlled, and these are the
+	// characters beyond the ASCII controls that a log processor treats
+	// as a line ending or that reorder what a reader sees.
+	t.Run("c1, unicode separators and format characters become spaces", func(t *testing.T) {
+		for _, r := range []rune{'\u0085', '\u2028', '\u2029', '\u009b',
+			'\u202e', '\u200b', '\u00ad'} {
+			in := "head" + string(r) + "tail"
+			got := sanitizeWebhookEcho(in)
+			if strings.ContainsRune(got, r) {
+				t.Errorf("sanitizeWebhookEcho(%q) = %q, want %U folded to a space",
+					in, got, r)
+			}
+			if !strings.Contains(got, "head") || !strings.Contains(got, "tail") {
+				t.Errorf("sanitizeWebhookEcho(%q) = %q, want the text kept", in, got)
+			}
 		}
 	})
 

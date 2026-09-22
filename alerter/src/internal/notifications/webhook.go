@@ -11,9 +11,11 @@ package notifications
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
@@ -87,9 +89,20 @@ func (n *webhookNotifier) Send(ctx context.Context, channel *database.Notificati
 	// to a private or internal IP address.
 	if !n.allowInternal {
 		if err := hostvalidation.ValidateURLHost(endpointURL); err != nil {
-			// A URL that will not parse produces a *url.Error carrying
-			// the whole endpoint URL, which may hold a credential in
-			// its path or query string; report only the redacted form.
+			var urlErr *url.Error
+			if errors.As(err, &urlErr) {
+				// (*url.Error).Error renders the RAW input string, not
+				// a parsed URL, so this text is the stored endpoint URL
+				// in whatever shape the operator saved it - possibly
+				// with no scheme for redactURLPath to anchor on, and
+				// possibly with a password in its userinfo. Nothing
+				// borrowed from it may be reported, and nothing useful
+				// would be: the operator learns only that the URL is
+				// malformed either way.
+				return fmt.Errorf("webhook endpoint blocked (SSRF protection): " +
+					"the endpoint URL is malformed")
+			}
+			// Every other failure names the host and nothing else.
 			return fmt.Errorf("webhook endpoint blocked (SSRF protection): %s",
 				sanitizeWebhookEcho(err.Error()))
 		}
@@ -130,10 +143,11 @@ func (n *webhookNotifier) Send(ctx context.Context, channel *database.Notificati
 
 	req, err := http.NewRequestWithContext(ctx, method, endpointURL, reqBody)
 	if err != nil {
-		// http.NewRequestWithContext returns a *url.Error for a
-		// malformed URL, and that carries the whole endpoint URL;
-		// report only the redacted form.
-		return fmt.Errorf("failed to create request: %s", sanitizeWebhookEcho(err.Error()))
+		// With a non-nil context and a method Validate has already
+		// accepted, the only way this fails is url.Parse rejecting the
+		// endpoint URL, and that error quotes the raw stored string
+		// back. Report nothing borrowed from it.
+		return fmt.Errorf("failed to create request: the endpoint URL is malformed")
 	}
 
 	// Set content type for non-GET requests

@@ -60,10 +60,12 @@ func TestSendTestGenericWebhook_TransportErrorRedactsURL(t *testing.T) {
 }
 
 // TestSendTestWebhook_CreateRequestErrorRedactsURL drives the
-// http.NewRequest failure branch, whose *url.Error quotes the whole URL
-// back.
+// http.NewRequest failure branch. Its *url.Error renders the RAW input
+// string, which may carry no scheme for the redactor to anchor on and
+// may carry a password in its userinfo, so nothing borrowed from it may
+// reach the error at all.
 func TestSendTestWebhook_CreateRequestErrorRedactsURL(t *testing.T) {
-	malformed := "http://127.0.0.1\x00:1" + webhookSecretPath
+	malformed := "svc:hunter2@127.0.0.1\x00:1" + webhookSecretPath
 
 	t.Run("slack or mattermost", func(t *testing.T) {
 		err := sendTestWebhook(malformed, "Slack")
@@ -72,6 +74,12 @@ func TestSendTestWebhook_CreateRequestErrorRedactsURL(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), "failed to create request") {
 			t.Errorf("error = %q, want a create-request failure", err)
+		}
+		if !strings.Contains(err.Error(), "malformed") {
+			t.Errorf("error = %q, want it to report a malformed URL", err)
+		}
+		if strings.Contains(err.Error(), "hunter2") {
+			t.Errorf("error = %q repeats the userinfo", err)
 		}
 		assertNoWebhookURL(t, err.Error())
 	})
@@ -83,6 +91,36 @@ func TestSendTestWebhook_CreateRequestErrorRedactsURL(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), "failed to create request") {
 			t.Errorf("error = %q, want a create-request failure", err)
+		}
+		if !strings.Contains(err.Error(), "malformed") {
+			t.Errorf("error = %q, want it to report a malformed URL", err)
+		}
+		if strings.Contains(err.Error(), "hunter2") {
+			t.Errorf("error = %q repeats the userinfo", err)
+		}
+		assertNoWebhookURL(t, err.Error())
+	})
+}
+
+// TestSendTestWebhook_SchemeLessURLIsNotEchoed covers the stored URL
+// that never had a scheme. The redactor anchors on "://", so it cannot
+// mask such a path; the call site is what stops that mattering, by
+// never echoing a parse failure.
+func TestSendTestWebhook_SchemeLessURLIsNotEchoed(t *testing.T) {
+	malformed := "hooks.example.com" + webhookSecretPath + "%zz"
+
+	t.Run("slack or mattermost", func(t *testing.T) {
+		err := sendTestWebhook(malformed, "Slack")
+		if err == nil {
+			t.Fatal("expected an error for a malformed URL")
+		}
+		assertNoWebhookURL(t, err.Error())
+	})
+
+	t.Run("generic webhook", func(t *testing.T) {
+		err := sendTestGenericWebhook(malformed, http.MethodPost, nil, "", "")
+		if err == nil {
+			t.Fatal("expected an error for a malformed URL")
 		}
 		assertNoWebhookURL(t, err.Error())
 	})

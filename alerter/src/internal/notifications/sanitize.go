@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -64,10 +65,14 @@ const (
 //   - Applies redact, which removes whichever part of a URL is the
 //     credential for this channel, because the text may repeat the
 //     request URL.
-//   - Maps control characters to spaces, so a hostile or broken
-//     endpoint cannot inject newlines and forge log lines. Invalid
-//     UTF-8 is replaced at the same time, which also keeps the value
-//     storable in a Postgres text column.
+//   - Maps control and formatting characters to spaces, so a hostile
+//     or broken endpoint cannot inject newlines and forge log lines.
+//     Invalid UTF-8 is replaced at the same time, which also keeps the
+//     value storable in a Postgres text column. The class is wider than
+//     the ASCII controls on purpose: a response body is wholly
+//     attacker-controlled, and U+0085, U+2028 and U+2029 end a line for
+//     a good number of log processors whilst the bidi formatting
+//     characters can reorder what the notification-history view shows.
 //   - Caps the result at maxEchoedBytes. What is read and what is
 //     echoed are deliberately separate limits: a body is read under a
 //     1 MiB io.LimitReader, but a captive portal or a hostile endpoint
@@ -79,7 +84,12 @@ const (
 func sanitizeEcho(s string, redact func(string) string) string {
 	s = redact(s)
 	s = strings.Map(func(r rune) rune {
-		if r < 0x20 || r == 0x7f {
+		// unicode.IsControl covers the C0 and C1 ranges, DEL and
+		// U+0085; Cf is the format class, which holds the bidi
+		// overrides and the zero-width joiners; U+2028 and U+2029 are
+		// in neither, being Zl and Zp.
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) ||
+			r == '\u2028' || r == '\u2029' {
 			return ' '
 		}
 		return r
@@ -232,20 +242,37 @@ const urlPathPlaceholder = "<redacted>"
 // know which endpoint was unreachable, and the host alone is not the
 // credential.
 //
-// A URL is recognized by "://" alone, so text with no scheme - a bare
-// "hooks.example.com/services/XXX" - passes through untouched. Every
-// string this is applied to comes from net/http or from url.Parse,
-// which always render the scheme, so that gap is not reachable from the
-// call sites; it is recorded here because it would matter to a new one.
+// Any userinfo in the authority is replaced too, because the generic
+// webhook channel supports basic authentication and an operator may
+// perfectly well store the credential as "https://user:pass@host/path".
+// The authority is split at the LAST '@' of the run, since RFC 3986
+// requires a literal '@' inside userinfo to be written %40.
+//
+// Two limits, neither of which any current call site can reach, because
+// no caller passes a string that may be a raw stored URL. Both are the
+// call sites' job to respect, not this function's, so check them before
+// applying the redactor somewhere new:
+//
+//   - A URL is recognized by "://" alone, so scheme-less text - a bare
+//     "hooks.example.com/services/XXX" - passes through untouched.
+//     Nothing validates that a stored webhook_url or endpoint_url
+//     carries a scheme, and (*url.Error).Error renders the raw input
+//     string rather than a parsed URL, so a parse failure over such a
+//     value would hand the whole credential to this function and get it
+//     back unchanged. The senders therefore never echo a url.Parse
+//     failure; they report a fixed "the URL is malformed" instead.
+//   - Whitespace inside a stored path ends the redacted run early and
+//     leaves the tail of the path in the clear. The same parse-failure
+//     paths are the only way such a string could arrive here, and they
+//     no longer echo anything.
 //
 // Like the Telegram redactor, this one fails closed, and its terminator
-// class is the same: the redacted run ends only at whitespace or a
-// control character, never at a quote, paren, bracket, comma or
-// semicolon. Those characters surround a URL in an error message, but
-// they may equally appear inside a percent-decoded path, and ending the
-// run at one would print the rest of the credential verbatim.
-// Over-redacting the boilerplate that follows a URL is free;
-// under-redacting the URL is not.
+// class is the same: the redacted run ends only at whitespace, never at
+// a quote, paren, bracket, comma or semicolon. Those characters
+// surround a URL in an error message, but they may equally appear
+// inside a percent-decoded path, and ending the run at one would print
+// the rest of the credential verbatim. Over-redacting the boilerplate
+// that follows a URL is free; under-redacting the URL is not.
 func redactURLPath(s string) string {
 	const scheme = "://"
 	var b strings.Builder
@@ -263,7 +290,17 @@ func redactURLPath(s string) string {
 			host++
 		}
 		b.WriteString(s[:i+len(scheme)])
-		b.WriteString(rest[:host])
+		// The host run spans the whole authority, so any userinfo in
+		// front of the host is a credential that has to go. Split at
+		// the last '@': a literal '@' inside userinfo must be written
+		// %40, so the last one is always the authority delimiter.
+		hostRun := rest[:host]
+		if at := strings.LastIndexByte(hostRun, '@'); at >= 0 {
+			b.WriteString(urlPathPlaceholder)
+			b.WriteString(hostRun[at:])
+		} else {
+			b.WriteString(hostRun)
+		}
 		if host == len(rest) || isURLPathTerminator(rest[host]) {
 			// Host only: nothing followed it that could be a path, a
 			// query or a fragment, so there is nothing to redact.
@@ -307,11 +344,12 @@ func isURLHostTerminator(c byte) bool {
 // The other ASCII control characters are deliberately NOT terminators,
 // which is the one place this class differs from
 // isTelegramTokenTerminator. A control character cannot appear in a URL
-// that was actually dispatched, but url.Parse quotes the raw string
-// back at you when it rejects one - `parse "http://host\x00/secret":
-// net/url: invalid control character in URL` - and ending the host
-// there would leave the path after it unredacted. Swallowing the
-// control character into the redacted run instead costs nothing.
+// that was actually dispatched, and ending the host at one would leave
+// the path after it unredacted, so it is swallowed into the redacted
+// run instead, which costs nothing. This is belt and braces rather than
+// load-bearing: net/url renders its errors with %q, which escapes such
+// a byte to the four literal characters \x00 before the redactor ever
+// sees it.
 func isURLPathTerminator(c byte) bool {
 	switch c {
 	case ' ', '\t', '\n', '\v', '\f', '\r':

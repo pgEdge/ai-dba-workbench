@@ -63,11 +63,14 @@ func sendWebhookNotification(
 	// Send HTTP POST to webhook URL
 	req, err := http.NewRequestWithContext(ctx, "POST", webhookURL, strings.NewReader(body))
 	if err != nil {
-		// http.NewRequestWithContext returns a *url.Error for a
-		// malformed URL, and that carries the whole webhook URL, which
-		// for Slack and Mattermost is the credential itself; report
-		// only the redacted form.
-		return fmt.Errorf("failed to create request: %s", sanitizeWebhookEcho(err.Error()))
+		// With a non-nil context and a constant method, the only way
+		// this fails is url.Parse rejecting the webhook URL, and that
+		// error quotes the raw stored string back: for Slack and
+		// Mattermost that string is the credential, and it need not
+		// even carry a scheme for redactURLPath to anchor on. Report
+		// nothing borrowed from it.
+		return fmt.Errorf("failed to create request: the %s webhook URL is malformed",
+			serviceName)
 	}
 	req.Header.Set("Content-Type", "application/json")
 

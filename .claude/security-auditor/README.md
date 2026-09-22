@@ -121,6 +121,19 @@ moved.
   must check the length itself; `internal/oidc/state.go` does, in
   `SealState` and `OpenState`, against its own `keySize` constant.
 
+- A notification channel's URL is itself a credential (Slack and
+  Mattermost incoming webhooks, a Telegram bot token, a generic webhook
+  endpoint holding a token in its path, query string or userinfo), so
+  no error in a sender wraps with `%w` anything `net/http` or `net/url`
+  produced, and every piece of borrowed text goes through
+  `sanitizeEcho` first. `(*url.Error).Error` renders the *raw input
+  string* rather than a parsed URL and masks no password, so a parse
+  failure is never echoed at all, sanitised or otherwise. `sanitize.go`
+  is duplicated between `alerter/src/internal/notifications` and
+  `server/src/internal/api` and the two copies must stay byte-identical
+  below the copyright header; check with
+  `diff <(tail -n +11 <a>) <(tail -n +11 <b>)`.
+
 ## The RBAC Audit Log
 
 Administrative changes to users, tokens, groups and permissions are

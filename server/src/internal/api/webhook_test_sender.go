@@ -57,11 +57,14 @@ func sendTestGenericWebhook(endpointURL, httpMethod string, headers map[string]s
 	// user-supplied URL.
 	req, err := http.NewRequest(httpMethod, endpointURL, reqBody) //nolint:gosec // G704: URL host validated upstream; DNS rebinding between validation and dial is a known, admin-scope residual risk
 	if err != nil {
-		// http.NewRequest returns a *url.Error for a malformed URL,
-		// and that carries the whole endpoint URL, which for Slack and
-		// Mattermost is the credential itself; report only the
-		// redacted form.
-		return fmt.Errorf("failed to create request: %s", sanitizeWebhookEcho(err.Error()))
+		// http.NewRequest fails here only when url.Parse rejects the
+		// URL, and (*url.Error).Error quotes the raw stored string
+		// back: for Slack and Mattermost that string is the
+		// credential, and it need not carry a scheme for redactURLPath
+		// to anchor on. Report nothing borrowed from it. The handler
+		// parses the URL before calling either sender, so this is
+		// unreachable from it today; the senders do not rely on that.
+		return fmt.Errorf("failed to create request: the URL is malformed")
 	}
 
 	// Set content type for non-GET requests
@@ -141,11 +144,14 @@ func sendTestWebhook(webhookURL string, channelType string) error {
 	// user-supplied URL.
 	req, err := http.NewRequest(http.MethodPost, webhookURL, strings.NewReader(body)) //nolint:gosec // G704: URL host validated upstream; DNS rebinding between validation and dial is a known, admin-scope residual risk
 	if err != nil {
-		// http.NewRequest returns a *url.Error for a malformed URL,
-		// and that carries the whole endpoint URL, which for Slack and
-		// Mattermost is the credential itself; report only the
-		// redacted form.
-		return fmt.Errorf("failed to create request: %s", sanitizeWebhookEcho(err.Error()))
+		// http.NewRequest fails here only when url.Parse rejects the
+		// URL, and (*url.Error).Error quotes the raw stored string
+		// back: for Slack and Mattermost that string is the
+		// credential, and it need not carry a scheme for redactURLPath
+		// to anchor on. Report nothing borrowed from it. The handler
+		// parses the URL before calling either sender, so this is
+		// unreachable from it today; the senders do not rely on that.
+		return fmt.Errorf("failed to create request: the URL is malformed")
 	}
 	req.Header.Set("Content-Type", "application/json")
 

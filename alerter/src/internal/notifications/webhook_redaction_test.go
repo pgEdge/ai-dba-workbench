@@ -84,8 +84,9 @@ func TestWebhookSenders_TransportErrorRedactsURL(t *testing.T) {
 
 func TestWebhookSenders_CreateRequestErrorRedactsURL(t *testing.T) {
 	// A NUL in the URL makes http.NewRequestWithContext fail with a
-	// *url.Error that quotes the whole URL back.
-	malformed := "http://127.0.0.1\x00:1" + webhookSecretPath
+	// *url.Error that quotes the raw stored string back, scheme,
+	// userinfo and all.
+	malformed := "svc:hunter2@127.0.0.1\x00:1" + webhookSecretPath
 
 	tests := []struct {
 		name     string
@@ -113,26 +114,90 @@ func TestWebhookSenders_CreateRequestErrorRedactsURL(t *testing.T) {
 			if !strings.Contains(err.Error(), "failed to create request") {
 				t.Errorf("Send() error = %q, want a create-request failure", err)
 			}
+			if !strings.Contains(err.Error(), "malformed") {
+				t.Errorf("Send() error = %q, want it to report a malformed URL", err)
+			}
+			if strings.Contains(err.Error(), "hunter2") {
+				t.Errorf("Send() error = %q repeats the userinfo", err)
+			}
 			assertNoWebhookURL(t, err.Error())
 		})
 	}
 }
 
-// TestWebhookNotifier_SSRFBlockRedactsURL covers the SSRF-protection
-// branch, whose error comes from url.Parse and so quotes the endpoint
-// URL in full when the URL will not parse.
-func TestWebhookNotifier_SSRFBlockRedactsURL(t *testing.T) {
+// TestWebhookNotifier_SSRFBlockDoesNotEchoAParseFailure covers the
+// SSRF-protection branch. It wraps hostvalidation.ValidateURLHost,
+// which wraps url.Parse, and (*url.Error).Error renders the RAW input
+// string: not a parsed URL, so it may carry no scheme for the redactor
+// to anchor on, and it may carry a password in its userinfo. Nothing
+// borrowed from a parse failure may reach the error.
+func TestWebhookNotifier_SSRFBlockDoesNotEchoAParseFailure(t *testing.T) {
+	tests := []struct {
+		name        string
+		endpointURL string
+		forbidden   []string
+	}{
+		{
+			name:        "a control character in the url",
+			endpointURL: "http://webhook.example.com\x00" + webhookSecretPath,
+			forbidden:   []string{"T00000000", "/services"},
+		},
+		{
+			// The redactor cannot anchor on a host without a scheme, so
+			// echoing this would hand over the whole path.
+			name:        "no scheme and an invalid percent escape",
+			endpointURL: "hooks.example.com" + webhookSecretPath + "%zz",
+			forbidden:   []string{"T00000000", "/services", "hooks.example.com"},
+		},
+		{
+			name:        "a password in the userinfo",
+			endpointURL: "https://svc:hunter2@hooks.example.com" + webhookSecretPath + "%zz",
+			forbidden:   []string{"hunter2", "T00000000", "/services"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			notifier := NewWebhookNotifier(http.DefaultClient, &mockTemplateRenderer{})
+			channel := &database.NotificationChannel{EndpointURL: strPtr(tt.endpointURL)}
+
+			err := notifier.Send(context.Background(), channel, createTestPayload())
+			if err == nil {
+				t.Fatal("Send() expected the endpoint to be blocked")
+			}
+			if !strings.Contains(err.Error(), "SSRF protection") {
+				t.Errorf("Send() error = %q, want it to mention SSRF protection", err)
+			}
+			if !strings.Contains(err.Error(), "malformed") {
+				t.Errorf("Send() error = %q, want it to report a malformed URL", err)
+			}
+			for _, fragment := range tt.forbidden {
+				if strings.Contains(err.Error(), fragment) {
+					t.Errorf("Send() error = %q repeats %q of the endpoint URL",
+						err, fragment)
+				}
+			}
+			assertNoWebhookURL(t, err.Error())
+		})
+	}
+}
+
+// TestWebhookNotifier_SSRFBlockNamesTheHost is the other side of the
+// branch above: a URL that parses but resolves somewhere internal is
+// reported with the host, which is what the operator needs and is not
+// the credential.
+func TestWebhookNotifier_SSRFBlockNamesTheHost(t *testing.T) {
 	notifier := NewWebhookNotifier(http.DefaultClient, &mockTemplateRenderer{})
 	channel := &database.NotificationChannel{
-		EndpointURL: strPtr("http://webhook.example.com\x00" + webhookSecretPath),
+		EndpointURL: strPtr("http://127.0.0.1" + webhookSecretPath),
 	}
 
 	err := notifier.Send(context.Background(), channel, createTestPayload())
 	if err == nil {
 		t.Fatal("Send() expected the endpoint to be blocked")
 	}
-	if !strings.Contains(err.Error(), "SSRF protection") {
-		t.Errorf("Send() error = %q, want it to mention SSRF protection", err)
+	if !strings.Contains(err.Error(), "127.0.0.1") {
+		t.Errorf("Send() error = %q, want it to name the blocked host", err)
 	}
 	assertNoWebhookURL(t, err.Error())
 }

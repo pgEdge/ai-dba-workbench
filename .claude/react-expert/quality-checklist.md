@@ -773,6 +773,50 @@ that, and #373 centralised the construction. Current callers are
 `utils/agenticLoop.ts`, `hooks/chat/chatAgenticLoop.ts`,
 `hooks/useChartAnalysis.ts` and `hooks/useQueryOverview.ts`.
 
+## Generated SQL Validation
+
+Generated SQL is never offered as runnable until it has been planned
+server-side. `src/utils/sqlValidation.ts` is the only client of
+`POST /api/v1/connections/{id}/query/validate`; it bounds concurrent
+requests at `MAX_CONCURRENT_VALIDATIONS` (3) and caches results per
+connection, database and SQL text, so a report full of code blocks
+issues a handful of requests rather than dozens. A failed request
+resolves to `null` and is not cached: the UI then treats the block as
+unvalidated and still offers Run.
+
+`src/hooks/useSqlValidation.ts` wraps that for components. Its effect
+keys on the request inputs alone, so an unrelated re-render never
+re-fires validation. Statement statuses collapse to a block state in
+`summariseValidation`: any `invalid` wins, then `unsupported`, else
+`valid`. `unsupported` is not a failure; it means EXPLAIN cannot plan
+that statement kind (DDL, `SET`, `VACUUM` and friends) and the block
+stays runnable with a hint.
+
+`RunnableCodeBlock` applies the gate. A block whose SQL contains `$N`
+placeholders (`hasSqlParameters` in `sqlDetection.ts`) is a template:
+no Run button, an explanatory notice, copy button kept, and no
+validation request. Everything else validates on mount, with Run
+disabled whilst pending or invalid, and an explicit "Run anyway"
+escape hatch on the invalid notice so a reviewer is never hard
+blocked. The Tooltip's wrapping `<span>` carries a stable
+`aria-label` (the run target), because MUI would otherwise put the
+changing tooltip title there and tests query by that label.
+
+Never split SQL on a raw `;`. `splitSqlStatements` in
+`sqlDetection.ts` tokenises single-quoted literals, quoted
+identifiers, dollar-quoted bodies and line and nested block comments
+first; `extractExecutableSQL` and `hasSqlParameters` are both built
+on it. The cluster routing comment has one home too:
+`CONNECTION_ID_COMMENT_RE` and `stripConnectionIdComment`, used by
+`MarkdownContent` and by `createRoutedSqlValidator`.
+
+`runAgenticLoop` takes an optional `validateSqlBlocks`. After the
+final text, it validates the ```sql blocks and, on failure, makes
+exactly one extra LLM round-trip asking for corrections. That round
+sits outside the `maxIterations` budget deliberately, and every
+failure path (no validator, null result, non-OK response, a tool call
+instead of text, empty text) returns the original text unchanged.
+
 ## Coverage Requirements
 
 The 90% line coverage floor in `CLAUDE.md` applies to all new and

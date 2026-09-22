@@ -770,8 +770,15 @@ whilst an unavailable one is returned with `IsAvailable` false since
 issue #465), an entry with no `probeName` or no `absenceWindow`, or a
 failed staleness read all leave the alert active and log at operator
 level rather than debug. The trade-off is deliberate: disabling a probe
-or unmonitoring a connection keeps the alert until someone clears or
-acknowledges it, which beats announcing a resolution nobody observed.
+keeps the alert until someone clears or acknowledges it, which beats
+announcing a resolution nobody observed. Unmonitoring a connection is the
+exception, and is handled before the absence gate is ever reached:
+`cleanResolvedAlerts` resolves the unmonitored connections once per pass
+through `Datastore.GetUnmonitoredConnections` and
+`clearAlertForUnmonitoredConnection` clears every active alert on one,
+whatever its type, rewriting the description to say monitoring was turned
+off and queueing no clear notification (issue #500). A failed read of
+that set leaves the alerts active, as a failed staleness read does.
 `TestMetricRegistryProbeName` requires every entry to name a probe its
 latest SQL actually reads, `TestMetricRegistryAbsenceWindowMatchesSQL`
 requires the declared window to equal the shortest `collected_at` cutoff

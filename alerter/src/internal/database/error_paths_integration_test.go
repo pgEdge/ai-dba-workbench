@@ -87,6 +87,9 @@ func TestQueriesReturnErrorOnClosedPool(t *testing.T) {
 	if _, err := ds.GetProbeStalenessByConnection(ctx); err == nil {
 		t.Errorf("GetProbeStalenessByConnection should error on closed pool")
 	}
+	if _, err := ds.GetUnmonitoredConnections(ctx); err == nil {
+		t.Errorf("GetUnmonitoredConnections should error on closed pool")
+	}
 	if _, err := ds.GetAlertRuleByName(ctx, "x"); err == nil {
 		t.Errorf("GetAlertRuleByName should error on closed pool")
 	}

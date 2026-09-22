@@ -262,12 +262,28 @@ func (d *Datastore) IsBlackoutActive(ctx context.Context, connectionID *int, dbN
 	return count > 0, nil
 }
 
-// DeleteOldAlerts deletes cleared alerts older than the cutoff date
+// DeleteOldAlerts deletes retired alerts older than the cutoff date.
+//
+// The age of a retired alert is COALESCE(cleared_at, triggered_at)
+// because only a cleared alert is given a cleared_at: AcknowledgeAlert
+// sets status = 'acknowledged' and leaves cleared_at NULL, so keying the
+// delete on cleared_at alone reaped no acknowledged alert at all, and an
+// acknowledged alert accumulated for the life of the installation
+// despite the status filter here plainly intending to reap it. Setting
+// cleared_at when an alert is acknowledged would have been the smaller
+// change, but that column means "this alert was cleared" everywhere else
+// it is read: the alert list filters active alerts on cleared_at IS
+// NULL, the timeline emits an alert-cleared event for every row that has
+// one, the re-raise cooldowns measure from it, and the notification
+// templates render it as "Cleared". An acknowledged alert would have
+// begun reporting a clear it never had. Falling back to triggered_at
+// retires it on the same retention period without overloading the
+// column. See GitHub issue #500.
 func (d *Datastore) DeleteOldAlerts(ctx context.Context, cutoff time.Time) (int64, error) {
 	result, err := d.pool.Exec(ctx, `
 		DELETE FROM alerts
 		WHERE status IN ('cleared', 'acknowledged')
-		  AND cleared_at < $1
+		  AND COALESCE(cleared_at, triggered_at) < $1
 	`, cutoff)
 	if err != nil {
 		return 0, err
@@ -361,6 +377,42 @@ func (d *Datastore) GetActiveConnections(ctx context.Context) ([]int, error) {
 	}
 
 	return ids, nil
+}
+
+// GetUnmonitoredConnections returns the id and name of every connection
+// an operator has stopped monitoring, as a map keyed by connection id.
+//
+// The alert cleaner needs the whole set once per pass rather than a
+// lookup per alert, and it needs the name so that the alert it closes can
+// say which server stopped being monitored. A connection that has been
+// deleted outright is absent here, as it is from the connections table;
+// its alerts go with it through the foreign key.
+func (d *Datastore) GetUnmonitoredConnections(ctx context.Context) (map[int]string, error) {
+	rows, err := d.pool.Query(ctx, `
+		SELECT id, name
+		FROM connections
+		WHERE is_monitored = FALSE
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get unmonitored connections: %w", err)
+	}
+	defer rows.Close()
+
+	unmonitored := make(map[int]string)
+	for rows.Next() {
+		var id int
+		var name string
+		if err := rows.Scan(&id, &name); err != nil {
+			return nil, fmt.Errorf("failed to scan unmonitored connection: %w", err)
+		}
+		unmonitored[id] = name
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("row iteration error: %w", err)
+	}
+
+	return unmonitored, nil
 }
 
 // ProbeStaleness is defined in types.go

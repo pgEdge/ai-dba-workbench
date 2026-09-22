@@ -589,6 +589,24 @@ project adheres to
 
 ### Fixed
 
+- Fix alerts staying active for ever on a server an operator has
+  stopped monitoring. The probes of an unmonitored connection leave
+  the staleness view, so every alert on it was judged to have a probe
+  that is not reporting and was held open, whilst retention only
+  reaps a cleared or acknowledged alert, so nothing removed them and
+  nothing said why they were stuck. The alerter's cleanup pass now
+  clears every active alert on a connection whose monitoring has been
+  turned off, whatever the type of the alert, and rewrites its
+  description to record that it was closed because monitoring of the
+  server stopped rather than because the condition ended. No clear
+  notifications are sent for those alerts, since nothing resolved the
+  conditions they report. An alert on a stalled or unavailable probe
+  is still held open as before. Alert retention also reaps
+  acknowledged alerts again: it measured the age of a retired alert
+  by its clear time, which an acknowledged alert never has, so an
+  acknowledged alert was kept for the life of the installation. It
+  now falls back to the time the alert was raised. (#500)
+
 - Fix the transaction throughput chart on the Performance Summary
   page counting a database's whole lifetime transaction count into
   one interval. The commits and rollbacks per second were derived by

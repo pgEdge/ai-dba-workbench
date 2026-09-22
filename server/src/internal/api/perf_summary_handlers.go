@@ -696,7 +696,42 @@ func (h *PerfSummaryHandler) queryCacheHit(
 	return latestHit, latestRead, points[len(points)-1].Value, points
 }
 
-// queryTransactions returns the latest transaction throughput and time series.
+// queryTransactions returns the latest transaction throughput and the
+// bucketed time series, computed from per-interval deltas of the
+// pg_stat_database transaction counters.
+//
+// Deltas are computed per database (LAG partitioned by datname) and only
+// then summed into buckets, so a database created between two samples
+// does not contribute its lifetime commits to that interval, and one
+// dropped between samples does not turn the interval's delta negative
+// and flatten the bucket to zero. A per-database delta that is negative
+// for either counter is discarded, as is each database's first sample in
+// the range, which has no predecessor.
+//
+// An interval whose stats_reset differs from that database's previous
+// sample is discarded as well: a reset that overshoots the previous
+// value within one sample interval yields a positive but meaningless
+// delta that the negative-delta guard cannot catch. Only the affected
+// database's interval is dropped, not the whole sample.
+//
+// Elapsed time is derived from the distinct sample timestamps rather
+// than from the per-database rows, because summing an elapsed value
+// carried on every row would multiply it by the number of databases and
+// collapse commits_per_sec accordingly. A per-database delta is only
+// admitted when its own predecessor row is the sample immediately
+// before it, which the join on both collected_at and
+// previous_collected_at enforces: a database missing from an
+// intermediate sample would otherwise have its delta span two intervals
+// whilst being divided by the elapsed time of only the last one.
+//
+// Correctness here is not free: the PARTITION BY datname window cannot
+// use the collected_at ordering of the partition's index, so a wide
+// range sorts externally. Measured over 864,000 seeded rows, a 30-day
+// window took 1443ms against 272ms for the old whole-cluster
+// differencing (a 35MB external merge sort), and a 24-hour window
+// 44.7ms against 12.3ms. That 5.3x is the price of not reporting a
+// created or dropped database as a spike, so do not trade it back by
+// differencing the summed counters again.
 func (h *PerfSummaryHandler) queryTransactions(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -705,43 +740,75 @@ func (h *PerfSummaryHandler) queryTransactions(
 	bucketInterval string,
 ) (float64, float64, []TransactionPoint) {
 	rows, err := tx.Query(ctx, `
-        WITH deltas AS (
+        WITH sample_elapsed AS (
+            SELECT collected_at,
+                   LAG(collected_at) OVER (ORDER BY collected_at)
+                       AS previous_collected_at,
+                   EXTRACT(EPOCH FROM collected_at - LAG(collected_at) OVER (
+                       ORDER BY collected_at
+                   )) AS elapsed_sec
+            FROM (
+                SELECT DISTINCT collected_at
+                FROM metrics.pg_stat_database
+                WHERE connection_id = $3
+                  AND collected_at >= $2
+                  AND collected_at <= $4
+            ) AS samples
+        ),
+        deltas AS (
             SELECT
                 collected_at,
-                SUM(xact_commit) AS total_commit,
-                SUM(xact_rollback) AS total_rollback,
-                LAG(SUM(xact_commit)) OVER (ORDER BY collected_at) AS prev_commit,
-                LAG(SUM(xact_rollback)) OVER (ORDER BY collected_at) AS prev_rollback,
-                EXTRACT(EPOCH FROM
-                    collected_at - LAG(collected_at) OVER (ORDER BY collected_at)
-                ) AS elapsed_sec
+                LAG(collected_at) OVER w AS previous_collected_at,
+                xact_commit - LAG(xact_commit) OVER w AS delta_commit,
+                xact_rollback - LAG(xact_rollback) OVER w AS delta_rollback,
+                stats_reset IS DISTINCT FROM LAG(stats_reset) OVER w
+                    AS reset_changed
             FROM metrics.pg_stat_database
             WHERE connection_id = $3
               AND collected_at >= $2
               AND collected_at <= $4
-            GROUP BY collected_at
+            WINDOW w AS (PARTITION BY datname ORDER BY collected_at)
         ),
         valid_deltas AS (
-            SELECT
-                collected_at,
-                (total_commit - prev_commit) AS delta_commit,
-                (total_rollback - prev_rollback) AS delta_rollback,
-                elapsed_sec
-            FROM deltas
-            WHERE prev_commit IS NOT NULL
-              AND elapsed_sec > 0
-              AND (total_commit - prev_commit) >= 0
-              AND (total_rollback - prev_rollback) >= 0
+            SELECT d.collected_at, d.delta_commit, d.delta_rollback
+            FROM deltas d
+            JOIN sample_elapsed s
+              ON s.collected_at = d.collected_at
+             AND s.previous_collected_at = d.previous_collected_at
+            WHERE d.delta_commit IS NOT NULL
+              AND d.delta_rollback IS NOT NULL
+              AND d.delta_commit >= 0
+              AND d.delta_rollback >= 0
+              AND NOT d.reset_changed
+              AND s.elapsed_sec > 0
+        ),
+        bucket_deltas AS (
+            SELECT date_bin($1::interval, collected_at, $2) AS bucket,
+                   SUM(delta_commit) AS delta_commit,
+                   SUM(delta_rollback) AS delta_rollback
+            FROM valid_deltas
+            GROUP BY bucket
+        ),
+        bucket_elapsed AS (
+            SELECT date_bin($1::interval, s.collected_at, $2) AS bucket,
+                   SUM(s.elapsed_sec) AS elapsed_sec
+            FROM sample_elapsed s
+            WHERE s.elapsed_sec > 0
+              AND EXISTS (
+                  SELECT 1 FROM valid_deltas v
+                  WHERE v.collected_at = s.collected_at
+              )
+            GROUP BY bucket
         )
-        SELECT date_bin($1::interval, collected_at, $2) AS bucket,
-               SUM(delta_commit) / SUM(elapsed_sec) AS commits_per_sec,
-               CASE WHEN SUM(delta_commit + delta_rollback) = 0 THEN 0
-                    ELSE SUM(delta_rollback)::float /
-                         SUM(delta_commit + delta_rollback)::float * 100.0
+        SELECT d.bucket,
+               d.delta_commit / e.elapsed_sec AS commits_per_sec,
+               CASE WHEN d.delta_commit + d.delta_rollback = 0 THEN 0
+                    ELSE d.delta_rollback::float /
+                         (d.delta_commit + d.delta_rollback)::float * 100.0
                END AS rollback_percent
-        FROM valid_deltas
-        GROUP BY bucket
-        ORDER BY bucket
+        FROM bucket_deltas d
+        JOIN bucket_elapsed e ON e.bucket = d.bucket
+        ORDER BY d.bucket
     `, bucketInterval, startTime, connectionID, endTime)
 	if err != nil {
 		log.Printf("[DEBUG] No transaction data for connection %d: %s", connectionID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connectionID is an integer and err is sanitized via logging.SanitizeForLog
@@ -753,8 +820,9 @@ func (h *PerfSummaryHandler) queryTransactions(
 	for rows.Next() {
 		var pt TransactionPoint
 		if err := rows.Scan(&pt.Time, &pt.CommitsPerSec, &pt.RollbackPercent); err != nil {
-			log.Printf("[DEBUG] Error scanning transaction data: %v", err)
-			continue
+			// pgx closes the cursor on a scan failure and reports the
+			// error through rows.Err below.
+			break
 		}
 		pt.CommitsPerSec = roundTo(pt.CommitsPerSec, 1)
 		pt.RollbackPercent = roundTo(pt.RollbackPercent, 1)

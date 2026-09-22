@@ -548,6 +548,22 @@ project adheres to
 
 ### Fixed
 
+- Fix the transaction throughput chart on the Performance Summary
+  page counting a database's whole lifetime transaction count into
+  one interval. The commits and rollbacks per second were derived by
+  differencing the cluster-wide sum of the `pg_stat_database`
+  counters, so a database created between two collector samples
+  added its entire counter to that interval as a spike, whilst a
+  database dropped between two samples turned the difference
+  negative and flattened the interval to zero. The counters are now
+  differenced for each database separately and only then summed, and
+  an interval is discarded for a single database when its statistics
+  were reset, when it was missing from the preceding sample, or when
+  the sample has no predecessor in the selected range. Charts over a
+  window in which databases were created or dropped therefore report
+  lower, accurate rates where they previously showed a spike or a
+  gap. (#469)
+
 - Fix the `pg_stat_statements` collector probe discarding the block
   timing columns on every modern server. The probe chose its query
   shape by looking for the version-specific columns in

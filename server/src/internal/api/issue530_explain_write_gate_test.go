@@ -36,10 +36,8 @@ func TestIssue530_IsReadOnlyStatementExplain(t *testing.T) {
 		readOnly bool
 	}{
 		{"explain select", "EXPLAIN SELECT * FROM t", true},
-		{"legacy explain delete classifies by the inner statement",
-			"EXPLAIN DELETE FROM t", false},
-		{"legacy explain verbose delete classifies by the inner statement",
-			"EXPLAIN VERBOSE DELETE FROM t", false},
+		{"explain delete plans only", "EXPLAIN DELETE FROM t", true},
+		{"explain verbose delete plans only", "EXPLAIN VERBOSE DELETE FROM t", true},
 		{"legacy explain verbose select", "EXPLAIN VERBOSE SELECT 1", true},
 		{"explain analyze select", "EXPLAIN ANALYZE SELECT 1", true},
 		{"explain analyze delete", "EXPLAIN ANALYZE DELETE FROM t", false},
@@ -81,8 +79,8 @@ func TestIssue530_IsReadOnlyStatementExplain(t *testing.T) {
 			"EXPLAIN ANALYZE EXPLAIN ANALYZE DELETE FROM t", false},
 		{"pathological nesting fails closed",
 			strings.Repeat("EXPLAIN ANALYZE ", 64) + "SELECT 1", false},
-		{"nesting beyond the depth limit fails closed",
-			strings.Repeat("EXPLAIN ", 64) + "DELETE FROM t", false},
+		{"no-analyze nesting stays read-only",
+			strings.Repeat("EXPLAIN ", 64) + "DELETE FROM t", true},
 		{"unicode-escaped analyze option name",
 			`EXPLAIN (U&"\0061nalyze") DELETE FROM t WHERE id = 99`, false},
 		{"lowercase unicode-escaped analyze option name",

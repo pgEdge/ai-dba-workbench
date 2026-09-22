@@ -1679,6 +1679,11 @@ func buildSchemas() map[string]*OpenAPISchema {
 		},
 		"RBACUser": {
 			Type: "object",
+			// auth_source is the only property listed here because it is
+			// the only one this schema has ever declared as required; the
+			// rest are left as they were rather than sweeping an unrelated
+			// audit of the schema into the change that added this field.
+			Required: []string{"auth_source"},
 			Properties: map[string]*OpenAPISchema{
 				"id":                 {Type: "integer", Format: "int64", Description: "User ID"},
 				"username":           {Type: "string", Description: "Username"},
@@ -1749,6 +1754,11 @@ func buildSchemas() map[string]*OpenAPISchema {
 		},
 		"UserPrivilegesResponse": {
 			Type: "object",
+			// auth_source is the only property listed here because it is
+			// the only one this schema has ever declared as required; the
+			// rest are left as they were rather than sweeping an unrelated
+			// audit of the schema into the change that added this field.
+			Required: []string{"auth_source"},
 			Properties: map[string]*OpenAPISchema{
 				"username":     {Type: "string", Description: "Username"},
 				"is_superuser": {Type: "boolean", Description: "Whether the user is a superuser"},

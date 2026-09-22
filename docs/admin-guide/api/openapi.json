@@ -13312,7 +13312,10 @@
             "type": "string",
             "description": "Username"
           }
-        }
+        },
+        "required": [
+          "auth_source"
+        ]
       },
       "RelationshipInput": {
         "type": "object",
@@ -14006,7 +14009,10 @@
             "type": "string",
             "description": "Username"
           }
-        }
+        },
+        "required": [
+          "auth_source"
+        ]
       },
       "UserUpdateRequest": {
         "type": "object",

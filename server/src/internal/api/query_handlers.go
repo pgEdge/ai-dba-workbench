@@ -556,7 +556,12 @@ func isReadOnlyStatementAtDepth(sql string, depth int) bool {
 		return isReadOnlyExplain(body, depth)
 	}
 
-	upper := strings.ToUpper(body)
+	// Mask the quoted literals, quoted identifiers and comments before
+	// uppercasing, so the keyword scans below read code only and a
+	// statement such as SELECT * FROM audit WHERE msg LIKE '%signed
+	// into%' is not classified as a write. The masking is for
+	// classification alone; the text that is executed is untouched.
+	upper := strings.ToUpper(maskNonCode(body))
 
 	if strings.HasPrefix(upper, "WITH") {
 		// Writable CTEs can perform data modification, e.g.
@@ -584,10 +589,11 @@ func isReadOnlyStatementAtDepth(sql string, depth int) bool {
 // FOR KEY SHARE), which stamps the lock onto every row it returns.
 // PostgreSQL refuses both inside a read-only transaction, so classifying
 // them as writes makes this gate agree with the database rather than
-// leaving the transaction to reject them later. upperSQL must already be
-// uppercased. Like the writable-CTE scan, this reads keywords wherever
-// they appear, a string literal included, so it can only over-report,
-// which is the safe direction.
+// leaving the transaction to reject them later. upperSQL must already
+// have had its non-code regions masked (see maskNonCode) and been
+// uppercased. Like the writable-CTE scan, this reads a keyword wherever
+// it appears in the remaining code, so it can only over-report, which is
+// the safe direction.
 func hasWritingSelectClause(upperSQL string) bool {
 	return containsSQLKeyword(upperSQL, "INTO") ||
 		containsLockingClause(upperSQL)
@@ -924,6 +930,28 @@ func skipNonCode(s string, i int) int {
 		return skipBlockComment(s, i)
 	}
 	return i
+}
+
+// maskNonCode replaces every quoted literal, quoted identifier and
+// comment in s with spaces, so a keyword scan reads code only. Each
+// masked byte becomes one space, leaving the result the same length as
+// s, which keeps any offset measured on the mask valid against the
+// original. Callers must mask before uppercasing, because
+// strings.ToUpper is not length-preserving for every input.
+func maskNonCode(s string) string {
+	masked := []byte(s)
+	for i := 0; i < len(masked); {
+		j := skipNonCode(s, i)
+		if j == i {
+			i++
+			continue
+		}
+		for k := i; k < j; k++ {
+			masked[k] = ' '
+		}
+		i = j
+	}
+	return string(masked)
 }
 
 // nextSQLWord splits the leading identifier-character run off s,

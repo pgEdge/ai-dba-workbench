@@ -352,6 +352,11 @@ func (h *ConnectionHandler) executeQuery(w http.ResponseWriter, r *http.Request,
 	// standard query path and use pgconn's simple protocol directly.
 	// pgx.Conn.Query always parses $N as bind parameters even in
 	// simple protocol mode, but pgconn.Exec sends SQL text as-is.
+	//
+	// The confirmation prompt and the write-access gate above have
+	// already run for these statements, and runSimpleStatements applies
+	// the same read-only transaction the pgx path uses, so this branch
+	// is no shortcut past either check (issue #530).
 	if needsSimpleProtocol(statements) {
 		poolConn, err := pool.Acquire(ctx)
 		if err != nil {
@@ -362,14 +367,9 @@ func (h *ConnectionHandler) executeQuery(w http.ResponseWriter, r *http.Request,
 		}
 		defer poolConn.Release()
 
-		results := make([]statementResult, 0, len(statements))
-		for _, stmt := range statements {
-			result := runSimpleStatement(ctx, poolConn.Conn().PgConn(), stmt, connectionID)
-			results = append(results, result)
-			if result.Error != "" {
-				break
-			}
-		}
+		results := runSimpleStatements(ctx, poolConn.Conn().PgConn(),
+			statements, connectionID, allReadOnly)
+
 		RespondJSON(w, http.StatusOK, multiQueryResponse{
 			Results:         results,
 			TotalStatements: len(statements),
@@ -522,30 +522,199 @@ func stripLeadingComments(sql string) string {
 	return ""
 }
 
+// maxExplainDepth bounds the recursion isReadOnlyStatement performs
+// through nested EXPLAIN statements. PostgreSQL rejects EXPLAIN EXPLAIN
+// ..., so anything approaching this depth is malformed or hostile and
+// the classifier fails closed by calling it a write.
+const maxExplainDepth = 8
+
 // isReadOnlyStatement returns true if the SQL statement (after stripping
 // leading comments) begins with a read-only keyword: SELECT, WITH, SHOW,
 // EXPLAIN, or TABLE. Writable CTEs (WITH ... INSERT/UPDATE/DELETE) are
-// classified as non-read-only.
+// classified as non-read-only, as is an EXPLAIN whose options include
+// ANALYZE and whose inner statement writes (issue #530).
 func isReadOnlyStatement(sql string) bool {
-	body := strings.ToUpper(strings.TrimSpace(stripLeadingComments(sql)))
+	return isReadOnlyStatementAtDepth(sql, 0)
+}
 
-	if strings.HasPrefix(body, "WITH") {
+// isReadOnlyStatementAtDepth is isReadOnlyStatement with the EXPLAIN
+// nesting depth reached so far.
+func isReadOnlyStatementAtDepth(sql string, depth int) bool {
+	body := strings.TrimSpace(stripLeadingComments(sql))
+	upper := strings.ToUpper(body)
+
+	if hasKeywordPrefix(upper, "EXPLAIN") {
+		return isReadOnlyExplain(body, depth)
+	}
+
+	if strings.HasPrefix(upper, "WITH") {
 		// Writable CTEs can perform data modification, e.g.
 		// WITH deleted AS (DELETE FROM t RETURNING *) SELECT * FROM deleted.
 		// Check for DML keywords as standalone words in the body.
 		dmlKeywords := []string{"INSERT", "UPDATE", "DELETE"}
 		for _, kw := range dmlKeywords {
-			if containsSQLKeyword(body, kw) {
+			if containsSQLKeyword(upper, kw) {
 				return false
 			}
 		}
 		return true
 	}
 
-	return strings.HasPrefix(body, "SELECT") ||
-		strings.HasPrefix(body, "SHOW") ||
-		strings.HasPrefix(body, "EXPLAIN") ||
-		strings.HasPrefix(body, "TABLE ")
+	return strings.HasPrefix(upper, "SELECT") ||
+		strings.HasPrefix(upper, "SHOW") ||
+		strings.HasPrefix(upper, "TABLE ")
+}
+
+// isReadOnlyExplain classifies an EXPLAIN statement by what it explains.
+// body must already start with the EXPLAIN keyword and have had its
+// leading comments stripped. Without ANALYZE, EXPLAIN only plans the
+// inner statement and executes nothing, so it is read-only; with
+// ANALYZE the inner statement really runs and decides the answer. Any
+// mention of ANALYZE counts as enabled: EXPLAIN (ANALYZE false) is
+// treated as an execution rather than trusting the option's value.
+func isReadOnlyExplain(body string, depth int) bool {
+	rest := strings.TrimSpace(stripLeadingComments(body[len("EXPLAIN"):]))
+
+	analyze := false
+	if strings.HasPrefix(rest, "(") {
+		// Parenthesised form: EXPLAIN ( option [, ...] ) statement.
+		options, remainder, ok := splitExplainOptions(rest)
+		if !ok {
+			// Unbalanced parentheses: the statement is malformed, so
+			// fail closed rather than guess at the option list.
+			return false
+		}
+		upperOptions := strings.ToUpper(options)
+		analyze = containsSQLKeyword(upperOptions, "ANALYZE") ||
+			containsSQLKeyword(upperOptions, "ANALYSE") //nolint:misspell // British spelling accepted by PostgreSQL
+		rest = strings.TrimSpace(stripLeadingComments(remainder))
+	} else {
+		// Legacy form: EXPLAIN [ANALYZE] [VERBOSE] statement, in either
+		// order.
+	keywords:
+		for {
+			word, remainder := nextSQLWord(rest)
+			switch strings.ToUpper(word) {
+			case "ANALYZE", "ANALYSE": //nolint:misspell // British spelling accepted by PostgreSQL
+				analyze = true
+			case "VERBOSE":
+			default:
+				// Not an EXPLAIN keyword, so the inner statement starts
+				// here.
+				break keywords
+			}
+			rest = strings.TrimSpace(stripLeadingComments(remainder))
+		}
+	}
+
+	if !analyze {
+		return true
+	}
+	if rest == "" || depth >= maxExplainDepth {
+		return false
+	}
+	return isReadOnlyStatementAtDepth(rest, depth+1)
+}
+
+// splitExplainOptions splits an EXPLAIN option list from the statement
+// that follows it. s must start with the opening parenthesis. It
+// returns the option text, the remainder after the matching closing
+// parenthesis, and whether a matching parenthesis was found. Quoted
+// strings, quoted identifiers and comments are skipped so that a
+// parenthesis inside one does not end the list early.
+func splitExplainOptions(s string) (options, remainder string, ok bool) {
+	depth := 0
+	i := 0
+	for i < len(s) {
+		ch := s[i]
+
+		if ch == '\'' || ch == '"' {
+			i = skipQuoted(s, i)
+			continue
+		}
+		if ch == '-' && i+1 < len(s) && s[i+1] == '-' {
+			for i < len(s) && s[i] != '\n' {
+				i++
+			}
+			continue
+		}
+		if ch == '/' && i+1 < len(s) && s[i+1] == '*' {
+			i = skipBlockComment(s, i)
+			continue
+		}
+		switch ch {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				return s[1:i], s[i+1:], true
+			}
+		}
+		i++
+	}
+	return "", "", false
+}
+
+// skipQuoted returns the index just past the quoted string or quoted
+// identifier starting at s[i], which must be a single or double quote.
+// A doubled quote inside the literal is an escaped quote rather than a
+// terminator. An unterminated literal runs to the end of the string.
+func skipQuoted(s string, i int) int {
+	quote := s[i]
+	i++
+	for i < len(s) {
+		if s[i] == quote {
+			if i+1 < len(s) && s[i+1] == quote {
+				i += 2
+				continue
+			}
+			return i + 1
+		}
+		i++
+	}
+	return len(s)
+}
+
+// skipBlockComment returns the index just past the (possibly nested)
+// block comment starting at s[i], which must be the opening slash.
+func skipBlockComment(s string, i int) int {
+	depth := 1
+	i += 2
+	for i < len(s) && depth > 0 {
+		if s[i] == '/' && i+1 < len(s) && s[i+1] == '*' {
+			depth++
+			i += 2
+		} else if s[i] == '*' && i+1 < len(s) && s[i+1] == '/' {
+			depth--
+			i += 2
+		} else {
+			i++
+		}
+	}
+	return i
+}
+
+// nextSQLWord splits the leading identifier-character run off s,
+// returning that word and the rest of the string. The word is empty
+// when s does not start with an identifier character.
+func nextSQLWord(s string) (word, rest string) {
+	i := 0
+	for i < len(s) && isIdentChar(s[i]) {
+		i++
+	}
+	return s[:i], s[i:]
+}
+
+// hasKeywordPrefix reports whether upperSQL starts with keyword followed
+// by a non-identifier character, so that EXPLAINABLE does not match
+// EXPLAIN.
+func hasKeywordPrefix(upperSQL, keyword string) bool {
+	if !strings.HasPrefix(upperSQL, keyword) {
+		return false
+	}
+	return len(upperSQL) == len(keyword) ||
+		!isIdentChar(upperSQL[len(keyword)])
 }
 
 // containsSQLKeyword checks whether a SQL keyword appears as a standalone
@@ -579,19 +748,52 @@ func containsSQLKeyword(upperSQL, keyword string) bool {
 func needsSimpleProtocol(statements []string) bool {
 	for _, stmt := range statements {
 		body := strings.ToUpper(strings.TrimSpace(stripLeadingComments(stmt)))
-		if strings.HasPrefix(body, "EXPLAIN") && containsDollarParam(stmt) {
+		if hasKeywordPrefix(body, "EXPLAIN") && containsDollarParam(stmt) {
 			return true
 		}
 	}
 	return false
 }
 
-// containsDollarParam checks whether the string contains a $N
-// parameter placeholder (e.g. $1, $2).
+// containsDollarParam checks whether the string contains a $N parameter
+// placeholder (e.g. $1, $2) as real SQL. A $N inside a single-quoted
+// literal, a dollar-quoted literal, a double-quoted identifier, a line
+// comment or a block comment is text rather than a placeholder and does
+// not count (issue #530). An unterminated literal or comment swallows
+// the rest of the string, so the scan ends and reports no placeholder
+// rather than reading the quoted text as SQL.
 func containsDollarParam(s string) bool {
-	for i := 0; i < len(s)-1; i++ {
-		if s[i] == '$' && s[i+1] >= '1' && s[i+1] <= '9' {
-			return true
+	i := 0
+	for i < len(s) {
+		ch := s[i]
+
+		switch {
+		case ch == '\'' || ch == '"':
+			i = skipQuoted(s, i)
+		case ch == '-' && i+1 < len(s) && s[i+1] == '-':
+			for i < len(s) && s[i] != '\n' {
+				i++
+			}
+		case ch == '/' && i+1 < len(s) && s[i+1] == '*':
+			i = skipBlockComment(s, i)
+		case ch == '$':
+			// A dollar-quoted string opens here, or this is a
+			// placeholder, or it is a bare dollar sign.
+			if tag := scanDollarTag(s, i); tag != "" {
+				i += len(tag)
+				closeIdx := strings.Index(s[i:], tag)
+				if closeIdx < 0 {
+					return false
+				}
+				i += closeIdx + len(tag)
+				continue
+			}
+			if i+1 < len(s) && s[i+1] >= '1' && s[i+1] <= '9' {
+				return true
+			}
+			i++
+		default:
+			i++
 		}
 	}
 	return false
@@ -769,6 +971,108 @@ func runStatement(ctx context.Context, q queryable, stmt string, limit int, conn
 	}
 }
 
+// runSimpleStatements executes statements over the simple query
+// protocol. When readOnly is true they run inside a read-only
+// transaction, matching the discipline the pgx path applies: a
+// statement that slipped through classification as read-only still
+// cannot write, because PostgreSQL refuses it (issue #530). A statement
+// error rolls the transaction back and a clean run commits. A failure
+// of the transaction control itself is reported as a result of its own
+// and no statement runs, so the read-only guarantee holds even when the
+// transaction cannot be opened.
+func runSimpleStatements(
+	ctx context.Context,
+	pgConn *pgconn.PgConn,
+	statements []string,
+	connectionID int,
+	readOnly bool,
+) []statementResult {
+	exec := func(execCtx context.Context, sql string) error {
+		return pgConn.Exec(execCtx, sql).Close()
+	}
+	run := func(runCtx context.Context, stmt string) statementResult {
+		return runSimpleStatement(runCtx, pgConn, stmt, connectionID)
+	}
+	return runSimpleStatementsWith(ctx, exec, run, statements, connectionID,
+		readOnly)
+}
+
+// runSimpleStatementsWith is runSimpleStatements over an injected
+// statement executor and runner, so that the transaction discipline can
+// be tested without a live connection. exec issues the transaction
+// control statements and run executes one of the caller's statements.
+func runSimpleStatementsWith(
+	ctx context.Context,
+	exec func(ctx context.Context, sql string) error,
+	run func(ctx context.Context, stmt string) statementResult,
+	statements []string,
+	connectionID int,
+	readOnly bool,
+) []statementResult {
+	if readOnly {
+		if err := exec(ctx, "BEGIN"); err != nil {
+			return []statementResult{controlFailure("BEGIN", err, connectionID)}
+		}
+		if err := exec(ctx, "SET TRANSACTION READ ONLY"); err != nil {
+			rollbackSimple(ctx, exec, connectionID)
+			return []statementResult{
+				controlFailure("SET TRANSACTION READ ONLY", err, connectionID),
+			}
+		}
+	}
+
+	results := make([]statementResult, 0, len(statements))
+	failed := false
+	for _, stmt := range statements {
+		result := run(ctx, stmt)
+		results = append(results, result)
+		if result.Error != "" {
+			failed = true
+			break
+		}
+	}
+
+	if readOnly {
+		if failed {
+			rollbackSimple(ctx, exec, connectionID)
+		} else if err := exec(ctx, "COMMIT"); err != nil {
+			rollbackSimple(ctx, exec, connectionID)
+			results = append(results,
+				controlFailure("COMMIT", err, connectionID))
+		}
+	}
+
+	return results
+}
+
+// controlFailure logs a failed transaction-control statement and turns
+// it into a result the caller can report alongside the statements'
+// own results.
+func controlFailure(sql string, err error, connectionID int) statementResult {
+	log.Printf("[ERROR] Simple protocol %s failed (connection=%d): %v",
+		sql, connectionID, err)
+	return statementResult{
+		Query: sql,
+		Error: safeQueryError("Transaction error", err),
+	}
+}
+
+// rollbackSimple unwinds a simple-protocol transaction through
+// pkg/rollback, so the unwind runs on the bounded, non-cancelable
+// context the project requires. A failed rollback is logged: the
+// connection is released back to a pool that is closed at the end of
+// the request, so there is nothing further to do about it.
+func rollbackSimple(
+	ctx context.Context,
+	exec func(ctx context.Context, sql string) error,
+	connectionID int,
+) {
+	if err := rollback.Simple(ctx, exec); err != nil {
+		log.Printf("[ERROR] Simple protocol rollback failed (connection=%d): %v",
+			connectionID, err)
+	}
+}
+
 // runSimpleStatement executes a statement using the pgconn simple
 // protocol which sends SQL text directly to PostgreSQL without
 // interpreting $N as bind parameters.  This is used for EXPLAIN
@@ -778,6 +1082,7 @@ func runSimpleStatement(ctx context.Context, pgConn *pgconn.PgConn, stmt string,
 
 	var columns []string
 	var resultRows [][]string
+	var failure error
 
 	for mrr.NextResult() {
 		rr := mrr.ResultReader()
@@ -804,24 +1109,29 @@ func runSimpleStatement(ctx context.Context, pgConn *pgconn.PgConn, stmt string,
 			resultRows = append(resultRows, values)
 		}
 
-		_, err := rr.Close()
-		if err != nil {
+		if _, err := rr.Close(); err != nil {
 			log.Printf("[ERROR] Simple query close failed (connection=%d): %v",
 				connectionID, err)
-			return statementResult{
-				Query: stmt,
-				Error: safeQueryError("Query error", err),
-			}
+			failure = err
+			break
 		}
 	}
 
-	err := mrr.Close()
-	if err != nil {
-		log.Printf("[ERROR] Simple query multi-result close failed (connection=%d): %v",
-			connectionID, err)
+	// The multi-result reader is always closed, including after a
+	// failing result: leaving it open keeps the connection busy, and the
+	// caller's ROLLBACK would then fail to reach the server.
+	if err := mrr.Close(); err != nil {
+		if failure == nil {
+			log.Printf("[ERROR] Simple query multi-result close failed (connection=%d): %v",
+				connectionID, err)
+			failure = err
+		}
+	}
+
+	if failure != nil {
 		return statementResult{
 			Query: stmt,
-			Error: safeQueryError("Query error", err),
+			Error: safeQueryError("Query error", failure),
 		}
 	}
 

@@ -52,6 +52,16 @@ matching `SAVEPOINT` and `RELEASE SAVEPOINT` statements are the
 caller's work and keep the caller's `ctx`; `runSavepointed` in
 `collector/src/database/schema.go` is the one user.
 
+A caller that drives a connection over the simple query protocol has
+no `pgx.Tx` and no `Rollback` method, only a raw `*pgconn.PgConn`, so
+it unwinds with `rollback.Simple(ctx, exec)`: `exec` is a
+`func(context.Context, string) error` that issues the statement, and
+`Simple` calls it with `"ROLLBACK"` on `rollback.Context(ctx)`. The
+statement text stays inside `pkg/rollback` so that `Scan` still sees
+every rollback in the tree going through the package. `rollbackSimple`
+in `server/src/internal/api/query_handlers.go`, added for issue #530,
+is the only user; it wraps `pgConn.Exec(ctx, sql).Close()`.
+
 The statements inside the transaction keep using the request-derived
 `ctx`; only the rollback changes. Rollbacks that take no context (the
 `database/sql` transactions in `server/src/internal/auth/`) fall
@@ -89,7 +99,9 @@ argument, and a call to `Exec`, `Query`, `QueryRow`, `Prepare` or
 their `Context` variants whose SQL argument (a string literal, or a
 concatenation whose leftmost operand is a literal) starts with
 `ROLLBACK` case-insensitively. `rollback.Tx` takes two arguments and is
-therefore not matched.
+therefore not matched, and neither is a call that passes the statement
+through a variable, which is how `rollback.Simple`'s injected executor
+issues it.
 
 Each module runs the scanner over its own root in a test named
 `TestNoDirectRollbacksInModule`, so the check runs under whichever

@@ -434,3 +434,42 @@ func TestAlertStaysActiveWhenClearWriteFails(t *testing.T) {
 		t.Errorf("clear notifications = %d, want 0", counts[database.NotificationTypeAlertClear])
 	}
 }
+
+// TestUnmonitoredClearFailureStillClaimsAlert pins the contract that
+// keeps a failed clear from falling through to the ordinary resolution
+// path. clearAlertForUnmonitoredConnection reports true for an alert on
+// an unmonitored connection whether or not the clear could be written,
+// because cleanResolvedAlerts skips checkAlertResolved on a true verdict
+// alone: were it to report false here, a threshold alert whose condition
+// looks resolved would be cleared by that path in the same pass and
+// would queue the clear notification this one exists to suppress.
+func TestUnmonitoredClearFailureStillClaimsAlert(t *testing.T) {
+	engine, _, pool, cleanup := newEngineSpockTestEnv(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	capture := installStalenessNotificationCapture(t, engine)
+	connID := insertTestConnection(t, pool, "clear-failure-claims")
+	alertID := insertUnmonitoredTestAlert(t, pool, connID, "threshold",
+		"connection count high", "Connections above the threshold")
+
+	stopMonitoringConnection(t, pool, connID)
+	installRejectingTrigger(t, pool, createRejectStatusUpdatesFuncSQL,
+		createRejectStatusUpdatesTriggerSQL, dropRejectStatusUpdatesSQL)
+
+	alert := &database.Alert{
+		ID:           alertID,
+		ConnectionID: connID,
+		AlertType:    "threshold",
+		Description:  "Connections above the threshold",
+	}
+
+	if !engine.clearAlertForUnmonitoredConnection(ctx, alert,
+		&unmonitoredConnectionSnapshot{}) {
+		t.Error("clearAlertForUnmonitoredConnection = false after a failed clear, " +
+			"want true so that the resolution path does not clear and notify")
+	}
+	if counts := capture.drain(t); counts[database.NotificationTypeAlertClear] != 0 {
+		t.Errorf("clear notifications = %d, want 0", counts[database.NotificationTypeAlertClear])
+	}
+}

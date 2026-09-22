@@ -348,6 +348,8 @@ func (h *ConnectionHandler) executeQuery(w http.ResponseWriter, r *http.Request,
 	}
 	defer pool.Close()
 
+	limit := defaultRowLimit
+
 	// For EXPLAIN queries with $N parameter placeholders, bypass the
 	// standard query path and use pgconn's simple protocol directly.
 	// pgx.Conn.Query always parses $N as bind parameters even in
@@ -372,7 +374,7 @@ func (h *ConnectionHandler) executeQuery(w http.ResponseWriter, r *http.Request,
 		defer poolConn.Release()
 
 		results := runSimpleStatements(ctx, poolConn.Conn().PgConn(),
-			statements, connectionID, allReadOnly)
+			statements, limit, connectionID, allReadOnly)
 
 		RespondJSON(w, http.StatusOK, multiQueryResponse{
 			Results:         results,
@@ -381,7 +383,6 @@ func (h *ConnectionHandler) executeQuery(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	limit := defaultRowLimit
 	results := make([]statementResult, 0, len(statements))
 
 	if allReadOnly {
@@ -1218,6 +1219,7 @@ func runSimpleStatements(
 	ctx context.Context,
 	pgConn *pgconn.PgConn,
 	statements []string,
+	limit int,
 	connectionID int,
 	readOnly bool,
 ) []statementResult {
@@ -1225,7 +1227,7 @@ func runSimpleStatements(
 		return pgConn.Exec(execCtx, sql).Close()
 	}
 	run := func(runCtx context.Context, stmt string) statementResult {
-		return runSimpleStatement(runCtx, pgConn, stmt, connectionID)
+		return runSimpleStatement(runCtx, pgConn, stmt, limit, connectionID)
 	}
 	return runSimpleStatementsWith(ctx, exec, run, statements, connectionID,
 		readOnly)
@@ -1315,12 +1317,21 @@ func rollbackSimple(
 // protocol which sends SQL text directly to PostgreSQL without
 // interpreting $N as bind parameters.  This is used for EXPLAIN
 // queries that contain parameter placeholders from pg_stat_statements.
-func runSimpleStatement(ctx context.Context, pgConn *pgconn.PgConn, stmt string, connectionID int) statementResult {
+//
+// No LIMIT can be injected here, because the statement text is sent
+// unaltered, so the result set is bounded on this side instead: rows
+// past limit are counted but not retained, and Truncated reports that
+// the caller is seeing a shortened result, as it does on the pgx path.
+// The reader is drained rather than abandoned, so the result reader
+// closes cleanly and the connection stays usable for the rest of the
+// batch and for the transaction control around it.
+func runSimpleStatement(ctx context.Context, pgConn *pgconn.PgConn, stmt string, limit int, connectionID int) statementResult {
 	mrr := pgConn.Exec(ctx, stmt)
 
 	var columns []string
 	var resultRows [][]string
 	var failure error
+	truncated := false
 
 	for mrr.NextResult() {
 		rr := mrr.ResultReader()
@@ -1335,6 +1346,14 @@ func runSimpleStatement(ctx context.Context, pgConn *pgconn.PgConn, stmt string,
 		}
 
 		for rr.NextRow() {
+			if len(resultRows) >= limit {
+				// Keep reading so the reader closes cleanly, but stop
+				// buffering: an unbounded EXPLAIN or SELECT would
+				// otherwise hold the whole result set in memory.
+				truncated = true
+				continue
+			}
+
 			row := rr.Values()
 			values := make([]string, len(row))
 			for i, col := range row {
@@ -1378,10 +1397,11 @@ func runSimpleStatement(ctx context.Context, pgConn *pgconn.PgConn, stmt string,
 	}
 
 	return statementResult{
-		Columns:  columns,
-		Rows:     resultRows,
-		RowCount: len(resultRows),
-		Query:    stmt,
+		Columns:   columns,
+		Rows:      resultRows,
+		RowCount:  len(resultRows),
+		Truncated: truncated,
+		Query:     stmt,
 	}
 }
 

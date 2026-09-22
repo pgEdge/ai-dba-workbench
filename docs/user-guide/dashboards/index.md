@@ -107,11 +107,13 @@ The table and index leaderboards on the database
 dashboard do not follow the selector; both report the
 latest collected sample.
 
-The database summary cards on the server dashboard, the
-KPI tiles on the estate dashboard and the comparative
-charts on the cluster dashboard all follow the selector.
-Each of those panels sits inside the Monitoring section,
-with the selector on the section header in plain view.
+The database summary cards on the server dashboard and
+the comparative charts on the cluster dashboard follow
+the selector, as does the Transaction Rate tile on the
+estate dashboard. Each of those panels sits inside the
+Monitoring section, with the selector on the section
+header in plain view. The other estate KPI tiles report
+the estate as it stands now, whatever the selector reads.
 
 The performance tiles in the status panel always cover the
 last twenty-four hours, whatever the selector reads. Those

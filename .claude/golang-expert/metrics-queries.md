@@ -1492,6 +1492,19 @@ same "no data" behaviour the sibling endpoints have.
 fixture holding two eras of samples whose every metric differs, so a
 window that selects one era cannot silently report the other's figures.
 
+`GET /api/v1/metrics/performance-summary` follows the same rule, with one
+deliberate exception. `queryCacheHit`, `queryTransactions`,
+`queryCheckpoints` and `queryConnectionCount` are all bounded by the
+resolved window, `queryConnectionCount` with the same repeated-bounds
+snapshot pin the database summaries use, because the Cluster dashboard
+charts its result beside three windowed series and an unbounded count
+showed the live backend total against a window that held no samples at
+all. `queryXIDAage` (the name carries a typo in the source) stays
+unbounded: it feeds only the status-panel tiles, which keep a fixed
+twenty-four hour window by design, so binding it to the selector would be
+the bug rather than the fix. Adding a sub-query to this handler means
+deciding which of the two it is.
+
 ### Bound group cardinality
 
 Where a grouping key is influenceable from outside the workbench, cap the

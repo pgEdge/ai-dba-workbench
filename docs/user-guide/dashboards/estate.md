@@ -15,14 +15,16 @@ attention.
 
 ## KPI Tiles
 
-KPI tiles display key metrics with embedded sparklines
-that show recent trends. Each tile presents a single
-metric value alongside a miniature time-series chart
-for context.
+KPI tiles display key metrics across the estate. Each
+tile presents a single metric value with its label and
+its unit.
 
-The tiles follow the dashboard time range selector, so
-each value and sparkline covers the selected window
-across every server in the estate.
+Transaction Rate follows the dashboard time range
+selector and reports the commit rate over the selected
+window, summed across every server in the estate. Total
+Servers, Total Connections, and Active Alerts do not
+follow the selector; each of those tiles reports the
+estate as it stands now.
 
 ## Cluster Cards
 

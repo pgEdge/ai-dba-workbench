@@ -459,7 +459,8 @@ func (h *PerfSummaryHandler) handlePerfSummary(
 			ctx, tx, connID, startTime, now, bucketInterval)
 
 		// Query 6: Active backend count
-		connResp.ActiveConnections = h.queryConnectionCount(ctx, tx, connID)
+		connResp.ActiveConnections = h.queryConnectionCount(
+			ctx, tx, connID, startTime, now)
 
 		response.Connections = append(response.Connections, connResp)
 	}
@@ -912,25 +913,36 @@ func (h *PerfSummaryHandler) queryCheckpoints(
 }
 
 // queryConnectionCount returns the number of backends connected to a
-// monitored server at its most recent collection. The count comes from
-// metrics.pg_stat_database.numbackends, summed across every database in
-// that snapshot, which is the same source the per-database summaries use.
+// monitored server at the newest collection inside the requested window.
+// The count comes from metrics.pg_stat_database.numbackends, summed across
+// every database in that snapshot, which is the same source and the same
+// window bounds the per-database summaries use, so the comparative
+// Connection Count chart agrees with them and with the other series
+// alongside it. A window with no samples in it reports zero rather than
+// falling back to the live backend count. The bounds are repeated in the
+// inner and the outer predicate to let the planner prune partitions, as in
+// queryDatabaseStats.
 func (h *PerfSummaryHandler) queryConnectionCount(
 	ctx context.Context,
 	tx pgx.Tx,
 	connectionID int,
+	startTime, endTime time.Time,
 ) int {
 	var count int
 	err := tx.QueryRow(ctx, `
         SELECT COALESCE(SUM(numbackends), 0)
         FROM metrics.pg_stat_database
         WHERE connection_id = $1
+          AND collected_at >= $2
+          AND collected_at <= $3
           AND collected_at = (
               SELECT MAX(collected_at)
               FROM metrics.pg_stat_database
               WHERE connection_id = $1
+                AND collected_at >= $2
+                AND collected_at <= $3
           )
-    `, connectionID).Scan(&count)
+    `, connectionID, startTime, endTime).Scan(&count)
 	if err != nil {
 		log.Printf("[DEBUG] No connection count data for connection %d: %s", connectionID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connectionID is an integer and err is sanitized via logging.SanitizeForLog
 		return 0

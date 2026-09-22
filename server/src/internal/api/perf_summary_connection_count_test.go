@@ -23,14 +23,15 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/database"
 )
 
-// runConnectionCount executes queryConnectionCount in the same read-only
-// transaction shape handlePerfSummary uses, so the helper is exercised
-// exactly as it is in production.
+// runConnectionCount executes queryConnectionCount over the given window
+// in the same read-only transaction shape handlePerfSummary uses, so the
+// helper is exercised exactly as it is in production.
 func runConnectionCount(
 	t *testing.T,
 	h *PerfSummaryHandler,
 	pool *pgxpool.Pool,
 	connID int,
+	startTime, endTime time.Time,
 ) int {
 	t.Helper()
 
@@ -41,7 +42,7 @@ func runConnectionCount(
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // rollback after read is a no-op
 
-	return h.queryConnectionCount(ctx, tx, connID)
+	return h.queryConnectionCount(ctx, tx, connID, startTime, endTime)
 }
 
 // TestQueryConnectionCount_SumsLatestSnapshot verifies that the comparative
@@ -82,8 +83,74 @@ func TestQueryConnectionCount_SumsLatestSnapshot(t *testing.T) {
         (connection_id, collected_at, datname, numbackends)
         VALUES ($1, $2, 'appdb', 40)`, otherConnID, latest)
 
-	if got := runConnectionCount(t, h, pool, connID); got != 8 {
+	if got := runConnectionCount(
+		t, h, pool, connID, now.Add(-1*time.Hour), now); got != 8 {
 		t.Errorf("queryConnectionCount = %d, want 8", got)
+	}
+}
+
+// TestQueryConnectionCount_HonoursWindow verifies that the count follows
+// the selected time window rather than always reporting the live backend
+// count: a window that ends before the newest snapshot reports the newest
+// snapshot inside it, and a window that predates every sample reports
+// zero, matching the empty Transaction Rate, Cache Hit Ratio and Rollback
+// Rate series the Cluster dashboard draws beside it.
+func TestQueryConnectionCount_HonoursWindow(t *testing.T) {
+	h, pool, cleanup := newDatabaseSummariesTestHandler(t)
+	defer cleanup()
+
+	const connID = 73
+	ctx := context.Background()
+	now := time.Now().UTC()
+	latest := now.Add(-1 * time.Minute)
+	older := now.Add(-90 * time.Minute)
+
+	exec := func(sql string, args ...any) {
+		if _, err := pool.Exec(ctx, sql, args...); err != nil {
+			t.Fatalf("seed exec failed: %v\nSQL: %s", err, sql)
+		}
+	}
+
+	exec(`INSERT INTO metrics.pg_stat_database
+        (connection_id, collected_at, datname, numbackends)
+        VALUES ($1, $2, 'appdb', 15)`, connID, latest)
+	exec(`INSERT INTO metrics.pg_stat_database
+        (connection_id, collected_at, datname, numbackends)
+        VALUES ($1, $2, 'appdb', 4), ($1, $2, 'postgres', 3)`, connID, older)
+
+	tests := []struct {
+		name  string
+		start time.Time
+		end   time.Time
+		want  int
+	}{
+		{
+			name:  "window covering every sample takes the newest",
+			start: now.Add(-3 * time.Hour),
+			end:   now,
+			want:  15,
+		},
+		{
+			name:  "window ending before the newest sample excludes it",
+			start: now.Add(-3 * time.Hour),
+			end:   now.Add(-30 * time.Minute),
+			want:  7,
+		},
+		{
+			name:  "window predating every sample reports zero",
+			start: now.Add(-48 * time.Hour),
+			end:   now.Add(-24 * time.Hour),
+			want:  0,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := runConnectionCount(t, h, pool, connID, tc.start, tc.end)
+			if got != tc.want {
+				t.Errorf("queryConnectionCount = %d, want %d", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -93,7 +160,9 @@ func TestQueryConnectionCount_NoData(t *testing.T) {
 	h, pool, cleanup := newDatabaseSummariesTestHandler(t)
 	defer cleanup()
 
-	if got := runConnectionCount(t, h, pool, 9999); got != 0 {
+	now := time.Now().UTC()
+	if got := runConnectionCount(
+		t, h, pool, 9999, now.Add(-1*time.Hour), now); got != 0 {
 		t.Errorf("queryConnectionCount = %d, want 0", got)
 	}
 }
@@ -110,7 +179,9 @@ func TestQueryConnectionCount_MissingTable(t *testing.T) {
 		t.Fatalf("failed to drop table: %v", err)
 	}
 
-	if got := runConnectionCount(t, h, pool, 71); got != 0 {
+	now := time.Now().UTC()
+	if got := runConnectionCount(
+		t, h, pool, 71, now.Add(-1*time.Hour), now); got != 0 {
 		t.Errorf("queryConnectionCount = %d, want 0", got)
 	}
 }
@@ -513,5 +584,63 @@ func TestHandlePerfSummary_ShortCustomWindowUsesBucketFloor(t *testing.T) {
 		if pt.Value == nil || *pt.Value != 90.0 {
 			t.Errorf("point %d = %s, want 90", i, fmtFloatPtr(pt.Value))
 		}
+	}
+}
+
+// TestHandlePerfSummary_ConnectionCountFollowsWindow drives the endpoint
+// the Cluster dashboard's comparative charts call and asserts that
+// active_connections follows the selected window like the series charted
+// beside it: a custom window that predates every sample must report zero
+// rather than the live backend count.
+func TestHandlePerfSummary_ConnectionCountFollowsWindow(t *testing.T) {
+	h, pool, cleanup := newPerfSummaryTestHandler(t)
+	defer cleanup()
+
+	const connID = 85
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Minute)
+
+	if _, err := pool.Exec(ctx, `INSERT INTO metrics.pg_stat_database
+        (connection_id, collected_at, datname, numbackends)
+        VALUES ($1, $2, 'appdb', 15)`, connID, now.Add(-5*time.Minute)); err != nil {
+		t.Fatalf("seed pg_stat_database: %v", err)
+	}
+
+	get := func(url string) PerfConnectionResponse {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, url, nil)
+		rec := httptest.NewRecorder()
+		h.handlePerfSummary(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected status %d, got %d (body %q)",
+				http.StatusOK, rec.Code, rec.Body.String())
+		}
+		var resp PerfSummaryResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+		if len(resp.Connections) != 1 {
+			t.Fatalf("expected 1 connection, got %d", len(resp.Connections))
+		}
+		return resp.Connections[0]
+	}
+
+	if got := get("/api/v1/metrics/performance-summary?connection_id=85" +
+		"&time_range=24h").ActiveConnections; got != 15 {
+		t.Errorf("active_connections over 24h = %d, want 15", got)
+	}
+
+	windowStart := now.Add(-48 * time.Hour)
+	windowEnd := now.Add(-24 * time.Hour)
+	stale := get("/api/v1/metrics/performance-summary?connection_id=85" +
+		"&time_range=custom&time_start=" + windowStart.Format(time.RFC3339) +
+		"&time_end=" + windowEnd.Format(time.RFC3339))
+	if stale.ActiveConnections != 0 {
+		t.Errorf("active_connections over a pre-data window = %d, want 0",
+			stale.ActiveConnections)
+	}
+	if len(stale.Transactions.TimeSeries) != 0 {
+		t.Errorf("expected an empty transaction series alongside it, got %d points",
+			len(stale.Transactions.TimeSeries))
 	}
 }

@@ -683,11 +683,12 @@ func isReadOnlyExplain(body string, depth int) bool {
 		rest = strings.TrimSpace(stripLeadingComments(remainder))
 	} else {
 		// Legacy form: EXPLAIN [ANALYZE] [VERBOSE] statement, in either
-		// order. This grammar is closed: ANALYZE, ANALYSE and VERBOSE
-		// are keywords rather than a ColId, so a quoted or escaped
-		// spelling of one is a syntax error rather than an option, and
-		// the first word that is none of them really is the start of
-		// the inner statement. A plain EXPLAIN only plans it.
+		// order. This grammar is closed: ANALYZE, its British
+		// spelling and VERBOSE are keywords rather than a ColId, so a
+		// quoted or escaped spelling of one is a syntax error rather
+		// than an option, and the first word that is none of them
+		// really is the start of the inner statement. A plain EXPLAIN
+		// only plans it.
 	keywords:
 		for {
 			word, remainder := nextSQLWord(rest)

@@ -23,6 +23,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/pkg/rollback"
+	"github.com/pgedge/ai-workbench/server/internal/database"
 	"github.com/pgedge/ai-workbench/server/internal/tsv"
 )
 
@@ -251,6 +252,16 @@ func (h *ConnectionHandler) executeQuery(w http.ResponseWriter, r *http.Request,
 	if query == "" {
 		RespondError(w, http.StatusBadRequest, "Query is required")
 		return
+	}
+
+	// Validate the optional database override before it reaches the
+	// connection string, and before any datastore work.
+	if req.DatabaseName != "" {
+		if err := database.ValidateDatabaseName(req.DatabaseName); err != nil {
+			RespondError(w, http.StatusBadRequest,
+				"Invalid database name: "+err.Error())
+			return
+		}
 	}
 
 	// Split into individual statements early so we can classify them

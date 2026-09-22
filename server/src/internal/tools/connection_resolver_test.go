@@ -215,3 +215,40 @@ func TestNewConnectionResolver(t *testing.T) {
 		t.Error("Expected nil rbacChecker")
 	}
 }
+
+// TestResolve_RejectsInvalidDatabaseName checks that a database_name
+// that cannot name a real database is refused before any connection
+// lookup, which is why a resolver with no datastore or RBAC checker can
+// answer it without panicking (issue #530).
+func TestResolve_RejectsInvalidDatabaseName(t *testing.T) {
+	resolver := NewConnectionResolver(nil, nil, nil)
+
+	names := map[string]string{
+		"whitespace only":  "   ",
+		"embedded NUL":     "custom\x00db",
+		"embedded newline": "custom\ndb",
+		"over 63 bytes":    strings.Repeat("a", 64),
+	}
+
+	for name, dbName := range names {
+		t.Run(name, func(t *testing.T) {
+			args := map[string]any{
+				"connection_id": float64(1),
+				"database_name": dbName,
+			}
+
+			resolved, errResp := resolver.Resolve(context.Background(), args, nil)
+
+			if resolved != nil {
+				t.Fatal("Expected nil resolved connection")
+			}
+			if errResp == nil || !errResp.IsError {
+				t.Fatal("Expected an error response")
+			}
+			if !strings.Contains(errResp.Content[0].Text, "invalid database_name") {
+				t.Errorf("Expected an invalid database_name error, got: %s",
+					errResp.Content[0].Text)
+			}
+		})
+	}
+}

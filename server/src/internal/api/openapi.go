@@ -3615,7 +3615,8 @@ func buildPaths() map[string]OpenAPIPathItem {
 				Tags:        []string{"Metrics"},
 				Security:    bearerAuth,
 				Parameters: []OpenAPIParameter{
-					queryParamString("connection_ids", "Comma-separated connection IDs"),
+					queryParamString("connection_ids",
+						"Comma-separated connection IDs; at most 100 per request"),
 					queryParamInt("connection_id", "Single connection ID"),
 					queryParamStringRequired("probe_name", "Probe name to query"),
 					queryParamString("time_range",
@@ -3692,7 +3693,8 @@ func buildPaths() map[string]OpenAPIPathItem {
 				Tags:        []string{"Metrics"},
 				Security:    bearerAuth,
 				Parameters: []OpenAPIParameter{
-					queryParamString("connection_ids", "Comma-separated connection IDs"),
+					queryParamString("connection_ids",
+						"Comma-separated connection IDs; at most 100 per request"),
 					queryParamInt("connection_id", "Single connection ID"),
 					queryParamString("time_range",
 						"Time range (1h, 6h, 24h, 7d, 30d, custom; default: 1h); custom requires time_start and time_end, and the span must not exceed 30 days"),

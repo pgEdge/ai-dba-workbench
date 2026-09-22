@@ -5966,7 +5966,7 @@
           {
             "name": "connection_ids",
             "in": "query",
-            "description": "Comma-separated connection IDs",
+            "description": "Comma-separated connection IDs; at most 100 per request",
             "schema": {
               "type": "string"
             }
@@ -6065,7 +6065,7 @@
           {
             "name": "connection_ids",
             "in": "query",
-            "description": "Comma-separated connection IDs",
+            "description": "Comma-separated connection IDs; at most 100 per request",
             "schema": {
               "type": "string"
             }

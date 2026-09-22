@@ -406,6 +406,12 @@ window that ends in the past reports each database as the
 database stood then. A window that ends at the present
 moment returns the current figures, as before.
 
+The `/api/v1/metrics/query` and
+`/api/v1/metrics/performance-summary` endpoints accept at
+most 100 entries in `connection_ids`, because each one adds
+a further set of queries to the request; a longer list
+returns status 400.
+
 The `/api/v1/metrics/top-queries` endpoint defaults to
 `time_range=1h` when the request names no window.
 PostgreSQL reports the `pg_stat_statements` counters

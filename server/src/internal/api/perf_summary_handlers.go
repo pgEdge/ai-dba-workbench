@@ -506,8 +506,13 @@ func (h *PerfSummaryHandler) parseConnectionIDs(
 	w http.ResponseWriter,
 	r *http.Request,
 ) []int {
-	// Try connection_ids first (comma-separated list)
+	// Try connection_ids first (comma-separated list). The length cap is
+	// applied here so that an oversized list is rejected before the RBAC
+	// loop and the connection name lookups do any database work.
 	if ids, ok := ParseQueryIntList(w, r, "connection_ids"); ok {
+		if !CheckConnectionIDCount(w, ids) {
+			return nil // Error already sent by CheckConnectionIDCount
+		}
 		return ids
 	}
 	if r.URL.Query().Get("connection_ids") != "" {

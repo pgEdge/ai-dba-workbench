@@ -317,3 +317,41 @@ func RequireGET(w http.ResponseWriter, r *http.Request) bool {
 func RequirePOST(w http.ResponseWriter, r *http.Request) bool {
 	return RequireMethod(w, r, http.MethodPost)
 }
+
+// maxConnectionIDsPerRequest caps how many connection IDs a single request
+// may name in connection_ids. The endpoints that accept the list fan out
+// per connection: /metrics/performance-summary runs five sub-queries, a
+// GetConnection name lookup and an RBAC check for every ID, all inside one
+// read-only transaction under a single 30 second deadline, against a
+// datastore pool that defaults to four connections. Most endpoints need no
+// such bound because their cost does not scale with a caller-supplied list
+// length; these do, so without a cap one authenticated request can cost
+// arbitrarily much, which is a cheap denial of service. It is the companion
+// to maxTopQueriesTimeSpan, which bounds the other multiplier, the window.
+//
+// One hundred is comfortably above any real estate the web client displays
+// at once (the connection picker lists every visible connection, and an
+// estate of that size is already an outlier), whilst keeping the worst-case
+// fan-out to roughly five hundred sub-queries, which stays well inside the
+// 30 second deadline and the pool's statement_timeout
+// (database.DefaultDatastoreStatementTimeout). Anyone raising this figure
+// needs to re-measure the per-connection fan-out at the new count, at the
+// full 30 day window, and confirm that the pool does not starve other
+// requests whilst one of these is in flight.
+const maxConnectionIDsPerRequest = 100
+
+// CheckConnectionIDCount reports whether a parsed connection_ids list is
+// short enough to serve. It sends the 400 itself, so a false return means
+// the response has already been written, matching the convention in the
+// parseConnectionIDs helpers that call it. It must be applied before any
+// per-connection work, the RBAC loop and the name lookups included, since
+// the point is to reject the request before it costs anything.
+func CheckConnectionIDCount(w http.ResponseWriter, ids []int) bool {
+	if len(ids) > maxConnectionIDsPerRequest {
+		RespondError(w, http.StatusBadRequest, fmt.Sprintf(
+			"Too many connection_ids: at most %d are allowed per request",
+			maxConnectionIDsPerRequest))
+		return false
+	}
+	return true
+}

@@ -645,14 +645,16 @@ var explainNonExecutingOptions = map[string]bool{
 // inner statement and executes nothing, so it is read-only; with ANALYZE
 // the inner statement really runs and decides the answer.
 //
-// ANALYZE is detected by an allow-list that fails closed rather than by
-// searching for the word, because an EXPLAIN option name is a ColId:
-// PostgreSQL accepts it as a quoted identifier and decodes its Unicode
-// escapes before comparing, so EXPLAIN (U&"\0061nalyze") DELETE ...
-// turns ANALYZE on without the text ever appearing. Only a bare,
-// unquoted, recognized option name counts as non-executing; anything
-// quoted, escaped or unrecognized is taken as an execution, and the
-// inner statement then decides the classification.
+// In the parenthesised option list, ANALYZE is detected by an
+// allow-list that fails closed rather than by searching for the word,
+// because an option name there is a ColId: PostgreSQL accepts it as a
+// quoted identifier and decodes its Unicode escapes before comparing,
+// so EXPLAIN (U&"\0061nalyze") DELETE ... turns ANALYZE on without the
+// text ever appearing. Only a bare, unquoted, recognized option name
+// counts as non-executing; anything quoted, escaped or unrecognized is
+// taken as an execution, and the inner statement then decides the
+// classification. The legacy form needs no such care, because its
+// option words are keywords that cannot be quoted or escaped.
 func isReadOnlyExplain(body string, depth int) bool {
 	rest := strings.TrimSpace(stripLeadingComments(body[len("EXPLAIN"):]))
 
@@ -669,10 +671,11 @@ func isReadOnlyExplain(body string, depth int) bool {
 		rest = strings.TrimSpace(stripLeadingComments(remainder))
 	} else {
 		// Legacy form: EXPLAIN [ANALYZE] [VERBOSE] statement, in either
-		// order. ANALYZE and VERBOSE are the only option words this form
-		// takes, so any other word is taken as an execution and the
-		// statement starting there is classified on its own merits,
-		// rather than being trusted because EXPLAIN preceded it.
+		// order. This grammar is closed: ANALYZE, ANALYSE and VERBOSE
+		// are keywords rather than a ColId, so a quoted or escaped
+		// spelling of one is a syntax error rather than an option, and
+		// the first word that is none of them really is the start of
+		// the inner statement. A plain EXPLAIN only plans it.
 	keywords:
 		for {
 			word, remainder := nextSQLWord(rest)
@@ -681,9 +684,6 @@ func isReadOnlyExplain(body string, depth int) bool {
 				executes = true
 			case "VERBOSE":
 			default:
-				if word != "" {
-					executes = true
-				}
 				break keywords
 			}
 			rest = strings.TrimSpace(stripLeadingComments(remainder))

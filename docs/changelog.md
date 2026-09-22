@@ -1628,10 +1628,7 @@ project adheres to
   consists entirely of bare, recognized options that only change how the
   plan is reported, so a quoted or Unicode-escaped spelling of
   `ANALYZE`, such as `EXPLAIN (U&"\0061nalyze")`, no longer passes as
-  read-only. `EXPLAIN` in the legacy `ANALYZE`/`VERBOSE` form is now
-  classified by the statement it explains, so `EXPLAIN DELETE ...`
-  prompts for confirmation and needs write access even though it only
-  plans. `SELECT ... INTO`, a row-locking `SELECT ... FOR UPDATE` or
+  read-only. `SELECT ... INTO`, a row-locking `SELECT ... FOR UPDATE` or
   `FOR SHARE`, and a `WITH` query containing `MERGE` are now classified
   as writes as well, matching what a read-only transaction will accept.
   The test for a `$N` placeholder now ignores one that appears inside a

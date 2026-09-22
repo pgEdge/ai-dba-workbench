@@ -232,6 +232,19 @@ executes the query against the correct database server.
 Write statements display a confirmation dialog before
 the system executes the query.
 
+The Workbench validates each generated SQL block as the
+report renders, by planning the statement with `EXPLAIN`
+in a read-only transaction that is rolled back; the check
+never executes anything. A block that fails the check
+shows the error and replaces Run with a Run anyway
+button, a statement that PostgreSQL cannot plan in
+advance stays runnable under a "Not validated" notice,
+and a block that uses `$1`-style parameter placeholders
+is labelled a template and offers no Run button, because
+it needs parameter values before it can run. The
+[AI Alert Analysis](../alerts/ai-analysis.md) document
+describes these states in more detail.
+
 The system caches analysis results for 30 minutes. A
 Download button in the dialog footer saves the report
 as a markdown file.

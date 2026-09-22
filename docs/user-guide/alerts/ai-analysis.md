@@ -97,6 +97,43 @@ the play button executes the SQL against the alert's
 connection and database. The tooltip on the play button
 shows the target server and database name.
 
+### Query Validation
+
+The Workbench checks each generated SQL block against the
+alert's database as the report renders, so that a query
+the model invented cannot be offered as though it were
+known to work. The check plans the statement with
+`EXPLAIN` inside a read-only transaction that is rolled
+back afterwards; validation never executes the statement
+and never changes anything.
+
+A generated SQL block therefore appears in one of four
+states:
+
+- Validated blocks passed the check and show the play
+  button, which runs the query as described above.
+- Blocks that PostgreSQL rejected show the error beneath
+  the block, and the play button gives way to a Run
+  anyway button for a user who is confident the query is
+  correct.
+- Blocks of a kind PostgreSQL cannot plan in advance show
+  a "Not validated" notice giving that reason, and keep
+  the play button, because such a statement can still be
+  run.
+- Template blocks use `$1`-style parameter placeholders
+  and show no play button, because such a query needs
+  parameter values substituted in before it can run.
+
+The check plans `SELECT`, `WITH`, `INSERT`, `UPDATE`,
+`DELETE`, `MERGE`, `VALUES` and `TABLE` statements. It
+reports every other statement as not validated, including
+the DDL statements and `ALTER SYSTEM`, `VACUUM`, `SET`,
+`SHOW`, `GRANT`, `REINDEX`, `CLUSTER` and `ANALYZE`;
+review these statements yourself before running them.
+
+The play button is unavailable whilst a check is still in
+flight.
+
 ### Inline Results
 
 The system displays query results in a table directly
@@ -119,7 +156,7 @@ block take effect together. If the statements leave a
 transaction open, the system rolls it back and reports an
 error, and nothing done inside that transaction is kept.
 
-### SQL Validation
+### SQL Extraction
 
 The system extracts only executable SQL from code blocks.
 The extraction process filters out configuration file

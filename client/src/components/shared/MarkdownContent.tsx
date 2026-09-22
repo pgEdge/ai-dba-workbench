@@ -25,7 +25,12 @@ import remarkGfm from 'remark-gfm';
 import RunnableCodeBlock from './RunnableCodeBlock';
 import ConnectionSelectorCodeBlock from './ConnectionSelectorCodeBlock';
 import AnalysisSkeleton from './AnalysisSkeleton';
-import { isSqlCodeBlock, extractLanguage } from './sqlDetection';
+import {
+    isSqlCodeBlock,
+    extractLanguage,
+    CONNECTION_ID_COMMENT_RE,
+    stripConnectionIdComment,
+} from './sqlDetection';
 import { createCleanTheme } from './markdownUtils';
 import {
     sxH3,
@@ -159,11 +164,13 @@ const MarkdownContent: React.FC<MarkdownContentProps> = ({
 
                 // Cluster analysis: parse connection_id comment or show selector
                 if (connectionMap && connectionMap.size > 0) {
-                    const connectionIdMatch = codeString.match(/^--\s*connection_id:\s*(\d+)\s*\n/);
+                    const connectionIdMatch =
+                        CONNECTION_ID_COMMENT_RE.exec(codeString);
                     if (connectionIdMatch) {
                         const targetId = parseInt(connectionIdMatch[1], 10);
                         const targetName = connectionMap.get(targetId) || `Server ${targetId}`;
-                        const strippedCode = codeString.replace(/^--\s*connection_id:\s*\d+\s*\n/, '');
+                        const strippedCode =
+                            stripConnectionIdComment(codeString);
                         return (
                             <RunnableCodeBlock
                                 codeContent={strippedCode}

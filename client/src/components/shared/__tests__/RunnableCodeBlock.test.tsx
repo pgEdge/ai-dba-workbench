@@ -51,10 +51,21 @@ vi.mock('../../../utils/apiClient', () => ({
     apiFetch: (...args: unknown[]) => mockApiFetch(...args),
 }));
 
+// Validation (issue #532) is stubbed out for the execution tests below,
+// which predate it; its own behaviour is covered in the dedicated
+// describe block at the end of this file and in the hook's own tests.
+const mockUseSqlValidation = vi.fn(
+    (_options: unknown) => ({ status: 'skipped', error: '' }),
+);
+vi.mock('../../../hooks/useSqlValidation', () => ({
+    useSqlValidation: (options: unknown) => mockUseSqlValidation(options),
+}));
+
 const theme = createTheme();
 
 const baseProps = {
-    codeContent: 'SELECT * FROM spock.exception_status WHERE status = $1;',
+    codeContent:
+        "SELECT * FROM spock.exception_status WHERE status = 'pending';",
     language: 'sql',
     isDark: false,
     connectionId: 1,
@@ -112,6 +123,8 @@ const makeErrorResponse = ({
 
 beforeEach(() => {
     mockApiFetch.mockReset();
+    mockUseSqlValidation.mockReset();
+    mockUseSqlValidation.mockReturnValue({ status: 'skipped', error: '' });
 });
 
 describe('RunnableCodeBlock layout (issue #221 fix)', () => {
@@ -548,5 +561,164 @@ describe('RunnableCodeBlock query execution', () => {
                 screen.queryByText('1 statement'),
             ).not.toBeInTheDocument(),
         );
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Validation gating (issue #532)
+// ---------------------------------------------------------------------------
+
+describe('RunnableCodeBlock validation gating', () => {
+    it('renders a parameter template without a run button', () => {
+        renderWithTheme(
+            <RunnableCodeBlock
+                {...baseProps}
+                isSql={true}
+                codeContent="SELECT * FROM t WHERE id = $1;"
+            />,
+        );
+
+        expect(
+            screen.getByTestId('sql-template-notice'),
+        ).toHaveTextContent('query template');
+        expect(screen.queryByLabelText('Run query')).toBeNull();
+    });
+
+    it('keeps the copy button on a parameter template', () => {
+        renderWithTheme(
+            <RunnableCodeBlock
+                {...baseProps}
+                isSql={true}
+                codeContent="SELECT * FROM t WHERE id = $1;"
+            />,
+        );
+
+        expect(screen.getByLabelText('Copy to clipboard')).toBeInTheDocument();
+    });
+
+    it('does not validate a parameter template', () => {
+        renderWithTheme(
+            <RunnableCodeBlock
+                {...baseProps}
+                isSql={true}
+                codeContent="SELECT * FROM t WHERE id = $1;"
+            />,
+        );
+
+        expect(mockUseSqlValidation).toHaveBeenCalledWith(
+            expect.objectContaining({ enabled: false }),
+        );
+    });
+
+    it('validates the stripped SQL against the target connection', () => {
+        renderWithTheme(
+            <RunnableCodeBlock
+                {...baseProps}
+                isSql={true}
+                connectionId={7}
+                databaseName="appdb"
+                codeContent="SELECT 1;"
+            />,
+        );
+
+        expect(mockUseSqlValidation).toHaveBeenCalledWith({
+            sql: 'SELECT 1;',
+            connectionId: 7,
+            databaseName: 'appdb',
+            enabled: true,
+        });
+    });
+
+    it('disables run whilst validation is in flight', () => {
+        mockUseSqlValidation.mockReturnValue({
+            status: 'pending',
+            error: '',
+        });
+        renderWithTheme(
+            <RunnableCodeBlock
+                {...baseProps}
+                isSql={true}
+                codeContent="SELECT 1;"
+            />,
+        );
+
+        expect(getRunButton()).toBeDisabled();
+        expect(screen.getByLabelText('Validating query')).toBeInTheDocument();
+    });
+
+    it('disables run and shows the error when validation fails', () => {
+        mockUseSqlValidation.mockReturnValue({
+            status: 'invalid',
+            error: 'column "total_ram" does not exist',
+        });
+        renderWithTheme(
+            <RunnableCodeBlock
+                {...baseProps}
+                isSql={true}
+                codeContent="SELECT total_ram FROM pg_stat_activity;"
+            />,
+        );
+
+        expect(getRunButton()).toBeDisabled();
+        expect(
+            screen.getByTestId('sql-validation-error'),
+        ).toHaveTextContent('column "total_ram" does not exist');
+    });
+
+    it('re-enables run through the Run anyway escape hatch', async () => {
+        mockUseSqlValidation.mockReturnValue({
+            status: 'invalid',
+            error: 'relation "nope" does not exist',
+        });
+        renderWithTheme(
+            <RunnableCodeBlock
+                {...baseProps}
+                isSql={true}
+                codeContent="SELECT 1 FROM nope;"
+            />,
+        );
+
+        const user = userEvent.setup();
+        await user.click(screen.getByRole('button', { name: 'Run anyway' }));
+
+        expect(getRunButton()).toBeEnabled();
+        expect(
+            screen.queryByRole('button', { name: 'Run anyway' }),
+        ).toBeNull();
+    });
+
+    it('enables run with an unvalidated hint for unsupported statements', () => {
+        mockUseSqlValidation.mockReturnValue({
+            status: 'unsupported',
+            error: '',
+        });
+        renderWithTheme(
+            <RunnableCodeBlock
+                {...baseProps}
+                isSql={true}
+                serverName="node1"
+                codeContent="VACUUM ANALYZE t;"
+            />,
+        );
+
+        expect(getRunButton('Run on node1')).toBeEnabled();
+        expect(
+            screen.getByTestId('sql-unvalidated-notice'),
+        ).toHaveTextContent('Not validated');
+    });
+
+    it('shows no notice when validation succeeds', () => {
+        mockUseSqlValidation.mockReturnValue({ status: 'valid', error: '' });
+        renderWithTheme(
+            <RunnableCodeBlock
+                {...baseProps}
+                isSql={true}
+                codeContent="SELECT 1;"
+            />,
+        );
+
+        expect(getRunButton()).toBeEnabled();
+        expect(screen.queryByTestId('sql-unvalidated-notice')).toBeNull();
+        expect(screen.queryByTestId('sql-validation-error')).toBeNull();
     });
 });

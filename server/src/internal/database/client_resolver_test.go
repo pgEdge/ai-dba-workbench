@@ -509,3 +509,48 @@ func TestClientResolver_ResolveOrError_DelegatesToResolveClient(t *testing.T) {
 		t.Errorf("expected delegation to ResolveClient (token extractor error), got: %v", err)
 	}
 }
+
+// TestClientResolver_ResolveClient_RejectsInvalidDatabaseOverride checks
+// that a session carrying a database name that cannot name a real
+// database is refused before a connection string is built (issue #530).
+func TestClientResolver_ResolveClient_RejectsInvalidDatabaseOverride(t *testing.T) {
+	dbName := "custom\x00db"
+	connID := 42
+	sessions := &mockSessionProvider{
+		session: &ConnectionSession{
+			ConnectionID: connID,
+			DatabaseName: &dbName,
+		},
+	}
+	connInfo := &mockConnInfoProvider{
+		conn: &MonitoredConnection{
+			ID:           connID,
+			Host:         "localhost",
+			Port:         5432,
+			DatabaseName: "default_db",
+			Username:     "testuser",
+		},
+		password: "testpass",
+	}
+	clientManager := NewClientManager(nil)
+	defer clientManager.CloseAll()
+
+	resolver := &ClientResolver{
+		TokenExtractor: func(ctx context.Context) string { return "test-token-hash" },
+		Sessions:       sessions,
+		ConnInfo:       connInfo,
+		ClientManager:  clientManager,
+	}
+
+	_, err := resolver.ResolveClient(context.Background())
+	if err == nil {
+		t.Fatal("expected an error for an invalid database override")
+	}
+	if !strings.Contains(err.Error(), "invalid database name") {
+		t.Errorf("expected an invalid database name error, got: %v", err)
+	}
+	if connInfo.receivedDatabaseOverride != "" {
+		t.Errorf("connection string was built with %q",
+			connInfo.receivedDatabaseOverride)
+	}
+}

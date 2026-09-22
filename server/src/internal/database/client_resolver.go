@@ -132,10 +132,16 @@ func (r *ClientResolver) ResolveClient(ctx context.Context) (*Client, error) {
 				return nil, fmt.Errorf("failed to get connection info: %w", err)
 			}
 
-			// Build connection string with optional database override
+			// Build connection string with optional database override,
+			// validating the override first; see ValidateDatabaseName.
 			var databaseOverride string
 			if session.DatabaseName != nil {
 				databaseOverride = *session.DatabaseName
+			}
+			if databaseOverride != "" {
+				if err := ValidateDatabaseName(databaseOverride); err != nil {
+					return nil, fmt.Errorf("invalid database name in the selected session: %w", err)
+				}
 			}
 			connStr := r.ConnInfo.BuildConnectionString(conn, password, databaseOverride)
 

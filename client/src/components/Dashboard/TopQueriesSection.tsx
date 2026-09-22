@@ -488,20 +488,20 @@ const TopQueriesSection: React.FC<TopQueriesSectionProps> = ({
         event: React.ChangeEvent<HTMLInputElement>
     ): void => {
         setHideCollectorQueries(event.target.checked);
-        setPage(0);
-    }, []);
+        resetPaging();
+    }, [resetPaging]);
 
     const handleDatabaseChange = useCallback((
         event: SelectChangeEvent
     ): void => {
         setDatabaseFilter(event.target.value);
-        setPage(0);
-    }, []);
+        resetPaging();
+    }, [resetPaging]);
 
     const handlePageSizeChange = useCallback((size: number): void => {
         setPageSize(size);
-        setPage(0);
-    }, []);
+        resetPaging();
+    }, [resetPaging]);
 
     const handlePreviousPage = useCallback((): void => {
         setPage(prev => Math.max(0, prev - 1));

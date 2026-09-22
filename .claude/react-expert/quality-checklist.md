@@ -422,6 +422,14 @@ yet, so each call site repeats the same two-part pattern that
   bounds as well as the range, because a custom window can be
   narrowed without `range` ever leaving `custom`.
 
+- Route every offset reset through one helper rather than calling
+  `setPage(0)` at each call site, because the total row count read
+  from `X-Total-Count` has to be cleared alongside the offset.
+  `TopQueriesSection.resetPaging` does both, and its filter, toggle
+  and page-size handlers all go through it; a bare `setPage(0)`
+  leaves the previous filter's total on screen until the next
+  response lands.
+
 `/api/v1/metrics/top-queries` is windowed, and both of its callers
 pass the selected range: `TopQueriesSection` for the leaderboard and
 `QueryDetail` for the header statistics behind the overlay a row

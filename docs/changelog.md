@@ -292,6 +292,16 @@ project adheres to
   every other audited change is still rolled back when its event
   cannot be written. (#65)
 
+- Add a Top Queries section to the Database Dashboard, listing the
+  slowest statements recorded for the database you are viewing,
+  ordered by total execution time. The section follows the
+  dashboard's time range, pages through the results twenty rows at
+  a time by default, and hides the Workbench's own monitoring
+  queries unless you switch that off. Selecting a row opens the
+  existing query detail overlay. The Server Dashboard's Top
+  Queries section is unchanged, and keeps its database filter.
+  (#369)
+
 ### Changed
 
 - Change the alerter's default Gemini reasoning model from

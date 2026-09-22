@@ -11,7 +11,12 @@ package api
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -128,10 +133,10 @@ func buildDatabaseSummaries(
 	defer tx.Rollback(ctx) //nolint:errcheck // rollback after read is a no-op
 
 	dbMap := make(map[string]*DatabaseSummary)
-	h.queryDatabaseSizes(ctx, tx, connID, dbMap)
-	h.queryDatabaseStats(ctx, tx, connID, dbMap)
-	h.queryDeadTupleRatios(ctx, tx, connID, dbMap)
-	h.queryTransactionRates(ctx, tx, connID, dbMap)
+	h.queryDatabaseSizes(ctx, tx, connID, startTime, endTime, dbMap)
+	h.queryDatabaseStats(ctx, tx, connID, startTime, endTime, dbMap)
+	h.queryDeadTupleRatios(ctx, tx, connID, startTime, endTime, dbMap)
+	h.queryTransactionRates(ctx, tx, connID, startTime, endTime, dbMap)
 	h.queryDatabaseCacheHitTimeSeries(ctx, tx, connID, startTime, endTime,
 		bucketInterval, dbMap)
 
@@ -304,9 +309,9 @@ func TestDatabaseSummaries_Issue362_EnrichmentSkipsUnknownDatabase(t *testing.T)
 	// enrichment helper must leave the map empty because none may create
 	// entries.
 	dbMap := make(map[string]*DatabaseSummary)
-	h.queryDatabaseStats(ctx, tx, connID, dbMap)
-	h.queryDeadTupleRatios(ctx, tx, connID, dbMap)
-	h.queryTransactionRates(ctx, tx, connID, dbMap)
+	h.queryDatabaseStats(ctx, tx, connID, startTime, now, dbMap)
+	h.queryDeadTupleRatios(ctx, tx, connID, startTime, now, dbMap)
+	h.queryTransactionRates(ctx, tx, connID, startTime, now, dbMap)
 	h.queryDatabaseCacheHitTimeSeries(ctx, tx, connID, startTime, now,
 		"60 seconds", dbMap)
 
@@ -321,9 +326,9 @@ func TestDatabaseSummaries_Issue362_EnrichmentSkipsUnknownDatabase(t *testing.T)
 		DatabaseName:  "keep",
 		CacheHitRatio: CacheHitRatioData{TimeSeries: []CacheHitRatioPoint{}},
 	}
-	h.queryDatabaseStats(ctx, tx, connID, dbMap)
-	h.queryDeadTupleRatios(ctx, tx, connID, dbMap)
-	h.queryTransactionRates(ctx, tx, connID, dbMap)
+	h.queryDatabaseStats(ctx, tx, connID, startTime, now, dbMap)
+	h.queryDeadTupleRatios(ctx, tx, connID, startTime, now, dbMap)
+	h.queryTransactionRates(ctx, tx, connID, startTime, now, dbMap)
 	h.queryDatabaseCacheHitTimeSeries(ctx, tx, connID, startTime, now,
 		"60 seconds", dbMap)
 
@@ -366,16 +371,24 @@ func TestDatabaseSummaries_QueryError(t *testing.T) {
 	defer tx.Rollback(ctx) //nolint:errcheck // rollback after read is a no-op
 
 	dbMap := make(map[string]*DatabaseSummary)
-	h.queryDatabaseSizes(ctx, tx, 1, dbMap)
+	errStart := time.Now().UTC().Add(-time.Hour)
+	errEnd := time.Now().UTC()
+	h.queryDatabaseSizes(ctx, tx, 1, errStart, errEnd, dbMap)
 	// A failed query aborts the transaction, so restart it for the rest.
 	_ = tx.Rollback(ctx)
 	for _, fn := range []func(pgx.Tx){
-		func(tx pgx.Tx) { h.queryDatabaseStats(ctx, tx, 1, dbMap) },
-		func(tx pgx.Tx) { h.queryDeadTupleRatios(ctx, tx, 1, dbMap) },
-		func(tx pgx.Tx) { h.queryTransactionRates(ctx, tx, 1, dbMap) },
+		func(tx pgx.Tx) {
+			h.queryDatabaseStats(ctx, tx, 1, errStart, errEnd, dbMap)
+		},
+		func(tx pgx.Tx) {
+			h.queryDeadTupleRatios(ctx, tx, 1, errStart, errEnd, dbMap)
+		},
+		func(tx pgx.Tx) {
+			h.queryTransactionRates(ctx, tx, 1, errStart, errEnd, dbMap)
+		},
 		func(tx pgx.Tx) {
 			h.queryDatabaseCacheHitTimeSeries(ctx, tx, 1,
-				time.Now().Add(-time.Hour), time.Now(), "60 seconds", dbMap)
+				errStart, errEnd, "60 seconds", dbMap)
 		},
 	} {
 		// Each query gets its own transaction, rolled back immediately
@@ -444,5 +457,588 @@ func TestDatabaseSummaries_ScanError(t *testing.T) {
 	if len(summaries) != 0 {
 		t.Fatalf("rows that fail to scan must not create entries; got: %#v",
 			summaries)
+	}
+}
+
+// doDatabaseSummariesRequest drives handleDatabaseSummaries over the full
+// HTTP path so that parameter parsing, the time-window resolver and the
+// response encoding are all exercised.
+func doDatabaseSummariesRequest(
+	h *PerfSummaryHandler,
+	query string,
+) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/metrics/database-summaries?"+query, nil)
+	rec := httptest.NewRecorder()
+	h.handleDatabaseSummaries(rec, req)
+	return rec
+}
+
+// decodeDatabaseSummaries asserts a 200 response and returns the summaries
+// keyed by database name.
+func decodeDatabaseSummaries(
+	t *testing.T,
+	rec *httptest.ResponseRecorder,
+) map[string]DatabaseSummary {
+	t.Helper()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code,
+			rec.Body.String())
+	}
+	var resp DatabaseSummaryResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v; body: %s", err,
+			rec.Body.String())
+	}
+	out := make(map[string]DatabaseSummary, len(resp.Databases))
+	for _, db := range resp.Databases {
+		out[db.DatabaseName] = db
+	}
+	return out
+}
+
+// seedDatabaseSummariesWindowFixture inserts two eras of samples for a
+// single database: a historical pair around ten hours ago and a recent pair
+// within the last few minutes. Every metric differs between the two eras, so
+// a window that selects one era cannot accidentally report the other's
+// figures.
+func seedDatabaseSummariesWindowFixture(
+	t *testing.T,
+	pool *pgxpool.Pool,
+	connID int,
+	histPrev, histLatest, recentPrev, recentLatest time.Time,
+) {
+	t.Helper()
+	ctx := context.Background()
+
+	exec := func(sql string, args ...any) {
+		if _, err := pool.Exec(ctx, sql, args...); err != nil {
+			t.Fatalf("seed exec failed: %v\nSQL: %s", err, sql)
+		}
+	}
+
+	exec(`INSERT INTO metrics.pg_database
+        (connection_id, collected_at, datname, datistemplate,
+         database_size_bytes)
+        VALUES ($1, $2, 'app', false, 1000000),
+               ($1, $3, 'app', false, 2000000)`,
+		connID, histLatest, recentLatest)
+
+	exec(`INSERT INTO metrics.pg_stat_database
+        (connection_id, collected_at, datname, numbackends, blks_hit,
+         blks_read, xact_commit, xact_rollback)
+        VALUES
+        ($1, $2, 'app', 3, 100, 20, 1000, 10),
+        ($1, $3, 'app', 4, 400, 50, 1300, 13),
+        ($1, $4, 'app', 9, 5000, 500, 5000, 50),
+        ($1, $5, 'app', 11, 5600, 560, 5600, 56)`,
+		connID, histPrev, histLatest, recentPrev, recentLatest)
+
+	exec(`INSERT INTO metrics.pg_stat_all_tables
+        (connection_id, collected_at, database_name, n_live_tup, n_dead_tup)
+        VALUES ($1, $2, 'app', 900, 100),
+               ($1, $3, 'app', 500, 500)`,
+		connID, histLatest, recentLatest)
+}
+
+// TestDatabaseSummaries_CustomWindowSelectsHistoricalSamples verifies that a
+// custom window bounds every sub-query, not only the cache-hit time series:
+// a window over the historical era must report that era's size, connection
+// count, dead tuple ratio and cache hit ratio, and the default preset must
+// report the recent era's instead. Without the window bound on the
+// MAX(collected_at) sub-queries, a historical window would return today's
+// sizes alongside a historical chart.
+func TestDatabaseSummaries_CustomWindowSelectsHistoricalSamples(t *testing.T) {
+	h, pool, cleanup := newDatabaseSummariesTestHandler(t)
+	defer cleanup()
+
+	const connID = 601
+	now := time.Now().UTC()
+	histPrev := now.Add(-10*time.Hour - 5*time.Minute)
+	histLatest := now.Add(-10 * time.Hour)
+	recentPrev := now.Add(-6 * time.Minute)
+	recentLatest := now.Add(-1 * time.Minute)
+	seedDatabaseSummariesWindowFixture(t, pool, connID, histPrev, histLatest,
+		recentPrev, recentLatest)
+
+	iso := func(ts time.Time) string { return ts.Format(time.RFC3339) }
+	historical := decodeDatabaseSummaries(t, doDatabaseSummariesRequest(h,
+		fmt.Sprintf(
+			"connection_id=%d&time_range=custom&time_start=%s&time_end=%s",
+			connID, iso(now.Add(-11*time.Hour)), iso(now.Add(-9*time.Hour)))))
+
+	app, ok := historical["app"]
+	if !ok {
+		t.Fatalf("expected 'app' in the historical window; got %#v",
+			historical)
+	}
+	if app.SizeBytes != 1000000 {
+		t.Errorf("SizeBytes = %d, want 1000000 (the historical snapshot)",
+			app.SizeBytes)
+	}
+	if app.ActiveConnections != 4 {
+		t.Errorf("ActiveConnections = %d, want 4", app.ActiveConnections)
+	}
+	if app.DeadTupleRatio != 10.0 {
+		t.Errorf("DeadTupleRatio = %v, want 10.0", app.DeadTupleRatio)
+	}
+	// blks_hit moved 100 -> 400 and blks_read 20 -> 50 inside the window,
+	// so the ratio is 300/330 = 90.91%.
+	if app.CacheHitRatio.Current == nil ||
+		*app.CacheHitRatio.Current != 90.91 {
+		t.Errorf("CacheHitRatio.Current = %v, want 90.91",
+			fmtFloatPtr(app.CacheHitRatio.Current))
+	}
+	// xact_commit moved 1000 -> 1300 over 300 seconds, so 1 txn/sec.
+	if app.TransactionRate != 1.0 {
+		t.Errorf("TransactionRate = %v, want 1.0", app.TransactionRate)
+	}
+
+	// The default preset covers the recent era and must report it.
+	recent := decodeDatabaseSummaries(t, doDatabaseSummariesRequest(h,
+		fmt.Sprintf("connection_id=%d", connID)))
+	app, ok = recent["app"]
+	if !ok {
+		t.Fatalf("expected 'app' in the default window; got %#v", recent)
+	}
+	if app.SizeBytes != 2000000 {
+		t.Errorf("SizeBytes = %d, want 2000000 (the recent snapshot)",
+			app.SizeBytes)
+	}
+	if app.ActiveConnections != 11 {
+		t.Errorf("ActiveConnections = %d, want 11", app.ActiveConnections)
+	}
+	if app.DeadTupleRatio != 50.0 {
+		t.Errorf("DeadTupleRatio = %v, want 50.0", app.DeadTupleRatio)
+	}
+}
+
+// TestDatabaseSummaries_PresetWindowSelectsRecentSamples verifies that an
+// explicit preset resolves through the same resolver and reports the recent
+// era, and that a preset too short to reach the historical era excludes it.
+func TestDatabaseSummaries_PresetWindowSelectsRecentSamples(t *testing.T) {
+	h, pool, cleanup := newDatabaseSummariesTestHandler(t)
+	defer cleanup()
+
+	const connID = 602
+	now := time.Now().UTC()
+	seedDatabaseSummariesWindowFixture(t, pool, connID,
+		now.Add(-10*time.Hour-5*time.Minute), now.Add(-10*time.Hour),
+		now.Add(-6*time.Minute), now.Add(-1*time.Minute))
+
+	for _, preset := range []string{"1h", "6h", "24h", "7d", "30d"} {
+		t.Run(preset, func(t *testing.T) {
+			summaries := decodeDatabaseSummaries(t,
+				doDatabaseSummariesRequest(h, fmt.Sprintf(
+					"connection_id=%d&time_range=%s", connID, preset)))
+			app, ok := summaries["app"]
+			if !ok {
+				t.Fatalf("expected 'app' for time_range=%s; got %#v",
+					preset, summaries)
+			}
+			if app.SizeBytes != 2000000 {
+				t.Errorf("SizeBytes = %d, want 2000000", app.SizeBytes)
+			}
+			if app.ActiveConnections != 11 {
+				t.Errorf("ActiveConnections = %d, want 11",
+					app.ActiveConnections)
+			}
+		})
+	}
+}
+
+// TestDatabaseSummaries_CustomWindowFutureEndClamped verifies that a custom
+// window whose end lies in the future is clamped to now rather than
+// rejected, so the newest snapshot is still reported.
+func TestDatabaseSummaries_CustomWindowFutureEndClamped(t *testing.T) {
+	h, pool, cleanup := newDatabaseSummariesTestHandler(t)
+	defer cleanup()
+
+	const connID = 603
+	now := time.Now().UTC()
+	seedDatabaseSummariesWindowFixture(t, pool, connID,
+		now.Add(-10*time.Hour-5*time.Minute), now.Add(-10*time.Hour),
+		now.Add(-6*time.Minute), now.Add(-1*time.Minute))
+
+	summaries := decodeDatabaseSummaries(t, doDatabaseSummariesRequest(h,
+		fmt.Sprintf(
+			"connection_id=%d&time_range=custom&time_start=%s&time_end=%s",
+			connID, now.Add(-2*time.Hour).Format(time.RFC3339),
+			now.Add(2*time.Hour).Format(time.RFC3339))))
+
+	app, ok := summaries["app"]
+	if !ok {
+		t.Fatalf("a clamped window must still find the snapshot; got %#v",
+			summaries)
+	}
+	if app.SizeBytes != 2000000 {
+		t.Errorf("SizeBytes = %d, want 2000000", app.SizeBytes)
+	}
+}
+
+// TestDatabaseSummaries_InvalidTimeRange verifies the 400 response for an
+// unsupported preset, which carries ResolveTimeWindow's own wording so that
+// it matches /metrics/query.
+func TestDatabaseSummaries_InvalidTimeRange(t *testing.T) {
+	h, _, cleanup := newDatabaseSummariesTestHandler(t)
+	defer cleanup()
+
+	rec := doDatabaseSummariesRequest(h, "connection_id=604&time_range=90m")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", rec.Code,
+			rec.Body.String())
+	}
+	want := `invalid time range "90m": must be one of 1h, 6h, 24h, 7d, 30d, custom`
+	if got := errorMessageFromBody(t, rec); got != want {
+		t.Errorf("error = %q, want %q", got, want)
+	}
+}
+
+// TestDatabaseSummaries_CustomWindowRejections verifies that every rejection
+// ResolveTimeWindow can raise surfaces as a 400 carrying the resolver's own
+// message.
+func TestDatabaseSummaries_CustomWindowRejections(t *testing.T) {
+	h, _, cleanup := newDatabaseSummariesTestHandler(t)
+	defer cleanup()
+
+	now := time.Now().UTC()
+	iso := func(ts time.Time) string { return ts.Format(time.RFC3339) }
+
+	tests := []struct {
+		name    string
+		query   string
+		wantErr string
+	}{
+		{
+			name:    "missing both timestamps",
+			query:   "&time_range=custom",
+			wantErr: "time_start and time_end are both required",
+		},
+		{
+			name:    "missing end",
+			query:   "&time_range=custom&time_start=" + iso(now.Add(-time.Hour)),
+			wantErr: "time_start and time_end are both required",
+		},
+		{
+			name: "unparsable start",
+			query: "&time_range=custom&time_start=yesterday&time_end=" +
+				iso(now),
+			wantErr: `invalid time_start "yesterday": must be an RFC 3339 timestamp`,
+		},
+		{
+			name: "unparsable end",
+			query: "&time_range=custom&time_start=" + iso(now.Add(-time.Hour)) +
+				"&time_end=tomorrow",
+			wantErr: `invalid time_end "tomorrow": must be an RFC 3339 timestamp`,
+		},
+		{
+			name: "end before start",
+			query: "&time_range=custom&time_start=" + iso(now.Add(-time.Hour)) +
+				"&time_end=" + iso(now.Add(-2*time.Hour)),
+			wantErr: "time_end must be after time_start",
+		},
+		{
+			name: "start in the future",
+			query: "&time_range=custom&time_start=" + iso(now.Add(time.Hour)) +
+				"&time_end=" + iso(now.Add(2*time.Hour)),
+			wantErr: "invalid time_start: must not be in the future",
+		},
+		{
+			// Well past both the shared 366-day resolver cap and this
+			// endpoint's own 30-day cap; the tighter one wins, because
+			// ResolveTimeWindow's own rejection fires first only when the
+			// span also exceeds 366 days, and the messages differ.
+			name: "span beyond the cap",
+			query: "&time_range=custom&time_start=" +
+				iso(now.Add(-400*24*time.Hour)) + "&time_end=" + iso(now),
+			wantErr: "span must not exceed 366 days",
+		},
+		{
+			name: "span just beyond the endpoint cap",
+			query: "&time_range=custom&time_start=" +
+				iso(now.Add(-maxAggregationTimeSpan-time.Minute)) +
+				"&time_end=" + iso(now),
+			wantErr: "invalid time range: span must not exceed 30 days",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := doDatabaseSummariesRequest(h, "connection_id=605"+tt.query)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400; body: %s", rec.Code,
+					rec.Body.String())
+			}
+			if got := errorMessageFromBody(t, rec); !strings.Contains(
+				got, tt.wantErr) {
+				t.Errorf("error = %q, want it to contain %q", got, tt.wantErr)
+			}
+		})
+	}
+}
+
+// TestDatabaseSummaries_AcceptsWindowJustInsideCap pins the accepted side
+// of the per-endpoint span cap. Before issue #387 this handler validated
+// time_range against the preset map, which capped the window at 30 days by
+// construction; the explicit check restores that bound now that custom
+// windows resolve through metrics.ResolveTimeWindow.
+func TestDatabaseSummaries_AcceptsWindowJustInsideCap(t *testing.T) {
+	h, _, cleanup := newDatabaseSummariesTestHandler(t)
+	defer cleanup()
+
+	now := time.Now().UTC()
+	iso := func(ts time.Time) string { return ts.Format(time.RFC3339) }
+
+	rec := doDatabaseSummariesRequest(h, "connection_id=607"+
+		"&time_range=custom&time_start="+
+		iso(now.Add(-maxAggregationTimeSpan+time.Minute))+
+		"&time_end="+iso(now))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code,
+			rec.Body.String())
+	}
+}
+
+// TestDatabaseSummaries_ShortCustomWindowFloorsBucketWidth verifies the ten
+// second bucket floor. The bucket width is the window span divided by sixty,
+// which a five-minute custom window would drive down to five seconds, below
+// any realistic probe interval; the floor keeps it at ten.
+func TestDatabaseSummaries_ShortCustomWindowFloorsBucketWidth(t *testing.T) {
+	h, pool, cleanup := newDatabaseSummariesTestHandler(t)
+	defer cleanup()
+
+	const connID = 606
+	now := time.Now().UTC()
+	first := now.Add(-4 * time.Minute)
+	second := now.Add(-3 * time.Minute)
+
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `INSERT INTO metrics.pg_database
+        (connection_id, collected_at, datname, datistemplate,
+         database_size_bytes)
+        VALUES ($1, $2, 'app', false, 4096)`, connID, second); err != nil {
+		t.Fatalf("insert pg_database: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO metrics.pg_stat_database
+        (connection_id, collected_at, datname, numbackends, blks_hit,
+         blks_read, xact_commit, xact_rollback)
+        VALUES ($1, $2, 'app', 2, 100, 20, 100, 1),
+               ($1, $3, 'app', 5, 400, 50, 400, 4)`,
+		connID, first, second); err != nil {
+		t.Fatalf("insert pg_stat_database: %v", err)
+	}
+
+	summaries := decodeDatabaseSummaries(t, doDatabaseSummariesRequest(h,
+		fmt.Sprintf(
+			"connection_id=%d&time_range=custom&time_start=%s&time_end=%s",
+			connID, now.Add(-5*time.Minute).Format(time.RFC3339),
+			now.Format(time.RFC3339))))
+
+	app, ok := summaries["app"]
+	if !ok {
+		t.Fatalf("expected 'app' in a five-minute window; got %#v", summaries)
+	}
+	// The two samples are a minute apart, so a ten second bucket puts each
+	// delta in a bucket of its own; only the second sample has a delta.
+	if len(app.CacheHitRatio.TimeSeries) != 1 {
+		t.Errorf("TimeSeries length = %d, want 1; got %#v",
+			len(app.CacheHitRatio.TimeSeries), app.CacheHitRatio.TimeSeries)
+	}
+	if app.CacheHitRatio.Current == nil ||
+		*app.CacheHitRatio.Current != 90.91 {
+		t.Errorf("CacheHitRatio.Current = %v, want 90.91",
+			fmtFloatPtr(app.CacheHitRatio.Current))
+	}
+}
+
+// TestDatabaseSummaries_TransactionBeginFailure verifies the 500 path when a
+// read-only transaction cannot be started, here by closing the pool first.
+func TestDatabaseSummaries_TransactionBeginFailure(t *testing.T) {
+	h, pool, cleanup := newDatabaseSummariesTestHandler(t)
+	defer cleanup()
+
+	_, _ = pool.Exec(context.Background(),
+		databaseSummariesTestSchemaTeardown)
+	pool.Close()
+
+	rec := doDatabaseSummariesRequest(h, "connection_id=607")
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500; body: %s", rec.Code,
+			rec.Body.String())
+	}
+}
+
+// transactionRatesProjection selects which deliberately broken projection
+// of datname installTransactionRatesView installs over the base table.
+type transactionRatesProjection int
+
+const (
+	// datnameAsTextArray projects datname as a text array, so that scanning
+	// the column into a string fails.
+	datnameAsTextArray transactionRatesProjection = iota
+	// datnameAsDivisionByZero projects datname as a division by zero that
+	// cannot be folded to a constant, so the statement prepares cleanly and
+	// fails only when the rows are produced.
+	datnameAsDivisionByZero
+)
+
+// transactionRatesBaseTable replaces metrics.pg_stat_database with a base
+// table of the same shape, ready for one of the views below to project.
+const transactionRatesBaseTable = `
+        DROP TABLE IF EXISTS metrics.pg_stat_database CASCADE;
+        CREATE TABLE metrics.pg_stat_database_base (
+            connection_id  integer     NOT NULL,
+            collected_at   timestamptz NOT NULL,
+            datname        text,
+            numbackends    integer     NOT NULL DEFAULT 0,
+            blks_hit       bigint      NOT NULL DEFAULT 0,
+            blks_read      bigint      NOT NULL DEFAULT 0,
+            xact_commit    bigint      NOT NULL DEFAULT 0,
+            xact_rollback  bigint      NOT NULL DEFAULT 0
+        );`
+
+// transactionRatesTextArrayView projects datname as a one-element text
+// array.
+const transactionRatesTextArrayView = `
+        CREATE VIEW metrics.pg_stat_database AS
+            SELECT connection_id, collected_at, ARRAY[datname] AS datname,
+                   numbackends, blks_hit, blks_read, xact_commit,
+                   xact_rollback
+            FROM metrics.pg_stat_database_base;`
+
+// transactionRatesDivisionView projects datname as a division by zero that
+// the planner cannot fold away.
+const transactionRatesDivisionView = `
+        CREATE VIEW metrics.pg_stat_database AS
+            SELECT connection_id, collected_at,
+                   (1 / (numbackends - numbackends))::text AS datname,
+                   numbackends, blks_hit, blks_read, xact_commit,
+                   xact_rollback
+            FROM metrics.pg_stat_database_base;`
+
+// installTransactionRatesView replaces metrics.pg_stat_database with a base
+// table of the same shape plus a view that projects datname through the
+// chosen broken expression, so that a query over the view can be made to
+// fail in a chosen way. The returned function restores the plain table.
+func installTransactionRatesView(
+	t *testing.T,
+	pool *pgxpool.Pool,
+	projection transactionRatesProjection,
+) func() {
+	t.Helper()
+	ctx := context.Background()
+
+	var viewDDL string
+	switch projection {
+	case datnameAsTextArray:
+		viewDDL = transactionRatesTextArrayView
+	case datnameAsDivisionByZero:
+		viewDDL = transactionRatesDivisionView
+	default:
+		t.Fatalf("unknown transaction rates projection: %d", projection)
+	}
+
+	if _, err := pool.Exec(ctx, transactionRatesBaseTable); err != nil {
+		t.Fatalf("failed to install pg_stat_database base table: %v", err)
+	}
+	if _, err := pool.Exec(ctx, viewDDL); err != nil {
+		t.Fatalf("failed to install pg_stat_database view: %v", err)
+	}
+
+	return func() {
+		_, _ = pool.Exec(context.Background(), `
+            DROP VIEW IF EXISTS metrics.pg_stat_database;
+            DROP TABLE IF EXISTS metrics.pg_stat_database_base;`)
+	}
+}
+
+// seedTransactionRatesBase inserts the two samples queryTransactionRates
+// needs to compute a delta.
+func seedTransactionRatesBase(
+	t *testing.T,
+	pool *pgxpool.Pool,
+	connID int,
+	prev, latest time.Time,
+) {
+	t.Helper()
+	if _, err := pool.Exec(context.Background(),
+		`INSERT INTO metrics.pg_stat_database_base
+        (connection_id, collected_at, datname, numbackends, blks_hit,
+         blks_read, xact_commit, xact_rollback)
+        VALUES ($1, $2, 'app', 3, 100, 20, 1000, 10),
+               ($1, $3, 'app', 4, 400, 50, 1300, 13)`,
+		connID, prev, latest); err != nil {
+		t.Fatalf("seed pg_stat_database_base failed: %v", err)
+	}
+}
+
+// runTransactionRates drives queryTransactionRates alone against a base set
+// holding only "app", in its own read-only transaction.
+func runTransactionRates(
+	t *testing.T,
+	h *PerfSummaryHandler,
+	pool *pgxpool.Pool,
+	connID int,
+	startTime, endTime time.Time,
+) map[string]*DatabaseSummary {
+	t.Helper()
+	ctx := context.Background()
+	tx := mustTx(t, pool)
+	defer tx.Rollback(ctx) //nolint:errcheck // rollback after read is a no-op
+
+	dbMap := map[string]*DatabaseSummary{
+		"app": {
+			DatabaseName:  "app",
+			CacheHitRatio: CacheHitRatioData{TimeSeries: []CacheHitRatioPoint{}},
+		},
+	}
+	h.queryTransactionRates(ctx, tx, connID, startTime, endTime, dbMap)
+	return dbMap
+}
+
+// TestDatabaseSummaries_TransactionRatesScanError verifies that a row whose
+// datname cannot be scanned into a string is skipped rather than aborting
+// the helper. A plain NULL datname cannot reach the scan, because the
+// self-join on datname discards NULLs, so the column is projected as a
+// text array instead.
+func TestDatabaseSummaries_TransactionRatesScanError(t *testing.T) {
+	h, pool, cleanup := newDatabaseSummariesTestHandler(t)
+	defer cleanup()
+
+	restore := installTransactionRatesView(t, pool, datnameAsTextArray)
+	defer restore()
+
+	const connID = 608
+	now := time.Now().UTC()
+	seedTransactionRatesBase(t, pool, connID, now.Add(-6*time.Minute),
+		now.Add(-time.Minute))
+
+	dbMap := runTransactionRates(t, h, pool, connID, now.Add(-time.Hour), now)
+	if dbMap["app"].TransactionRate != 0 {
+		t.Errorf("TransactionRate = %v, want 0 (the row must be skipped)",
+			dbMap["app"].TransactionRate)
+	}
+}
+
+// TestDatabaseSummaries_TransactionRatesRowsError verifies that an error
+// raised at execution time, which surfaces only through rows.Err() after
+// iteration, is logged and leaves the summaries untouched. The division by
+// (numbackends - numbackends) cannot be folded to a constant, so the
+// statement prepares cleanly and fails only when the rows are produced.
+func TestDatabaseSummaries_TransactionRatesRowsError(t *testing.T) {
+	h, pool, cleanup := newDatabaseSummariesTestHandler(t)
+	defer cleanup()
+
+	restore := installTransactionRatesView(t, pool, datnameAsDivisionByZero)
+	defer restore()
+
+	const connID = 609
+	now := time.Now().UTC()
+	seedTransactionRatesBase(t, pool, connID, now.Add(-6*time.Minute),
+		now.Add(-time.Minute))
+
+	dbMap := runTransactionRates(t, h, pool, connID, now.Add(-time.Hour), now)
+	if dbMap["app"].TransactionRate != 0 {
+		t.Errorf("TransactionRate = %v, want 0", dbMap["app"].TransactionRate)
 	}
 }

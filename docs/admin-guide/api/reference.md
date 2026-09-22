@@ -217,7 +217,7 @@ The API provides endpoints in the following categories.
 | GET | `/api/v1/metrics/query` | Query metrics for preset or custom windows. |
 | GET | `/api/v1/metrics/baselines` | Get metric baseline values. |
 | GET | `/api/v1/metrics/performance-summary` | Get a performance summary. |
-| GET | `/api/v1/metrics/database-summaries` | Get database-level summaries. |
+| GET | `/api/v1/metrics/database-summaries` | Get database-level summaries over a time window. |
 | GET | `/api/v1/metrics/top-queries` | Get the top queries by resource usage over a time window. |
 | GET | `/api/v1/metrics/connection-groups` | Get connection counts grouped by user, client, or database. |
 | GET | `/api/v1/metrics/query-stats` | Get period-scoped statistics for a query. |
@@ -353,6 +353,18 @@ explanatory message when a request breaks one:
 - The start must fall before the present moment.
 - The span must not exceed 366 days.
 
+Three endpoints apply a tighter limit of 30 days on top of
+that, because their cost grows with the window rather than
+being absorbed by a wider bucket:
+`/api/v1/metrics/top-queries`,
+`/api/v1/metrics/performance-summary` and
+`/api/v1/metrics/database-summaries`. A span longer than 30
+days but no longer than 366 days is rejected with
+`invalid time range: span must not exceed 30 days`, and a
+span longer than 366 days with the 366 day message above.
+Thirty days is the longest preset, so no preset is
+affected.
+
 The server clamps an end time in the future to the
 present moment rather than rejecting the request,
 because a picker set to the current day often overshoots
@@ -375,14 +387,24 @@ curl -H "Authorization: Bearer YOUR_TOKEN" \
 
 The `/api/v1/metrics/query`,
 `/api/v1/metrics/connection-groups`,
+`/api/v1/metrics/database-summaries`,
 `/api/v1/metrics/performance-summary`,
 `/api/v1/metrics/query-stats` and
 `/api/v1/metrics/top-queries` endpoints support a custom
 window with the same three parameters and the same rules;
 `performance-summary` derives its bucket width from the
 resolved window, one sixtieth of the span with a ten second
-floor. The `/api/v1/metrics/database-summaries` endpoint
-accepts the presets alone.
+floor.
+
+The `/api/v1/metrics/database-summaries` endpoint defaults
+to `time_range=24h` when the request names no window, and
+bounds every figure in the response by the resolved window.
+The database size, the connection count, the dead tuple
+ratio and the transaction rate all describe the state at
+the end of the window rather than the present moment, so a
+window that ends in the past reports each database as the
+database stood then. A window that ends at the present
+moment returns the current figures, as before.
 
 The `/api/v1/metrics/top-queries` endpoint defaults to
 `time_range=1h` when the request names no window.
@@ -410,8 +432,8 @@ sample. The behaviour that follows from that is:
   altogether.
 - A custom window may span at most 30 days, which is the
   longest preset; the endpoint rejects a longer span with
-  `span must not exceed 30 days`, whereas the other
-  windowed endpoints accept up to 366 days.
+  `span must not exceed 30 days`, as described under
+  Metric Time Windows below.
 - On a server with `pg_stat_statements` installed in more
   than one database, the collector stores each counter
   once per such database. The endpoint counts each

@@ -43,6 +43,14 @@ export const useDatabaseCacheHit = (
             return;
         }
 
+        /*
+         * The window here is deliberately fixed at 24 hours and does not
+         * track the dashboard time selector. These tiles render above the
+         * Monitoring section that holds the selector, so a user looking at
+         * them cannot see the control that would be changing the numbers;
+         * a fixed at-a-glance summary is the more honest reading. The
+         * panels inside the Monitoring section do follow the selector.
+         */
         const url = `/api/v1/metrics/database-summaries`
             + `?connection_id=${connectionId}&time_range=24h`;
 

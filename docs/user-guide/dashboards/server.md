@@ -113,6 +113,16 @@ and shows '--' when the database had no block access in
 the latest interval. Users can click a database entry to
 navigate to the [database dashboard](database.md).
 
+The section follows the dashboard time range selector.
+Each card reports the databases as they stood at the end
+of the selected window, so a window that ends in the past
+shows the sizes, connection counts and dead tuple ratios
+of that moment rather than the present ones. The
+performance tiles in the status panel keep their own fixed
+twenty-four hour window, as the
+[Dashboards](index.md#views-that-honour-the-selector)
+page explains.
+
 ## Connections
 
 The connections section breaks down the server's
@@ -183,6 +193,11 @@ appear, and changing the range returns the section to its
 first page. The [object dashboard](object.md) page explains
 how the Workbench derives a windowed figure from the
 cumulative `pg_stat_statements` counters.
+
+The database filter above the list is the one exception.
+The filter lists the databases seen over a fixed
+twenty-four hours, so the available choices do not vanish
+as the user narrows the selected window.
 
 The Database column resolves each query's source
 database from the `dbid` field in

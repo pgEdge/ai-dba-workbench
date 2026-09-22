@@ -433,7 +433,7 @@ func TestHandleDatabaseSummaries_RejectsInvalidRequests(t *testing.T) {
 			method: http.MethodGet,
 			url:    "/api/v1/metrics/database-summaries?connection_id=1&time_range=99z",
 			status: http.StatusBadRequest,
-			want:   "Invalid time_range: must be one of 1h, 6h, 24h, 7d, 30d",
+			want:   `invalid time range "99z": must be one of 1h, 6h, 24h, 7d, 30d, custom`,
 		},
 	}
 
@@ -820,10 +820,62 @@ func TestHandleTopQueries_QueryFailureReportsError(t *testing.T) {
 	}
 }
 
+// TestHandlePerfSummary_RejectsOverlongWindow pins the per-endpoint span
+// cap on /metrics/performance-summary. The shared resolver allows 366
+// days, but this endpoint runs five sub-queries for every connection in
+// connection_ids inside a single read-only transaction, so it applies
+// maxAggregationTimeSpan on top.
+func TestHandlePerfSummary_RejectsOverlongWindow(t *testing.T) {
+	h, pool, cleanup := newPerfEndpointTestHandler(t)
+	defer cleanup()
+
+	const connID = 4107
+	now := time.Now().UTC()
+	seedPerfEndpointMetrics(t, pool, connID, now.Add(-1*time.Minute),
+		now.Add(-2*time.Minute))
+
+	customURL := func(start, end time.Time) string {
+		return "/api/v1/metrics/performance-summary?connection_id=4107" +
+			"&time_range=custom&time_start=" +
+			url.QueryEscape(start.Format(time.RFC3339)) +
+			"&time_end=" + url.QueryEscape(end.Format(time.RFC3339))
+	}
+
+	t.Run("just inside the cap is accepted", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet,
+			customURL(now.Add(-maxAggregationTimeSpan+time.Minute), now), nil)
+		rec := httptest.NewRecorder()
+
+		h.handlePerfSummary(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d (body %q)",
+				rec.Code, http.StatusOK, rec.Body.String())
+		}
+	})
+
+	t.Run("just outside the cap is rejected", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet,
+			customURL(now.Add(-maxAggregationTimeSpan-time.Minute), now), nil)
+		rec := httptest.NewRecorder()
+
+		h.handlePerfSummary(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want %d (body %q)",
+				rec.Code, http.StatusBadRequest, rec.Body.String())
+		}
+		want := "invalid time range: span must not exceed 30 days"
+		if got := decodeError(t, rec).Error; got != want {
+			t.Errorf("error = %q, want %q", got, want)
+		}
+	})
+}
+
 // TestHandleTopQueries_RejectsOverlongWindow covers the per-endpoint span
 // cap added for issue #387. The shared resolver allows 366 days, which is
 // far more than this aggregation can afford, so the handler applies
-// maxTopQueriesTimeSpan of its own on top.
+// maxAggregationTimeSpan of its own on top.
 func TestHandleTopQueries_RejectsOverlongWindow(t *testing.T) {
 	h, pool, cleanup := newPerfEndpointTestHandler(t)
 	defer cleanup()
@@ -841,7 +893,7 @@ func TestHandleTopQueries_RejectsOverlongWindow(t *testing.T) {
 
 	t.Run("just inside the cap is accepted", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet,
-			customURL(now.Add(-maxTopQueriesTimeSpan+time.Minute), now), nil)
+			customURL(now.Add(-maxAggregationTimeSpan+time.Minute), now), nil)
 		rec := httptest.NewRecorder()
 
 		h.handleTopQueries(rec, req)
@@ -854,7 +906,7 @@ func TestHandleTopQueries_RejectsOverlongWindow(t *testing.T) {
 
 	t.Run("just outside the cap is rejected", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet,
-			customURL(now.Add(-maxTopQueriesTimeSpan-time.Minute), now), nil)
+			customURL(now.Add(-maxAggregationTimeSpan-time.Minute), now), nil)
 		rec := httptest.NewRecorder()
 
 		h.handleTopQueries(rec, req)
@@ -901,10 +953,10 @@ func TestHandleTopQueries_RejectsOverlongWindow(t *testing.T) {
 	}
 }
 
-// TestCheckTopQueriesTimeSpan exercises the cap directly, including the
+// TestCheckAggregationTimeSpan exercises the cap directly, including the
 // exact boundary, which the HTTP-level test cannot hit without racing the
 // clock between building the URL and resolving the window.
-func TestCheckTopQueriesTimeSpan(t *testing.T) {
+func TestCheckAggregationTimeSpan(t *testing.T) {
 	end := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 
 	cases := []struct {
@@ -913,42 +965,42 @@ func TestCheckTopQueriesTimeSpan(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "an hour", span: time.Hour},
-		{name: "exactly the cap", span: maxTopQueriesTimeSpan},
-		{name: "a second over the cap", span: maxTopQueriesTimeSpan + time.Second, wantErr: true},
+		{name: "exactly the cap", span: maxAggregationTimeSpan},
+		{name: "a second over the cap", span: maxAggregationTimeSpan + time.Second, wantErr: true},
 		{name: "the shared 366-day cap", span: metrics.MaxCustomTimeSpan, wantErr: true},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := checkTopQueriesTimeSpan(metrics.TimeWindow{
+			err := checkAggregationTimeSpan(metrics.TimeWindow{
 				Start: end.Add(-tc.span),
 				End:   end,
 			})
 			if tc.wantErr {
 				if err == nil {
-					t.Fatalf("checkTopQueriesTimeSpan(%v) = nil, want an error", tc.span)
+					t.Fatalf("checkAggregationTimeSpan(%v) = nil, want an error", tc.span)
 				}
-				if err.Error() != topQueriesTimeSpanError {
-					t.Errorf("error = %q, want %q", err.Error(), topQueriesTimeSpanError)
+				if err.Error() != aggregationTimeSpanError {
+					t.Errorf("error = %q, want %q", err.Error(), aggregationTimeSpanError)
 				}
 				return
 			}
 			if err != nil {
-				t.Fatalf("checkTopQueriesTimeSpan(%v) = %v, want nil", tc.span, err)
+				t.Fatalf("checkAggregationTimeSpan(%v) = %v, want nil", tc.span, err)
 			}
 		})
 	}
 }
 
-// TestValidTimeRangesFitTopQueriesCap locks in the relationship the cap is
-// justified by: maxTopQueriesTimeSpan is the longest preset, so tightening
+// TestValidTimeRangesFitAggregationCap locks in the relationship the cap is
+// justified by: maxAggregationTimeSpan is the longest preset, so tightening
 // it below one of them would start rejecting requests the web client makes
 // by default.
-func TestValidTimeRangesFitTopQueriesCap(t *testing.T) {
+func TestValidTimeRangesFitAggregationCap(t *testing.T) {
 	for name, span := range metrics.ValidTimeRanges {
-		if span > maxTopQueriesTimeSpan {
-			t.Errorf("preset %q spans %v, which exceeds maxTopQueriesTimeSpan of %v",
-				name, span, maxTopQueriesTimeSpan)
+		if span > maxAggregationTimeSpan {
+			t.Errorf("preset %q spans %v, which exceeds maxAggregationTimeSpan of %v",
+				name, span, maxAggregationTimeSpan)
 		}
 	}
 }

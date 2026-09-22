@@ -20,6 +20,10 @@ import type {
 } from '../components/Dashboard/types';
 import { apiGet } from '../utils/apiClient';
 import { logger } from '../utils/logger';
+import {
+    appendTimeRangeParams,
+    isTimeRangeQueryable,
+} from '../utils/timeRangeParams';
 
 export interface UseMetricsReturn {
     data: MetricSeries[] | null;
@@ -92,12 +96,9 @@ const buildMetricsUrl = (
     const searchParams = new URLSearchParams();
 
     searchParams.append('probe_name', params.probeName);
-    searchParams.append('time_range', params.timeRange);
-
-    if (params.timeRange === 'custom' && customStart && customEnd) {
-        searchParams.append('time_start', customStart);
-        searchParams.append('time_end', customEnd);
-    }
+    appendTimeRangeParams(searchParams, {
+        range: params.timeRange, customStart, customEnd,
+    });
 
     if (params.connectionId !== undefined) {
         searchParams.append('connection_id', params.connectionId.toString());
@@ -172,7 +173,10 @@ export const useMetrics = (params: MetricQueryParams | null): UseMetricsReturn =
          * server rejects with a 400, so skip the request entirely and
          * leave whatever data and error state is already in place.
          */
-        if (params.timeRange === 'custom' && (!customStart || !customEnd)) {
+        const selectedWindow = {
+            range: params.timeRange, customStart, customEnd,
+        };
+        if (!isTimeRangeQueryable(selectedWindow)) {
             return;
         }
 

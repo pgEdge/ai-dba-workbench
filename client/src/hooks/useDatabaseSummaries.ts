@@ -12,6 +12,12 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { useAuth } from '../contexts/useAuth';
 import { apiFetch } from '../utils/apiClient';
 import { logger } from '../utils/logger';
+import {
+    appendTimeRangeParams,
+    isTimeRangeQueryable,
+} from '../utils/timeRangeParams';
+import { useRequestSequence } from './useRequestSequence';
+import type { TimeRangeState } from '../components/Dashboard/types';
 import type {
     DatabaseSummary,
     ServerPerformanceSummary,
@@ -27,14 +33,21 @@ export interface UseDatabaseSummariesResult {
     error: string | null;
 }
 
+/** The window used when the caller does not follow the selector. */
+const DEFAULT_TIME_RANGE: TimeRangeState = { range: '24h' };
+
 /** Build the database-summaries endpoint URL for a connection. */
 const buildSummariesUrl = (
     connectionId: number,
-    timeRange: string,
-): string => (
-    `/api/v1/metrics/database-summaries`
-    + `?connection_id=${connectionId}&time_range=${timeRange}`
-);
+    timeRange: TimeRangeState,
+): string => {
+    const params = new URLSearchParams({
+        connection_id: connectionId.toString(),
+    });
+    appendTimeRangeParams(params, timeRange);
+
+    return `/api/v1/metrics/database-summaries?${params.toString()}`;
+};
 
 /**
  * Throw a descriptive error when the response reports a failure.
@@ -88,11 +101,15 @@ const toErrorMessage = (err: unknown): string => (
  * defaults whilst disabled, including when a caller disables the hook
  * after it has already loaded: anything in flight at that point is
  * invalidated rather than allowed to land afterwards.
+ *
+ * `timeRange` is the dashboard's selected window, including the bounds
+ * of a custom one; callers that only want the database names can omit
+ * it and take the fixed 24-hour default.
  */
 export const useDatabaseSummaries = (
     connectionId: number,
     refreshKey = 0,
-    timeRange = '24h',
+    timeRange: TimeRangeState = DEFAULT_TIME_RANGE,
     enabled = true,
 ): UseDatabaseSummariesResult => {
     const { user } = useAuth();
@@ -100,36 +117,54 @@ export const useDatabaseSummaries = (
     const [databases, setDatabases] = useState<DatabaseSummary[]>([]);
     const [loading, setLoading] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
-    const isMountedRef = useRef<boolean>(true);
-    // Identifies the most recently started request. isMountedRef alone
-    // cannot order overlapping fetches: the effect's cleanup sets it
-    // false, but the next run sets it true again before the earlier
-    // request resolves, so a slow response for one connection could
-    // land after a fast one for the next and overwrite it. Changing
-    // the selected connection, or a refreshKey tick, both re-run the
-    // effect without cancelling what is already in flight.
-    const requestIdRef = useRef<number>(0);
+    // Orders overlapping fetches. Changing the selected connection or
+    // the time range, or a refreshKey tick, re-runs the effect without
+    // cancelling what is already in flight, so a slow response for one
+    // selection could otherwise land after a fast one for the next and
+    // overwrite it.
+    const { beginRequest, supersedeRequest } = useRequestSequence();
     const initialLoadDoneRef = useRef<boolean>(false);
     const userRef = useRef(user);
     userRef.current = user;
 
     const isLoggedIn = !!user;
 
+    // Destructured so that the fetch depends on the window's values
+    // rather than on the identity of the object the caller passes,
+    // which a parent re-render would otherwise change on every pass.
+    const { range, customStart, customEnd } = timeRange;
+
     const fetchData = useCallback(async (): Promise<void> => {
         if (!userRef.current) { return; }
 
-        const url = buildSummariesUrl(connectionId, timeRange);
+        const selectedWindow: TimeRangeState = {
+            range, customStart, customEnd,
+        };
+
+        /*
+         * A custom range without both bounds is a transient state the
+         * server rejects with a 400, so skip the request entirely and
+         * leave whatever data and error state is already in place.
+         */
+        if (!isTimeRangeQueryable(selectedWindow)) {
+            // Abandon any request still in flight for the previous
+            // window, so its response cannot land and be shown as
+            // though it described the newly selected one.
+            supersedeRequest();
+            setLoading(false);
+            return;
+        }
+
+        const url = buildSummariesUrl(connectionId, selectedWindow);
 
         if (!initialLoadDoneRef.current) {
             setLoading(true);
         }
         setError(null);
 
-        const requestId = ++requestIdRef.current;
         // A response is only applied if the component is still mounted
         // and no newer request has been started since.
-        const isCurrent = (): boolean =>
-            isMountedRef.current && requestIdRef.current === requestId;
+        const isCurrent = beginRequest();
 
         try {
             const response = await apiFetch(url);
@@ -157,39 +192,35 @@ export const useDatabaseSummaries = (
                 setLoading(false);
             }
         }
-    }, [connectionId, timeRange]);
+    }, [
+        connectionId, range, customStart, customEnd,
+        beginRequest, supersedeRequest,
+    ]);
 
     useEffect(() => {
         initialLoadDoneRef.current = false;
     }, [connectionId]);
 
     useEffect(() => {
-        isMountedRef.current = true;
-
         if (enabled) {
             if (isLoggedIn) {
                 fetchData();
             }
         } else {
-            // Bumping the request id is what actually stops a response
-            // that is already in flight from landing, because
-            // isMountedRef is set true again on every run of this
-            // effect and so cannot distinguish "disabled" from
-            // "remounted". The rest returns the hook to the empty
-            // defaults its disabled contract promises; the databases
-            // update is guarded so that a hook which was never enabled
-            // does not re-render for a new empty array.
-            requestIdRef.current++;
+            // Superseding the request in flight is what actually stops
+            // its response from landing; useRequestSequence tracks
+            // mounting itself, so there is no flag to reset here. The
+            // rest returns the hook to the empty defaults its disabled
+            // contract promises; the databases update is guarded so
+            // that a hook which was never enabled does not re-render
+            // for a new empty array.
+            supersedeRequest();
             initialLoadDoneRef.current = false;
             setDatabases(prev => (prev.length === 0 ? prev : []));
             setLoading(false);
             setError(null);
         }
-
-        return () => {
-            isMountedRef.current = false;
-        };
-    }, [isLoggedIn, enabled, fetchData, refreshKey]);
+    }, [isLoggedIn, enabled, fetchData, refreshKey, supersedeRequest]);
 
     return { databases, loading, error };
 };

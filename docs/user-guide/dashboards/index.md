@@ -107,17 +107,32 @@ The table and index leaderboards on the database
 dashboard do not follow the selector; both report the
 latest collected sample.
 
-The performance and database summary tiles always cover
-the last twenty-four hours, whatever the selector reads.
-That fixed window is deliberate rather than an
-oversight, and moving those tiles onto the selector is
-tracked as separate work.
+The database summary cards on the server dashboard and
+the comparative charts on the cluster dashboard follow
+the selector, as does the Transaction Rate tile on the
+estate dashboard. Each of those panels sits inside the
+Monitoring section, with the selector on the section
+header in plain view. The other estate KPI tiles report
+the estate as it stands now, whatever the selector reads.
+
+The performance tiles in the status panel always cover the
+last twenty-four hours, whatever the selector reads. Those
+tiles render above the Monitoring section rather than
+inside it, so a user reading a tile cannot see the control
+that would be changing the figure; the fixed window is a
+deliberate choice rather than an oversight.
+
+The database filter on the Top Queries panel lists the
+databases seen over a fixed twenty-four hours as well,
+even though the panel itself follows the selector. The
+choices in that filter therefore stay put as the user
+narrows the window.
 
 ## Event Timeline
 
 The event timeline displays notable events across the
-selected servers. The timeline appears above the
-performance summary tiles in the monitoring section.
+selected servers. The timeline appears in the status
+panel, above the performance tiles.
 
 The timeline header carries its own range control,
 offering the same five presets and a Custom option that

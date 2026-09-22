@@ -37,8 +37,16 @@ import {
     DASHBOARD_CONTROL_TEXT_SX,
     DASHBOARD_TAB_CHIP_TEXT_SX,
 } from '../../theme/tokens';
-import type { TopQueriesSectionProps, TopQueryRow } from './types';
+import type {
+    TimeRangeState,
+    TopQueriesSectionProps,
+    TopQueryRow,
+} from './types';
 import { logger } from '../../utils/logger';
+import {
+    appendTimeRangeParams,
+    isTimeRangeQueryable,
+} from '../../utils/timeRangeParams';
 
 /** Maximum characters to display before truncating a query */
 const MAX_QUERY_LENGTH = 80;
@@ -55,9 +63,11 @@ const ALL_DATABASES = '';
 /**
  * Window the database list is fetched over. The list is only used to
  * populate the filter control, so the value matters only in that a
- * database with no activity in the window is not offered.
+ * database with no activity in the window is not offered. It stays
+ * fixed rather than following the dashboard selector, so the choices
+ * in the control do not vanish as the user narrows the period.
  */
-const DATABASE_LIST_TIME_RANGE = '24h';
+const DATABASE_LIST_TIME_RANGE: TimeRangeState = { range: '24h' };
 
 /** Table container styles */
 const TABLE_CONTAINER_SX = {
@@ -342,9 +352,11 @@ const TopQueriesSection: React.FC<TopQueriesSectionProps> = ({
     useResetOnChange(scopedDatabase, resetPaging);
 
     // The database list drives the filter control only, so it tracks
-    // the connection rather than the dashboard refresh cycle, and it
-    // is not fetched at all when the section is pinned to one
-    // database and the control is therefore never rendered.
+    // the connection rather than the dashboard refresh cycle or the
+    // selected window; the list of databases a connection monitors
+    // should not shrink as the user narrows the period. It is not
+    // fetched at all when the section is pinned to one database and
+    // the control is therefore never rendered.
     const { databases } = useDatabaseSummaries(
         connectionId, 0, DATABASE_LIST_TIME_RANGE, !isScoped);
 
@@ -366,7 +378,10 @@ const TopQueriesSection: React.FC<TopQueriesSectionProps> = ({
          * server rejects with a 400, so skip the request entirely and
          * leave whatever data and error state is already in place.
          */
-        if (selectedRange === 'custom' && (!customStart || !customEnd)) {
+        const selectedWindow = {
+            range: selectedRange, customStart, customEnd,
+        };
+        if (!isTimeRangeQueryable(selectedWindow)) {
             return;
         }
 
@@ -376,12 +391,8 @@ const TopQueriesSection: React.FC<TopQueriesSectionProps> = ({
             offset: (page * pageSize).toString(),
             order_by: 'total_exec_time',
             order: 'desc',
-            time_range: selectedRange,
         });
-        if (selectedRange === 'custom' && customStart && customEnd) {
-            params.set('time_start', customStart);
-            params.set('time_end', customEnd);
-        }
+        appendTimeRangeParams(params, selectedWindow);
         if (hideCollectorQueries) {
             params.set('exclude_collector', 'true');
         }

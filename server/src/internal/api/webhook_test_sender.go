@@ -12,19 +12,21 @@ package api
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
-	"unicode/utf8"
 )
 
 // sendTestGenericWebhook sends a test message to a generic REST webhook endpoint.
 // It supports GET, POST, PUT, and PATCH methods with optional authentication
 // and custom headers.
+//
+// The endpoint URL may carry a credential in its path or query string, so no
+// error returned from here wraps with %w anything net/http produced, and no
+// text borrowed from the endpoint is echoed raw: both go through the helpers
+// in sanitize.go, since the caller logs what this returns.
 func sendTestGenericWebhook(endpointURL, httpMethod string, headers map[string]string, authType, authCredentials string) error {
 	client := &http.Client{
 		Timeout: 30 * time.Second,
@@ -55,7 +57,11 @@ func sendTestGenericWebhook(endpointURL, httpMethod string, headers map[string]s
 	// user-supplied URL.
 	req, err := http.NewRequest(httpMethod, endpointURL, reqBody) //nolint:gosec // G704: URL host validated upstream; DNS rebinding between validation and dial is a known, admin-scope residual risk
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		// http.NewRequest returns a *url.Error for a malformed URL,
+		// and that carries the whole endpoint URL, which for Slack and
+		// Mattermost is the credential itself; report only the
+		// redacted form.
+		return fmt.Errorf("failed to create request: %s", sanitizeWebhookEcho(err.Error()))
 	}
 
 	// Set content type for non-GET requests
@@ -88,22 +94,29 @@ func sendTestGenericWebhook(endpointURL, httpMethod string, headers map[string]s
 
 	resp, err := client.Do(req) //nolint:gosec // G704: URL host validated upstream and redirects disabled so the validated host cannot be bypassed via Location header; DNS rebinding between validation and dial is a known, admin-scope residual risk
 	if err != nil {
-		return fmt.Errorf("failed to send request: %w", err)
+		return fmt.Errorf("failed to send request: %s", webhookTransportError(err))
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		respBody, readErr := io.ReadAll(resp.Body)
+		respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		if readErr != nil {
-			return fmt.Errorf("webhook returned status %d (failed to read body: %v)", resp.StatusCode, readErr)
+			return fmt.Errorf("webhook returned status %d (failed to read body: %s)",
+				resp.StatusCode, sanitizeWebhookEcho(readErr.Error()))
 		}
-		return fmt.Errorf("webhook returned status %d: %s", resp.StatusCode, string(respBody))
+		return fmt.Errorf("webhook returned status %d: %s",
+			resp.StatusCode, sanitizeWebhookEcho(string(respBody)))
 	}
 
 	return nil
 }
 
 // sendTestWebhook sends a test message to a Slack or Mattermost webhook URL.
+//
+// The whole webhook URL is the credential for both services, so no error
+// returned from here wraps with %w anything net/http produced, and no text
+// borrowed from the far end is echoed raw: both go through the helpers in
+// sanitize.go, since the caller logs what this returns.
 func sendTestWebhook(webhookURL string, channelType string) error {
 	client := &http.Client{
 		Timeout: 30 * time.Second,
@@ -128,22 +141,28 @@ func sendTestWebhook(webhookURL string, channelType string) error {
 	// user-supplied URL.
 	req, err := http.NewRequest(http.MethodPost, webhookURL, strings.NewReader(body)) //nolint:gosec // G704: URL host validated upstream; DNS rebinding between validation and dial is a known, admin-scope residual risk
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		// http.NewRequest returns a *url.Error for a malformed URL,
+		// and that carries the whole endpoint URL, which for Slack and
+		// Mattermost is the credential itself; report only the
+		// redacted form.
+		return fmt.Errorf("failed to create request: %s", sanitizeWebhookEcho(err.Error()))
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := client.Do(req) //nolint:gosec // G704: URL host validated upstream and redirects disabled so the validated host cannot be bypassed via Location header; DNS rebinding between validation and dial is a known, admin-scope residual risk
 	if err != nil {
-		return fmt.Errorf("failed to send request: %w", err)
+		return fmt.Errorf("failed to send request: %s", webhookTransportError(err))
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, readErr := io.ReadAll(resp.Body)
+		respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		if readErr != nil {
-			return fmt.Errorf("webhook returned status %d (failed to read body: %v)", resp.StatusCode, readErr)
+			return fmt.Errorf("webhook returned status %d (failed to read body: %s)",
+				resp.StatusCode, sanitizeWebhookEcho(readErr.Error()))
 		}
-		return fmt.Errorf("webhook returned status %d: %s", resp.StatusCode, string(respBody))
+		return fmt.Errorf("webhook returned status %d: %s",
+			resp.StatusCode, sanitizeWebhookEcho(string(respBody)))
 	}
 
 	return nil
@@ -273,180 +292,4 @@ func sendTestTelegram(botToken, chatID string) error {
 	}
 
 	return nil
-}
-
-// telegramMaxEchoedBytes bounds how much borrowed text any error built
-// from a Bot API exchange may repeat. See sanitizeTelegramEcho.
-const telegramMaxEchoedBytes = 256
-
-// telegramEchoTruncationMarker marks text sanitizeTelegramEcho cut
-// short.
-const telegramEchoTruncationMarker = "…"
-
-// sanitizeTelegramEcho prepares a string that came from the far end of
-// a Bot API call - a response body, an API description, a transport
-// error - for inclusion in an error a caller will record: the alerter
-// writes it to notification_history.error_message and its own log, the
-// server writes it to the server log. Every borrowed string
-// interpolated into an error goes through here; that rule is what makes
-// the property easy to check.
-//
-// It does three things, all of which are load-bearing:
-//
-//   - Redacts the bot token, because the text may repeat the request
-//     URL, which carries the credential in its path.
-//   - Maps control characters to spaces, so a hostile or broken
-//     endpoint cannot inject newlines and forge log lines. Invalid
-//     UTF-8 is replaced at the same time, which also keeps the value
-//     storable in a Postgres text column.
-//   - Caps the result at telegramMaxEchoedBytes. What is read and what
-//     is echoed are deliberately separate limits: the body is read
-//     under a 1 MiB io.LimitReader, but a captive portal or a hostile
-//     endpoint would otherwise put the whole megabyte into the log and
-//     the database on every one of the three delivery attempts.
-//
-// Redaction runs before the cap so the cap can never slice a token run
-// and leave the tail of it visible.
-//
-// This helper is duplicated between
-// alerter/src/internal/notifications/telegram.go and
-// server/src/internal/api/webhook_test_sender.go; the alerter and the
-// server are separate Go modules, so it cannot be shared. The two
-// copies must stay character-for-character identical - diff them after
-// any change.
-func sanitizeTelegramEcho(s string) string {
-	s = redactTelegramToken(s)
-	s = strings.Map(func(r rune) rune {
-		if r < 0x20 || r == 0x7f {
-			return ' '
-		}
-		return r
-	}, s)
-	if len(s) <= telegramMaxEchoedBytes {
-		return s
-	}
-	cut := telegramMaxEchoedBytes
-	for cut > 0 && !utf8.RuneStart(s[cut]) {
-		cut--
-	}
-	return s[:cut] + telegramEchoTruncationMarker
-}
-
-// redactTelegramToken replaces the bot token in any text that may have
-// come from a URL with a fixed placeholder.
-//
-// The token is a bearer credential and it sits in the request path, so
-// anything net/http reports about a failed request - a *url.Error, a
-// redirect message, a proxy error - repeats it verbatim, as does a
-// description the Bot API echoes back. Errors from these callers are
-// logged and stored, and are read by people who are not entitled to the
-// credential, so borrowed text is passed through here rather than
-// wrapped with %w.
-//
-// The redactor fails closed. Once "/bot" is found the token run that
-// follows is always replaced, whether or not the terminating '/' of
-// "/bot<token>/sendMessage" is present: a truncated URL in a proxy
-// error, a description echoing a partial path, or a caller building a
-// different Bot API URL must never be able to carry a live credential
-// through untouched. Do not reintroduce a bail-out that copies the
-// remainder of the string out verbatim.
-//
-// This helper is duplicated between
-// alerter/src/internal/notifications/telegram.go and
-// server/src/internal/api/webhook_test_sender.go; the alerter and the
-// server are separate Go modules, so it cannot be shared. The two
-// copies must stay character-for-character identical - diff them after
-// any change.
-func redactTelegramToken(s string) string {
-	const prefix = "/bot"
-	var b strings.Builder
-	for {
-		i := strings.Index(s, prefix)
-		if i < 0 {
-			break
-		}
-		// The token runs from just after the prefix to the first
-		// character that cannot appear in a token interpolated into a
-		// URL path, or to the end of the string when none follows.
-		rest := s[i+len(prefix):]
-		j := 0
-		for j < len(rest) && !isTelegramTokenTerminator(rest[j]) {
-			j++
-		}
-		b.WriteString(s[:i])
-		if j == 0 {
-			// An empty run is not a credential: the literal text
-			// "/bot", or "/bot/" with nothing between the slashes,
-			// carries no token and redacting it would only mislead.
-			// Emit it unchanged and keep scanning after it.
-			b.WriteString(prefix)
-		} else {
-			b.WriteString("/bot<redacted>")
-		}
-		// Whatever terminated the run is left in place, so the '/' of
-		// the usual "/bot<token>/sendMessage" survives in the output.
-		s = rest[j:]
-	}
-	b.WriteString(s)
-	return b.String()
-}
-
-// isTelegramTokenTerminator reports whether c ends a bot token that was
-// interpolated into a URL path.
-//
-// The invariant: this class must be a SUBSET of the characters the
-// server's telegramBotTokenPattern forbids inside a token. Any
-// character a token may legally contain has to be swallowed into the
-// redacted run; if it ends the run instead, redaction stops in the
-// middle of the credential and prints the rest of it verbatim. The
-// class is therefore exactly whitespace and control characters, which
-// cannot appear in a URL at all, plus the three path delimiters '/',
-// '?' and '#'.
-//
-// Do NOT add "defensive" quoting or bracketing characters - the double
-// quote, the apostrophe, the backquote, the angle brackets, the closing
-// paren, the closing square bracket, the comma or the semicolon - on
-// the grounds that they surround a URL in an error or a log line. An
-// earlier version did exactly that, reasoning about the text around a
-// token rather than about the token itself, and any token containing
-// one of them leaked its whole tail. Over-redacting the boilerplate
-// that follows a token is free; under-redacting the token is not.
-//
-// This helper is duplicated between
-// alerter/src/internal/notifications/telegram.go and
-// server/src/internal/api/webhook_test_sender.go; the alerter and the
-// server are separate Go modules, so it cannot be shared. The two
-// copies must stay character-for-character identical - diff them after
-// any change.
-func isTelegramTokenTerminator(c byte) bool {
-	// Space and everything below it: all ASCII whitespace and control
-	// characters. UTF-8 continuation bytes are >= 0x80, so a multi-byte
-	// character is never mistaken for a terminator.
-	if c <= ' ' {
-		return true
-	}
-	switch c {
-	case '/', '?', '#':
-		return true
-	}
-	return false
-}
-
-// telegramTransportError renders a transport failure without the request
-// URL. *url.Error stringifies as `Op "URL": Err`, which would leak the
-// bot token, so only its operation and cause are reported.
-//
-// This helper is duplicated between
-// alerter/src/internal/notifications/telegram.go and
-// server/src/internal/api/webhook_test_sender.go; the alerter and the
-// server are separate Go modules, so it cannot be shared. The two
-// copies must stay character-for-character identical - diff them after
-// any change.
-func telegramTransportError(err error) string {
-	var urlErr *url.Error
-	if errors.As(err, &urlErr) && urlErr.Err != nil {
-		return fmt.Sprintf("%s request failed: %s", urlErr.Op,
-			sanitizeTelegramEcho(urlErr.Err.Error()))
-	}
-	return sanitizeTelegramEcho(err.Error())
 }

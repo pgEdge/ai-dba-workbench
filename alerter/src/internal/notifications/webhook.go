@@ -71,6 +71,11 @@ func (n *webhookNotifier) Validate(channel *database.NotificationChannel) error 
 }
 
 // Send implements Notifier.Send
+//
+// The endpoint URL may carry a credential in its path or query string,
+// so no error returned from here wraps with %w anything net/http
+// produced, and no text borrowed from the endpoint is echoed raw: both
+// go through the helpers in sanitize.go.
 func (n *webhookNotifier) Send(ctx context.Context, channel *database.NotificationChannel, payload *database.NotificationPayload) error {
 	if err := n.Validate(channel); err != nil {
 		return err
@@ -82,7 +87,11 @@ func (n *webhookNotifier) Send(ctx context.Context, channel *database.Notificati
 	// to a private or internal IP address.
 	if !n.allowInternal {
 		if err := hostvalidation.ValidateURLHost(endpointURL); err != nil {
-			return fmt.Errorf("webhook endpoint blocked (SSRF protection): %w", err)
+			// A URL that will not parse produces a *url.Error carrying
+			// the whole endpoint URL, which may hold a credential in
+			// its path or query string; report only the redacted form.
+			return fmt.Errorf("webhook endpoint blocked (SSRF protection): %s",
+				sanitizeWebhookEcho(err.Error()))
 		}
 	}
 
@@ -121,7 +130,10 @@ func (n *webhookNotifier) Send(ctx context.Context, channel *database.Notificati
 
 	req, err := http.NewRequestWithContext(ctx, method, endpointURL, reqBody)
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		// http.NewRequestWithContext returns a *url.Error for a
+		// malformed URL, and that carries the whole endpoint URL;
+		// report only the redacted form.
+		return fmt.Errorf("failed to create request: %s", sanitizeWebhookEcho(err.Error()))
 	}
 
 	// Set content type for non-GET requests
@@ -158,7 +170,7 @@ func (n *webhookNotifier) Send(ctx context.Context, channel *database.Notificati
 	// Send request
 	resp, err := n.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to send webhook: %w", err)
+		return fmt.Errorf("failed to send webhook: %s", webhookTransportError(err))
 	}
 	defer resp.Body.Close()
 
@@ -166,9 +178,11 @@ func (n *webhookNotifier) Send(ctx context.Context, channel *database.Notificati
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		if readErr != nil {
-			return fmt.Errorf("webhook returned %d (failed to read body: %v)", resp.StatusCode, readErr)
+			return fmt.Errorf("webhook returned %d (failed to read body: %s)",
+				resp.StatusCode, sanitizeWebhookEcho(readErr.Error()))
 		}
-		return fmt.Errorf("webhook returned %d: %s", resp.StatusCode, string(respBody))
+		return fmt.Errorf("webhook returned %d: %s",
+			resp.StatusCode, sanitizeWebhookEcho(string(respBody)))
 	}
 
 	return nil

@@ -22,6 +22,13 @@ import (
 // sendWebhookNotification sends a JSON payload to a webhook URL. It handles
 // template selection, rendering, HTTP posting, and response validation. The
 // serviceName parameter is used in error messages (e.g. "slack", "mattermost").
+//
+// For Slack and Mattermost the whole webhook URL is the credential, so no
+// error returned from here wraps with %w anything net/http produced, and no
+// text borrowed from the far end is echoed raw: both go through the helpers
+// in sanitize.go. The alerter logs what this returns and writes it to
+// notification_history.error_message, both of which are read by people who
+// are not entitled to the credential.
 func sendWebhookNotification(
 	ctx context.Context,
 	httpClient *http.Client,
@@ -56,22 +63,29 @@ func sendWebhookNotification(
 	// Send HTTP POST to webhook URL
 	req, err := http.NewRequestWithContext(ctx, "POST", webhookURL, strings.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		// http.NewRequestWithContext returns a *url.Error for a
+		// malformed URL, and that carries the whole webhook URL, which
+		// for Slack and Mattermost is the credential itself; report
+		// only the redacted form.
+		return fmt.Errorf("failed to create request: %s", sanitizeWebhookEcho(err.Error()))
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to send %s notification: %w", serviceName, err)
+		return fmt.Errorf("failed to send %s notification: %s",
+			serviceName, webhookTransportError(err))
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		if readErr != nil {
-			return fmt.Errorf("%s webhook returned %d (failed to read body: %v)", serviceName, resp.StatusCode, readErr)
+			return fmt.Errorf("%s webhook returned %d (failed to read body: %s)",
+				serviceName, resp.StatusCode, sanitizeWebhookEcho(readErr.Error()))
 		}
-		return fmt.Errorf("%s webhook returned %d: %s", serviceName, resp.StatusCode, string(respBody))
+		return fmt.Errorf("%s webhook returned %d: %s",
+			serviceName, resp.StatusCode, sanitizeWebhookEcho(string(respBody)))
 	}
 
 	return nil

@@ -964,6 +964,8 @@ func (h *NotificationChannelHandler) testChannel(w http.ResponseWriter, r *http.
 		}
 
 		if err := sendTestWebhook(*channel.WebhookURL, displayType); err != nil {
+			// sendTestWebhook never puts the webhook URL, which is
+			// itself the credential, in its error.
 			log.Printf("[ERROR] Failed to send test webhook: %v", err)
 			RespondError(w, http.StatusBadGateway, "Failed to send test webhook")
 			return
@@ -1014,6 +1016,8 @@ func (h *NotificationChannelHandler) testChannel(w http.ResponseWriter, r *http.
 			derefStr(channel.AuthType),
 			derefStr(channel.AuthCredentials),
 		); err != nil {
+			// sendTestGenericWebhook never puts the endpoint URL, which
+			// may carry a credential in its path, in its error.
 			log.Printf("[ERROR] Failed to send test webhook: %v", err)
 			RespondError(w, http.StatusBadGateway, "Failed to send test webhook")
 			return

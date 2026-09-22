@@ -665,3 +665,69 @@ func TestRunSimpleStatement_LimitAppliesPerResult(t *testing.T) {
 		t.Error("expected the batched result to be reported as truncated")
 	}
 }
+
+// TestRunSimpleStatement_EmptyResult covers the normalisation of a
+// result that returns no rows at all: Rows must be an empty array rather
+// than null, so that the JSON the client receives has the same shape as
+// a result that did return rows.
+func TestRunSimpleStatement_EmptyResult(t *testing.T) {
+	_, pool, _, cleanup := newQueryExecTestHandler(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	poolConn, err := pool.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("Failed to acquire a connection: %v", err)
+	}
+	defer poolConn.Release()
+
+	result := runSimpleStatement(ctx, poolConn.Conn().PgConn(),
+		"SELECT 1 AS g WHERE false", 5, 0)
+
+	if result.Error != "" {
+		t.Fatalf("unexpected error: %s", result.Error)
+	}
+	if result.Rows == nil {
+		t.Error("expected an empty row slice rather than nil")
+	}
+	if len(result.Rows) != 0 || result.RowCount != 0 {
+		t.Errorf("rows = %d, row count = %d, want 0 and 0",
+			len(result.Rows), result.RowCount)
+	}
+	if result.Truncated {
+		t.Error("an empty result must not be reported as truncated")
+	}
+	if len(result.Columns) != 1 || result.Columns[0] != "g" {
+		t.Errorf("columns = %v, want [g]", result.Columns)
+	}
+}
+
+// TestSimpleRowValues covers the rendering of one simple-protocol row,
+// where a NULL column arrives as a nil byte slice and is reported as the
+// text NULL, as it is on the pgx path.
+func TestSimpleRowValues(t *testing.T) {
+	tests := []struct {
+		name string
+		row  [][]byte
+		want []string
+	}{
+		{"no columns", [][]byte{}, []string{}},
+		{"values", [][]byte{[]byte("a"), []byte("1")}, []string{"a", "1"}},
+		{"null column", [][]byte{nil, []byte("x")}, []string{"NULL", "x"}},
+		{"empty string", [][]byte{[]byte("")}, []string{""}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := simpleRowValues(tt.row)
+			if len(got) != len(tt.want) {
+				t.Fatalf("values = %v, want %v", got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("values[%d] = %q, want %q", i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}

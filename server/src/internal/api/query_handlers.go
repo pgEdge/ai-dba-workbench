@@ -742,23 +742,12 @@ func splitExplainOptionEntries(options string) []string {
 	i := 0
 
 	for i < len(options) {
+		if j := skipNonCode(options, i); j != i {
+			i = j
+			continue
+		}
+
 		ch := options[i]
-
-		if isQuoteStart(options, i) {
-			i = skipQuoted(options, i)
-			continue
-		}
-		if ch == '-' && i+1 < len(options) && options[i+1] == '-' {
-			for i < len(options) && options[i] != '\n' {
-				i++
-			}
-			continue
-		}
-		if ch == '/' && i+1 < len(options) && options[i+1] == '*' {
-			i = skipBlockComment(options, i)
-			continue
-		}
-
 		switch {
 		case ch == '(':
 			depth++
@@ -789,23 +778,12 @@ func splitExplainOptions(s string) (options, remainder string, ok bool) {
 	depth := 0
 	i := 0
 	for i < len(s) {
-		ch := s[i]
+		if j := skipNonCode(s, i); j != i {
+			i = j
+			continue
+		}
 
-		if isQuoteStart(s, i) {
-			i = skipQuoted(s, i)
-			continue
-		}
-		if ch == '-' && i+1 < len(s) && s[i+1] == '-' {
-			for i < len(s) && s[i] != '\n' {
-				i++
-			}
-			continue
-		}
-		if ch == '/' && i+1 < len(s) && s[i+1] == '*' {
-			i = skipBlockComment(s, i)
-			continue
-		}
-		switch ch {
+		switch s[i] {
 		case '(':
 			depth++
 		case ')':
@@ -919,6 +897,35 @@ func skipBlockComment(s string, i int) int {
 	return i
 }
 
+// skipNonCode returns the index just past the quoted literal or comment
+// starting at s[i], or i itself when s[i] does not begin one. It is the
+// step every scan over statement text shares: a quoted string, a quoted
+// identifier (including the prefixed E'...', U&'...' and U&"..." forms),
+// a line comment or a block comment holds text rather than SQL, so a
+// comma, parenthesis or $N inside one must not be read as code. An
+// unterminated literal or comment runs to the end of the string, which
+// ends the caller's scan rather than resuming inside the quoted text.
+//
+// Dollar-quoted strings are not handled here: only containsDollarParam
+// scans text that can contain one, and it has to inspect the dollar sign
+// itself to tell a $tag$ literal from a $N placeholder.
+func skipNonCode(s string, i int) int {
+	if isQuoteStart(s, i) {
+		return skipQuoted(s, i)
+	}
+	if s[i] == '-' && i+1 < len(s) && s[i+1] == '-' {
+		j := i
+		for j < len(s) && s[j] != '\n' {
+			j++
+		}
+		return j
+	}
+	if s[i] == '/' && i+1 < len(s) && s[i+1] == '*' {
+		return skipBlockComment(s, i)
+	}
+	return i
+}
+
 // nextSQLWord splits the leading identifier-character run off s,
 // returning that word and the rest of the string. The word is empty
 // when s does not start with an identifier character.
@@ -992,36 +999,31 @@ func needsSimpleProtocol(statements []string) bool {
 func containsDollarParam(s string) bool {
 	i := 0
 	for i < len(s) {
-		ch := s[i]
-
-		switch {
-		case isQuoteStart(s, i):
-			i = skipQuoted(s, i)
-		case ch == '-' && i+1 < len(s) && s[i+1] == '-':
-			for i < len(s) && s[i] != '\n' {
-				i++
-			}
-		case ch == '/' && i+1 < len(s) && s[i+1] == '*':
-			i = skipBlockComment(s, i)
-		case ch == '$':
-			// A dollar-quoted string opens here, or this is a
-			// placeholder, or it is a bare dollar sign.
-			if tag := scanDollarTag(s, i); tag != "" {
-				i += len(tag)
-				closeIdx := strings.Index(s[i:], tag)
-				if closeIdx < 0 {
-					return false
-				}
-				i += closeIdx + len(tag)
-				continue
-			}
-			if i+1 < len(s) && s[i+1] >= '1' && s[i+1] <= '9' {
-				return true
-			}
-			i++
-		default:
-			i++
+		if j := skipNonCode(s, i); j != i {
+			i = j
+			continue
 		}
+
+		if s[i] != '$' {
+			i++
+			continue
+		}
+
+		// A dollar-quoted string opens here, or this is a placeholder,
+		// or it is a bare dollar sign.
+		if tag := scanDollarTag(s, i); tag != "" {
+			i += len(tag)
+			closeIdx := strings.Index(s[i:], tag)
+			if closeIdx < 0 {
+				return false
+			}
+			i += closeIdx + len(tag)
+			continue
+		}
+		if i+1 < len(s) && s[i+1] >= '1' && s[i+1] <= '9' {
+			return true
+		}
+		i++
 	}
 	return false
 }
@@ -1327,45 +1329,49 @@ func rollbackSimple(
 // closes cleanly and the connection stays usable for the rest of the
 // batch and for the transaction control around it.
 func runSimpleStatement(ctx context.Context, pgConn *pgconn.PgConn, stmt string, limit int, connectionID int) statementResult {
-	mrr := pgConn.Exec(ctx, stmt)
+	set := &simpleResultSet{limit: limit}
+	if err := set.read(pgConn.Exec(ctx, stmt), connectionID); err != nil {
+		return statementResult{
+			Query: stmt,
+			Error: safeQueryError("Query error", err),
+		}
+	}
 
-	var columns []string
-	var resultRows [][]string
+	if set.rows == nil {
+		set.rows = [][]string{}
+	}
+
+	return statementResult{
+		Columns:   set.columns,
+		Rows:      set.rows,
+		RowCount:  len(set.rows),
+		Truncated: set.truncated,
+		Query:     stmt,
+	}
+}
+
+// simpleResultSet accumulates the columns and rows of a simple-protocol
+// result, bounded by limit.
+type simpleResultSet struct {
+	limit     int
+	columns   []string
+	rows      [][]string
+	truncated bool
+}
+
+// read drains every result of mrr into the set, closing both the
+// individual result readers and mrr itself, and returns the first error
+// either close reported. Reading stops at the first failing result,
+// whose error is the one the caller reports.
+func (rs *simpleResultSet) read(
+	mrr *pgconn.MultiResultReader,
+	connectionID int,
+) error {
 	var failure error
-	truncated := false
 
 	for mrr.NextResult() {
 		rr := mrr.ResultReader()
-
-		// Extract column names from field descriptions
-		fds := rr.FieldDescriptions()
-		if columns == nil {
-			columns = make([]string, len(fds))
-			for i, fd := range fds {
-				columns[i] = string(fd.Name)
-			}
-		}
-
-		for rr.NextRow() {
-			if len(resultRows) >= limit {
-				// Keep reading so the reader closes cleanly, but stop
-				// buffering: an unbounded EXPLAIN or SELECT would
-				// otherwise hold the whole result set in memory.
-				truncated = true
-				continue
-			}
-
-			row := rr.Values()
-			values := make([]string, len(row))
-			for i, col := range row {
-				if col == nil {
-					values[i] = "NULL"
-				} else {
-					values[i] = string(col)
-				}
-			}
-			resultRows = append(resultRows, values)
-		}
+		rs.readResult(rr)
 
 		if _, err := rr.Close(); err != nil {
 			log.Printf("[ERROR] Simple query close failed (connection=%d): %v",
@@ -1378,32 +1384,53 @@ func runSimpleStatement(ctx context.Context, pgConn *pgconn.PgConn, stmt string,
 	// The multi-result reader is always closed, including after a
 	// failing result: leaving it open keeps the connection busy, and the
 	// caller's ROLLBACK would then fail to reach the server.
-	if err := mrr.Close(); err != nil {
-		if failure == nil {
-			log.Printf("[ERROR] Simple query multi-result close failed (connection=%d): %v",
-				connectionID, err)
-			failure = err
+	if err := mrr.Close(); err != nil && failure == nil {
+		log.Printf("[ERROR] Simple query multi-result close failed (connection=%d): %v",
+			connectionID, err)
+		failure = err
+	}
+
+	return failure
+}
+
+// readResult appends one result's rows to the set, taking the column
+// names from the first result that carries any. Every row is read so
+// that the reader closes cleanly, but rows past the limit are counted
+// rather than retained.
+func (rs *simpleResultSet) readResult(rr *pgconn.ResultReader) {
+	// Extract column names from field descriptions
+	if rs.columns == nil {
+		fds := rr.FieldDescriptions()
+		rs.columns = make([]string, len(fds))
+		for i, fd := range fds {
+			rs.columns[i] = string(fd.Name)
 		}
 	}
 
-	if failure != nil {
-		return statementResult{
-			Query: stmt,
-			Error: safeQueryError("Query error", failure),
+	for rr.NextRow() {
+		if len(rs.rows) >= rs.limit {
+			// Keep reading so the reader closes cleanly, but stop
+			// buffering: an unbounded EXPLAIN or SELECT would
+			// otherwise hold the whole result set in memory.
+			rs.truncated = true
+			continue
+		}
+		rs.rows = append(rs.rows, simpleRowValues(rr.Values()))
+	}
+}
+
+// simpleRowValues renders one simple-protocol row as strings, with a
+// NULL column reported as the text NULL, matching the pgx path.
+func simpleRowValues(row [][]byte) []string {
+	values := make([]string, len(row))
+	for i, col := range row {
+		if col == nil {
+			values[i] = "NULL"
+		} else {
+			values[i] = string(col)
 		}
 	}
-
-	if resultRows == nil {
-		resultRows = [][]string{}
-	}
-
-	return statementResult{
-		Columns:   columns,
-		Rows:      resultRows,
-		RowCount:  len(resultRows),
-		Truncated: truncated,
-		Query:     stmt,
-	}
+	return values
 }
 
 // formatValueForJSON converts a database value to a string for JSON

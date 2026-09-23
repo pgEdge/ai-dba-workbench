@@ -510,22 +510,36 @@ project adheres to
   group grant needed on the owning account. A scope kind left
   unset, or holding the relevant wildcard, stays unrestricted
   as before, and a session login is unaffected throughout,
-  because a session carries no token. An endpoint reserved for
-  superusers that names no permission, such as the RBAC audit
-  log at `GET /api/v1/rbac/audit`, refuses a token whose admin
-  scope has been narrowed, because a gate that names no
-  permission has nothing to intersect against. Everything
-  fails closed: a scope that cannot be read, and an API-token
-  request that carries no token identifier, are denied. This
-  is a breaking change for existing integrations, because a
-  superuser-owned token that carries an explicit scope will
-  start receiving `403 Forbidden` where it previously
-  succeeded, and there is no configuration option that
-  restores the old behaviour. Review every token owned by a
-  superuser before upgrading; where one is refused afterwards,
-  either clear the token's scope, add the relevant wildcard to
-  the scope, or narrow what the token is asked to do so that
-  it matches the scope the token holds. (#471)
+  because a session carries no token. The two endpoints
+  reserved for superusers that name no permission, the RBAC
+  audit log at `GET /api/v1/rbac/audit` and a group's admin
+  permissions at `/api/v1/rbac/groups/{id}/permissions`,
+  refuse a token whose admin scope has been narrowed, because
+  a gate that names no permission has nothing to intersect
+  against. A public MCP tool is now bound by the token's MCP
+  scope as well, for a token of any owner, so a token whose
+  MCP scope names specific tools can no longer call
+  `store_memory`, `recall_memories` or `delete_memory` unless
+  the scope names them too (#482). Setting a token's MCP
+  scope to an identifier that is not registered is refused
+  with `400 Bad Request`, where the name used to be dropped
+  silently and a list of unknown names left the token
+  unrestricted. Everything fails closed: a scope that cannot
+  be read, and an API-token request that carries no token
+  identifier, are denied, and the `list_connections` tool
+  returns an error rather than every connection when the
+  caller's visible connections cannot be resolved. This is a
+  breaking change for existing integrations, because a token
+  that carries an explicit scope, most often one owned by a
+  superuser, will start receiving `403 Forbidden` where it
+  previously succeeded, and there is no configuration option
+  that restores the old behaviour. Review every scoped token
+  before upgrading, starting with those owned by a superuser
+  and any whose MCP scope names specific tools; where one is
+  refused afterwards, either clear the token's scope, add the
+  relevant wildcard to the scope, or narrow what the token is
+  asked to do so that it matches the scope the token holds.
+  (#471)
 
 - Change the alerter's default Gemini reasoning model from
   `gemini-2.5-flash` to `gemini-3.6-flash`. Google no longer offers

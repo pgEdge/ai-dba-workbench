@@ -37,6 +37,12 @@ The effective access for a scoped token equals the intersection of the owner's
 access and the token scope. A superuser holds every privilege, so the
 intersection for a superuser's token is the token scope itself.
 
+A scope type left empty places no restriction on that type, so setting a
+scope type to an empty list lifts the restriction rather than withdrawing
+access. The MCP privilege scope applies to public MCP tools as well, so a
+token whose MCP scope names specific tools can call only those tools. The
+server refuses an MCP scope that names an identifier it does not recognise.
+
 !!! note
 
     A token cannot exceed the access level of the owner.

@@ -1624,9 +1624,10 @@ project adheres to
   string is now assembled with the URL builder, which escapes the path
   and the query by construction, and a name that cannot name a real
   database, being empty, longer than 63 bytes, or carrying a NUL or
-  another control character, is refused at all three call sites. Stored
-  connections themselves are unchanged, and a caller who could not
-  already reach a connection still cannot. (#530)
+  another control character, is refused at all three call sites and
+  when a session's database selection is saved. Stored connections
+  themselves are unchanged, and a caller who could not already reach a
+  connection still cannot. (#530)
 
 - Bound the rows held in memory when a statement runs over the simple
   query protocol, which is the path taken by an `EXPLAIN` containing a
@@ -1660,7 +1661,12 @@ project adheres to
   The test for a `$N` placeholder now ignores one that appears inside a
   quoted string, a dollar-quoted body or a comment, and understands the
   `E'...'` and `U&'...'` literal forms, so an `EXPLAIN` over a query
-  containing a literal `$1` is no longer misrouted. Statements that do
+  containing a literal `$1` is no longer misrouted. The keyword scans
+  behind the classification likewise read code only, skipping quoted
+  strings, dollar-quoted bodies, quoted identifiers and comments, so a
+  keyword inside one no longer marks a read as a write, and a quote or
+  comment marker inside a dollar-quoted body no longer hides a write
+  that follows it. Statements that do
   run over the simple query protocol are now held inside the same
   read-only transaction as the rest of the read path. The fix needs no
   restart beyond the upgrade itself and no database migration. (#530)

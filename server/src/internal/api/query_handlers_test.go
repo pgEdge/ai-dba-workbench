@@ -974,6 +974,10 @@ func TestScanDollarTag(t *testing.T) {
 		{"mid_string", "SELECT $fn$code$fn$", 7, "$fn$"},
 		{"single_dollar", "$", 0, ""},
 		{"out_of_bounds", "abc", 5, ""},
+		{"identifier_continuation", "a$q$b$q$", 1, ""},
+		{"after_dollar", "a$$b$$", 2, ""},
+		{"after_non_ascii_byte", "\u00e9$q$x$q$", 2, ""},
+		{"after_paren", "($q$x$q$", 1, "$q$"},
 	}
 
 	for _, tt := range tests {

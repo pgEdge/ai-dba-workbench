@@ -745,17 +745,19 @@ func (s *AuthStore) LinkFederatedIdentity(username, issuer, subject string, reli
 	// OIDC checks in config.validateConfig), and a federated login only ever
 	// looks up the issuer it was configured with, so a link to anything
 	// else would create an account that no login can reach. Refusing it
-	// here turns a mistyped -oidc-issuer into an error instead.
+	// here turns a mistyped -issuer into an error instead.
+	//
+	// An issuer never carries credentials either, and one that did would
+	// be stored in external_subject and later reported as auth_issuer, so
+	// userinfo is refused first, whatever the scheme. Neither error echoes
+	// the value: a string that does not even parse can still hold a
+	// password, and quoting it would put that on the terminal or in a log.
 	issuerURL, err := url.Parse(issuer)
-	if err != nil || issuerURL.Scheme != "https" || issuerURL.Host == "" {
-		return "", fmt.Errorf("issuer %q is not a valid https:// URL", issuer)
-	}
-	// An issuer never carries credentials, and one that did would be
-	// stored in external_subject and later reported as auth_issuer. The
-	// error deliberately does not echo the value, so the credentials do
-	// not reach the terminal or a log either.
-	if issuerURL.User != nil {
+	if err == nil && issuerURL.User != nil {
 		return "", fmt.Errorf("issuer must not contain user credentials")
+	}
+	if err != nil || issuerURL.Scheme != "https" || issuerURL.Host == "" {
+		return "", fmt.Errorf("issuer is not a valid https:// URL")
 	}
 	key := ExternalSubjectKey(issuer, subject)
 

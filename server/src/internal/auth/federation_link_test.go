@@ -281,6 +281,9 @@ func TestLinkFederatedIdentityArgumentErrors(t *testing.T) {
 		{"issuer with a control character", "kate", "https://idp.example.com/\x1b[2J", linkTestSubject, "not a valid https:// URL"},
 		{"issuer with user credentials", "kate", "https://user:pass@idp.example.com", linkTestSubject, "must not contain user credentials"},
 		{"issuer with a bare user name", "kate", "https://user@idp.example.com", linkTestSubject, "must not contain user credentials"},
+		{"http issuer with user credentials", "kate", "http://user:pass@idp.example.com", linkTestSubject, "must not contain user credentials"},
+		{"ftp issuer with user credentials", "kate", "ftp://user:pass@idp.example.com", linkTestSubject, "must not contain user credentials"},
+		{"unparseable issuer with user credentials", "kate", "https://user:pass@idp.example.com/%zz", linkTestSubject, "not a valid https:// URL"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

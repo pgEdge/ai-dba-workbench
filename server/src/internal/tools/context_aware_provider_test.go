@@ -20,6 +20,7 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
 	"github.com/pgedge/ai-workbench/server/internal/resources"
 	"golang.org/x/crypto/bcrypt"
+	"gopkg.in/yaml.v3"
 )
 
 // TestNewContextAwareProvider tests provider creation
@@ -1240,5 +1241,29 @@ func TestContextAwareProvider_GetClient_NilClientResolver(t *testing.T) {
 	}
 	if err.Error() != "no database connection configured" {
 		t.Errorf("expected exact 'no database connection configured', got: %q", err.Error())
+	}
+}
+
+// TestContextAwareProvider_RegisterDatabaseTools_TestQueryAlwaysRegistered
+// verifies at the registration layer that test_query cannot be switched
+// off from a configuration file, whilst a switchable tool configured the
+// same way is still switched off.
+func TestContextAwareProvider_RegisterDatabaseTools_TestQueryAlwaysRegistered(t *testing.T) {
+	cfg := &config.Config{}
+	raw := "builtins:\n  tools:\n    test_query: false\n    query_database: false\n"
+	if err := yaml.Unmarshal([]byte(raw), cfg); err != nil {
+		t.Fatalf("failed to unmarshal configuration: %v", err)
+	}
+	resourceReg := resources.NewContextAwareRegistry(nil, cfg, nil, nil)
+	provider := NewContextAwareProvider(nil, resourceReg, nil, cfg, nil, nil, nil)
+
+	registry := NewRegistry()
+	provider.registerDatabaseTools(registry, nil)
+
+	if _, ok := registry.Get("test_query"); !ok {
+		t.Error("test_query was not registered with test_query: false configured")
+	}
+	if _, ok := registry.Get("query_database"); ok {
+		t.Error("query_database was registered with query_database: false configured")
 	}
 }

@@ -1346,8 +1346,9 @@ func TestRBACHandler_GetUserPrivileges_PermissionDenied(t *testing.T) {
 
 // TestDescribeAuthSource covers the mapping from a stored row to the pair of
 // fields every user object carries, including the two rows a handler test
-// cannot easily produce: one with no auth_source at all, and a federated one
-// whose stored identity does not parse.
+// cannot easily produce: one with no auth_source at all, one with a source this
+// build does not know, and a federated one whose stored identity does not
+// parse.
 func TestDescribeAuthSource(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -1361,9 +1362,28 @@ func TestDescribeAuthSource(t *testing.T) {
 			wantSource: auth.AuthSourceLocal,
 		},
 		{
-			name:       "empty auth source reports as local",
+			// Login refuses a password to anything but exactly local, so
+			// an empty value must not be reported as local either.
+			name:       "empty auth source reports as unknown",
 			user:       auth.StoredUser{},
-			wantSource: auth.AuthSourceLocal,
+			wantSource: authSourceUnknown,
+		},
+		{
+			name: "empty auth source still reports a parsable issuer",
+			user: auth.StoredUser{
+				ExternalSubject: auth.ExternalSubjectKey("https://idp.example.com", "subject-1"),
+			},
+			wantSource: authSourceUnknown,
+			wantIssuer: "https://idp.example.com",
+		},
+		{
+			name: "an unexpected source is passed through as stored",
+			user: auth.StoredUser{
+				AuthSource:      "saml",
+				ExternalSubject: auth.ExternalSubjectKey("https://idp.example.com", "subject-1"),
+			},
+			wantSource: "saml",
+			wantIssuer: "https://idp.example.com",
 		},
 		{
 			name: "a local row never reports an issuer",

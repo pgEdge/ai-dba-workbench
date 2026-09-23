@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -739,6 +740,14 @@ func (s *AuthStore) LinkFederatedIdentity(username, issuer, subject string, reli
 	}
 	if issuer == "" || subject == "" {
 		return "", fmt.Errorf("an issuer and a subject are both required")
+	}
+	// The configured issuer must be an https:// URL with a host (see the
+	// OIDC checks in config.validateConfig), and a federated login only ever
+	// looks up the issuer it was configured with, so a link to anything
+	// else would create an account that no login can reach. Refusing it
+	// here turns a mistyped -oidc-issuer into an error instead.
+	if issuerURL, err := url.Parse(issuer); err != nil || issuerURL.Scheme != "https" || issuerURL.Host == "" {
+		return "", fmt.Errorf("issuer %q is not a valid https:// URL", issuer)
 	}
 	key := ExternalSubjectKey(issuer, subject)
 

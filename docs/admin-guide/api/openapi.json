@@ -13277,10 +13277,11 @@
           },
           "auth_source": {
             "type": "string",
-            "description": "How the account signs in: local for a password held by the Workbench, oidc for an account federated to an identity provider",
+            "description": "How the account signs in: local for a password held by the Workbench, oidc for an account federated to an identity provider, and unknown for a stored account with no recorded source, which cannot sign in with a password",
             "enum": [
               "local",
-              "oidc"
+              "oidc",
+              "unknown"
             ]
           },
           "display_name": {
@@ -13974,10 +13975,11 @@
           },
           "auth_source": {
             "type": "string",
-            "description": "How the account signs in: local for a password held by the Workbench, oidc for an account federated to an identity provider",
+            "description": "How the account signs in: local for a password held by the Workbench, oidc for an account federated to an identity provider, and unknown for a stored account with no recorded source, which cannot sign in with a password",
             "enum": [
               "local",
-              "oidc"
+              "oidc",
+              "unknown"
             ]
           },
           "connection_privileges": {

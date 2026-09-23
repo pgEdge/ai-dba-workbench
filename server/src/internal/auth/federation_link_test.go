@@ -274,6 +274,11 @@ func TestLinkFederatedIdentityArgumentErrors(t *testing.T) {
 		{"no issuer", "kate", "", linkTestSubject, "issuer and a subject"},
 		{"no subject", "kate", linkTestIssuer, "", "issuer and a subject"},
 		{"unknown user", "nobody", linkTestIssuer, linkTestSubject, "user not found"},
+		{"http issuer", "kate", "http://idp.example.com", linkTestSubject, "not a valid https:// URL"},
+		{"issuer without scheme", "kate", "idp.example.com", linkTestSubject, "not a valid https:// URL"},
+		{"issuer without host", "kate", "https://", linkTestSubject, "not a valid https:// URL"},
+		{"unparseable issuer", "kate", "https://idp.example.com/%zz", linkTestSubject, "not a valid https:// URL"},
+		{"issuer with a control character", "kate", "https://idp.example.com/\x1b[2J", linkTestSubject, "not a valid https:// URL"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -285,6 +290,14 @@ func TestLinkFederatedIdentityArgumentErrors(t *testing.T) {
 				t.Fatalf("error = %v, want it to contain %q", err, tt.want)
 			}
 		})
+	}
+
+	// A refused issuer must leave the account exactly as it was: still
+	// local, and still without an external subject.
+	authSource, subject, _ := linkedAccountState(t, store, "kate")
+	if authSource != AuthSourceLocal || subject != "" {
+		t.Fatalf("after refused links: auth_source = %q, external_subject = %q; want local and empty",
+			authSource, subject)
 	}
 }
 

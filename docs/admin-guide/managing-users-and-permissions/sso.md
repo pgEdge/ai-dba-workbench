@@ -328,6 +328,11 @@ where the issuer and subject come from:
        -issuer "https://idp.example.com" -subject "8a7f-sub"
    ```
 
+   The command refuses an issuer that is not an `https://` URL with a
+   host, since the server only accepts such an issuer in its own
+   configuration and no login could reach an account linked to
+   anything else.
+
 4. Ask the person to sign in again. The login now resolves to the
    linked account, and group reconciliation runs against it.
 
@@ -696,21 +701,22 @@ The following listing shows two federated accounts and four local ones:
 Auth store: /var/lib/ai-workbench/data/auth.db
 
 Users:
-===============================================================================================================================
-Username             Created           Last Login        Status               Authentication               Notes
--------------------------------------------------------------------------------------------------------------------------------
-Alice                2026-06-10 13:24  Never             Enabled              https://idp.example.com      Developer
-Bob                  2026-06-10 13:31  Never             DISABLED             Local                        developer
-Carol                2026-06-10 13:32  Never             Enabled              https://idp.example.com      Management
-Dan                  2026-06-10 13:37  Never             Enabled              Local                        sales
-admin                2026-06-09 11:59  2026-06-10 12:27  Enabled              Local                        management
-inventory            2026-06-10 13:31  Never             Enabled              Local                        Software
-===============================================================================================================================
+=================================================================================================================
+Username             Created           Last Login        Status               Notes                Authentication
+-----------------------------------------------------------------------------------------------------------------
+Alice                2026-06-10 13:24  Never             Enabled              Developer            https://idp.example.com
+Bob                  2026-06-10 13:31  Never             DISABLED             developer            Local
+Carol                2026-06-10 13:32  Never             Enabled              Management           https://idp.example.com
+Dan                  2026-06-10 13:37  Never             Enabled              sales                Local
+admin                2026-06-09 11:59  2026-06-10 12:27  Enabled              management           Local
+inventory            2026-06-10 13:31  Never             Enabled              Software             Local
+=================================================================================================================
 ```
 
 The column reads `Local` for an account that authenticates here, and the
-issuer for an account the provider owns. An issuer too long for the
-column is elided with a trailing `...`, in the same way as a long note.
+issuer for an account the provider owns. The column comes last and is
+printed in full, so two issuers that differ only near the end, such as
+two tenants or realms of the same provider, remain distinguishable.
 The column reads `OIDC` in the rare case of an account marked as
 federated whose stored identity cannot be parsed, which is worth
 investigating because a login can no longer match such an account.

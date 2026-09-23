@@ -216,7 +216,7 @@ func (h *RBACHandler) updateUser(w http.ResponseWriter, r *http.Request, userID 
 		// on a federated user would otherwise have the whole transaction
 		// rolled back behind a generic failure, and could reasonably
 		// believe they had disabled the account when they had not.
-		if user.AuthSource != "" && user.AuthSource != auth.AuthSourceLocal {
+		if user.AuthSource != auth.AuthSourceLocal {
 			RespondError(w, http.StatusBadRequest,
 				"This account signs in through an identity provider, so it cannot be "+
 					"given a password. Remove the password and apply the other changes, "+
@@ -408,25 +408,34 @@ func (h *RBACHandler) getUserPrivileges(w http.ResponseWriter, r *http.Request, 
 	RespondJSON(w, http.StatusOK, resp)
 }
 
+// authSourceUnknown is what describeAuthSource reports for a row whose stored
+// auth_source is empty, so that the field is never blank in a response.
+const authSourceUnknown = "unknown"
+
 // describeAuthSource reports how a stored account signs in, as the pair of
 // values every user object in this package carries: the authentication source
 // itself, and the issuer of the identity provider that owns the account.
 //
-// A row with an empty auth_source is reported as local, so the field is never
-// blank in a response: the column was added with federation, and any row that
-// predates it, or that some other path left empty, is by definition an account
-// that signs in with a password here.
+// Only a stored value of exactly local is reported as local, which is the
+// reading AuthenticateUser applies when it refuses password login to anything
+// else. Every other value is passed through as it is stored, with the issuer
+// when the external subject parses, so that an unexpected source is shown for
+// what it is rather than dressed up as oidc. The one exception is an empty
+// value, which is reported as unknown: the column is NOT NULL DEFAULT 'local',
+// so no supported path writes one, but calling such a row local would tell an
+// administrator that it accepts a password when login refuses it, and calling
+// it oidc would name a provider nothing on the row supports.
 //
 // The issuer is empty for a local account, and also for a federated one whose
 // stored external subject cannot be parsed; a caller renders its own fallback
 // rather than being handed a half-parsed key. The subject is never reported.
 func describeAuthSource(user *auth.StoredUser) (source, issuer string) {
 	source = user.AuthSource
-	if source == "" {
-		source = auth.AuthSourceLocal
-	}
 	if source == auth.AuthSourceLocal {
 		return source, ""
+	}
+	if source == "" {
+		source = authSourceUnknown
 	}
 	return source, auth.IssuerFromExternalSubject(user.ExternalSubject)
 }

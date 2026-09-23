@@ -153,16 +153,16 @@ The user list includes all currently defined user and service accounts:
 Auth store: /var/lib/ai-workbench/data/auth.db
 
 Users:
-===============================================================================================================================
-Username             Created           Last Login        Status               Authentication               Notes
--------------------------------------------------------------------------------------------------------------------------------
-Alice                2026-06-10 13:24  Never             Enabled              https://idp.example.com      Developer
-Bob                  2026-06-10 13:31  Never             DISABLED             Local                        developer
-Carol                2026-06-10 13:32  Never             Enabled              https://idp.example.com      Management
-Dan                  2026-06-10 13:37  Never             Enabled              Local                        sales
-admin                2026-06-09 11:59  2026-06-10 12:27  Enabled              Local                        management
-inventory            2026-06-10 13:31  Never             Enabled              Local                        Software
-===============================================================================================================================
+=================================================================================================================
+Username             Created           Last Login        Status               Notes                Authentication
+-----------------------------------------------------------------------------------------------------------------
+Alice                2026-06-10 13:24  Never             Enabled              Developer            https://idp.example.com
+Bob                  2026-06-10 13:31  Never             DISABLED             developer            Local
+Carol                2026-06-10 13:32  Never             Enabled              Management           https://idp.example.com
+Dan                  2026-06-10 13:37  Never             Enabled              sales                Local
+admin                2026-06-09 11:59  2026-06-10 12:27  Enabled              management           Local
+inventory            2026-06-10 13:31  Never             Enabled              Software             Local
+=================================================================================================================
 ```
 
 The `Authentication` column reads `Local` for an account that holds a

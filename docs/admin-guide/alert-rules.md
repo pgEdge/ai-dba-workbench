@@ -67,6 +67,8 @@ categories:
   maintenance.
 - System rules monitor CPU, memory, and system
   resources.
+- Availability rules monitor whether the collector
+  is still gathering metrics on schedule.
 
 ## Replication Rules
 

@@ -782,7 +782,10 @@ project adheres to
   `TEST_AI_WORKBENCH_KEEP_DB` flag that keeps the generated database for
   inspection, the reason leftover `ai_workbench_test_*` databases
   accumulate, and the fact that a failed setup makes the package exit
-  successfully without running a single test. (#525)
+  successfully without running a single test. It also names
+  `TestMigration_PgSettings` as the one test that connects directly to
+  the database in `TEST_AI_WORKBENCH_SERVER` and drops its schema.
+  (#525)
 
 - Fix the `pg_stat_statements` collector probe discarding the block
   timing columns on every modern server. The probe chose its query

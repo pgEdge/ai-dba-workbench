@@ -323,6 +323,41 @@ func TestConnectionHandler_SetCurrentConnection_InvalidConnectionID(t *testing.T
 	}
 }
 
+// TestConnectionHandler_SetCurrentConnection_InvalidDatabaseName checks
+// that a database override which could never name a database is refused
+// before it is stored, ahead of the RBAC check and the datastore lookup
+// (both nil here, so reaching either would panic).
+func TestConnectionHandler_SetCurrentConnection_InvalidDatabaseName(t *testing.T) {
+	handler := NewConnectionHandlerWithSecurity(nil, nil, nil, false, nil, nil)
+
+	for _, name := range []string{"", "   ", "db\x00name", strings.Repeat("a", 64)} {
+		dbName := name
+		body, _ := json.Marshal(CurrentConnectionRequest{
+			ConnectionID: 1,
+			DatabaseName: &dbName,
+		})
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/connections/current",
+			bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+
+		handler.setCurrentConnection(rec, req, "test-token-hash")
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("database_name %q: expected status %d, got %d",
+				name, http.StatusBadRequest, rec.Code)
+			continue
+		}
+		var response ErrorResponse
+		if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+			t.Fatalf("Failed to decode response: %v", err)
+		}
+		if !strings.HasPrefix(response.Error, "Invalid database name: ") {
+			t.Errorf("database_name %q: unexpected error %q", name, response.Error)
+		}
+	}
+}
+
 func TestConnectionCreateRequest_JSON(t *testing.T) {
 	sslMode := "require"
 	req := ConnectionCreateRequest{

@@ -137,8 +137,7 @@ func TestQueryTool_ParameterisedQueryIsValidated(t *testing.T) {
 }
 
 // TestQueryTool_ParameterisedMultiStatement covers the split inside
-// the GENERIC_PLAN path: the simple query protocol must be handed one
-// statement at a time.
+// the GENERIC_PLAN path, which plans one statement at a time.
 func TestQueryTool_ParameterisedMultiStatement(t *testing.T) {
 	if !serverSupportsGenericPlan(t) {
 		t.Skip("server predates EXPLAIN (GENERIC_PLAN)")
@@ -153,6 +152,49 @@ func TestQueryTool_ParameterisedMultiStatement(t *testing.T) {
 	if resp.IsError {
 		t.Fatalf("multi-statement parameterised query was rejected: %s",
 			responseText(resp))
+	}
+}
+
+// TestQueryTool_ParameterisedSmuggledCommandsAreNeverRun sends a
+// parameterised query the splitter cannot divide, carrying a COMMIT
+// and a DROP TABLE. Each statement is planned over the extended query
+// protocol, which refuses more than one command, so the table must
+// survive and the query must be rejected.
+func TestQueryTool_ParameterisedSmuggledCommandsAreNeverRun(t *testing.T) {
+	if !serverSupportsGenericPlan(t) {
+		t.Skip("server predates EXPLAIN (GENERIC_PLAN)")
+	}
+
+	pool, _, poolCleanup := newToolsTestPool(t)
+	defer poolCleanup()
+
+	ctx := context.Background()
+	const victim = "test_query_smuggle_victim"
+	if _, err := pool.Exec(ctx,
+		"CREATE TABLE IF NOT EXISTS "+victim+" (a int)"); err != nil {
+		t.Fatalf("failed to create the victim table: %v", err)
+	}
+	defer func() {
+		_, _ = pool.Exec(context.Background(), "DROP TABLE IF EXISTS "+victim)
+	}()
+
+	tool, cleanup := newTestQueryToolClient(t)
+	defer cleanup()
+
+	resp := runTestQuery(t, tool,
+		`SELECT E'\'', $1; COMMIT; DROP TABLE `+victim)
+
+	if !resp.IsError {
+		t.Errorf("a smuggled COMMIT was accepted: %s", responseText(resp))
+	}
+
+	var exists bool
+	if err := pool.QueryRow(ctx, "SELECT to_regclass($1) IS NOT NULL",
+		victim).Scan(&exists); err != nil {
+		t.Fatalf("failed to look up the victim table: %v", err)
+	}
+	if !exists {
+		t.Fatal("the victim table was dropped: test_query ran a smuggled command")
 	}
 }
 

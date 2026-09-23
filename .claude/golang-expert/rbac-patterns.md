@@ -360,12 +360,18 @@ permission rather than `CanAccessConnection` (the Variant 2 gate on
 `updateConnection` and `deleteConnection`) must also call
 `RBACChecker.ConnectionInTokenScope`, before the row is loaded, since
 neither ownership nor `manage_connections` says which connections a
-token was issued for. `SetTokenMCPScopeByNames` returns
-`auth.ErrUnknownMCPPrivilege` for an unregistered identifier, which
-the scope handler maps to 400, because silently dropping it could
-store an empty, and therefore unrestricted, MCP scope. Every
-`VisibleConnectionIDs` caller, `list_connections` included, must
-return on error rather than skip filtering.
+token was issued for; it admits only a `read_write` scope entry,
+because its callers mutate the connection. `SetTokenMCPScopeByNames`
+returns `auth.ErrUnknownMCPPrivilege` for an unregistered identifier,
+which the scope handler maps to 400, because silently dropping it
+could store an empty, and therefore unrestricted, MCP scope. The
+handler also runs `auth.ValidateScopedConnections` before writing any
+scope kind, so a bad access level cannot leave a partial update.
+Every `VisibleConnectionIDs` caller, `list_connections` included,
+must return on error rather than skip filtering, and
+`VisibleConnectionIDs` itself checks `TokenScopeError` before the
+group wildcard return, since a failed scope read leaves that
+wildcard in place.
 
 Everything fails closed: a scope lookup error denies (or, in
 `VisibleConnectionIDs`, is an error rather than "everything"), an

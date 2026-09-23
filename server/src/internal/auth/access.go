@@ -843,6 +843,16 @@ func (rc *RBACChecker) VisibleConnectionIDs(ctx context.Context, lister Connecti
 
 	privs := rc.GetEffectivePrivileges(ctx)
 
+	// A token whose scope could not be read is shown nothing, and the
+	// check has to come before the wildcard return below: a failed read
+	// leaves the owner's group wildcard in place, which would otherwise
+	// enumerate every connection.
+	tokenID := GetTokenIDFromContext(ctx)
+	if tokenID > 0 && privs.TokenScopeError != nil {
+		return nil, false, fmt.Errorf("token %d: connection scope could not be read: %w",
+			tokenID, privs.TokenScopeError)
+	}
+
 	// Check for the ConnectionIDAll wildcard in the effective privileges.
 	// Token scoping is already applied by GetEffectivePrivileges; a
 	// wildcard survives only if both group grants and token scope allow
@@ -894,20 +904,13 @@ func (rc *RBACChecker) VisibleConnectionIDs(ctx context.Context, lister Connecti
 	// after them; otherwise a token issued for one connection enumerates
 	// every connection its owner happens to have. The scope was already
 	// read by GetEffectivePrivileges, so it is intersected from there
-	// rather than with one query per visible connection. A token whose
-	// scope could not be read is shown nothing, for the same reason
-	// CanAccessConnection denies it; a token with no scope at all
-	// (privs.TokenScope nil, no error) is unrestricted.
-	if tokenID := GetTokenIDFromContext(ctx); tokenID > 0 {
-		if privs.TokenScopeError != nil {
-			return nil, false, fmt.Errorf("token %d: connection scope could not be read: %w",
-				tokenID, privs.TokenScopeError)
-		}
-		if privs.TokenScope != nil {
-			for connID := range seen {
-				if !privs.TokenScope.InScope(connID) {
-					delete(seen, connID)
-				}
+	// rather than with one query per visible connection. A token with
+	// no scope at all (privs.TokenScope nil, no error) is unrestricted;
+	// one whose scope could not be read was refused above.
+	if tokenID > 0 && privs.TokenScope != nil {
+		for connID := range seen {
+			if !privs.TokenScope.InScope(connID) {
+				delete(seen, connID)
 			}
 		}
 	}
@@ -994,8 +997,8 @@ func (rc *RBACChecker) HasWriteAccess(ctx context.Context, connectionID int) boo
 }
 
 // ConnectionInTokenScope reports whether the acting API token's
-// connection scope admits connectionID, whatever access the owner
-// holds.
+// connection scope admits connectionID at read_write, whatever access
+// the owner holds, since its callers change or delete the connection.
 //
 // It is for handlers that decide access to a connection by ownership or an
 // admin permission, such as updating or deleting a connection under
@@ -1004,8 +1007,9 @@ func (rc *RBACChecker) HasWriteAccess(ctx context.Context, connectionID int) boo
 // without this a token scoped to one connection could change or delete
 // another (see issue #471). A session caller has no token and is always
 // in scope, as is a token with no connection scope or one holding the
-// wildcard. A token context missing its id, or a scope that cannot be
-// read, is out of scope, because neither may widen access.
+// wildcard at read_write; a read-only scope entry is not. A token
+// context missing its id, or a scope that cannot be read, is out of
+// scope, because neither may widen access.
 func (rc *RBACChecker) ConnectionInTokenScope(ctx context.Context, connectionID int) bool {
 	if rc.authStore == nil {
 		return true
@@ -1013,7 +1017,7 @@ func (rc *RBACChecker) ConnectionInTokenScope(ctx context.Context, connectionID 
 	if tokenContextIncomplete(ctx) {
 		return false
 	}
-	inScope, _ := rc.applyConnectionTokenScope(ctx, connectionID,
+	inScope, level := rc.applyConnectionTokenScope(ctx, connectionID,
 		AccessLevelReadWrite)
-	return inScope
+	return inScope && level == AccessLevelReadWrite
 }

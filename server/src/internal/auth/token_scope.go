@@ -26,6 +26,25 @@ var ErrUnknownMCPPrivilege = errors.New("unknown MCP privilege identifier")
 // Token Scope Management
 // =============================================================================
 
+// ErrInvalidAccessLevel is returned when a connection scope entry names
+// an access level other than read or read_write.
+var ErrInvalidAccessLevel = errors.New("invalid access level")
+
+// ValidateScopedConnections checks that every entry's access level is
+// read or read_write, so that a caller writing several scope kinds can
+// refuse a bad connection scope before writing any of them.
+func ValidateScopedConnections(connections []ScopedConnection) error {
+	for _, conn := range connections {
+		if conn.AccessLevel != AccessLevelRead &&
+			conn.AccessLevel != AccessLevelReadWrite {
+			return fmt.Errorf("%w %q for connection %d: must be %q or %q",
+				ErrInvalidAccessLevel, conn.AccessLevel, conn.ConnectionID,
+				AccessLevelRead, AccessLevelReadWrite)
+		}
+	}
+	return nil
+}
+
 // SetTokenConnectionScope sets the connection scope for a token.
 // If connections is empty, clears all connection scoping (token has no connection restrictions).
 // The change is attributed to the system actor.
@@ -40,14 +59,8 @@ func (s *AuthStore) setTokenConnectionScope(actor Actor, tokenID int64,
 	// SQLite CHECK constraint, so that a bad level is reported as what
 	// it is instead of an opaque insert failure, and so that the rule
 	// is visible to a reader of this code.
-	for _, conn := range connections {
-		if conn.AccessLevel != AccessLevelRead &&
-			conn.AccessLevel != AccessLevelReadWrite {
-			return fmt.Errorf(
-				"invalid access level %q for connection %d: must be %q or %q",
-				conn.AccessLevel, conn.ConnectionID, AccessLevelRead,
-				AccessLevelReadWrite)
-		}
+	if err := ValidateScopedConnections(connections); err != nil {
+		return err
 	}
 
 	s.mu.Lock()

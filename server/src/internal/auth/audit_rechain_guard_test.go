@@ -412,14 +412,16 @@ func TestRechainKeepsThePurgedPrefixLink(t *testing.T) {
 func insertAuditRowAtID(t *testing.T, store *AuthStore, id int64,
 	at time.Time) {
 	t.Helper()
+	occurredAt := at.UTC().Format(auditTimeLayout)
+	prevHash := fmt.Sprintf("prev-%d", id)
+	hash := fmt.Sprintf("hash-%d", id)
 	if _, err := store.db.Exec(`
         INSERT INTO audit_events (
             id, occurred_at, actor_type, actor_name, action, outcome,
             prev_hash, hash, hash_version
         ) VALUES (?, ?, 'system', 'system', 'user.create', 'success',
                   ?, ?, 2)`,
-		id, at.UTC().Format(auditTimeLayout),
-		fmt.Sprintf("prev-%d", id), fmt.Sprintf("hash-%d", id)); err != nil {
+		id, occurredAt, prevHash, hash); err != nil {
 		t.Fatalf("Failed to insert a row at id %d: %v", id, err)
 	}
 }

@@ -327,7 +327,7 @@ func RequirePOST(w http.ResponseWriter, r *http.Request) bool {
 // such bound because their cost does not scale with a caller-supplied list
 // length; these do, so without a cap one authenticated request can cost
 // arbitrarily much, which is a cheap denial of service. It is the companion
-// to maxTopQueriesTimeSpan, which bounds the other multiplier, the window.
+// to maxAggregationTimeSpan, which bounds the other multiplier, the window.
 //
 // One hundred is comfortably above any real estate the web client displays
 // at once (the connection picker lists every visible connection, and an

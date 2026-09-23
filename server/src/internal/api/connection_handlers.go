@@ -649,6 +649,16 @@ func (h *ConnectionHandler) setCurrentConnection(w http.ResponseWriter, r *http.
 		return
 	}
 
+	// Refuse a database override that could never name a database
+	// before it is stored; it is validated again wherever it is read.
+	if req.DatabaseName != nil {
+		if err := database.ValidateDatabaseName(*req.DatabaseName); err != nil {
+			RespondError(w, http.StatusBadRequest,
+				"Invalid database name: "+err.Error())
+			return
+		}
+	}
+
 	// Check RBAC access before persisting the session; otherwise a
 	// caller could pin their session to a connection they cannot use.
 	if canAccess, _ := h.rbacChecker.CanAccessConnection(r.Context(), req.ConnectionID); !canAccess {

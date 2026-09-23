@@ -10,6 +10,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -110,6 +111,8 @@ func TestIssue530_IsReadOnlyStatementExplain(t *testing.T) {
 				"SERIALIZE none, FORMAT JSON) DELETE FROM t", true},
 		{"recognized options lowercase",
 			"explain (verbose, format json) delete from t", true},
+		{"parenthesis inside a dollar-quoted option value",
+			"EXPLAIN (FORMAT $$)$$, ANALYZE) DELETE FROM t", false},
 	}
 
 	for _, tt := range tests {
@@ -163,6 +166,10 @@ func TestIssue530_ContainsDollarParam(t *testing.T) {
 		{"identifier ending in e is not an E literal",
 			"SELECT code'$1", false},
 		{"lone e before a placeholder", "SELECT e, $1", true},
+		{"quote inside a dollar quote then a placeholder",
+			"SELECT $q$'$q$, $1", true},
+		{"dollar continuing an identifier is not a dollar quote",
+			"SELECT a$q$ FROM t WHERE id = $1 -- $q$", true},
 	}
 
 	for _, tt := range tests {
@@ -509,6 +516,9 @@ func TestIssue530_SplitStatementsQuoting(t *testing.T) {
 			[]string{`SELECT U&"a;b"`}},
 		{"real split after a quoted identifier", `SELECT "a;b"; SELECT 2`,
 			[]string{`SELECT "a;b"`, "SELECT 2"}},
+		{"dollar continuing an identifier still splits",
+			"SELECT 1 AS a$q$; SELECT 2 -- $q$",
+			[]string{"SELECT 1 AS a$q$", "SELECT 2 -- $q$"}},
 		{"plain literal still splits after it", `SELECT 'a;b'; SELECT 2`,
 			[]string{`SELECT 'a;b'`, "SELECT 2"}},
 	}
@@ -645,6 +655,25 @@ func TestIssue530_KeywordScansIgnoreNonCode(t *testing.T) {
 		{"genuine writable CTE beside a literal",
 			"WITH c AS (DELETE FROM t WHERE a = 'delete' RETURNING *) " +
 				"SELECT * FROM c", false},
+		{"delete inside a dollar-quoted literal in a CTE",
+			"WITH c AS (SELECT $$delete$$ AS a) SELECT * FROM c", true},
+		{"single quote inside a dollar quote hides nothing",
+			"WITH a AS (SELECT $q$'$q$ AS c), d AS (DELETE FROM t RETURNING *) " +
+				"SELECT * FROM d", false},
+		{"double quote inside a dollar quote hides nothing",
+			`WITH a AS (SELECT $$"$$ AS c), d AS (DELETE FROM t RETURNING *) ` +
+				"SELECT * FROM d", false},
+		{"line comment marker inside a dollar quote hides nothing",
+			"WITH a AS (SELECT $$--$$ AS c), d AS (DELETE FROM t RETURNING *) " +
+				"SELECT * FROM d", false},
+		{"block comment marker inside a dollar quote hides nothing",
+			"WITH a AS (SELECT $$/*$$ AS c), d AS (DELETE FROM t RETURNING *) " +
+				"SELECT * FROM d", false},
+		{"into after a dollar quote holding a quote",
+			"SELECT $$'$$ AS a INTO x FROM t", false},
+		{"dollar continuing an identifier opens no dollar quote",
+			"WITH a AS (SELECT 1 AS c$q$), d AS (DELETE FROM t RETURNING *) " +
+				"SELECT * FROM d -- $q$", false},
 	}
 
 	for _, tt := range tests {
@@ -671,6 +700,11 @@ func TestIssue530_MaskNonCode(t *testing.T) {
 		{"line comment", "SELECT a -- into\nFROM t", "SELECT a        \nFROM t"},
 		{"block comment", "SELECT /* into */ a", "SELECT            a"},
 		{"unterminated literal", "SELECT 'into", "SELECT      "},
+		{"dollar-quoted literal", "SELECT $q$'$q$ AS c", "SELECT " + strings.Repeat(" ", 7) + " AS c"},
+		{"anonymous dollar quote", "SELECT $$x$$", "SELECT      "},
+		{"unterminated dollar quote", "SELECT $q$ into", "SELECT " + strings.Repeat(" ", 8)},
+		{"dollar continuing an identifier", "SELECT a$q$ FROM t", "SELECT a$q$ FROM t"},
+		{"placeholder is code", "SELECT $1", "SELECT $1"},
 		{"empty", "", ""},
 	}
 
@@ -686,5 +720,76 @@ func TestIssue530_MaskNonCode(t *testing.T) {
 					tt.input, len(got), len(tt.input))
 			}
 		})
+	}
+}
+
+// TestIssue530_SetCurrentConnectionStoresValidDatabaseName checks the
+// database override on the path that saves it: a legitimate name is
+// stored and echoed back, and an unknown connection is still refused
+// after the name has passed validation.
+func TestIssue530_SetCurrentConnectionStoresValidDatabaseName(t *testing.T) {
+	ds, pool, cleanupDS := newIssue269ConnectionDatastore(t)
+	defer cleanupDS()
+
+	_, store, cleanupStore := createTestRBACHandler(t)
+	defer cleanupStore()
+
+	const owner = "issue530_session_owner"
+	userID := newTestUser(t, store, owner)
+	rawToken, _, err := store.AuthenticateUser(owner, "Password1234")
+	if err != nil {
+		t.Fatalf("AuthenticateUser: %v", err)
+	}
+	tokenHash := auth.GetTokenHashByRawToken(rawToken)
+
+	const connID = 7530
+	seedIssue269Connection(t, pool, connID, owner, "issue530-conn")
+
+	checker := mockSharingChecker(t, store, connID, owner, false)
+	handler := NewConnectionHandlerWithSecurity(ds, store, checker, false, nil, nil)
+
+	post := func(id int, dbName string) *httptest.ResponseRecorder {
+		body, _ := json.Marshal(CurrentConnectionRequest{
+			ConnectionID: id,
+			DatabaseName: &dbName,
+		})
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/connections/current",
+			bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req = withUser(req, userID)
+		req = withUsername(req, owner)
+		req = withBearerRaw(req, rawToken)
+		rec := httptest.NewRecorder()
+		handler.setCurrentConnection(rec, req, tokenHash)
+		return rec
+	}
+
+	// A name with URL-significant characters is legitimate: escaping,
+	// not rejection, is what keeps it inside the connection string.
+	const dbName = "sales db?x=1"
+	rec := post(connID, dbName)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp CurrentConnectionResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.DatabaseName == nil || *resp.DatabaseName != dbName {
+		t.Errorf("response database_name = %v, want %q", resp.DatabaseName, dbName)
+	}
+	session, err := store.GetConnectionSession(tokenHash)
+	if err != nil {
+		t.Fatalf("GetConnectionSession: %v", err)
+	}
+	if session == nil || session.DatabaseName == nil || *session.DatabaseName != dbName {
+		t.Errorf("stored session = %+v, want database %q", session, dbName)
+	}
+
+	// A connection the owner may reach but which does not exist.
+	missing := mockSharingChecker(t, store, connID+1, owner, false)
+	handler = NewConnectionHandlerWithSecurity(ds, store, missing, false, nil, nil)
+	if rec := post(connID+1, "postgres"); rec.Code != http.StatusBadRequest {
+		t.Errorf("unknown connection: expected 400, got %d", rec.Code)
 	}
 }

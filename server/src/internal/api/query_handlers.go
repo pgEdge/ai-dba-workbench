@@ -68,9 +68,21 @@ const queryTimeout = 30 * time.Second
 // scanDollarTag checks whether sql[i] starts a dollar-quote tag. If a
 // valid tag is found (either $$ or $identifier$), it returns the full
 // tag string. Otherwise it returns an empty string.
+//
+// A dollar sign that continues an identifier, as in foo$bar$ (PostgreSQL
+// allows $ after the first character of an unquoted identifier, and
+// treats any byte from 0x80 up as an identifier character), is part of
+// that identifier rather than the start of a dollar quote, so it yields
+// no tag. Reading one there would let a later $bar$ hide the code in
+// between from the classifier.
 func scanDollarTag(sql string, i int) string {
 	if i >= len(sql) || sql[i] != '$' {
 		return ""
+	}
+	if i > 0 {
+		if prev := sql[i-1]; isIdentChar(prev) || prev == '$' || prev >= 0x80 {
+			return ""
+		}
 	}
 	// Check for $$ (empty tag)
 	if i+1 < len(sql) && sql[i+1] == '$' {
@@ -907,17 +919,24 @@ func skipBlockComment(s string, i int) int {
 // starting at s[i], or i itself when s[i] does not begin one. It is the
 // step every scan over statement text shares: a quoted string, a quoted
 // identifier (including the prefixed E'...', U&'...' and U&"..." forms),
-// a line comment or a block comment holds text rather than SQL, so a
-// comma, parenthesis or $N inside one must not be read as code. An
-// unterminated literal or comment runs to the end of the string, which
-// ends the caller's scan rather than resuming inside the quoted text.
-//
-// Dollar-quoted strings are not handled here: only containsDollarParam
-// scans text that can contain one, and it has to inspect the dollar sign
-// itself to tell a $tag$ literal from a $N placeholder.
+// a dollar-quoted string, a line comment or a block comment holds text
+// rather than SQL, so a comma, parenthesis, keyword or $N inside one
+// must not be read as code, and a quote or comment marker inside a
+// dollar-quoted string must not open a region that swallows the code
+// after it. An unterminated literal or comment runs to the end of the
+// string, which ends the caller's scan rather than resuming inside the
+// quoted text. A $N placeholder is not a dollar quote (see
+// scanDollarTag), so it is left for the caller to see.
 func skipNonCode(s string, i int) int {
 	if isQuoteStart(s, i) {
 		return skipQuoted(s, i)
+	}
+	if tag := scanDollarTag(s, i); tag != "" {
+		end := strings.Index(s[i+len(tag):], tag)
+		if end < 0 {
+			return len(s)
+		}
+		return i + len(tag) + end + len(tag)
 	}
 	if s[i] == '-' && i+1 < len(s) && s[i+1] == '-' {
 		j := i
@@ -1032,20 +1051,10 @@ func containsDollarParam(s string) bool {
 			continue
 		}
 
+		// skipNonCode has already stepped over any dollar-quoted
+		// string, so a dollar sign here is a placeholder or a bare one.
 		if s[i] != '$' {
 			i++
-			continue
-		}
-
-		// A dollar-quoted string opens here, or this is a placeholder,
-		// or it is a bare dollar sign.
-		if tag := scanDollarTag(s, i); tag != "" {
-			i += len(tag)
-			closeIdx := strings.Index(s[i:], tag)
-			if closeIdx < 0 {
-				return false
-			}
-			i += closeIdx + len(tag)
 			continue
 		}
 		if i+1 < len(s) && s[i+1] >= '1' && s[i+1] <= '9' {

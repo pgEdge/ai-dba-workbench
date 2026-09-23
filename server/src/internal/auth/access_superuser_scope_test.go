@@ -561,16 +561,17 @@ func TestVisibleConnectionIDsSuperuserHonoursTokenScope(t *testing.T) {
 
 func TestVisibleConnectionIDsSuperuserUnscopedSeesAll(t *testing.T) {
 	tests := []struct {
-		name  string
-		scope []ScopedConnection
+		name       string
+		scope      []ScopedConnection
+		adminScope []string
 	}{
-		{"no scope", nil},
+		{"no scope", nil, nil},
 		{"wildcard scope", []ScopedConnection{
 			{ConnectionID: ConnectionIDAll, AccessLevel: AccessLevelReadWrite},
-		}},
+		}, nil},
 		// An admin-only scope leaves the connection scope empty, so
 		// connection visibility is untouched by it.
-		{"other scope kinds only", nil},
+		{"other scope kinds only", nil, []string{AdminPermissionWildcard}},
 	}
 
 	for _, tc := range tests {
@@ -580,8 +581,9 @@ func TestVisibleConnectionIDsSuperuserUnscopedSeesAll(t *testing.T) {
 
 			if len(tc.scope) > 0 {
 				f.setConnectionScope(t, tc.scope)
-			} else {
-				f.setAdminScope(t, []string{AdminPermissionWildcard})
+			}
+			if len(tc.adminScope) > 0 {
+				f.setAdminScope(t, tc.adminScope)
 			}
 
 			ids, all, err := f.checker.VisibleConnectionIDs(f.tokenCtx(),
@@ -766,10 +768,14 @@ func TestConnectionInTokenScope(t *testing.T) {
 	}
 
 	f.setConnectionScope(t, []ScopedConnection{
-		{ConnectionID: 1, AccessLevel: AccessLevelRead},
+		{ConnectionID: 1, AccessLevel: AccessLevelReadWrite},
+		{ConnectionID: 3, AccessLevel: AccessLevelRead},
 	})
 	if !f.checker.ConnectionInTokenScope(f.tokenCtx(), 1) {
-		t.Error("Expected the scoped connection to be admitted")
+		t.Error("Expected the read_write scoped connection to be admitted")
+	}
+	if f.checker.ConnectionInTokenScope(f.tokenCtx(), 3) {
+		t.Error("Expected a read-only scoped connection to be refused")
 	}
 	if f.checker.ConnectionInTokenScope(f.tokenCtx(), 2) {
 		t.Error("Expected a connection outside the scope to be refused")

@@ -1044,9 +1044,39 @@ func validateStatements(
 	for _, stmt := range statements {
 		results = append(results,
 			validateStatement(ctx, tx, pgConn, stmt, genericPlan))
+
+		if err := validationInterrupted(ctx, pgConn.TxStatus()); err != nil {
+			return nil, err
+		}
 	}
 	return results, nil
 }
+
+// validationInterrupted reports why validation cannot carry on after a
+// statement, or nil when it can. A request that has run out of time has
+// not checked the statements still to come, so it must not go on to
+// report them as valid. And every statement must leave the read-only
+// transaction open: if one ended it, whatever follows would run
+// outside it, so validation fails closed rather than trusting the
+// shape of its input.
+func validationInterrupted(ctx context.Context, txStatus byte) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("validation did not finish: %w", err)
+	}
+	if txStatus == txStatusIdle {
+		return errors.New("the validation transaction ended " +
+			"before validation finished")
+	}
+	return nil
+}
+
+// txStatusIdle is the ReadyForQuery transaction status PostgreSQL
+// reports when the session is not inside a transaction block.
+const txStatusIdle = 'I'
+
+// sqlStateQueryCanceled is the SQLSTATE PostgreSQL raises when a
+// statement is stopped early, including by statement_timeout.
+const sqlStateQueryCanceled = "57014"
 
 // supportsGenericPlan reports whether the server is new enough for
 // EXPLAIN (GENERIC_PLAN), which arrived in PostgreSQL 16.
@@ -1088,7 +1118,7 @@ func validateStatement(
 		}
 	}
 
-	err := runExplain(ctx, tx, pgConn, explainSQL, containsDollarParam(stmt))
+	err := runExplain(ctx, pgConn, explainSQL)
 
 	// Undo any error state and drop the savepoint again. Both are best
 	// effort: a failure here shows up as an error on the next statement.
@@ -1099,6 +1129,18 @@ func validateStatement(
 		return statementValidation{Query: stmt, Status: validationValid}
 	}
 
+	// Running out of time says nothing about whether the statement is
+	// valid, so it must not be reported as a rejection.
+	var pgErr *pgconn.PgError
+	if ctx.Err() != nil ||
+		(errors.As(err, &pgErr) && pgErr.Code == sqlStateQueryCanceled) {
+		return statementValidation{
+			Query:  stmt,
+			Status: validationUnsupported,
+			Error:  "planning the statement timed out, so it was not validated",
+		}
+	}
+
 	return statementValidation{
 		Query:  stmt,
 		Status: validationInvalid,
@@ -1106,31 +1148,22 @@ func validateStatement(
 	}
 }
 
-// runExplain runs one EXPLAIN. A statement carrying $N placeholders
-// goes through the simple query protocol on the transaction's own
-// connection, because pgx would otherwise read the placeholders as
-// bind parameters; the statement has already been split, so the
-// simple protocol sees exactly one command.
-func runExplain(
-	ctx context.Context,
-	tx pgx.Tx,
-	pgConn *pgconn.PgConn,
-	explainSQL string,
-	parameterised bool,
-) error {
-	if parameterised {
-		return pgConn.Exec(ctx, explainSQL).Close()
-	}
-
-	rows, err := tx.Query(ctx, explainSQL)
+// runExplain runs one EXPLAIN on the transaction's own connection
+// over the extended query protocol, binding every $N placeholder to
+// NULL; EXPLAIN (GENERIC_PLAN) ignores the values, and a statement
+// without placeholders binds none. The extended protocol matters for
+// safety: PostgreSQL refuses to prepare more than one command, so SQL
+// the splitter failed to divide is rejected rather than run, whereas
+// the simple protocol would execute every command in it, including a
+// COMMIT that ends the read-only transaction.
+func runExplain(ctx context.Context, pgConn *pgconn.PgConn, explainSQL string) error {
+	sd, err := pgConn.Prepare(ctx, "", explainSQL, nil)
 	if err != nil {
 		return err
 	}
-	for rows.Next() {
-		// The plan itself is discarded; only the error matters.
-	}
-	rows.Close()
-	return rows.Err()
+	params := make([][]byte, len(sd.ParamOIDs))
+	// The plan itself is discarded; only the error matters.
+	return pgConn.ExecPrepared(ctx, "", params, nil, nil).Read().Err
 }
 
 // explainCommand returns the EXPLAIN command that validates stmt, or

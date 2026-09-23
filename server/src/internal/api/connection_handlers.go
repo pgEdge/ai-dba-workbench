@@ -407,12 +407,26 @@ func (h *ConnectionHandler) getConnection(w http.ResponseWriter, r *http.Request
 	RespondJSON(w, http.StatusOK, conn)
 }
 
+// connectionOutOfTokenScope is the refusal given when an API token's
+// connection scope does not include the connection being changed.
+const connectionOutOfTokenScope = "Permission denied: this token's scope does not include the connection"
+
 // updateConnection handles PUT /api/v1/connections/{id}
 func (h *ConnectionHandler) updateConnection(w http.ResponseWriter, r *http.Request, id int) {
 	// Get current user info for permission check
 	username, _, err := getUserInfoCompat(r, h.authStore)
 	if err != nil {
 		RespondError(w, http.StatusUnauthorized, "Invalid or missing authentication token")
+		return
+	}
+
+	// Neither ownership nor manage_connections says which connections
+	// an API token was issued for, so a scoped token is confined to its
+	// own connections here as everywhere else. The check comes before
+	// the lookup so that a refusal does not reveal whether the
+	// connection exists.
+	if !h.rbacChecker.ConnectionInTokenScope(r.Context(), id) {
+		RespondError(w, http.StatusForbidden, connectionOutOfTokenScope)
 		return
 	}
 
@@ -512,6 +526,16 @@ func (h *ConnectionHandler) deleteConnection(w http.ResponseWriter, r *http.Requ
 	username, _, err := getUserInfoCompat(r, h.authStore)
 	if err != nil {
 		RespondError(w, http.StatusUnauthorized, "Invalid or missing authentication token")
+		return
+	}
+
+	// Neither ownership nor manage_connections says which connections
+	// an API token was issued for, so a scoped token is confined to its
+	// own connections here as everywhere else. The check comes before
+	// the lookup so that a refusal does not reveal whether the
+	// connection exists.
+	if !h.rbacChecker.ConnectionInTokenScope(r.Context(), id) {
+		RespondError(w, http.StatusForbidden, connectionOutOfTokenScope)
 		return
 	}
 

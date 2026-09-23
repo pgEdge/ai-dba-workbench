@@ -11,8 +11,16 @@ package auth
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 )
+
+// ErrUnknownMCPPrivilege is returned when an MCP scope names a privilege
+// identifier that is not registered. Writing the rest of the list would
+// silently drop the unknown name, and a list made up only of unknown
+// names would then store no scope at all, which reads as unrestricted,
+// so the whole change is refused instead.
+var ErrUnknownMCPPrivilege = errors.New("unknown MCP privilege identifier")
 
 // =============================================================================
 // Token Scope Management
@@ -244,12 +252,22 @@ func (s *AuthStore) setTokenMCPScopeByNames(actor Actor, tokenID int64,
 			break
 		}
 
-		if _, execErr := tx.Exec(
+		res, execErr := tx.Exec(
 			`INSERT INTO token_mcp_scope (token_id, privilege_identifier_id)
              SELECT ?, id FROM mcp_privilege_identifiers WHERE identifier = ?`,
 			tokenID, identifier,
-		); execErr != nil {
+		)
+		if execErr != nil {
 			err = fmt.Errorf("failed to add privilege to token scope: %w", execErr)
+			return err
+		}
+		inserted, rowsErr := res.RowsAffected()
+		if rowsErr != nil {
+			err = fmt.Errorf("failed to add privilege to token scope: %w", rowsErr)
+			return err
+		}
+		if inserted == 0 {
+			err = fmt.Errorf("%w: %q", ErrUnknownMCPPrivilege, identifier)
 			return err
 		}
 	}

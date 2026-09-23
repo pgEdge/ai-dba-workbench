@@ -11,6 +11,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
 
@@ -748,5 +749,65 @@ func TestGetEffectivePrivilegesSuperuserReportsScopeLookupError(t *testing.T) {
 	}
 	if privs.TokenScope != nil {
 		t.Errorf("Expected no scope to be claimed, got %+v", privs.TokenScope)
+	}
+}
+
+// TestConnectionInTokenScope checks the check that handlers gated on
+// ownership or an admin permission apply to a token's connection scope:
+// a narrowed scope admits only its connections, a session and an
+// unscoped token admit any, and an incomplete token context or an
+// unreadable scope denies.
+func TestConnectionInTokenScope(t *testing.T) {
+	f, cleanup := newSuperuserScopeFixture(t)
+	defer cleanup()
+
+	if !f.checker.ConnectionInTokenScope(f.tokenCtx(), 2) {
+		t.Error("Expected an unscoped token to admit any connection")
+	}
+
+	f.setConnectionScope(t, []ScopedConnection{
+		{ConnectionID: 1, AccessLevel: AccessLevelRead},
+	})
+	if !f.checker.ConnectionInTokenScope(f.tokenCtx(), 1) {
+		t.Error("Expected the scoped connection to be admitted")
+	}
+	if f.checker.ConnectionInTokenScope(f.tokenCtx(), 2) {
+		t.Error("Expected a connection outside the scope to be refused")
+	}
+	if !f.checker.ConnectionInTokenScope(f.sessionCtx(), 2) {
+		t.Error("Expected a session to be unaffected by token scope")
+	}
+	if f.checker.ConnectionInTokenScope(unidentifiedTokenCtx(), 1) {
+		t.Error("Expected an incomplete token context to be refused")
+	}
+	if !NewRBACChecker(nil).ConnectionInTokenScope(f.tokenCtx(), 2) {
+		t.Error("Expected a checker without a store to admit the caller")
+	}
+
+	f.dropScopeTable(t, "token_connection_scope")
+	if f.checker.ConnectionInTokenScope(f.tokenCtx(), 1) {
+		t.Error("Expected an unreadable scope to be refused")
+	}
+}
+
+// TestSetTokenMCPScopeByNamesRejectsUnknownIdentifier checks that an
+// unregistered identifier is refused with ErrUnknownMCPPrivilege and
+// that the token's existing MCP scope is left as it was.
+func TestSetTokenMCPScopeByNamesRejectsUnknownIdentifier(t *testing.T) {
+	f, cleanup := newSuperuserScopeFixture(t)
+	defer cleanup()
+
+	f.setMCPScope(t, []string{"tool_a"})
+	err := f.store.SetTokenMCPScopeByNames(f.tokenID,
+		[]string{"tool_b", "no_such_tool"})
+	if !errors.Is(err, ErrUnknownMCPPrivilege) {
+		t.Fatalf("Expected ErrUnknownMCPPrivilege, got %v", err)
+	}
+	scope, err := f.store.GetTokenScope(f.tokenID)
+	if err != nil {
+		t.Fatalf("GetTokenScope failed: %v", err)
+	}
+	if scope == nil || len(scope.MCPPrivileges) != 1 {
+		t.Errorf("Expected the MCP scope to be untouched, got %+v", scope)
 	}
 }

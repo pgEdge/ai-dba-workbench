@@ -355,6 +355,18 @@ refuses a PUT or DELETE on the acting token's own scope, since
 own record and undo every gate above. Managing another token's scope is
 unaffected, and the remaining policy gaps are noted at the guard.
 
+A handler that authorises a connection by ownership or an admin
+permission rather than `CanAccessConnection` (the Variant 2 gate on
+`updateConnection` and `deleteConnection`) must also call
+`RBACChecker.ConnectionInTokenScope`, before the row is loaded, since
+neither ownership nor `manage_connections` says which connections a
+token was issued for. `SetTokenMCPScopeByNames` returns
+`auth.ErrUnknownMCPPrivilege` for an unregistered identifier, which
+the scope handler maps to 400, because silently dropping it could
+store an empty, and therefore unrestricted, MCP scope. Every
+`VisibleConnectionIDs` caller, `list_connections` included, must
+return on error rather than skip filtering.
+
 Everything fails closed: a scope lookup error denies (or, in
 `VisibleConnectionIDs`, is an error rather than "everything"), an
 API-token context carrying no token id (`tokenContextIncomplete`)

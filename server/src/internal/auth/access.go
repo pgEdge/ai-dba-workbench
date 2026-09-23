@@ -992,3 +992,28 @@ func (rc *RBACChecker) HasWriteAccess(ctx context.Context, connectionID int) boo
 	canAccess, accessLevel := rc.CanAccessConnection(ctx, connectionID)
 	return canAccess && accessLevel == AccessLevelReadWrite
 }
+
+// ConnectionInTokenScope reports whether the acting API token's
+// connection scope admits connectionID, whatever access the owner
+// holds.
+//
+// It is for handlers that decide access to a connection by ownership or an
+// admin permission, such as updating or deleting a connection under
+// manage_connections, rather than by CanAccessConnection. Those checks
+// say nothing about which connections a token was issued for, so
+// without this a token scoped to one connection could change or delete
+// another (see issue #471). A session caller has no token and is always
+// in scope, as is a token with no connection scope or one holding the
+// wildcard. A token context missing its id, or a scope that cannot be
+// read, is out of scope, because neither may widen access.
+func (rc *RBACChecker) ConnectionInTokenScope(ctx context.Context, connectionID int) bool {
+	if rc.authStore == nil {
+		return true
+	}
+	if tokenContextIncomplete(ctx) {
+		return false
+	}
+	inScope, _ := rc.applyConnectionTokenScope(ctx, connectionID,
+		AccessLevelReadWrite)
+	return inScope
+}

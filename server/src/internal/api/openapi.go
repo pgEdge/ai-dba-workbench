@@ -201,7 +201,7 @@ func buildSchemas() map[string]*OpenAPISchema {
 			Properties: map[string]*OpenAPISchema{
 				"authenticated": {Type: "boolean", Description: "Whether the user is authenticated"},
 				"username":      {Type: "string", Description: "Username of the authenticated user"},
-				"is_superuser":  {Type: "boolean", Description: "Whether the user has superuser privileges"},
+				"is_superuser":  {Type: "boolean", Description: "Whether the caller may pass a superuser-only gate: true for a superuser's session, and for a superuser's API token only when the token's admin scope is empty or holds the wildcard"},
 				"error":         {Type: "string", Description: "Error message if authentication failed"},
 			},
 		},

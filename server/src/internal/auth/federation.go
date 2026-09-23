@@ -746,8 +746,16 @@ func (s *AuthStore) LinkFederatedIdentity(username, issuer, subject string, reli
 	// looks up the issuer it was configured with, so a link to anything
 	// else would create an account that no login can reach. Refusing it
 	// here turns a mistyped -oidc-issuer into an error instead.
-	if issuerURL, err := url.Parse(issuer); err != nil || issuerURL.Scheme != "https" || issuerURL.Host == "" {
+	issuerURL, err := url.Parse(issuer)
+	if err != nil || issuerURL.Scheme != "https" || issuerURL.Host == "" {
 		return "", fmt.Errorf("issuer %q is not a valid https:// URL", issuer)
+	}
+	// An issuer never carries credentials, and one that did would be
+	// stored in external_subject and later reported as auth_issuer. The
+	// error deliberately does not echo the value, so the credentials do
+	// not reach the terminal or a log either.
+	if issuerURL.User != nil {
+		return "", fmt.Errorf("issuer must not contain user credentials")
 	}
 	key := ExternalSubjectKey(issuer, subject)
 

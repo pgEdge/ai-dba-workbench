@@ -118,9 +118,9 @@ comment notes this for migrations 7 and 10. A fresh install reaches the
 same shape as an upgraded one for the separate reason that every
 migration runs in order on both.
 
-The opposite rule applies to the plain configuration tables, where
-there are no partitions to inherit the change: see
-`notification-channels.md` for `notification_channels`.
+The exception is `notification_channels`, whose later columns are
+also written into its base `CREATE TABLE`: see
+`notification-channels.md`.
 
 ## Dropping Partitions and pgx "conn busy"
 

@@ -90,12 +90,13 @@ on the transaction the `SchemaManager` opens for it.
 Migration 1 is the consolidated baseline; the `Up`
 function creates the complete schema, including every
 table, index and constraint, along with the seed data for
-probe configurations and alert rules, so a fresh
-installation reaches the current schema in a single step.
-Each later migration is an incremental change, such as a
-new column, a new index or a corrected alert rule, and is
-applied in version order to an installation that already
-holds the earlier schema.
+probe configurations and alert rules. Each later migration
+is an incremental change, such as a new column, a new index
+or a corrected alert rule, for an installation that already
+holds the earlier schema. A fresh installation still applies
+every migration in version order, starting from Migration 1;
+the later migrations find their changes already present in
+the baseline, which is why each one must be idempotent.
 
 Versions are allocated sequentially, so the highest
 `Version` registered in `schema.go` is the schema version

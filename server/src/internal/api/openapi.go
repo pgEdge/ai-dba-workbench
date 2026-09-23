@@ -1905,7 +1905,7 @@ func buildSchemas() map[string]*OpenAPISchema {
 			Type: "object",
 			Properties: map[string]*OpenAPISchema{
 				"query":  {Type: "string", Description: "The statement as it was submitted"},
-				"status": {Type: "string", Enum: []string{"valid", "invalid", "unsupported"}, Description: "valid when EXPLAIN planned the statement, invalid when EXPLAIN rejected it, unsupported when EXPLAIN cannot plan this kind of statement"},
+				"status": {Type: "string", Enum: []string{"valid", "invalid", "unsupported"}, Description: "valid when EXPLAIN planned the statement, invalid when EXPLAIN rejected it, unsupported when the statement could not be checked, for example because EXPLAIN cannot plan this kind of statement or planning timed out"},
 				"error":  {Type: "string", Description: "The sanitized PostgreSQL message when the status is invalid, or the reason validation was not possible when the status is unsupported"},
 			},
 		},
@@ -2138,7 +2138,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/connections/{id}/query/validate": {
 			Post: &OpenAPIOperation{
 				Summary:     "Validate SQL without executing it",
-				Description: "Plans each statement of the supplied SQL with EXPLAIN inside a read-only transaction that is always rolled back, so nothing is executed. Statements are split with a SQL-aware tokeniser. A statement carrying $N parameter placeholders is planned with EXPLAIN (GENERIC_PLAN) on PostgreSQL 16 and later, and reported as unsupported on older servers. Requires read access to the connection; no write permission is needed and no confirmation is involved.",
+				Description: "Plans each statement of the supplied SQL with EXPLAIN inside a read-only transaction that is always rolled back, so nothing is executed. Statements are split with a SQL-aware tokeniser and each is planned over the extended query protocol, which refuses more than one command, so SQL the tokeniser fails to divide is rejected rather than run. A statement carrying $N parameter placeholders is planned with EXPLAIN (GENERIC_PLAN) on PostgreSQL 16 and later, and reported as unsupported on older servers. Requires read access to the connection; no write permission is needed and no confirmation is involved.",
 				OperationID: "validateConnectionQuery",
 				Tags:        []string{"Connections"},
 				Security:    bearerAuth,

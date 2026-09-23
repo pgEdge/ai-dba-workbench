@@ -195,10 +195,8 @@ const genericPlanMinVersionNum = 160000
 
 // validateGenericPlan validates a query whose statements carry $N
 // parameter placeholders, planning each statement with EXPLAIN
-// (GENERIC_PLAN). The query is split first, and each statement is sent
-// on its own through the simple query protocol: pgx would otherwise
-// read the placeholders as bind parameters, and the simple protocol
-// must never be handed more than one command at a time.
+// (GENERIC_PLAN). The query is split first, and each statement is
+// planned on its own (see explainGenericPlan).
 func validateGenericPlan(ctx context.Context, tx pgx.Tx, query string) (mcp.ToolResponse, error) {
 	statements := splitStatements(query)
 	if len(statements) == 0 {
@@ -222,10 +220,22 @@ func validateGenericPlan(ctx context.Context, tx pgx.Tx, query string) (mcp.Tool
 }
 
 // explainGenericPlan plans one statement with EXPLAIN (GENERIC_PLAN)
-// on the transaction's own connection, using the simple query protocol
-// so that $N placeholders reach the server as written.
+// on the transaction's own connection. It goes through pgconn rather
+// than pgx, which would otherwise read the $N placeholders as bind
+// parameters it has no values for, and uses the extended query
+// protocol with every placeholder bound to NULL, which GENERIC_PLAN
+// ignores. The extended protocol refuses to prepare more than one
+// command, so SQL the splitter failed to divide is rejected rather
+// than run, as the simple protocol would run it, including a COMMIT
+// that ends the read-only transaction.
 func explainGenericPlan(ctx context.Context, tx pgx.Tx, stmt string) error {
-	return tx.Conn().PgConn().Exec(ctx, "EXPLAIN (GENERIC_PLAN) "+stmt).Close()
+	pgConn := tx.Conn().PgConn()
+	sd, err := pgConn.Prepare(ctx, "", "EXPLAIN (GENERIC_PLAN) "+stmt, nil)
+	if err != nil {
+		return err
+	}
+	params := make([][]byte, len(sd.ParamOIDs))
+	return pgConn.ExecPrepared(ctx, "", params, nil, nil).Read().Err
 }
 
 // supportsGenericPlan reports whether the server is new enough for

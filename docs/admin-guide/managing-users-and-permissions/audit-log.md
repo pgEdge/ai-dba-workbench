@@ -402,7 +402,7 @@ two cases that call for opposite responses:
 |--------|---------|
 | `0` | The log verified. |
 | `1` | The check could not run, for example the store would not open. |
-| `2` | The log contradicts its chain or holds an unkeyed event. |
+| `2` | The chain is broken, has lost its tail or holds an unkeyed event. |
 | `3` | Nothing in the log verified under the key in use. |
 
 Status `3` is almost always the wrong server secret rather than
@@ -416,8 +416,10 @@ highest identifier the table has ever issued, which SQLite records
 separately, so that events deleted from the newest end of the log are
 reported rather than left invisible: removing the tail leaves every
 surviving event correctly linked to the one before it and so would
-otherwise verify cleanly. The two figures are read together, so an
-event the server writes whilst the check is running cannot separate
+otherwise verify cleanly. A disagreement is reported with status `2`,
+like any other contradiction of the chain. The two figures are read
+together, so an event the server writes whilst the check is running
+cannot separate
 them, and they must agree exactly. A record of the highest identifier
 that has gone missing, that sits above the newest surviving event, or
 that sits below it, is reported, because none of the three is a state
@@ -514,17 +516,23 @@ number of deliberate steps required to hide a deletion from one to
 several. They are not a defence against an attacker with write access
 to `auth.db`.
 
-Four limits are worth stating plainly.
+Five limits are worth stating plainly.
 
 An attacker holding both the server secret and write access to
 `auth.db` can forge the log freely. The hash is keyed, so the secret is
-what they need; with it they can recompute every hash after making a
-change, and the record of the highest identifier issued, which
-verification compares the newest event against, is an ordinary SQLite
-table they can set to whatever value makes the comparison agree. Keep
-the secret file and the data directory apart, as far as the operating
-system allows, so that an account able to read one cannot reach the
-other.
+what they need to rewrite events; with it they can recompute every hash
+after making a change. Keep the secret file and the data directory
+apart, as far as the operating system allows, so that an account able
+to read one cannot reach the other.
+
+Deleting the newest events needs write access to `auth.db` alone, and
+no secret. The events left behind still verify, and the record of the
+highest identifier issued, which verification compares the newest
+event against, is an ordinary SQLite table with no protection of its
+own; an attacker who deletes the newest events and then sets that
+record to the new highest identifier leaves a log that verifies
+cleanly. The comparison catches a deletion that leaves the record
+alone, and nothing more.
 
 Deleting the oldest events outright is still accepted. The first
 surviving event's link to its predecessor is taken as given, because

@@ -105,7 +105,8 @@ func describeAuditFilter(f auth.AuditFilter) string {
 
 	add := func(name, value string) {
 		if value != "" {
-			parts = append(parts, name+"="+strconv.Quote(value))
+			parts = append(parts,
+				name+"="+strconv.Quote(capAuditFilterValue(value)))
 		}
 	}
 
@@ -135,6 +136,25 @@ func describeAuditFilter(f auth.AuditFilter) string {
 	}
 
 	return strings.Join(parts, " ")
+}
+
+// auditFilterValueMax is the longest filter value, in runes, that the
+// audit-read log line reproduces. The filters arrive as query
+// parameters, so without a cap one request could write a line of any
+// length to the server log; the names, types and actions they match
+// are all far shorter than this.
+const auditFilterValueMax = 64
+
+// capAuditFilterValue shortens a filter value to auditFilterValueMax
+// runes for the log line, marking the cut with an ellipsis so that a
+// shortened value is never mistaken for the whole of it. It counts
+// runes rather than bytes so that a cut never splits a character.
+func capAuditFilterValue(value string) string {
+	runes := []rune(value)
+	if len(runes) <= auditFilterValueMax {
+		return value
+	}
+	return string(runes[:auditFilterValueMax-3]) + "..."
 }
 
 // auditScopeDenied is the message returned to a token whose admin

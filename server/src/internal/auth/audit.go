@@ -1013,30 +1013,6 @@ func (s *AuthStore) verifyLegacyAuditChain() (int64, error) {
 	return 0, nil
 }
 
-// rechainAuditLogTx performs the rewrite, and returns the number of
-// rows re-hashed.
-//
-// The append-only trigger refuses an UPDATE, so it is dropped and
-// re-created inside the transaction that does the rewriting. That is
-// safe on three counts, and all three are needed:
-//
-//   - SQLite makes DDL transactional, so the DROP is undone by a
-//     rollback exactly as the row updates are. A failure part-way
-//     therefore leaves both the rows and the trigger as they were,
-//     rather than a half-rewritten log with no trigger on it.
-//   - The store opens SQLite with _txlock=immediate, so this
-//     transaction takes the database's write lock at BEGIN. No other
-//     connection can write between the DROP and the CREATE.
-//   - In WAL mode a reader on another connection sees the last
-//     committed snapshot, so no other connection ever observes the
-//     database without the trigger; it appears again, having never been
-//     absent, at commit.
-//
-// The alternative, deleting every row and re-inserting it with the new
-// hash, needs no DDL but rewrites sqlite_sequence as a side effect of
-// emptying an AUTOINCREMENT table, and verifyAuditTail reads exactly
-// that value to detect a truncated log. Dropping the trigger touches
-// less.
 // ErrAuditRechainChanged reports that the log moved between the plan
 // the operator approved and the transaction that would have rewritten
 // it, so the rewrite was abandoned with nothing written.
@@ -1077,6 +1053,30 @@ func (s *AuthStore) checkAuditRechainPlanStillHolds(tx *sql.Tx,
 		plan.Events, plan.LowestID, plan.HighestID)
 }
 
+// rechainAuditLogTx performs the rewrite, and returns the number of
+// rows re-hashed.
+//
+// The append-only trigger refuses an UPDATE, so it is dropped and
+// re-created inside the transaction that does the rewriting. That is
+// safe on three counts, and all three are needed:
+//
+//   - SQLite makes DDL transactional, so the DROP is undone by a
+//     rollback exactly as the row updates are. A failure part-way
+//     therefore leaves both the rows and the trigger as they were,
+//     rather than a half-rewritten log with no trigger on it.
+//   - The store opens SQLite with _txlock=immediate, so this
+//     transaction takes the database's write lock at BEGIN. No other
+//     connection can write between the DROP and the CREATE.
+//   - In WAL mode a reader on another connection sees the last
+//     committed snapshot, so no other connection ever observes the
+//     database without the trigger; it appears again, having never been
+//     absent, at commit.
+//
+// The alternative, deleting every row and re-inserting it with the new
+// hash, needs no DDL but rewrites sqlite_sequence as a side effect of
+// emptying an AUTOINCREMENT table, and verifyAuditTail reads exactly
+// that value to detect a truncated log. Dropping the trigger touches
+// less.
 func (s *AuthStore) rechainAuditLogTx(actor Actor, plan AuditRechainPlan) (
 	int64, error) {
 
@@ -1747,11 +1747,17 @@ func (s *AuthStore) verifyAuditSchema() error {
 // What that still does not buy:
 //
 //   - An attacker who can read the server secret and write auth.db can
-//     rewrite the whole chain freely, and can set sqlite_sequence to
-//     whatever value makes the arithmetic here agree, so this check
-//     sees nothing. Keeping those two apart is the entire protection:
-//     the secret belongs in a file the account running the server can
-//     read and nothing else can.
+//     rewrite the whole chain freely, so this check sees nothing.
+//     Keeping those two apart is the entire protection against
+//     rewriting: the secret belongs in a file the account running the
+//     server can read and nothing else can.
+//   - Deleting the newest rows needs no secret at all. The rows left
+//     behind still verify, and nothing protects sqlite_sequence the way
+//     the no-update trigger protects audit_events, so an attacker with
+//     write access alone can delete the tail and write the sequence
+//     down to the new MAX(id) in one more statement, after which this
+//     check agrees. It catches a deletion that leaves the sequence
+//     alone, and nothing more.
 //   - Deleting the oldest rows outright is still accepted, because the
 //     first surviving row's prev_hash is taken as given: the retention
 //     purge is a legitimate producer of exactly that shape, and nothing
@@ -1775,9 +1781,10 @@ func (s *AuthStore) verifyAuditTail() error {
 		return err
 	}
 	if !present {
-		return errors.New("audit chain tail unverifiable: the sqlite_sequence " +
-			"table is missing; every database this server creates holds one, " +
-			"because its tables use AUTOINCREMENT, so it has been removed")
+		return fmt.Errorf("%w: audit chain tail unverifiable: the "+
+			"sqlite_sequence table is missing; every database this server "+
+			"creates holds one, because its tables use AUTOINCREMENT, so it "+
+			"has been removed", ErrAuditChainBroken)
 	}
 
 	var newest, seq sql.NullInt64
@@ -1802,23 +1809,23 @@ func checkAuditTail(newest int64, seq sql.NullInt64) error {
 		// was deleted, or its value blanked, by hand.
 		if newest > 0 {
 			return fmt.Errorf(
-				"audit chain tail missing: the sqlite_sequence row for "+
+				"%w: audit chain tail missing: the sqlite_sequence row for "+
 					"audit_events has been removed or emptied whilst %d "+
-					"event(s) remain", newest)
+					"event(s) remain", ErrAuditChainBroken, newest)
 		}
 		return nil
 	}
 
 	switch {
 	case seq.Int64 > newest:
-		return fmt.Errorf("audit chain tail missing: newest row %d, sequence %d",
-			newest, seq.Int64)
+		return fmt.Errorf("%w: audit chain tail missing: newest row %d, "+
+			"sequence %d", ErrAuditChainBroken, newest, seq.Int64)
 	case seq.Int64 < newest:
 		return fmt.Errorf(
-			"audit sequence inconsistent: newest row %d, sequence %d; "+
+			"%w: audit sequence inconsistent: newest row %d, sequence %d; "+
 				"SQLite raises the sequence before it writes the row, so "+
 				"it cannot fall behind on its own",
-			newest, seq.Int64)
+			ErrAuditChainBroken, newest, seq.Int64)
 	}
 
 	return nil

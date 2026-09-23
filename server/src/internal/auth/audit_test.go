@@ -746,6 +746,9 @@ func TestVerifyAuditTailWithoutSequenceTable(t *testing.T) {
 	if !strings.Contains(err.Error(), "sqlite_sequence table is missing") {
 		t.Errorf("Unexpected error text: %v", err)
 	}
+	if !errors.Is(err, ErrAuditChainBroken) {
+		t.Errorf("Expected the error to wrap ErrAuditChainBroken, got %v", err)
+	}
 }
 
 // TestCheckAuditTail pins each verdict of the tail comparison. The
@@ -781,7 +784,41 @@ func TestCheckAuditTail(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("Expected an error containing %q, got %v", tc.wantErr, err)
 			}
+			// A disagreement is tampering, so it must carry the same
+			// sentinel as a broken link: the command line decides its
+			// exit status on that, not on the message.
+			if !errors.Is(err, ErrAuditChainBroken) {
+				t.Errorf("Expected the error to wrap ErrAuditChainBroken, got %v", err)
+			}
 		})
+	}
+}
+
+// TestVerifyAuditChainTailTruncationIsTampering drives the whole
+// verification over a log whose newest row has been deleted, the one
+// shape the chain itself cannot see, and checks that it is reported
+// with the tampering sentinel rather than as a check that could not
+// run.
+func TestVerifyAuditChainTailTruncationIsTampering(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAudit(t)
+	defer cleanup()
+
+	for i := 0; i < 2; i++ {
+		mustRecord(t, store, newEvent(systemActor, "user.create", "user",
+			int64Ptr(int64(i+1)), "alice", nil))
+	}
+	if _, err := store.db.Exec(
+		"DELETE FROM audit_events WHERE id = (SELECT MAX(id) FROM audit_events)",
+	); err != nil {
+		t.Fatalf("Failed to delete the newest audit row: %v", err)
+	}
+
+	_, firstBad, err := store.VerifyAuditChain()
+	if !errors.Is(err, ErrAuditChainBroken) {
+		t.Fatalf("Expected ErrAuditChainBroken, got %v", err)
+	}
+	if firstBad != 0 {
+		t.Errorf("Expected no first bad row for a tail truncation, got %d", firstBad)
 	}
 }
 

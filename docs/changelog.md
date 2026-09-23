@@ -338,9 +338,12 @@ project adheres to
 
 - Key the RBAC audit log's hash chain. New events are hashed
   with HMAC-SHA256 under a key derived from the server secret
-  rather than with an unkeyed SHA-256, so rewriting the log
+  rather than with an unkeyed SHA-256, so rewriting events
   undetected now needs read access to the secret file as well
-  as write access to `auth.db`. The version each event was
+  as write access to `auth.db`. Deleting the newest events and
+  then resetting the SQLite record of the highest identifier
+  issued still needs write access alone, as the admin guide
+  describes. The version each event was
   hashed under is covered by the hash itself and may never
   fall as the chain advances, so an event cannot be relabelled
   into an encoding the verifier will not check. Every server

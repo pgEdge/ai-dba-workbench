@@ -172,3 +172,22 @@ func TestDescribeAuditFilter(t *testing.T) {
 		})
 	}
 }
+
+// TestDescribeAuditFilterCapsLongValues checks that a filter value
+// supplied in the query string cannot write a line of unbounded length
+// to the server log, and that the cut is marked and never splits a
+// multi-byte character.
+func TestDescribeAuditFilterCapsLongValues(t *testing.T) {
+	long := strings.Repeat("é", auditFilterValueMax*4)
+	got := describeAuditFilter(auth.AuditFilter{ActorName: long})
+
+	want := `actor="` + strings.Repeat("é", auditFilterValueMax-3) + `..."`
+	if got != want {
+		t.Errorf("describeAuditFilter = %q, want %q", got, want)
+	}
+
+	exact := strings.Repeat("a", auditFilterValueMax)
+	if got := capAuditFilterValue(exact); got != exact {
+		t.Errorf("a value at the cap must be kept whole, got %q", got)
+	}
+}

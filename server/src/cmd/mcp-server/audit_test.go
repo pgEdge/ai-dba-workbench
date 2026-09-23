@@ -455,6 +455,23 @@ func TestDescribeAuditVerifyFailure(t *testing.T) {
 			wantCode: 1,
 			wantText: "failed at row 2",
 		},
+		{
+			name:     "tail truncation",
+			rows:     4,
+			firstBad: 0,
+			err: fmt.Errorf("%w: audit chain tail missing: newest row 4, "+
+				"sequence 5", auth.ErrAuditChainBroken),
+			wantCode: auditExitTampered,
+			wantText: "tail missing",
+		},
+		{
+			name:     "check could not run",
+			rows:     0,
+			firstBad: 0,
+			err:      errors.New("failed to query audit events: disk I/O error"),
+			wantCode: 1,
+			wantText: "failed to verify audit log",
+		},
 	}
 
 	for _, tc := range tests {

@@ -403,7 +403,8 @@ free, additive act, whatever the dispatch suggests: version 2 made
 every version 1 row unverifiable and forced the re-chain upgrade step.
 A row naming a version `auditHash` will not compute is reported as
 tampering, wrapped in `ErrAuditChainBroken` by `VerifyAuditChain`
-(`audit.go:1589-1601`), deliberately, because the version is a column
+(the error branch after its `auditHash` call), deliberately, because
+the version is a column
 in the file and relabelling a row must not move it out of the
 verifier's reach.
 
@@ -538,8 +539,9 @@ Anything else stays 1.
 
 A successful `GET /api/v1/rbac/audit` is not written to `audit_events`,
 because reading is not a change; `handleAudit` logs one `[AUDIT]` line
-naming the actor, the filters in effect (`describeAuditFilter`) and the
-row count instead.
+naming the actor, the filters in effect (`describeAuditFilter`, which
+caps each value at `auditFilterValueMax` runes) and the row count
+instead.
 
 Tail truncation is caught by `verifyAuditTail`, which compares
 `MAX(id)` against the `sqlite_sequence` row. Deleting that row whilst
@@ -550,5 +552,8 @@ is `AUTOINCREMENT`. `MAX(id)` and the sequence are read by a single
 statement, which SQLite evaluates against one snapshot, so a server
 insert whilst the CLI (which opens its own store on the same file) is
 verifying cannot leave the sequence a step ahead of the newest id; the
-pure comparison is `checkAuditTail`. Any other query error is returned
-rather than swallowed.
+pure comparison is `checkAuditTail`. Every disagreement wraps
+`ErrAuditChainBroken`, so the CLI exits with the tampering status; any
+other query error is returned unwrapped rather than swallowed, and
+exits 1. `sqlite_sequence` itself is unprotected, so a tail deleted and
+then matched by writing the sequence down passes without the secret.

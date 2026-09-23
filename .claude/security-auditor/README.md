@@ -134,7 +134,7 @@ client address, before and after snapshots and a hash chain.
   dispatches on it, but a format change is not free: version 2 left
   every version 1 row unverifiable, and an upgraded database has to be
   re-chained. A version `auditHash` will not compute is reported as
-  tampering, wrapped in `ErrAuditChainBroken` at `audit.go:1589-1601`,
+  tampering, wrapped in `ErrAuditChainBroken` in `VerifyAuditChain`,
   because the version is a value in the file and relabelling a row must
   not put it beyond the verifier. Both renderings length-prefix each
   field, so text cannot be shifted between two columns without changing
@@ -231,9 +231,11 @@ client address, before and after snapshots and a hash chain.
   never given it.
 - `verifyAuditTail` compares `MAX(id)` with the `sqlite_sequence`
   entry and reports any disagreement: missing, above or below, and a
-  missing `sqlite_sequence` table as well. `MAX(id)` and the sequence
-  are read by one statement, so a server insert whilst the CLI, which
-  opens its own store, is verifying cannot separate them.
+  missing `sqlite_sequence` table as well, each wrapped in
+  `ErrAuditChainBroken` so `-verify-audit-log` exits with the tampering
+  status. `MAX(id)` and the sequence are read by one statement, so a
+  server insert whilst the CLI, which opens its own store, is verifying
+  cannot separate them.
 - Snapshots never carry `password_hash`, and no token material reaches
   a row, a log line or a response.
 
@@ -241,11 +243,15 @@ Know the limits before crediting the chain in a report, and say them
 plainly rather than crediting the design with more than it does.
 
 - An attacker holding both `auth.db` and the server secret can forge
-  the log freely: the key is derived from the same secret the server
-  reads, and `sqlite_sequence`, which `verifyAuditTail` compares the
-  newest id against, is an ordinary writable table they can fix up to
-  match. Only a copy of the events somewhere the server cannot reach
-  defends against that, and there is no anchor outside the file.
+  the log freely, since the key is derived from the same secret the
+  server reads. Only a copy of the events somewhere the server cannot
+  reach defends against that, and there is no anchor outside the file.
+- Truncating the tail needs write access to `auth.db` alone, no
+  secret. `sqlite_sequence`, which `verifyAuditTail` compares the
+  newest id against, has no trigger or other protection, so deleting
+  the newest rows and one `UPDATE sqlite_sequence SET seq = <new
+  MAX(id)>` passes verification. Do not credit the key with defending
+  the tail.
 - Wholesale deletion of the log's prefix is still accepted, because the
   first surviving row's `prev_hash` is taken as given and the retention
   purge legitimately produces that shape.

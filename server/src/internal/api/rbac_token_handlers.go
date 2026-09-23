@@ -10,6 +10,7 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -356,18 +357,25 @@ func (h *RBACHandler) setTokenScope(w http.ResponseWriter, r *http.Request, toke
 		return
 	}
 
-	if req.Connections != nil {
-		if err := h.actorStore(r).SetTokenConnectionScope(tokenID, req.Connections); err != nil {
-			log.Printf("[ERROR] Failed to set connection scope for token %d: %v", tokenID, err)
-			RespondError(w, http.StatusInternalServerError, "Failed to set connection scope")
+	// The MCP scope is written first because it is the one that can be
+	// refused for its content, an unregistered identifier, and a
+	// refusal should leave the other scope kinds as they were.
+	if req.MCPPrivileges != nil {
+		if err := h.actorStore(r).SetTokenMCPScopeByNames(tokenID, req.MCPPrivileges); err != nil {
+			if errors.Is(err, auth.ErrUnknownMCPPrivilege) {
+				RespondError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			log.Printf("[ERROR] Failed to set MCP scope for token %d: %v", tokenID, err)
+			RespondError(w, http.StatusInternalServerError, "Failed to set MCP scope")
 			return
 		}
 	}
 
-	if req.MCPPrivileges != nil {
-		if err := h.actorStore(r).SetTokenMCPScopeByNames(tokenID, req.MCPPrivileges); err != nil {
-			log.Printf("[ERROR] Failed to set MCP scope for token %d: %v", tokenID, err)
-			RespondError(w, http.StatusInternalServerError, "Failed to set MCP scope")
+	if req.Connections != nil {
+		if err := h.actorStore(r).SetTokenConnectionScope(tokenID, req.Connections); err != nil {
+			log.Printf("[ERROR] Failed to set connection scope for token %d: %v", tokenID, err)
+			RespondError(w, http.StatusInternalServerError, "Failed to set connection scope")
 			return
 		}
 	}

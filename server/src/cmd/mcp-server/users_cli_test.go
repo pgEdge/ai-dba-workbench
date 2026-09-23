@@ -450,6 +450,8 @@ func TestStripControlCharacters(t *testing.T) {
 		{"C0 controls", "a\x00b\x07c\td\re\nf", "a?b?c?d?e?f"},
 		{"DEL", "a\x7fb", "a?b"},
 		{"C1 single-byte CSI", "a\u009b31mb", "a?31mb"},
+		{"right-to-left override", "https://idp.example.com/\u202emoc.live", "https://idp.example.com/?moc.live"},
+		{"zero-width characters", "a\u200bb\u200dc\ufeffd", "a?b?c?d"},
 		{"empty value", "", ""},
 	}
 	for _, tt := range tests {

@@ -409,15 +409,21 @@ func describeUserAuth(user *auth.StoredUser) string {
 	}
 }
 
-// stripControlCharacters replaces every control character in value with a
-// question mark, so that a stored value cannot move the cursor, recolour the
-// terminal or forge extra rows when it is printed. logging.SanitizeForLog is
-// not used because it escapes only a fixed list of characters, leaving the
-// rest of the C0 range and the C1 range (which includes the single-byte CSI,
-// U+009B) untouched; unicode.IsControl covers both.
+// stripControlCharacters replaces every control character and every Unicode
+// format character (category Cf) in value with a question mark, so that a
+// stored value cannot move the cursor, recolour the terminal, forge extra rows
+// or, through a bidirectional override such as U+202E or a zero-width
+// character, make one issuer read as another. logging.SanitizeForLog is not
+// used because it escapes only a fixed list of characters, leaving the rest of
+// the C0 range, the C1 range (which includes the single-byte CSI, U+009B) and
+// every format character untouched.
+//
+// Replacing format characters can mangle an annotation written in a script
+// that uses a zero-width joiner, which is an acceptable cost in an
+// administrative table whose job is to be read unambiguously.
 func stripControlCharacters(value string) string {
 	return strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
 			return '?'
 		}
 		return r

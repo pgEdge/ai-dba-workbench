@@ -80,18 +80,20 @@ interface RbacUser {
     is_superuser?: boolean;
     enabled?: boolean;
     // Where the account's identity is managed: "local" for an account
-    // this server authenticates itself, or "oidc" for one federated to
-    // an identity provider. The provider subject is deliberately never
-    // sent, so the issuer is all the client can show.
+    // this server authenticates itself, "oidc" for one federated to an
+    // identity provider, or "unknown" where the stored value is empty.
+    // The provider subject is deliberately never sent, so the issuer is
+    // all the client can show.
     auth_source?: string;
     auth_issuer?: string;
 }
 
-// An account is federated when the server reports an authentication
-// source other than "local". This mirrors the test the server applies
-// before refusing a password write (see rbac_user_handlers.go), and it
-// treats a missing or empty value as local so that a response from a
-// server predating federated login still renders as it always did.
+// An account is treated as federated when the server reports any
+// authentication source other than "local", including "unknown", which
+// matches the server refusing a password login or write to such an
+// account. A missing or empty value is treated as local only because a
+// server predating federated login does not send the field at all, and
+// its responses should render as they always did.
 const isFederatedUser = (rowUser: RbacUser): boolean =>
     rowUser.auth_source !== undefined
     && rowUser.auth_source !== ''

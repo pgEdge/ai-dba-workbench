@@ -413,15 +413,13 @@ func insertAuditRowAtID(t *testing.T, store *AuthStore, id int64,
 	at time.Time) {
 	t.Helper()
 	occurredAt := at.UTC().Format(auditTimeLayout)
-	prevHash := fmt.Sprintf("prev-%d", id)
-	hash := fmt.Sprintf("hash-%d", id)
 	if _, err := store.db.Exec(`
         INSERT INTO audit_events (
             id, occurred_at, actor_type, actor_name, action, outcome,
             prev_hash, hash, hash_version
-        ) VALUES (?, ?, 'system', 'system', 'user.create', 'success',
-                  ?, ?, 2)`,
-		id, occurredAt, prevHash, hash); err != nil {
+        ) VALUES (?1, ?2, 'system', 'system', 'user.create', 'success',
+                  'prev-' || ?1, 'hash-' || ?1, 2)`,
+		id, occurredAt); err != nil {
 		t.Fatalf("Failed to insert a row at id %d: %v", id, err)
 	}
 }

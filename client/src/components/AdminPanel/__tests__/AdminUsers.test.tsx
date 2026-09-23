@@ -1228,6 +1228,17 @@ describe('AdminUsers', () => {
             expect(screen.queryByText('Federated')).not.toBeInTheDocument();
         });
 
+        it('treats any source other than local as federated', async () => {
+            installListMocks({
+                users: [{ ...mockUsers[1], auth_source: 'unknown' }],
+            });
+            renderWithTheme(<AdminUsers />);
+            await waitFor(() => {
+                expect(screen.getByText('bob')).toBeInTheDocument();
+            });
+            expect(screen.getByText('Federated')).toBeInTheDocument();
+        });
+
         it('marks a federated account and shows its issuer in the row', async () => {
             installListMocks({ users: [federatedUser] });
             renderWithTheme(<AdminUsers />);

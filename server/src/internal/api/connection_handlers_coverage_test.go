@@ -23,6 +23,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pgedge/ai-workbench/pkg/crypto"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/database"
 )
@@ -839,13 +840,25 @@ func TestConnCov_ListDatabases(t *testing.T) {
 	if ip := net.ParseIP(cfg.Host); cfg.Host != "localhost" && (ip == nil || !ip.IsLoopback()) {
 		t.Skipf("Test database host %q is not loopback; skipping live listing", cfg.Host)
 	}
+	// CI's server authenticates with a password whilst a dev host may
+	// trust loopback, so carry over whatever the test DSN holds.
+	var encrypted *string
+	if cfg.Password != "" {
+		enc, encErr := crypto.EncryptPassword(cfg.Password, connCovSecret)
+		if encErr != nil {
+			t.Fatalf("Encrypt test password: %v", encErr)
+		}
+		encrypted = &enc
+	}
 	var id int
 	if err := f.pool.QueryRow(context.Background(), `
         INSERT INTO connections (name, description, host, port,
-            database_name, username, owner_username, sslmode)
-        VALUES ('local', '', $1, $2, $3, $4, $5, 'disable')
+            database_name, username, password_encrypted, owner_username,
+            sslmode)
+        VALUES ('local', '', $1, $2, $3, $4, $5, $6, 'disable')
         RETURNING id
-    `, cfg.Host, int(cfg.Port), cfg.Database, cfg.User, owner.username).Scan(&id); err != nil {
+    `, cfg.Host, int(cfg.Port), cfg.Database, cfg.User, encrypted,
+		owner.username).Scan(&id); err != nil {
 		t.Fatalf("Seed local connection: %v", err)
 	}
 

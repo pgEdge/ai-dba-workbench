@@ -67,7 +67,11 @@ func (n *webhookNotifier) Validate(channel *database.NotificationChannel) error 
 		method = "POST"
 	}
 	if method != "GET" && method != "POST" && method != "PUT" && method != "PATCH" {
-		return fmt.Errorf("invalid HTTP method: %s", method)
+		// The method is operator-supplied configuration that reaches
+		// the log and notification_history.error_message from here, so
+		// it is sanitized like any other borrowed text.
+		return fmt.Errorf("invalid HTTP method %q: must be GET, POST, PUT or PATCH",
+			sanitizeConfigEcho(method))
 	}
 	return nil
 }
@@ -104,7 +108,7 @@ func (n *webhookNotifier) Send(ctx context.Context, channel *database.Notificati
 			}
 			// Every other failure names the host and nothing else.
 			return fmt.Errorf("webhook endpoint blocked (SSRF protection): %s",
-				sanitizeWebhookEcho(err.Error()))
+				sanitizeWebhookEcho(err.Error(), endpointURL))
 		}
 	}
 
@@ -184,7 +188,7 @@ func (n *webhookNotifier) Send(ctx context.Context, channel *database.Notificati
 	// Send request
 	resp, err := n.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to send webhook: %s", webhookTransportError(err))
+		return fmt.Errorf("failed to send webhook: %s", webhookTransportError(err, endpointURL))
 	}
 	defer resp.Body.Close()
 
@@ -193,10 +197,10 @@ func (n *webhookNotifier) Send(ctx context.Context, channel *database.Notificati
 		respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		if readErr != nil {
 			return fmt.Errorf("webhook returned %d (failed to read body: %s)",
-				resp.StatusCode, sanitizeWebhookEcho(readErr.Error()))
+				resp.StatusCode, sanitizeWebhookEcho(readErr.Error(), endpointURL))
 		}
 		return fmt.Errorf("webhook returned %d: %s",
-			resp.StatusCode, sanitizeWebhookEcho(string(respBody)))
+			resp.StatusCode, sanitizeWebhookEcho(string(respBody), endpointURL))
 	}
 
 	return nil

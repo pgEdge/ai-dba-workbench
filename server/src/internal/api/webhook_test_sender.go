@@ -43,6 +43,14 @@ func sendTestGenericWebhook(endpointURL, httpMethod string, headers map[string]s
 	if httpMethod == "" {
 		httpMethod = http.MethodPost
 	}
+	if !isValidWebhookHTTPMethod(httpMethod) {
+		// The handlers reject any other method at create and update
+		// time, but a row written before that check existed may still
+		// carry one. http.NewRequest would otherwise fail on it and be
+		// reported as a malformed URL.
+		return fmt.Errorf("invalid HTTP method %q: must be GET, POST, PUT or PATCH",
+			sanitizeConfigEcho(httpMethod))
+	}
 
 	// Build request body for non-GET methods
 	var reqBody io.Reader
@@ -97,7 +105,7 @@ func sendTestGenericWebhook(endpointURL, httpMethod string, headers map[string]s
 
 	resp, err := client.Do(req) //nolint:gosec // G704: URL host validated upstream and redirects disabled so the validated host cannot be bypassed via Location header; DNS rebinding between validation and dial is a known, admin-scope residual risk
 	if err != nil {
-		return fmt.Errorf("failed to send request: %s", webhookTransportError(err))
+		return fmt.Errorf("failed to send request: %s", webhookTransportError(err, endpointURL))
 	}
 	defer resp.Body.Close()
 
@@ -105,10 +113,10 @@ func sendTestGenericWebhook(endpointURL, httpMethod string, headers map[string]s
 		respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		if readErr != nil {
 			return fmt.Errorf("webhook returned status %d (failed to read body: %s)",
-				resp.StatusCode, sanitizeWebhookEcho(readErr.Error()))
+				resp.StatusCode, sanitizeWebhookEcho(readErr.Error(), endpointURL))
 		}
 		return fmt.Errorf("webhook returned status %d: %s",
-			resp.StatusCode, sanitizeWebhookEcho(string(respBody)))
+			resp.StatusCode, sanitizeWebhookEcho(string(respBody), endpointURL))
 	}
 
 	return nil
@@ -157,7 +165,7 @@ func sendTestWebhook(webhookURL string, channelType string) error {
 
 	resp, err := client.Do(req) //nolint:gosec // G704: URL host validated upstream and redirects disabled so the validated host cannot be bypassed via Location header; DNS rebinding between validation and dial is a known, admin-scope residual risk
 	if err != nil {
-		return fmt.Errorf("failed to send request: %s", webhookTransportError(err))
+		return fmt.Errorf("failed to send request: %s", webhookTransportError(err, webhookURL))
 	}
 	defer resp.Body.Close()
 
@@ -165,10 +173,10 @@ func sendTestWebhook(webhookURL string, channelType string) error {
 		respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		if readErr != nil {
 			return fmt.Errorf("webhook returned status %d (failed to read body: %s)",
-				resp.StatusCode, sanitizeWebhookEcho(readErr.Error()))
+				resp.StatusCode, sanitizeWebhookEcho(readErr.Error(), webhookURL))
 		}
 		return fmt.Errorf("webhook returned status %d: %s",
-			resp.StatusCode, sanitizeWebhookEcho(string(respBody)))
+			resp.StatusCode, sanitizeWebhookEcho(string(respBody), webhookURL))
 	}
 
 	return nil

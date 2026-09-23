@@ -173,3 +173,49 @@ func TestSendTestWebhook_ResponseBodyIsSanitizedAndCapped(t *testing.T) {
 		})
 	}
 }
+
+// TestSendTestWebhook_SchemelessPathEchoIsRedacted covers an endpoint,
+// proxy or WAF answering with an error page that names the request
+// path with no scheme in front, which redactURLPath alone cannot see.
+func TestSendTestWebhook_SchemelessPathEchoIsRedacted(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		if _, err := w.Write([]byte("no route for " + r.URL.Path)); err != nil {
+			t.Errorf("failed to write the test response body: %v", err)
+		}
+	}))
+	defer server.Close()
+
+	for name, send := range map[string]func() error{
+		"slack": func() error { return sendTestWebhook(server.URL+webhookSecretPath, "Slack") },
+		"generic webhook": func() error {
+			return sendTestGenericWebhook(server.URL+webhookSecretPath, http.MethodPost, nil, "", "")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := send()
+			if err == nil {
+				t.Fatal("expected an error for a 404 response")
+			}
+			if !strings.Contains(err.Error(), "no route for") {
+				t.Errorf("error = %q, want the body echoed", err)
+			}
+			assertNoWebhookURL(t, err.Error())
+		})
+	}
+}
+
+func TestSendTestGenericWebhook_InvalidMethodIsSanitized(t *testing.T) {
+	err := sendTestGenericWebhook("https://hooks.example.com"+webhookSecretPath,
+		"DELETE\n[ERROR] forged", nil, "", "")
+	if err == nil {
+		t.Fatal("expected an invalid method error")
+	}
+	if !strings.Contains(err.Error(), "invalid HTTP method") {
+		t.Errorf("error = %q, want an invalid method error", err)
+	}
+	if strings.ContainsAny(err.Error(), "\n\r") {
+		t.Errorf("error = %q, want no line breaks", err)
+	}
+	assertNoWebhookURL(t, err.Error())
+}

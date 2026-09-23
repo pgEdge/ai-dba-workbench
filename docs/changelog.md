@@ -1355,10 +1355,14 @@ project adheres to
   webhook URL is the credential, and a generic webhook endpoint may
   carry one in its path or query string, yet a routine transport
   failure produced an error that quoted the URL in full. Such errors
-  now name only the operation, the host and the cause, and a failing
-  endpoint's response body has its control characters replaced with
-  spaces and is capped at 256 bytes before it is echoed, as the
-  Telegram channel's already was. (#498)
+  now name only the operation, the host and the cause. A failing
+  endpoint's response body has its control characters removed, has the
+  channel's own URL path, query string and userinfo removed wherever
+  they appear (with or without a scheme in front), and is capped at 256
+  bytes before it is echoed; the Telegram channel's echoes lose their
+  control characters in the same way. The server now also rejects a
+  webhook `http_method` other than `GET`, `POST`, `PUT` or `PATCH` when
+  a channel is created or updated. (#498)
 
 - Fix a configuration file that omits
   `http.auth.max_failed_attempts_before_lockout` silently disabling

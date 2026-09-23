@@ -77,7 +77,7 @@ func sendWebhookNotification(
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to send %s notification: %s",
-			serviceName, webhookTransportError(err))
+			serviceName, webhookTransportError(err, webhookURL))
 	}
 	defer resp.Body.Close()
 
@@ -85,10 +85,10 @@ func sendWebhookNotification(
 		respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		if readErr != nil {
 			return fmt.Errorf("%s webhook returned %d (failed to read body: %s)",
-				serviceName, resp.StatusCode, sanitizeWebhookEcho(readErr.Error()))
+				serviceName, resp.StatusCode, sanitizeWebhookEcho(readErr.Error(), webhookURL))
 		}
 		return fmt.Errorf("%s webhook returned %d: %s",
-			serviceName, resp.StatusCode, sanitizeWebhookEcho(string(respBody)))
+			serviceName, resp.StatusCode, sanitizeWebhookEcho(string(respBody), webhookURL))
 	}
 
 	return nil

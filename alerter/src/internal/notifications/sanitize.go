@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"sort"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -60,29 +61,33 @@ const (
 // interpolated into an error goes through here; that rule is what makes
 // the property easy to check.
 //
-// It does three things, all of which are load-bearing:
+// It does three things, in this order, all of which are load-bearing:
 //
-//   - Applies redact, which removes whichever part of a URL is the
-//     credential for this channel, because the text may repeat the
-//     request URL.
-//   - Maps control and formatting characters to spaces, so a hostile
-//     or broken endpoint cannot inject newlines and forge log lines.
+//   - Deletes control and formatting characters, so a hostile or
+//     broken endpoint cannot inject newlines and forge log lines.
 //     Invalid UTF-8 is replaced at the same time, which also keeps the
 //     value storable in a Postgres text column. The class is wider than
 //     the ASCII controls on purpose: a response body is wholly
 //     attacker-controlled, and U+0085, U+2028 and U+2029 end a line for
 //     a good number of log processors whilst the bidi formatting
 //     characters can reorder what the notification-history view shows.
+//   - Applies redact, which removes whichever part of a URL is the
+//     credential for this channel, because the text may repeat the
+//     request URL.
 //   - Caps the result at maxEchoedBytes. What is read and what is
 //     echoed are deliberately separate limits: a body is read under a
 //     1 MiB io.LimitReader, but a captive portal or a hostile endpoint
 //     would otherwise put the whole megabyte into the log and the
 //     database on every one of the three delivery attempts.
 //
-// Redaction runs before the cap so the cap can never slice a credential
-// run and leave the tail of it visible.
+// The characters are deleted rather than mapped to a space, and before
+// redaction rather than after, so that none of them can split a URL
+// into pieces a redactor does not recognize: "https:\x00//host/secret"
+// has no "://" for redactURLPath to anchor on, and a space in place of
+// the NUL would still have none, whereas deleting it restores the URL
+// for the redactor to find. Redaction runs before the cap so the cap
+// can never slice a credential run and leave the tail of it visible.
 func sanitizeEcho(s string, redact func(string) string) string {
-	s = redact(s)
 	s = strings.Map(func(r rune) rune {
 		// unicode.IsControl covers the C0 and C1 ranges, DEL and
 		// U+0085; Cf is the format class, which holds the bidi
@@ -90,10 +95,11 @@ func sanitizeEcho(s string, redact func(string) string) string {
 		// in neither, being Zl and Zp.
 		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) ||
 			r == '\u2028' || r == '\u2029' {
-			return ' '
+			return -1
 		}
 		return r
 	}, s)
+	s = redact(s)
 	if len(s) <= maxEchoedBytes {
 		return s
 	}
@@ -130,16 +136,130 @@ func telegramTransportError(err error) string {
 	return transportError(err, redactTelegramToken)
 }
 
-// sanitizeWebhookEcho is sanitizeEcho with the URL-path redactor, for
-// the Slack, Mattermost and generic webhook channels.
-func sanitizeWebhookEcho(s string) string {
-	return sanitizeEcho(s, redactURLPath)
+// sanitizeConfigEcho is sanitizeEcho with no redaction, for a value an
+// operator stored in a channel's configuration that is not itself a
+// credential but still reaches the log and the notification history
+// when it is rejected, such as an HTTP method.
+func sanitizeConfigEcho(s string) string {
+	return sanitizeEcho(s, func(s string) string { return s })
 }
 
-// webhookTransportError is transportError with the URL-path redactor,
-// for the Slack, Mattermost and generic webhook channels.
-func webhookTransportError(err error) string {
-	return transportError(err, redactURLPath)
+// sanitizeWebhookEcho is sanitizeEcho with the webhook redactor for the
+// channel's own configured URL, for the Slack, Mattermost and generic
+// webhook channels. See webhookRedactor.
+func sanitizeWebhookEcho(s, webhookURL string) string {
+	return sanitizeEcho(s, webhookRedactor(webhookURL))
+}
+
+// webhookTransportError is transportError with the webhook redactor for
+// the channel's own configured URL, for the Slack, Mattermost and
+// generic webhook channels. See webhookRedactor.
+func webhookTransportError(err error, webhookURL string) string {
+	return transportError(err, webhookRedactor(webhookURL))
+}
+
+// minURLSecretBytes is the shortest whole URL component - a path, a
+// query string, a password - that webhookRedactor removes wherever it
+// appears. Anything shorter is not a credential worth the name, and
+// removing every occurrence of, say, a one-character password would
+// shred the rest of the message.
+const minURLSecretBytes = 4
+
+// minURLSecretTokenBytes is the shortest single piece of a URL - a path
+// segment, a query value - that webhookRedactor removes wherever it
+// appears. Removing a common word such as "services" from an echoed
+// body as well costs nothing; leaving a Slack or Mattermost secret
+// segment in place because a proxy quoted only part of the path would
+// not.
+const minURLSecretTokenBytes = 6
+
+// webhookRedactor returns a redactor for text borrowed from an HTTP
+// exchange with the webhook at webhookURL.
+//
+// It applies redactURLPath, which recognizes any URL by its "://", and
+// then removes every literal occurrence of the configured URL's own
+// credential-bearing parts: the whole URL, its path, its query string,
+// its fragment, its userinfo, and each individual path segment and
+// query value, in both their escaped and unescaped spellings. The
+// second pass is the one that matters for a response body. A proxy, a
+// WAF or the endpoint itself may well answer with an error page naming
+// the request path with no scheme in front of it - "no route for
+// /services/T.../B.../XXX" - and a matcher that works from URL syntax
+// alone cannot see that. Anchoring on the value actually sent can.
+//
+// The host is the one part of the URL that is kept, as redactURLPath
+// keeps it: an operator reading a failed-delivery message needs to know
+// which endpoint was unreachable, and the host alone is not the
+// credential. With an empty webhookURL this is redactURLPath alone.
+func webhookRedactor(webhookURL string) func(string) string {
+	secrets := urlSecrets(webhookURL)
+	return func(s string) string {
+		s = redactURLPath(s)
+		for _, secret := range secrets {
+			s = strings.ReplaceAll(s, secret, urlPathPlaceholder)
+		}
+		return s
+	}
+}
+
+// urlSecrets lists the parts of rawURL that webhookRedactor removes
+// wherever they appear, longest first so that a whole path is replaced
+// in one piece before any of its segments is considered on its own.
+func urlSecrets(rawURL string) []string {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return nil
+	}
+	components := []string{rawURL}
+	if unescaped, err := url.PathUnescape(rawURL); err == nil {
+		components = append(components, unescaped)
+	}
+	var host, hostname string
+	if u, err := url.Parse(rawURL); err == nil {
+		host, hostname = u.Host, u.Hostname()
+		components = append(components, u.EscapedPath(), u.Path,
+			u.RawQuery, u.EscapedFragment(), u.Fragment)
+		if query, err := url.QueryUnescape(u.RawQuery); err == nil {
+			components = append(components, query)
+		}
+		if u.User != nil {
+			components = append(components, u.User.String(),
+				u.User.Username())
+			if password, ok := u.User.Password(); ok {
+				components = append(components, password)
+			}
+		}
+	}
+
+	seen := make(map[string]bool)
+	var secrets []string
+	add := func(secret string, minBytes int) {
+		if len(secret) < minBytes || secret == host ||
+			secret == hostname || seen[secret] {
+			return
+		}
+		seen[secret] = true
+		secrets = append(secrets, secret)
+	}
+	for _, component := range components {
+		add(component, minURLSecretBytes)
+		// Split into the pieces a partial echo would most plausibly
+		// quote: path segments, query keys and values, and the halves
+		// of any userinfo.
+		for _, token := range strings.FieldsFunc(component, isURLSecretDelimiter) {
+			add(token, minURLSecretTokenBytes)
+		}
+	}
+	sort.SliceStable(secrets, func(i, j int) bool {
+		return len(secrets[i]) > len(secrets[j])
+	})
+	return secrets
+}
+
+// isURLSecretDelimiter reports whether r separates the pieces of a URL
+// that urlSecrets considers one at a time.
+func isURLSecretDelimiter(r rune) bool {
+	return strings.ContainsRune("/?#&=;:@", r)
 }
 
 // redactTelegramToken replaces the bot token in any text that may have
@@ -248,23 +368,19 @@ const urlPathPlaceholder = "<redacted>"
 // The authority is split at the LAST '@' of the run, since RFC 3986
 // requires a literal '@' inside userinfo to be written %40.
 //
-// Two limits, neither of which any current call site can reach, because
-// no caller passes a string that may be a raw stored URL. Both are the
-// call sites' job to respect, not this function's, so check them before
-// applying the redactor somewhere new:
+// Two limits, which is why the senders never call this on its own but
+// through webhookRedactor, which also removes the configured URL's own
+// parts wherever they appear:
 //
 //   - A URL is recognized by "://" alone, so scheme-less text - a bare
-//     "hooks.example.com/services/XXX" - passes through untouched.
-//     Nothing validates that a stored webhook_url or endpoint_url
-//     carries a scheme, and (*url.Error).Error renders the raw input
-//     string rather than a parsed URL, so a parse failure over such a
-//     value would hand the whole credential to this function and get it
-//     back unchanged. The senders therefore never echo a url.Parse
-//     failure; they report a fixed "the URL is malformed" instead.
+//     "hooks.example.com/services/XXX", or an error page naming only the
+//     request path - passes through untouched. Nothing validates that a
+//     stored webhook_url or endpoint_url carries a scheme, and
+//     (*url.Error).Error renders the raw input string rather than a
+//     parsed URL, so the senders also never echo a url.Parse failure;
+//     they report a fixed "the URL is malformed" instead.
 //   - Whitespace inside a stored path ends the redacted run early and
-//     leaves the tail of the path in the clear. The same parse-failure
-//     paths are the only way such a string could arrive here, and they
-//     no longer echo anything.
+//     leaves the tail of the path in the clear.
 //
 // Like the Telegram redactor, this one fails closed, and its terminator
 // class is the same: the redacted run ends only at whitespace, never at

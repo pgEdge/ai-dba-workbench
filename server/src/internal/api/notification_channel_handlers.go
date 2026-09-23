@@ -298,6 +298,12 @@ func (h *NotificationChannelHandler) createChannel(w http.ResponseWriter, r *htt
 		}
 	}
 
+	if req.HTTPMethod != nil && *req.HTTPMethod != "" &&
+		!isValidWebhookHTTPMethod(*req.HTTPMethod) {
+		RespondError(w, http.StatusBadRequest, invalidHTTPMethodMessage)
+		return
+	}
+
 	// Get owner_username from auth context
 	username := auth.GetUsernameFromContext(r.Context())
 	if username == "" {
@@ -523,6 +529,10 @@ func (h *NotificationChannelHandler) updateChannel(w http.ResponseWriter, r *htt
 		existing.EndpointURL = req.EndpointURL
 	}
 	if req.HTTPMethod != nil {
+		if *req.HTTPMethod != "" && !isValidWebhookHTTPMethod(*req.HTTPMethod) {
+			RespondError(w, http.StatusBadRequest, invalidHTTPMethodMessage)
+			return
+		}
 		existing.HTTPMethod = *req.HTTPMethod
 	}
 	if req.Headers != nil {
@@ -810,6 +820,24 @@ var telegramBotTokenPattern = regexp.MustCompile(
 // is to catch obvious rubbish - a pasted URL, a chat title, a bare '@' -
 // with a clear message and let the API decide the rest.
 var telegramChatIDPattern = regexp.MustCompile(`^(-?\d+|@[A-Za-z0-9_]+)$`)
+
+// invalidHTTPMethodMessage is the 400 response for an http_method
+// isValidWebhookHTTPMethod rejects. It does not repeat the value, which
+// is operator input.
+const invalidHTTPMethodMessage = "Invalid http_method: must be one of GET, POST, PUT, PATCH"
+
+// isValidWebhookHTTPMethod reports whether method is one the generic
+// webhook channel can send with. It matches the alerter's
+// webhookNotifier.Validate, which refuses to deliver with any other
+// method; an empty method means the POST default and is handled by the
+// callers.
+func isValidWebhookHTTPMethod(method string) bool {
+	switch method {
+	case http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch:
+		return true
+	}
+	return false
+}
 
 // validateTelegramFields checks the effective bot token and chat ID of a
 // telegram channel and returns a client-facing message describing the

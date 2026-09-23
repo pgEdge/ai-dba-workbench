@@ -12725,7 +12725,7 @@
           },
           "http_method": {
             "type": "string",
-            "description": "HTTP method for webhook"
+            "description": "HTTP method for webhook: GET, POST, PUT or PATCH. Omit or send an empty string for the POST default; any other value is rejected with 400."
           },
           "is_estate_default": {
             "type": "boolean",

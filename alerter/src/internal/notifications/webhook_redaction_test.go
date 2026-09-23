@@ -254,3 +254,52 @@ func TestWebhookSenders_ResponseBodyIsSanitizedAndCapped(t *testing.T) {
 		})
 	}
 }
+
+// TestWebhookSenders_SchemelessPathEchoIsRedacted covers an endpoint,
+// proxy or WAF answering with an error page that names the request
+// path with no scheme in front, which redactURLPath alone cannot see.
+func TestWebhookSenders_SchemelessPathEchoIsRedacted(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		if _, err := w.Write([]byte("no route for " + r.URL.Path)); err != nil {
+			t.Errorf("failed to write the test response body: %v", err)
+		}
+	}))
+	defer server.Close()
+	secretURL := server.URL + webhookSecretPath
+
+	tests := []struct {
+		name     string
+		notifier Notifier
+		channel  *database.NotificationChannel
+	}{
+		{
+			name:     "slack",
+			notifier: NewSlackNotifier(server.Client(), &mockTemplateRenderer{}),
+			channel:  &database.NotificationChannel{WebhookURL: strPtr(secretURL)},
+		},
+		{
+			name:     "mattermost",
+			notifier: NewMattermostNotifier(server.Client(), &mockTemplateRenderer{}),
+			channel:  &database.NotificationChannel{WebhookURL: strPtr(secretURL)},
+		},
+		{
+			name:     "generic webhook",
+			notifier: NewWebhookNotifierAllowInternal(server.Client(), &mockTemplateRenderer{}),
+			channel:  &database.NotificationChannel{EndpointURL: strPtr(secretURL)},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.notifier.Send(context.Background(), tt.channel, createTestPayload())
+			if err == nil {
+				t.Fatal("Send() expected an error for a 404 response")
+			}
+			if !strings.Contains(err.Error(), "no route for") {
+				t.Errorf("Send() error = %q, want the body echoed", err)
+			}
+			assertNoWebhookURL(t, err.Error())
+		})
+	}
+}

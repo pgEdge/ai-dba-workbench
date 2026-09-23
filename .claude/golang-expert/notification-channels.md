@@ -107,14 +107,16 @@ what missed VULN-002.
 
 **Bound what is echoed, not just what is read.** `sanitizeTelegramEcho`
 wraps every borrowed string before it is interpolated into an error:
-redact the token, map control characters to spaces (a hostile endpoint
-can otherwise forge log lines, and the result also stays storable in a
-Postgres text column), then cap at `maxEchoedBytes` (256) on a
+delete control characters (a hostile endpoint can otherwise forge log
+lines, and the result also stays storable in a Postgres text column),
+then redact the token, then cap at `maxEchoedBytes` (256) on a
 rune boundary. The response body is read under a 1 MiB `io.LimitReader`,
 but that is a *read* limit; without the echo cap a captive portal writes
 a megabyte into the log and into `notification_history.error_message` on
 every one of the three delivery attempts. Redaction runs before the cap
-so the cap can never slice a token run in half.
+so the cap can never slice a token run in half. The fold runs *before*
+redaction and deletes rather than maps to a space, so a control
+character cannot split `://` and hide a URL from the redactor.
 
 **Both modules must stay in step.** The whole redact/cap/sanitize set
 lives in `alerter/src/internal/notifications/sanitize.go` and
@@ -138,7 +140,13 @@ Telegram token has, so the same rule applies to
 failed send wraps with `%w` anything `net/http` or `url.Parse`
 produced, and no borrowed response body is echoed raw. Transport errors
 go through `webhookTransportError`, everything else through
-`sanitizeWebhookEcho` (issue #498).
+`sanitizeWebhookEcho` (issue #498). Both take the channel's configured
+URL: `webhookRedactor` runs `redactURLPath` and then removes every
+literal occurrence of that URL's path, query, fragment, userinfo and
+individual segments (`urlSecrets`), because a proxy or WAF error page
+may quote the path with no scheme for `redactURLPath` to anchor on.
+Operator config echoed in an error (the HTTP method) goes through
+`sanitizeConfigEcho`.
 
 Four sites per sender leak, not one: the `Do` error, the response-body
 echo, the `http.NewRequest*` error (a `*url.Error` quoting the URL when

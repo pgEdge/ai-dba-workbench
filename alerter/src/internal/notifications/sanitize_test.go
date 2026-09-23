@@ -232,14 +232,14 @@ func TestRedactURLPathNeverEmitsUserinfo(t *testing.T) {
 
 func TestSanitizeWebhookEcho(t *testing.T) {
 	t.Run("ordinary text is unchanged", func(t *testing.T) {
-		if got := sanitizeWebhookEcho("connection refused"); got != "connection refused" {
+		if got := sanitizeWebhookEcho("connection refused", ""); got != "connection refused" {
 			t.Errorf("sanitizeWebhookEcho() = %q", got)
 		}
 	})
 
 	t.Run("a webhook path is redacted", func(t *testing.T) {
 		in := "invalid_payload from https://hooks.slack.com" + webhookSecretPath
-		got := sanitizeWebhookEcho(in)
+		got := sanitizeWebhookEcho(in, "")
 		if strings.Contains(got, "T00000000") {
 			t.Errorf("sanitizeWebhookEcho() = %q, want the path redacted", got)
 		}
@@ -248,8 +248,8 @@ func TestSanitizeWebhookEcho(t *testing.T) {
 		}
 	})
 
-	t.Run("control characters become spaces", func(t *testing.T) {
-		got := sanitizeWebhookEcho("first\n[ERROR] forged\r\tx\x00y\x7fz")
+	t.Run("control characters are removed", func(t *testing.T) {
+		got := sanitizeWebhookEcho("first\n[ERROR] forged\r\tx\x00y\x7fz", "")
 		if strings.ContainsAny(got, "\n\r\t\x00\x7f") {
 			t.Errorf("sanitizeWebhookEcho() = %q, want no control characters", got)
 		}
@@ -261,13 +261,13 @@ func TestSanitizeWebhookEcho(t *testing.T) {
 	// A response body is wholly attacker-controlled, and these are the
 	// characters beyond the ASCII controls that a log processor treats
 	// as a line ending or that reorder what a reader sees.
-	t.Run("c1, unicode separators and format characters become spaces", func(t *testing.T) {
+	t.Run("c1, unicode separators and format characters are removed", func(t *testing.T) {
 		for _, r := range []rune{'\u0085', '\u2028', '\u2029', '\u009b',
 			'\u202e', '\u200b', '\u00ad'} {
 			in := "head" + string(r) + "tail"
-			got := sanitizeWebhookEcho(in)
+			got := sanitizeWebhookEcho(in, "")
 			if strings.ContainsRune(got, r) {
-				t.Errorf("sanitizeWebhookEcho(%q) = %q, want %U folded to a space",
+				t.Errorf("sanitizeWebhookEcho(%q) = %q, want %U removed",
 					in, got, r)
 			}
 			if !strings.Contains(got, "head") || !strings.Contains(got, "tail") {
@@ -277,7 +277,7 @@ func TestSanitizeWebhookEcho(t *testing.T) {
 	})
 
 	t.Run("a long body is capped", func(t *testing.T) {
-		got := sanitizeWebhookEcho(strings.Repeat("A", 100000))
+		got := sanitizeWebhookEcho(strings.Repeat("A", 100000), "")
 		if len(got) > maxEchoedBytes+len(echoTruncationMarker) {
 			t.Errorf("sanitizeWebhookEcho() returned %d bytes, want at most %d",
 				len(got), maxEchoedBytes+len(echoTruncationMarker))
@@ -288,21 +288,21 @@ func TestSanitizeWebhookEcho(t *testing.T) {
 	})
 
 	t.Run("the cap does not split a rune", func(t *testing.T) {
-		got := sanitizeWebhookEcho(strings.Repeat("中", 500))
+		got := sanitizeWebhookEcho(strings.Repeat("中", 500), "")
 		if !utf8.ValidString(got) {
 			t.Error("sanitizeWebhookEcho() produced invalid UTF-8")
 		}
 	})
 
 	t.Run("invalid utf-8 is replaced", func(t *testing.T) {
-		got := sanitizeWebhookEcho("head\xff\xfetail")
+		got := sanitizeWebhookEcho("head\xff\xfetail", "")
 		if !utf8.ValidString(got) {
 			t.Errorf("sanitizeWebhookEcho() = %q, want valid UTF-8", got)
 		}
 	})
 
 	t.Run("empty", func(t *testing.T) {
-		if got := sanitizeWebhookEcho(""); got != "" {
+		if got := sanitizeWebhookEcho("", ""); got != "" {
 			t.Errorf("sanitizeWebhookEcho() = %q, want empty", got)
 		}
 	})
@@ -310,7 +310,7 @@ func TestSanitizeWebhookEcho(t *testing.T) {
 
 func TestWebhookTransportError(t *testing.T) {
 	t.Run("plain error", func(t *testing.T) {
-		got := webhookTransportError(fmt.Errorf("something broke"))
+		got := webhookTransportError(fmt.Errorf("something broke"), "")
 		if got != "something broke" {
 			t.Errorf("webhookTransportError() = %q, want %q", got, "something broke")
 		}
@@ -322,7 +322,7 @@ func TestWebhookTransportError(t *testing.T) {
 			URL: "https://hooks.slack.com" + webhookSecretPath,
 			Err: fmt.Errorf("dial tcp: connection refused"),
 		}
-		got := webhookTransportError(urlErr)
+		got := webhookTransportError(urlErr, "")
 		if strings.Contains(got, "T00000000") || strings.Contains(got, "services") {
 			t.Errorf("webhookTransportError() = %q, want no webhook path", got)
 		}
@@ -339,7 +339,7 @@ func TestWebhookTransportError(t *testing.T) {
 			Op:  "Post",
 			URL: "https://hooks.slack.com" + webhookSecretPath,
 		}
-		got := webhookTransportError(urlErr)
+		got := webhookTransportError(urlErr, "")
 		if strings.Contains(got, "T00000000") || strings.Contains(got, "services") {
 			t.Errorf("webhookTransportError() = %q, want no webhook path", got)
 		}
@@ -347,9 +347,146 @@ func TestWebhookTransportError(t *testing.T) {
 
 	t.Run("a nested url error inside a plain error is redacted", func(t *testing.T) {
 		got := webhookTransportError(fmt.Errorf(
-			"giving up: https://hooks.slack.com%s", webhookSecretPath))
+			"giving up: https://hooks.slack.com%s", webhookSecretPath), "")
 		if strings.Contains(got, "T00000000") {
 			t.Errorf("webhookTransportError() = %q, want no webhook path", got)
+		}
+	})
+}
+
+// TestSanitizeEcho_FoldRunsBeforeRedaction pins the order of the two
+// steps: a control character inside the scheme separator must not hide
+// the URL from redactURLPath and then be folded away afterwards, which
+// would hand back a legible, unredacted URL.
+func TestSanitizeEcho_FoldRunsBeforeRedaction(t *testing.T) {
+	for _, sep := range []string{"\x00", "\n", "\u200b", "\u2028", "\u0085"} {
+		in := "error: https:" + sep + "//hooks.slack.com" + webhookSecretPath
+		got := sanitizeWebhookEcho(in, "")
+		if strings.Contains(got, "T00000000") || strings.Contains(got, "XXXXXXXX") {
+			t.Errorf("sanitizeWebhookEcho(%q) = %q, want the path redacted", in, got)
+		}
+		if !strings.Contains(got, "https://hooks.slack.com") {
+			t.Errorf("sanitizeWebhookEcho(%q) = %q, want the host kept", in, got)
+		}
+	}
+}
+
+func TestSanitizeConfigEcho(t *testing.T) {
+	if got := sanitizeConfigEcho("DELETE"); got != "DELETE" {
+		t.Errorf("sanitizeConfigEcho() = %q, want it unchanged", got)
+	}
+	got := sanitizeConfigEcho("POST\n[ERROR] forged\r" + strings.Repeat("A", 1000))
+	if strings.ContainsAny(got, "\n\r") {
+		t.Errorf("sanitizeConfigEcho() = %q, want no line breaks", got)
+	}
+	if !strings.HasSuffix(got, echoTruncationMarker) {
+		t.Errorf("sanitizeConfigEcho() = %q, want it capped", got)
+	}
+}
+
+// TestWebhookRedactor_SchemelessEchoOfTheConfiguredURL is the case a
+// syntax matcher cannot see: an endpoint or an intermediary answering
+// with an error page that names the request path, or part of it, with
+// no scheme in front.
+func TestWebhookRedactor_SchemelessEchoOfTheConfiguredURL(t *testing.T) {
+	webhookURL := "https://hooks.slack.com" + webhookSecretPath
+	tests := []struct {
+		name string
+		body string
+	}{
+		{"the whole path", "404 no route for " + webhookSecretPath},
+		{"host and path", "cannot reach hooks.slack.com" + webhookSecretPath},
+		{"a partial path", "unknown hook B00000000/XXXXXXXXXXXXXXXXXXXXXXXX"},
+		{"the secret segment alone", `{"error":"XXXXXXXXXXXXXXXXXXXXXXXX revoked"}`},
+		{"a percent-encoded path", "no route for %2Fservices%2FT00000000%2FB00000000"},
+		{"the path split by a control character", "no route for /services/T000\x0000000/B00000000"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sanitizeWebhookEcho(tt.body, webhookURL)
+			for _, fragment := range []string{"T00000000", "B00000000", "XXXXXXXX"} {
+				if strings.Contains(got, fragment) {
+					t.Errorf("sanitizeWebhookEcho(%q) = %q repeats %q", tt.body, got, fragment)
+				}
+			}
+		})
+	}
+
+	t.Run("the host survives", func(t *testing.T) {
+		got := sanitizeWebhookEcho("cannot reach hooks.slack.com"+webhookSecretPath, webhookURL)
+		if !strings.Contains(got, "hooks.slack.com") {
+			t.Errorf("sanitizeWebhookEcho() = %q, want the host kept", got)
+		}
+	})
+
+	t.Run("a transport error is redacted the same way", func(t *testing.T) {
+		got := webhookTransportError(fmt.Errorf("proxy said: bad path %s", webhookSecretPath), webhookURL)
+		if strings.Contains(got, "T00000000") {
+			t.Errorf("webhookTransportError() = %q, want no webhook path", got)
+		}
+	})
+}
+
+func TestWebhookRedactor_QueryFragmentAndUserinfo(t *testing.T) {
+	webhookURL := "https://svc:hunter2pw@hooks.example.com/in?token=s3cr3tvalue&x=1#frag0123"
+	body := "rejected token=s3cr3tvalue for user svc:hunter2pw, s3cr3tvalue, frag0123"
+	got := sanitizeWebhookEcho(body, webhookURL)
+	for _, fragment := range []string{"s3cr3tvalue", "hunter2pw", "frag0123"} {
+		if strings.Contains(got, fragment) {
+			t.Errorf("sanitizeWebhookEcho() = %q repeats %q", got, fragment)
+		}
+	}
+}
+
+func TestURLSecrets(t *testing.T) {
+	t.Run("empty", func(t *testing.T) {
+		if got := urlSecrets("  "); got != nil {
+			t.Errorf("urlSecrets() = %q, want nil", got)
+		}
+	})
+
+	t.Run("longest first and the host is kept", func(t *testing.T) {
+		got := urlSecrets("https://hooks.slack.com:8443" + webhookSecretPath)
+		for i := 1; i < len(got); i++ {
+			if len(got[i]) > len(got[i-1]) {
+				t.Fatalf("urlSecrets() = %q, want longest first", got)
+			}
+		}
+		for _, secret := range got {
+			if secret == "hooks.slack.com" || secret == "hooks.slack.com:8443" {
+				t.Errorf("urlSecrets() = %q, want the host left out", got)
+			}
+			if len(secret) < minURLSecretBytes {
+				t.Errorf("urlSecrets() returned %q, shorter than the minimum", secret)
+			}
+		}
+		for _, want := range []string{webhookSecretPath, "XXXXXXXXXXXXXXXXXXXXXXXX", "T00000000"} {
+			found := false
+			for _, secret := range got {
+				found = found || secret == want
+			}
+			if !found {
+				t.Errorf("urlSecrets() = %q, want it to include %q", got, want)
+			}
+		}
+	})
+
+	t.Run("an unparsable url still yields its pieces", func(t *testing.T) {
+		got := urlSecrets("hooks.example.com\x00" + webhookSecretPath + "%zz")
+		found := false
+		for _, secret := range got {
+			found = found || secret == "T00000000"
+		}
+		if !found {
+			t.Errorf("urlSecrets() = %q, want the path segments", got)
+		}
+	})
+
+	t.Run("short pieces are left alone", func(t *testing.T) {
+		for _, secret := range urlSecrets("https://h.example.com/a/b?x=1") {
+			if secret == "a" || secret == "b" || secret == "x" || secret == "1" {
+				t.Errorf("urlSecrets() returned the short piece %q", secret)
+			}
 		}
 	})
 }

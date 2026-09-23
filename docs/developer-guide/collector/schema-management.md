@@ -182,6 +182,9 @@ sm.migrations = append(sm.migrations, Migration{
             CREATE INDEX IF NOT EXISTS
                 idx_probe_events_collected_at
                 ON probe_events(collected_at DESC);
+
+            COMMENT ON INDEX idx_probe_events_collected_at IS
+                'Supports queries for the most recent events.';
         `)
         if err != nil {
             return fmt.Errorf(

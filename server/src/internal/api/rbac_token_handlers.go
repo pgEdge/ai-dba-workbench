@@ -357,9 +357,15 @@ func (h *RBACHandler) setTokenScope(w http.ResponseWriter, r *http.Request, toke
 		return
 	}
 
-	// The MCP scope is written first because it is the one that can be
-	// refused for its content, an unregistered identifier, and a
-	// refusal should leave the other scope kinds as they were.
+	// A request refused for its content must leave every scope kind as
+	// it was, so the connection access levels are checked before any
+	// write, and the MCP scope, which can be refused for naming an
+	// unregistered identifier, is written first.
+	if err := auth.ValidateScopedConnections(req.Connections); err != nil {
+		RespondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
 	if req.MCPPrivileges != nil {
 		if err := h.actorStore(r).SetTokenMCPScopeByNames(tokenID, req.MCPPrivileges); err != nil {
 			if errors.Is(err, auth.ErrUnknownMCPPrivilege) {

@@ -81,6 +81,51 @@ func TestSetTokenScopeRejectsUnknownMCPPrivilege(t *testing.T) {
 	}
 }
 
+// TestSetTokenScopeRejectsInvalidAccessLevelBeforeWriting checks that a
+// connection entry with an unknown access level is refused with 400
+// before any scope kind is written, so a valid MCP scope in the same
+// request does not land on its own.
+func TestSetTokenScopeRejectsInvalidAccessLevelBeforeWriting(t *testing.T) {
+	handler, store, cleanup := createTestRBACHandler(t)
+	defer cleanup()
+
+	for _, name := range []string{"known_tool", "other_tool"} {
+		if _, err := store.RegisterMCPPrivilege(name,
+			auth.MCPPrivilegeTypeTool, name, false); err != nil {
+			t.Fatalf("RegisterMCPPrivilege failed: %v", err)
+		}
+	}
+	target := mustCreateScopedToken(t, store, "svc-bad-level",
+		[]string{auth.PermManageUsers})
+	if err := store.SetTokenMCPScopeByNames(target,
+		[]string{"known_tool"}); err != nil {
+		t.Fatalf("SetTokenMCPScopeByNames failed: %v", err)
+	}
+
+	body := strings.NewReader(`{"mcp_privileges":["other_tool"],` +
+		`"connections":[{"connection_id":3,"access_level":"write"}]}`)
+	req := httptest.NewRequest(http.MethodPut,
+		"/api/v1/rbac/tokens/"+strconv.FormatInt(target, 10)+"/scope", body)
+	req.Header.Set("Content-Type", "application/json")
+	req = withSuperuser(req)
+	rec := httptest.NewRecorder()
+	handler.handleTokenSubpath(rec, req)
+
+	if rec.Code != http.StatusBadRequest ||
+		!strings.Contains(rec.Body.String(), "invalid access level") {
+		t.Fatalf("Expected 400 for an invalid access level, got %d: %s",
+			rec.Code, rec.Body.String())
+	}
+
+	names, err := store.GetTokenMCPScope(target)
+	if err != nil {
+		t.Fatalf("GetTokenMCPScope failed: %v", err)
+	}
+	if len(names) != 1 || names[0] != "known_tool" {
+		t.Errorf("Expected the MCP scope to be untouched, got %v", names)
+	}
+}
+
 // connectionMutationRequest issues a PUT or DELETE against a connection
 // with the given session bearer, acting as the given superuser API
 // token.

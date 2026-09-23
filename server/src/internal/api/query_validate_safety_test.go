@@ -28,7 +28,7 @@ const safetyVictimTable = "query_validate_victim"
 // statement splitter cannot divide correctly, carrying a COMMIT that
 // would end the read-only transaction and a DROP TABLE after it. The
 // extended query protocol refuses to prepare more than one command,
-// so none of it may run and none of it may be reported as valid.
+// so none of it may run and no statement may be reported as valid.
 func TestValidateQuery_SmuggledCommandsAreNeverRun(t *testing.T) {
 	h, pool, target, cleanup := newQueryExecTestHandler(t)
 	defer cleanup()
@@ -64,11 +64,16 @@ func TestValidateQuery_SmuggledCommandsAreNeverRun(t *testing.T) {
 			}
 			rec := postValidate(t, h, connID, string(body))
 
+			// On a server that predates GENERIC_PLAN a parameterised
+			// payload is reported unsupported, which is also safe:
+			// what matters is that it is never planned as valid.
 			if rec.Code == http.StatusOK {
 				resp := decodeValidate(t, rec)
-				if resp.Valid {
-					t.Errorf("valid = true for a smuggled COMMIT (statements %+v)",
-						resp.Statements)
+				for _, stmt := range resp.Statements {
+					if stmt.Status == validationValid {
+						t.Errorf("a smuggled COMMIT was reported valid (statements %+v)",
+							resp.Statements)
+					}
 				}
 			}
 

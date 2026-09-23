@@ -512,19 +512,25 @@ The purge deletes a contiguous id-prefix and nothing else:
 
 ```go
 DELETE FROM audit_events
-    WHERE id < (SELECT COALESCE(MIN(id), 0) FROM audit_events
+    WHERE id < (SELECT MIN(id) FROM audit_events
                 WHERE occurred_at >= ?)
 ```
 
 `occurred_at` is a column an attacker who can write `auth.db` chooses;
-`id` is insertion order and no server path writes it. Deleting on
+`id` is insertion order, assigned by SQLite on every server insert and
+fixed on existing rows by the append-only trigger; a writer can name
+an `id` on INSERT, but that only moves the boundary earlier. Deleting on
 `occurred_at` alone let backdated rows steer the purge into removing
 the newest events, which relinked the chain and, through the appended
 `audit.purge` event, put `MAX(id)` back into agreement with
 `sqlite_sequence`, the disagreement `verifyAuditTail` exists to read.
-When no row falls inside the window the `COALESCE(..., 0)` branch
-deletes nothing, which is deliberate: emptying the log instead would
-restore the same oracle. `TestPurgeIgnoresBackdatedNewestRows` in
+When no row falls inside the window the subquery yields NULL and
+nothing is deleted, which is deliberate: emptying the log instead would
+restore the same oracle, and a fixed cut-off such as 0 would delete
+rows inserted at negative ids. `forEachAuditEvent` likewise starts its
+first page with no lower bound on `id`, and `rechainAuditLogTx`
+refuses to commit when the rows it reached differ from the plan's
+count. `TestPurgeIgnoresBackdatedNewestRows` in
 `audit_rechain_guard_test.go` covers both halves, the refusal and an
 honest prefix still being purged.
 

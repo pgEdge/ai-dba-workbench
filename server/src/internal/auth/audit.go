@@ -579,8 +579,13 @@ type auditQuerier interface {
 // them a page at a time. fn may execute further statements on q,
 // because each page's rows are fully read and closed before fn sees
 // them.
+//
+// The first page has no lower bound on id. Ids are values in the file,
+// and an INSERT may name zero or a negative one, so a walk that began
+// above any fixed value would skip rows the verifier and the re-chain
+// must both see.
 func forEachAuditEvent(q auditQuerier, fn func(AuditEvent) error) error {
-	after := int64(0)
+	var after *int64
 	for {
 		page, err := auditEventPage(q, after)
 		if err != nil {
@@ -593,15 +598,25 @@ func forEachAuditEvent(q auditQuerier, fn func(AuditEvent) error) error {
 			if err := fn(page[i]); err != nil {
 				return err
 			}
-			after = page[i].ID
+			id := page[i].ID
+			after = &id
 		}
 	}
 }
 
-// auditEventPage reads up to auditPageSize rows with an id above after,
-// in id order.
-func auditEventPage(q auditQuerier, after int64) ([]AuditEvent, error) {
-	rows, err := q.Query(auditSelectPage, after, auditPageSize)
+// auditEventPage reads up to auditPageSize rows in id order: the first
+// rows of the log when after is nil, otherwise those with an id above
+// it.
+func auditEventPage(q auditQuerier, after *int64) ([]AuditEvent, error) {
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if after == nil {
+		rows, err = q.Query(auditSelectFirstPage, auditPageSize)
+	} else {
+		rows, err = q.Query(auditSelectPage, *after, auditPageSize)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to query audit events: %w", err)
 	}
@@ -1147,6 +1162,17 @@ func (s *AuthStore) rechainAuditLogTx(actor Actor, plan AuditRechainPlan) (
 		return 0, walkErr
 	}
 
+	// The plan counted the rows with COUNT(*), and the walk reached
+	// them one page at a time. Were the two ever to disagree, some row
+	// the operator approved would be left unsigned beside keyed ones,
+	// a mixed log the store then refuses to open, so the rewrite is
+	// abandoned rather than committed.
+	if rehashed != plan.Events {
+		return 0, fmt.Errorf("%w: the plan counted %d event(s) but the "+
+			"rewrite reached %d; nothing has been written",
+			ErrAuditRechainChanged, plan.Events, rehashed)
+	}
+
 	if _, err := tx.Exec(auditNoUpdateTriggerDDL); err != nil {
 		return 0, fmt.Errorf("failed to restore the append-only trigger "+
 			"%s: %w", auditNoUpdateTrigger, err)
@@ -1477,6 +1503,8 @@ const (
 
 	auditSelectPage = auditSelectAll +
 		" WHERE id > ? ORDER BY id LIMIT ?"
+
+	auditSelectFirstPage = auditSelectAll + " ORDER BY id LIMIT ?"
 
 	auditSelectByID = auditSelectAll + " WHERE id = ?"
 
@@ -1904,19 +1932,26 @@ func (s *AuthStore) PurgeAuditEvents(olderThan time.Time) (removed int64, err er
 	// exactly the disagreement verifyAuditTail reads to detect a
 	// truncated log. Retention runs unattended every few minutes, so
 	// that would be a deletion oracle an attacker need only wait for.
-	// id is insertion order, is assigned by SQLite and is not writable
-	// through any server path, so a prefix of ids is a prefix of the
-	// log.
+	// id is insertion order, is assigned by SQLite on every server
+	// insert, and cannot be changed on an existing row because of the
+	// append-only trigger, so a prefix of ids is a prefix of the log. A
+	// writer of the file can name an id on INSERT, but a row inserted
+	// that way can only move the boundary earlier, never past the
+	// oldest row inside the window.
 	//
-	// When no row is inside the window the subquery yields 0 and
-	// nothing is deleted, which is a deliberate departure from deleting
-	// the whole log. Over-retaining is harmless and lasts only until
-	// the next event is recorded, whereas emptying the table hands the
+	// When no row is inside the window the subquery yields NULL, the
+	// comparison is never true and nothing is deleted, which is a
+	// deliberate departure from deleting the whole log. NULL rather
+	// than a fixed value such as 0, because an INSERT may name a
+	// negative id and a fixed cut-off would delete below it. Over-
+	// retaining is harmless and lasts only until the next scheduled
+	// purge after an event falls inside the window again, whereas
+	// emptying the table hands the
 	// same oracle back: backdating every row would erase the log
 	// entirely and leave the appended audit.purge event as a fresh
 	// genesis row.
 	result, err := tx.Exec(`DELETE FROM audit_events
-        WHERE id < (SELECT COALESCE(MIN(id), 0) FROM audit_events
+        WHERE id < (SELECT MIN(id) FROM audit_events
                     WHERE occurred_at >= ?)`,
 		olderThan.UTC().Format(auditTimeLayout))
 	if err != nil {

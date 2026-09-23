@@ -11,6 +11,8 @@ package auth
 
 import (
 	"errors"
+	"fmt"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -401,5 +403,116 @@ func TestRechainKeepsThePurgedPrefixLink(t *testing.T) {
 	if _, firstBad, err := reopened.VerifyAuditChain(); err != nil {
 		t.Errorf("Expected the re-chained log to verify, got %v (row %d)",
 			err, firstBad)
+	}
+}
+
+// insertAuditRowAtID writes a row at an explicit id, which an INSERT may
+// name whatever AUTOINCREMENT would have assigned, including zero and
+// negative values.
+func insertAuditRowAtID(t *testing.T, store *AuthStore, id int64,
+	at time.Time) {
+	t.Helper()
+	if _, err := store.db.Exec(`
+        INSERT INTO audit_events (
+            id, occurred_at, actor_type, actor_name, action, outcome,
+            prev_hash, hash, hash_version
+        ) VALUES (?, ?, 'system', 'system', 'user.create', 'success',
+                  ?, ?, 2)`,
+		id, at.UTC().Format(auditTimeLayout),
+		fmt.Sprintf("prev-%d", id), fmt.Sprintf("hash-%d", id)); err != nil {
+		t.Fatalf("Failed to insert a row at id %d: %v", id, err)
+	}
+}
+
+// TestPurgeWithNoRowInWindowKeepsNegativeIDs checks that a purge with
+// nothing inside the retention window deletes nothing at all. A fixed
+// cut-off of 0 would still have removed rows written at negative ids.
+func TestPurgeWithNoRowInWindowKeepsNegativeIDs(t *testing.T) {
+	store, _ := newReopenableStore(t)
+	if _, err := store.db.Exec("DELETE FROM audit_events"); err != nil {
+		t.Fatalf("Failed to empty the audit log: %v", err)
+	}
+
+	old := time.Now().UTC().Add(-72 * time.Hour)
+	insertAuditRowAtID(t, store, -2, old)
+	insertAuditRowAtID(t, store, -1, old)
+	insertAuditRowAtID(t, store, 5, old)
+
+	removed, err := store.PurgeAuditEvents(time.Now().UTC().Add(-time.Hour))
+	if err != nil {
+		t.Fatalf("Failed to purge: %v", err)
+	}
+	if removed != 0 {
+		t.Fatalf("Expected the purge to remove nothing, got %d", removed)
+	}
+
+	var count int
+	if err := store.db.QueryRow(
+		"SELECT COUNT(*) FROM audit_events").Scan(&count); err != nil {
+		t.Fatalf("Failed to count audit events: %v", err)
+	}
+	if count != 3 {
+		t.Errorf("Expected all 3 rows to survive, got %d", count)
+	}
+}
+
+// TestForEachAuditEventReadsNonPositiveIDs checks that the paged walk
+// the verifier and the re-chain share reaches rows at zero and negative
+// ids, across more than one page, rather than starting above them.
+func TestForEachAuditEventReadsNonPositiveIDs(t *testing.T) {
+	original := auditPageSize
+	auditPageSize = 2
+	defer func() { auditPageSize = original }()
+
+	store, _ := newReopenableStore(t)
+	if _, err := store.db.Exec("DELETE FROM audit_events"); err != nil {
+		t.Fatalf("Failed to empty the audit log: %v", err)
+	}
+
+	now := time.Now().UTC()
+	want := []int64{math.MinInt64, -1, 0, 3}
+	for _, id := range want {
+		insertAuditRowAtID(t, store, id, now)
+	}
+
+	var got []int64
+	if err := forEachAuditEvent(store.db, func(ev AuditEvent) error {
+		got = append(got, ev.ID)
+		return nil
+	}); err != nil {
+		t.Fatalf("Walk failed: %v", err)
+	}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("Expected the walk to visit %v, got %v", want, got)
+	}
+}
+
+// TestRechainReportsARowItCannotHash covers a re-hash failing part-way
+// through the walk: the rewrite must stop and report the row rather
+// than commit a partly signed log. A store with no key is what makes
+// auditHash refuse.
+func TestRechainReportsARowItCannotHash(t *testing.T) {
+	store, _ := newReopenableStore(t)
+	for i := 0; i < 2; i++ {
+		if err := store.recordAuditInOwnTx(newEvent(systemActor,
+			"user.create", "user", nil, "alice", nil)); err != nil {
+			t.Fatalf("Failed to record an event: %v", err)
+		}
+	}
+
+	var plan AuditRechainPlan
+	if err := store.db.QueryRow(
+		"SELECT COUNT(*), MIN(id), MAX(id) FROM audit_events").
+		Scan(&plan.Events, &plan.LowestID, &plan.HighestID); err != nil {
+		t.Fatalf("Failed to measure the audit log: %v", err)
+	}
+	store.auditKey = nil
+
+	_, err := store.rechainAuditLogTx(systemActor, plan)
+	if err == nil {
+		t.Fatal("Expected the re-hash to fail without a key")
+	}
+	if !strings.Contains(err.Error(), "failed to re-hash audit row") {
+		t.Errorf("Expected the failing row to be named, got %v", err)
 	}
 }

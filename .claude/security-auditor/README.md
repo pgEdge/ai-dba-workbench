@@ -199,16 +199,21 @@ client address, before and after snapshots and a hash chain.
   no hash over a row it did not create. Treat any proposal that has an
   unattended path re-sign existing rows as that bug returning.
 - `PurgeAuditEvents` deletes a contiguous id-prefix and can express
-  nothing else: `DELETE ... WHERE id < (SELECT COALESCE(MIN(id), 0)
-  FROM audit_events WHERE occurred_at >= ?)`. `occurred_at` is
-  attacker-writable and `id` is not, so deleting by timestamp alone
+  nothing else: `DELETE ... WHERE id < (SELECT MIN(id) FROM
+  audit_events WHERE occurred_at >= ?)`. `occurred_at` is
+  attacker-writable. Server inserts let SQLite assign `id` and the
+  append-only trigger stops an existing row's `id` changing; a writer
+  can name an `id` on INSERT, but that can only move the boundary
+  earlier, never past the oldest row in the window. Deleting by
+  timestamp alone
   made retention, which runs unattended every five minutes, a
   suffix-deletion oracle: backdated newest rows were deleted, the chain
   relinked to the last survivor, and the appended `audit.purge` event
   raised `MAX(id)` back into agreement with `sqlite_sequence`, which is
   exactly what `verifyAuditTail` reads. Where no row is inside the
-  window the subquery yields 0 and nothing is deleted, deliberately: an
-  empty log would hand the same oracle back. Any change that filters
+  window the subquery yields NULL and nothing is deleted, deliberately:
+  an empty log would hand the same oracle back, and a fixed cut-off
+  such as 0 would delete rows inserted at negative ids. Any change that filters
   the purge on a column a writer of `auth.db` controls reopens this.
 - Verification distinguishes a wrong key from tampering, because the
   responses differ. The `keyProven` flag is the whole mechanism: a row

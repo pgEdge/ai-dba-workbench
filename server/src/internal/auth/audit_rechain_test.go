@@ -1013,7 +1013,7 @@ func TestAuditEventPageReportsAScanFailure(t *testing.T) {
 		t.Fatalf("Failed to insert the row: %v", err)
 	}
 
-	if _, err := auditEventPage(store.db, 0); err == nil {
+	if _, err := auditEventPage(store.db, nil); err == nil {
 		t.Fatal("Expected the scan to fail")
 	} else if !strings.Contains(err.Error(), "failed to scan audit event") {
 		t.Errorf("Expected a scan failure, got %v", err)

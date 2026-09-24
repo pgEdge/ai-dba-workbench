@@ -4430,7 +4430,7 @@
             }
           },
           "400": {
-            "description": "Query is required",
+            "description": "Query is required, or the database name is invalid",
             "content": {
               "application/json": {
                 "schema": {

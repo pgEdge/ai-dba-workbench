@@ -2146,7 +2146,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 				RequestBody: jsonRequestBody("QueryValidateRequest", "SQL to validate", true),
 				Responses: map[string]OpenAPIResponse{
 					"200": jsonResponse("QueryValidateResponse", "Validation result for every statement"),
-					"400": jsonResponse("ErrorResponse", "Query is required"),
+					"400": jsonResponse("ErrorResponse", "Query is required, or the database name is invalid"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
 					"403": jsonResponse("ErrorResponse", "Permission denied: you do not have access to this connection"),
 					"404": jsonResponse("ErrorResponse", "Connection not found"),

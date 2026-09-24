@@ -266,6 +266,51 @@ func TestValidateQuery_BadRequests(t *testing.T) {
 	}
 }
 
+// TestValidateQuery_InvalidDatabaseName covers the second-line
+// check on the optional database override: a name that cannot name a
+// real database is turned away with a 400 before it reaches the
+// connection string. The handler has a nil datastore, so the check must
+// run before any datastore call or the test would panic.
+func TestValidateQuery_InvalidDatabaseName(t *testing.T) {
+	tests := []struct {
+		name   string
+		dbName string
+	}{
+		{name: "whitespace only", dbName: "   "},
+		{name: "too long", dbName: strings.Repeat("a", 64)},
+		{name: "newline", dbName: "my\ndb"},
+		{name: "escape character", dbName: "my\x1bdb"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler := newTestConnectionHandlerWithRBAC()
+			body, err := json.Marshal(queryValidateRequest{
+				Query: "SELECT 1", DatabaseName: tt.dbName,
+			})
+			if err != nil {
+				t.Fatalf("failed to marshal the request: %v", err)
+			}
+			req := httptest.NewRequest(http.MethodPost,
+				"/api/v1/connections/1/query/validate",
+				bytes.NewBuffer(body))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+
+			handler.validateQuery(rec, req, 1)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want %d (body %q)",
+					rec.Code, http.StatusBadRequest, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), "Invalid database name") {
+				t.Errorf("body = %q, want an invalid database name error",
+					rec.Body.String())
+			}
+		})
+	}
+}
+
 // TestValidateQuery_ReadCheckDenied covers the RBAC gate. The caller
 // holds a token scoped to a different connection, so the read check
 // fails; the nil datastore proves the gate runs before any datastore

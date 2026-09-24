@@ -58,6 +58,16 @@ func TestIssue530_IsReadOnlyStatementExplain(t *testing.T) {
 			"EXPLAIN (ANALYZE) WITH x AS (SELECT 1) SELECT * FROM x", true},
 		{"explain analyze mixed case", "ExPlAiN aNaLyZe DeLeTe FROM t", false},
 		{"explain analyze lowercase", "explain analyze delete from t", false},
+		{"form feed before a comment hiding analyze",
+			"EXPLAIN\f/* x */ ANALYZE DELETE FROM t", false},
+		{"form feed before a line comment hiding analyze",
+			"EXPLAIN\f-- c\nANALYZE DELETE FROM t", false},
+		{"form feed before a comment hiding the option list",
+			"EXPLAIN\f/**/(ANALYZE) DELETE FROM t", false},
+		{"vertical tab before a comment hiding analyze",
+			"EXPLAIN\v/* x */ ANALYZE DELETE FROM t", false},
+		{"carriage return ends a line comment before analyze",
+			"EXPLAIN -- c\rANALYZE DELETE FROM t", false},
 		{"explain with leading comment",
 			"-- plan it\nEXPLAIN ANALYZE DELETE FROM t", false},
 		{"explain with block comment before options",
@@ -519,6 +529,8 @@ func TestIssue530_SplitStatementsQuoting(t *testing.T) {
 		{"dollar continuing an identifier still splits",
 			"SELECT 1 AS a$q$; SELECT 2 -- $q$",
 			[]string{"SELECT 1 AS a$q$", "SELECT 2 -- $q$"}},
+		{"carriage return ends a line comment", "SELECT 1 -- c\r; DELETE FROM t",
+			[]string{"SELECT 1 -- c", "DELETE FROM t"}},
 		{"plain literal still splits after it", `SELECT 'a;b'; SELECT 2`,
 			[]string{`SELECT 'a;b'`, "SELECT 2"}},
 	}
@@ -691,6 +703,19 @@ func TestIssue530_KeywordScansIgnoreNonCode(t *testing.T) {
 		{"E after a non-ASCII identifier byte is not an escape prefix",
 			`WITH a AS (SELECT éE'\' AS c), d AS (DELETE FROM t RETURNING *) ` +
 				"SELECT * FROM d", false},
+		{"E after a dollar continuing an identifier is not an escape prefix",
+			`WITH x AS (SELECT a$E'\' AS c), d AS (DELETE FROM t RETURNING *) ` +
+				"SELECT * FROM d", false},
+		{"explain analyze of an identifier dollar before an E literal",
+			`EXPLAIN ANALYZE WITH x AS (SELECT a$E'\' AS c), ` +
+				"d AS (DELETE FROM t RETURNING *) SELECT * FROM d", false},
+		{"into after an identifier dollar before an E literal",
+			`SELECT a$E'\' AS c INTO newtab FROM t`, false},
+		{"carriage return ends a line comment",
+			"WITH a AS (SELECT 1) -- x\r, d AS (DELETE FROM t RETURNING *) " +
+				"SELECT * FROM d", false},
+		{"form feed before a leading comment",
+			"\f/* x */ WITH d AS (DELETE FROM t RETURNING *) SELECT * FROM d", false},
 	}
 
 	for _, tt := range tests {
@@ -723,6 +748,8 @@ func TestIssue530_MaskNonCode(t *testing.T) {
 		{"dollar continuing an identifier", "SELECT a$q$ FROM t", "SELECT a$q$ FROM t"},
 		{"non-ASCII dollar tag", "SELECT $é$'$é$ AS c", "SELECT " + strings.Repeat(" ", 9) + " AS c"},
 		{"E continuing a non-ASCII identifier", `SELECT éE'\' AS c`, `SELECT éE    AS c`},
+		{"E after an identifier dollar", `SELECT a$E'\' AS c`, `SELECT a$E    AS c`},
+		{"carriage return ends a line comment", "SELECT a -- x\rFROM t", "SELECT a     \rFROM t"},
 		{"placeholder is code", "SELECT $1", "SELECT $1"},
 		{"empty", "", ""},
 	}

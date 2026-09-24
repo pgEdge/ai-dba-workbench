@@ -139,6 +139,22 @@ export const ALL_ADMIN_OPTION: AdminPermissionOption = {
     _isAll: true,
 };
 
+// A scope category with no entries places no restriction on the token,
+// which the server enforces the same way; these explain that under an
+// empty category so it is not read as "restricted to nothing".
+
+/** Helper text shown when a token's connection scope is empty. */
+export const NO_CONNECTION_RESTRICTION_TEXT =
+    'No restriction: the token may use every connection its owner can reach';
+
+/** Helper text shown when a token's MCP privilege scope is empty. */
+export const NO_MCP_RESTRICTION_TEXT =
+    'No restriction: the token may use every MCP privilege its owner holds';
+
+/** Helper text shown when a token's admin permission scope is empty. */
+export const NO_ADMIN_RESTRICTION_TEXT =
+    'No restriction: the token may use every admin permission its owner holds';
+
 // ---------------------------------------------------------------------
 // Helper functions
 // ---------------------------------------------------------------------

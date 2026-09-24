@@ -39,7 +39,7 @@ func createTestRBACHandlerWithDir(t *testing.T) (*RBACHandler, *auth.AuthStore,
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
 
-	store, err := auth.NewAuthStore(dir, 0, 0)
+	store, err := auth.NewAuthStore(dir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		os.RemoveAll(dir)
 		t.Fatalf("Failed to create auth store: %v", err)

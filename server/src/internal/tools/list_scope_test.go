@@ -27,7 +27,7 @@ import (
 // tool, plus the RBAC-exempt tools, which stay visible by design.
 func TestListForContextHonoursMCPScope(t *testing.T) {
 	tmpDir := t.TempDir()
-	authStore, err := auth.NewAuthStore(tmpDir, 0, 0)
+	authStore, err := auth.NewAuthStore(tmpDir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("NewAuthStore: %v", err)
 	}

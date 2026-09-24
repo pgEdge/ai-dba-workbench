@@ -163,12 +163,22 @@ func newTokenScopeBlackoutHandler(t *testing.T) (*BlackoutHandler,
 	return h, pool, callers
 }
 
+// rowExistsQueries holds one fixed query per table rowExists can check,
+// so that no SQL is built from a string at run time.
+var rowExistsQueries = map[string]string{
+	"blackouts":          "SELECT EXISTS (SELECT 1 FROM blackouts WHERE id = $1)",
+	"blackout_schedules": "SELECT EXISTS (SELECT 1 FROM blackout_schedules WHERE id = $1)",
+}
+
 // rowExists reports whether the table holds a row with the given id.
 func rowExists(t *testing.T, pool *pgxpool.Pool, table string, id int64) bool {
 	t.Helper()
+	query, ok := rowExistsQueries[table]
+	if !ok {
+		t.Fatalf("rowExists has no query for table %q", table)
+	}
 	var exists bool
-	if err := pool.QueryRow(context.Background(),
-		"SELECT EXISTS (SELECT 1 FROM "+table+" WHERE id = $1)",
+	if err := pool.QueryRow(context.Background(), query,
 		id).Scan(&exists); err != nil {
 		t.Fatalf("Failed to query %s: %v", table, err)
 	}

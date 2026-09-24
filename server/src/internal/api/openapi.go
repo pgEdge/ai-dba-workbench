@@ -1273,7 +1273,7 @@ func buildSchemas() map[string]*OpenAPISchema {
 				// on the response to detect whether they are configured.
 				"webhook_url":             {Type: "string", Description: "Webhook URL (Slack/Mattermost). On PUT: omit to keep existing, empty string to clear, value to replace."},
 				"endpoint_url":            {Type: "string", Description: "Endpoint URL (webhook)"},
-				"http_method":             {Type: "string", Description: "HTTP method for webhook"},
+				"http_method":             {Type: "string", Description: "HTTP method for webhook: GET, POST, PUT or PATCH. Omit or send an empty string for the POST default; any other value is rejected with 400."},
 				"headers":                 {Type: "object", Description: "HTTP headers for webhook. On PUT: omit to keep existing, send an empty object to clear, send a non-empty map to replace. Values are accepted but never returned; the response exposes only header_names.", AdditionalProperties: &OpenAPISchema{Type: "string"}},
 				"auth_type":               {Type: "string", Description: "Webhook auth type (e.g. bearer, basic)"},
 				"auth_credentials":        {Type: "string", Description: "Webhook auth credentials. On PUT: omit to keep existing, empty string to clear, value to replace."},

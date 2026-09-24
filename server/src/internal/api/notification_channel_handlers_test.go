@@ -1210,6 +1210,16 @@ func TestCreateChannel_ValidationErrors(t *testing.T) {
 			want: "from_address is required for email channels",
 		},
 		{
+			name: "unsupported http_method",
+			body: `{"channel_type":"webhook","name":"w","endpoint_url":"https://hooks.example.com/x","http_method":"DELETE"}`,
+			want: invalidHTTPMethodMessage,
+		},
+		{
+			name: "http_method with a control character",
+			body: `{"channel_type":"webhook","name":"w","endpoint_url":"https://hooks.example.com/x","http_method":"POST\n[ERROR] forged"}`,
+			want: invalidHTTPMethodMessage,
+		},
+		{
 			name: "malformed JSON",
 			body: `{not json`,
 			want: "Invalid request body",
@@ -1272,6 +1282,11 @@ func TestUpdateChannel_ValidationErrors(t *testing.T) {
 			name: "clear from_address on email channel",
 			body: `{"from_address":""}`,
 			want: "from_address is required for email channels",
+		},
+		{
+			name: "unsupported http_method",
+			body: `{"http_method":"post"}`,
+			want: invalidHTTPMethodMessage,
 		},
 		{
 			name: "malformed JSON",

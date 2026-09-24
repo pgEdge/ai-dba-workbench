@@ -1396,6 +1396,22 @@ project adheres to
 
 ### Security
 
+- Stop the Slack, Mattermost and generic webhook channels putting their
+  endpoint URL into the alerter log, into
+  `notification_history.error_message` and into the server log when a
+  delivery or a test send fails. For Slack and Mattermost the whole
+  webhook URL is the credential, and a generic webhook endpoint may
+  carry one in its path or query string, yet a routine transport
+  failure produced an error that quoted the URL in full. Such errors
+  now name only the operation, the host and the cause. A failing
+  endpoint's response body has its control characters removed, has the
+  channel's own URL path, query string and userinfo removed wherever
+  they appear (with or without a scheme in front), and is capped at 256
+  bytes before it is echoed; the Telegram channel's echoes lose their
+  control characters in the same way. The server now also rejects a
+  webhook `http_method` other than `GET`, `POST`, `PUT` or `PATCH` when
+  a channel is created or updated. (#498)
+
 - Fix a configuration file that omits
   `http.auth.max_failed_attempts_before_lockout` silently disabling
   account lockout. The setting was a plain integer, so an omitted key

@@ -1533,12 +1533,12 @@ func TestSanitizeTelegramEcho(t *testing.T) {
 		}
 	})
 
-	t.Run("control characters become spaces", func(t *testing.T) {
+	t.Run("control characters are removed", func(t *testing.T) {
 		got := sanitizeTelegramEcho("first\n[ERROR] forged\r\tx\x00y\x7fz")
 		if strings.ContainsAny(got, "\n\r\t\x00\x7f") {
 			t.Errorf("sanitizeTelegramEcho() = %q, want no control characters", got)
 		}
-		if got != "first [ERROR] forged  x y z" {
+		if got != "first[ERROR] forgedxyz" {
 			t.Errorf("sanitizeTelegramEcho() = %q", got)
 		}
 	})

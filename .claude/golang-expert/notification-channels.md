@@ -114,24 +114,92 @@ what missed VULN-002.
 
 **Bound what is echoed, not just what is read.** `sanitizeTelegramEcho`
 wraps every borrowed string before it is interpolated into an error:
-redact the token, map control characters to spaces (a hostile endpoint
-can otherwise forge log lines, and the result also stays storable in a
-Postgres text column), then cap at `telegramMaxEchoedBytes` (256) on a
+delete control characters (a hostile endpoint can otherwise forge log
+lines, and the result also stays storable in a Postgres text column),
+then redact the token, then cap at `maxEchoedBytes` (256) on a
 rune boundary. The response body is read under a 1 MiB `io.LimitReader`,
 but that is a *read* limit; without the echo cap a captive portal writes
 a megabyte into the log and into `notification_history.error_message` on
 every one of the three delivery attempts. Redaction runs before the cap
-so the cap can never slice a token run in half.
+so the cap can never slice a token run in half. The fold runs *before*
+redaction and deletes rather than maps to a space, so a control
+character cannot split `://` and hide a URL from the redactor.
 
-**Both modules must stay in step.** `sanitizeTelegramEcho`,
-`redactTelegramToken`, `isTelegramTokenTerminator` and
-`telegramTransportError` are duplicated verbatim in
-`alerter/src/internal/notifications/telegram.go` and
-`server/src/internal/api/webhook_test_sender.go` (separate Go modules,
-so no sharing). The block from `// telegramMaxEchoedBytes bounds` to the
-end of each file is character-for-character identical; diff it
-mechanically after any change, because a divergence reopens the hole in
-one module only.
+**Both modules must stay in step.** The whole redact/cap/sanitize set
+lives in `alerter/src/internal/notifications/sanitize.go` and
+`server/src/internal/api/sanitize.go` (separate Go modules, so no
+sharing). Apart from the package clause the two files are
+character-for-character identical, as are the two `sanitize_test.go`
+files beside them; diff them mechanically after any change, because a
+divergence reopens the hole in one module only:
+
+    diff <(tail -n +11 alerter/src/internal/notifications/sanitize.go) \
+         <(tail -n +11 server/src/internal/api/sanitize.go)
+
+## Slack, Mattermost and the Generic Webhook Leak the Whole URL
+
+For Slack and Mattermost the incoming-webhook URL *is* the credential;
+there is no separate token. A generic webhook endpoint may carry one in
+its path or query string just as easily. That is the same exposure the
+Telegram token has, so the same rule applies to
+`webhook_sender.go`, `webhook.go` and the two "send test" senders in
+`server/src/internal/api/webhook_test_sender.go`: no error built from a
+failed send wraps with `%w` anything `net/http` or `url.Parse`
+produced, and no borrowed response body is echoed raw. Transport errors
+go through `webhookTransportError`, everything else through
+`sanitizeWebhookEcho` (issue #498). Both take the channel's configured
+URL: `webhookRedactor` runs `redactURLPath` and then removes every
+literal occurrence of that URL's path, query, fragment, userinfo and
+individual segments (`urlSecrets`), because a proxy or WAF error page
+may quote the path with no scheme for `redactURLPath` to anchor on.
+Operator config echoed in an error (the HTTP method) goes through
+`sanitizeConfigEcho`.
+
+Four sites per sender leak, not one: the `Do` error, the response-body
+echo, the `http.NewRequest*` error (a `*url.Error` quoting the URL when
+it will not parse) and, in `webhook.go`, the SSRF-block error, which
+wraps `hostvalidation.ValidateURLHost` and so inherits `url.Parse`'s
+quoted URL.
+
+**Never echo a `url.Parse` failure, sanitised or not.** The first two
+sites go through the helpers, but the last two do not echo at all: they
+return a fixed "the URL is malformed" message. `(*url.Error).Error`
+renders `%s %q: %s` over the *raw input string* rather than a parsed
+URL, so on a parse failure the text is whatever the operator stored,
+and nothing validates that a stored `webhook_url` or `endpoint_url`
+carries a scheme. `redactURLPath` anchors on `://`, so a scheme-less
+stored URL would pass straight through it. In `webhook.go` the parse
+failure is picked out with `errors.As(err, &urlErr)`; every other
+`ValidateURLHost` failure names the host and nothing else, and is
+still worth echoing.
+
+**`redactURLPath` treats everything after the host as sensitive.** There
+is no `/bot`-style marker to anchor on, so the host is all that
+survives; keeping the host is deliberate, since an operator needs to
+know which endpoint was unreachable and the host alone is not the
+credential. It fails closed in the same way the Telegram redactor does,
+and its terminator class carries the same prohibition: a redacted run
+ends only at ASCII whitespace, never at a quote, paren, bracket, comma
+or semicolon, because a path may contain any of those and ending the
+run at one prints the rest of the credential. `isURLPathTerminator`
+differs from `isTelegramTokenTerminator` in one respect only, and
+deliberately: the other control characters are *not* terminators,
+because `url.Parse` quotes a raw URL back when it rejects one for
+holding a control character, and stopping the host there would leave
+the path after it unredacted.
+
+The redactor masks userinfo as well as the path, splitting the
+authority at the *last* `@` (a literal `@` inside userinfo must be
+written `%40`, so the last one is always the delimiter) and keeping
+only the host after it; the generic webhook channel supports basic
+auth, so the userinfo may hold a password.
+
+Two limits are the call site's responsibility rather than the
+redactor's: text with no `://` passes through untouched, and a run ends
+at ASCII whitespace, so a path holding a space is masked only up to it.
+Both are reachable only from a `url.Parse` failure, which is why no
+call site echoes one. Check that before applying `redactURLPath` at a
+new call site.
 
 ## The Shared HTTP Client Refuses Redirects
 
@@ -332,14 +400,14 @@ list, so the taint is dropped at that hop. `postMessage` carries no
 `//nolint` and must not gain one, because a directive for a rule that
 never fires is noise.
 
-The server is a separate Go module from the alerter, so
-`redactTelegramToken` and `telegramTransportError` are duplicated into
-`webhook_test_sender.go` rather than imported. They must stay in step
-with `alerter/src/internal/notifications/telegram.go`; both copies carry
-a comment saying so. The reason is the same on both sides: the bot token
+The server is a separate Go module from the alerter, so the whole
+helper set is duplicated into `server/src/internal/api/sanitize.go`
+rather than imported. It must stay in step with
+`alerter/src/internal/notifications/sanitize.go`; both copies carry a
+comment saying so. The reason is the same on both sides: the credential
 is in the request path, `testChannel` logs the sender's error with
-`log.Printf("[ERROR] ...")`, and a `%w` wrap would put a live credential
-in the server log.
+`log.Printf("[ERROR] ...")`, and a `%w` wrap would put it in the server
+log.
 
 ## Validating Telegram Identifiers Loosely
 

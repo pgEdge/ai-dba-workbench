@@ -348,8 +348,8 @@ func (h *RBACHandler) refuseSelfScopeMutation(w http.ResponseWriter,
 // empty array, or returns "" when there is none. Each kind is stored as
 // rows in its own table and a kind with no rows is unrestricted, so
 // writing an empty array would lift that restriction whilst reading as
-// "allow nothing". The store keeps that behaviour for the CLI, which
-// clears a kind deliberately and says so; the HTTP API refuses it, and
+// "allow nothing". The store still clears a kind that way for the CLI,
+// which does so deliberately and says so; the HTTP API refuses it, and
 // DELETE on the scope is its explicit way to lift a restriction.
 func emptyScopeKind(connections, mcpPrivileges, adminPermissions bool) string {
 	switch {

@@ -28,6 +28,7 @@ import { countEstateServers } from '../../../utils/clusterHelpers';
 import { logger } from '../../../utils/logger';
 import { useRetryingFetch } from '../../../hooks/useRetryingFetch';
 import { useRequestSequence } from '../../../hooks/useRequestSequence';
+import { chunkConnectionIds } from '../../../utils/connectionIdBatches';
 import type { EstateSelection } from '../../../types/selection';
 
 interface KpiTilesSectionProps {
@@ -106,10 +107,18 @@ const KpiTilesSection: React.FC<KpiTilesSectionProps> = ({ selection, serverIds 
             return true;
         }
 
-        const perfParams = new URLSearchParams({
-            connection_ids: serverIds.join(','),
+        // The estate can hold more servers than one request may name,
+        // so the ID list is batched to the server's cap and the
+        // per-connection results concatenated. The alerts endpoint is
+        // not capped and is fetched whole, as before.
+        const perfUrls = chunkConnectionIds(serverIds).map(batch => {
+            const perfParams = new URLSearchParams({
+                connection_ids: batch.join(','),
+            });
+            appendTimeRangeParams(perfParams, selectedWindow);
+            return '/api/v1/metrics/performance-summary'
+                + `?${perfParams.toString()}`;
         });
-        appendTimeRangeParams(perfParams, selectedWindow);
 
         if (!initialLoadDoneRef.current) {
             setLoading(true);
@@ -121,11 +130,8 @@ const KpiTilesSection: React.FC<KpiTilesSectionProps> = ({ selection, serverIds 
         const isCurrent = beginRequest();
 
         try {
-            const [perfResponse, alertsResponse] = await Promise.all([
-                apiFetch(
-                    '/api/v1/metrics/performance-summary'
-                    + `?${perfParams.toString()}`,
-                ),
+            const [perfResponses, alertsResponse] = await Promise.all([
+                Promise.all(perfUrls.map(url => apiFetch(url))),
                 apiFetch(
                     '/api/v1/alerts?exclude_cleared=true&limit=200',
                 ),
@@ -138,19 +144,25 @@ const KpiTilesSection: React.FC<KpiTilesSectionProps> = ({ selection, serverIds 
             // A non-OK response is a real failure. Surface it so the
             // retry controller reschedules the fetch instead of silently
             // rendering zero/partial KPI data as if the load succeeded.
-            if (!perfResponse.ok || !alertsResponse.ok) {
+            // One failed batch fails the whole load for the same reason.
+            if (perfResponses.some(r => !r.ok) || !alertsResponse.ok) {
                 if (isCurrent()) {
                     setError('Failed to fetch KPI data');
                 }
                 return false;
             }
 
-            const perfData = await perfResponse.json();
+            const perfData = await Promise.all(
+                perfResponses.map(r => r.json()),
+            );
             const alertsData = await alertsResponse.json();
 
             let totalConnections = 0;
             let transactionRate = 0;
-            const connections = perfData.connections || [];
+            const connections: Record<string, unknown>[] = perfData.flatMap(
+                (d: { connections?: Record<string, unknown>[] }) =>
+                    d.connections || [],
+            );
 
             connections.forEach((conn: Record<string, unknown>) => {
                 totalConnections += 1;

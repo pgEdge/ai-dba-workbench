@@ -24,6 +24,10 @@ import {
     appendTimeRangeParams,
     isTimeRangeQueryable,
 } from '../utils/timeRangeParams';
+import {
+    chunkConnectionIds,
+    MAX_CONNECTION_IDS_PER_REQUEST,
+} from '../utils/connectionIdBatches';
 
 export interface UseMetricsReturn {
     data: MetricSeries[] | null;
@@ -148,6 +152,52 @@ const buildMetricsUrl = (
 };
 
 /**
+ * Build one URL per request the query needs.
+ *
+ * The endpoint caps how many connection IDs a request may name, so a
+ * longer list is split into batches; a list within the cap, which is
+ * every caller today, yields the single URL it always did.
+ */
+const buildMetricsUrls = (
+    params: MetricQueryParams,
+    customStart?: string,
+    customEnd?: string,
+): string[] => {
+    const ids = params.connectionIds ?? [];
+    if (ids.length <= MAX_CONNECTION_IDS_PER_REQUEST) {
+        return [buildMetricsUrl(params, customStart, customEnd)];
+    }
+
+    return chunkConnectionIds(ids).map(batch => buildMetricsUrl(
+        { ...params, connectionIds: batch }, customStart, customEnd,
+    ));
+};
+
+/**
+ * Combine the responses to a batched query into one parsed result.
+ *
+ * The endpoint returns a series per connection rather than one series
+ * aggregated across them, so concatenating the batches reproduces the
+ * unbatched response. The window is taken from the first batch that
+ * reported one: every batch asks for the same range, and the server
+ * resolves it per request from the probe's collection interval, so the
+ * batches can in principle differ in bucket width. Anchoring the axis
+ * to the first is the same choice the unbatched request made.
+ */
+const mergeMetricsResponses = (
+    parsed: { series: MetricSeries[] | null; window: MetricsWindow | null }[],
+): { series: MetricSeries[] | null; window: MetricsWindow | null } => {
+    if (parsed.length === 1) {return parsed[0];}
+
+    return {
+        series: parsed.some(p => p.series !== null)
+            ? parsed.flatMap(p => p.series ?? [])
+            : null,
+        window: parsed.find(p => p.window !== null)?.window ?? null,
+    };
+};
+
+/**
  * Custom hook for fetching metric time series data.
  * Follows the usePerformanceSummary pattern with initialLoadDoneRef
  * to prevent flash on auto-refresh.
@@ -180,7 +230,7 @@ export const useMetrics = (params: MetricQueryParams | null): UseMetricsReturn =
             return;
         }
 
-        const url = buildMetricsUrl(params, customStart, customEnd);
+        const urls = buildMetricsUrls(params, customStart, customEnd);
 
         if (!initialLoadDoneRef.current) {
             setLoading(true);
@@ -188,12 +238,17 @@ export const useMetrics = (params: MetricQueryParams | null): UseMetricsReturn =
         setError(null);
 
         try {
-            const result = await apiGet<MetricsQueryResult | MetricSeries[]>(
-                url,
-            );
+            // Any batch that rejects rejects the whole load, exactly as
+            // a failed single request did, so a partial series is never
+            // rendered as though the load succeeded.
+            const results = await Promise.all(urls.map(
+                url => apiGet<MetricsQueryResult | MetricSeries[]>(url),
+            ));
 
             if (isMountedRef.current) {
-                const parsed = parseMetricsResponse(result);
+                const parsed = mergeMetricsResponses(
+                    results.map(parseMetricsResponse),
+                );
                 setData(parsed.series);
                 setMetricsWindow(parsed.window);
                 initialLoadDoneRef.current = true;

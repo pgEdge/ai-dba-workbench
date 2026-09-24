@@ -22,6 +22,7 @@ import {
     isTimeRangeQueryable,
 } from '../../../utils/timeRangeParams';
 import { useRequestSequence } from '../../../hooks/useRequestSequence';
+import { chunkConnectionIds } from '../../../utils/connectionIdBatches';
 import { Chart } from '../../Chart';
 import { CHART_SECTION_SX } from '../styles';
 import { logger } from '../../../utils/logger';
@@ -101,10 +102,17 @@ const ComparativeChartsSection: React.FC<ComparativeChartsSectionProps> = ({ ser
             return;
         }
 
-        const params = new URLSearchParams({
-            connection_ids: serverIds.join(','),
+        // A cluster can hold more members than one request may name,
+        // so the ID list is batched to the server's cap and the
+        // per-connection results concatenated. Any failed batch
+        // throws, exactly as a failed single request did.
+        const urls = chunkConnectionIds(serverIds).map(batch => {
+            const params = new URLSearchParams({
+                connection_ids: batch.join(','),
+            });
+            appendTimeRangeParams(params, selectedWindow);
+            return `/api/v1/metrics/performance-summary?${params.toString()}`;
         });
-        appendTimeRangeParams(params, selectedWindow);
 
         if (!initialLoadDoneRef.current) {
             setLoading(true);
@@ -116,21 +124,26 @@ const ComparativeChartsSection: React.FC<ComparativeChartsSectionProps> = ({ ser
         const isCurrent = beginRequest();
 
         try {
-            const response = await apiFetch(
-                `/api/v1/metrics/performance-summary?${params.toString()}`,
+            const responses = await Promise.all(
+                urls.map(url => apiFetch(url)),
             );
 
-            if (!response.ok) {
-                const errorData = await response.json().catch(() => ({})) as { error?: string };
-                throw new Error(errorData.error || `Failed to fetch data: ${response.status}`);
+            for (const response of responses) {
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({})) as { error?: string };
+                    throw new Error(errorData.error || `Failed to fetch data: ${response.status}`);
+                }
             }
 
             // Checked before parsing as well as after, so that a
             // response for a superseded window is not parsed at all,
             // and so that a request started during the parse wins.
             if (isCurrent()) {
-                const data = await response.json();
-                const connections = data.connections || [];
+                const data = await Promise.all(responses.map(r => r.json()));
+                const connections: Record<string, unknown>[] = data.flatMap(
+                    (d: { connections?: Record<string, unknown>[] }) =>
+                        d.connections || [],
+                );
 
                 const parsed: ConnectionMetrics[] = connections.map(
                     (conn: Record<string, unknown>) => {

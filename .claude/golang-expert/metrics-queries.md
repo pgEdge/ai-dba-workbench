@@ -1226,6 +1226,21 @@ wording; anything between 30 and 366 days gets
 `checkAggregationTimeSpan`. Tests that pin the boundary need to pick
 their span accordingly.
 
+The window is one multiplier on the cost of these requests; the length
+of `connection_ids` is the other. `maxConnectionIDsPerRequest` (100) and
+`CheckConnectionIDCount` live in `server/src/internal/api/request_helpers.go`,
+and both `parseConnectionIDs` helpers (`MetricsHandler` in
+`metrics_handlers.go`, `PerfSummaryHandler` in `perf_summary_handlers.go`)
+apply the cap on the `connection_ids` branch, so the `400` lands before
+the RBAC loop, the `GetConnection` name lookups and the read-only
+transaction do any work. That placement is the point: the fan-out on
+`/metrics/performance-summary` is five sub-queries, a name lookup and an
+RBAC check per ID, all under one 30 second deadline against a pool that
+defaults to four connections. The single `connection_id` path is
+unaffected, and `handleConnectionGroups` already requires exactly one ID.
+Keep the cap in the parse helper rather than in each handler, and
+re-measure the fan-out before raising it.
+
 The rules are shared, not metrics-only. `GET /api/v1/timeline/events`
 takes absolute `start_time` and `end_time` values; `resolveTimelineWindow`
 in `server/src/internal/api/timeline_handlers.go` parses them with

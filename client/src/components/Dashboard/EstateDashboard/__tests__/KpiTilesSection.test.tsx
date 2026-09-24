@@ -15,6 +15,7 @@ import KpiTilesSection from '../KpiTilesSection';
 import { DEFAULT_RETRY_BASE_DELAY_MS } from '../../../../hooks/useRetryingFetch';
 import type { EstateSelection } from '../../../../types/selection';
 import type { TimeRangeState } from '../../types';
+import { MAX_CONNECTION_IDS_PER_REQUEST } from '../../../../utils/connectionIdBatches';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -389,5 +390,114 @@ describe('KpiTilesSection', () => {
 
         expect(screen.queryByText('Reconnecting…')).not.toBeInTheDocument();
         expect(screen.getByText('Active Alerts')).toBeInTheDocument();
+    });
+});
+
+describe('KpiTilesSection connection_ids batching', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockLastRefresh = 0;
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    const ids = (count: number): number[] =>
+        Array.from({ length: count }, (_, i) => i + 1);
+
+    // One connection entry per requested id, so the merged totals are
+    // exactly what a single unbatched request would have produced.
+    const perfBodyFor = (url: string) => {
+        const requested = (
+            new URLSearchParams(url.split('?')[1]).get('connection_ids') ?? ''
+        ).split(',');
+        return {
+            connections: requested.map(id => ({
+                connection_id: Number(id),
+                transactions: { commits_per_sec: 1 },
+            })),
+        };
+    };
+
+    const perfUrls = (): string[] =>
+        mockApiFetch.mock.calls
+            .map(call => call[0] as string)
+            .filter(url => url.includes('/performance-summary'));
+
+    const requestedIds = (url: string): number[] =>
+        (new URLSearchParams(url.split('?')[1]).get('connection_ids') ?? '')
+            .split(',')
+            .map(Number);
+
+    it('sends one request when the estate is within the cap', async () => {
+        mockApiFetch.mockImplementation((url: string) =>
+            url.includes('/alerts')
+                ? Promise.resolve(okResponse(alertsBody))
+                : Promise.resolve(okResponse(perfBodyFor(url))),
+        );
+
+        renderSection(ids(MAX_CONNECTION_IDS_PER_REQUEST));
+
+        await waitFor(() => {
+            expect(perfUrls()).toHaveLength(1);
+        });
+        expect(requestedIds(perfUrls()[0]))
+            .toEqual(ids(MAX_CONNECTION_IDS_PER_REQUEST));
+    });
+
+    it('batches an over-cap estate and merges the results', async () => {
+        mockApiFetch.mockImplementation((url: string) =>
+            url.includes('/alerts')
+                ? Promise.resolve(okResponse(alertsBody))
+                : Promise.resolve(okResponse(perfBodyFor(url))),
+        );
+
+        const serverIds = ids(250);
+        renderSection(serverIds);
+
+        // 250 ids at a cap of 100 is three requests, plus the single
+        // uncapped alerts request.
+        await waitFor(() => {
+            expect(perfUrls()).toHaveLength(3);
+        });
+        const urls = perfUrls();
+        expect(requestedIds(urls[0])).toEqual(serverIds.slice(0, 100));
+        expect(requestedIds(urls[1])).toEqual(serverIds.slice(100, 200));
+        expect(requestedIds(urls[2])).toEqual(serverIds.slice(200, 250));
+        expect(urls.flatMap(requestedIds)).toEqual(serverIds);
+
+        // The merged totals match the single-request result: one
+        // connection per server and one commit per second from each.
+        await waitFor(() => {
+            expect(screen.getByText('250 tx/s')).toBeInTheDocument();
+        });
+        expect(screen.getByText('Total Connections')).toBeInTheDocument();
+        expect(screen.getAllByText('250').length).toBeGreaterThan(0);
+    });
+
+    it('fails the whole load when one batch fails', async () => {
+        vi.useFakeTimers();
+        // The second batch is the one that fails; a partial result must
+        // not render as though the load succeeded.
+        mockApiFetch.mockImplementation((url: string) => {
+            if (url.includes('/alerts')) {
+                return Promise.resolve(okResponse(alertsBody));
+            }
+            return requestedIds(url)[0] === 101
+                ? Promise.resolve(errorResponse())
+                : Promise.resolve(okResponse(perfBodyFor(url)));
+        });
+
+        renderSection(ids(250));
+
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        expect(screen.getByText('Reconnecting…')).toBeInTheDocument();
+        expect(screen.queryByText('Active Alerts')).not.toBeInTheDocument();
     });
 });

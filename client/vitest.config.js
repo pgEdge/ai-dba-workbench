@@ -37,10 +37,10 @@ export default defineConfig({
             // vary by a hundredth of a point, so the gate holds the
             // line today and is raised towards 90 as coverage grows.
             thresholds: {
-                lines: 91.5,
-                statements: 90.4,
-                functions: 87.9,
-                branches: 79.8,
+                lines: 91.7,
+                statements: 90.6,
+                functions: 88.2,
+                branches: 79.9,
             },
         },
     },

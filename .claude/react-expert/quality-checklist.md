@@ -516,6 +516,23 @@ passes the selected window; `TopQueriesSection` deliberately does
 not, because it uses the hook only for the database filter list and
 that list should not shrink as the user narrows the period.
 
+A request may name at most 100 connection IDs in `connection_ids`, on
+`/metrics/performance-summary`, `/metrics/query`, `/metrics/top-queries`,
+`/metrics/query-stats` and `/metrics/database-summaries`; a longer list
+earns a 400 (issue #520). An estate can exceed that, so batch the list
+with `chunkConnectionIds` from `client/src/utils/connectionIdBatches.ts`,
+issue the batches with `Promise.all` and concatenate the `connections`
+arrays. `MAX_CONNECTION_IDS_PER_REQUEST` there must stay equal to
+`maxConnectionIDsPerRequest` in
+`server/src/internal/api/request_helpers.go`. `KpiTilesSection`,
+`ComparativeChartsSection`, `usePerformanceSummary` and `useMetrics`
+batch already; a failed batch must fail the whole load, never render a
+partial result. The merge drops the response's top-level `aggregate`,
+whose weighted cache hit average cannot be recomputed from the response
+fields, so a consumer needing it must read an unbatched response.
+`/api/v1/alerts` and `/api/v1/overview` also take `connection_ids` but
+are not capped, and are sent whole.
+
 ## TypeScript Standards
 
 Two ambient declaration files sit at the root of `client/src/`.

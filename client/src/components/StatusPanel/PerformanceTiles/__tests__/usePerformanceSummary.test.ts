@@ -17,6 +17,7 @@ import type {
     ClusterSelection,
     EstateSelection,
 } from '../../../../types/selection';
+import { MAX_CONNECTION_IDS_PER_REQUEST } from '../../../../utils/connectionIdBatches';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -255,5 +256,104 @@ describe('usePerformanceSummary', () => {
         expect(mockApiFetch).toHaveBeenCalledTimes(2);
         expect(result.current.data).toEqual(summaryBody);
         expect(result.current.retrying).toBe(false);
+    });
+});
+
+describe('usePerformanceSummary connection_ids batching', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockAuthUser = mockUser;
+        mockLastRefresh = 0;
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    const ids = (count: number): number[] =>
+        Array.from({ length: count }, (_, i) => i + 1);
+
+    const requestedIds = (url: string): number[] =>
+        (new URLSearchParams(url.split('?')[1]).get('connection_ids') ?? '')
+            .split(',')
+            .map(Number);
+
+    // One connection entry per requested id, plus an aggregate, so the
+    // merge can be compared against the unbatched response.
+    const bodyFor = (url: string) => ({
+        time_range: '24h',
+        connections: requestedIds(url).map(id => ({ connection_id: id })),
+        aggregate: { cache_hit_ratio: 99, commits_per_sec: 1, rollback_percent: 0 },
+    });
+
+    const bigCluster = (count: number): ClusterSelection => ({
+        ...clusterSelection,
+        servers: ids(count).map(id => ({ id, name: `s${id}` })),
+        serverIds: ids(count),
+    });
+
+    it('sends one request and returns it verbatim within the cap', async () => {
+        mockApiFetch.mockImplementation((url: string) =>
+            Promise.resolve(okResponse(bodyFor(url))),
+        );
+
+        const selection = bigCluster(MAX_CONNECTION_IDS_PER_REQUEST);
+        const { result } = renderHook(() => usePerformanceSummary(selection));
+
+        await waitFor(() => {
+            expect(result.current.data).not.toBeNull();
+        });
+
+        expect(mockApiFetch).toHaveBeenCalledTimes(1);
+        // A single response is passed through untouched, aggregate and all.
+        expect(result.current.data?.aggregate).toBeDefined();
+        expect(result.current.data?.connections).toHaveLength(
+            MAX_CONNECTION_IDS_PER_REQUEST,
+        );
+    });
+
+    it('batches an over-cap cluster and concatenates the connections', async () => {
+        mockApiFetch.mockImplementation((url: string) =>
+            Promise.resolve(okResponse(bodyFor(url))),
+        );
+
+        const selection = bigCluster(250);
+        const { result } = renderHook(() => usePerformanceSummary(selection));
+
+        await waitFor(() => {
+            expect(result.current.data).not.toBeNull();
+        });
+
+        const urls = mockApiFetch.mock.calls.map(call => call[0] as string);
+        expect(urls).toHaveLength(3);
+        expect(requestedIds(urls[0])).toEqual(ids(250).slice(0, 100));
+        expect(requestedIds(urls[1])).toEqual(ids(250).slice(100, 200));
+        expect(requestedIds(urls[2])).toEqual(ids(250).slice(200));
+
+        // The merged result matches what one request would have returned,
+        // except that the unmergeable aggregate is dropped.
+        expect(result.current.data?.time_range).toBe('24h');
+        expect(
+            result.current.data?.connections.map(c => c.connection_id),
+        ).toEqual(ids(250));
+        expect(result.current.data?.aggregate).toBeUndefined();
+    });
+
+    it('surfaces a failing batch as an error and keeps no partial data', async () => {
+        mockApiFetch.mockImplementation((url: string) =>
+            requestedIds(url)[0] === 101
+                ? Promise.resolve(errorResponse(500, { error: 'batch failed' }))
+                : Promise.resolve(okResponse(bodyFor(url))),
+        );
+
+        // The selection is hoisted so every render passes the same
+        // object; a fresh one each render would restart the fetch.
+        const selection = bigCluster(250);
+        const { result } = renderHook(() => usePerformanceSummary(selection));
+
+        await waitFor(() => {
+            expect(result.current.error).toBe('batch failed');
+        });
+        expect(result.current.data).toBeNull();
     });
 });

@@ -244,14 +244,20 @@ time in seconds for an available datastore connection.
 
 ### pool.max_connections_per_server
 
-The `max_connections_per_server` option specifies the maximum
-concurrent connections per monitored database server.
+The `max_connections_per_server` option specifies the maximum number
+of connections the collector keeps open to each monitored server,
+counting idle connections as well as those in use. The limit covers
+every database on the server, so a probe that visits each database in
+turn closes idle connections to other databases before it opens a new
+one.
 
 - Type: integer
 - Default: `3`
 - Min: 1
 - Example: `max_connections_per_server: 5`
-- Note: This limit applies per server, not total.
+- Note: This limit applies to each monitored connection, not to the
+  collector as a whole. The server component opens its own
+  connections to monitored servers, which this limit does not cover.
 
 ### pool.monitored_max_idle_seconds
 

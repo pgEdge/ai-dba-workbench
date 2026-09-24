@@ -155,10 +155,10 @@ func TestAcquireReleaseSlot(t *testing.T) {
 	m.releaseSlot(999)
 }
 
-func TestHashConnString_Stable(t *testing.T) {
-	a := hashConnString("foo=bar")
-	b := hashConnString("foo=bar")
-	c := hashConnString("foo=baz")
+func TestHashConnectionParams_Stable(t *testing.T) {
+	a := hashConnectionParams(map[string]string{"foo": "bar", "host": "h"})
+	b := hashConnectionParams(map[string]string{"host": "h", "foo": "bar"})
+	c := hashConnectionParams(map[string]string{"foo": "baz", "host": "h"})
 	if a != b {
 		t.Errorf("hash not stable: %q vs %q", a, b)
 	}
@@ -605,9 +605,8 @@ func TestPoolManager_InvalidateChangedPools_BuildError(t *testing.T) {
 	m := NewMonitoredConnectionPoolManager(1, 1)
 
 	// Inject a fake pool entry so InvalidateChangedPools sees something.
-	fakeStr := "host=fake port=5432 user=u dbname=d"
 	m.mu.Lock()
-	m.poolHashes[1] = hashConnString(fakeStr)
+	m.poolHashes[1] = hashConnectionParams(map[string]string{"host": "fake", "port": "5432", "user": "u", "dbname": "d"})
 	m.poolKeyToConnID[1] = 1
 	// Note: we deliberately don't insert into pools so that even after
 	// invalidation the missing pool entry is gracefully handled.

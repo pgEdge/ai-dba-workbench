@@ -750,6 +750,19 @@ project adheres to
 
 ### Fixed
 
+- Fix the collector opening more connections to a monitored server
+  than `pool.max_connections_per_server` allows. The limit counted
+  only connections in use, whilst each database on the server had its
+  own pool that kept its connections open for
+  `monitored_max_idle_seconds`, so a server with many databases held
+  an idle connection for each of them. The limit now counts every
+  connection the collector has open to the server, idle or in use,
+  and idle connections to other databases are closed before a new one
+  is opened. Every configuration reload also closed and reopened all
+  of a server's connections even when nothing had changed, because
+  the hash that detects a changed connection was computed over
+  parameters in random order; the hash is now stable. (#539)
+
 - Fix alerts staying active for ever on a server an operator has
   stopped monitoring. The probes of an unmonitored connection leave
   the staleness view, so every alert on it was judged to have a probe

@@ -97,6 +97,31 @@ partitions hit the `"2006-01-02 15:04:05-07:00"` or
   `timestamptz` columns or `timestamptz` range partitions; the
   session `TimeZone` will silently change the absolute instant.
 
+## Adding a Column After Migration 1
+
+For the partitioned `metrics.*` tables the numbered migrations in
+`collector/src/database/schema.go` are the authoritative record of a
+table's final shape. A column added after the consolidated migration #1
+lives only in its own migration, as
+`ALTER TABLE metrics.<table> ADD COLUMN IF NOT EXISTS ...` on the
+partitioned parent, and is not duplicated into the base `CREATE TABLE`
+block. The existing instances are migration 7 (`table_size` on
+`pg_stat_all_tables`, `index_size` on `pg_stat_all_indexes`),
+migration 10 (`stats_reset` on `pg_stat_statements`), migration 12
+(`query_id` on `pg_stat_activity`) and migration 13
+(`available_memory` on `pg_sys_memory_info`).
+
+The `ALTER` path alone is sufficient because PostgreSQL propagates
+`ADD COLUMN` on a partitioned parent to existing and future partitions
+automatically, so no per-partition DDL is needed; migration 13's own
+comment notes this for migrations 7 and 10. A fresh install reaches the
+same shape as an upgraded one for the separate reason that every
+migration runs in order on both.
+
+The exception is `notification_channels`, whose later columns are
+also written into its base `CREATE TABLE`: see
+`notification-channels.md`.
+
 ## Dropping Partitions and pgx "conn busy"
 
 A single `*pgx.Conn` (or the `*pgxpool.Conn` wrapper) has a single

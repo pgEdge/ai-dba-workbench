@@ -324,11 +324,12 @@ func (h *RBACHandler) getTokenScope(w http.ResponseWriter, r *http.Request, toke
 // record that bounds it. A session caller has no token id, so it is
 // unaffected, and a token may still manage other tokens' scopes.
 //
-// This is the narrow fix only. A token may still widen a *different*
-// token's scope beyond its own, superuser-owned tokens may still be
-// created without superuser rights, and permission strings written
-// into a scope are not validated against a known set; those are
-// tracked separately as a policy question about who may issue what.
+// This is the narrow fix only. A token may still widen or clear a
+// *different* token's scope, including one owned by a superuser,
+// superuser-owned tokens may still be created without superuser rights,
+// and permission strings written into a scope are not validated against
+// a known set; issue #522 tracks all three as a policy question about
+// who may issue what.
 func (h *RBACHandler) refuseSelfScopeMutation(w http.ResponseWriter,
 	r *http.Request, tokenID int64) bool {
 
@@ -341,6 +342,25 @@ func (h *RBACHandler) refuseSelfScopeMutation(w http.ResponseWriter,
 	h.recordDenial(r, reason)
 	RespondError(w, http.StatusForbidden, reason)
 	return true
+}
+
+// emptyScopeKind names the first scope kind a scope PUT supplied as an
+// empty array, or returns "" when there is none. Each kind is stored as
+// rows in its own table and a kind with no rows is unrestricted, so
+// writing an empty array would lift that restriction whilst reading as
+// "allow nothing". The store keeps that behaviour for the CLI, which
+// clears a kind deliberately and says so; the HTTP API refuses it, and
+// DELETE on the scope is its explicit way to lift a restriction.
+func emptyScopeKind(connections, mcpPrivileges, adminPermissions bool) string {
+	switch {
+	case connections:
+		return "connections"
+	case mcpPrivileges:
+		return "mcp_privileges"
+	case adminPermissions:
+		return "admin_permissions"
+	}
+	return ""
 }
 
 func (h *RBACHandler) setTokenScope(w http.ResponseWriter, r *http.Request, tokenID int64) {
@@ -358,9 +378,19 @@ func (h *RBACHandler) setTokenScope(w http.ResponseWriter, r *http.Request, toke
 	}
 
 	// A request refused for its content must leave every scope kind as
-	// it was, so the connection access levels are checked before any
-	// write, and the MCP scope, which can be refused for naming an
-	// unregistered identifier, is written first.
+	// it was, so empty arrays and the connection access levels are
+	// checked before any write, and the MCP scope, which can be refused
+	// for naming an unregistered identifier, is written first.
+	if kind := emptyScopeKind(req.Connections != nil && len(req.Connections) == 0,
+		req.MCPPrivileges != nil && len(req.MCPPrivileges) == 0,
+		req.AdminPermissions != nil && len(req.AdminPermissions) == 0); kind != "" {
+		RespondError(w, http.StatusBadRequest, fmt.Sprintf(
+			"%s must not be an empty array: a scope kind with no entries is "+
+				"unrestricted, so an empty array would lift the restriction "+
+				"rather than deny everything; omit the key to leave it "+
+				"unchanged, or use DELETE to clear the token's scope", kind))
+		return
+	}
 	if err := auth.ValidateScopedConnections(req.Connections); err != nil {
 		RespondError(w, http.StatusBadRequest, err.Error())
 		return

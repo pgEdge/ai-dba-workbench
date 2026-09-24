@@ -169,7 +169,6 @@ builtins:
     similarity_search: true
     execute_explain: true
     count_rows: true
-    test_query: true
     list_probes: true
     describe_probe: true
     query_metrics: true
@@ -765,6 +764,14 @@ details.
 The builtins section enables or disables individual
 tools and resources.
 
+Two tools are always enabled and cannot be turned off
+through the `builtins.tools` section. The `test_query`
+tool validates SQL without executing the query, and
+the server asks Ellie to check every statement through
+that tool before presenting the statement to a user.
+The `read_resource` tool backs resource listing, so
+resources become unreachable without the tool.
+
 ```yaml
 builtins:
   tools:
@@ -773,7 +780,6 @@ builtins:
     similarity_search: true
     execute_explain: true
     count_rows: true
-    test_query: true
     list_probes: true
     describe_probe: true
     query_metrics: true

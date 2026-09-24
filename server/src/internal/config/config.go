@@ -69,7 +69,11 @@ type BuiltinsConfig struct {
 
 // ToolsConfig holds configuration for enabling/disabling built-in tools
 // All tools are enabled by default
-// Note: read_resource tool is always enabled as it's used to list resources
+// Note: the read_resource tool is always enabled as it's used to list
+// resources, and test_query is always enabled because it only validates
+// SQL without returning data and the chat assistant is instructed to
+// validate every statement through it before showing it to the user;
+// neither has a field here.
 type ToolsConfig struct {
 	QueryDatabase       *bool `yaml:"query_database"`       // Execute SQL queries (default: true)
 	GetSchemaInfo       *bool `yaml:"get_schema_info"`      // Get detailed schema information (default: true)
@@ -84,6 +88,7 @@ type ToolsConfig struct {
 	ListConnections     *bool `yaml:"list_connections"`     // List available connections (default: true)
 	GetAlertHistory     *bool `yaml:"get_alert_history"`    // Query historic alerts (default: true)
 	GetAlertRules       *bool `yaml:"get_alert_rules"`      // Query alert rules and thresholds (default: true)
+	GetBlackouts        *bool `yaml:"get_blackouts"`        // Query alert blackout windows and schedules (default: true)
 	GetMetricBaselines  *bool `yaml:"get_metric_baselines"` // Query metric baselines for anomaly context (default: true)
 	QueryDatastore      *bool `yaml:"query_datastore"`      // Execute read-only SQL against the datastore (default: true)
 	GetTimelineEvents   *bool `yaml:"get_timeline_events"`  // Query the incident-investigation timeline (default: true)
@@ -122,6 +127,11 @@ func (c *ToolsConfig) IsToolEnabled(toolName string) bool {
 		return c.SearchKnowledgebase == nil || *c.SearchKnowledgebase
 	case "count_rows":
 		return c.CountRows == nil || *c.CountRows
+	case "test_query":
+		// Always enabled: it only validates SQL and never returns data, and
+		// the chat assistant validates every statement through it, so
+		// disabling it would leave the assistant calling an unregistered tool.
+		return true
 	case "list_probes":
 		return c.ListProbes == nil || *c.ListProbes
 	case "describe_probe":
@@ -134,6 +144,8 @@ func (c *ToolsConfig) IsToolEnabled(toolName string) bool {
 		return c.GetAlertHistory == nil || *c.GetAlertHistory
 	case "get_alert_rules":
 		return c.GetAlertRules == nil || *c.GetAlertRules
+	case "get_blackouts":
+		return c.GetBlackouts == nil || *c.GetBlackouts
 	case "get_metric_baselines":
 		return c.GetMetricBaselines == nil || *c.GetMetricBaselines
 	case "query_datastore":
@@ -1173,6 +1185,27 @@ func mergeConfig(dest, src *Config) {
 	}
 	if src.Builtins.Tools.QueryMetrics != nil {
 		dest.Builtins.Tools.QueryMetrics = src.Builtins.Tools.QueryMetrics
+	}
+	if src.Builtins.Tools.ListConnections != nil {
+		dest.Builtins.Tools.ListConnections = src.Builtins.Tools.ListConnections
+	}
+	if src.Builtins.Tools.GetAlertHistory != nil {
+		dest.Builtins.Tools.GetAlertHistory = src.Builtins.Tools.GetAlertHistory
+	}
+	if src.Builtins.Tools.GetAlertRules != nil {
+		dest.Builtins.Tools.GetAlertRules = src.Builtins.Tools.GetAlertRules
+	}
+	if src.Builtins.Tools.GetBlackouts != nil {
+		dest.Builtins.Tools.GetBlackouts = src.Builtins.Tools.GetBlackouts
+	}
+	if src.Builtins.Tools.GetMetricBaselines != nil {
+		dest.Builtins.Tools.GetMetricBaselines = src.Builtins.Tools.GetMetricBaselines
+	}
+	if src.Builtins.Tools.QueryDatastore != nil {
+		dest.Builtins.Tools.QueryDatastore = src.Builtins.Tools.QueryDatastore
+	}
+	if src.Builtins.Tools.GetTimelineEvents != nil {
+		dest.Builtins.Tools.GetTimelineEvents = src.Builtins.Tools.GetTimelineEvents
 	}
 	if src.Builtins.Tools.StoreMemory != nil {
 		dest.Builtins.Tools.StoreMemory = src.Builtins.Tools.StoreMemory

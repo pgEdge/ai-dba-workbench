@@ -817,6 +817,28 @@ project adheres to
   the database in `TEST_AI_WORKBENCH_SERVER` and drops its schema.
   (#525)
 
+- Fix six of the nineteen `builtins.tools` switches on the server
+  having no effect, because the configuration merge read their
+  values from the configuration file and then discarded them: setting
+  `list_connections`, `get_alert_history`, `get_alert_rules`,
+  `get_metric_baselines`, `query_datastore` or `get_timeline_events`
+  to `false` left the tool enabled. That mattered most for
+  `query_datastore`, which runs arbitrary read-only SQL against the
+  datastore and could not be switched off at all. Every switch now
+  takes effect. The `get_blackouts` tool, which the documentation and
+  the example configuration both advertised as switchable, had no
+  backing configuration field at all; the tool now has one and
+  behaves like the rest. The `test_query` tool was advertised the
+  same way, and is now permanently enabled alongside `read_resource`
+  instead: the tool only validates SQL without executing the
+  statement, and the server asks Ellie to check every statement
+  through that tool before showing the statement to a user, so an
+  operator who disabled the tool would leave the assistant calling a
+  tool that is not registered. An existing `test_query: true` setting
+  is harmless, but the key is no longer recognised and has been
+  removed from the documented example and from
+  `examples/ai-dba-server.yaml`. (#521)
+
 - Fix the `pg_stat_statements` collector probe discarding the block
   timing columns on every modern server. The probe chose its query
   shape by looking for the version-specific columns in

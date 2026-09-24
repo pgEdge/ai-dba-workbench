@@ -553,8 +553,8 @@ builtins:
     # Datastore query tool (arbitrary SQL on the datastore)
     query_datastore: true
 
-    # Resource tools
-    read_resource: true
+    # The read_resource and test_query tools are always
+    # enabled and cannot be turned off here
 
     # Alert tools
     get_alert_rules: true

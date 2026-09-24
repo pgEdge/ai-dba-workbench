@@ -27,7 +27,7 @@ import (
 // listing matches what a read will actually allow.
 func TestListForContextHonoursMCPScope(t *testing.T) {
 	tmpDir := t.TempDir()
-	authStore, err := auth.NewAuthStore(tmpDir, 0, 0)
+	authStore, err := auth.NewAuthStore(tmpDir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("NewAuthStore: %v", err)
 	}

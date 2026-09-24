@@ -674,6 +674,23 @@ func TestIssue530_KeywordScansIgnoreNonCode(t *testing.T) {
 		{"dollar continuing an identifier opens no dollar quote",
 			"WITH a AS (SELECT 1 AS c$q$), d AS (DELETE FROM t RETURNING *) " +
 				"SELECT * FROM d -- $q$", false},
+		{"quote inside a non-ASCII dollar tag hides nothing",
+			"WITH a AS (SELECT $é$'$é$ AS c), d AS (DELETE FROM t RETURNING *) " +
+				"SELECT * FROM d", false},
+		{"explain analyze of a non-ASCII dollar tag hiding a delete",
+			"EXPLAIN ANALYZE WITH a AS (SELECT $é$'$é$ AS c), " +
+				"d AS (DELETE FROM t RETURNING *) SELECT * FROM d", false},
+		{"into after a non-ASCII dollar tag holding a quote",
+			"SELECT $é$'$é$ AS c INTO newtab FROM t", false},
+		{"comment marker inside a mixed non-ASCII dollar tag hides nothing",
+			"WITH a AS (SELECT $qé$--$qé$ AS c), d AS (DELETE FROM t RETURNING *) " +
+				"SELECT * FROM d", false},
+		{"dollar continuing a non-ASCII identifier opens no dollar quote",
+			"WITH a AS (SELECT 1 AS é$q$), d AS (DELETE FROM t RETURNING *) " +
+				"SELECT * FROM d -- $q$", false},
+		{"E after a non-ASCII identifier byte is not an escape prefix",
+			`WITH a AS (SELECT éE'\' AS c), d AS (DELETE FROM t RETURNING *) ` +
+				"SELECT * FROM d", false},
 	}
 
 	for _, tt := range tests {
@@ -704,6 +721,8 @@ func TestIssue530_MaskNonCode(t *testing.T) {
 		{"anonymous dollar quote", "SELECT $$x$$", "SELECT      "},
 		{"unterminated dollar quote", "SELECT $q$ into", "SELECT " + strings.Repeat(" ", 8)},
 		{"dollar continuing an identifier", "SELECT a$q$ FROM t", "SELECT a$q$ FROM t"},
+		{"non-ASCII dollar tag", "SELECT $é$'$é$ AS c", "SELECT " + strings.Repeat(" ", 9) + " AS c"},
+		{"E continuing a non-ASCII identifier", `SELECT éE'\' AS c`, `SELECT éE    AS c`},
 		{"placeholder is code", "SELECT $1", "SELECT $1"},
 		{"empty", "", ""},
 	}

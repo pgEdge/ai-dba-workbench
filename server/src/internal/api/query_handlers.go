@@ -66,21 +66,24 @@ const maxRowLimit = 1000
 const queryTimeout = 30 * time.Second
 
 // scanDollarTag checks whether sql[i] starts a dollar-quote tag. If a
-// valid tag is found (either $$ or $identifier$), it returns the full
-// tag string. Otherwise it returns an empty string.
+// valid tag is found (either $$ or $tag$), it returns the full tag
+// string. Otherwise it returns an empty string. The tag follows
+// PostgreSQL's lexer: it starts with a letter, an underscore or any byte
+// from 0x80 up, and continues with those or a digit, so $é$ is a tag
+// just as $q$ is. Missing one would leave a quote or comment marker
+// inside it to hide the code that follows from the classifier.
 //
-// A dollar sign that continues an identifier, as in foo$bar$ (PostgreSQL
-// allows $ after the first character of an unquoted identifier, and
-// treats any byte from 0x80 up as an identifier character), is part of
-// that identifier rather than the start of a dollar quote, so it yields
-// no tag. Reading one there would let a later $bar$ hide the code in
-// between from the classifier.
+// A dollar sign that continues an identifier, as in foo$bar$ or é$bar$
+// (PostgreSQL allows $ after the first character of an unquoted
+// identifier), is part of that identifier rather than the start of a
+// dollar quote, so it yields no tag. Reading one there would let a later
+// $bar$ hide the code in between from the classifier.
 func scanDollarTag(sql string, i int) string {
 	if i >= len(sql) || sql[i] != '$' {
 		return ""
 	}
 	if i > 0 {
-		if prev := sql[i-1]; isIdentChar(prev) || prev == '$' || prev >= 0x80 {
+		if prev := sql[i-1]; isIdentChar(prev) || prev == '$' {
 			return ""
 		}
 	}
@@ -88,26 +91,20 @@ func scanDollarTag(sql string, i int) string {
 	if i+1 < len(sql) && sql[i+1] == '$' {
 		return "$$"
 	}
-	// Check for $identifier$ where identifier is [A-Za-z_][A-Za-z0-9_]*
+	// Check for $tag$, where the tag is an identifier that does not
+	// start with a digit.
 	j := i + 1
-	if j >= len(sql) {
+	if j >= len(sql) || !isIdentChar(sql[j]) ||
+		(sql[j] >= '0' && sql[j] <= '9') {
 		return ""
 	}
-	ch := sql[j]
-	if (ch < 'A' || ch > 'Z') && (ch < 'a' || ch > 'z') && ch != '_' {
-		return ""
-	}
-	j++
-	for j < len(sql) {
-		ch = sql[j]
-		if ch == '$' {
+	for j++; j < len(sql); j++ {
+		if sql[j] == '$' {
 			return sql[i : j+1]
 		}
-		if (ch < 'A' || ch > 'Z') && (ch < 'a' || ch > 'z') &&
-			(ch < '0' || ch > '9') && ch != '_' {
+		if !isIdentChar(sql[j]) {
 			return ""
 		}
-		j++
 	}
 	return ""
 }
@@ -1065,13 +1062,18 @@ func containsDollarParam(s string) bool {
 	return false
 }
 
-// isIdentChar returns true if the byte is a valid SQL identifier character
-// (letter, digit, or underscore).
+// isIdentChar returns true if the byte is a valid SQL identifier
+// character: an ASCII letter, digit or underscore, or any byte from 0x80
+// up, which PostgreSQL's lexer treats as a letter (ident_start and
+// ident_cont in scan.l). Outside a quoted literal or comment such a byte
+// can only be part of an identifier, so a keyword, literal prefix or
+// dollar sign that touches one continues that identifier.
 func isIdentChar(b byte) bool {
 	return (b >= 'A' && b <= 'Z') ||
 		(b >= 'a' && b <= 'z') ||
 		(b >= '0' && b <= '9') ||
-		b == '_'
+		b == '_' ||
+		b >= 0x80
 }
 
 // safeQueryError extracts a user-facing error message from a query error.

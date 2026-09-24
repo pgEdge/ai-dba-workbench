@@ -94,28 +94,63 @@ func openLatestTestPool(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
+// Fixture DDL is held in constants so that no run-time value is ever
+// concatenated into the SQL text the fixtures execute.
+const (
+	latestTablesCreateSQL = `CREATE TABLE metrics."` + latestTablesProbe + `" (
+        connection_id integer NOT NULL,
+        collected_at  timestamp with time zone NOT NULL,
+        inserted_at   timestamp without time zone NOT NULL DEFAULT now(),
+        database_name text NOT NULL,
+        schemaname    text NOT NULL,
+        relname       text NOT NULL,
+        n_live_tup    bigint,
+        table_size    bigint
+    )`
+	latestTablesDropSQL = `DROP TABLE IF EXISTS metrics."` + latestTablesProbe + `"`
+
+	latestNoSchemaCreateSQL = `CREATE TABLE metrics."` + latestNoSchemaProbe + `" (
+        connection_id integer NOT NULL,
+        collected_at  timestamp with time zone NOT NULL,
+        datname       name NOT NULL,
+        numbackends   integer
+    )`
+	latestNoSchemaKeysOnlyCreateSQL = `CREATE TABLE metrics."` + latestNoSchemaProbe + `" (
+        connection_id integer NOT NULL,
+        collected_at  timestamp with time zone NOT NULL,
+        datname       name NOT NULL
+    )`
+	latestNoSchemaDropSQL = `DROP TABLE IF EXISTS metrics."` + latestNoSchemaProbe + `"`
+
+	latestNoDimensionCreateSQL = `CREATE TABLE metrics."` + latestNoDimensionProbe + `" (
+        connection_id integer NOT NULL,
+        collected_at  timestamp with time zone NOT NULL,
+        value         bigint
+    )`
+	latestNoDimensionDropSQL = `DROP TABLE IF EXISTS metrics."` + latestNoDimensionProbe + `"`
+)
+
 // createLatestFixtureTable (re)creates a fixture probe table in the metrics
-// schema, clears any cached column metadata for it and registers a cleanup
-// that drops it again.
-func createLatestFixtureTable(t *testing.T, pool *pgxpool.Pool, name, columns string) {
+// schema using the given constant DDL, clears any cached column metadata
+// for it and registers a cleanup that drops it again.
+func createLatestFixtureTable(t *testing.T, pool *pgxpool.Pool, name, createSQL, dropSQL string) {
 	t.Helper()
 
 	ctx := context.Background()
 	if _, err := pool.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS metrics"); err != nil {
 		t.Fatalf("failed to create metrics schema: %v", err)
 	}
-	if _, err := pool.Exec(ctx, `DROP TABLE IF EXISTS metrics."`+name+`"`); err != nil {
+	if _, err := pool.Exec(ctx, dropSQL); err != nil {
 		t.Fatalf("failed to drop fixture table %s: %v", name, err)
 	}
-	if _, err := pool.Exec(ctx, `CREATE TABLE metrics."`+name+`" (`+columns+`)`); err != nil {
+	if _, err := pool.Exec(ctx, createSQL); err != nil {
 		t.Fatalf("failed to create fixture table %s: %v", name, err)
 	}
 	tableColumnCache.Delete(name)
 	tableDBColCache.Delete(name)
 
 	t.Cleanup(func() {
-		if _, err := pool.Exec(context.Background(),
-			`DROP TABLE IF EXISTS metrics."`+name+`"`); err != nil {
+		if _, err := pool.Exec(context.Background(), dropSQL); err != nil {
 			t.Logf("fixture teardown for %s failed: %v", name, err)
 		}
 		tableColumnCache.Delete(name)
@@ -131,16 +166,8 @@ func setupLatestTablesFixture(t *testing.T) *LatestSnapshotHandler {
 	pool := openLatestTestPool(t)
 	t.Cleanup(pool.Close)
 
-	createLatestFixtureTable(t, pool, latestTablesProbe, `
-        connection_id integer NOT NULL,
-        collected_at  timestamp with time zone NOT NULL,
-        inserted_at   timestamp without time zone NOT NULL DEFAULT now(),
-        database_name text NOT NULL,
-        schemaname    text NOT NULL,
-        relname       text NOT NULL,
-        n_live_tup    bigint,
-        table_size    bigint
-    `)
+	createLatestFixtureTable(t, pool, latestTablesProbe,
+		latestTablesCreateSQL, latestTablesDropSQL)
 
 	ctx := context.Background()
 	now := time.Now().UTC()
@@ -420,12 +447,8 @@ func TestLatestSnapshot_SchemaFiltersIgnoredWithoutSchemaColumn(t *testing.T) {
 	pool := openLatestTestPool(t)
 	t.Cleanup(pool.Close)
 
-	createLatestFixtureTable(t, pool, latestNoSchemaProbe, `
-        connection_id integer NOT NULL,
-        collected_at  timestamp with time zone NOT NULL,
-        datname       name NOT NULL,
-        numbackends   integer
-    `)
+	createLatestFixtureTable(t, pool, latestNoSchemaProbe,
+		latestNoSchemaCreateSQL, latestNoSchemaDropSQL)
 	if _, err := pool.Exec(context.Background(),
 		`INSERT INTO metrics."`+latestNoSchemaProbe+`"
          VALUES (1, now(), 'appdb', 3), (1, now(), 'pg_catalog', 5)`); err != nil {
@@ -450,11 +473,8 @@ func TestLatestSnapshot_NoDimensionColumns(t *testing.T) {
 	pool := openLatestTestPool(t)
 	t.Cleanup(pool.Close)
 
-	createLatestFixtureTable(t, pool, latestNoDimensionProbe, `
-        connection_id integer NOT NULL,
-        collected_at  timestamp with time zone NOT NULL,
-        value         bigint
-    `)
+	createLatestFixtureTable(t, pool, latestNoDimensionProbe,
+		latestNoDimensionCreateSQL, latestNoDimensionDropSQL)
 
 	h := &LatestSnapshotHandler{datastore: database.NewTestDatastore(pool)}
 	rec := getLatest(t, h,
@@ -473,11 +493,8 @@ func TestLatestSnapshot_NoDimensionColumns(t *testing.T) {
 func TestLatestSnapshot_ColumnCaches(t *testing.T) {
 	pool := openLatestTestPool(t)
 	t.Cleanup(pool.Close)
-	createLatestFixtureTable(t, pool, latestNoSchemaProbe, `
-        connection_id integer NOT NULL,
-        collected_at  timestamp with time zone NOT NULL,
-        datname       name NOT NULL
-    `)
+	createLatestFixtureTable(t, pool, latestNoSchemaProbe,
+		latestNoSchemaKeysOnlyCreateSQL, latestNoSchemaDropSQL)
 	ctx := context.Background()
 
 	// A fresh entry is served from the cache without touching the

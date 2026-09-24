@@ -123,8 +123,8 @@ func TestPoolManager_CapCountsOpenConnectionsAcrossDatabases(t *testing.T) {
 			if err != nil {
 				t.Fatalf("GetConnectionForDatabase(%s): %v", db, err)
 			}
-			if _, err := c.Exec(ctx, "SELECT 1"); err != nil {
-				t.Fatalf("SELECT 1 on %s: %v", db, err)
+			if err := c.Ping(ctx); err != nil {
+				t.Fatalf("ping %s: %v", db, err)
 			}
 			m.ReturnConnection(mc.ID, c)
 
@@ -177,8 +177,8 @@ func TestPoolManager_CapHoldsUnderConcurrency(t *testing.T) {
 					peak = open
 				}
 				mu.Unlock()
-				if _, err := c.Exec(ctx, "SELECT 1"); err != nil {
-					t.Errorf("SELECT 1 on %s: %v", db, err)
+				if err := c.Ping(ctx); err != nil {
+					t.Errorf("ping %s: %v", db, err)
 				}
 				m.ReturnConnection(mc.ID, c)
 			}

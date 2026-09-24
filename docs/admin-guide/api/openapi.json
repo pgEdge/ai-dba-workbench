@@ -269,7 +269,7 @@
             }
           },
           "403": {
-            "description": "Permission denied",
+            "description": "Permission denied, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -353,7 +353,7 @@
             }
           },
           "403": {
-            "description": "Permission denied",
+            "description": "Permission denied, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -1343,7 +1343,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_blackouts permission",
+            "description": "Requires manage_blackouts permission, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -1478,7 +1478,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_blackouts permission",
+            "description": "Requires manage_blackouts permission, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -1549,7 +1549,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_blackouts permission",
+            "description": "Requires manage_blackouts permission, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -1723,7 +1723,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_blackouts permission",
+            "description": "Requires manage_blackouts permission, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -1858,7 +1858,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_blackouts permission",
+            "description": "Requires manage_blackouts permission, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -1929,7 +1929,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_blackouts permission",
+            "description": "Requires manage_blackouts permission, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -1997,7 +1997,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_blackouts permission",
+            "description": "Requires manage_blackouts permission, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -2201,7 +2201,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_notification_channels permission",
+            "description": "Requires manage_notification_channels permission, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -2280,7 +2280,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_notification_channels permission",
+            "description": "Requires manage_notification_channels permission, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -2589,7 +2589,7 @@
             }
           },
           "403": {
-            "description": "Forbidden",
+            "description": "Forbidden, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -3084,7 +3084,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_connections permission",
+            "description": "Requires manage_connections permission, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -3143,7 +3143,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_connections permission",
+            "description": "Requires manage_connections permission, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -3234,7 +3234,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_connections permission",
+            "description": "Requires manage_connections permission, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -3312,7 +3312,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_connections permission",
+            "description": "Requires manage_connections permission, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -3443,7 +3443,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_connections permission",
+            "description": "Requires manage_connections permission, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -3574,7 +3574,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_connections permission",
+            "description": "Requires manage_connections permission, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -3644,7 +3644,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_connections permission",
+            "description": "Requires manage_connections permission, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -7712,7 +7712,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_probes permission",
+            "description": "Requires manage_probes permission, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -7791,7 +7791,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_probes permission",
+            "description": "Requires manage_probes permission, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -9183,7 +9183,7 @@
       },
       "put": {
         "summary": "Set token scope",
-        "description": "Sets scope restrictions for a token including connections, MCP privileges, and admin permissions. A token may not change its own scope, so a request whose target is the caller's own acting token is refused.",
+        "description": "Sets scope restrictions for a token including connections, MCP privileges, and admin permissions. Each kind that is present replaces that kind's restriction, and a kind that is omitted or null is left unchanged. A kind with no entries is unrestricted, so an empty array would lift the restriction rather than deny everything; it is refused with 400, and DELETE is the way to clear a token's scope. A token may not change its own scope, so a request whose target is the caller's own acting token is refused.",
         "operationId": "setTokenScope",
         "tags": [
           "RBAC Tokens"
@@ -9215,7 +9215,7 @@
             "description": "Scope updated"
           },
           "400": {
-            "description": "Invalid request",
+            "description": "Invalid request, including an empty array for any scope kind",
             "content": {
               "application/json": {
                 "schema": {
@@ -13668,24 +13668,27 @@
         "properties": {
           "admin_permissions": {
             "type": "array",
-            "description": "Admin permission names",
+            "description": "Admin permission names. Omit or send null to leave this kind unchanged; an empty array is refused with 400.",
             "items": {
               "type": "string"
-            }
+            },
+            "nullable": true
           },
           "connections": {
             "type": "array",
-            "description": "Connection scope entries",
+            "description": "Connection scope entries. Omit or send null to leave this kind unchanged; an empty array is refused with 400.",
             "items": {
               "type": "object"
-            }
+            },
+            "nullable": true
           },
           "mcp_privileges": {
             "type": "array",
-            "description": "MCP privilege names",
+            "description": "MCP privilege names. Omit or send null to leave this kind unchanged; an empty array is refused with 400.",
             "items": {
               "type": "string"
-            }
+            },
+            "nullable": true
           }
         }
       },

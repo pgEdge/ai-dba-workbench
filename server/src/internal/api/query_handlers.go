@@ -898,6 +898,21 @@ type queryValidateResponse struct {
 	Statements      []statementValidation `json:"statements"`
 }
 
+// checkDatabaseOverride validates an optional database override with
+// database.ValidateDatabaseName. An empty name means no override and
+// passes. On failure it writes a 400 response and returns false.
+func checkDatabaseOverride(w http.ResponseWriter, name string) bool {
+	if name == "" {
+		return true
+	}
+	if err := database.ValidateDatabaseName(name); err != nil {
+		RespondError(w, http.StatusBadRequest,
+			"Invalid database name: "+err.Error())
+		return false
+	}
+	return true
+}
+
 // validateQuery handles POST /api/v1/connections/{id}/query/validate.
 // It plans each statement with EXPLAIN inside a read-only transaction
 // that is always rolled back, so no statement is ever executed. Only
@@ -937,12 +952,8 @@ func (h *ConnectionHandler) validateQuery(w http.ResponseWriter, r *http.Request
 	// Validate the optional database override before it reaches the
 	// connection string, and before any datastore work, matching the
 	// check on the execute endpoint.
-	if req.DatabaseName != "" {
-		if err := database.ValidateDatabaseName(req.DatabaseName); err != nil {
-			RespondError(w, http.StatusBadRequest,
-				"Invalid database name: "+err.Error())
-			return
-		}
+	if !checkDatabaseOverride(w, req.DatabaseName) {
+		return
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), validateTimeout)

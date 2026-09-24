@@ -5798,7 +5798,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Database summaries",
+            "description": "Database summaries; an empty databases array when the metrics schema has not been created",
             "content": {
               "application/json": {
                 "schema": {
@@ -5829,6 +5829,16 @@
           },
           "403": {
             "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to query database summaries",
             "content": {
               "application/json": {
                 "schema": {

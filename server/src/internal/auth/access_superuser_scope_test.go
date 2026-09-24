@@ -796,6 +796,56 @@ func TestConnectionInTokenScope(t *testing.T) {
 	}
 }
 
+// TestAllConnectionsInTokenScope checks the whole-estate form of
+// ConnectionInTokenScope: only a scope that admits every connection at
+// read_write, now and in future, passes.
+func TestAllConnectionsInTokenScope(t *testing.T) {
+	f, cleanup := newSuperuserScopeFixture(t)
+	defer cleanup()
+
+	if !f.checker.AllConnectionsInTokenScope(f.tokenCtx()) {
+		t.Error("Expected an unscoped token to cover every connection")
+	}
+
+	f.setConnectionScope(t, []ScopedConnection{
+		{ConnectionID: ConnectionIDAll, AccessLevel: AccessLevelReadWrite},
+	})
+	if !f.checker.AllConnectionsInTokenScope(f.tokenCtx()) {
+		t.Error("Expected the read_write wildcard to cover every connection")
+	}
+
+	f.setConnectionScope(t, []ScopedConnection{
+		{ConnectionID: ConnectionIDAll, AccessLevel: AccessLevelRead},
+	})
+	if f.checker.AllConnectionsInTokenScope(f.tokenCtx()) {
+		t.Error("Expected a read-only wildcard to be refused")
+	}
+
+	f.setConnectionScope(t, []ScopedConnection{
+		{ConnectionID: 1, AccessLevel: AccessLevelReadWrite},
+	})
+	if f.checker.AllConnectionsInTokenScope(f.tokenCtx()) {
+		t.Error("Expected a scope naming specific connections to be refused")
+	}
+	if !f.checker.AllConnectionsInTokenScope(f.sessionCtx()) {
+		t.Error("Expected a session to be unaffected by token scope")
+	}
+	if f.checker.AllConnectionsInTokenScope(unidentifiedTokenCtx()) {
+		t.Error("Expected an incomplete token context to be refused")
+	}
+	if !NewRBACChecker(nil).AllConnectionsInTokenScope(f.tokenCtx()) {
+		t.Error("Expected a checker without a store to admit the caller")
+	}
+
+	f.setConnectionScope(t, []ScopedConnection{
+		{ConnectionID: ConnectionIDAll, AccessLevel: AccessLevelReadWrite},
+	})
+	f.dropScopeTable(t, "token_connection_scope")
+	if f.checker.AllConnectionsInTokenScope(f.tokenCtx()) {
+		t.Error("Expected an unreadable scope to be refused")
+	}
+}
+
 // TestSetTokenMCPScopeByNamesRejectsUnknownIdentifier checks that an
 // unregistered identifier is refused with ErrUnknownMCPPrivilege and
 // that the token's existing MCP scope is left as it was.

@@ -37,9 +37,57 @@ func (e *Engine) evaluateThresholds(ctx context.Context) {
 		e.evaluateRuleForAllConnections(ctx, rule)
 	}
 
-	// Evaluate metric staleness after standard threshold rules
-	e.evaluateMetricStaleness(ctx)
+	// Then the two probe-scoped passes, which read the same view.
+	e.evaluateProbeScopedRules(ctx)
 }
+
+// evaluateProbeScopedRules runs the two passes keyed on a probe rather
+// than a metric: staleness, for a probe that is merely late, and
+// availability, for one that was collecting and has stopped. Both judge
+// exactly the same rows, so the view is read once here and shared; a
+// failed read says nothing about either condition, so it is logged once
+// and both passes are skipped rather than each reporting the same error.
+func (e *Engine) evaluateProbeScopedRules(ctx context.Context) {
+	entries, err := e.datastore.GetProbeStalenessByConnection(ctx)
+	if err != nil {
+		e.log("ERROR: Failed to get probe staleness: %v", err)
+		return
+	}
+
+	e.evaluateMetricStaleness(ctx, entries)
+
+	// The availability pass follows staleness, and reports the entries
+	// that the staleness evaluator deliberately says nothing about.
+	e.evaluateProbeUnavailable(ctx, entries)
+}
+
+// Rule and metric names for the two probe-scoped rules. Neither metric
+// has a metricRegistry entry, because both rules are evaluated by the
+// bespoke passes in this file rather than through the registry, so these
+// constants are the only place the names are written.
+const (
+	// metricStalenessRuleName is the rule reporting a probe that is
+	// merely late.
+	metricStalenessRuleName = "metric_staleness"
+
+	// probeUnavailableRuleName is the rule reporting a probe that was
+	// collecting and has stopped being available.
+	probeUnavailableRuleName = "probe_unavailable"
+
+	// probeUnavailableMetricName is that rule's metric_name, and is how
+	// the alert cleaner tells a probe_unavailable alert apart from a
+	// metric_staleness one: both carry a probe name, and the two resolve
+	// on entirely different conditions.
+	probeUnavailableMetricName = "probe_available"
+)
+
+// The two values the probe_available metric takes. The rule is seeded as
+// "< 1", so an unavailable probe reports 0 and a probe that is collecting
+// reports 1; the alert cleaner clears on the latter.
+const (
+	probeUnavailableValue = 0.0
+	probeAvailableValue   = 1.0
+)
 
 // evaluateRuleForAllConnections evaluates a rule across all connections with data
 func (e *Engine) evaluateRuleForAllConnections(ctx context.Context, rule *database.AlertRule) {
@@ -252,16 +300,13 @@ func (e *Engine) triggerThresholdAlert(ctx context.Context, rule *database.Alert
 
 // evaluateMetricStaleness checks for probes whose data exceeds the configured
 // staleness threshold (expressed as a multiple of the collection interval).
-func (e *Engine) evaluateMetricStaleness(ctx context.Context) {
+// The entries are the pass's shared read of the probe staleness view, made
+// once by evaluateProbeScopedRules.
+func (e *Engine) evaluateMetricStaleness(ctx context.Context,
+	entries []database.ProbeStaleness) {
 	e.debugLog("Evaluating metric staleness...")
 
-	entries, err := e.datastore.GetProbeStalenessByConnection(ctx)
-	if err != nil {
-		e.log("ERROR: Failed to get probe staleness: %v", err)
-		return
-	}
-
-	rule, err := e.datastore.GetAlertRuleByName(ctx, "metric_staleness")
+	rule, err := e.datastore.GetAlertRuleByName(ctx, metricStalenessRuleName)
 	if err != nil {
 		e.debugLog("No metric_staleness rule found: %v", err)
 		return
@@ -284,7 +329,10 @@ func (e *Engine) evaluateMetricStaleness(ctx context.Context) {
 		// this loop evaluated those entries it would raise a permanent
 		// staleness alert for every such probe on every connection. Do
 		// not "fix" this skip: the alert cleaner, not the evaluator, is
-		// what issue #465 changed.
+		// what issue #465 changed, and a probe that was collecting and
+		// has stopped being available is reported by
+		// evaluateProbeUnavailable below under its own rule, which is
+		// what issue #512 added.
 		if !entry.IsAvailable {
 			e.debugLog("Skipping staleness check for probe %s on connection %d: probe is unavailable",
 				entry.ProbeName, entry.ConnectionID)
@@ -380,6 +428,165 @@ func (e *Engine) evaluateMetricStaleness(ctx context.Context) {
 			e.queueNotification(alert, database.NotificationTypeAlertFire)
 		}
 	}
+}
+
+// evaluateProbeUnavailable reports probes that were collecting and have
+// stopped being available, which is the fault evaluateMetricStaleness
+// cannot report and, before issue #512, nothing else did either: the
+// collector flips is_available false on the first probe run after the
+// extension, the privilege or the connection goes, whilst the staleness
+// ratio is still about 1, so no staleness alert has fired for the alert
+// cleaner to hold open and the staleness evaluator will not raise one
+// afterwards because it skips unavailable entries.
+//
+// No stored record of the previous availability is needed to tell that
+// transition from a probe that has never been available, and none should
+// be added. probe_availability.last_collected is sticky, because the
+// collector's UpsertProbeAvailability coalesces it, so it never returns
+// to NULL once a probe has collected at all, and
+// GetProbeStalenessByConnection filters on pa.last_collected IS NOT NULL.
+// An entry in that view whose IsAvailable is false is therefore, by
+// construction, a probe that collected before and has stopped being
+// available; a probe whose extension was never installed has a NULL
+// last_collected and never appears in the view at all. Adding a column or
+// a previous-state table to re-derive this would duplicate a fact the
+// view already carries.
+//
+// The entries are the same shared read the staleness pass judged, so this
+// pass adds no query of its own.
+func (e *Engine) evaluateProbeUnavailable(ctx context.Context,
+	entries []database.ProbeStaleness) {
+	e.debugLog("Evaluating probe availability...")
+
+	rule, err := e.datastore.GetAlertRuleByName(ctx, probeUnavailableRuleName)
+	if err != nil {
+		e.debugLog("No %s rule found: %v", probeUnavailableRuleName, err)
+		return
+	}
+	if !rule.DefaultEnabled {
+		e.debugLog("%s rule is disabled", probeUnavailableRuleName)
+		return
+	}
+
+	for _, entry := range entries {
+		if ctx.Err() != nil {
+			return
+		}
+		if entry.IsAvailable {
+			continue
+		}
+		e.evaluateProbeUnavailableEntry(ctx, rule, entry)
+	}
+}
+
+// evaluateProbeUnavailableEntry raises, or updates, the probe_unavailable
+// alert for one unavailable probe, applying the same blackout,
+// per-connection threshold and cooldown guards as the staleness
+// evaluator.
+func (e *Engine) evaluateProbeUnavailableEntry(ctx context.Context,
+	rule *database.AlertRule, entry database.ProbeStaleness) {
+	connID := entry.ConnectionID
+
+	active, err := e.datastore.IsBlackoutActive(ctx, &connID, nil)
+	if err != nil {
+		e.debugLog("Error checking blackout for connection %d: %v", connID, err)
+	}
+	if active {
+		e.debugLog("Skipping probe availability check for connection %d: blackout active", connID)
+		return
+	}
+
+	threshold, operator, severity, enabled := e.datastore.GetEffectiveThreshold(
+		ctx, rule.ID, connID, nil)
+	if !enabled {
+		e.debugLog("%s disabled for connection %d", probeUnavailableRuleName, connID)
+		return
+	}
+
+	// The metric is the availability flag itself, 0 whilst the probe is
+	// unavailable, so the seeded "< 1" is violated for as long as the
+	// probe stays that way. An operator who has overridden the operator
+	// or threshold gets whatever they configured.
+	if !e.checkThreshold(probeUnavailableValue, operator, threshold) {
+		return
+	}
+
+	// One alert per probe, as for staleness: several probes failing on
+	// one connection raise one alert each rather than fighting over a
+	// single row.
+	existing, err := e.datastore.GetActiveThresholdAlertForProbe(ctx, rule.ID, connID, entry.ProbeName)
+	if err != nil {
+		// Creating an alert now could duplicate one that already
+		// exists, so wait for the next pass instead.
+		e.log("ERROR: Failed to look up probe availability alert for %s on connection %d: %v",
+			entry.ProbeName, connID, err)
+		return
+	}
+	if existing != nil {
+		if err := e.datastore.UpdateAlertValues(ctx, existing.ID, probeUnavailableValue,
+			threshold, operator, severity); err != nil {
+			e.log("ERROR: Failed to update probe availability alert values: %v", err)
+		} else {
+			e.debugLog("Updated probe availability alert for %s on connection %d",
+				entry.ProbeName, connID)
+		}
+		return
+	}
+
+	recentlyCleared, err := e.datastore.GetRecentlyClearedAlertForProbe(
+		ctx, rule.ID, connID, entry.ProbeName, AlertCooldownPeriod)
+	if err != nil {
+		e.debugLog("Error checking probe availability cooldown for %s on connection %d: %v",
+			entry.ProbeName, connID, err)
+	} else if recentlyCleared {
+		e.debugLog("Skipping probe availability alert for %s on connection %d: cooldown active (cleared within %v)",
+			entry.ProbeName, connID, AlertCooldownPeriod)
+		return
+	}
+
+	reason := unavailableProbeReason(entry)
+	title := fmt.Sprintf("Probe unavailable: %s on %s", entry.ProbeName, entry.ConnectionName)
+	description := probeUnavailableAlertDescription(entry.ProbeName, entry.ConnectionName, reason)
+
+	metricName := rule.MetricName
+	probeName := entry.ProbeName
+	value := probeUnavailableValue
+	alert := &database.Alert{
+		AlertType:      "threshold",
+		RuleID:         &rule.ID,
+		ConnectionID:   connID,
+		ProbeName:      &probeName,
+		MetricName:     &metricName,
+		MetricValue:    &value,
+		ThresholdValue: &threshold,
+		Operator:       &operator,
+		Severity:       severity,
+		Title:          title,
+		Description:    description,
+		Status:         "active",
+		TriggeredAt:    time.Now(),
+	}
+
+	if err := e.datastore.CreateAlert(ctx, alert); err != nil {
+		e.log("ERROR: Failed to create probe availability alert: %v", err)
+		return
+	}
+
+	e.log("Probe availability alert created: %s (%s)", title, reason)
+	e.queueNotification(alert, database.NotificationTypeAlertFire)
+}
+
+// probeUnavailableAlertDescription is the wording a probe_unavailable
+// alert carries. The reason is whatever the collector recorded, or the
+// stand-in unavailableProbeReason supplies when it recorded nothing, so
+// the sentence never has a hole in it.
+func probeUnavailableAlertDescription(probeName, connectionName, reason string) string {
+	return fmt.Sprintf(
+		"The %s probe on %s was collecting and is no longer available (%s). "+
+			"Metric collection for this probe has stopped, so dashboards and "+
+			"alert rules that depend on it cannot be evaluated until it is "+
+			"available again.",
+		probeName, connectionName, reason)
 }
 
 // stalenessMinutes converts a staleness ratio into the number of minutes

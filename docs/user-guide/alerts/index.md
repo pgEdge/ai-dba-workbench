@@ -90,13 +90,26 @@ cleared alert does not report that collection has
 stopped.
 
 This behaviour holds an existing alert open; it does not
-raise one. A probe that goes unavailable before its
-staleness alert has fired produces no alert at all,
-because the alerter does not evaluate staleness for an
-unavailable probe, and on a probe that collects every
-minute the staleness threshold is nowhere near reached by
-the time the probe stops. Alerting on a probe that stops
-being available is tracked in [issue 512](https://github.com/pgEdge/ai-dba-workbench/issues/512).
+raise one. The probe that has stopped is reported by a
+separate rule, `probe_unavailable`, which raises a warning
+alert as soon as a probe that had been collecting stops
+being available. That moment normally arrives long before
+a staleness alert could fire, so the two rules cover
+different halves of the same failure. A probe whose
+extension was never installed does not raise the alert,
+which keeps a permanent alert off every probe that has
+simply never run.
+
+The alerter clears a probe unavailable alert when the
+probe collects again. The alerter also clears the alert
+when an operator retires the probe by disabling it or by
+no longer monitoring the connection, and when the probe
+no longer reports its availability for that connection.
+
+A held staleness alert and a probe unavailable alert can
+be open on the same probe at the same time; the first
+reports that the data went stale and the second reports
+why, and each one clears on its own terms.
 
 ### False Positive
 

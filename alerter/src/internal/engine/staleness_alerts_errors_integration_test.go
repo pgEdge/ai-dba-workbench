@@ -112,7 +112,7 @@ func TestStalenessEvaluatorSurvivesStalenessQueryFailure(t *testing.T) {
 
 	// Neither pass may change anything: the evaluator cannot see the
 	// probes, and the cleaner cannot tell whether the alert resolved.
-	engine.evaluateMetricStaleness(ctx)
+	engine.evaluateProbeScopedRules(ctx)
 	engine.cleanResolvedAlerts(ctx)
 
 	alerts := readStalenessAlertsForRule(t, pool, ruleID)
@@ -143,7 +143,7 @@ func TestStalenessEvaluatorSurvivesAlertLookupFailure(t *testing.T) {
 		t.Fatalf("failed to drop alerts: %v", err)
 	}
 
-	engine.evaluateMetricStaleness(ctx)
+	engine.evaluateProbeScopedRules(ctx)
 
 	if counts := capture.drain(t); counts[database.NotificationTypeAlertFire] != 0 {
 		t.Errorf("fire notifications = %d, want 0 when the lookup failed",
@@ -168,7 +168,7 @@ func TestStalenessEvaluatorSurvivesAlertCreateFailure(t *testing.T) {
 		t.Fatalf("failed to add the rejecting constraint: %v", err)
 	}
 
-	engine.evaluateMetricStaleness(ctx)
+	engine.evaluateProbeScopedRules(ctx)
 
 	if alerts := readStalenessAlertsForRule(t, pool, ruleID); len(alerts) != 0 {
 		t.Errorf("alert rows = %d, want 0 when the insert is rejected", len(alerts))
@@ -192,7 +192,7 @@ func TestStalenessEvaluatorSurvivesAlertUpdateFailure(t *testing.T) {
 	connID := insertTestConnection(t, pool, "staleness-update-failure")
 	seedStaleProbe(t, pool, connID, "pg_stat_activity", "30 minutes")
 
-	engine.evaluateMetricStaleness(ctx)
+	engine.evaluateProbeScopedRules(ctx)
 	if alerts := readStalenessAlertsForRule(t, pool, ruleID); len(alerts) != 1 {
 		t.Fatalf("alert rows = %d, want 1", len(alerts))
 	}
@@ -209,7 +209,7 @@ func TestStalenessEvaluatorSurvivesAlertUpdateFailure(t *testing.T) {
 		}
 	})
 
-	engine.evaluateMetricStaleness(ctx)
+	engine.evaluateProbeScopedRules(ctx)
 
 	alerts := readStalenessAlertsForRule(t, pool, ruleID)
 	if len(alerts) != 1 {
@@ -269,7 +269,7 @@ func TestStalenessEvaluatorSkipConditions(t *testing.T) {
 
 			tt.prepare(t, pool, ruleID, connID)
 
-			engine.evaluateMetricStaleness(ctx)
+			engine.evaluateProbeScopedRules(ctx)
 
 			if alerts := readStalenessAlertsForRule(t, pool, ruleID); len(alerts) != 0 {
 				t.Errorf("alert rows = %d, want 0", len(alerts))
@@ -296,7 +296,7 @@ func TestStalenessEvaluatorSurvivesBlackoutLookupFailure(t *testing.T) {
 		t.Fatalf("failed to drop blackouts: %v", err)
 	}
 
-	engine.evaluateMetricStaleness(ctx)
+	engine.evaluateProbeScopedRules(ctx)
 
 	alerts := readStalenessAlertsForRule(t, pool, ruleID)
 	if len(alerts) != 1 {
@@ -327,7 +327,7 @@ func TestStalenessAlertIgnoresOtherProbesInTheView(t *testing.T) {
 	seedStaleProbe(t, pool, connID, "pg_stat_database", "1 second")
 	seedStaleProbe(t, pool, connID, "pg_stat_activity", "30 minutes")
 
-	engine.evaluateMetricStaleness(ctx)
+	engine.evaluateProbeScopedRules(ctx)
 	engine.cleanResolvedAlerts(ctx)
 
 	alerts := readStalenessAlertsForRule(t, pool, ruleID)

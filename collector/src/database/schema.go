@@ -3491,6 +3491,50 @@ func (sm *SchemaManager) registerMigrations() {
 			return nil
 		},
 	})
+
+	// Migration #16: Seed the probe_unavailable built-in alert rule. See
+	// GitHub issue #512.
+	//
+	// metric_staleness cannot report a probe that has stopped collecting
+	// because the alerter's staleness evaluator skips probes whose
+	// availability flag is false, and it must: a probe whose extension
+	// will never be installed sits at is_available = FALSE for ever and
+	// would otherwise pin a permanent staleness alert to every such probe
+	// on every connection. The probe an operator actually cares about,
+	// the one that was collecting yesterday and is not collecting today,
+	// was skipped along with those, so nothing reported it at all.
+	//
+	// The new rule reports exactly that transition. Its metric is the
+	// availability flag, which the alerter supplies as 0 for an
+	// unavailable probe and 1 for one that is collecting, so the seeded
+	// "< 1" is violated for as long as the probe stays unavailable;
+	// metric_unit is NULL because the value is a flag rather than a
+	// quantity, matching replication_slot_inactive and the other boolean
+	// rules. required_extension is NULL because the rule applies to every
+	// probe on every deployment.
+	//
+	// ON CONFLICT (name) DO NOTHING preserves an operator's edits on an
+	// installation that already carries a rule of this name, in the same
+	// way as the seeds in migrations #1 and #3.
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     16,
+		Description: "Seed the probe_unavailable built-in alert rule",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			_, err := tx.Exec(ctx, `
+				INSERT INTO alert_rules (name, description, category, metric_name, metric_unit, default_operator, default_threshold, default_severity, default_enabled, required_extension, is_built_in)
+				VALUES
+					('probe_unavailable', 'A probe that was collecting has stopped being available; metric collection for it has stopped', 'availability', 'probe_available', NULL, '<', 1, 'warning', TRUE, NULL, TRUE)
+				ON CONFLICT (name) DO NOTHING;
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to seed the probe_unavailable alert rule: %w", err)
+			}
+
+			return nil
+		},
+	})
 }
 
 // Migrate applies all pending migrations

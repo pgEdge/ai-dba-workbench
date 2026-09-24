@@ -505,12 +505,26 @@ project adheres to
   intersects the owner's rights with the token's scope for the
   surface being reached, and because a superuser holds
   everything, the intersection is the scope itself: a token
-  scoped to one administrative permission, one connection or
-  one tool may use exactly that and nothing else, with no
-  group grant needed on the owning account. A scope kind left
-  unset, or holding the relevant wildcard, stays unrestricted
-  as before, and a session login is unaffected throughout,
-  because a session carries no token. The two endpoints
+  whose admin scope names one permission is limited to that
+  permission, one whose connection scope names one connection
+  is limited to that connection, and one whose MCP scope names
+  one tool is limited to that tool, with no group grant needed
+  on the owning account. A scope kind left unset, or holding
+  the relevant wildcard, stays unrestricted as before, so a
+  token narrowed in one kind is not narrowed in another, and a
+  session login is unaffected throughout, because a session
+  carries no token. The connection scope now also bounds the
+  endpoints that change blackouts, blackout schedules, alert,
+  probe and channel overrides and clusters, which are gated on
+  an admin permission: a change on one server needs that
+  connection in scope at `read_write`, and a change to a
+  cluster, a group or the whole estate, or to a cluster's
+  definition or membership, needs a scope covering every
+  connection. `PUT /api/v1/rbac/tokens/{id}/scope` refuses an
+  empty list for any scope kind with `400 Bad Request`,
+  because an empty kind means unrestricted; clear the scope
+  with `DELETE` or use the wildcard instead, and the console
+  does the same. The two endpoints
   reserved for superusers that name no permission, the RBAC
   audit log at `GET /api/v1/rbac/audit` and a group's admin
   permissions at `/api/v1/rbac/groups/{id}/permissions`,

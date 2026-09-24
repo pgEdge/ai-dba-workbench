@@ -373,6 +373,34 @@ must return on error rather than skip filtering, and
 group wildcard return, since a failed scope read leaves that
 wildcard in place.
 
+Handlers gated on an admin permission that change something attached
+to connections, namely blackouts, blackout schedules, alert, probe and
+channel overrides and cluster writes, apply the connection scope
+through the helpers in `internal/api/token_scope_targets.go`.
+`requireTargetInTokenScope` admits a `server` target with an id when
+that connection is in scope, and sends a cluster, group or estate
+target (or a server target with no id) to
+`RBACChecker.AllConnectionsInTokenScope`, which needs a scope covering
+every connection because such a target reaches connections the token
+does not name, including ones added later. A cluster definition,
+membership or relationship change goes through
+`requireAllConnectionsInTokenScope` or
+`requireConnectionsInTokenScope`. A write addressed by id (blackout or
+schedule update and delete) checks the stored record, and a schedule
+update checks the body as well, so a token cannot move a record into
+or out of its scope; `requireBlackoutInTokenScope` skips the database
+read when the token's scope covers everything. A new handler of this
+kind must call one of these helpers, and
+`token_scope_targets_test.go` and `token_scope_blackout_test.go` hold
+the table-driven cases to extend.
+
+The scope PUT refuses an empty array for any kind with 400
+(`emptyScopeKind` in `rbac_token_handlers.go`), because an empty kind
+means unrestricted and the request almost always meant the opposite;
+an omitted or null kind is left unchanged, and DELETE clears the whole
+scope. The CLI still clears a kind given an empty list. The client's
+`AdminTokenScopes.tsx` follows the same rule through `buildScopeBody`.
+
 Everything fails closed: a scope lookup error denies (or, in
 `VisibleConnectionIDs`, is an error rather than "everything"), an
 API-token context carrying no token id (`tokenContextIncomplete`)

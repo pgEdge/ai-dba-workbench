@@ -37,11 +37,25 @@ The effective access for a scoped token equals the intersection of the owner's
 access and the token scope. A superuser holds every privilege, so the
 intersection for a superuser's token is the token scope itself.
 
-A scope type left empty places no restriction on that type, so setting a
-scope type to an empty list lifts the restriction rather than withdrawing
-access. The MCP privilege scope applies to public MCP tools as well, so a
-token whose MCP scope names specific tools can call only those tools. The
-server refuses an MCP scope that names an identifier it does not recognise.
+A scope type left empty places no restriction on that type. To lift the
+restriction on one type, set that type to its wildcard; to lift every
+restriction, clear the token's scope. The `PUT /api/v1/rbac/tokens/{id}/scope`
+endpoint refuses an empty list for any scope type with `400 Bad Request`, and
+leaves a scope type that the request omits unchanged. The Workbench console
+follows the same rule: saving a token with every scope type empty clears the
+scope, but emptying one restricted type whilst another stays restricted is
+refused.
+
+The connection scope also governs changes to blackouts, blackout schedules,
+alert, probe and channel overrides, and clusters, even though those endpoints
+are gated on an admin permission. A token may change one of these on a single
+server only when that connection is in its scope with `read_write` access; a
+change that applies to a cluster, a group or the whole estate, or that alters a
+cluster's definition or membership, needs a connection scope that covers every
+connection.
+
+The MCP privilege scope applies to public MCP tools as well, so a token whose
+MCP scope names specific tools can call only those tools. The server refuses an MCP scope that names an identifier it does not recognise.
 
 !!! note
 

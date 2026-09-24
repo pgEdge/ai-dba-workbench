@@ -382,10 +382,11 @@ that connection is in scope, and sends a cluster, group or estate
 target (or a server target with no id) to
 `RBACChecker.AllConnectionsInTokenScope`, which needs a scope covering
 every connection because such a target reaches connections the token
-does not name, including ones added later. A cluster definition,
-membership or relationship change goes through
-`requireAllConnectionsInTokenScope` or
-`requireConnectionsInTokenScope`. A write addressed by id (blackout or
+does not name, including ones added later. A cluster definition or
+relationship change goes through `requireAllConnectionsInTokenScope`
+(setting or clearing a source's relationships deletes all of them
+first, whatever the target), and adding or removing a server goes
+through `requireConnectionsInTokenScope` for that connection. A write addressed by id (blackout or
 schedule update and delete) checks the stored record, and a schedule
 update checks the body as well, so a token cannot move a record into
 or out of its scope; `requireBlackoutInTokenScope` skips the database

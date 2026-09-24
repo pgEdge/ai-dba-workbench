@@ -1502,14 +1502,10 @@ func (h *ClusterHandler) setConnectionRelationships(w http.ResponseWriter, r *ht
 		return
 	}
 
-	// Relationships join the source to each target, so the token must
-	// hold every one of them at read_write.
-	connIDs := make([]int, 0, len(req.Relationships)+1)
-	connIDs = append(connIDs, connID)
-	for _, rel := range req.Relationships {
-		connIDs = append(connIDs, rel.TargetConnectionID)
-	}
-	if !requireConnectionsInTokenScope(w, r, h.rbacChecker, connIDs...) {
+	// Setting a source's relationships first deletes every manual
+	// relationship from it, whatever the target, so the token must
+	// cover every connection rather than only those the request names.
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker) {
 		return
 	}
 
@@ -1660,7 +1656,9 @@ func (h *ClusterHandler) clearConnectionRelationships(w http.ResponseWriter, r *
 		return
 	}
 
-	if !requireConnectionsInTokenScope(w, r, h.rbacChecker, connID) {
+	// Clearing deletes every manual relationship from the source,
+	// whatever the target, so the token must cover every connection.
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker) {
 		return
 	}
 

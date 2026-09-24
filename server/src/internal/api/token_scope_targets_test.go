@@ -295,9 +295,9 @@ func TestBlackoutCreateRespectsTokenScope(t *testing.T) {
 }
 
 // TestClusterWritesRespectTokenScope covers the cluster handlers: a
-// change to a cluster or group definition, or to a relationship
-// addressed by id, needs every connection in scope, and a change naming
-// connections needs each of them.
+// change to a cluster or group definition, or to relationships, needs
+// every connection in scope, and adding or removing a server needs that
+// connection.
 func TestClusterWritesRespectTokenScope(t *testing.T) {
 	_, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
@@ -389,11 +389,14 @@ func TestClusterWritesRespectTokenScope(t *testing.T) {
 			}),
 			refused: []scopeCaller{narrowed},
 		},
+		// Setting or clearing a source's relationships first deletes every
+		// manual relationship from that source, whatever its target, so
+		// even a source and targets the token holds are not enough.
 		{
-			name:    "set relationships within scope",
+			name:    "set relationships",
 			call:    put(relationships(5), relBody("7")),
-			allowed: []scopeCaller{session, wildcard, narrowed},
-			refused: []scopeCaller{readOnly},
+			allowed: []scopeCaller{session, unscoped, wildcard},
+			refused: []scopeCaller{narrowed, readOnly},
 		},
 		{
 			name:    "set relationships to a target out of scope",
@@ -401,22 +404,11 @@ func TestClusterWritesRespectTokenScope(t *testing.T) {
 			refused: []scopeCaller{narrowed},
 		},
 		{
-			name:    "set relationships from a source out of scope",
-			call:    put(relationships(6), relBody("5")),
-			refused: []scopeCaller{narrowed},
-		},
-		{
-			name: "clear relationships in scope",
-			call: put(func(w http.ResponseWriter, r *http.Request) {
+			name: "clear relationships",
+			call: del(func(w http.ResponseWriter, r *http.Request) {
 				h.clearConnectionRelationships(w, r, 1, 7)
-			}, ""),
-			allowed: []scopeCaller{narrowed},
-		},
-		{
-			name: "clear relationships out of scope",
-			call: put(func(w http.ResponseWriter, r *http.Request) {
-				h.clearConnectionRelationships(w, r, 1, 6)
-			}, ""),
+			}),
+			allowed: []scopeCaller{session, unscoped, wildcard},
 			refused: []scopeCaller{narrowed, readOnly},
 		},
 	})

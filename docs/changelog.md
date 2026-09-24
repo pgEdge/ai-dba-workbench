@@ -498,61 +498,61 @@ project adheres to
 
 - Bind an API token owned by a superuser to the token's own
   scope. The authorisation check previously short-circuited on
-  the owner's superuser flag before it looked at the scope, so
-  a token minted for one narrow job reached every connection,
+  the owner's superuser flag before it looked at the scope, so a
+  token minted for one narrow job reached every connection,
   every MCP tool and every administrative permission in the
   installation, whatever scope it carried. Each check now
   intersects the owner's rights with the token's scope for the
   surface being reached, and because a superuser holds
   everything, the intersection is the scope itself: a token
   whose admin scope names one permission is limited to that
-  permission, one whose connection scope names one connection
-  is limited to that connection, and one whose MCP scope names
-  one tool is limited to that tool, with no group grant needed
-  on the owning account. A scope kind left unset, or holding
-  the relevant wildcard, stays unrestricted as before, so a
-  token narrowed in one kind is not narrowed in another, and a
-  session login is unaffected throughout, because a session
-  carries no token. The connection scope now also bounds the
-  endpoints that change blackouts, blackout schedules, alert,
-  probe and channel overrides and clusters, which are gated on
-  an admin permission: a change on one server needs that
-  connection in scope at `read_write`, and a change to a
-  cluster, a group or the whole estate, or to a cluster's
-  definition or membership, needs a scope covering every
-  connection. `PUT /api/v1/rbac/tokens/{id}/scope` refuses an
-  empty list for any scope kind with `400 Bad Request`,
-  because an empty kind means unrestricted; clear the scope
-  with `DELETE` or use the wildcard instead, and the console
-  does the same. The two endpoints
-  reserved for superusers that name no permission, the RBAC
-  audit log at `GET /api/v1/rbac/audit` and a group's admin
-  permissions at `/api/v1/rbac/groups/{id}/permissions`,
-  refuse a token whose admin scope has been narrowed, because
-  a gate that names no permission has nothing to intersect
-  against. A public MCP tool is now bound by the token's MCP
-  scope as well, for a token of any owner, so a token whose
-  MCP scope names specific tools can no longer call
-  `store_memory`, `recall_memories` or `delete_memory` unless
-  the scope names them too (#482). Setting a token's MCP
-  scope to an identifier that is not registered is refused
-  with `400 Bad Request`, where the name used to be dropped
-  silently and a list of unknown names left the token
-  unrestricted. Everything fails closed: a scope that cannot
-  be read, and an API-token request that carries no token
-  identifier, are denied, and the `list_connections` tool
-  returns an error rather than every connection when the
-  caller's visible connections cannot be resolved. This is a
-  breaking change for existing integrations, because a token
-  that carries an explicit scope, most often one owned by a
-  superuser, will start receiving `403 Forbidden` where it
-  previously succeeded, and there is no configuration option
-  that restores the old behaviour. Review every scoped token
-  before upgrading, starting with those owned by a superuser
-  and any whose MCP scope names specific tools; where one is
-  refused afterwards, either clear the token's scope, add the
-  relevant wildcard to the scope, or narrow what the token is
-  asked to do so that it matches the scope the token holds.
+  permission, one whose connection scope names one connection is
+  limited to that connection, and one whose MCP scope names one
+  tool is limited to that tool (and to `test_query`, which every
+  token may call), with no group grant needed on the owning
+  account. A scope kind left unset, or holding the relevant
+  wildcard, stays unrestricted as before, so a token narrowed in
+  one kind is not narrowed in another, and a session login is
+  unaffected throughout, because a session carries no token. The
+  connection scope now also bounds the endpoints that change
+  blackouts, blackout schedules, alert, probe and channel
+  overrides and clusters, which are gated on an admin
+  permission: a change on one server needs that connection in
+  scope at `read_write`, as does adding a server to a cluster or
+  removing one, whilst a change to a cluster, a group or the
+  whole estate, or to a cluster's definition or relationships,
+  needs a scope covering every connection. `PUT
+  /api/v1/rbac/tokens/{id}/scope` refuses an empty list for any
+  scope kind with `400 Bad Request`, because an empty kind means
+  unrestricted; clear the scope with `DELETE` or use the
+  wildcard instead, and the console does the same. The two
+  endpoints reserved for superusers that name no permission, the
+  RBAC audit log at `GET /api/v1/rbac/audit` and a group's admin
+  permissions at `/api/v1/rbac/groups/{id}/permissions`, refuse
+  a token whose admin scope has been narrowed, because a gate
+  that names no permission has nothing to intersect against. A
+  public MCP tool is now bound by the token's MCP scope as well,
+  for a token of any owner, so a token whose MCP scope names
+  specific tools can no longer call `store_memory`,
+  `recall_memories` or `delete_memory` unless the scope names
+  them too (#482). Setting a token's MCP scope to an identifier
+  that is not registered is refused with `400 Bad Request`,
+  where the name used to be dropped silently and a list of
+  unknown names left the token unrestricted. Everything fails
+  closed: a scope that cannot be read, and an API-token request
+  that carries no token identifier, are denied, and the
+  `list_connections` tool returns an error rather than every
+  connection when the caller's visible connections cannot be
+  resolved. This is a breaking change for existing integrations,
+  because a token that carries an explicit scope, most often one
+  owned by a superuser, will start receiving `403 Forbidden`
+  where it previously succeeded, and there is no configuration
+  option that restores the old behaviour. Review every scoped
+  token before upgrading, starting with those owned by a
+  superuser and any whose MCP scope names specific tools; where
+  one is refused afterwards, either clear the token's scope, add
+  the relevant wildcard to the scope, or narrow what the token
+  is asked to do so that it matches the scope the token holds.
   (#471)
 
 - Change the alerter's default Gemini reasoning model from

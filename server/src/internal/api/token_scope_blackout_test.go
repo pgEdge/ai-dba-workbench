@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -208,6 +209,13 @@ func TestBlackoutWritesByIDRespectTokenScope(t *testing.T) {
 			scheduleBody), id)
 	}
 
+	moveScheduleOut := func(h *BlackoutHandler, w http.ResponseWriter,
+		c scopeCaller, id int64) {
+		h.updateBlackoutSchedule(w, newScopeRequest(c, http.MethodPut,
+			strings.Replace(scheduleBody, `"connection_id":5`,
+				`"connection_id":6`, 1)), id)
+	}
+
 	cases := []struct {
 		name   string
 		fn     write
@@ -238,6 +246,9 @@ func TestBlackoutWritesByIDRespectTokenScope(t *testing.T) {
 		{"move schedule from out of scope", updateSchedule, "blackout_schedules", 2, "narrowed", http.StatusForbidden},
 		{"move cluster schedule", updateSchedule, "blackout_schedules", 3, "narrowed", http.StatusForbidden},
 		{"move cluster schedule wildcard", updateSchedule, "blackout_schedules", 3, "wildcard", http.StatusOK},
+		// The schedule is on connection 5 today, but the body would move
+		// it onto connection 6, which the token does not hold.
+		{"move schedule out of scope", moveScheduleOut, "blackout_schedules", 1, "narrowed", http.StatusForbidden},
 	}
 
 	for _, tc := range cases {

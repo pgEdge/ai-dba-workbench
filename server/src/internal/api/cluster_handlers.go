@@ -850,6 +850,13 @@ func (h *ClusterHandler) updateCluster(w http.ResponseWriter, r *http.Request, i
 		return
 	}
 
+	// A cluster's definition decides which cluster-wide blackouts,
+	// overrides and grants reach its members, so a token must cover
+	// every connection to change it (issue #471).
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker) {
+		return
+	}
+
 	var req ClusterRequest
 	if !DecodeJSONBody(w, r, &req) {
 		return
@@ -914,6 +921,13 @@ func (h *ClusterHandler) deleteCluster(w http.ResponseWriter, r *http.Request, i
 		return
 	}
 
+	// A cluster's definition decides which cluster-wide blackouts,
+	// overrides and grants reach its members, so a token must cover
+	// every connection to change it (issue #471).
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker) {
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
@@ -969,6 +983,13 @@ func (h *ClusterHandler) updateAutoDetectedCluster(w http.ResponseWriter, r *htt
 		return
 	}
 
+	// A cluster's definition decides which cluster-wide blackouts,
+	// overrides and grants reach its members, so a token must cover
+	// every connection to change it (issue #471).
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker) {
+		return
+	}
+
 	// Parse request body
 	var req AutoDetectedClusterRequest
 	if !DecodeJSONBody(w, r, &req) {
@@ -1021,6 +1042,13 @@ func (h *ClusterHandler) deleteAutoDetectedCluster(w http.ResponseWriter, r *htt
 	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections) {
 		RespondError(w, http.StatusForbidden,
 			"Permission denied: you do not have permission to delete auto-detected clusters")
+		return
+	}
+
+	// A cluster's definition decides which cluster-wide blackouts,
+	// overrides and grants reach its members, so a token must cover
+	// every connection to change it (issue #471).
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker) {
 		return
 	}
 
@@ -1087,6 +1115,13 @@ func (h *ClusterHandler) updateAutoDetectedGroup(w http.ResponseWriter, r *http.
 	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections) {
 		RespondError(w, http.StatusForbidden,
 			"Permission denied: you do not have permission to rename auto-detected groups")
+		return
+	}
+
+	// A group's definition decides which group-wide blackouts,
+	// overrides and grants reach its members, so a token must cover
+	// every connection to change it (issue #471).
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker) {
 		return
 	}
 
@@ -1197,6 +1232,9 @@ func (h *ClusterHandler) addServerToCluster(w http.ResponseWriter, r *http.Reque
 		RespondError(w, http.StatusBadRequest, "A valid connection_id is required")
 		return
 	}
+	if !requireConnectionsInTokenScope(w, r, h.rbacChecker, req.ConnectionID) {
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
@@ -1259,6 +1297,10 @@ func (h *ClusterHandler) handleRemoveServerFromCluster(w http.ResponseWriter, r 
 	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections) {
 		RespondError(w, http.StatusForbidden,
 			"Permission denied: requires manage_connections permission")
+		return
+	}
+
+	if !requireConnectionsInTokenScope(w, r, h.rbacChecker, connectionID) {
 		return
 	}
 
@@ -1460,6 +1502,17 @@ func (h *ClusterHandler) setConnectionRelationships(w http.ResponseWriter, r *ht
 		return
 	}
 
+	// Relationships join the source to each target, so the token must
+	// hold every one of them at read_write.
+	connIDs := make([]int, 0, len(req.Relationships)+1)
+	connIDs = append(connIDs, connID)
+	for _, rel := range req.Relationships {
+		connIDs = append(connIDs, rel.TargetConnectionID)
+	}
+	if !requireConnectionsInTokenScope(w, r, h.rbacChecker, connIDs...) {
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
@@ -1578,6 +1631,12 @@ func (h *ClusterHandler) handleDeleteRelationship(w http.ResponseWriter, r *http
 		return
 	}
 
+	// A relationship addressed by id could join any two connections, so
+	// deleting one needs a token that covers every connection.
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker) {
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
@@ -1598,6 +1657,10 @@ func (h *ClusterHandler) clearConnectionRelationships(w http.ResponseWriter, r *
 	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections) {
 		RespondError(w, http.StatusForbidden,
 			"Permission denied: requires manage_connections permission")
+		return
+	}
+
+	if !requireConnectionsInTokenScope(w, r, h.rbacChecker, connID) {
 		return
 	}
 

@@ -1241,29 +1241,33 @@ func TestDatabaseSummaries_ScanTypeMismatchIsAnError(t *testing.T) {
 	end := time.Now().UTC()
 
 	cases := []struct {
-		name  string
-		table string
-		view  string
-		run   func(pgx.Tx, map[string]*DatabaseSummary) error
+		name    string
+		install string
+		drop    string
+		run     func(pgx.Tx, map[string]*DatabaseSummary) error
 	}{
 		{
-			name:  "sizes",
-			table: "metrics.pg_database",
-			view: `SELECT 1 AS connection_id,
+			name: "sizes",
+			install: `DROP TABLE metrics.pg_database;
+                CREATE VIEW metrics.pg_database AS
+                SELECT 1 AS connection_id,
                        now() - INTERVAL '1 minute' AS collected_at,
                        ARRAY['app'] AS datname, false AS datistemplate,
                        1::bigint AS database_size_bytes`,
+			drop: "DROP VIEW IF EXISTS metrics.pg_database",
 			run: func(tx pgx.Tx, m map[string]*DatabaseSummary) error {
 				return h.queryDatabaseSizes(ctx, tx, 1, start, end, m)
 			},
 		},
 		{
-			name:  "dead tuples",
-			table: "metrics.pg_stat_all_tables",
-			view: `SELECT 1 AS connection_id,
+			name: "dead tuples",
+			install: `DROP TABLE metrics.pg_stat_all_tables;
+                CREATE VIEW metrics.pg_stat_all_tables AS
+                SELECT 1 AS connection_id,
                        now() - INTERVAL '1 minute' AS collected_at,
                        ARRAY['app'] AS database_name,
                        1::bigint AS n_live_tup, 1::bigint AS n_dead_tup`,
+			drop: "DROP VIEW IF EXISTS metrics.pg_stat_all_tables",
 			run: func(tx pgx.Tx, m map[string]*DatabaseSummary) error {
 				return h.queryDeadTupleRatios(ctx, tx, 1, start, end, m)
 			},
@@ -1272,16 +1276,13 @@ func TestDatabaseSummaries_ScanTypeMismatchIsAnError(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := pool.Exec(ctx, fmt.Sprintf(
-				"DROP TABLE %s; CREATE VIEW %s AS %s",
-				tc.table, tc.table, tc.view)); err != nil {
+			if _, err := pool.Exec(ctx, tc.install); err != nil {
 				t.Fatalf("install view: %v", err)
 			}
 			// The shared teardown drops tables, not views, so the view
 			// must go before the next test rebuilds the schema.
 			defer func() {
-				if _, err := pool.Exec(ctx,
-					"DROP VIEW IF EXISTS "+tc.table); err != nil {
+				if _, err := pool.Exec(ctx, tc.drop); err != nil {
 					t.Errorf("drop view: %v", err)
 				}
 			}()

@@ -283,6 +283,46 @@ describe('AdminTokenScopes - empty scope categories', () => {
                 /connections and MCP privileges restriction cannot be lifted/,
             )).toBeInTheDocument();
         });
+        // Lifting every restriction and then restoring the others would
+        // leave the token unrestricted in between, so that is not offered.
+        expect(within(dialog).queryByText(/remove every restriction/))
+            .not.toBeInTheDocument();
+        expect(mockApiPut).not.toHaveBeenCalled();
+    });
+
+    it('refuses to save when a stored restriction could not be shown', async () => {
+        mockApi([makeToken({ scoped: true, mcp_privileges: [1] })]);
+        const listing = mockApiGet.getMockImplementation() as (url: string) => Promise<unknown>;
+        mockApiGet.mockImplementation((url: string) =>
+            url === '/api/v1/rbac/privileges/mcp'
+                ? Promise.reject(new Error('privileges unavailable'))
+                : listing(url));
+        const user = userEvent.setup({ delay: null });
+        renderPanel();
+
+        const dialog = await openEdit(user);
+        expect(within(dialog).getByText(/could not all be shown/))
+            .toBeInTheDocument();
+
+        await clickSave(user, dialog);
+
+        expect(within(dialog).getByText(/could not all be shown/))
+            .toBeInTheDocument();
+        expect(mockApiDelete).not.toHaveBeenCalled();
+        expect(mockApiPut).not.toHaveBeenCalled();
+    });
+
+    it('refuses to save when a stored admin permission is not recognised', async () => {
+        mockApi([makeToken({ scoped: true, admin_permissions: ['retired_permission'] })]);
+        const user = userEvent.setup({ delay: null });
+        renderPanel();
+
+        const dialog = await openEdit(user);
+        await clickSave(user, dialog);
+
+        expect(within(dialog).getByText(/admin permissions could not all be shown/))
+            .toBeInTheDocument();
+        expect(mockApiDelete).not.toHaveBeenCalled();
         expect(mockApiPut).not.toHaveBeenCalled();
     });
 

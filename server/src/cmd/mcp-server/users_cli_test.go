@@ -318,7 +318,7 @@ func rowFor(t *testing.T, output, username string) string {
 // attempts.
 func TestListUsersCommandStatusColumns(t *testing.T) {
 	dataDir := t.TempDir()
-	store, err := auth.NewAuthStore(dataDir, 0, 1)
+	store, err := auth.NewAuthStore(dataDir, 0, 1, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("NewAuthStore: %v", err)
 	}

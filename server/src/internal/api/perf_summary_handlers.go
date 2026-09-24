@@ -1034,28 +1034,11 @@ func (h *PerfSummaryHandler) handleDatabaseSummaries(
 	defer rollback.Tx(ctx, tx) //nolint:errcheck // no-op after commit
 
 	dbMap := make(map[string]*DatabaseSummary)
-
-	// Every sub-query is bounded by the resolved window, so a historical
-	// custom window reports the estate as it stood at the end of that
-	// window rather than mixing today's sizes and counts with a historical
-	// cache hit series.
-
-	// Query 1: Database sizes from metrics.pg_database
-	h.queryDatabaseSizes(ctx, tx, connID, window.Start, window.End, dbMap)
-
-	// Query 2: Stats from metrics.pg_stat_database
-	h.queryDatabaseStats(ctx, tx, connID, window.Start, window.End, dbMap)
-
-	// Query 3: Dead tuple ratio from metrics.pg_stat_all_tables
-	h.queryDeadTupleRatios(ctx, tx, connID, window.Start, window.End, dbMap)
-
-	// Query 4: Transaction rate (delta between the latest two collections
-	// inside the window)
-	h.queryTransactionRates(ctx, tx, connID, window.Start, window.End, dbMap)
-
-	// Query 5: Cache hit ratio time series per database
-	h.queryDatabaseCacheHitTimeSeries(ctx, tx, connID, window.Start,
-		window.End, bucketInterval, dbMap)
+	if err := h.collectDatabaseSummaries(ctx, tx, connID, window,
+		bucketInterval, dbMap); err != nil {
+		respondDatabaseSummariesError(w, connID, err)
+		return
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		log.Printf("[ERROR] Failed to commit read-only transaction: %v", err)
@@ -1074,6 +1057,79 @@ func (h *PerfSummaryHandler) handleDatabaseSummaries(
 	})
 }
 
+// collectDatabaseSummaries runs the five database-summaries sub-queries in
+// order inside tx, populating dbMap, and returns the first failure.
+//
+// Every sub-query is bounded by the resolved window, so a historical custom
+// window reports the estate as it stood at the end of that window rather
+// than mixing today's sizes and counts with a historical cache hit series.
+//
+// The sequence stops at the first error rather than carrying on, because a
+// failed statement aborts the transaction and every later statement would
+// then fail with 25P02 instead of reporting anything useful.
+func (h *PerfSummaryHandler) collectDatabaseSummaries(
+	ctx context.Context,
+	tx pgx.Tx,
+	connectionID int,
+	window metrics.TimeWindow,
+	bucketInterval string,
+	dbMap map[string]*DatabaseSummary,
+) error {
+	start, end := window.Start, window.End
+	steps := []func() error{
+		// Database sizes from metrics.pg_database; the only step that
+		// creates entries.
+		func() error {
+			return h.queryDatabaseSizes(ctx, tx, connectionID, start, end, dbMap)
+		},
+		// Connection counts from metrics.pg_stat_database.
+		func() error {
+			return h.queryDatabaseStats(ctx, tx, connectionID, start, end, dbMap)
+		},
+		// Dead tuple ratios from metrics.pg_stat_all_tables.
+		func() error {
+			return h.queryDeadTupleRatios(ctx, tx, connectionID, start, end, dbMap)
+		},
+		// Transaction rates, the delta between the latest two collections
+		// inside the window.
+		func() error {
+			return h.queryTransactionRates(ctx, tx, connectionID, start, end, dbMap)
+		},
+		// Cache hit ratio time series per database.
+		func() error {
+			return h.queryDatabaseCacheHitTimeSeries(ctx, tx, connectionID,
+				start, end, bucketInterval, dbMap)
+		},
+	}
+	for _, step := range steps {
+		if err := step(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// respondDatabaseSummariesError turns a sub-query failure into a response,
+// following respondTopQueriesError. Only a missing metrics schema is
+// reported as an empty result, so that a workbench whose collector has
+// never run renders no database cards rather than a failure. Every other
+// failure, a statement timeout on a wide custom window included, is logged
+// at [ERROR] and reported as a 500, because returning the summaries with
+// the affected figures silently absent would make a persistent failure look
+// like a database with no data.
+func respondDatabaseSummariesError(w http.ResponseWriter, connID int, err error) {
+	if isUndefinedTableError(err) {
+		log.Printf("[DEBUG] No database summaries data for connection %d: %s", connID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connID is an integer and err is sanitized via logging.SanitizeForLog
+		RespondJSON(w, http.StatusOK, DatabaseSummaryResponse{
+			Databases: []DatabaseSummary{},
+		})
+		return
+	}
+	log.Printf("[ERROR] Failed to query database summaries for connection %d: %s", connID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connID is an integer and err is sanitized via logging.SanitizeForLog
+	RespondError(w, http.StatusInternalServerError,
+		"Failed to query database summaries")
+}
+
 // queryDatabaseSizes populates database size information from pg_database.
 //
 // The snapshot is the newest one inside the requested window, so a
@@ -1088,7 +1144,7 @@ func (h *PerfSummaryHandler) queryDatabaseSizes(
 	connectionID int,
 	startTime, endTime time.Time,
 	dbMap map[string]*DatabaseSummary,
-) {
+) error {
 	rows, err := tx.Query(ctx, `
         SELECT datname, database_size_bytes
         FROM metrics.pg_database
@@ -1105,30 +1161,37 @@ func (h *PerfSummaryHandler) queryDatabaseSizes(
           AND datistemplate = false
     `, connectionID, startTime, endTime)
 	if err != nil {
-		log.Printf("[DEBUG] No database size data for connection %d: %s", connectionID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connectionID is an integer and err is sanitized via logging.SanitizeForLog
-		return
+		return fmt.Errorf("query database sizes: %w", err)
 	}
 	defer rows.Close()
 
+	// pgx closes the result set on a scan error, so a row that cannot be
+	// scanned ends the iteration rather than being skipped, and the error
+	// is returned. Columns the collector may leave NULL are therefore
+	// scanned through pointers, so that such a row is genuinely skipped;
+	// the same holds for the other database-summaries helpers.
 	for rows.Next() {
-		var name string
-		var sizeBytes int64
+		var name *string
+		var sizeBytes *int64
 		if err := rows.Scan(&name, &sizeBytes); err != nil {
-			log.Printf("[DEBUG] Error scanning database size: %v", err)
+			return fmt.Errorf("scan database size: %w", err)
+		}
+		if name == nil || sizeBytes == nil {
 			continue
 		}
-		dbMap[name] = &DatabaseSummary{
-			DatabaseName: name,
-			SizeBytes:    sizeBytes,
-			SizePretty:   formatBytes(sizeBytes),
+		dbMap[*name] = &DatabaseSummary{
+			DatabaseName: *name,
+			SizeBytes:    *sizeBytes,
+			SizePretty:   formatBytes(*sizeBytes),
 			CacheHitRatio: CacheHitRatioData{
 				TimeSeries: []CacheHitRatioPoint{},
 			},
 		}
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[DEBUG] Error iterating database size rows: %v", err)
+		return fmt.Errorf("query database sizes: %w", err)
 	}
+	return nil
 }
 
 // queryDatabaseStats populates the connection count from the newest
@@ -1141,7 +1204,7 @@ func (h *PerfSummaryHandler) queryDatabaseStats(
 	connectionID int,
 	startTime, endTime time.Time,
 	dbMap map[string]*DatabaseSummary,
-) {
+) error {
 	rows, err := tx.Query(ctx, `
         SELECT datname, numbackends
         FROM metrics.pg_stat_database
@@ -1157,16 +1220,17 @@ func (h *PerfSummaryHandler) queryDatabaseStats(
           )
     `, connectionID, startTime, endTime)
 	if err != nil {
-		log.Printf("[DEBUG] No pg_stat_database data for connection %d: %s", connectionID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connectionID is an integer and err is sanitized via logging.SanitizeForLog
-		return
+		return fmt.Errorf("query database stats: %w", err)
 	}
 	defer rows.Close()
 
 	for rows.Next() {
-		var name string
-		var numBackends int
+		var name *string
+		var numBackends *int
 		if err := rows.Scan(&name, &numBackends); err != nil {
-			log.Printf("[DEBUG] Error scanning database stats: %v", err)
+			return fmt.Errorf("scan database stats: %w", err)
+		}
+		if name == nil || numBackends == nil {
 			continue
 		}
 		// Only queryDatabaseSizes may create entries; the latest
@@ -1174,15 +1238,16 @@ func (h *PerfSummaryHandler) queryDatabaseStats(
 		// databases currently exist. Skip rows for databases absent
 		// from that snapshot (e.g. recently dropped databases whose
 		// historical rows still linger in pg_stat_database).
-		db, exists := dbMap[name]
+		db, exists := dbMap[*name]
 		if !exists {
 			continue
 		}
-		db.ActiveConnections = numBackends
+		db.ActiveConnections = *numBackends
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[DEBUG] Error iterating database stats rows: %v", err)
+		return fmt.Errorf("query database stats: %w", err)
 	}
+	return nil
 }
 
 // queryDeadTupleRatios populates dead tuple ratios from the newest
@@ -1195,7 +1260,7 @@ func (h *PerfSummaryHandler) queryDeadTupleRatios(
 	connectionID int,
 	startTime, endTime time.Time,
 	dbMap map[string]*DatabaseSummary,
-) {
+) error {
 	rows, err := tx.Query(ctx, `
         SELECT database_name,
                CASE WHEN SUM(n_live_tup) + SUM(n_dead_tup) = 0 THEN 0
@@ -1216,29 +1281,31 @@ func (h *PerfSummaryHandler) queryDeadTupleRatios(
         GROUP BY database_name
     `, connectionID, startTime, endTime)
 	if err != nil {
-		log.Printf("[DEBUG] No dead tuple data for connection %d: %s", connectionID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connectionID is an integer and err is sanitized via logging.SanitizeForLog
-		return
+		return fmt.Errorf("query dead tuple ratios: %w", err)
 	}
 	defer rows.Close()
 
 	for rows.Next() {
-		var name string
-		var ratio float64
+		var name *string
+		var ratio *float64
 		if err := rows.Scan(&name, &ratio); err != nil {
-			log.Printf("[DEBUG] Error scanning dead tuple ratio: %v", err)
+			return fmt.Errorf("scan dead tuple ratio: %w", err)
+		}
+		if name == nil || ratio == nil {
 			continue
 		}
 		// Only queryDatabaseSizes may create entries; skip databases
 		// absent from the latest pg_database snapshot.
-		db, exists := dbMap[name]
+		db, exists := dbMap[*name]
 		if !exists {
 			continue
 		}
-		db.DeadTupleRatio = roundTo(ratio, 2)
+		db.DeadTupleRatio = roundTo(*ratio, 2)
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[DEBUG] Error iterating dead tuple rows: %v", err)
+		return fmt.Errorf("query dead tuple ratios: %w", err)
 	}
+	return nil
 }
 
 // queryTransactionRates computes transaction rate per database as the delta
@@ -1252,7 +1319,7 @@ func (h *PerfSummaryHandler) queryTransactionRates(
 	connectionID int,
 	startTime, endTime time.Time,
 	dbMap map[string]*DatabaseSummary,
-) {
+) error {
 	rows, err := tx.Query(ctx, `
         WITH latest_two AS (
             SELECT DISTINCT collected_at
@@ -1287,17 +1354,18 @@ func (h *PerfSummaryHandler) queryTransactionRates(
         WHERE (p1.xact_commit - p2.xact_commit) >= 0
     `, connectionID, startTime, endTime)
 	if err != nil {
-		log.Printf("[DEBUG] No transaction rate data for connection %d: %s", connectionID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connectionID is an integer and err is sanitized via logging.SanitizeForLog
-		return
+		return fmt.Errorf("query transaction rates: %w", err)
 	}
 	defer rows.Close()
 
 	for rows.Next() {
 		var name string
 		var rate float64
+		// The self-join on datname and the non-negative delta predicate
+		// already exclude NULLs, so a scan failure here is a type
+		// mismatch rather than missing data.
 		if err := rows.Scan(&name, &rate); err != nil {
-			log.Printf("[DEBUG] Error scanning transaction rate: %v", err)
-			continue
+			return fmt.Errorf("scan transaction rate: %w", err)
 		}
 		// Only queryDatabaseSizes may create entries; skip databases
 		// absent from the latest pg_database snapshot.
@@ -1308,8 +1376,9 @@ func (h *PerfSummaryHandler) queryTransactionRates(
 		db.TransactionRate = roundTo(rate, 1)
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[DEBUG] Error iterating transaction rate rows: %v", err)
+		return fmt.Errorf("query transaction rates: %w", err)
 	}
+	return nil
 }
 
 // queryDatabaseCacheHitTimeSeries populates each database's cache hit
@@ -1326,7 +1395,7 @@ func (h *PerfSummaryHandler) queryDatabaseCacheHitTimeSeries(
 	startTime, endTime time.Time,
 	bucketInterval string,
 	dbMap map[string]*DatabaseSummary,
-) {
+) error {
 	rows, err := tx.Query(ctx, `
         WITH deltas AS (
             SELECT
@@ -1362,17 +1431,17 @@ func (h *PerfSummaryHandler) queryDatabaseCacheHitTimeSeries(
         ORDER BY datname, bucket
     `, bucketInterval, startTime, connectionID, endTime)
 	if err != nil {
-		log.Printf("[DEBUG] No cache hit time series for connection %d: %s", connectionID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connectionID is an integer and err is sanitized via logging.SanitizeForLog
-		return
+		return fmt.Errorf("query database cache hit time series: %w", err)
 	}
 	defer rows.Close()
 
 	for rows.Next() {
-		var name string
+		var name *string
 		var pt CacheHitRatioPoint
 		if err := rows.Scan(&name, &pt.Time, &pt.Value); err != nil {
-			log.Printf("[DEBUG] Error scanning db cache hit time series: %v",
-				err)
+			return fmt.Errorf("scan database cache hit time series: %w", err)
+		}
+		if name == nil {
 			continue
 		}
 		if pt.Value != nil {
@@ -1384,7 +1453,7 @@ func (h *PerfSummaryHandler) queryDatabaseCacheHitTimeSeries(
 		// a database that was dropped partway through the window. Skip
 		// such databases so their historical samples do not resurrect a
 		// ghost card for a database that no longer exists (issue #362).
-		db, exists := dbMap[name]
+		db, exists := dbMap[*name]
 		if !exists {
 			continue
 		}
@@ -1395,9 +1464,9 @@ func (h *PerfSummaryHandler) queryDatabaseCacheHitTimeSeries(
 		db.CacheHitRatio.Current = pt.Value
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[DEBUG] Error iterating db cache hit time series: %v",
-			err)
+		return fmt.Errorf("query database cache hit time series: %w", err)
 	}
+	return nil
 }
 
 // defaultTopQueryOrderBy and defaultTopQueryOrder are the request values

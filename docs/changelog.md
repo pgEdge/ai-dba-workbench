@@ -750,6 +750,14 @@ project adheres to
 
 ### Fixed
 
+- Fix the database summaries reporting a failed query as an empty
+  success. Each sub-query logged its error and returned no rows, so a
+  statement timeout or a broken metrics table produced a blank or
+  partial summary with status 200. The endpoint now returns status 500
+  for any failure other than a missing metrics table, which still
+  returns an empty list. A row holding a NULL database name, size or
+  connection count is now skipped rather than ending the scan early
+  and hiding every database after it. (#519)
 - Fix alerts staying active for ever on a server an operator has
   stopped monitoring. The probes of an unmonitored connection leave
   the staleness view, so every alert on it was judged to have a probe

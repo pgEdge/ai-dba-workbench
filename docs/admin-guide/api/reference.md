@@ -404,7 +404,10 @@ ratio and the transaction rate all describe the state at
 the end of the window rather than the present moment, so a
 window that ends in the past reports each database as the
 database stood then. A window that ends at the present
-moment returns the current figures, as before.
+moment returns the current figures, as before. The endpoint
+returns an empty `databases` array when the metrics schema
+has not been created yet; any other query failure returns
+status 500 rather than a partial or empty list.
 
 The `/api/v1/metrics/query` and
 `/api/v1/metrics/performance-summary` endpoints accept at

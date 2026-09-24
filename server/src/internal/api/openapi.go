@@ -3759,10 +3759,11 @@ func buildPaths() map[string]OpenAPIPathItem {
 						"Window end as an RFC 3339 timestamp; required when time_range is custom"),
 				},
 				Responses: map[string]OpenAPIResponse{
-					"200": jsonResponse("DatabaseSummaryResponse", "Database summaries"),
+					"200": jsonResponse("DatabaseSummaryResponse", "Database summaries; an empty databases array when the metrics schema has not been created"),
 					"400": jsonResponse("ErrorResponse", "Invalid parameters"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
 					"403": jsonResponse("ErrorResponse", "Permission denied"),
+					"500": jsonResponse("ErrorResponse", "Failed to query database summaries"),
 				},
 			},
 		},

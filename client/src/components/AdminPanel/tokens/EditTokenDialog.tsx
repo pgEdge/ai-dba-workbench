@@ -34,7 +34,13 @@ import {
 import { SELECT_FIELD_SX } from '../../shared/formStyles';
 import ScopeMultiSelect from './ScopeMultiSelect';
 import ConnectionScopeTable from './ConnectionScopeTable';
-import { ALL_MCP_OPTION, ALL_ADMIN_OPTION } from './tokenTypes';
+import {
+    ALL_MCP_OPTION,
+    ALL_ADMIN_OPTION,
+    NO_CONNECTION_RESTRICTION_TEXT,
+    NO_MCP_RESTRICTION_TEXT,
+    NO_ADMIN_RESTRICTION_TEXT,
+} from './tokenTypes';
 import type {
     Token,
     Connection,
@@ -178,6 +184,11 @@ const EditTokenDialog: React.FC<EditTokenDialogProps> = ({
                             label="Add Connection"
                             margin="dense"
                             placeholder="Select a connection to add..."
+                            helperText={
+                                scopedConnections.length === 0
+                                    ? NO_CONNECTION_RESTRICTION_TEXT
+                                    : undefined
+                            }
                             InputLabelProps={{
                                 ...params.InputLabelProps,
                                 shrink: true,
@@ -226,6 +237,7 @@ const EditTokenDialog: React.FC<EditTokenDialogProps> = ({
                     }
                     allOption={ALL_MCP_OPTION}
                     disabled={loading}
+                    emptyHelperText={NO_MCP_RESTRICTION_TEXT}
                 />
 
                 <Typography
@@ -247,6 +259,7 @@ const EditTokenDialog: React.FC<EditTokenDialogProps> = ({
                     }
                     allOption={ALL_ADMIN_OPTION}
                     disabled={loading}
+                    emptyHelperText={NO_ADMIN_RESTRICTION_TEXT}
                 />
             </DialogContent>
             <DialogActions sx={dialogActionsSx}>

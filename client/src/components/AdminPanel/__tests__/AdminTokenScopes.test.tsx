@@ -655,7 +655,7 @@ describe('AdminTokenScopes - unified error fallback', () => {
             is_service_account: false,
             is_superuser: false,
             expires_at: null,
-            scope: { scoped: false },
+            scope: { scoped: true, admin_permissions: ['manage_users'] },
         };
         mockApiGet.mockImplementation((url: string) => {
             if (url === '/api/v1/rbac/tokens') {
@@ -1476,7 +1476,9 @@ describe('AdminTokenScopes - additional coverage', () => {
             is_service_account: false,
             is_superuser: false,
             expires_at: null,
-            scope: { scoped: false },
+            // Scoped, so that saving it unchanged still writes the scope;
+            // an unscoped token with nothing selected makes no call.
+            scope: { scoped: true, admin_permissions: ['manage_users'] },
         };
         mockApiGet.mockImplementation((url: string) => {
             if (url === '/api/v1/rbac/tokens') {

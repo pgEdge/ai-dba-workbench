@@ -82,10 +82,8 @@ func scanDollarTag(sql string, i int) string {
 	if i >= len(sql) || sql[i] != '$' {
 		return ""
 	}
-	if i > 0 {
-		if prev := sql[i-1]; isIdentChar(prev) || prev == '$' {
-			return ""
-		}
+	if continuesIdentifier(sql, i) {
+		return ""
 	}
 	// Check for $$ (empty tag)
 	if i+1 < len(sql) && sql[i+1] == '$' {
@@ -115,12 +113,12 @@ func hasOnlyComments(s string) bool {
 	i := 0
 	for i < len(s) {
 		ch := s[i]
-		if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' {
+		if isSQLSpace(ch) {
 			i++
 			continue
 		}
 		if ch == '-' && i+1 < len(s) && s[i+1] == '-' {
-			for i < len(s) && s[i] != '\n' {
+			for i < len(s) && !isSQLNewline(s[i]) {
 				i++
 			}
 			continue
@@ -185,7 +183,7 @@ func splitStatements(sql string) []string {
 
 		// Line comment
 		if ch == '-' && i+1 < len(sql) && sql[i+1] == '-' {
-			for i < len(sql) && sql[i] != '\n' {
+			for i < len(sql) && !isSQLNewline(sql[i]) {
 				i++
 			}
 			continue
@@ -499,14 +497,14 @@ func stripLeadingComments(sql string) string {
 		ch := sql[i]
 
 		// Skip whitespace
-		if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' {
+		if isSQLSpace(ch) {
 			i++
 			continue
 		}
 
 		// Line comment: skip to end of line
 		if ch == '-' && i+1 < len(sql) && sql[i+1] == '-' {
-			for i < len(sql) && sql[i] != '\n' {
+			for i < len(sql) && !isSQLNewline(sql[i]) {
 				i++
 			}
 			continue
@@ -849,7 +847,7 @@ func isQuoteStart(s string, i int) bool {
 	if s[i] == '\'' || s[i] == '"' {
 		return true
 	}
-	if i > 0 && isIdentChar(s[i-1]) {
+	if continuesIdentifier(s, i) {
 		return false
 	}
 	length, _ := literalPrefix(s, i)
@@ -937,7 +935,7 @@ func skipNonCode(s string, i int) int {
 	}
 	if s[i] == '-' && i+1 < len(s) && s[i+1] == '-' {
 		j := i
-		for j < len(s) && s[j] != '\n' {
+		for j < len(s) && !isSQLNewline(s[j]) {
 			j++
 		}
 		return j
@@ -1067,13 +1065,51 @@ func containsDollarParam(s string) bool {
 // up, which PostgreSQL's lexer treats as a letter (ident_start and
 // ident_cont in scan.l). Outside a quoted literal or comment such a byte
 // can only be part of an identifier, so a keyword, literal prefix or
-// dollar sign that touches one continues that identifier.
+// dollar sign that touches one continues that identifier. ident_cont
+// also includes $, which cannot start an identifier and so is left out
+// here; continuesIdentifier covers it where a character that follows
+// one matters.
 func isIdentChar(b byte) bool {
 	return (b >= 'A' && b <= 'Z') ||
 		(b >= 'a' && b <= 'z') ||
 		(b >= '0' && b <= '9') ||
 		b == '_' ||
 		b >= 0x80
+}
+
+// continuesIdentifier reports whether s[i] would continue an unquoted
+// identifier, because the byte before it is an identifier character or
+// a $ (PostgreSQL's ident_cont includes $, as in a$b). A dollar sign
+// or literal prefix there is part of the identifier rather than the
+// start of a dollar quote or a prefixed literal, so in a$E'\' the
+// literal is a standard string rather than an escape string. A $ that
+// is not itself part of an identifier makes the statement a syntax
+// error, so treating every preceding $ this way cannot hide code that
+// runs.
+func continuesIdentifier(s string, i int) bool {
+	if i == 0 {
+		return false
+	}
+	prev := s[i-1]
+	return isIdentChar(prev) || prev == '$'
+}
+
+// isSQLSpace reports whether b is whitespace to PostgreSQL's lexer
+// (space in scan.l): space, tab, newline, carriage return, form feed or
+// vertical tab.
+func isSQLSpace(b byte) bool {
+	switch b {
+	case ' ', '\t', '\n', '\r', '\f', '\v':
+		return true
+	}
+	return false
+}
+
+// isSQLNewline reports whether b ends a -- line comment. PostgreSQL's
+// lexer ends one at a carriage return as well as a newline
+// (non_newline in scan.l), so code after a lone \r is code.
+func isSQLNewline(b byte) bool {
+	return b == '\n' || b == '\r'
 }
 
 // safeQueryError extracts a user-facing error message from a query error.

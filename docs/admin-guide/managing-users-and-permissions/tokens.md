@@ -49,13 +49,16 @@ refused.
 The connection scope also governs changes to blackouts, blackout schedules,
 alert, probe and channel overrides, and clusters, even though those endpoints
 are gated on an admin permission. A token may change one of these on a single
-server only when that connection is in its scope with `read_write` access; a
-change that applies to a cluster, a group or the whole estate, or that alters a
-cluster's definition or membership, needs a connection scope that covers every
-connection.
+server, or add that server to a cluster or remove it from one, only when that
+connection is in its scope with `read_write` access; a change that applies to a
+cluster, a group or the whole estate, or that alters a cluster's definition or
+relationships, needs a connection scope that covers every connection.
 
 The MCP privilege scope applies to public MCP tools as well, so a token whose
-MCP scope names specific tools can call only those tools. The server refuses an MCP scope that names an identifier it does not recognise.
+MCP scope names specific tools can call only those tools, apart from
+`test_query`, which validates a query without running it and is available to
+every token. The server refuses an MCP scope that names an identifier it does
+not recognise.
 
 !!! note
 

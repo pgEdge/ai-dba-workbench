@@ -632,6 +632,21 @@ project adheres to
   documentation, from the server README and from the Docker
   and walkthrough sample configurations. (#261)
 
+- Correct the alerter documentation for the metrics and rules it
+  actually implements. The developer guide's metric name list
+  omitted eight of the 31 metrics in the alerter's metric registry,
+  including the two Spock recent-count metrics and both replication
+  slot retention metrics. The Alert Rule Reference documented a
+  single WAL retention rule against
+  `pg_replication_slots.retained_bytes` with a 1 GB threshold, in
+  place of the two rules the collector actually seeds,
+  `replication_slot_retention_warn` at 1 GiB and
+  `replication_slot_retention_high` at 10 GiB, both reading
+  `pg_replication_slots.max_retained_bytes`. The same page had no
+  entry at all for the built-in `metric_staleness` rule, which now
+  has one describing what the staleness ratio measures and how the
+  alert clears. (#466)
+
 - Fix Ask Ellie failing with `Function call is missing a
   thought_signature in functionCall parts` on every question that
   needs a tool call when the LLM provider is Gemini. Google's current

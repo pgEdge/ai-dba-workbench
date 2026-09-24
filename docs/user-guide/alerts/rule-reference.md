@@ -207,21 +207,48 @@ The alerter reads the most recent sample for each slot
 recorded in the last 15 minutes, so a single late
 collection does not clear the alert.
 
-### High Replication Slot WAL Retention
+### Replication Slot WAL Retention Warning
 
-This rule alerts when a replication slot retains more
-WAL data than the threshold.
+This rule alerts when a replication slot's retained WAL
+reaches the warning threshold.
 
 | Property | Value |
 |----------|-------|
-| Metric | `pg_replication_slots.retained_bytes` |
-| Operator | `>` |
-| Default Threshold | 1073741824 (1 GB) |
+| Rule Name | `replication_slot_retention_warn` |
+| Metric | `pg_replication_slots.max_retained_bytes` |
+| Operator | `>=` |
+| Default Threshold | 1073741824 (1 GiB) |
 | Default Severity | warning |
 
-Large WAL retention by a replication slot can lead to
-disk exhaustion. Investigate the subscriber connection
-or consider dropping unused slots.
+Large WAL retention by a replication slot can lead to disk
+exhaustion. Investigate the subscriber connection or
+consider dropping unused slots.
+
+The rule evaluates the maximum retained WAL across all
+slots on a server, so the alert fires when any single
+slot's retained WAL reaches the threshold. The alerter
+reads only samples collected in the last 15 minutes, so the
+rule does not fire on stale data after a collector stops.
+
+### Critical Replication Slot WAL Retention
+
+This rule alerts when a replication slot retains enough WAL
+to threaten the server.
+
+| Property | Value |
+|----------|-------|
+| Rule Name | `replication_slot_retention_high` |
+| Metric | `pg_replication_slots.max_retained_bytes` |
+| Operator | `>=` |
+| Default Threshold | 10737418240 (10 GiB) |
+| Default Severity | critical |
+
+This rule reads the same metric and the same 15-minute
+window as the warning rule, and differs only in threshold
+and severity. Retention at this level usually means a
+subscriber has been disconnected for some time; reconnect
+the subscriber or drop the slot before the WAL volume fills
+the file system.
 
 ### Standby Disconnected
 
@@ -561,6 +588,54 @@ Timed checkpoints are not counted.
 Frequent requested checkpoints indicate
 `checkpoint_segments` or `max_wal_size` may be too low
 for the workload.
+
+## Availability Rules
+
+Availability rules report on the health of metric
+collection itself rather than on the state of a monitored
+server.
+
+### Stale Metrics
+
+This rule alerts when a probe has stopped collecting
+metrics and the dashboards are showing outdated data.
+
+| Property | Value |
+|----------|-------|
+| Rule Name | `metric_staleness` |
+| Metric | `probe_staleness_ratio` |
+| Operator | `>` |
+| Default Threshold | 3 |
+| Default Severity | warning |
+
+The staleness ratio is the time since the probe last
+collected, divided by the collection interval configured
+for that probe. A ratio of 3 therefore means the probe is
+three collection intervals late, which on a probe that runs
+every 60 seconds is three minutes without data. Because the
+ratio is relative to the interval, the same threshold suits
+a probe that runs every minute and one that runs every ten
+minutes.
+
+The rule is scoped to a probe rather than to a metric, and
+the alerter raises one alert for each stale probe on each
+monitored connection. The alerter evaluates the rule
+directly from the recorded probe collection times, so the
+rule needs no entry in the metric registry and no
+PostgreSQL extension.
+
+The alert clears once the probe collects again and the
+ratio falls back to the threshold or below, and it also
+clears when an operator disables the probe or stops
+monitoring the connection, because both are deliberate
+changes rather than faults. A probe that has become
+unavailable is the exception: the alert stays active, and
+its description changes to report that collection has
+stopped and why, until the probe collects again. The
+alerter never raises this alert for a probe that is already
+unavailable, since an unavailable probe is the normal
+steady state on a server that lacks the extension the probe
+reads.
 
 ## Customizing Rules
 

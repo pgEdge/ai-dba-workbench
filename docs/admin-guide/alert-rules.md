@@ -67,6 +67,8 @@ categories:
   maintenance.
 - System rules monitor CPU, memory, and system
   resources.
+- Availability rules monitor whether the collector
+  is still gathering metrics on schedule.
 
 ## Replication Rules
 
@@ -116,10 +118,10 @@ monitoring:
 
 The slot retention rules evaluate the maximum retained
 WAL across all replication slots on a server; the
-alerter fires a rule when any single slot retains more
-WAL than the threshold permits. Both rules read only
-samples collected in the last 15 minutes, so neither
-rule fires on stale data after a collector stops.
+alerter fires a rule when any single slot's retained
+WAL reaches the threshold. Both rules read only samples
+collected in the last 15 minutes, so neither rule fires
+on stale data after a collector stops.
 
 ## Hierarchical Overrides
 

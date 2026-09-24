@@ -91,6 +91,7 @@ The alerter supports the following metric name patterns.
 - `pg_settings.max_connections` - The max_connections setting
   value.
 - `connection_utilization_percent` - Connection usage percentage.
+- `pg_stat_activity.count` - Client backend session count.
 - `pg_stat_activity.blocked_count` - Number of blocked sessions.
 - `pg_stat_activity.idle_in_transaction_seconds` - Idle
   transaction time.
@@ -106,7 +107,27 @@ The alerter supports the following metric name patterns.
 - `pg_stat_replication.replay_lag_seconds` - Replication lag in
   seconds.
 - `pg_stat_replication.lag_bytes` - Replication lag in bytes.
+- `pg_stat_replication.standby_disconnected` - Standby with no WAL
+  receiver process.
 - `pg_replication_slots.inactive` - Inactive replication slots.
+- `pg_replication_slots.inactive_count` - Number of inactive
+  replication slots.
+- `pg_replication_slots.retained_bytes` - Largest retained WAL
+  size, taken from the newest sample of each slot.
+- `pg_replication_slots.max_retained_bytes` - Largest retained WAL
+  size, taken from the connection's newest sample.
+- `pg_node_role.subscription_worker_down` - Subscription with an
+  apply worker that is not running.
+
+### Spock Metrics
+
+The Spock metrics count rows that the collector captures from a
+rolling 15-minute window on the monitored server:
+
+- `spock_exception_log.recent_count` - Spock exceptions logged in
+  the window.
+- `spock_resolutions.recent_count` - Spock conflict resolutions
+  recorded in the window.
 
 ### Database Metrics
 

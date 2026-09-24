@@ -35,6 +35,7 @@ alerter/
 │       │   ├── datastore.go      # DB connection
 │       │   ├── types.go          # Type definitions
 │       │   ├── queries.go        # Alert queries
+│       │   ├── metric_registry.go # Metric queries
 │       │   └── notification_queries.go
 │       ├── engine/
 │       │   ├── engine.go         # Core engine

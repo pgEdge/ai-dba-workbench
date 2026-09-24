@@ -143,6 +143,9 @@ func (h *ProbeOverrideHandler) upsertOverride(w http.ResponseWriter, r *http.Req
 	if !h.checkPermission(w, r) {
 		return
 	}
+	if !requireTargetInTokenScope(w, r, h.rbacChecker, scope, &scopeID) {
+		return
+	}
 
 	var req database.ProbeOverrideUpdate
 	if !DecodeJSONBody(w, r, &req) {
@@ -162,6 +165,9 @@ func (h *ProbeOverrideHandler) upsertOverride(w http.ResponseWriter, r *http.Req
 // deleteOverride handles DELETE /api/v1/probe-overrides/{scope}/{scopeId}/{probeName}
 func (h *ProbeOverrideHandler) deleteOverride(w http.ResponseWriter, r *http.Request, scope string, scopeID int, probeName string) {
 	if !h.checkPermission(w, r) {
+		return
+	}
+	if !requireTargetInTokenScope(w, r, h.rbacChecker, scope, &scopeID) {
 		return
 	}
 

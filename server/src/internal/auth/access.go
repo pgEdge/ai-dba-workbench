@@ -1021,3 +1021,19 @@ func (rc *RBACChecker) ConnectionInTokenScope(ctx context.Context, connectionID 
 		AccessLevelReadWrite)
 	return inScope && level == AccessLevelReadWrite
 }
+
+// AllConnectionsInTokenScope reports whether the acting API token's
+// connection scope admits every connection at read_write, which is what
+// changing something that covers more than one connection needs: a
+// blackout or override on a cluster, a group or the whole estate, or a
+// cluster's own definition. Such a change reaches connections the token
+// may not name today and ones added later, so only a token with no
+// connection scope, or the wildcard at read_write, passes; a session
+// caller always does. It fails closed on the same terms as
+// ConnectionInTokenScope.
+func (rc *RBACChecker) AllConnectionsInTokenScope(ctx context.Context) bool {
+	// Asking about ConnectionIDAll matches only the wildcard row, or
+	// passes when the token has no connection scope at all, since no
+	// real connection has that id.
+	return rc.ConnectionInTokenScope(ctx, ConnectionIDAll)
+}

@@ -419,6 +419,9 @@ func (h *BlackoutHandler) createBlackout(w http.ResponseWriter, r *http.Request)
 		RespondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if !requireTargetInTokenScope(w, r, h.rbacChecker, req.Scope, req.ConnectionID) {
+		return
+	}
 
 	// Parse times
 	startTime, err := time.Parse(time.RFC3339, req.StartTime)
@@ -482,6 +485,9 @@ func (h *BlackoutHandler) updateBlackout(w http.ResponseWriter, r *http.Request,
 		notFound(database.ErrBlackoutNotFound, "Blackout not found")) {
 		return
 	}
+	if !requireTargetInTokenScope(w, r, h.rbacChecker, existing.Scope, existing.ConnectionID) {
+		return
+	}
 
 	reason := existing.Reason
 	if req.Reason != nil {
@@ -521,6 +527,9 @@ func (h *BlackoutHandler) deleteBlackout(w http.ResponseWriter, r *http.Request,
 	if !h.checkPermission(w, r) {
 		return
 	}
+	if !h.requireBlackoutInTokenScope(w, r, id) {
+		return
+	}
 
 	if err := h.datastore.DeleteBlackout(r.Context(), id); respondDBError(w, err, "delete blackout",
 		notFound(database.ErrBlackoutNotFound, "Blackout not found")) {
@@ -533,6 +542,9 @@ func (h *BlackoutHandler) deleteBlackout(w http.ResponseWriter, r *http.Request,
 // stopBlackout handles POST /api/v1/blackouts/{id}/stop
 func (h *BlackoutHandler) stopBlackout(w http.ResponseWriter, r *http.Request, id int64) {
 	if !h.checkPermission(w, r) {
+		return
+	}
+	if !h.requireBlackoutInTokenScope(w, r, id) {
 		return
 	}
 
@@ -697,6 +709,9 @@ func (h *BlackoutHandler) createBlackoutSchedule(w http.ResponseWriter, r *http.
 		RespondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if !requireTargetInTokenScope(w, r, h.rbacChecker, req.Scope, req.ConnectionID) {
+		return
+	}
 
 	// Validate required fields
 	if req.Name == "" {
@@ -767,6 +782,9 @@ func (h *BlackoutHandler) updateBlackoutSchedule(w http.ResponseWriter, r *http.
 		RespondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if !requireTargetInTokenScope(w, r, h.rbacChecker, req.Scope, req.ConnectionID) {
+		return
+	}
 
 	// Validate required fields
 	if req.Name == "" {
@@ -790,6 +808,12 @@ func (h *BlackoutHandler) updateBlackoutSchedule(w http.ResponseWriter, r *http.
 	enabled := true
 	if req.Enabled != nil {
 		enabled = *req.Enabled
+	}
+
+	// Moving a schedule is a change to both where it was and where it
+	// goes, so the token must cover the existing target as well.
+	if !h.requireBlackoutScheduleInTokenScope(w, r, id) {
+		return
 	}
 
 	schedule := &database.BlackoutSchedule{
@@ -820,6 +844,9 @@ func (h *BlackoutHandler) deleteBlackoutSchedule(w http.ResponseWriter, r *http.
 	if !h.checkPermission(w, r) {
 		return
 	}
+	if !h.requireBlackoutScheduleInTokenScope(w, r, id) {
+		return
+	}
 
 	if err := h.datastore.DeleteBlackoutSchedule(r.Context(), id); respondDBError(w, err, "delete blackout schedule",
 		notFound(database.ErrBlackoutScheduleNotFound, "Blackout schedule not found")) {
@@ -827,4 +854,41 @@ func (h *BlackoutHandler) deleteBlackoutSchedule(w http.ResponseWriter, r *http.
 	}
 
 	RespondJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+// requireBlackoutInTokenScope looks up a blackout and applies
+// requireTargetInTokenScope to it, answering 404 when it does not exist.
+// A caller whose token covers every connection needs no lookup, so
+// sessions and unscoped tokens take the same path as before.
+func (h *BlackoutHandler) requireBlackoutInTokenScope(w http.ResponseWriter,
+	r *http.Request, id int64) bool {
+
+	if h.rbacChecker.AllConnectionsInTokenScope(r.Context()) {
+		return true
+	}
+	existing, err := h.datastore.GetBlackout(r.Context(), id)
+	if respondDBError(w, err, "fetch blackout",
+		notFound(database.ErrBlackoutNotFound, "Blackout not found")) {
+		return false
+	}
+	return requireTargetInTokenScope(w, r, h.rbacChecker, existing.Scope,
+		existing.ConnectionID)
+}
+
+// requireBlackoutScheduleInTokenScope is requireBlackoutInTokenScope for
+// a blackout schedule.
+func (h *BlackoutHandler) requireBlackoutScheduleInTokenScope(
+	w http.ResponseWriter, r *http.Request, id int64) bool {
+
+	if h.rbacChecker.AllConnectionsInTokenScope(r.Context()) {
+		return true
+	}
+	existing, err := h.datastore.GetBlackoutSchedule(r.Context(), id)
+	if respondDBError(w, err, "fetch blackout schedule",
+		notFound(database.ErrBlackoutScheduleNotFound,
+			"Blackout schedule not found")) {
+		return false
+	}
+	return requireTargetInTokenScope(w, r, h.rbacChecker, existing.Scope,
+		existing.ConnectionID)
 }

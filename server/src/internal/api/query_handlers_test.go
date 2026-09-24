@@ -655,6 +655,8 @@ func TestStripLeadingComments(t *testing.T) {
 		input    string
 		expected string
 	}{
+		{"form feed and vertical tab", "\f\v/* c */\fSELECT 1", "SELECT 1"},
+		{"carriage return ends a line comment", "-- c\rSELECT 1", "SELECT 1"},
 		{
 			"no comments",
 			"SELECT 1",
@@ -1032,6 +1034,8 @@ func TestHasOnlyComments(t *testing.T) {
 		{"mixed", "-- line\n/* block */\n  ", true},
 		{"has sql", "-- comment\nSELECT 1", false},
 		{"just sql", "SELECT 1", false},
+		{"form feed and vertical tab", "\f\v-- hello", true},
+		{"carriage return ends a line comment", "-- hello\rSELECT 1", false},
 	}
 
 	for _, tt := range tests {

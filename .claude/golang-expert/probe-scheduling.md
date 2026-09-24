@@ -131,7 +131,11 @@ with N databases hold up to `max * (N+1)` connections (issue #539).
 (`connLocks`) and, whenever the target pool has no idle connection to
 hand out, calls `evictIdleConnections`, which closes (via `Hijack`)
 idle connections in the connection's other pools until idle plus held
-slots stays within the semaphore capacity. The tests in
+slots stays within the semaphore capacity. Pool creation takes the
+caller's `ctx`, because it runs under that lock. `SyncPools` never
+deletes a connection's semaphore or lock, because a probe may still hold
+them after its pools are removed, and a fresh pair would let the cap be
+exceeded alongside it. The tests in
 `monitored_pool_cap_test.go` check the total with `openConnections`
 and against `pg_stat_activity`.
 

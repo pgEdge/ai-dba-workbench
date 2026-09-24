@@ -234,7 +234,7 @@ func (m *MonitoredConnectionPoolManager) acquireWithinCap(ctx context.Context, c
 
 	if !exists {
 		var err error
-		pool, err = m.createPool(conn, databaseName, serverSecret, poolKey)
+		pool, err = m.createPool(ctx, conn, databaseName, serverSecret, poolKey)
 		if err != nil {
 			return nil, err
 		}
@@ -247,7 +247,7 @@ func (m *MonitoredConnectionPoolManager) acquireWithinCap(ctx context.Context, c
 // connection and records it in the manager's maps. The caller must hold
 // the connection's lock, which is what guarantees that no other pool can
 // be created for the same key in the meantime.
-func (m *MonitoredConnectionPoolManager) createPool(conn MonitoredConnection, databaseName string, serverSecret string, poolKey int) (*pgxpool.Pool, error) {
+func (m *MonitoredConnectionPoolManager) createPool(ctx context.Context, conn MonitoredConnection, databaseName string, serverSecret string, poolKey int) (*pgxpool.Pool, error) {
 	params, err := buildMonitoredConnectionParams(conn, databaseName, serverSecret)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build connection string: %w", err)
@@ -260,7 +260,7 @@ func (m *MonitoredConnectionPoolManager) createPool(conn MonitoredConnection, da
 	identity["dbname"] = conn.DatabaseName
 	paramsHash := hashConnectionParams(identity)
 
-	newPool, err := createMonitoredPool(connstring.Build(params), m.maxConnections, m.maxIdleSeconds)
+	newPool, err := createMonitoredPool(ctx, connstring.Build(params), m.maxConnections, m.maxIdleSeconds)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create connection pool for monitored connection %d: %w", conn.ID, err)
 	}
@@ -444,7 +444,11 @@ func (m *MonitoredConnectionPoolManager) SyncPools(activeConnectionIDs []int) {
 		delete(m.poolHashes, poolKey)
 		delete(m.poolKeyToConnID, poolKey)
 
-		// Only remove semaphore if there are no more pools for this connection
+		// The semaphore and lock are kept even once the connection has no
+		// pools left: a probe may still hold a slot and a connection from
+		// a pool just removed, and a replacement semaphore or lock would
+		// let a later acquisition open connections beyond the cap
+		// alongside it. Each is a few bytes per connection ID.
 		hasOtherPools := false
 		for pk := range m.pools {
 			if m.poolKeyToConnID[pk] == connID {
@@ -453,8 +457,6 @@ func (m *MonitoredConnectionPoolManager) SyncPools(activeConnectionIDs []int) {
 			}
 		}
 		if !hasOtherPools {
-			delete(m.semaphores, connID)
-			delete(m.connLocks, connID)
 			delete(m.poolUpdatedAt, connID)
 		}
 	}
@@ -601,9 +603,7 @@ func (m *MonitoredConnectionPoolManager) Close() error {
 }
 
 // createMonitoredPool creates a pgxpool.Pool for a monitored connection
-func createMonitoredPool(connStr string, maxConns int, maxIdleSeconds int) (*pgxpool.Pool, error) {
-	ctx := context.Background()
-
+func createMonitoredPool(ctx context.Context, connStr string, maxConns int, maxIdleSeconds int) (*pgxpool.Pool, error) {
 	// Parse connection string
 	config, err := pgxpool.ParseConfig(connStr)
 	if err != nil {

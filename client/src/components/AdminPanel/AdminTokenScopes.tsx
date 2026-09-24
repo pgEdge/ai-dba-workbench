@@ -93,9 +93,20 @@ const liftOneCategoryError = (categories: string[]): string =>
     `The ${categories.join(' and ')} restriction cannot be lifted on its own ` +
     'whilst other categories stay restricted. For MCP privileges or admin ' +
     `permissions, choose "All the owner's MCP privileges" or "All the ` +
-    `owner's admin permissions" instead. To lift the connections ` +
-    'restriction, remove every restriction and save, then set the ' +
-    'remaining ones again.';
+    `owner's admin permissions" instead. The connections restriction can ` +
+    'be lifted only together with every other one, so to keep the others, ' +
+    'create a new token with the scope it needs and then delete this one.';
+
+/**
+ * Explains why a scope edit cannot be saved at all: the stored scope
+ * holds entries the dialog could not show, most often because the MCP
+ * privilege list failed to load, so saving what the dialog holds would
+ * drop them and widen the token.
+ */
+const unshownScopeError = (categories: string[]): string =>
+    `This token's stored ${categories.join(' and ')} could not all be ` +
+    'shown, so saving now could widen its scope. Reload the page and try ' +
+    'again.';
 
 const AdminTokenScopes: React.FC = () => {
     const theme = useTheme();
@@ -140,6 +151,7 @@ const AdminTokenScopes: React.FC = () => {
     const [editAdminPermissions, setEditAdminPermissions] = useState<AdminPermissionOption[]>([]);
     const [editLoading, setEditLoading] = useState(false);
     const [editError, setEditError] = useState<string | null>(null);
+    const [editUnshownError, setEditUnshownError] = useState<string | null>(null);
     const [editAvailableConnections, setEditAvailableConnections] = useState<Connection[]>([]);
     const [editOwnerConnectionLevels, setEditOwnerConnectionLevels] = useState<Record<number, string>>({});
     const [editOwnerIsSuperuser, setEditOwnerIsSuperuser] = useState(false);
@@ -333,7 +345,24 @@ const AdminTokenScopes: React.FC = () => {
             setEditAdminPermissions(ADMIN_PERMISSIONS.filter((p) => scopeAdminPerms.includes(p.id)));
         }
 
-        setEditError(null);
+        // A stored entry the dialog cannot show would be dropped by a
+        // save, lifting a restriction nobody chose to lift.
+        const mcpWildcard = mcpNames.includes('*');
+        const unshown: string[] = [];
+        if (!mcpWildcard && scopeMcpIds.some(
+            (id: number) => !mcpPrivileges.some((p) => p.id === id),
+        )) {
+            unshown.push('MCP privileges');
+        }
+        if (!scopeAdminPerms.includes('*') && scopeAdminPerms.some(
+            (perm: string) => !ADMIN_PERMISSIONS.some((p) => p.id === perm),
+        )) {
+            unshown.push('admin permissions');
+        }
+        const unshownError = unshown.length > 0 ? unshownScopeError(unshown) : null;
+        setEditUnshownError(unshownError);
+
+        setEditError(unshownError);
         setEditOpen(true);
 
         if (token.user_id) {
@@ -384,6 +413,10 @@ const AdminTokenScopes: React.FC = () => {
 
     const handleSaveScope = async () => {
         if (!editToken) {
+            return;
+        }
+        if (editUnshownError) {
+            setEditError(editUnshownError);
             return;
         }
         const body = buildScopeBody(

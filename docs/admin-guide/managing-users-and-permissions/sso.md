@@ -575,19 +575,20 @@ fails part way through can only leave a user holding fewer privileges
 than the provider asserts, never more.
 
 Setting `superuser_group` hands out more than the flag's name suggests,
-and the server prints a warning at start-up whenever it is configured.
-A superuser bypasses every group grant, reaching every connection,
-every MCP tool and every administrative permission from a browser
-session. An API token the account owns is bound by the scope of that
-token, so a scoped token stays within its scope, whereas an unscoped
-token carries the same full privilege as the session. `superuser_group`
-changes who can hand out that privilege, from a Workbench administrator
-to anyone able to add a member to one provider group. Revocation is no
-faster than any other mapped group: the flag is withdrawn at the
-person's next login, and a browser session or an API token they already
-hold keeps full privilege until then, so disable the account to revoke
-it sooner. Leave the option empty unless the
-provider's group administrators are trusted to that extent.
+and the server prints a warning at start-up whenever it is configured. A
+superuser bypasses every group grant, reaching every connection, every
+MCP tool and every administrative permission from a browser session. An
+API token the account owns is bound by the scope of that token, so a
+scoped token stays within its scope, whereas an unscoped token carries
+the same full privilege as the session. `superuser_group` changes who
+can hand out that privilege, from a Workbench administrator to anyone
+able to add a member to one provider group. Revocation is no faster than
+any other mapped group: the flag is withdrawn at the person's next
+login, and until then a browser session they already hold keeps full
+privilege, as does an unscoped API token they own, whilst a scoped token
+keeps whatever its scope allows; disable the account to revoke any of
+them sooner. Leave the option empty unless the provider's group
+administrators are trusted to that extent.
 
 ### Keeping Mapped Groups Flat
 

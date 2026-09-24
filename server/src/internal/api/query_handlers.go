@@ -1845,6 +1845,17 @@ func (h *ConnectionHandler) validateQuery(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Validate the optional database override before it reaches the
+	// connection string, and before any datastore work, matching the
+	// check on the execute endpoint.
+	if req.DatabaseName != "" {
+		if err := database.ValidateDatabaseName(req.DatabaseName); err != nil {
+			RespondError(w, http.StatusBadRequest,
+				"Invalid database name: "+err.Error())
+			return
+		}
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), validateTimeout)
 	defer cancel()
 

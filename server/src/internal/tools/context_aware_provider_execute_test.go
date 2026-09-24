@@ -195,7 +195,7 @@ func TestExecuteRefusesDisabledTool(t *testing.T) {
 // privilege for a tool is refused by name, and that an RBAC-exempt tool
 // is not.
 func TestExecuteRefusesToolOutsideRBAC(t *testing.T) {
-	store, err := auth.NewAuthStore(t.TempDir(), 0, 0)
+	store, err := auth.NewAuthStore(t.TempDir(), 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("NewAuthStore: %v", err)
 	}

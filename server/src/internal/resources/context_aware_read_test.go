@@ -36,7 +36,7 @@ import (
 func readTestAuthStore(t *testing.T) (*auth.AuthStore, int64) {
 	t.Helper()
 
-	store, err := auth.NewAuthStore(t.TempDir(), 0, 0)
+	store, err := auth.NewAuthStore(t.TempDir(), 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("NewAuthStore: %v", err)
 	}
@@ -484,7 +484,7 @@ func TestReadConnectionInfoReportsSessionLookupFailure(t *testing.T) {
 	defer cleanup()
 
 	dir := t.TempDir()
-	store, err := auth.NewAuthStore(dir, 0, 0)
+	store, err := auth.NewAuthStore(dir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("NewAuthStore: %v", err)
 	}
@@ -643,7 +643,7 @@ func TestReadServesResourcesFromRealClient(t *testing.T) {
 // session, a stored one and a failing lookup.
 func TestAuthSessionAdapter(t *testing.T) {
 	dir := t.TempDir()
-	store, err := auth.NewAuthStore(dir, 0, 0)
+	store, err := auth.NewAuthStore(dir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("NewAuthStore: %v", err)
 	}

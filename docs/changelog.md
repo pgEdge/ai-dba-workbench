@@ -750,6 +750,16 @@ project adheres to
 
 ### Fixed
 
+- Fix a connection created without a description breaking the
+  connection list for every user. The server stored the missing
+  description as `NULL` and then failed to read the row back, so the
+  create request returned an error although the connection had been
+  saved, and every later request to list connections failed until
+  the row was corrected by hand. The server now stores an empty
+  description and reads an existing `NULL` as an empty one, and
+  collector schema migration 17 replaces any `NULL` description with
+  an empty string and makes the column `NOT NULL`. (#540)
+
 - Fix alerts staying active for ever on a server an operator has
   stopped monitoring. The probes of an unmonitored connection leave
   the staleness view, so every alert on it was judged to have a probe

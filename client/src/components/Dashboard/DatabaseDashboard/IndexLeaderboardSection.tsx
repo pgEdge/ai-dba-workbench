@@ -234,6 +234,10 @@ const IndexLeaderboardSection: React.FC<DatabaseSectionProps> = ({
             limit: '10',
             order_by: activeSortOption.orderBy,
             order: activeSortOption.order,
+            // Leave out pg_catalog, information_schema and TOAST
+            // indexes, as pg_stat_user_indexes does, so catalog objects
+            // cannot crowd user indexes out of the top ten (issue #499).
+            exclude_system_schemas: 'true',
         });
         const url = `/api/v1/metrics/latest?${params.toString()}`;
 

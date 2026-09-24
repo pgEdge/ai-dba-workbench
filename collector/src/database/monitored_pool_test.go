@@ -301,15 +301,24 @@ func TestCreateMonitoredPool_Success(t *testing.T) {
 		t.Fatalf("build: %v", err)
 	}
 
-	pool, err := createMonitoredPool(connStr, 2, 1)
+	pool, err := createMonitoredPool(context.Background(), connStr, 2, 1)
 	if err != nil {
 		t.Fatalf("createMonitoredPool: %v", err)
 	}
 	defer pool.Close()
+
+	// The caller's context bounds the test connection, which runs whilst
+	// the connection's lock is held, so one that has already ended must fail it.
+	done, cancel := context.WithCancel(context.Background())
+	cancel()
+	if p, err := createMonitoredPool(done, connStr, 2, 1); err == nil {
+		p.Close()
+		t.Fatal("expected an ended context to fail pool creation")
+	}
 }
 
 func TestCreateMonitoredPool_BadConnString(t *testing.T) {
-	if _, err := createMonitoredPool("::not::a::valid::connstr", 1, 0); err == nil {
+	if _, err := createMonitoredPool(context.Background(), "::not::a::valid::connstr", 1, 0); err == nil {
 		t.Fatal("expected parse error")
 	}
 }
@@ -317,7 +326,7 @@ func TestCreateMonitoredPool_BadConnString(t *testing.T) {
 func TestCreateMonitoredPool_PingFails(t *testing.T) {
 	// Reachable parse, unreachable host -> Acquire/Ping fails.
 	connStr := "host=127.0.0.1 port=1 user=postgres dbname=x sslmode=disable connect_timeout=1"
-	if _, err := createMonitoredPool(connStr, 1, 0); err == nil {
+	if _, err := createMonitoredPool(context.Background(), connStr, 1, 0); err == nil {
 		t.Fatal("expected acquire/ping failure")
 	}
 }
@@ -350,7 +359,7 @@ func TestCreateMonitoredPool_ClampsMaxConns(t *testing.T) {
 	}
 
 	huge := int(int64(1<<31) + 100)
-	pool, err := createMonitoredPool(connStr, huge, 60)
+	pool, err := createMonitoredPool(context.Background(), connStr, huge, 60)
 	if err != nil {
 		t.Fatalf("createMonitoredPool with huge maxConns: %v", err)
 	}
@@ -562,8 +571,13 @@ func TestPoolManager_SyncPools(t *testing.T) {
 			t.Errorf("expected mc1 (id=%d) pools removed; pool key %d remains", mc1.ID, poolKey)
 		}
 	}
-	if _, ok := m.semaphores[mc1.ID]; ok {
-		t.Errorf("expected mc1 semaphore cleared")
+	// The semaphore and lock outlive the pools, so that a probe still
+	// holding a slot shares them with any later acquisition.
+	if _, ok := m.semaphores[mc1.ID]; !ok {
+		t.Errorf("expected mc1 semaphore kept")
+	}
+	if _, ok := m.connLocks[mc1.ID]; !ok {
+		t.Errorf("expected mc1 connection lock kept")
 	}
 }
 

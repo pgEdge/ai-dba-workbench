@@ -3548,10 +3548,11 @@ func (sm *SchemaManager) registerMigrations() {
 	// added so that no other writer can reintroduce a NULL.
 	//
 	// Every statement is idempotent: the UPDATE touches only NULL rows,
-	// and re-applying SET NOT NULL or SET DEFAULT is a no-op. The
-	// connections table holds one row per monitored server, so the
-	// table scan SET NOT NULL performs under its exclusive lock is
-	// brief.
+	// and re-applying SET NOT NULL or SET DEFAULT is a no-op. The table
+	// is locked before the backfill so that an older server still
+	// running cannot insert a NULL between the UPDATE and SET NOT NULL
+	// and fail the migration; the connections table holds one row per
+	// monitored server, so the lock is held only briefly.
 	sm.migrations = append(sm.migrations, Migration{
 		Version:     17,
 		Description: "Backfill and require connections.description",
@@ -3559,6 +3560,8 @@ func (sm *SchemaManager) registerMigrations() {
 			ctx := context.Background()
 
 			_, err := tx.Exec(ctx, `
+				LOCK TABLE connections IN ACCESS EXCLUSIVE MODE;
+
 				UPDATE connections SET description = '' WHERE description IS NULL;
 
 				ALTER TABLE connections

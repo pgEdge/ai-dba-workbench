@@ -310,12 +310,15 @@ groups, tokens and privileges; the
 [Audit Log](../../admin-guide/managing-users-and-permissions/audit-log.md)
 document describes the events and how to read
 them. The following table describes the flags
-that read and verify the log:
+that read and verify the log, along with
+`-rechain-audit-log`, which rewrites it:
 
 | Flag | Description |
 |------|-------------|
 | `-list-audit` | List RBAC audit log events |
 | `-verify-audit-log` | Verify the audit log hash chain |
+| `-rechain-audit-log` | Re-hash an inherited audit log under the server secret |
+| `-confirm-rechain` | Confirm `-rechain-audit-log` without an interactive prompt |
 | `-audit-actor string` | Filter events by actor name |
 | `-audit-action string` | Filter events by action |
 | `-audit-target-type string` | Filter events by target type |

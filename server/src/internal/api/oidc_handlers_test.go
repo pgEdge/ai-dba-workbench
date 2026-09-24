@@ -94,7 +94,7 @@ func newTestOIDCEnv(t *testing.T, mutators ...func(*config.OIDCConfig)) *oidcTes
 	}
 
 	dataDir := t.TempDir()
-	store, err := auth.NewAuthStore(dataDir, 0, 0)
+	store, err := auth.NewAuthStore(dataDir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("auth.NewAuthStore: %v", err)
 	}

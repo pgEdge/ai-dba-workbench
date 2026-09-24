@@ -865,7 +865,7 @@ func TestGetTimelineEventsRBACDeniesNoAccess(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	store, err := auth.NewAuthStore(tmpDir, 0, 0)
+	store, err := auth.NewAuthStore(tmpDir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("NewAuthStore: %v", err)
 	}
@@ -931,7 +931,7 @@ func TestGetTimelineEventsRBACDeniesExplicitConnectionID(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	store, err := auth.NewAuthStore(tmpDir, 0, 0)
+	store, err := auth.NewAuthStore(tmpDir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("NewAuthStore: %v", err)
 	}

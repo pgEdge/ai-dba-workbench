@@ -10,8 +10,11 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/user"
 	"strconv"
@@ -237,9 +240,56 @@ func listAuditCommand(dataDir string, f *Flags) error {
 	return nil
 }
 
+// Exit statuses for verify-audit-log. They are distinct so that a
+// monitoring script can act on the difference without parsing English:
+// a mislaid or rotated secret needs someone to find the right file,
+// whilst a log that verified as far as row N and then stopped needs an
+// incident. Everything else keeps the general-purpose 1 the other
+// commands use.
+const (
+	// auditExitTampered reports a log whose contents contradict the
+	// chain, the version ordering or the rule that no row may carry the
+	// unkeyed version 1 hash.
+	auditExitTampered = 2
+
+	// auditExitKeyMismatch reports a log in which nothing verified,
+	// which is far more often the wrong server secret than a rewrite
+	// that began at the first row.
+	auditExitKeyMismatch = 3
+)
+
+// auditVerifyError carries the exit status a failed verification should
+// leave behind, so that the decision is made where the failure is
+// understood rather than in the dispatcher.
+type auditVerifyError struct {
+	code int
+	err  error
+}
+
+func (e *auditVerifyError) Error() string { return e.err.Error() }
+
+func (e *auditVerifyError) Unwrap() error { return e.err }
+
+// auditVerifyExitCode returns the status verify-audit-log should exit
+// with for err, defaulting to 1 for anything that carries no opinion.
+func auditVerifyExitCode(err error) int {
+	var verifyErr *auditVerifyError
+	if errors.As(err, &verifyErr) {
+		return verifyErr.code
+	}
+
+	return 1
+}
+
 // verifyAuditLogCommand handles the verify-audit-log command,
 // recomputing the hash chain over the whole audit log and reporting the
 // first row that fails.
+//
+// A key mismatch is reported as such rather than as tampering. The two
+// look similar from the outside, since under the wrong key no keyed row
+// recomputes, but they call for opposite responses, and an operator
+// told their log had been tampered with every time a secret was rotated
+// would soon stop believing the message when it mattered.
 func verifyAuditLogCommand(dataDir string) error {
 	store, err := openAuthStoreCLI(dataDir)
 	if err != nil {
@@ -249,14 +299,177 @@ func verifyAuditLogCommand(dataDir string) error {
 
 	rows, firstBad, err := store.VerifyAuditChain()
 	if err != nil {
-		if firstBad != 0 {
-			return fmt.Errorf(
-				"audit log verification failed at row %d after %d event(s): %w",
-				firstBad, rows, err)
-		}
-		return fmt.Errorf("failed to verify audit log: %w", err)
+		return describeAuditVerifyFailure(rows, firstBad, err)
 	}
 
 	fmt.Printf("Audit log verified: %d event(s), chain intact\n", rows)
 	return nil
+}
+
+// rechainAuditLogCommand handles the rechain-audit-log command, which
+// re-hashes an existing audit log as keyed version 2 rows under the
+// server secret. It is the one-time upgrade step for a database written
+// by a release that predates the keyed chain, and such a database
+// refuses to open until it has been run.
+//
+// It prints what it has found and asks before it writes anything. The
+// re-chain attests whatever the log says at the moment it runs, so it
+// must be a deliberate act taken on the figures, rather than the reflex
+// an operator reaches for to clear a start-up error. assumeYes, from
+// -confirm-rechain, is the answer for a non-interactive run.
+func rechainAuditLogCommand(dataDir string, assumeYes bool, in io.Reader,
+	out io.Writer) error {
+
+	auditKey, err := cliAuditKey()
+	if err != nil {
+		return err
+	}
+
+	result, err := auth.RechainAuditLog(dataDir, auditKey, cliActor(),
+		func(plan auth.AuditRechainPlan) (bool, error) {
+			printAuditRechainPlan(out, dataDir, plan)
+			if assumeYes {
+				// An unattended run has nobody to weigh the warning
+				// the plan has just printed, so a log that does not
+				// even agree with its own hashes is refused rather
+				// than signed. An operator who has read it and still
+				// judges the log sound can say so interactively.
+				if !plan.LegacyChainOK {
+					return false, errors.New(
+						"the audit log does not verify under its own " +
+							"unkeyed rules, so -confirm-rechain will not " +
+							"sign it. Inspect the log, restore auth.db " +
+							"from a known-good copy if you cannot account " +
+							"for the difference, and re-chain " +
+							"interactively if you judge it sound")
+				}
+
+				fmt.Fprintln(out,
+					"Proceeding: -confirm-rechain was given.")
+				return true, nil
+			}
+
+			return confirmAuditRechain(in, out)
+		})
+	if err != nil {
+		return fmt.Errorf("failed to re-chain the audit log: %w", err)
+	}
+	if !result.Confirmed {
+		fmt.Fprintln(out, "Aborted. Nothing has been changed.")
+		return nil
+	}
+
+	fmt.Fprintf(out, "Audit log re-chained: %d event(s) re-hashed under the "+
+		"server secret, and the re-chain itself recorded in the log.\n",
+		result.Events)
+	fmt.Fprintln(out, "Verify the log now with -verify-audit-log.")
+
+	return nil
+}
+
+// auditRechainConfirmWord is what an interactive operator must type. It
+// is a word rather than a single letter because the answer should cost
+// a moment's thought; "y" is what one presses to make a prompt go away.
+const auditRechainConfirmWord = "rechain"
+
+// printAuditRechainPlan reports what the log holds and what the
+// re-chain would do to it.
+func printAuditRechainPlan(out io.Writer, dataDir string,
+	plan auth.AuditRechainPlan) {
+
+	fmt.Fprintf(out, "Audit log in %s:\n", dataDir)
+	fmt.Fprintf(out, "  Events:              %d\n", plan.Events)
+	fmt.Fprintf(out, "  Unkeyed (version 1): %d\n", plan.UnkeyedEvents)
+	fmt.Fprintf(out, "  Oldest event:        %s\n", auditPlanTime(plan.Oldest))
+	fmt.Fprintf(out, "  Newest event:        %s\n", auditPlanTime(plan.Newest))
+
+	if plan.LegacyChainOK {
+		fmt.Fprintln(out, "  Existing chain:      recomputes cleanly")
+		fmt.Fprintln(out, "\nThat the existing chain recomputes is worth "+
+			"little on its own: the version 1\nhash is unkeyed, so anyone "+
+			"able to write auth.db could have produced a chain\nthat "+
+			"recomputes just as cleanly. It rules out a careless edit, and "+
+			"nothing more.")
+	} else {
+		fmt.Fprintf(out, "  Existing chain:      DOES NOT recompute "+
+			"(first bad row %d)\n", plan.LegacyFirstBad)
+		if plan.LegacyChainErr != nil {
+			fmt.Fprintf(out, "                       %v\n",
+				plan.LegacyChainErr)
+		}
+		fmt.Fprintln(out, "\nThe log does not agree with its own hashes. "+
+			"Re-chaining would sign that log\nunder the server secret. "+
+			"Restore auth.db from a known-good copy instead unless\nyou "+
+			"know why it differs.")
+	}
+
+	fmt.Fprintf(out, "\nThis will re-hash all %d event(s) as keyed "+
+		"version 2 rows, in one transaction,\nand record the re-chain in "+
+		"the log. It attests the log exactly as it now stands:\nwhatever "+
+		"this database currently says becomes what the keyed chain "+
+		"vouches for.\n", plan.Events)
+}
+
+// auditPlanTime renders a timestamp for the plan, naming an empty log
+// rather than printing a zero time at it.
+func auditPlanTime(t time.Time) string {
+	if t.IsZero() {
+		return "(none)"
+	}
+
+	return t.UTC().Format(time.RFC3339)
+}
+
+// confirmAuditRechain asks the operator to type the confirmation word.
+// Anything else, end of input included, declines; a non-interactive run
+// with no -confirm-rechain therefore changes nothing rather than
+// proceeding on silence.
+func confirmAuditRechain(in io.Reader, out io.Writer) (bool, error) {
+	fmt.Fprintf(out, "\nType %q to proceed, or anything else to abort: ",
+		auditRechainConfirmWord)
+
+	reader := bufio.NewReader(in)
+	answer, err := reader.ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return false, fmt.Errorf("failed to read the confirmation: %w", err)
+	}
+
+	return strings.TrimSpace(answer) == auditRechainConfirmWord, nil
+}
+
+// describeAuditVerifyFailure turns a VerifyAuditChain error into the
+// message and exit status the operator should see.
+func describeAuditVerifyFailure(rows int, firstBad int64, err error) error {
+	if errors.Is(err, auth.ErrAuditKeyMismatch) {
+		return &auditVerifyError{
+			code: auditExitKeyMismatch,
+			err: fmt.Errorf("audit log could not be verified with the key in "+
+				"use, after %d event(s): %w\n"+
+				"       Nothing in this log verified, which usually means "+
+				"the server secret file is not the one the log was written "+
+				"under; confirm secret_file before treating this as "+
+				"tampering", rows, err),
+		}
+	}
+
+	tampered := errors.Is(err, auth.ErrAuditChainBroken) ||
+		errors.Is(err, auth.ErrAuditChainDowngraded) ||
+		errors.Is(err, auth.ErrAuditUnkeyedRow)
+
+	if firstBad != 0 {
+		wrapped := fmt.Errorf(
+			"audit log verification failed at row %d after %d event(s): %w",
+			firstBad, rows, err)
+		if tampered {
+			return &auditVerifyError{code: auditExitTampered, err: wrapped}
+		}
+		return wrapped
+	}
+
+	wrapped := fmt.Errorf("failed to verify audit log: %w", err)
+	if tampered {
+		return &auditVerifyError{code: auditExitTampered, err: wrapped}
+	}
+
+	return wrapped
 }

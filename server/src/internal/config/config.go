@@ -761,6 +761,14 @@ type CLIFlags struct {
 	DBSSLSet   bool
 
 	// Secret file flags
+	// SecretFile is applied by applyCLIFlags but is not currently wired
+	// to any command-line flag. It must stay that way, or be wired to
+	// the command line as well, because the audit chain is keyed by the
+	// secret this names: main resolves it for CLI commands through
+	// LoadConfigSecretFile, which reads the configuration file alone,
+	// so a flag the server alone accepted would have the two key their
+	// rows from different secrets and break the chain silently.
+	// TestSecretFileResolutionMatches locks the two paths together.
 	SecretFile    string
 	SecretFileSet bool
 
@@ -1524,12 +1532,55 @@ func LoadConfigDataDir(configPath string) (string, error) {
 	return cfg.DataDir, nil
 }
 
+// configSecretFile is a minimal struct for extracting just the
+// secret_file setting from a config file.
+type configSecretFile struct {
+	SecretFile string `yaml:"secret_file"`
+}
+
+// LoadConfigSecretFile extracts just the secret_file field from a
+// config file, for the same reason LoadConfigDataDir exists: the
+// command line needs it before the full configuration is loaded,
+// because every command it runs writes an audit row whose hash is
+// keyed by the secret that setting names. It returns an empty string
+// when the file does not exist, is empty, or sets no secret_file, in
+// which case the caller falls back to the default search order.
+func LoadConfigSecretFile(configPath string) (string, error) {
+	if configPath == "" {
+		return "", nil
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("failed to read config file: %w", err)
+	}
+
+	if len(data) == 0 {
+		return "", nil
+	}
+
+	var cfg configSecretFile
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return "", fmt.Errorf("failed to parse config file: %w", err)
+	}
+
+	return cfg.SecretFile, nil
+}
+
 // GetDefaultSecretPath returns the path to an existing default
 // server secret file, or "" if none was found. Search order
 // matches GetDefaultConfigPath: per-user config directory first,
 // then /etc/pgedge/.
-func GetDefaultSecretPath(binaryPath string) string {
-	return fileutil.GetDefaultConfigPath(binaryPath, "ai-dba-server.secret")
+//
+// It takes no executable path. fileutil.GetDefaultConfigPath ignores
+// the one it accepts, deliberately, so that a file sitting next to the
+// binary is never picked up in preference to the installed one; passing
+// a value here only suggested it mattered.
+func GetDefaultSecretPath() string {
+	return fileutil.GetDefaultConfigPath("", "ai-dba-server.secret")
 }
 
 // ConfigFileExists checks if a config file exists at the given path

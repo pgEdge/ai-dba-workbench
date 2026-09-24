@@ -61,7 +61,7 @@ func TestInitAuthStoreAppliesEffectiveLockoutThreshold(t *testing.T) {
 			server := &Server{cfg: lockoutConfig(tc.raw), dataDir: t.TempDir()}
 
 			if out := captureStderr(t, func() {
-				if err := server.initAuthStore(); err != nil {
+				if err := server.initAuthStore("a server secret"); err != nil {
 					t.Fatalf("initAuthStore: %v", err)
 				}
 			}); out == "" {
@@ -120,7 +120,7 @@ func TestInitAuthStoreReportsExistingStore(t *testing.T) {
 	first := &Server{cfg: lockoutConfig(nil), dataDir: dataDir}
 
 	out := captureStderr(t, func() {
-		if err := first.initAuthStore(); err != nil {
+		if err := first.initAuthStore("a server secret"); err != nil {
 			t.Fatalf("initAuthStore: %v", err)
 		}
 	})
@@ -133,7 +133,7 @@ func TestInitAuthStoreReportsExistingStore(t *testing.T) {
 
 	second := &Server{cfg: lockoutConfig(nil), dataDir: dataDir}
 	out = captureStderr(t, func() {
-		if err := second.initAuthStore(); err != nil {
+		if err := second.initAuthStore("a server secret"); err != nil {
 			t.Fatalf("initAuthStore on the second start: %v", err)
 		}
 	})
@@ -156,7 +156,7 @@ func TestInitAuthStoreReportsExistingStore(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 	blocked := &Server{cfg: lockoutConfig(nil), dataDir: filePath}
-	err := blocked.initAuthStore()
+	err := blocked.initAuthStore("a server secret")
 	if err == nil {
 		t.Fatal("expected an error for a data directory that is a file")
 	}

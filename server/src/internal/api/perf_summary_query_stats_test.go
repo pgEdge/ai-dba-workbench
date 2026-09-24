@@ -866,7 +866,7 @@ func TestQueryStats_PermissionDenied(t *testing.T) {
 	_, pool, cleanup := newTopQueriesTestHandler(t)
 	defer cleanup()
 
-	authStore, err := auth.NewAuthStore(t.TempDir(), 0, 0)
+	authStore, err := auth.NewAuthStore(t.TempDir(), 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("NewAuthStore failed: %v", err)
 	}

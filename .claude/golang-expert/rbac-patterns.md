@@ -377,9 +377,9 @@ in `audit.go`. `idx_audit_prev_hash` is a unique index, so no two
 events can name the same predecessor and only one event can be the
 genesis row with an empty `prev_hash`; a test fixture that inserts
 `audit_events` rows by hand must chain them rather than reuse a
-placeholder. And `auditHashV1` length-prefixes each field rather than
-joining with a separator, so a value containing the separator cannot
-render identically to a different pair of columns.
+placeholder. And `auditCanonical` length-prefixes each field rather
+than joining with a separator, so a value containing the separator
+cannot render identically to a different pair of columns.
 
 The audit DDL is not gated on the schema version. `initSchema` in
 `store.go` ends by calling `ensureAuditSchema`, which re-runs the
@@ -398,11 +398,156 @@ Each row stores the rendering its hash was computed under in
 `hash_version` (schema v6, `migrateV5ToV6`; the audit table itself
 arrived in v5, after the federation columns of v4), and `auditHash`
 dispatches on `ev.HashVersion`, returning `errUnknownAuditHashVersion`
-for a version it has no case for. To change the rendering, bump
-`auditHashVersion`, add a case, and keep the old one: rows are
-verified under the version they carry, so older rows keep verifying
-and a row naming an unknown version is reported by row and version
-rather than as a broken chain.
+for a version it has no case for. Changing the rendering is not a
+free, additive act, whatever the dispatch suggests: version 2 made
+every version 1 row unverifiable and forced the re-chain upgrade step.
+A row naming a version `auditHash` will not compute is reported as
+tampering, wrapped in `ErrAuditChainBroken` by `VerifyAuditChain`
+(the error branch after its `auditHash` call), deliberately, because
+the version is a column
+in the file and relabelling a row must not move it out of the
+verifier's reach.
+
+`auditHashVersion` is 2: an HMAC-SHA256 over the canonical rendering,
+keyed by `AuthStore.auditKey`, so rewriting a row needs the server
+secret as well as write access to `auth.db`. Version 1, the unkeyed
+SHA-256, is no longer admissible anywhere: `auditHash` refuses to
+compute it and returns `ErrAuditUnkeyedRow`, and the only code that
+still computes it is `verifyLegacyAuditChain`, reporting on a log the
+re-chain is about to replace. The key comes from
+`auth.DeriveAuditKey(serverSecret)`, PBKDF2-HMAC-SHA256 through
+`pkg/crypto.DeriveKey` under the fixed salt
+`pgedge-ai-workbench/audit-hash-chain/v1`, which must never change and
+must never be reused by another subsystem.
+
+`NewAuthStore` takes the key as its fourth argument and refuses one
+shorter than `minAuditKeyBytes` (32), which is what `DeriveAuditKey`
+produces. Both paths that open the store supply it: the server derives
+it in `initAuthStore`, which is why `NewServer` loads the server secret
+before it opens the store rather than after, and the command line
+derives it in `resolveCLIAuditKey`, which reads the secret through the
+shared `loadServerSecretFile` in `server.go` and fails the command
+outright when there is none, rather than writing an unkeyed row.
+`main` reads `secret_file` ahead of the full configuration load with
+`config.LoadConfigSecretFile`, the same trick `LoadConfigDataDir`
+plays, and hands it to `RunCLICommands`; a configuration file that
+cannot be read is fatal there, because the default search order would
+otherwise pick a different secret, or a different `auth.db`.
+
+The version number is inside the digest (`auditCanonical` renders
+`ev.HashVersion` straight after the label), so a version 2 row cannot
+be relabelled as version 1 and recomputed unkeyed. `VerifyAuditChain`
+also refuses a version that falls as the chain advances
+(`ErrAuditChainDowngraded`).
+
+Behind both, `ensureNoUnkeyedAuditRows` runs at the end of every
+`initSchema` and refuses to open a database holding any version 1 row,
+naming `-rechain-audit-log` and saying that deleting `auth.db` is not
+the remedy. It counts rows rather than reading `schema_version`, which
+is a value inside the file and so writable by whoever can write the
+log.
+
+Both that gate and `auditRechainPlan` first call
+`checkNoKeyedAuditRows`, which counts keyed rows and refuses, wrapping
+`ErrAuditUnkeyedRow`, when the log holds any at all whilst unkeyed rows
+remain. The re-chain serves exactly one database shape, a log inherited
+wholly from a pre-key release, which holds unkeyed rows and nothing
+else; a log mixing the two renderings had its unkeyed rows written by
+something with write access to `auth.db`, and re-chaining would sign
+them. Do not reintroduce an ordering test here: `id` is `INTEGER
+PRIMARY KEY AUTOINCREMENT`, which governs only the values SQLite
+assigns, so an explicit `INSERT` naming id 0 or -1 is accepted and
+sorts below every genuine row, which is how VULN-307 defeated the
+prefix check this replaced. The two refusals are worded differently on
+purpose, so that the start-up message for the mixed case points at a
+restore rather than at a command that will refuse it in turn.
+`rechainAuditLogCommand` also refuses a `-confirm-rechain` run when
+`plan.LegacyChainOK` is false, leaving the interactive path free to
+proceed on a human's judgement.
+`verifyLegacyAuditChain` carries the same `ev.HashVersion <
+highestVersion` check `VerifyAuditChain` has, so `LegacyChainOK` cannot
+be true for a downgraded log.
+
+`auth.RechainAuditLog` is the one way past that gate, and the
+`-rechain-audit-log` subcommand is its only caller. It opens through
+the unexported `newAuthStore(..., allowUnkeyedAuditRows: true)`, builds
+an `AuditRechainPlan` (row count, span, unkeyed count, and whether the
+log recomputes under `verifyLegacyAuditChain`), passes it to an
+`AuditRechainConfirm` callback that must return true, and then
+`rechainAuditLogTx` re-hashes every row as version 2 in one
+transaction, re-linking each `prev_hash` to the new hash of the row
+before it, keeping the first row's `prev_hash` as given (which only
+`TestRechainKeepsThePurgedPrefixLink` can see, because every other
+fixture starts from a genesis row whose `prev_hash` is empty), and
+appending
+an `audit.rechain` event. It drops the append-only trigger and
+re-creates it inside that transaction; SQLite makes DDL transactional,
+`_txlock=immediate` holds the write lock from BEGIN and WAL readers see
+the last committed snapshot, so no other connection observes the table
+without the trigger and a rollback restores rows and trigger together.
+The walk pages through `forEachAuditEvent` because a statement executed
+on the connection an open query is streaming from would deadlock.
+
+`rechainAuditLogTx` opens with `checkAuditRechainPlanStillHolds`, which
+re-reads `COUNT(*)`, `MIN(id)` and `MAX(id)` under the transaction's
+write lock and returns `ErrAuditRechainChanged` if any differs from the
+plan the operator approved, because the confirmation prompt may have
+waited whilst another writer appended rows. It is an id-range check
+rather than a second full verification, which would double the work
+without settling anything the range does not.
+
+There is deliberately no boundary machinery between inherited and keyed
+rows, and none should be added. Three successive designs kept a signed
+watermark, and each gave the server a way to sign a forgery; the last
+let the retention purge re-anchor the boundary onto a backdated row, so
+an attacker who could write `auth.db` had the server attest a
+fabricated history under the real key. `PurgeAuditEvents` is now a
+plain delete plus its own keyed event and writes no hash over a row it
+did not create. Treat any proposal that has an unattended path re-sign
+existing rows as that bug returning;
+`TestPurgeDoesNotReanchorAForgedPrefix` in `audit_rechain_test.go` is
+the regression test.
+
+The purge deletes a contiguous id-prefix and nothing else:
+
+```go
+DELETE FROM audit_events
+    WHERE id < (SELECT MIN(id) FROM audit_events
+                WHERE occurred_at >= ?)
+```
+
+`occurred_at` is a column an attacker who can write `auth.db` chooses;
+`id` is insertion order, assigned by SQLite on every server insert and
+fixed on existing rows by the append-only trigger; a writer can name
+an `id` on INSERT, but that only moves the boundary earlier. Deleting on
+`occurred_at` alone let backdated rows steer the purge into removing
+the newest events, which relinked the chain and, through the appended
+`audit.purge` event, put `MAX(id)` back into agreement with
+`sqlite_sequence`, the disagreement `verifyAuditTail` exists to read.
+When no row falls inside the window the subquery yields NULL and
+nothing is deleted, which is deliberate: emptying the log instead would
+restore the same oracle, and a fixed cut-off such as 0 would delete
+rows inserted at negative ids. `forEachAuditEvent` likewise starts its
+first page with no lower bound on `id`, and `rechainAuditLogTx`
+refuses to commit when the rows it reached differ from the plan's
+count. `TestPurgeIgnoresBackdatedNewestRows` in
+`audit_rechain_guard_test.go` covers both halves, the refusal and an
+honest prefix still being purged.
+
+`VerifyAuditChain` separates a wrong key from tampering, because an
+operator's response differs. The `keyProven` flag is the mechanism: a
+row that fails before any row has verified under the key is
+`ErrAuditKeyMismatch`, which the CLI maps to exit 3 in
+`describeAuditVerifyFailure` (`cmd/mcp-server/audit.go`); once a row
+has verified, later failures are `ErrAuditChainBroken`,
+`ErrAuditChainDowngraded` or `ErrAuditUnkeyedRow`, which map to exit 2.
+Anything else stays 1.
+
+A successful `GET /api/v1/rbac/audit` is not written to `audit_events`,
+because reading is not a change; `handleAudit` logs one `[AUDIT]` line
+naming the actor, the filters in effect (`describeAuditFilter`, which
+caps each value at `auditFilterValueMax` runes) and the row count
+instead.
 
 Tail truncation is caught by `verifyAuditTail`, which compares
 `MAX(id)` against the `sqlite_sequence` row. Deleting that row whilst
@@ -413,5 +558,8 @@ is `AUTOINCREMENT`. `MAX(id)` and the sequence are read by a single
 statement, which SQLite evaluates against one snapshot, so a server
 insert whilst the CLI (which opens its own store on the same file) is
 verifying cannot leave the sequence a step ahead of the newest id; the
-pure comparison is `checkAuditTail`. Any other query error is returned
-rather than swallowed.
+pure comparison is `checkAuditTail`. Every disagreement wraps
+`ErrAuditChainBroken`, so the CLI exits with the tampering status; any
+other query error is returned unwrapped rather than swallowed, and
+exits 1. `sqlite_sequence` itself is unprotected, so a tail deleted and
+then matched by writing the sequence down passes without the secret.

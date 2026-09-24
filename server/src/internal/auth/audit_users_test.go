@@ -1144,7 +1144,7 @@ func TestEnableUserResetsFailedAttempts(t *testing.T) {
 
 	// Two failures lock the account, which is what leaves a non-zero
 	// counter behind for the enable to clear.
-	store, err := NewAuthStore(tmpDir, 0, 2)
+	store, err := NewAuthStore(tmpDir, 0, 2, AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
@@ -1214,7 +1214,7 @@ func TestLockoutSurvivesAuditFailure(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	store, err := NewAuthStore(tmpDir, 0, 2)
+	store, err := NewAuthStore(tmpDir, 0, 2, AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("Failed to create auth store: %v", err)
 	}

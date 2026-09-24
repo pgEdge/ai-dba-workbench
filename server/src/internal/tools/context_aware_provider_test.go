@@ -269,7 +269,7 @@ func TestContextAwareProvider_RegisterTools_WithContext(t *testing.T) {
 func TestGetClient_TokenScopeEnforcement(t *testing.T) {
 	// Create a temporary auth store
 	tmpDir := t.TempDir()
-	authStore, err := auth.NewAuthStore(tmpDir, 0, 0)
+	authStore, err := auth.NewAuthStore(tmpDir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("NewAuthStore: %v", err)
 	}
@@ -369,7 +369,7 @@ func TestGetClient_TokenScopeEnforcement(t *testing.T) {
 // calls get a clean "no connection selected" error.
 func TestGetClient_SessionClearedOnRBACDenial(t *testing.T) {
 	tmpDir := t.TempDir()
-	authStore, err := auth.NewAuthStore(tmpDir, 0, 0)
+	authStore, err := auth.NewAuthStore(tmpDir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("NewAuthStore: %v", err)
 	}
@@ -432,7 +432,7 @@ func TestGetClient_SessionClearedOnRBACDenial(t *testing.T) {
 // rbacChecker, but this test ensures defensive coding is in place.
 func TestGetClient_NilRBACCheckerInSession(t *testing.T) {
 	tmpDir := t.TempDir()
-	authStore, err := auth.NewAuthStore(tmpDir, 0, 0)
+	authStore, err := auth.NewAuthStore(tmpDir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("NewAuthStore: %v", err)
 	}
@@ -495,7 +495,7 @@ func TestGetClient_NilRBACCheckerInSession(t *testing.T) {
 // token scope restriction would bypass RBAC checks at use-time.
 func TestExecute_GetClient_RBACDenialClearsSession(t *testing.T) {
 	tmpDir := t.TempDir()
-	authStore, err := auth.NewAuthStore(tmpDir, 0, 0)
+	authStore, err := auth.NewAuthStore(tmpDir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("NewAuthStore: %v", err)
 	}
@@ -597,7 +597,7 @@ func TestExecute_GetClient_RBACDenialClearsSession(t *testing.T) {
 // exercised).
 func TestExecute_GetClient_RBACAllowsAccessProceedsToDatastore(t *testing.T) {
 	tmpDir := t.TempDir()
-	authStore, err := auth.NewAuthStore(tmpDir, 0, 0)
+	authStore, err := auth.NewAuthStore(tmpDir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("NewAuthStore: %v", err)
 	}
@@ -705,7 +705,7 @@ func TestExecute_GetClient_RBACAllowsAccessProceedsToDatastore(t *testing.T) {
 // should return a helpful "no connection selected" error.
 func TestExecute_GetClient_NoSession(t *testing.T) {
 	tmpDir := t.TempDir()
-	authStore, err := auth.NewAuthStore(tmpDir, 0, 0)
+	authStore, err := auth.NewAuthStore(tmpDir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("NewAuthStore: %v", err)
 	}
@@ -771,7 +771,7 @@ func TestExecute_GetClient_NoSession(t *testing.T) {
 // pass, and the code should attempt to use the database override.
 func TestExecute_GetClient_SessionWithDatabaseOverride(t *testing.T) {
 	tmpDir := t.TempDir()
-	authStore, err := auth.NewAuthStore(tmpDir, 0, 0)
+	authStore, err := auth.NewAuthStore(tmpDir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("NewAuthStore: %v", err)
 	}
@@ -888,7 +888,7 @@ func TestExecute_GetClient_SessionWithDatabaseOverride(t *testing.T) {
 // bypasses RBAC checks even when a sharing lookup would deny access.
 func TestExecute_GetClient_SuperuserBypassesRBAC(t *testing.T) {
 	tmpDir := t.TempDir()
-	authStore, err := auth.NewAuthStore(tmpDir, 0, 0)
+	authStore, err := auth.NewAuthStore(tmpDir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("NewAuthStore: %v", err)
 	}
@@ -993,7 +993,7 @@ func TestExecute_GetClient_SuperuserBypassesRBAC(t *testing.T) {
 // tool would inject a connection_id from an expired/restricted session scope.
 func TestExecute_QueryMetrics_RBACChecksConnectionIDInjection(t *testing.T) {
 	tmpDir := t.TempDir()
-	authStore, err := auth.NewAuthStore(tmpDir, 0, 0)
+	authStore, err := auth.NewAuthStore(tmpDir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("NewAuthStore: %v", err)
 	}
@@ -1083,7 +1083,7 @@ func TestExecute_QueryMetrics_RBACChecksConnectionIDInjection(t *testing.T) {
 // RBAC allows access to the session's connection, the connection_id IS injected.
 func TestExecute_QueryMetrics_RBACAllowsConnectionIDInjection(t *testing.T) {
 	tmpDir := t.TempDir()
-	authStore, err := auth.NewAuthStore(tmpDir, 0, 0)
+	authStore, err := auth.NewAuthStore(tmpDir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("NewAuthStore: %v", err)
 	}
@@ -1160,7 +1160,7 @@ func TestExecute_QueryMetrics_RBACAllowsConnectionIDInjection(t *testing.T) {
 // when the user is a superuser, connection_id is always injected from the session.
 func TestExecute_QueryMetrics_SuperuserAlwaysInjectsConnectionID(t *testing.T) {
 	tmpDir := t.TempDir()
-	authStore, err := auth.NewAuthStore(tmpDir, 0, 0)
+	authStore, err := auth.NewAuthStore(tmpDir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("NewAuthStore: %v", err)
 	}

@@ -141,14 +141,99 @@ recorded in the `audit_events` table of the SQLite auth store
 (`server/src/internal/auth/audit.go`), with the acting principal, the
 client address, before and after snapshots and a hash chain.
 
-- Each row's hash covers the previous row's hash and every audited
-  column except `id` and `hash_version`. Each row stores the rendering
-  version it was hashed under in `hash_version`, and `auditHash`
-  dispatches on it, so a format change adds a case rather than
-  invalidating older rows, and an unknown version is reported as such
-  and not as a broken chain. The version 1 rendering length-prefixes
-  each field, so text cannot be shifted between two columns without
-  changing the digest.
+- Each row's hash covers the previous row's hash, its own
+  `hash_version` and every other audited column except `id`. Each row
+  stores the rendering version it was hashed under, and `auditHash`
+  dispatches on it, but a format change is not free: version 2 left
+  every version 1 row unverifiable, and an upgraded database has to be
+  re-chained. A version `auditHash` will not compute is reported as
+  tampering, wrapped in `ErrAuditChainBroken` in `VerifyAuditChain`,
+  because the version is a value in the file and relabelling a row must
+  not put it beyond the verifier. Both renderings length-prefix each
+  field, so text cannot be shifted between two columns without changing
+  the digest.
+- Version 1 is an unkeyed SHA-256. No row this build writes carries
+  it, and `auditHash` refuses to compute it at all, returning
+  `ErrAuditUnkeyedRow`: the only code that still computes it is
+  `verifyLegacyAuditChain`, which reports on a log the re-chain is
+  about to replace. Version 2 is an HMAC-SHA256 under
+  `DeriveAuditKey(serverSecret)`, so a chain cannot be recomputed
+  without the server secret. `NewAuthStore` refuses an empty or
+  under-32-byte key, and every caller, the CLI included, must supply
+  one.
+- Two rules stop the keying being downgraded away, which without them
+  would be the `alg: none` attack: the version is inside the digest, so
+  a version 2 row cannot be relabelled and recomputed as version 1, and
+  `VerifyAuditChain` refuses a version that falls as the chain
+  advances. Behind both, `ensureNoUnkeyedAuditRows` runs on every open
+  and refuses to open a database holding any version 1 row at all.
+- The re-chain is only for a log wholly inherited at upgrade, and both
+  `ensureNoUnkeyedAuditRows` and `auditRechainPlan` test that shape
+  through `checkNoKeyedAuditRows`: any keyed row at all alongside an
+  unkeyed one means unkeyed rows were written into a log that was
+  already keyed, and the refusal names that case and points at a
+  restore rather than at `-rechain-audit-log`. Row order is not
+  consulted, and must not be: `id` is `INTEGER PRIMARY KEY
+  AUTOINCREMENT`, which constrains only the values SQLite assigns, so
+  an explicit `INSERT` at id 0 or -1 sorts below every genuine row and
+  satisfies any test phrased as a prefix (VULN-307). Without the check,
+  an attacker who rewrote the log, relabelled every row version 1 and
+  recomputed the unkeyed chain (which needs no secret) could rely on
+  the start-up refusal to pressure an operator into signing the
+  forgery. `-confirm-rechain` additionally refuses a plan whose
+  `LegacyChainOK` is false, so an unattended run cannot sign a log the
+  command has just reported does not recompute.
+  `verifyLegacyAuditChain` carries the same downgrade check as
+  `VerifyAuditChain`, so `LegacyChainOK` cannot be true for a log with
+  a version 1 row above a keyed one.
+- The approved plan is bound to the rows that get signed.
+  `AuditRechainPlan` carries `Events`, `LowestID` and `HighestID`, and
+  `checkAuditRechainPlanStillHolds` re-reads all three as the first
+  statement inside the rewrite transaction, which holds the write lock,
+  and returns `ErrAuditRechainChanged` if any has moved. `s.mu` is no
+  help here: the adversary is another writer on the same file, and the
+  confirmation prompt can wait indefinitely.
+- The one way past that gate is `RechainAuditLog`, driven by the
+  operator command `-rechain-audit-log`. It opens through the
+  unexported `newAuthStore` with `allowUnkeyedAuditRows`, shows the
+  operator the figures, requires confirmation, and then re-hashes every
+  row as version 2 in one transaction, re-linking each `prev_hash` to
+  the new hash of the row before it and appending an `audit.rechain`
+  event. It drops and re-creates the append-only trigger inside that
+  transaction; SQLite makes DDL transactional, `_txlock=immediate`
+  holds the write lock from BEGIN, and WAL readers see the last
+  committed snapshot, so no other connection ever observes the table
+  without the trigger and a rollback restores both rows and trigger.
+- There is deliberately no boundary machinery between inherited and
+  keyed rows. Three earlier designs kept a signed watermark, and each
+  provided a route to have the server sign a forgery: the last one let
+  the retention purge re-anchor the boundary onto a backdated row.
+  `PurgeAuditEvents` now deletes and records its own event, and writes
+  no hash over a row it did not create. Treat any proposal that has an
+  unattended path re-sign existing rows as that bug returning.
+- `PurgeAuditEvents` deletes a contiguous id-prefix and can express
+  nothing else: `DELETE ... WHERE id < (SELECT MIN(id) FROM
+  audit_events WHERE occurred_at >= ?)`. `occurred_at` is
+  attacker-writable. Server inserts let SQLite assign `id` and the
+  append-only trigger stops an existing row's `id` changing; a writer
+  can name an `id` on INSERT, but that can only move the boundary
+  earlier, never past the oldest row in the window. Deleting by
+  timestamp alone
+  made retention, which runs unattended every five minutes, a
+  suffix-deletion oracle: backdated newest rows were deleted, the chain
+  relinked to the last survivor, and the appended `audit.purge` event
+  raised `MAX(id)` back into agreement with `sqlite_sequence`, which is
+  exactly what `verifyAuditTail` reads. Where no row is inside the
+  window the subquery yields NULL and nothing is deleted, deliberately:
+  an empty log would hand the same oracle back, and a fixed cut-off
+  such as 0 would delete rows inserted at negative ids. Any change that filters
+  the purge on a column a writer of `auth.db` controls reopens this.
+- Verification distinguishes a wrong key from tampering, because the
+  responses differ. The `keyProven` flag is the whole mechanism: a row
+  that fails before anything has verified under the key reports
+  `ErrAuditKeyMismatch` (CLI exit 3); once any row has verified, a
+  later failure is `ErrAuditChainBroken`, `ErrAuditChainDowngraded` or
+  `ErrAuditUnkeyedRow` (CLI exit 2).
 - `prev_hash` carries a unique index, so no two events can name the
   same predecessor and only one event can be the genesis row with an
   empty `prev_hash`. A forked chain is refused by the schema.
@@ -164,22 +249,38 @@ client address, before and after snapshots and a hash chain.
   never given it.
 - `verifyAuditTail` compares `MAX(id)` with the `sqlite_sequence`
   entry and reports any disagreement: missing, above or below, and a
-  missing `sqlite_sequence` table as well. `MAX(id)` and the sequence
-  are read by one statement, so a server insert whilst the CLI, which
-  opens its own store, is verifying cannot separate them.
+  missing `sqlite_sequence` table as well, each wrapped in
+  `ErrAuditChainBroken` so `-verify-audit-log` exits with the tampering
+  status. `MAX(id)` and the sequence are read by one statement, so a
+  server insert whilst the CLI, which opens its own store, is verifying
+  cannot separate them.
 - Snapshots never carry `password_hash`, and no token material reaches
   a row, a log line or a response.
 
-Know the limits before crediting the chain in a report. It is an
-unkeyed SHA-256 computed by the same server that stores it, and
-`sqlite_sequence` is an ordinary writable table, so anyone with write
-access to `auth.db` can alter the log and make both checks agree
-again. The chain and the tail check raise the cost of careless or
-accidental deletion; they are not a defence against a deliberate
-attacker with filesystem access, and only an independent copy of the
-events is. A verification that passes is not evidence that nothing
-happened. Adding a key the server does not hold, or an anchor outside
-the file, is an open design question rather than an oversight.
+Know the limits before crediting the chain in a report, and say them
+plainly rather than crediting the design with more than it does.
+
+- An attacker holding both `auth.db` and the server secret can forge
+  the log freely, since the key is derived from the same secret the
+  server reads. Only a copy of the events somewhere the server cannot
+  reach defends against that, and there is no anchor outside the file.
+- Truncating the tail needs write access to `auth.db` alone, no
+  secret. `sqlite_sequence`, which `verifyAuditTail` compares the
+  newest id against, has no trigger or other protection, so deleting
+  the newest rows and one `UPDATE sqlite_sequence SET seq = <new
+  MAX(id)>` passes verification. Do not credit the key with defending
+  the tail.
+- Wholesale deletion of the log's prefix is still accepted, because the
+  first surviving row's `prev_hash` is taken as given and the retention
+  purge legitimately produces that shape.
+- A re-chain attests the database exactly as it stood at the moment it
+  ran, and says nothing about anything before it. On an upgraded
+  installation the keyed chain starts at that point.
+- Nothing verifies at start-up. `VerifyAuditChain` has one non-test
+  caller, `verifyAuditLogCommand` under `-verify-audit-log`, so on an
+  installation that never runs it the chain is never checked.
+
+A verification that passes is not evidence that nothing happened.
 
 The audit write is fail-closed everywhere but one place: a mutation
 whose event cannot be recorded is rolled back. The exception is

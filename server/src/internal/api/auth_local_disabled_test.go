@@ -26,7 +26,7 @@ import (
 func newLocalLoginTestStore(t *testing.T) *auth.AuthStore {
 	t.Helper()
 
-	store, err := auth.NewAuthStore(t.TempDir(), 30, 5)
+	store, err := auth.NewAuthStore(t.TempDir(), 30, 5, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("creating auth store: %v", err)
 	}

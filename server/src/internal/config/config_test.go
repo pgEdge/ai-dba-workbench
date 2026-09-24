@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -645,7 +646,7 @@ func TestGetDefaultSecretPath(t *testing.T) {
 	t.Setenv("AppData", base)
 	fileutil.SetSystemConfigDirForTest(t, filepath.Join(base, "absent-etc-pgedge"))
 
-	result := GetDefaultSecretPath("/usr/local/bin/pgedge-postgres-mcp")
+	result := GetDefaultSecretPath()
 	if result != "" {
 		t.Errorf("expected empty path, got %q", result)
 	}
@@ -672,7 +673,7 @@ func TestGetDefaultSecretPath_UserDirHit(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	if got := GetDefaultSecretPath(""); got != expected {
+	if got := GetDefaultSecretPath(); got != expected {
 		t.Errorf("GetDefaultSecretPath = %q, want %q", got, expected)
 	}
 }
@@ -2424,5 +2425,110 @@ func TestMergeConfigOverridesEveryField(t *testing.T) {
 		if ptr == nil || *ptr {
 			t.Errorf("builtin %s: expected an explicit false to be carried over", name)
 		}
+	}
+}
+
+// TestLoadConfigSecretFile covers the early, partial read of
+// secret_file that the command line depends on, including the cases
+// where there is nothing to read: each of those must come back as an
+// empty path so the caller falls through to the default search order,
+// and only an unreadable or malformed file is an error.
+func TestLoadConfigSecretFile(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	write := func(name, content string) string {
+		path := filepath.Join(tmpDir, name)
+		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+			t.Fatalf("failed to write test file: %v", err)
+		}
+		return path
+	}
+
+	tests := []struct {
+		name        string
+		path        string
+		expected    string
+		expectError bool
+	}{
+		{
+			name: "config with secret_file",
+			path: write("with_secret.yaml", `
+http:
+    address: ":8080"
+secret_file: /etc/pgedge/custom.secret
+`),
+			expected: "/etc/pgedge/custom.secret",
+		},
+		{
+			name: "config without secret_file",
+			path: write("without_secret.yaml", `
+http:
+    address: ":8080"
+`),
+			expected: "",
+		},
+		{
+			name:     "non-existent file",
+			path:     filepath.Join(tmpDir, "nonexistent.yaml"),
+			expected: "",
+		},
+		{
+			name:     "empty path",
+			path:     "",
+			expected: "",
+		},
+		{
+			name:     "empty file",
+			path:     write("empty_secret.yaml", ""),
+			expected: "",
+		},
+		{
+			name:        "invalid YAML",
+			path:        write("invalid_secret.yaml", "this: is: not: valid: yaml: {{{{\n"),
+			expectError: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := LoadConfigSecretFile(tc.path)
+			if tc.expectError {
+				if err == nil {
+					t.Fatalf("expected an error, got %q", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.expected {
+				t.Errorf("LoadConfigSecretFile = %q, want %q", got, tc.expected)
+			}
+		})
+	}
+}
+
+// TestLoadConfigSecretFileUnreadable checks that a file that exists but
+// cannot be read is reported rather than treated as absent: falling
+// through to the default search order there would look for the secret
+// somewhere the operator did not put it.
+func TestLoadConfigSecretFileUnreadable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// Windows maps only the owner-write bit, so a mode of 0000
+		// still leaves the file readable, and os.Geteuid returns
+		// -1 there rather than 0, so the check below cannot skip.
+		t.Skip("mode 0000 does not prevent a read on Windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root can read a 0000 file")
+	}
+
+	path := filepath.Join(t.TempDir(), "unreadable.yaml")
+	if err := os.WriteFile(path, []byte("secret_file: /x\n"), 0000); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	if _, err := LoadConfigSecretFile(path); err == nil {
+		t.Error("expected an unreadable config file to be reported")
 	}
 }

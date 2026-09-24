@@ -49,7 +49,7 @@ func newScopeFixture(t *testing.T, scopeLevel string) *scopeFixture {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	store, err := NewAuthStore(tmpDir, 0, 0)
+	store, err := NewAuthStore(tmpDir, 0, 0, AuditKeyForTesting())
 	if err != nil {
 		os.RemoveAll(tmpDir)
 		t.Fatalf("failed to create auth store: %v", err)

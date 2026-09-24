@@ -128,6 +128,16 @@ in SQLite via `modernc.org/sqlite` and `database/sql`, so its SQL uses
 `?` placeholders, not `$1`. Tests open a store in a temporary directory
 with `auth.NewAuthStore` and must:
 
+- Pass `auth.AuditKeyForTesting()` as the fourth argument. The store
+  keys its audit hash chain (hash version 2) with a key production
+  derives from the server secret via `auth.DeriveAuditKey`, and
+  `NewAuthStore` refuses an empty one, because a store without a key
+  cannot write a single audited change. The test helper returns a fixed
+  non-secret key and skips the PBKDF2 work. It is an ordinary exported
+  function rather than an `export_test.go` one, because callers span
+  `api`, `tools`, `llmproxy` and `cmd/mcp-server`, so it ships in the
+  production binary and panics via `testing.Testing()` if anything but
+  a test binary calls it.
 - Call `store.SetBcryptCostForTesting(t, bcrypt.MinCost)` immediately
   after construction. Production hashes at `DefaultBcryptCost` (12); a
   suite that creates hundreds of users at that cost has previously hit
@@ -139,6 +149,25 @@ with `auth.NewAuthStore` and must:
 - Stop every `auth.NewRateLimiter` with `Stop()` (idempotent), or close
   the `AuthHandler` that owns it, to avoid leaking its cleanup
   goroutine.
+
+A test that needs a database looking like one an older release left
+behind calls `auth.SeedUnkeyedAuditLogForTesting`, which writes rows
+hashed under the unkeyed version 1 rendering and optionally deletes one
+to break the links. Nothing else in the tree writes such a row, by
+design, and the helper carries the same `testing.Testing()` guard as
+`AuditKeyForTesting` for the same reason. Assertions about the
+append-only trigger must read `sqlite_master` through a raw
+`sql.Open("sqlite", ...)` connection, because opening an `AuthStore`
+runs `ensureAuditSchema`, which re-creates the trigger and would make
+the assertion pass either way.
+
+Tests in `server/src/cmd/mcp-server` that run a CLI command go through
+`openAuthStoreCLI`, which resolves the audit key from the real server
+secret file. `TestMain` in `main_test.go` replaces the `cliAuditKey`
+function variable with a fixed key for the whole binary, so that the
+suite does not pass or fail on whether the host happens to have
+`/etc/pgedge/ai-dba-server.secret`; a test that exercises the
+resolution itself restores `resolveCLIAuditKey` for its own scope.
 
 ## Handler Tests: Bearer Plus Context
 

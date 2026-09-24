@@ -769,6 +769,24 @@ project adheres to
   actually takes, in place of the `*sql.DB` of an earlier
   implementation. (#479)
 
+- Correct the Test Environment section of the collector schema
+  management guide, which documented only `TEST_DB_CONN` and described
+  the tests as running against the database named in that value. The
+  schema tests read `TEST_AI_WORKBENCH_SERVER` first, accept either a
+  connection URL or a libpq key-value string, and create a database of
+  their own named `ai_workbench_test_<timestamp>` for the run, so the
+  role in the connection string needs the `CREATEDB` privilege. The
+  section now also records the fallback to
+  `host=localhost port=5432 user=postgres sslmode=disable` when neither
+  variable is set, the previously undocumented
+  `TEST_AI_WORKBENCH_KEEP_DB` flag that keeps the generated database for
+  inspection, the reason leftover `ai_workbench_test_*` databases
+  accumulate, and the fact that a failed setup makes the package exit
+  successfully without running a single test. It also names
+  `TestMigration_PgSettings` as the one test that connects directly to
+  the database in `TEST_AI_WORKBENCH_SERVER` and drops its schema.
+  (#525)
+
 - Fix the `pg_stat_statements` collector probe discarding the block
   timing columns on every modern server. The probe chose its query
   shape by looking for the version-specific columns in

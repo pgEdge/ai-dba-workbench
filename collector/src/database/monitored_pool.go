@@ -686,6 +686,20 @@ func buildMonitoredConnectionParams(conn MonitoredConnection, databaseName strin
 		params["password"] = decryptedPassword
 	}
 
+	addMonitoredSSLParams(params, conn)
+
+	// Set application name to identify monitoring connections
+	params["application_name"] = ApplicationName
+
+	// Set connection timeout (10 seconds)
+	params["connect_timeout"] = "10"
+
+	return params, nil
+}
+
+// addMonitoredSSLParams adds a monitored connection's TLS settings to
+// params, defaulting sslmode to prefer when none is configured.
+func addMonitoredSSLParams(params map[string]string, conn MonitoredConnection) {
 	if conn.SSLMode.Valid && conn.SSLMode.String != "" {
 		params["sslmode"] = conn.SSLMode.String
 	} else {
@@ -703,12 +717,4 @@ func buildMonitoredConnectionParams(conn MonitoredConnection, databaseName strin
 	if conn.SSLRootCert.Valid && conn.SSLRootCert.String != "" {
 		params["sslrootcert"] = conn.SSLRootCert.String
 	}
-
-	// Set application name to identify monitoring connections
-	params["application_name"] = ApplicationName
-
-	// Set connection timeout (10 seconds)
-	params["connect_timeout"] = "10"
-
-	return params, nil
 }

@@ -42,15 +42,150 @@ func (e *Engine) cleanResolvedAlerts(ctx context.Context) {
 	// alert, lazily so that a pass which needs it never reads it.
 	staleness := &probeStalenessSnapshot{}
 
+	// An operator who stops monitoring a connection retires its alerts
+	// too, so the set of unmonitored connections is resolved once per pass
+	// alongside the other snapshots. See GitHub issue #500.
+	unmonitored := &unmonitoredConnectionSnapshot{}
+
 	for _, alert := range alerts {
 		if ctx.Err() != nil {
 			return
+		}
+
+		// This check sits outside the threshold branch below because it
+		// applies to an alert of any type: an anomaly or connection alert
+		// on a connection nobody is monitoring is as stuck as a threshold
+		// one. An alert it claims skips the resolution checks entirely,
+		// so that a failed clear cannot fall through to the path that
+		// would notify.
+		if e.clearAlertForUnmonitoredConnection(ctx, alert, unmonitored) {
+			continue
 		}
 
 		if alert.AlertType == "threshold" && alert.RuleID != nil {
 			e.checkAlertResolved(ctx, alert, gates[*alert.RuleID], staleness)
 		}
 	}
+}
+
+// unmonitoredConnectionSnapshot holds one cleanup pass's view of which
+// connections an operator has stopped monitoring, read on first use and
+// reused for every alert after that, exactly as probeStalenessSnapshot
+// is. A failed read is remembered too, for the same reason: retrying it
+// per alert would hammer a datastore that is already unwell, and every
+// caller treats the failure the same way, by leaving the alert active.
+type unmonitoredConnectionSnapshot struct {
+	connections map[int]string
+	err         error
+	loaded      bool
+}
+
+// get returns the pass's unmonitored connections, reading them through
+// the engine's datastore the first time it is called.
+func (s *unmonitoredConnectionSnapshot) get(ctx context.Context, e *Engine) (map[int]string, error) {
+	if !s.loaded {
+		s.connections, s.err = e.datastore.GetUnmonitoredConnections(ctx)
+		s.loaded = true
+	}
+	return s.connections, s.err
+}
+
+// unmonitoredClearDescriptionPrefix opens the description of every alert
+// closed because its connection is no longer monitored, so that the
+// history of the alert says plainly why it ended.
+const unmonitoredClearDescriptionPrefix = "Monitoring stopped: "
+
+// unmonitoredClearDescription is the text such an alert carries out. It
+// keeps whatever the alert last said after the new opening, because the
+// condition that raised it is still the most useful thing in the record,
+// and the reader needs to know both what was wrong and that nothing has
+// shown it to be better.
+func unmonitoredClearDescription(connectionName, previous string) string {
+	return fmt.Sprintf(
+		unmonitoredClearDescriptionPrefix+
+			"monitoring of %s was turned off, so this alert was closed "+
+			"without the condition it reports being observed to end. The "+
+			"alert said: %s",
+		connectionName, previous)
+}
+
+// clearAlertForUnmonitoredConnection closes an active alert whose
+// connection an operator has stopped monitoring, and reports whether the
+// alert belonged to such a connection at all, so the caller can skip the
+// ordinary resolution checks for an alert this path has taken charge of.
+//
+// It reports true even when the clear itself failed. The ordinary
+// resolution path would otherwise pick the alert up in the same pass,
+// and, finding the condition resolved, clear it and queue the very
+// clear notification this path exists to suppress. Leaving the alert
+// active for the next pass to retry is the safer of the two, so the
+// verdict is about which path owns the alert rather than about whether
+// the write succeeded.
+//
+// Nothing publishes a change to connections.is_monitored, so the cleanup
+// pass is the only place this can be noticed. Until it was, the probes of
+// an unmonitored connection left the staleness view, every absent metric
+// on it was classified as a probe that is not reporting, and its alerts
+// stayed active for ever: DeleteOldAlerts only reaps a retired alert, so
+// nothing removed them and nothing explained them. Un-monitoring a server
+// is deliberate operator action rather than a collector falling over, and
+// is_monitored is what tells the two apart, which is why this clears
+// where an unavailable probe holds the alert open. The wider rule that
+// pins an alert open behind a stalled probe is untouched. See GitHub
+// issue #500.
+//
+// No clear notification is queued. An operator who has just stopped
+// monitoring a server must not be sent a burst of messages announcing
+// conditions as resolved when nothing resolved them, and they already
+// know what they did.
+//
+// A failed read of the unmonitored set leaves every alert active and in
+// the ordinary path's hands, as a failed staleness read does; a failed
+// description rewrite still clears the alert, because an alert stuck
+// active for ever is the fault being fixed here and a stale description
+// is a far smaller one. Both failures are logged.
+func (e *Engine) clearAlertForUnmonitoredConnection(ctx context.Context,
+	alert *database.Alert, unmonitored *unmonitoredConnectionSnapshot) bool {
+	if unmonitored == nil {
+		unmonitored = &unmonitoredConnectionSnapshot{}
+	}
+
+	connections, err := unmonitored.get(ctx, e)
+	if err != nil {
+		e.log("ERROR: Cannot tell whether connection %d is still monitored for alert %d, "+
+			"leaving it active: %v", alert.ConnectionID, alert.ID, err)
+		return false
+	}
+
+	connectionName, found := connections[alert.ConnectionID]
+	if !found {
+		return false
+	}
+
+	e.log("Connection %d (%s) is no longer monitored; clearing alert %d",
+		alert.ConnectionID, connectionName, alert.ID)
+
+	// A description this function already wrote is left alone. It can only
+	// be there because a previous pass rewrote it and then failed to clear
+	// the alert, and rewriting it again would nest one explanation inside
+	// the next for as long as the clear kept failing.
+	if !strings.HasPrefix(alert.Description, unmonitoredClearDescriptionPrefix) {
+		description := unmonitoredClearDescription(connectionName, alert.Description)
+		if err := e.datastore.UpdateAlertDescription(ctx, alert.ID, description); err != nil {
+			e.log("ERROR: Failed to record why alert %d was closed, clearing it with its "+
+				"original description: %v", alert.ID, err)
+		} else {
+			alert.Description = description
+		}
+	}
+
+	if err := e.datastore.ClearAlert(ctx, alert.ID); err != nil {
+		e.log("ERROR: Failed to clear alert %d for unmonitored connection %d, "+
+			"leaving it for the next pass: %v",
+			alert.ID, alert.ConnectionID, err)
+	}
+
+	return true
 }
 
 // probeStalenessSnapshot holds one cleanup pass's view of which probes

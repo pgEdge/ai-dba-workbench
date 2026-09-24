@@ -308,8 +308,7 @@ recognisable in notification history. The alerter restores
 the evaluator's original wording once the probe collects
 again, so the clear notification and the stored history
 describe the recovery rather than the outage. A probe that
-an operator has disabled, and a probe on a connection that
-is no longer monitored, both clear the alert, because each
+an operator has disabled clears the alert, because that
 represents a deliberate change rather than a fault; the
 alerter restores the original wording on that path too,
 rebuilding it from the connection and probe configuration,
@@ -335,6 +334,28 @@ runs every 60 seconds is still at a ratio of 1.0 at the
 moment the collector records the probe as unavailable.
 Alerting on a probe that moves from available to
 unavailable is tracked separately in [issue 512](https://github.com/pgEdge/ai-dba-workbench/issues/512).
+
+## Alerts on a Server You Stop Monitoring
+
+Turning off monitoring for a server closes its alerts.
+On its next cleanup cycle the alerter clears every active
+alert on that server, of every type, and rewrites each
+alert description to record that it was closed because
+monitoring of the server was turned off rather than
+because the condition it reports ended. The alerts then
+age out under the normal retention period.
+
+No clear notifications are sent for those alerts, because
+nothing observed the conditions resolve and an operator
+who has just stopped monitoring a server does not need a
+burst of messages announcing them as fixed. The alerter
+logs each alert it closes this way at the normal log
+level.
+
+Turning monitoring back on does not reopen the closed
+alerts. Any condition that still holds raises a fresh
+alert on the next evaluation cycle, subject to the usual
+re-raise cooldown.
 
 ## Blackout Interaction
 

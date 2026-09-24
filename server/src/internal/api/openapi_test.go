@@ -12,6 +12,7 @@ package api
 import (
 	"encoding/json"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -387,5 +388,34 @@ func TestOpenAPICapabilitiesResponseDescribesAuthMethods(t *testing.T) {
 		if _, ok := authSchema.Properties[property]; !ok {
 			t.Errorf("AuthCapabilities has no %q property", property)
 		}
+	}
+}
+
+// TestOpenAPIUserSchemasRequireAuthSource checks that the two schemas built
+// from a StoredUser declare auth_source as required, because the handlers
+// always set it, with no omitempty, so a consumer would otherwise be told to
+// expect a field that is in fact always there. auth_issuer stays optional: it
+// does carry omitempty, and is genuinely absent for a local account.
+func TestOpenAPIUserSchemasRequireAuthSource(t *testing.T) {
+	spec := BuildOpenAPISpec()
+
+	for _, name := range []string{"RBACUser", "UserPrivilegesResponse"} {
+		t.Run(name, func(t *testing.T) {
+			schema, ok := spec.Components.Schemas[name]
+			if !ok {
+				t.Fatalf("the spec has no %s schema", name)
+			}
+			if _, ok := schema.Properties["auth_source"]; !ok {
+				t.Fatalf("%s has no auth_source property", name)
+			}
+			if !slices.Contains(schema.Required, "auth_source") {
+				t.Fatalf("%s required list is %v, which omits auth_source",
+					name, schema.Required)
+			}
+			if slices.Contains(schema.Required, "auth_issuer") {
+				t.Fatalf("%s requires auth_issuer, which is absent for a local account",
+					name)
+			}
+		})
 	}
 }

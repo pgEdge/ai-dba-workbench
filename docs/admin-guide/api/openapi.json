@@ -13271,6 +13271,14 @@
             "type": "string",
             "description": "User annotation"
           },
+          "auth_issuer": {
+            "type": "string",
+            "description": "Issuer of the identity provider that owns a federated account. Absent for a local account, and for a federated account whose stored identity cannot be parsed. The provider subject is never reported"
+          },
+          "auth_source": {
+            "type": "string",
+            "description": "How the account signs in. The known values are local for a password held by the Workbench, oidc for an account federated to an identity provider, and unknown for a stored account with no recorded source. Other values may appear, since any other stored source is reported exactly as it is stored; any value other than local means the account cannot sign in with a password"
+          },
           "display_name": {
             "type": "string",
             "description": "Display name"
@@ -13300,7 +13308,10 @@
             "type": "string",
             "description": "Username"
           }
-        }
+        },
+        "required": [
+          "auth_source"
+        ]
       },
       "RelationshipInput": {
         "type": "object",
@@ -13953,6 +13964,14 @@
               "type": "string"
             }
           },
+          "auth_issuer": {
+            "type": "string",
+            "description": "Issuer of the identity provider that owns a federated account. Absent for a local account, and for a federated account whose stored identity cannot be parsed. The provider subject is never reported"
+          },
+          "auth_source": {
+            "type": "string",
+            "description": "How the account signs in. The known values are local for a password held by the Workbench, oidc for an account federated to an identity provider, and unknown for a stored account with no recorded source. Other values may appear, since any other stored source is reported exactly as it is stored; any value other than local means the account cannot sign in with a password"
+          },
           "connection_privileges": {
             "type": "object",
             "description": "Connection ID to access level mapping",
@@ -13982,7 +14001,10 @@
             "type": "string",
             "description": "Username"
           }
-        }
+        },
+        "required": [
+          "auth_source"
+        ]
       },
       "UserUpdateRequest": {
         "type": "object",

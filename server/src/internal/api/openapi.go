@@ -1679,6 +1679,11 @@ func buildSchemas() map[string]*OpenAPISchema {
 		},
 		"RBACUser": {
 			Type: "object",
+			// auth_source is the only property listed here because it is
+			// the only one this schema has ever declared as required; the
+			// rest are left as they were rather than sweeping an unrelated
+			// audit of the schema into the change that added this field.
+			Required: []string{"auth_source"},
 			Properties: map[string]*OpenAPISchema{
 				"id":                 {Type: "integer", Format: "int64", Description: "User ID"},
 				"username":           {Type: "string", Description: "Username"},
@@ -1688,6 +1693,16 @@ func buildSchemas() map[string]*OpenAPISchema {
 				"is_superuser":       {Type: "boolean", Description: "Whether the user is a superuser"},
 				"is_service_account": {Type: "boolean", Description: "Whether the user is a service account"},
 				"annotation":         {Type: "string", Description: "User annotation"},
+				"auth_source": {Type: "string",
+					Description: "How the account signs in. The known values are local for a password " +
+						"held by the Workbench, oidc for an account federated to an identity provider, " +
+						"and unknown for a stored account with no recorded source. Other values may " +
+						"appear, since any other stored source is reported exactly as it is stored; any " +
+						"value other than local means the account cannot sign in with a password"},
+				"auth_issuer": {Type: "string",
+					Description: "Issuer of the identity provider that owns a federated account. Absent " +
+						"for a local account, and for a federated account whose stored identity cannot " +
+						"be parsed. The provider subject is never reported"},
 			},
 		},
 		"AuditEvent": {
@@ -1742,9 +1757,24 @@ func buildSchemas() map[string]*OpenAPISchema {
 		},
 		"UserPrivilegesResponse": {
 			Type: "object",
+			// auth_source is the only property listed here because it is
+			// the only one this schema has ever declared as required; the
+			// rest are left as they were rather than sweeping an unrelated
+			// audit of the schema into the change that added this field.
+			Required: []string{"auth_source"},
 			Properties: map[string]*OpenAPISchema{
-				"username":              {Type: "string", Description: "Username"},
-				"is_superuser":          {Type: "boolean", Description: "Whether the user is a superuser"},
+				"username":     {Type: "string", Description: "Username"},
+				"is_superuser": {Type: "boolean", Description: "Whether the user is a superuser"},
+				"auth_source": {Type: "string",
+					Description: "How the account signs in. The known values are local for a password " +
+						"held by the Workbench, oidc for an account federated to an identity provider, " +
+						"and unknown for a stored account with no recorded source. Other values may " +
+						"appear, since any other stored source is reported exactly as it is stored; any " +
+						"value other than local means the account cannot sign in with a password"},
+				"auth_issuer": {Type: "string",
+					Description: "Issuer of the identity provider that owns a federated account. Absent " +
+						"for a local account, and for a federated account whose stored identity cannot " +
+						"be parsed. The provider subject is never reported"},
 				"groups":                {Type: "array", Items: &OpenAPISchema{Type: "string"}, Description: "Group names"},
 				"mcp_privileges":        {Type: "array", Items: &OpenAPISchema{Type: "string"}, Description: "MCP privilege identifiers"},
 				"connection_privileges": {Type: "object", Description: "Connection ID to access level mapping", AdditionalProperties: &OpenAPISchema{Type: "string"}},

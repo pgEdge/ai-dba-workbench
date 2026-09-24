@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -663,6 +664,27 @@ func parseExternalSubjectKey(key string) (issuer, subject string, ok bool) {
 	return rest[:length], rest[length+1:], true
 }
 
+// IssuerFromExternalSubject returns the issuer half of a stored
+// users.external_subject key, so that an administrator reading a user list
+// can tell which identity provider owns a federated account.
+//
+// The subject half is deliberately not returned. It is a long opaque string
+// that means nothing to a human reading a list, and it is an identifier there
+// is no reason to spread through API responses and CLI tables when nothing
+// reading them needs it; the few callers that genuinely need both halves, such
+// as the messages -link-oidc-user prints, build them from the parts they
+// already hold.
+//
+// An empty key, or one that does not parse, yields "" rather than a guess, so
+// that a caller can fall back to a generic label.
+func IssuerFromExternalSubject(key string) string {
+	issuer, _, ok := parseExternalSubjectKey(key)
+	if !ok {
+		return ""
+	}
+	return issuer
+}
+
 // describeSubjectKey renders a stored external subject for an operator,
 // falling back to the raw key when it does not parse.
 func describeSubjectKey(key string) string {
@@ -718,6 +740,24 @@ func (s *AuthStore) LinkFederatedIdentity(username, issuer, subject string, reli
 	}
 	if issuer == "" || subject == "" {
 		return "", fmt.Errorf("an issuer and a subject are both required")
+	}
+	// The configured issuer must be an https:// URL with a host (see the
+	// OIDC checks in config.validateConfig), and a federated login only ever
+	// looks up the issuer it was configured with, so a link to anything
+	// else would create an account that no login can reach. Refusing it
+	// here turns a mistyped -issuer into an error instead.
+	//
+	// An issuer never carries credentials either, and one that did would
+	// be stored in external_subject and later reported as auth_issuer, so
+	// userinfo is refused first, whatever the scheme. Neither error echoes
+	// the value: a string that does not even parse can still hold a
+	// password, and quoting it would put that on the terminal or in a log.
+	issuerURL, err := url.Parse(issuer)
+	if err == nil && issuerURL.User != nil {
+		return "", fmt.Errorf("issuer must not contain user credentials")
+	}
+	if err != nil || issuerURL.Scheme != "https" || issuerURL.Host == "" {
+		return "", fmt.Errorf("issuer is not a valid https:// URL")
 	}
 	key := ExternalSubjectKey(issuer, subject)
 

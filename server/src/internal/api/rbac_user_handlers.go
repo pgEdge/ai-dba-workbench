@@ -57,10 +57,13 @@ func (h *RBACHandler) listUsers(w http.ResponseWriter, r *http.Request) {
 		IsSuperuser      bool   `json:"is_superuser"`
 		IsServiceAccount bool   `json:"is_service_account"`
 		Annotation       string `json:"annotation,omitempty"`
+		AuthSource       string `json:"auth_source"`
+		AuthIssuer       string `json:"auth_issuer,omitempty"`
 	}
 
 	result := make([]userResponse, len(users))
 	for i, u := range users {
+		source, issuer := describeAuthSource(u)
 		result[i] = userResponse{
 			ID:               u.ID,
 			Username:         u.Username,
@@ -70,6 +73,8 @@ func (h *RBACHandler) listUsers(w http.ResponseWriter, r *http.Request) {
 			IsSuperuser:      u.IsSuperuser,
 			IsServiceAccount: u.IsServiceAccount,
 			Annotation:       u.Annotation,
+			AuthSource:       source,
+			AuthIssuer:       issuer,
 		}
 	}
 
@@ -211,7 +216,7 @@ func (h *RBACHandler) updateUser(w http.ResponseWriter, r *http.Request, userID 
 		// on a federated user would otherwise have the whole transaction
 		// rolled back behind a generic failure, and could reasonably
 		// believe they had disabled the account when they had not.
-		if user.AuthSource != "" && user.AuthSource != auth.AuthSourceLocal {
+		if user.AuthSource != auth.AuthSourceLocal {
 			RespondError(w, http.StatusBadRequest,
 				"This account signs in through an identity provider, so it cannot be "+
 					"given a password. Remove the password and apply the other changes, "+
@@ -326,15 +331,26 @@ func (h *RBACHandler) getUserPrivileges(w http.ResponseWriter, r *http.Request, 
 	type privilegeResponse struct {
 		Username             string         `json:"username"`
 		IsSuperuser          bool           `json:"is_superuser"`
+		AuthSource           string         `json:"auth_source"`
+		AuthIssuer           string         `json:"auth_issuer,omitempty"`
 		Groups               []string       `json:"groups"`
 		MCPPrivileges        []string       `json:"mcp_privileges"`
 		ConnectionPrivileges map[int]string `json:"connection_privileges"`
 		AdminPermissions     []string       `json:"admin_permissions"`
 	}
 
+	// The authentication source belongs in this response as much as in the
+	// user list: a superuser flag or a group membership that keeps reverting
+	// is usually an identity provider reconciling the account on each login,
+	// and an administrator looking at the privileges of one user is exactly
+	// the person who needs to know that.
+	source, issuer := describeAuthSource(user)
+
 	resp := privilegeResponse{
 		Username:    user.Username,
 		IsSuperuser: user.IsSuperuser,
+		AuthSource:  source,
+		AuthIssuer:  issuer,
 	}
 
 	// Get groups
@@ -390,6 +406,38 @@ func (h *RBACHandler) getUserPrivileges(w http.ResponseWriter, r *http.Request, 
 	}
 
 	RespondJSON(w, http.StatusOK, resp)
+}
+
+// authSourceUnknown is what describeAuthSource reports for a row whose stored
+// auth_source is empty, so that the field is never blank in a response.
+const authSourceUnknown = "unknown"
+
+// describeAuthSource reports how a stored account signs in, as the pair of
+// values every user object in this package carries: the authentication source
+// itself, and the issuer of the identity provider that owns the account.
+//
+// Only a stored value of exactly local is reported as local, which is the
+// reading AuthenticateUser applies when it refuses password login to anything
+// else. Every other value is passed through as it is stored, with the issuer
+// when the external subject parses, so that an unexpected source is shown for
+// what it is rather than dressed up as oidc. The one exception is an empty
+// value, which is reported as unknown: the column is NOT NULL DEFAULT 'local',
+// so no supported path writes one, but calling such a row local would tell an
+// administrator that it accepts a password when login refuses it, and calling
+// it oidc would name a provider nothing on the row supports.
+//
+// The issuer is empty for a local account, and also for a federated one whose
+// stored external subject cannot be parsed; a caller renders its own fallback
+// rather than being handed a half-parsed key. The subject is never reported.
+func describeAuthSource(user *auth.StoredUser) (source, issuer string) {
+	source = user.AuthSource
+	if source == auth.AuthSourceLocal {
+		return source, ""
+	}
+	if source == "" {
+		source = authSourceUnknown
+	}
+	return source, auth.IssuerFromExternalSubject(user.ExternalSubject)
 }
 
 // capitalizeFirst returns the string with its first character uppercased.

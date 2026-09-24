@@ -78,8 +78,16 @@ const mockUsers = [
     },
 ];
 
+// The RBAC user rows carry the federated-account fields only when the
+// server reports them, so the fixture type makes them optional on top
+// of the shared shape.
+type MockUser = (typeof mockUsers)[number] & {
+    auth_source?: string;
+    auth_issuer?: string;
+};
+
 interface ListMockOverrides {
-    users?: typeof mockUsers;
+    users?: MockUser[];
     privileges?: unknown;
     privilegesRejection?: Error;
 }
@@ -1182,6 +1190,173 @@ describe('AdminUsers', () => {
                     screen.getByText('An unexpected error occurred'),
                 ).toBeInTheDocument();
             });
+        });
+    });
+
+    describe('Federated accounts', () => {
+        const federatedUser: MockUser = {
+            ...mockUsers[1],
+            id: 4,
+            username: 'carol',
+            display_name: 'Carol',
+            email: 'carol@example.com',
+            auth_source: 'oidc',
+            auth_issuer: 'https://idp.example.com/realms/workbench',
+        };
+
+        it('leaves a local account looking exactly as before', async () => {
+            installListMocks();
+            renderWithTheme(<AdminUsers />);
+            await waitFor(() => {
+                expect(screen.getByText('alice')).toBeInTheDocument();
+            });
+            // Two local humans and one service account, so "User"
+            // appears twice and nothing is marked federated.
+            expect(screen.getAllByText('User')).toHaveLength(2);
+            expect(screen.queryByText('Federated')).not.toBeInTheDocument();
+        });
+
+        it('treats an explicit local auth source as a local account', async () => {
+            installListMocks({
+                users: [{ ...mockUsers[1], auth_source: 'local' }],
+            });
+            renderWithTheme(<AdminUsers />);
+            await waitFor(() => {
+                expect(screen.getByText('bob')).toBeInTheDocument();
+            });
+            expect(screen.getByText('User')).toBeInTheDocument();
+            expect(screen.queryByText('Federated')).not.toBeInTheDocument();
+        });
+
+        it('treats any source other than local as federated', async () => {
+            installListMocks({
+                users: [{ ...mockUsers[1], auth_source: 'unknown' }],
+            });
+            renderWithTheme(<AdminUsers />);
+            await waitFor(() => {
+                expect(screen.getByText('bob')).toBeInTheDocument();
+            });
+            expect(screen.getByText('Federated')).toBeInTheDocument();
+        });
+
+        it('marks a federated account and shows its issuer in the row', async () => {
+            installListMocks({ users: [federatedUser] });
+            renderWithTheme(<AdminUsers />);
+            await waitFor(() => {
+                expect(screen.getByText('carol')).toBeInTheDocument();
+            });
+            expect(screen.getByText('Federated')).toBeInTheDocument();
+            expect(
+                screen.getByText(
+                    'https://idp.example.com/realms/workbench',
+                ),
+            ).toBeInTheDocument();
+            expect(screen.queryByText('User')).not.toBeInTheDocument();
+        });
+
+        it('shows the full issuer in a tooltip when the row line is clamped', async () => {
+            installListMocks({ users: [federatedUser] });
+            const user = userEvent.setup({ delay: null });
+            renderWithTheme(<AdminUsers />);
+            await waitFor(() => {
+                expect(screen.getByText('carol')).toBeInTheDocument();
+            });
+            await user.hover(
+                screen.getByText('https://idp.example.com/realms/workbench'),
+            );
+            const tooltip = await screen.findByRole('tooltip');
+            expect(tooltip).toHaveTextContent(
+                'https://idp.example.com/realms/workbench',
+            );
+        });
+
+        it('marks a federated account that reports no issuer', async () => {
+            installListMocks({
+                users: [{ ...federatedUser, auth_issuer: undefined }],
+            });
+            renderWithTheme(<AdminUsers />);
+            await waitFor(() => {
+                expect(screen.getByText('carol')).toBeInTheDocument();
+            });
+            expect(screen.getByText('Federated')).toBeInTheDocument();
+        });
+
+        it('replaces the edit password field with the reason it is absent', async () => {
+            installListMocks({ users: [federatedUser] });
+            const user = userEvent.setup({ delay: null });
+            renderWithTheme(<AdminUsers />);
+            await waitFor(() => {
+                expect(screen.getByText('carol')).toBeInTheDocument();
+            });
+            await user.click(screen.getByLabelText('edit user'));
+            const dialog = await screen.findByRole('dialog');
+            expect(
+                within(dialog).queryByText(/^Password/),
+            ).not.toBeInTheDocument();
+            expect(
+                within(dialog).getByText(
+                    /signs in through the identity provider at https:\/\/idp\.example\.com\/realms\/workbench, so it cannot be given a password/i,
+                ),
+            ).toBeInTheDocument();
+            expect(
+                within(dialog).getByText(/unlink the account first/i),
+            ).toBeInTheDocument();
+        });
+
+        it('warns in the same notice that the provider reconciles the superuser flag', async () => {
+            installListMocks({ users: [federatedUser] });
+            const user = userEvent.setup({ delay: null });
+            renderWithTheme(<AdminUsers />);
+            await waitFor(() => {
+                expect(screen.getByText('carol')).toBeInTheDocument();
+            });
+            await user.click(screen.getByLabelText('edit user'));
+            const dialog = await screen.findByRole('dialog');
+            expect(
+                within(dialog).getByText(
+                    /superuser flag where the provider grants one, are reconciled at every sign-in/i,
+                ),
+            ).toBeInTheDocument();
+            // The toggle itself stays usable: an administrator may
+            // still legitimately grant the flag.
+            expect(
+                within(dialog).getByRole('checkbox', { name: /superuser/i }),
+            ).toBeEnabled();
+        });
+
+        it('falls back to generic wording when the issuer is unknown', async () => {
+            installListMocks({
+                users: [{ ...federatedUser, auth_issuer: undefined }],
+            });
+            const user = userEvent.setup({ delay: null });
+            renderWithTheme(<AdminUsers />);
+            await waitFor(() => {
+                expect(screen.getByText('carol')).toBeInTheDocument();
+            });
+            await user.click(screen.getByLabelText('edit user'));
+            const dialog = await screen.findByRole('dialog');
+            expect(
+                within(dialog).getByText(
+                    /signs in through an identity provider, so it cannot be given a password/i,
+                ),
+            ).toBeInTheDocument();
+        });
+
+        it('keeps the password field for a local account', async () => {
+            installListMocks({ users: [mockUsers[1]] });
+            const user = userEvent.setup({ delay: null });
+            renderWithTheme(<AdminUsers />);
+            await waitFor(() => {
+                expect(screen.getByText('bob')).toBeInTheDocument();
+            });
+            await user.click(screen.getByLabelText('edit user'));
+            const dialog = await screen.findByRole('dialog');
+            expect(
+                findFieldByLabel(dialog, 'Password'),
+            ).toBeInTheDocument();
+            expect(
+                within(dialog).queryByText(/identity provider/i),
+            ).not.toBeInTheDocument();
         });
     });
 });

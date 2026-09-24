@@ -153,17 +153,23 @@ The user list includes all currently defined user and service accounts:
 Auth store: /var/lib/ai-workbench/data/auth.db
 
 Users:
-=========================================================================================
-Username             Created                   Last Login           Status     Notes
------------------------------------------------------------------------------------------
-Alice                2026-06-10 13:24          Never                Enabled    Developer
-Bob                  2026-06-10 13:31          Never                DISABLED   developer
-Carol                2026-06-10 13:32          Never                Enabled    Management
-Dan                  2026-06-10 13:37          Never                Enabled    sales
-admin                2026-06-09 11:59          2026-06-10 12:27     Enabled    management
-inventory            2026-06-10 13:31          Never                Enabled    Software
-=========================================================================================
+=================================================================================================================
+Username             Created           Last Login        Status               Notes                Authentication
+-----------------------------------------------------------------------------------------------------------------
+Alice                2026-06-10 13:24  Never             Enabled              Developer            https://idp.example.com
+Bob                  2026-06-10 13:31  Never             DISABLED             developer            Local
+Carol                2026-06-10 13:32  Never             Enabled              Management           https://idp.example.com
+Dan                  2026-06-10 13:37  Never             Enabled              sales                Local
+admin                2026-06-09 11:59  2026-06-10 12:27  Enabled              management           Local
+inventory            2026-06-10 13:31  Never             Enabled              Software             Local
+=================================================================================================================
 ```
+
+The `Authentication` column reads `Local` for an account that holds a
+Workbench password, and the identity provider's issuer for an account that
+signs in through single sign-on; see
+[Single Sign-On](sso.md) for how federated accounts are identified in each
+administrative interface.
 
 ### Modifying an Account
 
@@ -183,6 +189,12 @@ you to modify:
 - if the account has `Superuser` privileges.
 
 ![Editing user details](../../images/edit_account.png)
+
+A federated account is marked in the `Type` column with a `Federated` chip
+and the provider's issuer, and its `Edit user` dialog offers no password
+field; the dialog explains instead that the account signs in through the
+provider and that the provider reconciles its group membership and
+superuser flag at every sign-in.
 
 You can also modify these properties at the command line. In the following
 example, the `-update-user` command starts an interactive session that

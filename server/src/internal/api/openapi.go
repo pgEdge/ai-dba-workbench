@@ -3841,7 +3841,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					queryParamIntRequired("connection_id", "Connection ID"),
 					queryParamStringRequired("queryid", "Query ID to report on"),
 					queryParamString("database_name",
-						"Restrict the statistics to rows recorded against this database"),
+						"Restrict the statistics to the query's executions in this database"),
 					queryParamString("time_range",
 						"Time range (1h, 6h, 24h, 7d, 30d, custom; default: 1h); custom requires time_start and time_end"),
 					queryParamString("time_start",

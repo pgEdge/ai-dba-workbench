@@ -6270,7 +6270,7 @@
           {
             "name": "database_name",
             "in": "query",
-            "description": "Restrict the statistics to rows recorded against this database",
+            "description": "Restrict the statistics to the query's executions in this database",
             "schema": {
               "type": "string"
             }

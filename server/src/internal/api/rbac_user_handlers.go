@@ -213,6 +213,14 @@ func (h *RBACHandler) updateUser(w http.ResponseWriter, r *http.Request, userID 
 		return
 	}
 
+	// Changing a superuser's password, profile or enabled state is as
+	// good as holding the role: a new password lets the caller sign in
+	// as that superuser, and disabling one can lock every administrator
+	// out. Only a superuser may therefore edit a superuser account.
+	if user.IsSuperuser && !h.requireSuperuser(w, r) {
+		return
+	}
+
 	// Validate password against the length and dictionary policy when set
 	if req.Password != nil && *req.Password != "" {
 		if err := auth.ValidatePassword(*req.Password); err != nil {
@@ -264,6 +272,11 @@ func (h *RBACHandler) deleteUser(w http.ResponseWriter, r *http.Request, userID 
 	user, err := h.authStore.GetUserByID(userID)
 	if err != nil || user == nil {
 		RespondError(w, http.StatusNotFound, "User not found")
+		return
+	}
+
+	// See updateUser: only a superuser may delete a superuser account.
+	if user.IsSuperuser && !h.requireSuperuser(w, r) {
 		return
 	}
 

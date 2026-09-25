@@ -263,3 +263,122 @@ func TestRespondUserStoreError(t *testing.T) {
 		})
 	}
 }
+
+// superuserTarget creates a second account holding the superuser role and
+// returns its ID, for tests of what a manage_users holder may do to one.
+func superuserTarget(t *testing.T, store *auth.AuthStore) int64 {
+	t.Helper()
+	if err := store.CreateUser("target", "Password1234", "before", "", ""); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if err := store.SetUserSuperuser("target", true); err != nil {
+		t.Fatalf("SetUserSuperuser: %v", err)
+	}
+	id, err := store.GetUserID("target")
+	if err != nil {
+		t.Fatalf("GetUserID: %v", err)
+	}
+	return id
+}
+
+// TestRBACHandler_UpdateUser_SuperuserTargetRequiresSuperuser covers the
+// other half of #497: resetting a superuser's password would let the
+// caller sign in as them, and disabling one could lock every
+// administrator out, so a manage_users holder may not edit a superuser.
+func TestRBACHandler_UpdateUser_SuperuserTargetRequiresSuperuser(t *testing.T) {
+	tests := []struct {
+		name string
+		body map[string]any
+	}{
+		{"password reset", map[string]any{"password": "An0ther-Str0ng-Pass!"}},
+		{"disable", map[string]any{"enabled": false}},
+		{"annotation", map[string]any{"annotation": "after"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler, store, adminID, cleanup := adminRBACHandler(t)
+			defer cleanup()
+			targetID := superuserTarget(t, store)
+
+			rec := putUser(t, handler, targetID, tt.body,
+				func(r *http.Request) *http.Request { return withUser(r, adminID) })
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("Expected status %d, got %d. Body: %s",
+					http.StatusForbidden, rec.Code, rec.Body.String())
+			}
+
+			after, err := store.GetUserByID(targetID)
+			if err != nil {
+				t.Fatalf("GetUserByID: %v", err)
+			}
+			if !after.Enabled || after.Annotation != "before" {
+				t.Errorf("the refused request changed the account: enabled=%v annotation=%q",
+					after.Enabled, after.Annotation)
+			}
+			if _, _, err := store.AuthenticateUser("target", "Password1234"); err != nil {
+				t.Errorf("the original password no longer works: %v", err)
+			}
+			assertDeniedAudited(t, store, "user.update")
+		})
+	}
+}
+
+// TestRBACHandler_UpdateUser_SuperuserCanEditSuperuser checks a superuser
+// may still reset another superuser's password.
+func TestRBACHandler_UpdateUser_SuperuserCanEditSuperuser(t *testing.T) {
+	handler, store, cleanup := createTestRBACHandler(t)
+	defer cleanup()
+	targetID := superuserTarget(t, store)
+
+	rec := putUser(t, handler, targetID,
+		map[string]any{"password": "An0ther-Str0ng-Pass!"}, withSuperuser)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected status %d, got %d. Body: %s",
+			http.StatusOK, rec.Code, rec.Body.String())
+	}
+	if _, _, err := store.AuthenticateUser("target", "An0ther-Str0ng-Pass!"); err != nil {
+		t.Errorf("the new password does not work: %v", err)
+	}
+}
+
+// TestRBACHandler_DeleteUser_SuperuserTarget checks that only a superuser
+// may delete a superuser account.
+func TestRBACHandler_DeleteUser_SuperuserTarget(t *testing.T) {
+	tests := []struct {
+		name       string
+		superuser  bool
+		wantStatus int
+	}{
+		{"manage_users holder is refused", false, http.StatusForbidden},
+		{"superuser may delete", true, http.StatusNoContent},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler, store, adminID, cleanup := adminRBACHandler(t)
+			defer cleanup()
+			targetID := superuserTarget(t, store)
+
+			req := httptest.NewRequest(http.MethodDelete,
+				"/api/v1/rbac/users/"+strconv.FormatInt(targetID, 10), nil)
+			if tt.superuser {
+				req = withSuperuser(req)
+			} else {
+				req = withUser(req, adminID)
+			}
+			rec := httptest.NewRecorder()
+			handler.deleteUser(rec, req, targetID)
+
+			if rec.Code != tt.wantStatus {
+				t.Fatalf("Expected status %d, got %d. Body: %s",
+					tt.wantStatus, rec.Code, rec.Body.String())
+			}
+			user, _ := store.GetUserByID(targetID)
+			if exists := user != nil; exists == tt.superuser {
+				t.Errorf("account exists = %v after the request", exists)
+			}
+			if !tt.superuser {
+				assertDeniedAudited(t, store, "user.delete")
+			}
+		})
+	}
+}

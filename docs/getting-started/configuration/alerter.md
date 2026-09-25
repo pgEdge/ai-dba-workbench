@@ -411,7 +411,7 @@ provider.
 | `api_key_file` | string | None | Path to API key file |
 | `base_url` | string | `https://api.openai.com/v1` | OpenAI base URL |
 | `embedding_model` | string | `text-embedding-3-small` | Embedding model |
-| `reasoning_model` | string | `gpt-4o-mini` | Reasoning model |
+| `reasoning_model` | string | `gpt-6-luna` | Reasoning model |
 
 The `openai` provider works with any server that
 implements the OpenAI-compatible API. Set `base_url`

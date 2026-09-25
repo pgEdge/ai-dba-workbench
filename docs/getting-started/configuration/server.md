@@ -133,7 +133,7 @@ embedding:
 #=====================================================
 llm:
   provider: "anthropic"
-  model: "claude-sonnet-4-5"
+  model: "claude-sonnet-5"
   # anthropic_api_key_file: "~/.anthropic-api-key"
   # openai_api_key_file: "~/.openai-api-key"
   # gemini_api_key_file: "~/.gemini-api-key"
@@ -519,7 +519,7 @@ database analysis.
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `provider` | string | `anthropic` | LLM provider |
-| `model` | string | `claude-sonnet-4-5` | Model name |
+| `model` | string | `claude-sonnet-5` | Model name |
 | `anthropic_api_key_file` | string | | Anthropic key path |
 | `openai_api_key_file` | string | | OpenAI key path |
 | `gemini_api_key_file` | string | | Gemini key path |
@@ -634,7 +634,7 @@ verbose tool descriptions:
 ```yaml
 llm:
   provider: "anthropic"
-  model: "claude-sonnet-4-5"
+  model: "claude-sonnet-5"
   anthropic_api_key_file: "~/.anthropic-api-key"
   compact_tool_descriptions: "false"
 ```
@@ -945,7 +945,7 @@ embedding:
   voyage_api_key_file: "/etc/ai-workbench/voyage-key"
 llm:
   provider: "anthropic"
-  model: "claude-sonnet-4-5"
+  model: "claude-sonnet-5"
   anthropic_api_key_file: "/etc/ai-workbench/ant-key"
 secret_file: "/etc/ai-workbench/server.secret"
 data_dir: "/var/lib/ai-workbench/data"

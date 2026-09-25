@@ -519,6 +519,21 @@ project adheres to
   example configuration and the walkthrough script are updated to
   match.
 
+- Change the server's default Anthropic model from
+  `claude-sonnet-4-5` to `claude-sonnet-5`, and the alerter's
+  default OpenAI reasoning model from `gpt-4o-mini` to
+  `gpt-6-luna`. A deployment that leaves `llm.model` or
+  `llm.openai.reasoning_model` unset now uses the new model; set
+  either option explicitly to keep the previous one. The example
+  configurations and the walkthrough script are updated to match.
+
+- Move the server, the alerter and the shared embedding package to
+  `pgedge-go-llm-lib` v0.4.0. Models that reject the `temperature`
+  or `max_tokens` parameter, such as Claude Sonnet 5 and OpenAI's
+  GPT-6 models, previously failed every request, and now work when
+  configured explicitly. The library adjusts the request after the
+  first rejection, which costs one extra round trip per client.
+
 - Report the queried time window in the `/api/v1/metrics/query`
   response. The endpoint returned a bare array of series and said
   nothing about the window behind the series, so charts derived

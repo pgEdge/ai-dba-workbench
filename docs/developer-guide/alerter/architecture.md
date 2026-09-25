@@ -325,7 +325,7 @@ Reasoning providers classify anomalies as real issues or false
 positives. The alerter supports the following providers:
 
 - Ollama with models like `qwen2.5:7b-instruct`.
-- OpenAI with `gpt-4o-mini`.
+- OpenAI with `gpt-6-luna`.
 - Anthropic with `claude-haiku-4-5`.
 
 ## Configuration Reloading

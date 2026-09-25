@@ -605,14 +605,7 @@ type auditQuerier interface {
 // above any fixed value would skip rows the verifier and the re-chain
 // must both see.
 func forEachAuditEvent(q auditQuerier, fn func(AuditEvent) error) error {
-	return walkAuditEventsAfter(q, nil, fn)
-}
-
-// walkAuditEventsAfter is forEachAuditEvent starting after the given id,
-// or at the start of the log when after is nil.
-func walkAuditEventsAfter(q auditQuerier, after *int64,
-	fn func(AuditEvent) error) error {
-
+	var after *int64
 	for {
 		page, err := auditEventPage(q, after)
 		if err != nil {

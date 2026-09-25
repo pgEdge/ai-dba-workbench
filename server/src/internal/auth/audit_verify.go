@@ -79,7 +79,7 @@ func (s *AuthStore) verifyAuditLog() (AuditVerifyReport, error) {
 	report.Events = walk.count
 	report.FirstBad = walk.firstBad
 	if errors.Is(err, errAuditRowUnverified) {
-		return report, s.classifyUnverifiedRow(&walk)
+		return report, s.classifyUnverifiedRow(&walk, anchor.found)
 	}
 	if err != nil {
 		return report, err
@@ -105,19 +105,27 @@ func (s *AuthStore) verifyAuditLog() (AuditVerifyReport, error) {
 }
 
 // classifyUnverifiedRow reports a row whose hash did not recompute
-// under the key. Where the log from its start, or from the end of the
-// history, has the shape a changed server secret leaves, it is reported
-// as a key mismatch; anything else is tampering.
-func (s *AuthStore) classifyUnverifiedRow(walk *auditChainWalk) error {
-	var after *int64
-	if walk.anchor.hasHistory() {
-		after = walk.anchor.HistoryThroughID
-	}
+// under the key. Where the log has the shape a changed server secret
+// leaves, it is reported as a key mismatch; anything else is tampering.
+//
+// anchorFound says the walk ran from a purge or re-chain event that
+// verifies under the key and records where the log begins. Such an
+// event was written under the key in use, by a purge that had checked
+// every older row or a re-chain that had accepted them, so no change of
+// secret can explain a row that fails now; the failure is reported as
+// tampering without asking. Asking would be worse than useless: the
+// question looks at the rows only, and would take a row edited just
+// past the anchor's history as a rotation, letting -confirm-rechain
+// accept a deletion the anchor's head or digest was there to catch. The
+// one rotation it misreads is a return to a secret used before the
+// anchor was written, which an operator can re-chain interactively.
+func (s *AuthStore) classifyUnverifiedRow(walk *auditChainWalk,
+	anchorFound bool) error {
 
 	keyChange := false
-	if !walk.keyProven {
+	if !walk.keyProven && !anchorFound {
 		var err error
-		keyChange, err = s.looksLikeKeyChange(s.db, after)
+		keyChange, err = s.looksLikeKeyChange(s.db)
 		if err != nil {
 			return err
 		}
@@ -125,7 +133,7 @@ func (s *AuthStore) classifyUnverifiedRow(walk *auditChainWalk) error {
 	if keyChange {
 		return fmt.Errorf("%w: audit row %d does not verify under the key "+
 			"in use, and neither does any row before it, whilst every row "+
-			"after them that was checked does. That is what a server "+
+			"after them does. That is what a server "+
 			"secret changed or replaced since those rows were written "+
 			"looks like, rather than tampering: check that the server "+
 			"secret file is the one these rows were written under. If the "+

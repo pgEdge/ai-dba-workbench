@@ -352,47 +352,76 @@ func (s *AuthStore) auditRowVerifies(ev *AuditEvent) bool {
 // errStopAuditWalk ends a walk early without reporting a failure.
 var errStopAuditWalk = errors.New("stop the audit walk")
 
-// looksLikeKeyChange reports whether the log, read from the row after
-// the given id (or from its start when after is nil), has the shape a
-// changed server secret leaves: one or more rows that do not verify
+// looksLikeKeyChange reports whether the log, read from its start, has
+// the shape a changed server secret leaves: one or more rows that do not verify
 // under the key in use, each linked to the one before it, followed
-// either by the end of the log or by a row that verifies and links to
-// the last of them. The server keeps writing after its secret changes,
-// and each new row chains onto the last one written under the old
-// secret, so that is exactly what a rotation looks like; a row forged
-// or altered by someone without the key usually breaks a link on one
-// side of it.
+// either by the end of the log or by rows that all verify and each link
+// to the one before, with no rows lost from the tail. The server keeps
+// writing after its secret changes, and each new row chains onto the
+// last one written under the old secret, so that is exactly what a
+// rotation looks like; a row forged or altered by someone without the
+// key usually breaks a link on one side of it.
+//
+// Every row after the leading run is checked, not just the first,
+// because the re-anchor this verdict can let run unattended accepts as
+// history everything through the last row that fails anywhere in the
+// log. A verdict drawn from the first few rows would let a rotation, or
+// an edit to the oldest row that mimics one, carry a deletion or an
+// alteration further on through with it.
 //
 // It is a judgement, not a proof. Anyone able to write auth.db can
 // forge rows that fit the shape, so the message it leads to says
 // "probably", and the re-chain it points at shows the operator exactly
-// which rows it would accept.
-func (s *AuthStore) looksLikeKeyChange(q auditQuerier, after *int64) (bool,
-	error) {
+// which rows it would accept. Its callers do not ask it at all when a
+// purge or re-chain event that verifies records where the log begins:
+// see classifyUnverifiedRow.
+func (s *AuthStore) looksLikeKeyChange(q auditQuerier) (bool, error) {
 
 	run := int64(0)
 	var last AuditEvent
-	shaped := false
-	err := walkAuditEventsAfter(q, after, func(ev AuditEvent) error {
-		if run > 0 && ev.PrevHash != last.Hash {
+	verifying := false
+	err := forEachAuditEvent(q, func(ev AuditEvent) error {
+		if (run > 0 || verifying) && ev.PrevHash != last.Hash {
 			return errStopAuditWalk
 		}
+		last = ev
 		if s.auditRowVerifies(&ev) {
-			shaped = run > 0
+			if run == 0 {
+				// The first row verifies, so whatever failed, it was
+				// not the oldest rows.
+				return errStopAuditWalk
+			}
+			verifying = true
+			return nil
+		}
+		if verifying {
+			// A row failing after rows that verified is not what a
+			// changed secret leaves behind.
 			return errStopAuditWalk
 		}
 		run++
-		last = ev
 		return nil
 	})
 	if errors.Is(err, errStopAuditWalk) {
-		return shaped, nil
+		return false, nil
 	}
 	if err != nil {
 		return false, err
 	}
+	if run == 0 {
+		return false, nil
+	}
 
-	return run > 0, nil
+	// A rotation loses nothing from the tail, so a log that has also
+	// lost rows there is not explained by one.
+	if err := s.verifyAuditTail(); err != nil {
+		if errors.Is(err, ErrAuditChainBroken) {
+			return false, nil
+		}
+		return false, err
+	}
+
+	return true, nil
 }
 
 // auditPurgeCut is what verifyAuditPurgePrefix finds: the row the purge
@@ -451,14 +480,14 @@ func (s *AuthStore) verifyAuditPurgePrefix(tx *sql.Tx, cut int64) (
 // log had been tampered with every time a secret was rotated would soon
 // stop believing it.
 func (s *AuthStore) auditPurgeUnverified(q auditQuerier, cause error) error {
-	keyChange, err := s.looksLikeKeyChange(q, nil)
+	keyChange, err := s.looksLikeKeyChange(q)
 	if err != nil {
 		return err
 	}
 	if keyChange {
 		return fmt.Errorf("%w: %s: %v. The oldest events do not verify "+
-			"under the key in use and every one after them that was "+
-			"checked does, which is what a server secret changed or "+
+			"under the key in use and every one after them does, "+
+			"which is what a server secret changed or "+
 			"replaced since they were written looks like, rather than "+
 			"tampering. Confirm secret_file; if the secret was changed "+
 			"deliberately or is lost, run 'ai-dba-server "+

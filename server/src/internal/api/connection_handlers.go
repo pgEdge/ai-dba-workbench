@@ -828,6 +828,13 @@ func (h *ConnectionHandler) handleUpdateConnectionCluster(w http.ResponseWriter,
 			"Permission denied: requires manage_connections permission")
 		return
 	}
+	// Re-homing a connection changes it, so a read-only entry in the
+	// token's connection scope is not enough, matching the member rule
+	// on POST /clusters/{id}/servers (issue #471).
+	if !h.rbacChecker.ConnectionInTokenScope(r.Context(), connectionID) {
+		RespondError(w, http.StatusForbidden, connectionOutOfTokenScope)
+		return
+	}
 
 	var req ConnectionClusterUpdateRequest
 	if !DecodeJSONBody(w, r, &req) {

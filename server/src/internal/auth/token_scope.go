@@ -11,12 +11,39 @@ package auth
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 )
+
+// ErrUnknownMCPPrivilege is returned when an MCP scope names a privilege
+// identifier that is not registered. Writing the rest of the list would
+// silently drop the unknown name, and a list made up only of unknown
+// names would then store no scope at all, which reads as unrestricted,
+// so the whole change is refused instead.
+var ErrUnknownMCPPrivilege = errors.New("unknown MCP privilege identifier")
 
 // =============================================================================
 // Token Scope Management
 // =============================================================================
+
+// ErrInvalidAccessLevel is returned when a connection scope entry names
+// an access level other than read or read_write.
+var ErrInvalidAccessLevel = errors.New("invalid access level")
+
+// ValidateScopedConnections checks that every entry's access level is
+// read or read_write, so that a caller writing several scope kinds can
+// refuse a bad connection scope before writing any of them.
+func ValidateScopedConnections(connections []ScopedConnection) error {
+	for _, conn := range connections {
+		if conn.AccessLevel != AccessLevelRead &&
+			conn.AccessLevel != AccessLevelReadWrite {
+			return fmt.Errorf("%w %q for connection %d: must be %q or %q",
+				ErrInvalidAccessLevel, conn.AccessLevel, conn.ConnectionID,
+				AccessLevelRead, AccessLevelReadWrite)
+		}
+	}
+	return nil
+}
 
 // SetTokenConnectionScope sets the connection scope for a token.
 // If connections is empty, clears all connection scoping (token has no connection restrictions).
@@ -27,6 +54,14 @@ func (s *AuthStore) SetTokenConnectionScope(tokenID int64, connections []ScopedC
 
 func (s *AuthStore) setTokenConnectionScope(actor Actor, tokenID int64,
 	connections []ScopedConnection) (err error) {
+
+	// The stored access level is checked here rather than left to the
+	// SQLite CHECK constraint, so that a bad level is reported as what
+	// it is instead of an opaque insert failure, and so that the rule
+	// is visible to a reader of this code.
+	if err := ValidateScopedConnections(connections); err != nil {
+		return err
+	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -230,12 +265,22 @@ func (s *AuthStore) setTokenMCPScopeByNames(actor Actor, tokenID int64,
 			break
 		}
 
-		if _, execErr := tx.Exec(
+		res, execErr := tx.Exec(
 			`INSERT INTO token_mcp_scope (token_id, privilege_identifier_id)
              SELECT ?, id FROM mcp_privilege_identifiers WHERE identifier = ?`,
 			tokenID, identifier,
-		); execErr != nil {
+		)
+		if execErr != nil {
 			err = fmt.Errorf("failed to add privilege to token scope: %w", execErr)
+			return err
+		}
+		inserted, rowsErr := res.RowsAffected()
+		if rowsErr != nil {
+			err = fmt.Errorf("failed to add privilege to token scope: %w", rowsErr)
+			return err
+		}
+		if inserted == 0 {
+			err = fmt.Errorf("%w: %q", ErrUnknownMCPPrivilege, identifier)
 			return err
 		}
 	}

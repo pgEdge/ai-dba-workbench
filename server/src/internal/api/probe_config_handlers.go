@@ -133,6 +133,9 @@ func (h *ProbeConfigHandler) updateProbeConfig(w http.ResponseWriter, r *http.Re
 	if !h.checkPermission(w, r) {
 		return
 	}
+	if !h.requireProbeConfigInTokenScope(w, r, id) {
+		return
+	}
 
 	var req database.ProbeConfigUpdate
 	if !DecodeJSONBody(w, r, &req) {
@@ -151,4 +154,35 @@ func (h *ProbeConfigHandler) updateProbeConfig(w http.ResponseWriter, r *http.Re
 	}
 
 	RespondJSON(w, http.StatusOK, updated)
+}
+
+// requireProbeConfigInTokenScope looks up a probe config and checks that
+// the acting API token's connection scope covers it, answering 404 when
+// it does not exist (issue #471). A config naming a connection needs
+// that connection in scope at read_write; a global config applies to
+// every connection without its own, so it needs a scope covering every
+// connection. A caller whose token covers every connection needs no
+// lookup, so sessions and unscoped tokens take the same path as before.
+func (h *ProbeConfigHandler) requireProbeConfigInTokenScope(
+	w http.ResponseWriter, r *http.Request, id int64) bool {
+
+	if h.rbacChecker.AllConnectionsInTokenScope(r.Context()) {
+		return true
+	}
+	existing, err := h.datastore.GetProbeConfig(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, database.ErrProbeConfigNotFound) {
+			RespondError(w, http.StatusNotFound, "Probe config not found")
+			return false
+		}
+		log.Printf("[ERROR] Failed to fetch probe config: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to fetch probe config")
+		return false
+	}
+	scope := string(database.BlackoutScopeEstate)
+	if existing.ConnectionID != nil {
+		scope = string(database.BlackoutScopeServer)
+	}
+	return requireTargetInTokenScope(w, r, h.rbacChecker, scope,
+		existing.ConnectionID)
 }

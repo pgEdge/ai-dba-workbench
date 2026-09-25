@@ -169,6 +169,9 @@ func (h *AlertOverrideHandler) upsertOverride(w http.ResponseWriter, r *http.Req
 	if !h.checkPermission(w, r) {
 		return
 	}
+	if !requireTargetInTokenScope(w, r, h.rbacChecker, scope, &scopeID) {
+		return
+	}
 
 	var req database.AlertThresholdUpdate
 	if !DecodeJSONBody(w, r, &req) {
@@ -188,6 +191,9 @@ func (h *AlertOverrideHandler) upsertOverride(w http.ResponseWriter, r *http.Req
 // deleteOverride handles DELETE /api/v1/alert-overrides/{scope}/{scopeId}/{ruleId}
 func (h *AlertOverrideHandler) deleteOverride(w http.ResponseWriter, r *http.Request, scope string, scopeID int, ruleID int64) {
 	if !h.checkPermission(w, r) {
+		return
+	}
+	if !requireTargetInTokenScope(w, r, h.rbacChecker, scope, &scopeID) {
 		return
 	}
 

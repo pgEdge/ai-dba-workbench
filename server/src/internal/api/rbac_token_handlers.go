@@ -10,6 +10,7 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -313,7 +314,62 @@ func (h *RBACHandler) getTokenScope(w http.ResponseWriter, r *http.Request, toke
 	})
 }
 
+// refuseSelfScopeMutation refuses a scope change whose target is the
+// caller's own acting token, reporting true when the request has been
+// answered and must go no further.
+//
+// Without this, a token scoped to exactly manage_token_scopes could
+// widen or clear its own scope and so escape every other scope gate:
+// the permission it legitimately holds would let it rewrite the very
+// record that bounds it. A session caller has no token id, so it is
+// unaffected, and a token may still manage other tokens' scopes.
+//
+// This is the narrow fix only. A token may still widen or clear a
+// *different* token's scope, including one owned by a superuser, and
+// may create a fresh token for any owner through POST /rbac/tokens,
+// which carries no scope at all and so sidesteps this check entirely;
+// superuser-owned tokens may still be created without superuser rights,
+// and permission strings written into a scope are not validated against
+// a known set. Issue #522 tracks all of these as a policy question
+// about who may issue what.
+func (h *RBACHandler) refuseSelfScopeMutation(w http.ResponseWriter,
+	r *http.Request, tokenID int64) bool {
+
+	actingTokenID := auth.GetTokenIDFromContext(r.Context())
+	if actingTokenID <= 0 || actingTokenID != tokenID {
+		return false
+	}
+
+	const reason = "Permission denied: a token may not change its own scope"
+	h.recordDenial(r, reason)
+	RespondError(w, http.StatusForbidden, reason)
+	return true
+}
+
+// emptyScopeKind names the first scope kind a scope PUT supplied as an
+// empty array, or returns "" when there is none. Each kind is stored as
+// rows in its own table and a kind with no rows is unrestricted, so
+// writing an empty array would lift that restriction whilst reading as
+// "allow nothing". The store still clears a kind that way for the CLI,
+// which does so deliberately and says so; the HTTP API refuses it, and
+// DELETE on the scope is its explicit way to lift a restriction.
+func emptyScopeKind(connections, mcpPrivileges, adminPermissions bool) string {
+	switch {
+	case connections:
+		return "connections"
+	case mcpPrivileges:
+		return "mcp_privileges"
+	case adminPermissions:
+		return "admin_permissions"
+	}
+	return ""
+}
+
 func (h *RBACHandler) setTokenScope(w http.ResponseWriter, r *http.Request, tokenID int64) {
+	if h.refuseSelfScopeMutation(w, r, tokenID) {
+		return
+	}
+
 	var req struct {
 		Connections      []auth.ScopedConnection `json:"connections"`
 		MCPPrivileges    []string                `json:"mcp_privileges"`
@@ -323,18 +379,41 @@ func (h *RBACHandler) setTokenScope(w http.ResponseWriter, r *http.Request, toke
 		return
 	}
 
-	if req.Connections != nil {
-		if err := h.actorStore(r).SetTokenConnectionScope(tokenID, req.Connections); err != nil {
-			log.Printf("[ERROR] Failed to set connection scope for token %d: %v", tokenID, err)
-			RespondError(w, http.StatusInternalServerError, "Failed to set connection scope")
-			return
-		}
+	// A request refused for its content must leave every scope kind as
+	// it was, so empty arrays and the connection access levels are
+	// checked before any write, and the MCP scope, which can be refused
+	// for naming an unregistered identifier, is written first.
+	if kind := emptyScopeKind(req.Connections != nil && len(req.Connections) == 0,
+		req.MCPPrivileges != nil && len(req.MCPPrivileges) == 0,
+		req.AdminPermissions != nil && len(req.AdminPermissions) == 0); kind != "" {
+		RespondError(w, http.StatusBadRequest, fmt.Sprintf(
+			"%s must not be an empty array: a scope kind with no entries is "+
+				"unrestricted, so an empty array would lift the restriction "+
+				"rather than deny everything; omit the key to leave it "+
+				"unchanged, or use DELETE to clear the token's scope", kind))
+		return
+	}
+	if err := auth.ValidateScopedConnections(req.Connections); err != nil {
+		RespondError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 
 	if req.MCPPrivileges != nil {
 		if err := h.actorStore(r).SetTokenMCPScopeByNames(tokenID, req.MCPPrivileges); err != nil {
+			if errors.Is(err, auth.ErrUnknownMCPPrivilege) {
+				RespondError(w, http.StatusBadRequest, err.Error())
+				return
+			}
 			log.Printf("[ERROR] Failed to set MCP scope for token %d: %v", tokenID, err)
 			RespondError(w, http.StatusInternalServerError, "Failed to set MCP scope")
+			return
+		}
+	}
+
+	if req.Connections != nil {
+		if err := h.actorStore(r).SetTokenConnectionScope(tokenID, req.Connections); err != nil {
+			log.Printf("[ERROR] Failed to set connection scope for token %d: %v", tokenID, err)
+			RespondError(w, http.StatusInternalServerError, "Failed to set connection scope")
 			return
 		}
 	}
@@ -351,6 +430,10 @@ func (h *RBACHandler) setTokenScope(w http.ResponseWriter, r *http.Request, toke
 }
 
 func (h *RBACHandler) clearTokenScope(w http.ResponseWriter, r *http.Request, tokenID int64) {
+	if h.refuseSelfScopeMutation(w, r, tokenID) {
+		return
+	}
+
 	if err := h.actorStore(r).ClearTokenScope(tokenID); err != nil {
 		log.Printf("[ERROR] Failed to clear token scope for token %d: %v", tokenID, err)
 		RespondError(w, http.StatusInternalServerError, "Failed to clear token scope")

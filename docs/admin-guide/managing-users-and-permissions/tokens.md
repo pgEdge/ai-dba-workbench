@@ -10,8 +10,9 @@ The Workbench uses two kinds of tokens:
   or regular users. A service account may only authenticate with a token.
 
 A token's scope restricts it to a subset of the owning user's permissions. A
-token without scope restrictions inherits the full access of the owner. The
-system supports three scope types:
+token without scope restrictions inherits the full access of the owner. A
+token that a superuser owns is restricted by its scope in the same way as
+any other token. The system supports three scope types:
 
 - *Connection scope* limits the token to specific database connections with a
   per-connection access level of `read` or `read_write`. A token scope can
@@ -33,7 +34,42 @@ that type:
   holds.
 
 The effective access for a scoped token equals the intersection of the owner's
-group-level access and the token scope.
+access and the token scope. A superuser holds every privilege, so the
+intersection for a superuser's token is the token scope itself.
+
+A scope type left empty places no restriction on that type. To lift the
+restriction on one type, set that type to its wildcard; to lift every
+restriction, clear the token's scope. The `PUT /api/v1/rbac/tokens/{id}/scope`
+endpoint refuses an empty list for any scope type with `400 Bad Request`, and
+leaves a scope type that the request omits unchanged. The Workbench console
+follows the same rule: saving a token with every scope type empty clears the
+scope, but emptying one restricted type whilst another stays restricted is
+refused.
+
+The connection scope also governs changes to blackouts, blackout schedules,
+alert, probe and channel overrides, alert rules, probe configurations,
+notification channels and clusters, even though those endpoints are gated on an
+admin permission. A token may change one of these on a single server, or add
+that server to a cluster, remove it from one or move it between clusters, only
+when that connection is in its scope with `read_write` access; a change that
+applies to a cluster, a group or the whole estate, that alters an alert rule, a
+global probe configuration or a notification channel, or that alters a
+cluster's definition or relationships, needs a connection scope that covers
+every connection.
+
+Two routes still reach beyond a token's connection scope. A token whose admin
+scope includes `manage_token_scopes` can create a token for any owner through
+`POST /api/v1/rbac/tokens`, and the new token carries no scope until one is
+set; issue #522 tracks this. The `query_datastore` MCP tool reads the metrics
+that the datastore holds for every connection. A token that must stay within
+its connections should hold neither `manage_token_scopes` nor
+`query_datastore`.
+
+The MCP privilege scope applies to public MCP tools as well, so a token whose
+MCP scope names specific tools can call only those tools, apart from
+`test_query`, which validates a query without running it and is available to
+every token. The server refuses an MCP scope that names an identifier it does
+not recognise.
 
 !!! note
 

@@ -37,6 +37,7 @@ import {
     getDeleteIconSx,
     getTableContainerSx,
 } from '../styles';
+import { isMcpWildcardId } from './tokenTypes';
 import type { Token, Connection, TokenScopeConnection } from './tokenTypes';
 
 export interface TokensTableProps {
@@ -233,10 +234,7 @@ const TokensTable: React.FC<TokensTableProps> = ({
                                                             )}
                                                             mcpPrivileges={
                                                                 token.scope?.mcp_privileges?.some(
-                                                                    (id: number) =>
-                                                                        getMcpPrivilegeName(
-                                                                            id
-                                                                        ) === '*'
+                                                                    isMcpWildcardId
                                                                 )
                                                                     ? [
                                                                           "All the owner's MCP privileges",

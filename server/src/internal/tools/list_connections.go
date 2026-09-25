@@ -169,8 +169,13 @@ CRITICAL: Never silently analyze multiple connections. Always get explicit user 
 			if rbacChecker != nil {
 				visible, allConns, visErr := rbacChecker.VisibleConnectionIDs(ctx, visibilityLister)
 				if visErr != nil {
+					// Fail closed like every other caller: an unresolved
+					// visible set must never fall through to listing
+					// every connection.
 					fmt.Fprintf(os.Stderr, "ERROR: list_connections: failed to resolve visible connections: %v\n", visErr)
-				} else if !allConns {
+					return mcp.NewToolError("Failed to resolve accessible connections")
+				}
+				if !allConns {
 					visibleSet := make(map[int]bool, len(visible))
 					for _, id := range visible {
 						visibleSet[id] = true

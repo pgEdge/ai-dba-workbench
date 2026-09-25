@@ -377,11 +377,19 @@ func createUserInfoHandler(authStore *auth.AuthStore) http.HandlerFunc {
 			}
 		}
 
+		// The reported flag is the one a superuser-only gate would
+		// apply, not the raw context flag: a superuser's API token
+		// whose admin scope has been narrowed is refused by
+		// requireSuperuser, and a client that used the raw flag to
+		// decide whether to offer, say, the audit page would offer a
+		// page the server then refuses.
+		isSuperuser := auth.NewRBACChecker(authStore).IsSuperuser(ctx)
+
 		// Return user info as JSON
 		api.RespondJSON(w, http.StatusOK, map[string]any{
 			"authenticated":     true,
 			"username":          username,
-			"is_superuser":      auth.IsSuperuserFromContext(ctx),
+			"is_superuser":      isSuperuser,
 			"admin_permissions": adminPermissions,
 		})
 	}

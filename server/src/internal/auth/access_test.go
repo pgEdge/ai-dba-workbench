@@ -491,8 +491,13 @@ func TestRBACCheckerNilStore(t *testing.T) {
 	checker := NewRBACChecker(nil)
 	ctx := context.Background()
 
-	// Should act as superuser when store is nil
-	if !checker.IsSuperuser(ctx) {
+	// A nil store disables authorisation, but it does not promote an
+	// unauthenticated caller: the context flag still has to be set.
+	if checker.IsSuperuser(ctx) {
+		t.Error("Expected no superuser status without the context flag")
+	}
+	superuserCtx := context.WithValue(ctx, IsSuperuserContextKey, true)
+	if !checker.IsSuperuser(superuserCtx) {
 		t.Error("Expected superuser when store is nil")
 	}
 
@@ -2507,8 +2512,9 @@ func TestNewRBACCheckerWithSharing_NilStore(t *testing.T) {
 		t.Error("Expected authStore to be nil")
 	}
 
-	// Nil store means superuser mode (full access)
-	ctx := context.Background()
+	// Nil store means superuser mode (full access) for a caller the
+	// context already marks as a superuser.
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, true)
 	if !checker.IsSuperuser(ctx) {
 		t.Error("Expected IsSuperuser to return true with nil store")
 	}

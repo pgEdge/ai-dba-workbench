@@ -9,10 +9,15 @@
  */
 
 import type React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import EditTokenDialog from '../EditTokenDialog';
+import {
+    NO_CONNECTION_RESTRICTION_TEXT,
+    NO_MCP_RESTRICTION_TEXT,
+    NO_ADMIN_RESTRICTION_TEXT,
+} from '../tokenTypes';
 import type { Token, Connection, McpPrivilege, AdminPermissionEntry } from '../tokenTypes';
 
 const theme = createTheme();
@@ -253,5 +258,86 @@ describe('EditTokenDialog', () => {
     it('handles null token gracefully', () => {
         renderComponent({ token: null });
         expect(screen.getByText('Edit token: Token')).toBeInTheDocument();
+    });
+
+    it('explains that empty categories place no restriction', () => {
+        renderComponent();
+        expect(screen.getByText(NO_CONNECTION_RESTRICTION_TEXT)).toBeInTheDocument();
+        expect(screen.getByText(NO_MCP_RESTRICTION_TEXT)).toBeInTheDocument();
+        expect(screen.getByText(NO_ADMIN_RESTRICTION_TEXT)).toBeInTheDocument();
+    });
+
+    it('drops the explanation from categories that hold entries', () => {
+        renderComponent({
+            scopedConnections: [
+                { id: 1, name: 'Primary DB', access_level: 'read' },
+            ],
+            selectedMcpPrivileges: [MCP_PRIVILEGES[0]],
+            selectedAdminPermissions: [ADMIN_PERMISSIONS[0]],
+        });
+        expect(screen.queryByText(NO_CONNECTION_RESTRICTION_TEXT)).not.toBeInTheDocument();
+        expect(screen.queryByText(NO_MCP_RESTRICTION_TEXT)).not.toBeInTheDocument();
+        expect(screen.queryByText(NO_ADMIN_RESTRICTION_TEXT)).not.toBeInTheDocument();
+    });
+
+    it('changes a scoped connection access level via the table', async () => {
+        const onScopedConnectionsChange = vi.fn();
+        renderComponent({
+            onScopedConnectionsChange,
+            ownerIsSuperuser: true,
+            scopedConnections: [
+                { id: 1, name: 'Primary DB', access_level: 'read' },
+                { id: 2, name: 'Secondary DB', access_level: 'read' },
+            ],
+        });
+
+        const row = screen.getByText('Primary DB').closest('tr') as HTMLElement;
+        fireEvent.mouseDown(within(row).getByRole('combobox'));
+        await waitFor(() => {
+            expect(
+                screen.getByRole('option', { name: 'Read/Write' }),
+            ).toBeInTheDocument();
+        });
+        fireEvent.click(screen.getByRole('option', { name: 'Read/Write' }));
+
+        expect(onScopedConnectionsChange).toHaveBeenCalledWith([
+            { id: 1, name: 'Primary DB', access_level: 'read_write' },
+            { id: 2, name: 'Secondary DB', access_level: 'read' },
+        ]);
+    });
+
+    it('removes a scoped connection via the table', () => {
+        const onScopedConnectionsChange = vi.fn();
+        renderComponent({
+            onScopedConnectionsChange,
+            scopedConnections: [
+                { id: 1, name: 'Primary DB', access_level: 'read' },
+                { id: 2, name: 'Secondary DB', access_level: 'read' },
+            ],
+        });
+
+        fireEvent.click(
+            screen.getByRole('button', { name: 'remove Primary DB' }),
+        );
+        expect(onScopedConnectionsChange).toHaveBeenCalledWith([
+            { id: 2, name: 'Secondary DB', access_level: 'read' },
+        ]);
+    });
+
+    it('closes via the backdrop when not loading', () => {
+        const onClose = vi.fn();
+        renderComponent({ onClose });
+        const backdrop = document.querySelector('.MuiBackdrop-root');
+        expect(backdrop).not.toBeNull();
+        fireEvent.click(backdrop as Element);
+        expect(onClose).toHaveBeenCalled();
+    });
+
+    it('does not close via the backdrop while loading', () => {
+        const onClose = vi.fn();
+        renderComponent({ onClose, loading: true });
+        const backdrop = document.querySelector('.MuiBackdrop-root');
+        fireEvent.click(backdrop as Element);
+        expect(onClose).not.toHaveBeenCalled();
     });
 });

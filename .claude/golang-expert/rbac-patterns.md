@@ -302,6 +302,134 @@ above. When you add a gate, add at minimum:
 The denial test plus the gate body (5 statements) covers the new
 lines; the admin-allowed test covers the not-taken branch.
 
+## A Superuser's Token Is Bounded By Its Scope
+
+Since GitHub issue `#471`, a superuser's API token no longer carries
+its owner's superuser status unconditionally: each check in
+`server/src/internal/auth/access.go` intersects the owner's superuser
+rights with the acting token's scope for the surface being reached.
+A superuser holds everything, so the intersection is simply the scope
+itself, and a token scoped to one permission, one connection or one
+tool may still use exactly that.
+
+Two shapes, and the difference matters:
+
+- A check that names the thing being reached
+  (`HasAdminPermission`, `CanAccessConnection`, `CanAccessMCPItem`,
+  `VisibleConnectionIDs`, `GetEffectivePrivileges`) reads the raw
+  context flag `auth.IsSuperuserFromContext` and consults the scope of
+  its own kind. The named thing is allowed when it is in scope, when
+  the token has no scope of that kind, or when the scope holds the
+  wildcard, and no group grant on the owning account is needed.
+  Crucially, a narrowed scope of one kind must never narrow another
+  kind: an admin-scoped token still reaches every connection and tool.
+- A blanket gate, which names nothing and would hand over everything
+  at once, goes through `RBACChecker.IsSuperuser`. That returns false
+  when the token's admin scope has been narrowed, meaning it names
+  specific permissions rather than being empty or holding `*`, because
+  there is nothing to intersect against. `requireSuperuser` in
+  `internal/api/rbac_handlers.go` is the blanket gate; the MCP listing
+  filters are not, since they name each item and go through
+  `CanAccessMCPItem` per item.
+
+The apparent inconsistency, `IsSuperuser` false whilst
+`HasAdminPermission` allows the scoped permission, is deliberate and
+is documented on `IsSuperuser`; do not "fix" it.
+
+A public MCP privilege is bounded the same way. `IsPrivilegePublic`
+removes the need for a group grant, not the token's scope, so
+`CanAccessMCPItem` intersects the public path with the MCP scope as
+well: a token scoped to one tool cannot call every public tool, which
+was issue `#482`. The listing paths follow from that. Neither
+`ListForContext` in `internal/tools/context_aware_provider.go` nor the
+one in `internal/resources/context_aware_registry.go` short-circuits on
+`IsSuperuser` any more, because that flag comes from the admin scope
+and says nothing about tools; every caller goes through the per-item
+filter, which already admits sessions, unscoped tokens, wildcard scopes
+and a nil auth store, and `rbacExemptTools` is still applied.
+
+A token also may not rewrite the scope that bounds it:
+`refuseSelfScopeMutation` in `internal/api/rbac_token_handlers.go`
+refuses a PUT or DELETE on the acting token's own scope, since
+`manage_token_scopes` would otherwise be enough to widen the token's
+own record and undo every gate above. Managing another token's scope is
+unaffected, and the remaining policy gaps are noted at the guard.
+
+A handler that authorises a connection by ownership or an admin
+permission rather than `CanAccessConnection` (the Variant 2 gate on
+`updateConnection` and `deleteConnection`) must also call
+`RBACChecker.ConnectionInTokenScope`, before the row is loaded, since
+neither ownership nor `manage_connections` says which connections a
+token was issued for; it admits only a `read_write` scope entry,
+because its callers mutate the connection. `SetTokenMCPScopeByNames`
+returns `auth.ErrUnknownMCPPrivilege` for an unregistered identifier,
+which the scope handler maps to 400, because silently dropping it
+could store an empty, and therefore unrestricted, MCP scope. The
+handler also runs `auth.ValidateScopedConnections` before writing any
+scope kind, so a bad access level cannot leave a partial update.
+Every `VisibleConnectionIDs` caller, `list_connections` included,
+must return on error rather than skip filtering, and
+`VisibleConnectionIDs` itself checks `TokenScopeError` before the
+group wildcard return, since a failed scope read leaves that
+wildcard in place.
+
+Handlers gated on an admin permission that change something attached
+to connections, namely blackouts, blackout schedules, alert, probe and
+channel overrides and cluster writes, apply the connection scope
+through the helpers in `internal/api/token_scope_targets.go`.
+`requireTargetInTokenScope` admits a `server` target with an id when
+that connection is in scope, and sends a cluster, group or estate
+target (or a server target with no id) to
+`RBACChecker.AllConnectionsInTokenScope`, which needs a scope covering
+every connection because such a target reaches connections the token
+does not name, including ones added later. A cluster definition or
+relationship change goes through `requireAllConnectionsInTokenScope`
+(setting or clearing a source's relationships deletes all of them
+first, whatever the target), and adding or removing a server goes
+through `requireConnectionsInTokenScope` for that connection. A write addressed by id (blackout or
+schedule update and delete) checks the stored record, and a schedule
+update checks the body as well, so a token cannot move a record into
+or out of its scope; `requireBlackoutInTokenScope` skips the database
+read when the token's scope covers everything. A new handler of this
+kind must call one of these helpers, and
+`token_scope_targets_test.go` and `token_scope_blackout_test.go` hold
+the table-driven cases to extend.
+
+The scope PUT refuses an empty array for any kind with 400
+(`emptyScopeKind` in `rbac_token_handlers.go`), because an empty kind
+means unrestricted and the request almost always meant the opposite;
+an omitted or null kind is left unchanged, and DELETE clears the whole
+scope. The CLI still clears a kind given an empty list. The client's
+`AdminTokenScopes.tsx` follows the same rule through `buildScopeBody`.
+
+Everything fails closed: a scope lookup error denies (or, in
+`VisibleConnectionIDs`, is an error rather than "everything"), an
+API-token context carrying no token id (`tokenContextIncomplete`)
+denies in `GetEffectivePrivileges` as in its five siblings, an
+unreadable scope withdraws `IsSuperuser` from the report as well, and
+`applyTokenCeiling` treats an access level it does not recognise as
+read. Session callers carry no token id and are unaffected throughout.
+
+`GetEffectivePrivileges` reports what the checks will actually allow:
+`applySuperuserTokenScope` fills `TokenScope`, `TokenScopeError` and
+the connection, MCP and admin maps from the token's scope, instead of
+returning empty maps that every consumer reads as unrestricted. A kind
+the token does not scope, or scopes with a wildcard, leaves its map
+empty.
+
+The audit endpoint needs no gate of its own: `requireUnscopedTokenForAudit`
+was retired in the same change because `requireSuperuser` refuses
+exactly the tokens it refused. `auth.IsSuperuserFromContext` itself is
+unchanged and remains the raw context accessor, reported as such by
+`cmd/mcp-server/handlers.go`.
+
+The rules are pinned by
+`server/src/internal/auth/access_superuser_scope_test.go` at the
+checker level and by
+`server/src/internal/api/rbac_issue471_test.go` plus
+`server/src/internal/api/rbac_audit_gate_test.go` at the HTTP
+boundary.
+
 ## Denial Auditing in the RBAC Management Handlers
 
 The `/api/v1/rbac/*` handlers do not inline the gate. They call the
@@ -343,7 +471,7 @@ the username, user or token id and client IP that
 request context. The token id is `auth.TokenIDContextKey`, the same
 key `RBACChecker` reads to enforce token scope; there is deliberately
 no attribution-only key, so a token is named in the log exactly when
-its scope is enforced, and `requireUnscopedTokenForAudit` refuses an
+its scope is enforced, and `RBACChecker.IsSuperuser` refuses an
 API-token context that carries no id rather than passing it. The
 composition is pinned by
 `server/src/internal/api/rbac_token_scope_regression_test.go`.

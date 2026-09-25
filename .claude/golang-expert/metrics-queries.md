@@ -1369,9 +1369,9 @@ same `collected_at`, differing only in the probing `database_name`. Its
 `readings` CTE therefore keeps one copy per
 `(queryid, userid, dbid, toplevel, collected_at)` with `DISTINCT ON`
 (lowest `database_name` wins, for a stable choice), resolves each row's
-own database through `db_names`; `samples` applies the optional
-`database_name` filter to that resolved name and then `LAG`s over
-`(queryid, userid, dbid, toplevel)`, `totals` drops the pairs whose
+own database through `db_names`; `deltas` `LAG`s over
+`(queryid, userid, dbid, toplevel)`, `samples` applies the optional
+`database_name` filter to the resolved name, `totals` drops the pairs whose
 call or time delta is negative, floors the row and block deltas at
 zero, sums per `queryid` and keeps only statements with calls in the
 window, and `latest_sample` supplies the OIDs, the resolved name and the
@@ -1399,7 +1399,9 @@ both statements put first. `db_names` takes the most recent
 `(datid, datname)` per OID from `metrics.pg_stat_database` and
 `metrics.pg_stat_activity` together (`UNION ALL`, then `DISTINCT ON
 (datid) ... ORDER BY datid, collected_at DESC, datname`), each bounded to
-`nameLookupWindowSQL` before the latest `pg_stat_statements` snapshot.
+the `nameLookupWindowSQL` up to and including the latest
+`pg_stat_statements` snapshot; the upper bound stops a name observed
+after statement collection stopped from renaming recorded statements.
 `pg_stat_database` is the primary source, but note it is database-scoped
 (`WHERE datname = current_database()`), so it holds one row per
 *monitored* database per collection, not one per database in the
@@ -1412,10 +1414,15 @@ and because that differs between the copies of one counter, the database
 filter must run after the `DISTINCT ON` in `readings`, never inside it.
 Filtering the copies lets each one match its own probing database, so a
 filtered view reports the counter under every probing database; that was
-issue #508. The filter therefore lives in `samples` (`WHERE
-r.database_name = $N` in `buildTopQueriesSQL`, `WHERE database_name =
-$5` in `queryStatsSQLTemplate`), where it cannot be pushed below the
-`DISTINCT ON` because `database_name` is not one of its keys. The
+issue #508. It must also run after the `LAG`: the fallback name changes
+between collections when the set of probing databases does, and
+filtering first drops the predecessor and loses a delta the unfiltered
+view counts. The filter therefore lives after the window (`WHERE
+d.database_name = $N` in `samples`, over `deltas`, in
+`buildTopQueriesSQL`; `AND database_name = $5` in `valid_deltas` in
+`queryStatsSQLTemplate`), and the planner cannot push it below the
+window because `database_name` is not a partition key, so a filtered
+request differences every reading in the window. The
 drill-down binds the name the top-queries list reported, so both
 endpoints must resolve it identically. Tests:
 `perf_summary_dbid_resolution_test.go`.

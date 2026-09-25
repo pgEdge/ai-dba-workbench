@@ -34,9 +34,30 @@ func seedProbedCounter(
 	queryID, dbID int64,
 ) time.Time {
 	t.Helper()
+	return seedProbedCounterThrough(t, pool, queryID, dbID,
+		dbidProbeDatabases, dbidProbeDatabases)
+}
+
+// seedProbedCounterThrough is seedProbedCounter with the probing databases
+// given separately for the earlier and the later collection, so that a
+// test can change the set of databases the probe ran in between them.
+func seedProbedCounterThrough(
+	t *testing.T,
+	pool *pgxpool.Pool,
+	queryID, dbID int64,
+	earlierProbes, laterProbes []string,
+) time.Time {
+	t.Helper()
 	latest := time.Now().UTC().Add(-1 * time.Minute)
-	for i, at := range []time.Time{latest.Add(-5 * time.Minute), latest} {
-		for _, probeDB := range dbidProbeDatabases {
+	collections := []struct {
+		at     time.Time
+		probes []string
+	}{
+		{latest.Add(-5 * time.Minute), earlierProbes},
+		{latest, laterProbes},
+	}
+	for i, c := range collections {
+		for _, probeDB := range c.probes {
 			if _, err := pool.Exec(context.Background(),
 				`INSERT INTO metrics.pg_stat_statements
                 (connection_id, collected_at, queryid, userid, dbid,
@@ -45,7 +66,7 @@ func seedProbedCounter(
                  shared_blks_hit, shared_blks_read)
                 VALUES ($1, $2, $3, 10, $4, $5, 'SELECT unobserved', $6, $7,
                         2, 1, 3, 0, 0, 0)`,
-				topQueriesConnID, at, queryID, dbID, probeDB,
+				topQueriesConnID, c.at, queryID, dbID, probeDB,
 				int64(120*i), float64(240*i)); err != nil {
 				t.Fatalf("pg_stat_statements seed failed: %v", err)
 			}
@@ -198,10 +219,33 @@ func TestTopQueries_UnresolvedDbidMatchesOneDatabase(t *testing.T) {
 	})
 }
 
+// TestTopQueries_UnresolvedDbidProbeSetChange covers an unresolved dbid
+// whose fallback name changes between collections because the probe
+// stopped running in one database: the earlier reading falls back to
+// alpha and the later one to postgres. The database filter is applied
+// after the deltas are taken, so the delta counts under postgres, the name
+// of the reading that ends it, rather than being lost because its
+// predecessor was filtered out, and the filtered and unfiltered views
+// still agree.
+func TestTopQueries_UnresolvedDbidProbeSetChange(t *testing.T) {
+	h, pool, cleanup := newTopQueriesTestHandler(t)
+	defer cleanup()
+
+	latest := seedProbedCounterThrough(t, pool, 6004, 400,
+		[]string{"alpha", "postgres"}, []string{"postgres"})
+	seedStatDatabase(t, pool, latest, 100, "alpha")
+
+	assertDbidAttribution(t, h, "6004", "postgres", []dbidExpectation{
+		{"postgres", 120},
+		{"alpha", 0},
+	})
+}
+
 // TestTopQueries_DbidLookupSources pins how db_names combines its two
 // sources: pg_stat_activity still names a database pg_stat_database never
 // saw, the most recent observation wins across the two tables, and rows
-// older than the lookup window are ignored.
+// outside the lookup window, older than it or newer than the latest
+// statement snapshot, are ignored.
 func TestTopQueries_DbidLookupSources(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -241,6 +285,17 @@ func TestTopQueries_DbidLookupSources(t *testing.T) {
 			},
 			wantDatabase: "alpha",
 		},
+		{
+			name: "names observed after the latest snapshot are ignored",
+			seed: func(t *testing.T, pool *pgxpool.Pool, latest time.Time) {
+				seedStatDatabase(t, pool, latest, 300, "gamma")
+				seedStatDatabase(t, pool, latest.Add(10*time.Minute),
+					300, "gamma_later")
+				seedActivityDatabase(t, pool, latest.Add(10*time.Minute),
+					300, "gamma_later")
+			},
+			wantDatabase: "gamma",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -263,8 +318,9 @@ func TestTopQueries_DbidLookupSources(t *testing.T) {
 }
 
 // TestStatementDatabaseLookupSQL checks the shared lookup text: it reads
-// both name sources, bounds each to the lookup window, and carries no
-// format verbs, since it is spliced into format strings as an argument.
+// both name sources, bounds each to the lookup window on both sides, and
+// carries no format verbs, since it is spliced into format strings as an
+// argument.
 func TestStatementDatabaseLookupSQL(t *testing.T) {
 	for _, want := range []string{
 		"FROM metrics.pg_stat_database",
@@ -278,6 +334,10 @@ func TestStatementDatabaseLookupSQL(t *testing.T) {
 	if got := strings.Count(statementDatabaseLookupSQL,
 		"INTERVAL '"+nameLookupWindowSQL+"'"); got != 2 {
 		t.Errorf("lookup window appears %d times, want 2", got)
+	}
+	if got := strings.Count(statementDatabaseLookupSQL,
+		"collected_at <= (SELECT collected_at FROM latest)"); got != 2 {
+		t.Errorf("lookup upper bound appears %d times, want 2", got)
 	}
 	if strings.Contains(statementDatabaseLookupSQL, "%") {
 		t.Errorf("lookup SQL contains a format verb:\n%s",

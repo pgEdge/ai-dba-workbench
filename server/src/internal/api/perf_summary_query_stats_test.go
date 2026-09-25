@@ -482,7 +482,7 @@ func TestBuildQueryStatsSQL(t *testing.T) {
 	}
 
 	sql, args = buildQueryStatsSQL(4242, 1001, window, "alpha' OR '1'='1")
-	if !strings.Contains(sql, "WHERE database_name = $5") {
+	if !strings.Contains(sql, "AND database_name = $5") {
 		t.Errorf("database_name clause missing or misnumbered:\n%s", sql)
 	}
 	if strings.Contains(sql, "alpha") {

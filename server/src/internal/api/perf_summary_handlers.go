@@ -1508,7 +1508,12 @@ func buildTopQueriesSQL(
 
 	// The database filter is applied in samples, to the name readings
 	// resolved for each deduplicated reading, so that a filtered request
-	// aggregates only the counters of that database. It cannot be applied
+	// aggregates only the counters of that database. It is applied after the
+	// deltas are taken rather than before, so that each delta counts under
+	// the name of the reading that ends it: an unresolved dbid's fallback
+	// name can change between collections when the set of probing databases
+	// does, and filtering first would then drop the predecessor and lose a
+	// delta that the unfiltered request counts. It cannot be applied
 	// after totals: pg_stat_statements keeps a separate counter per dbid
 	// for one queryid, totals sums them, and a filter on the summed row
 	// would report every database's calls under the one that was asked
@@ -1522,7 +1527,7 @@ func buildTopQueriesSQL(
 	databaseClause := ""
 	if databaseName != "" {
 		databaseClause = fmt.Sprintf(
-			"WHERE r.database_name = $%d", len(filterArgs)+1)
+			"WHERE d.database_name = $%d", len(filterArgs)+1)
 		filterArgs = append(filterArgs, databaseName)
 	}
 
@@ -1612,9 +1617,9 @@ func buildTopQueriesSQL(
 	// count every call once per database with the extension. readings
 	// keeps one copy per (queryid, userid, dbid, toplevel, collected_at),
 	// choosing the lowest database_name so that the choice is stable, and
-	// the LAG runs over that. It also resolves the statement's own database
-	// through db_names, which is what the optional database filter, applied
-	// in samples, matches.
+	// the LAG runs over that, in deltas. It also resolves the statement's own
+	// database through db_names, which is what the optional database filter,
+	// applied in samples once the deltas are taken, matches.
 	//
 	// A sample pair whose call or time delta is negative is discarded,
 	// because a negative delta means the counters were reset by
@@ -1670,8 +1675,11 @@ func buildTopQueriesSQL(
 	// into a 5-second one. Materializing costs one pass each and makes the
 	// cost proportional to the window rather than to the window times the
 	// number of distinct statements. samples itself is referenced twice, so
-	// PostgreSQL materializes it without being asked, and readings is
-	// referenced once and inlined.
+	// PostgreSQL materializes it without being asked, and readings and
+	// deltas are each referenced once and inlined. The database filter
+	// cannot be pushed below the LAG in deltas, since database_name is not a
+	// partition key, so a filtered request takes its deltas over every
+	// reading in the window, as an unfiltered one does.
 	cte := fmt.Sprintf(`
         WITH %s,
         user_names AS (
@@ -1717,7 +1725,7 @@ func buildTopQueriesSQL(
             ORDER BY pss.queryid, pss.userid, pss.dbid, pss.toplevel,
                      pss.collected_at, pss.database_name
         ),
-        samples AS (
+        deltas AS (
             SELECT
                 r.queryid, r.collected_at,
                 r.database_name, r.sample_database_name, r.dbid, r.userid,
@@ -1731,11 +1739,15 @@ func buildTopQueriesSQL(
                 r.shared_blks_read
                     - LAG(r.shared_blks_read) OVER identity AS delta_read
             FROM readings r
-            %s
             WINDOW identity AS (
                 PARTITION BY r.queryid, r.userid, r.dbid, r.toplevel
                 ORDER BY r.collected_at
             )
+        ),
+        samples AS (
+            SELECT d.*
+            FROM deltas d
+            %s
         ),
         totals AS MATERIALIZED (
             SELECT
@@ -2079,9 +2091,11 @@ const nameLookupWindowSQL = "1 hour"
 // consulted, and a statement whose database had no backend sampled in the
 // hour fell back to the probing database_name.
 //
-// Both reads are bounded to nameLookupWindowSQL before the latest
-// pg_stat_statements snapshot, because neither table has an index on the
-// OID and DISTINCT ON would otherwise sort every row in retention. The
+// Both reads are bounded to the nameLookupWindowSQL leading up to the
+// latest pg_stat_statements snapshot, because neither table has an index on
+// the OID and DISTINCT ON would otherwise sort every row in retention. The
+// upper bound also keeps a name observed after statement collection stopped
+// from renaming the statements already recorded. The
 // most recent observation of an OID wins whichever table it came from, so
 // a database renamed within the window resolves to its current name; the
 // trailing datname only makes a tie at one instant stable.
@@ -2103,6 +2117,7 @@ const statementDatabaseLookupSQL = `latest AS (
                 WHERE connection_id = $1
                   AND collected_at >= (SELECT collected_at FROM latest)
                       - INTERVAL '` + nameLookupWindowSQL + `'
+                  AND collected_at <= (SELECT collected_at FROM latest)
                   AND datid IS NOT NULL
                   AND datname IS NOT NULL
                 UNION ALL
@@ -2111,6 +2126,7 @@ const statementDatabaseLookupSQL = `latest AS (
                 WHERE connection_id = $1
                   AND collected_at >= (SELECT collected_at FROM latest)
                       - INTERVAL '` + nameLookupWindowSQL + `'
+                  AND collected_at <= (SELECT collected_at FROM latest)
                   AND datid IS NOT NULL
                   AND datname IS NOT NULL
             ) observed
@@ -2180,11 +2196,13 @@ func respondTopQueriesError(w http.ResponseWriter, connID int, err error) {
 // resolves the statement's own database through db_names.
 //
 // The first %s is statementDatabaseLookupSQL. The second is the optional
-// database_name clause built by buildQueryStatsSQL, applied in samples to
-// the name readings resolved, so that the drill-down, which binds the
+// database_name clause built by buildQueryStatsSQL, applied in valid_deltas
+// to the name readings resolved, so that the drill-down, which binds the
 // database name the top-queries list reported for the statement, finds the
 // statement's counters whichever database they were probed through (issue
-// #508). The scan binds connection_id and queryid, the leading columns of
+// #508). It is applied after the LAG, as in buildTopQueriesSQL, so that a
+// fallback name that changes between collections cannot drop a delta. The
+// scan binds connection_id and queryid, the leading columns of
 // idx_pg_stat_statements_identity_time, whose key order is also the ORDER
 // BY of readings.
 const queryStatsSQLTemplate = `
@@ -2206,12 +2224,12 @@ const queryStatsSQLTemplate = `
         ),
         samples AS (
             SELECT
+                database_name,
                 calls,
                 total_exec_time,
                 LAG(calls) OVER identity AS prev_calls,
                 LAG(total_exec_time) OVER identity AS prev_time
             FROM readings
-            %s
             WINDOW identity AS (
                 PARTITION BY userid, dbid, toplevel
                 ORDER BY collected_at
@@ -2225,6 +2243,7 @@ const queryStatsSQLTemplate = `
             WHERE prev_calls IS NOT NULL
               AND (calls - prev_calls) >= 0
               AND (total_exec_time - prev_time) >= 0
+              %s
         )
         SELECT COUNT(*),
                COALESCE(SUM(delta_calls), 0),
@@ -2244,7 +2263,7 @@ func buildQueryStatsSQL(
 	args = []any{connID, queryID, window.Start, window.End}
 	databaseClause := ""
 	if databaseName != "" {
-		databaseClause = fmt.Sprintf("WHERE database_name = $%d", len(args)+1)
+		databaseClause = fmt.Sprintf("AND database_name = $%d", len(args)+1)
 		args = append(args, databaseName)
 	}
 	return fmt.Sprintf(queryStatsSQLTemplate, statementDatabaseLookupSQL,

@@ -166,6 +166,8 @@ through the store (`recordAuditInOwnTx`, backdating `OccurredAt`), not
 by raw INSERT: the purge verifies every row it removes and refuses a
 prefix holding a forged row such as `insertAuditRowAtID` writes, or one
 that does not start at genesis or the previous purge's recorded head.
+From `cmd/mcp-server` tests, use `auth.SeedAuditEventForTesting`, which
+does the same behind a `testing.Testing()` guard.
 
 Tests in `server/src/cmd/mcp-server` that run a CLI command go through
 `openAuthStoreCLI`, which resolves the audit key from the real server

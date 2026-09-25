@@ -713,7 +713,9 @@ func TestFreshInstallNeedsNoRechain(t *testing.T) {
 }
 
 // TestRechainOfAnEmptyLog checks the degenerate case, which a database
-// whose whole log has been purged reaches.
+// whose whole log has been purged reaches: an empty log verifies, so
+// there is nothing to re-chain, the operator is not asked and nothing is
+// written.
 func TestRechainOfAnEmptyLog(t *testing.T) {
 	store, dir := newReopenableStore(t)
 	if _, err := store.db.Exec("DELETE FROM audit_events"); err != nil {
@@ -721,22 +723,18 @@ func TestRechainOfAnEmptyLog(t *testing.T) {
 	}
 	store.Close()
 
-	var seen AuditRechainPlan
+	asked := false
 	result, err := RechainAuditLog(dir, AuditKeyForTesting(), systemActor,
 		func(plan AuditRechainPlan) (bool, error) {
-			seen = plan
+			asked = true
 			return true, nil
 		})
 	if err != nil {
 		t.Fatalf("Failed to re-chain an empty log: %v", err)
 	}
-	if result.Events != 0 || seen.Events != 0 {
-		t.Errorf("Expected an empty log, got %d planned and %d re-hashed",
-			seen.Events, result.Events)
-	}
-	if !seen.Oldest.IsZero() || !seen.Newest.IsZero() {
-		t.Errorf("Expected no timestamps for an empty log, got %s and %s",
-			seen.Oldest, seen.Newest)
+	if !result.UpToDate || result.Confirmed || asked {
+		t.Errorf("Expected an empty log to need no re-chain, got %+v "+
+			"(asked: %v)", result, asked)
 	}
 
 	reopened, err := reopenStore(t, dir)
@@ -744,7 +742,7 @@ func TestRechainOfAnEmptyLog(t *testing.T) {
 		t.Fatalf("Failed to reopen the store: %v", err)
 	}
 	if _, _, err := reopened.VerifyAuditChain(); err != nil {
-		t.Fatalf("Expected the re-chain event alone to verify, got %v", err)
+		t.Fatalf("Expected the empty log to verify, got %v", err)
 	}
 }
 

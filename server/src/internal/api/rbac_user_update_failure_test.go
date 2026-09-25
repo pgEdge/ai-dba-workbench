@@ -181,6 +181,15 @@ func TestRBACHandler_UpdateUser_EmptyAuthSourceRefusesPassword(t *testing.T) {
 	}
 }
 
+// Triggers that abort every insert into, or update of, the users table,
+// standing in for whatever the database might refuse.
+const (
+	refuseUserInserts = `CREATE TRIGGER refuse_user_inserts BEFORE INSERT ON users
+        BEGIN SELECT RAISE(ABORT, 'forced failure'); END`
+	refuseUserUpdates = `CREATE TRIGGER refuse_user_updates BEFORE UPDATE ON users
+        BEGIN SELECT RAISE(ABORT, 'forced failure'); END`
+)
+
 // TestRBACHandler_CreateUser_StoreFailure covers each store call createUser
 // makes failing for a reason that is not the caller's: every one must answer
 // with its own generic 500 rather than the store's error text.
@@ -193,25 +202,25 @@ func TestRBACHandler_CreateUser_StoreFailure(t *testing.T) {
 	}{
 		{
 			name:    "user insert",
-			trigger: "BEFORE INSERT ON users",
+			trigger: refuseUserInserts,
 			body:    map[string]any{"username": "newuser", "password": "Password1234"},
 			want:    "Failed to create user",
 		},
 		{
 			name:    "service account insert",
-			trigger: "BEFORE INSERT ON users",
+			trigger: refuseUserInserts,
 			body:    map[string]any{"username": "newsvc", "is_service_account": true},
 			want:    "Failed to create service account",
 		},
 		{
 			name:    "disable",
-			trigger: "BEFORE UPDATE ON users",
+			trigger: refuseUserUpdates,
 			body:    map[string]any{"username": "newuser", "password": "Password1234", "enabled": false},
 			want:    "Failed to disable user",
 		},
 		{
 			name:    "superuser grant",
-			trigger: "BEFORE UPDATE ON users",
+			trigger: refuseUserUpdates,
 			body:    map[string]any{"username": "newuser", "password": "Password1234", "is_superuser": true},
 			want:    "Failed to set superuser status",
 		},
@@ -220,8 +229,7 @@ func TestRBACHandler_CreateUser_StoreFailure(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			env := newUpdateUserTestEnv(t)
 
-			if _, err := env.db.Exec("CREATE TRIGGER refuse_users " + tt.trigger +
-				" BEGIN SELECT RAISE(ABORT, 'forced failure'); END"); err != nil {
+			if _, err := env.db.Exec(tt.trigger); err != nil {
 				t.Fatalf("creating the trigger: %v", err)
 			}
 

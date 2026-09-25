@@ -118,3 +118,34 @@ a getter to that interface means updating `testConfig` in
 `scheduler_integration_test.go`; the integration fake deliberately
 leaves the jitter at zero so the existing timing-sensitive tests still
 see a prompt first execution.
+
+## Monitored pool cap counts open connections
+
+`pool.max_connections_per_server` is enforced in
+`collector/src/database/monitored_pool.go`, not in the scheduler. The
+per-connection-ID semaphore in `MonitoredConnectionPoolManager` bounds
+connections in use, but every (connection, database) pair has its own
+pgxpool that keeps idle connections, so on its own it let a server
+with N databases hold up to `max * (N+1)` connections (issue #539).
+`acquireWithinCap` therefore runs under a per-connection mutex
+(`connLocks`) and, whenever the target pool has no idle connection to
+hand out, calls `evictIdleConnections`, which closes (via `Hijack`)
+idle connections in the connection's other pools until idle plus held
+slots stays within the semaphore capacity. Pool creation takes the
+caller's `ctx`, because it runs under that lock. `SyncPools` never
+deletes a connection's semaphore or lock, because a probe may still hold
+them after its pools are removed, and a fresh pair would let the cap be
+exceeded alongside it. When `pool.Acquire` fails because the caller's
+context ended, pgxpool (puddle) goes on opening the connection in the
+background and keeps it as idle, so `GetConnectionForDatabase` holds
+the slot until `ConstructingConns()` drops to zero
+(`releaseSlotAfterConstruction`) rather than releasing it at once. The
+tests in
+`monitored_pool_cap_test.go` check the total with `openConnections`
+and against `pg_stat_activity`.
+
+`InvalidateChangedPools` compares `hashConnectionParams` over the
+sorted parameter map with `dbname` set to the connection's own
+database, so every pool derived from one connection shares a hash.
+Never hash `connstring.Build` output: it iterates a map, so its order
+is random and each reload would re-dial every pool.

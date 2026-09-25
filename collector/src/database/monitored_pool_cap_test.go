@@ -12,7 +12,11 @@ package database
 import (
 	"context"
 	"fmt"
+	"io"
+	"net"
+	"strconv"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -309,5 +313,110 @@ func TestPoolManager_EvictIdleConnections_NoSemaphore(t *testing.T) {
 
 	if got := m.openConnections(987654); got != 0 {
 		t.Errorf("expected no connections for an unknown connection, got %d", got)
+	}
+}
+
+// startDelayingProxy starts a TCP proxy to the test server that waits
+// for the current delay before forwarding each new connection, so that
+// a test can make pgxpool take as long as it likes to open one. It
+// returns the proxy's port and the delay to set.
+func startDelayingProxy(t *testing.T) (int, *atomic.Int64) {
+	t.Helper()
+	cfg := parseTestServerURL(t)
+	upstream := net.JoinHostPort(cfg.host, strconv.Itoa(cfg.port))
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	delay := &atomic.Int64{}
+	go func() {
+		for {
+			client, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer client.Close()
+				time.Sleep(time.Duration(delay.Load()))
+				server, err := net.Dial("tcp", upstream)
+				if err != nil {
+					return
+				}
+				defer server.Close()
+				go pipeUntilClosed(server, client)
+				pipeUntilClosed(client, server)
+			}()
+		}
+	}()
+	addr, ok := ln.Addr().(*net.TCPAddr)
+	if !ok {
+		t.Fatalf("proxy address %v is not TCP", ln.Addr())
+	}
+	return addr.Port, delay
+}
+
+// pipeUntilClosed copies src to dst until either side is closed. The
+// error that ends the copy is expected, since it is how the proxy
+// learns that the pool closed the connection, so it is not reported.
+func pipeUntilClosed(dst io.Writer, src io.Reader) {
+	if _, err := io.Copy(dst, src); err != nil {
+		return
+	}
+}
+
+// TestPoolManager_SlotHeldWhilstAbandonedAcquireConstructs covers an
+// acquisition whose context ends first: pgxpool returns the context's error at once
+// but goes on opening the connection in the background and then keeps
+// it as idle. Releasing the semaphore slot straight away would let
+// another acquisition open a connection alongside the one still being
+// opened, so the slot must stay held until the construction finishes.
+func TestPoolManager_SlotHeldWhilstAbandonedAcquireConstructs(t *testing.T) {
+	requireSchema(t)
+	port, delay := startDelayingProxy(t)
+
+	m := NewMonitoredConnectionPoolManager(2, 300)
+	t.Cleanup(func() { _ = m.Close() })
+
+	mc := makeMonitoredConn(t, 5394, testMonitoredServerSecret)
+	mc.Host = "127.0.0.1"
+	mc.Port = port
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	held, err := m.GetConnection(ctx, mc, testMonitoredServerSecret)
+	if err != nil {
+		t.Fatalf("GetConnection: %v", err)
+	}
+	defer m.ReturnConnection(mc.ID, held)
+
+	// The pool now has no idle connection, so the next acquisition has
+	// to open one, and the proxy makes that outlast the caller.
+	delay.Store(int64(time.Second))
+	short, cancelShort := context.WithTimeout(ctx, 100*time.Millisecond)
+	defer cancelShort()
+	if c, err := m.GetConnection(short, mc, testMonitoredServerSecret); err == nil {
+		m.ReturnConnection(mc.ID, c)
+		t.Fatal("expected the acquisition to time out")
+	}
+
+	sem := m.getSemaphore(mc.ID)
+	if got := len(sem); got != 2 {
+		t.Errorf("slots held straight after the abandoned acquisition = %d, want 2 whilst its connection is still being opened", got)
+	}
+
+	deadline := time.Now().Add(10 * time.Second)
+	for len(sem) != 1 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if got := len(sem); got != 1 {
+		t.Fatalf("slots held once the construction finished = %d, want 1", got)
+	}
+	pool := getPoolFor(t, m, mc.ID)
+	if idle := pool.Stat().IdleConns(); idle != 1 {
+		t.Errorf("idle connections after the construction finished = %d, want 1", idle)
 	}
 }

@@ -23,6 +23,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
+	"github.com/pgedge/ai-workbench/server/internal/database"
 )
 
 // newTestConnectionHandlerWithRBAC creates a handler with auth disabled so
@@ -640,6 +641,8 @@ func TestStripLeadingComments(t *testing.T) {
 		input    string
 		expected string
 	}{
+		{"form feed and vertical tab", "\f\v/* c */\fSELECT 1", "SELECT 1"},
+		{"carriage return ends a line comment", "-- c\rSELECT 1", "SELECT 1"},
 		{
 			"no comments",
 			"SELECT 1",
@@ -973,6 +976,16 @@ func TestScanDollarTag(t *testing.T) {
 		{"mid_string", "SELECT $fn$code$fn$", 7, "$fn$"},
 		{"single_dollar", "$", 0, ""},
 		{"out_of_bounds", "abc", 5, ""},
+		{"identifier_continuation", "a$q$b$q$", 1, ""},
+		{"after_dollar", "a$$b$$", 2, ""},
+		{"after_non_ascii_byte", "\u00e9$q$x$q$", 2, ""},
+		{"after_paren", "($q$x$q$", 1, "$q$"},
+		{"non_ascii_tag", "$\u00e9$body$\u00e9$", 0, "$\u00e9$"},
+		{"non_ascii_continuation", "$q\u00e9$x$q\u00e9$", 0, "$q\u00e9$"},
+		{"non_ascii_after_digit", "$q1\u00e9$x$q1\u00e9$", 0, "$q1\u00e9$"},
+		{"high_byte_tag", "$\xff$x$\xff$", 0, "$\xff$"},
+		{"non_ascii_tag_no_close", "$\u00e9x", 0, ""},
+		{"after_non_ascii_letter_in_tag_position", "\u00e9$\u00e9$", 2, ""},
 	}
 
 	for _, tt := range tests {
@@ -1000,6 +1013,8 @@ func TestHasOnlyComments(t *testing.T) {
 		{"mixed", "-- line\n/* block */\n  ", true},
 		{"has sql", "-- comment\nSELECT 1", false},
 		{"just sql", "SELECT 1", false},
+		{"form feed and vertical tab", "\f\v-- hello", true},
+		{"carriage return ends a line comment", "-- hello\rSELECT 1", false},
 	}
 
 	for _, tt := range tests {
@@ -1142,5 +1157,133 @@ func TestIsParameterPlaceholderError(t *testing.T) {
 					tt.msg, got, tt.expected)
 			}
 		})
+	}
+}
+
+// TestExecuteQuery_RejectsInvalidDatabaseOverride pins the validation of
+// the optional database override. The handler is built with a nil
+// datastore, so anything that reached the connection lookup would panic;
+// a clean 400 therefore shows the request was turned away before any
+// connection string was built or any pool was touched (issue #530).
+func TestExecuteQuery_RejectsInvalidDatabaseOverride(t *testing.T) {
+	names := map[string]string{
+		"whitespace only":  "   ",
+		"embedded NUL":     "my\u0000db",
+		"embedded newline": "my\ndb",
+		"over 63 bytes":    strings.Repeat("a", 64),
+	}
+
+	for name, database := range names {
+		t.Run(name, func(t *testing.T) {
+			handler := newTestConnectionHandlerWithRBAC()
+
+			body, err := json.Marshal(map[string]string{
+				"query":         "SELECT 1",
+				"database_name": database,
+			})
+			if err != nil {
+				t.Fatalf("Failed to build request body: %v", err)
+			}
+
+			req := httptest.NewRequest(http.MethodPost,
+				"/api/v1/connections/1/query", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+
+			handler.executeQuery(rec, req, 1)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("Expected status %d, got %d",
+					http.StatusBadRequest, rec.Code)
+			}
+
+			var response ErrorResponse
+			if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+				t.Fatalf("Failed to decode response: %v", err)
+			}
+			if !strings.HasPrefix(response.Error, "Invalid database name") {
+				t.Errorf("Expected an invalid database name error, got %q",
+					response.Error)
+			}
+		})
+	}
+}
+
+// TestExecuteQuery_DatabaseOverrideInjectionIsEscaped covers the payload
+// from the connection-parameter injection report. The validator is
+// deliberately narrow and does not reject it, because PostgreSQL would
+// accept it as a database name; the protection is that
+// BuildConnectionString escapes it, so it names a (missing) database
+// instead of adding host and sslmode parameters. The handler test shows
+// it is not turned away at the gate, and
+// TestBuildConnectionStringDatabaseNameRoundTrip in the database package
+// shows the built DSN still points at the stored host (issue #530).
+func TestExecuteQuery_DatabaseOverrideInjectionIsEscaped(t *testing.T) {
+	const payload = "mydb?host=evil.example.com&sslmode=disable"
+
+	if err := database.ValidateDatabaseName(payload); err != nil {
+		t.Fatalf("Expected the payload to pass the narrow validator: %v", err)
+	}
+
+	ds := &database.Datastore{}
+	conn := &database.MonitoredConnection{
+		Host:         "db.example.com",
+		Port:         5432,
+		DatabaseName: "mydb",
+		Username:     "user",
+	}
+
+	cfg, err := pgconn.ParseConfig(ds.BuildConnectionString(conn, "secret", payload))
+	if err != nil {
+		t.Fatalf("Failed to parse the built connection string: %v", err)
+	}
+	if cfg.Host != conn.Host {
+		t.Errorf("Injection changed the host to %q", cfg.Host)
+	}
+	if cfg.Database != payload {
+		t.Errorf("Database name = %q, want %q", cfg.Database, payload)
+	}
+}
+
+// TestExecuteQuery_AcceptsUnusualDatabaseOverride confirms the validator
+// stays narrow: a name PostgreSQL would accept is not rejected here, so
+// it fails later, at the connection, rather than at the gate.
+func TestExecuteQuery_AcceptsUnusualDatabaseOverride(t *testing.T) {
+	handler := newTestConnectionHandlerWithRBAC()
+
+	body := `{"query": "SELECT 1", "database_name": "my db-1.prod"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections/1/query",
+		bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	// The nil datastore panics once the request gets past validation,
+	// which is exactly the outcome under test: the name was accepted.
+	defer func() {
+		if r := recover(); r == nil && rec.Code == http.StatusBadRequest {
+			t.Errorf("A valid database name was rejected: %s", rec.Body.String())
+		}
+	}()
+
+	handler.executeQuery(rec, req, 1)
+}
+
+// TestIsIdentChar pins the identifier-character set to PostgreSQL's
+// lexer, which treats every byte from 0x80 up as a letter, so a keyword
+// or literal prefix that continues a non-ASCII identifier is read as
+// part of that identifier.
+func TestIsIdentChar(t *testing.T) {
+	tests := []struct {
+		b    byte
+		want bool
+	}{
+		{'a', true}, {'Z', true}, {'0', true}, {'_', true},
+		{0x80, true}, {0xc3, true}, {0xff, true},
+		{' ', false}, {'$', false}, {'\'', false}, {'(', false}, {0x7f, false},
+	}
+	for _, tt := range tests {
+		if got := isIdentChar(tt.b); got != tt.want {
+			t.Errorf("isIdentChar(%#x) = %v, want %v", tt.b, got, tt.want)
+		}
 	}
 }

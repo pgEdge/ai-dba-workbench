@@ -86,6 +86,22 @@ func Tx(ctx context.Context, tx Rollbacker) error {
 	return tx.Rollback(rbCtx)
 }
 
+// SimpleExec issues a SQL statement on the given context and reports
+// its outcome. Simple hands the statement text to one of these.
+type SimpleExec func(ctx context.Context, sql string) error
+
+// Simple issues ROLLBACK through exec on Context(ctx). It exists for
+// callers that drive a connection over the simple query protocol (a raw
+// pgconn has no Rollback method and no pgx.Tx to hand to Tx), and it
+// keeps the statement text inside this package so that Scan still sees
+// every rollback in the tree going through the bounded, non-cancelable
+// context.
+func Simple(ctx context.Context, exec SimpleExec) error {
+	rbCtx, cancel := Context(ctx)
+	defer cancel()
+	return exec(rbCtx, "ROLLBACK")
+}
+
 // ToSavepoint issues ROLLBACK TO SAVEPOINT name on Context(ctx). The
 // name must be an unquoted SQL identifier; anything else is rejected
 // before any SQL is sent. The matching SAVEPOINT and RELEASE SAVEPOINT

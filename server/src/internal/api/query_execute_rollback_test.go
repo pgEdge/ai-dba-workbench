@@ -357,7 +357,8 @@ func TestExecuteQuery_ConfirmedWriteFailureReported(t *testing.T) {
 
 // TestExecuteQuery_ExplainWithParametersUsesSimpleProtocol covers the
 // simple-protocol branch taken by EXPLAIN statements that contain $N
-// placeholders, which bypasses the transaction path entirely.
+// placeholders, which runs its own read-only transaction rather than
+// the pgx one (issue #530).
 func TestExecuteQuery_ExplainWithParametersUsesSimpleProtocol(t *testing.T) {
 	h, pool, target, cleanup := newQueryExecTestHandler(t)
 	defer cleanup()
@@ -583,4 +584,150 @@ func TestExecuteQuery_RejectsInvalidRequests(t *testing.T) {
 			t.Errorf("status = %d, want %d", rec.Code, http.StatusNotFound)
 		}
 	})
+}
+
+// TestRunSimpleStatement_StopsBufferingAtLimit covers the row bound on
+// the simple-protocol path, which cannot inject a LIMIT because it sends
+// the statement text unaltered. Rows past the limit are read but not
+// retained, Truncated says so, and the connection is left in a state
+// where the next statement on it still works, which is what draining the
+// reader rather than abandoning it buys.
+func TestRunSimpleStatement_StopsBufferingAtLimit(t *testing.T) {
+	_, pool, _, cleanup := newQueryExecTestHandler(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	poolConn, err := pool.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("Failed to acquire a connection: %v", err)
+	}
+	defer poolConn.Release()
+	pgConn := poolConn.Conn().PgConn()
+
+	result := runSimpleStatement(ctx, pgConn,
+		"SELECT g FROM generate_series(1, 25) AS g", 5, 0)
+
+	if result.Error != "" {
+		t.Fatalf("unexpected error: %s", result.Error)
+	}
+	if len(result.Rows) != 5 {
+		t.Errorf("rows = %d, want 5", len(result.Rows))
+	}
+	if result.RowCount != 5 {
+		t.Errorf("row count = %d, want 5", result.RowCount)
+	}
+	if !result.Truncated {
+		t.Error("expected the result to be reported as truncated")
+	}
+	if len(result.Rows) > 0 && result.Rows[0][0] != "1" {
+		t.Errorf("first retained row = %q, want \"1\"", result.Rows[0][0])
+	}
+
+	// A result that fits is not marked truncated, and the connection is
+	// still usable for it.
+	within := runSimpleStatement(ctx, pgConn,
+		"SELECT g FROM generate_series(1, 3) AS g", 5, 0)
+	if within.Error != "" {
+		t.Fatalf("unexpected error on the following statement: %s", within.Error)
+	}
+	if len(within.Rows) != 3 {
+		t.Errorf("rows = %d, want 3", len(within.Rows))
+	}
+	if within.Truncated {
+		t.Error("a result within the limit must not be truncated")
+	}
+}
+
+// TestRunSimpleStatement_LimitAppliesPerResult confirms the bound is
+// applied across a multi-statement simple-protocol batch, where one
+// reader yields several results.
+func TestRunSimpleStatement_LimitAppliesPerResult(t *testing.T) {
+	_, pool, _, cleanup := newQueryExecTestHandler(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	poolConn, err := pool.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("Failed to acquire a connection: %v", err)
+	}
+	defer poolConn.Release()
+
+	result := runSimpleStatement(ctx, poolConn.Conn().PgConn(),
+		"SELECT 1; SELECT g FROM generate_series(1, 10) AS g", 2, 0)
+
+	if result.Error != "" {
+		t.Fatalf("unexpected error: %s", result.Error)
+	}
+	if len(result.Rows) != 2 {
+		t.Errorf("rows = %d, want 2", len(result.Rows))
+	}
+	if !result.Truncated {
+		t.Error("expected the batched result to be reported as truncated")
+	}
+}
+
+// TestRunSimpleStatement_EmptyResult covers the normalisation of a
+// result that returns no rows at all: Rows must be an empty array rather
+// than null, so that the JSON the client receives has the same shape as
+// a result that did return rows.
+func TestRunSimpleStatement_EmptyResult(t *testing.T) {
+	_, pool, _, cleanup := newQueryExecTestHandler(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	poolConn, err := pool.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("Failed to acquire a connection: %v", err)
+	}
+	defer poolConn.Release()
+
+	result := runSimpleStatement(ctx, poolConn.Conn().PgConn(),
+		"SELECT 1 AS g WHERE false", 5, 0)
+
+	if result.Error != "" {
+		t.Fatalf("unexpected error: %s", result.Error)
+	}
+	if result.Rows == nil {
+		t.Error("expected an empty row slice rather than nil")
+	}
+	if len(result.Rows) != 0 || result.RowCount != 0 {
+		t.Errorf("rows = %d, row count = %d, want 0 and 0",
+			len(result.Rows), result.RowCount)
+	}
+	if result.Truncated {
+		t.Error("an empty result must not be reported as truncated")
+	}
+	if len(result.Columns) != 1 || result.Columns[0] != "g" {
+		t.Errorf("columns = %v, want [g]", result.Columns)
+	}
+}
+
+// TestSimpleRowValues covers the rendering of one simple-protocol row,
+// where a NULL column arrives as a nil byte slice and is reported as the
+// text NULL, as it is on the pgx path.
+func TestSimpleRowValues(t *testing.T) {
+	tests := []struct {
+		name string
+		row  [][]byte
+		want []string
+	}{
+		{"no columns", [][]byte{}, []string{}},
+		{"values", [][]byte{[]byte("a"), []byte("1")}, []string{"a", "1"}},
+		{"null column", [][]byte{nil, []byte("x")}, []string{"NULL", "x"}},
+		{"empty string", [][]byte{[]byte("")}, []string{""}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := simpleRowValues(tt.row)
+			if len(got) != len(tt.want) {
+				t.Fatalf("values = %v, want %v", got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("values[%d] = %q, want %q", i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
 }

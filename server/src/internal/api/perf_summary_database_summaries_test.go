@@ -23,6 +23,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/server/internal/database"
+	"github.com/pgedge/ai-workbench/server/internal/metrics"
 )
 
 // databaseSummariesTestSchema mirrors the minimum columns the five
@@ -111,10 +112,11 @@ func newDatabaseSummariesTestHandler(
 	return handler, pool, cleanup
 }
 
-// buildDatabaseSummaries runs the five query helpers in the same sequence
-// as handleDatabaseSummaries and returns the resulting summaries keyed by
-// database name. It isolates the aggregation logic under test from the
-// HTTP/RBAC plumbing in the handler.
+// buildDatabaseSummaries runs the five query helpers through
+// collectDatabaseSummaries, exactly as handleDatabaseSummaries does, and
+// returns the resulting summaries keyed by database name. It isolates the
+// aggregation logic under test from the HTTP/RBAC plumbing in the handler,
+// and fails the test if any sub-query reports an error.
 func buildDatabaseSummaries(
 	t *testing.T,
 	h *PerfSummaryHandler,
@@ -133,12 +135,11 @@ func buildDatabaseSummaries(
 	defer tx.Rollback(ctx) //nolint:errcheck // rollback after read is a no-op
 
 	dbMap := make(map[string]*DatabaseSummary)
-	h.queryDatabaseSizes(ctx, tx, connID, startTime, endTime, dbMap)
-	h.queryDatabaseStats(ctx, tx, connID, startTime, endTime, dbMap)
-	h.queryDeadTupleRatios(ctx, tx, connID, startTime, endTime, dbMap)
-	h.queryTransactionRates(ctx, tx, connID, startTime, endTime, dbMap)
-	h.queryDatabaseCacheHitTimeSeries(ctx, tx, connID, startTime, endTime,
-		bucketInterval, dbMap)
+	window := metrics.TimeWindow{Start: startTime, End: endTime}
+	if err := h.collectDatabaseSummaries(ctx, tx, connID, window,
+		bucketInterval, dbMap); err != nil {
+		t.Fatalf("collectDatabaseSummaries failed: %v", err)
+	}
 
 	out := make(map[string]DatabaseSummary, len(dbMap))
 	for name, db := range dbMap {
@@ -305,15 +306,26 @@ func TestDatabaseSummaries_Issue362_EnrichmentSkipsUnknownDatabase(t *testing.T)
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // rollback after read is a no-op
 
+	dbMap := make(map[string]*DatabaseSummary)
+	enrich := func() {
+		t.Helper()
+		for name, err := range map[string]error{
+			"stats":      h.queryDatabaseStats(ctx, tx, connID, startTime, now, dbMap),
+			"dead tuple": h.queryDeadTupleRatios(ctx, tx, connID, startTime, now, dbMap),
+			"tx rate":    h.queryTransactionRates(ctx, tx, connID, startTime, now, dbMap),
+			"cache hit": h.queryDatabaseCacheHitTimeSeries(ctx, tx, connID,
+				startTime, now, "60 seconds", dbMap),
+		} {
+			if err != nil {
+				t.Fatalf("%s helper failed: %v", name, err)
+			}
+		}
+	}
+
 	// Start with an EMPTY base set (skip queryDatabaseSizes). Every
 	// enrichment helper must leave the map empty because none may create
 	// entries.
-	dbMap := make(map[string]*DatabaseSummary)
-	h.queryDatabaseStats(ctx, tx, connID, startTime, now, dbMap)
-	h.queryDeadTupleRatios(ctx, tx, connID, startTime, now, dbMap)
-	h.queryTransactionRates(ctx, tx, connID, startTime, now, dbMap)
-	h.queryDatabaseCacheHitTimeSeries(ctx, tx, connID, startTime, now,
-		"60 seconds", dbMap)
+	enrich()
 
 	if len(dbMap) != 0 {
 		t.Fatalf("enrichment helpers must not create entries; got: %#v",
@@ -326,11 +338,7 @@ func TestDatabaseSummaries_Issue362_EnrichmentSkipsUnknownDatabase(t *testing.T)
 		DatabaseName:  "keep",
 		CacheHitRatio: CacheHitRatioData{TimeSeries: []CacheHitRatioPoint{}},
 	}
-	h.queryDatabaseStats(ctx, tx, connID, startTime, now, dbMap)
-	h.queryDeadTupleRatios(ctx, tx, connID, startTime, now, dbMap)
-	h.queryTransactionRates(ctx, tx, connID, startTime, now, dbMap)
-	h.queryDatabaseCacheHitTimeSeries(ctx, tx, connID, startTime, now,
-		"60 seconds", dbMap)
+	enrich()
 
 	if _, ok := dbMap["ghost"]; ok {
 		t.Fatalf("'ghost' must not be created by enrichment helpers")
@@ -350,9 +358,11 @@ func TestDatabaseSummaries_Issue362_EnrichmentSkipsUnknownDatabase(t *testing.T)
 	}
 }
 
-// TestDatabaseSummaries_QueryError verifies every query helper handles a
-// failing query (here, missing metrics tables) gracefully by logging and
-// returning without panicking or creating spurious entries.
+// TestDatabaseSummaries_QueryError verifies that every query helper
+// reports a failing query (here, missing metrics tables) as an error that
+// isUndefinedTableError detects, rather than logging it and returning
+// as though the query had found nothing, and that none of them creates a
+// spurious entry on the way (issue #519).
 func TestDatabaseSummaries_QueryError(t *testing.T) {
 	h, pool, cleanup := newDatabaseSummariesTestHandler(t)
 	defer cleanup()
@@ -364,40 +374,42 @@ func TestDatabaseSummaries_QueryError(t *testing.T) {
 		t.Fatalf("teardown for query-error test failed: %v", err)
 	}
 
-	tx, err := pool.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
-	if err != nil {
-		t.Fatalf("BeginTx failed: %v", err)
-	}
-	defer tx.Rollback(ctx) //nolint:errcheck // rollback after read is a no-op
-
 	dbMap := make(map[string]*DatabaseSummary)
 	errStart := time.Now().UTC().Add(-time.Hour)
 	errEnd := time.Now().UTC()
-	h.queryDatabaseSizes(ctx, tx, 1, errStart, errEnd, dbMap)
-	// A failed query aborts the transaction, so restart it for the rest.
-	_ = tx.Rollback(ctx)
-	for _, fn := range []func(pgx.Tx){
-		func(tx pgx.Tx) {
-			h.queryDatabaseStats(ctx, tx, 1, errStart, errEnd, dbMap)
-		},
-		func(tx pgx.Tx) {
-			h.queryDeadTupleRatios(ctx, tx, 1, errStart, errEnd, dbMap)
-		},
-		func(tx pgx.Tx) {
-			h.queryTransactionRates(ctx, tx, 1, errStart, errEnd, dbMap)
-		},
-		func(tx pgx.Tx) {
-			h.queryDatabaseCacheHitTimeSeries(ctx, tx, 1,
+	helpers := []struct {
+		name string
+		fn   func(pgx.Tx) error
+	}{
+		{"sizes", func(tx pgx.Tx) error {
+			return h.queryDatabaseSizes(ctx, tx, 1, errStart, errEnd, dbMap)
+		}},
+		{"stats", func(tx pgx.Tx) error {
+			return h.queryDatabaseStats(ctx, tx, 1, errStart, errEnd, dbMap)
+		}},
+		{"dead tuples", func(tx pgx.Tx) error {
+			return h.queryDeadTupleRatios(ctx, tx, 1, errStart, errEnd, dbMap)
+		}},
+		{"transaction rates", func(tx pgx.Tx) error {
+			return h.queryTransactionRates(ctx, tx, 1, errStart, errEnd, dbMap)
+		}},
+		{"cache hit", func(tx pgx.Tx) error {
+			return h.queryDatabaseCacheHitTimeSeries(ctx, tx, 1,
 				errStart, errEnd, "60 seconds", dbMap)
-		},
-	} {
+		}},
+	}
+	for _, helper := range helpers {
 		// Each query gets its own transaction, rolled back immediately
 		// after use, since a failed query aborts the transaction and
 		// would otherwise leak a checked-out pool connection that
 		// pool.Close() waits on forever in cleanup().
 		itemTx := mustTx(t, pool)
-		fn(itemTx)
+		err := helper.fn(itemTx)
 		_ = itemTx.Rollback(ctx)
+		if !isUndefinedTableError(err) {
+			t.Errorf("%s: err = %v, want an undefined_table error",
+				helper.name, err)
+		}
 	}
 
 	if len(dbMap) != 0 {
@@ -418,9 +430,9 @@ func mustTx(t *testing.T, pool *pgxpool.Pool) pgx.Tx {
 	return tx
 }
 
-// TestDatabaseSummaries_ScanError verifies that a row which fails to scan
-// (NULL values in NOT NULL destination columns) is skipped rather than
-// crashing the helper, and does not create a dbMap entry.
+// TestDatabaseSummaries_ScanError verifies that a row carrying a NULL in a
+// column the collector may leave NULL is skipped, without failing the
+// sub-query and without creating a dbMap entry.
 func TestDatabaseSummaries_ScanError(t *testing.T) {
 	h, pool, cleanup := newDatabaseSummariesTestHandler(t)
 	defer cleanup()
@@ -973,14 +985,15 @@ func seedTransactionRatesBase(
 }
 
 // runTransactionRates drives queryTransactionRates alone against a base set
-// holding only "app", in its own read-only transaction.
+// holding only "app", in its own read-only transaction, and returns the
+// summaries together with the helper's error.
 func runTransactionRates(
 	t *testing.T,
 	h *PerfSummaryHandler,
 	pool *pgxpool.Pool,
 	connID int,
 	startTime, endTime time.Time,
-) map[string]*DatabaseSummary {
+) (map[string]*DatabaseSummary, error) {
 	t.Helper()
 	ctx := context.Background()
 	tx := mustTx(t, pool)
@@ -992,15 +1005,16 @@ func runTransactionRates(
 			CacheHitRatio: CacheHitRatioData{TimeSeries: []CacheHitRatioPoint{}},
 		},
 	}
-	h.queryTransactionRates(ctx, tx, connID, startTime, endTime, dbMap)
-	return dbMap
+	err := h.queryTransactionRates(ctx, tx, connID, startTime, endTime, dbMap)
+	return dbMap, err
 }
 
 // TestDatabaseSummaries_TransactionRatesScanError verifies that a row whose
-// datname cannot be scanned into a string is skipped rather than aborting
-// the helper. A plain NULL datname cannot reach the scan, because the
-// self-join on datname discards NULLs, so the column is projected as a
-// text array instead.
+// datname cannot be scanned into a string is returned as an error. pgx
+// closes the result set on a scan failure, so skipping the row would
+// silently drop every row after it too (issue #519). A plain NULL datname
+// cannot reach the scan, because the self-join on datname discards NULLs,
+// so the column is projected as a text array instead.
 func TestDatabaseSummaries_TransactionRatesScanError(t *testing.T) {
 	h, pool, cleanup := newDatabaseSummariesTestHandler(t)
 	defer cleanup()
@@ -1013,16 +1027,21 @@ func TestDatabaseSummaries_TransactionRatesScanError(t *testing.T) {
 	seedTransactionRatesBase(t, pool, connID, now.Add(-6*time.Minute),
 		now.Add(-time.Minute))
 
-	dbMap := runTransactionRates(t, h, pool, connID, now.Add(-time.Hour), now)
+	dbMap, err := runTransactionRates(t, h, pool, connID,
+		now.Add(-time.Hour), now)
+	if err == nil {
+		t.Fatal("a scan failure must be returned as an error")
+	}
 	if dbMap["app"].TransactionRate != 0 {
-		t.Errorf("TransactionRate = %v, want 0 (the row must be skipped)",
+		t.Errorf("TransactionRate = %v, want 0",
 			dbMap["app"].TransactionRate)
 	}
 }
 
 // TestDatabaseSummaries_TransactionRatesRowsError verifies that an error
 // raised at execution time, which surfaces only through rows.Err() after
-// iteration, is logged and leaves the summaries untouched. The division by
+// iteration, is returned to the caller and leaves the summaries untouched.
+// This is the path a statement timeout takes (issue #519). The division by
 // (numbackends - numbackends) cannot be folded to a constant, so the
 // statement prepares cleanly and fails only when the rows are produced.
 func TestDatabaseSummaries_TransactionRatesRowsError(t *testing.T) {
@@ -1037,8 +1056,246 @@ func TestDatabaseSummaries_TransactionRatesRowsError(t *testing.T) {
 	seedTransactionRatesBase(t, pool, connID, now.Add(-6*time.Minute),
 		now.Add(-time.Minute))
 
-	dbMap := runTransactionRates(t, h, pool, connID, now.Add(-time.Hour), now)
+	dbMap, err := runTransactionRates(t, h, pool, connID,
+		now.Add(-time.Hour), now)
+	if err == nil {
+		t.Fatal("an execution-time failure must be returned as an error")
+	}
+	if isUndefinedTableError(err) {
+		t.Errorf("err = %v, must not be classed as undefined_table", err)
+	}
 	if dbMap["app"].TransactionRate != 0 {
 		t.Errorf("TransactionRate = %v, want 0", dbMap["app"].TransactionRate)
+	}
+}
+
+// TestDatabaseSummaries_MissingTablesReturnEmptySuccess verifies that the
+// endpoint keeps reporting a missing metrics schema, the state of a
+// workbench whose collector has never run, as a 200 with an empty
+// databases array rather than as a failure (issue #519).
+func TestDatabaseSummaries_MissingTablesReturnEmptySuccess(t *testing.T) {
+	h, pool, cleanup := newDatabaseSummariesTestHandler(t)
+	defer cleanup()
+
+	if _, err := pool.Exec(context.Background(),
+		databaseSummariesTestSchemaTeardown); err != nil {
+		t.Fatalf("teardown for missing-tables test failed: %v", err)
+	}
+
+	rec := doDatabaseSummariesRequest(h, "connection_id=610")
+	summaries := decodeDatabaseSummaries(t, rec)
+	if len(summaries) != 0 {
+		t.Errorf("databases = %#v, want empty", summaries)
+	}
+	if !strings.Contains(rec.Body.String(), `"databases":[]`) {
+		t.Errorf("body = %s, want an empty databases array, not null",
+			rec.Body.String())
+	}
+}
+
+// TestDatabaseSummaries_MissingLaterTableReturnsEmptySuccess drops only a
+// table read by a later sub-query, so the size query succeeds and creates
+// an entry before the undefined_table error arrives. The response must
+// still be the empty success rather than a partial set of cards or a
+// failure caused by the aborted transaction.
+func TestDatabaseSummaries_MissingLaterTableReturnsEmptySuccess(t *testing.T) {
+	h, pool, cleanup := newDatabaseSummariesTestHandler(t)
+	defer cleanup()
+
+	const connID = 611
+	now := time.Now().UTC()
+	seedDatabaseSummariesFixture(t, pool, connID, now.Add(-time.Minute),
+		now.Add(-2*time.Minute), now.Add(-90*time.Minute))
+	if _, err := pool.Exec(context.Background(),
+		`DROP TABLE metrics.pg_stat_all_tables`); err != nil {
+		t.Fatalf("drop pg_stat_all_tables failed: %v", err)
+	}
+
+	rec := doDatabaseSummariesRequest(h, fmt.Sprintf("connection_id=%d",
+		connID))
+	if summaries := decodeDatabaseSummaries(t, rec); len(summaries) != 0 {
+		t.Errorf("databases = %#v, want empty", summaries)
+	}
+}
+
+// TestDatabaseSummaries_QueryFailureReportsError verifies that a failure
+// other than a missing table, here an execution-time division by zero that
+// stands in for a statement timeout, is reported as a 500 rather than as a
+// successful response with the affected figures silently absent (issue
+// #519).
+func TestDatabaseSummaries_QueryFailureReportsError(t *testing.T) {
+	h, pool, cleanup := newDatabaseSummariesTestHandler(t)
+	defer cleanup()
+
+	restore := installTransactionRatesView(t, pool, datnameAsDivisionByZero)
+	defer restore()
+
+	const connID = 612
+	now := time.Now().UTC()
+	latest := now.Add(-time.Minute)
+	seedTransactionRatesBase(t, pool, connID, now.Add(-6*time.Minute), latest)
+	if _, err := pool.Exec(context.Background(), `INSERT INTO metrics.pg_database
+        (connection_id, collected_at, datname, datistemplate,
+         database_size_bytes)
+        VALUES ($1, $2, 'app', false, 1048576)`, connID, latest); err != nil {
+		t.Fatalf("seed pg_database failed: %v", err)
+	}
+
+	rec := doDatabaseSummariesRequest(h, fmt.Sprintf("connection_id=%d",
+		connID))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body: %s", rec.Code,
+			rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Failed to query database summaries") {
+		t.Errorf("body = %s, want the generic failure message", body)
+	}
+	if strings.Contains(body, "division") {
+		t.Errorf("body = %s, must not leak the database error", body)
+	}
+}
+
+// TestDatabaseSummaries_NullRowsDoNotHideOthers seeds a row carrying NULLs
+// in every table alongside a complete one, and checks that the complete
+// database is still reported in full. Before the NULL-tolerant scans, a
+// NULL ended the iteration of whichever helper met it, so every row after
+// it was lost as well.
+func TestDatabaseSummaries_NullRowsDoNotHideOthers(t *testing.T) {
+	h, pool, cleanup := newDatabaseSummariesTestHandler(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	const connID = 613
+	now := time.Now().UTC()
+	latest := now.Add(-time.Minute)
+	prev := now.Add(-6 * time.Minute)
+
+	exec := func(sql string, args ...any) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, sql, args...); err != nil {
+			t.Fatalf("seed exec failed: %v\nSQL: %s", err, sql)
+		}
+	}
+	exec(`INSERT INTO metrics.pg_database
+        (connection_id, collected_at, datname, datistemplate,
+         database_size_bytes)
+        VALUES ($1, $2, 'gone', false, NULL),
+               ($1, $2, 'good', false, 2048)`, connID, latest)
+	exec(`ALTER TABLE metrics.pg_stat_database
+        ALTER COLUMN numbackends DROP NOT NULL`)
+	exec(`INSERT INTO metrics.pg_stat_database
+        (connection_id, collected_at, datname, numbackends, blks_hit,
+         blks_read, xact_commit, xact_rollback)
+        VALUES ($1, $2, NULL, 1, 10, 1, 1, 0),
+               ($1, $3, NULL, 1, 20, 2, 2, 0),
+               ($1, $2, 'good', NULL, 100, 0, 100, 0),
+               ($1, $3, 'good', 5, 190, 10, 400, 0)`, connID, prev, latest)
+	exec(`INSERT INTO metrics.pg_stat_all_tables
+        (connection_id, collected_at, database_name, n_live_tup, n_dead_tup)
+        VALUES ($1, $2, NULL, 5, 5),
+               ($1, $2, 'good', 90, 10)`, connID, latest)
+
+	rec := doDatabaseSummariesRequest(h, fmt.Sprintf("connection_id=%d",
+		connID))
+	summaries := decodeDatabaseSummaries(t, rec)
+	if _, ok := summaries["gone"]; ok {
+		t.Errorf("a database with a NULL size must be skipped")
+	}
+	good, ok := summaries["good"]
+	if !ok {
+		t.Fatalf("'good' missing from %#v", summaries)
+	}
+	if good.SizeBytes != 2048 {
+		t.Errorf("SizeBytes = %d, want 2048", good.SizeBytes)
+	}
+	if good.ActiveConnections != 5 {
+		t.Errorf("ActiveConnections = %d, want 5", good.ActiveConnections)
+	}
+	if good.DeadTupleRatio != 10.0 {
+		t.Errorf("DeadTupleRatio = %v, want 10", good.DeadTupleRatio)
+	}
+	// 300 commits over the five minutes between the two samples.
+	if good.TransactionRate != 1.0 {
+		t.Errorf("TransactionRate = %v, want 1.0", good.TransactionRate)
+	}
+	if len(good.CacheHitRatio.TimeSeries) != 1 {
+		t.Fatalf("len(TimeSeries) = %d, want 1",
+			len(good.CacheHitRatio.TimeSeries))
+	}
+	// 90 hits and 10 reads between the two samples.
+	assertRatio(t, "good current", good.CacheHitRatio.Current, 90.0)
+}
+
+// TestDatabaseSummaries_ScanTypeMismatchIsAnError replaces a metrics table
+// with a view that projects the database name as a text array, so that
+// the helper's scan into a string fails. pgx closes the result set on a
+// scan failure, so the helper must return the error rather than report
+// the rows it read before it as the whole result.
+func TestDatabaseSummaries_ScanTypeMismatchIsAnError(t *testing.T) {
+	h, pool, cleanup := newDatabaseSummariesTestHandler(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	start := time.Now().UTC().Add(-time.Hour)
+	end := time.Now().UTC()
+
+	cases := []struct {
+		name    string
+		install string
+		drop    string
+		run     func(pgx.Tx, map[string]*DatabaseSummary) error
+	}{
+		{
+			name: "sizes",
+			install: `DROP TABLE metrics.pg_database;
+                CREATE VIEW metrics.pg_database AS
+                SELECT 1 AS connection_id,
+                       now() - INTERVAL '1 minute' AS collected_at,
+                       ARRAY['app'] AS datname, false AS datistemplate,
+                       1::bigint AS database_size_bytes`,
+			drop: "DROP VIEW IF EXISTS metrics.pg_database",
+			run: func(tx pgx.Tx, m map[string]*DatabaseSummary) error {
+				return h.queryDatabaseSizes(ctx, tx, 1, start, end, m)
+			},
+		},
+		{
+			name: "dead tuples",
+			install: `DROP TABLE metrics.pg_stat_all_tables;
+                CREATE VIEW metrics.pg_stat_all_tables AS
+                SELECT 1 AS connection_id,
+                       now() - INTERVAL '1 minute' AS collected_at,
+                       ARRAY['app'] AS database_name,
+                       1::bigint AS n_live_tup, 1::bigint AS n_dead_tup`,
+			drop: "DROP VIEW IF EXISTS metrics.pg_stat_all_tables",
+			run: func(tx pgx.Tx, m map[string]*DatabaseSummary) error {
+				return h.queryDeadTupleRatios(ctx, tx, 1, start, end, m)
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := pool.Exec(ctx, tc.install); err != nil {
+				t.Fatalf("install view: %v", err)
+			}
+			// The shared teardown drops tables, not views, so the view
+			// must go before the next test rebuilds the schema.
+			defer func() {
+				if _, err := pool.Exec(ctx, tc.drop); err != nil {
+					t.Errorf("drop view: %v", err)
+				}
+			}()
+
+			tx := mustTx(t, pool)
+			defer tx.Rollback(ctx) //nolint:errcheck // rollback after read is a no-op
+			dbMap := map[string]*DatabaseSummary{
+				"app": {DatabaseName: "app"},
+			}
+			err := tc.run(tx, dbMap)
+			if err == nil || isUndefinedTableError(err) {
+				t.Errorf("err = %v, want a scan error", err)
+			}
+		})
 	}
 }

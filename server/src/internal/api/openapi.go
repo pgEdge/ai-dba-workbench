@@ -269,7 +269,7 @@ func buildSchemas() map[string]*OpenAPISchema {
 			Type: "object",
 			Properties: map[string]*OpenAPISchema{
 				"cluster_id":        {Type: "integer", Description: "Target cluster ID; null resets the connection to auto-detection", Nullable: true},
-				"role":              {Type: "string", Description: "Cluster role for the connection", Nullable: true},
+				"role":              {Type: "string", Description: "Cluster role for the connection", Nullable: true, Enum: []string{"standalone", "binary_primary", "binary_standby", "binary_cascading", "logical_publisher", "logical_subscriber", "logical_bidirectional", "spock_node", "spock_standby", "primary", "replica", "node", "unknown"}},
 				"membership_source": {Type: "string", Description: "How the connection is assigned: auto or manual"},
 			},
 		},
@@ -2099,9 +2099,10 @@ func buildPaths() map[string]OpenAPIPathItem {
 				RequestBody: jsonRequestBody("ConnectionClusterUpdateRequest", "Cluster assignment update", true),
 				Responses: map[string]OpenAPIResponse{
 					"200": jsonResponse("ConnectionClusterInfo", "Updated cluster assignment"),
-					"400": jsonResponse("ErrorResponse", "Invalid request"),
+					"400": jsonResponse("ErrorResponse", "Invalid request or role"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
 					"403": jsonResponse("ErrorResponse", "Permission denied: requires manage_connections permission, or the API token's connection scope does not cover the target"),
+					"404": jsonResponse("ErrorResponse", "Cluster not found, or not visible to the caller"),
 					"500": jsonResponse("ErrorResponse", "Failed to assign connection to cluster"),
 				},
 			},
@@ -2328,8 +2329,8 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"200": jsonResponse("ClusterGroup", "Updated group"),
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Forbidden, or the API token's connection scope does not cover the target"),
-					"404": jsonResponse("ErrorResponse", "Group not found"),
+					"403": jsonResponse("ErrorResponse", "Forbidden, or the API token's connection scope does not cover every connection"),
+					"404": jsonResponse("ErrorResponse", "Group not found, or not visible to the caller"),
 				},
 			},
 			Delete: &OpenAPIOperation{
@@ -2342,7 +2343,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 				Responses: map[string]OpenAPIResponse{
 					"204": {Description: "Group deleted"},
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission or ownership of the cluster group"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission or ownership of the cluster group, or the API token's connection scope does not cover every connection"),
 					"404": jsonResponse("ErrorResponse", "Group not found"),
 				},
 			},

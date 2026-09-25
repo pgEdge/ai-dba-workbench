@@ -746,6 +746,28 @@ type ConnectionClusterUpdateRequest struct {
 	MembershipSource string  `json:"membership_source"`
 }
 
+// knownConnectionRoles lists the values PUT /connections/{id}/cluster
+// accepts for a connection's role: the node roles the collector's
+// pg_node_role probe reports (and auto-detection copies into
+// connections.role), the generic roles the client offers for an "other"
+// cluster, and the "unknown" fallback auto-detection writes when no role
+// is known.
+var knownConnectionRoles = map[string]bool{
+	"standalone":            true,
+	"binary_primary":        true,
+	"binary_standby":        true,
+	"binary_cascading":      true,
+	"logical_publisher":     true,
+	"logical_subscriber":    true,
+	"logical_bidirectional": true,
+	"spock_node":            true,
+	"spock_standby":         true,
+	"primary":               true,
+	"replica":               true,
+	"node":                  true,
+	"unknown":               true,
+}
+
 // connectionClusterResponse bundles current cluster info with available
 // clusters so the UI can populate a selector in a single round-trip.
 type connectionClusterResponse struct {
@@ -829,8 +851,9 @@ func (h *ConnectionHandler) handleUpdateConnectionCluster(w http.ResponseWriter,
 		return
 	}
 	// Re-homing a connection changes it, so a read-only entry in the
-	// token's connection scope is not enough, matching the member rule
-	// on POST /clusters/{id}/servers (issue #471).
+	// token's connection scope is not enough (issue #471). The target
+	// cluster gets the same visibility check below as the cluster on
+	// POST /clusters/{id}/servers.
 	if !h.rbacChecker.ConnectionInTokenScope(r.Context(), connectionID) {
 		RespondError(w, http.StatusForbidden, connectionOutOfTokenScope)
 		return
@@ -840,9 +863,36 @@ func (h *ConnectionHandler) handleUpdateConnectionCluster(w http.ResponseWriter,
 	if !DecodeJSONBody(w, r, &req) {
 		return
 	}
+	if req.Role != nil && !knownConnectionRoles[*req.Role] {
+		RespondError(w, http.StatusBadRequest, "Invalid role")
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
+
+	// A caller must not move a connection into a cluster whose members
+	// it cannot see; such a cluster answers 404, as the GET does, so its
+	// existence is not disclosed (issue #471). Unlike POST
+	// /clusters/{id}/servers, a cluster with no members is allowed: the
+	// server dialog creates a cluster and then assigns the new
+	// connection to it with this request.
+	if req.ClusterID != nil {
+		visible, allConnections, err := resolveVisibleConnectionSet(ctx, h.rbacChecker, h.datastore)
+		if respondDBError(w, err, "assign connection to cluster") {
+			return
+		}
+		if !allConnections {
+			members, err := h.datastore.GetConnectionIDsForCluster(ctx, *req.ClusterID)
+			if respondDBError(w, err, "assign connection to cluster") {
+				return
+			}
+			if membersHidden(members, visible) {
+				RespondError(w, http.StatusNotFound, "Cluster not found")
+				return
+			}
+		}
+	}
 
 	if req.ClusterID == nil && req.MembershipSource != "manual" {
 		// Reset to auto-detection

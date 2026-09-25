@@ -81,6 +81,8 @@ moved.
   else. A scope kind the token leaves empty, or scopes with the
   wildcard, is unrestricted on that surface, and a narrowed scope of
   one kind never narrows another.
+- Container writes (cluster groups, clusters and relationships) need
+  every connection in the token's scope.
 - A blanket superuser gate is the exception, because it names nothing
   to intersect against: `RBACChecker.IsSuperuser` returns false for a
   token whose admin scope has been narrowed, which is what

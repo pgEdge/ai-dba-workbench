@@ -526,8 +526,11 @@ project adheres to
   channel, or to a cluster's definition or relationships, needs
   a scope covering every connection. A write to a blackout or
   blackout schedule that the token cannot see answers `404 Not
-  Found`, as reading it does. `PUT
-  /api/v1/rbac/tokens/{id}/scope` refuses an empty list for any
+  Found`, as reading it does, and so does moving a connection
+  into a cluster, or updating a cluster group, whose members the
+  caller cannot see; moving a connection between clusters also
+  refuses a role the server does not recognise with `400 Bad
+  Request`. `PUT /api/v1/rbac/tokens/{id}/scope` refuses an empty list for any
   scope kind with `400 Bad Request`, because an empty kind means
   unrestricted; clear the scope with `DELETE` or use the
   wildcard instead, and the console does the same. The two

@@ -132,6 +132,20 @@ export const ALL_MCP_OPTION: McpPrivilegeOption = {
     _isAll: true,
 };
 
+/**
+ * The id the server stores, and returns in a token's scope, for the
+ * all-MCP-privileges wildcard (privilege_identifier_id = 0).
+ */
+export const MCP_WILDCARD_ID = 0;
+
+/**
+ * Reports whether an MCP privilege id in a token's scope is the
+ * wildcard, whether it came from the server (0) or from the dialog's
+ * own sentinel option (-1).
+ */
+export const isMcpWildcardId = (id: number): boolean =>
+    id === MCP_WILDCARD_ID || id === ALL_MCP_OPTION.id;
+
 /** Sentinel option for selecting all admin permissions. */
 export const ALL_ADMIN_OPTION: AdminPermissionOption = {
     id: '*',

@@ -236,7 +236,9 @@ func TestBlackoutWritesByIDRespectTokenScope(t *testing.T) {
 	}{
 		{"delete blackout in scope", deleteBlackout, "blackouts", 1, "narrowed", http.StatusOK},
 		{"delete blackout read-only", deleteBlackout, "blackouts", 1, "readOnly", http.StatusForbidden},
-		{"delete blackout out of scope", deleteBlackout, "blackouts", 2, "narrowed", http.StatusForbidden},
+		// A record on a connection the token cannot see answers 404, as
+		// reading it does, so that a refusal does not reveal the id.
+		{"delete blackout out of scope", deleteBlackout, "blackouts", 2, "narrowed", http.StatusNotFound},
 		{"delete cluster blackout narrowed", deleteBlackout, "blackouts", 3, "narrowed", http.StatusForbidden},
 		{"delete cluster blackout wildcard", deleteBlackout, "blackouts", 3, "wildcard", http.StatusOK},
 		{"delete missing blackout", deleteBlackout, "blackouts", 999, "narrowed", http.StatusNotFound},
@@ -244,16 +246,16 @@ func TestBlackoutWritesByIDRespectTokenScope(t *testing.T) {
 		{"stop cluster blackout narrowed", stopBlackout, "blackouts", 3, "narrowed", http.StatusForbidden},
 		{"stop cluster blackout session", stopBlackout, "blackouts", 3, "session", http.StatusOK},
 		{"update blackout in scope", updateBlackout, "blackouts", 1, "narrowed", http.StatusOK},
-		{"update blackout out of scope", updateBlackout, "blackouts", 2, "narrowed", http.StatusForbidden},
+		{"update blackout out of scope", updateBlackout, "blackouts", 2, "narrowed", http.StatusNotFound},
 		{"delete schedule in scope", deleteSchedule, "blackout_schedules", 1, "narrowed", http.StatusOK},
-		{"delete schedule out of scope", deleteSchedule, "blackout_schedules", 2, "narrowed", http.StatusForbidden},
+		{"delete schedule out of scope", deleteSchedule, "blackout_schedules", 2, "narrowed", http.StatusNotFound},
 		{"delete cluster schedule narrowed", deleteSchedule, "blackout_schedules", 3, "narrowed", http.StatusForbidden},
 		{"delete cluster schedule unscoped", deleteSchedule, "blackout_schedules", 3, "unscoped", http.StatusOK},
 		{"delete missing schedule", deleteSchedule, "blackout_schedules", 999, "narrowed", http.StatusNotFound},
 		{"update schedule in scope", updateSchedule, "blackout_schedules", 1, "narrowed", http.StatusOK},
 		// The body moves the schedule onto connection 5, which the token
 		// holds, but the schedule is on connection 6 today.
-		{"move schedule from out of scope", updateSchedule, "blackout_schedules", 2, "narrowed", http.StatusForbidden},
+		{"move schedule from out of scope", updateSchedule, "blackout_schedules", 2, "narrowed", http.StatusNotFound},
 		{"move cluster schedule", updateSchedule, "blackout_schedules", 3, "narrowed", http.StatusForbidden},
 		{"move cluster schedule wildcard", updateSchedule, "blackout_schedules", 3, "wildcard", http.StatusOK},
 		// The schedule is on connection 5 today, but the body would move
@@ -274,6 +276,9 @@ func TestBlackoutWritesByIDRespectTokenScope(t *testing.T) {
 			}
 			if tc.want == http.StatusForbidden {
 				assertOutOfTokenScope(t, rec)
+			}
+			if tc.want == http.StatusForbidden ||
+				(tc.want == http.StatusNotFound && tc.id < 999) {
 				if !rowExists(t, pool, tc.table, tc.id) {
 					t.Errorf("Expected %s row %d to survive a refusal",
 						tc.table, tc.id)

@@ -83,9 +83,13 @@ The log also records two actions of its own:
 
 An `audit.purge` event is attributed to the `system` actor, carries no
 target, and records the cutoff it applied in `details.older_than` and
-the number of events it removed in `details.removed`. The event is
-written in the same transaction as the deletion, so a log that has
-shrunk always explains why.
+the number of events it removed in `details.removed`. It also records
+the event it left as the oldest in the log, by identifier in
+`details.oldest_retained_id` and by that event's own hash in
+`details.oldest_retained_hash`, which is what verification later checks
+the start of the log against. The event is written in the same
+transaction as the deletion, so a log that has shrunk always explains
+why.
 
 An `audit.rechain` event is attributed to the operator who ran
 `-rechain-audit-log` and records how many events were re-hashed in
@@ -376,7 +380,12 @@ opens the authentication store, whatever schema version the store
 records, so a database from which either has been dropped is protected
 again at the next start. Verification also refuses to pass a log whose
 index or trigger is missing at the time it runs, because a chain that
-recomputes cleanly without them has shown nothing. A store whose chain
+recomputes cleanly without them has shown nothing, and it checks what
+each one does as well as its name: the index must be unique, must not
+be partial and must cover the link to the preceding event and nothing
+else, and the trigger must be the one the server creates, word for
+word. An object that keeps the expected name but no longer protects the
+log is reported with status `2`. A store whose chain
 has already forked cannot be given the index, and the server refuses to
 open it, naming the index and the query that finds the duplicates.
 
@@ -426,6 +435,22 @@ that sits below it, is reported, because none of the three is a state
 the database produces by itself; so is a store with no such record at
 all, because every table the server creates keeps one and removing it
 takes deliberate effort.
+
+Verification checks the start of the log in the same spirit. Every
+purge records the event it left as the oldest, as described above, and
+nothing but the purge deletes events, so until the next purge the
+oldest event must be exactly that one; a log whose oldest event is any
+other is reported with status `2`, because events have been deleted
+from the start of it since the purge ran. Where no purge event records
+the oldest event, because no purge has removed anything since the
+server was upgraded to a release that writes the record, verification
+falls back to a weaker check: an oldest event that follows another
+event, which is no longer in the log, is reported only when no
+`audit.purge` event survives at all to account for the removal. A log
+whose first event follows a missing predecessor and which holds no
+purge event is evidence of deletion, since the purge is the only thing
+that legitimately produces that shape and it always leaves an event
+behind.
 
 ### Upgrading a Log Written Before the Keyed Chain
 
@@ -534,10 +559,16 @@ record to the new highest identifier leaves a log that verifies
 cleanly. The comparison catches a deletion that leaves the record
 alone, and nothing more.
 
-Deleting the oldest events outright is still accepted. The first
-surviving event's link to its predecessor is taken as given, because
-the retention purge is a legitimate producer of exactly that shape, so
-wholesale removal of the start of the log leaves a chain that verifies.
+Deleting the oldest events is caught precisely only once a purge has
+recorded where the log begins. On a log whose newest purge event was
+written by a build that predates the record, verification can say only
+whether some purge event survives to explain a missing predecessor, so
+a deletion from the start of that log still verifies until the next
+purge removes something and records the oldest event. Once the record
+exists, removing the oldest events and every purge
+event that mentions them is no longer enough: the newest surviving
+purge event names an oldest event that is not there, and it cannot be
+rewritten without the server secret.
 
 The re-chain blesses whatever the database contained at the moment it
 ran, as described above, so on an upgraded installation the keyed chain
@@ -581,6 +612,20 @@ retention period. Because each remaining event still carries the hash of
 the event that preceded it, the chain stays verifiable across a purge;
 verification treats the earliest remaining event's recorded previous
 hash as its starting point.
+
+Before it deletes anything, the purge checks the events it is about to
+remove. They must begin with the event the previous purge left as the
+oldest, or with the very first event the log ever held if no purge has
+run, every one of them must verify under the server secret, and each
+must link to the one before it, through to the event that becomes the
+new oldest. Without that check, an attacker who deleted the start of
+the log could insert a single backdated event and wait for the next
+purge to remove it and record a new oldest event over the deletion. A
+purge that finds anything else deletes nothing and logs an error that
+begins `refusing to purge the audit log`, and it keeps refusing at every
+five-minute run until the log is dealt with; run `-verify-audit-log` to
+see what it found, and treat it as you would a failed verification.
+Retention stops whilst the purge refuses, so `auth.db` grows until then.
 
 The purge removes a run of the oldest events and can express nothing
 else: it finds the oldest event inside the retention window and deletes

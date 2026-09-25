@@ -326,7 +326,7 @@ positives. The alerter supports the following providers:
 
 - Ollama with models like `qwen2.5:7b-instruct`.
 - OpenAI with `gpt-4o-mini`.
-- Anthropic with `claude-3-5-haiku`.
+- Anthropic with `claude-haiku-4-5`.
 
 ## Configuration Reloading
 

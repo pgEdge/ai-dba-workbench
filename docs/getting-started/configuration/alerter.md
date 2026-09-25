@@ -456,7 +456,7 @@ provider.
 |--------|------|---------|-------------|
 | `api_key_file` | string | None | Path to API key file |
 | `base_url` | string | `https://api.anthropic.com/v1` | Anthropic base URL |
-| `reasoning_model` | string | `claude-3-5-haiku-20241022` | Reasoning model |
+| `reasoning_model` | string | `claude-haiku-4-5` | Reasoning model |
 
 #### Gemini Configuration
 
@@ -469,7 +469,7 @@ key can access.
 |--------|------|---------|-------------|
 | `api_key_file` | string | None | Path to API key file |
 | `base_url` | string | `https://generativelanguage.googleapis.com` | Gemini base URL |
-| `reasoning_model` | string | `gemini-3.6-flash` | Reasoning model |
+| `reasoning_model` | string | `gemini-3.8-flash` | Reasoning model |
 | `embedding_model` | string | `gemini-embedding-001` | Embedding model |
 
 When Gemini is the embedding provider, the

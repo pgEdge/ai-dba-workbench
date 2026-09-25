@@ -507,6 +507,18 @@ project adheres to
   explicitly. The example configuration and the walkthrough script
   are updated to match. (#459)
 
+- Change the alerter's default Anthropic reasoning model from
+  `claude-3-5-haiku-20241022` to `claude-haiku-4-5`. Anthropic has
+  retired `claude-3-5-haiku-20241022`, so a deployment that left
+  `llm.anthropic.reasoning_model` unset failed every Tier 3
+  classification with a 404. Existing configurations that name a
+  retired Claude 3 model must be updated to a current model, or Tier 3
+  classification continues to fail with a 404. The default Gemini
+  reasoning model also moves from `gemini-3.6-flash` to
+  `gemini-3.8-flash`, superseding the change for #459 above. The
+  example configuration and the walkthrough script are updated to
+  match.
+
 - Report the queried time window in the `/api/v1/metrics/query`
   response. The endpoint returned a bare array of series and said
   nothing about the window behind the series, so charts derived

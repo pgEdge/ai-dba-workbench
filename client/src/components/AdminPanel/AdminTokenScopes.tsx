@@ -27,6 +27,7 @@ import {
     ADMIN_PERMISSIONS,
     ALL_MCP_OPTION,
     ALL_ADMIN_OPTION,
+    isMcpWildcardId,
     filterMcpPrivileges,
     filterAdminPermissions,
 } from './tokens';
@@ -164,7 +165,7 @@ const AdminTokenScopes: React.FC = () => {
     const [deleteLoading, setDeleteLoading] = useState(false);
 
     const getMcpPrivilegeName = useCallback((id: number) => {
-        if (id === -1) {
+        if (isMcpWildcardId(id)) {
             return "All the owner's MCP privileges";
         }
         const priv = mcpPrivileges.find((p) => p.id === id);
@@ -331,8 +332,8 @@ const AdminTokenScopes: React.FC = () => {
         }));
 
         const scopeMcpIds = token.scope?.mcp_privileges ?? [];
-        const mcpNames = scopeMcpIds.map((id: number) => getMcpPrivilegeName(id));
-        if (mcpNames.includes('*')) {
+        const mcpWildcard = scopeMcpIds.some(isMcpWildcardId);
+        if (mcpWildcard) {
             setEditMcpPrivileges([ALL_MCP_OPTION]);
         } else {
             setEditMcpPrivileges(mcpPrivileges.filter((p) => scopeMcpIds.includes(p.id)));
@@ -347,7 +348,6 @@ const AdminTokenScopes: React.FC = () => {
 
         // A stored entry the dialog cannot show would be dropped by a
         // save, lifting a restriction nobody chose to lift.
-        const mcpWildcard = mcpNames.includes('*');
         const unshown: string[] = [];
         if (!mcpWildcard && scopeMcpIds.some(
             (id: number) => !mcpPrivileges.some((p) => p.id === id),

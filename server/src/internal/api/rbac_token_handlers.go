@@ -325,11 +325,13 @@ func (h *RBACHandler) getTokenScope(w http.ResponseWriter, r *http.Request, toke
 // unaffected, and a token may still manage other tokens' scopes.
 //
 // This is the narrow fix only. A token may still widen or clear a
-// *different* token's scope, including one owned by a superuser,
+// *different* token's scope, including one owned by a superuser, and
+// may create a fresh token for any owner through POST /rbac/tokens,
+// which carries no scope at all and so sidesteps this check entirely;
 // superuser-owned tokens may still be created without superuser rights,
 // and permission strings written into a scope are not validated against
-// a known set; issue #522 tracks all three as a policy question about
-// who may issue what.
+// a known set. Issue #522 tracks all of these as a policy question
+// about who may issue what.
 func (h *RBACHandler) refuseSelfScopeMutation(w http.ResponseWriter,
 	r *http.Request, tokenID int64) bool {
 

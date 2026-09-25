@@ -312,6 +312,33 @@ describe('AdminTokenScopes - empty scope categories', () => {
         expect(mockApiPut).not.toHaveBeenCalled();
     });
 
+    it('saves a token whose MCP scope is the stored wildcard', async () => {
+        // The server returns the all-MCP-privileges wildcard as id 0,
+        // which the dialog must recognise rather than count as an entry
+        // it cannot show.
+        mockApi([makeToken({
+            scoped: true,
+            mcp_privileges: [0],
+            admin_permissions: ['manage_users'],
+        })]);
+        const user = userEvent.setup({ delay: null });
+        renderPanel();
+
+        const dialog = await openEdit(user);
+        expect(within(dialog).queryByText(/could not all be shown/))
+            .not.toBeInTheDocument();
+        await clickSave(user, dialog);
+
+        await waitFor(() => {
+            expect(mockApiPut).toHaveBeenCalledWith(
+                '/api/v1/rbac/tokens/9/scope',
+                { mcp_privileges: ['*'], admin_permissions: ['manage_users'] },
+            );
+        });
+        expect(mockApiDelete).not.toHaveBeenCalled();
+        expect(screen.queryByText(/Privilege 0/)).not.toBeInTheDocument();
+    });
+
     it('refuses to save when a stored admin permission is not recognised', async () => {
         mockApi([makeToken({ scoped: true, admin_permissions: ['retired_permission'] })]);
         const user = userEvent.setup({ delay: null });

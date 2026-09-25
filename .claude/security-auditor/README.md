@@ -212,12 +212,15 @@ client address, before and after snapshots and a hash chain.
   no hash over a row it did not create. Treat any proposal that has an
   unattended path re-sign existing rows as that bug returning.
 - `PurgeAuditEvents` deletes a contiguous id-prefix and can express
-  nothing else: `DELETE ... WHERE id < (SELECT MIN(id) FROM
-  audit_events WHERE occurred_at >= ?)`. `occurred_at` is
-  attacker-writable. Server inserts let SQLite assign `id` and the
-  append-only trigger stops an existing row's `id` changing; a writer
-  can name an `id` on INSERT, but that can only move the boundary
-  earlier, never past the oldest row in the window. Deleting by
+  nothing else: it reads `cut = MIN(id) WHERE occurred_at >= ?`, checks
+  the prefix, then runs `DELETE ... WHERE id < cut`. `occurred_at` is
+  attacker-writable. The append-only trigger stops an UPDATE changing
+  an `id`, but `id` is not in the HMAC, so a writer can delete a
+  genuine row and re-insert it at another id and it still verifies; an
+  id-prefix is a log prefix only because `verifyAuditPurgePrefix`
+  requires the rows to link in id order from the recorded head. A
+  row inserted at a chosen id can only move the boundary earlier,
+  never past the oldest row in the window. Deleting by
   timestamp alone
   made retention, which runs unattended every five minutes, a
   suffix-deletion oracle: backdated newest rows were deleted, the chain
@@ -229,11 +232,26 @@ client address, before and after snapshots and a hash chain.
   such as 0 would delete rows inserted at negative ids. Any change that filters
   the purge on a column a writer of `auth.db` controls reopens this.
 - Verification distinguishes a wrong key from tampering, because the
-  responses differ. The `keyProven` flag is the whole mechanism: a row
-  that fails before anything has verified under the key reports
-  `ErrAuditKeyMismatch` (CLI exit 3); once any row has verified, a
-  later failure is `ErrAuditChainBroken`, `ErrAuditChainDowngraded` or
-  `ErrAuditUnkeyedRow` (CLI exit 2).
+  responses differ. A failing row is `ErrAuditKeyMismatch` (CLI exit 3)
+  only if no row outside the history has verified yet (`keyProven`)
+  and `looksLikeKeyChange` sees a linked run of failing rows followed
+  by the end of the log or by rows that ALL verify and link, with
+  `verifyAuditTail` passing. It walks the whole log, deliberately: the
+  re-anchor's history runs to the last failing row anywhere, so a
+  verdict drawn from the leading rows let `-confirm-rechain` launder a
+  later deletion. `classifyUnverifiedRow`, and the purge's
+  `auditPurgeUnverified`, also never report a key mismatch when a verified anchor recording a head exists
+  (`anchorFound`): the verifier returns on the first bad row before the
+  history-digest and head checks, so asking would let one edit just
+  past an anchor's head or history launder a deletion there (both fixed
+  in #502; the A-to-B-to-A secret rotation falls to the interactive
+  path). `scanAuditForReanchor` re-derives the shape
+  (`failsAfterVerified`) and clears `KeyMismatch` if a row was written
+  between the verify and the scan, and `reanchorAuditLogTx` re-runs
+  `verifyAuditTail` under the write lock on a key mismatch; otherwise it is `ErrAuditChainBroken`, and downgrades and unkeyed
+  rows are exit 2 as well. An attacker who rewrites the oldest rows
+  keeping their links therefore gets the key-mismatch wording; exit 3
+  is advice, not proof of innocence.
 - `prev_hash` carries a unique index, so no two events can name the
   same predecessor and only one event can be the genesis row with an
   empty `prev_hash`. A forked chain is refused by the schema.
@@ -270,13 +288,45 @@ plainly rather than crediting the design with more than it does.
   the newest rows and one `UPDATE sqlite_sequence SET seq = <new
   MAX(id)>` passes verification. Do not credit the key with defending
   the tail.
-- Wholesale deletion of the log's prefix is still accepted, because the
-  first surviving row's `prev_hash` is taken as given and the retention
-  purge legitimately produces that shape.
+- Head deletion (#502) is caught against the head the newest purge
+  event recorded (`oldest_retained_hash`); a record-less purge event
+  never overrides an older recorded one, in the verifier or in
+  `auditPurgeStart`. Only on a log whose purge events all predate the
+  record does the weak fallback apply (a missing predecessor passes
+  if any `audit.purge` row survives). The purge refuses, and retention
+  stalls, on a prefix that does not verify and link from the recorded
+  head, including for benign causes such as a rotated secret, until an
+  operator re-anchors with `-rechain-audit-log`.
+- The re-anchor (`audit_reanchor.go`) appends one keyed `audit.rechain`
+  event and accepts every row through the last failing one as history,
+  bound only by an unkeyed SHA-256 digest and count. History rows lose
+  attribution: anything done to them before the re-anchor is accepted,
+  and only later changes are detectable. An older anchor re-inserted
+  into the log is refused by `checkAuditAnchorLinks` in the purge and
+  by the link check in the verifier; the newest anchor recording a
+  head, which must verify, wins. `-confirm-rechain` re-anchors
+  unattended only on a key mismatch, which is forgeable (see above):
+  editing every row through the newest anchor, keeping stored hashes,
+  makes that anchor unverifiable and the log rotation-shaped, so a
+  scripted run accepts rewritten rows reaching back past the newest
+  purge, which may be minutes old. There is no `-previous-secret-file`
+  to prove them. `previous_*` head fields are
+  signed into the event only when the previous anchor verified, and the
+  CLI prints file-sourced hashes only if they are 64 lowercase hex
+  (`auditPlanHash`).
+- Rows deleted and later restored at their original ids from a copy
+  leave no trace; that needs an anchor outside the file.
+- `verifyAuditSchema` refuses any trigger other than
+  `audit_events_no_update` whose table is `audit_events` or whose SQL
+  mentions it, and `recordAudit` fails unless the INSERT wrote exactly
+  one row, against `RAISE(IGNORE)` triggers silently dropping events.
+  `prev_hash` stored as a BLOB escapes the unique index (BLOB and TEXT
+  compare unequal); the id-order walk still rejects a fork, and no
+  `typeof` check exists yet.
 - A re-chain attests the database exactly as it stood at the moment it
   ran, and says nothing about anything before it. On an upgraded
   installation the keyed chain starts at that point.
-- Nothing verifies at start-up. `VerifyAuditChain` has one non-test
+- Nothing verifies at start-up. `VerifyAuditLog` has one non-test
   caller, `verifyAuditLogCommand` under `-verify-audit-log`, so on an
   installation that never runs it the chain is never checked.
 

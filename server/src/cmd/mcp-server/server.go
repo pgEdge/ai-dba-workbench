@@ -11,6 +11,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -575,10 +576,28 @@ func (s *Server) purgeAuditEvents() {
 
 	cutoff := time.Now().UTC().AddDate(0, 0, -days)
 	if removed, err := s.authStore.PurgeAuditEvents(cutoff); err != nil {
-		log.Printf("[ERROR] Failed to purge audit events: %v", err)
+		log.Print(auditPurgeFailureMessage(err))
 	} else if removed > 0 {
 		fmt.Fprintf(os.Stderr, "Removed %d audit event(s) older than %d days\n", removed, days)
 	}
+}
+
+// auditPurgeFailureMessage is the log line for a failed purge. A purge
+// that refuses because the log does not verify repeats at every tick
+// until an operator acts, so the line names the commands that diagnose
+// and recover from it.
+func auditPurgeFailureMessage(err error) string {
+	msg := fmt.Sprintf("[ERROR] Failed to purge audit events: %v", err)
+	if errors.Is(err, auth.ErrAuditKeyMismatch) ||
+		errors.Is(err, auth.ErrAuditChainBroken) {
+
+		msg += "; the purge will keep refusing until this is resolved. " +
+			"Run 'ai-dba-server -verify-audit-log' to see why, and " +
+			"'ai-dba-server -rechain-audit-log' to record a new starting " +
+			"point once you have accounted for it"
+	}
+
+	return msg
 }
 
 // hasValidLLMConfig returns true when the configured LLM provider has the

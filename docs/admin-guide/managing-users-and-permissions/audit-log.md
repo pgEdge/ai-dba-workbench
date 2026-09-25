@@ -79,13 +79,17 @@ The log also records two actions of its own:
 | Action | Description |
 |--------|-------------|
 | `audit.purge` | The retention purge removed events from the log. |
-| `audit.rechain` | The log was re-hashed under the server secret. |
+| `audit.rechain` | The log was re-hashed, or given a new starting point. |
 
 An `audit.purge` event is attributed to the `system` actor, carries no
 target, and records the cutoff it applied in `details.older_than` and
-the number of events it removed in `details.removed`. The event is
-written in the same transaction as the deletion, so a log that has
-shrunk always explains why.
+the number of events it removed in `details.removed`. It also records
+the event it left as the oldest in the log, by identifier in
+`details.oldest_retained_id` and by that event's own hash in
+`details.oldest_retained_hash`, which is what verification later checks
+the start of the log against. The event is written in the same
+transaction as the deletion, so a log that has shrunk always explains
+why.
 
 An `audit.rechain` event is attributed to the operator who ran
 `-rechain-audit-log` and records how many events were re-hashed in
@@ -95,6 +99,25 @@ rules beforehand in `details.legacy_chain_ok`. It is written in the same
 transaction as the rewrite and becomes the newest link of the rebuilt
 chain, so a log whose every hash has changed carries the event that
 explains why.
+
+The re-anchor, which `-rechain-audit-log` performs on a keyed log that
+no longer verifies, also writes an `audit.rechain` event, with
+`details.mode` set to `reanchor`. That event rewrites nothing; it
+records why verification failed in `details.reason`, whether the failure
+looked like a changed server secret in `details.key_mismatch`, and the
+oldest event it accepted in `details.oldest_retained_id` and
+`details.oldest_retained_hash`, the same fields a purge records, and
+the number of events the log held in `details.events`. Where
+it accepted events as history, it records the last of them in
+`details.history_through_id`, their number in `details.history_events`
+and a digest of their contents in `details.history_digest`. Where an
+earlier purge or re-anchor had recorded a starting point, the
+`details.previous_*` fields record which event it was and whether it
+verified, and, only where it verified, what it named: what an event
+that does not verify says is whatever its writer chose, so it is not
+signed into the new one. A purge that runs whilst history events
+survive copies the three `history_*` fields into its own event for the
+events it keeps.
 
 A request that an authorisation check refuses is recorded with the
 action the request would have used had it been allowed, so that a denial
@@ -254,7 +277,7 @@ the audit flags:
 |------|-------------|
 | `-list-audit` | List RBAC audit log events |
 | `-verify-audit-log` | Verify the audit log hash chain |
-| `-rechain-audit-log` | Re-hash an inherited log under the server secret |
+| `-rechain-audit-log` | Re-hash an inherited log, or re-anchor a failing one |
 | `-confirm-rechain` | Confirm `-rechain-audit-log` without a prompt |
 | `-audit-actor string` | Filter audit events by actor name |
 | `-audit-action string` | Filter by action, such as `group.create` |
@@ -376,7 +399,15 @@ opens the authentication store, whatever schema version the store
 records, so a database from which either has been dropped is protected
 again at the next start. Verification also refuses to pass a log whose
 index or trigger is missing at the time it runs, because a chain that
-recomputes cleanly without them has shown nothing. A store whose chain
+recomputes cleanly without them has shown nothing, and it checks what
+each one does as well as its name: the index must be unique, must not
+be partial and must cover the link to the preceding event and nothing
+else, and the trigger must be the one the server creates, word for
+word, and the only trigger that acts on the table. An object that keeps
+the expected name but no longer protects the log, or an extra trigger
+that could discard or delete events as they are written, is reported
+with status `2`, and the server refuses to record an event that such a
+trigger discards. A store whose chain
 has already forked cannot be given the index, and the server refuses to
 open it, naming the index and the query that finds the duplicates.
 
@@ -402,14 +433,38 @@ two cases that call for opposite responses:
 |--------|---------|
 | `0` | The log verified. |
 | `1` | The check could not run, for example the store would not open. |
-| `2` | The chain is broken, has lost its tail or holds an unkeyed event. |
-| `3` | Nothing in the log verified under the key in use. |
+| `2` | The chain is broken or has lost its tail. |
+| `3` | The oldest events do not verify under the key in use. |
 
-Status `3` is almost always the wrong server secret rather than
-tampering, because a rewrite that began at the very first event is far
-rarer than a secret that has been rotated, moved or never created.
-Check that `secret_file` names the file the log was written under
-before treating it as an incident.
+A store that holds an unkeyed event does not open, so the command
+reports it with status `1` and the reason the store refused.
+
+Status `3` means that the oldest events, and possibly all of them, fail
+under the key in use, each still linked to the one before it, whilst
+every event after them verifies and links to the one before it, the
+log has lost nothing from its tail, and no earlier event verified under
+the key. That is the shape a server secret changed since those events
+were written leaves behind, and the command reports it as a probable
+wrong or rotated secret rather than as tampering. It never does so
+where a purge or re-anchor event that verifies under the key records
+where the log begins: such an event was written under the key in use,
+after every older event had been checked or accepted, so no change of
+secret can explain an event failing after it, and any failure on such
+a log is reported with status `2`. Check that `secret_file` names
+the file the log was written under before treating it as an incident;
+if the secret was changed deliberately, or the old one is lost, see
+[Recovering a Log That No Longer Verifies](#recovering-a-log-that-no-longer-verifies).
+A failure of any other shape, such as an event in the middle of the log
+that no longer verifies, is reported with status `2`.
+
+A log that a re-anchor has given a new starting point reports how many
+of its events were accepted as history:
+
+```text
+Audit log verified: 2 event(s), chain intact
+  1 of them were accepted as history by the re-chain recorded in event 2,
+  and verify only as unchanged since then, not as written by this server
+```
 
 Verification also compares the newest event's identifier against the
 highest identifier the table has ever issued, which SQLite records
@@ -426,6 +481,22 @@ that sits below it, is reported, because none of the three is a state
 the database produces by itself; so is a store with no such record at
 all, because every table the server creates keeps one and removing it
 takes deliberate effort.
+
+Verification checks the start of the log in the same spirit. Every
+purge records the event it left as the oldest, as described above, and
+nothing but the purge deletes events, so until the next purge the
+oldest event must be exactly that one; a log whose oldest event is any
+other is reported with status `2`, because events have been deleted
+from the start of it since the purge ran. Where no purge event records
+the oldest event, because no purge has removed anything since the
+server was upgraded to a release that writes the record, verification
+falls back to a weaker check: an oldest event that follows another
+event, which is no longer in the log, is reported only when no
+`audit.purge` event survives at all to account for the removal. A log
+whose first event follows a missing predecessor and which holds no
+purge event is evidence of deletion, since the purge is the only thing
+that legitimately produces that shape and it always leaves an event
+behind.
 
 ### Upgrading a Log Written Before the Keyed Chain
 
@@ -507,6 +578,137 @@ because the prompt may have sat waiting whilst something else wrote to
 the file. The message gives both the figures you approved and the ones
 it found, and nothing has been signed.
 
+### Recovering a Log That No Longer Verifies
+
+A keyed log that stops verifying also stops the retention purge, as
+described under [Retention](#retention), and nothing the purge does by
+itself clears the refusal. The two ordinary causes are a server secret
+that has been changed or lost since the older events were written, and
+events deleted or altered by someone able to write `auth.db`. The
+`-rechain-audit-log` command recovers from both by re-anchoring the
+log, which gives the log a new trusted starting point.
+
+In the following example, `-rechain-audit-log` examines a keyed log and
+offers to re-anchor it:
+
+```bash
+./bin/ai-dba-server -rechain-audit-log
+```
+
+The command runs verification first. A log that already verifies needs
+nothing, and the command says so without asking:
+
+```text
+The audit log verifies as it stands; there is nothing to re-chain.
+```
+
+Otherwise the command prints why verification fails, the oldest event
+it would accept with that event's hash, any starting point an earlier
+purge or re-anchor recorded, and the events it would accept as history.
+It then asks you to type `rechain`, and changes nothing on any other
+answer. The following output comes from a log written under a server
+secret that has since been replaced, with the failure reason shortened
+here to fit the page:
+
+```text
+Audit log in /var/lib/ai-workbench:
+  Events:              1
+  Oldest event:        2026-09-25T14:14:52Z
+  Newest event:        2026-09-25T14:14:52Z
+  Verification fails:  audit chain key mismatch: audit row 1 does not ...
+
+The oldest events do not verify under the current server secret, and the events
+after them do. That is what changing or replacing the secret leaves behind. If
+you have not changed secret_file, do not proceed: find the right secret file
+instead, and the log will verify as it stands.
+
+The re-chain would record:
+  Oldest event accepted: 1
+  Its hash:              d0dd1659b885db7ca952077849fbcbca0b92be24d02b014a32b7386c81e4ffee
+  Previously recorded:   (none)
+  Accepted as history:   1 event(s), 1 to 1
+
+Events accepted as history are no longer shown to have been written by this
+server. Whatever was done to them before now is accepted with them; from now on
+the log shows only whether they change again.
+
+No existing event is changed, re-signed or deleted. One audit.rechain event is
+appended, signed under the current secret, recording the above as where the log
+now begins.
+
+Type "rechain" to proceed, or anything else to abort:
+```
+
+The `-confirm-rechain` flag answers the prompt in advance, but only
+where the failure has the shape a changed secret leaves, the case an
+operator can foresee and script for: the oldest events fail, linked to
+one another, and every event after them verifies and links, with
+nothing lost from the tail. The whole log is checked, because the
+re-anchor accepts everything through the last failing event as
+history, so a rotated secret cannot carry a later deletion or edit
+through an unattended run. For any other failure an unattended run
+prints the findings and stops, because the failure may be tampering and
+needs someone to read it; re-anchor such a log interactively once you
+have accounted for it, or restore `auth.db` from a known-good copy
+instead.
+
+That shape is evidence, not proof. Someone able to write `auth.db` can
+edit every event up to and including the newest purge or re-anchor
+event, whilst keeping their stored hashes and links, and the result
+looks exactly like a changed secret. Because the purge runs every five
+minutes, that newest event may be only minutes old, so the edit can
+reach almost the whole log, along with any deletion made before those
+events. A scripted `-confirm-rechain` accepts all of it as history
+without anyone reading the plan, so use it only where the secret is
+known to have changed, and run the command interactively whenever it
+has not.
+
+Where every event verifies and the failure is in where the log begins
+or ends, such as events lost from the tail, the re-anchor accepts no
+history, and the plan warns that recording a new starting point removes
+the evidence of the failure from the log; afterwards only the recorded
+reason shows that it was there.
+
+The re-anchor never deletes, rewrites or re-signs an existing event.
+It appends one `audit.rechain` event, signed under the current server
+secret, that records the oldest event as where the log now begins, in
+the fields described under
+[Recorded Actions](#recorded-actions). Every event from the start of
+the log through the last one that fails verification, or fails to link
+to the event before it, is accepted as history, and the event records a
+digest of their contents. From then on, verification and the purge
+check those events against the digest and their number rather than
+under the key, and hold every later event to the key as before. The
+purge can therefore remove history events again as they age out, and
+copies the digest of any it keeps into its own event.
+
+Accepting events as history gives something up, and the plan says so
+before you confirm. History events are no longer shown to have been
+written by this server; anything done to them before the re-anchor, by
+anyone, is accepted with them, and the digest shows only that they have
+not changed since. That is why the re-anchor needs an operator's
+confirmation.
+
+Verification and the purge treat the newest anchor, meaning the newest
+purge or re-anchor event that records a starting point, as
+authoritative. Every purge or re-anchor event from the newest down to
+that anchor must verify under the current secret: if one does not,
+verification holds every event to the key as if no anchor existed, and
+the purge refuses, rather than falling back to an older anchor. An
+older event cannot
+override a newer one: a copy of an earlier event put back into the log
+does not link into the chain where it sits, and both verification and
+the purge refuse a log in that state.
+
+The command refuses, and writes nothing, when the log's unique index or
+append-only trigger is missing or altered, when verification could not
+read the log, and when the log changed between the plan you approved
+and the write, which the command checks inside the transaction that
+holds the database's write lock. After recording the event, the command
+verifies the log again and reports any failure that a new starting
+point does not account for. Verify the log with `-verify-audit-log`
+afterwards in any case.
+
 ### What Verification Does and Does Not Show
 
 Read those checks for what they are. They catch deletions made without
@@ -516,7 +718,7 @@ number of deliberate steps required to hide a deletion from one to
 several. They are not a defence against an attacker with write access
 to `auth.db`.
 
-Five limits are worth stating plainly.
+Six limits are worth stating plainly.
 
 An attacker holding both the server secret and write access to
 `auth.db` can forge the log freely. The hash is keyed, so the secret is
@@ -534,14 +736,25 @@ record to the new highest identifier leaves a log that verifies
 cleanly. The comparison catches a deletion that leaves the record
 alone, and nothing more.
 
-Deleting the oldest events outright is still accepted. The first
-surviving event's link to its predecessor is taken as given, because
-the retention purge is a legitimate producer of exactly that shape, so
-wholesale removal of the start of the log leaves a chain that verifies.
+Deleting the oldest events is caught precisely only once a purge has
+recorded where the log begins. On a log whose purge events were all
+written by builds that predate the record, verification can say only
+whether some purge event survives to explain a missing predecessor, so
+a deletion from the start of that log still verifies until the next
+purge removes something and records the oldest event. Once the record
+exists, removing the oldest events and every purge
+event that mentions them is no longer enough: the newest surviving
+purge event names an oldest event that is not there, and it cannot be
+rewritten without the server secret. Events deleted and later put
+back exactly as they were, from a copy, leave nothing to find.
 
 The re-chain blesses whatever the database contained at the moment it
 ran, as described above, so on an upgraded installation the keyed chain
 says nothing about the period before that.
+
+A re-anchor likewise accepts its history events as they stood when it
+ran, as described above, so for those events verification shows only
+that they have not changed since, and nothing about who wrote them.
 
 Nothing verifies the log at start-up. Verification runs only when you
 run `-verify-audit-log`, so schedule it if you want the check to happen
@@ -581,6 +794,26 @@ retention period. Because each remaining event still carries the hash of
 the event that preceded it, the chain stays verifiable across a purge;
 verification treats the earliest remaining event's recorded previous
 hash as its starting point.
+
+Before it deletes anything, the purge checks the events it is about to
+remove. They must begin with the oldest event that the newest purge or
+re-anchor recorded, or with the very first event the log ever held if
+no purge has run, every one of them must verify under the server secret, and each
+must link to the one before it, through to the event that becomes the
+new oldest. Without that check, an attacker who deleted the start of
+the log could insert a single backdated event and wait for the next
+purge to remove it and record a new oldest event over the deletion. A
+purge that finds anything else deletes nothing and logs an error that
+contains `refusing to purge the audit log`, and it keeps refusing at
+every five-minute run until the log is dealt with. Where the refusal is
+because the log does not verify, the error names
+`-verify-audit-log`, which shows what the purge found, and
+`-rechain-audit-log`, which records a new starting point once you have
+accounted for it, as described under
+[Recovering a Log That No Longer Verifies](#recovering-a-log-that-no-longer-verifies).
+Retention stops whilst the purge refuses, so `auth.db` grows until then.
+Events a re-anchor accepted as history are checked against its digest
+rather than under the key, so the purge removes them as they age out.
 
 The purge removes a run of the oldest events and can express nothing
 else: it finds the oldest event inside the retention window and deletes

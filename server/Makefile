@@ -21,7 +21,7 @@ BINARY := ai-dba-server
 # (66.9% both locally and in CI) so the gate holds the line today, and
 # it should be raised towards 90 as coverage grows. Override for local
 # experiments with `make coverage COVERAGE_MIN=80`.
-COVERAGE_MIN ?= 66.8
+COVERAGE_MIN ?= 67.4
 
 # Get absolute path to output directory
 ABS_BIN_DIR := $(abspath $(BIN_DIR))

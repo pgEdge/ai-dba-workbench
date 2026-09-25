@@ -386,9 +386,23 @@ The audit DDL is not gated on the schema version. `initSchema` in
 `IF NOT EXISTS` table, trigger and unique-index statements on every
 open; the version gate alone left a database stamped with the current
 version but created before the index existed without it for good.
-`VerifyAuditChain` asserts through `verifyAuditSchema` that the index
-(and its uniqueness, via `pragma_index_list`) and the trigger are
-present before it reads a row. `TestReopenRestoresAuditSchemaObjects`
+`VerifyAuditChain` asserts through `verifyAuditSchema` the definitions,
+not just the names, before it reads a row: `verifyAuditChainIndex`
+requires `pragma_index_list` to report the index unique and not
+partial, and `pragma_index_info` to report exactly one key column,
+`prev_hash` (an expression column has a NULL name, so it fails too);
+`verifyAuditNoUpdateTrigger` refuses any other trigger on
+`audit_events` or whose SQL mentions it (a `RAISE(IGNORE)` trigger
+would drop chosen events with the chain intact; `recordAudit` also
+fails unless its INSERT wrote one row), and compares the trigger's
+`sqlite_master.sql` against `expectedAuditTriggerSQL()`, which is `auditNoUpdateTriggerDDL`
+with whitespace collapsed, `IF NOT EXISTS` removed and the trailing
+`;` trimmed, because SQLite stores the statement minus those two. So
+changing `auditNoUpdateTriggerDDL` changes what verification accepts;
+an existing database keeps its old trigger text, since the DDL is
+`IF NOT EXISTS`, so a change there also needs a migration that drops
+and re-creates the trigger. `TestVerifyAuditSchemaChecksDefinitions`
+in `audit_head_test.go` holds the same-named impostor cases. `TestReopenRestoresAuditSchemaObjects`
 and `TestReopenRefusesForkedChain` in `audit_test.go` go through
 `NewAuthStore` rather than calling a migration directly; keep any new
 schema test on that path, because a test that calls the migration
@@ -501,19 +515,44 @@ rows, and none should be added. Three successive designs kept a signed
 watermark, and each gave the server a way to sign a forgery; the last
 let the retention purge re-anchor the boundary onto a backdated row, so
 an attacker who could write `auth.db` had the server attest a
-fabricated history under the real key. `PurgeAuditEvents` is now a
-plain delete plus its own keyed event and writes no hash over a row it
-did not create. Treat any proposal that has an unattended path re-sign
+fabricated history under the real key. `PurgeAuditEvents` is a
+delete plus its own keyed event and writes no hash over a row it did
+not create. Treat any proposal that has an unattended path re-sign
 existing rows as that bug returning;
 `TestPurgeDoesNotReanchorAForgedPrefix` in `audit_rechain_test.go` is
 the regression test.
 
-The purge deletes a contiguous id-prefix and nothing else:
+Head deletion (#502) is handled in `audit_head.go` without re-signing
+anything. The purge event's details carry `oldest_retained_id` and
+`oldest_retained_hash`, the existing hash of the row it left as the
+oldest, as a value inside an event the purge itself creates; the
+verifier still recomputes that row like any other. `auditHeadCheck`
+(fed by `verifyAuditLog` only with rows that verified) requires the
+oldest row's hash to equal the newest purge's record, and, when no
+purge records one, reports a non-empty leading `prev_hash` only if no
+`audit.purge` row survives at all (the weak fallback for purge events
+written before the record). The record is worthless unless the purge
+cannot be steered into writing a new one over a deletion, so before
+deleting, `verifyAuditPurgePrefix` checks, in the purge transaction,
+that the rows up to and including the new head start at the previous
+purge's recorded hash (or at a genesis row with `prev_hash` "" when no
+purge exists; anywhere only when no purge event records a head, since a
+record-less purge never overrides an older recorded one, in either the
+purge or `auditHeadCheck`, or a replayed pre-record event would reopen
+the weak case), that
+each verifies under the key (`checkAuditRowVerifies`) and that each
+links to the one before. Any failure refuses the purge and deletes
+nothing, which stalls retention by design; the refusal wraps
+`ErrAuditChainBroken` and starts `errAuditPurgeRefused`. The cases,
+including the one-INSERT laundering attempt, are in
+`audit_head_test.go`.
+
+The purge deletes a contiguous id-prefix and nothing else: it reads the
+cut in the transaction, verifies the prefix, then deletes below it.
 
 ```go
-DELETE FROM audit_events
-    WHERE id < (SELECT MIN(id) FROM audit_events
-                WHERE occurred_at >= ?)
+SELECT MIN(id) FROM audit_events WHERE occurred_at >= ?  -- cut
+DELETE FROM audit_events WHERE id < ?                     -- cut
 ```
 
 `occurred_at` is a column an attacker who can write `auth.db` chooses;
@@ -524,7 +563,7 @@ an `id` on INSERT, but that only moves the boundary earlier. Deleting on
 the newest events, which relinked the chain and, through the appended
 `audit.purge` event, put `MAX(id)` back into agreement with
 `sqlite_sequence`, the disagreement `verifyAuditTail` exists to read.
-When no row falls inside the window the subquery yields NULL and
+When no row falls inside the window `MIN(id)` is NULL and
 nothing is deleted, which is deliberate: emptying the log instead would
 restore the same oracle, and a fixed cut-off such as 0 would delete
 rows inserted at negative ids. `forEachAuditEvent` likewise starts its
@@ -534,14 +573,48 @@ count. `TestPurgeIgnoresBackdatedNewestRows` in
 `audit_rechain_guard_test.go` covers both halves, the refusal and an
 honest prefix still being purged.
 
-`VerifyAuditChain` separates a wrong key from tampering, because an
-operator's response differs. The `keyProven` flag is the mechanism: a
-row that fails before any row has verified under the key is
-`ErrAuditKeyMismatch`, which the CLI maps to exit 3 in
-`describeAuditVerifyFailure` (`cmd/mcp-server/audit.go`); once a row
-has verified, later failures are `ErrAuditChainBroken`,
-`ErrAuditChainDowngraded` or `ErrAuditUnkeyedRow`, which map to exit 2.
-Anything else stays 1.
+`verifyAuditLog` (`audit_verify.go`; `VerifyAuditChain` is a thin
+wrapper over `VerifyAuditLog`) separates a wrong key from tampering,
+because an operator's response differs. A row whose HMAC does not
+recompute is classified by `classifyUnverifiedRow`: only when no row
+outside the history has yet verified (`keyProven`), no verified anchor
+recording a head was found (`anchorFound`, since such an anchor
+postdates any rotation; the purge's `auditPurgeUnverified` takes the
+same flag), and `looksLikeKeyChange` finds a run of failing rows, each linked to the
+one before, followed by the end of the log or by rows that all verify
+and link (it walks the whole log, then requires `verifyAuditTail`),
+is it `ErrAuditKeyMismatch` (CLI exit 3,
+message names `-rechain-audit-log`); anything else is
+`ErrAuditChainBroken`, and `ErrAuditChainDowngraded` or
+`ErrAuditUnkeyedRow` map to exit 2 too, in `describeAuditVerifyFailure`
+(`cmd/mcp-server/audit.go`). Anything else stays 1. The purge's
+repeating log line comes from `auditPurgeFailureMessage` in
+`cmd/mcp-server/server.go` and names both commands for either sentinel.
+
+The re-anchor (`audit_reanchor.go`) is the recovery for a keyed log the
+purge refuses. `RechainAuditLog` picks it when the log holds no unkeyed
+rows; a log that verifies returns `UpToDate` without calling `confirm`.
+It rewrites nothing: `reanchorAuditLogTx` re-checks the plan under the
+write lock, rescans (`scanAuditForReanchor`, compared with the plan's
+scan so an in-place replacement is caught), and appends one keyed
+`audit.rechain` event carrying `oldest_retained_id`/`_hash`, and, when
+rows fail, `history_through_id`, `history_events` and
+`history_digest`, an unkeyed SHA-256 over every row through the last
+that fails to verify or link (`auditHistoryDigest`). Purge and rechain
+events are both anchors (`isAuditAnchorAction`); `findAuditAnchor`
+takes the newest that records a head and requires it to verify, and a
+record-less anchor never overrides. History rows skip the key and link
+checks in the verifier and in `verifyAuditPurgePrefix` but must match
+the digest and count, and a purge keeping some history carries the
+digest of the survivors forward. `checkAuditAnchorLinks` is the purge's
+anti-replay check: the row before the anchor must match its
+`prev_hash` and the row after must name its hash, so a re-inserted old
+anchor cannot take over. The CLI (`confirmAuditReanchor`) lets
+`-confirm-rechain` proceed only on `KeyMismatch`, which
+`auditReanchorPlan` clears when the scan's `failsAfterVerified` shows a
+failing row after one beyond the existing history verified. Tests are
+in `audit_reanchor_test.go`, `audit_reanchor_scope_test.go` and
+`cmd/mcp-server/reanchor_audit_test.go`.
 
 A successful `GET /api/v1/rbac/audit` is not written to `audit_events`,
 because reading is not a change; `handleAudit` logs one `[AUDIT]` line

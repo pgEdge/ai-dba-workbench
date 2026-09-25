@@ -1597,6 +1597,54 @@ project adheres to
 
 ### Security
 
+- Report events deleted from the start of the RBAC audit log in
+  `-verify-audit-log`, which previously accepted them because the
+  retention purge legitimately leaves the oldest event pointing at a
+  predecessor that is gone. Each `audit.purge` event now records the
+  event it left as the oldest, in `details.oldest_retained_id` and
+  `details.oldest_retained_hash`, and verification exits with status 2
+  when the oldest event is any other, or when it follows a missing
+  predecessor and no purge event survives to account for it. The purge
+  now also verifies the events it is about to delete, requiring them to
+  start where the previous purge left off, to verify under the server
+  secret and to link through to the new oldest event, so that one
+  backdated event inserted into `auth.db` cannot have the next purge
+  record a new starting point over a deletion. A purge that finds
+  anything else deletes nothing and logs `refusing to purge the audit
+  log` at every run until the log is dealt with, so retention stops and
+  `auth.db` grows in the meantime. (#502)
+
+- Recover a stalled audit log retention purge with
+  `-rechain-audit-log`, which on a keyed log that no longer verifies
+  now re-anchors the log instead of re-hashing it. The command shows why
+  verification fails, the oldest event and hash it would accept and any
+  starting point previously recorded, and changes nothing unless the
+  operator types `rechain`; `-confirm-rechain` answers in advance only
+  when the whole log has the shape a changed server secret leaves,
+  which someone able to write `auth.db` can imitate, so scripted runs
+  belong only where the secret is known to have changed. The re-anchor
+  deletes, rewrites and re-signs nothing: it appends one signed
+  `audit.rechain` event that records the new starting point and accepts
+  the oldest events, through the last one that fails, as history bound
+  by a digest, so retention can purge them again. History events are no
+  longer attributable to this server, and anything done to them before
+  the re-anchor is accepted with them. An older purge or re-anchor event
+  put back into the log cannot override a newer one. Verification now
+  reports a failure with the shape of a changed secret as a probable
+  wrong or rotated secret, with status 3, rather than as tampering, and
+  both it and the purge's repeating error name `-rechain-audit-log`.
+  (#502)
+
+- Check the definitions of the audit log's schema objects in
+  `-verify-audit-log`, not only their names. The index on the link to
+  the preceding event must be unique, not partial, and on that column
+  alone, and the append-only trigger must match the one the server
+  creates and be the only trigger on the table, so a same-named index
+  on another column, a trigger whose body does nothing, or an extra
+  trigger that discards events is now reported with status 2. The
+  server also refuses to record an event that a trigger discards,
+  rather than committing the change with no event. (#501)
+
 - Stop the Slack, Mattermost and generic webhook channels putting their
   endpoint URL into the alerter log, into
   `notification_history.error_message` and into the server log when a

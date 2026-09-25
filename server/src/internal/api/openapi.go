@@ -1936,6 +1936,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 				Responses: map[string]OpenAPIResponse{
 					"302": {Description: "Redirect to the identity provider, or to \"/\" with login_error set when OIDC login is not enabled"},
 					"405": {Description: "Method not allowed; the Allow header names GET"},
+					"429": jsonResponse("ErrorResponse", "Too many login requests from this address"),
 					"500": jsonResponse("ErrorResponse", "Failed to create or seal the login state"),
 				},
 			},
@@ -1960,7 +1961,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 				},
 				Responses: map[string]OpenAPIResponse{
 					"302": {Description: "Redirect to the return path on success, or to \"/\" with login_error set on failure"},
-					"400": jsonResponse("ErrorResponse", "Missing or invalid state cookie, state mismatch, or missing authorization code"),
+					"400": jsonResponse("ErrorResponse", "Missing or invalid state cookie, state mismatch, a state that has already been used, or missing authorization code"),
 					"404": {Description: "OIDC login is not enabled"},
 					"405": {Description: "Method not allowed; the Allow header names GET"},
 					"429": jsonResponse("ErrorResponse", "Too many callback requests from this address"),

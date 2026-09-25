@@ -1597,6 +1597,32 @@ project adheres to
 
 ### Security
 
+- Make each OIDC login state good for one callback only, and rate limit
+  `GET /api/v1/auth/oidc/start` per client address. The sealed state
+  cookie is stateless and stayed valid for its ten minute lifetime, so
+  one call to the start endpoint gave an anonymous caller a state that
+  replayed against the callback with any number of bogus codes; every
+  replay spent the callback's rate-limit allowance, which without
+  `http.trusted_proxies` is shared by the whole deployment, and sent the
+  client credentials to the provider's token endpoint. The server now
+  remembers a digest of each accepted state for as long as the state
+  could be opened and refuses a second presentation with `400` before
+  the provider is contacted, and the start endpoint allows 240 requests
+  a minute per client address. A completed login now hands back the one
+  unit it spent on each limiter, where it used to clear the callback's
+  allowance entirely. The record is held in memory, so a
+  deployment running several server processes with one server secret
+  refuses a replay only at the process that accepted the state. (#505)
+
+- Document `http.trusted_proxies` as required for a production
+  deployment behind a reverse proxy with OIDC login enabled, and name
+  the consequences in the start-up warning printed when the list is
+  empty: every client shares one OIDC rate-limit allowance, and behind
+  a TLS-terminating proxy the login state cookie cannot use the
+  `__Host-` prefix, which lets a host able to set cookies for a sibling
+  subdomain log a user in to the attacker's account (login CSRF).
+  (#506)
+
 - Stop the Slack, Mattermost and generic webhook channels putting their
   endpoint URL into the alerter log, into
   `notification_history.error_message` and into the server log when a

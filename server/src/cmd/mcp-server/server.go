@@ -421,18 +421,27 @@ func logOIDCStartupWarnings(w io.Writer, cfg *config.Config) {
 	}
 
 	// Without a trusted proxy list, every request behind a reverse proxy
-	// arrives with that proxy's address, so the callback's rate limit
-	// has one key for the whole deployment rather than one per client:
-	// it stops nothing an attacker does and can be spent deliberately to
-	// deny everyone else a login. The same list decides whether the OIDC
-	// state cookie may use the "__Host-" name prefix, so without it the
-	// cookie is written under its plain name.
+	// arrives with that proxy's address, so the start and callback rate
+	// limits have one key for the whole deployment rather than one per
+	// client: they stop nothing an attacker does and can be spent
+	// deliberately to deny everyone else a login. The same list decides
+	// whether the OIDC state cookie may use the "__Host-" name prefix
+	// when TLS terminates at the proxy, so without it the cookie is
+	// written under its plain name, and a host that can set cookies for
+	// a sibling subdomain can plant its own login state over a user's
+	// and have that user's browser finish the attacker's login (login
+	// CSRF, issue #506). The warning names both consequences so that an
+	// operator reads the list as required behind a proxy, not optional.
 	if len(cfg.HTTP.TrustedProxies) == 0 {
 		fmt.Fprintf(w,
-			"WARNING: http.trusted_proxies is empty, so per-client rate limiting of the OIDC\n"+
-				"         callback is inoperative behind a reverse proxy: every request shares one\n"+
-				"         allowance, and the login state cookie cannot use the __Host- prefix.\n"+
-				"         Set http.trusted_proxies to the reverse proxy's address.\n")
+			"WARNING: http.trusted_proxies is empty. Behind a reverse proxy this is unsafe for\n"+
+				"         OIDC login: every request shares one rate-limit allowance for the OIDC\n"+
+				"         start and callback endpoints, so any client can spend it and block\n"+
+				"         federated login for everyone; and unless TLS terminates at this server,\n"+
+				"         the login state cookie cannot use the __Host- prefix, so a host that can\n"+
+				"         set cookies for a sibling subdomain can log a user in to the attacker's\n"+
+				"         own account (login CSRF). Set http.trusted_proxies to the reverse\n"+
+				"         proxy's address; it is required for production deployments behind one.\n")
 	}
 
 	// superuser_group hands the Workbench superuser flag to whoever can

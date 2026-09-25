@@ -311,7 +311,7 @@ func TestOpenAPIOIDCPathOperationsMatchHandlers(t *testing.T) {
 			// the 404 only stranded the user on an error page.
 			// Both handlers answer anything but GET with 405 and an
 			// Allow: GET header, so the spec documents that too.
-			wantStatuses:    []string{"302", "405", "500"},
+			wantStatuses:    []string{"302", "405", "429", "500"},
 			wantQueryParams: []string{"return"},
 		},
 		{

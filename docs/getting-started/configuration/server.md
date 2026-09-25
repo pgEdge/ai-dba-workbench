@@ -339,7 +339,7 @@ that read and verify the log, along with
 | `tls.cert_file` | string | | Certificate file |
 | `tls.key_file` | string | | Private key file |
 | `tls.chain_file` | string | | Certificate chain |
-| `trusted_proxies` | list | `[]` | Trusted proxy CIDRs |
+| `trusted_proxies` | list | `[]` | Trusted proxy CIDRs; required behind a reverse proxy when OIDC login is enabled |
 | `cors_origin` | string | `""` | Allowed CORS origin |
 | `hsts_enabled` | bool | `false` | Send the Strict-Transport-Security header |
 | `auth.max_failed_attempts_before_lockout` | int | `10` | Lock after N failures (`0` disables); restart required |

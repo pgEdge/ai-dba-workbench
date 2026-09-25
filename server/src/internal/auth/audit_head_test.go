@@ -59,7 +59,7 @@ func auditRowCount(t *testing.T, s *AuthStore) int {
 }
 
 // newestPurgeHead reads the head record of the newest audit.purge event.
-func newestPurgeHead(t *testing.T, s *AuthStore) auditPurgeHead {
+func newestPurgeHead(t *testing.T, s *AuthStore) auditAnchor {
 	t.Helper()
 
 	events, _, err := s.ListAuditEvents(AuditFilter{Action: auditActionPurge,
@@ -68,7 +68,7 @@ func newestPurgeHead(t *testing.T, s *AuthStore) auditPurgeHead {
 		t.Fatalf("Failed to read the newest purge event: %v (%d found)",
 			err, len(events))
 	}
-	head, err := parseAuditPurgeHead(&events[0])
+	head, err := parseAuditAnchor(&events[0])
 	if err != nil {
 		t.Fatalf("Failed to parse the purge event: %v", err)
 	}
@@ -449,7 +449,7 @@ func TestUnreadablePurgeDetailsAreReported(t *testing.T) {
 // TestParseAuditPurgeHeadNoDetails checks a purge event with no details
 // reads as one that recorded no head.
 func TestParseAuditPurgeHeadNoDetails(t *testing.T) {
-	head, err := parseAuditPurgeHead(&AuditEvent{ID: 3})
+	head, err := parseAuditAnchor(&AuditEvent{ID: 3})
 	if err != nil || head.OldestRetainedID != nil ||
 		head.OldestRetainedHash != "" {
 		t.Errorf("Expected an empty record, got %+v, %v", head, err)

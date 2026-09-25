@@ -11,8 +11,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -316,39 +314,13 @@ func TestLogStartupInfo_KnowledgebaseDisabled(t *testing.T) {
 	}
 }
 
-// seedAuditEvent inserts a single audit_events row directly via a
-// second connection to the auth store's SQLite file, backdated to
-// occurredAt. It bypasses the auth package's exported recording API
-// so tests can control the timestamp precisely. The hashes are
-// placeholders rather than real digests, since PurgeAuditEvents only
-// touches occurred_at, but each row still links to the current head
-// and carries a distinct hash: prev_hash is unique, so a chain that
-// forked or restarted would be refused by the schema.
-func seedAuditEvent(t *testing.T, dbPath string, occurredAt time.Time) {
+// seedAuditEvent appends one keyed audit event backdated to
+// occurredAt, written and signed as the store would have written it
+// then, so that the retention purge accepts it and can remove it.
+func seedAuditEvent(t *testing.T, store *auth.AuthStore, occurredAt time.Time) {
 	t.Helper()
 
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		t.Fatalf("failed to open auth db for seeding: %v", err)
-	}
-	defer db.Close()
-
-	var prevHash string
-	err = db.QueryRow(
-		"SELECT hash FROM audit_events ORDER BY id DESC LIMIT 1").Scan(&prevHash)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		t.Fatalf("failed to read the audit chain head: %v", err)
-	}
-
-	const auditTimeLayout = "2006-01-02T15:04:05.000000000Z07:00"
-	stamp := occurredAt.UTC().Format(auditTimeLayout)
-	_, err = db.Exec(
-		`INSERT INTO audit_events
-			(occurred_at, actor_type, actor_name, action, outcome, prev_hash, hash)
-		VALUES (?, 'system', 'system', 'test.seed', 'success', ?, ?)`,
-		stamp, prevHash, "seed-"+stamp,
-	)
-	if err != nil {
+	if err := auth.SeedAuditEventForTesting(store, occurredAt); err != nil {
 		t.Fatalf("failed to seed audit event: %v", err)
 	}
 }
@@ -373,8 +345,8 @@ func TestPurgeAuditEventsZeroDaysKeepsForever(t *testing.T) {
 	}
 	defer store.Close()
 
-	seedAuditEvent(t, store.Path(), time.Now().Add(-48*time.Hour))
-	seedAuditEvent(t, store.Path(), time.Now())
+	seedAuditEvent(t, store, time.Now().Add(-48*time.Hour))
+	seedAuditEvent(t, store, time.Now())
 
 	zero := 0
 	s := &Server{
@@ -401,8 +373,8 @@ func TestPurgeAuditEventsRemovesOldEvents(t *testing.T) {
 	}
 	defer store.Close()
 
-	seedAuditEvent(t, store.Path(), time.Now().Add(-48*time.Hour))
-	seedAuditEvent(t, store.Path(), time.Now())
+	seedAuditEvent(t, store, time.Now().Add(-48*time.Hour))
+	seedAuditEvent(t, store, time.Now())
 
 	one := 1
 	s := &Server{

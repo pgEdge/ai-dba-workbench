@@ -1618,8 +1618,11 @@ project adheres to
   `-verify-audit-log`, not only their names. The index on the link to
   the preceding event must be unique, not partial, and on that column
   alone, and the append-only trigger must match the one the server
-  creates, so a same-named index on another column or a trigger whose
-  body does nothing is now reported with status 2. (#501)
+  creates and be the only trigger on the table, so a same-named index
+  on another column, a trigger whose body does nothing, or an extra
+  trigger that discards events is now reported with status 2. The
+  server also refuses to record an event that a trigger discards,
+  rather than committing the change with no event. (#501)
 
 - Stop the Slack, Mattermost and generic webhook channels putting their
   endpoint URL into the alerter log, into

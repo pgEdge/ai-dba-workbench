@@ -212,12 +212,15 @@ client address, before and after snapshots and a hash chain.
   no hash over a row it did not create. Treat any proposal that has an
   unattended path re-sign existing rows as that bug returning.
 - `PurgeAuditEvents` deletes a contiguous id-prefix and can express
-  nothing else: `DELETE ... WHERE id < (SELECT MIN(id) FROM
-  audit_events WHERE occurred_at >= ?)`. `occurred_at` is
-  attacker-writable. Server inserts let SQLite assign `id` and the
-  append-only trigger stops an existing row's `id` changing; a writer
-  can name an `id` on INSERT, but that can only move the boundary
-  earlier, never past the oldest row in the window. Deleting by
+  nothing else: it reads `cut = MIN(id) WHERE occurred_at >= ?`, checks
+  the prefix, then runs `DELETE ... WHERE id < cut`. `occurred_at` is
+  attacker-writable. The append-only trigger stops an UPDATE changing
+  an `id`, but `id` is not in the HMAC, so a writer can delete a
+  genuine row and re-insert it at another id and it still verifies; an
+  id-prefix is a log prefix only because `verifyAuditPurgePrefix`
+  requires the rows to link in id order from the recorded head. A
+  row inserted at a chosen id can only move the boundary earlier,
+  never past the oldest row in the window. Deleting by
   timestamp alone
   made retention, which runs unattended every five minutes, a
   suffix-deletion oracle: backdated newest rows were deleted, the chain
@@ -270,9 +273,24 @@ plainly rather than crediting the design with more than it does.
   the newest rows and one `UPDATE sqlite_sequence SET seq = <new
   MAX(id)>` passes verification. Do not credit the key with defending
   the tail.
-- Wholesale deletion of the log's prefix is still accepted, because the
-  first surviving row's `prev_hash` is taken as given and the retention
-  purge legitimately produces that shape.
+- Head deletion (#502) is caught against the head the newest purge
+  event recorded (`oldest_retained_hash`); a record-less purge event
+  never overrides an older recorded one, in the verifier or in
+  `auditPurgeStart`. Only on a log whose purge events all predate the
+  record does the weak fallback apply (a missing predecessor passes
+  if any `audit.purge` row survives). The purge refuses, and retention
+  stalls, on a prefix that does not verify and link from the recorded
+  head, including for benign causes such as a rotated secret; there is
+  no operator re-anchor command yet.
+- Rows deleted and later restored at their original ids from a copy
+  leave no trace; that needs an anchor outside the file.
+- `verifyAuditSchema` refuses any trigger other than
+  `audit_events_no_update` whose table is `audit_events` or whose SQL
+  mentions it, and `recordAudit` fails unless the INSERT wrote exactly
+  one row, against `RAISE(IGNORE)` triggers silently dropping events.
+  `prev_hash` stored as a BLOB escapes the unique index (BLOB and TEXT
+  compare unequal); the id-order walk still rejects a fork, and no
+  `typeof` check exists yet.
 - A re-chain attests the database exactly as it stood at the moment it
   ran, and says nothing about anything before it. On an upgraded
   installation the keyed chain starts at that point.

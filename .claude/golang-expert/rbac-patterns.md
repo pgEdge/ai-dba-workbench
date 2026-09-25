@@ -391,8 +391,11 @@ not just the names, before it reads a row: `verifyAuditChainIndex`
 requires `pragma_index_list` to report the index unique and not
 partial, and `pragma_index_info` to report exactly one key column,
 `prev_hash` (an expression column has a NULL name, so it fails too);
-`verifyAuditNoUpdateTrigger` compares the trigger's `sqlite_master.sql`
-against `expectedAuditTriggerSQL()`, which is `auditNoUpdateTriggerDDL`
+`verifyAuditNoUpdateTrigger` refuses any other trigger on
+`audit_events` or whose SQL mentions it (a `RAISE(IGNORE)` trigger
+would drop chosen events with the chain intact; `recordAudit` also
+fails unless its INSERT wrote one row), and compares the trigger's
+`sqlite_master.sql` against `expectedAuditTriggerSQL()`, which is `auditNoUpdateTriggerDDL`
 with whitespace collapsed, `IF NOT EXISTS` removed and the trailing
 `;` trimmed, because SQLite stores the statement minus those two. So
 changing `auditNoUpdateTriggerDDL` changes what verification accepts;
@@ -533,7 +536,10 @@ cannot be steered into writing a new one over a deletion, so before
 deleting, `verifyAuditPurgePrefix` checks, in the purge transaction,
 that the rows up to and including the new head start at the previous
 purge's recorded hash (or at a genesis row with `prev_hash` "" when no
-purge exists; anywhere when the newest purge predates the record), that
+purge exists; anywhere only when no purge event records a head, since a
+record-less purge never overrides an older recorded one, in either the
+purge or `auditHeadCheck`, or a replayed pre-record event would reopen
+the weak case), that
 each verifies under the key (`checkAuditRowVerifies`) and that each
 links to the one before. Any failure refuses the purge and deletes
 nothing, which stalls retention by design; the refusal wraps

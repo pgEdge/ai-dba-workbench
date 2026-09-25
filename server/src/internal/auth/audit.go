@@ -1273,6 +1273,19 @@ func (s *AuthStore) recordAudit(tx *sql.Tx, ev *AuditEvent) error {
 	if err != nil {
 		return fmt.Errorf("failed to insert audit event: %w", err)
 	}
+	// A trigger planted in auth.db can make the INSERT succeed without
+	// writing a row (RAISE(IGNORE)), which would commit the change the
+	// event describes with no record of it; verifyAuditSchema refuses
+	// such a trigger, and this refuses the write it would cause.
+	n, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to confirm audit event insert: %w", err)
+	}
+	if n != 1 {
+		return fmt.Errorf("failed to insert audit event: %d rows written, "+
+			"not 1; a trigger on audit_events may be discarding events",
+			n)
+	}
 
 	if id, err := result.LastInsertId(); err == nil {
 		ev.ID = id
@@ -1758,31 +1771,56 @@ func (s *AuthStore) verifyAuditChainIndex() error {
 }
 
 // verifyAuditNoUpdateTrigger checks that audit_events_no_update exists
-// on audit_events and is exactly the trigger auditNoUpdateTriggerDDL
-// creates. Nothing short of the whole definition would do: a trigger
-// with a WHEN clause, or one that fires only on UPDATE OF some columns,
-// still contains BEFORE UPDATE and RAISE(ABORT, yet lets rows be
-// rewritten.
+// on audit_events, is exactly the trigger auditNoUpdateTriggerDDL
+// creates, and is the only trigger that touches audit_events at all.
+// Nothing short of the whole definition would do: a trigger with a WHEN
+// clause, or one that fires only on UPDATE OF some columns, still
+// contains BEFORE UPDATE and RAISE(ABORT, yet lets rows be rewritten.
+// And any other trigger is refused, whichever table it is on, because
+// one that discards chosen events with RAISE(IGNORE), or deletes them
+// as they arrive, leaves a chain that verifies with those events never
+// in it.
 func (s *AuthStore) verifyAuditNoUpdateTrigger() error {
-	var definition sql.NullString
-	err := s.db.QueryRow(`SELECT sql FROM sqlite_master
-         WHERE type = 'trigger' AND name = ? AND tbl_name = 'audit_events'`,
-		auditNoUpdateTrigger).Scan(&definition)
-	switch {
-	case errors.Is(err, sql.ErrNoRows):
-		return fmt.Errorf("audit chain unprotected: the trigger %s is "+
-			"missing from audit_events, so rows may have been rewritten "+
-			"in place", auditNoUpdateTrigger)
-	case err != nil:
+	rows, err := s.db.Query(`SELECT name, sql FROM sqlite_master
+         WHERE type = 'trigger'
+           AND (tbl_name = 'audit_events' COLLATE NOCASE
+                OR sql LIKE '%audit_events%')
+         ORDER BY name`)
+	if err != nil {
 		return fmt.Errorf("failed to look for trigger %s: %w",
 			auditNoUpdateTrigger, err)
 	}
+	defer rows.Close()
 
-	if normalizeSchemaSQL(definition.String) != expectedAuditTriggerSQL() {
-		return fmt.Errorf("audit chain unprotected: the trigger %s on "+
-			"audit_events does not match the definition this server "+
-			"creates, so rows may have been rewritten in place",
-			auditNoUpdateTrigger)
+	found := false
+	for rows.Next() {
+		var name string
+		var definition sql.NullString
+		if err := rows.Scan(&name, &definition); err != nil {
+			return fmt.Errorf("failed to look for trigger %s: %w",
+				auditNoUpdateTrigger, err)
+		}
+		if name != auditNoUpdateTrigger {
+			return fmt.Errorf("audit chain unprotected: the trigger %q "+
+				"is not one this server creates and acts on audit_events, "+
+				"so events may have been discarded or rewritten", name)
+		}
+		if normalizeSchemaSQL(definition.String) != expectedAuditTriggerSQL() {
+			return fmt.Errorf("audit chain unprotected: the trigger %s on "+
+				"audit_events does not match the definition this server "+
+				"creates, so rows may have been rewritten in place",
+				auditNoUpdateTrigger)
+		}
+		found = true
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("failed to look for trigger %s: %w",
+			auditNoUpdateTrigger, err)
+	}
+	if !found {
+		return fmt.Errorf("audit chain unprotected: the trigger %s is "+
+			"missing from audit_events, so rows may have been rewritten "+
+			"in place", auditNoUpdateTrigger)
 	}
 
 	return nil
@@ -2032,15 +2070,19 @@ func (s *AuthStore) PurgeAuditEvents(olderThan time.Time) (removed int64, err er
 	// exactly the disagreement verifyAuditTail reads to detect a
 	// truncated log. Retention runs unattended every few minutes, so
 	// that would be a deletion oracle an attacker need only wait for.
-	// id is insertion order, is assigned by SQLite on every server
-	// insert, and cannot be changed on an existing row because of the
-	// append-only trigger, so a prefix of ids is a prefix of the log. A
-	// writer of the file can name an id on INSERT, but a row inserted
-	// that way can only move the boundary earlier, never past the
-	// oldest row inside the window.
+	// id is insertion order and is assigned by SQLite on every server
+	// insert. The append-only trigger stops an UPDATE changing it, but a
+	// writer of the file can delete a row and insert it again at another
+	// id, and since the id is not covered by the hash the row still
+	// verifies there; so a prefix of ids is not by itself a prefix of
+	// the log. What makes it one is verifyAuditPurgePrefix, which
+	// requires the rows to be deleted to link, in id order, from the
+	// recorded head through to the new one. A row inserted at a chosen
+	// id can also only move the boundary earlier, never past the oldest
+	// row inside the window.
 	//
-	// When no row is inside the window the subquery yields NULL, the
-	// comparison is never true and nothing is deleted, which is a
+	// When no row is inside the window MIN(id) is NULL and nothing is
+	// deleted, which is a
 	// deliberate departure from deleting the whole log. NULL rather
 	// than a fixed value such as 0, because an INSERT may name a
 	// negative id and a fixed cut-off would delete below it. Over-

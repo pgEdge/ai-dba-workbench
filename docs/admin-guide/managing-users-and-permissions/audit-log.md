@@ -384,8 +384,11 @@ recomputes cleanly without them has shown nothing, and it checks what
 each one does as well as its name: the index must be unique, must not
 be partial and must cover the link to the preceding event and nothing
 else, and the trigger must be the one the server creates, word for
-word. An object that keeps the expected name but no longer protects the
-log is reported with status `2`. A store whose chain
+word, and the only trigger that acts on the table. An object that keeps
+the expected name but no longer protects the log, or an extra trigger
+that could discard or delete events as they are written, is reported
+with status `2`, and the server refuses to record an event that such a
+trigger discards. A store whose chain
 has already forked cannot be given the index, and the server refuses to
 open it, naming the index and the query that finds the duplicates.
 
@@ -560,15 +563,16 @@ cleanly. The comparison catches a deletion that leaves the record
 alone, and nothing more.
 
 Deleting the oldest events is caught precisely only once a purge has
-recorded where the log begins. On a log whose newest purge event was
-written by a build that predates the record, verification can say only
+recorded where the log begins. On a log whose purge events were all
+written by builds that predate the record, verification can say only
 whether some purge event survives to explain a missing predecessor, so
 a deletion from the start of that log still verifies until the next
 purge removes something and records the oldest event. Once the record
 exists, removing the oldest events and every purge
 event that mentions them is no longer enough: the newest surviving
 purge event names an oldest event that is not there, and it cannot be
-rewritten without the server secret.
+rewritten without the server secret. Events deleted and later put
+back exactly as they were, from a copy, leave nothing to find.
 
 The re-chain blesses whatever the database contained at the moment it
 ran, as described above, so on an upgraded installation the keyed chain

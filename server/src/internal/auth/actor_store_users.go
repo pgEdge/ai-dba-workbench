@@ -100,10 +100,10 @@ func (s *AuthStore) createUser(actor Actor, username, password, annotation,
 	displayName, email string) error {
 
 	if err := ValidateUsername(username); err != nil {
-		return err
+		return invalidInput(err)
 	}
 	if err := ValidatePassword(password); err != nil {
-		return err
+		return invalidInput(err)
 	}
 
 	return s.insertUserAudited(actor, "user.create", username,
@@ -145,7 +145,7 @@ func (s *AuthStore) createServiceAccount(actor Actor, username, annotation,
 	displayName, email string) error {
 
 	if err := ValidateUsername(username); err != nil {
-		return err
+		return invalidInput(err)
 	}
 
 	return s.insertUserAudited(actor, "service_account.create", username,
@@ -234,7 +234,7 @@ func (s *AuthStore) updateUser(actor Actor, username, newPassword,
 
 	if newPassword != "" {
 		if valErr := ValidatePassword(newPassword); valErr != nil {
-			return valErr
+			return invalidInput(valErr)
 		}
 	}
 
@@ -418,7 +418,7 @@ func (s *AuthStore) applyUserPasswordTx(tx *sql.Tx, username string,
 	}
 
 	if valErr := ValidatePassword(*update.Password); valErr != nil {
-		return valErr
+		return invalidInput(valErr)
 	}
 	hash, hashErr := bcrypt.GenerateFromPassword([]byte(*update.Password), s.bcryptCost)
 	if hashErr != nil {

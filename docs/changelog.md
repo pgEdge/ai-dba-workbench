@@ -750,6 +750,15 @@ project adheres to
 
 ### Fixed
 
+- Fix the RBAC user endpoints answering a request the auth store
+  refuses on its merits with a 500 and a generic message. The store
+  now marks such refusals, such as a password for an account that
+  signs in through an identity provider, and the create, update and
+  delete user endpoints return them as a 400 carrying the store's own
+  explanation, keeping the 500 for genuine failures. The update
+  endpoint's separate copy of the identity provider password check has
+  gone, so the store is the one place that rule is written. (#485)
+
 - Fix alerts staying active for ever on a server an operator has
   stopped monitoring. The probes of an unmonitored connection leave
   the staleness view, so every alert on it was judged to have a probe
@@ -1596,6 +1605,19 @@ project adheres to
   remains available to API consumers. (#387)
 
 ### Security
+
+- Stop the `manage_users` permission granting superuser status. The
+  create and update user endpoints accepted `is_superuser` from any
+  caller holding `manage_users`, which a group can be granted, so a
+  member of such a group could make themselves or anyone else a
+  superuser and so gain every permission the group was never given.
+  `POST /api/v1/rbac/users` and `PUT /api/v1/rbac/users/{id}` now
+  refuse a request carrying `is_superuser` with a 403 unless the caller
+  is already a superuser, apply none of its other changes, and record
+  the refusal in the audit log. Editing or deleting an account that is
+  already a superuser now needs a superuser too, since a `manage_users`
+  holder who could reset a superuser's password could sign in as them.
+  (#497)
 
 - Stop the Slack, Mattermost and generic webhook channels putting their
   endpoint URL into the alerter log, into

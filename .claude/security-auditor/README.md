@@ -96,11 +96,12 @@ moved.
   `auth_source` only then to tell a missing user (no error) from a
   refused write. Without it a hash written onto a federated account
   lies dormant until `UnlinkFederatedIdentity` with `-restore-password`
-  returns `auth_source` to local and makes it live. `updateUser` in
-  `api/rbac_user_handlers.go` checks the same condition first and
-  answers 400, because that endpoint applies the password, enabled and
-  superuser changes in one transaction and a late refusal would silently
-  roll back the others.
+  returns `auth_source` to local and makes it live. The refusal is the
+  only copy of the rule: it is an `*auth.InvalidInputError`, so
+  `updateUser` in `api/rbac_user_handlers.go` answers it with a 400
+  naming the reason, and because that endpoint applies the password,
+  enabled and superuser changes in one transaction, the refusal rolls
+  back the others too (#485).
 - Every setting in the `http.auth` section is read once at start-up and
   held for the life of the process. A reload changes none of them:
   handlers keep by-value copies and `ReloadableConfig.Reload` only swaps

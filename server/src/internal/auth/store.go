@@ -1178,7 +1178,10 @@ func (s *AuthStore) writePasswordHashLocked(exec sqlExecer, username string, has
 	if err != nil {
 		return fmt.Errorf("failed to check authentication source: %w", err)
 	}
-	return fmt.Errorf("cannot set a password for %s: identity is managed by %s", username, authSource)
+	return invalidInput(fmt.Errorf(
+		"cannot set a password for %s: the account signs in through an identity provider "+
+			"(auth source %q), so it has no password to set; unlink the account first",
+		username, authSource))
 }
 
 // sqlExecer is the slice of *sql.DB and *sql.Tx that writePasswordHashLocked

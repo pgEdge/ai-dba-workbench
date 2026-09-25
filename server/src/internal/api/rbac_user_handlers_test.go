@@ -662,9 +662,9 @@ func TestRBACHandler_CreateServiceAccount_DuplicateUsername(t *testing.T) {
 // transaction, so an administrator disabling a federated user whilst
 // also filling in the password field would have the whole update rolled
 // back by the store's password guard, and could reasonably read the
-// generic failure as the account having been disabled. The request is
-// refused up front instead, with an explanation and with nothing
-// written.
+// generic failure as the account having been disabled. The store's
+// refusal is marked as invalid input, so the request is answered with a
+// 400 carrying the store's explanation, and nothing is written.
 func TestRBACHandler_UpdateUser_FederatedPasswordRejected(t *testing.T) {
 	handler, store, adminID, cleanup := adminRBACHandler(t)
 	defer cleanup()

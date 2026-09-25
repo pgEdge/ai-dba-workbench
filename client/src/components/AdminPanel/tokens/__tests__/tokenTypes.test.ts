@@ -16,6 +16,8 @@ import {
     ALL_MCP_OPTION,
     ALL_ADMIN_OPTION,
     EXPIRY_OPTIONS,
+    MCP_WILDCARD_ID,
+    isMcpWildcardId,
 } from '../tokenTypes';
 import type { McpPrivilege } from '../tokenTypes';
 
@@ -118,6 +120,19 @@ describe('tokenTypes', () => {
         it('returns empty array when allowedPermissionIds is empty', () => {
             const result = filterAdminPermissions([]);
             expect(result).toHaveLength(0);
+        });
+    });
+
+    describe('isMcpWildcardId', () => {
+        it('recognises the stored and the dialog wildcard ids', () => {
+            expect(MCP_WILDCARD_ID).toBe(0);
+            expect(isMcpWildcardId(0)).toBe(true);
+            expect(isMcpWildcardId(ALL_MCP_OPTION.id)).toBe(true);
+        });
+
+        it('does not treat a real privilege id as the wildcard', () => {
+            expect(isMcpWildcardId(1)).toBe(false);
+            expect(isMcpWildcardId(42)).toBe(false);
         });
     });
 });

@@ -516,12 +516,17 @@ project adheres to
   unaffected throughout, because a session carries no token. The
   connection scope now also bounds the endpoints that change
   blackouts, blackout schedules, alert, probe and channel
-  overrides and clusters, which are gated on an admin
+  overrides, alert rules, probe configurations, notification
+  channels and clusters, which are gated on an admin
   permission: a change on one server needs that connection in
-  scope at `read_write`, as does adding a server to a cluster or
-  removing one, whilst a change to a cluster, a group or the
-  whole estate, or to a cluster's definition or relationships,
-  needs a scope covering every connection. `PUT
+  scope at `read_write`, as does adding a server to a cluster,
+  removing one or moving a connection between clusters, whilst
+  a change to a cluster, a group or the whole estate, to an
+  alert rule, a global probe configuration or a notification
+  channel, or to a cluster's definition or relationships, needs
+  a scope covering every connection. A write to a blackout or
+  blackout schedule that the token cannot see answers `404 Not
+  Found`, as reading it does. `PUT
   /api/v1/rbac/tokens/{id}/scope` refuses an empty list for any
   scope kind with `400 Bad Request`, because an empty kind means
   unrestricted; clear the scope with `DELETE` or use the
@@ -543,7 +548,13 @@ project adheres to
   that carries no token identifier, are denied, and the
   `list_connections` tool returns an error rather than every
   connection when the caller's visible connections cannot be
-  resolved. This is a breaking change for existing integrations,
+  resolved. Two routes still reach beyond a connection scope: a
+  token whose admin scope includes `manage_token_scopes` can
+  create a token with no scope for any owner through `POST
+  /api/v1/rbac/tokens` (#522), and the `query_datastore` MCP
+  tool reads every connection's metrics from the datastore, so
+  a token that must stay within its connections should hold
+  neither. This is a breaking change for existing integrations,
   because a token that carries an explicit scope, most often one
   owned by a superuser, will start receiving `403 Forbidden`
   where it previously succeeded, and there is no configuration

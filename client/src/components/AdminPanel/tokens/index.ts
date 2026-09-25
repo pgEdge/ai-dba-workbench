@@ -30,6 +30,8 @@ export {
     ADMIN_PERMISSIONS,
     ALL_MCP_OPTION,
     ALL_ADMIN_OPTION,
+    MCP_WILDCARD_ID,
+    isMcpWildcardId,
     filterMcpPrivileges,
     filterAdminPermissions,
 } from './tokenTypes';

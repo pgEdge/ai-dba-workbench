@@ -164,12 +164,36 @@ func (m *MonitoredConnectionPoolManager) GetConnectionForDatabase(ctx context.Co
 		return nil, fmt.Errorf("failed to acquire connection slot: %w", err)
 	}
 
-	pgxConn, err := m.acquireWithinCap(ctx, conn, databaseName, serverSecret)
+	pgxConn, pending, err := m.acquireWithinCap(ctx, conn, databaseName, serverSecret)
 	if err != nil {
-		m.releaseSlot(conn.ID)
+		if pending != nil {
+			go m.releaseSlotAfterConstruction(conn.ID, pending)
+		} else {
+			m.releaseSlot(conn.ID)
+		}
 		return nil, err
 	}
 	return pgxConn, nil
+}
+
+// constructionPollInterval is how often releaseSlotAfterConstruction
+// checks whether a pool has finished opening a connection.
+const constructionPollInterval = 50 * time.Millisecond
+
+// releaseSlotAfterConstruction releases a semaphore slot once the pool
+// has no connection left under construction. When the caller's context
+// ends whilst pgxpool is opening a connection, Acquire returns at once
+// but the pool finishes opening the connection in the background and
+// keeps it as idle, so the slot stays held until then; releasing it
+// straight away would let another acquisition open a connection on top
+// of the one still being opened, exceeding the cap. The wait is bounded
+// by the connect_timeout the connection parameters set, and by the pool
+// being closed, which cancels any construction in progress.
+func (m *MonitoredConnectionPoolManager) releaseSlotAfterConstruction(connectionID int, pool *pgxpool.Pool) {
+	for pool.Stat().ConstructingConns() > 0 {
+		time.Sleep(constructionPollInterval)
+	}
+	m.releaseSlot(connectionID)
 }
 
 // monitoredPoolKey returns the key of the pool for one database on a
@@ -217,7 +241,11 @@ func (m *MonitoredConnectionPoolManager) connLock(connectionID int) *sync.Mutex 
 // concurrent acquisition could take the idle connection this one had
 // counted on, or two acquisitions could each decide there was room for
 // one more connection.
-func (m *MonitoredConnectionPoolManager) acquireWithinCap(ctx context.Context, conn MonitoredConnection, databaseName string, serverSecret string) (*pgxpool.Conn, error) {
+//
+// On failure, the returned pool is non-nil when that pool is still
+// opening a connection for the failed acquisition, in which case the
+// caller must keep its semaphore slot until the construction finishes.
+func (m *MonitoredConnectionPoolManager) acquireWithinCap(ctx context.Context, conn MonitoredConnection, databaseName string, serverSecret string) (*pgxpool.Conn, *pgxpool.Pool, error) {
 	lock := m.connLock(conn.ID)
 	lock.Lock()
 	defer lock.Unlock()
@@ -236,11 +264,18 @@ func (m *MonitoredConnectionPoolManager) acquireWithinCap(ctx context.Context, c
 		var err error
 		pool, err = m.createPool(ctx, conn, databaseName, serverSecret, poolKey)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
-	return pool.Acquire(ctx)
+	pgxConn, err := pool.Acquire(ctx)
+	if err != nil {
+		if ctx.Err() != nil && pool.Stat().ConstructingConns() > 0 {
+			return nil, pool, err
+		}
+		return nil, nil, err
+	}
+	return pgxConn, nil, nil
 }
 
 // createPool opens a new pool for one database on a monitored
@@ -289,10 +324,12 @@ func (m *MonitoredConnectionPoolManager) createPool(ctx context.Context, conn Mo
 //
 // Every connection in use belongs to a goroutine holding a semaphore
 // slot, including one borrowed from a pool that has since been closed
-// and removed from the map, so the connections open to the server number
-// at most the idle ones plus the slots held by other goroutines. Opening
-// one more therefore stays within the cap when the idle count is no
-// greater than the free slots.
+// and removed from the map, as does one a pool is still opening for an
+// acquisition whose context ended (see releaseSlotAfterConstruction),
+// so the connections open to the server number at most the idle ones
+// plus the slots held by other goroutines. Opening one more therefore
+// stays within the cap when the idle count is no greater than the free
+// slots.
 func (m *MonitoredConnectionPoolManager) evictIdleConnections(ctx context.Context, connectionID int, exceptKey int) {
 	m.mu.RLock()
 	sem := m.semaphores[connectionID]

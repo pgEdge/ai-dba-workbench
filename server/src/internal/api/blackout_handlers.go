@@ -485,7 +485,7 @@ func (h *BlackoutHandler) updateBlackout(w http.ResponseWriter, r *http.Request,
 		notFound(database.ErrBlackoutNotFound, "Blackout not found")) {
 		return
 	}
-	if !requireTargetInTokenScope(w, r, h.rbacChecker, existing.Scope, existing.ConnectionID) {
+	if !h.requireFetchedBlackoutInTokenScope(w, r, existing) {
 		return
 	}
 
@@ -857,9 +857,9 @@ func (h *BlackoutHandler) deleteBlackoutSchedule(w http.ResponseWriter, r *http.
 }
 
 // requireBlackoutInTokenScope looks up a blackout and applies
-// requireTargetInTokenScope to it, answering 404 when it does not exist.
-// A caller whose token covers every connection needs no lookup, so
-// sessions and unscoped tokens take the same path as before.
+// requireFetchedBlackoutInTokenScope to it, answering 404 when it does
+// not exist. A caller whose token covers every connection needs no
+// lookup, so sessions and unscoped tokens take the same path as before.
 func (h *BlackoutHandler) requireBlackoutInTokenScope(w http.ResponseWriter,
 	r *http.Request, id int64) bool {
 
@@ -871,8 +871,24 @@ func (h *BlackoutHandler) requireBlackoutInTokenScope(w http.ResponseWriter,
 		notFound(database.ErrBlackoutNotFound, "Blackout not found")) {
 		return false
 	}
-	return requireTargetInTokenScope(w, r, h.rbacChecker, existing.Scope,
-		existing.ConnectionID)
+	return h.requireFetchedBlackoutInTokenScope(w, r, existing)
+}
+
+// requireFetchedBlackoutInTokenScope applies targetInTokenScope to a
+// stored blackout. When the target is out of scope it answers 404 if
+// the caller could not see the blackout, as GET /blackouts/{id} does,
+// so that a refusal does not reveal which ids exist, and 403 otherwise.
+func (h *BlackoutHandler) requireFetchedBlackoutInTokenScope(
+	w http.ResponseWriter, r *http.Request, b *database.Blackout) bool {
+
+	if targetInTokenScope(r.Context(), h.rbacChecker, b.Scope, b.ConnectionID) {
+		return true
+	}
+	h.refuseOutOfScope(w, r, "Blackout not found",
+		func(ctx context.Context, visible map[int]bool) (bool, error) {
+			return h.blackoutVisible(ctx, b, visible)
+		})
+	return false
 }
 
 // requireBlackoutScheduleInTokenScope is requireBlackoutInTokenScope for
@@ -889,6 +905,43 @@ func (h *BlackoutHandler) requireBlackoutScheduleInTokenScope(
 			"Blackout schedule not found")) {
 		return false
 	}
-	return requireTargetInTokenScope(w, r, h.rbacChecker, existing.Scope,
-		existing.ConnectionID)
+	if targetInTokenScope(r.Context(), h.rbacChecker, existing.Scope,
+		existing.ConnectionID) {
+		return true
+	}
+	h.refuseOutOfScope(w, r, "Blackout schedule not found",
+		func(ctx context.Context, visible map[int]bool) (bool, error) {
+			return h.blackoutScheduleVisible(ctx, existing, visible)
+		})
+	return false
+}
+
+// refuseOutOfScope answers a write to a stored blackout or schedule
+// whose target the acting token's connection scope does not cover: 404
+// with notFoundMsg when visibleFn says the caller could not see the
+// record, matching the GET for the same id, and 403 when it could.
+func (h *BlackoutHandler) refuseOutOfScope(w http.ResponseWriter,
+	r *http.Request, notFoundMsg string,
+	visibleFn func(context.Context, map[int]bool) (bool, error)) {
+
+	visible, allConnections, err := resolveVisibleConnectionSet(r.Context(),
+		h.rbacChecker, h.datastore)
+	if err != nil {
+		log.Printf("[ERROR] Failed to resolve visible connections: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to check access")
+		return
+	}
+	if !allConnections {
+		ok, err := visibleFn(r.Context(), visible)
+		if err != nil {
+			log.Printf("[ERROR] Failed to check visibility: %v", err)
+			RespondError(w, http.StatusInternalServerError, "Failed to check access")
+			return
+		}
+		if !ok {
+			RespondError(w, http.StatusNotFound, notFoundMsg)
+			return
+		}
+	}
+	RespondError(w, http.StatusForbidden, targetOutOfTokenScope)
 }

@@ -1690,7 +1690,7 @@ func buildSchemas() map[string]*OpenAPISchema {
 				"display_name":       {Type: "string", Description: "Display name"},
 				"email":              {Type: "string", Description: "Email address"},
 				"enabled":            {Type: "boolean", Description: "Whether the user is enabled"},
-				"is_superuser":       {Type: "boolean", Description: "Whether the user is a superuser. Only a superuser may send this field; anyone else is refused with 403."},
+				"is_superuser":       {Type: "boolean", Description: "Whether the user is a superuser"},
 				"is_service_account": {Type: "boolean", Description: "Whether the user is a service account"},
 				"annotation":         {Type: "string", Description: "User annotation"},
 				"auth_source": {Type: "string",
@@ -1752,7 +1752,7 @@ func buildSchemas() map[string]*OpenAPISchema {
 				"email":        {Type: "string", Description: "Email address"},
 				"annotation":   {Type: "string", Description: "User annotation"},
 				"enabled":      {Type: "boolean", Description: "Whether the user is enabled"},
-				"is_superuser": {Type: "boolean", Description: "Whether the user is a superuser"},
+				"is_superuser": {Type: "boolean", Description: "Whether the user is a superuser. Only a superuser may send this field; anyone else is refused with 403."},
 			},
 		},
 		"UserPrivilegesResponse": {

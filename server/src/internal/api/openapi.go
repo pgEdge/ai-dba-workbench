@@ -159,7 +159,11 @@ func buildSecuritySchemes() map[string]*OpenAPISecurityScheme {
 				"to the token's connection, MCP and admin scopes, even " +
 				"when its owner is a superuser, so a superuser-owned " +
 				"token can receive 403 where its owner's session would " +
-				"succeed. A token whose admin scope names specific " +
+				"succeed. Two exceptions remain on the connection scope: " +
+				"the query_datastore tool reads metrics for every " +
+				"connection, and a token whose admin scope includes " +
+				"manage_token_scopes can create an unscoped token for " +
+				"any owner. A token whose admin scope names specific " +
 				"permissions may exercise those permissions, but cannot " +
 				"pass a gate that requires superuser status outright, " +
 				"such as the audit log. A token with no scope of a given " +

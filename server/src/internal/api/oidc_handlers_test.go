@@ -222,7 +222,14 @@ func mintStateCookie(t *testing.T) (*http.Cookie, *oidc.LoginState) {
 	if err != nil {
 		t.Fatalf("oidc.SealState: %v", err)
 	}
-	return &http.Cookie{Name: oidc.StateCookieName, Value: sealed}, state
+	// A request cookie carries only its name and value; the attributes
+	// are set to match what the handler issues.
+	return &http.Cookie{
+		Name:     oidc.StateCookieName,
+		Value:    sealed,
+		HttpOnly: true,
+		Secure:   true,
+	}, state
 }
 
 // findCookie returns the named cookie from a response, or nil.

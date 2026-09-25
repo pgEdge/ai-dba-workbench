@@ -197,25 +197,13 @@ func (s *AuthStore) verifyAuditPurgePrefix(tx *sql.Tx, cut int64) (
 			return AuditEvent{}, fmt.Errorf("failed to scan an audit event "+
 				"to purge: %w", err)
 		}
-		if err := s.checkAuditRowVerifies(&ev); err != nil {
-			return AuditEvent{}, err
+		var before *AuditEvent
+		if !first {
+			before = &prev
 		}
-
-		switch {
-		case !first && ev.PrevHash != prev.Hash:
-			return AuditEvent{}, fmt.Errorf("%w: %s: event %d does not "+
-				"link to event %d before it", ErrAuditChainBroken,
-				errAuditPurgeRefused, ev.ID, prev.ID)
-		case first && start != "" && ev.Hash != start:
-			return AuditEvent{}, fmt.Errorf("%w: %s: the oldest event, %d, "+
-				"is not the one the previous purge left as the oldest, so "+
-				"events have been deleted from the start of the log",
-				ErrAuditChainBroken, errAuditPurgeRefused, ev.ID)
-		case first && genesis && ev.PrevHash != "":
-			return AuditEvent{}, fmt.Errorf("%w: %s: the oldest event, %d, "+
-				"follows an event that is no longer in the log, and no "+
-				"audit.purge event accounts for its removal",
-				ErrAuditChainBroken, errAuditPurgeRefused, ev.ID)
+		if err := s.checkAuditPrefixRow(&ev, before, start,
+			genesis); err != nil {
+			return AuditEvent{}, err
 		}
 
 		prev = ev
@@ -235,6 +223,39 @@ func (s *AuthStore) verifyAuditPurgePrefix(tx *sql.Tx, cut int64) (
 	}
 
 	return prev, nil
+}
+
+// checkAuditPrefixRow checks one row of the prefix a purge is about to
+// delete: it must verify under the key, and link to the row before it,
+// or, as the first row, be where the purge must begin. before is nil
+// for the first row.
+func (s *AuthStore) checkAuditPrefixRow(ev, before *AuditEvent,
+	start string, genesis bool) error {
+
+	if err := s.checkAuditRowVerifies(ev); err != nil {
+		return err
+	}
+
+	switch {
+	case before != nil:
+		if ev.PrevHash != before.Hash {
+			return fmt.Errorf("%w: %s: event %d does not link to event %d "+
+				"before it", ErrAuditChainBroken, errAuditPurgeRefused,
+				ev.ID, before.ID)
+		}
+	case start != "" && ev.Hash != start:
+		return fmt.Errorf("%w: %s: the oldest event, %d, is not the one "+
+			"the previous purge left as the oldest, so events have been "+
+			"deleted from the start of the log", ErrAuditChainBroken,
+			errAuditPurgeRefused, ev.ID)
+	case genesis && ev.PrevHash != "":
+		return fmt.Errorf("%w: %s: the oldest event, %d, follows an event "+
+			"that is no longer in the log, and no audit.purge event "+
+			"accounts for its removal", ErrAuditChainBroken,
+			errAuditPurgeRefused, ev.ID)
+	}
+
+	return nil
 }
 
 // auditPurgeStart returns where the prefix a purge deletes must begin:

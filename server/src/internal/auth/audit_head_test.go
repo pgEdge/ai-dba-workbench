@@ -196,7 +196,7 @@ func TestVerifyReportsHeadDeletedSinceTheLastPurge(t *testing.T) {
 }
 
 // TestVerifyAcceptsAHeadALegacyPurgeExplains pins the residual limit
-// for a log whose newest purge event predates the head record: a
+// for a log whose purge events all predate the head record: a
 // predecessor is then accounted for by the existence of a purge event,
 // and nothing more precise is possible.
 func TestVerifyAcceptsAHeadALegacyPurgeExplains(t *testing.T) {
@@ -559,52 +559,58 @@ func TestCheckAuditRowVerifiesUnknownVersion(t *testing.T) {
 // judged by what they do, not by their names: each case swaps one for
 // a same-named object that no longer protects the chain.
 func TestVerifyAuditSchemaChecksDefinitions(t *testing.T) {
-	dropIndex := "DROP INDEX " + auditChainIndexName + "; "
-	dropTrigger := "DROP TRIGGER " + auditNoUpdateTrigger + "; "
+	// Each tamper is a fixed literal, so that the statements a case runs
+	// are visible at a glance and nothing is assembled at run time.
 	cases := []struct {
 		name    string
 		tamper  string
 		wantErr string
 	}{
 		{"unique index on another column",
-			dropIndex + "CREATE UNIQUE INDEX " + auditChainIndexName +
-				" ON audit_events(id)",
+			`DROP INDEX idx_audit_prev_hash;
+             CREATE UNIQUE INDEX idx_audit_prev_hash ON audit_events(id)`,
 			"not an index on prev_hash alone"},
 		{"unique index on prev_hash and another column",
-			dropIndex + "CREATE UNIQUE INDEX " + auditChainIndexName +
-				" ON audit_events(prev_hash, id)",
+			`DROP INDEX idx_audit_prev_hash;
+             CREATE UNIQUE INDEX idx_audit_prev_hash
+                 ON audit_events(prev_hash, id)`,
 			"not an index on prev_hash alone"},
 		{"unique index on an expression",
-			dropIndex + "CREATE UNIQUE INDEX " + auditChainIndexName +
-				" ON audit_events(lower(prev_hash))",
+			`DROP INDEX idx_audit_prev_hash;
+             CREATE UNIQUE INDEX idx_audit_prev_hash
+                 ON audit_events(lower(prev_hash))`,
 			"not an index on prev_hash alone"},
 		{"partial unique index",
-			dropIndex + "CREATE UNIQUE INDEX " + auditChainIndexName +
-				" ON audit_events(prev_hash) WHERE id < 0",
+			`DROP INDEX idx_audit_prev_hash;
+             CREATE UNIQUE INDEX idx_audit_prev_hash
+                 ON audit_events(prev_hash) WHERE id < 0`,
 			"is partial"},
 		{"trigger that does nothing",
-			dropTrigger + "CREATE TRIGGER " + auditNoUpdateTrigger +
-				" BEFORE UPDATE ON audit_events BEGIN SELECT 1; END",
+			`DROP TRIGGER audit_events_no_update;
+             CREATE TRIGGER audit_events_no_update
+                 BEFORE UPDATE ON audit_events BEGIN SELECT 1; END`,
 			"does not match the definition"},
 		{"trigger with a WHEN clause",
-			dropTrigger + "CREATE TRIGGER " + auditNoUpdateTrigger +
-				" BEFORE UPDATE ON audit_events WHEN 0 BEGIN " +
-				"SELECT RAISE(ABORT, 'audit_events is append-only'); END",
+			`DROP TRIGGER audit_events_no_update;
+             CREATE TRIGGER audit_events_no_update
+                 BEFORE UPDATE ON audit_events WHEN 0 BEGIN
+                 SELECT RAISE(ABORT, 'audit_events is append-only'); END`,
 			"does not match the definition"},
 		{"trigger on some columns only",
-			dropTrigger + "CREATE TRIGGER " + auditNoUpdateTrigger +
-				" BEFORE UPDATE OF details ON audit_events BEGIN " +
-				"SELECT RAISE(ABORT, 'audit_events is append-only'); END",
+			`DROP TRIGGER audit_events_no_update;
+             CREATE TRIGGER audit_events_no_update
+                 BEFORE UPDATE OF details ON audit_events BEGIN
+                 SELECT RAISE(ABORT, 'audit_events is append-only'); END`,
 			"does not match the definition"},
 		{"extra trigger discarding events as they arrive",
-			"CREATE TRIGGER audit_drop BEFORE INSERT ON audit_events " +
-				"WHEN NEW.actor_name = 'mallory' BEGIN " +
-				"SELECT RAISE(IGNORE); END",
+			`CREATE TRIGGER audit_drop BEFORE INSERT ON audit_events
+                 WHEN NEW.actor_name = 'mallory' BEGIN
+                 SELECT RAISE(IGNORE); END`,
 			"is not one this server creates"},
 		{"extra trigger on another table deleting events",
-			"CREATE TRIGGER user_hide AFTER INSERT ON users BEGIN " +
-				"DELETE FROM audit_events WHERE id = " +
-				"(SELECT MAX(id) FROM audit_events); END",
+			`CREATE TRIGGER user_hide AFTER INSERT ON users BEGIN
+                 DELETE FROM audit_events
+                     WHERE id = (SELECT MAX(id) FROM audit_events); END`,
 			"is not one this server creates"},
 	}
 

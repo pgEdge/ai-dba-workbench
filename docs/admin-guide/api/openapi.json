@@ -5881,9 +5881,25 @@
             }
           },
           {
+            "name": "exclude_schemas",
+            "in": "query",
+            "description": "Comma-separated schema names to exclude (probes with a schemaname column only; 'none' excludes nothing)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "exclude_system_schemas",
+            "in": "query",
+            "description": "Exclude pg_catalog, information_schema and pg_toast* schemas, as pg_stat_user_tables does (probes with a schemaname column only)",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
             "name": "order_by",
             "in": "query",
-            "description": "Column to sort by (default: collected_at)",
+            "description": "Column to sort by (default: the first entity key column)",
             "schema": {
               "type": "string"
             }

@@ -750,6 +750,22 @@ project adheres to
 
 ### Fixed
 
+- Fix the Table Leaderboard and Index Leaderboard on the database
+  dashboard listing `pg_catalog` and `information_schema` objects,
+  each shown with zero rows or zero reads. Both leaderboards ranked
+  every schema the collector records, and PostgreSQL reports zero
+  counters for a catalog table it holds no statistics for, so on a
+  database where every counter is zero, such as a standby or a
+  server whose statistics were reset, catalog objects filled the top
+  ten. Both leaderboards now leave out the system schemas that
+  PostgreSQL leaves out of `pg_stat_user_tables` and
+  `pg_stat_user_indexes`: `pg_catalog`, `information_schema` and the
+  TOAST schemas. The `/api/v1/metrics/latest` endpoint gains an
+  `exclude_system_schemas` query parameter for this purpose, and its
+  existing `exclude_schemas` parameter is now documented in the API
+  reference. The Vacuum Status section still includes the system
+  schemas. (#499)
+
 - Fix alerts staying active for ever on a server an operator has
   stopped monitoring. The probes of an unmonitored connection leave
   the staleness view, so every alert on it was judged to have a probe

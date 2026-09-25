@@ -768,6 +768,24 @@ project adheres to
   acknowledged alert was kept for the life of the installation. It
   now falls back to the time the alert was raised. (#500)
 
+- Fix the top queries list reporting a query under every monitored
+  database when it is filtered by database. The server named a
+  query's database from the backends the collector happened to
+  sample in the previous hour, and when none had been sampled it
+  used the database the statistics were collected through instead;
+  since those statistics are collected once through every database
+  with `pg_stat_statements` installed, a filtered list then showed
+  the same query, with the same calls, under each of them. The name
+  now comes from the per-database statistics the collector records
+  for every database it monitors, so the query appears under the
+  database it actually ran in. A query in a database the collector
+  cannot see still falls back to one of the collecting databases,
+  but only to one, so the filtered and unfiltered lists agree. The
+  query drill-down resolves the database the same way, so it finds
+  the query when given the database the list reported, and without
+  a database filter it no longer counts a query's calls once for
+  every database it was collected through. (#508)
+
 - Fix the transaction throughput chart on the Performance Summary
   page counting a database's whole lifetime transaction count into
   one interval. The commits and rollbacks per second were derived by

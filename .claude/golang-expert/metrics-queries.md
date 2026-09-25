@@ -1304,7 +1304,9 @@ PostgreSQL 18, which added B-tree skip scans, a predicate on
 the window. `/metrics/query` and `/metrics/latest` always carry the
 database name; `/metrics/query-stats` takes an optional `database_name`
 parameter, which the drill-down always sends, and `buildQueryStatsSQL`
-binds it as an extra predicate so that the object index applies.
+applies it to the statement's resolved database (see below), so the
+scan binds only `connection_id` and `queryid` and reads the identity
+index, whose leading columns those are.
 `/metrics/top-queries` reads the identity index described below for the
 aggregation itself, and the object index for the per-row query-text
 lateral on its page statement.
@@ -1319,10 +1321,10 @@ measuring, and do not drop any of these:
   serves everything that wants the newest samples for a connection,
   including the `latest` CTE that anchors the name lookups.
 - `idx_pg_stat_statements_object (connection_id, database_name, queryid,
-  collected_at DESC)` serves the per-statement drill-downs, which always
-  bind a database name, and the query-text lookup on the top-queries
-  page statement. It cannot be replaced by the identity index below:
-  that index puts `queryid` ahead of `database_name`, so it cannot
+  collected_at DESC)` serves per-statement lookups that bind a
+  database name, such as `/metrics/query`, and the query-text lookup on
+  the top-queries page statement. It cannot be replaced by the identity
+  index below: that index puts `queryid` ahead of `database_name`, so it cannot
   return one statement's samples in `collected_at` order.
 - `idx_pg_stat_statements_identity_time (connection_id, queryid, userid,
   dbid, toplevel, collected_at, database_name) INCLUDE (calls,
@@ -1330,8 +1332,9 @@ measuring, and do not drop any of these:
   min_exec_time, max_exec_time)` is migration #15, added for issue #387.
   Its key order is exactly the `ORDER BY` of the `readings` CTE in
   `buildTopQueriesSQL` (identity columns, then `collected_at`, then the
-  probing `database_name` as the tiebreaker), which serves both the
-  `DISTINCT ON` and the identity window, so the aggregation
+  probing `database_name` as the tiebreaker), and, after the leading
+  `queryid` equality, of the one in `queryStatsSQLTemplate`; it serves
+  both the `DISTINCT ON` and the identity window, so the aggregation
   reads the rows already sorted, with a Merge Append combining the
   partitions; the INCLUDE list makes the scan index-only.
 
@@ -1366,8 +1369,8 @@ same `collected_at`, differing only in the probing `database_name`. Its
 `readings` CTE therefore keeps one copy per
 `(queryid, userid, dbid, toplevel, collected_at)` with `DISTINCT ON`
 (lowest `database_name` wins, for a stable choice), resolves each row's
-own database through `db_names`, and applies the optional
-`database_name` filter to that resolved name; `samples` then `LAG`s over
+own database through `db_names`; `samples` applies the optional
+`database_name` filter to that resolved name and then `LAG`s over
 `(queryid, userid, dbid, toplevel)`, `totals` drops the pairs whose
 call or time delta is negative, floors the row and block deltas at
 zero, sums per `queryid` and keeps only statements with calls in the
@@ -1385,10 +1388,37 @@ which stores one counter under two names and expects it summed once);
 and the database filter has to select which counters are summed rather
 than filter the summed row, because `totals` sums every `dbid` of a
 `queryid` (`TestTopQueries_DatabaseFilterSumsOneDatabase`, 1,200 calls
-in one database and 12 in another). `queryStatsSQLTemplate` still keys
-its identity on `database_name`; it is safe only because the drill-down
-always binds one database, and it should adopt the same shape if that
-ever changes.
+in one database and 12 in another). `queryStatsSQLTemplate` has the
+same `readings` shape for its single `queryid`, and its identity is
+`(userid, dbid, toplevel)` too.
+
+### Resolving dbid to a database name (#508)
+
+`statementDatabaseLookupSQL` holds the `latest` and `db_names` CTEs that
+both statements put first. `db_names` takes the most recent
+`(datid, datname)` per OID from `metrics.pg_stat_database` and
+`metrics.pg_stat_activity` together (`UNION ALL`, then `DISTINCT ON
+(datid) ... ORDER BY datid, collected_at DESC, datname`), each bounded to
+`nameLookupWindowSQL` before the latest `pg_stat_statements` snapshot.
+`pg_stat_database` is the primary source, but note it is database-scoped
+(`WHERE datname = current_database()`), so it holds one row per
+*monitored* database per collection, not one per database in the
+cluster. `pg_stat_activity` is sampled server-wide, which is why it stays
+as a second source: it can name a database the monitoring role has no
+`CONNECT` on.
+
+An OID neither source names falls back to the probing `database_name`,
+and because that differs between the copies of one counter, the database
+filter must run after the `DISTINCT ON` in `readings`, never inside it.
+Filtering the copies lets each one match its own probing database, so a
+filtered view reports the counter under every probing database; that was
+issue #508. The filter therefore lives in `samples` (`WHERE
+r.database_name = $N` in `buildTopQueriesSQL`, `WHERE database_name =
+$5` in `queryStatsSQLTemplate`), where it cannot be pushed below the
+`DISTINCT ON` because `database_name` is not one of its keys. The
+drill-down binds the name the top-queries list reported, so both
+endpoints must resolve it identically. Tests:
+`perf_summary_dbid_resolution_test.go`.
 
 `totals` and `latest_sample` must stay `MATERIALIZED`. The planner
 cannot see through the `samples` CTE, estimates both at one row, and
@@ -1417,12 +1447,13 @@ not another index.
 
 ## Bounded Activity Lookups (server)
 
-`buildTopQueriesSQL` resolves `dbid` and `userid` OIDs to names through
+`buildTopQueriesSQL` resolves `userid` OIDs to names through
 `DISTINCT ON (...) ... ORDER BY oid, collected_at DESC` over
-`metrics.pg_stat_activity`, which has no index on `datid` or
-`usesysid`. Without a `collected_at` bound that sort covers every
-activity row in retention for the connection, and it runs twice per
-page (count and page statements). Both CTEs stay anchored to
+`metrics.pg_stat_activity`, which has no index on `usesysid`, and
+`dbid` OIDs the same way over that table plus `metrics.pg_stat_database`
+(see above). Without a `collected_at` bound that sort covers every
+row in retention for the connection, and it runs twice per
+page (count and page statements). The CTEs stay anchored to
 the latest `pg_stat_statements` snapshot rather than to the requested
 window, because they are a name lookup and not a measurement, and read
 only the preceding

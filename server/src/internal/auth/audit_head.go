@@ -12,7 +12,6 @@ package auth
 import (
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 )
 
@@ -84,9 +83,12 @@ type auditHeadCheck struct {
 	// purgeSeen records that some audit.purge event survives, which is
 	// all a build that predates the head record left to go on.
 	purgeSeen bool
-	// purgeID and head describe the newest audit.purge event and the
-	// head it recorded; head is empty when that event predates the
-	// record.
+	// purgeID and head describe the newest audit.purge event that
+	// records a head, and are empty while none has been seen. A later
+	// purge event without a record does not replace them: once a head
+	// has been recorded, only a later record may move it, or a replayed
+	// copy of an old event written before the record would reopen the
+	// weaker check below.
 	purgeID int64
 	head    auditPurgeHead
 }
@@ -106,8 +108,10 @@ func (h *auditHeadCheck) observe(ev *AuditEvent) error {
 		return err
 	}
 	h.purgeSeen = true
-	h.purgeID = ev.ID
-	h.head = head
+	if head.OldestRetainedHash != "" {
+		h.purgeID = ev.ID
+		h.head = head
+	}
 
 	return nil
 }
@@ -148,10 +152,10 @@ func (h *auditHeadCheck) check() (int64, error) {
 	return 0, nil
 }
 
-// auditSelectNewestPurge reads the newest audit.purge event, whose head
-// record says where the next purge must begin.
-const auditSelectNewestPurge = auditSelectAll +
-	" WHERE action = ? ORDER BY id DESC LIMIT 1"
+// auditSelectPurgesNewestFirst reads the audit.purge events, newest
+// first, so that the next purge can find the newest head recorded.
+const auditSelectPurgesNewestFirst = auditSelectAll +
+	" WHERE action = ? ORDER BY id DESC"
 
 // auditSelectThroughID reads every row up to and including an id, in id
 // order: the prefix a purge is about to delete and the row it will
@@ -234,36 +238,55 @@ func (s *AuthStore) verifyAuditPurgePrefix(tx *sql.Tx, cut int64) (
 }
 
 // auditPurgeStart returns where the prefix a purge deletes must begin:
-// the hash of the head the newest audit.purge event recorded, or, when
-// no purge event exists at all, genesis set to say that it must begin
-// at the genesis row. An empty start with genesis unset means the
-// newest purge event predates the head record, so the prefix may begin
-// anywhere; that lasts only until the first purge this build runs.
+// the hash of the head recorded by the newest audit.purge event that
+// records one, or, when no purge event exists at all, genesis set to
+// say that it must begin at the genesis row. An empty start with
+// genesis unset means purge events exist but none records a head, as
+// on a log purged only by builds that predate the record, so the
+// prefix may begin anywhere; that lasts only until the first purge this
+// build runs. A purge event without a record never overrides an older
+// one that has a record, since a copy of a genuine early event replayed
+// into the log would otherwise reopen that weaker case on demand.
+//
+// Every purge event it reads must verify, because the record is
+// trusted only for that: a purge event written without the key is not
+// the server's word on anything. The rows are closed before it
+// returns, so the caller can issue its next statement.
 func (s *AuthStore) auditPurgeStart(tx *sql.Tx) (start string,
 	genesis bool, err error) {
 
-	ev, err := scanAuditEvent(
-		tx.QueryRow(auditSelectNewestPurge, auditActionPurge).Scan)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", true, nil
-	}
+	rows, err := tx.Query(auditSelectPurgesNewestFirst, auditActionPurge)
 	if err != nil {
 		return "", false, fmt.Errorf("failed to read the newest audit "+
 			"purge event: %w", err)
 	}
+	defer rows.Close()
 
-	// The record is trusted only because its hash verifies; a purge
-	// event written without the key is not the server's word on
-	// anything.
-	if err := s.checkAuditRowVerifies(&ev); err != nil {
-		return "", false, err
+	seen := false
+	for rows.Next() {
+		ev, err := scanAuditEvent(rows.Scan)
+		if err != nil {
+			return "", false, fmt.Errorf("failed to read the newest audit "+
+				"purge event: %w", err)
+		}
+		seen = true
+		if err := s.checkAuditRowVerifies(&ev); err != nil {
+			return "", false, err
+		}
+		head, err := parseAuditPurgeHead(&ev)
+		if err != nil {
+			return "", false, err
+		}
+		if head.OldestRetainedHash != "" {
+			return head.OldestRetainedHash, false, nil
+		}
 	}
-	head, err := parseAuditPurgeHead(&ev)
-	if err != nil {
-		return "", false, err
+	if err := rows.Err(); err != nil {
+		return "", false, fmt.Errorf("failed to read the newest audit "+
+			"purge event: %w", err)
 	}
 
-	return head.OldestRetainedHash, false, nil
+	return "", !seen, nil
 }
 
 // checkAuditRowVerifies recomputes one row's hash under the store's

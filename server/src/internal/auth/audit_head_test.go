@@ -341,6 +341,52 @@ func TestPurgeAcceptsAnyStartAfterALegacyPurge(t *testing.T) {
 	}
 }
 
+// TestReplayedLegacyPurgeDoesNotReopenTheWeakCheck replays a genuine,
+// keyed purge event written before the head record into a log that
+// already has one, after deleting the head. The newer event records
+// nothing, so it must not stand in for the older record: the verifier
+// still reports the head, and the purge still refuses.
+func TestReplayedLegacyPurgeDoesNotReopenTheWeakCheck(t *testing.T) {
+	store, next := purgedLog(t)
+	deleteAuditRows(t, store, auditRowStates(t, store)[0].ID)
+	legacy := newEvent(systemActor, auditActionPurge, "", nil, "",
+		map[string]any{"older_than": next.Format(time.RFC3339),
+			"removed": 1})
+	if err := store.recordAuditInOwnTx(legacy); err != nil {
+		t.Fatalf("Failed to record a legacy purge event: %v", err)
+	}
+
+	if _, _, err := store.VerifyAuditChain(); !errors.Is(err,
+		ErrAuditChainBroken) || !strings.Contains(err.Error(),
+		"deleted from the start of the log") {
+		t.Errorf("Expected the head deletion still to be reported, got %v",
+			err)
+	}
+	if _, err := store.PurgeAuditEvents(next); !errors.Is(err,
+		ErrAuditChainBroken) || !strings.Contains(err.Error(),
+		"not the one the previous purge left") {
+		t.Errorf("Expected the purge still to refuse, got %v", err)
+	}
+}
+
+// TestRecordAuditRefusesADiscardedEvent checks an insert that a trigger
+// turns into a no-op fails the write rather than committing the change
+// with no event.
+func TestRecordAuditRefusesADiscardedEvent(t *testing.T) {
+	store, _ := newReopenableStore(t)
+	if _, err := store.db.Exec("CREATE TRIGGER audit_drop BEFORE INSERT " +
+		"ON audit_events BEGIN SELECT RAISE(IGNORE); END"); err != nil {
+		t.Fatalf("Failed to create the discarding trigger: %v", err)
+	}
+
+	ev := newEvent(systemActor, "user.create", "user", nil, "alice", nil)
+	if err := store.recordAuditInOwnTx(ev); err == nil ||
+		!strings.Contains(err.Error(), "0 rows written") {
+		t.Errorf("Expected the discarded event to fail the write, got %v",
+			err)
+	}
+}
+
 // insertForgedPurgeRow writes an audit.purge row with a hash nobody
 // holding the key computed.
 func insertForgedPurgeRow(t *testing.T, s *AuthStore) {
@@ -550,6 +596,16 @@ func TestVerifyAuditSchemaChecksDefinitions(t *testing.T) {
 				" BEFORE UPDATE OF details ON audit_events BEGIN " +
 				"SELECT RAISE(ABORT, 'audit_events is append-only'); END",
 			"does not match the definition"},
+		{"extra trigger discarding events as they arrive",
+			"CREATE TRIGGER audit_drop BEFORE INSERT ON audit_events " +
+				"WHEN NEW.actor_name = 'mallory' BEGIN " +
+				"SELECT RAISE(IGNORE); END",
+			"is not one this server creates"},
+		{"extra trigger on another table deleting events",
+			"CREATE TRIGGER user_hide AFTER INSERT ON users BEGIN " +
+				"DELETE FROM audit_events WHERE id = " +
+				"(SELECT MAX(id) FROM audit_events); END",
+			"is not one this server creates"},
 	}
 
 	for _, tc := range cases {

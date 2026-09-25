@@ -47,8 +47,9 @@ A failed login takes one of two shapes, and which one an operator sees
 says where the failure happened. The callback answers `400` with a
 generic JSON error when the request never reached the provider
 successfully: no state cookie, a state cookie that does not open, a
-state parameter that does not match the sealed one, or neither an
-authorisation code nor a provider error, since the provider's `error`
+state parameter that does not match the sealed one, a login state that
+has already been presented once, or neither an authorisation code nor a
+provider error, since the provider's `error`
 parameter is read first and takes the redirect branch below. It
 redirects the browser back to the login page with a `login_error`
 query parameter when the request did come back
@@ -160,34 +161,60 @@ whose button does not work.
 
 Set `http.trusted_proxies` to the reverse proxy's address ranges
 whenever the Workbench sits behind a proxy, which in a supported
-deployment it always does.
+deployment it always does. The setting is required, not advisory, for a
+production deployment behind a proxy; without it, any anonymous caller
+can block federated login for every user, and the login state cookie
+loses the protection that stops login CSRF from a sibling subdomain.
 
-The callback endpoint is rate limited per client address, and the
-allowance is spent only by requests that reach the identity provider,
-so a request refused before that point, one with no login state cookie
-or a mismatched state, costs nothing. Behind a proxy, every request
-carries the proxy's address unless `http.trusted_proxies` names it, so
-the limit collapses to a single allowance shared by the whole
-deployment. An anonymous caller can spend that allowance: the start
-endpoint needs no credentials and is not itself rate limited, so one
-`GET` to it mints a login state that replays against the callback for
-the ten minute lifetime of the state plus a minute of clock skew, and a
-handful of such requests deny everyone else a login until the window
-passes. Setting `http.trusted_proxies` is what stops the allowance being
-shared across every client, because the limit then applies to the
-caller's own address. On a deployment where local login is switched
-off, that is the only way in.
+The start and callback endpoints are each rate limited per client
+address, with an allowance of 240 requests a minute; a completed login
+hands its allowance back, so the limits bound failed and abandoned
+logins rather than working ones. Every call to the start endpoint
+spends one unit of the start allowance. The callback allowance is spent
+only by requests that reach the identity provider, so a request refused
+before that point costs nothing; such requests include one with no
+login state cookie, one with a mismatched state and one that replays a
+state already presented.
+
+Each login state is accepted by the callback once only. The server
+remembers a digest of every state the callback has accepted for as long
+as the state could still be opened, which is the ten minute lifetime of
+the state plus a minute of clock skew. A captured state cookie cannot
+therefore be replayed with further authorisation codes, and each state
+reaches the provider's token endpoint at most once. The record is held
+in the server's memory; a deployment that runs several server processes
+with the same server secret refuses a replay only at the process that
+first accepted the state.
+
+Behind a proxy, every request carries the proxy's address unless
+`http.trusted_proxies` names it, so each limit collapses to a single
+allowance shared by the whole deployment. An anonymous caller can then
+spend that allowance with repeated requests to the start endpoint and
+deny everyone else a login until the window passes; on a deployment
+where local login is switched off, federated login is the only way in.
+Setting `http.trusted_proxies` stops the allowance being shared across
+every client, because each limit then applies to the caller's own
+address.
 
 The same list decides how far the server believes the
 `X-Forwarded-Proto` header. Every cookie the server sets carries the
 `Secure` attribute whenever the header says `https`, whichever address
 the request came from, because a forged header can only cost the forger
 their own cookie. The login state cookie additionally uses the
-`__Host-` name prefix, which stops a compromised sibling subdomain
-overwriting it, but only when the header arrived from an address on
-`http.trusted_proxies`; without the list the cookie is written under
-its plain name. The server prints a warning at start-up when the list
-is empty and federated login is enabled.
+`__Host-` name prefix, which stops a sibling subdomain overwriting the
+cookie, but only when the server terminates TLS itself or when the
+header arrived from an address on `http.trusted_proxies`. Without the
+list, a server behind a TLS-terminating proxy writes the cookie under
+its plain name. A host that can set cookies for a sibling subdomain can
+then plant the attacker's own login state over the user's cookie and
+send the user's browser to the callback with the attacker's code; the
+user ends up logged in to the attacker's account. The attack is login
+CSRF (cross-site request forgery): the attacker gains no access to the
+user's own account, but the user may enter data into an account the
+attacker controls.
+
+The server prints a warning at start-up that names both consequences
+when the list is empty and federated login is enabled.
 
 ## Registering the Workbench at the Provider
 

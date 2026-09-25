@@ -1608,8 +1608,9 @@ project adheres to
   remembers a digest of each accepted state for as long as the state
   could be opened and refuses a second presentation with `400` before
   the provider is contacted, and the start endpoint allows 240 requests
-  a minute per client address, returned by a completed login as the
-  callback's allowance is. The record is held in memory, so a
+  a minute per client address. A completed login now hands back the one
+  unit it spent on each limiter, where it used to clear the callback's
+  allowance entirely. The record is held in memory, so a
   deployment running several server processes with one server secret
   refuses a replay only at the process that accepted the state. (#505)
 

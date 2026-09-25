@@ -4097,7 +4097,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/rbac/users/{id}": {
 			Put: &OpenAPIOperation{
 				Summary:     "Update user",
-				Description: "Updates a user's details. Requires manage_users permission; setting or clearing is_superuser also requires the caller to be a superuser.",
+				Description: "Updates a user's details. Requires manage_users permission; setting or clearing is_superuser also requires the caller to be a superuser, as does updating any user who is already a superuser.",
 				OperationID: "updateUser",
 				Tags:        []string{"RBAC Users"},
 				Security:    bearerAuth,
@@ -4117,13 +4117,13 @@ func buildPaths() map[string]OpenAPIPathItem {
 					},
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_users permission, and superuser privileges to send is_superuser"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_users permission, and superuser privileges to send is_superuser or to update a superuser"),
 					"404": jsonResponse("ErrorResponse", "User not found"),
 				},
 			},
 			Delete: &OpenAPIOperation{
 				Summary:     "Delete user",
-				Description: "Deletes a user. Requires manage_users permission.",
+				Description: "Deletes a user. Requires manage_users permission, and superuser privileges when the user being deleted is a superuser.",
 				OperationID: "deleteUser",
 				Tags:        []string{"RBAC Users"},
 				Security:    bearerAuth,
@@ -4131,7 +4131,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 				Responses: map[string]OpenAPIResponse{
 					"204": {Description: "User deleted"},
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_users permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_users permission, and superuser privileges to delete a superuser"),
 					"404": jsonResponse("ErrorResponse", "User not found"),
 				},
 			},

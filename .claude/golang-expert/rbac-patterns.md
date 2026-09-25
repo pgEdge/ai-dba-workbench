@@ -360,8 +360,11 @@ call `requireSuperuser` right after decoding whenever the body carries
 `is_superuser` at all, true or false, before any store read (#497). The
 field's presence, not whether it would change the row, is the test, so
 the rule never depends on target state read outside the transaction.
-Pinned by `rbac_user_superuser_gate_test.go`. Any new endpoint that can
-change superuser status needs the same gate.
+`updateUser` and `deleteUser` also call `requireSuperuser` when the
+target account is a superuser, since resetting its password or
+disabling it is as good as holding the role. Pinned by
+`rbac_user_superuser_gate_test.go`. Any new endpoint that can change
+superuser status, or write to a superuser account, needs the same gate.
 
 ## Store Refusals Map to 400
 

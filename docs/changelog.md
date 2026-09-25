@@ -1614,7 +1614,10 @@ project adheres to
   `POST /api/v1/rbac/users` and `PUT /api/v1/rbac/users/{id}` now
   refuse a request carrying `is_superuser` with a 403 unless the caller
   is already a superuser, apply none of its other changes, and record
-  the refusal in the audit log. (#497)
+  the refusal in the audit log. Editing or deleting an account that is
+  already a superuser now needs a superuser too, since a `manage_users`
+  holder who could reset a superuser's password could sign in as them.
+  (#497)
 
 - Stop the Slack, Mattermost and generic webhook channels putting their
   endpoint URL into the alerter log, into

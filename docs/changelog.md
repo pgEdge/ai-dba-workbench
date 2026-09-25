@@ -827,6 +827,12 @@ project adheres to
   the hash that detects a changed connection was computed over
   parameters in random order; the hash is now stable. (#539)
 
+- Fix the server ignoring `llm.temperature: 0`. The configuration
+  merge treated a temperature of 0 as unset, so the 0.7 default won
+  and an operator could not ask for deterministic output. An explicit
+  0 is now passed to the provider, whilst an omitted or negative value
+  still falls back to 0.7. (#551)
+
 - Fix alerts staying active for ever on a server an operator has
   stopped monitoring. The probes of an unmonitored connection leave
   the staleness view, so every alert on it was judged to have a probe

@@ -13328,7 +13328,7 @@
           },
           "is_superuser": {
             "type": "boolean",
-            "description": "Whether the user is a superuser. Only a superuser may send this field; anyone else is refused with 403."
+            "description": "Whether the user is a superuser"
           },
           "username": {
             "type": "string",
@@ -14057,7 +14057,7 @@
           },
           "is_superuser": {
             "type": "boolean",
-            "description": "Whether the user is a superuser"
+            "description": "Whether the user is a superuser. Only a superuser may send this field; anyone else is refused with 403."
           },
           "password": {
             "type": "string",

@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"os"
 
+	pgllm "github.com/pgEdge/pgedge-go-llm-lib/llm"
 	"github.com/pgedge/ai-workbench/server/internal/api"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/compactor"
@@ -229,21 +230,7 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 		registerDatastoreHandler(mux, channelOverrideHandler, authWrapper, "Channel override configuration", deps.Datastore)
 
 		// Server info endpoint (for Server Info Dialog)
-		serverInfoLLMConfig := &llmproxy.Config{
-			Provider:               deps.Config.LLM.Provider,
-			Model:                  deps.Config.LLM.Model,
-			AnthropicAPIKey:        deps.Config.LLM.AnthropicAPIKey,
-			AnthropicBaseURL:       deps.Config.LLM.AnthropicBaseURL,
-			OpenAIAPIKey:           deps.Config.LLM.OpenAIAPIKey,
-			OpenAIBaseURL:          deps.Config.LLM.OpenAIBaseURL,
-			GeminiAPIKey:           deps.Config.LLM.GeminiAPIKey,
-			GeminiBaseURL:          deps.Config.LLM.GeminiBaseURL,
-			OllamaURL:              deps.Config.LLM.OllamaURL,
-			MaxTokens:              deps.Config.LLM.MaxTokens,
-			Temperature:            deps.Config.LLM.Temperature,
-			UseCompactDescriptions: deps.Config.LLM.UseCompactDescriptions(),
-			LLMConfig:              &deps.Config.LLM,
-		}
+		serverInfoLLMConfig := newLLMProxyConfig(&deps.Config.LLM)
 		serverInfoHandler := api.NewServerInfoHandler(deps.Datastore, deps.AuthStore, rbacChecker, serverInfoLLMConfig)
 		registerDatastoreHandler(mux, serverInfoHandler, authWrapper, "Server info", deps.Datastore)
 
@@ -456,6 +443,30 @@ func handleCapabilities(aiEnabled bool, maxIterations int,
 	}
 }
 
+// newLLMProxyConfig builds the llmproxy configuration shared by the chat
+// proxy, the AI overview generator and the server info analysis from the
+// operator's llm settings. Temperature is always resolved through
+// LLMConfig.Temperature so that an explicit 0 reaches the provider and an
+// unset value falls back to the default. Callers add any path-specific
+// fields, such as the memory and auth stores, to the returned value.
+func newLLMProxyConfig(llm *config.LLMConfig) *llmproxy.Config {
+	return &llmproxy.Config{
+		Provider:               llm.Provider,
+		Model:                  llm.Model,
+		AnthropicAPIKey:        llm.AnthropicAPIKey,
+		AnthropicBaseURL:       llm.AnthropicBaseURL,
+		OpenAIAPIKey:           llm.OpenAIAPIKey,
+		OpenAIBaseURL:          llm.OpenAIBaseURL,
+		GeminiAPIKey:           llm.GeminiAPIKey,
+		GeminiBaseURL:          llm.GeminiBaseURL,
+		OllamaURL:              llm.OllamaURL,
+		MaxTokens:              llm.MaxTokens,
+		Temperature:            pgllm.Float(llm.Temperature()),
+		UseCompactDescriptions: llm.UseCompactDescriptions(),
+		LLMConfig:              llm,
+	}
+}
+
 // setupLLMHandlers configures LLM proxy endpoints by mounting the
 // library LLM proxy handler under /api/v1/llm. Returns an error if the
 // proxy handler cannot be constructed.
@@ -474,24 +485,10 @@ func setupLLMHandlers(mux *http.ServeMux, cfg *config.Config, toolProvider api.C
 	}
 
 	// Create LLM proxy configuration
-	llmConfig := &llmproxy.Config{
-		Provider:               cfg.LLM.Provider,
-		Model:                  cfg.LLM.Model,
-		AnthropicAPIKey:        cfg.LLM.AnthropicAPIKey,
-		AnthropicBaseURL:       cfg.LLM.AnthropicBaseURL,
-		OpenAIAPIKey:           cfg.LLM.OpenAIAPIKey,
-		OpenAIBaseURL:          cfg.LLM.OpenAIBaseURL,
-		GeminiAPIKey:           cfg.LLM.GeminiAPIKey,
-		GeminiBaseURL:          cfg.LLM.GeminiBaseURL,
-		OllamaURL:              cfg.LLM.OllamaURL,
-		MaxTokens:              cfg.LLM.MaxTokens,
-		Temperature:            cfg.LLM.Temperature,
-		UseCompactDescriptions: cfg.LLM.UseCompactDescriptions(),
-		CompactDescriptions:    compactDescs,
-		MemoryStore:            memoryStore,
-		AuthStore:              authStore,
-		LLMConfig:              &cfg.LLM,
-	}
+	llmConfig := newLLMProxyConfig(&cfg.LLM)
+	llmConfig.CompactDescriptions = compactDescs
+	llmConfig.MemoryStore = memoryStore
+	llmConfig.AuthStore = authStore
 
 	// Mount the library LLM proxy under the /api/v1/llm prefix. The proxy
 	// registers providers/models/health (public) and chat/chat/stream/

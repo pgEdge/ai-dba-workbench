@@ -211,7 +211,7 @@ func TestProviderOptions_DefaultsAndHeaders(t *testing.T) {
 	cfg := &Config{
 		Model:       "claude-test",
 		MaxTokens:   2048,
-		Temperature: 0.5,
+		Temperature: pgllm.Float(0.5),
 		LLMConfig:   &config.LLMConfig{TimeoutSeconds: 30},
 	}
 	opts := cfg.providerOptions("anthropic", "key", "http://base")
@@ -232,6 +232,33 @@ func TestProviderOptions_DefaultsAndHeaders(t *testing.T) {
 	}
 	if opts.RequestTimeout.Seconds() != 30 {
 		t.Errorf("expected 30s timeout, got %v", opts.RequestTimeout)
+	}
+}
+
+// TestProviderOptions_Temperature guards issue #551: an explicit
+// temperature of 0 must reach the provider options, whilst a nil
+// temperature leaves the provider default in place.
+func TestProviderOptions_Temperature(t *testing.T) {
+	tests := []struct {
+		name string
+		temp *float64
+		want *float64
+	}{
+		{name: "nil leaves provider default", temp: nil, want: nil},
+		{name: "explicit zero is sent", temp: pgllm.Float(0), want: pgllm.Float(0)},
+		{name: "non-zero is sent", temp: pgllm.Float(0.7), want: pgllm.Float(0.7)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &Config{Model: "m", Temperature: tt.temp}
+			opts := cfg.providerOptions("anthropic", "key", "http://base")
+			switch {
+			case tt.want == nil && opts.Temperature != nil:
+				t.Errorf("expected nil Temperature, got %v", *opts.Temperature)
+			case tt.want != nil && (opts.Temperature == nil || *opts.Temperature != *tt.want):
+				t.Errorf("expected Temperature %v, got %v", *tt.want, opts.Temperature)
+			}
+		})
 	}
 }
 

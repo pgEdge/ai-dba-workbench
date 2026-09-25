@@ -199,9 +199,9 @@ func TestVerifiedAnchorRulesOutAKeyMismatch(t *testing.T) {
 	})
 }
 
-// assertTamperingNotKeyMismatch checks that the verifier and the
-// re-chain plan, run under key, both treat the log in dir as tampered
-// with, and closes store.
+// assertTamperingNotKeyMismatch checks that the verifier, the purge and
+// the re-chain plan, run under key, all treat the log in dir as
+// tampered with, and closes store.
 func assertTamperingNotKeyMismatch(t *testing.T, dir string,
 	store *AuthStore, key []byte) {
 	t.Helper()
@@ -209,6 +209,11 @@ func assertTamperingNotKeyMismatch(t *testing.T, dir string,
 	if _, err := store.VerifyAuditLog(); !errors.Is(err,
 		ErrAuditChainBroken) || errors.Is(err, ErrAuditKeyMismatch) {
 		t.Errorf("Expected tampering, not a key mismatch, got %v", err)
+	}
+	if _, err := store.PurgeAuditEvents(time.Now().UTC().Add(
+		-time.Hour)); !errors.Is(err, ErrAuditChainBroken) ||
+		errors.Is(err, ErrAuditKeyMismatch) {
+		t.Errorf("Expected the purge to refuse as tampering, got %v", err)
 	}
 	store.Close()
 

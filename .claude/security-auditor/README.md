@@ -239,8 +239,8 @@ client address, before and after snapshots and a hash chain.
   `verifyAuditTail` passing. It walks the whole log, deliberately: the
   re-anchor's history runs to the last failing row anywhere, so a
   verdict drawn from the leading rows let `-confirm-rechain` launder a
-  later deletion. `classifyUnverifiedRow` also never reports a key
-  mismatch when a verified anchor recording a head exists
+  later deletion. `classifyUnverifiedRow`, and the purge's
+  `auditPurgeUnverified`, also never report a key mismatch when a verified anchor recording a head exists
   (`anchorFound`): the verifier returns on the first bad row before the
   history-digest and head checks, so asking would let one edit just
   past an anchor's head or history launder a deletion there (both fixed

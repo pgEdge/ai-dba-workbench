@@ -579,7 +579,8 @@ because an operator's response differs. A row whose HMAC does not
 recompute is classified by `classifyUnverifiedRow`: only when no row
 outside the history has yet verified (`keyProven`), no verified anchor
 recording a head was found (`anchorFound`, since such an anchor
-postdates any rotation), and `looksLikeKeyChange` finds a run of failing rows, each linked to the
+postdates any rotation; the purge's `auditPurgeUnverified` takes the
+same flag), and `looksLikeKeyChange` finds a run of failing rows, each linked to the
 one before, followed by the end of the log or by rows that all verify
 and link (it walks the whole log, then requires `verifyAuditTail`),
 is it `ErrAuditKeyMismatch` (CLI exit 3,

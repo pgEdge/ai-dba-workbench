@@ -444,7 +444,7 @@ func (s *AuthStore) verifyAuditPurgePrefix(tx *sql.Tx, cut int64) (
 
 	anchor, err := s.findAuditAnchor(tx)
 	if errors.Is(err, errAuditAnchorUnverified) {
-		return auditPurgeCut{}, s.auditPurgeUnverified(tx, err)
+		return auditPurgeCut{}, s.auditPurgeUnverified(tx, err, false)
 	}
 	if err != nil {
 		return auditPurgeCut{}, err
@@ -465,7 +465,8 @@ func (s *AuthStore) verifyAuditPurgePrefix(tx *sql.Tx, cut int64) (
 	}
 	if err := walk.run(tx); err != nil {
 		if errors.Is(err, errAuditRowUnverified) {
-			return auditPurgeCut{}, s.auditPurgeUnverified(tx, err)
+			return auditPurgeCut{}, s.auditPurgeUnverified(tx, err,
+				anchor.found)
 		}
 		return auditPurgeCut{}, err
 	}
@@ -478,11 +479,17 @@ func (s *AuthStore) verifyAuditPurgePrefix(tx *sql.Tx, cut int64) (
 // changed server secret or like tampering. The two are told apart
 // because they call for different responses, and an operator told the
 // log had been tampered with every time a secret was rotated would soon
-// stop believing it.
-func (s *AuthStore) auditPurgeUnverified(q auditQuerier, cause error) error {
-	keyChange, err := s.looksLikeKeyChange(q)
-	if err != nil {
-		return err
+// stop believing it. Where a purge or re-chain event that verifies
+// records where the log begins (anchorFound), a rotation cannot explain
+// the failure, so it is tampering, as classifyUnverifiedRow reports it.
+func (s *AuthStore) auditPurgeUnverified(q auditQuerier, cause error,
+	anchorFound bool) error {
+	keyChange := false
+	if !anchorFound {
+		var err error
+		if keyChange, err = s.looksLikeKeyChange(q); err != nil {
+			return err
+		}
 	}
 	if keyChange {
 		return fmt.Errorf("%w: %s: %v. The oldest events do not verify "+

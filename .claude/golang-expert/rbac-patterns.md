@@ -527,7 +527,7 @@ anything. The purge event's details carry `oldest_retained_id` and
 `oldest_retained_hash`, the existing hash of the row it left as the
 oldest, as a value inside an event the purge itself creates; the
 verifier still recomputes that row like any other. `auditHeadCheck`
-(fed by `VerifyAuditChain` only with rows that verified) requires the
+(fed by `verifyAuditLog` only with rows that verified) requires the
 oldest row's hash to equal the newest purge's record, and, when no
 purge records one, reports a non-empty leading `prev_hash` only if no
 `audit.purge` row survives at all (the weak fallback for purge events
@@ -573,14 +573,42 @@ count. `TestPurgeIgnoresBackdatedNewestRows` in
 `audit_rechain_guard_test.go` covers both halves, the refusal and an
 honest prefix still being purged.
 
-`VerifyAuditChain` separates a wrong key from tampering, because an
-operator's response differs. The `keyProven` flag is the mechanism: a
-row that fails before any row has verified under the key is
-`ErrAuditKeyMismatch`, which the CLI maps to exit 3 in
-`describeAuditVerifyFailure` (`cmd/mcp-server/audit.go`); once a row
-has verified, later failures are `ErrAuditChainBroken`,
-`ErrAuditChainDowngraded` or `ErrAuditUnkeyedRow`, which map to exit 2.
-Anything else stays 1.
+`verifyAuditLog` (`audit_verify.go`; `VerifyAuditChain` is a thin
+wrapper over `VerifyAuditLog`) separates a wrong key from tampering,
+because an operator's response differs. A row whose HMAC does not
+recompute is classified by `classifyUnverifiedRow`: only when no row
+outside the history has yet verified (`keyProven`) and
+`looksLikeKeyChange` finds a run of failing rows, each linked to the
+one before, followed by the end of the log or by a verifying row that
+links to the last of them, is it `ErrAuditKeyMismatch` (CLI exit 3,
+message names `-rechain-audit-log`); anything else is
+`ErrAuditChainBroken`, and `ErrAuditChainDowngraded` or
+`ErrAuditUnkeyedRow` map to exit 2 too, in `describeAuditVerifyFailure`
+(`cmd/mcp-server/audit.go`). Anything else stays 1. The purge's
+repeating log line comes from `auditPurgeFailureMessage` in
+`cmd/mcp-server/server.go` and names both commands for either sentinel.
+
+The re-anchor (`audit_reanchor.go`) is the recovery for a keyed log the
+purge refuses. `RechainAuditLog` picks it when the log holds no unkeyed
+rows; a log that verifies returns `UpToDate` without calling `confirm`.
+It rewrites nothing: `reanchorAuditLogTx` re-checks the plan under the
+write lock, rescans (`scanAuditForReanchor`, compared with the plan's
+scan so an in-place replacement is caught), and appends one keyed
+`audit.rechain` event carrying `oldest_retained_id`/`_hash`, and, when
+rows fail, `history_through_id`, `history_events` and
+`history_digest`, an unkeyed SHA-256 over every row through the last
+that fails to verify or link (`auditHistoryDigest`). Purge and rechain
+events are both anchors (`isAuditAnchorAction`); `findAuditAnchor`
+takes the newest that records a head and requires it to verify, and a
+record-less anchor never overrides. History rows skip the key and link
+checks in the verifier and in `verifyAuditPurgePrefix` but must match
+the digest and count, and a purge keeping some history carries the
+digest of the survivors forward. `checkAuditAnchorLinks` is the purge's
+anti-replay check: the row before the anchor must match its
+`prev_hash` and the row after must name its hash, so a re-inserted old
+anchor cannot take over. The CLI (`confirmAuditReanchor`) lets
+`-confirm-rechain` proceed only on `KeyMismatch`. Tests are in
+`audit_reanchor_test.go` and `cmd/mcp-server/reanchor_audit_test.go`.
 
 A successful `GET /api/v1/rbac/audit` is not written to `audit_events`,
 because reading is not a change; `handleAudit` logs one `[AUDIT]` line

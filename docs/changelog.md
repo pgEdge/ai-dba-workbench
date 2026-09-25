@@ -1614,6 +1614,25 @@ project adheres to
   log` at every run until the log is dealt with, so retention stops and
   `auth.db` grows in the meantime. (#502)
 
+- Recover a stalled audit log retention purge with
+  `-rechain-audit-log`, which on a keyed log that no longer verifies
+  now re-anchors the log instead of re-hashing it. The command shows why
+  verification fails, the oldest event and hash it would accept and any
+  starting point previously recorded, and changes nothing unless the
+  operator types `rechain`; `-confirm-rechain` answers in advance only
+  when the failure looks like a changed server secret. The re-anchor
+  deletes, rewrites and re-signs nothing: it appends one signed
+  `audit.rechain` event that records the new starting point and accepts
+  the oldest events, through the last one that fails, as history bound
+  by a digest, so retention can purge them again. History events are no
+  longer attributable to this server, and anything done to them before
+  the re-anchor is accepted with them. An older purge or re-anchor event
+  put back into the log cannot override a newer one. Verification now
+  reports a failure with the shape of a changed secret as a probable
+  wrong or rotated secret, with status 3, rather than as tampering, and
+  both it and the purge's repeating error name `-rechain-audit-log`.
+  (#502)
+
 - Check the definitions of the audit log's schema objects in
   `-verify-audit-log`, not only their names. The index on the link to
   the preceding event must be unique, not partial, and on that column

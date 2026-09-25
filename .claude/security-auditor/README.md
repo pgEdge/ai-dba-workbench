@@ -232,11 +232,14 @@ client address, before and after snapshots and a hash chain.
   such as 0 would delete rows inserted at negative ids. Any change that filters
   the purge on a column a writer of `auth.db` controls reopens this.
 - Verification distinguishes a wrong key from tampering, because the
-  responses differ. The `keyProven` flag is the whole mechanism: a row
-  that fails before anything has verified under the key reports
-  `ErrAuditKeyMismatch` (CLI exit 3); once any row has verified, a
-  later failure is `ErrAuditChainBroken`, `ErrAuditChainDowngraded` or
-  `ErrAuditUnkeyedRow` (CLI exit 2).
+  responses differ. A failing row is `ErrAuditKeyMismatch` (CLI exit 3)
+  only if no row outside the history has verified yet (`keyProven`)
+  and `looksLikeKeyChange` sees a linked run of failing rows followed
+  by the end of the log or a verifying row linked to the last of them;
+  otherwise it is `ErrAuditChainBroken`, and downgrades and unkeyed
+  rows are exit 2 as well. An attacker who rewrites the oldest rows
+  keeping their links therefore gets the key-mismatch wording; exit 3
+  is advice, not proof of innocence.
 - `prev_hash` carries a unique index, so no two events can name the
   same predecessor and only one event can be the genesis row with an
   empty `prev_hash`. A forked chain is refused by the schema.
@@ -280,8 +283,17 @@ plainly rather than crediting the design with more than it does.
   record does the weak fallback apply (a missing predecessor passes
   if any `audit.purge` row survives). The purge refuses, and retention
   stalls, on a prefix that does not verify and link from the recorded
-  head, including for benign causes such as a rotated secret; there is
-  no operator re-anchor command yet.
+  head, including for benign causes such as a rotated secret, until an
+  operator re-anchors with `-rechain-audit-log`.
+- The re-anchor (`audit_reanchor.go`) appends one keyed `audit.rechain`
+  event and accepts every row through the last failing one as history,
+  bound only by an unkeyed SHA-256 digest and count. History rows lose
+  attribution: anything done to them before the re-anchor is accepted,
+  and only later changes are detectable. An older anchor re-inserted
+  into the log is refused by `checkAuditAnchorLinks` in the purge and
+  by the link check in the verifier; the newest anchor recording a
+  head, which must verify, wins. `-confirm-rechain` re-anchors
+  unattended only on a key mismatch.
 - Rows deleted and later restored at their original ids from a copy
   leave no trace; that needs an anchor outside the file.
 - `verifyAuditSchema` refuses any trigger other than
@@ -294,7 +306,7 @@ plainly rather than crediting the design with more than it does.
 - A re-chain attests the database exactly as it stood at the moment it
   ran, and says nothing about anything before it. On an upgraded
   installation the keyed chain starts at that point.
-- Nothing verifies at start-up. `VerifyAuditChain` has one non-test
+- Nothing verifies at start-up. `VerifyAuditLog` has one non-test
   caller, `verifyAuditLogCommand` under `-verify-audit-log`, so on an
   installation that never runs it the chain is never checked.
 

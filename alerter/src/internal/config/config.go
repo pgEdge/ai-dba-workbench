@@ -421,14 +421,14 @@ func NewConfig() *Config {
 				ReasoningModel: "gpt-4o-mini",
 			},
 			Anthropic: AnthropicConfig{
-				ReasoningModel: "claude-3-5-haiku-20241022",
+				ReasoningModel: "claude-haiku-4-5",
 			},
 			Voyage: VoyageConfig{
 				EmbeddingModel: "voyage-3-lite",
 			},
 			Gemini: GeminiConfig{
 				EmbeddingModel: "gemini-embedding-001",
-				ReasoningModel: "gemini-3.6-flash",
+				ReasoningModel: "gemini-3.8-flash",
 			},
 		},
 	}

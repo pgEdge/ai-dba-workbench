@@ -865,7 +865,7 @@ func TestIsValidModelName(t *testing.T) {
 	}{
 		// Valid model names: charset and length within bounds, no ".." substring.
 		{"typical gemini name", "gemini-2.5-flash", true},
-		{"typical anthropic name", "claude-3-7-sonnet-20250219", true},
+		{"typical anthropic name", "claude-sonnet-4-6", true},
 		{"colon and slash allowed", "library/model:tag", true},
 		{"single slash vendor/model", "vendor/model", true},
 		{"single dot voyage", "voyage-3.5", true},

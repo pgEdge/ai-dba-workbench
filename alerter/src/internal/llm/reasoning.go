@@ -27,8 +27,8 @@ import (
 // the previous bespoke providers applied.
 var defaultReasoningModels = map[string]string{
 	"openai":    "gpt-4o-mini",
-	"anthropic": "claude-3-5-haiku-20241022",
-	"gemini":    "gemini-3.6-flash",
+	"anthropic": "claude-haiku-4-5",
+	"gemini":    "gemini-3.8-flash",
 	"ollama":    "llama3.2",
 }
 

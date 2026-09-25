@@ -69,7 +69,7 @@ select_llm_provider() {
       ;;
     3)
       llm_provider="gemini"
-      llm_model="gemini-3.6-flash"
+      llm_model="gemini-3.8-flash"
       ;;
     *)
       llm_provider=""

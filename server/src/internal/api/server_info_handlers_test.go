@@ -506,7 +506,7 @@ func TestServerInfoCreateLLMClient(t *testing.T) {
 			llmConfig: &llmproxy.Config{
 				Provider:        "anthropic",
 				AnthropicAPIKey: "test-key",
-				Model:           "claude-3-haiku-20240307",
+				Model:           "claude-haiku-4-5",
 			},
 		}
 

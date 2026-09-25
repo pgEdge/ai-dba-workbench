@@ -418,7 +418,7 @@ func NewConfig() *Config {
 			},
 			OpenAI: OpenAIConfig{
 				EmbeddingModel: "text-embedding-3-small",
-				ReasoningModel: "gpt-4o-mini",
+				ReasoningModel: "gpt-6-luna",
 			},
 			Anthropic: AnthropicConfig{
 				ReasoningModel: "claude-haiku-4-5",

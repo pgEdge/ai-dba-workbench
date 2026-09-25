@@ -397,8 +397,8 @@ llm:
     embedding_model: text-embedding-3-small
 
     # Model to use for reasoning/classification
-    # Default: gpt-4o-mini
-    reasoning_model: gpt-4o-mini
+    # Default: gpt-6-luna
+    reasoning_model: gpt-6-luna
 
   #-------------------------------------------------------------------------
   # Anthropic Settings

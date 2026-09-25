@@ -827,7 +827,7 @@ func defaultConfig() *Config {
 		},
 		LLM: LLMConfig{
 			Provider:        "anthropic",              // Default provider
-			Model:           "claude-sonnet-4-5",      // Default Anthropic model
+			Model:           "claude-sonnet-5",        // Default Anthropic model
 			AnthropicAPIKey: "",                       // Must be provided if using Anthropic
 			OpenAIAPIKey:    "",                       // Must be provided if using OpenAI
 			GeminiAPIKey:    "",                       // Must be provided if using Gemini

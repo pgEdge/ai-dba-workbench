@@ -5,7 +5,7 @@ go 1.26.8
 require (
 	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/jackc/pgx/v5 v5.9.2
-	github.com/pgEdge/pgedge-go-llm-lib v0.3.1
+	github.com/pgEdge/pgedge-go-llm-lib v0.4.0
 	github.com/pgedge/ai-workbench/pkg v0.0.0
 	golang.org/x/crypto v0.47.0
 	golang.org/x/oauth2 v0.37.0

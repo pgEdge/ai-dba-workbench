@@ -56,6 +56,7 @@ func TestNewConfig(t *testing.T) {
 		{"gemini embedding model", cfg.LLM.Gemini.EmbeddingModel, "gemini-embedding-001"},
 		{"gemini reasoning model", cfg.LLM.Gemini.ReasoningModel, "gemini-3.8-flash"},
 		{"anthropic reasoning model", cfg.LLM.Anthropic.ReasoningModel, "claude-haiku-4-5"},
+		{"openai reasoning model", cfg.LLM.OpenAI.ReasoningModel, "gpt-6-luna"},
 	}
 
 	for _, tt := range tests {

@@ -26,7 +26,7 @@ import (
 // when the configuration does not specify one. These mirror the defaults
 // the previous bespoke providers applied.
 var defaultReasoningModels = map[string]string{
-	"openai":    "gpt-4o-mini",
+	"openai":    "gpt-6-luna",
 	"anthropic": "claude-haiku-4-5",
 	"gemini":    "gemini-3.8-flash",
 	"ollama":    "llama3.2",

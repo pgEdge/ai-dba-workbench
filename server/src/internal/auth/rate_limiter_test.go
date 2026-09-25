@@ -302,3 +302,44 @@ func TestRateLimiter_CheckAndRecordIgnoresExpiredAttempts(t *testing.T) {
 		t.Error("an attempt after the window expired was refused")
 	}
 }
+
+// TestRateLimiter_RefundReturnsOneUnit pins that a refund hands back only
+// the most recent attempt, not the whole allowance, and that refunding an
+// address with nothing recorded is harmless.
+func TestRateLimiter_RefundReturnsOneUnit(t *testing.T) {
+	rl := NewRateLimiter(1, 3)
+	defer rl.Stop()
+	const ip = "192.0.2.40"
+
+	rl.Refund(ip)
+	if got := rl.GetRemainingAttempts(ip); got != 3 {
+		t.Fatalf("refunding an unknown address left %d remaining, want 3", got)
+	}
+
+	for range 3 {
+		if !rl.CheckAndRecord(ip) {
+			t.Fatal("an attempt within the allowance was refused")
+		}
+	}
+	if rl.CheckAndRecord(ip) {
+		t.Fatal("an attempt beyond the allowance was accepted")
+	}
+
+	rl.Refund(ip)
+	if got := rl.GetRemainingAttempts(ip); got != 1 {
+		t.Errorf("remaining after one refund = %d, want 1", got)
+	}
+	if !rl.CheckAndRecord(ip) {
+		t.Fatal("the refunded unit could not be spent")
+	}
+	if rl.CheckAndRecord(ip) {
+		t.Fatal("a refund returned more than one unit")
+	}
+
+	for range 3 {
+		rl.Refund(ip)
+	}
+	if got := rl.GetRemainingAttempts(ip); got != 3 {
+		t.Errorf("remaining after refunding everything = %d, want 3", got)
+	}
+}

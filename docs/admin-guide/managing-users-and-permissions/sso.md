@@ -48,7 +48,7 @@ says where the failure happened. The callback answers `400` with a
 generic JSON error when the request never reached the provider
 successfully: no state cookie, a state cookie that does not open, a
 state parameter that does not match the sealed one, a login state that
-has already been presented once, or neither an authorisation code nor a
+has already been accepted once, or neither an authorisation code nor a
 provider error, since the provider's `error`
 parameter is read first and takes the redirect branch below. It
 redirects the browser back to the login page with a `login_error`
@@ -168,23 +168,26 @@ loses the protection that stops login CSRF from a sibling subdomain.
 
 The start and callback endpoints are each rate limited per client
 address, with an allowance of 240 requests a minute; a completed login
-hands its allowance back, so the limits bound failed and abandoned
-logins rather than working ones. Every call to the start endpoint
+hands back the one unit it spent on each, so the limits bound failed
+and abandoned logins rather than working ones. Every call to the start
+endpoint
 spends one unit of the start allowance. The callback allowance is spent
 only by requests that reach the identity provider, so a request refused
 before that point costs nothing; such requests include one with no
 login state cookie, one with a mismatched state and one that replays a
-state already presented.
+state already accepted.
 
 Each login state is accepted by the callback once only. The server
-remembers a digest of every state the callback has accepted for as long
+remembers a digest of each state the callback has accepted for as long
 as the state could still be opened, which is the ten minute lifetime of
 the state plus a minute of clock skew. A captured state cookie cannot
-therefore be replayed with further authorisation codes, and each state
-reaches the provider's token endpoint at most once. The record is held
-in the server's memory; a deployment that runs several server processes
-with the same server secret refuses a replay only at the process that
-first accepted the state.
+therefore be replayed with further authorisation codes. The record
+holds up to 100,000 states at a time; under a sustained flood the
+oldest are forgotten early, and each forgotten state could then be
+presented once more. The record is held in the server's memory; a
+deployment that runs several server processes with the same server
+secret refuses a replay only at the process that first accepted the
+state.
 
 Behind a proxy, every request carries the proxy's address unless
 `http.trusted_proxies` names it, so each limit collapses to a single

@@ -377,10 +377,11 @@ func (h *OIDCHandler) handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Clear the state cookie before anything else can fail, so that it
-	// is gone on every path out of this function: a state that has been
-	// presented once must never be usable again, whether it was
-	// accepted, refused or never looked at.
+	// Clear the state cookie before anything else can fail, so that the
+	// browser drops it on every path out of this function, whether the
+	// state was accepted, refused or never looked at. Server-side, a
+	// state is refused a second time only once it has matched and been
+	// recorded by openPresentedState.
 	attrs := h.stateCookieAttributes(r)
 	h.clearStateCookie(w, attrs)
 
@@ -584,16 +585,19 @@ func (h *OIDCHandler) completeLogin(w http.ResponseWriter, r *http.Request,
 		SameSite: http.SameSiteLaxMode,
 	})
 
-	// A login that worked gives its allowance back. Without this, the
-	// budget is spent by success as readily as by abuse, and on a
-	// deployment with no trusted proxy list configured that budget is
-	// shared by everyone behind the reverse proxy.
+	// A login that worked gives back the unit it spent on each limiter.
+	// Without this, the budget is spent by success as readily as by
+	// abuse, and on a deployment with no trusted proxy list configured
+	// that budget is shared by everyone behind the reverse proxy. It is a
+	// refund of one unit, not a Reset, so that a user who can complete a
+	// login cannot use it to wipe the allowance clean and so lift the
+	// bound on calls to the provider's token endpoint.
 	if ipAddress != "" {
 		if h.rateLimiter != nil {
-			h.rateLimiter.Reset(ipAddress)
+			h.rateLimiter.Refund(ipAddress)
 		}
 		if h.startRateLimiter != nil {
-			h.startRateLimiter.Reset(ipAddress)
+			h.startRateLimiter.Refund(ipAddress)
 		}
 	}
 

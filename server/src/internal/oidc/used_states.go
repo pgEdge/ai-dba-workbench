@@ -30,10 +30,11 @@ const usedStateRetention = StateTTL + clockSkew
 // defaultUsedStatesCapacity bounds how many used states are remembered
 // at once. Each entry costs about 120 bytes of heap (a SHA-256 digest
 // held in a map and a queue, plus its expiry time), so a full set holds
-// roughly 12 MB. A state is added only when the callback accepts one, and
-// minting one needs a rate-limited call to the start endpoint, so the
-// set comes near this size only under a sustained flood from many
-// clients.
+// roughly 12 MB. A state is added once the callback has opened its
+// cookie and matched the state, before the code or the callback's rate
+// limit is looked at, so what bounds the growth is the rate limit on
+// minting states at the start endpoint; the set comes near this size
+// only under a sustained flood from many clients.
 const defaultUsedStatesCapacity = 100_000
 
 // usedState is one queued entry: the digest of a presented state and the
@@ -105,7 +106,11 @@ func (u *UsedStates) MarkUsed(state string) bool {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 
-	now := u.now()
+	// Round(0) strips the monotonic reading, so expiry is judged on the
+	// wall clock, the clock OpenState's expiry check uses. On the
+	// monotonic clock, a backward step of the wall clock would let the
+	// record forget a state that OpenState still accepts.
+	now := u.now().Round(0)
 	u.dropExpired(now)
 
 	if _, seen := u.digests[digest]; seen {
@@ -128,9 +133,10 @@ func (u *UsedStates) Len() int {
 	return len(u.queue)
 }
 
-// dropExpired removes every entry whose expiry has passed. Expiry times
-// are in insertion order, so they are all at the front of the queue.
-// The caller holds u.mu.
+// dropExpired removes expired entries from the front of the queue.
+// Expiry times follow insertion order unless the wall clock has stepped
+// backwards; then an expired entry queued behind an unexpired one is
+// kept a little longer, never dropped early. The caller holds u.mu.
 func (u *UsedStates) dropExpired(now time.Time) {
 	for len(u.queue) > 0 && now.After(u.queue[0].expires) {
 		u.dropOldest()
@@ -141,8 +147,8 @@ func (u *UsedStates) dropExpired(now time.Time) {
 // leaves the dropped element in the backing array until the next append
 // reallocates it, so the element is zeroed first. Because append
 // reallocates to a small multiple of the live length, the backing array
-// stays within a small multiple of capacity. The caller holds u.mu and ensures the queue is
-// not empty.
+// stays within a small multiple of capacity. The caller holds u.mu and
+// ensures the queue is not empty.
 func (u *UsedStates) dropOldest() {
 	delete(u.digests, u.queue[0].digest)
 	u.queue[0] = usedState{}

@@ -154,3 +154,41 @@ func TestUsedStatesAcceptsEachStateExactlyOnceUnderConcurrency(t *testing.T) {
 		}
 	}
 }
+
+// TestUsedStatesJudgesExpiryOnTheWallClock checks that stored expiries
+// carry no monotonic reading. OpenState judges expiry on the wall clock,
+// so a record on the monotonic clock would forget a state early if the
+// wall clock stepped backwards.
+func TestUsedStatesJudgesExpiryOnTheWallClock(t *testing.T) {
+	used := newUsedStates(10, time.Now)
+	used.MarkUsed("state-a")
+
+	used.mu.Lock()
+	expires := used.queue[0].expires
+	used.mu.Unlock()
+	if expires != expires.Round(0) {
+		t.Error("the stored expiry carries a monotonic clock reading")
+	}
+}
+
+// TestUsedStatesKeepsStatesAfterTheClockStepsBack steps the clock back
+// between two insertions, so the later entry expires first, and checks
+// that neither is forgotten whilst it could still be opened.
+func TestUsedStatesKeepsStatesAfterTheClockStepsBack(t *testing.T) {
+	clock := newFakeClock()
+	used := newUsedStates(10, clock.Now)
+
+	used.MarkUsed("state-a")
+	clock.Advance(-5 * time.Minute)
+	used.MarkUsed("state-b")
+
+	clock.Advance(usedStateRetention)
+	if used.MarkUsed("state-a") || used.MarkUsed("state-b") {
+		t.Fatal("a state was forgotten after the clock stepped back")
+	}
+
+	clock.Advance(5*time.Minute + time.Nanosecond)
+	if !used.MarkUsed("state-a") || !used.MarkUsed("state-b") {
+		t.Error("the states were not dropped once both had expired")
+	}
+}

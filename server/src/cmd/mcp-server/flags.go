@@ -236,7 +236,7 @@ func ParseFlags(defaultConfigPath string) *Flags {
 	flag.BoolVar(&f.ListAuditCmd, "list-audit", false, "List RBAC audit log events")
 	flag.BoolVar(&f.VerifyAuditCmd, "verify-audit-log", false, "Verify the audit log hash chain")
 	flag.BoolVar(&f.RechainAuditCmd, "rechain-audit-log", false,
-		"Re-hash an existing audit log under the server secret, once, after upgrading an existing installation")
+		"Re-hash an inherited audit log under the server secret, or re-anchor a keyed log that no longer verifies")
 	flag.BoolVar(&f.ConfirmRechain, "confirm-rechain", false,
 		"Confirm -rechain-audit-log without an interactive prompt")
 	flag.StringVar(&f.AuditActor, "audit-actor", "", "Filter audit events by actor name")

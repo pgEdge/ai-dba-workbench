@@ -4388,6 +4388,105 @@
         ]
       }
     },
+    "/connections/{id}/query/validate": {
+      "post": {
+        "summary": "Validate SQL without executing it",
+        "description": "Plans each statement of the supplied SQL with EXPLAIN inside a read-only transaction that is always rolled back, so nothing is executed. Statements are split with a SQL-aware tokeniser and each is planned over the extended query protocol, which refuses more than one command, so SQL the tokeniser fails to divide is rejected rather than run. A statement carrying $N parameter placeholders is planned with EXPLAIN (GENERIC_PLAN) on PostgreSQL 16 and later, and reported as unsupported on older servers. Requires read access to the connection; no write permission is needed and no confirmation is involved.",
+        "operationId": "validateConnectionQuery",
+        "tags": [
+          "Connections"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Connection ID",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "SQL to validate",
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QueryValidateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Validation result for every statement",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueryValidateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Query is required, or the database name is invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied: you do not have access to this connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Connection not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to validate query",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/conversations": {
       "get": {
         "summary": "List conversations",
@@ -13142,6 +13241,64 @@
           "calls",
           "total_exec_time"
         ]
+      },
+      "QueryValidateRequest": {
+        "type": "object",
+        "properties": {
+          "database_name": {
+            "type": "string",
+            "description": "Database to validate against; defaults to the connection's database"
+          },
+          "query": {
+            "type": "string",
+            "description": "SQL to validate; may contain several statements"
+          }
+        },
+        "required": [
+          "query"
+        ]
+      },
+      "QueryValidateResponse": {
+        "type": "object",
+        "properties": {
+          "statements": {
+            "type": "array",
+            "description": "Per-statement validation results, in the order the statements appeared",
+            "items": {
+              "$ref": "#/components/schemas/QueryValidationStatement"
+            }
+          },
+          "total_statements": {
+            "type": "integer",
+            "description": "Number of statements the SQL was split into"
+          },
+          "valid": {
+            "type": "boolean",
+            "description": "True when no statement was rejected; an unsupported statement does not make the request invalid"
+          }
+        }
+      },
+      "QueryValidationStatement": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "description": "The sanitized PostgreSQL message when the status is invalid, or the reason validation was not possible when the status is unsupported"
+          },
+          "query": {
+            "type": "string",
+            "description": "The statement as it was submitted"
+          },
+          "status": {
+            "type": "string",
+            "description": "valid when EXPLAIN planned the statement, invalid when EXPLAIN rejected it, unsupported when the statement could not be checked, for example because EXPLAIN cannot plan this kind of statement or planning timed out",
+            "enum": [
+              "valid",
+              "invalid",
+              "unsupported"
+            ]
+          }
+        }
       },
       "RBACGroup": {
         "type": "object",

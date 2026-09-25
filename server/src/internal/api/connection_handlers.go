@@ -356,6 +356,12 @@ func (h *ConnectionHandler) handleConnectionSubpath(w http.ResponseWriter, r *ht
 		return
 	}
 
+	// Handle /api/v1/connections/{id}/query/validate
+	if len(parts) == 3 && parts[1] == "query" && parts[2] == "validate" {
+		h.validateQuery(w, r, connectionID)
+		return
+	}
+
 	// Handle /api/v1/connections/{id}/context
 	if len(parts) == 2 && parts[1] == "context" {
 		if r.Method != http.MethodGet {

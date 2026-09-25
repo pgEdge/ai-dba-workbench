@@ -15,7 +15,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/pgedge/ai-workbench/pkg/rollback"
 	"github.com/pgedge/ai-workbench/server/internal/database"
 	"github.com/pgedge/ai-workbench/server/internal/logging"
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
@@ -110,12 +112,44 @@ DO NOT use for:
 			}
 			defer cleanup()
 
-			// Try EXPLAIN on the full query first
+			// A query carrying $N placeholders cannot be planned by
+			// the extended protocol, which has no values to infer the
+			// parameter types from and fails with "could not determine
+			// data type of parameter $1". PostgreSQL 16 added EXPLAIN
+			// (GENERIC_PLAN) for exactly this case, so use it where the
+			// server supports it and fall through to the plain EXPLAIN
+			// path, and its error, where it does not.
+			if containsParamPlaceholder(query) {
+				generic, verErr := supportsGenericPlan(ctx, rot.Tx)
+				if verErr != nil {
+					return mcp.NewToolError(fmt.Sprintf(
+						"Query validation failed: %v", verErr))
+				}
+				if generic {
+					return validateGenericPlan(ctx, rot.Tx, query)
+				}
+			}
+
+			// Try EXPLAIN on the full query first. A query of several
+			// statements fails as one prepared statement, and that
+			// failure aborts the transaction, so take a savepoint to
+			// unwind to before the per-statement retry.
+			if _, spErr := rot.Tx.Exec(ctx,
+				"SAVEPOINT "+testQuerySavepoint); spErr != nil {
+				return mcp.NewToolError(fmt.Sprintf(
+					"Query validation failed: %v", spErr))
+			}
 			explainQuery := "EXPLAIN " + query
 			rows, err := rot.Tx.Query(ctx, explainQuery)
 			if err != nil {
 				// Check if the error is about multiple statements
 				if isMultipleStatementError(err) {
+					if rbErr := rollback.ToSavepoint[pgconn.CommandTag](
+						ctx, rot.Tx, testQuerySavepoint); rbErr != nil {
+						return mcp.NewToolError(fmt.Sprintf(
+							"Query validation failed: %v", rbErr))
+					}
+
 					// Split and validate each statement individually
 					statements := splitStatements(query)
 					if len(statements) == 0 {
@@ -148,6 +182,83 @@ DO NOT use for:
 			return mcp.NewToolSuccess("Query is valid.")
 		},
 	}
+}
+
+// testQuerySavepoint is the savepoint the whole-query EXPLAIN runs
+// under, so that its failure does not leave the transaction aborted
+// for the per-statement retry.
+const testQuerySavepoint = "workbench_test_query"
+
+// genericPlanMinVersionNum is the server_version_num of the first
+// release with EXPLAIN (GENERIC_PLAN), which is PostgreSQL 16.
+const genericPlanMinVersionNum = 160000
+
+// validateGenericPlan validates a query whose statements carry $N
+// parameter placeholders, planning each statement with EXPLAIN
+// (GENERIC_PLAN). The query is split first, and each statement is
+// planned on its own (see explainGenericPlan).
+func validateGenericPlan(ctx context.Context, tx pgx.Tx, query string) (mcp.ToolResponse, error) {
+	statements := splitStatements(query)
+	if len(statements) == 0 {
+		return mcp.NewToolError("Query contains no valid SQL statements")
+	}
+
+	for i, stmt := range statements {
+		if err := explainGenericPlan(ctx, tx, stmt); err != nil {
+			return mcp.NewToolError(fmt.Sprintf(
+				"Statement %d is invalid: %v\n\nStatement: %s",
+				i+1, err, stmt))
+		}
+	}
+
+	logging.Info("test_query_executed",
+		"query_length", len(query),
+		"result", "valid",
+	)
+
+	return mcp.NewToolSuccess("Query is valid.")
+}
+
+// explainGenericPlan plans one statement with EXPLAIN (GENERIC_PLAN)
+// on the transaction's own connection. It goes through pgconn rather
+// than pgx, which would otherwise read the $N placeholders as bind
+// parameters it has no values for, and uses the extended query
+// protocol with every placeholder bound to NULL, which GENERIC_PLAN
+// ignores. The extended protocol refuses to prepare more than one
+// command, so SQL the splitter failed to divide is rejected rather
+// than run, as the simple protocol would run it, including a COMMIT
+// that ends the read-only transaction.
+func explainGenericPlan(ctx context.Context, tx pgx.Tx, stmt string) error {
+	pgConn := tx.Conn().PgConn()
+	sd, err := pgConn.Prepare(ctx, "", "EXPLAIN (GENERIC_PLAN) "+stmt, nil)
+	if err != nil {
+		return err
+	}
+	params := make([][]byte, len(sd.ParamOIDs))
+	return pgConn.ExecPrepared(ctx, "", params, nil, nil).Read().Err
+}
+
+// supportsGenericPlan reports whether the server is new enough for
+// EXPLAIN (GENERIC_PLAN).
+func supportsGenericPlan(ctx context.Context, tx pgx.Tx) (bool, error) {
+	var versionNum int
+	err := tx.QueryRow(ctx,
+		"SELECT current_setting('server_version_num')::int").Scan(&versionNum)
+	if err != nil {
+		return false, err
+	}
+	return versionNum >= genericPlanMinVersionNum, nil
+}
+
+// containsParamPlaceholder reports whether the SQL contains a $N
+// parameter placeholder such as $1.
+func containsParamPlaceholder(sql string) bool {
+	for i := 0; i+1 < len(sql); i++ {
+		if sql[i] == '$' && sql[i+1] >= '1' && sql[i+1] <= '9' {
+			return true
+		}
+	}
+	return false
 }
 
 // isMultipleStatementError checks if a PostgreSQL error indicates that

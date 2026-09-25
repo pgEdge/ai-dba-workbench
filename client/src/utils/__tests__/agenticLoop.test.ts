@@ -661,3 +661,200 @@ describe('runAgenticLoop', () => {
         });
     });
 });
+
+// ---------------------------------------------------------------------------
+// One-shot SQL self-repair (issue #532)
+// ---------------------------------------------------------------------------
+
+describe('runAgenticLoop SQL self-repair', () => {
+    const textResponse = (text: string) => ({
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+            content: [{ type: 'text', text }],
+        }),
+        text: vi.fn().mockResolvedValue(''),
+    });
+
+    const report = '## Findings\n\n```sql\nSELECT total_ram FROM t;\n```';
+
+    const invalidResult = {
+        valid: false,
+        total_statements: 1,
+        statements: [{
+            query: 'SELECT total_ram FROM t;',
+            status: 'invalid' as const,
+            error: 'column "total_ram" does not exist',
+        }],
+    };
+
+    const validResult = {
+        valid: true,
+        total_statements: 1,
+        statements: [{
+            query: 'SELECT 1;',
+            status: 'valid' as const,
+            error: '',
+        }],
+    };
+
+    const options = (extra: Partial<AgenticLoopOptions> = {}) => ({
+        messages: [{ role: 'user', content: 'Analyse' }],
+        tools: [],
+        systemPrompt: 'prompt',
+        maxIterations: 5,
+        ...extra,
+    });
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockStripPreamble.mockImplementation((text: string) => text);
+    });
+
+    it('returns the text unchanged when no validator is supplied', async () => {
+        mockApiFetch.mockResolvedValueOnce(textResponse(report));
+
+        expect(await runAgenticLoop(options())).toBe(report);
+        expect(mockApiFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('returns the text unchanged when there are no SQL blocks', async () => {
+        const validator = vi.fn();
+        mockApiFetch.mockResolvedValueOnce(textResponse('No SQL here'));
+
+        const result = await runAgenticLoop(
+            options({ validateSqlBlocks: validator }),
+        );
+
+        expect(result).toBe('No SQL here');
+        expect(validator).not.toHaveBeenCalled();
+    });
+
+    it('returns the text unchanged when every block validates', async () => {
+        const validator = vi.fn().mockResolvedValue(validResult);
+        mockApiFetch.mockResolvedValueOnce(textResponse(report));
+
+        const result = await runAgenticLoop(
+            options({ validateSqlBlocks: validator }),
+        );
+
+        expect(result).toBe(report);
+        expect(validator).toHaveBeenCalledWith('SELECT total_ram FROM t;');
+        expect(mockApiFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('returns the text unchanged when validation is unavailable', async () => {
+        const validator = vi.fn().mockResolvedValue(null);
+        mockApiFetch.mockResolvedValueOnce(textResponse(report));
+
+        expect(await runAgenticLoop(
+            options({ validateSqlBlocks: validator }),
+        )).toBe(report);
+        expect(mockApiFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('returns the text unchanged when the validator throws', async () => {
+        const validator = vi.fn().mockRejectedValue(new Error('offline'));
+        mockApiFetch.mockResolvedValueOnce(textResponse(report));
+
+        expect(await runAgenticLoop(
+            options({ validateSqlBlocks: validator }),
+        )).toBe(report);
+    });
+
+    it('asks the model once for a correction and returns it', async () => {
+        const validator = vi.fn().mockResolvedValue(invalidResult);
+        const corrected = '## Findings\n\n```sql\nSELECT 1;\n```';
+        mockApiFetch
+            .mockResolvedValueOnce(textResponse(report))
+            .mockResolvedValueOnce(textResponse(corrected));
+
+        const onProgress = vi.fn();
+        const result = await runAgenticLoop(
+            options({ validateSqlBlocks: validator, onProgress }),
+        );
+
+        expect(result).toBe(corrected);
+        expect(mockApiFetch).toHaveBeenCalledTimes(2);
+        expect(onProgress).toHaveBeenCalledWith('Correcting SQL...');
+
+        const body = JSON.parse(
+            (mockApiFetch.mock.calls[1][1] as { body: string }).body,
+        );
+        const lastMessage = body.messages[body.messages.length - 1];
+        expect(lastMessage.role).toBe('user');
+        expect(lastMessage.content[0].text).toContain(
+            'column "total_ram" does not exist',
+        );
+        expect(lastMessage.content[0].text).toContain(
+            'failed validation',
+        );
+    });
+
+    it('only attempts one repair round', async () => {
+        const validator = vi.fn().mockResolvedValue(invalidResult);
+        mockApiFetch
+            .mockResolvedValueOnce(textResponse(report))
+            .mockResolvedValueOnce(textResponse(report));
+
+        await runAgenticLoop(options({ validateSqlBlocks: validator }));
+
+        expect(mockApiFetch).toHaveBeenCalledTimes(2);
+    });
+
+    it('keeps the original text when the repair request fails', async () => {
+        const validator = vi.fn().mockResolvedValue(invalidResult);
+        mockApiFetch
+            .mockResolvedValueOnce(textResponse(report))
+            .mockResolvedValueOnce({
+                ok: false,
+                json: vi.fn(),
+                text: vi.fn().mockResolvedValue('boom'),
+            });
+
+        expect(await runAgenticLoop(
+            options({ validateSqlBlocks: validator }),
+        )).toBe(report);
+    });
+
+    it('keeps the original text when the repair request throws', async () => {
+        const validator = vi.fn().mockResolvedValue(invalidResult);
+        mockApiFetch
+            .mockResolvedValueOnce(textResponse(report))
+            .mockRejectedValueOnce(new Error('network'));
+
+        expect(await runAgenticLoop(
+            options({ validateSqlBlocks: validator }),
+        )).toBe(report);
+    });
+
+    it('keeps the original text when the repair answers with a tool call', async () => {
+        const validator = vi.fn().mockResolvedValue(invalidResult);
+        mockApiFetch
+            .mockResolvedValueOnce(textResponse(report))
+            .mockResolvedValueOnce({
+                ok: true,
+                json: vi.fn().mockResolvedValue({
+                    content: [{
+                        type: 'tool_use',
+                        tool_use: { id: 't1', name: 'get_schema_info' },
+                    }],
+                }),
+                text: vi.fn().mockResolvedValue(''),
+            });
+
+        expect(await runAgenticLoop(
+            options({ validateSqlBlocks: validator }),
+        )).toBe(report);
+    });
+
+    it('keeps the original text when the repair answers with nothing', async () => {
+        const validator = vi.fn().mockResolvedValue(invalidResult);
+        mockApiFetch
+            .mockResolvedValueOnce(textResponse(report))
+            .mockResolvedValueOnce(textResponse('   '));
+
+        expect(await runAgenticLoop(
+            options({ validateSqlBlocks: validator }),
+        )).toBe(report);
+    });
+});

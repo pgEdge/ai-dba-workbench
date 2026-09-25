@@ -352,6 +352,29 @@ new mutating RBAC endpoint, use `h.actorStore(r)` and extend the
 `deniedAction` mapping in the same change; the wiring is locked in by
 `server/src/internal/api/rbac_audit_wiring_test.go`.
 
+## Superuser Status Needs a Superuser
+
+`manage_users` is grantable to a group, so it must not be a route to
+superuser. `createUser` and `updateUser` in `rbac_user_handlers.go`
+call `requireSuperuser` right after decoding whenever the body carries
+`is_superuser` at all, true or false, before any store read (#497). The
+field's presence, not whether it would change the row, is the test, so
+the rule never depends on target state read outside the transaction.
+Pinned by `rbac_user_superuser_gate_test.go`. Any new endpoint that can
+change superuser status needs the same gate.
+
+## Store Refusals Map to 400
+
+The auth store marks a refusal that is the caller's to fix by wrapping
+it in `*auth.InvalidInputError` (via `invalidInput` in
+`auth/invalid_input.go`), which matches `auth.ErrInvalidInput` under
+`errors.Is`. The user handlers pass every store error to
+`respondUserStoreError`, which answers such an error with a 400
+carrying its message and anything else with a logged 500 and a fixed
+message (#485). Put a new store-level validation rule in the store and
+mark it there rather than duplicating it in a handler; the federated
+account password refusal in `writePasswordHashLocked` is the model.
+
 ## Audit Writes Are Fail-Closed, With One Exception
 
 Every audited mutation in `server/src/internal/auth` writes its event

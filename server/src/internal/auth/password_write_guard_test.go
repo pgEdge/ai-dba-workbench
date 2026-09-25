@@ -60,7 +60,7 @@ func TestUpdateUserRefusesPasswordOnFederatedAccount(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected a password write to a federated account to be refused")
 	}
-	if !strings.Contains(err.Error(), "identity is managed by oidc") {
+	if !strings.Contains(err.Error(), `auth source "oidc"`) {
 		t.Errorf("expected the error to name the managing identity source, got: %v", err)
 	}
 	if after := storedPasswordHash(t, store, "federated"); after != before {
@@ -87,8 +87,13 @@ func TestUpdateUserAtomicRefusesPasswordOnFederatedAccount(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected a password write to a federated account to be refused")
 	}
-	if !strings.Contains(err.Error(), "identity is managed by oidc") {
+	if !strings.Contains(err.Error(), `auth source "oidc"`) {
 		t.Errorf("expected the error to name the managing identity source, got: %v", err)
+	}
+	// The RBAC handler turns this into a 400 carrying the message, so the
+	// refusal must be distinguishable from a store failure.
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("expected the refusal to be marked ErrInvalidInput, got: %v", err)
 	}
 	if after := storedPasswordHash(t, store, "federated-atomic"); after != before {
 		t.Error("the password hash was changed despite the write being refused")
@@ -214,7 +219,7 @@ func TestPasswordWriteGuardIsAConditionOnTheUpdate(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected the write to be refused once the account was linked")
 	}
-	if !strings.Contains(err.Error(), "identity is managed by oidc") {
+	if !strings.Contains(err.Error(), `auth source "oidc"`) {
 		t.Errorf("expected the refusal to name the managing identity source, got: %v", err)
 	}
 	if after := storedPasswordHash(t, store, "racer"); after != before {

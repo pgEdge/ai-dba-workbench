@@ -130,6 +130,12 @@ func (h *AlertRuleHandler) updateAlertRule(w http.ResponseWriter, r *http.Reques
 	if !h.checkPermission(w, r) {
 		return
 	}
+	// An alert rule's defaults apply to every connection without an
+	// override, so a token must cover every connection to change one
+	// (issue #471).
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker) {
+		return
+	}
 
 	var req database.AlertRuleUpdate
 	if !DecodeJSONBody(w, r, &req) {

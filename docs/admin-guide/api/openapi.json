@@ -538,7 +538,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_alert_rules permission",
+            "description": "Requires manage_alert_rules permission, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -4280,7 +4280,7 @@
             }
           },
           "403": {
-            "description": "Permission denied: requires manage_connections permission",
+            "description": "Permission denied: requires manage_connections permission, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -6607,7 +6607,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_notification_channels permission",
+            "description": "Requires manage_notification_channels permission, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -6742,7 +6742,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_notification_channels permission",
+            "description": "Requires manage_notification_channels permission, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -6813,7 +6813,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_notification_channels permission",
+            "description": "Requires manage_notification_channels permission, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -6961,7 +6961,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_notification_channels permission",
+            "description": "Requires manage_notification_channels permission, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -7049,7 +7049,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_notification_channels permission",
+            "description": "Requires manage_notification_channels permission, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -7119,7 +7119,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_notification_channels permission",
+            "description": "Requires manage_notification_channels permission, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -7530,7 +7530,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_probes permission",
+            "description": "Requires manage_probes permission, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {

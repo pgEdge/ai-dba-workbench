@@ -107,6 +107,21 @@ const (
 	callbackRateMaxAttempts   = 240
 )
 
+// startRateWindowMinutes and startRateMaxAttempts bound how often one
+// rate-limit key may call the start endpoint, which is where every login
+// state is minted. A state can be spent at the callback once and only
+// once (see OIDCHandler.usedStates), so without a bound here the
+// single-use rule would be no bound at all: a caller could mint states as
+// fast as it could ask for them. The ceiling matches the callback's, so
+// that states cannot be minted faster than they can be spent, and for the
+// same reason as the callback's it is high: without http.trusted_proxies
+// the key is shared by everyone behind the reverse proxy. A completed
+// login returns this allowance too.
+const (
+	startRateWindowMinutes = callbackRateWindowMinutes
+	startRateMaxAttempts   = callbackRateMaxAttempts
+)
+
 // OIDCHandler serves the two endpoints of a federated login.
 //
 // It owns no session logic of its own: the state cookie comes from
@@ -125,6 +140,16 @@ type OIDCHandler struct {
 	// not the shared failed-login limiter, because a federated callback
 	// failing is not a password guess.
 	rateLimiter *auth.RateLimiter
+
+	// startRateLimiter bounds the start endpoint, and is likewise owned
+	// by this handler and stopped by Close.
+	startRateLimiter *auth.RateLimiter
+
+	// usedStates records the login states the callback has accepted, so
+	// that each sealed state cookie is good for one callback only. The
+	// cookie is stateless, so without this record one cookie could be
+	// replayed with any number of codes for as long as it stays valid.
+	usedStates *oidc.UsedStates
 
 	ipExtractor *auth.IPExtractor
 	tlsEnabled  bool
@@ -185,13 +210,15 @@ func newOIDCHandler(authStore federationStore, provider *oidc.Provider,
 	ipExtractor *auth.IPExtractor) *OIDCHandler {
 
 	return &OIDCHandler{
-		authStore:   authStore,
-		provider:    provider,
-		cfg:         cfg,
-		stateKey:    stateKey,
-		rateLimiter: auth.NewRateLimiter(callbackRateWindowMinutes, callbackRateMaxAttempts),
-		ipExtractor: ipExtractor,
-		tlsEnabled:  tlsEnabled,
+		authStore:        authStore,
+		provider:         provider,
+		cfg:              cfg,
+		stateKey:         stateKey,
+		rateLimiter:      auth.NewRateLimiter(callbackRateWindowMinutes, callbackRateMaxAttempts),
+		startRateLimiter: auth.NewRateLimiter(startRateWindowMinutes, startRateMaxAttempts),
+		usedStates:       oidc.NewUsedStates(),
+		ipExtractor:      ipExtractor,
+		tlsEnabled:       tlsEnabled,
 	}
 }
 
@@ -226,13 +253,16 @@ func handleStartUnavailable(w http.ResponseWriter, _ *http.Request) {
 	redirectTo(w, providerFailedTarget)
 }
 
-// Close stops the background cleanup goroutine belonging to the rate
-// limiter this handler created, mirroring AuthHandler.Close. Callers
+// Close stops the background cleanup goroutines belonging to the rate
+// limiters this handler created, mirroring AuthHandler.Close. Callers
 // must invoke it when the handler is torn down, notably in tests, or the
-// goroutine outlives it.
+// goroutines outlive it.
 func (h *OIDCHandler) Close() {
 	if h.rateLimiter != nil {
 		h.rateLimiter.Stop()
+	}
+	if h.startRateLimiter != nil {
+		h.startRateLimiter.Stop()
 	}
 }
 
@@ -263,6 +293,13 @@ func (h *OIDCHandler) handleStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !h.methodIsGET(w, r) {
+		return
+	}
+
+	// Charged on every call, as handleLogin charges its total-request
+	// limiter: minting a state costs nothing but this allowance, and each
+	// state is worth one call to the identity provider's token endpoint.
+	if !allowOn(w, h.startRateLimiter, h.extractIPFromRequest(r)) {
 		return
 	}
 
@@ -425,6 +462,18 @@ func (h *OIDCHandler) openPresentedState(w http.ResponseWriter, r *http.Request,
 		return nil, false
 	}
 
+	// A state is good for one callback. Clearing the cookie above only
+	// asks the browser to forget it; a caller replaying the cookie by
+	// hand ignores that, so the refusal has to be made here. It comes
+	// after the checks above, so that only a genuine, matching state is
+	// recorded, and before the authorization code is looked at, so that
+	// a replay never reaches the token endpoint or the rate limit.
+	if !h.usedStates.MarkUsed(state.State) {
+		log.Printf("[OIDC] Callback presented a login state that has already been used")
+		RespondError(w, http.StatusBadRequest, genericCallbackError)
+		return nil, false
+	}
+
 	return state, true
 }
 
@@ -539,8 +588,13 @@ func (h *OIDCHandler) completeLogin(w http.ResponseWriter, r *http.Request,
 	// budget is spent by success as readily as by abuse, and on a
 	// deployment with no trusted proxy list configured that budget is
 	// shared by everyone behind the reverse proxy.
-	if h.rateLimiter != nil && ipAddress != "" {
-		h.rateLimiter.Reset(ipAddress)
+	if ipAddress != "" {
+		if h.rateLimiter != nil {
+			h.rateLimiter.Reset(ipAddress)
+		}
+		if h.startRateLimiter != nil {
+			h.startRateLimiter.Reset(ipAddress)
+		}
 	}
 
 	//nolint:gosec // G706: username passed through logging.SanitizeForLog
@@ -682,11 +736,18 @@ func (h *OIDCHandler) clearStateCookie(w http.ResponseWriter, attrs stateCookieA
 // without a trusted proxy list, is shared by everyone behind the
 // reverse proxy.
 func (h *OIDCHandler) allowRequest(w http.ResponseWriter, ipAddress string) bool {
-	if h.rateLimiter == nil || ipAddress == "" {
+	return allowOn(w, h.rateLimiter, ipAddress)
+}
+
+// allowOn spends one unit of ipAddress's allowance on limiter, answering
+// 429 and returning false when none is left. A nil limiter, or a request
+// whose IP cannot be determined, is let through, as in AuthHandler.
+func allowOn(w http.ResponseWriter, limiter *auth.RateLimiter, ipAddress string) bool {
+	if limiter == nil || ipAddress == "" {
 		return true
 	}
 
-	if !h.rateLimiter.CheckAndRecord(ipAddress) {
+	if !limiter.CheckAndRecord(ipAddress) {
 		RespondError(w, http.StatusTooManyRequests,
 			"Too many login requests, please try again later")
 		return false

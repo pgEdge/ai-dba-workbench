@@ -376,7 +376,11 @@ func TestLogOIDCStartupWarnings(t *testing.T) {
 			mutate: func(cfg *config.Config) { cfg.HTTP.TrustedProxies = nil },
 			want: []string{
 				"http.trusted_proxies is empty",
+				"start and callback endpoints",
+				"any client can spend it",
 				"cannot use the __Host- prefix",
+				"login CSRF",
+				"required for production deployments",
 			},
 		},
 		"superuser group": {

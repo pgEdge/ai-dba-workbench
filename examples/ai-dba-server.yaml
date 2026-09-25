@@ -60,6 +60,11 @@ http:
   # proxy CIDR ranges to correctly extract client IP addresses from
   # X-Forwarded-For headers. Leave empty when not behind a proxy.
   #
+  # With OIDC login enabled, this list is required behind a proxy: without
+  # it every client shares one OIDC rate-limit allowance, and the login
+  # state cookie cannot use the __Host- prefix, which leaves login CSRF
+  # from a sibling subdomain possible. See the single sign-on guide.
+  #
   # trusted_proxies:
   #   - "10.0.0.0/8"
   #   - "172.16.0.0/12"

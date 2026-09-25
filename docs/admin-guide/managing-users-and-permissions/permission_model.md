@@ -59,8 +59,10 @@ hold the privileges the account needs.
 
 A superuser holds a special role that bypasses all permission checks. This
 allows a superuser to reach every connection, invoke every MCP tool, and
-perform every administrative operation. An administrator may grant the
-superuser role when they create or edit an account. For details on creating
+perform every administrative operation. A superuser may grant or revoke the
+superuser role when they create or edit an account; the `manage_users`
+permission alone does not allow either, and the Workbench refuses a request
+from any other account that sets or clears the role. For details on creating
 and managing accounts, see [Account Management](accounts.md).
 
 ## Groups and Privileges

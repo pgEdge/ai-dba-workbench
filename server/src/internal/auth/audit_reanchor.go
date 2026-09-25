@@ -81,6 +81,11 @@ type auditReanchorScan struct {
 	through       int64
 	historyEvents int64
 	digest        string
+
+	// failsAfterVerified records that a row failed after an earlier row
+	// had verified and linked, which a changed server secret does not
+	// produce.
+	failsAfterVerified bool
 }
 
 // scanAuditForReanchor reads the whole log, in id order, and finds the
@@ -91,6 +96,7 @@ func (s *AuthStore) scanAuditForReanchor(q auditQuerier) (auditReanchorScan,
 	var scan auditReanchorScan
 	digest := newAuditHistoryDigest()
 	prevHash := ""
+	verifiedBeyond := false
 	err := forEachAuditEvent(q, func(ev AuditEvent) error {
 		if scan.events == 0 {
 			scan.headID = ev.ID
@@ -98,6 +104,12 @@ func (s *AuthStore) scanAuditForReanchor(q auditQuerier) (auditReanchorScan,
 		}
 		bad := !s.auditRowVerifies(&ev) ||
 			(scan.events > 0 && ev.PrevHash != prevHash)
+
+		if !bad {
+			verifiedBeyond = true
+		} else if verifiedBeyond {
+			scan.failsAfterVerified = true
+		}
 
 		digest.add(&ev)
 		if bad {
@@ -148,6 +160,14 @@ func (s *AuthStore) auditReanchorPlan(plan *AuditRechainPlan) error {
 	scan, err := s.scanAuditForReanchor(s.db)
 	if err != nil {
 		return err
+	}
+	// The verifier read the log before this scan did, and a writer in
+	// between could have added a failing row that the scan would accept
+	// as history. -confirm-rechain acts on KeyMismatch alone, so it must
+	// describe the rows the re-anchor accepts, not the ones the verifier
+	// saw.
+	if scan.failsAfterVerified {
+		plan.KeyMismatch = false
 	}
 	plan.reanchor = scan
 	plan.HeadID = scan.headID
@@ -240,6 +260,14 @@ func (s *AuthStore) reanchorAuditLog(actor Actor, plan AuditRechainPlan,
 	return result, nil
 }
 
+// errAuditReanchorChanged is the refusal when the log the re-anchor
+// finds under the write lock is not the one the operator approved.
+var errAuditReanchorChanged = fmt.Errorf("%w: the events the plan you "+
+	"approved would have accepted are no longer the ones in the log. "+
+	"Nothing has been written. Something wrote to auth.db between the "+
+	"plan and this re-chain; find out what before running it again",
+	ErrAuditRechainChanged)
+
 // reanchorAuditLogTx appends the audit.rechain event that records the
 // new starting point, after checking under the write lock that the log
 // is still the one the operator approved.
@@ -269,11 +297,17 @@ func (s *AuthStore) reanchorAuditLogTx(actor Actor,
 		return err
 	}
 	if scan != plan.reanchor {
-		return fmt.Errorf("%w: the events the plan you approved would have "+
-			"accepted are no longer the ones in the log. Nothing has been "+
-			"written. Something wrote to auth.db between the plan and this "+
-			"re-chain; find out what before running it again",
-			ErrAuditRechainChanged)
+		return errAuditReanchorChanged
+	}
+	// A key mismatch loses nothing from the tail, and the verifier said
+	// so, but rows could have been removed from it since, which neither
+	// the scan nor the comparison above sees. The appended event would
+	// cover the gap, so it is checked again under the write lock, where
+	// no-one else can change it before the event is written.
+	if plan.KeyMismatch {
+		if err := s.verifyAuditTail(); err != nil {
+			return fmt.Errorf("%w (%w)", errAuditReanchorChanged, err)
+		}
 	}
 
 	details := map[string]any{
@@ -291,9 +325,14 @@ func (s *AuthStore) reanchorAuditLogTx(actor Actor,
 	}
 	if p := plan.PreviousHead; p != nil {
 		details["previous_head_event_id"] = p.EventID
-		details["previous_oldest_retained_id"] = p.HeadID
-		details["previous_oldest_retained_hash"] = p.HeadHash
 		details["previous_head_verified"] = p.Verified
+		// What an event that does not verify says is whatever its
+		// writer chose, and signing it into this event would lend it
+		// the key; only its id is kept.
+		if p.Verified {
+			details["previous_oldest_retained_id"] = p.HeadID
+			details["previous_oldest_retained_hash"] = p.HeadHash
+		}
 	}
 
 	ev := newEvent(actor, auditActionRechain, "", nil, "", details)

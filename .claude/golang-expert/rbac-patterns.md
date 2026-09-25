@@ -577,10 +577,12 @@ honest prefix still being purged.
 wrapper over `VerifyAuditLog`) separates a wrong key from tampering,
 because an operator's response differs. A row whose HMAC does not
 recompute is classified by `classifyUnverifiedRow`: only when no row
-outside the history has yet verified (`keyProven`) and
-`looksLikeKeyChange` finds a run of failing rows, each linked to the
-one before, followed by the end of the log or by a verifying row that
-links to the last of them, is it `ErrAuditKeyMismatch` (CLI exit 3,
+outside the history has yet verified (`keyProven`), no verified anchor
+recording a head was found (`anchorFound`, since such an anchor
+postdates any rotation), and `looksLikeKeyChange` finds a run of failing rows, each linked to the
+one before, followed by the end of the log or by rows that all verify
+and link (it walks the whole log, then requires `verifyAuditTail`),
+is it `ErrAuditKeyMismatch` (CLI exit 3,
 message names `-rechain-audit-log`); anything else is
 `ErrAuditChainBroken`, and `ErrAuditChainDowngraded` or
 `ErrAuditUnkeyedRow` map to exit 2 too, in `describeAuditVerifyFailure`
@@ -607,8 +609,11 @@ digest of the survivors forward. `checkAuditAnchorLinks` is the purge's
 anti-replay check: the row before the anchor must match its
 `prev_hash` and the row after must name its hash, so a re-inserted old
 anchor cannot take over. The CLI (`confirmAuditReanchor`) lets
-`-confirm-rechain` proceed only on `KeyMismatch`. Tests are in
-`audit_reanchor_test.go` and `cmd/mcp-server/reanchor_audit_test.go`.
+`-confirm-rechain` proceed only on `KeyMismatch`, which
+`auditReanchorPlan` clears when the scan's `failsAfterVerified` shows a
+failing row after one beyond the existing history verified. Tests are
+in `audit_reanchor_test.go`, `audit_reanchor_scope_test.go` and
+`cmd/mcp-server/reanchor_audit_test.go`.
 
 A successful `GET /api/v1/rbac/audit` is not written to `audit_events`,
 because reading is not a change; `handleAudit` logs one `[AUDIT]` line

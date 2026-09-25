@@ -595,7 +595,7 @@ func TestReanchorReportsAConfirmationError(t *testing.T) {
 func TestKeyChangeClassification(t *testing.T) {
 	t.Run("rotation followed by verifying rows", func(t *testing.T) {
 		_, store, _ := rotatedLog(t, 2, 1)
-		got, err := store.looksLikeKeyChange(store.db, nil)
+		got, err := store.looksLikeKeyChange(store.db)
 		if err != nil || !got {
 			t.Errorf("Expected a key change, got %v and %v", got, err)
 		}
@@ -607,7 +607,7 @@ func TestKeyChangeClassification(t *testing.T) {
 		recordAt(t, store, "b", time.Now().UTC())
 		store.Close()
 		other := openWithKey(t, dir, rotatedAuditKey)
-		got, err := other.looksLikeKeyChange(other.db, nil)
+		got, err := other.looksLikeKeyChange(other.db)
 		if err != nil || !got {
 			t.Errorf("Expected a key change, got %v and %v", got, err)
 		}
@@ -615,7 +615,7 @@ func TestKeyChangeClassification(t *testing.T) {
 
 	t.Run("the head verifies", func(t *testing.T) {
 		store, _ := purgedLog(t)
-		got, err := store.looksLikeKeyChange(store.db, nil)
+		got, err := store.looksLikeKeyChange(store.db)
 		if err != nil || got {
 			t.Errorf("Expected no key change, got %v and %v", got, err)
 		}
@@ -632,7 +632,7 @@ func TestKeyChangeClassification(t *testing.T) {
 			time.Now().UTC().Format(auditTimeLayout)); err != nil {
 			t.Fatalf("Failed to insert a forged row: %v", err)
 		}
-		got, err := store.looksLikeKeyChange(store.db, nil)
+		got, err := store.looksLikeKeyChange(store.db)
 		if err != nil || got {
 			t.Errorf("Expected no key change, got %v and %v", got, err)
 		}
@@ -643,7 +643,7 @@ func TestKeyChangeClassification(t *testing.T) {
 		if _, err := store.db.Exec("DELETE FROM audit_events"); err != nil {
 			t.Fatalf("Failed to empty the log: %v", err)
 		}
-		got, err := store.looksLikeKeyChange(store.db, nil)
+		got, err := store.looksLikeKeyChange(store.db)
 		if err != nil || got {
 			t.Errorf("Expected no key change, got %v and %v", got, err)
 		}

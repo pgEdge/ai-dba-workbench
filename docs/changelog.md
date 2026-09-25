@@ -1620,7 +1620,9 @@ project adheres to
   verification fails, the oldest event and hash it would accept and any
   starting point previously recorded, and changes nothing unless the
   operator types `rechain`; `-confirm-rechain` answers in advance only
-  when the failure looks like a changed server secret. The re-anchor
+  when the whole log has the shape a changed server secret leaves,
+  which someone able to write `auth.db` can imitate, so scripted runs
+  belong only where the secret is known to have changed. The re-anchor
   deletes, rewrites and re-signs nothing: it appends one signed
   `audit.rechain` event that records the new starting point and accepts
   the oldest events, through the last one that fails, as history bound

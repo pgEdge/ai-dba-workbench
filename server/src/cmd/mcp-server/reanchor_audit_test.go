@@ -172,6 +172,83 @@ func TestReanchorCommandAcceptsTamperingInteractively(t *testing.T) {
 	}
 }
 
+// validHash is shaped like a genuine audit row hash.
+var validHash = strings.Repeat("0123456789abcdef", 4)
+
+// TestAuditPlanHash checks that only a value shaped like a real hash is
+// printed as it stands.
+func TestAuditPlanHash(t *testing.T) {
+	tests := []struct {
+		name, in, want string
+	}{
+		{"a genuine hash", validHash, validHash},
+		{"the wrong length", "abc", "(not a valid hash: 3 bytes)"},
+		{"a control sequence", strings.Repeat("a", 63) + "\u009b",
+			"(not a valid hash: 65 bytes)"},
+		{"upper case", strings.Repeat("A", 64),
+			"(not a valid hash: holds characters other than lowercase hex " +
+				"digits)"},
+		{"an escape at full length", strings.Repeat("a", 63) + "\x1b",
+			"(not a valid hash: holds characters other than lowercase hex " +
+				"digits)"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := auditPlanHash(tt.in); got != tt.want {
+				t.Errorf("auditPlanHash(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestPrintAuditReanchorPlanWithoutHistory checks that a plan accepting
+// no history warns that the re-anchor removes the evidence of the
+// failure it records.
+func TestPrintAuditReanchorPlanWithoutHistory(t *testing.T) {
+	var out bytes.Buffer
+	printAuditReanchorPlan(&out, "/var/lib/example", auth.AuditRechainPlan{
+		Events:   3,
+		Problem:  fmt.Errorf("%w: audit chain tail missing", auth.ErrAuditChainBroken),
+		HeadID:   1,
+		HeadHash: validHash,
+	})
+	assertOutputContains(t, out.String(), "(none; every event verifies",
+		"removes the\nevidence", "Its hash:              "+validHash)
+}
+
+// TestReanchorCommandRefusesARotationWithLaterTampering checks that a
+// rotated secret does not let -confirm-rechain accept tampering further
+// on in the log, which the re-anchor would otherwise take in as history.
+func TestReanchorCommandRefusesARotationWithLaterTampering(t *testing.T) {
+	dir := rotatedSecretAuditStore(t)
+	store, err := auth.NewAuthStore(dir, 0, 0, auth.AuditKeyForTesting())
+	if err != nil {
+		t.Fatalf("failed to open the auth store: %v", err)
+	}
+	for _, name := range []string{"bob", "carol"} {
+		if err := store.CreateUser(name, "correct horse battery staple",
+			"", "Test User", name+"@example.com"); err != nil {
+			t.Fatalf("failed to create a user: %v", err)
+		}
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("failed to close the store: %v", err)
+	}
+	tamperAuditRow(t, dir)
+
+	err = verifyAuditLogCommand(dir)
+	if got := auditVerifyExitCode(err); got != auditExitTampered {
+		t.Errorf("expected tampering, got exit status %d: %v", got, err)
+	}
+
+	var out bytes.Buffer
+	err = rechainAuditLogCommand(dir, true, strings.NewReader(""), &out)
+	if err == nil || !strings.Contains(err.Error(), "will not re-anchor") {
+		t.Fatalf("expected an unattended refusal, got %v", err)
+	}
+}
+
 // TestPrintAuditPreviousHead checks each form the previous head takes
 // in the plan, including a hash carrying control characters.
 func TestPrintAuditPreviousHead(t *testing.T) {
@@ -183,9 +260,9 @@ func TestPrintAuditPreviousHead(t *testing.T) {
 	}{
 		{"none", nil, []string{"(none)"}, "event"},
 		{"verified", &auth.AuditRechainHead{EventID: 9,
-			Action: "audit.purge", HeadID: 4, HeadHash: "abc",
+			Action: "audit.purge", HeadID: 4, HeadHash: validHash,
 			Verified: true},
-			[]string{"event 4, hash abc", "audit.purge event 9",
+			[]string{"event 4, hash " + validHash, "audit.purge event 9",
 				"which verifies"}, "DOES NOT"},
 		{"unverified", &auth.AuditRechainHead{EventID: 9,
 			Action: "audit.rechain", HeadID: 4, HeadHash: "a\x1b[31mb"},

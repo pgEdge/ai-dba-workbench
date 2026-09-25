@@ -235,8 +235,20 @@ client address, before and after snapshots and a hash chain.
   responses differ. A failing row is `ErrAuditKeyMismatch` (CLI exit 3)
   only if no row outside the history has verified yet (`keyProven`)
   and `looksLikeKeyChange` sees a linked run of failing rows followed
-  by the end of the log or a verifying row linked to the last of them;
-  otherwise it is `ErrAuditChainBroken`, and downgrades and unkeyed
+  by the end of the log or by rows that ALL verify and link, with
+  `verifyAuditTail` passing. It walks the whole log, deliberately: the
+  re-anchor's history runs to the last failing row anywhere, so a
+  verdict drawn from the leading rows let `-confirm-rechain` launder a
+  later deletion. `classifyUnverifiedRow` also never reports a key
+  mismatch when a verified anchor recording a head exists
+  (`anchorFound`): the verifier returns on the first bad row before the
+  history-digest and head checks, so asking would let one edit just
+  past an anchor's head or history launder a deletion there (both fixed
+  in #502; the A-to-B-to-A secret rotation falls to the interactive
+  path). `scanAuditForReanchor` re-derives the shape
+  (`failsAfterVerified`) and clears `KeyMismatch` if a row was written
+  between the verify and the scan, and `reanchorAuditLogTx` re-runs
+  `verifyAuditTail` under the write lock on a key mismatch; otherwise it is `ErrAuditChainBroken`, and downgrades and unkeyed
   rows are exit 2 as well. An attacker who rewrites the oldest rows
   keeping their links therefore gets the key-mismatch wording; exit 3
   is advice, not proof of innocence.
@@ -293,7 +305,15 @@ plainly rather than crediting the design with more than it does.
   into the log is refused by `checkAuditAnchorLinks` in the purge and
   by the link check in the verifier; the newest anchor recording a
   head, which must verify, wins. `-confirm-rechain` re-anchors
-  unattended only on a key mismatch.
+  unattended only on a key mismatch, which is forgeable (see above):
+  editing every row through the newest anchor, keeping stored hashes,
+  makes that anchor unverifiable and the log rotation-shaped, so a
+  scripted run accepts rewritten rows reaching back past the newest
+  purge, which may be minutes old. There is no `-previous-secret-file`
+  to prove them. `previous_*` head fields are
+  signed into the event only when the previous anchor verified, and the
+  CLI prints file-sourced hashes only if they are 64 lowercase hex
+  (`auditPlanHash`).
 - Rows deleted and later restored at their original ids from a copy
   leave no trace; that needs an anchor outside the file.
 - `verifyAuditSchema` refuses any trigger other than

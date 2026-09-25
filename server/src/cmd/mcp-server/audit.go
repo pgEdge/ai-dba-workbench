@@ -541,7 +541,7 @@ func printAuditReanchorPlan(out io.Writer, dataDir string,
 	fmt.Fprintln(out, "\nThe re-chain would record:")
 	fmt.Fprintf(out, "  Oldest event accepted: %d\n", plan.HeadID)
 	fmt.Fprintf(out, "  Its hash:              %s\n",
-		logging.SanitizeForLog(plan.HeadHash))
+		auditPlanHash(plan.HeadHash))
 	printAuditPreviousHead(out, plan.PreviousHead)
 	if plan.HistoryEvents > 0 {
 		fmt.Fprintf(out, "  Accepted as history:   %d event(s), %d to %d\n",
@@ -553,11 +553,35 @@ func printAuditReanchorPlan(out io.Writer, dataDir string,
 	} else {
 		fmt.Fprintln(out, "  Accepted as history:   (none; every event "+
 			"verifies under the current secret)")
+		fmt.Fprintln(out, "\nEvery event verifies, so the failure above "+
+			"is in where the log begins or\nends. Recording a new starting "+
+			"point, and appending the event, removes the\nevidence of it "+
+			"from the log: after the re-chain, only this plan and the\n"+
+			"recorded reason show that it was there.")
 	}
 
 	fmt.Fprintln(out, "\nNo existing event is changed, re-signed or "+
 		"deleted. One audit.rechain event is\nappended, signed under the "+
 		"current secret, recording the above as where the log\nnow begins.")
+}
+
+// auditPlanHash returns a hash read from the file for the plan to
+// print. A genuine hash is 64 lowercase hex digits; anything else was
+// put there by someone, and is described rather than printed, so that
+// no terminal control sequence the sanitiser does not know about
+// reaches the operator's screen.
+func auditPlanHash(h string) string {
+	if len(h) != 64 {
+		return fmt.Sprintf("(not a valid hash: %d bytes)", len(h))
+	}
+	for _, c := range h {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return "(not a valid hash: holds characters other than " +
+				"lowercase hex digits)"
+		}
+	}
+
+	return h
 }
 
 // printAuditPreviousHead reports where the newest purge or re-chain
@@ -573,7 +597,7 @@ func printAuditPreviousHead(out io.Writer, p *auth.AuditRechainHead) {
 		verified = "which DOES NOT verify under the current secret"
 	}
 	fmt.Fprintf(out, "  Previously recorded:   event %d, hash %s\n",
-		p.HeadID, logging.SanitizeForLog(p.HeadHash))
+		p.HeadID, auditPlanHash(p.HeadHash))
 	fmt.Fprintf(out, "                         (by %s event %d, %s)\n",
 		p.Action, p.EventID, verified)
 }

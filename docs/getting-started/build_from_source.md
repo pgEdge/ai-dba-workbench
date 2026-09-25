@@ -389,7 +389,7 @@ Conversation store: PostgreSQL datastore
 LLM HTTP client: timeout=2m0s
 AI Overview: DISABLED (requires datastore and LLM configuration)
 Starting MCP server in HTTP mode on :8080
-LLM Proxy: ENABLED (provider: anthropic, model: claude-sonnet-4-5)
+LLM Proxy: ENABLED (provider: anthropic, model: claude-sonnet-5)
 Knowledgebase: DISABLED
 MCP tool REST bridge: ENABLED
 Conversation history: ENABLED

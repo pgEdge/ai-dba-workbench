@@ -308,14 +308,15 @@ Any new flag needs both cases covered: a configuration value that
 coincides with the flag's default must survive when the flag is not
 passed, and the flag passed with its default value must still win.
 
-A server setting whose zero value is meaningful is held as a `*int`
-or `*bool` with an accessor that applies the default, because
+A server setting whose zero value is meaningful is held as a `*int`,
+`*float64` or `*bool` with an accessor that applies the default, because
 `mergeConfig` decides whether a later source overrides an earlier one
 by testing the raw value: an omitted key arrives as the zero value and
 a guard such as `>= 0` then overwrites the default with it. This is
 what silently disabled account lockout (#473), and
-`http.auth.audit_retention_days` and `http.auth.local.enabled` follow
-the same shape. Tests cover the accessor's nil, negative and explicit
+`http.auth.audit_retention_days`, `http.auth.local.enabled` and
+`llm.temperature` (`LLMConfig.Temperature()`, #551) follow the same
+shape. Tests cover the accessor's nil, negative and explicit
 zero cases, and, where the value is consumed once at start-up, also
 assert on the effective value observed at the consumer rather than on
 the configuration field, since reading the raw pointer at the call

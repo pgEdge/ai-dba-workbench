@@ -525,7 +525,7 @@ database analysis.
 | `gemini_api_key_file` | string | | Gemini key path |
 | `ollama_url` | string | `http://localhost:11434` | Ollama URL |
 | `max_tokens` | int | `4096` | Max output tokens per response |
-| `temperature` | float | `0.7` | Sampling temperature |
+| `temperature` | float | `0.7` | Sampling temperature; `0` is honoured |
 | `max_iterations` | int | `50` | Max tool-call iterations |
 | `compact_tool_descriptions` | string | `auto` | Tool description mode |
 | `timeout_seconds` | int | `120` | LLM HTTP request timeout |

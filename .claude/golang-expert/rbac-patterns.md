@@ -386,9 +386,20 @@ The audit DDL is not gated on the schema version. `initSchema` in
 `IF NOT EXISTS` table, trigger and unique-index statements on every
 open; the version gate alone left a database stamped with the current
 version but created before the index existed without it for good.
-`VerifyAuditChain` asserts through `verifyAuditSchema` that the index
-(and its uniqueness, via `pragma_index_list`) and the trigger are
-present before it reads a row. `TestReopenRestoresAuditSchemaObjects`
+`VerifyAuditChain` asserts through `verifyAuditSchema` the definitions,
+not just the names, before it reads a row: `verifyAuditChainIndex`
+requires `pragma_index_list` to report the index unique and not
+partial, and `pragma_index_info` to report exactly one key column,
+`prev_hash` (an expression column has a NULL name, so it fails too);
+`verifyAuditNoUpdateTrigger` compares the trigger's `sqlite_master.sql`
+against `expectedAuditTriggerSQL()`, which is `auditNoUpdateTriggerDDL`
+with whitespace collapsed, `IF NOT EXISTS` removed and the trailing
+`;` trimmed, because SQLite stores the statement minus those two. So
+changing `auditNoUpdateTriggerDDL` changes what verification accepts;
+an existing database keeps its old trigger text, since the DDL is
+`IF NOT EXISTS`, so a change there also needs a migration that drops
+and re-creates the trigger. `TestVerifyAuditSchemaChecksDefinitions`
+in `audit_head_test.go` holds the same-named impostor cases. `TestReopenRestoresAuditSchemaObjects`
 and `TestReopenRefusesForkedChain` in `audit_test.go` go through
 `NewAuthStore` rather than calling a migration directly; keep any new
 schema test on that path, because a test that calls the migration
@@ -501,19 +512,41 @@ rows, and none should be added. Three successive designs kept a signed
 watermark, and each gave the server a way to sign a forgery; the last
 let the retention purge re-anchor the boundary onto a backdated row, so
 an attacker who could write `auth.db` had the server attest a
-fabricated history under the real key. `PurgeAuditEvents` is now a
-plain delete plus its own keyed event and writes no hash over a row it
-did not create. Treat any proposal that has an unattended path re-sign
+fabricated history under the real key. `PurgeAuditEvents` is a
+delete plus its own keyed event and writes no hash over a row it did
+not create. Treat any proposal that has an unattended path re-sign
 existing rows as that bug returning;
 `TestPurgeDoesNotReanchorAForgedPrefix` in `audit_rechain_test.go` is
 the regression test.
 
-The purge deletes a contiguous id-prefix and nothing else:
+Head deletion (#502) is handled in `audit_head.go` without re-signing
+anything. The purge event's details carry `oldest_retained_id` and
+`oldest_retained_hash`, the existing hash of the row it left as the
+oldest, as a value inside an event the purge itself creates; the
+verifier still recomputes that row like any other. `auditHeadCheck`
+(fed by `VerifyAuditChain` only with rows that verified) requires the
+oldest row's hash to equal the newest purge's record, and, when no
+purge records one, reports a non-empty leading `prev_hash` only if no
+`audit.purge` row survives at all (the weak fallback for purge events
+written before the record). The record is worthless unless the purge
+cannot be steered into writing a new one over a deletion, so before
+deleting, `verifyAuditPurgePrefix` checks, in the purge transaction,
+that the rows up to and including the new head start at the previous
+purge's recorded hash (or at a genesis row with `prev_hash` "" when no
+purge exists; anywhere when the newest purge predates the record), that
+each verifies under the key (`checkAuditRowVerifies`) and that each
+links to the one before. Any failure refuses the purge and deletes
+nothing, which stalls retention by design; the refusal wraps
+`ErrAuditChainBroken` and starts `errAuditPurgeRefused`. The cases,
+including the one-INSERT laundering attempt, are in
+`audit_head_test.go`.
+
+The purge deletes a contiguous id-prefix and nothing else: it reads the
+cut in the transaction, verifies the prefix, then deletes below it.
 
 ```go
-DELETE FROM audit_events
-    WHERE id < (SELECT MIN(id) FROM audit_events
-                WHERE occurred_at >= ?)
+SELECT MIN(id) FROM audit_events WHERE occurred_at >= ?  -- cut
+DELETE FROM audit_events WHERE id < ?                     -- cut
 ```
 
 `occurred_at` is a column an attacker who can write `auth.db` chooses;
@@ -524,7 +557,7 @@ an `id` on INSERT, but that only moves the boundary earlier. Deleting on
 the newest events, which relinked the chain and, through the appended
 `audit.purge` event, put `MAX(id)` back into agreement with
 `sqlite_sequence`, the disagreement `verifyAuditTail` exists to read.
-When no row falls inside the window the subquery yields NULL and
+When no row falls inside the window `MIN(id)` is NULL and
 nothing is deleted, which is deliberate: emptying the log instead would
 restore the same oracle, and a fixed cut-off such as 0 would delete
 rows inserted at negative ids. `forEachAuditEvent` likewise starts its

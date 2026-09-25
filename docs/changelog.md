@@ -1597,6 +1597,30 @@ project adheres to
 
 ### Security
 
+- Report events deleted from the start of the RBAC audit log in
+  `-verify-audit-log`, which previously accepted them because the
+  retention purge legitimately leaves the oldest event pointing at a
+  predecessor that is gone. Each `audit.purge` event now records the
+  event it left as the oldest, in `details.oldest_retained_id` and
+  `details.oldest_retained_hash`, and verification exits with status 2
+  when the oldest event is any other, or when it follows a missing
+  predecessor and no purge event survives to account for it. The purge
+  now also verifies the events it is about to delete, requiring them to
+  start where the previous purge left off, to verify under the server
+  secret and to link through to the new oldest event, so that one
+  backdated event inserted into `auth.db` cannot have the next purge
+  record a new starting point over a deletion. A purge that finds
+  anything else deletes nothing and logs `refusing to purge the audit
+  log` at every run until the log is dealt with, so retention stops and
+  `auth.db` grows in the meantime. (#502)
+
+- Check the definitions of the audit log's schema objects in
+  `-verify-audit-log`, not only their names. The index on the link to
+  the preceding event must be unique, not partial, and on that column
+  alone, and the append-only trigger must match the one the server
+  creates, so a same-named index on another column or a trigger whose
+  body does nothing is now reported with status 2. (#501)
+
 - Stop the Slack, Mattermost and generic webhook channels putting their
   endpoint URL into the alerter log, into
   `notification_history.error_message` and into the server log when a

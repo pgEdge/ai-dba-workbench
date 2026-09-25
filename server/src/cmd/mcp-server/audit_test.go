@@ -390,6 +390,30 @@ func TestVerifyAuditLogCommand(t *testing.T) {
 		}
 	})
 
+	t.Run("deleting the oldest event exits as tampering", func(t *testing.T) {
+		dataDir := t.TempDir()
+		seedAuditEvents(t, dataDir)
+
+		db, err := sql.Open("sqlite", filepath.Join(dataDir, "auth.db"))
+		if err != nil {
+			t.Fatalf("failed to open auth.db directly: %v", err)
+		}
+		if _, err := db.Exec(`DELETE FROM audit_events
+            WHERE id = (SELECT MIN(id) FROM audit_events)`); err != nil {
+			t.Fatalf("failed to delete the oldest audit row: %v", err)
+		}
+		db.Close()
+
+		err = verifyAuditLogCommand(dataDir)
+		if err == nil || !strings.Contains(err.Error(), "head missing") {
+			t.Fatalf("expected the head deletion to be reported, got %v", err)
+		}
+		if got := auditVerifyExitCode(err); got != auditExitTampered {
+			t.Errorf("expected exit status %d for tampering, got %d",
+				auditExitTampered, got)
+		}
+	})
+
 	t.Run("unopenable data dir returns error", func(t *testing.T) {
 		err := verifyAuditLogCommand(blockingDataDir(t))
 		if err == nil {

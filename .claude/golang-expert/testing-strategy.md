@@ -161,6 +161,12 @@ append-only trigger must read `sqlite_master` through a raw
 runs `ensureAuditSchema`, which re-creates the trigger and would make
 the assertion pass either way.
 
+A test that expects `PurgeAuditEvents` to delete rows must build them
+through the store (`recordAuditInOwnTx`, backdating `OccurredAt`), not
+by raw INSERT: the purge verifies every row it removes and refuses a
+prefix holding a forged row such as `insertAuditRowAtID` writes, or one
+that does not start at genesis or the previous purge's recorded head.
+
 Tests in `server/src/cmd/mcp-server` that run a CLI command go through
 `openAuthStoreCLI`, which resolves the audit key from the real server
 secret file. `TestMain` in `main_test.go` replaces the `cliAuditKey`

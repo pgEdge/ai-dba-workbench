@@ -1182,8 +1182,10 @@ func TestClusterCov_UpdateConnectionClusterTokenScope(t *testing.T) {
 		f.expectValue(t, "conn cluster", 5, "1")
 	})
 
-	for _, caller := range []scopeCaller{f.narrowed, f.session, f.unscoped,
-		f.wildcard} {
+	// The narrowed token cannot see cluster 2 (member: connection 9), so
+	// it is refused with 404; TestUpdateConnectionClusterTargetAndRole
+	// covers that case.
+	for _, caller := range []scopeCaller{f.session, f.unscoped, f.wildcard} {
 		t.Run(caller.name+" allowed", func(t *testing.T) {
 			if _, err := f.pool.Exec(context.Background(),
 				"UPDATE connections SET cluster_id = 1 WHERE id = 5"); err != nil {

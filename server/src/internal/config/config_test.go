@@ -783,6 +783,55 @@ func TestApplyCLIFlags(t *testing.T) {
 	}
 }
 
+// TestApplyCLIFlagsEveryFlag sets every flag applyCLIFlags handles and
+// checks that each one lands, including the defaults of the database
+// block the flags create (issue #478 raised its pool size).
+func TestApplyCLIFlagsEveryFlag(t *testing.T) {
+	cfg := defaultConfig()
+	applyCLIFlags(cfg, CLIFlags{
+		HTTPAddrSet: true, HTTPAddr: ":7071",
+		TLSEnabledSet: true, TLSEnabled: true,
+		TLSCertSet: true, TLSCertFile: "/tls/cert.pem",
+		TLSKeySet: true, TLSKeyFile: "/tls/key.pem",
+		TLSChainSet: true, TLSChainFile: "/tls/chain.pem",
+		DBHostSet: true, DBHost: "db.example.com",
+		DBPortSet: true, DBPort: 5433,
+		DBNameSet: true, DBName: "workbench",
+		DBUserSet: true, DBUser: "cliuser",
+		DBPassSet: true, DBPassword: "clipass",
+		DBSSLSet: true, DBSSLMode: "require",
+		SecretFileSet: true, SecretFile: "/secret/file",
+		TraceFileSet: true, TraceFile: "/trace/file",
+	})
+
+	want := DatabaseConfig{
+		Host:                "db.example.com",
+		Port:                5433,
+		Database:            "workbench",
+		User:                "cliuser",
+		Password:            "clipass",
+		SSLMode:             "require",
+		PoolMaxConns:        DefaultPoolMaxConns,
+		PoolMaxConnIdleTime: "30m",
+		StatementTimeout:    "30s",
+	}
+	if cfg.Database == nil || !reflect.DeepEqual(*cfg.Database, want) {
+		t.Fatalf("database = %+v, want %+v", cfg.Database, want)
+	}
+	if DefaultPoolMaxConns != 20 {
+		t.Errorf("DefaultPoolMaxConns = %d, want 20 as documented", DefaultPoolMaxConns)
+	}
+
+	tls := cfg.HTTP.TLS
+	if cfg.HTTP.Address != ":7071" || !tls.Enabled || tls.CertFile != "/tls/cert.pem" ||
+		tls.KeyFile != "/tls/key.pem" || tls.ChainFile != "/tls/chain.pem" {
+		t.Errorf("HTTP settings not applied: %+v", cfg.HTTP)
+	}
+	if cfg.SecretFile != "/secret/file" || cfg.TraceFile != "/trace/file" {
+		t.Errorf("SecretFile = %q, TraceFile = %q", cfg.SecretFile, cfg.TraceFile)
+	}
+}
+
 func TestLoadConfigDataDir(t *testing.T) {
 	tmpDir := t.TempDir()
 

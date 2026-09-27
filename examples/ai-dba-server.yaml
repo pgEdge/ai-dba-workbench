@@ -257,9 +257,13 @@ database:
   # Connection Pool Settings
   #-----------------------------------------------------------------------
 
-  # Maximum number of connections in the pool
-  # Default: 4
-  pool_max_conns: 4
+  # Maximum number of connections in the pool. Every API request that
+  # reads the datastore shares this pool, and a single dashboard page
+  # load issues more than twenty metrics requests at once. Allow for the
+  # collector's and alerter's own pools when sizing it against the
+  # datastore's max_connections.
+  # Default: 20
+  pool_max_conns: 20
 
   # Minimum number of connections in the pool
   # Default: 0
@@ -650,7 +654,7 @@ builtins:
 #   database: "ai_workbench_prod"
 #   user: "ai_workbench"
 #   sslmode: "verify-full"
-#   pool_max_conns: 10
+#   pool_max_conns: 20
 # embedding:
 #   enabled: true
 #   provider: "voyage"

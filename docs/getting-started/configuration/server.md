@@ -111,7 +111,7 @@ database:
   # password: ""
   # password_file: "/etc/pgedge/password.txt"
   sslmode: "prefer"
-  pool_max_conns: 4
+  pool_max_conns: 20
   pool_min_conns: 0
   pool_max_conn_idle_time: "30m"
   statement_timeout: "30s"
@@ -452,7 +452,7 @@ protection for user-created database connections.
 | `password` | string | | Database password |
 | `password_file` | string | | DB password file (if `password` empty) |
 | `sslmode` | string | `prefer` | SSL mode |
-| `pool_max_conns` | int | `4` | Max pool connections |
+| `pool_max_conns` | int | `20` | Max pool connections |
 | `pool_min_conns` | int | `0` | Min pool connections |
 | `pool_max_conn_idle_time` | string | `30m` | Max idle time |
 | `statement_timeout` | string | `30s` | Server-side statement timeout |
@@ -469,6 +469,17 @@ the server grants a datastore query, so it rejects nothing that would
 otherwise have completed. The value accepts any Go duration string,
 such as `45s` or `1m30s`; `0` disables the timeout, which is not
 recommended because a single runaway query can then starve the pool.
+
+The `pool_max_conns` option sets the size of the datastore connection
+pool that every API request shares. A single dashboard page load
+issues more than twenty metrics requests at once, so a small pool makes
+a page wait on itself and lets a few slow requests hold up the rest of
+the API. The default of `20` leaves room for a second user; together
+with the collector's default of 25 and the alerter's default of 10, it
+uses 55 of the 97 connections that the PostgreSQL default
+`max_connections` of 100 makes available to ordinary users. Raise the
+datastore's `max_connections` before raising any of the three pools
+past that total.
 
 ### Embedding (`embedding`)
 
@@ -964,7 +975,7 @@ database:
   database: "ai_workbench_prod"
   user: "ai_workbench"
   sslmode: "verify-full"
-  pool_max_conns: 10
+  pool_max_conns: 20
 embedding:
   enabled: true
   provider: "voyage"

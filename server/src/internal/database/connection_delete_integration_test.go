@@ -12,6 +12,8 @@ package database
 import (
 	"context"
 	"errors"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -437,5 +439,149 @@ func TestDeleteConnection_DismissUpdateFails(t *testing.T) {
 	}
 	if remaining != 1 {
 		t.Fatalf("expected connection to survive rolled-back delete, got %d rows", remaining)
+	}
+}
+
+// TestDeleteConnection_OverridesPoolStatementTimeout is the regression
+// test for issue #480. The pool's statement_timeout is set far below
+// the time the DELETE takes (a BEFORE DELETE trigger stands in for a
+// cascade through a long metrics history), and a control query proves
+// that the pool timeout is live. The delete must still succeed, the
+// trigger must observe ConnectionDeleteTimeout as the effective
+// setting, and the override must not leak into the pool connection
+// once the transaction ends.
+func TestDeleteConnection_OverridesPoolStatementTimeout(t *testing.T) {
+	_, setupPool, cleanup := newClusterDismissTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	if _, err := setupPool.Exec(ctx, `
+        CREATE TABLE IF NOT EXISTS delete_timeout_probe (setting TEXT);
+        CREATE OR REPLACE FUNCTION slow_connection_delete()
+        RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+            INSERT INTO delete_timeout_probe
+            VALUES (current_setting('statement_timeout'));
+            PERFORM pg_sleep(0.5);
+            RETURN OLD;
+        END;
+        $$;
+        DROP TRIGGER IF EXISTS slow_conn_delete ON connections;
+        CREATE TRIGGER slow_conn_delete
+        BEFORE DELETE ON connections
+        FOR EACH ROW EXECUTE FUNCTION slow_connection_delete();
+    `); err != nil {
+		t.Fatalf("failed to install slow delete trigger: %v", err)
+	}
+	defer func() {
+		if _, err := setupPool.Exec(context.Background(), `
+            DROP TABLE IF EXISTS delete_timeout_probe;
+            DROP TRIGGER IF EXISTS slow_conn_delete ON connections;
+            DROP FUNCTION IF EXISTS slow_connection_delete();
+        `); err != nil {
+			t.Logf("slow delete trigger teardown failed: %v", err)
+		}
+	}()
+
+	connID := insertConnectionDeleteTestConnection(t, setupPool, "slow-delete", nil)
+
+	// A single-connection pool built the production way, so the
+	// connection that runs the delete is the one checked afterwards.
+	cfg := testDatastoreConfig(t)
+	cfg.StatementTimeout = "200ms"
+	cfg.PoolMaxConns = 1
+	ds, err := NewDatastore(cfg, "test-secret")
+	if err != nil {
+		t.Skipf("Could not connect to test database: %v", err)
+	}
+	defer ds.Close()
+
+	// Control: the pool timeout cancels anything slower than 200ms.
+	_, err = ds.GetPool().Exec(ctx, "SELECT pg_sleep(0.5)")
+	if err == nil || !strings.Contains(err.Error(), "statement timeout") {
+		t.Fatalf("control pg_sleep(0.5) error = %v, want a statement timeout", err)
+	}
+
+	if err := ds.DeleteConnection(ctx, connID); err != nil {
+		t.Fatalf("DeleteConnection under a 200ms pool timeout failed: %v", err)
+	}
+
+	var remaining int
+	if err := setupPool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM connections WHERE id = $1`, connID,
+	).Scan(&remaining); err != nil {
+		t.Fatalf("post-delete connection count failed: %v", err)
+	}
+	if remaining != 0 {
+		t.Fatalf("expected connection %d to be deleted, found %d rows", connID, remaining)
+	}
+
+	// Let Postgres render the expected value, so the comparison does
+	// not depend on how SHOW formats a millisecond count.
+	var observed, want string
+	if err := setupPool.QueryRow(ctx,
+		`SELECT setting FROM delete_timeout_probe`,
+	).Scan(&observed); err != nil {
+		t.Fatalf("reading observed statement_timeout failed: %v", err)
+	}
+	if err := setupPool.QueryRow(ctx,
+		`SELECT set_config('statement_timeout', $1, true)`,
+		strconv.FormatInt(ConnectionDeleteTimeout.Milliseconds(), 10),
+	).Scan(&want); err != nil {
+		t.Fatalf("formatting expected statement_timeout failed: %v", err)
+	}
+	if observed != want {
+		t.Fatalf("statement_timeout inside the delete = %q, want %q", observed, want)
+	}
+
+	if got := showStatementTimeout(t, ds); got != "200ms" {
+		t.Fatalf("statement_timeout after the delete = %q, want the pool's \"200ms\"", got)
+	}
+}
+
+// TestDeleteConnection_CommitFails covers the commit error path. A
+// deferred constraint trigger only fires at COMMIT, so every statement
+// inside the transaction succeeds and the failure surfaces from Commit.
+func TestDeleteConnection_CommitFails(t *testing.T) {
+	ds, pool, cleanup := newClusterDismissTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	_ = insertClusterDismissTestGroup(t, pool)
+	connID := insertConnectionDeleteTestConnection(t, pool, "commit-target", nil)
+
+	if _, err := pool.Exec(ctx, `
+        CREATE OR REPLACE FUNCTION block_connection_commit()
+        RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+            RAISE EXCEPTION 'connection delete commit blocked by test trigger';
+        END;
+        $$;
+        DROP TRIGGER IF EXISTS block_conn_commit ON connections;
+        CREATE CONSTRAINT TRIGGER block_conn_commit
+        AFTER DELETE ON connections
+        DEFERRABLE INITIALLY DEFERRED
+        FOR EACH ROW EXECUTE FUNCTION block_connection_commit();
+    `); err != nil {
+		t.Fatalf("failed to install commit-blocking trigger: %v", err)
+	}
+	defer func() {
+		_, _ = pool.Exec(context.Background(),
+			`DROP FUNCTION IF EXISTS block_connection_commit() CASCADE`)
+	}()
+
+	err := ds.DeleteConnection(ctx, connID)
+	if err == nil || !strings.Contains(err.Error(), "failed to commit") {
+		t.Fatalf("DeleteConnection error = %v, want a commit failure", err)
+	}
+
+	var remaining int
+	if err := pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM connections WHERE id = $1`, connID,
+	).Scan(&remaining); err != nil {
+		t.Fatalf("post-commit connection count failed: %v", err)
+	}
+	if remaining != 1 {
+		t.Fatalf("expected connection to survive failed commit, got %d rows", remaining)
 	}
 }

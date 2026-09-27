@@ -226,8 +226,22 @@ func scanConnectionListItem(conn *ConnectionListItem, scanner interface{ Scan(..
 // starts failing; what it adds is a bound that survives a lost cancel
 // request, which a client-side context cancellation does not. Without
 // it a runaway query keeps holding one of the pool's connections
-// (PoolMaxConns defaults to 4) long after the HTTP request is gone.
+// (config.DefaultPoolMaxConns unless configured) long after the HTTP
+// request is gone.
 const DefaultDatastoreStatementTimeout = 30 * time.Second
+
+// ConnectionDeleteTimeout is the budget for deleting a connection. The
+// DELETE cascades through every metrics.* table and removes the
+// connection's whole retention history, which DefaultDatastoreStatementTimeout
+// and the ten seconds the other connection handlers allow cannot cover
+// for a connection that has been collecting for days (issue #480). The
+// longest budget the server grants any request is the HTTP server's 300
+// second WriteTimeout (internal/mcp/http_server.go), which exists for LLM
+// agentic loops; four minutes is the most the delete can take and still
+// leave time to write its response within that limit. DeleteConnection
+// applies it as a transaction-local statement_timeout, overriding the
+// pool-wide one, and deleteConnection uses it as the request deadline.
+const ConnectionDeleteTimeout = 4 * time.Minute
 
 // resolveStatementTimeout turns the configured statement_timeout into
 // the value to send as a startup runtime parameter. An empty string
@@ -285,7 +299,11 @@ func NewDatastore(cfg *config.DatabaseConfig, serverSecret string) (*Datastore, 
 	}
 	poolConfig.ConnConfig.RuntimeParams["statement_timeout"] = statementTimeout
 
-	// Apply pool settings with bounds checking to prevent overflow
+	// Apply pool settings with bounds checking to prevent overflow. An
+	// unset pool_max_conns selects config.DefaultPoolMaxConns rather
+	// than pgxpool's own default of max(4, NumCPU), which is far too
+	// small for the API's dashboard fan-out (issue #478).
+	poolConfig.MaxConns = config.DefaultPoolMaxConns
 	if cfg.PoolMaxConns > 0 && cfg.PoolMaxConns <= math.MaxInt32 {
 		poolConfig.MaxConns = int32(cfg.PoolMaxConns) //nolint:gosec // G115: bounds checked above
 	}
@@ -492,15 +510,31 @@ func (d *Datastore) CreateConnection(ctx context.Context, params ConnectionCreat
 // otherwise persist forever once their last connection is removed
 // because auto-detection only inserts new rows for unseen
 // auto_cluster_key values.
+//
+// The transaction runs under a local statement_timeout of
+// ConnectionDeleteTimeout, overriding the pool-wide timeout, because
+// the cascade through metrics.* can legitimately take minutes. For the
+// same reason it does not take d.mu: the mutex guards no Go state here
+// (d.pool never changes after construction), and holding its write
+// lock for the length of the cascade would stall every other datastore
+// call in the API behind it. Consistency with concurrent writers rests
+// on the transaction, as it must anyway, since the collector writes to
+// the same tables without the mutex.
 func (d *Datastore) DeleteConnection(ctx context.Context, id int) error {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to begin delete connection transaction: %w", err)
 	}
 	defer rollback.Tx(ctx, tx) //nolint:errcheck // no-op after commit
+
+	// set_config with is_local = true is the function form of SET
+	// LOCAL, which takes the value as a bind parameter.
+	if _, err := tx.Exec(ctx,
+		`SELECT set_config('statement_timeout', $1, true)`,
+		strconv.FormatInt(ConnectionDeleteTimeout.Milliseconds(), 10),
+	); err != nil {
+		return fmt.Errorf("failed to set delete connection statement timeout: %w", err)
+	}
 
 	// Delete the connection row and capture its cluster_id in one
 	// statement. Doing both atomically avoids a TOCTOU window in

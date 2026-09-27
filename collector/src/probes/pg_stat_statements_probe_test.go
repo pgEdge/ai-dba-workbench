@@ -584,7 +584,7 @@ func newSecondaryDatabase(t *testing.T, suffix string) *pgxpool.Pool {
 	}
 	t.Cleanup(func() {
 		if err := adminExec(
-			fmt.Sprintf("DROP DATABASE IF EXISTS %s", dbName)); err != nil {
+			fmt.Sprintf("DROP DATABASE IF EXISTS %s WITH (FORCE)", dbName)); err != nil {
 			t.Logf("drop secondary db %s: %v", dbName, err)
 		}
 	})

@@ -96,7 +96,7 @@ func teardownIntegration() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	pool, err := pgxpool.New(ctx, fmt.Sprintf(
-		"host=%s port=%d user=%s password=%s sslmode=disable dbname=postgres",
+		"host=%s port=%d user=%s password=%s sslmode=disable dbname=postgres pool_max_conns=1",
 		integration.host, integration.port, integration.username, integration.rawPassword))
 	if err != nil {
 		return
@@ -243,7 +243,7 @@ func setupIntegration(t *testing.T) *integrationFixture {
 		defer cancel()
 
 		adminPool, err := pgxpool.New(ctx, fmt.Sprintf(
-			"host=%s port=%d user=%s password=%s sslmode=%s dbname=postgres",
+			"host=%s port=%d user=%s password=%s sslmode=%s dbname=postgres pool_max_conns=1",
 			base.host, base.port, base.username, base.password, base.sslMode))
 		if err != nil {
 			integrationSkip = fmt.Sprintf("connect admin: %v", err)
@@ -343,13 +343,10 @@ func setupIntegration(t *testing.T) *integrationFixture {
 		}
 		ds.ReturnConnection(conn2)
 
+		// The pool manager is deliberately left unset: every test gets
+		// its own from setupIntegration, closed when the test ends.
 		integration = &integrationFixture{
-			ds: ds,
-			// Use 1 connection per monitored server and a short idle
-			// time so concurrent tests can't exhaust the postgres
-			// max_connections limit. We have ~30 tests that may each
-			// trigger pool creation against the same server.
-			pool:              database.NewMonitoredConnectionPoolManager(1, 5),
+			ds:                ds,
 			connID:            connID,
 			connName:          "monitored-test",
 			dbName:            dbName,
@@ -367,7 +364,24 @@ func setupIntegration(t *testing.T) *integrationFixture {
 	if integration == nil {
 		t.Skip("integration fixture unavailable")
 	}
-	return integration
+
+	// Give every test a pool manager of its own and close it when the
+	// test ends (issue #486). The database-scoped probe paths open one
+	// pool per database on the server, and pgx retires idle connections
+	// only on its minute-long health check, so a manager shared across
+	// the package held a backend open for every database the suite had
+	// touched until the process exited. One connection per pool keeps a
+	// test's footprint to one backend per database. The cleanup runs
+	// after the test's deferred ps.Stop, so no probe goroutine is still
+	// using a pool when it closes.
+	f := *integration
+	f.pool = database.NewMonitoredConnectionPoolManager(1, 5)
+	t.Cleanup(func() {
+		if err := f.pool.Close(); err != nil {
+			t.Logf("close monitored pool manager: %v", err)
+		}
+	})
+	return &f
 }
 
 // makeMonitoredConn returns a database.MonitoredConnection whose
@@ -1408,20 +1422,24 @@ func TestSchedulerLoadConfigs_GetMonitoredFails(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	adminPool, err := pgxpool.New(ctx, fmt.Sprintf(
-		"host=%s port=%d user=%s password=%s sslmode=disable dbname=postgres",
+		"host=%s port=%d user=%s password=%s sslmode=disable dbname=postgres pool_max_conns=1",
 		f.host, f.port, f.username, f.rawPassword))
 	if err != nil {
 		t.Fatalf("admin pool: %v", err)
 	}
-	defer adminPool.Close()
+	// Registered before the drop below so that it runs after it, since
+	// cleanups run in reverse order. A deferred Close runs before any
+	// cleanup, which left the drop hitting a closed pool and leaked the
+	// database on every run (issue #486).
+	t.Cleanup(adminPool.Close)
 
 	dbName := fmt.Sprintf("ai_workbench_sched_drop_%d", time.Now().UnixNano())
 	if _, err := adminPool.Exec(ctx, fmt.Sprintf("CREATE DATABASE %s", dbName)); err != nil {
 		t.Fatalf("create db: %v", err)
 	}
 	t.Cleanup(func() {
-		// Best-effort cleanup; if the admin pool is gone or the DB is
-		// busy, log rather than fail the test that already passed.
+		// Best-effort cleanup; if the DB cannot be dropped, log rather
+		// than fail the test that already passed.
 		if _, err := adminPool.Exec(context.Background(),
 			fmt.Sprintf("DROP DATABASE IF EXISTS %s WITH (FORCE)", dbName)); err != nil {
 			t.Logf("warning: drop %s on cleanup: %v", dbName, err)

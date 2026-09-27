@@ -139,21 +139,27 @@ func gcTestDatastore(t *testing.T) (*database.Datastore, func()) {
 		t.Fatalf("NewDatastore: %v", err)
 	}
 
-	conn, err := ds.GetConnection()
-	if err != nil {
-		t.Fatalf("GetConnection: %v", err)
-	}
-	if err := database.NewSchemaManager().Migrate(conn); err != nil {
-		ds.ReturnConnection(conn)
-		t.Fatalf("Migrate: %v", err)
-	}
-	ds.ReturnConnection(conn)
-
-	return ds, func() {
+	cleanup := func() {
 		ds.Close()
 		dropDatabase()
 		adminPool.Close()
 	}
+
+	// The caller only receives cleanup on success, so a failure from
+	// here on must run it itself or the database leaks (issue #486).
+	conn, err := ds.GetConnection()
+	if err != nil {
+		cleanup()
+		t.Fatalf("GetConnection: %v", err)
+	}
+	if err := database.NewSchemaManager().Migrate(conn); err != nil {
+		ds.ReturnConnection(conn)
+		cleanup()
+		t.Fatalf("Migrate: %v", err)
+	}
+	ds.ReturnConnection(conn)
+
+	return ds, cleanup
 }
 
 // TestGarbageCollector_RecordsAndResumesCycle is the end-to-end

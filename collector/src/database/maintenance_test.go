@@ -13,18 +13,34 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// maintenanceTestConnection returns a connection to the package's per-run
+// test database, which TestMain creates and drops, with the schema
+// cleared so each test starts from an empty database. These tests used
+// to call setupTestDatabase themselves, which created a fresh database
+// each time and repointed testDBName at it, so TestMain's teardown
+// dropped only the last one and every run leaked the rest (issue #486).
+// The schema is cleared again afterwards because
+// TestGetMaintenanceRunReadFailure drops maintenance_runs without
+// resetting schema_version, which would leave a later migration
+// believing the table exists.
+func maintenanceTestConnection(t *testing.T) *pgxpool.Conn {
+	t.Helper()
+	pool, conn := getTestConnection(t)
+	t.Cleanup(pool.Close)
+	t.Cleanup(func() { cleanupTestSchema(t, pool) })
+	t.Cleanup(conn.Release)
+	cleanupTestSchema(t, pool)
+	return conn
+}
 
 // TestMaintenanceRunRoundTrip covers the persistence that decouples the
 // partition dropper's schedule from process uptime (issue #437).
 func TestMaintenanceRunRoundTrip(t *testing.T) {
-	if err := setupTestDatabase(); err != nil {
-		t.Skipf("test database not provisioned: %v", err)
-	}
-
-	pool, conn := getTestConnection(t)
-	defer pool.Close()
-	defer conn.Release()
+	conn := maintenanceTestConnection(t)
 
 	ctx := context.Background()
 
@@ -95,13 +111,7 @@ func TestMaintenanceRunRoundTrip(t *testing.T) {
 // reported as absent rather than as an error, which is what lets the
 // collector treat "never run" as "due now".
 func TestGetMaintenanceRunUnknownTask(t *testing.T) {
-	if err := setupTestDatabase(); err != nil {
-		t.Skipf("test database not provisioned: %v", err)
-	}
-
-	pool, conn := getTestConnection(t)
-	defer pool.Close()
-	defer conn.Release()
+	conn := maintenanceTestConnection(t)
 
 	ctx := context.Background()
 
@@ -126,13 +136,7 @@ func TestGetMaintenanceRunUnknownTask(t *testing.T) {
 // is reported rather than being reported as "never run", since the two
 // lead the collector to different decisions.
 func TestGetMaintenanceRunReadFailure(t *testing.T) {
-	if err := setupTestDatabase(); err != nil {
-		t.Skipf("test database not provisioned: %v", err)
-	}
-
-	pool, conn := getTestConnection(t)
-	defer pool.Close()
-	defer conn.Release()
+	conn := maintenanceTestConnection(t)
 
 	ctx := context.Background()
 

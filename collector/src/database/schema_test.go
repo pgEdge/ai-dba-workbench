@@ -106,8 +106,10 @@ func teardownTestDatabase() {
 	}
 	defer adminPool.Close()
 
-	// Drop test database
-	_, err = adminPool.Exec(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS %s", testDBName))
+	// Drop test database. FORCE terminates any backend a test left
+	// connected, which would otherwise make the drop fail and leak the
+	// database (issue #486).
+	_, err = adminPool.Exec(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS %s WITH (FORCE)", testDBName))
 	if err != nil {
 		fmt.Printf("Warning: failed to drop test database %s: %v\n", testDBName, err)
 	} else {
@@ -250,6 +252,7 @@ func cleanupTestSchema(t *testing.T, pool *pgxpool.Pool) {
 		"probe_availability",
 		"alerter_settings",
 		// Core tables
+		"maintenance_runs",
 		"probe_configs",
 		"connections",
 		"clusters",

@@ -112,7 +112,12 @@ are editing.
   `collector/src/database/schema_test.go` and the probes package
   `TestMain`), apply the real schema through `NewSchemaManager`, and
   drop the database at the end unless `TEST_AI_WORKBENCH_KEEP_DB` is
-  set.
+  set. The scheduler package does the same with
+  `ai_workbench_sched_<nanos>`. Never run a collector test against the
+  database the URL itself names: it is shared with the server and
+  alerter suites, whose leftover tables (an alerter-shaped
+  `anomaly_candidates`, for one) turn `CREATE TABLE IF NOT EXISTS` into
+  a no-op and break the migration.
 - Alerter tests build their environment in helpers such as
   `newDetectAnomaliesEnv` and `newFullTestDatastore`, which apply an
   integration schema with `DROP`/`CREATE` statements and therefore take
@@ -120,6 +125,37 @@ are editing.
 
 `t.Parallel()` is not used in database-backed tests; the shared tables
 make it unsafe.
+
+## Collector Tests and max_connections
+
+The collector does not pass `-p=1`, so its packages share the server's
+`max_connections` (100 by default) with each other and with any other
+suite running on the host (issue #486). The rules that keep it under
+that limit:
+
+- In `collector/src/database`, only `TestMain` calls
+  `setupTestDatabase`; it reassigns `testDBName`, so any other caller
+  leaks a database per call. Tests take `getTestConnection(t)` and start
+  from `cleanupTestSchema`, whose table list must name every
+  non-`metrics` table a migration creates.
+- In `collector/src/scheduler`, `setupIntegration` shares the datastore
+  and seeded connection across the package but hands each test a fresh
+  `MonitoredConnectionPoolManager`, closed in `t.Cleanup`. Subtests
+  share their parent's. Do not store a pool manager in the package-level
+  fixture.
+- Any test that runs a database-scoped probe (`executeProbeForAllDatabases`
+  and friends) opens one pool, and so one backend, per connectable
+  database on the server, and pgx retires the idle connection only on
+  its minute-long health check. The package peak therefore tracks the
+  number of databases on the host, and every database a run leaks adds a
+  backend to every later run.
+- Drop a database a test creates in `t.Cleanup` with
+  `DROP DATABASE IF EXISTS ... WITH (FORCE)`, and register the admin
+  pool's `Close` as a cleanup before the drop (cleanups run last in,
+  first out). A `defer adminPool.Close()` runs before any cleanup, so
+  the drop hits a closed pool and the database leaks.
+- Admin pools used only for `CREATE`/`DROP DATABASE` carry
+  `pool_max_conns=1` in their DSN.
 
 ## The SQLite Auth Store
 

@@ -1411,17 +1411,25 @@ func TestVisibleConnectionIDs_ExplicitGrantIntersectsSharedVisibility(t *testing
 
 func TestVisibleConnectionIDs_NilStore_NoConnections(t *testing.T) {
 	checker := NewRBACChecker(nil)
-	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, true)
+	contexts := map[string]context.Context{
+		"anonymous": context.Background(),
+		"superuser": context.WithValue(context.Background(),
+			IsSuperuserContextKey, true),
+	}
 
-	ids, all, err := checker.VisibleConnectionIDs(ctx, nil)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	if all {
-		t.Error("Expected allConnections=false for nil store")
-	}
-	if ids != nil {
-		t.Errorf("Expected nil ids, got %v", ids)
+	for name, ctx := range contexts {
+		t.Run(name, func(t *testing.T) {
+			ids, all, err := checker.VisibleConnectionIDs(ctx, nil)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if all {
+				t.Error("Expected allConnections=false for nil store")
+			}
+			if ids != nil {
+				t.Errorf("Expected nil ids, got %v", ids)
+			}
+		})
 	}
 }
 

@@ -98,6 +98,7 @@ func TestHandleMetricsQuery_TimeSeriesMode_ParsesMountPointFilter(t *testing.T) 
 	var gotFilters metrics.MetricFilters
 	called := false
 	handler := &MetricsHandler{
+		authStore: newTestAuthStore(t),
 		datastore: &database.Datastore{},
 		queryTimeSeriesFn: func(
 			_ context.Context,
@@ -116,10 +117,10 @@ func TestHandleMetricsQuery_TimeSeriesMode_ParsesMountPointFilter(t *testing.T) 
 		},
 	}
 
-	req := httptest.NewRequest(http.MethodGet,
+	req := withSuperuser(httptest.NewRequest(http.MethodGet,
 		"/api/v1/metrics/query?connection_id=1"+
 			"&probe_name=pg_sys_disk_info&time_range=1h"+
-			"&mount_point=%2Fvar%2Flib%2Fpostgresql", nil)
+			"&mount_point=%2Fvar%2Flib%2Fpostgresql", nil))
 	rec := httptest.NewRecorder()
 
 	handler.handleMetricsQuery(rec, req)

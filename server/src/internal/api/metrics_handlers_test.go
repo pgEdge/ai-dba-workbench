@@ -82,13 +82,13 @@ func TestHandleMetricsQuery_MissingConnectionID(t *testing.T) {
 }
 
 func TestHandleMetricsQuery_MissingProbeName(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet,
-		"/api/v1/metrics/query?connection_id=1", nil)
+	req := withSuperuser(httptest.NewRequest(http.MethodGet,
+		"/api/v1/metrics/query?connection_id=1", nil))
 	rec := httptest.NewRecorder()
 
-	// With nil authStore the RBAC checker treats the caller as a
-	// superuser, so we reach probe_name validation.
-	handler := &MetricsHandler{}
+	// A superuser caller passes the RBAC gate, so we reach probe_name
+	// validation.
+	handler := &MetricsHandler{authStore: newTestAuthStore(t)}
 	handler.handleMetricsQuery(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
@@ -101,11 +101,11 @@ func TestHandleMetricsQuery_MissingProbeName(t *testing.T) {
 }
 
 func TestHandleMetricsQuery_InvalidProbeName(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet,
-		"/api/v1/metrics/query?connection_id=1&probe_name=bad;name", nil)
+	req := withSuperuser(httptest.NewRequest(http.MethodGet,
+		"/api/v1/metrics/query?connection_id=1&probe_name=bad;name", nil))
 	rec := httptest.NewRecorder()
 
-	handler := &MetricsHandler{}
+	handler := &MetricsHandler{authStore: newTestAuthStore(t)}
 	handler.handleMetricsQuery(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
@@ -118,12 +118,12 @@ func TestHandleMetricsQuery_LatestMode_InvalidLimit(t *testing.T) {
 	cases := []string{"0", "-1", "101", "abc"}
 	for _, limit := range cases {
 		t.Run("limit="+limit, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet,
+			req := withSuperuser(httptest.NewRequest(http.MethodGet,
 				"/api/v1/metrics/query?connection_id=1"+
-					"&probe_name=pg_stat_all_tables&limit="+limit, nil)
+					"&probe_name=pg_stat_all_tables&limit="+limit, nil))
 			rec := httptest.NewRecorder()
 
-			handler := &MetricsHandler{}
+			handler := &MetricsHandler{authStore: newTestAuthStore(t)}
 			handler.handleMetricsQuery(rec, req)
 
 			if rec.Code != http.StatusBadRequest {
@@ -141,12 +141,12 @@ func TestHandleMetricsQuery_LatestMode_InvalidLimit(t *testing.T) {
 func TestHandleMetricsQuery_LatestMode_InvalidOrderBy(t *testing.T) {
 	// A syntactically invalid order_by is rejected at the handler before
 	// any column discovery or SQL execution occurs.
-	req := httptest.NewRequest(http.MethodGet,
+	req := withSuperuser(httptest.NewRequest(http.MethodGet,
 		"/api/v1/metrics/query?connection_id=1"+
-			"&probe_name=pg_stat_all_tables&order_by=bad-column", nil)
+			"&probe_name=pg_stat_all_tables&order_by=bad-column", nil))
 	rec := httptest.NewRecorder()
 
-	handler := &MetricsHandler{}
+	handler := &MetricsHandler{authStore: newTestAuthStore(t)}
 	handler.handleMetricsQuery(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
@@ -160,13 +160,13 @@ func TestHandleMetricsQuery_LatestMode_InvalidOrderBy(t *testing.T) {
 }
 
 func TestHandleMetricsQuery_LatestMode_InvalidOrder(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet,
+	req := withSuperuser(httptest.NewRequest(http.MethodGet,
 		"/api/v1/metrics/query?connection_id=1"+
 			"&probe_name=pg_stat_all_tables&limit=1"+
-			"&order_by=n_live_tup&order=sideways", nil)
+			"&order_by=n_live_tup&order=sideways", nil))
 	rec := httptest.NewRecorder()
 
-	handler := &MetricsHandler{}
+	handler := &MetricsHandler{authStore: newTestAuthStore(t)}
 	handler.handleMetricsQuery(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
@@ -182,12 +182,12 @@ func TestHandleMetricsQuery_LatestMode_InvalidOrder(t *testing.T) {
 func TestHandleMetricsQuery_TimeSeriesMode_InvalidTimeRange(t *testing.T) {
 	// Without limit/order_by the handler stays on the time-series path;
 	// an invalid time_range is rejected there.
-	req := httptest.NewRequest(http.MethodGet,
+	req := withSuperuser(httptest.NewRequest(http.MethodGet,
 		"/api/v1/metrics/query?connection_id=1"+
-			"&probe_name=pg_stat_all_tables&time_range=99z", nil)
+			"&probe_name=pg_stat_all_tables&time_range=99z", nil))
 	rec := httptest.NewRecorder()
 
-	handler := &MetricsHandler{}
+	handler := &MetricsHandler{authStore: newTestAuthStore(t)}
 	handler.handleMetricsQuery(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
@@ -211,6 +211,7 @@ func TestHandleMetricsQuery_TimeSeriesMode_ParsesIndexNameFilter(t *testing.T) {
 	var gotFilters metrics.MetricFilters
 	called := false
 	handler := &MetricsHandler{
+		authStore: newTestAuthStore(t),
 		datastore: &database.Datastore{},
 		queryTimeSeriesFn: func(
 			_ context.Context,
@@ -229,10 +230,10 @@ func TestHandleMetricsQuery_TimeSeriesMode_ParsesIndexNameFilter(t *testing.T) {
 		},
 	}
 
-	req := httptest.NewRequest(http.MethodGet,
+	req := withSuperuser(httptest.NewRequest(http.MethodGet,
 		"/api/v1/metrics/query?connection_id=1"+
 			"&probe_name=pg_stat_all_indexes&time_range=1h"+
-			"&index_name=pk_orders", nil)
+			"&index_name=pk_orders", nil))
 	rec := httptest.NewRecorder()
 
 	handler.handleMetricsQuery(rec, req)
@@ -257,6 +258,7 @@ func TestHandleMetricsQuery_TimeSeriesMode_ParsesQueryIDFilter(t *testing.T) {
 	var gotFilters metrics.MetricFilters
 	called := false
 	handler := &MetricsHandler{
+		authStore: newTestAuthStore(t),
 		datastore: &database.Datastore{},
 		queryTimeSeriesFn: func(
 			_ context.Context,
@@ -275,10 +277,10 @@ func TestHandleMetricsQuery_TimeSeriesMode_ParsesQueryIDFilter(t *testing.T) {
 		},
 	}
 
-	req := httptest.NewRequest(http.MethodGet,
+	req := withSuperuser(httptest.NewRequest(http.MethodGet,
 		"/api/v1/metrics/query?connection_id=1"+
 			"&probe_name=pg_stat_statements&time_range=1h"+
-			"&queryid=-1234567890123456789", nil)
+			"&queryid=-1234567890123456789", nil))
 	rec := httptest.NewRecorder()
 
 	handler.handleMetricsQuery(rec, req)
@@ -302,6 +304,7 @@ func TestHandleMetricsQuery_TimeSeriesMode_SignedQueryIDNormalised(t *testing.T)
 	// forwarded verbatim, where a textual comparison would never match.
 	var gotFilters metrics.MetricFilters
 	handler := &MetricsHandler{
+		authStore: newTestAuthStore(t),
 		datastore: &database.Datastore{},
 		queryTimeSeriesFn: func(
 			_ context.Context,
@@ -319,10 +322,10 @@ func TestHandleMetricsQuery_TimeSeriesMode_SignedQueryIDNormalised(t *testing.T)
 		},
 	}
 
-	req := httptest.NewRequest(http.MethodGet,
+	req := withSuperuser(httptest.NewRequest(http.MethodGet,
 		"/api/v1/metrics/query?connection_id=1"+
 			"&probe_name=pg_stat_statements&time_range=1h"+
-			"&queryid=%2B42", nil)
+			"&queryid=%2B42", nil))
 	rec := httptest.NewRecorder()
 
 	handler.handleMetricsQuery(rec, req)
@@ -341,6 +344,7 @@ func TestHandleMetricsQuery_TimeSeriesMode_InvalidQueryID(t *testing.T) {
 	// A queryid that is not a 64-bit integer is rejected before any
 	// query runs, so a malformed value can never reach the database.
 	handler := &MetricsHandler{
+		authStore: newTestAuthStore(t),
 		datastore: &database.Datastore{},
 		queryTimeSeriesFn: func(
 			_ context.Context,
@@ -358,10 +362,10 @@ func TestHandleMetricsQuery_TimeSeriesMode_InvalidQueryID(t *testing.T) {
 		},
 	}
 
-	req := httptest.NewRequest(http.MethodGet,
+	req := withSuperuser(httptest.NewRequest(http.MethodGet,
 		"/api/v1/metrics/query?connection_id=1"+
 			"&probe_name=pg_stat_statements&time_range=1h"+
-			"&queryid=not-a-number", nil)
+			"&queryid=not-a-number", nil))
 	rec := httptest.NewRecorder()
 
 	handler.handleMetricsQuery(rec, req)
@@ -379,12 +383,12 @@ func TestHandleMetricsQuery_TimeSeriesMode_InvalidQueryID(t *testing.T) {
 func TestHandleMetricsQuery_LatestRowsMode_InvalidQueryID(t *testing.T) {
 	// The latest-row path shares the same queryid validation, and must
 	// reject a malformed value before it touches the pool.
-	handler := &MetricsHandler{datastore: &database.Datastore{}}
+	handler := &MetricsHandler{datastore: &database.Datastore{}, authStore: newTestAuthStore(t)}
 
-	req := httptest.NewRequest(http.MethodGet,
+	req := withSuperuser(httptest.NewRequest(http.MethodGet,
 		"/api/v1/metrics/query?connection_id=1"+
 			"&probe_name=pg_stat_statements&limit=5"+
-			"&queryid=99999999999999999999", nil)
+			"&queryid=99999999999999999999", nil))
 	rec := httptest.NewRecorder()
 
 	handler.handleMetricsQuery(rec, req)
@@ -423,11 +427,11 @@ func TestHandleMetricsQuery_TimeSeriesMode_DefaultQueryFn(t *testing.T) {
 		t.Skipf("Test database ping failed: %v", err)
 	}
 
-	handler := &MetricsHandler{datastore: database.NewTestDatastore(pool)}
+	handler := &MetricsHandler{datastore: database.NewTestDatastore(pool), authStore: newTestAuthStore(t)}
 
-	req := httptest.NewRequest(http.MethodGet,
+	req := withSuperuser(httptest.NewRequest(http.MethodGet,
 		"/api/v1/metrics/query?connection_id=1"+
-			"&probe_name=zzz_no_such_probe&time_range=1h", nil)
+			"&probe_name=zzz_no_such_probe&time_range=1h", nil))
 	rec := httptest.NewRecorder()
 
 	handler.handleMetricsQuery(rec, req)
@@ -441,10 +445,12 @@ func TestHandleMetricsQuery_TimeSeriesMode_DefaultQueryFn(t *testing.T) {
 // newWindowCapturingHandler returns a handler whose injected query function
 // records the resolved metrics.TimeWindow reaching the query layer.
 func newWindowCapturingHandler(
+	t *testing.T,
 	got *metrics.TimeWindow,
 	called *bool,
 ) *MetricsHandler {
 	return &MetricsHandler{
+		authStore: newTestAuthStore(t),
 		datastore: &database.Datastore{},
 		queryTimeSeriesFn: func(
 			_ context.Context,
@@ -469,14 +475,14 @@ func TestHandleMetricsQuery_CustomWindowReachesQueryLayer(t *testing.T) {
 	// window the caller asked for, since the bucketing derives from it.
 	var got metrics.TimeWindow
 	called := false
-	handler := newWindowCapturingHandler(&got, &called)
+	handler := newWindowCapturingHandler(t, &got, &called)
 
 	start := "2026-07-01T00:00:00Z"
 	end := "2026-07-02T06:30:00Z"
-	req := httptest.NewRequest(http.MethodGet,
+	req := withSuperuser(httptest.NewRequest(http.MethodGet,
 		"/api/v1/metrics/query?connection_id=1"+
 			"&probe_name=pg_stat_all_tables&time_range=custom"+
-			"&time_start="+start+"&time_end="+end, nil)
+			"&time_start="+start+"&time_end="+end, nil))
 	rec := httptest.NewRecorder()
 
 	handler.handleMetricsQuery(rec, req)
@@ -500,11 +506,11 @@ func TestHandleMetricsQuery_DefaultTimeRangeReachesQueryLayer(t *testing.T) {
 	// Omitting time_range keeps the historical one-hour default.
 	var got metrics.TimeWindow
 	called := false
-	handler := newWindowCapturingHandler(&got, &called)
+	handler := newWindowCapturingHandler(t, &got, &called)
 
-	req := httptest.NewRequest(http.MethodGet,
+	req := withSuperuser(httptest.NewRequest(http.MethodGet,
 		"/api/v1/metrics/query?connection_id=1"+
-			"&probe_name=pg_stat_all_tables", nil)
+			"&probe_name=pg_stat_all_tables", nil))
 	rec := httptest.NewRecorder()
 
 	handler.handleMetricsQuery(rec, req)
@@ -527,14 +533,14 @@ func TestHandleMetricsQuery_CustomWindowFutureEndClamped(t *testing.T) {
 	// handler must clamp rather than reject.
 	var got metrics.TimeWindow
 	called := false
-	handler := newWindowCapturingHandler(&got, &called)
+	handler := newWindowCapturingHandler(t, &got, &called)
 
 	start := time.Now().UTC().Add(-2 * time.Hour).Format(time.RFC3339)
 	end := time.Now().UTC().Add(2 * time.Hour).Format(time.RFC3339)
-	req := httptest.NewRequest(http.MethodGet,
+	req := withSuperuser(httptest.NewRequest(http.MethodGet,
 		"/api/v1/metrics/query?connection_id=1"+
 			"&probe_name=pg_stat_all_tables&time_range=custom"+
-			"&time_start="+start+"&time_end="+end, nil)
+			"&time_start="+start+"&time_end="+end, nil))
 	rec := httptest.NewRecorder()
 
 	handler.handleMetricsQuery(rec, req)
@@ -600,12 +606,12 @@ func TestHandleMetricsQuery_CustomWindowRejections(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet,
+			req := withSuperuser(httptest.NewRequest(http.MethodGet,
 				"/api/v1/metrics/query?connection_id=1"+
-					"&probe_name=pg_stat_all_tables"+tt.query, nil)
+					"&probe_name=pg_stat_all_tables"+tt.query, nil))
 			rec := httptest.NewRecorder()
 
-			handler := &MetricsHandler{}
+			handler := &MetricsHandler{authStore: newTestAuthStore(t)}
 			handler.handleMetricsQuery(rec, req)
 
 			if rec.Code != http.StatusBadRequest {
@@ -639,11 +645,11 @@ func TestHandleMetricsQuery_RejectsNonGET(t *testing.T) {
 func TestHandleMetricsQuery_RejectsNonIdentifierProbeName(t *testing.T) {
 	// A percent-encoded separator survives query parsing, so the probe name
 	// reaches the identifier check with an illegal character in it.
-	req := httptest.NewRequest(http.MethodGet,
-		"/api/v1/metrics/query?connection_id=1&probe_name=bad%3Bname", nil)
+	req := withSuperuser(httptest.NewRequest(http.MethodGet,
+		"/api/v1/metrics/query?connection_id=1&probe_name=bad%3Bname", nil))
 	rec := httptest.NewRecorder()
 
-	handler := &MetricsHandler{}
+	handler := &MetricsHandler{authStore: newTestAuthStore(t)}
 	handler.handleMetricsQuery(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
@@ -687,12 +693,12 @@ func TestHandleMetricsQuery_TimeSeriesMode_ParameterValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet,
+			req := withSuperuser(httptest.NewRequest(http.MethodGet,
 				"/api/v1/metrics/query?connection_id=1"+
-					"&probe_name=pg_stat_all_tables"+tt.query, nil)
+					"&probe_name=pg_stat_all_tables"+tt.query, nil))
 			rec := httptest.NewRecorder()
 
-			handler := &MetricsHandler{}
+			handler := &MetricsHandler{authStore: newTestAuthStore(t)}
 			handler.handleMetricsQuery(rec, req)
 
 			if rec.Code != http.StatusBadRequest {
@@ -713,6 +719,7 @@ func TestHandleMetricsQuery_TimeSeriesMode_ForwardsBucketsAndMetrics(t *testing.
 	var gotAggregation string
 	var gotMetrics []string
 	handler := &MetricsHandler{
+		authStore: newTestAuthStore(t),
 		datastore: &database.Datastore{},
 		queryTimeSeriesFn: func(
 			_ context.Context,
@@ -732,10 +739,10 @@ func TestHandleMetricsQuery_TimeSeriesMode_ForwardsBucketsAndMetrics(t *testing.
 		},
 	}
 
-	req := httptest.NewRequest(http.MethodGet,
+	req := withSuperuser(httptest.NewRequest(http.MethodGet,
 		"/api/v1/metrics/query?connection_id=1"+
 			"&probe_name=pg_stat_all_tables&buckets=42&aggregation=MAX"+
-			"&metrics=seq_scan,,%20idx_scan%20", nil)
+			"&metrics=seq_scan,,%20idx_scan%20", nil))
 	rec := httptest.NewRecorder()
 
 	handler.handleMetricsQuery(rec, req)
@@ -759,8 +766,9 @@ func TestHandleMetricsQuery_TimeSeriesMode_ForwardsBucketsAndMetrics(t *testing.
 // envelopeHandler builds a handler whose query function echoes the window
 // it was handed back into the envelope, exactly as metrics.QueryTimeSeries
 // does, and records the bucket count it was asked for.
-func envelopeHandler(gotBuckets *int) *MetricsHandler {
+func envelopeHandler(t *testing.T, gotBuckets *int) *MetricsHandler {
 	return &MetricsHandler{
+		authStore: newTestAuthStore(t),
 		datastore: &database.Datastore{},
 		queryTimeSeriesFn: func(
 			_ context.Context,
@@ -826,11 +834,11 @@ func TestHandleMetricsQuery_TimeSeriesMode_EnvelopePresetRange(t *testing.T) {
 	// drawn over the requested range rather than over whatever points
 	// happen to exist.
 	var buckets int
-	handler := envelopeHandler(&buckets)
+	handler := envelopeHandler(t, &buckets)
 
-	req := httptest.NewRequest(http.MethodGet,
+	req := withSuperuser(httptest.NewRequest(http.MethodGet,
 		"/api/v1/metrics/query?connection_id=1"+
-			"&probe_name=pg_stat_database&time_range=6h&buckets=72", nil)
+			"&probe_name=pg_stat_database&time_range=6h&buckets=72", nil))
 	rec := httptest.NewRecorder()
 	before := time.Now().UTC()
 
@@ -878,11 +886,11 @@ func TestHandleMetricsQuery_TimeSeriesMode_EnvelopeDefaultsRangeToOneHour(t *tes
 	// An omitted time_range is echoed as the "1h" the handler resolved,
 	// so the client is never left guessing which default applied.
 	var buckets int
-	handler := envelopeHandler(&buckets)
+	handler := envelopeHandler(t, &buckets)
 
-	req := httptest.NewRequest(http.MethodGet,
+	req := withSuperuser(httptest.NewRequest(http.MethodGet,
 		"/api/v1/metrics/query?connection_id=1"+
-			"&probe_name=pg_stat_database&buckets=60", nil)
+			"&probe_name=pg_stat_database&buckets=60", nil))
 	rec := httptest.NewRecorder()
 
 	handler.handleMetricsQuery(rec, req)
@@ -907,16 +915,16 @@ func TestHandleMetricsQuery_TimeSeriesMode_EnvelopeCustomRange(t *testing.T) {
 	// A custom window is reported the same way a preset one is: the
 	// resolved bounds and the width the query binned by.
 	var buckets int
-	handler := envelopeHandler(&buckets)
+	handler := envelopeHandler(t, &buckets)
 
 	start := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Second)
 	end := start.Add(time.Hour)
-	req := httptest.NewRequest(http.MethodGet,
+	req := withSuperuser(httptest.NewRequest(http.MethodGet,
 		"/api/v1/metrics/query?connection_id=1"+
 			"&probe_name=pg_stat_database&time_range=custom"+
 			"&time_start="+start.Format(time.RFC3339)+
 			"&time_end="+end.Format(time.RFC3339)+
-			"&buckets=30&aggregation=max", nil)
+			"&buckets=30&aggregation=max", nil))
 	rec := httptest.NewRecorder()
 
 	handler.handleMetricsQuery(rec, req)
@@ -949,6 +957,7 @@ func TestHandleMetricsQuery_TimeSeriesMode_EnvelopeCarriesPointFlags(t *testing.
 	observed := 90.0
 	carried := 90.0
 	handler := &MetricsHandler{
+		authStore: newTestAuthStore(t),
 		datastore: &database.Datastore{},
 		queryTimeSeriesFn: func(
 			_ context.Context,
@@ -975,9 +984,9 @@ func TestHandleMetricsQuery_TimeSeriesMode_EnvelopeCarriesPointFlags(t *testing.
 		},
 	}
 
-	req := httptest.NewRequest(http.MethodGet,
+	req := withSuperuser(httptest.NewRequest(http.MethodGet,
 		"/api/v1/metrics/query?connection_id=1"+
-			"&probe_name=pg_stat_all_tables&time_range=1h", nil)
+			"&probe_name=pg_stat_all_tables&time_range=1h", nil))
 	rec := httptest.NewRecorder()
 
 	handler.handleMetricsQuery(rec, req)

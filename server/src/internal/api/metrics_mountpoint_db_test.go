@@ -114,12 +114,12 @@ func TestHandleMetricsQuery_LatestRowsMode_ScopesToMountPoint(t *testing.T) {
 	pool, cleanup := setupMountFixture(t)
 	defer cleanup()
 
-	handler := &MetricsHandler{datastore: database.NewTestDatastore(pool)}
+	handler := &MetricsHandler{datastore: database.NewTestDatastore(pool), authStore: newTestAuthStore(t)}
 
-	req := httptest.NewRequest(http.MethodGet,
+	req := withSuperuser(httptest.NewRequest(http.MethodGet,
 		"/api/v1/metrics/query?connection_id=1&probe_name="+mountProbeTable+
 			"&limit=10&order_by=collected_at&order=desc"+
-			"&mount_point=%2Fsrv%2Fdata", nil)
+			"&mount_point=%2Fsrv%2Fdata", nil))
 	rec := httptest.NewRecorder()
 
 	handler.handleMetricsQuery(rec, req)
@@ -156,11 +156,11 @@ func TestHandleMetricsQuery_LatestRowsMode_UnfilteredReturnsEveryMount(t *testin
 	pool, cleanup := setupMountFixture(t)
 	defer cleanup()
 
-	handler := &MetricsHandler{datastore: database.NewTestDatastore(pool)}
+	handler := &MetricsHandler{datastore: database.NewTestDatastore(pool), authStore: newTestAuthStore(t)}
 
-	req := httptest.NewRequest(http.MethodGet,
+	req := withSuperuser(httptest.NewRequest(http.MethodGet,
 		"/api/v1/metrics/query?connection_id=1&probe_name="+mountProbeTable+
-			"&limit=10&order_by=collected_at&order=desc", nil)
+			"&limit=10&order_by=collected_at&order=desc", nil))
 	rec := httptest.NewRecorder()
 
 	handler.handleMetricsQuery(rec, req)
@@ -186,11 +186,11 @@ func TestHandleMetricsQuery_LatestRowsMode_UnknownProbe(t *testing.T) {
 	pool, cleanup := setupMountFixture(t)
 	defer cleanup()
 
-	handler := &MetricsHandler{datastore: database.NewTestDatastore(pool)}
+	handler := &MetricsHandler{datastore: database.NewTestDatastore(pool), authStore: newTestAuthStore(t)}
 
-	req := httptest.NewRequest(http.MethodGet,
+	req := withSuperuser(httptest.NewRequest(http.MethodGet,
 		"/api/v1/metrics/query?connection_id=1"+
-			"&probe_name=zzz_no_such_probe&limit=1", nil)
+			"&probe_name=zzz_no_such_probe&limit=1", nil))
 	rec := httptest.NewRecorder()
 
 	handler.handleMetricsQuery(rec, req)

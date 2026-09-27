@@ -122,7 +122,7 @@ func newQueryExecTestHandler(
 
 	handler := NewConnectionHandlerWithSecurity(
 		database.NewTestDatastoreWithSecret(pool, queryExecTestSecret),
-		nil, auth.NewRBACChecker(nil), false, nil, nil)
+		nil, newTestRBACChecker(t), false, nil, nil)
 
 	cleanup := func() {
 		_, _ = pool.Exec(context.Background(), queryExecTestTeardown)
@@ -168,7 +168,9 @@ func seedQueryExecConnection(
 	return id
 }
 
-// postQuery drives executeQuery with the given request body.
+// postQuery drives executeQuery with the given request body. The request
+// is marked superuser, so it passes the RBAC gate on a real test auth
+// store.
 func postQuery(
 	t *testing.T,
 	h *ConnectionHandler,
@@ -177,8 +179,8 @@ func postQuery(
 ) *httptest.ResponseRecorder {
 	t.Helper()
 
-	req := httptest.NewRequest(http.MethodPost,
-		"/api/v1/connections/1/query", strings.NewReader(body))
+	req := withSuperuser(httptest.NewRequest(http.MethodPost,
+		"/api/v1/connections/1/query", strings.NewReader(body)))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -486,7 +488,13 @@ func TestExecuteQuery_DeniesUnauthorisedCallers(t *testing.T) {
 			})
 		h := NewConnectionHandlerWithSecurity(ds, store, checker, false, nil, nil)
 
-		rec := postQuery(t, h, connID, `{"query":"SELECT 1"}`)
+		// An unauthenticated request: postQuery would mark it superuser.
+		req := httptest.NewRequest(http.MethodPost,
+			"/api/v1/connections/1/query", strings.NewReader(`{"query":"SELECT 1"}`))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+
+		h.executeQuery(rec, req, connID)
 
 		if rec.Code != http.StatusForbidden {
 			t.Fatalf("status = %d, want %d (body %q)",
@@ -538,8 +546,8 @@ func TestExecuteQuery_RejectsInvalidRequests(t *testing.T) {
 	connID := seedQueryExecConnection(t, pool, target, target.host, target.port)
 
 	t.Run("method not allowed", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet,
-			"/api/v1/connections/1/query", nil)
+		req := withSuperuser(httptest.NewRequest(http.MethodGet,
+			"/api/v1/connections/1/query", nil))
 		rec := httptest.NewRecorder()
 
 		h.executeQuery(rec, req, connID)

@@ -118,10 +118,10 @@ func TestHandleMetricsQuery_ConnectionIDsCap(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, tc.url, nil)
+			req := withSuperuser(httptest.NewRequest(http.MethodGet, tc.url, nil))
 			rec := httptest.NewRecorder()
 
-			handler := &MetricsHandler{}
+			handler := &MetricsHandler{authStore: newTestAuthStore(t)}
 			handler.handleMetricsQuery(rec, req)
 
 			if rec.Code != http.StatusBadRequest {
@@ -171,10 +171,10 @@ func TestHandlePerfSummary_ConnectionIDsCap(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, tc.url, nil)
+			req := withSuperuser(httptest.NewRequest(http.MethodGet, tc.url, nil))
 			rec := httptest.NewRecorder()
 
-			handler := &PerfSummaryHandler{}
+			handler := &PerfSummaryHandler{authStore: newTestAuthStore(t)}
 			handler.handlePerfSummary(rec, req)
 
 			if rec.Code != http.StatusBadRequest {

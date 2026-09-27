@@ -252,11 +252,11 @@ func TestProbeConfigHandler_ListProbeConfigs_InvalidConnectionID(t *testing.T) {
 }
 
 func TestProbeConfigHandler_UpdateProbeConfig_InvalidJSON(t *testing.T) {
-	rbac := auth.NewRBACChecker(nil)
+	rbac := newTestRBACChecker(t)
 	handler := NewProbeConfigHandler(nil, nil, rbac)
 
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/probe-configs/1",
-		bytes.NewBufferString("invalid json"))
+	req := withSuperuser(httptest.NewRequest(http.MethodPut, "/api/v1/probe-configs/1",
+		bytes.NewBufferString("invalid json")))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 

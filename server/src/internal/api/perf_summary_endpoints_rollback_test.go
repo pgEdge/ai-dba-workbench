@@ -148,7 +148,7 @@ func newPerfEndpointTestHandler(
 		t.Fatalf("Failed to create performance endpoint test schema: %v", err)
 	}
 
-	handler := NewPerfSummaryHandler(database.NewTestDatastore(pool), nil)
+	handler := NewPerfSummaryHandler(database.NewTestDatastore(pool), newTestAuthStore(t))
 	cleanup := func() {
 		_, _ = pool.Exec(context.Background(), perfEndpointTestSchemaTeardown)
 		pool.Close()
@@ -216,9 +216,9 @@ func TestHandlePerfSummary_ReturnsMetricsAndReleasesTransaction(t *testing.T) {
 	seedPerfEndpointMetrics(t, pool, connA, latest, prev)
 	seedPerfEndpointMetrics(t, pool, connB, latest, prev)
 
-	req := httptest.NewRequest(http.MethodGet,
+	req := withSuperuser(httptest.NewRequest(http.MethodGet,
 		"/api/v1/metrics/performance-summary?connection_ids=4101,4102"+
-			"&time_range=24h", nil)
+			"&time_range=24h", nil))
 	rec := httptest.NewRecorder()
 
 	h.handlePerfSummary(rec, req)
@@ -278,8 +278,8 @@ func TestHandlePerfSummary_SingleConnectionOmitsAggregate(t *testing.T) {
 	seedPerfEndpointMetrics(t, pool, connID, now.Add(-1*time.Minute),
 		now.Add(-2*time.Minute))
 
-	req := httptest.NewRequest(http.MethodGet,
-		"/api/v1/metrics/performance-summary?connection_id=4103", nil)
+	req := withSuperuser(httptest.NewRequest(http.MethodGet,
+		"/api/v1/metrics/performance-summary?connection_id=4103", nil))
 	rec := httptest.NewRecorder()
 
 	h.handlePerfSummary(rec, req)
@@ -308,8 +308,8 @@ func TestHandlePerfSummary_RejectsInvalidRequests(t *testing.T) {
 	defer cleanup()
 
 	t.Run("method not allowed", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost,
-			"/api/v1/metrics/performance-summary?connection_id=1", nil)
+		req := withSuperuser(httptest.NewRequest(http.MethodPost,
+			"/api/v1/metrics/performance-summary?connection_id=1", nil))
 		rec := httptest.NewRecorder()
 
 		h.handlePerfSummary(rec, req)
@@ -320,8 +320,8 @@ func TestHandlePerfSummary_RejectsInvalidRequests(t *testing.T) {
 	})
 
 	t.Run("missing connection", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet,
-			"/api/v1/metrics/performance-summary", nil)
+		req := withSuperuser(httptest.NewRequest(http.MethodGet,
+			"/api/v1/metrics/performance-summary", nil))
 		rec := httptest.NewRecorder()
 
 		h.handlePerfSummary(rec, req)
@@ -332,9 +332,9 @@ func TestHandlePerfSummary_RejectsInvalidRequests(t *testing.T) {
 	})
 
 	t.Run("invalid time range", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet,
+		req := withSuperuser(httptest.NewRequest(http.MethodGet,
 			"/api/v1/metrics/performance-summary?connection_id=1&time_range=99z",
-			nil)
+			nil))
 		rec := httptest.NewRecorder()
 
 		h.handlePerfSummary(rec, req)
@@ -361,9 +361,9 @@ func TestHandleDatabaseSummaries_ReturnsSummaries(t *testing.T) {
 	seedPerfEndpointMetrics(t, pool, connID, now.Add(-1*time.Minute),
 		now.Add(-2*time.Minute))
 
-	req := httptest.NewRequest(http.MethodGet,
+	req := withSuperuser(httptest.NewRequest(http.MethodGet,
 		"/api/v1/metrics/database-summaries?connection_id=4104&time_range=6h",
-		nil)
+		nil))
 	rec := httptest.NewRecorder()
 
 	h.handleDatabaseSummaries(rec, req)
@@ -439,7 +439,7 @@ func TestHandleDatabaseSummaries_RejectsInvalidRequests(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest(tc.method, tc.url, nil)
+			req := withSuperuser(httptest.NewRequest(tc.method, tc.url, nil))
 			rec := httptest.NewRecorder()
 
 			h.handleDatabaseSummaries(rec, req)
@@ -473,8 +473,8 @@ func TestHandleDatabaseSummaries_DefaultsAndEmptySeries(t *testing.T) {
 		t.Fatalf("seed exec failed: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodGet,
-		"/api/v1/metrics/database-summaries?connection_id=4106", nil)
+	req := withSuperuser(httptest.NewRequest(http.MethodGet,
+		"/api/v1/metrics/database-summaries?connection_id=4106", nil))
 	rec := httptest.NewRecorder()
 
 	h.handleDatabaseSummaries(rec, req)
@@ -535,7 +535,7 @@ func TestPerfSummaryEndpoints_ClosedPoolReturnsError(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, tc.url, nil)
+			req := withSuperuser(httptest.NewRequest(http.MethodGet, tc.url, nil))
 			rec := httptest.NewRecorder()
 
 			tc.handler(rec, req)
@@ -625,8 +625,8 @@ func TestHandleTopQueries_AggregatesWindowDeltas(t *testing.T) {
 	seedTopQueries(t, pool, connID)
 
 	t.Run("orders by total exec time", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet,
-			"/api/v1/metrics/top-queries?connection_id=4105&limit=500", nil)
+		req := withSuperuser(httptest.NewRequest(http.MethodGet,
+			"/api/v1/metrics/top-queries?connection_id=4105&limit=500", nil))
 		rec := httptest.NewRecorder()
 
 		h.handleTopQueries(rec, req)
@@ -663,9 +663,9 @@ func TestHandleTopQueries_AggregatesWindowDeltas(t *testing.T) {
 	})
 
 	t.Run("ascending order and row limit", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet,
+		req := withSuperuser(httptest.NewRequest(http.MethodGet,
 			"/api/v1/metrics/top-queries?connection_id=4105"+
-				"&order_by=calls&order=ASC&limit=0", nil)
+				"&order_by=calls&order=ASC&limit=0", nil))
 		rec := httptest.NewRecorder()
 
 		h.handleTopQueries(rec, req)
@@ -683,8 +683,8 @@ func TestHandleTopQueries_AggregatesWindowDeltas(t *testing.T) {
 	})
 
 	t.Run("filters by queryid", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet,
-			"/api/v1/metrics/top-queries?connection_id=4105&queryid=111", nil)
+		req := withSuperuser(httptest.NewRequest(http.MethodGet,
+			"/api/v1/metrics/top-queries?connection_id=4105&queryid=111", nil))
 		rec := httptest.NewRecorder()
 
 		h.handleTopQueries(rec, req)
@@ -696,9 +696,9 @@ func TestHandleTopQueries_AggregatesWindowDeltas(t *testing.T) {
 	})
 
 	t.Run("excludes collector probes", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet,
+		req := withSuperuser(httptest.NewRequest(http.MethodGet,
 			"/api/v1/metrics/top-queries?connection_id=4105&exclude_collector=true",
-			nil)
+			nil))
 		rec := httptest.NewRecorder()
 
 		h.handleTopQueries(rec, req)
@@ -726,8 +726,8 @@ func TestHandleTopQueries_MissingTableReturnsEmptyList(t *testing.T) {
 		t.Fatalf("Failed to drop pg_stat_statements: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodGet,
-		"/api/v1/metrics/top-queries?connection_id=4105", nil)
+	req := withSuperuser(httptest.NewRequest(http.MethodGet,
+		"/api/v1/metrics/top-queries?connection_id=4105", nil))
 	rec := httptest.NewRecorder()
 
 	h.handleTopQueries(rec, req)
@@ -771,8 +771,8 @@ func TestHandleTopQueries_SkipsUnscannableRows(t *testing.T) {
 		t.Fatalf("seed exec failed: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodGet,
-		"/api/v1/metrics/top-queries?connection_id=4107", nil)
+	req := withSuperuser(httptest.NewRequest(http.MethodGet,
+		"/api/v1/metrics/top-queries?connection_id=4107", nil))
 	rec := httptest.NewRecorder()
 
 	h.handleTopQueries(rec, req)
@@ -805,8 +805,8 @@ func TestHandleTopQueries_QueryFailureReportsError(t *testing.T) {
 		t.Fatalf("Failed to alter calls column: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodGet,
-		"/api/v1/metrics/top-queries?connection_id=4107", nil)
+	req := withSuperuser(httptest.NewRequest(http.MethodGet,
+		"/api/v1/metrics/top-queries?connection_id=4107", nil))
 	rec := httptest.NewRecorder()
 
 	h.handleTopQueries(rec, req)
@@ -842,8 +842,8 @@ func TestHandlePerfSummary_RejectsOverlongWindow(t *testing.T) {
 	}
 
 	t.Run("just inside the cap is accepted", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet,
-			customURL(now.Add(-maxAggregationTimeSpan+time.Minute), now), nil)
+		req := withSuperuser(httptest.NewRequest(http.MethodGet,
+			customURL(now.Add(-maxAggregationTimeSpan+time.Minute), now), nil))
 		rec := httptest.NewRecorder()
 
 		h.handlePerfSummary(rec, req)
@@ -855,8 +855,8 @@ func TestHandlePerfSummary_RejectsOverlongWindow(t *testing.T) {
 	})
 
 	t.Run("just outside the cap is rejected", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet,
-			customURL(now.Add(-maxAggregationTimeSpan-time.Minute), now), nil)
+		req := withSuperuser(httptest.NewRequest(http.MethodGet,
+			customURL(now.Add(-maxAggregationTimeSpan-time.Minute), now), nil))
 		rec := httptest.NewRecorder()
 
 		h.handlePerfSummary(rec, req)
@@ -892,8 +892,8 @@ func TestHandleTopQueries_RejectsOverlongWindow(t *testing.T) {
 	}
 
 	t.Run("just inside the cap is accepted", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet,
-			customURL(now.Add(-maxAggregationTimeSpan+time.Minute), now), nil)
+		req := withSuperuser(httptest.NewRequest(http.MethodGet,
+			customURL(now.Add(-maxAggregationTimeSpan+time.Minute), now), nil))
 		rec := httptest.NewRecorder()
 
 		h.handleTopQueries(rec, req)
@@ -905,8 +905,8 @@ func TestHandleTopQueries_RejectsOverlongWindow(t *testing.T) {
 	})
 
 	t.Run("just outside the cap is rejected", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet,
-			customURL(now.Add(-maxAggregationTimeSpan-time.Minute), now), nil)
+		req := withSuperuser(httptest.NewRequest(http.MethodGet,
+			customURL(now.Add(-maxAggregationTimeSpan-time.Minute), now), nil))
 		rec := httptest.NewRecorder()
 
 		h.handleTopQueries(rec, req)
@@ -922,8 +922,8 @@ func TestHandleTopQueries_RejectsOverlongWindow(t *testing.T) {
 	})
 
 	t.Run("a span the shared resolver would allow is still rejected", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet,
-			customURL(now.Add(-365*24*time.Hour), now), nil)
+		req := withSuperuser(httptest.NewRequest(http.MethodGet,
+			customURL(now.Add(-365*24*time.Hour), now), nil))
 		rec := httptest.NewRecorder()
 
 		h.handleTopQueries(rec, req)
@@ -938,9 +938,9 @@ func TestHandleTopQueries_RejectsOverlongWindow(t *testing.T) {
 	// cap; 30d sits exactly on the boundary and must still be accepted.
 	for _, preset := range []string{"1h", "6h", "24h", "7d", "30d"} {
 		t.Run("preset "+preset, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet,
+			req := withSuperuser(httptest.NewRequest(http.MethodGet,
 				"/api/v1/metrics/top-queries?connection_id=4105&time_range="+preset,
-				nil)
+				nil))
 			rec := httptest.NewRecorder()
 
 			h.handleTopQueries(rec, req)
@@ -1062,7 +1062,7 @@ func TestHandleTopQueries_RejectsInvalidRequests(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest(tc.method, tc.url, nil)
+			req := withSuperuser(httptest.NewRequest(tc.method, tc.url, nil))
 			rec := httptest.NewRecorder()
 
 			h.handleTopQueries(rec, req)

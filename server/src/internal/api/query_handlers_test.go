@@ -22,18 +22,20 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/pgedge/ai-workbench/server/internal/auth"
 )
 
-// newTestConnectionHandlerWithRBAC creates a handler with auth disabled so
-// RBAC checks pass without requiring a database.
-func newTestConnectionHandlerWithRBAC() *ConnectionHandler {
-	rbac := auth.NewRBACChecker(nil)
-	return NewConnectionHandlerWithSecurity(nil, nil, rbac, false, nil, nil)
+// newTestConnectionHandlerWithRBAC creates a handler whose RBAC checker
+// sits on a real test auth store, with no datastore. Requests marked with
+// withSuperuser pass the RBAC checks; a nil store would deny them (issue
+// #477).
+func newTestConnectionHandlerWithRBAC(t *testing.T) *ConnectionHandler {
+	t.Helper()
+	return NewConnectionHandlerWithSecurity(nil, nil, newTestRBACChecker(t),
+		false, nil, nil)
 }
 
 func TestExecuteQuery_MethodNotAllowed(t *testing.T) {
-	handler := newTestConnectionHandlerWithRBAC()
+	handler := newTestConnectionHandlerWithRBAC(t)
 
 	methods := []string{http.MethodGet, http.MethodPut, http.MethodDelete, http.MethodPatch}
 	for _, method := range methods {
@@ -57,11 +59,11 @@ func TestExecuteQuery_MethodNotAllowed(t *testing.T) {
 }
 
 func TestExecuteQuery_EmptyQuery(t *testing.T) {
-	handler := newTestConnectionHandlerWithRBAC()
+	handler := newTestConnectionHandlerWithRBAC(t)
 
 	body := `{"query": ""}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections/1/query",
-		bytes.NewBufferString(body))
+	req := withSuperuser(httptest.NewRequest(http.MethodPost, "/api/v1/connections/1/query",
+		bytes.NewBufferString(body)))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -81,11 +83,11 @@ func TestExecuteQuery_EmptyQuery(t *testing.T) {
 }
 
 func TestExecuteQuery_WhitespaceOnlyQuery(t *testing.T) {
-	handler := newTestConnectionHandlerWithRBAC()
+	handler := newTestConnectionHandlerWithRBAC(t)
 
 	body := `{"query": "   "}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections/1/query",
-		bytes.NewBufferString(body))
+	req := withSuperuser(httptest.NewRequest(http.MethodPost, "/api/v1/connections/1/query",
+		bytes.NewBufferString(body)))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -97,11 +99,11 @@ func TestExecuteQuery_WhitespaceOnlyQuery(t *testing.T) {
 }
 
 func TestExecuteQuery_InvalidJSON(t *testing.T) {
-	handler := newTestConnectionHandlerWithRBAC()
+	handler := newTestConnectionHandlerWithRBAC(t)
 
 	body := `{invalid json}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections/1/query",
-		bytes.NewBufferString(body))
+	req := withSuperuser(httptest.NewRequest(http.MethodPost, "/api/v1/connections/1/query",
+		bytes.NewBufferString(body)))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -113,11 +115,11 @@ func TestExecuteQuery_InvalidJSON(t *testing.T) {
 }
 
 func TestExecuteQuery_NoDatastore(t *testing.T) {
-	handler := newTestConnectionHandlerWithRBAC()
+	handler := newTestConnectionHandlerWithRBAC(t)
 
 	body := `{"query": "SELECT 1"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections/1/query",
-		bytes.NewBufferString(body))
+	req := withSuperuser(httptest.NewRequest(http.MethodPost, "/api/v1/connections/1/query",
+		bytes.NewBufferString(body)))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -607,7 +609,7 @@ func TestStatementResult_ErrorOmitsErrorField(t *testing.T) {
 }
 
 func TestConnectionSubpath_QueryRoute(t *testing.T) {
-	handler := newTestConnectionHandlerWithRBAC()
+	handler := newTestConnectionHandlerWithRBAC(t)
 
 	// Verify that /api/v1/connections/1/query routes to executeQuery
 	// by checking it does not return 404
@@ -779,13 +781,13 @@ func TestIsReadOnlyStatement(t *testing.T) {
 }
 
 func TestWriteStatements_RequireConfirmation(t *testing.T) {
-	handler := newTestConnectionHandlerWithRBAC()
+	handler := newTestConnectionHandlerWithRBAC(t)
 
 	// Send an ALTER SYSTEM without confirmed flag; the handler should
 	// return a confirmation response before touching the datastore.
 	body := `{"query": "ALTER SYSTEM SET work_mem = '16MB'"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections/1/query",
-		bytes.NewBufferString(body))
+	req := withSuperuser(httptest.NewRequest(http.MethodPost, "/api/v1/connections/1/query",
+		bytes.NewBufferString(body)))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -812,11 +814,11 @@ func TestWriteStatements_RequireConfirmation(t *testing.T) {
 }
 
 func TestMixedStatements_RequireConfirmation(t *testing.T) {
-	handler := newTestConnectionHandlerWithRBAC()
+	handler := newTestConnectionHandlerWithRBAC(t)
 
 	body := `{"query": "SELECT 1; ALTER SYSTEM SET work_mem = '16MB'; SELECT 2"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections/1/query",
-		bytes.NewBufferString(body))
+	req := withSuperuser(httptest.NewRequest(http.MethodPost, "/api/v1/connections/1/query",
+		bytes.NewBufferString(body)))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -843,7 +845,7 @@ func TestMixedStatements_RequireConfirmation(t *testing.T) {
 }
 
 func TestReadOnlyStatements_NoConfirmation(t *testing.T) {
-	handler := newTestConnectionHandlerWithRBAC()
+	handler := newTestConnectionHandlerWithRBAC(t)
 
 	// Pure read-only query should NOT trigger confirmation; it should
 	// proceed to the datastore path (which panics with nil datastore).

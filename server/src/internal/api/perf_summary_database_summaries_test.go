@@ -103,7 +103,7 @@ func newDatabaseSummariesTestHandler(
 	}
 
 	ds := database.NewTestDatastore(pool)
-	handler := NewPerfSummaryHandler(ds, nil)
+	handler := NewPerfSummaryHandler(ds, newTestAuthStore(t))
 	cleanup := func() {
 		_, _ = pool.Exec(context.Background(),
 			databaseSummariesTestSchemaTeardown)
@@ -479,8 +479,8 @@ func doDatabaseSummariesRequest(
 	h *PerfSummaryHandler,
 	query string,
 ) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(http.MethodGet,
-		"/api/v1/metrics/database-summaries?"+query, nil)
+	req := withSuperuser(httptest.NewRequest(http.MethodGet,
+		"/api/v1/metrics/database-summaries?"+query, nil))
 	rec := httptest.NewRecorder()
 	h.handleDatabaseSummaries(rec, req)
 	return rec

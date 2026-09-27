@@ -201,12 +201,17 @@ func TestContextAwareProvider_Execute_InvalidTool(t *testing.T) {
 
 	fallbackClient := database.NewClient(nil)
 	cfg := &config.Config{}
-	resourceReg := resources.NewContextAwareRegistry(clientManager, cfg, nil, nil)
+	// A nil auth store denies every check (issue #477), so give the
+	// provider a real store and execute as a superuser.
+	authStore, cleanup := newRBACTestStore(t)
+	defer cleanup()
+	resourceReg := resources.NewContextAwareRegistry(clientManager, cfg, authStore, nil)
 
-	provider := NewContextAwareProvider(clientManager, resourceReg, fallbackClient, cfg, nil, nil, nil)
+	provider := NewContextAwareProvider(clientManager, resourceReg, fallbackClient, cfg, authStore, nil, nil)
 
 	// Provide a token hash since auth is always required
 	ctx := context.WithValue(context.Background(), auth.TokenHashContextKey, "test-token-hash")
+	ctx = context.WithValue(ctx, auth.IsSuperuserContextKey, true)
 
 	// Execute non-existent tool
 	response, err := provider.Execute(ctx, "nonexistent_tool", map[string]any{})
@@ -300,7 +305,7 @@ func TestGetClient_TokenScopeEnforcement(t *testing.T) {
 
 	t.Run("provider creation with nil authStore creates valid rbacChecker", func(t *testing.T) {
 		// This test verifies that NewContextAwareProvider handles nil authStore
-		// correctly by creating an rbacChecker that grants full access
+		// by creating an rbacChecker that fails closed (issue #477)
 		clientManager := database.NewClientManager(nil)
 		defer clientManager.CloseAll()
 
@@ -316,10 +321,12 @@ func TestGetClient_TokenScopeEnforcement(t *testing.T) {
 			t.Fatal("Expected non-nil rbacChecker even with nil authStore")
 		}
 
-		// With nil authStore, superuser check should return true
+		// With nil authStore the checker denies, even for a context that
+		// claims superuser
 		ctx := context.WithValue(context.Background(), auth.TokenHashContextKey, "any-token")
-		if !provider.rbacChecker.IsSuperuser(ctx) {
-			t.Error("Expected IsSuperuser to return true with nil authStore")
+		ctx = context.WithValue(ctx, auth.IsSuperuserContextKey, true)
+		if provider.rbacChecker.IsSuperuser(ctx) {
+			t.Error("Expected IsSuperuser to return false with nil authStore")
 		}
 	})
 

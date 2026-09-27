@@ -488,25 +488,48 @@ func TestHasWriteAccess(t *testing.T) {
 // =============================================================================
 
 func TestRBACCheckerNilStore(t *testing.T) {
+	// A checker without an auth store must deny every check, even for a
+	// context that claims superuser, so that a nil store can never be
+	// mistaken for "no restrictions" (issue #477).
 	checker := NewRBACChecker(nil)
-	ctx := context.Background()
-
-	// Should act as superuser when store is nil
-	if !checker.IsSuperuser(ctx) {
-		t.Error("Expected superuser when store is nil")
+	contexts := map[string]context.Context{
+		"anonymous": context.Background(),
+		"superuser": context.WithValue(context.Background(),
+			IsSuperuserContextKey, true),
 	}
 
-	if !checker.CanAccessMCPItem(ctx, "any_tool") {
-		t.Error("Expected MCP access when store is nil")
-	}
+	for name, ctx := range contexts {
+		t.Run(name, func(t *testing.T) {
+			if checker.IsSuperuser(ctx) {
+				t.Error("Expected no superuser when store is nil")
+			}
 
-	canAccess, level := checker.CanAccessConnection(ctx, 99)
-	if !canAccess || level != AccessLevelReadWrite {
-		t.Error("Expected full connection access when store is nil")
-	}
+			if checker.CanAccessMCPItem(ctx, "any_tool") {
+				t.Error("Expected no MCP access when store is nil")
+			}
 
-	if !checker.HasAdminPermission(ctx, PermManageUsers) {
-		t.Error("Expected admin permission when store is nil")
+			canAccess, level := checker.CanAccessConnection(ctx, 99)
+			if canAccess || level != AccessLevelNone {
+				t.Errorf("Expected no connection access when store is nil, got %v/%q",
+					canAccess, level)
+			}
+
+			if checker.HasWriteAccess(ctx, 99) {
+				t.Error("Expected no write access when store is nil")
+			}
+
+			if checker.HasAdminPermission(ctx, PermManageUsers) {
+				t.Error("Expected no admin permission when store is nil")
+			}
+
+			privs := checker.GetEffectivePrivileges(ctx)
+			if privs.IsSuperuser || len(privs.MCPPrivileges) != 0 ||
+				len(privs.ConnectionPrivileges) != 0 ||
+				len(privs.AdminPermissions) != 0 {
+				t.Errorf("Expected empty privileges when store is nil, got %+v",
+					privs)
+			}
+		})
 	}
 }
 
@@ -1386,15 +1409,16 @@ func TestVisibleConnectionIDs_ExplicitGrantIntersectsSharedVisibility(t *testing
 	}
 }
 
-func TestVisibleConnectionIDs_NilStore_AllConnections(t *testing.T) {
+func TestVisibleConnectionIDs_NilStore_NoConnections(t *testing.T) {
 	checker := NewRBACChecker(nil)
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, true)
 
-	ids, all, err := checker.VisibleConnectionIDs(context.Background(), nil)
+	ids, all, err := checker.VisibleConnectionIDs(ctx, nil)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	if !all {
-		t.Error("Expected allConnections=true for nil store")
+	if all {
+		t.Error("Expected allConnections=false for nil store")
 	}
 	if ids != nil {
 		t.Errorf("Expected nil ids, got %v", ids)
@@ -2497,7 +2521,7 @@ func TestNewRBACCheckerWithSharing_WithLookup(t *testing.T) {
 }
 
 func TestNewRBACCheckerWithSharing_NilStore(t *testing.T) {
-	// Create checker with nil store (should still work, just returns full access)
+	// A nil store still yields a checker, but one that denies everything
 	checker := NewRBACCheckerWithSharing(nil, nil)
 
 	if checker == nil {
@@ -2507,10 +2531,10 @@ func TestNewRBACCheckerWithSharing_NilStore(t *testing.T) {
 		t.Error("Expected authStore to be nil")
 	}
 
-	// Nil store means superuser mode (full access)
-	ctx := context.Background()
-	if !checker.IsSuperuser(ctx) {
-		t.Error("Expected IsSuperuser to return true with nil store")
+	// Nil store denies, even for a context claiming superuser
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, true)
+	if checker.IsSuperuser(ctx) {
+		t.Error("Expected IsSuperuser to return false with nil store")
 	}
 }
 

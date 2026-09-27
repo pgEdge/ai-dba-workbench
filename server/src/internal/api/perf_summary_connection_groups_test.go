@@ -53,8 +53,8 @@ DROP TABLE IF EXISTS metrics.pg_stat_activity CASCADE;
 
 // newConnectionGroupsTestHandler wires a PerfSummaryHandler to the
 // TEST_AI_WORKBENCH_SERVER Postgres instance and installs the trimmed
-// pg_stat_activity schema above. The supplied auth store may be nil, in which
-// case the RBAC checker grants access to every connection.
+// pg_stat_activity schema above. The RBAC checker is built on the supplied
+// auth store, and a nil store denies every connection (issue #477).
 func newConnectionGroupsTestHandler(
 	t *testing.T,
 	store *auth.AuthStore,
@@ -267,7 +267,7 @@ func strPtr(s string) *string { return &s }
 // database user, with a placeholder label for a NULL or empty role name, the
 // state buckets, and the total-descending ordering.
 func TestConnectionGroups_GroupByUser(t *testing.T) {
-	h, pool, cleanup := newConnectionGroupsTestHandler(t, nil)
+	h, pool, cleanup := newConnectionGroupsTestHandler(t, newTestAuthStore(t))
 	defer cleanup()
 
 	const connID = 501
@@ -282,7 +282,7 @@ func TestConnectionGroups_GroupByUser(t *testing.T) {
 		fmt.Sprintf("connection_id=%d", connID),
 	} {
 		resp := decodeConnectionGroups(t,
-			doConnectionGroupsRequest(h, query, nil))
+			doConnectionGroupsRequest(h, query, withSuperuser))
 
 		if resp.CollectedAt == nil {
 			t.Fatalf("collected_at must be populated for %q", query)
@@ -312,7 +312,7 @@ func TestConnectionGroups_GroupByUser(t *testing.T) {
 // client_addr is labeled "local", the group's first non-NULL client_hostname
 // is reported, and groups with equal totals fall back to label ordering.
 func TestConnectionGroups_GroupByClient(t *testing.T) {
-	h, pool, cleanup := newConnectionGroupsTestHandler(t, nil)
+	h, pool, cleanup := newConnectionGroupsTestHandler(t, newTestAuthStore(t))
 	defer cleanup()
 
 	const connID = 502
@@ -321,7 +321,7 @@ func TestConnectionGroups_GroupByClient(t *testing.T) {
 		now.Add(-6*time.Minute))
 
 	resp := decodeConnectionGroups(t, doConnectionGroupsRequest(h,
-		fmt.Sprintf("connection_id=%d&group_by=client", connID), nil))
+		fmt.Sprintf("connection_id=%d&group_by=client", connID), withSuperuser))
 
 	assertGroups(t, resp.Groups, []ConnectionGroupRow{
 		{GroupLabel: "192.0.2.10",
@@ -336,7 +336,7 @@ func TestConnectionGroups_GroupByClient(t *testing.T) {
 // TestConnectionGroups_GroupByDatabase verifies the database grouping,
 // including the placeholder label used when datname is NULL or empty.
 func TestConnectionGroups_GroupByDatabase(t *testing.T) {
-	h, pool, cleanup := newConnectionGroupsTestHandler(t, nil)
+	h, pool, cleanup := newConnectionGroupsTestHandler(t, newTestAuthStore(t))
 	defer cleanup()
 
 	const connID = 503
@@ -345,7 +345,7 @@ func TestConnectionGroups_GroupByDatabase(t *testing.T) {
 		now.Add(-6*time.Minute))
 
 	resp := decodeConnectionGroups(t, doConnectionGroupsRequest(h,
-		fmt.Sprintf("connection_id=%d&group_by=database", connID), nil))
+		fmt.Sprintf("connection_id=%d&group_by=database", connID), withSuperuser))
 
 	assertGroups(t, resp.Groups, []ConnectionGroupRow{
 		{GroupLabel: "sales", Total: 3, Active: 1, Idle: 1,
@@ -359,7 +359,7 @@ func TestConnectionGroups_GroupByDatabase(t *testing.T) {
 // collected_at inside the window contributes: the older snapshot's "stale"
 // user, and the neighboring connection's rows, are both absent.
 func TestConnectionGroups_LatestSnapshotOnly(t *testing.T) {
-	h, pool, cleanup := newConnectionGroupsTestHandler(t, nil)
+	h, pool, cleanup := newConnectionGroupsTestHandler(t, newTestAuthStore(t))
 	defer cleanup()
 
 	const connID = 504
@@ -368,7 +368,7 @@ func TestConnectionGroups_LatestSnapshotOnly(t *testing.T) {
 		now.Add(-6*time.Minute))
 
 	resp := decodeConnectionGroups(t, doConnectionGroupsRequest(h,
-		fmt.Sprintf("connection_id=%d&group_by=user", connID), nil))
+		fmt.Sprintf("connection_id=%d&group_by=user", connID), withSuperuser))
 
 	var total int64
 	for _, g := range resp.Groups {
@@ -394,7 +394,7 @@ func TestConnectionGroups_LatestSnapshotOnly(t *testing.T) {
 // bound: a snapshot older than the requested time range yields no data, while
 // a wider range picks the same snapshot up.
 func TestConnectionGroups_TimeRangeExcludesOlderSnapshot(t *testing.T) {
-	h, pool, cleanup := newConnectionGroupsTestHandler(t, nil)
+	h, pool, cleanup := newConnectionGroupsTestHandler(t, newTestAuthStore(t))
 	defer cleanup()
 
 	const connID = 505
@@ -404,14 +404,14 @@ func TestConnectionGroups_TimeRangeExcludesOlderSnapshot(t *testing.T) {
 		now.Add(-120*time.Minute))
 
 	narrow := decodeConnectionGroups(t, doConnectionGroupsRequest(h,
-		fmt.Sprintf("connection_id=%d&time_range=1h", connID), nil))
+		fmt.Sprintf("connection_id=%d&time_range=1h", connID), withSuperuser))
 	if narrow.CollectedAt != nil || len(narrow.Groups) != 0 {
 		t.Errorf("rows outside the time range must be excluded; got %s",
 			rec2string(t, narrow))
 	}
 
 	wide := decodeConnectionGroups(t, doConnectionGroupsRequest(h,
-		fmt.Sprintf("connection_id=%d&time_range=6h", connID), nil))
+		fmt.Sprintf("connection_id=%d&time_range=6h", connID), withSuperuser))
 	if wide.CollectedAt == nil || len(wide.Groups) == 0 {
 		t.Errorf("a wider time range must include the snapshot; got %s",
 			rec2string(t, wide))
@@ -428,7 +428,7 @@ func rec2string(t *testing.T, resp ConnectionGroupsResponse) string {
 // in the snapshot than the cap allows, exactly maxConnectionGroups groups come
 // back, and the ones retained are the largest.
 func TestConnectionGroups_GroupCapTruncatesSmallestGroups(t *testing.T) {
-	h, pool, cleanup := newConnectionGroupsTestHandler(t, nil)
+	h, pool, cleanup := newConnectionGroupsTestHandler(t, newTestAuthStore(t))
 	defer cleanup()
 
 	const connID = 514
@@ -456,7 +456,7 @@ func TestConnectionGroups_GroupCapTruncatesSmallestGroups(t *testing.T) {
 	}
 
 	resp := decodeConnectionGroups(t, doConnectionGroupsRequest(h,
-		fmt.Sprintf("connection_id=%d&group_by=client", connID), nil))
+		fmt.Sprintf("connection_id=%d&group_by=client", connID), withSuperuser))
 
 	if len(resp.Groups) != maxConnectionGroups {
 		t.Fatalf("got %d groups, want the cap of %d", len(resp.Groups),
@@ -487,7 +487,7 @@ func TestConnectionGroups_GroupCapTruncatesSmallestGroups(t *testing.T) {
 // grouping; the schemas must say so, or a strict or code-generated client will
 // disagree with the server.
 func TestConnectionGroups_ResponseKeysMatchOpenAPIRequired(t *testing.T) {
-	h, pool, cleanup := newConnectionGroupsTestHandler(t, nil)
+	h, pool, cleanup := newConnectionGroupsTestHandler(t, newTestAuthStore(t))
 	defer cleanup()
 
 	const connID = 515
@@ -496,7 +496,7 @@ func TestConnectionGroups_ResponseKeysMatchOpenAPIRequired(t *testing.T) {
 		now.Add(-6*time.Minute))
 
 	rec := doConnectionGroupsRequest(h,
-		fmt.Sprintf("connection_id=%d&group_by=user", connID), nil)
+		fmt.Sprintf("connection_id=%d&group_by=user", connID), withSuperuser)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body: %s", rec.Code,
 			rec.Body.String())
@@ -555,10 +555,10 @@ func assertRequiredMatchesKeys(
 // TestConnectionGroups_EmptyResult verifies the documented empty shape when a
 // connection has no pg_stat_activity rows at all.
 func TestConnectionGroups_EmptyResult(t *testing.T) {
-	h, _, cleanup := newConnectionGroupsTestHandler(t, nil)
+	h, _, cleanup := newConnectionGroupsTestHandler(t, newTestAuthStore(t))
 	defer cleanup()
 
-	rec := doConnectionGroupsRequest(h, "connection_id=59999", nil)
+	rec := doConnectionGroupsRequest(h, "connection_id=59999", withSuperuser)
 	resp := decodeConnectionGroups(t, rec)
 
 	if resp.CollectedAt != nil {
@@ -593,7 +593,7 @@ func jsonHasEmptyGroups(body string) bool {
 // error as no data" policy: with the metrics table missing, the endpoint still
 // answers 200 with an empty payload.
 func TestConnectionGroups_QueryErrorReturnsEmpty(t *testing.T) {
-	h, pool, cleanup := newConnectionGroupsTestHandler(t, nil)
+	h, pool, cleanup := newConnectionGroupsTestHandler(t, newTestAuthStore(t))
 	defer cleanup()
 
 	if _, err := pool.Exec(context.Background(),
@@ -602,7 +602,7 @@ func TestConnectionGroups_QueryErrorReturnsEmpty(t *testing.T) {
 	}
 
 	resp := decodeConnectionGroups(t,
-		doConnectionGroupsRequest(h, "connection_id=506", nil))
+		doConnectionGroupsRequest(h, "connection_id=506", withSuperuser))
 	if resp.CollectedAt != nil || len(resp.Groups) != 0 {
 		t.Errorf("query error must yield an empty payload; got %s",
 			rec2string(t, resp))
@@ -622,7 +622,7 @@ func TestConnectionGroups_QueryErrorReturnsEmpty(t *testing.T) {
 // prepare time and never reaches the scan loop, and pgx happily renders any
 // scalar into a *string through its text fallback.
 func TestConnectionGroups_ScanErrorSkipsRow(t *testing.T) {
-	h, pool, cleanup := newConnectionGroupsTestHandler(t, nil)
+	h, pool, cleanup := newConnectionGroupsTestHandler(t, newTestAuthStore(t))
 	defer cleanup()
 
 	ctx := context.Background()
@@ -680,7 +680,7 @@ func TestConnectionGroups_ScanErrorSkipsRow(t *testing.T) {
 	rows.Close()
 
 	resp := decodeConnectionGroups(t, doConnectionGroupsRequest(h,
-		fmt.Sprintf("connection_id=%d&group_by=client", connID), nil))
+		fmt.Sprintf("connection_id=%d&group_by=client", connID), withSuperuser))
 
 	if len(resp.Groups) != 0 {
 		t.Errorf("rows that fail to scan must be skipped; got %s",
@@ -706,7 +706,7 @@ func TestConnectionGroups_ScanErrorSkipsRow(t *testing.T) {
 // statement succeeds, and the division by zero is raised only when the client
 // grouping evaluates MIN(client_hostname) at execution time.
 func TestConnectionGroups_RowsErrorReturnsPartialResult(t *testing.T) {
-	h, pool, cleanup := newConnectionGroupsTestHandler(t, nil)
+	h, pool, cleanup := newConnectionGroupsTestHandler(t, newTestAuthStore(t))
 	defer cleanup()
 
 	ctx := context.Background()
@@ -763,7 +763,7 @@ func TestConnectionGroups_RowsErrorReturnsPartialResult(t *testing.T) {
 	}
 
 	resp := decodeConnectionGroups(t, doConnectionGroupsRequest(h,
-		fmt.Sprintf("connection_id=%d&group_by=client", connID), nil))
+		fmt.Sprintf("connection_id=%d&group_by=client", connID), withSuperuser))
 
 	if len(resp.Groups) != 0 || resp.CollectedAt != nil ||
 		resp.TotalGroups != 0 {
@@ -775,13 +775,13 @@ func TestConnectionGroups_RowsErrorReturnsPartialResult(t *testing.T) {
 // TestConnectionGroups_TransactionBeginFailure verifies the 500 path when a
 // read-only transaction cannot be started, here by closing the pool first.
 func TestConnectionGroups_TransactionBeginFailure(t *testing.T) {
-	h, pool, cleanup := newConnectionGroupsTestHandler(t, nil)
+	h, pool, cleanup := newConnectionGroupsTestHandler(t, newTestAuthStore(t))
 	defer cleanup()
 
 	_, _ = pool.Exec(context.Background(), connectionGroupsTestSchemaTeardown)
 	pool.Close()
 
-	rec := doConnectionGroupsRequest(h, "connection_id=507", nil)
+	rec := doConnectionGroupsRequest(h, "connection_id=507", withSuperuser)
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("status = %d, want 500; body: %s", rec.Code,
 			rec.Body.String())
@@ -791,11 +791,11 @@ func TestConnectionGroups_TransactionBeginFailure(t *testing.T) {
 // TestConnectionGroups_InvalidGroupBy verifies the 400 response and its
 // wording, which must name every accepted value.
 func TestConnectionGroups_InvalidGroupBy(t *testing.T) {
-	h, _, cleanup := newConnectionGroupsTestHandler(t, nil)
+	h, _, cleanup := newConnectionGroupsTestHandler(t, newTestAuthStore(t))
 	defer cleanup()
 
 	rec := doConnectionGroupsRequest(h,
-		"connection_id=508&group_by=application_name", nil)
+		"connection_id=508&group_by=application_name", withSuperuser)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body: %s", rec.Code,
 			rec.Body.String())
@@ -810,11 +810,11 @@ func TestConnectionGroups_InvalidGroupBy(t *testing.T) {
 // unsupported time range, which carries ResolveTimeWindow's own wording so
 // that it matches /metrics/query.
 func TestConnectionGroups_InvalidTimeRange(t *testing.T) {
-	h, _, cleanup := newConnectionGroupsTestHandler(t, nil)
+	h, _, cleanup := newConnectionGroupsTestHandler(t, newTestAuthStore(t))
 	defer cleanup()
 
 	rec := doConnectionGroupsRequest(h,
-		"connection_id=509&time_range=90m", nil)
+		"connection_id=509&time_range=90m", withSuperuser)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body: %s", rec.Code,
 			rec.Body.String())
@@ -830,7 +830,7 @@ func TestConnectionGroups_InvalidTimeRange(t *testing.T) {
 // ends before the only snapshot finds nothing, and one that spans it finds
 // it.
 func TestConnectionGroups_CustomWindowSelectsSnapshot(t *testing.T) {
-	h, pool, cleanup := newConnectionGroupsTestHandler(t, nil)
+	h, pool, cleanup := newConnectionGroupsTestHandler(t, newTestAuthStore(t))
 	defer cleanup()
 
 	const connID = 511
@@ -843,7 +843,7 @@ func TestConnectionGroups_CustomWindowSelectsSnapshot(t *testing.T) {
 	before := decodeConnectionGroups(t, doConnectionGroupsRequest(h,
 		fmt.Sprintf("connection_id=%d&time_range=custom&time_start=%s&time_end=%s",
 			connID, iso(now.Add(-4*time.Hour)), iso(now.Add(-3*time.Hour))),
-		nil))
+		withSuperuser))
 	if before.CollectedAt != nil || len(before.Groups) != 0 {
 		t.Errorf("a window ending before the snapshot must be empty; got %s",
 			rec2string(t, before))
@@ -852,7 +852,7 @@ func TestConnectionGroups_CustomWindowSelectsSnapshot(t *testing.T) {
 	spanning := decodeConnectionGroups(t, doConnectionGroupsRequest(h,
 		fmt.Sprintf("connection_id=%d&time_range=custom&time_start=%s&time_end=%s",
 			connID, iso(now.Add(-2*time.Hour)), iso(now.Add(-time.Hour))),
-		nil))
+		withSuperuser))
 	if spanning.CollectedAt == nil || len(spanning.Groups) == 0 {
 		t.Fatalf("a window spanning the snapshot must include it; got %s",
 			rec2string(t, spanning))
@@ -867,7 +867,7 @@ func TestConnectionGroups_CustomWindowSelectsSnapshot(t *testing.T) {
 // window whose end lies in the future is clamped to now rather than
 // rejected, so the newest snapshot is still found.
 func TestConnectionGroups_CustomWindowFutureEndClamped(t *testing.T) {
-	h, pool, cleanup := newConnectionGroupsTestHandler(t, nil)
+	h, pool, cleanup := newConnectionGroupsTestHandler(t, newTestAuthStore(t))
 	defer cleanup()
 
 	const connID = 512
@@ -879,7 +879,7 @@ func TestConnectionGroups_CustomWindowFutureEndClamped(t *testing.T) {
 		fmt.Sprintf("connection_id=%d&time_range=custom&time_start=%s&time_end=%s",
 			connID, now.Add(-2*time.Hour).Format(time.RFC3339),
 			now.Add(2*time.Hour).Format(time.RFC3339)),
-		nil))
+		withSuperuser))
 	if resp.CollectedAt == nil || len(resp.Groups) == 0 {
 		t.Errorf("a clamped window must still find the snapshot; got %s",
 			rec2string(t, resp))
@@ -890,7 +890,7 @@ func TestConnectionGroups_CustomWindowFutureEndClamped(t *testing.T) {
 // ResolveTimeWindow can raise surfaces as a 400 carrying the resolver's own
 // message.
 func TestConnectionGroups_CustomWindowRejections(t *testing.T) {
-	h, _, cleanup := newConnectionGroupsTestHandler(t, nil)
+	h, _, cleanup := newConnectionGroupsTestHandler(t, newTestAuthStore(t))
 	defer cleanup()
 
 	now := time.Now().UTC()
@@ -935,7 +935,7 @@ func TestConnectionGroups_CustomWindowRejections(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			rec := doConnectionGroupsRequest(h,
-				"connection_id=513"+tt.query, nil)
+				"connection_id=513"+tt.query, withSuperuser)
 			if rec.Code != http.StatusBadRequest {
 				t.Fatalf("status = %d, want 400; body: %s", rec.Code,
 					rec.Body.String())
@@ -951,7 +951,7 @@ func TestConnectionGroups_CustomWindowRejections(t *testing.T) {
 // TestConnectionGroups_ConnectionIDValidation verifies that the endpoint
 // requires exactly one connection ID.
 func TestConnectionGroups_ConnectionIDValidation(t *testing.T) {
-	h, _, cleanup := newConnectionGroupsTestHandler(t, nil)
+	h, _, cleanup := newConnectionGroupsTestHandler(t, newTestAuthStore(t))
 	defer cleanup()
 
 	tests := []struct {
@@ -965,7 +965,7 @@ func TestConnectionGroups_ConnectionIDValidation(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			rec := doConnectionGroupsRequest(h, tc.query, nil)
+			rec := doConnectionGroupsRequest(h, tc.query, withSuperuser)
 			if rec.Code != http.StatusBadRequest {
 				t.Errorf("status = %d, want 400; body: %s", rec.Code,
 					rec.Body.String())
@@ -1012,7 +1012,7 @@ func TestConnectionGroups_PermissionDenied(t *testing.T) {
 
 // TestConnectionGroups_MethodNotAllowed verifies that only GET is accepted.
 func TestConnectionGroups_MethodNotAllowed(t *testing.T) {
-	h, _, cleanup := newConnectionGroupsTestHandler(t, nil)
+	h, _, cleanup := newConnectionGroupsTestHandler(t, newTestAuthStore(t))
 	defer cleanup()
 
 	for _, method := range []string{
@@ -1033,7 +1033,7 @@ func TestConnectionGroups_MethodNotAllowed(t *testing.T) {
 // a configured handler serves the endpoint, and a handler with no datastore
 // answers with the not-configured response instead.
 func TestConnectionGroups_RegisterRoutes(t *testing.T) {
-	h, pool, cleanup := newConnectionGroupsTestHandler(t, nil)
+	h, pool, cleanup := newConnectionGroupsTestHandler(t, newTestAuthStore(t))
 	defer cleanup()
 
 	const connID = 512
@@ -1045,8 +1045,8 @@ func TestConnectionGroups_RegisterRoutes(t *testing.T) {
 
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux, passthrough)
-	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf(
-		"/api/v1/metrics/connection-groups?connection_id=%d", connID), nil)
+	req := withSuperuser(httptest.NewRequest(http.MethodGet, fmt.Sprintf(
+		"/api/v1/metrics/connection-groups?connection_id=%d", connID), nil))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -1058,9 +1058,9 @@ func TestConnectionGroups_RegisterRoutes(t *testing.T) {
 	unconfiguredMux := http.NewServeMux()
 	unconfigured.RegisterRoutes(unconfiguredMux, passthrough)
 	unconfiguredRec := httptest.NewRecorder()
-	unconfiguredMux.ServeHTTP(unconfiguredRec, httptest.NewRequest(
+	unconfiguredMux.ServeHTTP(unconfiguredRec, withSuperuser(httptest.NewRequest(
 		http.MethodGet,
-		"/api/v1/metrics/connection-groups?connection_id=1", nil))
+		"/api/v1/metrics/connection-groups?connection_id=1", nil)))
 	if unconfiguredRec.Code == http.StatusOK {
 		t.Errorf("unconfigured route status = %d, want a non-200 "+
 			"not-configured response", unconfiguredRec.Code)

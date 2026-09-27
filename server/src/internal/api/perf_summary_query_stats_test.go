@@ -30,14 +30,16 @@ import (
 
 // callQueryStats invokes the query-stats handler with the supplied raw query
 // string and returns the recorder for inspection.
+// The request is marked superuser, so it passes the RBAC gate on a real
+// test auth store.
 func callQueryStats(
 	t *testing.T,
 	h *PerfSummaryHandler,
 	rawQuery string,
 ) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodGet,
-		"/api/v1/metrics/query-stats?"+rawQuery, nil)
+	req := withSuperuser(httptest.NewRequest(http.MethodGet,
+		"/api/v1/metrics/query-stats?"+rawQuery, nil))
 	rec := httptest.NewRecorder()
 	h.handleQueryStats(rec, req)
 	return rec
@@ -650,9 +652,9 @@ func TestQueryStats_QueryFailureIsAnError(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	req := httptest.NewRequest(http.MethodGet,
-		"/api/v1/metrics/query-stats?connection_id=4242&queryid=1001", nil)
-	req = req.WithContext(ctx)
+	req := withSuperuser(httptest.NewRequest(http.MethodGet,
+		"/api/v1/metrics/query-stats?connection_id=4242&queryid=1001",
+		nil).WithContext(ctx))
 	rec := httptest.NewRecorder()
 	h.handleQueryStats(rec, req)
 
@@ -872,7 +874,11 @@ func TestQueryStats_PermissionDenied(t *testing.T) {
 	}
 	h := NewPerfSummaryHandler(database.NewTestDatastore(pool), authStore)
 
-	rec := callQueryStats(t, h, "connection_id=4242&queryid=1001")
+	// An unauthenticated request: the helper would mark it superuser.
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/metrics/query-stats?connection_id=4242&queryid=1001", nil)
+	rec := httptest.NewRecorder()
+	h.handleQueryStats(rec, req)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403; body: %s", rec.Code,
 			rec.Body.String())

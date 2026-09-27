@@ -998,13 +998,13 @@ func unreachablePool(t *testing.T) *pgxpool.Pool {
 
 // TestHandleServerInfoAI covers the AI-analysis route: method and
 // connection-ID validation, and the delegation to the analysis response
-// writer. A nil auth store makes the RBAC checker grant access, and the
-// unreachable pool makes the database queries fail benignly so the handler
-// reaches the analysis step with no databases.
+// writer. A superuser caller on a real test auth store passes the RBAC
+// check, and the unreachable pool makes the database queries fail benignly
+// so the handler reaches the analysis step with no databases.
 func TestHandleServerInfoAI(t *testing.T) {
 	h := &ServerInfoHandler{
 		datastore:   database.NewTestDatastore(unreachablePool(t)),
-		rbacChecker: auth.NewRBACChecker(nil),
+		rbacChecker: newTestRBACChecker(t),
 		llmConfig:   &llmproxy.Config{Provider: "openai", OpenAIAPIKey: "k"},
 		cache:       make(map[int]*aiCacheEntry),
 	}
@@ -1045,7 +1045,7 @@ func TestHandleServerInfoAI(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest(tc.method, tc.path, nil)
+			req := withSuperuser(httptest.NewRequest(tc.method, tc.path, nil))
 			w := httptest.NewRecorder()
 			h.handleServerInfoRouting(w, req)
 			if w.Code != tc.wantStatus {

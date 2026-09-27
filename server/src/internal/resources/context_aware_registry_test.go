@@ -147,10 +147,19 @@ func TestContextAwareRegistry_Read_NotFound(t *testing.T) {
 		},
 	}
 
-	registry := NewContextAwareRegistry(cm, cfg, nil, nil)
+	// A nil auth store denies every check (issue #477), so give the
+	// registry a real store and read as a superuser.
+	authStore, err := auth.NewAuthStore(t.TempDir(), 0, 0, auth.AuditKeyForTesting())
+	if err != nil {
+		t.Fatalf("NewAuthStore: %v", err)
+	}
+	defer authStore.Close()
+
+	registry := NewContextAwareRegistry(cm, cfg, authStore, nil)
+	ctx := context.WithValue(context.Background(), auth.IsSuperuserContextKey, true)
 
 	// Reading non-existent resource should return not found content
-	content, err := registry.Read(context.Background(), "pg://nonexistent")
+	content, err := registry.Read(ctx, "pg://nonexistent")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -346,10 +355,12 @@ func TestGetClient_TokenScopeEnforcement(t *testing.T) {
 			t.Fatal("Expected non-nil rbacChecker even with nil authStore")
 		}
 
-		// With nil authStore, superuser check should return true
+		// With nil authStore the checker fails closed (issue #477), even
+		// for a context that claims superuser
 		ctx := context.WithValue(context.Background(), auth.TokenHashContextKey, "any-token")
-		if !registry.rbacChecker.IsSuperuser(ctx) {
-			t.Error("Expected IsSuperuser to return true with nil authStore")
+		ctx = context.WithValue(ctx, auth.IsSuperuserContextKey, true)
+		if registry.rbacChecker.IsSuperuser(ctx) {
+			t.Error("Expected IsSuperuser to return false with nil authStore")
 		}
 	})
 

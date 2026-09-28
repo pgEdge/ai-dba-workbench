@@ -424,13 +424,30 @@ func (d *Datastore) GetAlertsByConnection(ctx context.Context, connectionID int)
 	return alerts, nil
 }
 
-// UpdateAlertReevaluation increments the re-evaluation count and updates the
-// last re-evaluated timestamp for an alert.
-func (d *Datastore) UpdateAlertReevaluation(ctx context.Context, alertID int64) error {
+// UpdateAlertReevaluation increments the re-evaluation count, updates the
+// last re-evaluated timestamp and records the fingerprint of the prompt
+// inputs behind the decision. A nil fingerprint clears the stored one, so
+// the next due re-evaluation goes to the LLM again.
+func (d *Datastore) UpdateAlertReevaluation(ctx context.Context, alertID int64, fingerprint *string) error {
 	_, err := d.pool.Exec(ctx, `
 		UPDATE alerts
 		SET reevaluation_count = reevaluation_count + 1,
-		    last_reevaluated_at = NOW()
+		    last_reevaluated_at = NOW(),
+		    reevaluation_fingerprint = $2
+		WHERE id = $1
+	`, alertID, fingerprint)
+	return err
+}
+
+// DeferAlertReevaluation updates only the last re-evaluated timestamp of
+// an alert, pushing its next re-evaluation back by one interval. It is
+// used when the prompt inputs match the stored fingerprint and the LLM
+// call is skipped, so the re-evaluation count, which counts LLM
+// decisions, and the fingerprint are left alone.
+func (d *Datastore) DeferAlertReevaluation(ctx context.Context, alertID int64) error {
+	_, err := d.pool.Exec(ctx, `
+		UPDATE alerts
+		SET last_reevaluated_at = NOW()
 		WHERE id = $1
 	`, alertID)
 	return err

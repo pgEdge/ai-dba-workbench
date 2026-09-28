@@ -3578,6 +3578,38 @@ func (sm *SchemaManager) registerMigrations() {
 			return nil
 		},
 	})
+
+	// Migration #18: Record what the alerter's last "keep" re-evaluation
+	// of an acknowledged anomaly alert was based on. See GitHub issue
+	// #575.
+	//
+	// The alerter sent each acknowledged anomaly alert back to the LLM
+	// every time it fell due, although the prompt's inputs rarely change
+	// between runs, so most of those paid calls repeated a question that
+	// had already been answered. It now stores a hash of the prompt
+	// inputs when the LLM answers "keep", and skips the call while the
+	// hash is unchanged. NULL means there is no answer to reuse, which is
+	// the right state for every existing alert, so no backfill is needed.
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     18,
+		Description: "Add reevaluation_fingerprint column to alerts",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			_, err := tx.Exec(ctx, `
+				ALTER TABLE alerts
+					ADD COLUMN IF NOT EXISTS reevaluation_fingerprint TEXT;
+
+				COMMENT ON COLUMN alerts.reevaluation_fingerprint IS
+					'Hex SHA-256 of the prompt inputs behind the last LLM re-evaluation of this acknowledged anomaly alert that answered keep: the alert details, its acknowledgement, past acknowledgements of the metric, the other alerts on the server and the cluster context, but not the re-evaluation count. The alerter skips the LLM call while the hash is unchanged. NULL when there is no answer to reuse, including after a failed call or one made without the full context, so the alert goes to the LLM again when next due.';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to add alerts.reevaluation_fingerprint: %w", err)
+			}
+
+			return nil
+		},
+	})
 }
 
 // Migrate applies all pending migrations

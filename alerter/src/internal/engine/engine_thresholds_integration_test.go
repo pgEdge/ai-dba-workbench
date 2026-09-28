@@ -126,6 +126,7 @@ CREATE TABLE alerts (
     last_updated TIMESTAMPTZ,
     last_reevaluated_at TIMESTAMPTZ,
     reevaluation_count INTEGER NOT NULL DEFAULT 0,
+    reevaluation_fingerprint TEXT,
     anomaly_score REAL,
     anomaly_details JSONB,
     ai_analysis TEXT,

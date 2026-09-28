@@ -11,11 +11,14 @@ package engine
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/pgedge/ai-workbench/alerter/internal/config"
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
 	"github.com/pgedge/ai-workbench/pkg/worker"
 )
@@ -52,94 +55,164 @@ func (e *Engine) reevaluateAcknowledgedAlerts(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
+		e.reevaluateAlert(ctx, cfg.Anomaly.Reevaluation, alert)
+	}
+}
 
-		// Skip alerts without a metric name; re-evaluation requires
-		// metric context for meaningful LLM analysis.
-		if alert.MetricName == nil {
-			e.debugLog("Skipping re-evaluation for alert %d: no metric name", alert.ID)
-			if err := e.datastore.UpdateAlertReevaluation(ctx, alert.ID); err != nil {
-				e.log("ERROR: Failed to update re-evaluation for alert %d: %v", alert.ID, err)
-			}
-			continue
-		}
+// reevaluateAlert re-evaluates one acknowledged anomaly alert.
+//
+// When the LLM answers "keep", a fingerprint of the prompt inputs is
+// stored with the alert, and at the next due time the call is skipped if
+// the inputs have not changed, since the same question would get the same
+// answer (GitHub issue #575). Only a genuine "keep" built from the full
+// context stores a fingerprint: a failed call, a response that carries no
+// decision, and a prompt built after one of the context queries failed
+// all store none, so the alert goes back to the LLM when next due.
+func (e *Engine) reevaluateAlert(
+	ctx context.Context,
+	cfg config.ReevaluationConfig,
+	alert *database.AcknowledgedAnomalyAlert,
+) {
+	// Skip alerts without a metric name; re-evaluation requires
+	// metric context for meaningful LLM analysis.
+	if alert.MetricName == nil {
+		e.debugLog("Skipping re-evaluation for alert %d: no metric name", alert.ID)
+		e.recordReevaluation(ctx, alert.ID, nil)
+		return
+	}
 
-		// Fetch historical acknowledgements for the same metric and connection
-		historicalAcks, err := e.datastore.GetAcknowledgmentHistoryForMetric(
-			ctx, *alert.MetricName, alert.ConnectionID, alert.ID, 10,
-		)
-		if err != nil {
-			e.log("ERROR: Failed to get acknowledgment history for alert %d: %v", alert.ID, err)
-			historicalAcks = nil
-		}
+	// A keep decision is only reused when every context query succeeded;
+	// otherwise the prompt may be missing inputs that would change the
+	// answer.
+	contextComplete := true
 
-		// Fetch all active/acknowledged alerts on the same connection
-		connectionAlerts, err := e.datastore.GetAlertsByConnection(ctx, alert.ConnectionID)
-		if err != nil {
-			e.log("ERROR: Failed to get connection alerts for alert %d: %v", alert.ID, err)
-			connectionAlerts = nil
-		}
+	// Fetch historical acknowledgements for the same metric and connection
+	historicalAcks, err := e.datastore.GetAcknowledgmentHistoryForMetric(
+		ctx, *alert.MetricName, alert.ConnectionID, alert.ID, 10,
+	)
+	if err != nil {
+		e.log("ERROR: Failed to get acknowledgment history for alert %d: %v", alert.ID, err)
+		historicalAcks = nil
+		contextComplete = false
+	}
 
-		// Fetch cluster context for the LLM prompt
-		clusterPeers, err := e.datastore.GetClusterPeers(ctx, alert.ConnectionID)
-		if err != nil {
-			e.log("ERROR: Failed to get cluster peers for alert %d: %v", alert.ID, err)
-			clusterPeers = nil
-		}
-		clusterAlerts, err := e.datastore.GetAlertsByCluster(ctx, alert.ConnectionID)
-		if err != nil {
-			e.log("ERROR: Failed to get cluster alerts for alert %d: %v", alert.ID, err)
-			clusterAlerts = nil
-		}
+	// Fetch all active/acknowledged alerts on the same connection
+	connectionAlerts, err := e.datastore.GetAlertsByConnection(ctx, alert.ConnectionID)
+	if err != nil {
+		e.log("ERROR: Failed to get connection alerts for alert %d: %v", alert.ID, err)
+		connectionAlerts = nil
+		contextComplete = false
+	}
 
-		// Build the LLM prompt
-		prompt := e.buildReevaluationPrompt(alert, historicalAcks, connectionAlerts, clusterPeers, clusterAlerts)
+	// Fetch cluster context for the LLM prompt
+	clusterPeers, err := e.datastore.GetClusterPeers(ctx, alert.ConnectionID)
+	if err != nil {
+		e.log("ERROR: Failed to get cluster peers for alert %d: %v", alert.ID, err)
+		clusterPeers = nil
+		contextComplete = false
+	}
+	clusterAlerts, err := e.datastore.GetAlertsByCluster(ctx, alert.ConnectionID)
+	if err != nil {
+		e.log("ERROR: Failed to get cluster alerts for alert %d: %v", alert.ID, err)
+		clusterAlerts = nil
+		contextComplete = false
+	}
 
-		// Create a timeout context for the LLM call
-		timeout := time.Duration(cfg.Anomaly.Reevaluation.TimeoutSeconds) * time.Second
-		if timeout <= 0 {
-			timeout = DefaultTier3Timeout
-		}
-		tier3Ctx, cancel := context.WithTimeout(ctx, timeout)
-
-		// Call the reasoning provider
-		response, err := e.reasoningProvider.Classify(tier3Ctx, prompt)
-		cancel()
-
-		if err != nil {
-			e.log("ERROR: Re-evaluation LLM call failed for alert %d: %v", alert.ID, err)
-			if err := e.datastore.UpdateAlertReevaluation(ctx, alert.ID); err != nil {
-				e.log("ERROR: Failed to update re-evaluation for alert %d: %v", alert.ID, err)
-			}
-			continue
-		}
-
-		// Parse the LLM response
-		decision, confidence := parseReevaluationResponse(response)
-
-		if decision == "clear" {
-			if err := e.datastore.ClearAlert(ctx, alert.ID); err != nil {
-				e.log("ERROR: Failed to clear alert %d during re-evaluation: %v", alert.ID, err)
-			} else {
-				// Fetch the updated alert to include cleared_at in the notification
-				updatedAlert, err := e.datastore.GetAlert(ctx, alert.ID)
-				if err != nil {
-					e.log("ERROR: Failed to fetch updated alert %d after clearing: %v", alert.ID, err)
-				} else {
-					e.queueNotification(updatedAlert, database.NotificationTypeAlertClear)
-				}
-				e.log("Re-evaluation cleared alert %d (%s, confidence: %.2f)",
-					alert.ID, *alert.MetricName, confidence)
-			}
-		} else {
-			e.debugLog("Re-evaluation keeping alert %d (%s, decision: %s, confidence: %.2f)",
-				alert.ID, *alert.MetricName, decision, confidence)
-		}
-
-		// Always update the re-evaluation tracking regardless of outcome
-		if err := e.datastore.UpdateAlertReevaluation(ctx, alert.ID); err != nil {
+	fingerprint := e.reevaluationFingerprint(alert, historicalAcks, connectionAlerts, clusterPeers, clusterAlerts)
+	if contextComplete && alert.ReevaluationFingerprint != nil &&
+		*alert.ReevaluationFingerprint == fingerprint {
+		e.debugLog("Skipping re-evaluation LLM call for alert %d (%s): inputs unchanged since the last keep",
+			alert.ID, *alert.MetricName)
+		if err := e.datastore.DeferAlertReevaluation(ctx, alert.ID); err != nil {
 			e.log("ERROR: Failed to update re-evaluation for alert %d: %v", alert.ID, err)
 		}
+		return
 	}
+
+	// Build the LLM prompt
+	prompt := e.buildReevaluationPrompt(alert, historicalAcks, connectionAlerts, clusterPeers, clusterAlerts)
+
+	// Create a timeout context for the LLM call
+	timeout := time.Duration(cfg.TimeoutSeconds) * time.Second
+	if timeout <= 0 {
+		timeout = DefaultTier3Timeout
+	}
+	tier3Ctx, cancel := context.WithTimeout(ctx, timeout)
+
+	// Call the reasoning provider
+	response, err := e.reasoningProvider.Classify(tier3Ctx, prompt)
+	cancel()
+
+	if err != nil {
+		e.log("ERROR: Re-evaluation LLM call failed for alert %d: %v", alert.ID, err)
+		e.recordReevaluation(ctx, alert.ID, nil)
+		return
+	}
+
+	// Parse the LLM response
+	decision, confidence, found := parseReevaluationResponse(response)
+
+	var keptFingerprint *string
+	if decision == "clear" {
+		if err := e.datastore.ClearAlert(ctx, alert.ID); err != nil {
+			e.log("ERROR: Failed to clear alert %d during re-evaluation: %v", alert.ID, err)
+		} else {
+			// Fetch the updated alert to include cleared_at in the notification
+			updatedAlert, err := e.datastore.GetAlert(ctx, alert.ID)
+			if err != nil {
+				e.log("ERROR: Failed to fetch updated alert %d after clearing: %v", alert.ID, err)
+			} else {
+				e.queueNotification(updatedAlert, database.NotificationTypeAlertClear)
+			}
+			e.log("Re-evaluation cleared alert %d (%s, confidence: %.2f)",
+				alert.ID, *alert.MetricName, confidence)
+		}
+	} else {
+		e.debugLog("Re-evaluation keeping alert %d (%s, decision: %s, confidence: %.2f)",
+			alert.ID, *alert.MetricName, decision, confidence)
+		if found && contextComplete {
+			keptFingerprint = &fingerprint
+		}
+	}
+
+	// Always update the re-evaluation tracking regardless of outcome
+	e.recordReevaluation(ctx, alert.ID, keptFingerprint)
+}
+
+// recordReevaluation bumps an alert's re-evaluation count and timestamp and
+// stores the given fingerprint, logging rather than returning a failure.
+func (e *Engine) recordReevaluation(ctx context.Context, alertID int64, fingerprint *string) {
+	if err := e.datastore.UpdateAlertReevaluation(ctx, alertID, fingerprint); err != nil {
+		e.log("ERROR: Failed to update re-evaluation for alert %d: %v", alertID, err)
+	}
+}
+
+// reevaluationFingerprint returns a hex SHA-256 of everything that shapes
+// the re-evaluation answer: the reasoning model's name and the prompt
+// built from the given inputs, with the re-evaluation count zeroed. The
+// count changes on every call but says nothing new about the alert, so
+// including it would make every fingerprint unique. Hashing the rendered
+// prompt rather than a hand-picked subset of fields means any input the
+// prompt shows (the alert's value and baseline, its acknowledgement, past
+// acknowledgements, the other alerts on the server and the cluster
+// context), and any change to the prompt's wording, invalidates it.
+func (e *Engine) reevaluationFingerprint(
+	alert *database.AcknowledgedAnomalyAlert,
+	historicalAcks []*database.AcknowledgedAnomalyAlert,
+	connectionAlerts []*database.Alert,
+	clusterPeers []*database.ClusterPeerInfo,
+	clusterAlerts []*database.Alert,
+) string {
+	stable := *alert
+	stable.ReevaluationCount = 0
+
+	h := sha256.New()
+	if e.reasoningProvider != nil {
+		h.Write([]byte(e.reasoningProvider.ModelName()))
+	}
+	h.Write([]byte{0})
+	h.Write([]byte(e.buildReevaluationPrompt(&stable, historicalAcks, connectionAlerts, clusterPeers, clusterAlerts)))
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // buildReevaluationPrompt builds an LLM prompt for re-evaluating an
@@ -271,10 +344,12 @@ func (e *Engine) buildReevaluationPrompt(
 }
 
 // parseReevaluationResponse parses the LLM response for a re-evaluation
-// decision. It returns the decision ("clear" or "keep") and a confidence
-// score. This is a package-level function for testability.
-func parseReevaluationResponse(response string) (string, float64) {
-	return parseLLMDecision(response, reevaluationDecisionConfig)
+// decision. It returns the decision ("clear" or "keep"), a confidence
+// score, and whether the response contained a decision at all rather than
+// falling back to the default "keep". This is a package-level function for
+// testability.
+func parseReevaluationResponse(response string) (string, float64, bool) {
+	return parseLLMDecisionFound(response, reevaluationDecisionConfig)
 }
 
 // runReevaluationWorker periodically re-evaluates acknowledged anomaly

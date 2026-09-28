@@ -19,8 +19,13 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/pgedge/ai-workbench/pkg/rollback"
 )
+
+// foreignKeyViolation is PostgreSQL's SQLSTATE for a foreign key
+// violation.
+const foreignKeyViolation = "23503"
 
 // Sentinel errors for cluster operations
 var (
@@ -1128,7 +1133,10 @@ func (d *Datastore) getServersInClusterInternal(ctx context.Context, clusterID i
 
 // AssignConnectionToCluster assigns a connection to a cluster with a role.
 // When membershipSource is "manual" the connection stays pinned to the
-// cluster even when auto-detection would move it elsewhere.
+// cluster even when auto-detection would move it elsewhere. A cluster
+// id that names no cluster fails the connections.cluster_id foreign
+// key and is reported as ErrClusterNotFound, and a connection id that
+// names no connection as ErrConnectionNotFound.
 func (d *Datastore) AssignConnectionToCluster(ctx context.Context, connectionID int, clusterID *int, role *string, membershipSource string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -1141,6 +1149,11 @@ func (d *Datastore) AssignConnectionToCluster(ctx context.Context, connectionID 
 
 	result, err := d.pool.Exec(ctx, query, connectionID, clusterID, role, membershipSource)
 	if err != nil {
+		// cluster_id is the only foreign key this statement sets.
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == foreignKeyViolation {
+			return ErrClusterNotFound
+		}
 		return fmt.Errorf("failed to assign connection to cluster: %w", err)
 	}
 

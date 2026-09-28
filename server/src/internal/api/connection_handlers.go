@@ -11,6 +11,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
@@ -932,6 +933,16 @@ func (h *ConnectionHandler) handleUpdateConnectionCluster(w http.ResponseWriter,
 			membershipSource = "auto"
 		}
 		if err := h.datastore.AssignConnectionToCluster(ctx, connectionID, req.ClusterID, req.Role, membershipSource); err != nil {
+			// A missing cluster answers 404 like a hidden one, so the
+			// two cannot be told apart (issue #471).
+			if errors.Is(err, database.ErrClusterNotFound) {
+				RespondError(w, http.StatusNotFound, "Cluster not found")
+				return
+			}
+			if errors.Is(err, database.ErrConnectionNotFound) {
+				RespondError(w, http.StatusNotFound, "Connection not found")
+				return
+			}
 			log.Printf("[ERROR] Failed to assign connection to cluster (id=%d): %v", connectionID, err)
 			RespondError(w, http.StatusInternalServerError, "Failed to assign connection to cluster")
 			return

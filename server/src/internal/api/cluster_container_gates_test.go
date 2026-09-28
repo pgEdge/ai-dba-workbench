@@ -263,3 +263,120 @@ func TestClusterGroupWritesRespectTokenScope(t *testing.T) {
 		assertStatus(t, rec, http.StatusNoContent)
 	})
 }
+
+// TestClusterCreationRespectsTokenScope covers the connection-scope gate
+// on POST /api/v1/clusters, POST /api/v1/cluster-groups/{id}/clusters and
+// POST /api/v1/cluster-groups: a new cluster or group, and any
+// connection later moved into it, inherits its group's settings, so a
+// token whose connection scope does not cover every connection may not
+// create one.
+func TestClusterCreationRespectsTokenScope(t *testing.T) {
+	f := newClusterCovFixture(t)
+
+	// As in TestClusterGroupWritesRespectTokenScope, a token caller also
+	// carries a session bearer so that it reaches the gates after the
+	// session lookup on POST /cluster-groups.
+	asToken := func(token scopeCaller) scopeCaller {
+		return scopeCaller{name: token.name, wrap: func(r *http.Request) *http.Request {
+			return token.wrap(f.admin.wrap(r))
+		}}
+	}
+
+	for _, caller := range []scopeCaller{f.narrowed, f.readOnly} {
+		t.Run(caller.name+" may not create a cluster", func(t *testing.T) {
+			rec := clusterCovServe(f.handler, caller, http.MethodPost,
+				"/api/v1/clusters", `{"name":"Refused","group_id":3}`)
+			assertOutOfTokenScope(t, rec)
+			f.expectValue(t, "clusters named", "Refused", "0")
+		})
+		t.Run(caller.name+" may not create a cluster in a group", func(t *testing.T) {
+			rec := clusterCovServe(f.handler, caller, http.MethodPost,
+				"/api/v1/cluster-groups/3/clusters", `{"name":"Refused"}`)
+			assertOutOfTokenScope(t, rec)
+			f.expectValue(t, "clusters named", "Refused", "0")
+		})
+		t.Run(caller.name+" may not create a group", func(t *testing.T) {
+			rec := clusterCovServe(f.handler, asToken(caller), http.MethodPost,
+				"/api/v1/cluster-groups", `{"name":"Refused"}`)
+			assertOutOfTokenScope(t, rec)
+			f.expectValue(t, "groups named", "Refused", "0")
+		})
+	}
+
+	for _, caller := range []scopeCaller{f.session, f.unscoped, f.wildcard} {
+		t.Run(caller.name+" creates clusters", func(t *testing.T) {
+			name := "Top " + caller.name
+			rec := clusterCovServe(f.handler, caller, http.MethodPost,
+				"/api/v1/clusters", `{"name":"`+name+`","group_id":2}`)
+			assertStatus(t, rec, http.StatusCreated)
+			f.expectValue(t, "clusters named", name, "1")
+
+			name = "Grouped " + caller.name
+			rec = clusterCovServe(f.handler, caller, http.MethodPost,
+				"/api/v1/cluster-groups/2/clusters", `{"name":"`+name+`"}`)
+			assertStatus(t, rec, http.StatusCreated)
+			f.expectValue(t, "clusters named", name, "1")
+		})
+		t.Run(caller.name+" creates a group", func(t *testing.T) {
+			name := "Group " + caller.name
+			rec := clusterCovServe(f.handler, asToken(caller), http.MethodPost,
+				"/api/v1/cluster-groups", `{"name":"`+name+`"}`)
+			assertStatus(t, rec, http.StatusCreated)
+			f.expectValue(t, "groups named", name, "1")
+		})
+	}
+}
+
+// TestUpdateConnectionClusterMissingCluster covers a move into a cluster
+// id that does not exist on PUT /api/v1/connections/{id}/cluster: it
+// answers 404, as a hidden cluster does, rather than 500 from the
+// foreign key.
+func TestUpdateConnectionClusterMissingCluster(t *testing.T) {
+	f := newClusterCovFixture(t)
+	handler := f.connectionHandlerOn(f.pool)
+	const body = `{"cluster_id":999,"membership_source":"manual"}`
+
+	for _, caller := range []scopeCaller{f.admin, f.super, f.narrowed} {
+		t.Run(caller.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			handler.handleUpdateConnectionCluster(rec,
+				newScopeRequest(caller, http.MethodPut, body), 5)
+			assertError(t, rec, http.StatusNotFound, "Cluster not found")
+			f.expectValue(t, "conn cluster", 5, "1")
+		})
+	}
+
+	t.Run("missing connection", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		handler.handleUpdateConnectionCluster(rec,
+			newScopeRequest(f.super, http.MethodPut,
+				`{"cluster_id":2,"membership_source":"manual"}`), 999)
+		assertError(t, rec, http.StatusNotFound, "Connection not found")
+	})
+}
+
+// TestAddServerToClusterRefusesUnknownRole covers the role check on
+// POST /api/v1/clusters/{id}/servers, which writes connections.role as
+// PUT /api/v1/connections/{id}/cluster does.
+func TestAddServerToClusterRefusesUnknownRole(t *testing.T) {
+	f := newClusterCovFixture(t)
+
+	for _, role := range []string{"overlord", ""} {
+		t.Run("role "+role, func(t *testing.T) {
+			rec := clusterCovServe(f.handler, f.super, http.MethodPost,
+				"/api/v1/clusters/2/servers",
+				`{"connection_id":5,"role":"`+role+`"}`)
+			assertError(t, rec, http.StatusBadRequest, "Invalid role")
+			f.expectValue(t, "conn cluster", 5, "1")
+			f.expectValue(t, "conn role", 5, "primary")
+		})
+	}
+
+	t.Run("known role accepted", func(t *testing.T) {
+		rec := clusterCovServe(f.handler, f.super, http.MethodPost,
+			"/api/v1/clusters/2/servers",
+			`{"connection_id":5,"role":"spock_node"}`)
+		assertStatus(t, rec, http.StatusOK)
+		f.expectValue(t, "conn role", 5, "spock_node")
+	})
+}

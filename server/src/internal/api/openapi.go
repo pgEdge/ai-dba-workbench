@@ -159,11 +159,13 @@ func buildSecuritySchemes() map[string]*OpenAPISecurityScheme {
 				"to the token's connection, MCP and admin scopes, even " +
 				"when its owner is a superuser, so a superuser-owned " +
 				"token can receive 403 where its owner's session would " +
-				"succeed. Two exceptions remain on the connection scope: " +
-				"the query_datastore tool reads metrics for every " +
-				"connection, and a token whose admin scope includes " +
-				"manage_token_scopes can create an unscoped token for " +
-				"any owner. A token whose admin scope names specific " +
+				"succeed. Some grants still reach beyond the connection " +
+				"scope: the query_datastore tool runs read-only SQL over " +
+				"the whole datastore, including every connection's " +
+				"stored credentials; manage_token_scopes can create an " +
+				"unscoped token for any owner; manage_users can create a " +
+				"superuser; and manage_permissions can grant any group " +
+				"access to any connection. A token whose admin scope names specific " +
 				"permissions may exercise those permissions, but cannot " +
 				"pass a gate that requires superuser status outright, " +
 				"such as the audit log. A token with no scope of a given " +
@@ -2099,7 +2101,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"400": jsonResponse("ErrorResponse", "Invalid request or role"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
 					"403": jsonResponse("ErrorResponse", "Permission denied: requires manage_connections permission, or the API token's connection scope does not cover the target"),
-					"404": jsonResponse("ErrorResponse", "Cluster not found, or not visible to the caller"),
+					"404": jsonResponse("ErrorResponse", "Connection or cluster not found, or the cluster is not visible to the caller"),
 					"500": jsonResponse("ErrorResponse", "Failed to assign connection to cluster"),
 				},
 			},
@@ -2188,7 +2190,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"201": jsonResponse("Cluster", "Cluster created"),
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission, or the API token's connection scope does not cover every connection"),
 				},
 			},
 		},
@@ -2263,7 +2265,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 				RequestBody: jsonRequestBody("AddServerToClusterRequest", "Server assignment details", true),
 				Responses: map[string]OpenAPIResponse{
 					"204": {Description: "Server added to cluster"},
-					"400": jsonResponse("ErrorResponse", "Invalid request"),
+					"400": jsonResponse("ErrorResponse", "Invalid request or role"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
 					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission, or the API token's connection scope does not cover the target"),
 				},
@@ -2295,7 +2297,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"201": jsonResponse("ClusterGroup", "Group created"),
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission, or the API token's connection scope does not cover every connection"),
 				},
 			},
 		},
@@ -2372,7 +2374,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"201": jsonResponse("Cluster", "Cluster created"),
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission, or the API token's connection scope does not cover every connection"),
 				},
 			},
 		},

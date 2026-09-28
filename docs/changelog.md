@@ -532,7 +532,9 @@ project adheres to
   or `max_tokens` parameter, such as Claude Sonnet 5 and OpenAI's
   GPT-6 models, previously failed every request, and now work when
   configured explicitly. The library adjusts the request after the
-  first rejection, which costs one extra round trip per client.
+  first rejection, which costs one extra round trip per client. Those
+  models accept only their own default temperature, so
+  `llm.temperature` has no effect on them.
 
 - Report the queried time window in the `/api/v1/metrics/query`
   response. The endpoint returned a bare array of series and said

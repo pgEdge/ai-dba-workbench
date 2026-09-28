@@ -533,6 +533,17 @@ database analysis.
 | `openai_base_url` | string | `https://api.openai.com/v1` | OpenAI base URL |
 | `gemini_base_url` | string | `https://generativelanguage.googleapis.com` | Gemini base URL |
 
+#### Sampling Temperature (`temperature`)
+
+Some models accept only their own default temperature;
+these include `claude-sonnet-5`, the default model, and
+OpenAI's GPT-6 models. When a model rejects the
+configured `temperature`, the server resends the request
+without the setting and omits the setting from later
+requests. The model's own default then applies, so the
+`temperature` option has no effect, and the server does
+not log the change.
+
 #### Output Token Budget (`max_tokens`)
 
 The `max_tokens` option caps the number of output

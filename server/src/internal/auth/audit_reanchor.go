@@ -402,6 +402,25 @@ func (s *AuthStore) reanchorAuditLogTx(actor Actor,
 		}
 	}
 
+	details := auditReanchorDetails(plan, scan)
+	ev := newEvent(actor, auditActionRechain, "", nil, "", details)
+	if err := s.recordAudit(tx, ev); err != nil {
+		return fmt.Errorf("failed to record the re-chain event: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit the re-chain: %w", err)
+	}
+	committed = true
+
+	return nil
+}
+
+// auditReanchorDetails builds the details the audit.rechain event of a
+// re-anchor records, from the plan and the scan taken under the write
+// lock.
+func auditReanchorDetails(plan AuditRechainPlan,
+	scan auditReanchorScan) map[string]any {
 	details := map[string]any{
 		"mode":                 string(AuditRechainReanchor),
 		"reason":               plan.Problem.Error(),
@@ -430,15 +449,5 @@ func (s *AuthStore) reanchorAuditLogTx(actor Actor,
 		}
 	}
 
-	ev := newEvent(actor, auditActionRechain, "", nil, "", details)
-	if err := s.recordAudit(tx, ev); err != nil {
-		return fmt.Errorf("failed to record the re-chain event: %w", err)
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("failed to commit the re-chain: %w", err)
-	}
-	committed = true
-
-	return nil
+	return details
 }

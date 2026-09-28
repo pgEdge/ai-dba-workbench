@@ -372,7 +372,7 @@ func (e *Engine) processTier2And3(ctx context.Context) {
 	// longer hold, so they are expired before the queue is read.
 	e.expireStaleAnomalyCandidates(ctx)
 
-	candidates, err := e.datastore.GetUnprocessedAnomalyCandidates(ctx, 100)
+	candidates, err := e.datastore.GetUnprocessedAnomalyCandidates(ctx, AnomalyCandidateBatchLimit)
 	if err != nil {
 		e.log("ERROR: Failed to get anomaly candidates: %v", err)
 		return
@@ -442,10 +442,11 @@ func (e *Engine) processTier2And3(ctx context.Context) {
 	}
 }
 
-// expireStaleAnomalyCandidates marks candidates that have waited more than
-// StaleCandidateEvaluationIntervals Tier 1 evaluation intervals as
-// processed with no final decision, so they raise no alert and the
-// retention cleanup ages them out (issue #581).
+// expireStaleAnomalyCandidates marks candidates that have waited longer
+// than staleCandidateAge as processed with no final decision, so they
+// raise no alert and the retention cleanup ages them out (issue #581).
+// The count is logged at default verbosity whenever it is non-zero, so
+// an expiry on live data is visible.
 func (e *Engine) expireStaleAnomalyCandidates(ctx context.Context) {
 	cutoff := time.Now().Add(-staleCandidateAge(e.getConfig()))
 	expired, err := e.datastore.ExpireUnprocessedAnomalyCandidates(ctx, cutoff)
@@ -460,17 +461,35 @@ func (e *Engine) expireStaleAnomalyCandidates(ctx context.Context) {
 }
 
 // staleCandidateAge is how long a candidate may wait unprocessed before
-// expireStaleAnomalyCandidates expires it. A nil config, as an engine
-// built for the retention cleanup alone has, uses the default interval.
+// expireStaleAnomalyCandidates expires it.
+//
+// Expiry exists for candidates that nothing will ever process, and those
+// gain nothing from being expired promptly, whereas expiring a genuine
+// candidate that is merely queued behind a backlog would drop a transient
+// anomaly without assessing it. The cut-off must therefore sit well
+// beyond the slowest a healthy queue can drain. A pass processes up to
+// AnomalyCandidateBatchLimit candidates in turn, and the dominant cost of
+// each is the Tier 3 call, bounded by the Tier 3 timeout, so the
+// worst-case pass is the batch limit times that timeout. The
+// StaleCandidateSafetyFactor covers the Tier 2 embedding and database
+// work around each call and a candidate queued behind more than one full
+// batch. The timeout is used whether or not Tier 3 is enabled, which only
+// lengthens the cut-off. StaleCandidateMinAge keeps the cut-off at an
+// hour or more when the timeout is short. With the default 30-second
+// timeout the cut-off is 100 x 30s x 3, 2.5 hours.
+//
+// A nil config, as an engine built for the retention cleanup alone has,
+// uses DefaultTier3Timeout.
 func staleCandidateAge(cfg *config.Config) time.Duration {
-	var interval time.Duration
+	var timeout time.Duration
 	if cfg != nil {
-		interval = time.Duration(cfg.Anomaly.Tier1.EvaluationIntervalSeconds) * time.Second
+		timeout = time.Duration(cfg.Anomaly.Tier3.TimeoutSeconds) * time.Second
 	}
-	if interval <= 0 {
-		interval = DefaultTier1EvaluationInterval
+	if timeout <= 0 {
+		timeout = DefaultTier3Timeout
 	}
-	return StaleCandidateEvaluationIntervals * interval
+	return max(StaleCandidateMinAge,
+		AnomalyCandidateBatchLimit*StaleCandidateSafetyFactor*timeout)
 }
 
 // markCandidateProcessed stamps the candidate as processed and writes its

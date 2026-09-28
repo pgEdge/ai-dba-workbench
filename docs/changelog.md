@@ -1774,6 +1774,16 @@ project adheres to
   subdomain log a user in to the attacker's account (login CSRF).
   (#506)
 
+- Stop the alert history, blackout, metric baseline and timeline tools
+  revealing connections the caller cannot see. Asked for an unknown
+  connection ID, the first three listed the IDs and names of up to 20
+  connections regardless of the caller's access, and all four answered a
+  forbidden ID differently from a missing one, so a caller could probe
+  which IDs exist. The tools now check access before looking the
+  connection up, give the same "connection not found or not accessible"
+  answer for a missing ID, a forbidden one and a failed access check, and
+  suggest only connections the caller can see. (#571)
+
 - Treat a missing RBAC checker as denying access rather than granting
   it. The alert history, blackout, metric baseline, alert rule, metric
   query, timeline and connection list tools, the timeline and overview

@@ -220,6 +220,22 @@ scope key for the estate-wide feed, so a restricted caller must always
 get a `connections:` key, even when their visible set is empty; an
 empty set left as `""` would subscribe them to every connection.
 
+### Tools: check access before existence, and answer both alike
+
+An MCP tool taking an explicit `connection_id` must check access before
+looking the connection up, and must give one answer for a missing ID, a
+forbidden ID and an access check that fails; otherwise the response is
+an existence oracle. `resolveAccessibleConnection` in
+`internal/tools/connection_access.go` does this for `get_alert_history`,
+`get_blackouts`, `get_metric_baselines` and `get_timeline_events`
+(issue #571): it calls `CanAccessConnection` (which folds its own lookup
+errors into a denial), then reads the name, and on any failure returns
+"connection not found or not accessible" plus suggestions drawn only
+from `VisibleConnectionIDs`. The message never echoes the requested ID,
+so tests compare the missing and forbidden responses byte for byte
+(`connection_access_test.go`). `query_metrics`, `get_alert_rules` and
+the connection resolver use the same wording without suggestions.
+
 ### Denial test (no Postgres required)
 
 ```go

@@ -14,10 +14,13 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"hash/fnv"
+	"maps"
 	"math"
+	"sort"
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/pkg/connstring"
 	"github.com/pgedge/ai-workbench/pkg/crypto"
@@ -32,6 +35,7 @@ type MonitoredConnectionPoolManager struct {
 	poolHashes      map[int]string        // Pool key -> hash of connection params used to create pool
 	poolUpdatedAt   map[int]time.Time     // Connection ID -> updated_at when pool was created
 	poolKeyToConnID map[int]int           // Pool key -> connection ID (for reverse lookup)
+	connLocks       map[int]*sync.Mutex   // Connection ID -> lock guarding pool creation, acquisition and eviction
 	maxConnections  int                   // Maximum concurrent connections per monitored server
 	maxIdleSeconds  int                   // Maximum idle time (seconds) before closing idle connections
 	mu              sync.RWMutex
@@ -46,6 +50,7 @@ func NewMonitoredConnectionPoolManager(maxConnectionsPerServer int, maxIdleSecon
 		poolHashes:      make(map[int]string),
 		poolUpdatedAt:   make(map[int]time.Time),
 		poolKeyToConnID: make(map[int]int),
+		connLocks:       make(map[int]*sync.Mutex),
 		maxConnections:  maxConnectionsPerServer,
 		maxIdleSeconds:  maxIdleSeconds,
 	}
@@ -132,6 +137,20 @@ func (m *MonitoredConnectionPoolManager) releaseSlot(connectionID int) {
 	}
 }
 
+// openConnections returns how many connections the manager's pools
+// currently hold open, idle or in use, for a monitored connection.
+func (m *MonitoredConnectionPoolManager) openConnections(connectionID int) int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	total := 0
+	for poolKey, pool := range m.pools {
+		if m.poolKeyToConnID[poolKey] == connectionID {
+			total += int(pool.Stat().TotalConns())
+		}
+	}
+	return total
+}
+
 // GetConnection retrieves a connection for a monitored database
 func (m *MonitoredConnectionPoolManager) GetConnection(ctx context.Context, conn MonitoredConnection, serverSecret string) (*pgxpool.Conn, error) {
 	return m.GetConnectionForDatabase(ctx, conn, "", serverSecret)
@@ -144,64 +163,146 @@ func (m *MonitoredConnectionPoolManager) GetConnectionForDatabase(ctx context.Co
 	if err := m.acquireSlot(ctx, conn.ID); err != nil {
 		return nil, fmt.Errorf("failed to acquire connection slot: %w", err)
 	}
-	// Generate a unique pool key based on connection ID and database name.
-	// Server-level pools use the positive conn.ID. Database-specific pools
-	// use a deterministic negative key derived from conn.ID and databaseName
-	// to avoid collisions with server-level keys.
-	poolKey := conn.ID
-	if databaseName != "" {
-		h := fnv.New32a()
-		fmt.Fprintf(h, "%d:%s", conn.ID, databaseName)
-		poolKey = -int(h.Sum32())
+
+	pgxConn, pending, err := m.acquireWithinCap(ctx, conn, databaseName, serverSecret)
+	if err != nil {
+		if pending != nil {
+			go m.releaseSlotAfterConstruction(conn.ID, pending)
+		} else {
+			m.releaseSlot(conn.ID)
+		}
+		return nil, err
 	}
+	return pgxConn, nil
+}
+
+// constructionPollInterval is how often releaseSlotAfterConstruction
+// checks whether a pool has finished opening a connection.
+const constructionPollInterval = 50 * time.Millisecond
+
+// releaseSlotAfterConstruction releases a semaphore slot once the pool
+// has no connection left under construction. When the caller's context
+// ends whilst pgxpool is opening a connection, Acquire returns at once
+// but the pool finishes opening the connection in the background and
+// keeps it as idle, so the slot stays held until then; releasing it
+// straight away would let another acquisition open a connection on top
+// of the one still being opened, exceeding the cap. The wait is bounded
+// by the connect_timeout the connection parameters set, and by the pool
+// being closed, which cancels any construction in progress.
+func (m *MonitoredConnectionPoolManager) releaseSlotAfterConstruction(connectionID int, pool *pgxpool.Pool) {
+	for pool.Stat().ConstructingConns() > 0 {
+		time.Sleep(constructionPollInterval)
+	}
+	m.releaseSlot(connectionID)
+}
+
+// monitoredPoolKey returns the key of the pool for one database on a
+// monitored connection. Server-level pools use the positive conn.ID.
+// Database-specific pools use a deterministic negative key derived from
+// conn.ID and databaseName to avoid collisions with server-level keys.
+func monitoredPoolKey(connectionID int, databaseName string) int {
+	if databaseName == "" {
+		return connectionID
+	}
+	h := fnv.New32a()
+	fmt.Fprintf(h, "%d:%s", connectionID, databaseName)
+	return -int(h.Sum32())
+}
+
+// connLock gets or creates the mutex that guards pool creation,
+// connection acquisition and idle eviction for one monitored connection.
+func (m *MonitoredConnectionPoolManager) connLock(connectionID int) *sync.Mutex {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	lock, exists := m.connLocks[connectionID]
+	if !exists {
+		lock = &sync.Mutex{}
+		m.connLocks[connectionID] = lock
+	}
+	return lock
+}
+
+// acquireWithinCap returns a connection to one database on a monitored
+// server, opening the pool for that database if necessary, without
+// letting the connections open to the server exceed its semaphore's
+// capacity (pool.max_connections_per_server). The caller must already
+// hold a semaphore slot for the connection.
+//
+// A database-scoped probe visits every database through its own pool,
+// and each pool keeps its connections open once they are returned, so
+// counting only the connections in use would let a server with many
+// databases accumulate an idle connection per database however low the
+// cap is set (issue #539). When the target pool has no idle connection
+// to hand out, and so would have to open one, idle connections held by
+// the connection's other pools are closed first to make room.
+//
+// Everything here runs under the connection's own lock: without it, a
+// concurrent acquisition could take the idle connection this one had
+// counted on, or two acquisitions could each decide there was room for
+// one more connection.
+//
+// On failure, the returned pool is non-nil when that pool is still
+// opening a connection for the failed acquisition, in which case the
+// caller must keep its semaphore slot until the construction finishes.
+func (m *MonitoredConnectionPoolManager) acquireWithinCap(ctx context.Context, conn MonitoredConnection, databaseName string, serverSecret string) (*pgxpool.Conn, *pgxpool.Pool, error) {
+	lock := m.connLock(conn.ID)
+	lock.Lock()
+	defer lock.Unlock()
+
+	poolKey := monitoredPoolKey(conn.ID, databaseName)
 
 	m.mu.RLock()
 	pool, exists := m.pools[poolKey]
 	m.mu.RUnlock()
 
-	if exists {
-		pgxConn, err := pool.Acquire(ctx)
-		if err != nil {
-			m.releaseSlot(conn.ID)
-			return nil, err
-		}
-		return pgxConn, nil
+	if !exists || pool.Stat().IdleConns() == 0 {
+		m.evictIdleConnections(ctx, conn.ID, poolKey)
 	}
 
-	// Pool doesn't exist, create it
-	// Build connection string with specified database
-	connStr, err := buildMonitoredConnectionStringForDatabase(conn, databaseName, serverSecret)
+	if !exists {
+		var err error
+		pool, err = m.createPool(ctx, conn, databaseName, serverSecret, poolKey)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
+	pgxConn, err := pool.Acquire(ctx)
 	if err != nil {
-		m.releaseSlot(conn.ID)
+		if ctx.Err() != nil && pool.Stat().ConstructingConns() > 0 {
+			return nil, pool, err
+		}
+		return nil, nil, err
+	}
+	return pgxConn, nil, nil
+}
+
+// createPool opens a new pool for one database on a monitored
+// connection and records it in the manager's maps. The caller must hold
+// the connection's lock, which is what guarantees that no other pool can
+// be created for the same key in the meantime.
+func (m *MonitoredConnectionPoolManager) createPool(ctx context.Context, conn MonitoredConnection, databaseName string, serverSecret string, poolKey int) (*pgxpool.Pool, error) {
+	params, err := buildMonitoredConnectionParams(conn, databaseName, serverSecret)
+	if err != nil {
 		return nil, fmt.Errorf("failed to build connection string: %w", err)
 	}
 
-	// Create new pool (without holding lock)
-	newPool, err := createMonitoredPool(connStr, m.maxConnections, m.maxIdleSeconds)
+	// Record the hash of the connection's own parameters, as
+	// InvalidateChangedPools computes it, rather than of this pool's
+	// database-specific ones.
+	identity := maps.Clone(params)
+	identity["dbname"] = conn.DatabaseName
+	paramsHash := hashConnectionParams(identity)
+
+	newPool, err := createMonitoredPool(ctx, connstring.Build(params), m.maxConnections, m.maxIdleSeconds)
 	if err != nil {
-		m.releaseSlot(conn.ID)
 		return nil, fmt.Errorf("failed to create connection pool for monitored connection %d: %w", conn.ID, err)
 	}
 
-	// Now acquire lock just to add pool to map
 	m.mu.Lock()
-	// Check again in case another goroutine created it while we were creating ours
-	if existingPool, exists := m.pools[poolKey]; exists {
-		m.mu.Unlock()
-		// Close our newly created pool since we don't need it
-		newPool.Close()
-		// Use the existing pool instead
-		pgxConn, err := existingPool.Acquire(ctx)
-		if err != nil {
-			m.releaseSlot(conn.ID)
-			return nil, err
-		}
-		return pgxConn, nil
-	}
-
-	// Add our new pool to the map and store the connection string hash
 	m.pools[poolKey] = newPool
-	m.poolHashes[poolKey] = hashConnString(connStr)
+	m.poolHashes[poolKey] = paramsHash
 	m.poolKeyToConnID[poolKey] = conn.ID
 	m.poolUpdatedAt[conn.ID] = conn.UpdatedAt
 	m.mu.Unlock()
@@ -212,13 +313,69 @@ func (m *MonitoredConnectionPoolManager) GetConnectionForDatabase(ctx context.Co
 	}
 	logger.Infof("Created connection pool for monitored connection %d (%s)", conn.ID, dbInfo)
 
-	// Get connection from pool (without holding lock)
-	pgxConn, err := newPool.Acquire(ctx)
-	if err != nil {
-		m.releaseSlot(conn.ID)
-		return nil, err
+	return newPool, nil
+}
+
+// evictIdleConnections closes idle connections held by a monitored
+// connection's pools, other than the pool identified by exceptKey, until
+// opening one more connection would keep the total within the
+// connection's semaphore capacity. The caller must hold the connection's
+// lock and a semaphore slot.
+//
+// Every connection in use belongs to a goroutine holding a semaphore
+// slot, including one borrowed from a pool that has since been closed
+// and removed from the map, as does one a pool is still opening for an
+// acquisition whose context ended (see releaseSlotAfterConstruction),
+// so the connections open to the server number at most the idle ones
+// plus the slots held by other goroutines. Opening one more therefore
+// stays within the cap when the idle count is no greater than the free
+// slots.
+func (m *MonitoredConnectionPoolManager) evictIdleConnections(ctx context.Context, connectionID int, exceptKey int) {
+	m.mu.RLock()
+	sem := m.semaphores[connectionID]
+	var others []*pgxpool.Pool
+	idle := 0
+	for poolKey, pool := range m.pools {
+		if m.poolKeyToConnID[poolKey] != connectionID {
+			continue
+		}
+		idle += int(pool.Stat().IdleConns())
+		if poolKey != exceptKey {
+			others = append(others, pool)
+		}
 	}
-	return pgxConn, nil
+	m.mu.RUnlock()
+
+	if sem == nil {
+		return
+	}
+	excess := idle - (cap(sem) - len(sem))
+
+	for _, pool := range others {
+		if excess <= 0 {
+			return
+		}
+		for _, c := range pool.AcquireAllIdle(ctx) {
+			if excess <= 0 {
+				c.Release()
+				continue
+			}
+			closeHijacked(c.Hijack())
+			excess--
+		}
+	}
+}
+
+// closeHijacked closes a connection taken out of its pool with Hijack.
+// The bounded context stops an unresponsive server from holding the
+// connection's lock, and with it every probe on that server, whilst the
+// termination message is sent.
+func closeHijacked(c *pgx.Conn) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := c.Close(ctx); err != nil {
+		logger.Debugf("Error closing idle monitored connection: %v", err)
+	}
 }
 
 // ReturnConnection returns a connection to the pool and releases the semaphore slot
@@ -324,7 +481,11 @@ func (m *MonitoredConnectionPoolManager) SyncPools(activeConnectionIDs []int) {
 		delete(m.poolHashes, poolKey)
 		delete(m.poolKeyToConnID, poolKey)
 
-		// Only remove semaphore if there are no more pools for this connection
+		// The semaphore and lock are kept even once the connection has no
+		// pools left: a probe may still hold a slot and a connection from
+		// a pool just removed, and a replacement semaphore or lock would
+		// let a later acquisition open connections beyond the cap
+		// alongside it. Each is a few bytes per connection ID.
 		hasOtherPools := false
 		for pk := range m.pools {
 			if m.poolKeyToConnID[pk] == connID {
@@ -333,7 +494,6 @@ func (m *MonitoredConnectionPoolManager) SyncPools(activeConnectionIDs []int) {
 			}
 		}
 		if !hasOtherPools {
-			delete(m.semaphores, connID)
 			delete(m.poolUpdatedAt, connID)
 		}
 	}
@@ -347,10 +507,38 @@ func (m *MonitoredConnectionPoolManager) SyncPools(activeConnectionIDs []int) {
 	}
 }
 
-// hashConnString returns a hex-encoded SHA-256 hash of a connection string
-func hashConnString(connStr string) string {
-	h := sha256.Sum256([]byte(connStr))
-	return fmt.Sprintf("%x", h)
+// monitoredConnectionHash returns a hash of the parameters a monitored
+// connection's pools are built from. Every pool derived from the
+// connection, whichever database it serves, records this same hash, so a
+// per-database pool is not mistaken for a changed one merely because its
+// dbname differs from the connection's default. The parameters are
+// hashed in sorted order because connstring.Build emits them in map
+// iteration order, which differs from one call to the next; hashing its
+// output made every pool look changed on every configuration reload.
+func monitoredConnectionHash(conn MonitoredConnection, serverSecret string) (string, error) {
+	params, err := buildMonitoredConnectionParams(conn, "", serverSecret)
+	if err != nil {
+		return "", err
+	}
+	return hashConnectionParams(params), nil
+}
+
+// hashConnectionParams returns a hex-encoded SHA-256 hash of a set of
+// libpq parameters that does not depend on map iteration order.
+func hashConnectionParams(params map[string]string) string {
+	keys := make([]string, 0, len(params))
+	for key := range params {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	h := sha256.New()
+	for _, key := range keys {
+		// NUL cannot appear in a libpq parameter, so it separates
+		// fields unambiguously.
+		fmt.Fprintf(h, "%s\x00%s\x00", key, params[key])
+	}
+	return fmt.Sprintf("%x", h.Sum(nil))
 }
 
 // InvalidateChangedPools compares current connection parameters against the
@@ -361,12 +549,12 @@ func (m *MonitoredConnectionPoolManager) InvalidateChangedPools(connections []Mo
 	// Build a map of connection ID -> current connection string hash
 	currentHashes := make(map[int]string)
 	for _, conn := range connections {
-		connStr, err := buildMonitoredConnectionStringForDatabase(conn, "", serverSecret)
+		paramsHash, err := monitoredConnectionHash(conn, serverSecret)
 		if err != nil {
 			logger.Errorf("Failed to build connection string for pool invalidation check on connection %d: %v", conn.ID, err)
 			continue
 		}
-		currentHashes[conn.ID] = hashConnString(connStr)
+		currentHashes[conn.ID] = paramsHash
 	}
 
 	m.mu.Lock()
@@ -452,9 +640,7 @@ func (m *MonitoredConnectionPoolManager) Close() error {
 }
 
 // createMonitoredPool creates a pgxpool.Pool for a monitored connection
-func createMonitoredPool(connStr string, maxConns int, maxIdleSeconds int) (*pgxpool.Pool, error) {
-	ctx := context.Background()
-
+func createMonitoredPool(ctx context.Context, connStr string, maxConns int, maxIdleSeconds int) (*pgxpool.Pool, error) {
 	// Parse connection string
 	config, err := pgxpool.ParseConfig(connStr)
 	if err != nil {
@@ -499,7 +685,16 @@ func createMonitoredPool(connStr string, maxConns int, maxIdleSeconds int) (*pgx
 // buildMonitoredConnectionStringForDatabase builds a connection string for a monitored connection
 // with an optional database name override
 func buildMonitoredConnectionStringForDatabase(conn MonitoredConnection, databaseName string, serverSecret string) (string, error) {
-	// Build connection string
+	params, err := buildMonitoredConnectionParams(conn, databaseName, serverSecret)
+	if err != nil {
+		return "", err
+	}
+	return connstring.Build(params), nil
+}
+
+// buildMonitoredConnectionParams returns the libpq parameters for a
+// monitored connection, with an optional database name override
+func buildMonitoredConnectionParams(conn MonitoredConnection, databaseName string, serverSecret string) (map[string]string, error) {
 	params := make(map[string]string)
 
 	if conn.HostAddr.Valid && conn.HostAddr.String != "" {
@@ -523,11 +718,25 @@ func buildMonitoredConnectionStringForDatabase(conn MonitoredConnection, databas
 	if conn.PasswordEncrypted.Valid && conn.PasswordEncrypted.String != "" {
 		decryptedPassword, err := crypto.DecryptPassword(conn.PasswordEncrypted.String, serverSecret)
 		if err != nil {
-			return "", fmt.Errorf("failed to decrypt password for connection %d: %w", conn.ID, err)
+			return nil, fmt.Errorf("failed to decrypt password for connection %d: %w", conn.ID, err)
 		}
 		params["password"] = decryptedPassword
 	}
 
+	addMonitoredSSLParams(params, conn)
+
+	// Set application name to identify monitoring connections
+	params["application_name"] = ApplicationName
+
+	// Set connection timeout (10 seconds)
+	params["connect_timeout"] = "10"
+
+	return params, nil
+}
+
+// addMonitoredSSLParams adds a monitored connection's TLS settings to
+// params, defaulting sslmode to prefer when none is configured.
+func addMonitoredSSLParams(params map[string]string, conn MonitoredConnection) {
 	if conn.SSLMode.Valid && conn.SSLMode.String != "" {
 		params["sslmode"] = conn.SSLMode.String
 	} else {
@@ -545,12 +754,4 @@ func buildMonitoredConnectionStringForDatabase(conn MonitoredConnection, databas
 	if conn.SSLRootCert.Valid && conn.SSLRootCert.String != "" {
 		params["sslrootcert"] = conn.SSLRootCert.String
 	}
-
-	// Set application name to identify monitoring connections
-	params["application_name"] = ApplicationName
-
-	// Set connection timeout (10 seconds)
-	params["connect_timeout"] = "10"
-
-	return connstring.Build(params), nil
 }

@@ -27,6 +27,7 @@ import {
     Undo as UnackIcon,
     Psychology as AnalyzeIcon,
     TableChart as TableIcon,
+    Memory as ProviderIcon,
     TuneRounded,
 } from '@mui/icons-material';
 import {
@@ -36,7 +37,6 @@ import {
     hasDistinctLastUpdated,
     CHIP_LABEL_SX,
     FLEX_1_MIN0_SX,
-    getAlertTypeColor,
 } from './styles';
 import {
     ICON_16_SX,
@@ -47,8 +47,9 @@ import {
     ALERT_LAST_UPDATED_SX,
     ALERT_TIME_SX,
     SEVERITY_CHIP_BASE_SX,
-    ALERT_TYPE_CHIP_BASE_SX,
 } from '../../theme';
+import { isSystemAlert } from '../../utils/systemAlerts';
+import { AlertSourceChip, AlertTypeChip } from './AlertChips';
 import type { AlertItemProps } from './types';
 
 /**
@@ -72,6 +73,7 @@ const AlertItem: React.FC<AlertItemProps> = ({
     const thresholdInfo = formatThresholdInfo(alert);
     const friendlyTitle = getFriendlyTitle(alert.title);
     const showLastUpdated = hasDistinctLastUpdated(alert);
+    const system = isSystemAlert(alert);
 
     const containerSx = useMemo(() => ({
         display: 'flex',
@@ -132,16 +134,6 @@ const AlertItem: React.FC<AlertItemProps> = ({
         '& .MuiChip-label': CHIP_LABEL_SX,
     }), [baseColor]);
 
-    const alertTypeLabel = alert.alertType === 'anomaly' ? 'Anomaly' : 'Threshold';
-    const alertTypeColor = getAlertTypeColor(theme, alert.alertType || 'threshold');
-
-    const alertTypeChipSx = useMemo(() => ({
-        ...ALERT_TYPE_CHIP_BASE_SX,
-        bgcolor: alpha(alertTypeColor, 0.15),
-        color: alertTypeColor,
-        '& .MuiChip-label': CHIP_LABEL_SX,
-    }), [alertTypeColor]);
-
     const analyzeButtonSx = useMemo(() => ({
         p: 0.5,
         color: theme.palette.secondary.main,
@@ -166,14 +158,6 @@ const AlertItem: React.FC<AlertItemProps> = ({
         },
     }), [isAcknowledged, theme.palette.grey, theme.palette.success]);
 
-    const serverChipSx = useMemo(() => ({
-        height: 16,
-        fontSize: '0.875rem',
-        bgcolor: alpha(theme.palette.grey[500], 0.15),
-        color: 'text.secondary',
-        '& .MuiChip-label': CHIP_LABEL_SX,
-    }), [theme.palette.grey]);
-
     return (
         <Box sx={containerSx}>
             {/* Severity indicator */}
@@ -191,21 +175,25 @@ const AlertItem: React.FC<AlertItemProps> = ({
                     >
                         {friendlyTitle}
                     </Typography>
-                    {showServer && alert.server && (
-                        <Chip label={alert.server} size="small" sx={serverChipSx} />
-                    )}
+                    <AlertSourceChip
+                        isSystem={system}
+                        server={alert.server}
+                        showServer={showServer}
+                    />
                     {alert.databaseName && (
                         <Chip label={alert.databaseName} size="small" sx={dbChipSx} />
                     )}
                     {alert.objectName && (
                         <Chip
-                            icon={<TableIcon sx={{ fontSize: '0.875rem !important' }} />}
+                            icon={system
+                                ? <ProviderIcon sx={{ fontSize: '0.875rem !important' }} />
+                                : <TableIcon sx={{ fontSize: '0.875rem !important' }} />}
                             label={alert.objectName}
                             size="small"
                             sx={objectChipSx}
                         />
                     )}
-                    <Chip label={alertTypeLabel} size="small" sx={alertTypeChipSx} />
+                    <AlertTypeChip alertType={system ? 'system' : alert.alertType} />
                 </Box>
 
                 {/* Threshold info or description */}
@@ -255,8 +243,8 @@ const AlertItem: React.FC<AlertItemProps> = ({
                 <Chip label={alert.severity} size="small" sx={severityChipSx} />
             </Box>
 
-            {/* Analyze button */}
-            {onAnalyze && (
+            {/* Analyze button; system alerts have no connection to analyse */}
+            {onAnalyze && !system && (
                 <Tooltip title={alert.aiAnalysis ? "View cached analysis" : "Analyze with AI"} placement="left">
                     <IconButton
                         size="small"

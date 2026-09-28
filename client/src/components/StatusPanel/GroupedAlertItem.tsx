@@ -30,6 +30,7 @@ import {
     Undo as UnackIcon,
     Psychology as AnalyzeIcon,
     TableChart as TableIcon,
+    Memory as ProviderIcon,
     TuneRounded,
 } from '@mui/icons-material';
 import {
@@ -40,7 +41,6 @@ import {
     CHIP_LABEL_SX,
     CHIP_LABEL_075_SX,
     EXPAND_BUTTON_SX,
-    getAlertTypeColor,
     INSTANCE_TIME_SX,
     INSTANCE_THRESHOLD_SX,
     GROUP_TITLE_SX,
@@ -50,10 +50,11 @@ import {
     ICON_16_SX,
     ICON_14_SX,
     SEVERITY_CHIP_BASE_SX,
-    ALERT_TYPE_CHIP_BASE_SX,
     ALERT_ACK_TEXT_SX,
     ALERT_LAST_UPDATED_SX,
 } from '../../theme';
+import { isSystemAlert } from '../../utils/systemAlerts';
+import { AlertSourceChip, AlertTypeChip } from './AlertChips';
 import type {
     GroupedAlertInstanceProps,
     GroupedAlertItemProps,
@@ -76,6 +77,7 @@ const GroupedAlertInstance: React.FC<GroupedAlertInstanceProps> = ({
     const ackInFlight = !!isUnacknowledging?.(alert.id);
     const thresholdInfo = formatThresholdInfo(alert);
     const showLastUpdated = hasDistinctLastUpdated(alert);
+    const system = isSystemAlert(alert);
 
     const containerSx = useMemo(() => ({
         display: 'flex',
@@ -91,14 +93,6 @@ const GroupedAlertInstance: React.FC<GroupedAlertInstanceProps> = ({
             bgcolor: alpha(theme.palette.grey[500], 0.12),
         },
     }), [isAcknowledged, theme]);
-
-    const serverChipSx = useMemo(() => ({
-        height: 16,
-        fontSize: '0.875rem',
-        bgcolor: alpha(theme.palette.grey[500], 0.15),
-        color: 'text.secondary',
-        '& .MuiChip-label': CHIP_LABEL_SX,
-    }), [theme.palette.grey]);
 
     const dbChipSx = useMemo(() => ({
         height: 16,
@@ -120,16 +114,6 @@ const GroupedAlertInstance: React.FC<GroupedAlertInstanceProps> = ({
             mr: -0.25,
         },
     }), [theme.palette.custom.status]);
-
-    const alertTypeLabel = alert.alertType === 'anomaly' ? 'Anomaly' : 'Threshold';
-    const alertTypeColor = getAlertTypeColor(theme, alert.alertType || 'threshold');
-
-    const alertTypeChipSx = useMemo(() => ({
-        ...ALERT_TYPE_CHIP_BASE_SX,
-        bgcolor: alpha(alertTypeColor, 0.15),
-        color: alertTypeColor,
-        '& .MuiChip-label': CHIP_LABEL_SX,
-    }), [alertTypeColor]);
 
     const analyzeButtonSx = useMemo(() => ({
         p: 0.25,
@@ -170,21 +154,25 @@ const GroupedAlertInstance: React.FC<GroupedAlertInstanceProps> = ({
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, width: '100%' }}>
                 {/* Context chips */}
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap', flex: 1, minWidth: 0 }}>
-                    {showServer && alert.server && (
-                        <Chip label={alert.server} size="small" sx={serverChipSx} />
-                    )}
+                    <AlertSourceChip
+                        isSystem={system}
+                        server={alert.server}
+                        showServer={showServer}
+                    />
                     {alert.databaseName && (
                         <Chip label={alert.databaseName} size="small" sx={dbChipSx} />
                     )}
                     {alert.objectName && (
                         <Chip
-                            icon={<TableIcon sx={{ fontSize: '0.875rem !important' }} />}
+                            icon={system
+                                ? <ProviderIcon sx={{ fontSize: '0.875rem !important' }} />
+                                : <TableIcon sx={{ fontSize: '0.875rem !important' }} />}
                             label={alert.objectName}
                             size="small"
                             sx={objectChipSx}
                         />
                     )}
-                    <Chip label={alertTypeLabel} size="small" sx={alertTypeChipSx} />
+                    <AlertTypeChip alertType={system ? 'system' : alert.alertType} />
                     {thresholdInfo ? (
                         <Typography sx={INSTANCE_THRESHOLD_SX}>
                             {thresholdInfo}
@@ -209,8 +197,8 @@ const GroupedAlertInstance: React.FC<GroupedAlertInstanceProps> = ({
                     </Typography>
                 )}
 
-                {/* Analyze button */}
-                {onAnalyze && (
+                {/* Analyze button; system alerts have no connection to analyse */}
+                {onAnalyze && !system && (
                     <Tooltip title={alert.aiAnalysis ? "View cached analysis" : "Analyze with AI"} placement="left">
                         <IconButton
                             size="small"

@@ -29,7 +29,11 @@ project adheres to
   18 allows; every user and API token with alert access sees
   them, the REST API reports a `null` `connection_id` for
   them, and `GET /api/v1/alerts/counts` gains a `system`
-  total.
+  total. The web client lists system alerts on the estate
+  view with an "AI DBA Workbench" source label and a
+  "System" type chip in place of a server name, and offers
+  no AI analysis for them, since they concern no monitored
+  connection.
 - Add the `probe_unavailable` built-in alert rule, which
   reports a probe that had been collecting and has stopped
   being available. Collector schema migration 16 seeds the

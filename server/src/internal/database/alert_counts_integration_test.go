@@ -125,7 +125,7 @@ func TestGetAlertCounts_NoFilter(t *testing.T) {
 	insertAlertCountsAlert(t, pool, connB, "active")
 	insertAlertCountsAlert(t, pool, connB, "cleared") // must be excluded
 
-	result, err := ds.GetAlertCounts(context.Background(), nil)
+	result, err := ds.GetAlertCounts(context.Background(), nil, false)
 	if err != nil {
 		t.Fatalf("GetAlertCounts: %v", err)
 	}
@@ -154,7 +154,7 @@ func TestGetAlertCounts_WithFilter(t *testing.T) {
 	insertAlertCountsAlert(t, pool, connB, "active")
 
 	// Allow-list only connection A.
-	result, err := ds.GetAlertCounts(context.Background(), []int{connA})
+	result, err := ds.GetAlertCounts(context.Background(), []int{connA}, false)
 	if err != nil {
 		t.Fatalf("GetAlertCounts: %v", err)
 	}

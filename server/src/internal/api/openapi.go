@@ -411,9 +411,9 @@ func buildSchemas() map[string]*OpenAPISchema {
 			Type: "object",
 			Properties: map[string]*OpenAPISchema{
 				"id":              {Type: "integer", Format: "int64", Description: "Alert ID"},
-				"connection_id":   {Type: "integer", Description: "Associated connection ID"},
-				"server_name":     {Type: "string", Description: "Server name"},
-				"alert_type":      {Type: "string", Description: "Type of alert"},
+				"connection_id":   {Type: "integer", Description: "Associated connection ID; null for a system alert", Nullable: true},
+				"server_name":     {Type: "string", Description: "Server name; empty for a system alert"},
+				"alert_type":      {Type: "string", Enum: []string{"threshold", "anomaly", "connection", "system"}, Description: "Type of alert; a system alert reports a fault in the Workbench itself and belongs to no connection"},
 				"severity":        {Type: "string", Enum: []string{"critical", "warning", "info"}, Description: "Alert severity"},
 				"status":          {Type: "string", Enum: []string{"active", "acknowledged", "cleared"}, Description: "Alert status"},
 				"title":           {Type: "string", Description: "Alert title"},
@@ -443,18 +443,13 @@ func buildSchemas() map[string]*OpenAPISchema {
 		"AlertCountsResult": {
 			Type: "object",
 			Properties: map[string]*OpenAPISchema{
-				"counts": {
-					Type: "object",
-					AdditionalProperties: &OpenAPISchema{
-						Type: "object",
-						Properties: map[string]*OpenAPISchema{
-							"critical": {Type: "integer"},
-							"warning":  {Type: "integer"},
-							"info":     {Type: "integer"},
-						},
-					},
-					Description: "Alert counts by server ID",
+				"total": {Type: "integer", Format: "int64", Description: "Active alerts the caller may see, system alerts included"},
+				"by_server": {
+					Type:                 "object",
+					AdditionalProperties: &OpenAPISchema{Type: "integer", Format: "int64"},
+					Description:          "Active alert count keyed by connection ID; system alerts are never included",
 				},
+				"system": {Type: "integer", Format: "int64", Description: "Active system alerts, which belong to no connection"},
 			},
 		},
 		"AcknowledgeRequest": {
@@ -2371,7 +2366,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/alerts": {
 			Get: &OpenAPIOperation{
 				Summary:     "List alerts",
-				Description: "Returns alerts with optional filtering",
+				Description: "Returns alerts with optional filtering. System alerts, which belong to no connection, are included only when neither connection_id nor connection_ids is given",
 				OperationID: "listAlerts",
 				Tags:        []string{"Alerts"},
 				Security:    bearerAuth,
@@ -2398,7 +2393,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/alerts/counts": {
 			Get: &OpenAPIOperation{
 				Summary:     "Get alert counts by server",
-				Description: "Returns counts of active alerts grouped by server and severity",
+				Description: "Returns counts of active alerts grouped by server, with system alerts counted separately",
 				OperationID: "getAlertCounts",
 				Tags:        []string{"Alerts"},
 				Security:    bearerAuth,

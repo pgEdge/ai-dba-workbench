@@ -315,7 +315,7 @@ func TestPruneTopologyServers_IsExpandableReflectsVisibleChildren(t *testing.T) 
 // the short-circuit must run before any pool access.
 func TestGetAlertCounts_EmptyFilterShortCircuits(t *testing.T) {
 	d := &Datastore{}
-	result, err := d.GetAlertCounts(context.Background(), []int{})
+	result, err := d.GetAlertCounts(context.Background(), []int{}, false)
 	if err != nil {
 		t.Fatalf("GetAlertCounts: %v", err)
 	}

@@ -288,6 +288,52 @@ classification for complex anomalies.
 | `enabled` | boolean | `true` | Enable tier 3 |
 | `timeout_seconds` | integer | `30` | LLM API timeout |
 
+#### Provider Health (`provider_health`)
+
+The `anomaly.provider_health` section controls the system
+alert that the alerter raises when calls to the embedding or
+reasoning provider keep failing. Whilst a provider fails,
+anomaly detection runs in a degraded mode: tier 2 compares
+no candidate with past anomalies, tier 3 raises each
+candidate that reaches the tier without LLM classification,
+and the re-evaluation worker leaves acknowledged anomaly
+alerts unchanged.
+
+The following table describes the provider health option:
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `failure_threshold` | integer | `3` | Consecutive failed calls that raise the alert; must be at least 1 |
+
+The alerter counts consecutive failures separately for tier
+2 embeddings, tier 3 classification and re-evaluation, and
+for each provider. When one count reaches the threshold, the
+alerter raises a single warning alert for that tier and
+provider; the next successful call from that tier to that
+provider clears the alert. A call cancelled before it
+completes counts as neither a failure nor a success,
+although a call that times out counts as a failure.
+
+When anomaly detection is enabled, the alerter also checks
+the configured embedding and reasoning providers at
+startup. A failed check raises the tier 2 or tier 3 alert
+immediately, whatever the threshold; a failed reasoning
+check raises the tier 3 alert rather than the re-evaluation
+alert. At startup the alerter also clears any open provider
+alert for a tier or provider that is no longer configured.
+See
+[System Alerts](../../user-guide/alerts/index.md#system-alerts)
+for how the alert appears.
+
+In the following example, the alerter raises the alert after
+five consecutive failures:
+
+```yaml
+anomaly:
+  provider_health:
+    failure_threshold: 5
+```
+
 ### Baseline Calculation (`baselines`)
 
 The `baselines` section configures baseline metric

@@ -94,6 +94,12 @@ func nonSuperuserContext(userID int64, username string) context.Context {
 // nil return value, and the tool treated that nil as "all connections",
 // producing a SQL WHERE clause of TRUE that leaked every alert in the
 // datastore.
+//
+// Since GitHub issue #582 such a user may still see system alerts, which
+// belong to no connection, so the tool now runs its query with the
+// connection filter FALSE rather than answering at once; the dummy pool
+// makes that query fail. TestGetAlertHistorySystemAlertsNoConnectionsIntegration
+// proves against a real database that only the system alert comes back.
 func TestGetAlertHistoryTool_RBAC_NoAccessDeniesEmptyResult(t *testing.T) {
 	store, cleanup := newRBACRegressionTestStore(t)
 	defer cleanup()
@@ -125,16 +131,12 @@ func TestGetAlertHistoryTool_RBAC_NoAccessDeniesEmptyResult(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Handler returned error: %v", err)
 	}
-	if resp.IsError {
-		t.Fatalf("Handler returned error response: %+v", resp.Content)
-	}
 	if len(resp.Content) == 0 {
 		t.Fatal("Expected content in response")
 	}
 	body := resp.Content[0].Text
-	if !strings.Contains(body, "No alerts found") ||
-		!strings.Contains(body, "You do not have access to any connections") {
-		t.Errorf("Expected RBAC denial message, got: %q", body)
+	if !resp.IsError || !strings.Contains(body, "Failed to query alerts") {
+		t.Errorf("Expected the system alert query to run and fail on the dummy pool, got: %q", body)
 	}
 	// Must NOT leak alice's connection id or name anywhere in the body.
 	if strings.Contains(body, "42") {

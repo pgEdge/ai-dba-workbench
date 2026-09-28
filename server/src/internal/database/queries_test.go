@@ -3133,12 +3133,13 @@ func TestAlertStruct(t *testing.T) {
 	operator := ">"
 	now := time.Now()
 	clearedAt := now.Add(time.Hour)
+	connID := 42
 
 	a := Alert{
 		ID:             1,
 		AlertType:      "threshold",
 		RuleID:         &ruleID,
-		ConnectionID:   42,
+		ConnectionID:   &connID,
 		DatabaseName:   &dbName,
 		MetricName:     &metricName,
 		MetricValue:    &metricValue,
@@ -3156,8 +3157,8 @@ func TestAlertStruct(t *testing.T) {
 	if a.ID != 1 {
 		t.Errorf("expected ID 1, got %d", a.ID)
 	}
-	if a.ConnectionID != 42 {
-		t.Errorf("expected ConnectionID 42, got %d", a.ConnectionID)
+	if a.ConnectionID == nil || *a.ConnectionID != 42 {
+		t.Errorf("expected ConnectionID 42, got %v", a.ConnectionID)
 	}
 	if a.DatabaseName == nil || *a.DatabaseName != "appdb" {
 		t.Errorf("expected DatabaseName 'appdb', got %v", a.DatabaseName)

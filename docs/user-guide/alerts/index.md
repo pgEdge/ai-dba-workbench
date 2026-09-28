@@ -171,6 +171,46 @@ the blackout only prevents new alerts from being created.
 See [Blackouts](../blackouts.md) for details on
 maintenance windows.
 
+## System Alerts
+
+A system alert reports a fault in the Workbench itself
+rather than in a monitored server; the alert type is
+`system` and the alert belongs to no connection. The
+alerter currently raises one kind of system alert, for an
+embedding or reasoning provider that keeps failing and so
+degrades anomaly detection.
+
+The alert title names the affected tier and provider, as
+in `Anomaly detection degraded: Tier 2 embedding provider
+ollama failing`. The description gives the model, the
+number of consecutive failures when the alert was raised
+(or notes a failed startup check), what anomaly detection
+does whilst the provider fails, and the last error the
+provider returned. The alerter raises one alert for each
+tier and provider, at warning severity, and clears the
+alert on the next successful call from that tier to that
+provider.
+
+System alerts behave differently from connection alerts in
+the following ways:
+
+- every user and API token with access to alerts sees system
+  alerts, whatever connections the user or token may access.
+- a list of alerts filtered to particular connections leaves
+  system alerts out.
+- the alert counts report system alerts in a separate
+  `system` total rather than under a server.
+- blackouts, including estate blackouts, do not suppress
+  system alerts.
+- notifications go to the estate default channels, since
+  channel overrides apply to a server, cluster or group.
+- the event timeline leaves system alerts out.
+
+Users acknowledge a system alert in the same way as any
+other alert. See
+[Alerter Configuration](../../getting-started/configuration/alerter.md#provider-health-provider_health)
+for the failure threshold.
+
 ## Related Documentation
 
 - [Alert Rule Reference](rule-reference.md) lists all

@@ -293,7 +293,7 @@ const RunnableCodeBlock: React.FC<RunnableCodeBlockProps> = ({
                 position: 'relative',
                 // Remove bottom border radius when results, errors, a
                 // confirmation prompt or a validation notice are showing
-                ...((queryState.response || queryState.error || queryState.pendingConfirmation || showNotice) ? {
+                ...((queryState.response !== null || Boolean(queryState.error) || queryState.pendingConfirmation || showNotice) ? {
                     borderBottomLeftRadius: 0,
                     borderBottomRightRadius: 0,
                     mb: 0,
@@ -400,7 +400,7 @@ const RunnableCodeBlock: React.FC<RunnableCodeBlockProps> = ({
                             {!runAnyway && (
                                 <Button
                                     size="small"
-                                    onClick={() => setRunAnyway(true)}
+                                    onClick={() => { setRunAnyway(true); }}
                                     sx={{ textTransform: 'none', mt: 0.5 }}
                                 >
                                     Run anyway

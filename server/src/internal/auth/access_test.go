@@ -510,6 +510,17 @@ func TestRBACCheckerNilReceiver(t *testing.T) {
 	}
 }
 
+func TestRBACCheckerNilReceiverSetConnectionSharingLookup(t *testing.T) {
+	// Wiring a sharing lookup into a nil checker must be a no-op rather
+	// than a panic, and the checker must still deny (issue #572).
+	var checker *RBACChecker
+	checker.SetConnectionSharingLookup(
+		func(context.Context, int) (bool, string, error) {
+			return true, "alice", nil
+		})
+	assertCheckerDeniesEverything(t, checker)
+}
+
 // assertCheckerDeniesEverything checks that every access method on
 // checker denies, for an anonymous context and for one that claims
 // superuser.

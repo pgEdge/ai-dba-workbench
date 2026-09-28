@@ -55,8 +55,13 @@ func NewRBACChecker(authStore *AuthStore) *RBACChecker {
 
 // SetConnectionSharingLookup sets the function used to look up
 // connection sharing information. This must be called before
-// CanAccessConnection is used for non-superuser access checks.
+// CanAccessConnection is used for non-superuser access checks. It is a
+// no-op on a nil checker, which denies every check regardless (see
+// RBACChecker).
 func (rc *RBACChecker) SetConnectionSharingLookup(fn ConnectionSharingLookupFunc) {
+	if rc == nil {
+		return
+	}
 	rc.connSharingLookupFn = fn
 }
 

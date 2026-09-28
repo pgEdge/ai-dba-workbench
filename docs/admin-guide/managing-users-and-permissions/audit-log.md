@@ -840,12 +840,13 @@ rewritten without the server secret. Events deleted and later put
 back exactly as they were, from a copy, leave nothing to find. Where
 no purge has recorded the oldest event, deleting every event except
 event 1, or deleting them all and putting back a copy of event 1, is
-the same as deleting the newest events: every event the server writes
-afterwards links to event 1, and nothing in the file tells that log
-from one that never grew. An event's identifier is not part of its
-hash either, so someone who can write the database can empty the log,
-wait for the server to write one more event and move that event to
-identifier 1, and the log verifies for the same reason.
+the same as deleting the newest events: the tail record catches it,
+within the limits just described, but nothing else in the file tells
+that log from one that never grew. An event's identifier is not part of
+its hash either, so someone who can write the database could empty the
+log, wait for the server to write one more event and move that event to
+identifier 1; the chain alone would accept that log, and it is the tail
+record, which names the newest event by identifier, that refuses it.
 
 The re-chain blesses whatever the database contained at the moment it
 ran, as described above, so on an upgraded installation the keyed chain

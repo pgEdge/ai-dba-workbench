@@ -461,7 +461,11 @@ func TestBlackoutWritesCoverage(t *testing.T) {
 			http.MethodDelete, "", "", http.StatusNotFound},
 		{"delete schedule lookup fails", deleteSchedule(1), "narrowed",
 			http.MethodDelete, "", blackoutDropBlackouts, http.StatusInternalServerError},
-		{"delete schedule read-only visible", deleteSchedule(1), "readOnly",
+		// A blackout schedule is Workbench metadata, so a read entry
+		// is enough to delete one on that server.
+		{"delete schedule read-only", deleteSchedule(1), "readOnly",
+			http.MethodDelete, "", "", http.StatusOK},
+		{"delete visible schedule out of scope", deleteSchedule(4), "narrowed",
 			http.MethodDelete, "", "", http.StatusForbidden},
 	}
 

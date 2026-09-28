@@ -157,6 +157,7 @@ func newTokenScopeBlackoutHandler(t *testing.T) (*BlackoutHandler,
 	callers := map[string]scopeCaller{
 		"session": session, "unscoped": unscoped, "wildcard": wildcard,
 		"narrowed": narrowed, "readOnly": readOnly,
+		"wildcardRead": wildcardReadCaller(t, store),
 	}
 	h := NewBlackoutHandler(database.NewTestDatastore(pool), store,
 		auth.NewRBACChecker(store))
@@ -235,7 +236,13 @@ func TestBlackoutWritesByIDRespectTokenScope(t *testing.T) {
 		want   int
 	}{
 		{"delete blackout in scope", deleteBlackout, "blackouts", 1, "narrowed", http.StatusOK},
-		{"delete blackout read-only", deleteBlackout, "blackouts", 1, "readOnly", http.StatusForbidden},
+		// A blackout is Workbench metadata, so a read entry is enough.
+		{"delete blackout read-only", deleteBlackout, "blackouts", 1, "readOnly", http.StatusOK},
+		{"stop blackout read-only", stopBlackout, "blackouts", 1, "readOnly", http.StatusOK},
+		{"update schedule read-only", updateSchedule, "blackout_schedules", 1, "readOnly", http.StatusOK},
+		{"delete cluster blackout read-only", deleteBlackout, "blackouts", 3, "readOnly", http.StatusForbidden},
+		{"delete cluster blackout wildcard read", deleteBlackout, "blackouts", 3, "wildcardRead", http.StatusOK},
+		{"delete cluster schedule wildcard read", deleteSchedule, "blackout_schedules", 3, "wildcardRead", http.StatusOK},
 		// A record on a connection the token cannot see answers 404, as
 		// reading it does, so that a refusal does not reveal the id.
 		{"delete blackout out of scope", deleteBlackout, "blackouts", 2, "narrowed", http.StatusNotFound},

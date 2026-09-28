@@ -179,6 +179,14 @@ http:
     #   # Maps identity-provider group names to Workbench RBAC group names.
     #   # group_map:
     #   #   idp-group-name: workbench-group-name
+    #
+    #   # With an https redirect_url, tls.enabled false and no
+    #   # http.trusted_proxies, the login state cookie cannot use the
+    #   # __Host- prefix, so a sibling subdomain able to set cookies can
+    #   # log users in as an attacker (login CSRF). The server refuses to
+    #   # start in that case unless this is true; set trusted_proxies
+    #   # instead wherever possible.
+    #   # allow_unprefixed_state_cookie: false
 
 #=========================================================================
 # CONNECTION SECURITY

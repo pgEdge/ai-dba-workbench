@@ -143,6 +143,7 @@ The following table describes the federated authentication options:
 | `oidc.allowed_email_domains` | list | `[]` | Restricts login to verified addresses in these exact domains; empty means no restriction. |
 | `oidc.superuser_group` | string | | Provider group whose members hold the Workbench superuser flag; empty leaves the flag under local control. |
 | `oidc.group_map` | map | `{}` | Maps provider group names to Workbench group names. |
+| `oidc.allow_unprefixed_state_cookie` | bool | `false` | Accepts a login state cookie without the `__Host-` prefix behind a proxy; see [Requiring a Trusted Proxy List](#requiring-a-trusted-proxy-list). |
 
 Either `client_secret` or `client_secret_file` must be set. A secret
 read from `client_secret_file` is held only in memory, so saving the
@@ -219,8 +220,21 @@ CSRF (cross-site request forgery): the attacker gains no access to the
 user's own account, but the user may enter data into an account the
 attacker controls.
 
-The server prints a warning at start-up that names both consequences
-when the list is empty and federated login is enabled.
+The server therefore refuses to start when federated login is enabled,
+`redirect_url` uses `https`, `http.tls.enabled` is `false` and
+`http.trusted_proxies` is empty, which is a TLS-terminating proxy with
+no trusted proxy list. Set `http.trusted_proxies` to fix it, or, if
+no sibling subdomain can be used to set cookies for the parent domain,
+set `oidc.allow_unprefixed_state_cookie` to `true` to accept the risk.
+A `redirect_url` using `http` on a loopback host is exempt, because a
+browser never keeps a `__Host-` cookie over plain HTTP. A `SIGHUP`
+reload applies the same rule and keeps the previous configuration when
+it fails.
+
+When the list is empty and federated login is enabled, the server
+prints a warning at start-up about the shared rate-limit allowance;
+when `http.tls.enabled` is also `false`, a second warning names the
+login CSRF risk.
 
 ## Registering the Workbench at the Provider
 

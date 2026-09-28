@@ -1775,13 +1775,30 @@ project adheres to
   refuses a replay only at the process that accepted the state. (#505)
 
 - Document `http.trusted_proxies` as required for a production
-  deployment behind a reverse proxy with OIDC login enabled, and name
-  the consequences in the start-up warning printed when the list is
-  empty: every client shares one OIDC rate-limit allowance, and behind
-  a TLS-terminating proxy the login state cookie cannot use the
-  `__Host-` prefix, which lets a host able to set cookies for a sibling
-  subdomain log a user in to the attacker's account (login CSRF).
-  (#506)
+  deployment behind a reverse proxy with OIDC login enabled, and
+  refuse to start with federated login enabled, an `https`
+  `redirect_url`, `http.tls.enabled` false and no
+  `http.trusted_proxies`, unless the new
+  `http.auth.oidc.allow_unprefixed_state_cookie` option is set to
+  `true`. Behind a TLS-terminating proxy the login state cookie can
+  use the `__Host-` name prefix only when `X-Forwarded-Proto` comes
+  from a listed proxy, so on such a deployment it was written under
+  its plain name, and a host able to set cookies for a sibling
+  subdomain could plant its own login state and log a user in to the
+  attacker's account (login CSRF). A `SIGHUP` reload applies the same
+  rule and keeps the previous configuration when it fails. The
+  start-up warning printed when the list is empty names the
+  consequences: every client shares one OIDC rate-limit allowance
+  for the start and callback endpoints, and, unless the server
+  terminates TLS itself, the login CSRF risk. (#506)
+
+    **Upgrade step for an existing installation.** A deployment
+    in the shape above, which started with only a warning before
+    this release, now refuses to start. Set
+    `http.trusted_proxies` to the reverse proxy's address, or,
+    only where no sibling subdomain can set cookies for the
+    parent domain, set
+    `http.auth.oidc.allow_unprefixed_state_cookie` to `true`.
 
 - Treat a missing RBAC checker as denying access rather than granting
   it. The alert history, blackout, metric baseline, alert rule, metric

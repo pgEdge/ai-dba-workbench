@@ -362,6 +362,7 @@ that read and verify the log, along with
 | `auth.oidc.allowed_email_domains` | list | `[]` | Permitted verified email domains |
 | `auth.oidc.superuser_group` | string | | Provider group granting superuser |
 | `auth.oidc.group_map` | map | `{}` | Provider group to Workbench group map |
+| `auth.oidc.allow_unprefixed_state_cookie` | bool | `false` | Accept an unprefixed login state cookie behind a proxy |
 
 #### Authentication (`auth`)
 
@@ -378,6 +379,17 @@ login is disabled. The
 describes each option in full, along with registering
 the Workbench at an identity provider and mapping
 provider groups onto Workbench groups.
+
+The server also refuses to start with federated login
+enabled, an `https` `auth.oidc.redirect_url`,
+`tls.enabled` set to `false` and an empty
+`trusted_proxies` list. On that deployment the login
+state cookie cannot use the `__Host-` name prefix, so a
+sibling subdomain that can set cookies can log users in
+as an attacker. Set `trusted_proxies` to the reverse
+proxy's address, or set
+`auth.oidc.allow_unprefixed_state_cookie` to `true` to
+accept the risk.
 | `auth.audit_retention_days` | int | `90` | Days to keep RBAC audit events (0 keeps forever) |
 
 #### CORS Origin (`cors_origin`)

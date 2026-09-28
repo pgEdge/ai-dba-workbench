@@ -695,7 +695,7 @@ func TestNewProviderUsesTheEffectiveClientSecret(t *testing.T) {
 	// insists on an https issuer, so the fake provider's http issuer is
 	// substituted afterwards; the resolved secret is unaffected.
 	configFile := filepath.Join(dir, "server.yaml")
-	configBody := "http:\n  auth:\n    oidc:\n      enabled: true\n" +
+	configBody := "http:\n  trusted_proxies: [\"10.0.0.0/8\"]\n  auth:\n    oidc:\n      enabled: true\n" +
 		"      issuer: https://idp.example.com\n" +
 		"      client_id: " + idp.ClientID() + "\n" +
 		"      client_secret_file: " + secretFile + "\n" +

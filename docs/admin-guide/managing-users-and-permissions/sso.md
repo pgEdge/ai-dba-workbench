@@ -169,10 +169,12 @@ loses the protection that stops login CSRF from a sibling subdomain.
 The start and callback endpoints are each rate limited per client
 address, with an allowance of 240 requests a minute; a completed login
 hands back the one unit it spent on each, so the limits bound failed
-and abandoned logins rather than working ones. Every call to the start
-endpoint
-spends one unit of the start allowance. The callback allowance is spent
-only by requests that reach the identity provider, so a request refused
+and abandoned logins rather than working ones. Every `GET` request to
+the start endpoint spends one unit of the start allowance while
+federated login is enabled; a request with another method, or one made
+whilst federated login is disabled, is answered before the limit is
+checked and costs nothing. The callback allowance is spent only by
+requests that reach the identity provider, so a request refused
 before that point costs nothing; such requests include one with no
 login state cookie, one with a mismatched state and one that replays a
 state already accepted.
@@ -184,10 +186,11 @@ the state plus a minute of clock skew. A captured state cookie cannot
 therefore be replayed with further authorisation codes. The record
 holds up to 100,000 states at a time; under a sustained flood the
 oldest are forgotten early, and each forgotten state could then be
-presented once more. The record is held in the server's memory; a
-deployment that runs several server processes with the same server
-secret refuses a replay only at the process that first accepted the
-state.
+presented once more. The record is held in the server's memory, so a
+restart forgets it and a state accepted before the restart could be
+presented once more until it expires; a deployment that runs several
+server processes with the same server secret refuses a replay only at
+the process that first accepted the state.
 
 Behind a proxy, every request carries the proxy's address unless
 `http.trusted_proxies` names it, so each limit collapses to a single

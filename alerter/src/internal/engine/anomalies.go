@@ -162,7 +162,15 @@ func (e *Engine) detectAnomalies(ctx context.Context) {
 
 	cfg := e.getConfig()
 
-	if !cfg.Anomaly.Tier1.Enabled {
+	if !cfg.Anomaly.Enabled || !cfg.Anomaly.Tier1.Enabled {
+		return
+	}
+
+	// A candidate that no later tier can process would never raise an
+	// alert or be cleaned up, so write none; startup applies the same
+	// rule by disabling anomaly detection (issue #581).
+	if !e.anomalyProcessingAvailable(cfg) {
+		e.debugLog("Skipping anomaly detection: no LLM provider available for the enabled tiers")
 		return
 	}
 
@@ -233,10 +241,7 @@ func (e *Engine) detectAnomalies(ctx context.Context) {
 		}
 	}
 
-	// Process tier 2 and tier 3 if enabled
-	if cfg.Anomaly.Tier2.Enabled || cfg.Anomaly.Tier3.Enabled {
-		e.processTier2And3(ctx)
-	}
+	e.processTier2And3(ctx)
 }
 
 // baselineableValues returns the latest values that belong to the
@@ -362,6 +367,11 @@ func (e *Engine) detectAnomalyForValue(
 
 // processTier2And3 processes anomaly candidates through tier 2 and tier 3
 func (e *Engine) processTier2And3(ctx context.Context) {
+	// Candidates left behind while processing was unavailable, or by a
+	// backlog, would otherwise raise alerts about values that may no
+	// longer hold, so they are expired before the queue is read.
+	e.expireStaleAnomalyCandidates(ctx)
+
 	candidates, err := e.datastore.GetUnprocessedAnomalyCandidates(ctx, 100)
 	if err != nil {
 		e.log("ERROR: Failed to get anomaly candidates: %v", err)
@@ -430,6 +440,37 @@ func (e *Engine) processTier2And3(ctx context.Context) {
 
 		e.markCandidateProcessed(ctx, candidate)
 	}
+}
+
+// expireStaleAnomalyCandidates marks candidates that have waited more than
+// StaleCandidateEvaluationIntervals Tier 1 evaluation intervals as
+// processed with no final decision, so they raise no alert and the
+// retention cleanup ages them out (issue #581).
+func (e *Engine) expireStaleAnomalyCandidates(ctx context.Context) {
+	cutoff := time.Now().Add(-staleCandidateAge(e.getConfig()))
+	expired, err := e.datastore.ExpireUnprocessedAnomalyCandidates(ctx, cutoff)
+	if err != nil {
+		e.log("ERROR: Failed to expire stale anomaly candidates: %v", err)
+		return
+	}
+	if expired > 0 {
+		e.log("Expired %d anomaly candidates left unprocessed since before %s",
+			expired, cutoff.UTC().Format(time.RFC3339))
+	}
+}
+
+// staleCandidateAge is how long a candidate may wait unprocessed before
+// expireStaleAnomalyCandidates expires it. A nil config, as an engine
+// built for the retention cleanup alone has, uses the default interval.
+func staleCandidateAge(cfg *config.Config) time.Duration {
+	var interval time.Duration
+	if cfg != nil {
+		interval = time.Duration(cfg.Anomaly.Tier1.EvaluationIntervalSeconds) * time.Second
+	}
+	if interval <= 0 {
+		interval = DefaultTier1EvaluationInterval
+	}
+	return StaleCandidateEvaluationIntervals * interval
 }
 
 // markCandidateProcessed stamps the candidate as processed and writes its

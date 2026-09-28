@@ -63,6 +63,18 @@ const (
 	// after re-evaluation clears them based on user feedback. This is longer
 	// than the standard cooldown to respect the user's assessment.
 	ReevaluationSuppressionPeriod = 24 * time.Hour
+
+	// StaleCandidateEvaluationIntervals is how many Tier 1 evaluation
+	// intervals an anomaly candidate may wait unprocessed before it is
+	// expired without a decision. A condition that persists writes a
+	// fresh candidate on every cycle, so dropping an old one loses
+	// nothing, whilst processing it would raise an alert about a value
+	// that may no longer hold.
+	StaleCandidateEvaluationIntervals = 5
+
+	// DefaultTier1EvaluationInterval is the fallback Tier 1 evaluation
+	// interval used to derive the stale candidate cut-off.
+	DefaultTier1EvaluationInterval = 60 * time.Second
 )
 
 // Engine is the main alerter engine that coordinates all background processing
@@ -162,6 +174,17 @@ func (e *Engine) initLLMProviders() {
 		e.config.Anomaly.Enabled = false
 		e.log("Anomaly detection auto-disabled: no LLM providers available")
 	}
+}
+
+// anomalyProcessingAvailable reports whether a Tier 1 candidate can be
+// processed by at least one later tier under cfg: Tier 2 enabled with an
+// embedding provider, or Tier 3 enabled with a reasoning provider. The
+// providers are created once, at startup, for the tiers enabled then, so
+// a reload cannot add one. Without either, raw Tier 1 detection is too
+// noisy to alert on and anomaly detection is treated as disabled.
+func (e *Engine) anomalyProcessingAvailable(cfg *config.Config) bool {
+	return (cfg.Anomaly.Tier2.Enabled && e.embeddingProvider != nil) ||
+		(cfg.Anomaly.Tier3.Enabled && e.reasoningProvider != nil)
 }
 
 // Run starts the engine and runs until the context is canceled
@@ -267,6 +290,16 @@ func (e *Engine) Run(ctx context.Context) error {
 func (e *Engine) ReloadConfig(cfg *config.Config) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+
+	// Apply the startup rule in initLLMProviders to the new config, so a
+	// reload that leaves no usable tier after Tier 1 disables anomaly
+	// detection rather than leaving the detector writing candidates that
+	// nothing can process (issue #581).
+	if cfg != nil && cfg.Anomaly.Enabled && !e.anomalyProcessingAvailable(cfg) {
+		cfg.Anomaly.Enabled = false
+		e.log("Anomaly detection auto-disabled: no LLM provider available for the enabled tiers")
+	}
+
 	e.config = cfg
 	e.log("Configuration reloaded")
 }

@@ -25,12 +25,19 @@ package engine
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net"
+	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -240,7 +247,8 @@ func (t *providerHealthTracker) record(ctx context.Context, tier providerTier,
 		return
 	}
 
-	lastError := redactProviderError(callErr.Error(), t.secrets())
+	secrets := t.secrets()
+	lastError := redactProviderError(providerErrorText(callErr, provider), secrets)
 	description := providerHealthDescription(tier, provider, model, st.failures, immediate, lastError)
 	details := providerHealthDetails(tier, provider, model, st.failures, immediate, lastError)
 
@@ -248,6 +256,7 @@ func (t *providerHealthTracker) record(ctx context.Context, tier providerTier,
 		if lastError == st.lastError {
 			return
 		}
+		t.logCallError(key, callErr, secrets)
 		if err := t.store.UpdateSystemAlert(dbCtx, st.alertID, description, details); err != nil {
 			t.log("ERROR: Failed to update provider health alert %s: %v", key, err)
 			return
@@ -256,6 +265,7 @@ func (t *providerHealthTracker) record(ctx context.Context, tier providerTier,
 		return
 	}
 
+	t.logCallError(key, callErr, secrets)
 	objectName := provider + "/" + model
 	alert := &database.Alert{
 		ObjectName:     &objectName,
@@ -284,6 +294,13 @@ func (t *providerHealthTracker) record(ctx context.Context, tier providerTier,
 	st.lastError = lastError
 	t.log("Provider health alert raised: %s (%s)", alert.Title, lastError)
 	t.notify(opened, database.NotificationTypeAlertFire)
+}
+
+// logCallError writes the provider error to the alerter's own log with
+// the endpoint details the alert leaves out, so an operator can see
+// which host refused the call. Credentials are still removed.
+func (t *providerHealthTracker) logCallError(key string, callErr error, secrets []string) {
+	t.log("Provider health %s: call failed: %s", key, redactProviderLogError(callErr.Error(), secrets))
 }
 
 // load reads whether an alert is already open for key, once per key, and
@@ -395,40 +412,93 @@ func providerHealthDetails(tier providerTier, provider, model string,
 const maxProviderErrorBytes = 512
 
 // providerErrorPatterns match credentials a provider error may repeat:
-// a bearer token, a key or token parameter or header, a key-shaped value
-// from a known provider, and the userinfo of a URL.
+// a bearer or basic credential, the query string of a URL, a key or
+// token parameter or header, a key-shaped value from a known provider,
+// and the userinfo of a URL.
 var providerErrorPatterns = []struct {
 	re   *regexp.Regexp
 	repl string
 }{
-	{regexp.MustCompile(`(?i)(bearer\s+)[^\s"',;]+`), "${1}[REDACTED]"},
+	{regexp.MustCompile(`(?i)\b((?:bearer|basic)\s+)[A-Za-z0-9._~+/=-]+`), "${1}[REDACTED]"},
+	{regexp.MustCompile(`([A-Za-z][A-Za-z0-9+.-]*://[^\s?#"'<>]*)\?[^\s"'<>#]*`), "${1}?[REDACTED]"},
 	{regexp.MustCompile(`(?i)((?:api[_-]?key|x-api-key|x-goog-api-key|access[_-]?token|token|key|secret|password|authorization)["']?\s*[:=]\s*["']?)[^\s"'&,;}]+`), "${1}[REDACTED]"},
 	{regexp.MustCompile(`\b(?:sk|pa|pk)-[A-Za-z0-9_\-]{8,}`), "[REDACTED]"},
 	{regexp.MustCompile(`\bAIza[0-9A-Za-z_\-]{20,}`), "[REDACTED]"},
 	{regexp.MustCompile(`(://)[^/@\s]+@`), "${1}[REDACTED]@"},
 }
 
+// redactedMarker replaces each credential removed from provider text.
+const redactedMarker = "[REDACTED]"
+
+// providerMarkup replaces the characters Slack mrkdwn and Mattermost
+// Markdown treat as links or mentions (<url|text>, <!channel>,
+// [text](url), @channel). The notifiers for those channels only
+// JSON-escape an alert description, so provider text must not carry
+// markup into it.
+var providerMarkup = strings.NewReplacer(
+	"<", "(", ">", ")", "[", "(", "]", ")", "@", "＠",
+)
+
+// providerErrorText is the text of a failed provider call that an alert
+// may repeat. A transport failure names the endpoint's host, address,
+// port and path, which not every user with alert access should learn,
+// so it is reduced to the operation and a category of failure.
+func providerErrorText(err error, provider string) string {
+	var urlErr *url.Error
+	if !errors.As(err, &urlErr) {
+		return err.Error()
+	}
+	op := strings.ToUpper(urlErr.Op)
+	if op == "" || strings.ContainsFunc(op, func(r rune) bool { return r < 'A' || r > 'Z' }) {
+		op = "Request"
+	}
+	return fmt.Sprintf("%s to %s endpoint failed: %s", op, provider, transportFailure(urlErr))
+}
+
+// transportFailure names the category of a transport error without
+// repeating any of its detail.
+func transportFailure(urlErr *url.Error) string {
+	err := urlErr.Err
+	var dnsErr *net.DNSError
+	var certErr *tls.CertificateVerificationError
+	var authorityErr x509.UnknownAuthorityError
+	var hostnameErr x509.HostnameError
+	var invalidErr x509.CertificateInvalidError
+	var recordErr tls.RecordHeaderError
+	switch {
+	case urlErr.Timeout() || errors.Is(err, context.DeadlineExceeded):
+		return "timed out"
+	case errors.As(err, &dnsErr):
+		return "host name lookup failed"
+	case errors.Is(err, syscall.ECONNREFUSED):
+		return "connection refused"
+	case errors.Is(err, syscall.ECONNRESET):
+		return "connection reset"
+	case errors.Is(err, syscall.EHOSTUNREACH), errors.Is(err, syscall.ENETUNREACH):
+		return "host unreachable"
+	case errors.As(err, &certErr), errors.As(err, &authorityErr),
+		errors.As(err, &hostnameErr), errors.As(err, &invalidErr):
+		return "TLS certificate verification failed"
+	case errors.As(err, &recordErr):
+		return "TLS handshake failed"
+	case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
+		return "connection closed by the server"
+	default:
+		return "network error"
+	}
+}
+
 // redactProviderError prepares a provider error for an alert that every
 // user with alert access, and every notification channel, will see. It
-// deletes control and formatting characters, removes the configured API
-// keys verbatim and anything that looks like a credential, and caps the
-// length.
+// removes credentials as redactProviderLogError does, replaces markup
+// characters, and caps the length.
 func redactProviderError(msg string, secrets []string) string {
-	msg = strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) ||
-			r == '\u2028' || r == '\u2029' {
-			return -1
-		}
-		return r
-	}, strings.ToValidUTF8(msg, "\uFFFD"))
-	for _, secret := range secrets {
-		if secret != "" {
-			msg = strings.ReplaceAll(msg, secret, "[REDACTED]")
-		}
+	// Replace markup between the redaction markers, which stay intact.
+	parts := strings.Split(redactProviderLogError(msg, secrets), redactedMarker)
+	for i, part := range parts {
+		parts[i] = providerMarkup.Replace(part)
 	}
-	for _, p := range providerErrorPatterns {
-		msg = p.re.ReplaceAllString(msg, p.repl)
-	}
+	msg = strings.Join(parts, redactedMarker)
 	if len(msg) <= maxProviderErrorBytes {
 		return msg
 	}
@@ -437,6 +507,28 @@ func redactProviderError(msg string, secrets []string) string {
 		cut--
 	}
 	return msg[:cut] + "…"
+}
+
+// redactProviderLogError deletes control and formatting characters,
+// removes the configured secrets verbatim and anything that looks like
+// a credential. It keeps endpoint details, for the alerter's own log.
+func redactProviderLogError(msg string, secrets []string) string {
+	msg = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) ||
+			r == ' ' || r == ' ' {
+			return -1
+		}
+		return r
+	}, strings.ToValidUTF8(msg, "�"))
+	for _, secret := range secrets {
+		if secret != "" {
+			msg = strings.ReplaceAll(msg, secret, redactedMarker)
+		}
+	}
+	for _, p := range providerErrorPatterns {
+		msg = p.re.ReplaceAllString(msg, p.repl)
+	}
+	return msg
 }
 
 // healthTrackingEmbedding wraps an embedding provider and records the
@@ -506,14 +598,63 @@ func providerName(name string) string {
 	return name
 }
 
-// configuredSecrets returns the API keys cfg holds.
+// minDerivedSecretLen is the shortest base_url userinfo or query value
+// treated as a secret; removing a shorter one verbatim would mangle
+// ordinary words in the error text.
+const minDerivedSecretLen = 4
+
+// configuredSecrets returns the API keys cfg holds, and the userinfo and
+// query values of each provider's base_url.
 func configuredSecrets(cfg *config.Config) []string {
-	return []string{
+	secrets := []string{
 		cfg.GetOpenAIAPIKey(),
 		cfg.GetAnthropicAPIKey(),
 		cfg.GetVoyageAPIKey(),
 		cfg.GetGeminiAPIKey(),
 	}
+	for _, base := range []string{
+		cfg.LLM.Ollama.BaseURL,
+		cfg.LLM.OpenAI.BaseURL,
+		cfg.LLM.Anthropic.BaseURL,
+		cfg.LLM.Voyage.BaseURL,
+		cfg.LLM.Gemini.BaseURL,
+	} {
+		secrets = append(secrets, baseURLSecrets(base)...)
+	}
+	return secrets
+}
+
+// baseURLSecrets returns the userinfo and query values of a configured
+// base URL, in decoded and escaped forms, longest first so that a value
+// is removed before any shorter value inside it.
+func baseURLSecrets(base string) []string {
+	u, err := url.Parse(base)
+	if err != nil {
+		return nil
+	}
+	var values []string
+	if u.User != nil {
+		values = append(values, u.User.String(), u.User.Username())
+		if password, ok := u.User.Password(); ok {
+			values = append(values, password)
+		}
+	}
+	// Query keeps the pairs that parse and drops malformed ones.
+	for _, vs := range u.Query() {
+		values = append(values, vs...)
+	}
+	seen := map[string]bool{}
+	var secrets []string
+	for _, v := range values {
+		for _, form := range []string{v, url.QueryEscape(v), url.PathEscape(v)} {
+			if len(form) >= minDerivedSecretLen && !seen[form] {
+				seen[form] = true
+				secrets = append(secrets, form)
+			}
+		}
+	}
+	sort.Slice(secrets, func(i, j int) bool { return len(secrets[i]) > len(secrets[j]) })
+	return secrets
 }
 
 // initProviderHealth installs the tracking wrappers around the engine's

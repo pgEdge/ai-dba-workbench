@@ -186,10 +186,13 @@ ollama failing`. The description gives the model, the
 number of consecutive failures when the alert was raised
 (or notes a failed startup check), what anomaly detection
 does whilst the provider fails, and the last error the
-provider returned. The alerter raises one alert for each
-tier and provider, at warning severity, and clears the
-alert on the next successful call from that tier to that
-provider.
+provider returned, with any credentials removed. A network
+failure appears only as its category, such as `connection
+refused`, without the endpoint's address; the alerter log
+records the endpoint for the administrator. The alerter
+raises one alert for each tier and provider, at warning
+severity, and clears the alert on the next successful call
+from that tier to that provider.
 
 System alerts behave differently from connection alerts in
 the following ways:

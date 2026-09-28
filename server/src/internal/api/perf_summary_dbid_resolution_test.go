@@ -120,13 +120,14 @@ type dbidExpectation struct {
 }
 
 // assertDbidAttribution checks that the unfiltered list reports queryID
-// once, under wantDatabase and with its 120 calls counted once, that the
-// unfiltered drill-down agrees, and that each filter in cases returns the
-// expected calls from both endpoints.
+// once, under wantDatabase and with its 120 calls counted once, and with
+// wantSample, the probing database its metric rows are keyed by, as its
+// sample_database_name; that the unfiltered drill-down agrees; and that
+// each filter in cases returns the expected calls from both endpoints.
 func assertDbidAttribution(
 	t *testing.T,
 	h *PerfSummaryHandler,
-	queryID, wantDatabase string,
+	queryID, wantDatabase, wantSample string,
 	cases []dbidExpectation,
 ) {
 	t.Helper()
@@ -140,6 +141,10 @@ func assertDbidAttribution(
 	if rows[0].DatabaseName != wantDatabase || rows[0].Calls != 120 {
 		t.Errorf("unfiltered: database_name = %q, calls = %d; want %q, 120",
 			rows[0].DatabaseName, rows[0].Calls, wantDatabase)
+	}
+	if rows[0].SampleDatabaseName != wantSample {
+		t.Errorf("unfiltered: sample_database_name = %q, want %q",
+			rows[0].SampleDatabaseName, wantSample)
 	}
 	if rows[0].Query != "SELECT unobserved" {
 		t.Errorf("unfiltered: query = %q, want the sampled text",
@@ -193,7 +198,7 @@ func TestTopQueries_DbidResolvedFromPgStatDatabase(t *testing.T) {
 	seedStatDatabase(t, pool, latest, 300, "gamma")
 	seedStatDatabase(t, pool, latest, 100, "alpha")
 
-	assertDbidAttribution(t, h, "6001", "gamma", []dbidExpectation{
+	assertDbidAttribution(t, h, "6001", "gamma", "alpha", []dbidExpectation{
 		{"gamma", 120},
 		{"alpha", 0},
 		{"postgres", 0},
@@ -213,7 +218,7 @@ func TestTopQueries_UnresolvedDbidMatchesOneDatabase(t *testing.T) {
 	latest := seedProbedCounter(t, pool, 6002, 400)
 	seedStatDatabase(t, pool, latest, 100, "alpha")
 
-	assertDbidAttribution(t, h, "6002", "alpha", []dbidExpectation{
+	assertDbidAttribution(t, h, "6002", "alpha", "alpha", []dbidExpectation{
 		{"alpha", 120},
 		{"postgres", 0},
 	})
@@ -235,9 +240,43 @@ func TestTopQueries_UnresolvedDbidProbeSetChange(t *testing.T) {
 		[]string{"alpha", "postgres"}, []string{"postgres"})
 	seedStatDatabase(t, pool, latest, 100, "alpha")
 
-	assertDbidAttribution(t, h, "6004", "postgres", []dbidExpectation{
+	assertDbidAttribution(t, h, "6004", "postgres", "postgres", []dbidExpectation{
 		{"postgres", 120},
 		{"alpha", 0},
+	})
+}
+
+// TestTopQueries_LabelSkipsIdleIdentity covers a queryid run in two
+// databases in which only one made calls in the window. The idle one, dbid
+// 50, sorts first among the latest readings, but the list must not label
+// the statement with a database that contributed none of its calls, since
+// filtering by that name would then not find it.
+func TestTopQueries_LabelSkipsIdleIdentity(t *testing.T) {
+	h, pool, cleanup := newTopQueriesTestHandler(t)
+	defer cleanup()
+
+	latest := seedProbedCounter(t, pool, 6005, 300)
+	for _, at := range []time.Time{latest.Add(-5 * time.Minute), latest} {
+		for _, probeDB := range dbidProbeDatabases {
+			if _, err := pool.Exec(context.Background(),
+				`INSERT INTO metrics.pg_stat_statements
+                (connection_id, collected_at, queryid, userid, dbid,
+                 database_name, query, calls, total_exec_time,
+                 mean_exec_time, min_exec_time, max_exec_time, rows,
+                 shared_blks_hit, shared_blks_read)
+                VALUES ($1, $2, 6005, 10, 50, $3, 'SELECT unobserved', 10,
+                        20, 2, 1, 3, 0, 0, 0)`,
+				topQueriesConnID, at, probeDB); err != nil {
+				t.Fatalf("pg_stat_statements seed failed: %v", err)
+			}
+		}
+	}
+	seedStatDatabase(t, pool, latest, 50, "beta")
+	seedStatDatabase(t, pool, latest, 300, "gamma")
+
+	assertDbidAttribution(t, h, "6005", "gamma", "alpha", []dbidExpectation{
+		{"gamma", 120},
+		{"beta", 0},
 	})
 }
 

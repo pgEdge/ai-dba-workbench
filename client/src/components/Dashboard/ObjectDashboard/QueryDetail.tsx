@@ -333,6 +333,13 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
         };
     }, [user, fetchQueryData, refreshTrigger]);
 
+    // The charts read the statement's pg_stat_statements metric rows,
+    // which are keyed by the database the statistics were collected
+    // through rather than by the statement's own database, so they
+    // filter on the former whenever the server reports it.
+    const chartDatabaseName =
+        queryData?.sample_database_name || databaseName;
+
     // Chart query - execution time over time
     const execTimeChartParams = useMemo(
         (): MetricQueryParams | null => {
@@ -340,7 +347,7 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
             return {
                 probeName: 'pg_stat_statements',
                 connectionId,
-                databaseName,
+                databaseName: chartDatabaseName,
                 queryId: queryData.queryid,
                 timeRange: timeRange.range,
                 buckets: CHART_BUCKETS,
@@ -353,7 +360,7 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
             };
         },
         [
-            connectionId, databaseName, timeRange.range,
+            connectionId, chartDatabaseName, timeRange.range,
             queryData?.queryid,
         ]
     );
@@ -365,7 +372,7 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
             return {
                 probeName: 'pg_stat_statements',
                 connectionId,
-                databaseName,
+                databaseName: chartDatabaseName,
                 queryId: queryData.queryid,
                 timeRange: timeRange.range,
                 buckets: CHART_BUCKETS,
@@ -374,7 +381,7 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
             };
         },
         [
-            connectionId, databaseName, timeRange.range,
+            connectionId, chartDatabaseName, timeRange.range,
             queryData?.queryid,
         ]
     );

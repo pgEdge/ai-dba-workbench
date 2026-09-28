@@ -781,9 +781,11 @@ project adheres to
   database it actually ran in. A query in a database the collector
   cannot see still falls back to one of the collecting databases,
   but only to one, so the filtered and unfiltered lists agree. The
-  query drill-down resolves the database the same way, so it finds
-  the query when given the database the list reported, and without
-  a database filter it no longer counts a query's calls once for
+  query drill-down charts now read their data through the database
+  the statistics were collected in, so they no longer come up empty
+  for a query whose own database lacks the extension, and the
+  `/api/v1/metrics/query-stats` endpoint resolves the database the
+  same way as the list and no longer counts a query's calls once for
   every database it was collected through. (#508)
 
 - Fix the transaction throughput chart on the Performance Summary

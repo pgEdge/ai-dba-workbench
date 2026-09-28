@@ -507,6 +507,20 @@ describe('QueryDetail', () => {
             expect(callsParams?.timeRange).toBe('1h');
         });
 
+        it('scopes both charts to the database the statistics were '
+            + 'collected through', async () => {
+            mockApiFetch.mockResolvedValue(okResponse([
+                makeQueryRow({ sample_database_name: 'alpha' }),
+            ]));
+            renderDetail();
+
+            await waitFor(() => {
+                expect(paramsFor(EXEC_KEY)?.databaseName).toBe('alpha');
+            });
+            expect(paramsFor('calls_per_sec')?.databaseName)
+                .toBe('alpha');
+        });
+
         it('draws the call rate as a smooth line', async () => {
             renderDetail();
 

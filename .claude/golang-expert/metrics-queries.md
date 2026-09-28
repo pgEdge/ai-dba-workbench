@@ -1368,15 +1368,17 @@ cluster-wide view, so one counter lands once per such database at the
 same `collected_at`, differing only in the probing `database_name`. Its
 `readings` CTE therefore keeps one copy per
 `(queryid, userid, dbid, toplevel, collected_at)` with `DISTINCT ON`
-(lowest `database_name` wins, for a stable choice), resolves each row's
-own database through `db_names`; `deltas` `LAG`s over
+(lowest `database_name` wins, for a stable choice) and carries that
+probing name as `sample_database_name`; `deltas` `LAG`s over
 `(queryid, userid, dbid, toplevel)`, `samples` applies the optional
-`database_name` filter to the resolved name, `totals` drops the pairs whose
+database filter, `totals` drops the pairs whose
 call or time delta is negative, floors the row and block deltas at
 zero, sums per `queryid` and keeps only statements with calls in the
-window, and `latest_sample` supplies the OIDs, the resolved name and the
+window, `latest_sample` supplies the OIDs, the probing name and the
 two lifetime columns `min_exec_time` and `max_exec_time`, which cannot
-be differenced. `mean_exec_time` is derived as
+be differenced, preferring a sample with calls in its interval so an
+idle `dbid` never labels the row (`TestTopQueries_LabelSkipsIdleIdentity`),
+and `deduped` resolves `database_name` from `dbid` through `db_names`. `mean_exec_time` is derived as
 `SUM(delta_time) / SUM(delta_calls)`. A statement present in the
 snapshot but not executed in the window therefore does not appear at
 all, which is a deliberate behaviour change from the pre-#387 endpoint.
@@ -1417,15 +1419,26 @@ filtered view reports the counter under every probing database; that was
 issue #508. It must also run after the `LAG`: the fallback name changes
 between collections when the set of probing databases does, and
 filtering first drops the predecessor and loses a delta the unfiltered
-view counts. The filter therefore lives after the window (`WHERE
-d.database_name = $N` in `samples`, over `deltas`, in
-`buildTopQueriesSQL`; `AND database_name = $5` in `valid_deltas` in
-`queryStatsSQLTemplate`), and the planner cannot push it below the
-window because `database_name` is not a partition key, so a filtered
-request differences every reading in the window. The
-drill-down binds the name the top-queries list reported, so both
-endpoints must resolve it identically. Tests:
-`perf_summary_dbid_resolution_test.go`.
+view counts. The filter therefore lives after the window (in `samples`,
+over `deltas`, in `buildTopQueriesSQL`; `AND COALESCE(dn.datname,
+s.sample_database_name) = $5` in `valid_deltas` in
+`queryStatsSQLTemplate`). `buildTopQueriesSQL` also adds a pre-filter in
+`readings` that tests only `dbid` (resolved to the requested name, or
+unresolved), which is safe below the `LAG` because `dbid` is a partition
+key.
+
+Never join `db_names` in `readings`, or anywhere upstream of the
+aggregation: its `UNION ALL` estimates about 200 rows, and the join
+turns the index-only scan on `idx_pg_stat_statements_identity_time` into
+a hash join over a sequential scan with a large external sort (PR #554).
+Test `dbid` against `db_names` with `IN`/`NOT IN` subqueries instead,
+join it only in `deduped` (once per statement), and keep the
+`ORDER BY d.queryid` in `samples`, which lets `latest_sample` use an
+incremental sort. `/metrics/query-stats` resolves and filters the same
+way as the list, so it finds a statement by the name the list reported.
+`/metrics/query` filters on the probing `database_name`, which is why
+the list also returns `sample_database_name` and the drill-down charts
+bind that. Tests: `perf_summary_dbid_resolution_test.go`.
 
 `totals` and `latest_sample` must stay `MATERIALIZED`. The planner
 cannot see through the `samples` CTE, estimates both at one row, and

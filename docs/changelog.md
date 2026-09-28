@@ -519,7 +519,8 @@ project adheres to
   overrides, alert rules, probe configurations, notification
   channels and clusters, which are gated on an admin
   permission: a change on one server needs that connection in
-  scope at `read_write`, as does adding a server to a cluster,
+  scope at `read_write` (or at `read`, for a blackout or
+  blackout schedule), as does adding a server to a cluster,
   removing one or moving a connection between clusters, whilst
   a change to a cluster, a group or the whole estate, to an
   alert rule, a global probe configuration or a notification
@@ -558,18 +559,27 @@ project adheres to
   does not exist answers `404 Not Found`, as a hidden cluster
   does, rather than `500`; and adding a server to a cluster
   refuses a role the server does not recognise with `400 Bad
-  Request`. Three admin permissions and one MCP tool still reach
-  beyond a connection scope, so a token that must stay within
-  its connections should hold none of them: `manage_token_scopes`
-  can create a token with no scope for any owner through `POST
-  /api/v1/rbac/tokens` (#522), `manage_users` can create a
-  superuser (#497), `manage_permissions` can grant any group
-  `read_write` on any connection, and the `query_datastore` MCP
-  tool runs read-only SQL over the whole datastore, including
-  every connection's host, username and encrypted credentials. A
-  `read` entry still allows a token to acknowledge,
-  unacknowledge and save an analysis of an alert on that
-  connection, as `read` access allows a user to. This is a
+  Request`. Administrative grants are bounded by the connection
+  scope too, so a token can never give a user, a group or another
+  token access to a connection its own scope does not cover: a
+  token without every connection at `read_write` cannot grant a
+  group access beyond its scope or any admin permission, revoke
+  a grant on or delete a group holding a connection outside it,
+  add a member to a group that reaches beyond it, create a
+  superuser or make a user one, set the password of or re-enable
+  a user who reaches beyond it, create a token for such an owner,
+  or set or clear another token's scope so that the other token
+  reaches beyond it. One MCP tool still reaches beyond a
+  connection scope: `query_datastore` runs read-only SQL over
+  the whole datastore, including every connection's host,
+  username and encrypted credentials, and #566 tracks limiting
+  it to the connections the caller can read. A `read` entry
+  means read-only access to the monitored server, so it still
+  allows a token to acknowledge, unacknowledge and save an
+  analysis of an alert on that connection, and to manage
+  blackouts and blackout schedules on that server, which is
+  intended; a blackout covering a cluster, a group or the
+  estate needs the all-connections entry. This is a
   breaking change for existing integrations, because a token
   that carries an explicit scope, most often one owned by a
   superuser, will start receiving `403 Forbidden`

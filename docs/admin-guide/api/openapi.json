@@ -8341,7 +8341,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_groups permission",
+            "description": "Requires manage_groups permission, or the API token's connection scope does not cover a connection the group holds a grant on",
             "content": {
               "application/json": {
                 "schema": {
@@ -8481,7 +8481,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_groups permission",
+            "description": "Requires manage_groups permission, or the API token's connection scope does not cover the access the group confers",
             "content": {
               "application/json": {
                 "schema": {
@@ -8688,7 +8688,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_permissions permission",
+            "description": "Requires manage_permissions permission, or the API token's connection scope does not cover every connection",
             "content": {
               "application/json": {
                 "schema": {
@@ -8816,7 +8816,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_permissions permission",
+            "description": "Requires manage_permissions permission, or the API token's connection scope does not cover the connection and access level being granted or revoked",
             "content": {
               "application/json": {
                 "schema": {
@@ -9102,7 +9102,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_token_scopes permission",
+            "description": "Requires manage_token_scopes permission, or the API token's connection scope does not cover the new token owner's access",
             "content": {
               "application/json": {
                 "schema": {
@@ -9281,7 +9281,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_token_scopes permission, and refuses a change to the caller's own token",
+            "description": "Requires manage_token_scopes permission, refuses a change to the caller's own token, and refuses a scope that would reach beyond the API token's connection scope",
             "content": {
               "application/json": {
                 "schema": {
@@ -9330,7 +9330,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_token_scopes permission, and refuses a change to the caller's own token",
+            "description": "Requires manage_token_scopes permission, refuses a change to the caller's own token, and refuses clearing a scope when the token owner's access reaches beyond the API token's connection scope",
             "content": {
               "application/json": {
                 "schema": {
@@ -9456,7 +9456,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_users permission, and superuser privileges to send is_superuser",
+            "description": "Requires manage_users permission, and superuser privileges to send is_superuser; also refused when the API token's connection scope does not cover every connection and is_superuser is true",
             "content": {
               "application/json": {
                 "schema": {
@@ -9540,7 +9540,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_users permission, and superuser privileges to send is_superuser or to update a superuser",
+            "description": "Requires manage_users permission, and superuser privileges to send is_superuser or to update a superuser; also refused when the API token's connection scope does not cover the access being granted (setting is_superuser, or setting the password of or re-enabling a user who reaches beyond the scope)",
             "content": {
               "application/json": {
                 "schema": {
@@ -14109,7 +14109,7 @@
         "type": "http",
         "scheme": "bearer",
         "bearerFormat": "JWT",
-        "description": "Session token obtained from /auth/login, or an API token. Every request an API token makes is confined to the token's connection, MCP and admin scopes, even when its owner is a superuser, so a superuser-owned token can receive 403 where its owner's session would succeed. Some grants still reach beyond the connection scope: the query_datastore tool runs read-only SQL over the whole datastore, including every connection's stored credentials; manage_token_scopes can create an unscoped token for any owner; manage_users can create a superuser; and manage_permissions can grant any group access to any connection. A token whose admin scope names specific permissions may exercise those permissions, but cannot pass a gate that requires superuser status outright, such as the audit log. A token with no scope of a given kind, or one holding the * wildcard, is unrestricted on that surface."
+        "description": "Session token obtained from /auth/login, or an API token. Every request an API token makes is confined to the token's connection, MCP and admin scopes, even when its owner is a superuser, so a superuser-owned token can receive 403 where its owner's session would succeed. A token can never grant a user, a group or another token access to a connection its own connection scope does not cover, so creating a superuser, granting a group connection access or an admin permission, adding a group member, and setting another token's scope are refused with 403 when they would reach beyond it. A read entry allows alert acknowledgement and analysis, and blackout management, on that connection. The query_datastore tool still runs read-only SQL over the whole datastore, including every connection's stored credentials; issue #566 tracks limiting it to the connections the caller can read. A token whose admin scope names specific permissions may exercise those permissions, but cannot pass a gate that requires superuser status outright, such as the audit log. A token with no scope of a given kind, or one holding the * wildcard, is unrestricted on that surface."
       }
     }
   }

@@ -446,6 +446,48 @@ func TestReevaluationWriteFailures(t *testing.T) {
 	}
 }
 
+// TestClearReevaluatedAlertUnreadable checks that an alert cleared but then
+// unreadable is logged without a notification, using a trigger that
+// deletes the alert once it is cleared.
+func TestClearReevaluatedAlertUnreadable(t *testing.T) {
+	env := newReevaluationTestEnv(t)
+	metric := "m"
+	id := env.insertAcknowledgedAnomaly(t, &metric)
+
+	ctx := context.Background()
+	if _, err := env.pool.Exec(ctx, `
+		CREATE OR REPLACE FUNCTION reeval_delete_cleared() RETURNS trigger AS $$
+		BEGIN
+		    DELETE FROM alert_acknowledgments WHERE alert_id = NEW.id;
+		    DELETE FROM alerts WHERE id = NEW.id;
+		    RETURN NULL;
+		END;
+		$$ LANGUAGE plpgsql;
+		CREATE TRIGGER reeval_delete_cleared AFTER UPDATE ON alerts
+		    FOR EACH ROW EXECUTE FUNCTION reeval_delete_cleared();
+	`); err != nil {
+		t.Fatalf("create delete trigger: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := env.pool.Exec(context.Background(), `
+			DROP TRIGGER IF EXISTS reeval_delete_cleared ON alerts;
+			DROP FUNCTION IF EXISTS reeval_delete_cleared();
+		`); err != nil {
+			t.Logf("drop delete trigger: %v", err)
+		}
+	})
+
+	env.engine.clearReevaluatedAlert(ctx, &database.AcknowledgedAnomalyAlert{ID: id, MetricName: &metric}, 0.9)
+
+	var remaining int
+	if err := env.pool.QueryRow(ctx, `SELECT COUNT(*) FROM alerts WHERE id = $1`, id).Scan(&remaining); err != nil {
+		t.Fatalf("count alerts: %v", err)
+	}
+	if remaining != 0 {
+		t.Errorf("alert %d still present; the trigger did not run", id)
+	}
+}
+
 // TestReevaluationWithoutContext checks that an alert is still sent to the
 // LLM when every context query fails, using the default timeout when none
 // is configured, and that a stored fingerprint is not trusted.

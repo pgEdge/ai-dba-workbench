@@ -534,6 +534,14 @@ func (h *ClusterHandler) createClusterGroup(w http.ResponseWriter, r *http.Reque
 			"Permission denied: requires manage_connections permission")
 		return
 	}
+	// A new group holds clusters and group-wide settings that reach
+	// every connection later placed in it, so, as for the other
+	// container writes, a token must cover every connection (issue
+	// #471). The session lookup below refuses an API token today; this
+	// keeps the rule should that change.
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker) {
+		return
+	}
 
 	var req ClusterGroupRequest
 	if !DecodeJSONBody(w, r, &req) {
@@ -819,6 +827,13 @@ func (h *ClusterHandler) createClusterInGroup(w http.ResponseWriter, r *http.Req
 	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections) {
 		RespondError(w, http.StatusForbidden,
 			"Permission denied: requires manage_connections permission")
+		return
+	}
+	// A new cluster in a group inherits that group's blackouts, probe
+	// configurations and overrides, and so does any connection later
+	// moved into it, so a token must cover every connection (issue
+	// #471).
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker) {
 		return
 	}
 
@@ -1278,6 +1293,12 @@ func (h *ClusterHandler) addServerToCluster(w http.ResponseWriter, r *http.Reque
 		RespondError(w, http.StatusBadRequest, "A valid connection_id is required")
 		return
 	}
+	// The role is written to connections.role, so it gets the same
+	// check as PUT /connections/{id}/cluster.
+	if req.Role != nil && !knownConnectionRoles[*req.Role] {
+		RespondError(w, http.StatusBadRequest, "Invalid role")
+		return
+	}
 	if !requireConnectionsInTokenScope(w, r, h.rbacChecker, req.ConnectionID) {
 		return
 	}
@@ -1447,6 +1468,12 @@ func (h *ClusterHandler) handleCreateCluster(w http.ResponseWriter, r *http.Requ
 	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections) {
 		RespondError(w, http.StatusForbidden,
 			"Permission denied: requires manage_connections permission")
+		return
+	}
+	// As on POST /cluster-groups/{id}/clusters: the new cluster, and
+	// any connection later moved into it, inherits its group's
+	// settings, so a token must cover every connection (issue #471).
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker) {
 		return
 	}
 

@@ -358,6 +358,8 @@ var clusterCovQueries = map[string]string{
 	"relationship":      "SELECT EXISTS (SELECT 1 FROM cluster_node_relationships WHERE id = $1)::text",
 	"group by key":      "SELECT name FROM cluster_groups WHERE auto_group_key = $1",
 	"relationship pair": "SELECT count(*)::text FROM cluster_node_relationships WHERE source_connection_id = $1",
+	"clusters named":    "SELECT count(*)::text FROM clusters WHERE name = $1",
+	"groups named":      "SELECT count(*)::text FROM cluster_groups WHERE name = $1",
 }
 
 // readBack runs one of clusterCovQueries and returns its single text value.

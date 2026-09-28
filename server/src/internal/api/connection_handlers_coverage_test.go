@@ -1294,8 +1294,10 @@ func TestConnCov_UpdateConnectionCluster_Failures(t *testing.T) {
 
 	assertError(t, put(missing, ConnectionClusterUpdateRequest{}),
 		http.StatusInternalServerError, "Failed to reset membership source")
+	// A connection that is not there answers 404 rather than 500 (issue
+	// #471); TestUpdateConnectionClusterTargetAndRole covers the 500.
 	assertError(t, put(missing, ConnectionClusterUpdateRequest{ClusterID: &clusterID}),
-		http.StatusInternalServerError, "Failed to assign connection to cluster")
+		http.StatusNotFound, "Connection not found")
 
 	// With the clusters table gone the reset still succeeds, but reading
 	// back the joined cluster info fails.

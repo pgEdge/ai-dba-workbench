@@ -93,6 +93,19 @@ export const getFriendlyProbeName = (name: string): string => {
 // Alert friendly names
 // ---------------------------------------------------------------------------
 
+/**
+ * Friendly forms of alert title prefixes, keyed by the lowercase
+ * prefix. The text after the prefix is kept as the server sent it:
+ * a connection error names its host, and the system alert for a
+ * failing anomaly detection provider (#582) names the tier and the
+ * provider, as in "Anomaly detection degraded: Tier 2 embedding
+ * provider ollama failing".
+ */
+export const FRIENDLY_TITLE_PREFIXES: Record<string, string> = {
+    'connection error:': 'Connection Error:',
+    'anomaly detection degraded:': 'Anomaly Detection Degraded:',
+};
+
 export const FRIENDLY_ALERT_TITLES: Record<string, string> = {
     // Connection alerts
     'high_max_connections': 'High Max Connections',
@@ -184,9 +197,13 @@ export const FRIENDLY_ALERT_TITLES: Record<string, string> = {
 export const getFriendlyTitle = (title: string): string => {
     if (!title) {return 'Alert';}
 
-    // Connection error alerts: preserve hostname as-is
-    if (title.toLowerCase().startsWith('connection error:')) {
-        return `Connection Error:${title.substring('connection error:'.length)}`;
+    // Prefixed titles: replace the prefix and keep the rest verbatim,
+    // so hostnames and provider names are not title-cased.
+    const lowerTitle = title.toLowerCase();
+    for (const [prefix, friendly] of Object.entries(FRIENDLY_TITLE_PREFIXES)) {
+        if (lowerTitle.startsWith(prefix)) {
+            return `${friendly}${title.substring(prefix.length)}`;
+        }
     }
 
     // Check for exact match first

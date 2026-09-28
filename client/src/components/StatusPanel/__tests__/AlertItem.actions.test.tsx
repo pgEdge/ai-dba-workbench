@@ -162,7 +162,24 @@ describe('AlertItem system alerts', () => {
         expect(screen.getByText('System')).toBeInTheDocument();
     });
 
-    it('hides the analyse action but keeps acknowledge', () => {
+    it('hides acknowledge from a user without the permission', () => {
+        renderWithTheme(
+            <AlertItem alert={systemAlert} onAcknowledge={vi.fn()} />,
+        );
+        expect(screen.queryByLabelText('Acknowledge')).not.toBeInTheDocument();
+    });
+
+    it('hides restore from a user without the permission', () => {
+        renderWithTheme(
+            <AlertItem
+                alert={{ ...systemAlert, acknowledgedAt: '2026-09-28T10:00:00Z' }}
+                onUnacknowledge={vi.fn()}
+            />,
+        );
+        expect(screen.queryByLabelText('Restore to active')).not.toBeInTheDocument();
+    });
+
+    it('hides the analyse action but keeps acknowledge for a permitted user', () => {
         const onAcknowledge = vi.fn();
         renderWithTheme(
             <AlertItem
@@ -170,6 +187,7 @@ describe('AlertItem system alerts', () => {
                 onAnalyze={vi.fn()}
                 onEditOverride={vi.fn()}
                 onAcknowledge={onAcknowledge}
+                canAcknowledgeSystem
             />,
         );
 
@@ -275,5 +293,46 @@ describe('GroupedAlertItem', () => {
         expect(list.getAllByText('System')).toHaveLength(2);
         expect(list.getAllByTestId('MemoryIcon')).toHaveLength(2);
         expect(list.queryByLabelText('Analyze with AI')).not.toBeInTheDocument();
+        expect(list.queryByLabelText('Acknowledge')).not.toBeInTheDocument();
+    });
+
+    it('limits the group acknowledge to alerts the user may acknowledge', () => {
+        const onAcknowledgeGroup = vi.fn();
+        const { unmount } = renderWithTheme(
+            <GroupedAlertItem
+                title={systemAlert.title}
+                alerts={[systemAlert, { ...systemAlert, id: 3 }]}
+                onAcknowledgeGroup={onAcknowledgeGroup}
+            />,
+        );
+        expect(screen.queryByLabelText('Acknowledge all in group')).not.toBeInTheDocument();
+        unmount();
+
+        renderWithTheme(
+            <GroupedAlertItem
+                title={systemAlert.title}
+                alerts={[systemAlert, { ...systemAlert, id: 3 }]}
+                onAcknowledge={vi.fn()}
+                onAcknowledgeGroup={onAcknowledgeGroup}
+                canAcknowledgeSystem
+            />,
+        );
+        expect(screen.getAllByLabelText('Acknowledge')).toHaveLength(2);
+        fireEvent.click(screen.getByLabelText('Acknowledge all in group'));
+        expect(onAcknowledgeGroup).toHaveBeenCalledWith([systemAlert, { ...systemAlert, id: 3 }]);
+    });
+
+    it('acknowledges only the connection alerts in a mixed group', () => {
+        const onAcknowledgeGroup = vi.fn();
+        const mixed = { ...connectionAlert, id: 21, title: systemAlert.title, severity: 'warning' };
+        renderWithTheme(
+            <GroupedAlertItem
+                title={systemAlert.title}
+                alerts={[systemAlert, mixed]}
+                onAcknowledgeGroup={onAcknowledgeGroup}
+            />,
+        );
+        fireEvent.click(screen.getByLabelText('Acknowledge all in group'));
+        expect(onAcknowledgeGroup).toHaveBeenCalledWith([mixed]);
     });
 });

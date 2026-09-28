@@ -245,8 +245,8 @@ const estateSelection: Selection = {
 const metricValue = (label: string) =>
     screen.getByText(label).closest('.MuiPaper-root')?.textContent ?? '';
 
-// Unmapped titles are title-cased for display by getFriendlyTitle.
-const SYSTEM_TITLE = /Anomaly Detection Degraded/;
+// getFriendlyTitle title-cases the prefix of the system alert title.
+const SYSTEM_TITLE = 'Anomaly Detection Degraded: Tier 2 embedding provider ollama failing';
 
 describe('StatusPanel system alerts', () => {
     beforeEach(() => {
@@ -291,7 +291,18 @@ describe('StatusPanel system alerts', () => {
         expect(mockApiGet).not.toHaveBeenCalled();
     });
 
-    it('lets a system alert be acknowledged', async () => {
+    it('hides acknowledge on a system alert from a user without manage_alert_rules', async () => {
+        mockCanManageRules = false;
+        mockApiGet.mockResolvedValue({ alerts: [systemAlertRecord, makeAlertRecord()] });
+
+        renderPanel(estateSelection);
+
+        await screen.findByText(SYSTEM_TITLE);
+        // Only the connection alert keeps its acknowledge action.
+        expect(screen.getAllByLabelText('Acknowledge')).toHaveLength(1);
+    });
+
+    it('lets a permitted user acknowledge a system alert', async () => {
         mockApiGet.mockResolvedValue({ alerts: [{ ...systemAlertRecord, id: 99 }] });
         mockApiPost.mockResolvedValue({});
 

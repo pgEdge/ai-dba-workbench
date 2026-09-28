@@ -31,9 +31,11 @@ project adheres to
   them, and `GET /api/v1/alerts/counts` gains a `system`
   total. The web client lists system alerts on the estate
   view with an "AI DBA Workbench" source label and a
-  "System" type chip in place of a server name, and offers
-  no AI analysis for them, since they concern no monitored
-  connection.
+  "System" type chip in place of a server name, offers no AI
+  analysis for them, since they concern no monitored
+  connection, and shows their acknowledge and restore
+  actions only to a superuser or a holder of
+  `manage_alert_rules`.
 - Add the `probe_unavailable` built-in alert rule, which
   reports a probe that had been collecting and has stopped
   being available. Collector schema migration 16 seeds the

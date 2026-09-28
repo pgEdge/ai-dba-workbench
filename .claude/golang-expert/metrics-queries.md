@@ -190,6 +190,35 @@ decomposed into small, separately testable helpers:
   (RFC3339 for `time.Time`, `sanitizeFloat` dropping NaN/Inf to JSON
   null, `pgtype.Numeric`/`pgtype.Interval` collapsed to seconds/float).
 
+### The /metrics/latest snapshot endpoint and its schema filters
+
+`GET /api/v1/metrics/latest` (`server/src/internal/api/latest_handlers.go`)
+is a separate latest-row path that the database dashboard's leaderboards
+and Vacuum Status section use. It runs `DISTINCT ON` over the probe's
+entity key columns (`metrics.EntityKeyColumns`) within the last hour, then
+filters, sorts and limits in an outer query with `COUNT(*) OVER()` for the
+total. `database_name` is optional. Schema filters live in the outer
+`WHERE`, carried by `latestSchemaFilter`, and apply only to probes with a
+`schemaname` entity key column; for any other probe they are dropped
+silently rather than producing invalid SQL:
+
+- `exclude_schemas` is a comma-separated list, each name validated with
+  `IsValidIdentifier` and bound as a placeholder.
+- `exclude_system_schemas=true` appends the constant
+  `systemSchemaPredicate`, the same predicate PostgreSQL uses to derive
+  `pg_stat_user_tables` from `pg_stat_all_tables`: `pg_catalog` and
+  `information_schema` by name, and every `pg_toast*` schema by regex.
+  `pg_temp_N` schemas stay in, as they do in `pg_stat_user_tables`.
+
+The flag is opt-in. The Table and Index Leaderboards send it (issue #499:
+catalog relations report zero counters, and on a standby or after a
+statistics reset every table ties at zero, so catalogs filled the top
+ten); Vacuum Status does not, because catalog bloat matters there.
+`latest_handlers_db_test.go` holds the DB-backed tests, each using its
+own fixture probe table and clearing `tableColumnCache` and
+`tableDBColCache` for it, because both caches hold column metadata for
+five minutes.
+
 ### Identifier safety and the Codacy suppression
 
 Latest-row SQL interpolates only identifiers drawn from a live-discovered
@@ -1288,7 +1317,8 @@ is, and the 400 wording is the resolver's own on every endpoint except
 where `checkAggregationTimeSpan` adds the 30-day cap described above.
 
 Every handler that accepts a `queryid` parameter (`/metrics/query`,
-`/metrics/latest`, `/metrics/top-queries` and `/metrics/query-stats`)
+`/metrics/top-queries` and `/metrics/query-stats`; `/metrics/latest`
+takes none)
 parses it with `parseQueryIDFilter` in `metrics_handlers.go`, which
 returns a `*int64` and answers `400` to anything that is not a 64-bit
 integer. The value is bound uncast as `queryid = $N`, never through a
@@ -1301,8 +1331,8 @@ also naming `database_name`, the index's second column. Before
 PostgreSQL 18, which added B-tree skip scans, a predicate on
 `connection_id` and `queryid` alone falls back to a bitmap scan of
 `idx_pg_stat_statements_conn_time` over every row of the connection in
-the window. `/metrics/query` and `/metrics/latest` always carry the
-database name; `/metrics/query-stats` takes an optional `database_name`
+the window. `/metrics/query` always carries the database name;
+`/metrics/query-stats` takes an optional `database_name`
 parameter, which the drill-down always sends, and `buildQueryStatsSQL`
 binds it as an extra predicate so that the object index applies.
 `/metrics/top-queries` reads the identity index described below for the

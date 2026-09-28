@@ -12,6 +12,7 @@ package database
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -137,9 +138,13 @@ func TestSystemAlertLifecycle(t *testing.T) {
 		t.Errorf("open after clear = %d, %v, want 1", len(open), err)
 	}
 
-	// Once cleared, the key can be raised again.
+	// Once cleared, the alert can no longer be rewritten, and the key
+	// can be raised again.
 	if err := ds.ClearAlert(ctx, created.ID); err != nil {
 		t.Fatal(err)
+	}
+	if err := ds.UpdateSystemAlert(ctx, created.ID, "stale", nil); !errors.Is(err, ErrSystemAlertNotOpen) {
+		t.Errorf("UpdateSystemAlert on a cleared alert = %v, want ErrSystemAlertNotOpen", err)
 	}
 	if _, isNew, err := ds.CreateSystemAlert(ctx, systemAlert(key, "again")); err != nil || !isNew {
 		t.Errorf("re-raise after clear = %v, %v", isNew, err)

@@ -124,6 +124,9 @@ func (f *fakeSystemAlertStore) UpdateSystemAlert(_ context.Context, id int64, de
 		return f.updateErr
 	}
 	a := f.alerts[id]
+	if a == nil || a.Status == "cleared" {
+		return database.ErrSystemAlertNotOpen
+	}
 	a.Description = description
 	a.AnomalyDetails = details
 	return nil
@@ -397,6 +400,26 @@ func TestProviderHealth_StoreFailures(t *testing.T) {
 		h.fail("second")
 		if !strings.Contains(h.open().Description, "second") {
 			t.Error("text not rewritten once the update recovered")
+		}
+	})
+	t.Run("alert cleared by another process is raised again", func(t *testing.T) {
+		h := newTrackerHarness(1)
+		h.fail("first")
+		first := h.open()
+		if first == nil {
+			t.Fatal("alert not raised")
+		}
+		// Another process clears the alert behind this tracker's back.
+		h.store.mu.Lock()
+		first.Status = "cleared"
+		h.store.mu.Unlock()
+		h.fail("second")
+		again := h.open()
+		if again == nil || again.ID == first.ID || !strings.Contains(again.Description, "second") {
+			t.Fatalf("alert after a stale clear = %+v, want a new alert", again)
+		}
+		if len(h.notes) != 2 {
+			t.Errorf("notifications = %d, want 2", len(h.notes))
 		}
 	})
 	t.Run("conflicting create refreshes the other alert", func(t *testing.T) {
@@ -673,9 +696,58 @@ func TestCheckProviderHealth(t *testing.T) {
 			t.Errorf("status %s, creates %d", old.Status, h.store.creates)
 		}
 	})
+	t.Run("disabled tiers are neither checked nor kept", func(t *testing.T) {
+		e, h := providerHealthEngine(errors.New("down"), errors.New("down"))
+		e.config.Anomaly.Tier2.Enabled = false
+		e.config.Anomaly.Tier3.Enabled = false
+		e.config.Anomaly.Reevaluation.Enabled = false
+		emb := h.store.put(providerHealthKey(providerTierEmbedding, "openai"))
+		cls := h.store.put(providerHealthKey(providerTierClassification, "anthropic"))
+		e.checkProviderHealth(context.Background())
+		if emb.Status != "cleared" || cls.Status != "cleared" || h.store.creates != 0 {
+			t.Errorf("embedding %s, classification %s, creates %d",
+				emb.Status, cls.Status, h.store.creates)
+		}
+	})
+	t.Run("reasoning check falls back to re-evaluation", func(t *testing.T) {
+		e, h := providerHealthEngine(nil, errors.New("401 access denied"))
+		e.config.Anomaly.Tier3.Enabled = false
+		e.checkProviderHealth(context.Background())
+		if h.store.openFor(providerHealthKey(providerTierReevaluation, "anthropic")) == nil {
+			t.Error("no re-evaluation alert")
+		}
+		if h.store.openFor(providerHealthKey(providerTierClassification, "anthropic")) != nil {
+			t.Error("classification alert raised although Tier 3 is disabled")
+		}
+	})
 	t.Run("no tracker", func(t *testing.T) {
 		(&Engine{config: config.NewConfig()}).checkProviderHealth(context.Background())
 	})
+}
+
+func TestReasoningHealthTier(t *testing.T) {
+	tests := []struct {
+		name          string
+		tier3, reeval bool
+		want          providerTier
+		wantUsed      bool
+	}{
+		{"tier 3 wins", true, true, providerTierClassification, true},
+		{"tier 3 only", true, false, providerTierClassification, true},
+		{"re-evaluation only", false, true, providerTierReevaluation, true},
+		{"neither", false, false, providerTierClassification, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := config.NewConfig()
+			cfg.Anomaly.Tier3.Enabled = tt.tier3
+			cfg.Anomaly.Reevaluation.Enabled = tt.reeval
+			got, used := reasoningHealthTier(cfg)
+			if got != tt.want || used != tt.wantUsed {
+				t.Errorf("reasoningHealthTier = %v, %v; want %v, %v", got, used, tt.want, tt.wantUsed)
+			}
+		})
+	}
 }
 
 func TestActiveProviderHealthKeys(t *testing.T) {
@@ -687,6 +759,15 @@ func TestActiveProviderHealthKeys(t *testing.T) {
 	if got := e.activeProviderHealthKeys(); len(got) != 2 ||
 		got[providerHealthKey(providerTierReevaluation, "anthropic")] {
 		t.Errorf("active = %v", got)
+	}
+	// A reload that disables a tier drops its key even though the
+	// provider built at startup is still wrapped.
+	e.config.Anomaly.Tier2.Enabled = false
+	e.config.Anomaly.Tier3.Enabled = false
+	e.config.Anomaly.Reevaluation.Enabled = true
+	if got := e.activeProviderHealthKeys(); len(got) != 1 ||
+		!got[providerHealthKey(providerTierReevaluation, "anthropic")] {
+		t.Errorf("active after disabling tiers = %v", got)
 	}
 }
 

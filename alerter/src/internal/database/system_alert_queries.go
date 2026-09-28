@@ -87,11 +87,18 @@ const insertSystemAlertSQL = `
 		DO NOTHING
 	RETURNING id`
 
-// updateSystemAlertSQL refreshes the text of an open system alert.
+// updateSystemAlertSQL refreshes the text of an open system alert. A
+// cleared alert is left alone, so a caller holding a stale ID learns
+// that the alert has gone rather than rewriting history.
 const updateSystemAlertSQL = `
 	UPDATE alerts
 	SET description = $1, anomaly_details = $2, last_updated = NOW()
-	WHERE id = $3 AND alert_type = 'system'`
+	WHERE id = $3 AND alert_type = 'system' AND status <> 'cleared'`
+
+// ErrSystemAlertNotOpen reports that UpdateSystemAlert found no open
+// system alert with the given ID, typically because another alerter
+// process cleared it.
+var ErrSystemAlertNotOpen = errors.New("system alert is not open")
 
 // GetOpenSystemAlert returns the active or acknowledged system alert for
 // key, which is stored in metric_name, or nil when there is none.
@@ -167,12 +174,17 @@ func (d *Datastore) CreateSystemAlert(ctx context.Context, alert *Alert) (*Alert
 	return existing, false, nil
 }
 
-// UpdateSystemAlert rewrites the description and details of a system
-// alert and stamps last_updated. It never touches an alert of another
-// type.
+// UpdateSystemAlert rewrites the description and details of an open
+// system alert and stamps last_updated. It never touches an alert of
+// another type or a cleared one, and returns ErrSystemAlertNotOpen when
+// no open system alert has the ID.
 func (d *Datastore) UpdateSystemAlert(ctx context.Context, alertID int64, description string, details *string) error {
-	if _, err := d.pool.Exec(ctx, updateSystemAlertSQL, description, details, alertID); err != nil {
+	tag, err := d.pool.Exec(ctx, updateSystemAlertSQL, description, details, alertID)
+	if err != nil {
 		return fmt.Errorf("failed to update system alert: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrSystemAlertNotOpen
 	}
 	return nil
 }

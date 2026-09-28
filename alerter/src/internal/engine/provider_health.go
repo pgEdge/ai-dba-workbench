@@ -264,16 +264,16 @@ func (t *providerHealthTracker) raise(dbCtx context.Context, key string, st *pro
 	description := providerHealthDescription(tier, provider, model, st.failures, immediate, lastError)
 	details := providerHealthDetails(tier, provider, model, st.failures, immediate, lastError)
 
-	if st.alertID != 0 {
-		if lastError == st.lastError {
-			return
-		}
-		t.logCallError(key, callErr, secrets)
-		t.refresh(dbCtx, key, st, st.alertID, description, details, lastError)
+	if st.alertID != 0 && lastError == st.lastError {
+		return
+	}
+	t.logCallError(key, callErr, secrets)
+	// refresh reports false when another process cleared the alert this
+	// one still held, in which case a new alert is raised below.
+	if st.alertID != 0 && t.refresh(dbCtx, key, st, st.alertID, description, details, lastError) {
 		return
 	}
 
-	t.logCallError(key, callErr, secrets)
 	objectName := provider + "/" + model
 	alert := &database.Alert{
 		ObjectName:     &objectName,
@@ -302,14 +302,23 @@ func (t *providerHealthTracker) raise(dbCtx context.Context, key string, st *pro
 
 // refresh rewrites an open provider health alert's text, recording
 // lastError only once the write has succeeded so that a failed write is
-// retried on the next failure.
+// retried on the next failure. It reports false, and forgets the alert,
+// when the alert is no longer open, as happens when another alerter
+// process cleared it; any other outcome reports true.
 func (t *providerHealthTracker) refresh(dbCtx context.Context, key string, st *providerHealthState,
-	alertID int64, description string, details *string, lastError string) {
-	if err := t.store.UpdateSystemAlert(dbCtx, alertID, description, details); err != nil {
+	alertID int64, description string, details *string, lastError string) bool {
+	err := t.store.UpdateSystemAlert(dbCtx, alertID, description, details)
+	switch {
+	case errors.Is(err, database.ErrSystemAlertNotOpen):
+		st.alertID = 0
+		st.lastError = ""
+		return false
+	case err != nil:
 		t.log("ERROR: Failed to update provider health alert %s: %v", key, err)
-		return
+	default:
+		st.lastError = lastError
 	}
-	st.lastError = lastError
+	return true
 }
 
 // logCallError writes the provider error to the alerter's own log with
@@ -597,11 +606,11 @@ func (h *healthTrackingReasoning) ModelName() string {
 	return h.inner.ModelName()
 }
 
-// healthCheck makes one cheap call and raises the Tier 3 alert at once
-// if it fails.
-func (h *healthTrackingReasoning) healthCheck(ctx context.Context) error {
+// healthCheck makes one cheap call and raises the alert for tier at
+// once if it fails.
+func (h *healthTrackingReasoning) healthCheck(ctx context.Context, tier providerTier) error {
 	_, err := h.inner.Classify(ctx, providerHealthCheckPrompt)
-	h.tracker.record(ctx, providerTierClassification, h.provider, h.inner.ModelName(), err, true)
+	h.tracker.record(ctx, tier, h.provider, h.inner.ModelName(), err, true)
 	return err
 }
 
@@ -704,23 +713,43 @@ func (e *Engine) initProviderHealth() {
 }
 
 // activeProviderHealthKeys returns the keys of the provider health
-// alerts that the running configuration can still raise and clear.
+// alerts that the running configuration can still raise and clear. A
+// tier counts only while the current configuration enables it, since a
+// configuration reload can disable a tier whose provider was built at
+// startup.
 func (e *Engine) activeProviderHealthKeys() map[string]bool {
 	active := make(map[string]bool)
 	cfg := e.getConfig()
 	if !cfg.Anomaly.Enabled {
 		return active
 	}
-	if emb, ok := e.embeddingProvider.(*healthTrackingEmbedding); ok {
+	if emb, ok := e.embeddingProvider.(*healthTrackingEmbedding); ok && cfg.Anomaly.Tier2.Enabled {
 		active[providerHealthKey(providerTierEmbedding, emb.provider)] = true
 	}
 	if rsn, ok := e.reasoningProvider.(*healthTrackingReasoning); ok {
-		active[providerHealthKey(providerTierClassification, rsn.provider)] = true
+		if cfg.Anomaly.Tier3.Enabled {
+			active[providerHealthKey(providerTierClassification, rsn.provider)] = true
+		}
 		if cfg.Anomaly.Reevaluation.Enabled {
 			active[providerHealthKey(providerTierReevaluation, rsn.provider)] = true
 		}
 	}
 	return active
+}
+
+// reasoningHealthTier is the tier a reasoning provider health check is
+// recorded against: Tier 3 classification while it is enabled, otherwise
+// re-evaluation while that is enabled. It reports false when neither
+// uses the reasoning provider.
+func reasoningHealthTier(cfg *config.Config) (providerTier, bool) {
+	switch {
+	case cfg.Anomaly.Tier3.Enabled:
+		return providerTierClassification, true
+	case cfg.Anomaly.Reevaluation.Enabled:
+		return providerTierReevaluation, true
+	default:
+		return providerTierClassification, false
+	}
 }
 
 // checkProviderHealth runs at startup. It clears provider health alerts
@@ -743,7 +772,7 @@ func (e *Engine) checkProviderHealth(ctx context.Context) {
 		timeout = providerHealthCheckTimeout
 	}
 
-	if emb, ok := e.embeddingProvider.(*healthTrackingEmbedding); ok {
+	if emb, ok := e.embeddingProvider.(*healthTrackingEmbedding); ok && cfg.Anomaly.Tier2.Enabled {
 		checkCtx, cancel := context.WithTimeout(ctx, timeout)
 		if err := emb.healthCheck(checkCtx); err != nil {
 			e.log("WARNING: Embedding provider %s failed its startup health check", emb.provider)
@@ -751,8 +780,12 @@ func (e *Engine) checkProviderHealth(ctx context.Context) {
 		cancel()
 	}
 	if rsn, ok := e.reasoningProvider.(*healthTrackingReasoning); ok {
+		tier, used := reasoningHealthTier(cfg)
+		if !used {
+			return
+		}
 		checkCtx, cancel := context.WithTimeout(ctx, timeout)
-		if err := rsn.healthCheck(checkCtx); err != nil {
+		if err := rsn.healthCheck(checkCtx, tier); err != nil {
 			e.log("WARNING: Reasoning provider %s failed its startup health check", rsn.provider)
 		}
 		cancel()

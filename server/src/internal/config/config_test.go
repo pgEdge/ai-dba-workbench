@@ -57,6 +57,12 @@ func TestDefaultConfig(t *testing.T) {
 	}
 
 	// Test LLM defaults (LLM proxy is always enabled, no Enabled field)
+	if cfg.LLM.Provider != "anthropic" {
+		t.Errorf("Expected default LLM provider 'anthropic', got %s", cfg.LLM.Provider)
+	}
+	if cfg.LLM.Model != "claude-sonnet-5" {
+		t.Errorf("Expected default LLM model 'claude-sonnet-5', got %s", cfg.LLM.Model)
+	}
 	if cfg.LLM.MaxTokens != 4096 {
 		t.Errorf("Expected default max tokens 4096, got %d", cfg.LLM.MaxTokens)
 	}

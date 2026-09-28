@@ -22,5 +22,5 @@ data_dir: /data
 
 llm:
     provider: anthropic
-    model: claude-sonnet-4-5
+    model: claude-sonnet-5
     anthropic_api_key_file: /etc/pgedge/secret/llm-api-key

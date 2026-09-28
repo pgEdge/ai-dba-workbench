@@ -61,7 +61,7 @@ select_llm_provider() {
   case "$llm_choice" in
     1)
       llm_provider="anthropic"
-      llm_model="claude-sonnet-4-5"
+      llm_model="claude-sonnet-5"
       ;;
     2)
       llm_provider="openai"
@@ -69,7 +69,7 @@ select_llm_provider() {
       ;;
     3)
       llm_provider="gemini"
-      llm_model="gemini-3.6-flash"
+      llm_model="gemini-3.8-flash"
       ;;
     *)
       llm_provider=""

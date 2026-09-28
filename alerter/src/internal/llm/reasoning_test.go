@@ -47,7 +47,7 @@ func (f *fakeChatClient) Model() string { return f.model }
 
 func TestLibReasoningClassify(t *testing.T) {
 	fc := &fakeChatClient{
-		model: "claude-3-5-haiku-20241022",
+		model: "claude-haiku-4-5",
 		resp: &pgllm.ChatResponse{Content: []pgllm.ContentBlock{
 			{Type: pgllm.BlockText, Text: `{"decision":"alert",`},
 			// A non-text block must be ignored by the concatenation.
@@ -80,7 +80,7 @@ func TestLibReasoningClassify(t *testing.T) {
 	if fc.gotReq.Temperature == nil || *fc.gotReq.Temperature != 0.1 {
 		t.Fatalf("Temperature = %v, want 0.1", fc.gotReq.Temperature)
 	}
-	if r.ModelName() != "claude-3-5-haiku-20241022" {
+	if r.ModelName() != "claude-haiku-4-5" {
 		t.Fatalf("ModelName = %q", r.ModelName())
 	}
 }

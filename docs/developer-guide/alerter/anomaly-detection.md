@@ -384,9 +384,9 @@ Configure the reasoning provider in the `llm` section:
 | Provider | Model |
 |----------|-------|
 | Ollama | `qwen2.5:7b-instruct` |
-| OpenAI | `gpt-4o-mini` |
-| Anthropic | `claude-3-5-haiku-20241022` |
-| Gemini | `gemini-3.6-flash` |
+| OpenAI | `gpt-6-luna` |
+| Anthropic | `claude-haiku-4-5` |
+| Gemini | `gemini-3.8-flash` |
 
 ### Example Configuration
 
@@ -413,7 +413,7 @@ llm:
   openai:
     api_key_file: /etc/ai-workbench/openai-api-key.txt
     embedding_model: text-embedding-3-small
-    reasoning_model: gpt-4o-mini
+    reasoning_model: gpt-6-luna
 ```
 
 ## Baseline Calculation

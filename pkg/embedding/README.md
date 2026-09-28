@@ -80,7 +80,6 @@ Google publishes the following embedding models:
 
 - `gemini-embedding-001`
 - `gemini-embedding-2`
-- `gemini-embedding-2-preview`
 
 Any other model name the Gemini API accepts can be configured instead.
 

@@ -353,8 +353,8 @@ llm:
   provider: "anthropic"
 
   # Model name
-  # Default: claude-sonnet-4-5
-  model: "claude-sonnet-4-5"
+  # Default: claude-sonnet-5
+  model: "claude-sonnet-5"
 
   #-----------------------------------------------------------------------
   # Anthropic Configuration
@@ -645,7 +645,7 @@ builtins:
 #   voyage_api_key_file: "/etc/ai-workbench/voyage-api-key"
 # llm:
 #   provider: "anthropic"
-#   model: "claude-sonnet-4-5"
+#   model: "claude-sonnet-5"
 #   anthropic_api_key_file: "/etc/ai-workbench/anthropic-api-key"
 # secret_file: "/etc/ai-workbench/server.secret"
 # data_dir: "/var/lib/ai-workbench/data"

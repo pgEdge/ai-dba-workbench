@@ -397,8 +397,8 @@ llm:
     embedding_model: text-embedding-3-small
 
     # Model to use for reasoning/classification
-    # Default: gpt-4o-mini
-    reasoning_model: gpt-4o-mini
+    # Default: gpt-6-luna
+    reasoning_model: gpt-6-luna
 
   #-------------------------------------------------------------------------
   # Anthropic Settings
@@ -413,8 +413,8 @@ llm:
     # base_url: https://api.anthropic.com/v1
 
     # Model to use for reasoning/classification
-    # Default: claude-3-5-haiku-20241022
-    reasoning_model: claude-3-5-haiku-20241022
+    # Default: claude-haiku-4-5
+    reasoning_model: claude-haiku-4-5
 
   #-------------------------------------------------------------------------
   # Google Gemini Settings
@@ -438,8 +438,8 @@ llm:
     # Model to use for reasoning/classification
     # Model availability varies by Gemini API key tier; run
     # ListModels to verify which models a given key can access.
-    # Default: gemini-3.6-flash
-    reasoning_model: gemini-3.6-flash
+    # Default: gemini-3.8-flash
+    reasoning_model: gemini-3.8-flash
 
   #-------------------------------------------------------------------------
   # Voyage Settings (for embeddings only)
@@ -621,7 +621,7 @@ notifications:
 #   reasoning_provider: anthropic
 #   anthropic:
 #     api_key_file: /var/secrets/ai-workbench/anthropic-api-key.txt
-#     reasoning_model: claude-3-5-haiku-20241022
+#     reasoning_model: claude-haiku-4-5
 #   voyage:
 #     api_key_file: /var/secrets/ai-workbench/voyage-api-key.txt
 #     embedding_model: voyage-3-lite

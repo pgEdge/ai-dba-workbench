@@ -133,7 +133,7 @@ embedding:
 #=====================================================
 llm:
   provider: "anthropic"
-  model: "claude-sonnet-4-5"
+  model: "claude-sonnet-5"
   # anthropic_api_key_file: "~/.anthropic-api-key"
   # openai_api_key_file: "~/.openai-api-key"
   # gemini_api_key_file: "~/.gemini-api-key"
@@ -462,10 +462,10 @@ provider recognises; the server passes the name through rather than
 checking a fixed list, so a new provider model works as soon as the
 provider publishes the model. Leaving `model` empty selects the
 default model for the provider. Google publishes
-`gemini-embedding-001` (the default, 3072 dimensions),
-`gemini-embedding-2`, and `gemini-embedding-2-preview` (also 3072
-dimensions); model availability varies by Gemini API key tier, so run
-ListModels to verify which embedding models a given key can access.
+`gemini-embedding-001` (the default, 3072 dimensions) and
+`gemini-embedding-2` (also 3072 dimensions); model availability varies
+by Gemini API key tier, so run ListModels to verify which embedding
+models a given key can access.
 
 Because the model name is not restricted, an OpenAI-protocol-compatible
 local model server such as llama.cpp or vLLM can supply embeddings:
@@ -519,7 +519,7 @@ database analysis.
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `provider` | string | `anthropic` | LLM provider |
-| `model` | string | `claude-sonnet-4-5` | Model name |
+| `model` | string | `claude-sonnet-5` | Model name |
 | `anthropic_api_key_file` | string | | Anthropic key path |
 | `openai_api_key_file` | string | | OpenAI key path |
 | `gemini_api_key_file` | string | | Gemini key path |
@@ -532,6 +532,17 @@ database analysis.
 | `anthropic_base_url` | string | `https://api.anthropic.com/v1` | Anthropic base URL |
 | `openai_base_url` | string | `https://api.openai.com/v1` | OpenAI base URL |
 | `gemini_base_url` | string | `https://generativelanguage.googleapis.com` | Gemini base URL |
+
+#### Sampling Temperature (`temperature`)
+
+Some models accept only their own default temperature;
+these include `claude-sonnet-5`, the default model, and
+OpenAI's GPT-6 models. When a model rejects the
+configured `temperature`, the server resends the request
+without the setting and omits the setting from later
+requests. The model's own default then applies, so the
+`temperature` option has no effect, and the server does
+not log the change.
 
 #### Output Token Budget (`max_tokens`)
 
@@ -634,7 +645,7 @@ verbose tool descriptions:
 ```yaml
 llm:
   provider: "anthropic"
-  model: "claude-sonnet-4-5"
+  model: "claude-sonnet-5"
   anthropic_api_key_file: "~/.anthropic-api-key"
   compact_tool_descriptions: "false"
 ```
@@ -697,10 +708,9 @@ The built-in `database_path` default still points at the legacy
 The `embedding_provider` option accepts `voyage`, `openai`, `gemini`,
 or `ollama`, and `embedding_model` accepts any model name the chosen
 provider recognises. Google publishes `gemini-embedding-001` (the
-default, 3072 dimensions), `gemini-embedding-2`, and
-`gemini-embedding-2-preview` (also 3072 dimensions); model
-availability varies by Gemini API key tier, so run ListModels to
-verify which embedding models a given key can access.
+default, 3072 dimensions) and `gemini-embedding-2` (also 3072
+dimensions); model availability varies by Gemini API key tier, so run
+ListModels to verify which embedding models a given key can access.
 
 When Gemini provides the knowledgebase embeddings, the configured
 `embedding_model` must match the model that the KB Builder used to
@@ -946,7 +956,7 @@ embedding:
   voyage_api_key_file: "/etc/ai-workbench/voyage-key"
 llm:
   provider: "anthropic"
-  model: "claude-sonnet-4-5"
+  model: "claude-sonnet-5"
   anthropic_api_key_file: "/etc/ai-workbench/ant-key"
 secret_file: "/etc/ai-workbench/server.secret"
 data_dir: "/var/lib/ai-workbench/data"

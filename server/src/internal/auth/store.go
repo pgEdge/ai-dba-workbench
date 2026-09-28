@@ -127,6 +127,9 @@ type AuthStore struct {
 	// the re-chain writes only after its confirmation callback agrees.
 	// Set once at construction.
 	allowUnkeyedAuditRows bool
+	// failures coalesces repeated failure events; see
+	// audit_failures.go. It guards itself.
+	failures failureCoalescer
 }
 
 // SessionInfo holds session information (in-memory only)

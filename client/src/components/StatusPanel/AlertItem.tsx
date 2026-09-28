@@ -63,6 +63,7 @@ const AlertItem: React.FC<AlertItemProps> = ({
     isUnacknowledging,
     onAnalyze,
     onEditOverride,
+    canAcknowledgeSystem = false,
 }) => {
     const theme = useTheme();
     const severityColors = getSeverityColors(theme);
@@ -276,29 +277,31 @@ const AlertItem: React.FC<AlertItemProps> = ({
             )}
 
             {/* Ack/Unack button */}
-            <Tooltip title={isAcknowledged ? 'Restore to active' : 'Acknowledge'} placement="left">
-                <span>
-                    <IconButton
-                        size="small"
-                        disabled={isAcknowledged && ackInFlight}
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            if (isAcknowledged) {
-                                onUnacknowledge?.(alert.id);
-                            } else {
-                                onAcknowledge?.(alert);
-                            }
-                        }}
-                        sx={ackButtonSx}
-                    >
-                        {isAcknowledged ? (
-                            <UnackIcon sx={ICON_16_SX} />
-                        ) : (
-                            <AckIcon sx={ICON_16_SX} />
-                        )}
-                    </IconButton>
-                </span>
-            </Tooltip>
+            {(!system || canAcknowledgeSystem) && (
+                <Tooltip title={isAcknowledged ? 'Restore to active' : 'Acknowledge'} placement="left">
+                    <span>
+                        <IconButton
+                            size="small"
+                            disabled={isAcknowledged && ackInFlight}
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                if (isAcknowledged) {
+                                    onUnacknowledge?.(alert.id);
+                                } else {
+                                    onAcknowledge?.(alert);
+                                }
+                            }}
+                            sx={ackButtonSx}
+                        >
+                            {isAcknowledged ? (
+                                <UnackIcon sx={ICON_16_SX} />
+                            ) : (
+                                <AckIcon sx={ICON_16_SX} />
+                            )}
+                        </IconButton>
+                    </span>
+                </Tooltip>
+            )}
         </Box>
     );
 };

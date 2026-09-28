@@ -71,6 +71,7 @@ const GroupedAlertInstance: React.FC<GroupedAlertInstanceProps> = ({
     isUnacknowledging,
     onAnalyze,
     onEditOverride,
+    canAcknowledgeSystem = false,
 }) => {
     const theme = useTheme();
     const isAcknowledged = !!alert.acknowledgedAt;
@@ -230,29 +231,31 @@ const GroupedAlertInstance: React.FC<GroupedAlertInstanceProps> = ({
                 )}
 
                 {/* Ack/Unack button */}
-                <Tooltip title={isAcknowledged ? 'Restore to active' : 'Acknowledge'} placement="left">
-                    <span>
-                        <IconButton
-                            size="small"
-                            disabled={isAcknowledged && ackInFlight}
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                if (isAcknowledged) {
-                                    onUnacknowledge?.(alert.id);
-                                } else {
-                                    onAcknowledge?.(alert);
-                                }
-                            }}
-                            sx={ackButtonSx}
-                        >
-                            {isAcknowledged ? (
-                                <UnackIcon sx={ICON_14_SX} />
-                            ) : (
-                                <AckIcon sx={ICON_14_SX} />
-                            )}
-                        </IconButton>
-                    </span>
-                </Tooltip>
+                {(!system || canAcknowledgeSystem) && (
+                    <Tooltip title={isAcknowledged ? 'Restore to active' : 'Acknowledge'} placement="left">
+                        <span>
+                            <IconButton
+                                size="small"
+                                disabled={isAcknowledged && ackInFlight}
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (isAcknowledged) {
+                                        onUnacknowledge?.(alert.id);
+                                    } else {
+                                        onAcknowledge?.(alert);
+                                    }
+                                }}
+                                sx={ackButtonSx}
+                            >
+                                {isAcknowledged ? (
+                                    <UnackIcon sx={ICON_14_SX} />
+                                ) : (
+                                    <AckIcon sx={ICON_14_SX} />
+                                )}
+                            </IconButton>
+                        </span>
+                    </Tooltip>
+                )}
             </Box>
 
             {/* Last updated (only when distinct from triggered_at) */}
@@ -292,6 +295,7 @@ const GroupedAlertItem: React.FC<GroupedAlertItemProps> = ({
     onAnalyze,
     onEditOverride,
     onAcknowledgeGroup,
+    canAcknowledgeSystem = false,
 }) => {
     const theme = useTheme();
     const severityColors = getSeverityColors(theme);
@@ -341,7 +345,12 @@ const GroupedAlertItem: React.FC<GroupedAlertItemProps> = ({
         '& .MuiChip-label': CHIP_LABEL_SX,
     }), [baseColor]);
 
-    const hasUnacknowledged = alerts.some(a => !a.acknowledgedAt);
+    // The group action covers only the alerts this user may
+    // acknowledge; system alerts need an extra permission.
+    const groupAckable = useMemo(
+        () => alerts.filter(a => !a.acknowledgedAt && (canAcknowledgeSystem || !isSystemAlert(a))),
+        [alerts, canAcknowledgeSystem],
+    );
 
     const groupAckButtonSx = useMemo(() => ({
         p: 0.25,
@@ -365,13 +374,13 @@ const GroupedAlertItem: React.FC<GroupedAlertItemProps> = ({
                     sx={countChipSx}
                 />
                 <Chip label={highestSeverity} size="small" sx={severityChipSx} />
-                {hasUnacknowledged && onAcknowledgeGroup && (
+                {groupAckable.length > 0 && onAcknowledgeGroup && (
                     <Tooltip title="Acknowledge all in group" placement="left">
                         <IconButton
                             size="small"
                             onClick={(e) => {
                                 e.stopPropagation();
-                                onAcknowledgeGroup(alerts.filter(a => !a.acknowledgedAt));
+                                onAcknowledgeGroup(groupAckable);
                             }}
                             sx={groupAckButtonSx}
                         >
@@ -401,6 +410,7 @@ const GroupedAlertItem: React.FC<GroupedAlertItemProps> = ({
                             isUnacknowledging={isUnacknowledging}
                             onAnalyze={onAnalyze}
                             onEditOverride={onEditOverride}
+                            canAcknowledgeSystem={canAcknowledgeSystem}
                         />
                     ))}
                 </Box>

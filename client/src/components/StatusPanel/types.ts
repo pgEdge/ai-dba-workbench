@@ -104,6 +104,12 @@ export interface AlertItemProps {
     isUnacknowledging?: (alertId: number | string) => boolean;
     onAnalyze?: (alert: TransformedAlert) => void;
     onEditOverride?: (alert: TransformedAlert) => void;
+    /**
+     * Whether the current user may acknowledge and restore system
+     * alerts, which the server allows only to a superuser or a holder
+     * of manage_alert_rules. Defaults to false, hiding the action.
+     */
+    canAcknowledgeSystem?: boolean;
 }
 
 export interface GroupedAlertInstanceProps {
@@ -114,6 +120,12 @@ export interface GroupedAlertInstanceProps {
     isUnacknowledging?: (alertId: number | string) => boolean;
     onAnalyze?: (alert: TransformedAlert) => void;
     onEditOverride?: (alert: TransformedAlert) => void;
+    /**
+     * Whether the current user may acknowledge and restore system
+     * alerts, which the server allows only to a superuser or a holder
+     * of manage_alert_rules. Defaults to false, hiding the action.
+     */
+    canAcknowledgeSystem?: boolean;
 }
 
 export interface GroupedAlertItemProps {
@@ -125,6 +137,12 @@ export interface GroupedAlertItemProps {
     isUnacknowledging?: (alertId: number | string) => boolean;
     onAnalyze?: (alert: TransformedAlert) => void;
     onEditOverride?: (alert: TransformedAlert) => void;
+    /**
+     * Whether the current user may acknowledge and restore system
+     * alerts, which the server allows only to a superuser or a holder
+     * of manage_alert_rules. Defaults to false, hiding the action.
+     */
+    canAcknowledgeSystem?: boolean;
     onAcknowledgeGroup?: (alerts: TransformedAlert[]) => void;
 }
 
@@ -146,6 +164,12 @@ export interface AlertsSectionProps {
     isUnacknowledging?: (alertId: number | string) => boolean;
     onAnalyze?: (alert: TransformedAlert) => void;
     onEditOverride?: (alert: TransformedAlert) => void;
+    /**
+     * Whether the current user may acknowledge and restore system
+     * alerts, which the server allows only to a superuser or a holder
+     * of manage_alert_rules. Defaults to false, hiding the action.
+     */
+    canAcknowledgeSystem?: boolean;
     onAcknowledgeGroup?: (alerts: TransformedAlert[]) => void;
 }
 

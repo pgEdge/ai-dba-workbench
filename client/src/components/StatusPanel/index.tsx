@@ -785,6 +785,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
                     onAnalyze={aiEnabled ? handleAnalyze : undefined}
                     onEditOverride={hasPermission('manage_alert_rules') ? handleEditOverride : undefined}
                     onAcknowledgeGroup={handleAcknowledgeGroup}
+                    canAcknowledgeSystem={hasPermission('manage_alert_rules')}
                 />
 
                 {/* Topology (cluster only) */}

@@ -153,6 +153,14 @@ func (h *RBACHandler) createUser(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// A superuser reaches every connection, so a token bounded to some
+	// connections may not create one (issue #471).
+	if req.IsSuperuser != nil && *req.IsSuperuser &&
+		!h.requireGrantInTokenScope(w, r,
+			h.rbacChecker.AllConnectionsInTokenScope(r.Context())) {
+		return
+	}
+
 	if isServiceAccount {
 		if err := h.actorStore(r).CreateServiceAccount(req.Username, req.Annotation, req.DisplayName, req.Email); err != nil {
 			respondUserStoreError(w, err, "Failed to create service account", req.Username)
@@ -235,6 +243,22 @@ func (h *RBACHandler) updateUser(w http.ResponseWriter, r *http.Request, userID 
 			RespondError(w, http.StatusBadRequest, "Please enter a valid email address")
 			return
 		}
+	}
+
+	// A token bounded to some connections may not make a superuser, and
+	// may not set the password of, or re-enable, an account that reaches
+	// further than the token does, since either would hand the token's
+	// holder that account's access (issue #471).
+	if req.IsSuperuser != nil && *req.IsSuperuser &&
+		!h.requireGrantInTokenScope(w, r,
+			h.rbacChecker.AllConnectionsInTokenScope(r.Context())) {
+		return
+	}
+	takesOver := (req.Password != nil && *req.Password != "") ||
+		(req.Enabled != nil && *req.Enabled)
+	if takesOver && !h.requireGrantInTokenScope(w, r,
+		h.rbacChecker.UserWithinTokenScope(r.Context(), userID)) {
+		return
 	}
 
 	// Use atomic update to ensure all changes succeed or fail together

@@ -308,6 +308,10 @@ func (h *RBACHandler) deleteGroup(w http.ResponseWriter, r *http.Request, groupI
 	if !h.requirePermission(w, r, auth.PermManageGroups) {
 		return
 	}
+	if !h.requireGrantInTokenScope(w, r,
+		h.groupPrivilegesInTokenScope(r.Context(), groupID)) {
+		return
+	}
 
 	if err := h.actorStore(r).DeleteGroup(groupID); err != nil {
 		log.Printf("[ERROR] Failed to delete group %d: %v", groupID, err)
@@ -375,6 +379,14 @@ func (h *RBACHandler) addGroupMember(w http.ResponseWriter, r *http.Request, gro
 	if req.UserID != nil && req.GroupID != nil {
 		RespondError(w, http.StatusBadRequest,
 			"Only one of user_id or group_id may be specified")
+		return
+	}
+
+	// Joining a group confers everything the group and its ancestors
+	// hold, so a token may add a member only to a group whose access
+	// falls inside its own connection scope (issue #471).
+	if !h.requireGrantInTokenScope(w, r,
+		h.rbacChecker.GroupWithinTokenScope(r.Context(), groupID)) {
 		return
 	}
 

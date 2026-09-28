@@ -836,8 +836,8 @@ project adheres to
 - Fix the RBAC user endpoints answering a request the auth store
   refuses on its merits with a 500 and a generic message. The store
   now marks such refusals, such as a password for an account that
-  signs in through an identity provider, and the create, update and
-  delete user endpoints return them as a 400 carrying the store's own
+  signs in through an identity provider, and the create and update
+  user endpoints return them as a 400 carrying the store's own
   explanation, keeping the 500 for genuine failures. The update
   endpoint's separate copy of the identity provider password check has
   gone, so the store is the one place that rule is written. (#485)

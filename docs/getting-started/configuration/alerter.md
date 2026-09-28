@@ -315,12 +315,13 @@ completes counts as neither a failure nor a success,
 although a call that times out counts as a failure.
 
 When anomaly detection is enabled, the alerter also checks
-the configured embedding and reasoning providers at
-startup. A failed check raises the tier 2 or tier 3 alert
-immediately, whatever the threshold; a failed reasoning
-check raises the tier 3 alert rather than the re-evaluation
-alert. At startup the alerter also clears any open provider
-alert for a tier or provider that is no longer configured.
+the providers of the enabled tiers at startup. A failed
+check raises the alert for its tier immediately, whatever
+the threshold. A failed reasoning check raises the tier 3
+alert when tier 3 is enabled, and the re-evaluation alert
+when only re-evaluation uses the reasoning provider. At
+startup the alerter also clears any open provider alert for
+a tier or provider that is no longer configured or enabled.
 See
 [System Alerts](../../user-guide/alerts/index.md#system-alerts)
 for how the alert appears.

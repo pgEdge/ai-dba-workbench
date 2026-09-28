@@ -275,8 +275,8 @@ func allMetricCases() []metricCase {
 			insert: func(ctx context.Context, pool *pgxpool.Pool, connID int, base time.Time) error {
 				_, err := pool.Exec(ctx, `
 					INSERT INTO metrics.pg_stat_activity
-					    (connection_id, state, xact_start, collected_at)
-					VALUES ($1, 'idle in transaction', $2::timestamptz - INTERVAL '30 seconds', $2)
+					    (connection_id, backend_type, state, xact_start, collected_at)
+					VALUES ($1, 'client backend', 'idle in transaction', $2::timestamptz - INTERVAL '30 seconds', $2)
 				`, connID, base)
 				return err
 			},
@@ -286,8 +286,8 @@ func allMetricCases() []metricCase {
 			insert: func(ctx context.Context, pool *pgxpool.Pool, connID int, base time.Time) error {
 				_, err := pool.Exec(ctx, `
 					INSERT INTO metrics.pg_stat_activity
-					    (connection_id, state, query_start, collected_at)
-					VALUES ($1, 'active', $2::timestamptz - INTERVAL '10 seconds', $2)
+					    (connection_id, backend_type, state, query_start, collected_at)
+					VALUES ($1, 'client backend', 'active', $2::timestamptz - INTERVAL '10 seconds', $2)
 				`, connID, base)
 				return err
 			},
@@ -297,8 +297,8 @@ func allMetricCases() []metricCase {
 			insert: func(ctx context.Context, pool *pgxpool.Pool, connID int, base time.Time) error {
 				_, err := pool.Exec(ctx, `
 					INSERT INTO metrics.pg_stat_activity
-					    (connection_id, xact_start, collected_at)
-					VALUES ($1, $2::timestamptz - INTERVAL '45 seconds', $2)
+					    (connection_id, backend_type, xact_start, collected_at)
+					VALUES ($1, 'client backend', $2::timestamptz - INTERVAL '45 seconds', $2)
 				`, connID, base)
 				return err
 			},

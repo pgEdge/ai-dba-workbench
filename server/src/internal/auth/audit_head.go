@@ -293,6 +293,10 @@ func errAuditHeadNotRecorded(anchorEv *AuditEvent, rec auditAnchor,
 // a saved copy of it put back, because every row the server writes
 // after that links to it; that is a truncation of everything after row
 // 1, and nothing in the file can tell it from a log that never grew.
+// Nor does it stop a writer who empties the log and moves the next row
+// the server writes to id 1: the id is not part of the hash, so this
+// catches an emptied log only when its new row is left where it was
+// written.
 func auditGenesisAllowed(ev *AuditEvent) bool {
 	return ev.ID == 1 || isAuditAnchorAction(ev.Action)
 }

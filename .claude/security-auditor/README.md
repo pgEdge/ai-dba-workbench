@@ -425,6 +425,19 @@ client address, before and after snapshots and a hash chain.
   status. `MAX(id)` and the sequence are read by one statement, so a
   server insert whilst the CLI, which opens its own store, is verifying
   cannot separate them.
+- The tail anchor (`audit_tail.go`, #544) is one `audit_tail` row
+  naming the newest event by id and hash under an HMAC with its own
+  label; `recordAudit` decides before its insert (the insert moves
+  `sqlite_sequence`) whether to move it on, and does so only from an
+  anchor that names the newest row and verifies, from an empty log
+  whose sequence never issued an id, or on rotation (anchor and newest
+  row both fail under the key). Anything else is left stranded as
+  evidence. Rows carry hash version 3; a v3 newest row with no anchor
+  is tampering. `seedAuditTail` anchors a v2 log at open only when the
+  sequence agrees. The re-chain and re-anchor overwrite the anchor
+  unconditionally. Any new path that writes `audit_tail`, or any
+  "self-heal" that seeds an anchor when it is found missing, reopens
+  #544.
 - Snapshots never carry `password_hash`, and no token material reaches
   a row, a log line or a response.
 
@@ -435,12 +448,13 @@ plainly rather than crediting the design with more than it does.
   the log freely, since the key is derived from the same secret the
   server reads. Only a copy of the events somewhere the server cannot
   reach defends against that, and there is no anchor outside the file.
-- Truncating the tail needs write access to `auth.db` alone, no
-  secret. `sqlite_sequence`, which `verifyAuditTail` compares the
-  newest id against, has no trigger or other protection, so deleting
-  the newest rows and one `UPDATE sqlite_sequence SET seq = <new
-  MAX(id)>` passes verification. Do not credit the key with defending
-  the tail.
+- Tail truncation with `sqlite_sequence` rewritten is caught by the
+  anchor, not the sequence comparison, but only against the current
+  file: restoring an older `audit_tail` row with the rows after it
+  deleted, or an older whole file, passes; deleting every v3 row plus
+  the anchor (sequence rewritten) returns the log to its pre-upgrade v2
+  state; and wiping the log, anchor and sequence row reads as empty.
+  Triggers planted on `audit_tail` can only cause false failures.
 - Head deletion (#502) is caught against the head the newest purge
   event recorded (`oldest_retained_hash`); a record-less purge event
   never overrides an older recorded one, in the verifier

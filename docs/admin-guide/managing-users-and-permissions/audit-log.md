@@ -397,7 +397,7 @@ here so that it fits the page:
     "76bed6cc892595f6035701e0b68b3c112088d4a14b2e2db9173043735f9f85e7",
   "hash":
     "5438335f26c3c01a4f42976957dca65f25b48cf44c637ff38ac8bd042736a092",
-  "hash_version": 2
+  "hash_version": 3
 }
 ```
 
@@ -420,7 +420,10 @@ free, as version 2 shows: introducing the keyed hash left every
 version 1 event unverifiable, and an upgraded database has to be
 re-chained, as described below. Verification also refuses an event
 claiming a lower version than one before it, because the encodings only
-ever move forwards.
+ever move forwards. Version 3 computes the same keyed hash as version 2
+under its own label; it marks an event written by a release that keeps
+the tail record described below, so that an event can show which kind
+of release wrote it without that claim being open to change.
 
 The encoding records the length of each field alongside its value, so
 moving text
@@ -525,6 +528,38 @@ that sits below it, is reported, because none of the three is a state
 the database produces by itself; so is a store with no such record at
 all, because every table the server creates keeps one and removing it
 takes deliberate effort.
+
+That record is an ordinary SQLite table with no protection of its own,
+so someone who deletes the newest events can set it to the new highest
+identifier as well. The server therefore also keeps a tail record in
+the `audit_tail` table, naming the newest event by identifier and hash
+under a keyed hash (HMAC-SHA256) derived from the server secret, and
+moves it on in the same transaction that writes each event.
+Verification requires the tail record to name the newest event and to
+verify under the key, and reports status `2` when it names an event
+that is no longer the newest, when it does not verify, when it names an
+event but the log is empty, or when it is missing and the newest event
+is version 3. Rewriting the record to name the new newest event takes
+the server secret. Once the record names an event that has gone, the
+server leaves it as it is rather than moving it on, so the deletion is
+still reported however many events are written after it; only the
+re-chain, described below, gives the log a new tail record over one
+that does not verify. A secret changed since the record was written
+leaves both the record and the event it names failing under the new
+key, and the server treats that shape as a rotation, moving the record
+on under the new key, rather than as tampering, which the failing
+events already show.
+
+A database written by a release that predates the tail record has no
+such record and version 2 events. The server writes the record when it
+opens the store, naming the newest event, but only if the highest
+identifier SQLite has issued agrees with it, because a record written
+over a log that has already lost its newest events would vouch for the
+deletion; a log where the two disagree is left without one, and
+verification continues to report it. The change is one way: an earlier
+release run against the same `auth.db` afterwards writes version 2
+events after version 3 ones and leaves the tail record behind them, and
+verification reports both.
 
 Verification checks the start of the log in the same spirit. Every
 purge records the event it left as the oldest, as described above, and
@@ -838,14 +873,18 @@ after making a change. Keep the secret file and the data directory
 apart, as far as the operating system allows, so that an account able
 to read one cannot reach the other.
 
-Deleting the newest events needs write access to `auth.db` alone, and
-no secret. The events left behind still verify, and the record of the
-highest identifier issued, which verification compares the newest
-event against, is an ordinary SQLite table with no protection of its
-own; an attacker who deletes the newest events and then sets that
-record to the new highest identifier leaves a log that verifies
-cleanly. The comparison catches a deletion that leaves the record
-alone, and nothing more.
+Deleting the newest events is caught by the tail record, but only
+against the file as it now stands. Nothing outside `auth.db` records
+how far the log had reached, so an earlier copy of the `audit_tail`
+table, put back together with the events after the one it names
+deleted, and an earlier copy of the whole file, both verify. Deleting
+every version 3 event together with the tail record, and setting the
+record of the highest identifier to match, leaves a log that looks as
+it did before the first release that keeps the tail record wrote to it,
+so the events written before that upgrade remain exposed to deletion
+from the end. A log emptied entirely, with the tail record and the
+record of the highest identifier removed as well, reads as one that has
+never held an event.
 
 Deleting the oldest events is caught precisely only once a purge has
 recorded where the log begins. On a log whose purge events were all

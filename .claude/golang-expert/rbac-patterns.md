@@ -896,7 +896,10 @@ the version is a column
 in the file and relabelling a row must not move it out of the
 verifier's reach.
 
-`auditHashVersion` is 2: an HMAC-SHA256 over the canonical rendering,
+`auditHashVersion` is 3, rendered exactly as version 2 but under the
+label `v3` (`auditHashKeyed`), and marks rows written by a build that
+keeps the tail anchor described below. Both are an HMAC-SHA256 over
+the canonical rendering,
 keyed by `AuthStore.auditKey`, so rewriting a row needs the server
 secret as well as write access to `auth.db`. Version 1, the unkeyed
 SHA-256, is no longer admissible anywhere: `auditHash` refuses to
@@ -1119,7 +1122,26 @@ pure comparison is `checkAuditTail`. Every disagreement wraps
 `ErrAuditChainBroken`, so the CLI exits with the tampering status; any
 other query error is returned unwrapped rather than swallowed, and
 exits 1. `sqlite_sequence` itself is unprotected, so a tail deleted and
-then matched by writing the sequence down passes without the secret.
+then matched by writing the sequence down passes that comparison, and
+`verifyAuditTail` then calls `verifyAuditTailAnchor` (#544).
+
+The tail anchor lives in `audit_tail.go`: a single-row `audit_tail`
+table (`auditTailDDL`, created by `ensureAuditSchema`) holding the
+newest event's id and hash under `auditTailMAC`, an HMAC with its own
+label. `recordAudit` reads the newest row and the anchor in one
+statement (`readAuditTailState`), asks `mayAdvanceAuditTail` before
+its INSERT, because the insert moves `sqlite_sequence`, and calls
+`writeAuditTail` afterwards only when that allowed it. A stranded
+anchor is left alone on purpose, so the evidence persists. New rows
+carry `auditHashVersion` 3 (`auditTailHashVersion`), which renders as
+version 2 does under the label `v3`; a v3 newest row with no anchor
+fails verification. `initSchema` ends with `seedAuditTail`, which
+anchors a v2 log only when `checkAuditTail` agrees. The re-chain and
+re-anchor call `writeAuditTail` after `recordAudit` unconditionally.
+Test fixtures that insert `audit_events` rows by hand at version 3
+must also leave the anchor naming the newest row, or verification
+fails; `audit_tail_test.go` has `insertVersion2Log` for a
+pre-anchor log.
 
 ## Connection Access and Visibility Agree
 

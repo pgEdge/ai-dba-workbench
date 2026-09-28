@@ -94,8 +94,9 @@ type AuthStore struct {
 	maxFailedAttempts  int           // Max failed login attempts before lockout (0 = disabled)
 	sessions           sync.Map      // In-memory session store: token -> SessionInfo
 	sessionCleanupStop chan struct{} // Signals the session cleanup goroutine to stop
-	// auditKey keys the audit chain's HMAC (hash version 2). Every
-	// store that writes or verifies audit rows needs it, and every
+	// auditKey keys the audit chain's HMAC (hash versions 2 and 3) and
+	// the tail anchor's. Every store that writes or verifies audit rows
+	// needs it, and every
 	// process sharing one auth.db must derive the same one, so it comes
 	// from the server secret via DeriveAuditKey rather than from
 	// anything local to a process. It is set once at construction and
@@ -585,6 +586,9 @@ func (s *AuthStore) ensureAuditSchema() error {
 	if _, err := s.db.Exec(auditTableDDL); err != nil {
 		return fmt.Errorf("failed to create audit_events table: %w", err)
 	}
+	if _, err := s.db.Exec(auditTailDDL); err != nil {
+		return fmt.Errorf("failed to create audit_tail table: %w", err)
+	}
 
 	if _, err := s.db.Exec(auditChainIndexDDL); err != nil {
 		return fmt.Errorf(
@@ -905,11 +909,13 @@ func (s *AuthStore) initSchema() error {
 		return err
 	}
 
-	if s.allowUnkeyedAuditRows {
-		return nil
+	if !s.allowUnkeyedAuditRows {
+		if err := s.ensureNoUnkeyedAuditRows(); err != nil {
+			return err
+		}
 	}
 
-	return s.ensureNoUnkeyedAuditRows()
+	return s.seedAuditTail()
 }
 
 // Close stops the session cleanup goroutine (if running), writes a

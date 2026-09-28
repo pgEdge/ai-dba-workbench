@@ -2468,6 +2468,20 @@ project adheres to
   both it and the purge's repeating error name `-rechain-audit-log`.
   (#502)
 
+- Report events deleted from the end of the RBAC audit log in
+  `-verify-audit-log` even when the record of the highest identifier
+  SQLite has issued is rewritten to match, which previously passed. The
+  server now keeps a tail record in a new `audit_tail` table, naming the
+  newest event under a keyed hash derived from the server secret and
+  moved on with each event, and verification exits with status 2 when
+  it names any other event, does not verify, or is missing behind a
+  version 3 event, the hash version new events now carry. An existing
+  log is given a tail record when the store opens, provided nothing is
+  missing from its end; a record left naming a deleted event stays as
+  it is until an operator runs `-rechain-audit-log`. Running an earlier
+  release against the same `auth.db` afterwards is reported as a
+  version downgrade. (#544)
+
 - Check the definitions of the audit log's schema objects in
   `-verify-audit-log`, not only their names. The index on the link to
   the preceding event must be unique, not partial, and on that column

@@ -75,7 +75,7 @@ const auditNoUpdateTriggerDDL = `
 
 // auditSchemaDDL is the whole audit schema, table, trigger and chain
 // index together, for callers that have no reason to tell them apart.
-const auditSchemaDDL = auditTableDDL + auditChainIndexDDL
+const auditSchemaDDL = auditTableDDL + auditChainIndexDDL + auditTailDDL
 
 // auditChainIndexDDL creates the unique index that keeps the chain
 // linear. It is separated from the rest of the schema only so that
@@ -269,7 +269,14 @@ func newEvent(actor Actor, action, targetType string, targetID *int64,
 // under the key with RechainAuditLog, so the unkeyed rendering survives
 // only as something the re-chain recomputes on its way past, and
 // auditHash refuses it outright.
-const auditHashVersion = 2
+//
+// Version 3 renders exactly as version 2 does, under its own label and
+// number, and marks a row written by a build that keeps the tail anchor
+// in audit_tail. The rendering did not need to change; what needed a
+// new number was the fact, because a newest row carrying version 3
+// with no anchor beside it has lost the anchor, and the number is
+// covered by the HMAC, so it cannot be relabelled; see audit_tail.go.
+const auditHashVersion = auditTailHashVersion
 
 const (
 	// auditHashV1Label is the first field of the version 1 rendering.
@@ -280,6 +287,9 @@ const (
 	// produce the same digest over the same fields even where the
 	// digest function is otherwise the same primitive.
 	auditHashV2Label = "v2"
+
+	// auditHashV3Label is the first field of the version 3 rendering.
+	auditHashV3Label = "v3"
 )
 
 // auditHashKeySalt is the fixed PBKDF2 salt separating the audit chain
@@ -491,6 +501,8 @@ func auditHash(ev *AuditEvent, key []byte) (string, error) {
 			ErrAuditUnkeyedRow, ev.ID)
 	case 2:
 		return auditHashV2(ev, key)
+	case 3:
+		return auditHashKeyed(auditHashV3Label, ev, key)
 	default:
 		return "", fmt.Errorf("%w %d", errUnknownAuditHashVersion,
 			ev.HashVersion)
@@ -568,13 +580,21 @@ func auditHashV1(ev *AuditEvent) string {
 // rewrite a row and recompute every hash after it, whereas an HMAC
 // cannot be recomputed without the secret as well.
 func auditHashV2(ev *AuditEvent, key []byte) (string, error) {
+	return auditHashKeyed(auditHashV2Label, ev, key)
+}
+
+// auditHashKeyed is the keyed rendering shared by versions 2 and 3,
+// which differ only in the label and number they open with.
+func auditHashKeyed(label string, ev *AuditEvent, key []byte) (string,
+	error) {
+
 	if len(key) == 0 {
 		return "", errNoAuditKey
 	}
 
 	mac := hmac.New(sha256.New, key)
 	// hash.Hash.Write is documented never to return an error.
-	mac.Write(auditCanonical(auditHashV2Label, ev))
+	mac.Write(auditCanonical(label, ev))
 
 	return hex.EncodeToString(mac.Sum(nil)), nil
 }
@@ -890,7 +910,7 @@ type AuditRechainConfirm func(AuditRechainPlan) (bool, error)
 const auditActionRechain = "audit.rechain"
 
 // RechainAuditLog re-hashes every row of the audit log as a keyed
-// version 2 row under auditKey, in id order and in a single
+// row, at auditHashVersion, under auditKey, in id order and in a single
 // transaction, and appends an audit.rechain event recording that it
 // did. It is the one-time upgrade step for a database written by a
 // release that predates the keyed chain, and the only way to open such
@@ -1114,8 +1134,8 @@ func (s *AuthStore) verifyLegacyAuditChain() (int64, error) {
 		switch ev.HashVersion {
 		case 1:
 			want = auditHashV1(&ev)
-		case 2:
-			computed, err := auditHashV2(&ev, s.auditKey)
+		case 2, 3:
+			computed, err := auditHash(&ev, s.auditKey)
 			if err != nil {
 				firstBad = ev.ID
 				return err
@@ -1305,6 +1325,11 @@ func (s *AuthStore) rechainAuditLogTx(actor Actor, plan AuditRechainPlan) (
 	if err := s.recordAudit(tx, ev); err != nil {
 		return 0, fmt.Errorf("failed to record the re-chain event: %w", err)
 	}
+	// Every hash in the log has just changed, so whatever the tail
+	// anchor named is gone; it starts again at the re-chain event.
+	if err := s.writeAuditTail(tx, ev); err != nil {
+		return 0, err
+	}
 
 	if err := tx.Commit(); err != nil {
 		return 0, fmt.Errorf("failed to commit the re-chain: %w", err)
@@ -1331,17 +1356,25 @@ func nullableText(v string) any {
 // the current UTC time; a non-zero one is kept as given. The timestamp
 // is stored in auditTimeLayout, a fixed-width RFC 3339 UTC rendering
 // that sorts lexically in timestamp order. On success the event's ID,
-// PrevHash, OccurredAt and Hash fields are populated.
+// PrevHash, OccurredAt and Hash fields are populated, and the tail
+// anchor in audit_tail is moved on to the new row when the state it
+// held until now allows; see audit_tail.go.
 func (s *AuthStore) recordAudit(tx *sql.Tx, ev *AuditEvent) error {
 	if ev == nil {
 		return errors.New("audit event is nil")
 	}
 
-	var prevHash string
-	err := tx.QueryRow(
-		"SELECT hash FROM audit_events ORDER BY id DESC LIMIT 1").Scan(&prevHash)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	// The newest row and the tail anchor are read together, before the
+	// insert, because whether the anchor may move on to this event
+	// depends on what it named until now.
+	before, err := readAuditTailState(tx)
+	if err != nil {
 		return fmt.Errorf("failed to read previous audit hash: %w", err)
+	}
+	prevHash := before.newestHash
+	advance, err := s.mayAdvanceAuditTail(tx, before)
+	if err != nil {
+		return err
 	}
 
 	if ev.OccurredAt.IsZero() {
@@ -1407,11 +1440,16 @@ func (s *AuthStore) recordAudit(tx *sql.Tx, ev *AuditEvent) error {
 			n)
 	}
 
-	if id, err := result.LastInsertId(); err == nil {
-		ev.ID = id
+	id, err := result.LastInsertId()
+	if err != nil {
+		return fmt.Errorf("failed to read the id of the audit event: %w", err)
 	}
+	ev.ID = id
 
-	return nil
+	if !advance {
+		return nil
+	}
+	return s.writeAuditTail(tx, ev)
 }
 
 // recordFailure records a failed mutation in its own short transaction,
@@ -1708,13 +1746,13 @@ func (s *AuthStore) ListAuditEvents(f AuditFilter) ([]AuditEvent, int, error) {
 // check the error first: a firstBad of 0 means the chain is intact only when err is nil, because
 // a scan or iteration failure also reports firstBad 0.
 //
-// Every row must carry the keyed version 2 hash. A row claiming the
+// Every row must carry a keyed hash, version 2 or 3. A row claiming the
 // unkeyed version 1 rendering is refused by auditHash, because the
 // re-chain that an upgrade runs leaves none behind and nothing this
-// build writes produces one. The check that the version never falls
-// along the chain is redundant while 2 is the only admissible value,
-// and is kept because it costs nothing and will matter on the day a
-// version 3 exists.
+// build writes produces one. The version must never fall along the
+// chain: a version 2 row after a version 3 one was written by an older
+// build, or relabelled, and either way the tail anchor that version 3
+// promises is no longer being kept.
 //
 // Errors wrap one of the sentinels declared at the top of this file, so
 // a caller can tell tampering, a downgrade and a mislaid key apart
@@ -1912,9 +1950,11 @@ func normalizeSchemaSQL(text string) string {
 // read-only check in a transaction would contend with the server for
 // the write lock.
 //
-// What this is and is not. The check raises the cost of a careless
+// What this is and is not. The comparison raises the cost of a careless
 // deletion from one statement to three, and it catches the deletions an
-// operator or a script makes without meaning to hide anything.
+// operator or a script makes without meaning to hide anything; the tail
+// anchor, checked last by verifyAuditTailAnchor, is what catches the
+// third statement.
 //
 // Against a deliberate attacker it rests on the chain, and since hash
 // version 2 the chain is an HMAC keyed by a key derived from the server
@@ -1940,13 +1980,18 @@ func normalizeSchemaSQL(text string) string {
 //     Keeping those two apart is the entire protection against
 //     rewriting: the secret belongs in a file the account running the
 //     server can read and nothing else can.
-//   - Deleting the newest rows needs no secret at all. The rows left
-//     behind still verify, and nothing protects sqlite_sequence the way
-//     the no-update trigger protects audit_events, so an attacker with
-//     write access alone can delete the tail and write the sequence
-//     down to the new MAX(id) in one more statement, after which this
-//     check agrees. It catches a deletion that leaves the sequence
-//     alone, and nothing more.
+//   - Deleting the newest rows and writing sqlite_sequence down to
+//     match is caught by the tail anchor in audit_tail.go, not by the
+//     comparison here, which it defeats. The anchor has limits of its
+//     own: a copy of audit_tail saved earlier, restored together with
+//     the rows it names removed from the end, or an older copy of the
+//     whole file, passes, because nothing outside the file records how
+//     far the log had reached. Deleting every version 3 row with the
+//     anchor, and the sequence rewritten to match, leaves a log that
+//     looks as it did before this build first wrote to it, so an
+//     upgrade leaves exposed the events written before it. A log wiped
+//     entirely, anchor and sequence row included, reads as one that has
+//     never held an event.
 //   - Deleting the oldest rows is caught by the head check in
 //     audit_head.go only once a purge run by a build that records the
 //     head has removed something. Until then the newest audit.purge
@@ -1984,8 +2029,11 @@ func (s *AuthStore) verifyAuditTail() error {
 		Scan(&newest, &seq); err != nil {
 		return fmt.Errorf("failed to read newest audit row and sequence: %w", err)
 	}
+	if err := checkAuditTail(newest.Int64, seq); err != nil {
+		return err
+	}
 
-	return checkAuditTail(newest.Int64, seq)
+	return s.verifyAuditTailAnchor()
 }
 
 // checkAuditTail is the comparison behind verifyAuditTail, separated so
@@ -2025,8 +2073,14 @@ func checkAuditTail(newest int64, seq sql.NullInt64) error {
 // SQLite creates it with the first AUTOINCREMENT table, which for this
 // store is the users table in the fresh-install schema.
 func (s *AuthStore) sequenceTablePresent() (bool, error) {
+	return auditSequenceTablePresent(s.db)
+}
+
+// auditSequenceTablePresent is sequenceTablePresent on a database or a
+// transaction.
+func auditSequenceTablePresent(q auditRowQuerier) (bool, error) {
 	var count int
-	if err := s.db.QueryRow(
+	if err := q.QueryRow(
 		`SELECT COUNT(*) FROM sqlite_master
          WHERE type = 'table' AND name = 'sqlite_sequence'`).
 		Scan(&count); err != nil {

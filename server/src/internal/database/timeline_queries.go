@@ -805,6 +805,7 @@ func buildAlertFiredQuery(whereClause string) string {
 // buildAlertFiredCountQuery creates the count query for fired alerts
 func buildAlertFiredCountQuery(whereClause string) string {
 	tableWhere := strings.ReplaceAll(whereClause, "event_time", "triggered_at")
+	tableWhere = appendTimelineCondition(tableWhere, timelineConnectionAlertCondition)
 	return fmt.Sprintf(`
         SELECT COUNT(*)
         FROM alerts
@@ -891,18 +892,29 @@ const alertClearedDurationSQL = `
 func buildAlertClearedCountQuery(whereClause string) string {
 	tableWhere := strings.ReplaceAll(whereClause, "event_time", "cleared_at")
 
-	clearedCondition := "cleared_at IS NOT NULL"
-	if tableWhere != "" {
-		tableWhere = tableWhere + " AND " + clearedCondition
-	} else {
-		tableWhere = "WHERE " + clearedCondition
-	}
+	tableWhere = appendTimelineCondition(tableWhere, "cleared_at IS NOT NULL")
+	tableWhere = appendTimelineCondition(tableWhere, timelineConnectionAlertCondition)
 
 	return fmt.Sprintf(`
         SELECT COUNT(*)
         FROM alerts
         %s
     `, tableWhere)
+}
+
+// timelineConnectionAlertCondition keeps system alerts, which belong to
+// no connection, out of the alert event counts. The event queries leave
+// them out already by joining connections, so the counts match the
+// events they total.
+const timelineConnectionAlertCondition = "connection_id IS NOT NULL"
+
+// appendTimelineCondition adds a fixed condition to a WHERE clause that
+// is either empty or starts with WHERE.
+func appendTimelineCondition(tableWhere, condition string) string {
+	if tableWhere == "" {
+		return "WHERE " + condition
+	}
+	return tableWhere + " AND " + condition
 }
 
 // buildAlertAcknowledgedQuery creates the subquery for acknowledged alerts
@@ -945,6 +957,7 @@ func buildAlertAcknowledgedQuery(whereClause string) string {
 // buildAlertAcknowledgedCountQuery creates the count query for acknowledged alerts
 func buildAlertAcknowledgedCountQuery(whereClause string) string {
 	tableWhere := strings.ReplaceAll(whereClause, "event_time", "ack.acknowledged_at")
+	tableWhere = appendTimelineCondition(tableWhere, timelineConnectionAlertCondition)
 	tableWhere = strings.ReplaceAll(tableWhere, "connection_id", "a.connection_id")
 
 	return fmt.Sprintf(`

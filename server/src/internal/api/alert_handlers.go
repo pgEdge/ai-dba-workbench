@@ -23,9 +23,10 @@ import (
 // handlers use to look up which connection owns an alert before running
 // the RBAC gate. The concrete *database.Datastore satisfies this
 // interface via GetAlertConnectionID; tests inject a lightweight fake so
-// the RBAC branch can be exercised without a real database.
+// the RBAC branch can be exercised without a real database. A nil
+// connection ID means a system alert, which belongs to no connection.
 type alertConnectionResolver interface {
-	GetAlertConnectionID(ctx context.Context, alertID int64) (int, error)
+	GetAlertConnectionID(ctx context.Context, alertID int64) (*int, error)
 }
 
 // alertUnacknowledger is the narrow contract used by the
@@ -143,6 +144,12 @@ func (h *AlertHandler) handleAlerts(w http.ResponseWriter, r *http.Request) {
 	filter.Limit = ParseLimitWithDefaults(r, 100, 1000)
 	filter.Offset = ParseOffsetWithDefault(r, 0)
 
+	// System alerts belong to no connection, so a caller who asks for
+	// particular connections never gets them; otherwise they join the
+	// result for anyone CanSeeSystemAlerts allows (GitHub issue #582).
+	userFiltered := filter.ConnectionID != nil || len(filter.ConnectionIDs) > 0
+	filter.IncludeSystem = !userFiltered && h.rbacChecker.CanSeeSystemAlerts(r.Context())
+
 	// RBAC: restrict to visible connections. VisibleConnectionIDs loads
 	// sharing info once and returns the full allow-list including owned
 	// connections and shared ones the caller may see.
@@ -187,9 +194,14 @@ func (h *AlertHandler) handleAlerts(w http.ResponseWriter, r *http.Request) {
 			filter.ConnectionIDs = intersected
 		} else if filter.ConnectionID == nil {
 			// No user filter -- restrict to visible connections only.
+			// A caller who sees no connection may still see the
+			// system alerts, and only those.
 			if len(accessibleIDs) == 0 {
-				RespondJSON(w, http.StatusOK, &database.AlertListResult{Alerts: []database.Alert{}, Total: 0})
-				return
+				if !filter.IncludeSystem {
+					RespondJSON(w, http.StatusOK, &database.AlertListResult{Alerts: []database.Alert{}, Total: 0})
+					return
+				}
+				filter.SystemOnly = true
 			}
 			filter.ConnectionIDs = accessibleIDs
 		}
@@ -224,11 +236,16 @@ func (h *AlertHandler) handleAlertCounts(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Zero-grant caller: return an empty counts response without
-	// invoking GetAlertCounts. A nil datastore test can rely on this
-	// short-circuit to prove the RBAC gate runs before any database
-	// call.
-	if !allConnections && len(accessibleIDs) == 0 {
+	// System alerts belong to no connection, so they are counted for
+	// anyone CanSeeSystemAlerts allows, whatever their connection grants
+	// (GitHub issue #582).
+	includeSystem := h.rbacChecker.CanSeeSystemAlerts(r.Context())
+
+	// Zero-grant caller with no view of system alerts: return an empty
+	// counts response without invoking GetAlertCounts. A nil datastore
+	// test can rely on this short-circuit to prove the RBAC gate runs
+	// before any database call.
+	if !allConnections && len(accessibleIDs) == 0 && !includeSystem {
 		RespondJSON(w, http.StatusOK, &database.AlertCountsResult{
 			Total:    0,
 			ByServer: map[int]int64{},
@@ -237,13 +254,16 @@ func (h *AlertHandler) handleAlertCounts(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Push the caller's allow-list into the query. A nil slice (superuser
-	// or wildcard scope) means "no filter"; a non-nil slice restricts the
-	// SQL to the caller's visible connection IDs.
+	// or wildcard scope) means "no filter"; a non-nil slice, empty
+	// included, restricts the SQL to the caller's visible connection IDs.
 	var filterIDs []int
 	if !allConnections {
 		filterIDs = accessibleIDs
+		if filterIDs == nil {
+			filterIDs = []int{}
+		}
 	}
-	counts, err := h.datastore.GetAlertCounts(r.Context(), filterIDs)
+	counts, err := h.datastore.GetAlertCounts(r.Context(), filterIDs, includeSystem)
 	if err != nil {
 		log.Printf("[ERROR] Failed to fetch alert counts: %v", err)
 		RespondError(w, http.StatusInternalServerError, "Failed to fetch alert counts")
@@ -251,6 +271,18 @@ func (h *AlertHandler) handleAlertCounts(w http.ResponseWriter, r *http.Request)
 	}
 
 	RespondJSON(w, http.StatusOK, counts)
+}
+
+// canActOnAlert reports whether the caller may acknowledge, restore or
+// annotate an alert on the given connection. A nil connection is a
+// system alert, which CanSeeSystemAlerts governs; any other alert needs
+// access to its connection.
+func (h *AlertHandler) canActOnAlert(ctx context.Context, connID *int) bool {
+	if connID == nil {
+		return h.rbacChecker.CanSeeSystemAlerts(ctx)
+	}
+	canAccess, _ := h.rbacChecker.CanAccessConnection(ctx, *connID)
+	return canAccess
 }
 
 // AcknowledgeRequest represents the request body for acknowledging an alert
@@ -302,7 +334,7 @@ func (h *AlertHandler) acknowledgeAlert(w http.ResponseWriter, r *http.Request) 
 		RespondError(w, http.StatusNotFound, "Alert not found")
 		return
 	}
-	if canAccess, _ := h.rbacChecker.CanAccessConnection(r.Context(), connID); !canAccess {
+	if !h.canActOnAlert(r.Context(), connID) {
 		RespondError(w, http.StatusForbidden, "Access denied")
 		return
 	}
@@ -359,7 +391,7 @@ func (h *AlertHandler) unacknowledgeAlert(w http.ResponseWriter, r *http.Request
 		RespondError(w, http.StatusNotFound, "Alert not found")
 		return
 	}
-	if canAccess, _ := h.rbacChecker.CanAccessConnection(r.Context(), connID); !canAccess {
+	if !h.canActOnAlert(r.Context(), connID) {
 		RespondError(w, http.StatusForbidden, "Access denied")
 		return
 	}
@@ -436,7 +468,7 @@ func (h *AlertHandler) handleSaveAnalysis(w http.ResponseWriter, r *http.Request
 		RespondError(w, http.StatusNotFound, "Alert not found")
 		return
 	}
-	if canAccess, _ := h.rbacChecker.CanAccessConnection(r.Context(), connID); !canAccess {
+	if !h.canActOnAlert(r.Context(), connID) {
 		RespondError(w, http.StatusForbidden, "Access denied")
 		return
 	}

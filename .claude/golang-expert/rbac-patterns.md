@@ -181,6 +181,34 @@ cluster's owner and should not be granted mutation rights.
 If a future schema change adds `owner_username` to the `clusters`
 table, migrate these two handlers to Variant 2.
 
+## System Alerts Have No Connection (Issue #582)
+
+Alerts with `alert_type = 'system'` carry a NULL `connection_id`
+(collector migration v18, CHECK `alerts_system_connection_check`), so
+connection grants cannot govern them. The gate is
+`RBACChecker.CanSeeSystemAlerts` in
+`server/src/internal/auth/system_alerts.go`: it denies a nil checker,
+an incomplete token context, a context with no user ID and a token
+whose scope cannot be read, and grants the no-auth-store mode and
+every other authenticated caller, whatever their connection scope.
+
+Callers apply it through two filter flags on
+`database.AlertListFilter`: `IncludeSystem` ORs system alerts into the
+connection-restricted result, and `SystemOnly` returns system alerts
+alone, which `handleAlerts` uses for a zero-grant caller instead of
+the old early empty response (so such a caller now reaches the
+datastore). `GetAlertCounts` takes an `includeSystem` bool and reports
+system alerts under `system`, never in `by_server`. An explicit
+`connection_id` or `connection_ids` query parameter always excludes
+system alerts. Mutations (acknowledge, unacknowledge, save analysis)
+go through `AlertHandler.canActOnAlert`, which sends a nil connection
+to `CanSeeSystemAlerts` and anything else to `CanAccessConnection`;
+`GetAlertConnectionID` returns `*int` for this. The
+`get_alert_history` MCP tool uses the same gate. The timeline count
+queries in `timeline_queries.go` add `connection_id IS NOT NULL` and
+leave system alerts out. The tests are `system_alert_handlers_test.go` in `internal/api`
+and `system_alerts_integration_test.go` in `internal/database`.
+
 ## Test Patterns
 
 The regression tests live in

@@ -82,6 +82,12 @@ func dropAuthTable(t *testing.T, dataDir, table string) {
 		_, execErr = db.Exec("DROP TABLE token_mcp_scope")
 	case "token_admin_scope":
 		_, execErr = db.Exec("DROP TABLE token_admin_scope")
+	case "group_memberships":
+		_, execErr = db.Exec("DROP TABLE group_memberships")
+	case "connection_privileges":
+		_, execErr = db.Exec("DROP TABLE connection_privileges")
+	case "group_admin_permissions":
+		_, execErr = db.Exec("DROP TABLE group_admin_permissions")
 	default:
 		t.Fatalf("dropAuthTable: %q is not a droppable table", table)
 	}

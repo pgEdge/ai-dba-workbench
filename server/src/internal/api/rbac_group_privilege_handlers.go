@@ -116,6 +116,14 @@ func (h *RBACHandler) handleGroupConnectionPrivileges(w http.ResponseWriter, r *
 			return
 		}
 
+		// A token may grant only what its own connection scope covers
+		// (issue #471).
+		if !h.requireGrantInTokenScope(w, r,
+			h.rbacChecker.CanGrantConnectionInTokenScope(r.Context(),
+				req.ConnectionID, req.AccessLevel)) {
+			return
+		}
+
 		if err := h.actorStore(r).GrantConnectionPrivilege(groupID, req.ConnectionID, req.AccessLevel); err != nil {
 			log.Printf("[ERROR] Failed to grant connection privilege for conn %d to group %d: %v", req.ConnectionID, groupID, err)
 			RespondError(w, http.StatusInternalServerError, "Failed to grant connection privilege")
@@ -136,6 +144,14 @@ func (h *RBACHandler) handleGroupConnectionPrivileges(w http.ResponseWriter, r *
 		connID, err := strconv.Atoi(remaining[0])
 		if err != nil {
 			RespondError(w, http.StatusBadRequest, "Invalid connection ID")
+			return
+		}
+
+		// Revoking the last group grant on a connection lifts its group
+		// restriction, which opens a shared connection to every user, so
+		// a revoke needs the connection in scope too (issue #471).
+		if !h.requireGrantInTokenScope(w, r,
+			h.rbacChecker.ConnectionInTokenScope(r.Context(), connID)) {
 			return
 		}
 
@@ -214,6 +230,13 @@ func (h *RBACHandler) grantGroupPermission(w http.ResponseWriter, r *http.Reques
 	}
 	if req.Permission == "" {
 		RespondError(w, http.StatusBadRequest, "Permission is required")
+		return
+	}
+
+	// An admin permission acts across the whole estate, so only a token
+	// that covers every connection may grant one (issue #471).
+	if !h.requireGrantInTokenScope(w, r,
+		h.rbacChecker.AllConnectionsInTokenScope(r.Context())) {
 		return
 	}
 

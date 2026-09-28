@@ -72,6 +72,21 @@ func scopedCallers(t *testing.T, store *auth.AuthStore) (session, unscoped,
 	return session, unscoped, wildcard, narrowed, readOnly
 }
 
+// wildcardReadCaller is a superuser token whose connection scope is the
+// wildcard at read, which covers every connection read-only.
+func wildcardReadCaller(t *testing.T, store *auth.AuthStore) scopeCaller {
+	t.Helper()
+	id := mustCreateScopedToken(t, store, "svc-wildcard-read", nil)
+	if err := store.SetTokenConnectionScope(id, []auth.ScopedConnection{
+		{ConnectionID: auth.ConnectionIDAll, AccessLevel: auth.AccessLevelRead},
+	}); err != nil {
+		t.Fatalf("SetTokenConnectionScope failed: %v", err)
+	}
+	return scopeCaller{name: "wildcardRead", wrap: func(r *http.Request) *http.Request {
+		return withSuperuserToken(r, id)
+	}}
+}
+
 // newScopeRequest builds a request with a JSON body for the caller.
 func newScopeRequest(caller scopeCaller, method, body string) *http.Request {
 	var req *http.Request
@@ -252,6 +267,7 @@ func TestBlackoutCreateRespectsTokenScope(t *testing.T) {
 	_, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 	session, unscoped, wildcard, narrowed, readOnly := scopedCallers(t, store)
+	wildcardRead := wildcardReadCaller(t, store)
 	h := NewBlackoutHandler(nil, store, auth.NewRBACChecker(store))
 
 	blackout := func(target string) func(http.ResponseWriter, scopeCaller) {
@@ -275,22 +291,25 @@ func TestBlackoutCreateRespectsTokenScope(t *testing.T) {
 	const estate = `"scope":"estate"`
 
 	runScopeCases(t, []scopeCase{
+		// A blackout is Workbench metadata, so a read entry is enough.
 		{name: "blackout server in scope", call: blackout(server5),
-			allowed: []scopeCaller{session, unscoped, wildcard, narrowed},
-			refused: []scopeCaller{readOnly}},
+			allowed: []scopeCaller{session, unscoped, wildcard, narrowed,
+				readOnly}},
 		{name: "blackout server out of scope", call: blackout(server6),
-			refused: []scopeCaller{narrowed}},
+			refused: []scopeCaller{narrowed, readOnly}},
 		{name: "blackout cluster", call: blackout(cluster),
-			allowed: []scopeCaller{wildcard}, refused: []scopeCaller{narrowed}},
+			allowed: []scopeCaller{wildcard, wildcardRead},
+			refused: []scopeCaller{narrowed, readOnly}},
 		{name: "blackout estate", call: blackout(estate),
-			allowed: []scopeCaller{session}, refused: []scopeCaller{narrowed}},
-		{name: "schedule server in scope", call: schedule(server5),
-			allowed: []scopeCaller{unscoped, narrowed},
-			refused: []scopeCaller{readOnly}},
-		{name: "schedule server out of scope", call: schedule(server6),
+			allowed: []scopeCaller{session, wildcardRead},
 			refused: []scopeCaller{narrowed}},
+		{name: "schedule server in scope", call: schedule(server5),
+			allowed: []scopeCaller{unscoped, narrowed, readOnly}},
+		{name: "schedule server out of scope", call: schedule(server6),
+			refused: []scopeCaller{narrowed, readOnly}},
 		{name: "schedule estate", call: schedule(estate),
-			allowed: []scopeCaller{wildcard}, refused: []scopeCaller{narrowed}},
+			allowed: []scopeCaller{wildcard, wildcardRead},
+			refused: []scopeCaller{narrowed, readOnly}},
 	})
 }
 

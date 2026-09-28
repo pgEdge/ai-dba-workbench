@@ -55,6 +55,33 @@ func requireTargetInTokenScope(w http.ResponseWriter, r *http.Request,
 	return false
 }
 
+// blackoutTargetInTokenScope is targetInTokenScope for blackouts and
+// blackout schedules. A blackout silences alerting, which is Workbench
+// metadata rather than a change to the monitored server, so a read
+// entry in the connection scope admits one on that server, and a
+// cluster, group or estate-wide one needs every connection in scope at
+// either level.
+func blackoutTargetInTokenScope(ctx context.Context, rc *auth.RBACChecker,
+	scope string, connectionID *int) bool {
+
+	if scope == string(database.BlackoutScopeServer) && connectionID != nil {
+		return rc.ConnectionReadableInTokenScope(ctx, *connectionID)
+	}
+	return rc.ConnectionReadableInTokenScope(ctx, auth.ConnectionIDAll)
+}
+
+// requireBlackoutTargetInTokenScope applies blackoutTargetInTokenScope,
+// answering 403 and returning false when the target is out of scope.
+func requireBlackoutTargetInTokenScope(w http.ResponseWriter, r *http.Request,
+	rc *auth.RBACChecker, scope string, connectionID *int) bool {
+
+	if blackoutTargetInTokenScope(r.Context(), rc, scope, connectionID) {
+		return true
+	}
+	RespondError(w, http.StatusForbidden, targetOutOfTokenScope)
+	return false
+}
+
 // requireConnectionsInTokenScope answers 403 and returns false unless
 // every listed connection is in the acting token's connection scope at
 // read_write.

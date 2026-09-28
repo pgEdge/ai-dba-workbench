@@ -465,14 +465,12 @@ plainly rather than crediting the design with more than it does.
   only at id 1 or as an `audit.purge` row (`auditGenesisAllowed`), so
   an emptied table plus one new event fails, as does a replayed
   re-anchor event, since a re-anchor refuses an empty log; emptying all
-  but a genuine
-  row 1, or restoring a copy of it, is tail truncation (#544) and still
-  passes. The id is not in the hash, so moving the new event to id 1
-  (delete and reinsert with an explicit id) and lowering the
-  `audit_events` row in `sqlite_sequence` to 1, which the tail check
-  otherwise catches, passes too; comparing a
-  recorded `oldest_retained_id` would add nothing for the same
-  reason. The purge refuses, and retention
+  but a genuine row 1, or restoring a copy of it, is tail truncation,
+  which the tail anchor (#544) now catches. The id is not in the hash,
+  so moving the new event to id 1 (delete and reinsert with an explicit
+  id) passes the chain; the tail anchor names the newest row by id, so
+  it catches that too, and comparing a recorded `oldest_retained_id`
+  would add nothing for the same reason. The purge refuses, and retention
   stalls, on a prefix that does not verify and link from the recorded
   head, including for benign causes such as a rotated secret, until an
   operator re-anchors with `-rechain-audit-log`.

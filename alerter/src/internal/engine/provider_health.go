@@ -236,17 +236,29 @@ func (t *providerHealthTracker) record(ctx context.Context, tier providerTier,
 	}
 
 	st.failures++
-	threshold := t.threshold()
-	if threshold < 1 {
-		threshold = config.DefaultProviderFailureThreshold
-	}
-	if !immediate && st.failures < threshold {
+	if !immediate && st.failures < t.effectiveThreshold() {
 		return
 	}
 	if !t.load(dbCtx, key, st) {
 		return
 	}
+	t.raise(dbCtx, key, st, tier, provider, model, callErr, immediate)
+}
 
+// effectiveThreshold is the configured failure threshold, or the default
+// when the configuration holds a value below one.
+func (t *providerHealthTracker) effectiveThreshold() int {
+	if threshold := t.threshold(); threshold >= 1 {
+		return threshold
+	}
+	return config.DefaultProviderFailureThreshold
+}
+
+// raise opens the provider health alert for key, or refreshes the open
+// one when the provider's error has changed. The caller holds st.mu and
+// has loaded st.
+func (t *providerHealthTracker) raise(dbCtx context.Context, key string, st *providerHealthState,
+	tier providerTier, provider, model string, callErr error, immediate bool) {
 	secrets := t.secrets()
 	lastError := redactProviderError(providerErrorText(callErr, provider), secrets)
 	description := providerHealthDescription(tier, provider, model, st.failures, immediate, lastError)
@@ -257,11 +269,7 @@ func (t *providerHealthTracker) record(ctx context.Context, tier providerTier,
 			return
 		}
 		t.logCallError(key, callErr, secrets)
-		if err := t.store.UpdateSystemAlert(dbCtx, st.alertID, description, details); err != nil {
-			t.log("ERROR: Failed to update provider health alert %s: %v", key, err)
-			return
-		}
-		st.lastError = lastError
+		t.refresh(dbCtx, key, st, st.alertID, description, details, lastError)
 		return
 	}
 
@@ -284,16 +292,24 @@ func (t *providerHealthTracker) record(ctx context.Context, tier providerTier,
 	st.alertID = opened.ID
 	if !created {
 		// Another alerter process raised it first; refresh its text.
-		if err := t.store.UpdateSystemAlert(dbCtx, opened.ID, description, details); err != nil {
-			t.log("ERROR: Failed to update provider health alert %s: %v", key, err)
-			return
-		}
-		st.lastError = lastError
+		t.refresh(dbCtx, key, st, opened.ID, description, details, lastError)
 		return
 	}
 	st.lastError = lastError
 	t.log("Provider health alert raised: %s (%s)", alert.Title, lastError)
 	t.notify(opened, database.NotificationTypeAlertFire)
+}
+
+// refresh rewrites an open provider health alert's text, recording
+// lastError only once the write has succeeded so that a failed write is
+// retried on the next failure.
+func (t *providerHealthTracker) refresh(dbCtx context.Context, key string, st *providerHealthState,
+	alertID int64, description string, details *string, lastError string) {
+	if err := t.store.UpdateSystemAlert(dbCtx, alertID, description, details); err != nil {
+		t.log("ERROR: Failed to update provider health alert %s: %v", key, err)
+		return
+	}
+	st.lastError = lastError
 }
 
 // logCallError writes the provider error to the alerter's own log with

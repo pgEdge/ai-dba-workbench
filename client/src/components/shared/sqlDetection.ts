@@ -40,7 +40,7 @@ export const SQL_PARAMETER_RE = /\$\d+/;
  * Regex matching the opening delimiter of a dollar-quoted string, either
  * the anonymous `$$` form or a tagged `$tag$` form.
  */
-const DOLLAR_TAG_RE = /^\$([A-Za-z_][A-Za-z0-9_]*)?\$/;
+const DOLLAR_TAG_RE = /^\$(?:\$|[A-Za-z_][A-Za-z0-9_]*\$)/;
 
 /** The kinds of token the SQL scanner recognises. */
 export type SqlTokenKind = 'plain' | 'comment' | 'literal' | 'separator';

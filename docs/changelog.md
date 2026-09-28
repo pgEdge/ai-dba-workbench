@@ -551,15 +551,28 @@ project adheres to
   that carries no token identifier, are denied, and the
   `list_connections` tool returns an error rather than every
   connection when the caller's visible connections cannot be
-  resolved. Two routes still reach beyond a connection scope: a
-  token whose admin scope includes `manage_token_scopes` can
-  create a token with no scope for any owner through `POST
-  /api/v1/rbac/tokens` (#522), and the `query_datastore` MCP
-  tool reads every connection's metrics from the datastore, so
-  a token that must stay within its connections should hold
-  neither. This is a breaking change for existing integrations,
-  because a token that carries an explicit scope, most often one
-  owned by a superuser, will start receiving `403 Forbidden`
+  resolved. Creating a cluster, or a cluster
+  group, also needs a connection scope that covers every
+  connection, since a connection later moved into it inherits
+  its group's settings; moving a connection into a cluster that
+  does not exist answers `404 Not Found`, as a hidden cluster
+  does, rather than `500`; and adding a server to a cluster
+  refuses a role the server does not recognise with `400 Bad
+  Request`. Three admin permissions and one MCP tool still reach
+  beyond a connection scope, so a token that must stay within
+  its connections should hold none of them: `manage_token_scopes`
+  can create a token with no scope for any owner through `POST
+  /api/v1/rbac/tokens` (#522), `manage_users` can create a
+  superuser (#497), `manage_permissions` can grant any group
+  `read_write` on any connection, and the `query_datastore` MCP
+  tool runs read-only SQL over the whole datastore, including
+  every connection's host, username and encrypted credentials. A
+  `read` entry still allows a token to acknowledge,
+  unacknowledge and save an analysis of an alert on that
+  connection, as `read` access allows a user to. This is a
+  breaking change for existing integrations, because a token
+  that carries an explicit scope, most often one owned by a
+  superuser, will start receiving `403 Forbidden`
   where it previously succeeded, and there is no configuration
   option that restores the old behaviour. Review every scoped
   token before upgrading, starting with those owned by a

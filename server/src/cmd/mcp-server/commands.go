@@ -434,8 +434,10 @@ func runAuditCommands(f *Flags, dataDir string) bool {
 		{
 			selected: f.RechainAuditCmd,
 			run: func() error {
-				return rechainAuditLogCommand(dataDir, f.ConfirmRechain,
-					os.Stdin, os.Stdout)
+				return rechainAuditLogCommand(dataDir, auditRechainOptions{
+					assumeYes:          f.ConfirmRechain,
+					previousSecretFile: f.PreviousSecretFile,
+				}, os.Stdin, os.Stdout)
 			},
 		},
 	})

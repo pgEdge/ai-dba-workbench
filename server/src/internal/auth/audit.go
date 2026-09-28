@@ -838,6 +838,25 @@ type AuditRechainPlan struct {
 	HistoryEvents    int64
 	HistoryThroughID int64
 
+	// PreviousKeyGiven reports that the re-chain was given the key of
+	// the server secret the history was written under, by
+	// RechainAuditLogWithPreviousKey. HistoryProven then reports that
+	// every row the re-anchor would accept as history verifies under
+	// it, links to the row before it and accounts for the head as the
+	// verifier requires, and HistoryProofErr says why not when it does
+	// not. Without the previous key the history is an unexplained run
+	// of failing rows, which anyone able to write auth.db can produce.
+	PreviousKeyGiven bool
+	HistoryProven    bool
+	HistoryProofErr  error
+
+	// LaterEventsVerify reports that at least one row after the history
+	// verifies under the key in use, which shows that the server has
+	// been writing under the current secret. A re-anchor signed under a
+	// secret that nothing else in the log was written under may be the
+	// wrong one, and the real secret would then refuse every purge.
+	LaterEventsVerify bool
+
 	// reanchor is the scan the figures above came from, which the
 	// transaction repeats and compares under the write lock.
 	reanchor auditReanchorScan
@@ -899,6 +918,22 @@ const auditActionRechain = "audit.rechain"
 func RechainAuditLog(dataDir string, auditKey []byte, actor Actor,
 	confirm AuditRechainConfirm) (AuditRechainResult, error) {
 
+	return RechainAuditLogWithPreviousKey(dataDir, auditKey, nil, actor,
+		confirm)
+}
+
+// RechainAuditLogWithPreviousKey is RechainAuditLog given also the key
+// of the server secret a keyed log's older rows were written under, from
+// DeriveAuditKey, or nil when it is not known. A re-anchor then checks
+// the rows it would accept as history under that key and reports the
+// result in the plan (HistoryProven), which is what lets a caller
+// re-anchor without asking anyone: a changed secret is otherwise
+// indistinguishable from rows forged to look like one. The key is only
+// read with; nothing is signed under it.
+func RechainAuditLogWithPreviousKey(dataDir string, auditKey,
+	previousKey []byte, actor Actor,
+	confirm AuditRechainConfirm) (AuditRechainResult, error) {
+
 	if confirm == nil {
 		return AuditRechainResult{}, errors.New(
 			"a re-chain confirmation callback is required")
@@ -910,7 +945,7 @@ func RechainAuditLog(dataDir string, auditKey []byte, actor Actor,
 	}
 	defer store.Close()
 
-	return store.rechainAuditLog(actor, confirm)
+	return store.rechainAuditLog(actor, previousKey, confirm)
 }
 
 // rechainAuditLog is RechainAuditLog on an already-open store.
@@ -921,7 +956,7 @@ func RechainAuditLog(dataDir string, auditKey []byte, actor Actor,
 // whose store is doing nothing else. Holding it means the figures the
 // operator agreed to and the rows the transaction rewrites are the same
 // log as far as this process is concerned.
-func (s *AuthStore) rechainAuditLog(actor Actor,
+func (s *AuthStore) rechainAuditLog(actor Actor, previousKey []byte,
 	confirm AuditRechainConfirm) (AuditRechainResult, error) {
 
 	s.mu.Lock()
@@ -934,6 +969,9 @@ func (s *AuthStore) rechainAuditLog(actor Actor,
 		return result, err
 	}
 	if plan.Mode == AuditRechainReanchor {
+		if err := s.proveAuditReanchorPlan(&plan, previousKey); err != nil {
+			return result, err
+		}
 		return s.reanchorAuditLog(actor, plan, confirm)
 	}
 	result.Mode = plan.Mode
@@ -1354,7 +1392,11 @@ func (s *AuthStore) recordAudit(tx *sql.Tx, ev *AuditEvent) error {
 	// A trigger planted in auth.db can make the INSERT succeed without
 	// writing a row (RAISE(IGNORE)), which would commit the change the
 	// event describes with no record of it; verifyAuditSchema refuses
-	// such a trigger, and this refuses the write it would cause.
+	// such a trigger, and this refuses the write it would cause. It
+	// catches that trigger only: SQLite does not count rows a trigger
+	// changes, so one that deletes the event after it is written leaves
+	// the count at 1 and is caught only at verification, where
+	// verifyAuditSchema refuses any trigger it does not expect.
 	n, err := result.RowsAffected()
 	if err != nil {
 		return fmt.Errorf("failed to confirm audit event insert: %w", err)

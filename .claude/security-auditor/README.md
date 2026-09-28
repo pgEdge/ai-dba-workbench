@@ -298,10 +298,15 @@ plainly rather than crediting the design with more than it does.
   the tail.
 - Head deletion (#502) is caught against the head the newest purge
   event recorded (`oldest_retained_hash`); a record-less purge event
-  never overrides an older recorded one, in the verifier or in
-  `auditPurgeStart`. Only on a log whose purge events all predate the
-  record does the weak fallback apply (a missing predecessor passes
-  if any `audit.purge` row survives). The purge refuses, and retention
+  never overrides an older recorded one, in the verifier
+  (`findAuditAnchor`) or in the purge (`verifyAuditPurgePrefix`). Only
+  on a log whose purge events all predate the record does the weak
+  fallback apply (a missing predecessor passes if any `audit.purge` row
+  survives). With no record, a genesis row (`prev_hash` "") is accepted
+  only at id 1 or as an anchor row (`auditGenesisAllowed`), so an
+  emptied table plus one new event fails; emptying all but a genuine
+  row 1, or restoring a copy of it, is tail truncation (#544) and still
+  passes. The purge refuses, and retention
   stalls, on a prefix that does not verify and link from the recorded
   head, including for benign causes such as a rotated secret, until an
   operator re-anchors with `-rechain-audit-log`.
@@ -312,13 +317,18 @@ plainly rather than crediting the design with more than it does.
   and only later changes are detectable. An older anchor re-inserted
   into the log is refused by `checkAuditAnchorLinks` in the purge and
   by the link check in the verifier; the newest anchor recording a
-  head, which must verify, wins. `-confirm-rechain` re-anchors
-  unattended only on a key mismatch, which is forgeable (see above):
-  editing every row through the newest anchor, keeping stored hashes,
-  makes that anchor unverifiable and the log rotation-shaped, so a
-  scripted run accepts rewritten rows reaching back past the newest
-  purge, which may be minutes old. There is no `-previous-secret-file`
-  to prove them. `previous_*` head fields are
+  head, which must verify, wins. The key-mismatch shape is forgeable
+  (delete rows 1..j, insert one row whose hash is row j+1's
+  `prev_hash`), so `-confirm-rechain` (`confirmAuditReanchor`)
+  re-anchors unattended only when the shape matches, the history
+  verifies, links and passes the head check under the key from
+  `-previous-secret-file` (`proveAuditHistory`), and some later row
+  verifies under the current key (`LaterEventsVerify`, against a run
+  under the wrong secret). One previous key cannot prove an A-B-A
+  rotation or history containing an earlier re-anchor's history; those
+  need an interactive run. The interactive prompt requires a terminal
+  (`auditInputIsTerminal`), so piped stdin cannot answer it; the legacy
+  re-hash prompt does not have that check. `previous_*` head fields are
   signed into the event only when the previous anchor verified, and the
   CLI prints file-sourced hashes only if they are 64 lowercase hex
   (`auditPlanHash`).
@@ -327,7 +337,9 @@ plainly rather than crediting the design with more than it does.
 - `verifyAuditSchema` refuses any trigger other than
   `audit_events_no_update` whose table is `audit_events` or whose SQL
   mentions it, and `recordAudit` fails unless the INSERT wrote exactly
-  one row, against `RAISE(IGNORE)` triggers silently dropping events.
+  one row, which catches only `RAISE(IGNORE)`: SQLite's changes count
+  excludes trigger work, so a trigger deleting the row after insert is
+  caught only by `verifyAuditSchema`.
   `prev_hash` stored as a BLOB escapes the unique index (BLOB and TEXT
   compare unequal); the id-order walk still rejects a fork, and no
   `typeof` check exists yet.

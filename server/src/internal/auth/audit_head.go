@@ -229,12 +229,16 @@ func (h *auditHeadCheck) check() (int64, error) {
 		if h.oldest.Hash == h.anchor.OldestRetainedHash {
 			return 0, nil
 		}
-		return h.oldest.ID, fmt.Errorf(
-			"%w: audit log head missing: %s event %d recorded event %s as "+
-				"the oldest, but the oldest event is now %d; events have "+
-				"been deleted from the start of the log since then",
-			ErrAuditChainBroken, h.anchorEvent.Action, h.anchorEvent.ID,
-			auditIDString(h.anchor.OldestRetainedID), h.oldest.ID)
+		return h.oldest.ID, errAuditHeadNotRecorded(&h.anchorEvent,
+			h.anchor, &h.oldest)
+	}
+
+	// The oldest row starts a chain of its own. Only the first row the
+	// table ever held may do that, or an anchor event written into an
+	// emptied log by an earlier build; anything else is what emptying
+	// the table and letting the server write one more event leaves.
+	if h.oldest.PrevHash == "" && !auditGenesisAllowed(&h.oldest) {
+		return h.oldest.ID, errAuditGenesisMoved("", &h.oldest)
 	}
 
 	// No surviving anchor records the head, either because no purge
@@ -251,6 +255,61 @@ func (h *auditHeadCheck) check() (int64, error) {
 	}
 
 	return 0, nil
+}
+
+// errAuditHeadNotRecorded reports an oldest row other than the one an
+// anchor recorded. The record is compared by hash, so the row now
+// oldest may carry the recorded id and still be a different row, one
+// deleted and replaced; the message says so rather than naming the same
+// id twice.
+func errAuditHeadNotRecorded(anchorEv *AuditEvent, rec auditAnchor,
+	oldest *AuditEvent) error {
+
+	if rec.OldestRetainedID != nil && *rec.OldestRetainedID == oldest.ID {
+		return fmt.Errorf("%w: audit log head missing: %s event %d "+
+			"recorded event %d as the oldest, and the oldest event still "+
+			"has that id, but it is not the event recorded, because its "+
+			"hash differs; the event has been deleted and replaced",
+			ErrAuditChainBroken, anchorEv.Action, anchorEv.ID, oldest.ID)
+	}
+
+	return fmt.Errorf("%w: audit log head missing: %s event %d recorded "+
+		"event %s as the oldest, but the oldest event is now %d; events "+
+		"have been deleted from the start of the log since then",
+		ErrAuditChainBroken, anchorEv.Action, anchorEv.ID,
+		auditIDString(rec.OldestRetainedID), oldest.ID)
+}
+
+// auditGenesisAllowed reports whether a row with an empty prev_hash may
+// be the oldest in the log when no anchor records where the log begins.
+// The first row the table ever held has id 1, because audit_events uses
+// AUTOINCREMENT and so never reuses an id, even after every row has been
+// deleted. An audit.purge or audit.rechain event is allowed as well,
+// since builds before the head record could purge the whole log and
+// leave their own event as the first. Neither can be forged without the
+// key: the row must still verify.
+//
+// This does not reach a log emptied except for a genuine row 1, or with
+// a saved copy of it put back, because every row the server writes
+// after that links to it; that is a truncation of everything after row
+// 1, and nothing in the file can tell it from a log that never grew.
+func auditGenesisAllowed(ev *AuditEvent) bool {
+	return ev.ID == 1 || isAuditAnchorAction(ev.Action)
+}
+
+// errAuditGenesisMoved reports an oldest row that starts a chain of its
+// own although it is not the first row the table held. prefix, when not
+// empty, names the refusal it is part of.
+func errAuditGenesisMoved(prefix string, ev *AuditEvent) error {
+	if prefix != "" {
+		prefix += ": "
+	}
+
+	return fmt.Errorf("%w: %saudit log head missing: the oldest event, %d, "+
+		"starts a new chain, which only the first event the log ever held "+
+		"(event 1) may do, and no purge or re-chain event records where "+
+		"the log begins; every event before it has been deleted",
+		ErrAuditChainBroken, prefix, ev.ID)
 }
 
 // auditSelectAnchorsNewestFirst reads the anchor events, newest first,
@@ -646,6 +705,11 @@ func (w *auditPrefixWalk) checkPlace(ev *AuditEvent) error {
 			"that is no longer in the log, and no audit.purge event "+
 			"accounts for its removal", ErrAuditChainBroken,
 			errAuditPurgeRefused, ev.ID)
+	case start == "" && ev.PrevHash == "" && !auditGenesisAllowed(ev):
+		// The same rule the verifier applies, whether or not an older
+		// purge event survives: nothing but emptying the table leaves
+		// a new chain starting above event 1.
+		return errAuditGenesisMoved(errAuditPurgeRefused, ev)
 	}
 
 	return nil

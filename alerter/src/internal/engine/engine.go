@@ -64,17 +64,19 @@ const (
 	// than the standard cooldown to respect the user's assessment.
 	ReevaluationSuppressionPeriod = 24 * time.Hour
 
-	// StaleCandidateEvaluationIntervals is how many Tier 1 evaluation
-	// intervals an anomaly candidate may wait unprocessed before it is
-	// expired without a decision. A condition that persists writes a
-	// fresh candidate on every cycle, so dropping an old one loses
-	// nothing, whilst processing it would raise an alert about a value
-	// that may no longer hold.
-	StaleCandidateEvaluationIntervals = 5
+	// AnomalyCandidateBatchLimit is how many unprocessed candidates one
+	// processTier2And3 pass reads and processes, one after another.
+	AnomalyCandidateBatchLimit = 100
 
-	// DefaultTier1EvaluationInterval is the fallback Tier 1 evaluation
-	// interval used to derive the stale candidate cut-off.
-	DefaultTier1EvaluationInterval = 60 * time.Second
+	// StaleCandidateMinAge is the shortest time an anomaly candidate may
+	// wait unprocessed before it is expired without a decision; see
+	// staleCandidateAge.
+	StaleCandidateMinAge = time.Hour
+
+	// StaleCandidateSafetyFactor multiplies the worst-case duration of a
+	// processTier2And3 pass when deriving the stale candidate cut-off;
+	// see staleCandidateAge.
+	StaleCandidateSafetyFactor = 3
 )
 
 // Engine is the main alerter engine that coordinates all background processing

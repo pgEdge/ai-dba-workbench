@@ -516,16 +516,21 @@ that point, so the rule applies in two places:
   provider. A reload cannot add a provider, so enabling a tier that
   was disabled at startup takes a restart.
 
-A candidate that stays unprocessed for more than five Tier 1
-evaluation intervals is expired: the alerter marks it as processed
-with no final decision, so it raises no alert and the retention
-cleanup deletes it with the other processed candidates. A condition
-that persists produces a fresh candidate on every evaluation cycle,
-so an expired candidate loses nothing, whilst processing it late
-would raise an alert about a value that may no longer hold. The
-alerter expires candidates before each processing run and during the
-retention cleanup, which also runs whilst anomaly detection is
-disabled.
+A candidate that stays unprocessed for too long is expired: the
+alerter marks it as processed with no final decision, so it raises
+no alert and the retention cleanup deletes it with the other
+processed candidates. The alerter logs the number of candidates it
+expires whenever that number is not zero. Expiry exists to clear
+candidates that nothing will ever process, so the cut-off is set
+well beyond the time a healthy queue needs to drain, and a genuine
+candidate that is merely waiting behind a backlog is still assessed.
+Each processing run handles up to 100 candidates in turn, and each
+Tier 3 call can take up to `anomaly.tier3.timeout_seconds`, so the
+cut-off is three times 100 Tier 3 timeouts, with a minimum of one
+hour; at the default timeout of 30 seconds the cut-off is two and a
+half hours. The alerter expires candidates before each processing
+run and during the retention cleanup, which also runs whilst anomaly
+detection is disabled.
 
 ## Monitoring Anomaly Detection
 

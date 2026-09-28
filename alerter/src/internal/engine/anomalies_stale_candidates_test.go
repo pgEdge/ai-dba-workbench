@@ -25,9 +25,9 @@ import (
 // alerted on.
 
 func TestStaleCandidateAge(t *testing.T) {
-	withInterval := func(seconds int) *config.Config {
+	withTimeout := func(seconds int) *config.Config {
 		cfg := config.NewConfig()
-		cfg.Anomaly.Tier1.EvaluationIntervalSeconds = seconds
+		cfg.Anomaly.Tier3.TimeoutSeconds = seconds
 		return cfg
 	}
 
@@ -36,10 +36,13 @@ func TestStaleCandidateAge(t *testing.T) {
 		cfg  *config.Config
 		want time.Duration
 	}{
-		{"configured interval", withInterval(120), 10 * time.Minute},
-		{"zero interval uses default", withInterval(0), 5 * time.Minute},
-		{"negative interval uses default", withInterval(-1), 5 * time.Minute},
-		{"nil config uses default", nil, 5 * time.Minute},
+		{"default timeout", withTimeout(30), 150 * time.Minute},
+		{"long timeout", withTimeout(120), 10 * time.Hour},
+		{"short timeout keeps the one-hour floor", withTimeout(5), time.Hour},
+		{"floor boundary", withTimeout(12), time.Hour},
+		{"zero timeout uses default", withTimeout(0), 150 * time.Minute},
+		{"negative timeout uses default", withTimeout(-1), 150 * time.Minute},
+		{"nil config uses default", nil, 150 * time.Minute},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -108,7 +111,8 @@ func TestReloadConfigAppliesAnomalyProviderRule(t *testing.T) {
 
 // TestProcessTier2And3ExpiresStaleCandidates checks that a candidate older
 // than the stale cut-off is stamped processed with no final decision and
-// never reaches Tier 3, whilst a fresh one is processed as usual.
+// never reaches Tier 3, whilst a fresh one and one merely queued behind a
+// backlog for half an hour are both processed as usual.
 func TestProcessTier2And3ExpiresStaleCandidates(t *testing.T) {
 	engine, ds, pool, cleanup := newDetectAnomaliesEnv(t)
 	defer cleanup()
@@ -142,14 +146,15 @@ func TestProcessTier2And3ExpiresStaleCandidates(t *testing.T) {
 	cutoff := staleCandidateAge(engine.getConfig())
 	stale := newCandidate(time.Now().Add(-cutoff - time.Minute))
 	fresh := newCandidate(time.Now())
+	backlogged := newCandidate(time.Now().Add(-30 * time.Minute))
 
 	output := captureStderr(t, func() { engine.processTier2And3(ctx) })
 
 	if !strings.Contains(output, "Expired 1 anomaly candidates") {
 		t.Errorf("log output missing the expiry count:\n%s", output)
 	}
-	if got := reasoner.calls.Load(); got != 1 {
-		t.Errorf("Tier 3 calls = %d, want 1 (the fresh candidate only)", got)
+	if got := reasoner.calls.Load(); got != 2 {
+		t.Errorf("Tier 3 calls = %d, want 2 (the fresh and backlogged candidates)", got)
 	}
 
 	got, err := ds.GetAnomalyCandidateByID(ctx, stale.ID)
@@ -162,13 +167,15 @@ func TestProcessTier2And3ExpiresStaleCandidates(t *testing.T) {
 			got.ProcessedAt, got.FinalDecision, got.Tier3Result)
 	}
 
-	got, err = ds.GetAnomalyCandidateByID(ctx, fresh.ID)
-	if err != nil {
-		t.Fatalf("GetAnomalyCandidateByID(fresh): %v", err)
-	}
-	if got.ProcessedAt == nil || got.FinalDecision == nil || *got.FinalDecision != "suppress" {
-		t.Errorf("fresh candidate processed_at = %v, final_decision = %v; want processed and suppressed",
-			got.ProcessedAt, got.FinalDecision)
+	for name, c := range map[string]*database.AnomalyCandidate{"fresh": fresh, "backlogged": backlogged} {
+		got, err = ds.GetAnomalyCandidateByID(ctx, c.ID)
+		if err != nil {
+			t.Fatalf("GetAnomalyCandidateByID(%s): %v", name, err)
+		}
+		if got.ProcessedAt == nil || got.FinalDecision == nil || *got.FinalDecision != "suppress" {
+			t.Errorf("%s candidate processed_at = %v, final_decision = %v; want processed and suppressed",
+				name, got.ProcessedAt, got.FinalDecision)
+		}
 	}
 }
 

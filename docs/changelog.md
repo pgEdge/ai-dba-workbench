@@ -898,10 +898,11 @@ project adheres to
   processed, and the retention cleanup only deletes processed
   candidates. A reload now applies the startup rule, Tier 1 stores no
   candidate unless Tier 2 or Tier 3 can process it, and a candidate
-  left unprocessed for more than five Tier 1 evaluation intervals is
-  marked as processed with no final decision, so the backlog raises
-  no stale alerts and ages out through the normal retention
-  cleanup. (#581)
+  left unprocessed for longer than three times 100 Tier 3 timeouts
+  (two and a half hours by default, and never less than one hour) is
+  marked as processed with no final decision and counted in the log,
+  so the backlog raises no stale alerts and ages out through the
+  normal retention cleanup. (#581)
 
 - Fix alerts staying active for ever on a server an operator has
   stopped monitoring. The probes of an unmonitored connection leave

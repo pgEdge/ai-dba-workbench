@@ -551,8 +551,8 @@ project adheres to
   undetected now needs read access to the secret file as well
   as write access to `auth.db`. Deleting the newest events and
   then resetting the SQLite record of the highest identifier
-  issued still needs write access alone, as the admin guide
-  describes. The version each event was
+  issued needed write access alone until the tail record
+  described below (#544). The version each event was
   hashed under is covered by the hash itself and may never
   fall as the chain advances, so an event cannot be relabelled
   into an encoding the verifier will not check. Every server

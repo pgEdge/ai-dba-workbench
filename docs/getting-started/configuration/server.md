@@ -310,7 +310,10 @@ groups, tokens and privileges; the
 document describes the events and how to read
 them. The following table describes the flags
 that read and verify the log, along with
-`-rechain-audit-log`, which rewrites it:
+`-rechain-audit-log`, which either re-hashes an
+inherited log or re-anchors one that no longer
+verifies; a re-anchor leaves the existing events
+as they are and appends an anchor event:
 
 | Flag | Description |
 |------|-------------|

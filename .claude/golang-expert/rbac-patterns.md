@@ -647,7 +647,7 @@ purge records one, reports a non-empty leading `prev_hash` only if no
 written before the record). With no head record, an oldest row with
 `prev_hash` "" must be id 1 or an anchor row (`auditGenesisAllowed`):
 AUTOINCREMENT never reuses ids, so a new chain above 1 is an emptied
-table. Tests that empty `audit_events` by hand must expect
+table (unless someone reinserted the row at id 1: ids are not hashed). Tests that empty `audit_events` by hand must expect
 `ErrAuditChainBroken` or re-anchor afterwards. The record is worthless unless the purge
 cannot be steered into writing a new one over a deletion, so before
 deleting, `verifyAuditPurgePrefix` checks, in the purge transaction,

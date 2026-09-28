@@ -536,23 +536,28 @@ type EmbeddingConfig struct {
 // LLMConfig holds LLM configuration for web client chat proxy
 // LLM proxy is always enabled - API keys must be configured for the chosen provider
 type LLMConfig struct {
-	Provider                string  `yaml:"provider"`                  // "anthropic", "openai", "gemini", or "ollama"
-	Model                   string  `yaml:"model"`                     // Provider-specific model name
-	AnthropicAPIKey         string  `yaml:"-"`                         // API key for Anthropic (loaded from file, not config)
-	AnthropicAPIKeyFile     string  `yaml:"anthropic_api_key_file"`    // Path to file containing Anthropic API key
-	AnthropicBaseURL        string  `yaml:"anthropic_base_url"`        // Base URL for Anthropic API (default: https://api.anthropic.com/v1)
-	OpenAIAPIKey            string  `yaml:"-"`                         // API key for OpenAI (loaded from file, not config)
-	OpenAIAPIKeyFile        string  `yaml:"openai_api_key_file"`       // Path to file containing OpenAI API key
-	OpenAIBaseURL           string  `yaml:"openai_base_url"`           // Base URL for OpenAI API (default: https://api.openai.com/v1)
-	GeminiAPIKey            string  `yaml:"-"`                         // API key for Google Gemini (loaded from file, not config)
-	GeminiAPIKeyFile        string  `yaml:"gemini_api_key_file"`       // Path to file containing Gemini API key
-	GeminiBaseURL           string  `yaml:"gemini_base_url"`           // Base URL for Gemini API (default: https://generativelanguage.googleapis.com)
-	OllamaURL               string  `yaml:"ollama_url"`                // URL for Ollama service (default: http://localhost:11434)
-	MaxTokens               int     `yaml:"max_tokens"`                // Maximum tokens for LLM response (default: 4096)
-	MaxIterations           int     `yaml:"max_iterations"`            // Maximum agentic loop iterations (default: 50)
-	Temperature             float64 `yaml:"temperature"`               // Temperature for LLM sampling (default: 0.7)
-	TimeoutSeconds          int     `yaml:"timeout_seconds"`           // HTTP client timeout for LLM requests in seconds (default: 120)
-	CompactToolDescriptions string  `yaml:"compact_tool_descriptions"` // "auto" (default), "true", or "false"
+	Provider            string `yaml:"provider"`               // "anthropic", "openai", "gemini", or "ollama"
+	Model               string `yaml:"model"`                  // Provider-specific model name
+	AnthropicAPIKey     string `yaml:"-"`                      // API key for Anthropic (loaded from file, not config)
+	AnthropicAPIKeyFile string `yaml:"anthropic_api_key_file"` // Path to file containing Anthropic API key
+	AnthropicBaseURL    string `yaml:"anthropic_base_url"`     // Base URL for Anthropic API (default: https://api.anthropic.com/v1)
+	OpenAIAPIKey        string `yaml:"-"`                      // API key for OpenAI (loaded from file, not config)
+	OpenAIAPIKeyFile    string `yaml:"openai_api_key_file"`    // Path to file containing OpenAI API key
+	OpenAIBaseURL       string `yaml:"openai_base_url"`        // Base URL for OpenAI API (default: https://api.openai.com/v1)
+	GeminiAPIKey        string `yaml:"-"`                      // API key for Google Gemini (loaded from file, not config)
+	GeminiAPIKeyFile    string `yaml:"gemini_api_key_file"`    // Path to file containing Gemini API key
+	GeminiBaseURL       string `yaml:"gemini_base_url"`        // Base URL for Gemini API (default: https://generativelanguage.googleapis.com)
+	OllamaURL           string `yaml:"ollama_url"`             // URL for Ollama service (default: http://localhost:11434)
+	MaxTokens           int    `yaml:"max_tokens"`             // Maximum tokens for LLM response (default: 4096)
+	MaxIterations       int    `yaml:"max_iterations"`         // Maximum agentic loop iterations (default: 50)
+	// TemperaturePtr is the raw configured sampling temperature; nil
+	// means the setting was omitted from the config file. An explicit 0
+	// is kept and requests deterministic output. Use Temperature()
+	// to read the effective value, which applies the 0.7 default when
+	// this is nil or negative.
+	TemperaturePtr          *float64 `yaml:"temperature"`
+	TimeoutSeconds          int      `yaml:"timeout_seconds"`           // HTTP client timeout for LLM requests in seconds (default: 120)
+	CompactToolDescriptions string   `yaml:"compact_tool_descriptions"` // "auto" (default), "true", or "false"
 	// Custom headers for LLM requests
 	CustomHeaders          map[string]string `yaml:"custom_headers"`           // Global headers applied to all providers
 	CustomHeadersFiles     map[string]string `yaml:"custom_headers_files"`     // File paths for loading secret header values
@@ -560,6 +565,21 @@ type LLMConfig struct {
 	OpenAICustomHeaders    map[string]string `yaml:"openai_custom_headers"`    // Custom headers for OpenAI requests
 	GeminiCustomHeaders    map[string]string `yaml:"gemini_custom_headers"`    // Custom headers for Gemini requests
 	OllamaCustomHeaders    map[string]string `yaml:"ollama_custom_headers"`    // Custom headers for Ollama requests
+}
+
+// DefaultLLMTemperature is the sampling temperature used when
+// llm.temperature is not configured.
+const DefaultLLMTemperature = 0.7
+
+// Temperature returns the effective LLM sampling temperature,
+// defaulting to DefaultLLMTemperature when the setting was not
+// configured or was given a negative value, which no provider accepts.
+// An explicit 0 is returned as-is. A nil receiver yields the default.
+func (c *LLMConfig) Temperature() float64 {
+	if c == nil || c.TemperaturePtr == nil || *c.TemperaturePtr < 0 {
+		return DefaultLLMTemperature
+	}
+	return *c.TemperaturePtr
 }
 
 // UseCompactDescriptions resolves the compact_tool_descriptions setting
@@ -694,6 +714,11 @@ func boolPtr(b bool) *bool {
 // intPtr returns a pointer to the given int value.
 func intPtr(i int) *int {
 	return &i
+}
+
+// float64Ptr returns a pointer to the given float64 value.
+func float64Ptr(f float64) *float64 {
+	return &f
 }
 
 // LoadConfig loads configuration with proper priority:
@@ -834,8 +859,8 @@ func defaultConfig() *Config {
 			OllamaURL:       "http://localhost:11434", // Default Ollama URL
 			MaxTokens:       4096,                     // Default max tokens
 			MaxIterations:   50,                       // Default max agentic loop iterations
-			Temperature:     0.7,                      // Default temperature
-			TimeoutSeconds:  120,                      // Default HTTP client timeout in seconds
+			TemperaturePtr:  float64Ptr(DefaultLLMTemperature),
+			TimeoutSeconds:  120, // Default HTTP client timeout in seconds
 		},
 		Knowledgebase: KnowledgebaseConfig{
 			Enabled:               false,                                     // Disabled by default (opt-in)
@@ -1064,8 +1089,8 @@ func mergeConfig(dest, src *Config) {
 	if src.LLM.MaxIterations != 0 {
 		dest.LLM.MaxIterations = src.LLM.MaxIterations
 	}
-	if src.LLM.Temperature != 0 {
-		dest.LLM.Temperature = src.LLM.Temperature
+	if src.LLM.TemperaturePtr != nil {
+		dest.LLM.TemperaturePtr = src.LLM.TemperaturePtr
 	}
 	if src.LLM.TimeoutSeconds != 0 {
 		dest.LLM.TimeoutSeconds = src.LLM.TimeoutSeconds

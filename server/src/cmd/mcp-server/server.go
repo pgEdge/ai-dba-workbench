@@ -27,7 +27,6 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/config"
 	"github.com/pgedge/ai-workbench/server/internal/conversations"
 	"github.com/pgedge/ai-workbench/server/internal/database"
-	"github.com/pgedge/ai-workbench/server/internal/llmproxy"
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
 	"github.com/pgedge/ai-workbench/server/internal/oidc"
 	"github.com/pgedge/ai-workbench/server/internal/overview"
@@ -610,21 +609,7 @@ func (s *Server) startOverviewGenerator() {
 		return
 	}
 
-	llmConfig := &llmproxy.Config{
-		Provider:               s.cfg.LLM.Provider,
-		Model:                  s.cfg.LLM.Model,
-		AnthropicAPIKey:        s.cfg.LLM.AnthropicAPIKey,
-		AnthropicBaseURL:       s.cfg.LLM.AnthropicBaseURL,
-		OpenAIAPIKey:           s.cfg.LLM.OpenAIAPIKey,
-		OpenAIBaseURL:          s.cfg.LLM.OpenAIBaseURL,
-		GeminiAPIKey:           s.cfg.LLM.GeminiAPIKey,
-		GeminiBaseURL:          s.cfg.LLM.GeminiBaseURL,
-		OllamaURL:              s.cfg.LLM.OllamaURL,
-		MaxTokens:              s.cfg.LLM.MaxTokens,
-		Temperature:            s.cfg.LLM.Temperature,
-		UseCompactDescriptions: s.cfg.LLM.UseCompactDescriptions(),
-		LLMConfig:              &s.cfg.LLM,
-	}
+	llmConfig := newLLMProxyConfig(&s.cfg.LLM)
 
 	s.overviewHub = overview.NewHub()
 	s.overviewGen = overview.NewGenerator(s.datastore, llmConfig)

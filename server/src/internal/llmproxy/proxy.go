@@ -55,7 +55,7 @@ type Config struct {
 	GeminiBaseURL          string
 	OllamaURL              string
 	MaxTokens              int
-	Temperature            float64
+	Temperature            *float64 // nil leaves the provider default; 0 is sent as-is
 	UseCompactDescriptions bool
 	CompactDescriptions    map[string]string // tool name -> compact description
 	MemoryStore            *memory.Store     // Memory store for pinned memory injection (may be nil)
@@ -292,8 +292,8 @@ func (c *Config) providerOptions(name, apiKey, baseURL string) pgllm.Options {
 	if c.MaxTokens > 0 {
 		opts.MaxTokens = pgllm.Int(c.MaxTokens)
 	}
-	if c.Temperature > 0 {
-		opts.Temperature = pgllm.Float(c.Temperature)
+	if c.Temperature != nil {
+		opts.Temperature = pgllm.Float(*c.Temperature)
 	}
 	if c.LLMConfig != nil && c.LLMConfig.TimeoutSeconds > 0 {
 		opts.RequestTimeout = time.Duration(c.LLMConfig.TimeoutSeconds) * time.Second
@@ -335,10 +335,11 @@ func (c *Config) AnalysisMaxTokens() int {
 // Temperature remains a parameter because the two paths legitimately tune
 // it per prompt.
 //
-// Unlike providerOptions (which serves the streaming gateway and applies
-// the operator-configured MaxTokens/Temperature only when positive), the
-// analysis path always sets both: the resolved max-tokens is positive by
-// construction and the callers supply positive temperature constants. The
+// Unlike providerOptions (which serves the streaming gateway, applies the
+// operator-configured MaxTokens only when positive and applies Temperature
+// whenever it is set, including an explicit 0), the analysis path always
+// sets both: the resolved max-tokens is positive by construction and the
+// callers supply positive temperature constants. The
 // caller is responsible for guarding a nil *Config or an empty Provider
 // before calling; this method assumes c is non-nil.
 //

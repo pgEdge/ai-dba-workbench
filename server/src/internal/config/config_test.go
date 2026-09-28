@@ -66,8 +66,8 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.LLM.MaxTokens != 4096 {
 		t.Errorf("Expected default max tokens 4096, got %d", cfg.LLM.MaxTokens)
 	}
-	if cfg.LLM.Temperature != 0.7 {
-		t.Errorf("Expected default temperature 0.7, got %f", cfg.LLM.Temperature)
+	if got := cfg.LLM.Temperature(); got != 0.7 {
+		t.Errorf("Expected default temperature 0.7, got %f", got)
 	}
 	if cfg.LLM.TimeoutSeconds != 120 {
 		t.Errorf("Expected default LLM timeout 120 seconds, got %d", cfg.LLM.TimeoutSeconds)
@@ -1907,6 +1907,47 @@ func TestOIDCEnabledMergesExplicitFalse(t *testing.T) {
 	}
 }
 
+// TestLLMTemperatureFromYAML guards issue #551: an explicit
+// llm.temperature of 0 must survive the merge onto the defaults rather
+// than being mistaken for "not set" and replaced by 0.7.
+func TestLLMTemperatureFromYAML(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+		want float64
+	}{
+		{name: "unset uses default", yaml: "llm:\n    max_tokens: 100\n", want: 0.7},
+		{name: "explicit zero is kept", yaml: "llm:\n    temperature: 0\n", want: 0},
+		{name: "explicit non-zero", yaml: "llm:\n    temperature: 0.25\n", want: 0.25},
+		{name: "negative falls back to default", yaml: "llm:\n    temperature: -1\n", want: 0.7},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			configPath := filepath.Join(t.TempDir(), "config.yaml")
+			if err := os.WriteFile(configPath, []byte(tt.yaml), 0644); err != nil {
+				t.Fatalf("failed to write config file: %v", err)
+			}
+			cfg, err := LoadConfig(configPath, CLIFlags{ConfigFileSet: true, ConfigFile: configPath})
+			if err != nil {
+				t.Fatalf("failed to load config: %v", err)
+			}
+			if got := cfg.LLM.Temperature(); got != tt.want {
+				t.Errorf("Temperature() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLLMTemperatureNilReceiver(t *testing.T) {
+	var c *LLMConfig
+	if got := c.Temperature(); got != DefaultLLMTemperature {
+		t.Errorf("nil receiver Temperature() = %v, want %v", got, DefaultLLMTemperature)
+	}
+	if got := (&LLMConfig{}).Temperature(); got != DefaultLLMTemperature {
+		t.Errorf("unset Temperature() = %v, want %v", got, DefaultLLMTemperature)
+	}
+}
+
 func TestAuditRetentionDaysDefault(t *testing.T) {
 	cfg := defaultConfig()
 	if got := cfg.HTTP.Auth.AuditRetentionDays(); got != 90 {
@@ -2271,7 +2312,7 @@ func TestMergeConfigOverridesEveryField(t *testing.T) {
 			OllamaURL:               "https://ollama.example.com",
 			MaxTokens:               1234,
 			MaxIterations:           7,
-			Temperature:             0.5,
+			TemperaturePtr:          float64Ptr(0.5),
 			TimeoutSeconds:          99,
 			CompactToolDescriptions: "always",
 		},
@@ -2394,8 +2435,8 @@ func TestMergeConfigOverridesEveryField(t *testing.T) {
 		}
 	}
 
-	if dest.LLM.Temperature != 0.5 {
-		t.Errorf("llm temperature: got %v, want 0.5", dest.LLM.Temperature)
+	if got := dest.LLM.Temperature(); got != 0.5 {
+		t.Errorf("llm temperature: got %v, want 0.5", got)
 	}
 	if len(dest.HTTP.TrustedProxies) != 1 || dest.HTTP.TrustedProxies[0] != "192.0.2.0/24" {
 		t.Errorf("trusted proxies: got %v", dest.HTTP.TrustedProxies)

@@ -433,7 +433,7 @@ llm:
   # Default: 50
   max_iterations: 50
 
-  # Temperature for sampling
+  # Temperature for sampling; 0 requests the most deterministic output
   # Default: 0.7
   temperature: 0.7
 

@@ -935,6 +935,19 @@ project adheres to
   backlog raises no stale alerts and ages out through the normal
   retention cleanup. (#581)
 
+- Fix the alerter's anomaly baselines for
+  `connection_utilization_percent` and the
+  `pg_stat_activity.blocked_count`, `idle_in_transaction_seconds`,
+  `max_query_duration_seconds` and `max_xact_duration_seconds` metrics
+  counting background processes such as autovacuum workers,
+  walsenders and the checkpointer, whilst the live values counted
+  client backends only. The skewed baselines produced a steady stream
+  of spurious anomaly candidates, each of which could incur paid Tier 2
+  and Tier 3 calls. The baselines now count client backends only, and
+  the `connection_utilization_percent` baseline divides each sample by
+  the `max_connections` value in force when that sample was collected
+  rather than by the current value. (#567)
+
 - Fix alerts staying active for ever on a server an operator has
   stopped monitoring. The probes of an unmonitored connection leave
   the staleness view, so every alert on it was judged to have a probe

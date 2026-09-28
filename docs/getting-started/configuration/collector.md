@@ -251,6 +251,13 @@ every database on the server, so a probe that visits each database in
 turn closes idle connections to other databases before it opens a new
 one.
 
+The collector keeps one pool for server-wide probes and one for each
+database that a probe visits. A value lower than the number of those
+databases plus one means that probes close and reopen a connection on
+most visits, which raises the rate of new sessions on the server. A
+value of at least the database count plus one lets each pool keep an
+idle connection between visits.
+
 - Type: integer
 - Default: `3`
 - Min: 1

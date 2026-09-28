@@ -16,9 +16,13 @@ import { apiGet } from '../utils/apiClient';
 import { logger } from '../utils/logger';
 
 export interface AlertCounts {
+    // Every active alert the caller may see, system alerts included.
     total: number;
     byServer: Record<number, number>;
     byCluster: Record<string, number>;
+    // Active system alerts, which belong to no server and so are never
+    // in byServer; they count towards the estate total only.
+    system: number;
 }
 
 export interface AlertsContextValue {
@@ -39,6 +43,7 @@ interface AlertCountsApiResponse {
     total?: number;
     by_server?: Record<number, number>;
     by_cluster?: Record<string, number>;
+    system?: number;
 }
 
 const AlertsContext = createContext<AlertsContextValue | null>(null);
@@ -49,6 +54,7 @@ export const AlertsProvider = ({ children }: AlertsProviderProps): React.ReactEl
         total: 0,
         byServer: {},    // Map of server ID -> count
         byCluster: {},   // Map of cluster ID -> count (sum of server alerts)
+        system: 0,       // System alerts, which belong to no server
     });
     const [loading, setLoading] = useState<boolean>(false);
     const [lastFetch, setLastFetch] = useState<Date | null>(null);
@@ -70,6 +76,7 @@ export const AlertsProvider = ({ children }: AlertsProviderProps): React.ReactEl
                     total: data.total ?? 0,
                     byServer: data.by_server ?? {},
                     byCluster: data.by_cluster ?? {},
+                    system: data.system ?? 0,
                 });
                 setLastFetch(new Date());
             }

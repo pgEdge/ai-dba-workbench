@@ -32,6 +32,7 @@ import {
 } from './analysisStyles';
 import { BaseAnalysisDialog } from './shared/BaseAnalysisDialog';
 import { downloadAsMarkdown } from '../utils/downloadMarkdown';
+import { isSystemAlert, SYSTEM_ALERT_SOURCE_LABEL } from '../utils/systemAlerts';
 
 const TOOL_LABELS = [
     'Querying metrics',
@@ -119,6 +120,8 @@ export interface AlertAnalysisAlert {
     operator?: string;
     thresholdValue?: number | string | null;
     connectionId?: number;
+    // True for a system alert, which belongs to no connection.
+    isSystem?: boolean;
     databaseName?: string;
     server?: string;
     time?: string;
@@ -135,27 +138,46 @@ export interface AlertAnalysisDialogProps {
 }
 
 /**
- * Map the dialog's alert onto the input the analysis hook expects,
- * supplying defaults for the fields the hook requires.
+ * Shown in place of an analysis for an alert that cannot be analysed.
+ * The alert list hides the analyse action for these alerts, so this is
+ * a guard for any other caller rather than a normal path.
  */
-const toAlertInput = (alert: AlertAnalysisAlert): AlertInput => ({
-    id: typeof alert.id === 'string' ? Number(alert.id) : alert.id,
-    aiAnalysis: alert.aiAnalysis,
-    aiAnalysisMetricValue: typeof alert.aiAnalysisMetricValue === 'string'
-        ? Number(alert.aiAnalysisMetricValue)
-        : alert.aiAnalysisMetricValue,
-    alertType: alert.alertType,
-    severity: alert.severity ?? '',
-    title: alert.title ?? '',
-    description: alert.description,
-    metricName: alert.metricName,
-    metricValue: alert.metricValue,
-    operator: alert.operator,
-    thresholdValue: alert.thresholdValue,
-    connectionId: alert.connectionId ?? 0,
-    triggeredAt: alert.triggeredAt,
-    time: alert.time,
-});
+export const ANALYSIS_UNAVAILABLE_MESSAGE =
+    'AI analysis is not available for this alert. System alerts report a '
+    + 'fault in the AI DBA Workbench itself, not in a monitored server, so '
+    + 'there is no connection to analyse; the alert description gives the '
+    + 'cause and the last error.';
+
+/**
+ * Map the dialog's alert onto the input the analysis hook expects,
+ * supplying defaults for the fields the hook requires. Returns null for
+ * an alert that belongs to no connection (a system alert), since the
+ * analysis gathers context from the alert's connection and would
+ * otherwise run against a connection that does not exist.
+ */
+const toAlertInput = (alert: AlertAnalysisAlert): AlertInput | null => {
+    if (isSystemAlert(alert) || alert.connectionId === undefined) {
+        return null;
+    }
+    return {
+        id: typeof alert.id === 'string' ? Number(alert.id) : alert.id,
+        aiAnalysis: alert.aiAnalysis,
+        aiAnalysisMetricValue: typeof alert.aiAnalysisMetricValue === 'string'
+            ? Number(alert.aiAnalysisMetricValue)
+            : alert.aiAnalysisMetricValue,
+        alertType: alert.alertType,
+        severity: alert.severity ?? '',
+        title: alert.title ?? '',
+        description: alert.description,
+        metricName: alert.metricName,
+        metricValue: alert.metricValue,
+        operator: alert.operator,
+        thresholdValue: alert.thresholdValue,
+        connectionId: alert.connectionId,
+        triggeredAt: alert.triggeredAt,
+        time: alert.time,
+    };
+};
 
 const AlertAnalysisDialog: React.FC<AlertAnalysisDialogProps> = ({
     open,
@@ -175,10 +197,18 @@ const AlertAnalysisDialog: React.FC<AlertAnalysisDialogProps> = ({
         reset,
     } = useAlertAnalysis();
 
-    // Trigger analysis when dialog opens with an alert
+    const unavailable = !!alert && toAlertInput(alert) === null;
+    const system = isSystemAlert(alert);
+    const serverLabel = system ? SYSTEM_ALERT_SOURCE_LABEL : alert?.server;
+
+    // Trigger analysis when dialog opens with an alert that can be
+    // analysed.
     useEffect(() => {
         if (open && alert) {
-            void analyze(toAlertInput(alert));
+            const input = toAlertInput(alert);
+            if (input) {
+                void analyze(input);
+            }
         }
     }, [open, alert, analyze]);
 
@@ -197,7 +227,7 @@ const AlertAnalysisDialog: React.FC<AlertAnalysisDialogProps> = ({
         const filename = `alert-analysis-${alert.id || 'unknown'}-${timestamp}.md`;
 
         // Build optional fields
-        const serverLine = alert.server ? `- **Server:** ${alert.server}\n` : '';
+        const serverLine = serverLabel ? `- **Server:** ${serverLabel}\n` : '';
         const databaseLine = alert.databaseName
             ? `- **Database:** ${alert.databaseName}\n`
             : '';
@@ -269,10 +299,10 @@ ${analysis}
             </Typography>
 
             {/* Server pill */}
-            {alert?.server && (
+            {serverLabel && (
                 <Box sx={getServerBadgeSx(theme)}>
                     <Typography sx={sxMonoSmall}>
-                        {alert.server}
+                        {serverLabel}
                     </Typography>
                 </Box>
             )}
@@ -323,8 +353,8 @@ ${analysis}
             icon={iconElement}
             toolLabels={TOOL_LABELS}
             analysis={analysis}
-            loading={loading}
-            error={error}
+            loading={unavailable ? false : loading}
+            error={unavailable ? ANALYSIS_UNAVAILABLE_MESSAGE : error}
             progressMessage={progressMessage}
             activeTools={activeTools}
             onDownload={handleDownload}

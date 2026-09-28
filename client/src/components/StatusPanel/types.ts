@@ -31,8 +31,11 @@ export interface ApiAlert {
     description?: string;
     triggered_at?: string;
     last_updated?: string;
+    // Omitted (the server encodes an empty name as absent) for a
+    // system alert.
     server_name?: string;
-    connection_id?: number;
+    // Null for a system alert, which belongs to no connection.
+    connection_id?: number | null;
     database_name?: string;
     object_name?: string;
     alert_type?: string;
@@ -68,7 +71,11 @@ export type TransformedAlert = {
     // Pre-formatted relative time for lastUpdated (mirrors `time`).
     lastUpdatedTime?: string;
     server?: string;
+    // Undefined for a system alert; see isSystem.
     connectionId?: number;
+    // True for a system alert, which the alerter raises about the
+    // Workbench itself rather than about a monitored server.
+    isSystem?: boolean;
     databaseName?: string;
     objectName?: string;
     alertType?: string;

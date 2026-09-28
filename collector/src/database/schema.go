@@ -3535,6 +3535,49 @@ func (sm *SchemaManager) registerMigrations() {
 			return nil
 		},
 	})
+
+	// Migration #17: make connections.description NOT NULL.
+	//
+	// The column was declared TEXT DEFAULT '' but left nullable, and
+	// the server's INSERT names the column explicitly, so a connection
+	// created without a description stored NULL rather than the
+	// default. The server scans the column into a plain string, so one
+	// such row made every connection list request fail for every user
+	// (GitHub issue #540). The server now writes '' and reads NULL as
+	// '', but existing rows are backfilled here and the constraint is
+	// added so that no other writer can reintroduce a NULL.
+	//
+	// Every statement is idempotent: the UPDATE touches only NULL rows,
+	// and re-applying SET NOT NULL or SET DEFAULT is a no-op. The table
+	// is locked before the backfill so that an older server still
+	// running cannot insert a NULL between the UPDATE and SET NOT NULL
+	// and fail the migration; the connections table holds one row per
+	// monitored server, so the lock is held only briefly.
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     17,
+		Description: "Backfill and require connections.description",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			_, err := tx.Exec(ctx, `
+				LOCK TABLE connections IN ACCESS EXCLUSIVE MODE;
+
+				UPDATE connections SET description = '' WHERE description IS NULL;
+
+				ALTER TABLE connections
+					ALTER COLUMN description SET DEFAULT '',
+					ALTER COLUMN description SET NOT NULL;
+
+				COMMENT ON COLUMN connections.description IS
+					'User-provided description; the empty string when none was given';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to make connections.description NOT NULL: %w", err)
+			}
+
+			return nil
+		},
+	})
 }
 
 // Migrate applies all pending migrations

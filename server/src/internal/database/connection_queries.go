@@ -175,10 +175,16 @@ type ConnectionUpdateParams struct {
 // id, name, description, host, hostaddr, port, database_name, username,
 // password_encrypted, sslmode, sslcert, sslkey, sslrootcert,
 // owner_username, owner_token, is_monitored, is_shared, membership_source
+//
+// description is scanned through a sql.NullString because the column
+// was nullable before collector schema migration #17, so a row written
+// by an older server may still hold NULL; a NULL reads back as the
+// empty string rather than failing the whole scan.
 func scanFullConnection(scanner interface{ Scan(...any) error }) (*MonitoredConnection, error) {
 	var conn MonitoredConnection
+	var description sql.NullString
 	err := scanner.Scan(
-		&conn.ID, &conn.Name, &conn.Description, &conn.Host, &conn.HostAddr, &conn.Port,
+		&conn.ID, &conn.Name, &description, &conn.Host, &conn.HostAddr, &conn.Port,
 		&conn.DatabaseName, &conn.Username, &conn.PasswordEncrypted,
 		&conn.SSLMode, &conn.SSLCert, &conn.SSLKey, &conn.SSLRootCert,
 		&conn.OwnerUsername, &conn.OwnerToken, &conn.IsMonitored, &conn.IsShared,
@@ -187,6 +193,7 @@ func scanFullConnection(scanner interface{ Scan(...any) error }) (*MonitoredConn
 	if err != nil {
 		return nil, err
 	}
+	conn.Description = description.String
 	return &conn, nil
 }
 
@@ -196,13 +203,19 @@ func scanFullConnection(scanner interface{ Scan(...any) error }) (*MonitoredConn
 // by GetAllConnections where the closure is invoked once per scanned
 // row. The row must contain columns in this order: id, name, description,
 // host, port, database_name, is_monitored, is_shared, owner_username,
-// cluster_id, membership_source.
+// cluster_id, membership_source. A NULL description reads back as the
+// empty string, for the reason given on scanFullConnection.
 func scanConnectionListItem(conn *ConnectionListItem, scanner interface{ Scan(...any) error }) error {
-	return scanner.Scan(
-		&conn.ID, &conn.Name, &conn.Description, &conn.Host, &conn.Port,
+	var description sql.NullString
+	if err := scanner.Scan(
+		&conn.ID, &conn.Name, &description, &conn.Host, &conn.Port,
 		&conn.DatabaseName, &conn.IsMonitored, &conn.IsShared, &conn.OwnerUsername,
 		&conn.ClusterID, &conn.MembershipSource,
-	)
+	); err != nil {
+		return err
+	}
+	conn.Description = description.String
+	return nil
 }
 
 // DefaultDatastoreStatementTimeout is the server-side statement timeout
@@ -442,12 +455,15 @@ func (d *Datastore) CreateConnection(ctx context.Context, params ConnectionCreat
 		encryptedPassword = &encrypted
 	}
 
+	// An omitted description arrives as a nil pointer, which pgx binds
+	// as NULL; naming the column in the INSERT stops its DEFAULT ''
+	// from applying, so COALESCE supplies the empty string instead.
 	query := `
         INSERT INTO connections (
             name, description, host, hostaddr, port, database_name, username,
             password_encrypted, sslmode, sslcert, sslkey, sslrootcert,
             owner_username, is_shared, is_monitored
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+        ) VALUES ($1, COALESCE($2, ''), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
         RETURNING id, name, description, host, hostaddr, port, database_name, username,
                   password_encrypted, sslmode, sslcert, sslkey, sslrootcert,
                   owner_username, owner_token, is_monitored, is_shared,

@@ -1780,8 +1780,11 @@ project adheres to
   predecessor that is gone. Each `audit.purge` event now records the
   event it left as the oldest, in `details.oldest_retained_id` and
   `details.oldest_retained_hash`, and verification exits with status 2
-  when the oldest event is any other, or when it follows a missing
-  predecessor and no purge event survives to account for it. The purge
+  when the oldest event is any other, when it follows a missing
+  predecessor and no purge event survives to account for it, or when it
+  starts a new chain above event 1 with no purge or re-anchor event
+  recording where the log begins, which is what emptying the table and
+  letting the server write one more event leaves. The purge
   now also verifies the events it is about to delete, requiring them to
   start where the previous purge left off, to verify under the server
   secret and to link through to the new oldest event, so that one
@@ -1796,10 +1799,14 @@ project adheres to
   now re-anchors the log instead of re-hashing it. The command shows why
   verification fails, the oldest event and hash it would accept and any
   starting point previously recorded, and changes nothing unless the
-  operator types `rechain`; `-confirm-rechain` answers in advance only
-  when the whole log has the shape a changed server secret leaves,
-  which someone able to write `auth.db` can imitate, so scripted runs
-  belong only where the secret is known to have changed. The re-anchor
+  operator types `rechain` at a terminal, refusing input piped from a
+  script. `-confirm-rechain` answers in advance only when the whole log
+  has the shape a changed server secret leaves, the new
+  `-previous-secret-file` names the secret the older events were
+  written under and every event accepted as history verifies under it,
+  and at least one later event verifies under the current secret; the
+  shape alone is something anyone able to write `auth.db` can forge.
+  The re-anchor
   deletes, rewrites and re-signs nothing: it appends one signed
   `audit.rechain` event that records the new starting point and accepts
   the oldest events, through the last one that fails, as history bound
@@ -1819,8 +1826,9 @@ project adheres to
   creates and be the only trigger on the table, so a same-named index
   on another column, a trigger whose body does nothing, or an extra
   trigger that discards events is now reported with status 2. The
-  server also refuses to record an event that a trigger discards,
-  rather than committing the change with no event. (#501)
+  server also refuses to record an event that a trigger skips with
+  `RAISE(IGNORE)`, rather than committing the change with no event.
+  (#501)
 
 - Stop the Slack, Mattermost and generic webhook channels putting their
   endpoint URL into the alerter log, into

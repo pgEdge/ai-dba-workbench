@@ -10,6 +10,7 @@
 package auth
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"path/filepath"
@@ -559,8 +560,8 @@ func TestReanchorRefusesALogThatGrew(t *testing.T) {
 // refused rather than re-anchored over.
 func TestReanchorRefusesADamagedSchema(t *testing.T) {
 	_, store, _ := rotatedLog(t, 1, 1)
-	if _, err := store.db.Exec("DROP TRIGGER " +
-		auditNoUpdateTrigger); err != nil {
+	if _, err := store.db.Exec(
+		"DROP TRIGGER audit_events_no_update"); err != nil {
 		t.Fatalf("Failed to drop the trigger: %v", err)
 	}
 
@@ -828,12 +829,18 @@ func TestProveAuditHistory(t *testing.T) {
 			want: "head missing"},
 		{name: "a lower hash version",
 			alter: func(t *testing.T, s *AuthStore) {
-				updateAuditRow(t, s, "hash_version = 1", 3)
+				withAppendOnlyLifted(t, s, func() (sql.Result, error) {
+					return s.db.Exec("UPDATE audit_events " +
+						"SET hash_version = 1 WHERE id = 3")
+				})
 			},
 			want: "lower hash version"},
 		{name: "a row edited",
 			alter: func(t *testing.T, s *AuthStore) {
-				updateAuditRow(t, s, "actor_name = 'mallory'", 3)
+				withAppendOnlyLifted(t, s, func() (sql.Result, error) {
+					return s.db.Exec("UPDATE audit_events " +
+						"SET actor_name = 'mallory' WHERE id = 3")
+				})
 			},
 			want: "event 3 does not verify under it"},
 		{name: "an anchor with unreadable details",
@@ -916,18 +923,18 @@ func TestProveAuditHistoryReadFailure(t *testing.T) {
 	}
 }
 
-// updateAuditRow applies set to the row with the given id, with the
-// append-only trigger lifted for the purpose.
-func updateAuditRow(t *testing.T, s *AuthStore, set string, id int64) {
+// withAppendOnlyLifted runs update with the append-only trigger lifted
+// for the purpose, and puts the trigger back.
+func withAppendOnlyLifted(t *testing.T, s *AuthStore,
+	update func() (sql.Result, error)) {
 	t.Helper()
 
 	if _, err := s.db.Exec(
 		"DROP TRIGGER IF EXISTS audit_events_no_update"); err != nil {
 		t.Fatalf("Failed to drop the append-only trigger: %v", err)
 	}
-	if _, err := s.db.Exec("UPDATE audit_events SET "+set+" WHERE id = ?",
-		id); err != nil {
-		t.Fatalf("Failed to update audit row %d: %v", id, err)
+	if _, err := update(); err != nil {
+		t.Fatalf("Failed to update the audit row: %v", err)
 	}
 	if _, err := s.db.Exec(auditNoUpdateTriggerDDL); err != nil {
 		t.Fatalf("Failed to restore the append-only trigger: %v", err)

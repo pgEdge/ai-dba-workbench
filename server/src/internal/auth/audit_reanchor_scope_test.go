@@ -17,6 +17,12 @@ import (
 	"time"
 )
 
+// forgedAuditRowInsert is the statement forgeAuditRow runs.
+const forgedAuditRowInsert = `INSERT INTO audit_events (id, occurred_at,
+        actor_type, actor_name, action, outcome, details, prev_hash, hash,
+        hash_version)
+    VALUES (?, ?, 'system', 'system', ?, 'success', NULLIF(?, ''), ?, ?, 2)`
+
 // forgeAuditRow inserts a row, with the given id, action and details,
 // that links to the newest row but whose hash no key produced: what an
 // attacker who can write auth.db, but does not have the secret, can add.
@@ -26,11 +32,7 @@ func forgeAuditRow(t *testing.T, s *AuthStore, id int64, action,
 
 	rows := auditRowStates(t, s)
 	prev := rows[len(rows)-1].Hash
-	if _, err := s.db.Exec(`INSERT INTO audit_events (id, occurred_at,
-            actor_type, actor_name, action, outcome, details, prev_hash,
-            hash, hash_version)
-        VALUES (?, ?, 'system', 'system', ?, 'success', NULLIF(?, ''), ?,
-            ?, 2)`, id, time.Now().UTC().Format(auditTimeLayout), action,
+	if _, err := s.db.Exec(forgedAuditRowInsert, id, time.Now().UTC().Format(auditTimeLayout), action,
 		details, prev, strings.Repeat("f", 64)); err != nil {
 		t.Fatalf("Failed to insert a forged row: %v", err)
 	}
@@ -153,20 +155,16 @@ func TestReanchorScanFlagsAFailureAfterAVerifiedRow(t *testing.T) {
 func editAuditRow(t *testing.T, s *AuthStore, id int64) {
 	t.Helper()
 
-	for _, stmt := range []string{
-		"DROP TRIGGER " + auditNoUpdateTrigger,
-		"UPDATE audit_events SET actor_name = 'edited' WHERE id = ?",
-		auditSchemaDDL,
-	} {
-		var err error
-		if strings.Contains(stmt, "?") {
-			_, err = s.db.Exec(stmt, id)
-		} else {
-			_, err = s.db.Exec(stmt)
-		}
-		if err != nil {
-			t.Fatalf("Failed to edit audit row %d: %v", id, err)
-		}
+	if _, err := s.db.Exec(
+		"DROP TRIGGER audit_events_no_update"); err != nil {
+		t.Fatalf("Failed to drop the append-only trigger: %v", err)
+	}
+	if _, err := s.db.Exec("UPDATE audit_events SET actor_name = 'edited' "+
+		"WHERE id = ?", id); err != nil {
+		t.Fatalf("Failed to edit audit row %d: %v", id, err)
+	}
+	if _, err := s.db.Exec(auditSchemaDDL); err != nil {
+		t.Fatalf("Failed to restore the audit schema: %v", err)
 	}
 }
 

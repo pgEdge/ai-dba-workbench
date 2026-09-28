@@ -1057,8 +1057,12 @@ func TestIssue530_LexerReadingsMatchPostgres(t *testing.T) {
 			}
 			defer func() { _ = tx.Rollback(ctx) }()
 
+			if _, err := tx.Exec(ctx,
+				"SELECT set_config('standard_conforming_strings', $1, true)",
+				tt.conforming); err != nil {
+				t.Fatalf("failed to set standard_conforming_strings: %v", err)
+			}
 			setup := []string{
-				"SET LOCAL standard_conforming_strings = " + tt.conforming,
 				"SET LOCAL escape_string_warning = off",
 				"CREATE TEMP TABLE issue530_lex (a int) ON COMMIT DROP",
 				"INSERT INTO issue530_lex VALUES (1), (2)",
@@ -1145,13 +1149,19 @@ func TestIssue530_ClientEncodingPinnedAtStartup(t *testing.T) {
 	connID := seedQueryExecConnection(t, pool, target, target.host, target.port)
 
 	ctx := context.Background()
-	dbName := pgx.Identifier{target.database}.Sanitize()
-	if _, err := pool.Exec(ctx,
-		"ALTER DATABASE "+dbName+" SET client_encoding = 'SJIS'"); err != nil {
+	// The pool is connected to the target database, so the server names
+	// it with format('%I', ...) and no SQL is assembled here.
+	if _, err := pool.Exec(ctx, `DO $$ BEGIN
+		EXECUTE format('ALTER DATABASE %I SET client_encoding = ''SJIS''',
+			current_database());
+	END $$`); err != nil {
 		t.Skipf("cannot set a database default for client_encoding: %v", err)
 	}
 	defer func() {
-		_, _ = pool.Exec(ctx, "ALTER DATABASE "+dbName+" RESET client_encoding")
+		_, _ = pool.Exec(ctx, `DO $$ BEGIN
+			EXECUTE format('ALTER DATABASE %I RESET client_encoding',
+				current_database());
+		END $$`)
 	}()
 
 	rec := postQuery(t, h, connID, `{"query":"SHOW client_encoding"}`)

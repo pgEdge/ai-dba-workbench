@@ -320,7 +320,7 @@ func verifyAuditLogCommand(dataDir string) error {
 // rechainAuditLogCommand handles the rechain-audit-log command, which
 // does one of two things. On a database written by a release that
 // predates the keyed chain, which refuses to open until it has been
-// run, it re-hashes the log as keyed version 2 rows under the server
+// run, it re-hashes the log as keyed rows under the server
 // secret. On a keyed log that no longer verifies, which stops the
 // retention purge, it re-anchors the log instead: it rewrites nothing,
 // and appends one event recording where the log now begins and which
@@ -515,7 +515,7 @@ func printAuditRechainPlan(out io.Writer, dataDir string,
 	}
 
 	fmt.Fprintf(out, "\nThis will re-hash all %d event(s) as keyed "+
-		"version 2 rows, in one transaction,\nand record the re-chain in "+
+		"rows, in one transaction,\nand record the re-chain in "+
 		"the log. It attests the log exactly as it now stands:\nwhatever "+
 		"this database currently says becomes what the keyed chain "+
 		"vouches for.\n", plan.Events)

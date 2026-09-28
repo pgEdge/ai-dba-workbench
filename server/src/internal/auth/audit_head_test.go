@@ -707,22 +707,29 @@ func TestAuditGenesisAllowed(t *testing.T) {
 // TestVerifyAcceptsAPurgeEventAsGenesis checks that a log an older
 // build purged entirely, leaving its own purge event as the first row,
 // still verifies: that event records no head, but it starts a chain
-// only a purge could have started.
+// only a purge could have started. An older build writes version 2 rows
+// and no tail anchor, so the log is built that way, and the upgraded
+// store anchors it when it opens.
 func TestVerifyAcceptsAPurgeEventAsGenesis(t *testing.T) {
-	store, _ := newReopenableStore(t)
+	store, dir := newReopenableStore(t)
 	now := time.Now().UTC()
-	recordAt(t, store, "alice", now)
+	insertVersion2Event(t, store,
+		newEvent(systemActor, "user.create", "user", nil, "alice", nil))
 	emptyAuditLog(t, store)
 
 	legacy := newEvent(systemActor, auditActionPurge, "", nil, "",
 		map[string]any{"older_than": now.Format(time.RFC3339),
 			"removed": 1})
-	if err := store.recordAuditInOwnTx(legacy); err != nil {
-		t.Fatalf("Failed to record a legacy purge event: %v", err)
-	}
-	recordAt(t, store, "bob", now)
+	insertVersion2Event(t, store, legacy)
+	store.Close()
 
-	if _, firstBad, err := store.VerifyAuditChain(); err != nil {
+	upgraded, err := reopenStore(t, dir)
+	if err != nil {
+		t.Fatalf("Failed to reopen the store: %v", err)
+	}
+	recordAt(t, upgraded, "bob", now)
+
+	if _, firstBad, err := upgraded.VerifyAuditChain(); err != nil {
 		t.Errorf("Expected the log to verify: firstBad=%d err=%v",
 			firstBad, err)
 	}

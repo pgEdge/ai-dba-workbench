@@ -250,17 +250,19 @@ func TestAuditHashV2RequiresKey(t *testing.T) {
 	}
 }
 
-// TestRecordAuditWritesVersion2 checks that new rows carry the keyed
-// version, since that is the whole point of the bump.
-func TestRecordAuditWritesVersion2(t *testing.T) {
+// TestRecordAuditWritesCurrentVersion checks that new rows carry the
+// current keyed version, version 3, which marks a row written by a
+// build that keeps the tail anchor, and that its hash is the keyed
+// digest under the "v3" label rather than the version 2 one.
+func TestRecordAuditWritesCurrentVersion(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAudit(t)
 	defer cleanup()
 
 	ev := newEvent(systemActor, "user.create", "user", nil, "alice", nil)
 	mustRecord(t, store, ev)
 
-	if ev.HashVersion != 2 {
-		t.Errorf("Expected the recorded row to be version 2, got %d",
+	if ev.HashVersion != 3 {
+		t.Errorf("Expected the recorded row to be version 3, got %d",
 			ev.HashVersion)
 	}
 
@@ -270,16 +272,19 @@ func TestRecordAuditWritesVersion2(t *testing.T) {
 		Scan(&stored); err != nil {
 		t.Fatalf("Failed to read hash_version: %v", err)
 	}
-	if stored != 2 {
-		t.Errorf("Expected hash_version 2 on disk, got %d", stored)
+	if stored != 3 {
+		t.Errorf("Expected hash_version 3 on disk, got %d", stored)
 	}
 
-	want, err := auditHashV2(ev, AuditKeyForTesting())
+	want, err := auditHashKeyed(auditHashV3Label, ev, AuditKeyForTesting())
 	if err != nil {
-		t.Fatalf("auditHashV2 failed: %v", err)
+		t.Fatalf("auditHashKeyed failed: %v", err)
 	}
 	if ev.Hash != want {
 		t.Error("The recorded hash is not the keyed digest of the row")
+	}
+	if v2, err := auditHashV2(ev, AuditKeyForTesting()); err != nil || v2 == ev.Hash {
+		t.Errorf("Expected the version 2 rendering to differ, got %v", err)
 	}
 }
 
@@ -362,7 +367,7 @@ func TestVerifyRejectsVersionDowngradeAlongChain(t *testing.T) {
 	if firstBad != 3 {
 		t.Errorf("Expected row 3 to be reported, got %d", firstBad)
 	}
-	for _, want := range []string{"downgraded at row 3", "version 1 after version 2"} {
+	for _, want := range []string{"downgraded at row 3", "version 1 after version 3"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("Expected the error to say %q, got %v", want, err)
 		}
@@ -413,9 +418,9 @@ func TestVerifyDetectsTamperedVersion2Row(t *testing.T) {
         INSERT INTO audit_events (
             id, occurred_at, actor_type, actor_name, action, target_type,
             target_id, target_name, outcome, prev_hash, hash, hash_version
-        ) VALUES (2, ?, ?, ?, ?, 'user', ?, 'mallory', ?, ?, ?, 2)`,
+        ) VALUES (2, ?, ?, ?, ?, 'user', ?, 'mallory', ?, ?, ?, ?)`,
 		occurredAt, actorType, actorName, action, targetID, outcome,
-		prevHash, hash); err != nil {
+		prevHash, hash, auditHashVersion); err != nil {
 		t.Fatalf("Failed to rewrite the row: %v", err)
 	}
 

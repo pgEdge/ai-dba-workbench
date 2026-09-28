@@ -2408,7 +2408,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/alerts/acknowledge": {
 			Post: &OpenAPIOperation{
 				Summary:     "Acknowledge an alert",
-				Description: "Acknowledges an alert with an optional message",
+				Description: "Acknowledges an alert with an optional message. An alert on a connection needs access to that connection; a system alert, which has no connection, needs a superuser or the manage_alert_rules admin permission, and an API token must also hold manage_alert_rules in its admin scope if it has one",
 				OperationID: "acknowledgeAlert",
 				Tags:        []string{"Alerts"},
 				Security:    bearerAuth,
@@ -2435,7 +2435,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 			},
 			Delete: &OpenAPIOperation{
 				Summary:     "Unacknowledge an alert",
-				Description: "Removes acknowledgement from an alert",
+				Description: "Removes acknowledgement from an alert. An alert on a connection needs access to that connection; a system alert needs a superuser or the manage_alert_rules admin permission, bounded by an API token's admin scope as for acknowledgement",
 				OperationID: "unacknowledgeAlert",
 				Tags:        []string{"Alerts"},
 				Security:    bearerAuth,
@@ -2973,7 +2973,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/alerts/analysis": {
 			Put: &OpenAPIOperation{
 				Summary:     "Save AI analysis for alert",
-				Description: "Saves an AI-generated analysis for a specific alert",
+				Description: "Saves an AI-generated analysis for a specific alert, which needs access to the alert's connection. A system alert has no connection or metric to explain, so saving analysis on one is refused with 400 to every caller who may see system alerts, and with 403 to any caller who may not",
 				OperationID: "saveAlertAnalysis",
 				Tags:        []string{"Alerts"},
 				Security:    bearerAuth,
@@ -2985,7 +2985,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 							"application/json": {Schema: &OpenAPISchema{Type: "object", Properties: map[string]*OpenAPISchema{"status": {Type: "string"}}}},
 						},
 					},
-					"400": jsonResponse("ErrorResponse", "Invalid request"),
+					"400": jsonResponse("ErrorResponse", "Invalid request, or the alert is a system alert"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
 					"403": jsonResponse("ErrorResponse", "Access denied"),
 				},

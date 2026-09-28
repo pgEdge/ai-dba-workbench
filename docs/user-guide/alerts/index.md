@@ -209,8 +209,15 @@ the following ways:
   channel overrides apply to a server, cluster or group.
 - the event timeline leaves system alerts out.
 
-Users acknowledge a system alert in the same way as any
-other alert. See
+Only a superuser, or a user whose group holds the
+`manage_alert_rules` administrative permission, may
+acknowledge a system alert or restore an acknowledged one;
+an API token may do so only when its owner qualifies and
+the token's administrative scope, if it has one, includes
+`manage_alert_rules`. A system alert concerns no monitored
+server and has no metric to explain, so the server refuses
+to save an AI analysis on a system alert, answering the
+request with a 400 status. See
 [Alerter Configuration](../../getting-started/configuration/alerter.md#provider-health-provider_health)
 for the failure threshold.
 

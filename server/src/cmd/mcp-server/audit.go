@@ -21,6 +21,9 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/term"
+
+	"github.com/pgedge/ai-workbench/pkg/fileutil"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/logging"
 )
@@ -326,17 +329,23 @@ func verifyAuditLogCommand(dataDir string) error {
 // It prints what it has found and asks before it writes anything.
 // Either re-chain attests whatever the log says at the moment it runs,
 // so it must be a deliberate act taken on the figures, rather than the
-// reflex an operator reaches for to clear an error. assumeYes, from
-// -confirm-rechain, is the answer for a non-interactive run.
-func rechainAuditLogCommand(dataDir string, assumeYes bool, in io.Reader,
-	out io.Writer) error {
+// reflex an operator reaches for to clear an error. opts.assumeYes,
+// from -confirm-rechain, is the answer for a non-interactive run.
+func rechainAuditLogCommand(dataDir string, opts auditRechainOptions,
+	in io.Reader, out io.Writer) error {
 
+	assumeYes := opts.assumeYes
 	auditKey, err := cliAuditKey()
 	if err != nil {
 		return err
 	}
+	previousKey, err := previousAuditKey(opts.previousSecretFile)
+	if err != nil {
+		return err
+	}
 
-	result, err := auth.RechainAuditLog(dataDir, auditKey, cliActor(),
+	result, err := auth.RechainAuditLogWithPreviousKey(dataDir, auditKey,
+		previousKey, cliActor(),
 		func(plan auth.AuditRechainPlan) (bool, error) {
 			if plan.Mode == auth.AuditRechainReanchor {
 				printAuditReanchorPlan(out, dataDir, plan)
@@ -393,6 +402,45 @@ func rechainAuditLogCommand(dataDir string, assumeYes bool, in io.Reader,
 	fmt.Fprintln(out, "Verify the log now with -verify-audit-log.")
 
 	return nil
+}
+
+// auditRechainOptions carries the flags -rechain-audit-log acts on
+// besides the data directory.
+type auditRechainOptions struct {
+	// assumeYes is -confirm-rechain.
+	assumeYes bool
+
+	// previousSecretFile is -previous-secret-file, empty when not given.
+	previousSecretFile string
+}
+
+// previousAuditKey derives the audit chain key from the secret file
+// -previous-secret-file names, or returns nil when it names none. The
+// file is read exactly as the server reads its own secret.
+func previousAuditKey(path string) ([]byte, error) {
+	if path == "" {
+		return nil, nil
+	}
+
+	secret, err := fileutil.ReadSecretFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read -previous-secret-file: %w",
+			err)
+	}
+
+	return auth.DeriveAuditKey(secret), nil
+}
+
+// auditInputIsTerminal reports whether the confirmation is being read
+// from a terminal. It is a variable so that the tests, whose input is a
+// string, can stand in for one.
+var auditInputIsTerminal = defaultAuditInputIsTerminal
+
+// defaultAuditInputIsTerminal is the real test auditInputIsTerminal
+// makes.
+func defaultAuditInputIsTerminal(in io.Reader) bool {
+	f, ok := in.(*os.File)
+	return ok && term.IsTerminal(int(f.Fd()))
 }
 
 // auditRechainConfirmWord is what an interactive operator must type. It
@@ -538,6 +586,8 @@ func printAuditReanchorPlan(out io.Writer, dataDir string,
 			"may be the better remedy.")
 	}
 
+	printAuditReanchorEvidence(out, plan)
+
 	fmt.Fprintln(out, "\nThe re-chain would record:")
 	fmt.Fprintf(out, "  Oldest event accepted: %d\n", plan.HeadID)
 	fmt.Fprintf(out, "  Its hash:              %s\n",
@@ -602,22 +652,76 @@ func printAuditPreviousHead(out io.Writer, p *auth.AuditRechainHead) {
 		p.Action, p.EventID, verified)
 }
 
-// confirmAuditReanchor decides whether a re-anchor proceeds. An
-// unattended run proceeds only on a key mismatch, the one cause an
-// operator can foresee and script for: anything else may be tampering,
-// and needs someone to read the plan first.
+// printAuditReanchorEvidence reports what the previous secret showed
+// about the history, when one was given.
+func printAuditReanchorEvidence(out io.Writer, plan auth.AuditRechainPlan) {
+	if !plan.PreviousKeyGiven {
+		return
+	}
+	if plan.HistoryProven {
+		fmt.Fprintln(out, "\nEvery event that would be accepted as history "+
+			"verifies under the previous\nsecret, links to the one before "+
+			"it, and accounts for the start of the log.")
+		return
+	}
+
+	reason := "(no reason given)"
+	if plan.HistoryProofErr != nil {
+		reason = logging.SanitizeForLog(plan.HistoryProofErr.Error())
+	}
+	fmt.Fprintf(out, "\nThe previous secret DOES NOT account for the events "+
+		"that would be accepted\nas history: %s\n", reason)
+}
+
+// confirmAuditReanchor decides whether a re-anchor proceeds.
+//
+// An interactive run asks, and only on a terminal: the question is for
+// someone reading the plan, and input piped from a script would answer
+// it with nobody having read anything, which is -confirm-rechain without
+// its safeguards.
+//
+// An unattended run proceeds only where the evidence does not rest on
+// the shape of the log, which anyone able to write auth.db can imitate:
+// the failure must look like a changed secret, every event it would
+// accept as history must verify under the previous secret, and some
+// event after them must verify under the current one, so that the
+// re-anchor is not signed under a secret the server is not running
+// with.
 func confirmAuditReanchor(in io.Reader, out io.Writer, assumeYes bool,
 	plan auth.AuditRechainPlan) (bool, error) {
 
 	if !assumeYes {
+		if !auditInputIsTerminal(in) {
+			return false, errors.New("the re-anchor asks for confirmation " +
+				"on a terminal, and its input is not one, so nothing has " +
+				"been changed. Run it interactively, or unattended with " +
+				"-confirm-rechain and -previous-secret-file")
+		}
 		return confirmAuditRechain(in, out)
 	}
-	if !plan.KeyMismatch {
-		return false, errors.New("the audit log fails verification for a " +
-			"reason other than a changed server secret, so " +
-			"-confirm-rechain will not re-anchor it. Find out what " +
-			"happened, and re-chain interactively if you judge the log " +
-			"sound")
+
+	const refused = "-confirm-rechain will not re-anchor the audit log: "
+	const interactive = ". Find out what happened, and re-chain " +
+		"interactively if you judge the log sound"
+	switch {
+	case !plan.KeyMismatch:
+		return false, errors.New(refused + "it fails verification for a " +
+			"reason other than a changed server secret" + interactive)
+	case !plan.PreviousKeyGiven:
+		return false, errors.New(refused + "without -previous-secret-file " +
+			"naming the secret the older events were written under, " +
+			"nothing shows they are not forged to look like a changed " +
+			"secret" + interactive)
+	case !plan.HistoryProven:
+		return false, fmt.Errorf("%sthe previous secret does not account "+
+			"for the events it would accept as history: %w%s", refused,
+			plan.HistoryProofErr, interactive)
+	case !plan.LaterEventsVerify:
+		return false, errors.New(refused + "no event after the history " +
+			"verifies under the current secret, so nothing shows it is " +
+			"the one the server runs with; a re-anchor signed under the " +
+			"wrong secret would stop every purge under the right one" +
+			interactive)
 	}
 
 	fmt.Fprintln(out, "Proceeding: -confirm-rechain was given.")

@@ -667,3 +667,110 @@ func TestVerifyAuditNoUpdateTriggerQueryError(t *testing.T) {
 		t.Errorf("Expected the trigger lookup failure, got %v", err)
 	}
 }
+
+// emptyAuditLog deletes every row, as an operator clearing the log by
+// hand would.
+func emptyAuditLog(t *testing.T, s *AuthStore) {
+	t.Helper()
+
+	if _, err := s.db.Exec("DELETE FROM audit_events"); err != nil {
+		t.Fatalf("Failed to empty the audit log: %v", err)
+	}
+}
+
+// TestAuditGenesisAllowed checks which rows may start the log when no
+// anchor records where it begins.
+func TestAuditGenesisAllowed(t *testing.T) {
+	tests := []struct {
+		name   string
+		id     int64
+		action string
+		want   bool
+	}{
+		{"the first event", 1, "user.create", true},
+		{"a later event", 5, "user.create", false},
+		{"a purge event", 5, auditActionPurge, true},
+		{"a re-chain event", 5, auditActionRechain, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ev := &AuditEvent{ID: tt.id, Action: tt.action}
+			if got := auditGenesisAllowed(ev); got != tt.want {
+				t.Errorf("auditGenesisAllowed(%d, %s) = %v, want %v",
+					tt.id, tt.action, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestVerifyAcceptsAPurgeEventAsGenesis checks that a log an older
+// build purged entirely, leaving its own purge event as the first row,
+// still verifies: that event records no head, but it starts a chain
+// only a purge could have started.
+func TestVerifyAcceptsAPurgeEventAsGenesis(t *testing.T) {
+	store, _ := newReopenableStore(t)
+	now := time.Now().UTC()
+	recordAt(t, store, "alice", now)
+	emptyAuditLog(t, store)
+
+	legacy := newEvent(systemActor, auditActionPurge, "", nil, "",
+		map[string]any{"older_than": now.Format(time.RFC3339),
+			"removed": 1})
+	if err := store.recordAuditInOwnTx(legacy); err != nil {
+		t.Fatalf("Failed to record a legacy purge event: %v", err)
+	}
+	recordAt(t, store, "bob", now)
+
+	if _, firstBad, err := store.VerifyAuditChain(); err != nil {
+		t.Errorf("Expected the log to verify: firstBad=%d err=%v",
+			firstBad, err)
+	}
+}
+
+// TestPurgeRefusesAMovedGenesis checks that the retention purge, like
+// the verifier, refuses a log emptied by hand, and deletes nothing.
+func TestPurgeRefusesAMovedGenesis(t *testing.T) {
+	store, _ := newReopenableStore(t)
+	now := time.Now().UTC()
+	recordAt(t, store, "alice", now.Add(-96*time.Hour))
+	emptyAuditLog(t, store)
+	recordAt(t, store, "bob", now.Add(-72*time.Hour))
+	recordAt(t, store, "carol", now.Add(-72*time.Hour))
+	recordAt(t, store, "dave", now)
+
+	before := auditRowCount(t, store)
+	removed, err := store.PurgeAuditEvents(now.Add(-48 * time.Hour))
+	if !errors.Is(err, ErrAuditChainBroken) || removed != 0 ||
+		!strings.Contains(err.Error(), "starts a new chain") ||
+		!strings.Contains(err.Error(), errAuditPurgeRefused) {
+		t.Fatalf("Expected the purge to refuse the moved genesis, got %d "+
+			"removed and %v", removed, err)
+	}
+	if after := auditRowCount(t, store); after != before {
+		t.Errorf("Expected the refused purge to delete nothing, went from "+
+			"%d to %d rows", before, after)
+	}
+}
+
+// TestErrAuditHeadNotRecorded checks that a head replaced under the id
+// the anchor recorded is described as a replacement, rather than as the
+// oldest event having moved from one id to the same id.
+func TestErrAuditHeadNotRecorded(t *testing.T) {
+	anchorEv := &AuditEvent{ID: 9, Action: auditActionPurge}
+	recorded := int64(4)
+	rec := auditAnchor{OldestRetainedID: &recorded}
+
+	same := errAuditHeadNotRecorded(anchorEv, rec, &AuditEvent{ID: 4})
+	if !errors.Is(same, ErrAuditChainBroken) ||
+		!strings.Contains(same.Error(), "deleted and replaced") ||
+		strings.Contains(same.Error(), "is now 4") {
+		t.Errorf("Unexpected message for a replaced head: %v", same)
+	}
+
+	moved := errAuditHeadNotRecorded(anchorEv, rec, &AuditEvent{ID: 6})
+	if !errors.Is(moved, ErrAuditChainBroken) ||
+		!strings.Contains(moved.Error(), "the oldest event is now 6") {
+		t.Errorf("Unexpected message for a moved head: %v", moved)
+	}
+}

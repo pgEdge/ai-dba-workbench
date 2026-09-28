@@ -10,6 +10,7 @@
 package auth
 
 import (
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"reflect"
@@ -563,7 +564,7 @@ func TestReanchorRefusesADamagedSchema(t *testing.T) {
 		t.Fatalf("Failed to drop the trigger: %v", err)
 	}
 
-	_, err := store.rechainAuditLog(systemActor, alwaysConfirmRechain)
+	_, err := store.rechainAuditLog(systemActor, nil, alwaysConfirmRechain)
 	if err == nil || !strings.Contains(err.Error(),
 		"refusing to re-chain") {
 		t.Fatalf("Expected the damaged schema to be refused, got %v", err)
@@ -698,5 +699,260 @@ func TestReanchorHelpersReportAClosedStore(t *testing.T) {
 	if err := store.reanchorAuditLogTx(systemActor,
 		AuditRechainPlan{}); err == nil {
 		t.Error("Expected reanchorAuditLogTx to fail on a closed store")
+	}
+}
+
+// planWithPreviousKey runs the re-chain on dir under key, given
+// previousKey, and declines, returning the plan it was shown.
+func planWithPreviousKey(t *testing.T, dir string, key,
+	previousKey []byte) AuditRechainPlan {
+	t.Helper()
+
+	var seen AuditRechainPlan
+	if _, err := RechainAuditLogWithPreviousKey(dir, key, previousKey,
+		systemActor, func(plan AuditRechainPlan) (bool, error) {
+			seen = plan
+			return false, nil
+		}); err != nil {
+		t.Fatalf("Failed to plan the re-chain: %v", err)
+	}
+
+	return seen
+}
+
+// TestReanchorPlanProvesARotatedHistory checks that the previous key
+// proves the history of a genuine change of secret, and that the
+// re-anchor then records that it did.
+func TestReanchorPlanProvesARotatedHistory(t *testing.T) {
+	dir, store, _ := rotatedLog(t, 3, 2)
+	store.Close()
+
+	plan := planWithPreviousKey(t, dir, rotatedAuditKey,
+		AuditKeyForTesting())
+	if !plan.KeyMismatch || !plan.PreviousKeyGiven || !plan.HistoryProven ||
+		plan.HistoryProofErr != nil || !plan.LaterEventsVerify {
+		t.Fatalf("Expected a proven history with later events, got %+v",
+			plan)
+	}
+
+	if _, err := RechainAuditLogWithPreviousKey(dir, rotatedAuditKey,
+		AuditKeyForTesting(), systemActor,
+		func(AuditRechainPlan) (bool, error) { return true, nil }); err != nil {
+		t.Fatalf("Failed to re-anchor the log: %v", err)
+	}
+	reopened := openWithKey(t, dir, rotatedAuditKey)
+	ev, _ := newestRechainAnchor(t, reopened)
+	var details map[string]any
+	if err := json.Unmarshal(ev.Details, &details); err != nil {
+		t.Fatalf("Failed to read the re-chain details: %v", err)
+	}
+	if details["history_proven_by_previous_secret"] != true {
+		t.Errorf("Expected the re-chain to record the proof, got %v",
+			details)
+	}
+}
+
+// TestReanchorPlanWithoutAPreviousKey checks that the plan says only
+// whether later events verify when no previous key is given.
+func TestReanchorPlanWithoutAPreviousKey(t *testing.T) {
+	dir, store, _ := rotatedLog(t, 2, 1)
+	store.Close()
+
+	plan := planWithPreviousKey(t, dir, rotatedAuditKey, nil)
+	if plan.PreviousKeyGiven || plan.HistoryProven ||
+		plan.HistoryProofErr != nil || !plan.LaterEventsVerify {
+		t.Errorf("Unexpected evidence without a previous key: %+v", plan)
+	}
+}
+
+// TestReanchorPlanRefusesTheWrongPreviousKey checks that a previous key
+// the history was not written under proves nothing.
+func TestReanchorPlanRefusesTheWrongPreviousKey(t *testing.T) {
+	dir, store, _ := rotatedLog(t, 2, 1)
+	store.Close()
+
+	plan := planWithPreviousKey(t, dir, rotatedAuditKey,
+		DeriveAuditKey("not the previous secret"))
+	if !plan.PreviousKeyGiven || plan.HistoryProven ||
+		!errors.Is(plan.HistoryProofErr, errAuditHistoryUnproven) {
+		t.Errorf("Expected the wrong key to prove nothing, got %+v", plan)
+	}
+}
+
+// TestProveAuditReanchorPlanWithNoHistory checks the plans the proof
+// has nothing to do for: one for a log that verifies, and one that
+// would accept no history.
+func TestProveAuditReanchorPlanWithNoHistory(t *testing.T) {
+	store, _ := newReopenableStore(t)
+
+	var sound AuditRechainPlan
+	if err := store.proveAuditReanchorPlan(&sound,
+		AuditKeyForTesting()); err != nil {
+		t.Fatalf("Unexpected error for a sound log: %v", err)
+	}
+	if sound.PreviousKeyGiven || sound.LaterEventsVerify {
+		t.Errorf("Expected no evidence for a sound log, got %+v", sound)
+	}
+
+	plan := AuditRechainPlan{Problem: ErrAuditChainBroken}
+	plan.reanchor.events = 2
+	if err := store.proveAuditReanchorPlan(&plan,
+		AuditKeyForTesting()); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if !plan.PreviousKeyGiven || plan.HistoryProven ||
+		!plan.LaterEventsVerify || plan.HistoryProofErr == nil ||
+		!strings.Contains(plan.HistoryProofErr.Error(), "nothing for") {
+		t.Errorf("Expected nothing to be proven, got %+v", plan)
+	}
+}
+
+// TestProveAuditHistory checks each reason the proof gives, on a log
+// written under the test key and then altered.
+func TestProveAuditHistory(t *testing.T) {
+	tests := []struct {
+		name  string
+		alter func(t *testing.T, s *AuthStore)
+		want  string
+	}{
+		{name: "sound", alter: func(*testing.T, *AuthStore) {}},
+		{name: "a row deleted from the middle",
+			alter: func(t *testing.T, s *AuthStore) {
+				deleteAuditRows(t, s, 2)
+			},
+			want: "does not link to event 1"},
+		{name: "a row deleted from the start",
+			alter: func(t *testing.T, s *AuthStore) {
+				deleteAuditRows(t, s, 1)
+			},
+			want: "head missing"},
+		{name: "a lower hash version",
+			alter: func(t *testing.T, s *AuthStore) {
+				updateAuditRow(t, s, "hash_version = 1", 3)
+			},
+			want: "lower hash version"},
+		{name: "a row edited",
+			alter: func(t *testing.T, s *AuthStore) {
+				updateAuditRow(t, s, "actor_name = 'mallory'", 3)
+			},
+			want: "event 3 does not verify under it"},
+		{name: "an anchor with unreadable details",
+			alter: func(t *testing.T, s *AuthStore) {
+				ev := newEvent(systemActor, auditActionPurge, "", nil, "",
+					nil)
+				ev.Details = json.RawMessage(`{"oldest_retained_id":"x"}`)
+				if err := s.recordAuditInOwnTx(ev); err != nil {
+					t.Fatalf("Failed to record the anchor: %v", err)
+				}
+			},
+			want: "failed to read the details"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store, _ := newReopenableStore(t)
+			now := time.Now().UTC()
+			for _, name := range []string{"alice", "bob", "carol"} {
+				recordAt(t, store, name, now)
+			}
+			tt.alter(t, store)
+
+			proof, err := store.proveAuditHistory(store.db,
+				AuditKeyForTesting(), 1<<62)
+			if err != nil {
+				t.Fatalf("Unexpected read error: %v", err)
+			}
+			if tt.want == "" {
+				if proof != nil {
+					t.Errorf("Expected the history to be proven: %v", proof)
+				}
+				return
+			}
+			if !errors.Is(proof, errAuditHistoryUnproven) ||
+				!strings.Contains(proof.Error(), tt.want) {
+				t.Errorf("Expected a proof failure mentioning %q, got %v",
+					tt.want, proof)
+			}
+		})
+	}
+}
+
+// TestProveAuditHistoryStopsAtTheHistory checks that rows after the
+// last one the re-anchor would accept as history are not proven, since
+// they are written under the current key, not the previous one.
+func TestProveAuditHistoryStopsAtTheHistory(t *testing.T) {
+	dir, store, oldIDs := rotatedLog(t, 2, 1)
+	store.Close()
+	reopened := openWithKey(t, dir, AuditKeyForTesting())
+
+	proof, err := reopened.proveAuditHistory(reopened.db,
+		AuditKeyForTesting(), oldIDs[len(oldIDs)-1])
+	if err != nil || proof != nil {
+		t.Errorf("Expected the history alone to be proven, got %v, %v",
+			proof, err)
+	}
+}
+
+// TestProveAuditHistoryReadFailure checks that a log that cannot be read
+// is reported as an error, not as a failed proof, and that the plan
+// passes it on.
+func TestProveAuditHistoryReadFailure(t *testing.T) {
+	store, _ := newReopenableStore(t)
+	recordAt(t, store, "alice", time.Now().UTC())
+	store.Close()
+
+	proof, err := store.proveAuditHistory(store.db, AuditKeyForTesting(), 1)
+	if err == nil || proof != nil {
+		t.Errorf("Expected a read error, got %v, %v", proof, err)
+	}
+
+	plan := AuditRechainPlan{Problem: ErrAuditChainBroken}
+	plan.reanchor.events = 2
+	plan.reanchor.historyEvents = 1
+	plan.reanchor.through = 1
+	if err := store.proveAuditReanchorPlan(&plan,
+		AuditKeyForTesting()); err == nil {
+		t.Error("Expected the plan to pass the read error on")
+	}
+}
+
+// updateAuditRow applies set to the row with the given id, with the
+// append-only trigger lifted for the purpose.
+func updateAuditRow(t *testing.T, s *AuthStore, set string, id int64) {
+	t.Helper()
+
+	if _, err := s.db.Exec(
+		"DROP TRIGGER IF EXISTS audit_events_no_update"); err != nil {
+		t.Fatalf("Failed to drop the append-only trigger: %v", err)
+	}
+	if _, err := s.db.Exec("UPDATE audit_events SET "+set+" WHERE id = ?",
+		id); err != nil {
+		t.Fatalf("Failed to update audit row %d: %v", id, err)
+	}
+	if _, err := s.db.Exec(auditNoUpdateTriggerDDL); err != nil {
+		t.Fatalf("Failed to restore the append-only trigger: %v", err)
+	}
+}
+
+// TestSeedAuditEventForTesting checks that the seeded event is stamped
+// at the time given, in UTC, and that the log still verifies.
+func TestSeedAuditEventForTesting(t *testing.T) {
+	store, _ := newReopenableStore(t)
+	at := time.Date(2026, 1, 2, 3, 4, 5, 0, time.FixedZone("x", 3600))
+
+	if err := SeedAuditEventForTesting(store, at); err != nil {
+		t.Fatalf("Failed to seed an event: %v", err)
+	}
+	events, _, err := store.ListAuditEvents(AuditFilter{Limit: 1})
+	if err != nil || len(events) != 1 {
+		t.Fatalf("Failed to read the seeded event: %v (%d found)", err,
+			len(events))
+	}
+	if events[0].Action != "test.seed" || !events[0].OccurredAt.Equal(at) {
+		t.Errorf("Unexpected seeded event: %+v", events[0])
+	}
+	if _, firstBad, err := store.VerifyAuditChain(); err != nil {
+		t.Errorf("Expected the log to verify: firstBad=%d err=%v",
+			firstBad, err)
 	}
 }

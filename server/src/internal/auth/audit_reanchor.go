@@ -184,6 +184,98 @@ func (s *AuthStore) auditReanchorPlan(plan *AuditRechainPlan) error {
 	return nil
 }
 
+// proveAuditReanchorPlan fills in the plan's evidence for a re-anchor:
+// whether any row after the history verifies under the key in use, and,
+// given the previous key, whether the history is what that key wrote.
+// It is called with s.mu held, after auditReanchorPlan. The transaction
+// that writes the re-anchor repeats the scan and refuses if a row it
+// covers has changed, so the proof still holds when the event is signed.
+func (s *AuthStore) proveAuditReanchorPlan(plan *AuditRechainPlan,
+	previousKey []byte) error {
+
+	if plan.Problem == nil {
+		return nil
+	}
+	plan.LaterEventsVerify = plan.reanchor.events >
+		plan.reanchor.historyEvents
+	if len(previousKey) == 0 {
+		return nil
+	}
+	plan.PreviousKeyGiven = true
+	if plan.reanchor.historyEvents == 0 {
+		plan.HistoryProofErr = errors.New("no event would be accepted as " +
+			"history, so there is nothing for the previous secret to prove")
+		return nil
+	}
+
+	proof, err := s.proveAuditHistory(s.db, previousKey,
+		plan.reanchor.through)
+	if err != nil {
+		return err
+	}
+	plan.HistoryProofErr = proof
+	plan.HistoryProven = proof == nil
+
+	return nil
+}
+
+// errAuditHistoryUnproven wraps each reason proveAuditHistory gives.
+var errAuditHistoryUnproven = errors.New("the events that would be " +
+	"accepted as history are not what the previous secret wrote")
+
+// proveAuditHistory checks the rows through the last one a re-anchor
+// would accept as history, in id order, under previousKey: each must
+// verify under it, link to the row before it, and never go down in hash
+// version, and the head must be accounted for exactly as the verifier
+// requires of a log written under one key, so that a head deleted before
+// the secret changed is not carried into history with the rest. The
+// returned error is the reason the proof fails, or nil when it holds; a
+// failure to read the log is returned as the second value instead.
+func (s *AuthStore) proveAuditHistory(q auditQuerier, previousKey []byte,
+	through int64) (proof error, err error) {
+
+	var head auditHeadCheck
+	var prev AuditEvent
+	seen := false
+	err = forEachAuditEvent(q, func(ev AuditEvent) error {
+		if ev.ID > through {
+			return errStopAuditWalk
+		}
+		if seen && ev.PrevHash != prev.Hash {
+			return fmt.Errorf("%w: event %d does not link to event %d "+
+				"before it", errAuditHistoryUnproven, ev.ID, prev.ID)
+		}
+		if seen && ev.HashVersion < prev.HashVersion {
+			return fmt.Errorf("%w: event %d has a lower hash version than "+
+				"event %d before it", errAuditHistoryUnproven, ev.ID, prev.ID)
+		}
+		if want, hashErr := auditHash(&ev, previousKey); hashErr != nil ||
+			want != ev.Hash {
+
+			return fmt.Errorf("%w: event %d does not verify under it",
+				errAuditHistoryUnproven, ev.ID)
+		}
+		if obsErr := head.observe(&ev); obsErr != nil {
+			return fmt.Errorf("%w: %w", errAuditHistoryUnproven, obsErr)
+		}
+		prev = ev
+		seen = true
+
+		return nil
+	})
+	switch {
+	case errors.Is(err, errAuditHistoryUnproven):
+		return err, nil
+	case err != nil && !errors.Is(err, errStopAuditWalk):
+		return nil, err
+	}
+	if _, headErr := head.check(); headErr != nil {
+		return fmt.Errorf("%w: %w", errAuditHistoryUnproven, headErr), nil
+	}
+
+	return nil, nil
+}
+
 // previousAuditHead returns the newest anchor event that records a
 // head, whether or not it verifies, for the plan to show.
 func (s *AuthStore) previousAuditHead() (*AuditRechainHead, error) {
@@ -322,6 +414,9 @@ func (s *AuthStore) reanchorAuditLogTx(actor Actor,
 		details["history_through_id"] = scan.through
 		details["history_events"] = scan.historyEvents
 		details["history_digest"] = scan.digest
+	}
+	if plan.PreviousKeyGiven {
+		details["history_proven_by_previous_secret"] = plan.HistoryProven
 	}
 	if p := plan.PreviousHead; p != nil {
 		details["previous_head_event_id"] = p.EventID

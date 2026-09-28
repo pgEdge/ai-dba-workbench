@@ -11,8 +11,12 @@ package main
 
 import (
 	"bytes"
+	"database/sql"
 	"errors"
 	"fmt"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -27,7 +31,7 @@ func rotatedSecretAuditStore(t *testing.T) string {
 
 	dir := t.TempDir()
 	store, err := auth.NewAuthStore(dir, 0, 0,
-		auth.DeriveAuditKey("an older server secret"))
+		auth.DeriveAuditKey(olderServerSecret))
 	if err != nil {
 		t.Fatalf("failed to create the auth store: %v", err)
 	}
@@ -66,6 +70,54 @@ func tamperedAuditStore(t *testing.T) string {
 	return dir
 }
 
+// confirmRechainOpts is -confirm-rechain given on its own.
+var confirmRechainOpts = auditRechainOptions{assumeYes: true}
+
+// olderServerSecret is the obviously fake secret rotatedSecretAuditStore
+// writes the log under.
+const olderServerSecret = "an older server secret"
+
+// writeSecretFile writes secret to a file readable only by its owner,
+// as the server's own secret file is, and returns its path.
+func writeSecretFile(t *testing.T, secret string) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "previous.secret")
+	if err := os.WriteFile(path, []byte(secret+"\n"), 0o600); err != nil {
+		t.Fatalf("failed to write the secret file: %v", err)
+	}
+
+	return path
+}
+
+// addCurrentKeyEvents records events under the key the commands use.
+func addCurrentKeyEvents(t *testing.T, dir string, names ...string) {
+	t.Helper()
+
+	store, err := auth.NewAuthStore(dir, 0, 0, auth.AuditKeyForTesting())
+	if err != nil {
+		t.Fatalf("failed to open the auth store: %v", err)
+	}
+	for _, name := range names {
+		if err := store.CreateUser(name, "correct horse battery staple",
+			"", "Test User", name+"@example.com"); err != nil {
+			t.Fatalf("failed to create a user: %v", err)
+		}
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("failed to close the store: %v", err)
+	}
+}
+
+// rotatedWithPreviousSecret is -confirm-rechain given the secret
+// rotatedSecretAuditStore wrote the log under.
+func rotatedWithPreviousSecret(t *testing.T) auditRechainOptions {
+	t.Helper()
+
+	return auditRechainOptions{assumeYes: true,
+		previousSecretFile: writeSecretFile(t, olderServerSecret)}
+}
+
 func assertOutputContains(t *testing.T, out string, wants ...string) {
 	t.Helper()
 
@@ -83,8 +135,8 @@ func TestReanchorCommandDeclinedChangesNothing(t *testing.T) {
 	dir := rotatedSecretAuditStore(t)
 
 	var out bytes.Buffer
-	if err := rechainAuditLogCommand(dir, false, strings.NewReader("yes\n"),
-		&out); err != nil {
+	if err := rechainAuditLogCommand(dir, auditRechainOptions{},
+		strings.NewReader("yes\n"), &out); err != nil {
 		t.Fatalf("declining is not an error: %v", err)
 	}
 	assertOutputContains(t, out.String(), "Verification fails:",
@@ -105,14 +157,16 @@ func TestReanchorCommandDeclinedChangesNothing(t *testing.T) {
 // how much of it is history, and has nothing left to re-chain.
 func TestReanchorCommandAcceptsARotatedSecret(t *testing.T) {
 	dir := rotatedSecretAuditStore(t)
+	addCurrentKeyEvents(t, dir, "bob")
 
 	var out bytes.Buffer
-	if err := rechainAuditLogCommand(dir, true, strings.NewReader(""),
-		&out); err != nil {
+	if err := rechainAuditLogCommand(dir, rotatedWithPreviousSecret(t),
+		strings.NewReader(""), &out); err != nil {
 		t.Fatalf("failed to re-anchor the log: %v", err)
 	}
 	assertOutputContains(t, out.String(), "-confirm-rechain was given",
-		"Audit log re-anchored", "-verify-audit-log")
+		"verifies under the previous", "Audit log re-anchored",
+		"-verify-audit-log")
 
 	var verifyErr error
 	printed := captureStdout(t, func() {
@@ -125,8 +179,8 @@ func TestReanchorCommandAcceptsARotatedSecret(t *testing.T) {
 		"accepted as history by the re-chain", "not as written by this server")
 
 	out.Reset()
-	if err := rechainAuditLogCommand(dir, true, strings.NewReader(""),
-		&out); err != nil {
+	if err := rechainAuditLogCommand(dir, confirmRechainOpts,
+		strings.NewReader(""), &out); err != nil {
 		t.Fatalf("failed to run the re-chain a second time: %v", err)
 	}
 	assertOutputContains(t, out.String(), "nothing to re-chain")
@@ -139,7 +193,8 @@ func TestReanchorCommandRefusesTamperingUnattended(t *testing.T) {
 	dir := tamperedAuditStore(t)
 
 	var out bytes.Buffer
-	err := rechainAuditLogCommand(dir, true, strings.NewReader(""), &out)
+	err := rechainAuditLogCommand(dir, confirmRechainOpts,
+		strings.NewReader(""), &out)
 	if err == nil || !strings.Contains(err.Error(), "will not re-anchor") {
 		t.Fatalf("expected an unattended refusal, got %v", err)
 	}
@@ -158,7 +213,7 @@ func TestReanchorCommandAcceptsTamperingInteractively(t *testing.T) {
 	dir := tamperedAuditStore(t)
 
 	var out bytes.Buffer
-	if err := rechainAuditLogCommand(dir, false,
+	if err := rechainAuditLogCommand(dir, auditRechainOptions{},
 		strings.NewReader(auditRechainConfirmWord+"\n"), &out); err != nil {
 		t.Fatalf("failed to re-anchor the log: %v", err)
 	}
@@ -243,7 +298,8 @@ func TestReanchorCommandRefusesARotationWithLaterTampering(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	err = rechainAuditLogCommand(dir, true, strings.NewReader(""), &out)
+	err = rechainAuditLogCommand(dir, rotatedWithPreviousSecret(t),
+		strings.NewReader(""), &out)
 	if err == nil || !strings.Contains(err.Error(), "will not re-anchor") {
 		t.Fatalf("expected an unattended refusal, got %v", err)
 	}
@@ -331,6 +387,266 @@ func TestAuditPurgeFailureMessage(t *testing.T) {
 						tt.hint, msg)
 				}
 			}
+		})
+	}
+}
+
+// assertStillKeyMismatch checks that a refused re-anchor left the log
+// failing as a changed secret, exactly as before.
+func assertStillKeyMismatch(t *testing.T, dir string) {
+	t.Helper()
+
+	err := verifyAuditLogCommand(dir)
+	if got := auditVerifyExitCode(err); got != auditExitKeyMismatch {
+		t.Errorf("expected the log still to report a key mismatch, got "+
+			"exit status %d: %v", got, err)
+	}
+}
+
+// TestReanchorCommandNeedsThePreviousSecretUnattended checks that
+// -confirm-rechain on its own does not re-anchor even a genuine change
+// of secret, because the shape of the log is all it would have to go on.
+func TestReanchorCommandNeedsThePreviousSecretUnattended(t *testing.T) {
+	dir := rotatedSecretAuditStore(t)
+	addCurrentKeyEvents(t, dir, "bob")
+
+	var out bytes.Buffer
+	err := rechainAuditLogCommand(dir, confirmRechainOpts,
+		strings.NewReader(""), &out)
+	if err == nil || !strings.Contains(err.Error(), "will not re-anchor") ||
+		!strings.Contains(err.Error(), "-previous-secret-file") {
+		t.Fatalf("expected a refusal naming -previous-secret-file, got %v",
+			err)
+	}
+	assertStillKeyMismatch(t, dir)
+}
+
+// TestReanchorCommandRefusesTheWrongPreviousSecret checks that a
+// previous secret the history was not written under is refused, with
+// the reason shown in the plan as well as in the error.
+func TestReanchorCommandRefusesTheWrongPreviousSecret(t *testing.T) {
+	dir := rotatedSecretAuditStore(t)
+	addCurrentKeyEvents(t, dir, "bob")
+
+	var out bytes.Buffer
+	err := rechainAuditLogCommand(dir, auditRechainOptions{assumeYes: true,
+		previousSecretFile: writeSecretFile(t, "not the older secret")},
+		strings.NewReader(""), &out)
+	if err == nil || !strings.Contains(err.Error(), "does not account") ||
+		!strings.Contains(err.Error(), "does not verify under it") {
+		t.Fatalf("expected a refusal for the wrong secret, got %v", err)
+	}
+	assertOutputContains(t, out.String(), "DOES NOT account")
+	assertStillKeyMismatch(t, dir)
+}
+
+// TestReanchorCommandRefusesWithNoLaterEvent checks that an unattended
+// re-anchor is refused when nothing in the log verifies under the
+// current secret, since the re-anchor would then be signed under a
+// secret nothing shows the server runs with.
+func TestReanchorCommandRefusesWithNoLaterEvent(t *testing.T) {
+	dir := rotatedSecretAuditStore(t)
+
+	var out bytes.Buffer
+	err := rechainAuditLogCommand(dir, rotatedWithPreviousSecret(t),
+		strings.NewReader(""), &out)
+	if err == nil || !strings.Contains(err.Error(),
+		"no event after the history verifies") {
+		t.Fatalf("expected a refusal for want of a later event, got %v", err)
+	}
+	assertStillKeyMismatch(t, dir)
+}
+
+// TestReanchorCommandRefusesAnUnreadablePreviousSecret checks that a
+// -previous-secret-file that cannot be read stops the command before it
+// looks at the log.
+func TestReanchorCommandRefusesAnUnreadablePreviousSecret(t *testing.T) {
+	dir := rotatedSecretAuditStore(t)
+
+	var out bytes.Buffer
+	err := rechainAuditLogCommand(dir, auditRechainOptions{assumeYes: true,
+		previousSecretFile: filepath.Join(t.TempDir(), "missing.secret")},
+		strings.NewReader(""), &out)
+	if err == nil || !strings.Contains(err.Error(),
+		"failed to read -previous-secret-file") {
+		t.Fatalf("expected the unreadable file to be reported, got %v", err)
+	}
+	if out.Len() != 0 {
+		t.Errorf("expected nothing to be printed, got:\n%s", out.String())
+	}
+	assertStillKeyMismatch(t, dir)
+}
+
+// forgeKeyChange deletes the log's first event and puts in its place a
+// row that fails verification but whose hash is the one the next event
+// links to, which is the shape a changed secret leaves. It is what
+// anyone able to write auth.db can do to hide the deletion.
+func forgeKeyChange(t *testing.T, dir string) {
+	t.Helper()
+
+	db, err := sql.Open("sqlite", filepath.Join(dir, "auth.db"))
+	if err != nil {
+		t.Fatalf("failed to open auth.db directly: %v", err)
+	}
+	defer db.Close()
+
+	var link string
+	if err := db.QueryRow("SELECT prev_hash FROM audit_events " +
+		"WHERE id = 2").Scan(&link); err != nil {
+		t.Fatalf("failed to read the second event's link: %v", err)
+	}
+	if _, err := db.Exec("DELETE FROM audit_events WHERE id = 1"); err != nil {
+		t.Fatalf("failed to delete the first event: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO audit_events (id, occurred_at,
+        actor_type, actor_name, action, outcome, prev_hash, hash,
+        hash_version) VALUES (1, '2026-01-01T00:00:00Z', 'system',
+        'forger', 'user.create', 'success', '', ?, 2)`, link); err != nil {
+		t.Fatalf("failed to insert the forged event: %v", err)
+	}
+}
+
+// TestReanchorCommandRefusesAForgedKeyChange checks the attack the
+// previous secret exists to stop: a deletion disguised as a changed
+// secret is reported as one, but -confirm-rechain re-anchors it neither
+// on its own nor given a previous secret, since the forged row verifies
+// under no secret the operator has.
+func TestReanchorCommandRefusesAForgedKeyChange(t *testing.T) {
+	dir := t.TempDir()
+	addCurrentKeyEvents(t, dir, "alice", "bob", "carol")
+	forgeKeyChange(t, dir)
+	assertStillKeyMismatch(t, dir)
+
+	for name, opts := range map[string]auditRechainOptions{
+		"no previous secret": confirmRechainOpts,
+		"a previous secret": {assumeYes: true,
+			previousSecretFile: writeSecretFile(t, olderServerSecret)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var out bytes.Buffer
+			err := rechainAuditLogCommand(dir, opts, strings.NewReader(""),
+				&out)
+			if err == nil || !strings.Contains(err.Error(),
+				"will not re-anchor") {
+				t.Fatalf("expected an unattended refusal, got %v", err)
+			}
+			assertStillKeyMismatch(t, dir)
+		})
+	}
+}
+
+// TestReanchorCommandAsksOnlyOnATerminal checks that an interactive
+// re-anchor whose input is not a terminal refuses without reading it,
+// so that a confirmation word piped in by a script is not taken as an
+// operator having read the plan.
+func TestReanchorCommandAsksOnlyOnATerminal(t *testing.T) {
+	saved := auditInputIsTerminal
+	auditInputIsTerminal = func(io.Reader) bool { return false }
+	t.Cleanup(func() { auditInputIsTerminal = saved })
+
+	dir := rotatedSecretAuditStore(t)
+
+	var out bytes.Buffer
+	err := rechainAuditLogCommand(dir, auditRechainOptions{},
+		strings.NewReader(auditRechainConfirmWord+"\n"), &out)
+	if err == nil || !strings.Contains(err.Error(), "on a terminal") {
+		t.Fatalf("expected a refusal for input that is not a terminal, "+
+			"got %v", err)
+	}
+	assertStillKeyMismatch(t, dir)
+}
+
+// TestAuditInputIsTerminal checks the real terminal test on input that
+// is not a terminal, both a string and an ordinary file.
+func TestAuditInputIsTerminal(t *testing.T) {
+	// TestMain replaces the variable, so this calls the function it
+	// starts as.
+	isTerminal := defaultAuditInputIsTerminal
+
+	if isTerminal(strings.NewReader(auditRechainConfirmWord)) {
+		t.Error("expected a string not to be a terminal")
+	}
+
+	f, err := os.CreateTemp(t.TempDir(), "input")
+	if err != nil {
+		t.Fatalf("failed to create a file: %v", err)
+	}
+	defer f.Close()
+	if isTerminal(f) {
+		t.Error("expected an ordinary file not to be a terminal")
+	}
+}
+
+// TestPrintAuditReanchorEvidence checks each thing the plan says about
+// the previous secret, including a reason carrying control characters.
+func TestPrintAuditReanchorEvidence(t *testing.T) {
+	tests := []struct {
+		name  string
+		plan  auth.AuditRechainPlan
+		wants []string
+		never string
+	}{
+		{name: "no previous secret", plan: auth.AuditRechainPlan{}},
+		{name: "proven", plan: auth.AuditRechainPlan{PreviousKeyGiven: true,
+			HistoryProven: true},
+			wants: []string{"verifies under the previous"}},
+		{name: "unproven", plan: auth.AuditRechainPlan{
+			PreviousKeyGiven: true,
+			HistoryProofErr:  errors.New("event 3 \x1b[2Jdoes not verify")},
+			wants: []string{"DOES NOT account", "event 3"},
+			never: "\x1b"},
+		{name: "unproven without a reason", plan: auth.AuditRechainPlan{
+			PreviousKeyGiven: true},
+			wants: []string{"(no reason given)"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var out bytes.Buffer
+			printAuditReanchorEvidence(&out, tt.plan)
+			if len(tt.wants) == 0 && out.Len() != 0 {
+				t.Errorf("expected nothing, got:\n%s", out.String())
+			}
+			assertOutputContains(t, out.String(), tt.wants...)
+			if tt.never != "" && strings.Contains(out.String(), tt.never) {
+				t.Errorf("expected %q to be removed, got %q", tt.never,
+					out.String())
+			}
+		})
+	}
+}
+
+// TestRunAuditCommands checks that each audit command the flags select
+// runs, and that none runs when none is selected. Only commands that
+// succeed are run: a failing one ends the process.
+func TestRunAuditCommands(t *testing.T) {
+	dir := t.TempDir()
+	addCurrentKeyEvents(t, dir, "alice")
+
+	if runAuditCommands(&Flags{}, dir) {
+		t.Error("expected no audit command to run")
+	}
+
+	tests := []struct {
+		name  string
+		flags Flags
+		want  string
+	}{
+		{"list", Flags{ListAuditCmd: true, AuditLimit: 50}, "user.create"},
+		{"verify", Flags{VerifyAuditCmd: true}, "chain intact"},
+		{"rechain", Flags{RechainAuditCmd: true, ConfirmRechain: true},
+			"nothing to re-chain"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ran := false
+			printed := captureStdout(t, func() {
+				ran = runAuditCommands(&tt.flags, dir)
+			})
+			if !ran {
+				t.Fatal("expected the command to run")
+			}
+			assertOutputContains(t, printed, tt.want)
 		})
 	}
 }

@@ -10,8 +10,13 @@
 package main
 
 import (
+	"flag"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/pgedge/ai-workbench/server/internal/config"
 )
 
 func TestResolveDataDir(t *testing.T) {
@@ -313,5 +318,118 @@ func TestToReloadCLIFlags(t *testing.T) {
 	}
 	if result.DBSSLMode != "require" {
 		t.Errorf("expected DBSSLMode 'require', got %q", result.DBSSLMode)
+	}
+}
+
+// parseArgs runs ParseFlags on args with a fresh flag set standing in
+// for the process's own, restored when the test ends.
+func parseArgs(t *testing.T, args ...string) *Flags {
+	t.Helper()
+
+	savedSet, savedArgs := flag.CommandLine, os.Args
+	t.Cleanup(func() { flag.CommandLine, os.Args = savedSet, savedArgs })
+	flag.CommandLine = flag.NewFlagSet("ai-dba-server", flag.ContinueOnError)
+	os.Args = append([]string{"ai-dba-server"}, args...)
+
+	return ParseFlags("/etc/example/ai-dba-server.yaml")
+}
+
+// TestParseFlagsDefaults checks the values a bare invocation gets.
+func TestParseFlagsDefaults(t *testing.T) {
+	f := parseArgs(t)
+
+	if f.ConfigFile != "/etc/example/ai-dba-server.yaml" ||
+		f.AccessLevel != "read" || f.AuditLimit != 50 ||
+		f.PreviousSecretFile != "" || f.ConfirmRechain {
+		t.Errorf("unexpected defaults: %+v", f)
+	}
+	if got := f.ToCLIFlags(); got != (config.CLIFlags{}) {
+		t.Errorf("expected no flag to be marked set, got %+v", got)
+	}
+}
+
+// TestParseFlagsAuditRechain checks the flags the re-anchor reads.
+func TestParseFlagsAuditRechain(t *testing.T) {
+	f := parseArgs(t, "-rechain-audit-log", "-confirm-rechain",
+		"-previous-secret-file", "/etc/example/old.secret")
+
+	if !f.RechainAuditCmd || !f.ConfirmRechain ||
+		f.PreviousSecretFile != "/etc/example/old.secret" ||
+		!f.HasAuditCommand() {
+		t.Errorf("unexpected flags: %+v", f)
+	}
+}
+
+// TestToCLIFlags checks that each flag the configuration can override
+// is marked set, with its value, only when given.
+func TestToCLIFlags(t *testing.T) {
+	f := parseArgs(t, "-config", "/etc/example/other.yaml",
+		"-addr", "192.0.2.1:8080", "-tls", "-cert", "c.pem", "-key", "k.pem",
+		"-chain", "ch.pem", "-db-host", "db.example.com", "-db-port", "5433",
+		"-db-name", "workbench", "-db-user", "tester",
+		"-db-password", "not-a-real-password", "-db-sslmode", "require",
+		"-trace-file", "trace.log", "-debug")
+
+	want := config.CLIFlags{
+		ConfigFileSet: true, ConfigFile: "/etc/example/other.yaml",
+		HTTPAddrSet: true, HTTPAddr: "192.0.2.1:8080",
+		TLSEnabledSet: true, TLSEnabled: true,
+		TLSCertSet: true, TLSCertFile: "c.pem",
+		TLSKeySet: true, TLSKeyFile: "k.pem",
+		TLSChainSet: true, TLSChainFile: "ch.pem",
+		DBHostSet: true, DBHost: "db.example.com",
+		DBPortSet: true, DBPort: 5433,
+		DBNameSet: true, DBName: "workbench",
+		DBUserSet: true, DBUser: "tester",
+		DBPassSet: true, DBPassword: "not-a-real-password",
+		DBSSLSet: true, DBSSLMode: "require",
+		TraceFileSet: true, TraceFile: "trace.log",
+	}
+	if got := f.ToCLIFlags(); got != want {
+		t.Errorf("ToCLIFlags() =\n%+v\nwant\n%+v", got, want)
+	}
+}
+
+// TestResolvePasswords checks that each password comes from its flag,
+// then its file, and that an unreadable file is reported.
+func TestResolvePasswords(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "password")
+	if err := os.WriteFile(file, []byte("from-the-file\n"), 0o600); err != nil {
+		t.Fatalf("failed to write the password file: %v", err)
+	}
+
+	f := parseArgs(t, "-db-password", "from-the-flag",
+		"-password-file", file)
+	if err := f.ResolvePasswords(); err != nil {
+		t.Fatalf("ResolvePasswords failed: %v", err)
+	}
+	if f.DBPassword != "from-the-flag" || f.UserPassword != "from-the-file" {
+		t.Errorf("unexpected passwords: db %q, user %q", f.DBPassword,
+			f.UserPassword)
+	}
+
+	missing := filepath.Join(t.TempDir(), "missing")
+	for _, tt := range []struct{ flag, want string }{
+		{"-db-password-file", "resolving database password"},
+		{"-password-file", "resolving user password"},
+	} {
+		f := parseArgs(t, tt.flag, missing)
+		if err := f.ResolvePasswords(); err == nil ||
+			!strings.Contains(err.Error(), tt.want) {
+			t.Errorf("%s: expected %q, got %v", tt.flag, tt.want, err)
+		}
+	}
+}
+
+// TestGetDefaultPaths checks that the paths start from the running
+// binary. The configuration and secret paths depend on which files the
+// host has, so only the executable path is checked.
+func TestGetDefaultPaths(t *testing.T) {
+	execPath, _, _, err := GetDefaultPaths()
+	if err != nil {
+		t.Fatalf("GetDefaultPaths failed: %v", err)
+	}
+	if want, _ := os.Executable(); execPath != want {
+		t.Errorf("expected %q, got %q", want, execPath)
 	}
 }

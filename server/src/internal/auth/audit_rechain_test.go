@@ -957,7 +957,7 @@ func TestAuditRechainReportsDatabaseFailures(t *testing.T) {
 		AuditRechainPlan{}); err == nil {
 		t.Error("Expected the re-chain transaction to fail")
 	}
-	if _, err := damaged.rechainAuditLog(systemActor,
+	if _, err := damaged.rechainAuditLog(systemActor, nil,
 		alwaysConfirmRechain); err == nil {
 		t.Error("Expected the re-chain to fail")
 	}

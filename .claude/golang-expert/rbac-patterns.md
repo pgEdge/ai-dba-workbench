@@ -568,12 +568,16 @@ verifier still recomputes that row like any other. `auditHeadCheck`
 oldest row's hash to equal the newest purge's record, and, when no
 purge records one, reports a non-empty leading `prev_hash` only if no
 `audit.purge` row survives at all (the weak fallback for purge events
-written before the record). The record is worthless unless the purge
+written before the record). With no head record, an oldest row with
+`prev_hash` "" must be id 1 or an anchor row (`auditGenesisAllowed`):
+AUTOINCREMENT never reuses ids, so a new chain above 1 is an emptied
+table. Tests that empty `audit_events` by hand must expect
+`ErrAuditChainBroken` or re-anchor afterwards. The record is worthless unless the purge
 cannot be steered into writing a new one over a deletion, so before
 deleting, `verifyAuditPurgePrefix` checks, in the purge transaction,
 that the rows up to and including the new head start at the previous
-purge's recorded hash (or at a genesis row with `prev_hash` "" when no
-purge exists; anywhere only when no purge event records a head, since a
+purge's recorded hash (or at a genesis row with `prev_hash` "" that
+`auditGenesisAllowed` admits when no purge exists; anywhere only when no purge event records a head, since a
 record-less purge never overrides an older recorded one, in either the
 purge or `auditHeadCheck`, or a replayed pre-record event would reopen
 the weak case), that

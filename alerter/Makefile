@@ -28,7 +28,7 @@ BINARY := ai-dba-alerter
 # locally, before the tests for the clear path were added. Raise it
 # whenever a change lifts the total and never lower it. Override for
 # local experiments with `make coverage COVERAGE_MIN=80`.
-COVERAGE_MIN ?= 80.3
+COVERAGE_MIN ?= 86.6
 
 # Get absolute path to output directory
 ABS_BIN_DIR := $(abspath $(BIN_DIR))

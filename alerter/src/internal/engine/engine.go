@@ -76,6 +76,10 @@ type Engine struct {
 	embeddingProvider llm.EmbeddingProvider
 	reasoningProvider llm.ReasoningProvider
 
+	// providerHealth raises a system alert when a provider keeps
+	// failing; nil without a datastore. See provider_health.go.
+	providerHealth *providerHealthTracker
+
 	// Notification worker pool using generic WorkerPool abstraction
 	notificationPool *worker.WorkerPool[notificationJob]
 
@@ -108,6 +112,7 @@ func NewEngine(cfg *config.Config, datastore *database.Datastore, debug bool) *E
 	// Initialize LLM providers for Tier 2/3 anomaly detection
 	if cfg != nil {
 		e.initLLMProviders()
+		e.initProviderHealth()
 	}
 
 	// Create and start notification worker pool only when notifications are enabled.
@@ -186,6 +191,16 @@ func (e *Engine) Run(ctx context.Context) error {
 		e.runBaselineCalculator(ctx)
 	}()
 
+	// Provider health check, which also clears provider health alerts
+	// left open for a provider no longer configured
+	if e.providerHealth != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			e.checkProviderHealth(ctx)
+		}()
+	}
+
 	// Anomaly detector (if enabled)
 	if e.config.Anomaly.Enabled {
 		wg.Add(1)
@@ -199,7 +214,7 @@ func (e *Engine) Run(ctx context.Context) error {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				e.runReevaluationWorker(ctx)
+				e.runReevaluationWorker(withProviderTier(ctx, providerTierReevaluation))
 			}()
 		}
 	}

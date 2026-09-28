@@ -270,6 +270,21 @@ anomaly:
     # Default: 30
     timeout_seconds: 30
 
+  #-------------------------------------------------------------------------
+  # LLM Provider Health
+  #-------------------------------------------------------------------------
+  # The alerter raises a system alert when the Tier 2 embedding, Tier 3
+  # classification or re-evaluation calls to an LLM provider keep
+  # failing, because anomaly detection then degrades without any other
+  # sign. The alert clears on the next successful call. A failed health
+  # check at startup (for example, a retired model) raises it at once.
+
+  provider_health:
+    # Consecutive failed calls from one tier to one provider before the
+    # system alert is raised. Must be at least 1.
+    # Default: 3
+    failure_threshold: 3
+
 #=========================================================================
 # BASELINE CALCULATION SETTINGS
 #=========================================================================

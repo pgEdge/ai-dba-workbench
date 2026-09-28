@@ -262,7 +262,7 @@ func (d *Datastore) GetDueReminders(ctx context.Context) ([]DueReminder, error) 
 	rows, err := d.pool.Query(ctx, `
         SELECT
             -- Alert fields
-            a.id, a.alert_type, a.rule_id, a.connection_id, a.database_name,
+            a.id, a.alert_type, a.rule_id, COALESCE(a.connection_id, 0), a.database_name,
             a.probe_name, a.metric_name, a.metric_value, a.threshold_value,
             a.operator, a.severity, a.title, a.description, a.correlation_id,
             a.status, a.triggered_at, a.cleared_at, a.anomaly_score, a.anomaly_details,

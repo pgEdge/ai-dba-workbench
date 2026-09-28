@@ -79,6 +79,8 @@ anomaly:
         enabled: false
     tier3:
         enabled: false
+    provider_health:
+        failure_threshold: 3
 
 baselines:
     refresh_interval_seconds: 3600

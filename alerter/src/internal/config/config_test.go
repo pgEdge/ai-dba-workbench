@@ -107,6 +107,10 @@ func TestNewConfigAnomalyDefaults(t *testing.T) {
 			cfg.Anomaly.Tier1.Warmup.Daily.MinSamples, 3},
 		{"tier1 warmup.daily.min_span_hours",
 			cfg.Anomaly.Tier1.Warmup.Daily.MinSpanHours, 336},
+
+		// Provider health system alert (issue #582).
+		{"provider_health.failure_threshold",
+			cfg.Anomaly.ProviderHealth.FailureThreshold, 3},
 	}
 
 	for _, tt := range tests {
@@ -293,6 +297,20 @@ func TestValidateRejectsBadAnomalyConfig(t *testing.T) {
 				c.Anomaly.Tier1.Warmup.All.MinSamples = -1
 			},
 			errorMsg: "anomaly.tier1.warmup thresholds must be >= 0",
+		},
+		{
+			name: "zero provider failure_threshold rejected",
+			modifyFunc: func(c *Config) {
+				c.Anomaly.ProviderHealth.FailureThreshold = 0
+			},
+			errorMsg: "anomaly.provider_health.failure_threshold must be at least 1",
+		},
+		{
+			name: "negative provider failure_threshold rejected",
+			modifyFunc: func(c *Config) {
+				c.Anomaly.ProviderHealth.FailureThreshold = -2
+			},
+			errorMsg: "anomaly.provider_health.failure_threshold must be at least 1",
 		},
 	}
 
@@ -734,6 +752,7 @@ func TestExampleConfigsParse(t *testing.T) {
 		"anomaly.tier1.warmup.hourly.min_span_hours",
 		"anomaly.tier1.warmup.daily.min_samples",
 		"anomaly.tier1.warmup.daily.min_span_hours",
+		"anomaly.provider_health.failure_threshold",
 	}
 
 	for _, p := range paths {
@@ -765,6 +784,10 @@ func TestExampleConfigsParse(t *testing.T) {
 				t.Fatalf("failed to parse %s: %v", p, err)
 			}
 
+			if got := cfg.Anomaly.ProviderHealth.FailureThreshold; got != DefaultProviderFailureThreshold {
+				t.Errorf("%s: ProviderHealth.FailureThreshold = %d, want %d",
+					p, got, DefaultProviderFailureThreshold)
+			}
 			if cfg.Anomaly.Tier1.MaxZScore != 100.0 {
 				t.Errorf("%s: MaxZScore = %v, want 100.0",
 					p, cfg.Anomaly.Tier1.MaxZScore)

@@ -864,6 +864,20 @@ project adheres to
   Tier 1 now runs the pre-tier checks first and stores no candidate
   when one applies. (#577)
 
+- Fix anomaly candidates accumulating for ever after a configuration
+  reload that left no tier after Tier 1 able to process them. At
+  startup the alerter already disables anomaly detection when no
+  Tier 2 or Tier 3 provider is available, because Tier 1 alone is
+  too noisy to alert on, but a reload did not repeat the check: the
+  running detector kept storing Tier 1 candidates that nothing
+  processed, and the retention cleanup only deletes processed
+  candidates. A reload now applies the startup rule, Tier 1 stores no
+  candidate unless Tier 2 or Tier 3 can process it, and a candidate
+  left unprocessed for more than five Tier 1 evaluation intervals is
+  marked as processed with no final decision, so the backlog raises
+  no stale alerts and ages out through the normal retention
+  cleanup. (#581)
+
 - Fix alerts staying active for ever on a server an operator has
   stopped monitoring. The probes of an unmonitored connection leave
   the staleness view, so every alert on it was judged to have a probe

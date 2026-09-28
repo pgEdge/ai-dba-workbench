@@ -863,6 +863,11 @@ func (e *Engine) cleanupOldData(ctx context.Context) {
 		e.log("Deleted %d old alerts", deleted)
 	}
 
+	// Expire candidates that were never processed first, so the delete
+	// below ages them out; with anomaly detection disabled nothing else
+	// would ever stamp them.
+	e.expireStaleAnomalyCandidates(ctx)
+
 	// Delete old anomaly candidates
 	deleted, err = e.datastore.DeleteOldAnomalyCandidates(ctx, cutoff)
 	if err != nil {

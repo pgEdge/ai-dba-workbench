@@ -16,8 +16,11 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 )
@@ -570,6 +573,8 @@ func TestIssue530_SkipQuoted(t *testing.T) {
 		{"unicode identifier", `U&"ab" rest`, 6},
 		{"bit string", "B'10' rest", 5},
 		{"hex string", "x'ff' rest", 5},
+		{"a quote ends a bit string even when another follows",
+			"B'1''0' rest", 4},
 		{"national string", "N'ab' rest", 5},
 		{"unterminated literal", "'abc", 4},
 		{"not a literal prefix", "abc", 1},
@@ -578,7 +583,7 @@ func TestIssue530_SkipQuoted(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := skipQuoted(tt.input, 0); got != tt.want {
+			if got := skipQuoted(tt.input, 0, standardStrings); got != tt.want {
 				t.Errorf("skipQuoted(%q, 0) = %d, want %d",
 					tt.input, got, tt.want)
 			}
@@ -716,6 +721,36 @@ func TestIssue530_KeywordScansIgnoreNonCode(t *testing.T) {
 				"SELECT * FROM d", false},
 		{"form feed before a leading comment",
 			"\f/* x */ WITH d AS (DELETE FROM t RETURNING *) SELECT * FROM d", false},
+		{"backslash quote under standard_conforming_strings off",
+			`WITH x AS (SELECT '\'' AS c), d AS (DELETE FROM t RETURNING *) ` +
+				"SELECT * FROM d --'", false},
+		{"standard_conforming_strings turned off earlier in the request",
+			`SELECT set_config('standard_conforming_strings', 'off', false); ` +
+				`WITH x AS (SELECT '\'' AS c), d AS (DELETE FROM t RETURNING *) ` +
+				"SELECT * FROM d --'", false},
+		{"backslash quote in a national literal",
+			`WITH x AS (SELECT N'\'' AS c), d AS (DELETE FROM t RETURNING *) ` +
+				"SELECT * FROM d --'", false},
+		{"explain analyze of a backslash quote",
+			`EXPLAIN ANALYZE WITH x AS (SELECT '\'' AS c), ` +
+				"d AS (DELETE FROM t RETURNING *) SELECT * FROM d --'", false},
+		{"into after a backslash quote",
+			`SELECT '\'' AS c INTO newtab FROM t --'`, false},
+		{"semicolon only an escape reading treats as code",
+			`SELECT '\''; DELETE FROM t; --'`, false},
+		{"escape string continued onto the next line",
+			"WITH x AS (SELECT E'a'\n'\\'' AS c), d AS (DELETE FROM t RETURNING *) " +
+				"SELECT * FROM d --'", false},
+		{"escape string continued after a line comment",
+			"WITH x AS (SELECT E'a' -- c\n  '\\'' AS c), " +
+				"d AS (DELETE FROM t RETURNING *) SELECT * FROM d --'", false},
+		{"escape string continued after a carriage return",
+			"WITH x AS (SELECT E'a'\r'\\'' AS c), d AS (DELETE FROM t RETURNING *) " +
+				"SELECT * FROM d --'", false},
+		{"backslash in a plain literal under both readings",
+			`SELECT 'C:\temp' AS path FROM t`, true},
+		{"literal continued onto the next line",
+			"SELECT 'signed'\n' into' AS msg FROM t", true},
 	}
 
 	for _, tt := range tests {
@@ -756,7 +791,7 @@ func TestIssue530_MaskNonCode(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := maskNonCode(tt.input)
+			got := maskNonCode(tt.input, standardStrings)
 			if got != tt.want {
 				t.Errorf("maskNonCode(%q) = %q, want %q",
 					tt.input, got, tt.want)
@@ -837,5 +872,298 @@ func TestIssue530_SetCurrentConnectionStoresValidDatabaseName(t *testing.T) {
 	handler = NewConnectionHandlerWithSecurity(ds, store, missing, false, nil, nil)
 	if rec := post(connID+1, "postgres"); rec.Code != http.StatusBadRequest {
 		t.Errorf("unknown connection: expected 400, got %d", rec.Code)
+	}
+}
+
+// TestIssue530_SkipQuotedReadings covers the literal scanner under both
+// readings of a plain '...' literal, and the continuation of a string
+// literal onto a later line, which keeps the state it started in.
+func TestIssue530_SkipQuotedReadings(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		reading stringReading
+		want    int
+	}{
+		{"backslash is ordinary in a standard string",
+			`'a\' rest`, standardStrings, 4},
+		{"backslash escapes in an escape reading",
+			`'a\'' rest`, escapeStrings, 5},
+		{"doubled quote after a backslash in a standard string",
+			`'\'' rest`, standardStrings, len(`'\'' rest`)},
+		{"national literal follows the reading",
+			`N'\'' rest`, escapeStrings, 5},
+		{"E literal escapes under either reading",
+			`E'\'' rest`, standardStrings, 5},
+		{"unicode literal never takes a backslash escape",
+			`U&'\'' rest`, escapeStrings, len(`U&'\'' rest`)},
+		{"bit string never takes a backslash escape",
+			`B'\' rest`, escapeStrings, 4},
+		{"quoted identifier never takes a backslash escape",
+			`"\" rest`, escapeStrings, 3},
+		{"literal continued onto the next line", "'a'\n'b' rest", standardStrings, 7},
+		{"continuation after a carriage return", "'a'\r'b' rest", standardStrings, 7},
+		{"continuation after spaces and a line comment",
+			"'a' -- c\n  'b' rest", standardStrings, 14},
+		{"continuation after a comment on its own line",
+			"'a'\n-- c\n'b' rest", standardStrings, 12},
+		{"continuation keeps the escape state",
+			"E'a'\n'\\'' rest", standardStrings, 9},
+		{"continuation keeps the bit string state",
+			"B'1'\n'' rest", standardStrings, 7},
+		{"no continuation without a newline", "'a' 'b'", standardStrings, 3},
+		{"a block comment ends the continuation",
+			"'a' /* c */\n'b'", standardStrings, 3},
+		{"a line comment running to the end ends it",
+			"'a'\n-- c", standardStrings, 3},
+		{"a newline alone is no continuation", "'a'\n", standardStrings, 3},
+		{"a quoted identifier does not continue",
+			"\"a\"\n\"b\"", standardStrings, 3},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := skipQuoted(tt.input, 0, tt.reading); got != tt.want {
+				t.Errorf("skipQuoted(%q, 0, %d) = %d, want %d",
+					tt.input, tt.reading, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestIssue530_ContainsDollarParamEitherReading pins that a placeholder
+// visible under only one reading of a plain '...' literal still counts.
+func TestIssue530_ContainsDollarParamEitherReading(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  bool
+	}{
+		{"visible only under an escape reading", `SELECT '\'', $1 --'`, true},
+		{"visible only under a standard reading", `SELECT '\', $1 --'`, true},
+		{"hidden under both readings", `SELECT '$1'`, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := containsDollarParam(tt.input); got != tt.want {
+				t.Errorf("containsDollarParam(%q) = %v, want %v",
+					tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestIssue530_StandardConformingStringsOffRequiresConfirmation proves
+// that the round-four payload, which turns standard_conforming_strings
+// off and then hides a DELETE CTE behind '\”, now yields the
+// confirmation prompt. The handler answers before it reaches the nil
+// datastore.
+func TestIssue530_StandardConformingStringsOffRequiresConfirmation(t *testing.T) {
+	handler := newTestConnectionHandlerWithRBAC()
+
+	query := `SELECT set_config('standard_conforming_strings', 'off', false); ` +
+		`WITH x AS (SELECT '\'' AS c), d AS (DELETE FROM t RETURNING *) ` +
+		"SELECT * FROM d --'"
+	body, err := json.Marshal(queryRequest{Query: query})
+	if err != nil {
+		t.Fatalf("failed to encode the request: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost,
+		"/api/v1/connections/1/query", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.executeQuery(rec, req, 1)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body %q)",
+			rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var resp multiQueryResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v (body %q)", err, rec.Body.String())
+	}
+	if !resp.RequiresConfirmation {
+		t.Fatal("expected requires_confirmation for the hidden DELETE CTE")
+	}
+	if len(resp.WriteStatements) != 1 ||
+		!strings.Contains(resp.WriteStatements[0], "DELETE FROM t") {
+		t.Errorf("write statements = %q, want the WITH ... DELETE statement",
+			resp.WriteStatements)
+	}
+}
+
+// TestIssue530_LexerReadingsMatchPostgres runs each payload against a
+// real PostgreSQL server in a read-write transaction that is rolled
+// back, and requires both that PostgreSQL really deleted a row and that
+// the classifier calls the payload a write. It pins the scanner's model
+// of the lexer to what the server actually does, not only to the
+// reading of scan.l behind it.
+func TestIssue530_LexerReadingsMatchPostgres(t *testing.T) {
+	if os.Getenv("SKIP_DB_TESTS") != "" {
+		t.Skip("Skipping database test (SKIP_DB_TESTS is set)")
+	}
+	connStr := os.Getenv("TEST_AI_WORKBENCH_SERVER")
+	if connStr == "" {
+		t.Skip("TEST_AI_WORKBENCH_SERVER not set, skipping database test")
+	}
+
+	ctx := context.Background()
+	conn, err := pgx.Connect(ctx, connStr)
+	if err != nil {
+		t.Skipf("Could not connect to test database: %v", err)
+	}
+	defer func() { _ = conn.Close(ctx) }()
+
+	tests := []struct {
+		name       string
+		conforming string
+		statements []string
+	}{
+		{"backslash quote with standard_conforming_strings off", "off",
+			[]string{`WITH x AS (SELECT '\'' AS c), ` +
+				"d AS (DELETE FROM issue530_lex RETURNING *) SELECT * FROM d --'"}},
+		{"set_config turns standard_conforming_strings off", "on",
+			[]string{
+				`SELECT set_config('standard_conforming_strings', 'off', false)`,
+				`WITH x AS (SELECT '\'' AS c), ` +
+					"d AS (DELETE FROM issue530_lex RETURNING *) SELECT * FROM d --'",
+			}},
+		{"backslash quote in a national literal", "off",
+			[]string{`WITH x AS (SELECT N'\'' AS c), ` +
+				"d AS (DELETE FROM issue530_lex RETURNING *) SELECT * FROM d --'"}},
+		{"escape string continued onto the next line", "on",
+			[]string{"WITH x AS (SELECT E'a'\n'\\'' AS c), " +
+				"d AS (DELETE FROM issue530_lex RETURNING *) SELECT * FROM d --'"}},
+		{"escape string continued after a line comment", "on",
+			[]string{"WITH x AS (SELECT E'a' -- c\n  '\\'' AS c), " +
+				"d AS (DELETE FROM issue530_lex RETURNING *) SELECT * FROM d --'"}},
+		{"escape string continued after a carriage return", "on",
+			[]string{"WITH x AS (SELECT E'a'\r'\\'' AS c), " +
+				"d AS (DELETE FROM issue530_lex RETURNING *) SELECT * FROM d --'"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if isReadOnlyStatement(strings.Join(tt.statements, "; ")) {
+				t.Errorf("classifier calls %q read-only", tt.statements)
+			}
+
+			tx, err := conn.Begin(ctx)
+			if err != nil {
+				t.Fatalf("failed to begin: %v", err)
+			}
+			defer func() { _ = tx.Rollback(ctx) }()
+
+			setup := []string{
+				"SET LOCAL standard_conforming_strings = " + tt.conforming,
+				"SET LOCAL escape_string_warning = off",
+				"CREATE TEMP TABLE issue530_lex (a int) ON COMMIT DROP",
+				"INSERT INTO issue530_lex VALUES (1), (2)",
+			}
+			for _, stmt := range setup {
+				if _, err := tx.Exec(ctx, stmt); err != nil {
+					t.Fatalf("setup %q failed: %v", stmt, err)
+				}
+			}
+			// Each statement goes over the simple protocol, as the
+			// workbench sends it, so the server's lexer reads the text
+			// exactly as written.
+			for _, stmt := range tt.statements {
+				if _, err := tx.Conn().PgConn().Exec(ctx, stmt).ReadAll(); err != nil {
+					t.Fatalf("PostgreSQL rejected %q: %v", stmt, err)
+				}
+			}
+			var rows int
+			if err := tx.QueryRow(ctx,
+				"SELECT count(*) FROM issue530_lex").Scan(&rows); err != nil {
+				t.Fatalf("failed to count rows: %v", err)
+			}
+			if rows != 0 {
+				t.Errorf("rows left = %d, want 0: PostgreSQL did not run the DELETE", rows)
+			}
+		})
+	}
+}
+
+// TestIssue530_ClientEncodingChangeStopsReadOnlyBatch proves that a
+// statement which moves the connection off UTF8 ends the batch before
+// the next statement is lexed under the new encoding, on both the pgx
+// path and the simple-protocol path.
+func TestIssue530_ClientEncodingChangeStopsReadOnlyBatch(t *testing.T) {
+	h, pool, target, cleanup := newQueryExecTestHandler(t)
+	defer cleanup()
+
+	connID := seedQueryExecConnection(t, pool, target, target.host, target.port)
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"pgx path",
+			"SELECT set_config('client_encoding', 'SJIS', false); SELECT 1"},
+		{"simple-protocol path",
+			"SELECT set_config('client_encoding', 'SJIS', false); " +
+				"EXPLAIN SELECT 1 WHERE 1 = $1"},
+		{"transaction-local change",
+			"SELECT set_config('client_encoding', 'SJIS', true); SELECT 1"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body, err := json.Marshal(queryRequest{Query: tt.query})
+			if err != nil {
+				t.Fatalf("failed to encode the request: %v", err)
+			}
+			rec := postQuery(t, h, connID, string(body))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d (body %q)",
+					rec.Code, http.StatusOK, rec.Body.String())
+			}
+			resp := decodeMultiQuery(t, rec)
+			if len(resp.Results) != 1 {
+				t.Fatalf("results = %d, want 1 (the batch stops at the change)",
+					len(resp.Results))
+			}
+			if resp.Results[0].Error != clientEncodingChangedError {
+				t.Errorf("error = %q, want %q",
+					resp.Results[0].Error, clientEncodingChangedError)
+			}
+		})
+	}
+}
+
+// TestIssue530_ClientEncodingPinnedAtStartup proves that the query
+// connection starts on UTF8 even when the database's own default says
+// otherwise, because the startup parameter takes precedence over it.
+func TestIssue530_ClientEncodingPinnedAtStartup(t *testing.T) {
+	h, pool, target, cleanup := newQueryExecTestHandler(t)
+	defer cleanup()
+
+	connID := seedQueryExecConnection(t, pool, target, target.host, target.port)
+
+	ctx := context.Background()
+	dbName := pgx.Identifier{target.database}.Sanitize()
+	if _, err := pool.Exec(ctx,
+		"ALTER DATABASE "+dbName+" SET client_encoding = 'SJIS'"); err != nil {
+		t.Skipf("cannot set a database default for client_encoding: %v", err)
+	}
+	defer func() {
+		_, _ = pool.Exec(ctx, "ALTER DATABASE "+dbName+" RESET client_encoding")
+	}()
+
+	rec := postQuery(t, h, connID, `{"query":"SHOW client_encoding"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body %q)",
+			rec.Code, http.StatusOK, rec.Body.String())
+	}
+	resp := decodeMultiQuery(t, rec)
+	if len(resp.Results) != 1 || resp.Results[0].Error != "" {
+		t.Fatalf("results = %+v, want one clean result", resp.Results)
+	}
+	if got := resp.Results[0].Rows; len(got) != 1 || got[0][0] != "UTF8" {
+		t.Errorf("client_encoding = %q, want UTF8", got)
 	}
 }

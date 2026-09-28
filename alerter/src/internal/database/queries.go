@@ -602,7 +602,7 @@ func (d *Datastore) GetClusterPeers(ctx context.Context, connectionID int) ([]*C
 		WHERE c.cluster_id = (SELECT cluster_id FROM connections WHERE id = $1)
 		  AND c.cluster_id IS NOT NULL
 		  AND c.id != $1
-		ORDER BY c.name
+		ORDER BY c.name, c.id
 	`, connectionID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get cluster peers: %w", err)

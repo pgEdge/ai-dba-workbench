@@ -341,6 +341,34 @@ func TestReevaluationClearAndMissingMetric(t *testing.T) {
 	}
 }
 
+// TestParseReevaluationResponseFound checks which responses count as a
+// decision worth reusing. JSON without a recognized decision is not one,
+// even when a keyword in its reasoning still picks the decision returned.
+func TestParseReevaluationResponseFound(t *testing.T) {
+	tests := []struct {
+		name     string
+		response string
+		decision string
+		found    bool
+	}{
+		{"json keep", keepResponse, "keep", true},
+		{"json clear", clearResponse, "clear", true},
+		{"keyword text", "This alert should be kept.", "keep", true},
+		{"no decision", "I am not sure what to say.", "keep", false},
+		{"undecided json with keyword", `{"decision": "undecided", "reasoning": "should be kept"}`, "keep", false},
+		{"undecided json", `{"decision": "maybe"}`, "keep", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			decision, _, found := parseReevaluationResponse(tt.response)
+			if decision != tt.decision || found != tt.found {
+				t.Errorf("parseReevaluationResponse(%q) = %s, %v; want %s, %v",
+					tt.response, decision, found, tt.decision, tt.found)
+			}
+		})
+	}
+}
+
 // TestReevaluationFingerprintIgnoresCount checks that the fingerprint does
 // not change with the re-evaluation count but does with the alert value.
 func TestReevaluationFingerprintIgnoresCount(t *testing.T) {

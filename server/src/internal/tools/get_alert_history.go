@@ -194,11 +194,9 @@ Returns TSV data with:
 				}
 
 				// RBAC: verify access to the specified connection
-				if rbacChecker != nil {
-					canAccess, _ := rbacChecker.CanAccessConnection(ctx, connectionID)
-					if !canAccess {
-						return mcp.NewToolError(fmt.Sprintf("Access denied: you do not have permission to access connection ID %d.", connectionID))
-					}
+				canAccess, _ := rbacChecker.CanAccessConnection(ctx, connectionID)
+				if !canAccess {
+					return mcp.NewToolError(fmt.Sprintf("Access denied: you do not have permission to access connection ID %d.", connectionID))
 				}
 			}
 
@@ -209,7 +207,7 @@ Returns TSV data with:
 			// with "no grants".
 			var accessibleIDs []int
 			allConnections := true
-			if !singleConnection && rbacChecker != nil {
+			if !singleConnection {
 				ids, all, err := rbacChecker.VisibleConnectionIDs(ctx, visibilityLister)
 				if err != nil {
 					return mcp.NewToolError(fmt.Sprintf("Failed to resolve accessible connections: %v", err))

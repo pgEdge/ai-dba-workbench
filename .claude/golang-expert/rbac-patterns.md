@@ -198,6 +198,28 @@ request superuser; in package `api` that is `newTestRBACChecker(t)` or
 must say so in its doc comment, and denial tests inline an
 unauthenticated request instead of calling it.
 
+### A nil checker denies; never skip a check because it is nil
+
+A nil `*auth.RBACChecker` denies exactly as one on a nil store does:
+every method guards `rc == nil || rc.authStore == nil`, so
+`VisibleConnectionIDs` returns an empty set with `all == false` and
+`CanAccessConnection`, `HasAdminPermission` and the rest return false
+(issue #561). Call sites must therefore call the checker directly and
+never wrap the check in `if rbacChecker != nil { ... }`, which turns a
+missing checker into unrestricted access; handler constructors assign
+`checkPermission = RequireAdminPermission(...)` unconditionally. Any
+new method on `RBACChecker` needs the same nil-receiver guard. The
+exceptions are `store_memory.go` and `query_database.go`, which test
+for nil explicitly and deny. In the tools package, tests that need to
+get past the check use `asSuperuser(Tool(..., testRBACChecker(t), ...))`
+from `rbac_helpers_test.go`; nil-checker denial tests are in
+`nil_rbac_test.go`.
+
+The overview stream in `internal/overview/handler.go` uses the empty
+scope key for the estate-wide feed, so a restricted caller must always
+get a `connections:` key, even when their visible set is empty; an
+empty set left as `""` would subscribe them to every connection.
+
 ### Denial test (no Postgres required)
 
 ```go

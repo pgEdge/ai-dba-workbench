@@ -1774,6 +1774,20 @@ project adheres to
   subdomain log a user in to the attacker's account (login CSRF).
   (#506)
 
+- Treat a missing RBAC checker as denying access rather than granting
+  it. The alert history, blackout, metric baseline, alert rule, metric
+  query, timeline and connection list tools, the timeline and overview
+  endpoints, and the shared connection visibility helper each skipped
+  their access check when handed no checker, and so returned every
+  connection's data; they now return nothing, or a not-found or
+  permission error, and the admin handlers for alert rules, overrides,
+  blackouts, notification channels and probes answer 403 instead of
+  panicking. The production server always builds a checker, so this
+  closes a latent hole rather than a live one. The overview stream
+  also stops subscribing a signed-in user who can see no connections
+  to the estate-wide feed, which had sent them the overview of every
+  connection. (#561)
+
 - Stop the Slack, Mattermost and generic webhook channels putting their
   endpoint URL into the alerter log, into
   `notification_history.error_message` and into the server log when a

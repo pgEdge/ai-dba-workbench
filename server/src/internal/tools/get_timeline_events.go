@@ -329,12 +329,10 @@ func resolveTimelineConnection(
 		}
 	}
 
-	if rbacChecker != nil {
-		canAccess, _ := rbacChecker.CanAccessConnection(ctx, cid)
-		if !canAccess {
-			resp, rerr := mcp.NewToolError(fmt.Sprintf("Access denied: you do not have permission to access connection ID %d.", cid))
-			return false, 0, "", &resp, rerr
-		}
+	canAccess, _ := rbacChecker.CanAccessConnection(ctx, cid)
+	if !canAccess {
+		resp, rerr := mcp.NewToolError(fmt.Sprintf("Access denied: you do not have permission to access connection ID %d.", cid))
+		return false, 0, "", &resp, rerr
 	}
 
 	return true, cid, connName, nil, nil
@@ -353,7 +351,7 @@ func resolveTimelineAccessibleIDs(
 	rbacChecker *auth.RBACChecker,
 	visibilityLister auth.ConnectionVisibilityLister,
 ) ([]int, bool, *mcp.ToolResponse, error) {
-	if singleConnection || rbacChecker == nil {
+	if singleConnection {
 		return nil, true, nil, nil
 	}
 

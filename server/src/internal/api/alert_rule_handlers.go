@@ -35,9 +35,7 @@ func NewAlertRuleHandler(datastore *database.Datastore, authStore *auth.AuthStor
 		authStore:   authStore,
 		rbacChecker: rbacChecker,
 	}
-	if rbacChecker != nil {
-		h.checkPermission = RequireAdminPermission(rbacChecker, auth.PermManageAlertRules, "manage alert rules")
-	}
+	h.checkPermission = RequireAdminPermission(rbacChecker, auth.PermManageAlertRules, "manage alert rules")
 	return h
 }
 

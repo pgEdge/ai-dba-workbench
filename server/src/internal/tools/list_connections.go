@@ -33,9 +33,9 @@ type MonitoredConnectionInfo struct {
 }
 
 // ListConnectionsTool creates the list_connections tool for listing monitored connections.
-// When rbacChecker and visibilityLister are non-nil, the returned list is
-// filtered to connections the caller can see. Pass nil for both in tests
-// or when RBAC is not configured.
+// The returned list is filtered to connections the caller can see. A nil
+// rbacChecker denies, so the list is empty (issue #561); a nil
+// visibilityLister limits a non-superuser to their direct grants.
 func ListConnectionsTool(pool *pgxpool.Pool, rbacChecker *auth.RBACChecker, visibilityLister auth.ConnectionVisibilityLister) Tool {
 	return Tool{
 		Definition: mcp.Tool{
@@ -164,6 +164,11 @@ CRITICAL: Never silently analyze multiple connections. Always get explicit user 
 			// Track total connections before RBAC filtering to distinguish
 			// between "no connections exist" and "user has no access".
 			totalConnectionsBeforeFilter := len(connections)
+
+			// A nil checker denies: show nothing (issue #561).
+			if rbacChecker == nil {
+				connections = nil
+			}
 
 			// RBAC: filter connections to the caller's visible set.
 			if rbacChecker != nil {

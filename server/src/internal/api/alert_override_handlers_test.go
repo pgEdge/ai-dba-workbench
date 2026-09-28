@@ -493,7 +493,7 @@ func TestAlertOverrideHandler_ContextEndpoint_CallsDatastore(t *testing.T) {
 	// reaches GetOverrideContext it will panic on the nil pool, which
 	// confirms the handler parsed the URL and invoked the datastore.
 	ds := &database.Datastore{}
-	handler := NewAlertOverrideHandler(ds, nil, nil)
+	handler := NewAlertOverrideHandler(ds, nil, newTestRBACChecker(t))
 	handler.checkPermission = func(w http.ResponseWriter, r *http.Request) bool {
 		return true
 	}
@@ -524,7 +524,7 @@ func TestAlertOverrideHandler_ContextEndpoint_CallsDatastore(t *testing.T) {
 				}
 			}()
 
-			handler.handleAlertOverrides(rec, req)
+			handler.handleAlertOverrides(rec, withSuperuser(req))
 
 			// If no panic, the handler should return an error status
 			if rec.Code != http.StatusInternalServerError {
@@ -540,7 +540,7 @@ func TestAlertOverrideHandler_ContextEndpoint_DatastoreError(t *testing.T) {
 	// when the datastore returns an error. A zero-value Datastore with
 	// a nil pool will fail immediately, producing an error or panic.
 	ds := &database.Datastore{}
-	handler := NewAlertOverrideHandler(ds, nil, nil)
+	handler := NewAlertOverrideHandler(ds, nil, newTestRBACChecker(t))
 	handler.checkPermission = func(w http.ResponseWriter, r *http.Request) bool {
 		return true
 	}
@@ -557,7 +557,7 @@ func TestAlertOverrideHandler_ContextEndpoint_DatastoreError(t *testing.T) {
 		}
 	}()
 
-	handler.handleAlertOverrides(rec, req)
+	handler.handleAlertOverrides(rec, withSuperuser(req))
 
 	// If the handler returned normally (no panic), verify the error response
 	if rec.Code != http.StatusInternalServerError {

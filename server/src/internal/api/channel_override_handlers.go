@@ -34,9 +34,7 @@ func NewChannelOverrideHandler(datastore *database.Datastore, authStore *auth.Au
 		authStore:   authStore,
 		rbacChecker: rbacChecker,
 	}
-	if rbacChecker != nil {
-		h.checkPermission = RequireAdminPermission(rbacChecker, auth.PermManageNotificationChannels, "manage notification channels")
-	}
+	h.checkPermission = RequireAdminPermission(rbacChecker, auth.PermManageNotificationChannels, "manage notification channels")
 	return h
 }
 

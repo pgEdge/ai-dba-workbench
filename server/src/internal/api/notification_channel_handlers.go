@@ -42,9 +42,7 @@ func NewNotificationChannelHandlerWithSecurity(datastore *database.Datastore, au
 		rbacChecker:   rbacChecker,
 		hostValidator: NewHostValidator(allowInternal, allowedHosts, blockedHosts),
 	}
-	if rbacChecker != nil {
-		h.checkPermission = RequireAdminPermission(rbacChecker, auth.PermManageNotificationChannels, "manage notification channels")
-	}
+	h.checkPermission = RequireAdminPermission(rbacChecker, auth.PermManageNotificationChannels, "manage notification channels")
 	return h
 }
 

@@ -35,9 +35,7 @@ func NewProbeConfigHandler(datastore *database.Datastore, authStore *auth.AuthSt
 		authStore:   authStore,
 		rbacChecker: rbacChecker,
 	}
-	if rbacChecker != nil {
-		h.checkPermission = RequireAdminPermission(rbacChecker, auth.PermManageProbes, "manage probes")
-	}
+	h.checkPermission = RequireAdminPermission(rbacChecker, auth.PermManageProbes, "manage probes")
 	return h
 }
 

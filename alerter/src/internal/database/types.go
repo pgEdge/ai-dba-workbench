@@ -281,6 +281,11 @@ type AcknowledgedAnomalyAlert struct {
 	// Re-evaluation tracking
 	LastReevaluatedAt *time.Time `json:"last_reevaluated_at,omitempty"`
 	ReevaluationCount int        `json:"reevaluation_count"`
+
+	// ReevaluationFingerprint is the hash of the prompt inputs behind the
+	// last re-evaluation that answered "keep", or nil when there is no
+	// answer to reuse. See GitHub issue #575.
+	ReevaluationFingerprint *string `json:"reevaluation_fingerprint,omitempty"`
 }
 
 // ClusterPeerInfo holds lightweight cluster peer context for LLM prompts

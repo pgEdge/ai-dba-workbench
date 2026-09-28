@@ -25,7 +25,8 @@ func scanAcknowledgedAnomalyAlert(scanner interface{ Scan(dest ...any) error }, 
 		&a.ID, &a.ConnectionID, &a.Title, &a.Severity, &a.MetricName,
 		&a.MetricValue, &a.ZScore, &a.AnomalyDetails, &a.TriggeredAt,
 		&a.AckMessage, &a.FalsePositive, &a.AcknowledgedBy,
-		&a.AcknowledgedAt, &a.LastReevaluatedAt, &a.ReevaluationCount)
+		&a.AcknowledgedAt, &a.LastReevaluatedAt, &a.ReevaluationCount,
+		&a.ReevaluationFingerprint)
 }
 
 // float32SliceToVectorString converts a []float32 to a PostgreSQL vector string format
@@ -328,7 +329,8 @@ func (d *Datastore) GetAcknowledgedAnomalyAlerts(ctx context.Context, intervalSe
 		SELECT a.id, a.connection_id, a.title, a.severity, a.metric_name,
 		       a.metric_value, a.anomaly_score, a.anomaly_details, a.triggered_at,
 		       ack.message, ack.false_positive, ack.acknowledged_by,
-		       ack.acknowledged_at, a.last_reevaluated_at, a.reevaluation_count
+		       ack.acknowledged_at, a.last_reevaluated_at, a.reevaluation_count,
+		       a.reevaluation_fingerprint
 		FROM alerts a
 		LEFT JOIN LATERAL (
 		    SELECT message, false_positive, acknowledged_by, acknowledged_at
@@ -372,7 +374,8 @@ func (d *Datastore) GetAcknowledgmentHistoryForMetric(ctx context.Context, metri
 		SELECT a.id, a.connection_id, a.title, a.severity, a.metric_name,
 		       a.metric_value, a.anomaly_score, a.anomaly_details, a.triggered_at,
 		       ack.message, ack.false_positive, ack.acknowledged_by,
-		       ack.acknowledged_at, a.last_reevaluated_at, a.reevaluation_count
+		       ack.acknowledged_at, a.last_reevaluated_at, a.reevaluation_count,
+		       a.reevaluation_fingerprint
 		FROM alerts a
 		JOIN alert_acknowledgments ack ON ack.alert_id = a.id
 		WHERE a.metric_name = $1 AND a.connection_id = $2

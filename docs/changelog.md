@@ -779,6 +779,23 @@ project adheres to
 
 ### Fixed
 
+- Fix the alerter's re-evaluation worker sending each acknowledged
+  anomaly alert back to the LLM every time it fell due, by default
+  every five minutes, although nothing the prompt shows had changed
+  since the last "keep" answer. When the LLM answers "keep", the
+  alerter now stores a hash of the prompt inputs (the alert's value
+  and baseline, its acknowledgement, past acknowledgements of the
+  metric, the other alerts on the server, the cluster context and the
+  reasoning model, but not the re-evaluation count) in the new
+  `alerts.reevaluation_fingerprint` column, and skips the call while
+  the hash is unchanged. A new acknowledgement, a change in the
+  server's other alerts or a new model sends the alert to the LLM
+  again. A failed call, a response that contains no decision, or one
+  made when part of the context could not be read stores no hash, so
+  the alert is retried when next due. The collector adds the column
+  in schema migration 18, so upgrade the collector before the
+  alerter. (#575)
+
 - Fix a connection created without a description breaking the
   connection list for every user. The server stored the missing
   description as `NULL` and then failed to read the row back, so the

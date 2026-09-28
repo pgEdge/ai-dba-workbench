@@ -180,6 +180,16 @@ var metricRegistry = map[string]metricQueryConfig{
 	// reason as pg_settings.max_connections above. Freshness of the metric
 	// still comes from metrics.pg_stat_activity, which the 5 minute window
 	// on active_counts bounds. See GitHub issue #406.
+	//
+	// Both queries count client backends only. The historical query once
+	// counted every row, background processes included, so baselines sat
+	// above anything a live sample could reach and every evaluation scored
+	// a negative anomaly (GitHub issue #567). The historical max_conns CTE
+	// divides each sample by the max_connections in force when it was
+	// collected, which is what the latest query does for the newest
+	// sample; the earliest snapshot's range is open below, so samples
+	// collected before the first pg_settings write at onboarding are kept.
+	// pg_settings takes no time predicate, for the reason given above.
 	"connection_utilization_percent": {
 		probeName: "pg_stat_activity",
 		latestSQL: `
@@ -214,20 +224,30 @@ var metricRegistry = map[string]metricQueryConfig{
 				FROM metrics.pg_stat_activity psa
 				JOIN connections c ON c.id = psa.connection_id
 				WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1
+				  AND psa.backend_type = 'client backend'
 				GROUP BY psa.connection_id, psa.collected_at
 			),
 			max_conns AS (
-				SELECT DISTINCT ON (ps.connection_id) ps.connection_id, ps.setting::float as max_connections
+				SELECT ps.connection_id,
+				       ps.setting::float as max_connections,
+				       CASE WHEN LAG(ps.collected_at) OVER w IS NULL
+				            THEN '-infinity'::timestamptz
+				            ELSE ps.collected_at END as valid_from,
+				       COALESCE(LEAD(ps.collected_at) OVER w,
+				                'infinity'::timestamptz) as valid_to
 				FROM metrics.pg_settings ps
 				JOIN connections c ON c.id = ps.connection_id
 				WHERE ps.name = 'max_connections'
-				ORDER BY ps.connection_id, ps.collected_at DESC
+				WINDOW w AS (PARTITION BY ps.connection_id ORDER BY ps.collected_at)
 			)
 			SELECT a.connection_id, NULL::text as database_name,
 			       (a.active / NULLIF(m.max_connections, 0)) * 100 as value,
 			       a.collected_at
 			FROM activity_counts a
-			JOIN max_conns m ON a.connection_id = m.connection_id
+			JOIN max_conns m
+			  ON a.connection_id = m.connection_id
+			 AND a.collected_at >= m.valid_from
+			 AND a.collected_at < m.valid_to
 			ORDER BY a.connection_id, a.collected_at
 		`,
 		scan:           scanBasic,
@@ -682,6 +702,7 @@ var metricRegistry = map[string]metricQueryConfig{
 			JOIN connections c ON c.id = psa.connection_id
 			WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1
 			  AND psa.wait_event_type = 'Lock'
+			  AND psa.backend_type = 'client backend'
 			GROUP BY psa.connection_id, psa.collected_at
 			ORDER BY psa.connection_id, psa.collected_at
 		`,
@@ -721,6 +742,7 @@ var metricRegistry = map[string]metricQueryConfig{
 			WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1
 			  AND psa.state = 'idle in transaction'
 			  AND psa.xact_start IS NOT NULL
+			  AND psa.backend_type = 'client backend'
 			GROUP BY psa.connection_id, psa.collected_at
 			ORDER BY psa.connection_id, psa.collected_at
 		`,
@@ -787,6 +809,7 @@ var metricRegistry = map[string]metricQueryConfig{
 			WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1
 			  AND psa.state = 'active'
 			  AND psa.query_start IS NOT NULL
+			  AND psa.backend_type = 'client backend'
 			GROUP BY psa.connection_id, psa.collected_at
 			ORDER BY psa.connection_id, psa.collected_at
 		`,
@@ -824,6 +847,7 @@ var metricRegistry = map[string]metricQueryConfig{
 			JOIN connections c ON c.id = psa.connection_id
 			WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1
 			  AND psa.xact_start IS NOT NULL
+			  AND psa.backend_type = 'client backend'
 			GROUP BY psa.connection_id, psa.collected_at
 			ORDER BY psa.connection_id, psa.collected_at
 		`,

@@ -32,8 +32,10 @@ func forgeAuditRow(t *testing.T, s *AuthStore, id int64, action,
 
 	rows := auditRowStates(t, s)
 	prev := rows[len(rows)-1].Hash
-	if _, err := s.db.Exec(forgedAuditRowInsert, id, time.Now().UTC().Format(auditTimeLayout), action,
-		details, prev, strings.Repeat("f", 64)); err != nil {
+	occurredAt := time.Now().UTC().Format(auditTimeLayout)
+	forgedHash := strings.Repeat("f", 64)
+	if _, err := s.db.Exec(forgedAuditRowInsert, id, occurredAt, action,
+		details, prev, forgedHash); err != nil {
 		t.Fatalf("Failed to insert a forged row: %v", err)
 	}
 }

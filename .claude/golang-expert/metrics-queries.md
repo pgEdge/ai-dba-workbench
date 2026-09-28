@@ -1170,13 +1170,31 @@ runs once per rule, resolves the blacked-out connection set once per
 run, and scores every latest value for a connection (one per database
 for `scanWithDB` metrics) against the baselines for that value's
 `DatabaseName`, setting `candidate.DatabaseName` so the active-alert
-deduplication in `createAnomalyAlert` is per database as well.
+deduplication in `anomalyAlertSkipReason` is per database as well.
 `baselineableValues` drops object-scoped values, since `metric_baselines`
 has no object column. The audit tests
 (`engine/audit_defects_test.go`, `database/audit_defects_test.go`, C6,
 C7 and C10) assert this behaviour end to end, and
 `engine/baseline_selection_test.go` covers the selector and the key
 helper.
+
+Tier 2 (an embedding call) and Tier 3 (an LLM call) are billed per
+candidate, so `processTier2And3` runs `anomalyAlertSkipReason` before
+either (#568). It holds every check whose outcome does not depend on the
+tier results, in this order: blackout, open (`active` or `acknowledged`)
+anomaly alert for the same metric, connection and database (which sets
+`candidate.AlertID` to it), re-evaluation suppression, false-positive
+suppression. A lookup error counts as "does not apply". A skipped
+candidate gets no tier fields and no embedding; `determineFinalDecision`
+records `alert` for it (Tier 1 only), the value a candidate discarded
+after the tiers is left with, because `final_decision` is constrained to
+`alert`/`suppress`/`pending` and `FindSimilarAnomalies` is its only
+reader. `createAnomalyAlert` calls the same helper again, since state can
+change during a Tier 3 call of up to its timeout. Any new check of this
+kind belongs in the helper, not after the tiers. The false-positive check
+is only reachable when the open-alert lookup fails, because a
+false-positive alert is `acknowledged` and so already open;
+`TestProcessTier2And3SkipsPaidTiers` forces that failure to cover it.
 
 ## Time-Window Resolution (server)
 

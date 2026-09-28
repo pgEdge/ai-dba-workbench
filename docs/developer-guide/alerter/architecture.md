@@ -266,14 +266,16 @@ Tier 1 --> Candidate --> Checks --> Tier 2 --> Tier 3 --> Alert or Suppress
 ```
 
 Tier 1 creates anomaly candidates for values exceeding the
-z-score threshold. The alerter then checks each stored candidate
-for an active blackout, an open anomaly alert on the same metric,
-connection and database, and re-evaluation or false-positive
-suppression; a candidate that matches any check is marked as
-processed without running Tier 2 or Tier 3. Other candidates are
-processed by Tier 2, which generates embeddings and searches for
-similar past anomalies. Tier 3 uses LLM classification to make the
-final decision.
+z-score threshold, unless one of the checks below already applies,
+in which case it stores none. The alerter then checks each stored
+candidate for an active blackout, an open anomaly alert on the same
+metric, connection and database, and re-evaluation or
+false-positive suppression; a candidate that matches any check is
+marked as processed without running Tier 2 or Tier 3. The second
+pass covers a candidate stored before the condition began. Other
+candidates are processed by Tier 2, which generates embeddings and
+searches for similar past anomalies. Tier 3 uses LLM classification
+to make the final decision.
 
 ## Database Schema
 

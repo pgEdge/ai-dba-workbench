@@ -65,6 +65,13 @@ embedding or LLM call on later evaluation cycles. The alerter repeats
 the same checks just before creating an alert, because a blackout or
 an acknowledgement can arrive during a slow Tier 3 call.
 
+Tier 1 runs the same checks before it stores a candidate, and stores
+none when any of them applies. A persistent condition therefore adds
+no row to `anomaly_candidates` on each evaluation cycle whilst an
+alert is open, a blackout is active or a suppression holds. The
+pre-tier checks still run for a candidate that was stored before one
+of those conditions began.
+
 ## Tier 1: Statistical Analysis
 
 Tier 1 performs z-score analysis to identify statistical outliers.

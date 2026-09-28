@@ -281,42 +281,92 @@ func TestAlertHandler_HandleAlertCounts_SystemAlerts(t *testing.T) {
 	}
 }
 
-// TestAlertHandler_Mutation_SystemAlert proves a zero-grant user can
-// acknowledge, restore and annotate a system alert, whilst the same user
-// is still refused on the private connection's alert.
+// TestAlertHandler_Mutation_SystemAlert proves who may act on a system
+// alert: acknowledging and restoring one needs a superuser or a
+// manage_alert_rules holder, bounded by a token's admin scope, whilst
+// saving AI analysis on one is refused to everybody with a 400. It also
+// proves a zero-grant user is still refused on the private connection's
+// alert.
 func TestAlertHandler_Mutation_SystemAlert(t *testing.T) {
 	f := newSystemAlertHandlerFixture(t)
-	call := func(invoke alertMutationInvoker, method, url, body string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(method, url, bytes.NewReader([]byte(body)))
-		req.Header.Set("Content-Type", "application/json")
-		rec := httptest.NewRecorder()
-		invoke(f.handler, rec, f.bob(req))
-		return rec
-	}
 	ack := func(h *AlertHandler, w http.ResponseWriter, r *http.Request) { h.acknowledgeAlert(w, r) }
 	unack := func(h *AlertHandler, w http.ResponseWriter, r *http.Request) { h.unacknowledgeAlert(w, r) }
 	save := func(h *AlertHandler, w http.ResponseWriter, r *http.Request) { h.handleSaveAnalysis(w, r) }
 	sys := strconv.FormatInt(f.systemID, 10)
 
-	requireStatus(t, call(ack, http.MethodPost, "/api/v1/alerts/acknowledge",
-		`{"alert_id": `+sys+`, "message": "seen"}`), http.StatusOK)
-	requireStatus(t, call(unack, http.MethodDelete,
-		"/api/v1/alerts/acknowledge?alert_id="+sys, ""), http.StatusOK)
-	requireStatus(t, call(save, http.MethodPut, "/api/v1/alerts/analysis",
-		`{"alert_id": `+sys+`, "analysis": "provider down"}`), http.StatusOK)
+	holderID := setupUserWithPermission(t, f.store, "rules_admin", auth.PermManageAlertRules)
+	newToken := func(owner string, adminScope []string) int64 {
+		t.Helper()
+		_, token, err := f.store.CreateToken(owner, owner+" token", nil)
+		if err != nil {
+			t.Fatalf("CreateToken: %v", err)
+		}
+		if adminScope != nil {
+			if err := f.store.SetTokenAdminScope(token.ID, adminScope); err != nil {
+				t.Fatalf("SetTokenAdminScope: %v", err)
+			}
+		}
+		return token.ID
+	}
+	grantedToken := newToken("rules_admin", []string{auth.PermManageAlertRules})
+	withoutGrantToken := newToken("rules_admin", []string{auth.PermManageUsers})
+	noAuth := NewAlertHandler(f.handler.datastore, nil, auth.NewRBACChecker(nil))
+
+	tests := []struct {
+		name      string
+		handler   *AlertHandler
+		as        func(*http.Request) *http.Request
+		ackStatus int
+	}{
+		{"superuser", f.handler, withSuperuser, http.StatusOK},
+		{"manage_alert_rules holder", f.handler, func(r *http.Request) *http.Request {
+			return withUsername(withUser(r, holderID), "rules_admin")
+		}, http.StatusOK},
+		{"token scoped to the grant", f.handler, func(r *http.Request) *http.Request {
+			return withToken(r, holderID, grantedToken)
+		}, http.StatusOK},
+		{"token scoped without the grant", f.handler, func(r *http.Request) *http.Request {
+			return withToken(r, holderID, withoutGrantToken)
+		}, http.StatusForbidden},
+		{"plain user", f.handler, f.bob, http.StatusForbidden},
+		{"no-auth mode", noAuth, func(r *http.Request) *http.Request { return r }, http.StatusOK},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			call := func(invoke alertMutationInvoker, method, url, body string) *httptest.ResponseRecorder {
+				req := httptest.NewRequest(method, url, bytes.NewReader([]byte(body)))
+				req.Header.Set("Content-Type", "application/json")
+				rec := httptest.NewRecorder()
+				invoke(tt.handler, rec, tt.as(req))
+				return rec
+			}
+			requireStatus(t, call(ack, http.MethodPost, "/api/v1/alerts/acknowledge",
+				`{"alert_id": `+sys+`, "message": "seen"}`), tt.ackStatus)
+			requireStatus(t, call(unack, http.MethodDelete,
+				"/api/v1/alerts/acknowledge?alert_id="+sys, ""), tt.ackStatus)
+			requireStatus(t, call(save, http.MethodPut, "/api/v1/alerts/analysis",
+				`{"alert_id": `+sys+`, "analysis": "provider down"}`), http.StatusBadRequest)
+		})
+	}
 
 	var analysis *string
+	var status string
 	if err := f.pool.QueryRow(context.Background(),
-		`SELECT ai_analysis FROM alerts WHERE id = $1`, f.systemID).Scan(&analysis); err != nil {
-		t.Fatalf("read analysis: %v", err)
+		`SELECT ai_analysis, status FROM alerts WHERE id = $1`, f.systemID).Scan(&analysis, &status); err != nil {
+		t.Fatalf("read alert: %v", err)
 	}
-	if analysis == nil || *analysis != "provider down" {
-		t.Errorf("analysis = %v", analysis)
+	if analysis != nil {
+		t.Errorf("analysis = %q, want none saved on a system alert", *analysis)
+	}
+	if status != "active" {
+		t.Errorf("status = %q, want active after every acknowledgement was restored", status)
 	}
 
-	conn := strconv.FormatInt(f.connAlert, 10)
-	requireStatus(t, call(ack, http.MethodPost, "/api/v1/alerts/acknowledge",
-		`{"alert_id": `+conn+`}`), http.StatusForbidden)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/alerts/acknowledge",
+		bytes.NewReader([]byte(`{"alert_id": `+strconv.FormatInt(f.connAlert, 10)+`}`)))
+	rec := httptest.NewRecorder()
+	f.handler.acknowledgeAlert(rec, f.bob(req))
+	requireStatus(t, rec, http.StatusForbidden)
 }
 
 // TestAlertHandler_Mutation_SystemAlert_IncompleteToken_403 proves every
@@ -398,7 +448,7 @@ func TestAlertHandler_SystemAlert_DatastoreErrors(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/alerts/acknowledge",
 			bytes.NewReader([]byte(ackBody)))
 		rec := httptest.NewRecorder()
-		f.handler.handleAcknowledge(rec, f.bob(req))
+		f.handler.handleAcknowledge(rec, withSuperuser(req))
 		if rec.Code != want {
 			t.Errorf("acknowledge #%d: status %d, want %d", i+1, rec.Code, want)
 		}
@@ -409,8 +459,9 @@ func TestAlertHandler_SystemAlert_DatastoreErrors(t *testing.T) {
 		t.Fatalf("drop ai_analysis: %v", err)
 	}
 	rec := httptest.NewRecorder()
-	f.handler.handleSaveAnalysis(rec, f.bob(httptest.NewRequest(http.MethodPut,
-		"/api/v1/alerts/analysis", bytes.NewReader([]byte(`{"alert_id": `+sys+`, "analysis": "x"}`)))))
+	conn := strconv.FormatInt(f.connAlert, 10)
+	f.handler.handleSaveAnalysis(rec, withSuperuser(httptest.NewRequest(http.MethodPut,
+		"/api/v1/alerts/analysis", bytes.NewReader([]byte(`{"alert_id": `+conn+`, "analysis": "x"}`)))))
 	requireStatus(t, rec, http.StatusInternalServerError)
 
 	// The list query selects the dropped column, so it fails too.

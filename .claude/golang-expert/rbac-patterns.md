@@ -200,14 +200,23 @@ the old early empty response (so such a caller now reaches the
 datastore). `GetAlertCounts` takes an `includeSystem` bool and reports
 system alerts under `system`, never in `by_server`. An explicit
 `connection_id` or `connection_ids` query parameter always excludes
-system alerts. Mutations (acknowledge, unacknowledge, save analysis)
-go through `AlertHandler.canActOnAlert`, which sends a nil connection
-to `CanSeeSystemAlerts` and anything else to `CanAccessConnection`;
-`GetAlertConnectionID` returns `*int` for this. The
+system alerts. Seeing a system alert and acting on one are separate
+decisions. Acknowledge and unacknowledge go through
+`AlertHandler.canActOnAlert`, which sends a nil connection to
+`RBACChecker.CanManageSystemAlerts` (the same file; it is
+`HasAdminPermission(ctx, PermManageAlertRules)` behind a nil-checker
+guard, so a superuser or a `manage_alert_rules` holder passes, a
+token's admin scope bounds it, and every lookup error denies) and
+anything else to `CanAccessConnection`; `GetAlertConnectionID`
+returns `*int` for this. `handleSaveAnalysis` never saves on a system
+alert: it answers 403 when `CanSeeSystemAlerts` denies and 400
+otherwise, because the refusal concerns the alert, not the caller. No
+MCP tool mutates alerts, so there is no tool-side counterpart. The
 `get_alert_history` MCP tool uses the same gate. The timeline count
 queries in `timeline_queries.go` add `connection_id IS NOT NULL` and
-leave system alerts out. The tests are `system_alert_handlers_test.go` in `internal/api`
-and `system_alerts_integration_test.go` in `internal/database`.
+leave system alerts out. The tests are `system_alerts_test.go` in
+`internal/auth`, `system_alert_handlers_test.go` in `internal/api` and
+`system_alerts_integration_test.go` in `internal/database`.
 
 ## Test Patterns
 

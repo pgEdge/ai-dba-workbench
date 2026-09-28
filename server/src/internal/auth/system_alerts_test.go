@@ -84,3 +84,93 @@ func TestCanSeeSystemAlerts_TokenScopeErrorDenies(t *testing.T) {
 		t.Error("CanSeeSystemAlerts allowed a token whose scope read failed")
 	}
 }
+
+// TestCanManageSystemAlerts covers who may acknowledge a system alert:
+// a superuser or a manage_alert_rules holder, with a token bounded by
+// its own admin scope, and nobody else.
+func TestCanManageSystemAlerts(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	for _, name := range []string{"rulesadmin", "plainuser"} {
+		if err := store.CreateUser(name, "Password1234", "", "", ""); err != nil {
+			t.Fatalf("CreateUser(%s): %v", name, err)
+		}
+	}
+	holderID, err := store.GetUserID("rulesadmin")
+	if err != nil {
+		t.Fatalf("GetUserID: %v", err)
+	}
+	plainID, err := store.GetUserID("plainuser")
+	if err != nil {
+		t.Fatalf("GetUserID: %v", err)
+	}
+	groupID, err := store.CreateGroup("alert-rule-admins", "")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	if err := store.AddUserToGroup(groupID, holderID); err != nil {
+		t.Fatalf("AddUserToGroup: %v", err)
+	}
+	if err := store.GrantAdminPermission(groupID, PermManageAlertRules); err != nil {
+		t.Fatalf("GrantAdminPermission: %v", err)
+	}
+
+	newToken := func(owner string, adminScope []string) int64 {
+		t.Helper()
+		_, token, tokErr := store.CreateToken(owner, owner+" token", nil)
+		if tokErr != nil {
+			t.Fatalf("CreateToken: %v", tokErr)
+		}
+		if adminScope != nil {
+			if scopeErr := store.SetTokenAdminScope(token.ID, adminScope); scopeErr != nil {
+				t.Fatalf("SetTokenAdminScope: %v", scopeErr)
+			}
+		}
+		return token.ID
+	}
+	grantedToken := newToken("rulesadmin", []string{PermManageAlertRules})
+	withoutGrantToken := newToken("rulesadmin", []string{PermManageUsers})
+	plainToken := newToken("plainuser", nil)
+
+	checker := NewRBACChecker(store)
+	tests := []struct {
+		name    string
+		checker *RBACChecker
+		ctx     context.Context
+		want    bool
+	}{
+		{"nil checker denies", nil, systemAlertCtx(true, false, 1, 0), false},
+		{"no auth store allows", NewRBACChecker(nil), context.Background(), true},
+		{"token context without token ID denies", checker, systemAlertCtx(true, true, holderID, 0), false},
+		{"superuser allows", checker, systemAlertCtx(true, false, 1, 0), true},
+		{"no user ID denies", checker, systemAlertCtx(false, false, 0, 0), false},
+		{"manage_alert_rules holder allows", checker, systemAlertCtx(false, false, holderID, 0), true},
+		{"plain user denies", checker, systemAlertCtx(false, false, plainID, 0), false},
+		{"token scoped to the grant allows", checker, systemAlertCtx(false, true, holderID, grantedToken), true},
+		{"token scoped without the grant denies", checker, systemAlertCtx(false, true, holderID, withoutGrantToken), false},
+		{"plain user token denies", checker, systemAlertCtx(false, true, plainID, plainToken), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.checker.CanManageSystemAlerts(tt.ctx); got != tt.want {
+				t.Errorf("CanManageSystemAlerts = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestCanManageSystemAlerts_LookupErrorDenies proves a permission lookup
+// that fails is refused rather than let through.
+func TestCanManageSystemAlerts_LookupErrorDenies(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	checker := NewRBACChecker(store)
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if checker.CanManageSystemAlerts(systemAlertCtx(false, false, 1, 0)) {
+		t.Error("CanManageSystemAlerts allowed a caller whose permissions could not be read")
+	}
+}

@@ -29,7 +29,11 @@ project adheres to
   18 allows; every user and API token with alert access sees
   them, the REST API reports a `null` `connection_id` for
   them, and `GET /api/v1/alerts/counts` gains a `system`
-  total. The web client lists system alerts on the estate
+  total. Acknowledging or restoring a system alert requires
+  a superuser or the `manage_alert_rules` admin permission,
+  bounded by an API token's admin scope, and the server
+  refuses to save AI analysis on a system alert with a 400
+  response. The web client lists system alerts on the estate
   view with an "AI DBA Workbench" source label and a
   "System" type chip in place of a server name, offers no AI
   analysis for them, since they concern no monitored

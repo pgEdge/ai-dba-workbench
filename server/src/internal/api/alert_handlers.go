@@ -275,11 +275,13 @@ func (h *AlertHandler) handleAlertCounts(w http.ResponseWriter, r *http.Request)
 
 // canActOnAlert reports whether the caller may acknowledge, restore or
 // annotate an alert on the given connection. A nil connection is a
-// system alert, which CanSeeSystemAlerts governs; any other alert needs
-// access to its connection.
+// system alert, which describes the whole estate, so only a superuser or
+// a manage_alert_rules holder may act on one (CanManageSystemAlerts);
+// seeing it does not suffice. Any other alert needs access to its
+// connection.
 func (h *AlertHandler) canActOnAlert(ctx context.Context, connID *int) bool {
 	if connID == nil {
-		return h.rbacChecker.CanSeeSystemAlerts(ctx)
+		return h.rbacChecker.CanManageSystemAlerts(ctx)
 	}
 	canAccess, _ := h.rbacChecker.CanAccessConnection(ctx, *connID)
 	return canAccess
@@ -466,6 +468,19 @@ func (h *AlertHandler) handleSaveAnalysis(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		log.Printf("[ERROR] Failed to look up alert connection: %v", err)
 		RespondError(w, http.StatusNotFound, "Alert not found")
+		return
+	}
+	// AI analysis explains a metric on a monitored connection, and a
+	// system alert has neither, so saving one is refused for everybody.
+	// The refusal is about the alert rather than the caller, hence 400
+	// rather than 403; a caller who may not see system alerts at all
+	// still gets 403 first, as for any alert beyond their reach.
+	if connID == nil {
+		if !h.rbacChecker.CanSeeSystemAlerts(r.Context()) {
+			RespondError(w, http.StatusForbidden, "Access denied")
+			return
+		}
+		RespondError(w, http.StatusBadRequest, "AI analysis cannot be saved on a system alert")
 		return
 	}
 	if !h.canActOnAlert(r.Context(), connID) {

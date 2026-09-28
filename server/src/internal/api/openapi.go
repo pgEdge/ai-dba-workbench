@@ -159,13 +159,19 @@ func buildSecuritySchemes() map[string]*OpenAPISecurityScheme {
 				"to the token's connection, MCP and admin scopes, even " +
 				"when its owner is a superuser, so a superuser-owned " +
 				"token can receive 403 where its owner's session would " +
-				"succeed. Some grants still reach beyond the connection " +
-				"scope: the query_datastore tool runs read-only SQL over " +
-				"the whole datastore, including every connection's " +
-				"stored credentials; manage_token_scopes can create an " +
-				"unscoped token for any owner; manage_users can create a " +
-				"superuser; and manage_permissions can grant any group " +
-				"access to any connection. A token whose admin scope names specific " +
+				"succeed. A token can never grant a user, a group or " +
+				"another token access to a connection its own " +
+				"connection scope does not cover, so creating a " +
+				"superuser, granting a group connection access or an " +
+				"admin permission, adding a group member, and setting " +
+				"another token's scope are refused with 403 when they " +
+				"would reach beyond it. A read entry allows alert " +
+				"acknowledgement and analysis, and blackout management, " +
+				"on that connection. The query_datastore tool still runs " +
+				"read-only SQL over the whole datastore, including every " +
+				"connection's stored credentials; issue #566 tracks " +
+				"limiting it to the connections the caller can read. " +
+				"A token whose admin scope names specific " +
 				"permissions may exercise those permissions, but cannot " +
 				"pass a gate that requires superuser status outright, " +
 				"such as the audit log. A token with no scope of a given " +
@@ -4106,7 +4112,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					},
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_users permission, and superuser privileges to send is_superuser"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_users permission, and superuser privileges to send is_superuser; also refused when the API token's connection scope does not cover every connection and is_superuser is true"),
 				},
 			},
 		},
@@ -4134,7 +4140,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					},
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_users permission, and superuser privileges to send is_superuser or to update a superuser"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_users permission, and superuser privileges to send is_superuser or to update a superuser; also refused when the API token's connection scope does not cover the access being granted (setting is_superuser, or setting the password of or re-enabling a user who reaches beyond the scope)"),
 					"404": jsonResponse("ErrorResponse", "User not found"),
 				},
 			},
@@ -4269,7 +4275,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 				Responses: map[string]OpenAPIResponse{
 					"204": {Description: "Group deleted"},
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_groups permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_groups permission, or the API token's connection scope does not cover a connection the group holds a grant on"),
 				},
 			},
 		},
@@ -4287,7 +4293,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"204": {Description: "Member added"},
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_groups permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_groups permission, or the API token's connection scope does not cover the access the group confers"),
 				},
 			},
 		},
@@ -4409,7 +4415,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"200": {Description: "Privileges updated"},
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_permissions permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_permissions permission, or the API token's connection scope does not cover the connection and access level being granted or revoked"),
 				},
 			},
 		},
@@ -4446,7 +4452,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"200": {Description: "Permissions updated"},
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_permissions permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_permissions permission, or the API token's connection scope does not cover every connection"),
 				},
 			},
 		},
@@ -4488,7 +4494,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"201": jsonResponse("TokenCreateResponse", "Token created with raw value"),
 					"400": jsonResponse("ErrorResponse", "Invalid request body or token name"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_token_scopes permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_token_scopes permission, or the API token's connection scope does not cover the new token owner's access"),
 				},
 			},
 		},
@@ -4535,7 +4541,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"204": {Description: "Scope updated"},
 					"400": jsonResponse("ErrorResponse", "Invalid request, including an empty array for any scope kind"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_token_scopes permission, and refuses a change to the caller's own token"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_token_scopes permission, refuses a change to the caller's own token, and refuses a scope that would reach beyond the API token's connection scope"),
 				},
 			},
 			Delete: &OpenAPIOperation{
@@ -4548,7 +4554,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 				Responses: map[string]OpenAPIResponse{
 					"204": {Description: "Scope cleared"},
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_token_scopes permission, and refuses a change to the caller's own token"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_token_scopes permission, refuses a change to the caller's own token, and refuses clearing a scope when the token owner's access reaches beyond the API token's connection scope"),
 				},
 			},
 		},

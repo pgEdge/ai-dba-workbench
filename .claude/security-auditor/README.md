@@ -105,14 +105,18 @@ moved.
   The cluster-group create, update and delete routes accept session
   tokens only (`getUserInfoCompat` answers 401 to an API token), and
   carry the same all-connections gate in case that ever changes.
-- Grants that still reach beyond a token's connection scope, and are
-  documented as such in `tokens.md`: `query_datastore` (read-only SQL
-  over the whole datastore, `connections` credentials included),
-  `manage_token_scopes` (can mint an unscoped token for any owner,
-  #522), `manage_users` (can create a superuser, #497) and
-  `manage_permissions` (can grant any group access to any connection).
-  A `read` connection entry allows acknowledging, unacknowledging and
-  saving an analysis of an alert, as `read` access does for a user.
+- Grants are bounded by the acting token's connection scope
+  (`internal/auth/grant_scope.go`, `internal/api/rbac_grant_scope.go`):
+  group connection grants and revokes, group admin permissions, group
+  membership, group deletion, `is_superuser`, password set and
+  re-enable, token creation for an owner, and another token's scope
+  change or clear. The one documented exception left is
+  `query_datastore` (read-only SQL over the whole datastore,
+  `connections` credentials included), which #566 tracks. A `read`
+  connection entry allows acknowledging, unacknowledging and saving
+  an analysis of an alert, and managing blackouts and blackout
+  schedules on that server; the user ruled this intended, so do not
+  report it as a finding.
 - A blanket superuser gate is the exception, because it names nothing
   to intersect against: `RBACChecker.IsSuperuser` returns false for a
   token whose admin scope has been narrowed, which is what

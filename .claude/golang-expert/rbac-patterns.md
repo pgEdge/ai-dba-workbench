@@ -440,7 +440,8 @@ A token also may not rewrite the scope that bounds it:
 refuses a PUT or DELETE on the acting token's own scope, since
 `manage_token_scopes` would otherwise be enough to widen the token's
 own record and undo every gate above. Managing another token's scope is
-unaffected, and the remaining policy gaps are noted at the guard.
+bounded by the grant checks described below, and the remaining policy
+gaps are noted at the guard.
 
 A handler that authorises a connection by ownership or an admin
 permission rather than `CanAccessConnection` (the Variant 2 gate on
@@ -483,10 +484,45 @@ API tokens are ever admitted. A write addressed by id (blackout or
 schedule update and delete) checks the stored record, and a schedule
 update checks the body as well, so a token cannot move a record into
 or out of its scope; `requireBlackoutInTokenScope` skips the database
-read when the token's scope covers everything. A new handler of this
-kind must call one of these helpers, and
-`token_scope_targets_test.go` and `token_scope_blackout_test.go` hold
-the table-driven cases to extend.
+read when the token's scope covers everything. Blackouts and blackout
+schedules are the exception to `read_write`: they go through
+`requireBlackoutTargetInTokenScope` / `blackoutTargetInTokenScope`,
+which use `RBACChecker.ConnectionReadableInTokenScope`, so a `read`
+entry admits a server blackout and the wildcard at either level admits
+a wider one. The user ruled (28-09-2026) that `read` means read-only
+access to the monitored server, and blackouts, alert acknowledgement
+and alert analysis are Workbench metadata; do not tighten these back
+to `read_write`. A new handler of this kind must call one of these
+helpers, and `token_scope_targets_test.go` and
+`token_scope_blackout_test.go` hold the table-driven cases to extend.
+
+Administrative grants are bounded by the acting token's connection
+scope too: a token may never give a user, a group or another token
+access to a connection its own scope does not cover. The checks live
+in `internal/auth/grant_scope.go` (`CanGrantConnectionInTokenScope`,
+`UserWithinTokenScope`, `GroupWithinTokenScope`,
+`ScopedConnectionsInTokenScope`) and the handler helpers in
+`internal/api/rbac_grant_scope.go`; each refusal goes through
+`requireGrantInTokenScope`, which records the denial and answers 403
+with `grantOutOfTokenScope`. Gated today: a group connection grant
+(level must be within the scope entry) and revoke, any group admin
+permission grant, deleting a group holding an out-of-scope grant,
+adding a member to a group whose effective access (ancestors
+included) exceeds the scope or holds any admin permission, `is_superuser`
+true on user create or update, a password set or re-enable on a user
+who reaches beyond the scope, creating a token for such an owner, and
+setting or clearing another token's scope (an omitted `connections`
+is judged on the stored scope). Admin permissions and superuser status
+need `AllConnectionsInTokenScope`, since they act estate-wide; a
+lookup failure refuses. Revokes and group deletes are gated because a
+connection left with no group grant becomes unrestricted, opening a
+shared connection to every user. `UserWithinTokenScope` does not count
+privately owned (unshared) connections, because the RBAC handler has
+no datastore. The regression tests are in
+`internal/api/rbac_grant_scope_test.go`; each gate fails its test when
+reverted. PR #553 also edits the `is_superuser` handling in
+`createUser` and `updateUser`, so reconcile that gate when either
+merges.
 
 The scope PUT refuses an empty array for any kind with 400
 (`emptyScopeKind` in `rbac_token_handlers.go`), because an empty kind

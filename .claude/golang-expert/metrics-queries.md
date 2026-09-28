@@ -1064,8 +1064,9 @@ that follow from that, most learned the hard way in #406 and #407:
   plus descending-`ROW_NUMBER` form sorted it twice and measured about a
   third slower on 24,000 rows in the window.
 
-- A `historicalSQL` must apply every row filter its `latestSQL` applies,
-  because Tier 1 scores the live value against a baseline built from
+- A `historicalSQL` must apply every non-time row filter its
+  `latestSQL` applies (it keeps its own lookback window rather than
+  copying the `latestSQL` freshness cutoff), because Tier 1 scores the live value against a baseline built from
   the historical rows, and a baseline computed over a different row set
   is a different statistic. Every `pg_stat_activity` entry filters
   `backend_type = 'client backend'` in both queries; the historical

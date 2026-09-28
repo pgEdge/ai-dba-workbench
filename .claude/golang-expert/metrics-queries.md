@@ -1642,14 +1642,33 @@ careful, because the inconsistency reads as intentional. Much of
 `perf_summary_handlers.go` still logs raw errors with `%v` and is due a
 separate sweep.
 
-### Query errors are "no data", not 500s
+### Only a missing table is "no data"; other query errors are 500s
 
-The metrics endpoints deliberately answer 200 with an empty payload when
-their query fails, because the common cause is a probe that has never
-run against the connection, and a dashboard panel showing "no data"
-beats one showing an error. Follow `handleTopQueries` and
-`handleConnectionGroups`: log the error at DEBUG through
-`logging.SanitizeForLog` and return the empty shape.
+A metrics endpoint answers 200 with its empty shape only when the query
+fails with `42P01` (`isUndefinedTableError`), which is a workbench whose
+collector has never created its schema; log that at DEBUG. Every other
+failure, a statement timeout on a wide window above all, logs at
+`[ERROR]` through `logging.SanitizeForLog` and returns a 500 with a
+generic message, because an empty success hides a persistent failure as
+a quiet database. `handleQueryStats`, `handleTopQueries`
+(`respondTopQueriesError`) and `handleDatabaseSummaries`
+(`respondDatabaseSummariesError`, issue #519) follow this;
+`handleConnectionGroups` and the performance-summary helpers
+(`queryCacheHit`, `queryTransactions` and the rest) still log at DEBUG
+and return empty.
+
+Where one handler runs several statements in one transaction, as
+`collectDatabaseSummaries` does, stop at the first error: a failed
+statement aborts the transaction, so every later one fails with `25P02`,
+and a `42P01` from any of them means the schema is absent, so answer the
+whole request with the empty shape rather than a partial one.
+
+Treat `rows.Err()` as a failure too, since an execution-time error such
+as a statement timeout arrives there rather than from `Query`. pgx v5
+also closes the result set on a `rows.Scan` error, so `continue` after a
+scan error does not skip the row: it ends the loop, and the rows after it
+are lost. Scan nullable columns through pointers and skip NULL rows
+explicitly, and return a genuine scan error (a type mismatch).
 
 ### Package-level test-database interference
 
@@ -1724,3 +1743,7 @@ run.
   its evaluator `evaluateProbeUnavailable` and its resolution check
   `checkProbeUnavailableAlertResolved`; no new state, because
   `probe_availability.last_collected` is sticky.
+- #519: `database-summaries` sub-query failures reported as a 500
+  (`collectDatabaseSummaries`, `respondDatabaseSummariesError`), with
+  `42P01` kept as an empty success and NULL-tolerant scans in the five
+  helpers.

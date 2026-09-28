@@ -125,9 +125,36 @@ func runQueryDatabaseCacheHit(
 			CacheHitRatio: CacheHitRatioData{TimeSeries: []CacheHitRatioPoint{}},
 		}
 	}
-	h.queryDatabaseCacheHitTimeSeries(ctx, tx, connID, cacheHitBase,
-		cacheHitBase.Add(time.Hour), "60 seconds", dbMap)
+	if err := h.queryDatabaseCacheHitTimeSeries(ctx, tx, connID, cacheHitBase,
+		cacheHitBase.Add(time.Hour), "60 seconds", dbMap); err != nil {
+		t.Fatalf("queryDatabaseCacheHitTimeSeries failed: %v", err)
+	}
 	return dbMap
+}
+
+// runQueryDatabaseCacheHitErr is runQueryDatabaseCacheHit for the failure
+// cases: it returns the helper's error alongside the summaries instead of
+// failing the test on it.
+func runQueryDatabaseCacheHitErr(
+	t *testing.T,
+	h *PerfSummaryHandler,
+	pool *pgxpool.Pool,
+	connID int,
+	datname string,
+) (*DatabaseSummary, error) {
+	t.Helper()
+	ctx := context.Background()
+	tx := mustTx(t, pool)
+	defer tx.Rollback(ctx) //nolint:errcheck // rollback after read is a no-op
+
+	db := &DatabaseSummary{
+		DatabaseName:  datname,
+		CacheHitRatio: CacheHitRatioData{TimeSeries: []CacheHitRatioPoint{}},
+	}
+	err := h.queryDatabaseCacheHitTimeSeries(ctx, tx, connID, cacheHitBase,
+		cacheHitBase.Add(time.Hour), "60 seconds",
+		map[string]*DatabaseSummary{datname: db})
+	return db, err
 }
 
 // fmtFloatPtr renders a *float64 for test failure messages.
@@ -690,7 +717,9 @@ func TestQueryCacheHit_ExecutionErrorReturnsNoData(t *testing.T) {
 }
 
 // TestDatabaseCacheHit_ExecutionErrorLeavesEntriesEmpty is the
-// per-database counterpart of the execution-error test.
+// per-database counterpart of the execution-error test. Unlike
+// queryCacheHit, this helper returns the failure, so that the
+// database-summaries endpoint can report it (issue #519).
 func TestDatabaseCacheHit_ExecutionErrorLeavesEntriesEmpty(t *testing.T) {
 	h, pool, cleanup := newDatabaseSummariesTestHandler(t)
 	defer cleanup()
@@ -699,8 +728,11 @@ func TestDatabaseCacheHit_ExecutionErrorLeavesEntriesEmpty(t *testing.T) {
 	restore := installFailingCacheHitView(t, pool, connID)
 	defer restore()
 
-	db := runQueryDatabaseCacheHit(t, h, pool, connID, "db")["db"]
+	db, err := runQueryDatabaseCacheHitErr(t, h, pool, connID, "db")
 
+	if err == nil || isUndefinedTableError(err) {
+		t.Errorf("err = %v, want a non-undefined_table error", err)
+	}
 	if len(db.CacheHitRatio.TimeSeries) != 0 {
 		t.Errorf("TimeSeries = %#v, want empty", db.CacheHitRatio.TimeSeries)
 	}
@@ -719,8 +751,11 @@ func TestDatabaseCacheHit_QueryError(t *testing.T) {
 		t.Fatalf("teardown for query-error test failed: %v", err)
 	}
 
-	db := runQueryDatabaseCacheHit(t, h, pool, 520, "db")["db"]
+	db, err := runQueryDatabaseCacheHitErr(t, h, pool, 520, "db")
 
+	if !isUndefinedTableError(err) {
+		t.Errorf("err = %v, want an undefined_table error", err)
+	}
 	if len(db.CacheHitRatio.TimeSeries) != 0 {
 		t.Errorf("TimeSeries = %#v, want empty", db.CacheHitRatio.TimeSeries)
 	}

@@ -214,3 +214,63 @@ func TestStartRateLimitIsReturnedByASuccessfulLogin(t *testing.T) {
 		t.Errorf("a successful login did not return the start allowance: status %d", code)
 	}
 }
+
+// TestASuccessfulLoginRefundsExactlyOneUnitOnEachLimiter pins the refund
+// as one unit rather than the whole allowance. Both limiters are brought
+// to within one unit of their ceiling, counting the login's own start and
+// callback, so that a login which returns exactly what it spent leaves
+// room for exactly one further request on each before a 429. Swapping
+// Refund for Reset in completeLogin empties the history instead, and the
+// request that follows the one spare unit is then let through.
+func TestASuccessfulLoginRefundsExactlyOneUnitOnEachLimiter(t *testing.T) {
+	_, env := newTestOIDCHandler(t)
+	const client = "192.0.2.35:4000"
+
+	// The callback limiter: max-1 spent before the login, which spends
+	// the last unit and then hands one back.
+	for attempt := range callbackRateMaxAttempts - 1 {
+		if code := env.sendFailingExchange(t, client).Code; code == http.StatusTooManyRequests {
+			t.Fatalf("callback %d was rate limited before the allowance ran out", attempt+1)
+		}
+	}
+
+	// The start limiter: the login's own start is the last unit, so the
+	// address has spent the whole allowance by the time it calls back.
+	for attempt := range startRateMaxAttempts - 1 {
+		if code := env.startFrom(client).Code; code != http.StatusFound {
+			t.Fatalf("start %d status = %d before the allowance ran out", attempt+1, code)
+		}
+	}
+	rec := env.startFrom(client)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("the last start within the allowance got status %d", rec.Code)
+	}
+	cookie := findCookie(rec, oidc.StateCookieName)
+	state := env.openState(t, cookie)
+	env.idp.SetNextIDToken(env.idp.MintIDToken(t, map[string]any{
+		"sub": "subject-1", "email": testUsername, "nonce": state.Nonce,
+	}))
+	login := env.callbackFrom(client, cookie, state.State, "authorization-code")
+	if login.Code != http.StatusFound || findCookie(login, SessionCookieName) == nil {
+		t.Fatalf("the login did not succeed: status %d", login.Code)
+	}
+
+	// Exactly one more start, then a 429.
+	if code := env.startFrom(client).Code; code != http.StatusFound {
+		t.Fatalf("the start refunded by the login got status %d, want %d",
+			code, http.StatusFound)
+	}
+	if code := env.startFrom(client).Code; code != http.StatusTooManyRequests {
+		t.Errorf("the start after the refunded one got status %d, want %d: the login "+
+			"returned more than the one unit it spent", code, http.StatusTooManyRequests)
+	}
+
+	// Exactly one more callback, then a 429.
+	if code := env.sendFailingExchange(t, client).Code; code == http.StatusTooManyRequests {
+		t.Fatal("the callback refunded by the login was rate limited")
+	}
+	if code := env.sendFailingExchange(t, client).Code; code != http.StatusTooManyRequests {
+		t.Errorf("the callback after the refunded one got status %d, want %d: the login "+
+			"returned more than the one unit it spent", code, http.StatusTooManyRequests)
+	}
+}

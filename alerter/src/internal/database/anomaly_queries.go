@@ -336,7 +336,7 @@ func (d *Datastore) GetAcknowledgedAnomalyAlerts(ctx context.Context, intervalSe
 		    SELECT message, false_positive, acknowledged_by, acknowledged_at
 		    FROM alert_acknowledgments
 		    WHERE alert_id = a.id
-		    ORDER BY acknowledged_at DESC
+		    ORDER BY acknowledged_at DESC, id DESC
 		    LIMIT 1
 		) ack ON true
 		WHERE a.status = 'acknowledged' AND a.alert_type = 'anomaly'
@@ -380,7 +380,7 @@ func (d *Datastore) GetAcknowledgmentHistoryForMetric(ctx context.Context, metri
 		JOIN alert_acknowledgments ack ON ack.alert_id = a.id
 		WHERE a.metric_name = $1 AND a.connection_id = $2
 		  AND a.id != $3 AND a.alert_type = 'anomaly'
-		ORDER BY ack.acknowledged_at DESC
+		ORDER BY ack.acknowledged_at DESC, ack.id DESC
 		LIMIT $4
 	`, metricName, connectionID, excludeAlertID, limit)
 	if err != nil {

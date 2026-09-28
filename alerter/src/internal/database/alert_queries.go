@@ -368,7 +368,7 @@ func (d *Datastore) GetAlertsByCluster(ctx context.Context, connectionID int) ([
 		)
 		  AND connection_id != $1
 		  AND status IN ('active', 'acknowledged')
-		ORDER BY triggered_at DESC
+		ORDER BY triggered_at DESC, id DESC
 	`, connectionID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get alerts by cluster: %w", err)
@@ -401,7 +401,7 @@ func (d *Datastore) GetAlertsByConnection(ctx context.Context, connectionID int)
 		       cleared_at, last_updated, anomaly_score, anomaly_details
 		FROM alerts
 		WHERE connection_id = $1 AND status IN ('active', 'acknowledged')
-		ORDER BY triggered_at DESC
+		ORDER BY triggered_at DESC, id DESC
 	`, connectionID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get alerts by connection: %w", err)

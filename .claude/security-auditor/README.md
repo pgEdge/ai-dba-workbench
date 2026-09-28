@@ -61,15 +61,19 @@ moved.
   so a stopped collector, a stalled probe or a disabled one leaves the
   alert active (issue #407).
 - Visibility is per user: connections are scoped to their owner or to
-  groups the user belongs to. The REST handlers do not hide existence:
-  a caller without access to a connection gets 403, and several of them
-  echo the requested connection ID in the message (see
+  groups the user belongs to. Connection endpoints mostly do not hide
+  existence: a caller without access to a connection gets 403, and
+  several of them echo the requested connection ID in the message (see
   `handleTopQueries` and its neighbours in
   `internal/api/perf_summary_handlers.go`, and `getConnection` in
-  `internal/api/connection_handlers.go`). 404 is reserved for resources
-  that genuinely do not exist. Judge any REST enumeration concern
-  against that convention rather than assuming a 404-for-everything
-  model.
+  `internal/api/connection_handlers.go`). The exceptions answer 404 for
+  a record the caller cannot see, as for one that does not exist:
+  clusters and cluster groups whose members the caller cannot see, the
+  target cluster of `PUT /api/v1/connections/{id}/cluster` (a missing
+  cluster id answers 404 too, not 500 from the foreign key), and
+  blackouts and blackout schedules outside a token's connection scope.
+  Judge an enumeration concern against the convention of the endpoint
+  in question rather than assuming either model throughout.
 - The MCP tools that go through `resolveAccessibleConnection` in
   `server/src/internal/tools/connection_access.go` (`get_alert_history`,
   `get_blackouts`, `get_metric_baselines` and `get_timeline_events`) do
@@ -93,8 +97,22 @@ moved.
   else. A scope kind the token leaves empty, or scopes with the
   wildcard, is unrestricted on that surface, and a narrowed scope of
   one kind never narrows another.
-- Container writes (cluster groups, clusters and relationships) need
-  every connection in the token's scope.
+- Creating a cluster (`POST /api/v1/clusters`,
+  `POST /api/v1/cluster-groups/{id}/clusters`), and changing a
+  cluster's definition or relationships, need every connection in the
+  token's scope; adding a server to or removing one from a cluster, or
+  moving it between clusters, needs that connection at `read_write`.
+  The cluster-group create, update and delete routes accept session
+  tokens only (`getUserInfoCompat` answers 401 to an API token), and
+  carry the same all-connections gate in case that ever changes.
+- Grants that still reach beyond a token's connection scope, and are
+  documented as such in `tokens.md`: `query_datastore` (read-only SQL
+  over the whole datastore, `connections` credentials included),
+  `manage_token_scopes` (can mint an unscoped token for any owner,
+  #522), `manage_users` (can create a superuser, #497) and
+  `manage_permissions` (can grant any group access to any connection).
+  A `read` connection entry allows acknowledging, unacknowledging and
+  saving an analysis of an alert, as `read` access does for a user.
 - A blanket superuser gate is the exception, because it names nothing
   to intersect against: `RBACChecker.IsSuperuser` returns false for a
   token whose admin scope has been narrowed, which is what

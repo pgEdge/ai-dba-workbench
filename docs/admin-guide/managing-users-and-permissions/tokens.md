@@ -53,17 +53,29 @@ admin permission. A token may change one of these on a single server, or add
 that server to a cluster, remove it from one or move it between clusters, only
 when that connection is in its scope with `read_write` access; a change that
 applies to a cluster, a group or the whole estate, that alters an alert rule, a
-global probe configuration or a notification channel, or that alters a
-cluster's definition or relationships, needs a connection scope that covers
-every connection.
+global probe configuration or a notification channel, that creates a cluster
+or a cluster group, or that alters a cluster's definition or relationships,
+needs a connection scope that covers every connection.
 
-Two routes still reach beyond a token's connection scope. A token whose admin
-scope includes `manage_token_scopes` can create a token for any owner through
-`POST /api/v1/rbac/tokens`, and the new token carries no scope until one is
-set; issue #522 tracks this. The `query_datastore` MCP tool reads the metrics
-that the datastore holds for every connection. A token that must stay within
-its connections should hold neither `manage_token_scopes` nor
-`query_datastore`.
+Some admin permissions, and one MCP tool, reach beyond a token's connection
+scope, so a token that must stay within its connections should hold none of
+them:
+
+- `manage_token_scopes` lets a token create a token for any owner through
+  `POST /api/v1/rbac/tokens`, and the new token carries no scope until one is
+  set; issue #522 tracks this.
+- `manage_users` lets a token create a superuser, or make an existing user one;
+  issue #497 tracks this.
+- `manage_permissions` lets a token grant any group access to any connection,
+  `read_write` included, through
+  `POST /api/v1/rbac/groups/{id}/privileges/connections`.
+- The `query_datastore` MCP tool runs read-only SQL over the whole datastore,
+  including the `connections` table, so it can read every connection's host,
+  username and encrypted credentials as well as every connection's metrics.
+
+A `read` entry in the connection scope still allows a token to acknowledge or
+unacknowledge an alert on that connection and to save an analysis of it, in
+the same way that `read` access allows a user to do so.
 
 The MCP privilege scope applies to public MCP tools as well, so a token whose
 MCP scope names specific tools can call only those tools, apart from

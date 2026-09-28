@@ -78,6 +78,27 @@ type AnomalyConfig struct {
 	Tier2        Tier2Config        `yaml:"tier2"`
 	Tier3        Tier3Config        `yaml:"tier3"`
 	Reevaluation ReevaluationConfig `yaml:"reevaluation"`
+
+	// ProviderHealth controls the system alert raised when the
+	// embedding or reasoning provider keeps failing.
+	ProviderHealth ProviderHealthConfig `yaml:"provider_health"`
+}
+
+// DefaultProviderFailureThreshold is the default number of consecutive
+// failed calls to an LLM provider, from one tier, before the alerter
+// raises a system alert about it.
+const DefaultProviderFailureThreshold = 3
+
+// ProviderHealthConfig holds the settings for the system alert the
+// alerter raises when the Tier 2 embedding, Tier 3 classification or
+// re-evaluation calls to an LLM provider keep failing. See GitHub issue
+// #582.
+type ProviderHealthConfig struct {
+	// FailureThreshold is the number of consecutive failed calls from
+	// one tier to one provider that opens the alert. The first
+	// successful call clears it. A failed startup health check opens
+	// the alert at once, whatever the threshold. Must be at least 1.
+	FailureThreshold int `yaml:"failure_threshold"`
 }
 
 // Tier1Config holds Tier 1 statistical detection settings
@@ -399,6 +420,9 @@ func NewConfig() *Config {
 				TimeoutSeconds:  30,
 				MaxPerCycle:     10,
 			},
+			ProviderHealth: ProviderHealthConfig{
+				FailureThreshold: DefaultProviderFailureThreshold,
+			},
 		},
 		Baselines: BaselineConfig{
 			RefreshIntervalSeconds: 3600,
@@ -568,6 +592,9 @@ func (c *Config) Validate() error {
 		c.Anomaly.Tier1.Warmup.Daily.MinSamples < 0 ||
 		c.Anomaly.Tier1.Warmup.Daily.MinSpanHours < 0 {
 		return fmt.Errorf("anomaly.tier1.warmup thresholds must be >= 0")
+	}
+	if c.Anomaly.ProviderHealth.FailureThreshold < 1 {
+		return fmt.Errorf("anomaly.provider_health.failure_threshold must be at least 1")
 	}
 	return nil
 }

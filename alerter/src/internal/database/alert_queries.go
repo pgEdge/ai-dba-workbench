@@ -21,13 +21,20 @@ import (
 // scanAlert scans all 21 fields from a query row into an Alert struct.
 // This helper consolidates the duplicated scan pattern across alert queries.
 func scanAlert(scanner interface{ Scan(dest ...any) error }, alert *Alert) error {
-	return scanner.Scan(
-		&alert.ID, &alert.AlertType, &alert.RuleID, &alert.ConnectionID,
+	// connection_id is NULL for a system alert, which Alert represents
+	// as 0; see connectionIDFromNullable.
+	var connectionID *int
+	if err := scanner.Scan(
+		&alert.ID, &alert.AlertType, &alert.RuleID, &connectionID,
 		&alert.DatabaseName, &alert.ObjectName, &alert.ProbeName, &alert.MetricName,
 		&alert.MetricValue, &alert.ThresholdValue, &alert.Operator, &alert.Severity,
 		&alert.Title, &alert.Description, &alert.CorrelationID, &alert.Status,
 		&alert.TriggeredAt, &alert.ClearedAt, &alert.LastUpdated, &alert.AnomalyScore,
-		&alert.AnomalyDetails)
+		&alert.AnomalyDetails); err != nil {
+		return err
+	}
+	alert.ConnectionID = connectionIDFromNullable(connectionID)
+	return nil
 }
 
 // GetActiveThresholdAlert checks if there's an existing active alert for a rule/connection
@@ -237,7 +244,7 @@ func (d *Datastore) CreateAlert(ctx context.Context, alert *Alert) error {
 			anomaly_score, anomaly_details
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
 		RETURNING id
-	`, alert.AlertType, alert.RuleID, alert.ConnectionID, alert.DatabaseName,
+	`, alert.AlertType, alert.RuleID, nullableConnectionID(alert.ConnectionID), alert.DatabaseName,
 		alert.ObjectName, alert.ProbeName, alert.MetricName, alert.MetricValue,
 		alert.ThresholdValue, alert.Operator, alert.Severity, alert.Title,
 		alert.Description, alert.CorrelationID, alert.Status, alert.TriggeredAt,

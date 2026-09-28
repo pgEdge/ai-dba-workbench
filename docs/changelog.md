@@ -1843,10 +1843,19 @@ project adheres to
   strings, dollar-quoted bodies, quoted identifiers and comments, so a
   keyword inside one no longer marks a read as a write, and a quote or
   comment marker inside a dollar-quoted body no longer hides a write
-  that follows it. Statements that do
-  run over the simple query protocol are now held inside the same
-  read-only transaction as the rest of the read path. The fix needs no
-  restart beyond the upgrade itself and no database migration. (#530)
+  that follows it. A plain `'...'` literal is read both as a standard
+  string and as the escape string it becomes when
+  `standard_conforming_strings` is off, since a database, a role or an
+  earlier statement in the same request can turn that setting off, and
+  a string literal that continues onto a later line keeps the escapes
+  of the literal it continues. The query connection now starts on the
+  `UTF8` client encoding, and a read-only request stops at any statement
+  that changes it, because in encodings such as `SJIS` a multibyte
+  character can end in a byte the classifier would read as a backslash.
+  Statements that do run over the simple query protocol are now held
+  inside the same read-only transaction as the rest of the read path.
+  The fix needs no restart beyond the upgrade itself and no database
+  migration. (#530)
 
 - Fix a configuration file that omits
   `http.auth.max_failed_attempts_before_lockout` silently disabling

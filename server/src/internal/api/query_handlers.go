@@ -148,8 +148,16 @@ func hasOnlyComments(s string) bool {
 // scanning for semicolons that are outside of quoted strings, quoted
 // identifiers, dollar-quoted strings, line comments, and block comments
 // (with nesting). It trims whitespace and filters out empty or
-// comment-only statements.
+// comment-only statements. It reads a plain '...' literal as a standard
+// string, which is how the statements are split for execution; the
+// classifier splits under both readings (see isReadOnlyStatement).
 func splitStatements(sql string) []string {
+	return splitStatementsAs(sql, standardStrings)
+}
+
+// splitStatementsAs is splitStatements with the given reading of a plain
+// '...' literal.
+func splitStatementsAs(sql string, reading stringReading) []string {
 	var statements []string
 	start := 0
 	i := 0
@@ -160,7 +168,7 @@ func splitStatements(sql string) []string {
 		// Quoted string or quoted identifier, including the prefixed
 		// forms E'...', U&'...' and U&"...".
 		if isQuoteStart(sql, i) {
-			i = skipQuoted(sql, i)
+			i = skipQuoted(sql, i, reading)
 			continue
 		}
 
@@ -345,6 +353,11 @@ func (h *ConnectionHandler) executeQuery(w http.ResponseWriter, r *http.Request,
 		poolConfig.ConnConfig.RuntimeParams = make(map[string]string)
 	}
 	poolConfig.ConnConfig.RuntimeParams["application_name"] = "pgEdge AI DBA Workbench - Query"
+	// The classifier reads the statement text as UTF-8. A startup
+	// parameter overrides any client_encoding default set on the role or
+	// the database, and requireUTF8 stops a read-only batch if one of
+	// its statements changes the setting (see requireUTF8).
+	poolConfig.ConnConfig.RuntimeParams["client_encoding"] = "UTF8"
 
 	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
@@ -420,6 +433,7 @@ func (h *ConnectionHandler) executeQuery(w http.ResponseWriter, r *http.Request,
 
 		for _, stmt := range statements {
 			result := runStatement(ctx, tx, stmt, limit, connectionID)
+			result = requireUTF8(tx.Conn().PgConn(), result, connectionID)
 			results = append(results, result)
 
 			// Stop on first error
@@ -546,13 +560,44 @@ const maxExplainDepth = 8
 // are classified as non-read-only, as are a query with a writing clause
 // (see hasWritingSelectClause) and an EXPLAIN that may execute a writing
 // inner statement (issue #530).
+//
+// PostgreSQL lexes a plain '...' literal as a standard string when
+// standard_conforming_strings is on and as an escape string, in which a
+// backslash escapes the next character, when it is off. The setting can
+// be off for the database or the role, and an earlier statement in the
+// same request can turn it off, as set_config does from inside a
+// SELECT, so the reading in force when sql runs cannot be known here.
+// A literal can end in a different place under each reading, and the
+// one the classifier does not use can then hide the code that follows:
+//
+//	WITH x AS (SELECT '\'' AS c), d AS (DELETE FROM t RETURNING *)
+//	SELECT * FROM d --'
+//
+// is one literal running to the final quote under a standard reading,
+// which hides the DELETE, whereas under an escape reading the literal
+// ends after the escaped quote and the DELETE is code. sql is therefore
+// classified under both readings, and split into statements under each
+// so that a semicolon only one reading treats as code is respected too;
+// it is read-only only when every statement is read-only under both.
 func isReadOnlyStatement(sql string) bool {
-	return isReadOnlyStatementAtDepth(sql, 0)
+	for _, reading := range stringReadings {
+		pieces := splitStatementsAs(sql, reading)
+		if len(pieces) == 0 {
+			pieces = []string{sql}
+		}
+		for _, piece := range pieces {
+			if !isReadOnlyStatementAtDepth(piece, 0, reading) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
-// isReadOnlyStatementAtDepth is isReadOnlyStatement with the EXPLAIN
-// nesting depth reached so far.
-func isReadOnlyStatementAtDepth(sql string, depth int) bool {
+// isReadOnlyStatementAtDepth is isReadOnlyStatement for a single
+// statement, under one reading of a plain '...' literal, with the
+// EXPLAIN nesting depth reached so far.
+func isReadOnlyStatementAtDepth(sql string, depth int, reading stringReading) bool {
 	body := strings.TrimSpace(stripLeadingComments(sql))
 
 	// The EXPLAIN test runs against the original text rather than an
@@ -560,7 +605,7 @@ func isReadOnlyStatementAtDepth(sql string, depth int) bool {
 	// for every input (U+0131 gets shorter), so an offset measured on
 	// the copy cannot safely slice the original.
 	if hasKeywordPrefix(body, "EXPLAIN") {
-		return isReadOnlyExplain(body, depth)
+		return isReadOnlyExplain(body, depth, reading)
 	}
 
 	// Mask the quoted literals, quoted identifiers and comments before
@@ -568,7 +613,7 @@ func isReadOnlyStatementAtDepth(sql string, depth int) bool {
 	// statement such as SELECT * FROM audit WHERE msg LIKE '%signed
 	// into%' is not classified as a write. The masking is for
 	// classification alone; the text that is executed is untouched.
-	upper := strings.ToUpper(maskNonCode(body))
+	upper := strings.ToUpper(maskNonCode(body, reading))
 
 	if strings.HasPrefix(upper, "WITH") {
 		// Writable CTEs can perform data modification, e.g.
@@ -680,19 +725,19 @@ var explainNonExecutingOptions = map[string]bool{
 // taken as an execution, and the inner statement then decides the
 // classification. The legacy form needs no such care, because its
 // option words are keywords that cannot be quoted or escaped.
-func isReadOnlyExplain(body string, depth int) bool {
+func isReadOnlyExplain(body string, depth int, reading stringReading) bool {
 	rest := strings.TrimSpace(stripLeadingComments(body[len("EXPLAIN"):]))
 
 	executes := false
 	if strings.HasPrefix(rest, "(") {
 		// Parenthesised form: EXPLAIN ( option [, ...] ) statement.
-		options, remainder, ok := splitExplainOptions(rest)
+		options, remainder, ok := splitExplainOptions(rest, reading)
 		if !ok {
 			// Unbalanced parentheses: the statement is malformed, so
 			// fail closed rather than guess at the option list.
 			return false
 		}
-		executes = explainOptionsExecute(options)
+		executes = explainOptionsExecute(options, reading)
 		rest = strings.TrimSpace(stripLeadingComments(remainder))
 	} else {
 		// Legacy form: EXPLAIN [ANALYZE] [VERBOSE] statement, in either
@@ -722,15 +767,15 @@ func isReadOnlyExplain(body string, depth int) bool {
 	if rest == "" || depth >= maxExplainDepth {
 		return false
 	}
-	return isReadOnlyStatementAtDepth(rest, depth+1)
+	return isReadOnlyStatementAtDepth(rest, depth+1, reading)
 }
 
 // explainOptionsExecute reports whether a parenthesised EXPLAIN option
 // list may cause the inner statement to run. It inspects option names
 // only, never their values, and treats a name it cannot read as a bare
 // recognized identifier as an execution.
-func explainOptionsExecute(options string) bool {
-	entries := splitExplainOptionEntries(options)
+func explainOptionsExecute(options string, reading stringReading) bool {
+	entries := splitExplainOptionEntries(options, reading)
 	if len(entries) == 0 {
 		// EXPLAIN () is not valid SQL, so fail closed.
 		return true
@@ -748,14 +793,14 @@ func explainOptionsExecute(options string) bool {
 // that separate its entries. Quoted strings, quoted identifiers,
 // comments and nested parentheses are skipped so that a comma inside one
 // does not start an entry. The result is nil for an empty list.
-func splitExplainOptionEntries(options string) []string {
+func splitExplainOptionEntries(options string, reading stringReading) []string {
 	var entries []string
 	depth := 0
 	start := 0
 	i := 0
 
 	for i < len(options) {
-		if j := skipNonCode(options, i); j != i {
+		if j := skipNonCode(options, i, reading); j != i {
 			i = j
 			continue
 		}
@@ -787,11 +832,11 @@ func splitExplainOptionEntries(options string) []string {
 // parenthesis, and whether a matching parenthesis was found. Quoted
 // strings, quoted identifiers and comments are skipped so that a
 // parenthesis inside one does not end the list early.
-func splitExplainOptions(s string) (options, remainder string, ok bool) {
+func splitExplainOptions(s string, reading stringReading) (options, remainder string, ok bool) {
 	depth := 0
 	i := 0
 	for i < len(s) {
-		if j := skipNonCode(s, i); j != i {
+		if j := skipNonCode(s, i, reading); j != i {
 			i = j
 			continue
 		}
@@ -810,32 +855,82 @@ func splitExplainOptions(s string) (options, remainder string, ok bool) {
 	return "", "", false
 }
 
-// literalPrefix reports the length of the string-literal prefix at s[i]
-// and whether a backslash escapes the following character inside that
-// literal. PostgreSQL accepts E'...' (backslash escapes), U&'...' and
-// U&"..." (Unicode escapes), and the B'...', X'...' and N'...' forms,
-// each of which introduces a literal that a bare quote scan would start
-// one or two bytes late. The length is zero when no prefix starts here.
-func literalPrefix(s string, i int) (length int, backslashEscapes bool) {
+// stringReading is how PostgreSQL's lexer reads a plain '...' literal,
+// which depends on standard_conforming_strings when the statement is
+// lexed (xqstart in scan.l).
+type stringReading int
+
+const (
+	// standardStrings is standard_conforming_strings on, the default: a
+	// backslash in '...' is an ordinary character.
+	standardStrings stringReading = iota
+	// escapeStrings is standard_conforming_strings off: '...' is read as
+	// an E'...' escape string, so \' is an escaped quote.
+	escapeStrings
+)
+
+// stringReadings lists every reading the classifier must agree with.
+var stringReadings = []stringReading{standardStrings, escapeStrings}
+
+// literalKind is the kind of quoted text a quote or literal prefix
+// opens, which decides how the lexer finds its end.
+type literalKind int
+
+const (
+	// plainLiteral is '...' and N'...': PostgreSQL returns the N of the
+	// latter as a keyword and lexes the rest as a plain literal, so its
+	// escapes depend on the stringReading.
+	plainLiteral literalKind = iota
+	// escapeLiteral is E'...', where a backslash always escapes the
+	// next character.
+	escapeLiteral
+	// unicodeLiteral is U&'...': a doubled quote is a quote and a
+	// backslash starts a Unicode escape that cannot contain one.
+	// PostgreSQL rejects it outright when standard_conforming_strings is
+	// off, so its reading there does not matter.
+	unicodeLiteral
+	// bitLiteral is B'...' or X'...', which has no escapes at all:
+	// the next quote ends it, even when another quote follows.
+	bitLiteral
+	// quotedIdentifier is "..." or U&"...": a doubled double quote is
+	// part of the name, and it never continues onto another line.
+	quotedIdentifier
+)
+
+// literalPrefix reports the length and kind of the string-literal
+// prefix at s[i]. PostgreSQL accepts E'...' (backslash escapes), U&'...'
+// and U&"..." (Unicode escapes), and the B'...', X'...' and N'...'
+// forms, each of which introduces a literal that a bare quote scan would
+// start one or two bytes late. The length is zero when no prefix starts
+// here.
+func literalPrefix(s string, i int) (length int, kind literalKind) {
 	if i+1 >= len(s) {
-		return 0, false
+		return 0, plainLiteral
 	}
 	switch s[i] {
 	case 'E', 'e':
 		if s[i+1] == '\'' {
-			return 1, true
+			return 1, escapeLiteral
 		}
-	case 'B', 'b', 'X', 'x', 'N', 'n':
+	case 'B', 'b', 'X', 'x':
 		if s[i+1] == '\'' {
-			return 1, false
+			return 1, bitLiteral
+		}
+	case 'N', 'n':
+		if s[i+1] == '\'' {
+			return 1, plainLiteral
 		}
 	case 'U', 'u':
-		if s[i+1] == '&' && i+2 < len(s) &&
-			(s[i+2] == '\'' || s[i+2] == '"') {
-			return 2, false
+		if s[i+1] == '&' && i+2 < len(s) {
+			switch s[i+2] {
+			case '\'':
+				return 2, unicodeLiteral
+			case '"':
+				return 2, quotedIdentifier
+			}
 		}
 	}
-	return 0, false
+	return 0, plainLiteral
 }
 
 // isQuoteStart reports whether a quoted string or quoted identifier
@@ -856,21 +951,39 @@ func isQuoteStart(s string, i int) bool {
 
 // skipQuoted returns the index just past the quoted string or quoted
 // identifier starting at s[i], which must be a single or double quote or
-// the first character of a literal prefix (see literalPrefix). A doubled
-// quote inside the literal is an escaped quote rather than a terminator,
-// and inside an E'...' literal a backslash escapes the character that
-// follows it, so a backslash-escaped quote does not terminate it.
+// the first character of a literal prefix (see literalPrefix), following
+// the string states of PostgreSQL's lexer. A doubled quote is an escaped
+// quote rather than a terminator, except in a bit string. A backslash
+// escapes the character that follows it in an E'...' literal, and in a
+// plain '...' or N'...' literal under escapeStrings. A string literal
+// that is followed by whitespace containing a newline and another quote
+// continues after that quote in the same state (quotecontinue in
+// scan.l), so this is a single escape string whose second part ends at
+// its last quote, not at the one after the backslash:
+//
+//	E'a'
+//	'\''
+//
 // An unterminated literal runs to the end of the string.
-func skipQuoted(s string, i int) int {
-	escapes := false
-	if s[i] != '\'' && s[i] != '"' {
-		length, backslashEscapes := literalPrefix(s, i)
+func skipQuoted(s string, i int, reading stringReading) int {
+	kind := plainLiteral
+	switch s[i] {
+	case '\'':
+	case '"':
+		kind = quotedIdentifier
+	default:
+		length, prefixKind := literalPrefix(s, i)
 		if length == 0 {
 			return i + 1
 		}
-		escapes = backslashEscapes
+		kind = prefixKind
 		i += length
 	}
+
+	escapes := kind == escapeLiteral ||
+		(kind == plainLiteral && reading == escapeStrings)
+	doubles := kind != bitLiteral
+	continues := kind != quotedIdentifier
 
 	quote := s[i]
 	i++
@@ -879,9 +992,15 @@ func skipQuoted(s string, i int) int {
 		case escapes && s[i] == '\\':
 			i += 2
 		case s[i] == quote:
-			if i+1 < len(s) && s[i+1] == quote {
+			if doubles && i+1 < len(s) && s[i+1] == quote {
 				i += 2
 				continue
+			}
+			if continues {
+				if j := quoteContinuation(s, i+1); j > 0 {
+					i = j
+					continue
+				}
 			}
 			return i + 1
 		default:
@@ -889,6 +1008,34 @@ func skipQuoted(s string, i int) int {
 		}
 	}
 	return len(s)
+}
+
+// quoteContinuation reports where a string literal resumes when the
+// text from s[i], just after its closing quote, continues it: whitespace
+// and line comments containing at least one newline, then a quote
+// (quotecontinue in scan.l). It returns the index just past that quote,
+// or -1 when the literal really ended. A line comment must itself end in
+// a newline, and a block comment ends the whitespace, as in scan.l.
+func quoteContinuation(s string, i int) int {
+	sawNewline := false
+	for i < len(s) {
+		switch {
+		case isSQLNewline(s[i]):
+			sawNewline = true
+			i++
+		case isSQLSpace(s[i]):
+			i++
+		case s[i] == '-' && i+1 < len(s) && s[i+1] == '-':
+			for i < len(s) && !isSQLNewline(s[i]) {
+				i++
+			}
+		case s[i] == '\'' && sawNewline:
+			return i + 1
+		default:
+			return -1
+		}
+	}
+	return -1
 }
 
 // skipBlockComment returns the index just past the (possibly nested)
@@ -921,10 +1068,11 @@ func skipBlockComment(s string, i int) int {
 // after it. An unterminated literal or comment runs to the end of the
 // string, which ends the caller's scan rather than resuming inside the
 // quoted text. A $N placeholder is not a dollar quote (see
-// scanDollarTag), so it is left for the caller to see.
-func skipNonCode(s string, i int) int {
+// scanDollarTag), so it is left for the caller to see. reading says how
+// a plain '...' literal is read (see stringReading).
+func skipNonCode(s string, i int, reading stringReading) int {
 	if isQuoteStart(s, i) {
-		return skipQuoted(s, i)
+		return skipQuoted(s, i, reading)
 	}
 	if tag := scanDollarTag(s, i); tag != "" {
 		end := strings.Index(s[i+len(tag):], tag)
@@ -952,10 +1100,10 @@ func skipNonCode(s string, i int) int {
 // s, which keeps any offset measured on the mask valid against the
 // original. Callers must mask before uppercasing, because
 // strings.ToUpper is not length-preserving for every input.
-func maskNonCode(s string) string {
+func maskNonCode(s string, reading stringReading) string {
 	masked := []byte(s)
 	for i := 0; i < len(masked); {
-		j := skipNonCode(s, i)
+		j := skipNonCode(s, i, reading)
 		if j == i {
 			i++
 			continue
@@ -1037,11 +1185,25 @@ func needsSimpleProtocol(statements []string) bool {
 // block comment is text rather than a placeholder and does not count
 // (issue #530). An unterminated literal or comment swallows
 // the rest of the string, so the scan ends and reports no placeholder
-// rather than reading the quoted text as SQL.
+// rather than reading the quoted text as SQL. A placeholder found under
+// either reading of a plain '...' literal counts, since this only routes
+// the statement onto the simple-protocol path, which applies the same
+// read-only transaction and row limit as the pgx path.
 func containsDollarParam(s string) bool {
+	for _, reading := range stringReadings {
+		if containsDollarParamAs(s, reading) {
+			return true
+		}
+	}
+	return false
+}
+
+// containsDollarParamAs is containsDollarParam under one reading of a
+// plain '...' literal.
+func containsDollarParamAs(s string, reading stringReading) bool {
 	i := 0
 	for i < len(s) {
-		if j := skipNonCode(s, i); j != i {
+		if j := skipNonCode(s, i, reading); j != i {
 			i = j
 			continue
 		}
@@ -1275,6 +1437,38 @@ func runStatement(ctx context.Context, q queryable, stmt string, limit int, conn
 	}
 }
 
+// clientEncodingChangedError is the error reported for a statement that
+// left the connection on a client_encoding other than UTF8.
+const clientEncodingChangedError = "Query error: client_encoding must " +
+	"remain UTF8; the statements after this one were not run"
+
+// requireUTF8 turns result into a failure when the statement that
+// produced it left pgConn on a client_encoding other than UTF8, so the
+// caller stops before the next statement runs. PostgreSQL converts each
+// statement from the client encoding before lexing it, and in SJIS,
+// BIG5, GBK, GB18030 and JOHAB the second byte of a multibyte character
+// can be one that is a backslash, @, [ or a letter on its own, so the
+// server's reading of the text no longer matches the UTF-8 reading the
+// classifier gave it. After set_config('client_encoding', 'SJIS',
+// false), an E' followed by the bytes 0x95 0x5C and a quote is a
+// complete literal to the server, which reads 0x95 0x5C as one
+// character, but to the classifier 0x5C is a backslash escaping the
+// quote, which hides the code after it. No second reading can cover
+// every such encoding, so the setting is held at UTF8 instead. The write
+// path needs no such check, because its caller has already confirmed the
+// batch and holds write access to the connection.
+func requireUTF8(pgConn *pgconn.PgConn, result statementResult, connectionID int) statementResult {
+	if result.Error != "" || pgConn.ParameterStatus("client_encoding") == "UTF8" {
+		return result
+	}
+	log.Printf("[WARN] Query stopped: client_encoding changed to %q (connection=%d)",
+		pgConn.ParameterStatus("client_encoding"), connectionID)
+	return statementResult{
+		Query: result.Query,
+		Error: clientEncodingChangedError,
+	}
+}
+
 // runSimpleStatements executes statements over the simple query
 // protocol. When readOnly is true they run inside a read-only
 // transaction, matching the discipline the pgx path applies (issue
@@ -1305,7 +1499,8 @@ func runSimpleStatements(
 		return pgConn.Exec(execCtx, sql).Close()
 	}
 	run := func(runCtx context.Context, stmt string) statementResult {
-		return runSimpleStatement(runCtx, pgConn, stmt, limit, connectionID)
+		result := runSimpleStatement(runCtx, pgConn, stmt, limit, connectionID)
+		return requireUTF8(pgConn, result, connectionID)
 	}
 	return runSimpleStatementsWith(ctx, exec, run, statements, connectionID,
 		readOnly)

@@ -216,17 +216,6 @@ type metricCase struct {
 func allMetricCases() []metricCase {
 	return []metricCase{
 		{
-			metricName: "pg_settings.max_connections",
-			insert: func(ctx context.Context, pool *pgxpool.Pool, connID int, base time.Time) error {
-				_, err := pool.Exec(ctx, `
-					INSERT INTO metrics.pg_settings
-					    (connection_id, name, setting, collected_at)
-					VALUES ($1, 'max_connections', '200', $2)
-				`, connID, base)
-				return err
-			},
-		},
-		{
 			metricName: "connection_utilization_percent",
 			insert: func(ctx context.Context, pool *pgxpool.Pool, connID int, base time.Time) error {
 				if _, err := pool.Exec(ctx, `

@@ -81,45 +81,10 @@ func (e *Engine) reevaluateAlert(
 		return
 	}
 
-	// A keep decision is only reused when every context query succeeded;
-	// otherwise the prompt may be missing inputs that would change the
-	// answer.
-	contextComplete := true
+	rc := e.gatherReevaluationContext(ctx, alert)
 
-	// Fetch historical acknowledgements for the same metric and connection
-	historicalAcks, err := e.datastore.GetAcknowledgmentHistoryForMetric(
-		ctx, *alert.MetricName, alert.ConnectionID, alert.ID, 10,
-	)
-	if err != nil {
-		e.log("ERROR: Failed to get acknowledgment history for alert %d: %v", alert.ID, err)
-		historicalAcks = nil
-		contextComplete = false
-	}
-
-	// Fetch all active/acknowledged alerts on the same connection
-	connectionAlerts, err := e.datastore.GetAlertsByConnection(ctx, alert.ConnectionID)
-	if err != nil {
-		e.log("ERROR: Failed to get connection alerts for alert %d: %v", alert.ID, err)
-		connectionAlerts = nil
-		contextComplete = false
-	}
-
-	// Fetch cluster context for the LLM prompt
-	clusterPeers, err := e.datastore.GetClusterPeers(ctx, alert.ConnectionID)
-	if err != nil {
-		e.log("ERROR: Failed to get cluster peers for alert %d: %v", alert.ID, err)
-		clusterPeers = nil
-		contextComplete = false
-	}
-	clusterAlerts, err := e.datastore.GetAlertsByCluster(ctx, alert.ConnectionID)
-	if err != nil {
-		e.log("ERROR: Failed to get cluster alerts for alert %d: %v", alert.ID, err)
-		clusterAlerts = nil
-		contextComplete = false
-	}
-
-	fingerprint := e.reevaluationFingerprint(alert, historicalAcks, connectionAlerts, clusterPeers, clusterAlerts)
-	if contextComplete && alert.ReevaluationFingerprint != nil &&
+	fingerprint := e.reevaluationFingerprint(alert, rc.historicalAcks, rc.connectionAlerts, rc.clusterPeers, rc.clusterAlerts)
+	if rc.complete && alert.ReevaluationFingerprint != nil &&
 		*alert.ReevaluationFingerprint == fingerprint {
 		e.debugLog("Skipping re-evaluation LLM call for alert %d (%s): inputs unchanged since the last keep",
 			alert.ID, *alert.MetricName)
@@ -130,7 +95,7 @@ func (e *Engine) reevaluateAlert(
 	}
 
 	// Build the LLM prompt
-	prompt := e.buildReevaluationPrompt(alert, historicalAcks, connectionAlerts, clusterPeers, clusterAlerts)
+	prompt := e.buildReevaluationPrompt(alert, rc.historicalAcks, rc.connectionAlerts, rc.clusterPeers, rc.clusterAlerts)
 
 	// Create a timeout context for the LLM call
 	timeout := time.Duration(cfg.TimeoutSeconds) * time.Second
@@ -154,29 +119,86 @@ func (e *Engine) reevaluateAlert(
 
 	var keptFingerprint *string
 	if decision == "clear" {
-		if err := e.datastore.ClearAlert(ctx, alert.ID); err != nil {
-			e.log("ERROR: Failed to clear alert %d during re-evaluation: %v", alert.ID, err)
-		} else {
-			// Fetch the updated alert to include cleared_at in the notification
-			updatedAlert, err := e.datastore.GetAlert(ctx, alert.ID)
-			if err != nil {
-				e.log("ERROR: Failed to fetch updated alert %d after clearing: %v", alert.ID, err)
-			} else {
-				e.queueNotification(updatedAlert, database.NotificationTypeAlertClear)
-			}
-			e.log("Re-evaluation cleared alert %d (%s, confidence: %.2f)",
-				alert.ID, *alert.MetricName, confidence)
-		}
+		e.clearReevaluatedAlert(ctx, alert, confidence)
 	} else {
 		e.debugLog("Re-evaluation keeping alert %d (%s, decision: %s, confidence: %.2f)",
 			alert.ID, *alert.MetricName, decision, confidence)
-		if found && contextComplete {
+		if found && rc.complete {
 			keptFingerprint = &fingerprint
 		}
 	}
 
 	// Always update the re-evaluation tracking regardless of outcome
 	e.recordReevaluation(ctx, alert.ID, keptFingerprint)
+}
+
+// reevaluationContext holds the context the re-evaluation prompt is
+// built from. complete is false when any of the queries failed, in which
+// case the prompt may be missing inputs that would change the answer, so
+// a keep decision is neither stored nor reused.
+type reevaluationContext struct {
+	historicalAcks   []*database.AcknowledgedAnomalyAlert
+	connectionAlerts []*database.Alert
+	clusterPeers     []*database.ClusterPeerInfo
+	clusterAlerts    []*database.Alert
+	complete         bool
+}
+
+// gatherReevaluationContext fetches the past acknowledgements of the
+// alert's metric, the other alerts on its connection and the cluster
+// context, logging and leaving out any part that cannot be read.
+func (e *Engine) gatherReevaluationContext(
+	ctx context.Context,
+	alert *database.AcknowledgedAnomalyAlert,
+) reevaluationContext {
+	rc := reevaluationContext{complete: true}
+	failed := func(what string, err error) {
+		e.log("ERROR: Failed to get %s for alert %d: %v", what, alert.ID, err)
+		rc.complete = false
+	}
+
+	var err error
+	if rc.historicalAcks, err = e.datastore.GetAcknowledgmentHistoryForMetric(
+		ctx, *alert.MetricName, alert.ConnectionID, alert.ID, 10,
+	); err != nil {
+		rc.historicalAcks = nil
+		failed("acknowledgment history", err)
+	}
+	if rc.connectionAlerts, err = e.datastore.GetAlertsByConnection(ctx, alert.ConnectionID); err != nil {
+		rc.connectionAlerts = nil
+		failed("connection alerts", err)
+	}
+	if rc.clusterPeers, err = e.datastore.GetClusterPeers(ctx, alert.ConnectionID); err != nil {
+		rc.clusterPeers = nil
+		failed("cluster peers", err)
+	}
+	if rc.clusterAlerts, err = e.datastore.GetAlertsByCluster(ctx, alert.ConnectionID); err != nil {
+		rc.clusterAlerts = nil
+		failed("cluster alerts", err)
+	}
+	return rc
+}
+
+// clearReevaluatedAlert clears an alert the LLM decided no longer
+// applies, and queues the clear notification.
+func (e *Engine) clearReevaluatedAlert(
+	ctx context.Context,
+	alert *database.AcknowledgedAnomalyAlert,
+	confidence float64,
+) {
+	if err := e.datastore.ClearAlert(ctx, alert.ID); err != nil {
+		e.log("ERROR: Failed to clear alert %d during re-evaluation: %v", alert.ID, err)
+		return
+	}
+	// Fetch the updated alert to include cleared_at in the notification
+	updatedAlert, err := e.datastore.GetAlert(ctx, alert.ID)
+	if err != nil {
+		e.log("ERROR: Failed to fetch updated alert %d after clearing: %v", alert.ID, err)
+	} else {
+		e.queueNotification(updatedAlert, database.NotificationTypeAlertClear)
+	}
+	e.log("Re-evaluation cleared alert %d (%s, confidence: %.2f)",
+		alert.ID, *alert.MetricName, confidence)
 }
 
 // recordReevaluation bumps an alert's re-evaluation count and timestamp and

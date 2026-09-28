@@ -316,8 +316,9 @@ that read and verify the log, along with
 |------|-------------|
 | `-list-audit` | List RBAC audit log events |
 | `-verify-audit-log` | Verify the audit log hash chain |
-| `-rechain-audit-log` | Re-hash an inherited audit log under the server secret |
+| `-rechain-audit-log` | Re-hash an inherited audit log, or re-anchor one that no longer verifies |
 | `-confirm-rechain` | Confirm `-rechain-audit-log` without an interactive prompt |
+| `-previous-secret-file string` | Secret file the older audit events were written under, needed by `-confirm-rechain` to re-anchor them |
 | `-audit-actor string` | Filter events by actor name |
 | `-audit-action string` | Filter events by action |
 | `-audit-target-type string` | Filter events by target type |

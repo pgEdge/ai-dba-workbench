@@ -17,11 +17,13 @@ BINARY := ai-dba-collector
 
 # Minimum acceptable total statement coverage, in percent; the coverage
 # target fails below it. The project floor is 90% (see CLAUDE.md, Tests);
-# this default is pinned just below the total measured on 11 September
-# 2026 so the gate holds the line today, and it should be raised towards
-# 90 as coverage grows. Override for local experiments with
-# `make coverage COVERAGE_MIN=80`.
-COVERAGE_MIN ?= 88.6
+# this default is pinned a little below the 92.5% total measured locally
+# on 29 September 2026 for issue #582, whose statement-failure test for
+# the schema migrations lifted it from about 88.6%, leaving room for CI,
+# which skips the pgvector tests and so measures a few tenths lower.
+# Raise it whenever a change lifts the total and never lower it.
+# Override for local experiments with `make coverage COVERAGE_MIN=80`.
+COVERAGE_MIN ?= 91.8
 
 # Get absolute path to output directory
 ABS_BIN_DIR := $(abspath $(BIN_DIR))

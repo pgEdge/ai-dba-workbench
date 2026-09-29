@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -608,6 +609,14 @@ func TestStatementResult_ErrorOmitsErrorField(t *testing.T) {
 	}
 }
 
+// isNilPointerPanic reports whether a recovered value is the runtime's
+// nil pointer dereference, which is how executeQuery fails on the nil
+// datastore these tests use once it is past routing and RBAC.
+func isNilPointerPanic(r any) bool {
+	err, ok := r.(runtime.Error)
+	return ok && strings.Contains(err.Error(), "nil pointer dereference")
+}
+
 func TestConnectionSubpath_QueryRoute(t *testing.T) {
 	handler := newTestConnectionHandlerWithRBAC(t)
 
@@ -625,7 +634,9 @@ func TestConnectionSubpath_QueryRoute(t *testing.T) {
 	defer func() {
 		if r := recover(); r != nil {
 			// Expected: nil datastore causes a panic after routing succeeds
-			t.Log("Got expected panic after successful routing")
+			if !isNilPointerPanic(r) {
+				t.Fatalf("Expected a nil-datastore panic, got: %v", r)
+			}
 			return
 		}
 		// If no panic, verify routing succeeded and RBAC let it through
@@ -860,6 +871,9 @@ func TestReadOnlyStatements_NoConfirmation(t *testing.T) {
 	panicked := false
 	defer func() {
 		if r := recover(); r != nil {
+			if !isNilPointerPanic(r) {
+				t.Fatalf("Expected a nil-datastore panic, got: %v", r)
+			}
 			panicked = true
 		}
 		if !panicked && rec.Code == http.StatusForbidden {

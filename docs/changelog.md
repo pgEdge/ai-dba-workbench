@@ -2033,9 +2033,11 @@ project adheres to
   appended libpq parameters, sending the connection, and the stored
   password with it, to a host of the caller's choosing. The connection
   string is now assembled with the URL builder, which escapes the path
-  and the query by construction, and a name that cannot name a real
-  database, being empty, longer than 63 bytes, or carrying a NUL or
-  another control character, is refused at all three call sites and
+  and the query by construction; a name that begins with a slash, which
+  the driver would otherwise strip, travels in the `dbname` parameter
+  instead, so it reaches the database it names. A name that cannot name
+  a real database, being empty, longer than 63 bytes, or carrying a NUL
+  or another control character, is refused at all three call sites and
   when a session's database selection is saved. Stored connections
   themselves are unchanged, and a caller who could not already reach a
   connection still cannot. (#530)

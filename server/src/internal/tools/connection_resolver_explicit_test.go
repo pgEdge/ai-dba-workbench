@@ -25,12 +25,20 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
 )
 
-// resolverTestSchema creates the connections table that
-// GetConnectionWithPassword reads, with the columns it scans.
-const resolverTestSchema = `
-DROP TABLE IF EXISTS connections CASCADE;
+// resolverTestSchemaName is the schema that holds the fixture's
+// connections table. The fixture pool puts it first on search_path, so
+// the datastore's unqualified queries read it, and any connections table
+// already in the target database is left alone.
+const resolverTestSchemaName = "ai_wb_resolver_fixture"
 
-CREATE TABLE connections (
+// resolverTestSchema creates the connections table that
+// GetConnectionWithPassword reads, with the columns it scans, in its own
+// schema.
+const resolverTestSchema = `
+DROP SCHEMA IF EXISTS ai_wb_resolver_fixture CASCADE;
+CREATE SCHEMA ai_wb_resolver_fixture;
+
+CREATE TABLE ai_wb_resolver_fixture.connections (
     id SERIAL PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     description TEXT NOT NULL DEFAULT '',
@@ -172,6 +180,7 @@ func newResolverTestEnv(t *testing.T) *resolverTestEnv {
 	if err != nil {
 		t.Fatalf("Could not parse test database connection string: %v", err)
 	}
+	cfg.ConnConfig.RuntimeParams["search_path"] = resolverTestSchemaName
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		t.Fatalf("Could not connect to test database: %v", err)
@@ -194,7 +203,7 @@ func newResolverTestEnv(t *testing.T) *resolverTestEnv {
 
 	var connID int
 	if err := pool.QueryRow(ctx, `
-        INSERT INTO connections
+        INSERT INTO ai_wb_resolver_fixture.connections
             (name, host, port, database_name, username, password_encrypted,
              sslmode)
         VALUES ('resolver-test', $1, $2, $3, $4, $5, 'disable')
@@ -209,7 +218,7 @@ func newResolverTestEnv(t *testing.T) *resolverTestEnv {
 	t.Cleanup(func() {
 		_ = cm.CloseAll()
 		_, _ = pool.Exec(context.Background(),
-			"DROP TABLE IF EXISTS connections CASCADE")
+			"DROP SCHEMA IF EXISTS ai_wb_resolver_fixture CASCADE")
 		pool.Close()
 	})
 

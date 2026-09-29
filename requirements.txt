@@ -3,7 +3,7 @@ backrefs==5.9
 beautifulsoup4==4.14.2
 certifi==2025.8.3
 charset-normalizer==3.4.3
-click==8.3.3
+click==8.5.0
 colorama==0.4.6
 dacite==1.9.2
 ghp-import==2.1.0

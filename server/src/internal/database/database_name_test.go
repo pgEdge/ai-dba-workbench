@@ -10,6 +10,8 @@
 package database
 
 import (
+	"database/sql"
+	"maps"
 	"strings"
 	"testing"
 
@@ -72,8 +74,23 @@ func TestBuildConnectionStringDatabaseNameRoundTrip(t *testing.T) {
 		Port:         5433,
 		DatabaseName: "mydb",
 		Username:     "user",
+		SSLMode:      sql.NullString{String: "verify-full", Valid: true},
 	}
 	const password = "s3cr3t"
+
+	// The same connection with a benign name is the baseline: a hostile
+	// name must leave every other setting pgx parses exactly as it is
+	// here. verify-full gives the baseline no plaintext fallback, so a
+	// smuggled sslmode shows up in the TLS settings and the fallbacks.
+	baseline, err := pgconn.ParseConfig(
+		ds.BuildConnectionString(conn, password, "mydb"))
+	if err != nil {
+		t.Fatalf("pgconn.ParseConfig(baseline) failed: %v", err)
+	}
+	if baseline.TLSConfig == nil || len(baseline.Fallbacks) != 0 {
+		t.Fatalf("baseline TLS = %v, fallbacks = %d; want TLS and none",
+			baseline.TLSConfig, len(baseline.Fallbacks))
+	}
 
 	names := []string{
 		"mydb",
@@ -85,6 +102,9 @@ func TestBuildConnectionStringDatabaseNameRoundTrip(t *testing.T) {
 		"//reports",
 		"/",
 		"/mydb?host=evil.example.com&sslmode=disable",
+		"/mydb&sslmode=disable&options=-c%20role=postgres",
+		"/mydb&dbname=other&host=evil.example.com,db.example.com",
+		"mydb?dbname=other&target_session_attrs=any",
 		"my#db",
 		"my db",
 		"100%db",
@@ -119,6 +139,20 @@ func TestBuildConnectionStringDatabaseNameRoundTrip(t *testing.T) {
 			if cfg.Database != database {
 				t.Errorf("database = %q, want %q (dsn %q)",
 					cfg.Database, database, dsn)
+			}
+			if len(cfg.Fallbacks) != 0 {
+				t.Errorf("%d fallbacks, want none (dsn %q)",
+					len(cfg.Fallbacks), dsn)
+			}
+			if !maps.Equal(cfg.RuntimeParams, baseline.RuntimeParams) {
+				t.Errorf("runtime params = %v, want %v (dsn %q)",
+					cfg.RuntimeParams, baseline.RuntimeParams, dsn)
+			}
+			if cfg.TLSConfig == nil ||
+				cfg.TLSConfig.ServerName != baseline.TLSConfig.ServerName ||
+				cfg.TLSConfig.InsecureSkipVerify != baseline.TLSConfig.InsecureSkipVerify {
+				t.Errorf("TLS config = %+v, want one matching %+v (dsn %q)",
+					cfg.TLSConfig, baseline.TLSConfig, dsn)
 			}
 		})
 	}

@@ -17,10 +17,10 @@ BINARY := ai-dba-collector
 
 # Minimum acceptable total statement coverage, in percent; the coverage
 # target fails below it. The project floor is 90% (see CLAUDE.md, Tests);
-# this default is pinned a little below the 92.5% total measured locally
-# on 29 September 2026 for issue #582, whose statement-failure test for
-# the schema migrations lifted it from about 88.6%, leaving room for CI,
-# which skips the pgvector tests and so measures a few tenths lower.
+# this default is pinned a little below the lowest total CI measured on
+# 29 September 2026 for issue #582, whose statement-failure test for the
+# schema migrations lifted it from about 88.6%: CI reported 92.1% to
+# 92.9% across PG 14 to PG 18, against 92.5% locally.
 # Raise it whenever a change lifts the total and never lower it.
 # Override for local experiments with `make coverage COVERAGE_MIN=80`.
 COVERAGE_MIN ?= 91.8

@@ -1680,6 +1680,19 @@ project adheres to
 
 ### Security
 
+- Escape alert text for the chat service's markup in Slack and
+  Mattermost notifications. The alerter previously escaped template
+  values only for JSON, so an alert title, description, server name or
+  database name containing `<!channel>` or `<https://example.com|click>`
+  became a channel-wide mention or a disguised link in Slack, and one
+  containing `@channel`, `[text](url)` or emphasis markers took effect
+  in Mattermost. Slack values now have `&`, `<` and `>` replaced with
+  HTML entities; Mattermost values have each Markdown character
+  escaped with a backslash and a zero-width space inserted after each
+  `@`. Only the values are escaped, so the links, mentions and
+  formatting an administrator writes into a custom template still
+  work. The fire, clear and reminder templates are all covered. (#585)
+
 - Stop the Slack, Mattermost and generic webhook channels putting their
   endpoint URL into the alerter log, into
   `notification_history.error_message` and into the server log when a

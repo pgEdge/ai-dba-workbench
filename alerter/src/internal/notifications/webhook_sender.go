@@ -21,7 +21,8 @@ import (
 
 // sendWebhookNotification sends a JSON payload to a webhook URL. It handles
 // template selection, rendering, HTTP posting, and response validation. The
-// serviceName parameter is used in error messages (e.g. "slack", "mattermost").
+// serviceName parameter is used in error messages (e.g. "slack", "mattermost"),
+// and markup selects how the payload values are escaped for the service.
 //
 // For Slack and Mattermost the whole webhook URL is the credential, so no
 // error returned from here wraps with %w anything net/http produced, and no
@@ -34,6 +35,7 @@ func sendWebhookNotification(
 	httpClient *http.Client,
 	renderer TemplateRenderer,
 	serviceName string,
+	markup ChatMarkup,
 	webhookURL string,
 	channel *database.NotificationChannel,
 	payload *database.NotificationPayload,
@@ -55,7 +57,7 @@ func sendWebhookNotification(
 	}
 
 	// Render template
-	body, err := renderer.RenderJSON(template, payload, defaultTemplate)
+	body, err := renderer.RenderChatJSON(markup, template, payload, defaultTemplate)
 	if err != nil {
 		return fmt.Errorf("failed to render %s template: %w", serviceName, err)
 	}

@@ -23,6 +23,12 @@ type mockTemplateRenderer struct {
 	renderFunc     func(string, *database.NotificationPayload, string) (string, error)
 	renderJSONFunc func(string, *database.NotificationPayload, string) (string, error)
 	renderHTMLFunc func(string, *database.NotificationPayload, string) (string, error)
+
+	// renderChatJSONFunc, when set, handles RenderChatJSON. When it is
+	// nil, RenderChatJSON falls back to RenderJSON, so a test that only
+	// cares about the rendered body can set renderJSONFunc for Slack and
+	// Mattermost just as it does for a generic webhook.
+	renderChatJSONFunc func(ChatMarkup, string, *database.NotificationPayload, string) (string, error)
 }
 
 func (m *mockTemplateRenderer) Render(templateStr string, payload *database.NotificationPayload, defaultTemplate string) (string, error) {
@@ -47,6 +53,13 @@ func (m *mockTemplateRenderer) RenderHTML(templateStr string, payload *database.
 	}
 	// Default: return a simple HTML fragment
 	return "<b>Test notification</b>", nil
+}
+
+func (m *mockTemplateRenderer) RenderChatJSON(markup ChatMarkup, templateStr string, payload *database.NotificationPayload, defaultTemplate string) (string, error) {
+	if m.renderChatJSONFunc != nil {
+		return m.renderChatJSONFunc(markup, templateStr, payload, defaultTemplate)
+	}
+	return m.RenderJSON(templateStr, payload, defaultTemplate)
 }
 
 func strPtr(s string) *string {

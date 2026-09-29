@@ -52,5 +52,5 @@ func (n *mattermostNotifier) Send(ctx context.Context, channel *database.Notific
 		return err
 	}
 
-	return sendWebhookNotification(ctx, n.httpClient, n.renderer, "mattermost", *channel.WebhookURL, channel, payload)
+	return sendWebhookNotification(ctx, n.httpClient, n.renderer, "mattermost", ChatMarkupMattermost, *channel.WebhookURL, channel, payload)
 }

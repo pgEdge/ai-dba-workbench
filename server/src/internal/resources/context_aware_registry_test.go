@@ -106,6 +106,23 @@ func TestContextAwareRegistry_List(t *testing.T) {
 	})
 }
 
+// newSuperuserReadRegistry builds a registry on a real auth store and
+// returns it with a superuser context. A nil auth store denies every
+// check (issue #477), so tests that exercise Read beyond the RBAC gate
+// need both.
+func newSuperuserReadRegistry(t *testing.T, cm *database.ClientManager, cfg *conf.Config) (*ContextAwareRegistry, context.Context) {
+	t.Helper()
+	authStore, err := auth.NewAuthStore(t.TempDir(), 0, 0, auth.AuditKeyForTesting())
+	if err != nil {
+		t.Fatalf("NewAuthStore: %v", err)
+	}
+	t.Cleanup(func() { authStore.Close() })
+
+	registry := NewContextAwareRegistry(cm, cfg, authStore, nil)
+	ctx := context.WithValue(context.Background(), auth.IsSuperuserContextKey, true)
+	return registry, ctx
+}
+
 func TestContextAwareRegistry_Read_DisabledResource(t *testing.T) {
 	cm := database.NewClientManager(nil)
 	defer cm.CloseAll()
@@ -118,10 +135,10 @@ func TestContextAwareRegistry_Read_DisabledResource(t *testing.T) {
 		},
 	}
 
-	registry := NewContextAwareRegistry(cm, cfg, nil, nil)
+	registry, ctx := newSuperuserReadRegistry(t, cm, cfg)
 
 	// Reading disabled resource should return error content
-	content, err := registry.Read(context.Background(), URISystemInfo)
+	content, err := registry.Read(ctx, URISystemInfo)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -130,8 +147,9 @@ func TestContextAwareRegistry_Read_DisabledResource(t *testing.T) {
 	if len(content.Contents) == 0 {
 		t.Fatal("expected content")
 	}
-	if content.Contents[0].Text == "" {
-		t.Error("expected error message in content")
+	want := "Resource '" + URISystemInfo + "' is not available"
+	if content.Contents[0].Text != want {
+		t.Errorf("expected %q, got %q", want, content.Contents[0].Text)
 	}
 }
 
@@ -147,16 +165,7 @@ func TestContextAwareRegistry_Read_NotFound(t *testing.T) {
 		},
 	}
 
-	// A nil auth store denies every check (issue #477), so give the
-	// registry a real store and read as a superuser.
-	authStore, err := auth.NewAuthStore(t.TempDir(), 0, 0, auth.AuditKeyForTesting())
-	if err != nil {
-		t.Fatalf("NewAuthStore: %v", err)
-	}
-	defer authStore.Close()
-
-	registry := NewContextAwareRegistry(cm, cfg, authStore, nil)
-	ctx := context.WithValue(context.Background(), auth.IsSuperuserContextKey, true)
+	registry, ctx := newSuperuserReadRegistry(t, cm, cfg)
 
 	// Reading non-existent resource should return not found content
 	content, err := registry.Read(ctx, "pg://nonexistent")
@@ -185,11 +194,11 @@ func TestContextAwareRegistry_Read_AuthRequired(t *testing.T) {
 		},
 	}
 
-	// Auth enabled but no token in context
-	registry := NewContextAwareRegistry(cm, cfg, nil, nil)
+	// Superuser passes the RBAC gate, but there is no token in context
+	registry, ctx := newSuperuserReadRegistry(t, cm, cfg)
 
 	// Reading without token should return error
-	content, err := registry.Read(context.Background(), URISystemInfo)
+	content, err := registry.Read(ctx, URISystemInfo)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -198,8 +207,9 @@ func TestContextAwareRegistry_Read_AuthRequired(t *testing.T) {
 	if len(content.Contents) == 0 {
 		t.Fatal("expected content")
 	}
-	if content.Contents[0].Text == "" {
-		t.Error("expected error message")
+	want := "Error: no authentication token found in request context"
+	if content.Contents[0].Text != want {
+		t.Errorf("expected %q, got %q", want, content.Contents[0].Text)
 	}
 }
 
@@ -215,20 +225,24 @@ func TestContextAwareRegistry_Read_WithToken(t *testing.T) {
 		},
 	}
 
-	registry := NewContextAwareRegistry(cm, cfg, nil, nil)
+	registry, ctx := newSuperuserReadRegistry(t, cm, cfg)
 
 	// Add token to context
-	ctx := context.WithValue(context.Background(), auth.TokenHashContextKey, "test-token-hash")
+	ctx = context.WithValue(ctx, auth.TokenHashContextKey, "test-token-hash")
 
-	// Reading with token - will fail because no DB connection, but exercises the code path
+	// Reading with token gets past the token check and fails resolving
+	// a client, because no database connection is configured
 	content, err := registry.Read(ctx, URISystemInfo)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Should have content (either success or error about DB connection)
 	if len(content.Contents) == 0 {
 		t.Fatal("expected content")
+	}
+	want := "Error: no database connection configured for this token: no database configured"
+	if content.Contents[0].Text != want {
+		t.Errorf("expected %q, got %q", want, content.Contents[0].Text)
 	}
 }
 

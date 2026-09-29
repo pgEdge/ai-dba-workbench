@@ -115,10 +115,35 @@ func TestContextAwareProvider_Execute_WithAuth(t *testing.T) {
 
 	fallbackClient := database.NewClient(nil)
 	cfg := &config.Config{}
-	resourceReg := resources.NewContextAwareRegistry(clientManager, cfg, nil, nil)
+	// A nil auth store denies every check (issue #477), so give the
+	// provider a real store; the subtests that expect success execute
+	// as a superuser.
+	authStore, cleanup := newRBACTestStore(t)
+	defer cleanup()
+	resourceReg := resources.NewContextAwareRegistry(clientManager, cfg, authStore, nil)
 
 	// Auth enabled - should require token hash
-	provider := NewContextAwareProvider(clientManager, resourceReg, fallbackClient, cfg, nil, nil, nil)
+	provider := NewContextAwareProvider(clientManager, resourceReg, fallbackClient, cfg, authStore, nil, nil)
+
+	// superuserTokenContext returns a superuser context carrying the
+	// given token hash.
+	superuserTokenContext := func(tokenHash string) context.Context {
+		ctx := context.WithValue(context.Background(), auth.TokenHashContextKey, tokenHash)
+		return context.WithValue(ctx, auth.IsSuperuserContextKey, true)
+	}
+
+	// assertNotFound checks that read_resource reached the registry and
+	// reported the URI as unknown, rather than being denied.
+	assertNotFound := func(t *testing.T, response mcp.ToolResponse, uri string) {
+		t.Helper()
+		if len(response.Content) == 0 {
+			t.Fatal("Expected non-empty response content")
+		}
+		want := "Resource not found: " + uri
+		if response.Content[0].Text != want {
+			t.Errorf("Expected %q, got %q", want, response.Content[0].Text)
+		}
+	}
 
 	t.Run("missing token hash returns error", func(t *testing.T) {
 		// Context without token hash
@@ -138,8 +163,7 @@ func TestContextAwareProvider_Execute_WithAuth(t *testing.T) {
 	})
 
 	t.Run("with valid token hash succeeds", func(t *testing.T) {
-		// Context with token hash (no token store needed for stateless tools in auth mode)
-		ctx := context.WithValue(context.Background(), auth.TokenHashContextKey, "test-token-hash")
+		ctx := superuserTokenContext("test-token-hash")
 
 		// Execute read_resource (doesn't require database queries)
 		response, err := provider.Execute(ctx, "read_resource", map[string]any{
@@ -149,11 +173,7 @@ func TestContextAwareProvider_Execute_WithAuth(t *testing.T) {
 			t.Fatalf("Execute failed: %v", err)
 		}
 
-		// read_resource should return a response (may be error for non-existent resource)
-		// Verify we got a response
-		if len(response.Content) == 0 {
-			t.Fatal("Expected non-empty response content")
-		}
+		assertNotFound(t, response, "test://test")
 
 		// Note: In unit tests without database configuration, clients are not created
 		// In production with database config, read_resource would create clients for authenticated tokens
@@ -162,31 +182,34 @@ func TestContextAwareProvider_Execute_WithAuth(t *testing.T) {
 
 	t.Run("multiple tokens get different clients", func(t *testing.T) {
 		// First token
-		ctx1 := context.WithValue(context.Background(), auth.TokenHashContextKey, "token-hash-1")
-		_, err := provider.Execute(ctx1, "read_resource", map[string]any{
+		ctx1 := superuserTokenContext("token-hash-1")
+		response1, err := provider.Execute(ctx1, "read_resource", map[string]any{
 			"uri": "test://test1",
 		})
 		if err != nil {
 			t.Fatalf("Execute failed for token 1: %v", err)
 		}
+		assertNotFound(t, response1, "test://test1")
 
 		// Second token
-		ctx2 := context.WithValue(context.Background(), auth.TokenHashContextKey, "token-hash-2")
-		_, err = provider.Execute(ctx2, "read_resource", map[string]any{
+		ctx2 := superuserTokenContext("token-hash-2")
+		response2, err := provider.Execute(ctx2, "read_resource", map[string]any{
 			"uri": "test://test2",
 		})
 		if err != nil {
 			t.Fatalf("Execute failed for token 2: %v", err)
 		}
+		assertNotFound(t, response2, "test://test2")
 
 		// Third token
-		ctx3 := context.WithValue(context.Background(), auth.TokenHashContextKey, "token-hash-3")
-		_, err = provider.Execute(ctx3, "read_resource", map[string]any{
+		ctx3 := superuserTokenContext("token-hash-3")
+		response3, err := provider.Execute(ctx3, "read_resource", map[string]any{
 			"uri": "test://test3",
 		})
 		if err != nil {
 			t.Fatalf("Execute failed for token 3: %v", err)
 		}
+		assertNotFound(t, response3, "test://test3")
 
 		// Note: In unit tests without database configuration, clients are not created
 		// In production with database config, each token would get its own isolated database client

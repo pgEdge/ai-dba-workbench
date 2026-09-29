@@ -475,6 +475,8 @@ func TestDatabaseSummaries_ScanError(t *testing.T) {
 // doDatabaseSummariesRequest drives handleDatabaseSummaries over the full
 // HTTP path so that parameter parsing, the time-window resolver and the
 // response encoding are all exercised.
+// The request is marked superuser to pass the RBAC gate, so a denial
+// test must build its own request instead.
 func doDatabaseSummariesRequest(
 	h *PerfSummaryHandler,
 	query string,

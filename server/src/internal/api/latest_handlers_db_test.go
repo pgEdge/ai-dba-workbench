@@ -193,6 +193,8 @@ func setupLatestTablesFixture(t *testing.T) *LatestSnapshotHandler {
 
 // getLatest issues a GET against the latest-snapshot handler with the given
 // query string and returns the recorder.
+// The request is marked superuser to pass the RBAC gate, so a denial
+// test must build its own request instead.
 func getLatest(t *testing.T, h *LatestSnapshotHandler, query string) *httptest.ResponseRecorder {
 	t.Helper()
 

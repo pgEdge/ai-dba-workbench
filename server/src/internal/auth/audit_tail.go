@@ -268,7 +268,8 @@ func readAuditSequence(q auditRowQuerier) (bool, sql.NullInt64, error) {
 // newest row is hash version 2 and which has no anchor, and is called
 // on every open. It anchors nothing unless sqlite_sequence agrees that
 // no row has been lost from the end of the log, because an anchor
-// written over a truncated tail would vouch for it; such a log is left
+// written over a truncated tail would vouch for it, and the newest row
+// verifies under the key in use; such a log is left
 // without one, and once the next version 3 row is written its absence
 // is reported. Every other log is left as it is: one that is empty is
 // anchored by its first event, and one whose newest row is version 3
@@ -302,6 +303,16 @@ func (s *AuthStore) seedAuditTail() error {
 		return err
 	}
 	if !present || checkAuditTail(st.newestID, seq) != nil {
+		return nil
+	}
+	// An anchor signed over a row the key in use does not verify, as
+	// when the store is opened with the wrong secret, would read as an
+	// altered anchor under the right one and never be moved on.
+	verifies, err := s.newestAuditRowVerifies(tx, st)
+	if err != nil {
+		return err
+	}
+	if !verifies {
 		return nil
 	}
 

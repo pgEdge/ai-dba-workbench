@@ -1136,8 +1136,11 @@ anchor is left alone on purpose, so the evidence persists. New rows
 carry `auditHashVersion` 3 (`auditTailHashVersion`), which renders as
 version 2 does under the label `v3`; a v3 newest row with no anchor
 fails verification. `initSchema` ends with `seedAuditTail`, which
-anchors a v2 log only when `checkAuditTail` agrees. The re-chain and
-re-anchor call `writeAuditTail` after `recordAudit` unconditionally.
+anchors a v2 log only when `checkAuditTail` agrees and the newest row
+verifies under `s.auditKey` (an anchor signed under a wrong secret
+would read as altered under the right one and never advance). The
+re-chain and re-anchor call `writeAuditTail` after `recordAudit`
+unconditionally.
 Test fixtures that insert `audit_events` rows by hand at version 3
 must also leave the anchor naming the newest row, or verification
 fails; `audit_tail_test.go` has `insertVersion2Log` for a

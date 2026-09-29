@@ -2477,7 +2477,8 @@ project adheres to
   it names any other event, does not verify, or is missing behind a
   version 3 event, the hash version new events now carry. An existing
   log is given a tail record when the store opens, provided nothing is
-  missing from its end; a record left naming a deleted event stays as
+  missing from its end and its newest event verifies under the secret
+  in use; a record left naming a deleted event stays as
   it is until an operator runs `-rechain-audit-log`. Running an earlier
   release against the same `auth.db` afterwards is reported as a
   version downgrade. (#544)

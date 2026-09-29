@@ -338,6 +338,36 @@ func TestSeedRefusesATruncatedVersion2Log(t *testing.T) {
 	}
 }
 
+// TestSeedRefusesARowTheKeyDoesNotVerify checks that a version 2 log
+// first opened under the wrong secret is not anchored under that
+// secret, so that reopening it under the right one verifies rather
+// than reporting an altered anchor.
+func TestSeedRefusesARowTheKeyDoesNotVerify(t *testing.T) {
+	store, dir := newReopenableStore(t)
+	insertVersion2Log(t, store, 3)
+
+	wrong, err := NewAuthStore(dir, 0, 0, rotatedAuditKey)
+	if err != nil {
+		t.Fatalf("Failed to open under the wrong secret: %v", err)
+	}
+	if st := readTail(t, wrong); st.hasAnchor {
+		t.Errorf("Expected no anchor under the wrong secret, got %+v", st)
+	}
+	if err := wrong.Close(); err != nil {
+		t.Fatalf("Failed to close the store: %v", err)
+	}
+
+	reopened, err := reopenStore(t, dir)
+	if err != nil {
+		t.Fatalf("Failed to reopen the store: %v", err)
+	}
+	st := readTail(t, reopened)
+	if st.anchorID != 3 || !reopened.auditTailVerifies(st) {
+		t.Fatalf("Expected the right secret to anchor event 3, got %+v", st)
+	}
+	expectVerifies(t, reopened)
+}
+
 // TestSeedRefusesWithoutASequenceTable checks that a version 2 log in a
 // database with no sqlite_sequence table is not anchored.
 func TestSeedRefusesWithoutASequenceTable(t *testing.T) {

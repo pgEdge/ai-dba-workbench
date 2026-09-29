@@ -434,7 +434,8 @@ client address, before and after snapshots and a hash chain.
   row both fail under the key). Anything else is left stranded as
   evidence. Rows carry hash version 3; a v3 newest row with no anchor
   is tampering. `seedAuditTail` anchors a v2 log at open only when the
-  sequence agrees. The re-chain and re-anchor overwrite the anchor
+  sequence agrees and the newest row verifies under the key in use. The
+  re-chain and re-anchor overwrite the anchor
   unconditionally. Any new path that writes `audit_tail`, or any
   "self-heal" that seeds an anchor when it is found missing, reopens
   #544.

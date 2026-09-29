@@ -618,14 +618,22 @@ func (s *Server) startOverviewGenerator() {
 		return
 	}
 
+	s.buildOverviewGenerator()
+	s.overviewGen.Start(s.ctx)
+	fmt.Fprintf(os.Stderr, "AI Overview: ENABLED\n")
+	s.aiEnabled = true
+}
+
+// buildOverviewGenerator creates the overview generator and its SSE hub
+// from the LLM configuration without starting it. It is separate from
+// startOverviewGenerator so that the wiring can be tested without a
+// background goroutine that calls out to the configured provider.
+func (s *Server) buildOverviewGenerator() {
 	llmConfig := newLLMProxyConfig(&s.cfg.LLM)
 
 	s.overviewHub = overview.NewHub()
 	s.overviewGen = overview.NewGenerator(s.datastore, llmConfig)
 	s.overviewGen.SetHub(s.overviewHub)
-	s.overviewGen.Start(s.ctx)
-	fmt.Fprintf(os.Stderr, "AI Overview: ENABLED\n")
-	s.aiEnabled = true
 }
 
 // cleanupExpiredConnections cleans up database connections for expired tokens

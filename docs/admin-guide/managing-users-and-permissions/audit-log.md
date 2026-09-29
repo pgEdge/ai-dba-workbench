@@ -518,7 +518,11 @@ opens the store, naming the newest event, but only if the highest
 identifier SQLite has issued agrees with it, because a record written
 over a log that has already lost its newest events would vouch for the
 deletion; a log where the two disagree is left without one, and
-verification continues to report it. The change is one way: an earlier
+verification continues to report it. Nor is the record written while
+the newest event fails to verify under the secret in use, as when the
+store is first opened with the wrong secret file, since a record signed
+under that secret would read as altered under the right one; the next
+open with the right secret writes it. The change is one way: an earlier
 release run against the same `auth.db` afterwards writes version 2
 events after version 3 ones and leaves the tail record behind them, and
 verification reports both.

@@ -129,7 +129,8 @@ in SQLite via `modernc.org/sqlite` and `database/sql`, so its SQL uses
 with `auth.NewAuthStore` and must:
 
 - Pass `auth.AuditKeyForTesting()` as the fourth argument. The store
-  keys its audit hash chain (hash version 2) with a key production
+  keys its audit hash chain (new rows are hash version 3, which hashes
+  as version 2 does; version 2 rows remain readable) with a key production
   derives from the server secret via `auth.DeriveAuditKey`, and
   `NewAuthStore` refuses an empty one, because a store without a key
   cannot write a single audited change. The test helper returns a fixed

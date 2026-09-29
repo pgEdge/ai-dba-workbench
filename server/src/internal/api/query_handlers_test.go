@@ -614,8 +614,9 @@ func TestConnectionSubpath_QueryRoute(t *testing.T) {
 	// Verify that /api/v1/connections/1/query routes to executeQuery
 	// by checking it does not return 404
 	body := `{"query": "SELECT 1"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections/1/query",
-		bytes.NewBufferString(body))
+	// Superuser, so that RBAC does not answer 403 before the query path
+	req := withSuperuser(httptest.NewRequest(http.MethodPost, "/api/v1/connections/1/query",
+		bytes.NewBufferString(body)))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -625,15 +626,15 @@ func TestConnectionSubpath_QueryRoute(t *testing.T) {
 		if r := recover(); r != nil {
 			// Expected: nil datastore causes a panic after routing succeeds
 			t.Log("Got expected panic after successful routing")
+			return
+		}
+		// If no panic, verify routing succeeded and RBAC let it through
+		if rec.Code == http.StatusNotFound || rec.Code == http.StatusForbidden {
+			t.Errorf("Expected query route to reach executeQuery, got %d", rec.Code)
 		}
 	}()
 
 	handler.handleConnectionSubpath(rec, req)
-
-	// If no panic, verify we did not get a 404 (which would mean routing failed)
-	if rec.Code == http.StatusNotFound {
-		t.Error("Expected query route to be handled, got 404")
-	}
 }
 
 func TestStripLeadingComments(t *testing.T) {
@@ -850,8 +851,9 @@ func TestReadOnlyStatements_NoConfirmation(t *testing.T) {
 	// Pure read-only query should NOT trigger confirmation; it should
 	// proceed to the datastore path (which panics with nil datastore).
 	body := `{"query": "SELECT 1"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections/1/query",
-		bytes.NewBufferString(body))
+	// Superuser, so that RBAC does not answer 403 before the query path
+	req := withSuperuser(httptest.NewRequest(http.MethodPost, "/api/v1/connections/1/query",
+		bytes.NewBufferString(body)))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -859,6 +861,9 @@ func TestReadOnlyStatements_NoConfirmation(t *testing.T) {
 	defer func() {
 		if r := recover(); r != nil {
 			panicked = true
+		}
+		if !panicked && rec.Code == http.StatusForbidden {
+			t.Fatalf("Expected RBAC to admit a superuser, got 403: %s", rec.Body.String())
 		}
 		if !panicked && rec.Code == http.StatusOK {
 			// If no panic and we got a 200, check that there is no

@@ -293,27 +293,9 @@ func (s *AuthStore) seedAuditTail() error {
 	if err != nil {
 		return err
 	}
-	if st.hasAnchor || !st.hasNewest ||
-		st.newestVersion >= auditTailHashVersion || st.newestVersion < 2 {
-		return nil
-	}
-
-	present, seq, err := readAuditSequence(tx)
-	if err != nil {
+	seed, err := s.auditTailSeedable(tx, st)
+	if err != nil || !seed {
 		return err
-	}
-	if !present || checkAuditTail(st.newestID, seq) != nil {
-		return nil
-	}
-	// An anchor signed over a row the key in use does not verify, as
-	// when the store is opened with the wrong secret, would read as an
-	// altered anchor under the right one and never be moved on.
-	verifies, err := s.newestAuditRowVerifies(tx, st)
-	if err != nil {
-		return err
-	}
-	if !verifies {
-		return nil
 	}
 
 	ev := AuditEvent{ID: st.newestID, Hash: st.newestHash}
@@ -326,6 +308,32 @@ func (s *AuthStore) seedAuditTail() error {
 	committed = true
 
 	return nil
+}
+
+// auditTailSeedable reports whether seedAuditTail may anchor the log
+// in st: a version 2 newest row with no anchor, a sequence that agrees
+// nothing is missing from the end, and a newest row that verifies under
+// the key in use.
+func (s *AuthStore) auditTailSeedable(tx *sql.Tx,
+	st auditTailState) (bool, error) {
+
+	if st.hasAnchor || !st.hasNewest ||
+		st.newestVersion >= auditTailHashVersion || st.newestVersion < 2 {
+		return false, nil
+	}
+
+	present, seq, err := readAuditSequence(tx)
+	if err != nil {
+		return false, err
+	}
+	if !present || checkAuditTail(st.newestID, seq) != nil {
+		return false, nil
+	}
+
+	// An anchor signed over a row the key in use does not verify, as
+	// when the store is opened with the wrong secret, would read as an
+	// altered anchor under the right one and never be moved on.
+	return s.newestAuditRowVerifies(tx, st)
 }
 
 // verifyAuditTailAnchor checks that the anchor names the newest row and

@@ -11,8 +11,6 @@ package api
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -262,15 +260,14 @@ func covTestDSN(t *testing.T) string {
 	return dsn
 }
 
-// covRandomSchema returns a unique schema name for one test.
-func covRandomSchema(t *testing.T) string {
-	t.Helper()
-	b := make([]byte, 6)
-	if _, err := rand.Read(b); err != nil {
-		t.Fatalf("rand: %v", err)
-	}
-	return "covtest_" + hex.EncodeToString(b)
-}
+// covFixtureSchemaName is the schema each fixture test builds its tables
+// in. The tests in this package do not run in parallel, so one fixed
+// name is enough; it is dropped before and after each test.
+const covFixtureSchemaName = "api_cov_fixture"
+
+// covMissingSchemaName names a schema that is never created, so a pool
+// whose search_path points at it fails every unqualified query.
+const covMissingSchemaName = "api_cov_missing"
 
 // covPoolForSchema opens a small pool whose sessions resolve
 // unqualified table names in the given schema only.
@@ -298,18 +295,21 @@ func covPoolForSchema(t *testing.T, dsn, schema string) *pgxpool.Pool {
 func newCovFixture(t *testing.T) *covFixture {
 	t.Helper()
 	dsn := covTestDSN(t)
-	schema := covRandomSchema(t)
 	ctx := context.Background()
 
 	admin := covPoolForSchema(t, dsn, "public")
-	if _, err := admin.Exec(ctx, "CREATE SCHEMA "+schema); err != nil {
+	if _, err := admin.Exec(ctx, "DROP SCHEMA IF EXISTS api_cov_fixture CASCADE"); err != nil {
+		admin.Close()
+		t.Fatalf("drop stale schema: %v", err)
+	}
+	if _, err := admin.Exec(ctx, "CREATE SCHEMA api_cov_fixture"); err != nil {
 		admin.Close()
 		t.Fatalf("create schema: %v", err)
 	}
-	pool := covPoolForSchema(t, dsn, schema)
+	pool := covPoolForSchema(t, dsn, covFixtureSchemaName)
 	t.Cleanup(func() {
 		pool.Close()
-		_, _ = admin.Exec(context.Background(), "DROP SCHEMA IF EXISTS "+schema+" CASCADE")
+		_, _ = admin.Exec(context.Background(), "DROP SCHEMA IF EXISTS api_cov_fixture CASCADE")
 		admin.Close()
 	})
 
@@ -354,7 +354,7 @@ func newCovFixture(t *testing.T) *covFixture {
 func newBrokenDatastore(t *testing.T) *database.Datastore {
 	t.Helper()
 	dsn := covTestDSN(t)
-	pool := covPoolForSchema(t, dsn, covRandomSchema(t))
+	pool := covPoolForSchema(t, dsn, covMissingSchemaName)
 	t.Cleanup(pool.Close)
 	return database.NewTestDatastoreWithSecret(pool, channelTestServerSecret)
 }

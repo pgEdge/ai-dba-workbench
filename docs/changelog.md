@@ -2063,7 +2063,7 @@ project adheres to
   defeated a connection scope of `read` on a token whose owner holds
   `read_write`, and would equally defeat a plain read-only account. The
   classification now follows the inner statement unless the option list
-  consists entirely of bare, recognized options that only change how the
+  consists entirely of bare, recognised options that only change how the
   plan is reported, so a quoted or Unicode-escaped spelling of
   `ANALYZE`, such as `EXPLAIN (U&"\0061nalyze")`, no longer passes as
   read-only. `SELECT ... INTO`, a row-locking `SELECT ... FOR UPDATE` or

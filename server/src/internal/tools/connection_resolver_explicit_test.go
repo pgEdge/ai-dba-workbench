@@ -63,6 +63,27 @@ const resolverTestSecret = "test-server-secret-32-bytes-long!"
 // pointing the connection at another host (192.0.2.1 is TEST-NET-1).
 const hostileDatabaseName = "ai_wb_resolver?host=192.0.2.1&sslmode=disable"
 
+// createHostileDatabase and dropHostileDatabase create and drop the
+// database named hostileDatabaseName. They are written out in full,
+// because CREATE DATABASE cannot run inside a DO block and no SQL is
+// assembled at run time; TestHostileDatabaseStatements checks that they
+// name the same database.
+const (
+	createHostileDatabase = `CREATE DATABASE "ai_wb_resolver?host=192.0.2.1&sslmode=disable"`
+	dropHostileDatabase   = `DROP DATABASE IF EXISTS "ai_wb_resolver?host=192.0.2.1&sslmode=disable" WITH (FORCE)`
+)
+
+// TestHostileDatabaseStatements keeps the literal statements above in
+// step with hostileDatabaseName.
+func TestHostileDatabaseStatements(t *testing.T) {
+	quoted := pgx.Identifier{hostileDatabaseName}.Sanitize()
+	for _, stmt := range []string{createHostileDatabase, dropHostileDatabase} {
+		if !strings.Contains(stmt, " "+quoted) {
+			t.Errorf("%q does not name %s", stmt, quoted)
+		}
+	}
+}
+
 // toolResponseText returns the text of the first content item.
 func toolResponseText(resp *mcp.ToolResponse) string {
 	if resp == nil || len(resp.Content) == 0 {
@@ -294,13 +315,11 @@ func TestResolveExplicit_Database(t *testing.T) {
 	})
 
 	t.Run("hostile override stays on the stored host", func(t *testing.T) {
-		quoted := pgx.Identifier{hostileDatabaseName}.Sanitize()
-		if _, err := env.pool.Exec(ctx, "CREATE DATABASE "+quoted); err != nil {
+		if _, err := env.pool.Exec(ctx, createHostileDatabase); err != nil {
 			t.Fatalf("CREATE DATABASE failed: %v", err)
 		}
 		t.Cleanup(func() {
-			_, _ = env.pool.Exec(context.Background(),
-				"DROP DATABASE IF EXISTS "+quoted+" WITH (FORCE)")
+			_, _ = env.pool.Exec(context.Background(), dropHostileDatabase)
 		})
 
 		resolved, resp := env.resolver.Resolve(ctx, map[string]any{

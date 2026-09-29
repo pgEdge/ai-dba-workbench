@@ -762,11 +762,22 @@ func (d *Datastore) BuildConnectionString(conn *MonitoredConnection, password st
 	addParam("sslcert", conn.SSLCert)
 	addParam("sslkey", conn.SSLKey)
 
+	// pgx strips every leading '/' from the URL path, so a name that
+	// itself begins with '/' (which PostgreSQL allows) would connect to
+	// a different database. Such a name travels in the dbname query
+	// parameter instead, which pgx applies after the path; every other
+	// name keeps the conventional path form.
+	path := "/" + database
+	if strings.HasPrefix(database, "/") {
+		path = "/"
+		params.Set("dbname", database)
+	}
+
 	dsn := url.URL{
 		Scheme:   "postgres",
 		User:     userinfo,
 		Host:     net.JoinHostPort(host, strconv.Itoa(conn.Port)),
-		Path:     "/" + database,
+		Path:     path,
 		RawQuery: params.Encode(),
 	}
 

@@ -779,6 +779,13 @@ project adheres to
 
 ### Fixed
 
+- Keep the server's command-line overrides across a `SIGHUP`
+  configuration reload. A reload applied none of the flags given at
+  start-up, so the `-db-*` flags were replaced by the configuration
+  file's database settings, and a server started with `-tls` was
+  validated as though TLS were off. A reload now applies every flag
+  given on the command line, as start-up does. (#506)
+
 - Fix a connection created without a description breaking the
   connection list for every user. The server stored the missing
   description as `NULL` and then failed to read the row back, so the

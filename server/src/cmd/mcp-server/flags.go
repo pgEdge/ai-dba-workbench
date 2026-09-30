@@ -304,16 +304,18 @@ func (f *Flags) ToCLIFlags() config.CLIFlags {
 	return cliFlags
 }
 
-// ToReloadCLIFlags returns CLIFlags suitable for config reload operations
+// ToReloadCLIFlags returns the CLIFlags a SIGHUP reload applies over the
+// configuration file. A reload must rebuild the configuration exactly as
+// start-up did, so it carries every flag given explicitly on the command
+// line, with its "set" marker, rather than a subset. Dropping -tls, -cert,
+// -key or -chain made a reload validate the file as though TLS were off
+// whilst the process serves TLS, so a server started with -tls, OIDC
+// enabled, an https redirect_url and no trusted_proxies refused every
+// reload with the unprefixed state cookie error (issue #506). Values
+// without their marker were never applied at all, which is how the
+// database flags were silently lost on reload as well.
 func (f *Flags) ToReloadCLIFlags() config.CLIFlags {
-	return config.CLIFlags{
-		DBHost:     f.DBHost,
-		DBPort:     f.DBPort,
-		DBName:     f.DBName,
-		DBUser:     f.DBUser,
-		DBPassword: f.DBPassword,
-		DBSSLMode:  f.DBSSLMode,
-	}
+	return f.ToCLIFlags()
 }
 
 // ResolveDataDir returns the resolved data directory path with the following

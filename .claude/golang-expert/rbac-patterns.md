@@ -378,8 +378,9 @@ was issue `#482`. The listing paths follow from that. Neither
 one in `internal/resources/context_aware_registry.go` short-circuits on
 `IsSuperuser` any more, because that flag comes from the admin scope
 and says nothing about tools; every caller goes through the per-item
-filter, which already admits sessions, unscoped tokens, wildcard scopes
-and a nil auth store, and `rbacExemptTools` is still applied.
+filter, which already admits sessions, unscoped tokens and wildcard
+scopes (a nil auth store denies, as above), and `rbacExemptTools` is
+still applied.
 
 A token also may not rewrite the scope that bounds it:
 `refuseSelfScopeMutation` in `internal/api/rbac_token_handlers.go`

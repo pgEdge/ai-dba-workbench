@@ -149,8 +149,10 @@ func TestReadRefusesResourceOutsideRBAC(t *testing.T) {
 func TestReadCustomResourceReportsClientError(t *testing.T) {
 	// A nil client manager leaves the registry without a client
 	// resolver, which is the shape a server started with no database
-	// configured has.
-	registry := NewContextAwareRegistry(nil, readTestConfig(), nil, nil)
+	// configured has. The superuser context gets the read past the RBAC
+	// gate, which a registry without an auth store would refuse (issue
+	// #477).
+	registry, ctx := newSuperuserReadRegistry(t, nil, readTestConfig())
 
 	handlerCalled := false
 	registry.customResources["pg://custom"] = customResource{
@@ -161,7 +163,7 @@ func TestReadCustomResourceReportsClientError(t *testing.T) {
 		},
 	}
 
-	content, err := registry.Read(context.Background(), "pg://custom")
+	content, err := registry.Read(ctx, "pg://custom")
 	if err != nil {
 		t.Fatalf("Read returned an error: %v", err)
 	}
@@ -192,7 +194,7 @@ func TestReadTracesResourceReads(t *testing.T) {
 		t.Fatal("Expected tracing to be enabled")
 	}
 
-	registry := NewContextAwareRegistry(nil, readTestConfig(), nil, nil)
+	registry, superuserCtx := newSuperuserReadRegistry(t, nil, readTestConfig())
 	registry.customResources["pg://custom"] = customResource{
 		definition: mcp.Resource{URI: "pg://custom", Name: "Custom"},
 		handler: func(context.Context, *database.Client) (mcp.ResourceContent, error) {
@@ -200,7 +202,7 @@ func TestReadTracesResourceReads(t *testing.T) {
 		},
 	}
 
-	ctx := context.WithValue(context.Background(), auth.TokenHashContextKey,
+	ctx := context.WithValue(superuserCtx, auth.TokenHashContextKey,
 		"trace-token-hash")
 
 	// A single-text response, a multi-text response and a response with
@@ -268,9 +270,9 @@ func decodeConnectionInfo(t *testing.T, content mcp.ResourceContent) *Connection
 // TestReadConnectionInfoWithoutToken verifies the response when the
 // request carries no token at all, which is the CLI-over-stdio shape.
 func TestReadConnectionInfoWithoutToken(t *testing.T) {
-	registry := NewContextAwareRegistry(nil, readTestConfig(), nil, nil)
+	registry, ctx := newSuperuserReadRegistry(t, nil, readTestConfig())
 
-	content, err := registry.Read(context.Background(), URIConnectionInfo)
+	content, err := registry.Read(ctx, URIConnectionInfo)
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
@@ -572,7 +574,7 @@ func TestReadServesResourcesFromRealClient(t *testing.T) {
 	clientManager := database.NewClientManager(dbConfig)
 	defer clientManager.CloseAll()
 
-	registry := NewContextAwareRegistry(clientManager, readTestConfig(), nil, nil)
+	registry, superuserCtx := newSuperuserReadRegistry(t, clientManager, readTestConfig())
 	registry.customResources["pg://multi"] = customResource{
 		definition: mcp.Resource{URI: "pg://multi", Name: "Multi"},
 		handler: func(context.Context, *database.Client) (mcp.ResourceContent, error) {
@@ -598,7 +600,7 @@ func TestReadServesResourcesFromRealClient(t *testing.T) {
 		},
 	}
 
-	ctx := context.WithValue(context.Background(), auth.TokenHashContextKey,
+	ctx := context.WithValue(superuserCtx, auth.TokenHashContextKey,
 		"real-client-token-hash")
 
 	content, err := registry.Read(ctx, URISystemInfo)

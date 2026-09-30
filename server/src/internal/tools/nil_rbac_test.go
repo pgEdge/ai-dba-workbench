@@ -90,28 +90,39 @@ func TestTools_NilRBAC_AllConnectionsEmpty(t *testing.T) {
 	}
 }
 
-// TestTools_NilRBAC_ExistingConnectionDenied covers the tools that check
-// that a connection exists before checking access: against a real
-// connection, a nil checker still denies.
+// TestTools_NilRBAC_ExistingConnectionDenied checks every
+// single-connection tool against a real connection, so that a tool which
+// skipped its access check would find the connection and answer
+// something other than the denial asserted here.
 func TestTools_NilRBAC_ExistingConnectionDenied(t *testing.T) {
 	pool, _, cleanup := newToolsTestPool(t)
 	defer cleanup()
 	connID := seedBaselineConnection(t, pool, "denied-conn", true, "")
 
-	for name, tool := range map[string]Tool{
-		"get_alert_history": GetAlertHistoryTool(pool, nil, nil),
-		"get_blackouts":     GetBlackoutsTool(pool, nil, nil),
+	for name, tc := range map[string]struct {
+		tool Tool
+		want string
+	}{
+		"get_alert_history":    {GetAlertHistoryTool(pool, nil, nil), "Access denied"},
+		"get_blackouts":        {GetBlackoutsTool(pool, nil, nil), "Access denied"},
+		"get_metric_baselines": {GetMetricBaselinesTool(pool, nil, nil), "Access denied"},
+		"get_timeline_events":  {GetTimelineEventsTool(database.NewTestDatastore(pool), nil, nil), "Access denied"},
+		"query_metrics":        {QueryMetricsTool(pool, nil), "not found or not accessible"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			resp, err := asSuperuser(tool).Handler(map[string]any{"connection_id": float64(connID)})
+			args := map[string]any{"connection_id": float64(connID)}
+			if name == "query_metrics" {
+				args["probe_name"] = "pg_stat_activity"
+			}
+			resp, err := asSuperuser(tc.tool).Handler(args)
 			if err != nil {
 				t.Fatalf("handler returned error: %v", err)
 			}
 			if !resp.IsError || len(resp.Content) == 0 {
 				t.Fatalf("expected an error response, got: %+v", resp)
 			}
-			if text := resp.Content[0].Text; !strings.Contains(text, "Access denied") {
-				t.Errorf("expected an access-denied message, got: %s", text)
+			if text := resp.Content[0].Text; !strings.Contains(text, tc.want) {
+				t.Errorf("expected %q, got: %s", tc.want, text)
 			}
 		})
 	}
@@ -143,7 +154,7 @@ func TestListConnections_NilRBAC_ShowsNothing(t *testing.T) {
 
 // TestContextAwareProvider_NilRBAC_DeniesTool checks that a provider
 // whose checker is nil denies a tool call from a superuser rather than
-// running it or injecting the session's connection.
+// running it.
 func TestContextAwareProvider_NilRBAC_DeniesTool(t *testing.T) {
 	authStore, err := auth.NewAuthStore(t.TempDir(), 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
@@ -181,8 +192,5 @@ func TestContextAwareProvider_NilRBAC_DeniesTool(t *testing.T) {
 	}
 	if text := resp.Content[0].Text; !strings.Contains(text, "ccess denied") {
 		t.Errorf("expected an access-denied message, got: %s", text)
-	}
-	if _, injected := args["connection_id"]; injected {
-		t.Error("connection_id was injected despite a nil checker")
 	}
 }

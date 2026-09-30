@@ -171,7 +171,9 @@ CRITICAL: Never silently analyze multiple connections. Always get explicit user 
 			visible, allConns, visErr := rbacChecker.VisibleConnectionIDs(ctx, visibilityLister)
 			if visErr != nil {
 				fmt.Fprintf(os.Stderr, "ERROR: list_connections: failed to resolve visible connections: %v\n", visErr)
-			} else if !allConns {
+				return mcp.NewToolError("Failed to resolve accessible connections")
+			}
+			if !allConns {
 				visibleSet := make(map[int]bool, len(visible))
 				for _, id := range visible {
 					visibleSet[id] = true

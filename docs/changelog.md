@@ -1786,7 +1786,9 @@ project adheres to
   closes a latent hole rather than a live one. The overview stream
   also stops subscribing a signed-in user who can see no connections
   to the estate-wide feed, which had sent them the overview of every
-  connection. (#561)
+  connection, and the connection list tool now answers with an error
+  when the caller's visible connections cannot be resolved, where it
+  used to return every connection unfiltered. (#561)
 
 - Stop the Slack, Mattermost and generic webhook channels putting their
   endpoint URL into the alerter log, into

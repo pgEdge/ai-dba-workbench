@@ -407,12 +407,11 @@ func TestListConnectionsTool_Coverage(t *testing.T) {
 		{name: "no context sees shared only", raw: true, want: "Found 1 connections (0 monitored)"},
 	})
 
-	// A visibility failure is logged and leaves the list unfiltered. This
-	// case only drives that branch; it deliberately asserts nothing about
-	// which connections are returned.
+	// A visibility failure denies rather than returning the unfiltered
+	// list.
 	runToolCases(t, ListConnectionsTool(pool, checker, failingLister()), []toolCase{
 		{name: "visibility failure", args: map[string]any{"__context": restrictedUserContext()},
-			want: "Found"},
+			wantErr: true, want: "Failed to resolve accessible connections"},
 	})
 }
 

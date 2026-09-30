@@ -433,7 +433,11 @@ func TestSetupSIGHUPReloadsTheConfiguration(t *testing.T) {
 	server := &Server{cfg: cfg, clientManager: database.NewClientManager(cfg.Database)}
 
 	out := captureStderr(t, func() {
-		server.setupSIGHUP(&Flags{}, configPath)
+		// Stop the handler before captureStderr restores os.Stderr, so
+		// no reload can write to the closed pipe.
+		stop := server.setupSIGHUP(&Flags{}, configPath)
+		defer stop()
+		defer stop() // a second call must be a no-op
 		if err := syscall.Kill(os.Getpid(), syscall.SIGHUP); err != nil {
 			t.Fatalf("sending SIGHUP: %v", err)
 		}

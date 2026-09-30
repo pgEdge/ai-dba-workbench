@@ -700,8 +700,8 @@ func (s *Server) Run(flags *Flags, configPath string) error {
 	// Log startup information
 	s.logStartupInfo()
 
-	// Setup SIGHUP handler for configuration reload
-	s.setupSIGHUP(flags, configPath)
+	// Setup SIGHUP handler for configuration reload; Close stops it.
+	s.registerHandlerCloser(s.setupSIGHUP(flags, configPath))
 
 	// Setup SIGTERM/SIGINT handler for graceful shutdown and Go
 	// coverage-counter flush.
@@ -770,8 +770,11 @@ func (s *Server) setupShutdownHandler() {
 	})
 }
 
-// setupSIGHUP sets up the SIGHUP handler for configuration reload
-func (s *Server) setupSIGHUP(flags *Flags, configPath string) {
+// setupSIGHUP sets up the SIGHUP handler for configuration reload. It
+// returns a function that unregisters the handler and waits for its
+// goroutine to exit, so no reload can write to os.Stderr afterwards;
+// the function is safe to call more than once.
+func (s *Server) setupSIGHUP(flags *Flags, configPath string) func() {
 	cliFlags := flags.ToReloadCLIFlags()
 	reloadableCfg := config.NewReloadableConfig(s.cfg, configPath, cliFlags)
 
@@ -783,14 +786,31 @@ func (s *Server) setupSIGHUP(flags *Flags, configPath string) {
 	// Start SIGHUP listener
 	sighup := make(chan os.Signal, 1)
 	signal.Notify(sighup, syscall.SIGHUP)
+	done := make(chan struct{})
+	exited := make(chan struct{})
 	go func() {
-		for range sighup {
-			fmt.Fprintf(os.Stderr, "Received SIGHUP, reloading configuration...\n")
-			if err := reloadableCfg.Reload(); err != nil {
-				fmt.Fprintf(os.Stderr, "ERROR: Failed to reload config: %v\n", err)
+		defer close(exited)
+		for {
+			select {
+			case <-done:
+				return
+			case <-sighup:
+				fmt.Fprintf(os.Stderr, "Received SIGHUP, reloading configuration...\n")
+				if err := reloadableCfg.Reload(); err != nil {
+					fmt.Fprintf(os.Stderr, "ERROR: Failed to reload config: %v\n", err)
+				}
 			}
 		}
 	}()
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			signal.Stop(sighup)
+			close(done)
+			<-exited
+		})
+	}
 }
 
 // VerifySchemaHealth delegates to the underlying datastore's schema

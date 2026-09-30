@@ -1130,7 +1130,7 @@
             "description": "Redirect to the return path on success, or to \"/\" with login_error set on failure"
           },
           "400": {
-            "description": "Missing or invalid state cookie, state mismatch, or missing authorization code",
+            "description": "Missing or invalid state cookie, state mismatch, a state that has already been used, or missing authorization code",
             "content": {
               "application/json": {
                 "schema": {
@@ -1182,6 +1182,16 @@
           },
           "405": {
             "description": "Method not allowed; the Allow header names GET"
+          },
+          "429": {
+            "description": "Too many login requests from this address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           },
           "500": {
             "description": "Failed to create or seal the login state",

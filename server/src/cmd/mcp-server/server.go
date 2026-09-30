@@ -420,18 +420,27 @@ func logOIDCStartupWarnings(w io.Writer, cfg *config.Config) {
 	}
 
 	// Without a trusted proxy list, every request behind a reverse proxy
-	// arrives with that proxy's address, so the callback's rate limit
-	// has one key for the whole deployment rather than one per client:
-	// it stops nothing an attacker does and can be spent deliberately to
-	// deny everyone else a login. The same list decides whether the OIDC
-	// state cookie may use the "__Host-" name prefix, so without it the
-	// cookie is written under its plain name.
+	// arrives with that proxy's address, so the start and callback rate
+	// limits have one key for the whole deployment rather than one per
+	// client: they stop nothing an attacker does and can be spent
+	// deliberately to deny everyone else a login. The same list decides
+	// whether the OIDC state cookie may use the "__Host-" name prefix
+	// when TLS terminates at the proxy, so without it the cookie is
+	// written under its plain name, and a host that can set cookies for
+	// a sibling subdomain can plant its own login state over a user's
+	// and have that user's browser finish the attacker's login (login
+	// CSRF, issue #506). The warning names both consequences so that an
+	// operator reads the list as required behind a proxy, not optional.
 	if len(cfg.HTTP.TrustedProxies) == 0 {
 		fmt.Fprintf(w,
-			"WARNING: http.trusted_proxies is empty, so per-client rate limiting of the OIDC\n"+
-				"         callback is inoperative behind a reverse proxy: every request shares one\n"+
-				"         allowance, and the login state cookie cannot use the __Host- prefix.\n"+
-				"         Set http.trusted_proxies to the reverse proxy's address.\n")
+			"WARNING: http.trusted_proxies is empty. Behind a reverse proxy this is unsafe for\n"+
+				"         OIDC login: every request shares one rate-limit allowance for the OIDC\n"+
+				"         start and callback endpoints, so any client can spend it and block\n"+
+				"         federated login for everyone; and unless TLS terminates at this server,\n"+
+				"         the login state cookie cannot use the __Host- prefix, so a host that can\n"+
+				"         set cookies for a sibling subdomain can log a user in to the attacker's\n"+
+				"         own account (login CSRF). Set http.trusted_proxies to the reverse\n"+
+				"         proxy's address; it is required for production deployments behind one.\n")
 	}
 
 	// superuser_group hands the Workbench superuser flag to whoever can
@@ -609,14 +618,22 @@ func (s *Server) startOverviewGenerator() {
 		return
 	}
 
+	s.buildOverviewGenerator()
+	s.overviewGen.Start(s.ctx)
+	fmt.Fprintf(os.Stderr, "AI Overview: ENABLED\n")
+	s.aiEnabled = true
+}
+
+// buildOverviewGenerator creates the overview generator and its SSE hub
+// from the LLM configuration without starting it. It is separate from
+// startOverviewGenerator so that the wiring can be tested without a
+// background goroutine that calls out to the configured provider.
+func (s *Server) buildOverviewGenerator() {
 	llmConfig := newLLMProxyConfig(&s.cfg.LLM)
 
 	s.overviewHub = overview.NewHub()
 	s.overviewGen = overview.NewGenerator(s.datastore, llmConfig)
 	s.overviewGen.SetHub(s.overviewHub)
-	s.overviewGen.Start(s.ctx)
-	fmt.Fprintf(os.Stderr, "AI Overview: ENABLED\n")
-	s.aiEnabled = true
 }
 
 // cleanupExpiredConnections cleans up database connections for expired tokens
@@ -683,8 +700,8 @@ func (s *Server) Run(flags *Flags, configPath string) error {
 	// Log startup information
 	s.logStartupInfo()
 
-	// Setup SIGHUP handler for configuration reload
-	s.setupSIGHUP(flags, configPath)
+	// Setup SIGHUP handler for configuration reload; Close stops it.
+	s.registerHandlerCloser(s.setupSIGHUP(flags, configPath))
 
 	// Setup SIGTERM/SIGINT handler for graceful shutdown and Go
 	// coverage-counter flush.
@@ -753,8 +770,11 @@ func (s *Server) setupShutdownHandler() {
 	})
 }
 
-// setupSIGHUP sets up the SIGHUP handler for configuration reload
-func (s *Server) setupSIGHUP(flags *Flags, configPath string) {
+// setupSIGHUP sets up the SIGHUP handler for configuration reload. It
+// returns a function that unregisters the handler and waits for its
+// goroutine to exit, so no reload can write to os.Stderr afterwards;
+// the function is safe to call more than once.
+func (s *Server) setupSIGHUP(flags *Flags, configPath string) func() {
 	cliFlags := flags.ToReloadCLIFlags()
 	reloadableCfg := config.NewReloadableConfig(s.cfg, configPath, cliFlags)
 
@@ -766,14 +786,31 @@ func (s *Server) setupSIGHUP(flags *Flags, configPath string) {
 	// Start SIGHUP listener
 	sighup := make(chan os.Signal, 1)
 	signal.Notify(sighup, syscall.SIGHUP)
+	done := make(chan struct{})
+	exited := make(chan struct{})
 	go func() {
-		for range sighup {
-			fmt.Fprintf(os.Stderr, "Received SIGHUP, reloading configuration...\n")
-			if err := reloadableCfg.Reload(); err != nil {
-				fmt.Fprintf(os.Stderr, "ERROR: Failed to reload config: %v\n", err)
+		defer close(exited)
+		for {
+			select {
+			case <-done:
+				return
+			case <-sighup:
+				fmt.Fprintf(os.Stderr, "Received SIGHUP, reloading configuration...\n")
+				if err := reloadableCfg.Reload(); err != nil {
+					fmt.Fprintf(os.Stderr, "ERROR: Failed to reload config: %v\n", err)
+				}
 			}
 		}
 	}()
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			signal.Stop(sighup)
+			close(done)
+			<-exited
+		})
+	}
 }
 
 // VerifySchemaHealth delegates to the underlying datastore's schema

@@ -208,6 +208,30 @@ func (e *oidcTestEnv) openAuthDB(t *testing.T) *sql.DB {
 	return db
 }
 
+// mintStateCookie seals a fresh login state exactly as handleStart
+// would, without going through handleStart and so without spending its
+// rate-limit allowance.
+func mintStateCookie(t *testing.T) (*http.Cookie, *oidc.LoginState) {
+	t.Helper()
+
+	state, err := oidc.NewLoginState("/dashboard")
+	if err != nil {
+		t.Fatalf("oidc.NewLoginState: %v", err)
+	}
+	sealed, err := oidc.SealState(testStateKey, state)
+	if err != nil {
+		t.Fatalf("oidc.SealState: %v", err)
+	}
+	// A request cookie carries only its name and value; the attributes
+	// are set to match what the handler issues.
+	return &http.Cookie{
+		Name:     oidc.StateCookieName,
+		Value:    sealed,
+		HttpOnly: true,
+		Secure:   true,
+	}, state
+}
+
 // findCookie returns the named cookie from a response, or nil.
 func findCookie(rec *httptest.ResponseRecorder, name string) *http.Cookie {
 	for _, cookie := range rec.Result().Cookies() {
@@ -1066,12 +1090,13 @@ func TestCallbackRefusesWhenGroupReconciliationFails(t *testing.T) {
 // ID token staged and so answers invalid_grant. It is the cheapest
 // request that spends rate-limit allowance, because the allowance is
 // charged immediately before the call to the provider and nowhere
-// earlier.
+// earlier. The state is minted directly rather than through handleStart,
+// so that these tests of the callback's allowance do not also spend the
+// start endpoint's.
 func (e *oidcTestEnv) sendFailingExchange(t *testing.T, remoteAddr string) *httptest.ResponseRecorder {
 	t.Helper()
 
-	cookie := e.startLogin(t, "/dashboard")
-	state := e.openState(t, cookie)
+	cookie, state := mintStateCookie(t)
 	req := httptest.NewRequest(http.MethodGet, OIDCCallbackPath+"?"+url.Values{
 		"code": {"unredeemable-code"}, "state": {state.State},
 	}.Encode(), nil)

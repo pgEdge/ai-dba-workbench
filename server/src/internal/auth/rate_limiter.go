@@ -111,6 +111,26 @@ func (rl *RateLimiter) RecordFailedAttempt(ipAddress string) {
 	}
 }
 
+// Refund hands back one unit of an IP address's allowance by removing
+// its most recent recorded attempt. A successful login calls this rather
+// than Reset so that it returns only what it spent: Reset would clear
+// every attempt for the address, letting anyone who can complete one
+// login refill the whole allowance as often as they liked.
+func (rl *RateLimiter) Refund(ipAddress string) {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	attempts := rl.attempts[ipAddress]
+	switch len(attempts) {
+	case 0:
+		return
+	case 1:
+		delete(rl.attempts, ipAddress)
+	default:
+		rl.attempts[ipAddress] = attempts[:len(attempts)-1]
+	}
+}
+
 // Reset clears all failed attempts for an IP address
 // This can be called after a successful authentication
 func (rl *RateLimiter) Reset(ipAddress string) {

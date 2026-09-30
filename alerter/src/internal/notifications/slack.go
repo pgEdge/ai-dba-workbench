@@ -51,5 +51,5 @@ func (n *slackNotifier) Send(ctx context.Context, channel *database.Notification
 		return err
 	}
 
-	return sendWebhookNotification(ctx, n.httpClient, n.renderer, "slack", *channel.WebhookURL, channel, payload)
+	return sendWebhookNotification(ctx, n.httpClient, n.renderer, "slack", ChatMarkupSlack, *channel.WebhookURL, channel, payload)
 }

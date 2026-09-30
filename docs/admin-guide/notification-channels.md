@@ -183,6 +183,39 @@ these steps:
 For detailed instructions, see the
 [Mattermost Incoming Webhooks documentation](https://developers.mattermost.com/integrate/webhooks/incoming/).
 
+### Slack and Mattermost Templates
+
+Slack and Mattermost channels support custom templates
+through the `template_alert_fire`, `template_alert_clear`,
+and `template_reminder` fields of the REST API. Each
+template renders the complete JSON body of the webhook
+request, using the variables listed in
+[Template Variables](#template-variables).
+
+The alerter escapes the template variables for the
+service's markup before rendering, and leaves the
+template text intact. Alert titles, descriptions, and
+server and database names can contain text from outside
+the Workbench, so the escaping stops that text from
+adding a mention, a link, or formatting to a message:
+
+- For Slack, the alerter replaces `&`, `<`, and `>` with
+  `&amp;`, `&lt;`, and `&gt;`, as the Slack formatting
+  documentation requires, so a value cannot form a
+  `<!channel>` announcement or a `<url|text>` link.
+- For Mattermost, the alerter places a backslash before
+  each Markdown character in a value, and a zero-width
+  space after each `@`, so a value cannot format text,
+  form a link, or mention `@channel`, `@here`, `@all`, or
+  a user.
+
+Mentions, links, and formatting written into a custom
+template itself still work. Place variables in fields
+that the service renders as Markdown, such as `text` or
+a field `value`; in a field that the service shows as
+plain text, such as a field `title`, the escape
+characters may appear literally.
+
 ## Telegram Channels
 
 Telegram channels deliver alert notifications to a

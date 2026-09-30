@@ -329,6 +329,61 @@ func (r *templateRenderer) Render(templateStr string, payload *database.Notifica
 // JSON (double quotes, backslashes, backticks, newlines, etc.) do
 // not break the rendered JSON payload.
 func (r *templateRenderer) RenderJSON(templateStr string, payload *database.NotificationPayload, defaultTemplate string) (string, error) {
+	data := r.enhancePayload(payload)
+	jsonEscapeStringValues(data)
+	return r.executeJSONTemplate(templateStr, defaultTemplate, data)
+}
+
+// RenderChatJSON implements TemplateRenderer.RenderChatJSON
+// It renders the JSON envelope of a Slack or Mattermost incoming
+// webhook. Each string value in the template data is first escaped for
+// the markup the chat service parses, and then JSON-escaped, in that
+// order: the chat escaping can itself produce characters that are
+// special in JSON (Mattermost's backslashes), and the JSON escaping is
+// undone by the service's JSON decoder before its markup parser ever
+// sees the text.
+//
+// As with RenderHTML, only the data is escaped, never the template.
+// Links, mentions and formatting an administrator wrote into a custom
+// template are meant to work, whereas alert titles, descriptions,
+// server and database names can carry text the Workbench does not
+// control and must reach the channel as literal text.
+func (r *templateRenderer) RenderChatJSON(markup ChatMarkup, templateStr string, payload *database.NotificationPayload, defaultTemplate string) (string, error) {
+	var escape func(string) string
+	switch markup {
+	case ChatMarkupSlack:
+		escape = escapeSlackText
+	case ChatMarkupMattermost:
+		escape = escapeMattermostText
+	default:
+		return "", fmt.Errorf("unknown chat markup: %d", markup)
+	}
+
+	data := r.enhancePayload(payload)
+	for k, v := range data {
+		if chatTrustedKeys[k] {
+			continue
+		}
+		data[k] = escapeValue(v, escape)
+	}
+	jsonEscapeStringValues(data)
+	return r.executeJSONTemplate(templateStr, defaultTemplate, data)
+}
+
+// chatTrustedKeys names the template data keys RenderChatJSON leaves
+// unescaped. Both are computed by enhancePayload from constants rather
+// than copied from the payload, so they cannot carry outside text, and
+// SeverityColor is used as an attachment color, where a Mattermost
+// backslash in front of its '#' would make the color invalid.
+var chatTrustedKeys = map[string]bool{
+	"SeverityColor": true,
+	"SeverityEmoji": true,
+}
+
+// executeJSONTemplate renders tmplStr (or defaultTemplate when tmplStr
+// is empty) with data that has already been escaped, and checks that
+// the result is valid JSON.
+func (r *templateRenderer) executeJSONTemplate(templateStr, defaultTemplate string, data map[string]any) (string, error) {
 	// Use defaultTemplate if templateStr is empty
 	tmplStr := templateStr
 	if tmplStr == "" {
@@ -344,10 +399,6 @@ func (r *templateRenderer) RenderJSON(templateStr string, payload *database.Noti
 	if err != nil {
 		return "", fmt.Errorf("failed to compile template: %w", err)
 	}
-
-	// Create enhanced data map and JSON-escape all string values
-	data := r.enhancePayload(payload)
-	jsonEscapeStringValues(data)
 
 	// Execute template
 	var buf bytes.Buffer
@@ -444,40 +495,47 @@ func htmlEscapeStringValues(data map[string]any) {
 
 // htmlEscapeValue returns v with every string it contains HTML-escaped,
 // recursing through the container types a template data map can hold.
-// Values of any other type are returned unchanged: they cannot carry
-// markup through fmt's rendering of a number, a bool or a time.Time.
+func htmlEscapeValue(v any) any {
+	return escapeValue(v, html.EscapeString)
+}
+
+// escapeValue returns v with every string it contains passed through
+// escape, recursing through the container types a template data map can
+// hold. Values of any other type are returned unchanged: they cannot
+// carry markup through fmt's rendering of a number, a bool or a
+// time.Time.
 //
 // Nested containers are rebuilt rather than mutated. The map handed to
-// htmlEscapeStringValues is built fresh per render, but anything nested
-// inside it is shared with the payload the caller owns, and escaping
-// that in place would corrupt it for every other channel the same alert
-// fans out to.
-func htmlEscapeValue(v any) any {
+// the caller is built fresh per render, but anything nested inside it
+// is shared with the payload the caller owns, and escaping that in
+// place would corrupt it for every other channel the same alert fans
+// out to.
+func escapeValue(v any, escape func(string) string) any {
 	switch t := v.(type) {
 	case string:
-		return html.EscapeString(t)
+		return escape(t)
 	case []string:
 		out := make([]string, len(t))
 		for i, s := range t {
-			out[i] = html.EscapeString(s)
+			out[i] = escape(s)
 		}
 		return out
 	case []any:
 		out := make([]any, len(t))
 		for i, e := range t {
-			out[i] = htmlEscapeValue(e)
+			out[i] = escapeValue(e, escape)
 		}
 		return out
 	case map[string]string:
 		out := make(map[string]string, len(t))
 		for k, s := range t {
-			out[k] = html.EscapeString(s)
+			out[k] = escape(s)
 		}
 		return out
 	case map[string]any:
 		out := make(map[string]any, len(t))
 		for k, e := range t {
-			out[k] = htmlEscapeValue(e)
+			out[k] = escapeValue(e, escape)
 		}
 		return out
 	default:

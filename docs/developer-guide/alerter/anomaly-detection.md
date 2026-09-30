@@ -31,6 +31,10 @@ Tier 1: Statistical Analysis (z-score)
   - Creates candidates for values exceeding threshold
         |
         v
+Pre-Tier Checks
+  - Skips Tier 2 and Tier 3 when no alert could be raised
+        |
+        v
 Tier 2: Embedding Similarity (pgvector)
   - Generates vector embeddings for anomaly context
   - Searches for similar past anomalies
@@ -42,6 +46,24 @@ Tier 3: LLM Classification
   - Determines alert or suppress decision
   - Provides reasoning for the decision
 ```
+
+Before Tier 2 runs on a candidate, the alerter checks whether an
+alert could be raised for the candidate at all. The paid tiers are
+skipped when any of the following conditions applies:
+
+- an active blackout covers the connection.
+- an active or acknowledged anomaly alert is already open for the
+  same metric, connection and database.
+- re-evaluation cleared a matching alert within the last 24 hours.
+- a user acknowledged a matching alert as a false positive within
+  the last 24 hours.
+
+A skipped candidate is marked as processed without tier results or
+an embedding; when an open alert exists, the candidate's `alert_id`
+points at that alert. A persistent condition therefore costs no
+embedding or LLM call on later evaluation cycles. The alerter repeats
+the same checks just before creating an alert, because a blackout or
+an acknowledgement can arrive during a slow Tier 3 call.
 
 ## Tier 1: Statistical Analysis
 

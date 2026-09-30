@@ -842,6 +842,19 @@ project adheres to
   endpoint's separate copy of the identity provider password check has
   gone, so the store is the one place that rule is written. (#485)
 
+- Fix the alerter paying for Tier 2 and Tier 3 anomaly analysis on
+  candidates that could never raise an alert. Every candidate went
+  through an embedding call and an LLM call before the alerter
+  checked for an active blackout, an open anomaly alert on the same
+  metric, connection and database, or re-evaluation and
+  false-positive suppression, so a persistent condition bought both
+  calls on every evaluation cycle only for the result to be
+  discarded. Those checks now run before Tier 2, and a candidate
+  that matches one is marked as processed without either call,
+  linked to the open alert where there is one. The checks run again
+  just before an alert is created, since a blackout or an
+  acknowledgement can arrive during a slow Tier 3 call. (#568)
+
 - Fix alerts staying active for ever on a server an operator has
   stopped monitoring. The probes of an unmonitored connection leave
   the staleness view, so every alert on it was judged to have a probe

@@ -361,6 +361,22 @@ func (e *Engine) processTier2And3(ctx context.Context) {
 			return
 		}
 
+		// Checks that do not depend on the tier results run first, so
+		// a condition that persists across cycles does not buy an
+		// embedding and an LLM call on every cycle only for
+		// createAnomalyAlert to discard the result (issue #568).
+		if reason := e.anomalyAlertSkipReason(ctx, candidate); reason != "" {
+			e.debugLog("Skipping Tier 2 and Tier 3 for candidate %d (%s on connection %d): %s",
+				candidate.ID, candidate.MetricName, candidate.ConnectionID, reason)
+			// With no tier after Tier 1 run, determineFinalDecision
+			// records "alert", the same decision a candidate that
+			// passes the tiers and is then discarded by
+			// createAnomalyAlert is left with.
+			e.determineFinalDecision(candidate)
+			e.markCandidateProcessed(ctx, candidate)
+			continue
+		}
+
 		var similarAnomalies []*database.SimilarAnomaly
 		var embedding []float32
 
@@ -400,13 +416,18 @@ func (e *Engine) processTier2And3(ctx context.Context) {
 			}
 		}
 
-		// Mark as processed
-		now := time.Now()
-		candidate.ProcessedAt = &now
+		e.markCandidateProcessed(ctx, candidate)
+	}
+}
 
-		if err := e.datastore.UpdateAnomalyCandidate(ctx, candidate); err != nil {
-			e.log("ERROR: Failed to update anomaly candidate: %v", err)
-		}
+// markCandidateProcessed stamps the candidate as processed and writes its
+// tier results, decision and alert link back to anomaly_candidates.
+func (e *Engine) markCandidateProcessed(ctx context.Context, candidate *database.AnomalyCandidate) {
+	now := time.Now()
+	candidate.ProcessedAt = &now
+
+	if err := e.datastore.UpdateAnomalyCandidate(ctx, candidate); err != nil {
+		e.log("ERROR: Failed to update anomaly candidate: %v", err)
 	}
 }
 
@@ -608,11 +629,20 @@ func (e *Engine) determineFinalDecision(candidate *database.AnomalyCandidate) {
 	candidate.FinalDecision = &decision
 }
 
-// createAnomalyAlert creates an alert record for a confirmed anomaly candidate.
-// It deduplicates against existing active anomaly alerts for the same metric
-// and connection to prevent duplicate alerts.
-func (e *Engine) createAnomalyAlert(ctx context.Context, candidate *database.AnomalyCandidate, sensitivity float64) {
-	// Check if there's a blackout active for this connection
+// anomalyAlertSkipReason runs the checks that stop an alert being raised
+// for the candidate and that do not depend on the Tier 2 or Tier 3
+// results: an active blackout, an open (active or acknowledged) anomaly
+// alert for the same metric, connection and database, a recent
+// re-evaluation clear, and a recent false-positive acknowledgment. It
+// returns a short reason when one applies and "" otherwise. When an open
+// alert exists, candidate.AlertID is set to it so the candidate is
+// recorded against that alert.
+//
+// The order is significant: an acknowledged alert marked as a false
+// positive is also an open alert, so the duplicate check claims it first
+// and links the candidate to it. A lookup error is logged and treated as
+// "does not apply", so a failing query never hides a real anomaly.
+func (e *Engine) anomalyAlertSkipReason(ctx context.Context, candidate *database.AnomalyCandidate) string {
 	connID := candidate.ConnectionID
 	active, err := e.datastore.IsBlackoutActive(ctx, &connID, candidate.DatabaseName)
 	if err != nil {
@@ -620,36 +650,48 @@ func (e *Engine) createAnomalyAlert(ctx context.Context, candidate *database.Ano
 	}
 	if active {
 		e.debugLog("Skipping anomaly alert for connection %d: blackout active", connID)
-		return
+		return "blackout active"
 	}
 
-	// Check for an existing active anomaly alert on this metric/connection
 	existing, err := e.datastore.GetActiveAnomalyAlert(ctx, candidate.MetricName, candidate.ConnectionID, candidate.DatabaseName)
 	if err == nil && existing != nil {
 		e.debugLog("Active anomaly alert already exists for %s on connection %d (alert %d), skipping",
 			candidate.MetricName, candidate.ConnectionID, existing.ID)
 		candidate.AlertID = &existing.ID
-		return
+		return fmt.Sprintf("open anomaly alert %d", existing.ID)
 	}
 
-	// Check if re-evaluation previously cleared this alert based on user
-	// feedback. Use a longer suppression window to respect the user's
-	// assessment.
+	// Re-evaluation previously cleared this alert based on user
+	// feedback; use the longer suppression window to respect the
+	// user's assessment.
 	suppressed, err := e.datastore.GetReevaluationSuppressedAlert(ctx, candidate.MetricName, candidate.ConnectionID, candidate.DatabaseName, ReevaluationSuppressionPeriod)
 	if err != nil {
 		e.debugLog("Error checking re-evaluation suppression for %s on connection %d: %v", candidate.MetricName, candidate.ConnectionID, err)
 	} else if suppressed {
 		e.debugLog("Skipping anomaly alert %s on connection %d: suppressed by re-evaluation feedback", candidate.MetricName, candidate.ConnectionID)
-		return
+		return "suppressed by re-evaluation feedback"
 	}
 
-	// Check if user has acknowledged a similar alert as a false positive.
-	// Respect the user's assessment for the same suppression period.
+	// The user acknowledged a similar alert as a false positive;
+	// respect that for the same suppression period.
 	fpSuppressed, err := e.datastore.GetFalsePositiveSuppressedAlert(ctx, candidate.MetricName, candidate.ConnectionID, candidate.DatabaseName, ReevaluationSuppressionPeriod)
 	if err != nil {
 		e.debugLog("Error checking false positive suppression for %s on connection %d: %v", candidate.MetricName, candidate.ConnectionID, err)
 	} else if fpSuppressed {
 		e.debugLog("Skipping anomaly alert %s on connection %d: suppressed by user false positive acknowledgment", candidate.MetricName, candidate.ConnectionID)
+		return "suppressed by false positive acknowledgment"
+	}
+
+	return ""
+}
+
+// createAnomalyAlert creates an alert record for a confirmed anomaly candidate.
+// processTier2And3 has already run anomalyAlertSkipReason before the paid
+// tiers; it runs again here because Tier 3 can take up to its timeout, in
+// which time a blackout may start or a user may acknowledge an alert, and
+// an alert must not be raised against either.
+func (e *Engine) createAnomalyAlert(ctx context.Context, candidate *database.AnomalyCandidate, sensitivity float64) {
+	if e.anomalyAlertSkipReason(ctx, candidate) != "" {
 		return
 	}
 

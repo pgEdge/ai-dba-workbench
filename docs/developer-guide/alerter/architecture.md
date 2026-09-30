@@ -194,7 +194,10 @@ connection and database, preferring the hourly baseline for the
 current UTC hour, then the daily baseline for the current UTC
 weekday, then the global baseline, and taking the first of those
 that has passed its warmup gate. The detector creates anomaly
-candidates that progress through each tier. The final decision
+candidates that progress through each tier. Before Tier 2, the
+detector skips both paid tiers for a candidate when a blackout,
+an open anomaly alert or a recent suppression would prevent an
+alert from being raised. The final decision
 determines whether to create an alert or suppress the anomaly as
 a false positive.
 
@@ -258,15 +261,19 @@ are violated, the alerter writes alerts to the alerts table.
 ### Anomaly Detection Flow
 
 ```
-Tier 1 --> Candidate --> Tier 2 --> Tier 3 --> Alert or Suppress
-(z-score)   (store)    (embedding)  (LLM)
+Tier 1 --> Candidate --> Checks --> Tier 2 --> Tier 3 --> Alert or Suppress
+(z-score)   (store)     (skip?)   (embedding)  (LLM)
 ```
 
 Tier 1 creates anomaly candidates for values exceeding the
-z-score threshold. These candidates are stored and processed by
-Tier 2, which generates embeddings and searches for similar past
-anomalies. Tier 3 uses LLM classification to make the final
-decision.
+z-score threshold. The alerter then checks each stored candidate
+for an active blackout, an open anomaly alert on the same metric,
+connection and database, and re-evaluation or false-positive
+suppression; a candidate that matches any check is marked as
+processed without running Tier 2 or Tier 3. Other candidates are
+processed by Tier 2, which generates embeddings and searches for
+similar past anomalies. Tier 3 uses LLM classification to make the
+final decision.
 
 ## Database Schema
 

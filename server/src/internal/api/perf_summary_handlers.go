@@ -187,6 +187,14 @@ type DatabaseSummary struct {
 type TopQueryRow struct {
 	QueryID      string `json:"queryid"`
 	DatabaseName string `json:"database_name"`
+	// SampleDatabaseName is the database the pg_stat_statements probe
+	// recorded the statement through, which is the database_name the
+	// metrics.pg_stat_statements rows for it carry. DatabaseName is the
+	// statement's own database, resolved from its dbid, and can name a
+	// database the probe never runs in, so a caller that reads those rows
+	// through /api/v1/metrics/query, as the drill-down charts do, filters
+	// on this instead.
+	SampleDatabaseName string `json:"sample_database_name"`
 	// Username is the database role that ran the query, resolved from
 	// pg_stat_statements.userid. It is an empty string when the role
 	// could not be resolved; see buildTopQueriesSQL for why that can
@@ -1575,36 +1583,70 @@ func buildTopQueriesSQL(
 		excludeCollectorClause = excludeWorkbenchQueriesClause
 	}
 
-	// The database filter is applied inside the sample scan, against the
-	// name resolved through db_names (falling back to the raw
-	// pss.database_name column when the OID was never observed), so that a
-	// filtered request aggregates only the counters of that database. It
-	// cannot be applied after totals: pg_stat_statements keeps a separate
-	// counter per dbid for one queryid, totals sums them, and a filter on
-	// the summed row would report every database's calls under the one
-	// that was asked for.
+	// The database filter matches the name a statement is reported under:
+	// its dbid's name from db_names, or, for a dbid db_names cannot resolve,
+	// the probing database_name of the copy readings kept. It is applied
+	// in two parts, and neither may move.
+	//
+	// databaseClause, in samples, is the exact test. It runs after the LAG
+	// in deltas, so that each delta counts under the name of the reading
+	// that ends it: an unresolved dbid's fallback name can change between
+	// collections when the set of probing databases does, and filtering
+	// first would then drop the predecessor and lose a delta that the
+	// unfiltered request counts. It cannot run after totals: pg_stat_statements
+	// keeps a separate counter per dbid for one queryid, totals sums them,
+	// and a filter on the summed row would report every database's calls
+	// under the one that was asked for. Nor can the fallback half run
+	// inside readings, before the DISTINCT ON: the probing database_name
+	// differs between the copies of one counter, so filtering the copies
+	// would let each of them match its own probing database and report the
+	// one counter under every one of them (issue #508).
+	//
+	// readingsDatabaseClause, in readings, only discards the dbids that
+	// db_names names as some other database. It tests nothing but dbid,
+	// which is a partition key of the LAG, so it keeps or drops whole
+	// identities and cannot remove a predecessor; it spares the window the
+	// readings of every other monitored database. Both clauses are
+	// written as dbid tests against db_names rather than as a join, and
+	// the statement's name is only joined in deduped, once per queryid,
+	// because a join in readings or samples makes the planner hash-join
+	// over a sequential scan of the window instead of reading
+	// idx_pg_stat_statements_identity_time in order: db_names is a
+	// DISTINCT ON over a UNION ALL, which it estimates at 200 rows however
+	// few databases there are. Both clauses bind the same placeholder.
 	databaseClause := ""
+	readingsDatabaseClause := ""
 	if databaseName != "" {
-		databaseClause = fmt.Sprintf(
-			"AND COALESCE(dn.datname, pss.database_name) = $%d",
-			len(filterArgs)+1)
+		databasePos := len(filterArgs) + 1
+		databaseClause = fmt.Sprintf(`WHERE d.dbid IN (
+                SELECT datid FROM db_names WHERE datname = $%[1]d)
+               OR (d.sample_database_name = $%[1]d
+                   AND d.dbid NOT IN (SELECT datid FROM db_names))`,
+			databasePos)
+		readingsDatabaseClause = fmt.Sprintf(`AND (pss.dbid IN (
+                    SELECT datid FROM db_names WHERE datname = $%[1]d)
+                   OR pss.dbid NOT IN (SELECT datid FROM db_names))`,
+			databasePos)
 		filterArgs = append(filterArgs, databaseName)
 	}
 
 	// latest is the most recent pg_stat_statements snapshot for the
-	// connection; the three activity lookups below are anchored to it.
+	// connection; the db_names, user_names and last_client lookups below
+	// are all anchored to it.
 	//
-	// db_names and user_names resolve the OIDs recorded in
-	// pg_stat_statements to human-readable names using what
-	// pg_stat_activity observed for this connection in the hour leading up
-	// to that snapshot. Both are necessarily best-effort: an OID only
-	// appears in pg_stat_activity if the collector sampled a backend for
-	// that database or role inside that window, so a role that had no
-	// active backend sampled resolves to nothing and the query is reported
-	// with an empty username. Both CTEs pick the most recently observed
-	// name per OID, so a database or role renamed within the window
-	// resolves to its current name rather than to whichever of the two
-	// names the planner happened to reach first.
+	// db_names, described at statementDatabaseLookupSQL, resolves each
+	// statement's dbid to the name of the database it ran in.
+	//
+	// user_names resolves the role OIDs recorded in pg_stat_statements
+	// to names using what pg_stat_activity observed for this connection
+	// in the hour leading up to that snapshot. It is necessarily
+	// best-effort: an OID only appears in pg_stat_activity if the
+	// collector sampled a backend for that role inside that window, so a
+	// role that had no active backend sampled resolves to nothing and the
+	// query is reported with an empty username. It picks the most recently
+	// observed name per OID, so a role renamed within the window resolves
+	// to its current name rather than to whichever of the two names the
+	// planner happened to reach first.
 	//
 	// last_client attributes each queryid to the client most recently
 	// observed running it, through pg_stat_activity.query_id (collected
@@ -1674,8 +1716,13 @@ func buildTopQueriesSQL(
 	// count every call once per database with the extension. readings
 	// keeps one copy per (queryid, userid, dbid, toplevel, collected_at),
 	// choosing the lowest database_name so that the choice is stable, and
-	// the LAG runs over that. It also resolves the statement's own database
-	// through db_names, which is what the optional database filter matches.
+	// the LAG runs over that, in deltas. readings deliberately does not
+	// join db_names: that join turned the scan into a hash join over a
+	// sequential scan and cost the index order the DISTINCT ON and the LAG
+	// rely on. The statement's own database is resolved from dbid in
+	// deduped instead, once per statement, and the optional database
+	// filter, applied in samples once the deltas are taken, tests dbid
+	// against db_names without joining it.
 	//
 	// A sample pair whose call or time delta is negative is discarded,
 	// because a negative delta means the counters were reset by
@@ -1697,8 +1744,11 @@ func buildTopQueriesSQL(
 	//
 	// min_exec_time and max_exec_time are lifetime extremes that cannot be
 	// differenced, so they are read from the latest sample in the window
-	// alongside the identifying OIDs and the resolved database name; the
-	// trailing dbid and userid in that ORDER BY only break ties between
+	// alongside the identifying OIDs and the probing database name. That
+	// ORDER BY prefers a sample with calls in its interval, so a statement
+	// run in several databases is attributed to one that contributed calls
+	// rather than one that sat idle, which filtering by the label would
+	// then fail to find. The trailing dbid and userid only break ties between
 	// identities collected at the same instant, so the choice is stable.
 	// Ordering by either of them therefore
 	// sorts a windowed list on a lifetime value; that is a known wart, kept
@@ -1731,24 +1781,13 @@ func buildTopQueriesSQL(
 	// into a 5-second one. Materializing costs one pass each and makes the
 	// cost proportional to the window rather than to the window times the
 	// number of distinct statements. samples itself is referenced twice, so
-	// PostgreSQL materializes it without being asked, and readings is
-	// referenced once and inlined.
+	// PostgreSQL materializes it without being asked, and readings and
+	// deltas are each referenced once and inlined. The database filter
+	// cannot be pushed below the LAG in deltas, since database_name is not a
+	// partition key, so a filtered request takes its deltas over every
+	// reading in the window, as an unfiltered one does.
 	cte := fmt.Sprintf(`
-        WITH latest AS (
-            SELECT MAX(collected_at) AS collected_at
-            FROM metrics.pg_stat_statements
-            WHERE connection_id = $1
-        ),
-        db_names AS (
-            SELECT DISTINCT ON (datid) datid, datname
-            FROM metrics.pg_stat_activity
-            WHERE connection_id = $1
-              AND collected_at >= (SELECT collected_at FROM latest)
-                  - INTERVAL '%s'
-              AND datid IS NOT NULL
-              AND datname IS NOT NULL
-            ORDER BY datid, collected_at DESC
-        ),
+        WITH %s,
         user_names AS (
             SELECT DISTINCT ON (usesysid) usesysid, usename
             FROM metrics.pg_stat_activity
@@ -1778,12 +1817,10 @@ func buildTopQueriesSQL(
                 pss.queryid, pss.userid, pss.dbid, pss.toplevel,
                 pss.collected_at,
                 pss.database_name AS sample_database_name,
-                COALESCE(dn.datname, pss.database_name) AS database_name,
                 pss.calls, pss.total_exec_time, pss.rows,
                 pss.shared_blks_hit, pss.shared_blks_read,
                 pss.min_exec_time, pss.max_exec_time
             FROM metrics.pg_stat_statements pss
-            LEFT JOIN db_names dn ON pss.dbid = dn.datid
             WHERE pss.connection_id = $1
               AND pss.collected_at >= $2
               AND pss.collected_at <= $3
@@ -1793,10 +1830,10 @@ func buildTopQueriesSQL(
             ORDER BY pss.queryid, pss.userid, pss.dbid, pss.toplevel,
                      pss.collected_at, pss.database_name
         ),
-        samples AS (
+        deltas AS (
             SELECT
                 r.queryid, r.collected_at,
-                r.database_name, r.sample_database_name, r.dbid, r.userid,
+                r.sample_database_name, r.dbid, r.userid,
                 r.min_exec_time, r.max_exec_time,
                 r.calls - LAG(r.calls) OVER identity AS delta_calls,
                 r.total_exec_time
@@ -1811,6 +1848,12 @@ func buildTopQueriesSQL(
                 PARTITION BY r.queryid, r.userid, r.dbid, r.toplevel
                 ORDER BY r.collected_at
             )
+        ),
+        samples AS (
+            SELECT d.*
+            FROM deltas d
+            %s
+            ORDER BY d.queryid
         ),
         totals AS MATERIALIZED (
             SELECT
@@ -1828,17 +1871,19 @@ func buildTopQueriesSQL(
         ),
         latest_sample AS MATERIALIZED (
             SELECT DISTINCT ON (queryid)
-                queryid, database_name, sample_database_name, dbid, userid,
+                queryid, sample_database_name, dbid, userid,
                 min_exec_time, max_exec_time
             FROM samples
-            ORDER BY queryid, collected_at DESC, dbid, userid
+            ORDER BY queryid,
+                     COALESCE(delta_calls > 0 AND delta_time >= 0, false) DESC,
+                     collected_at DESC, dbid, userid
         ),
         deduped AS (
             SELECT
                 t.queryid::text,
                 t.queryid AS sample_queryid,
                 ls.sample_database_name,
-                ls.database_name,
+                COALESCE(dn.datname, ls.sample_database_name) AS database_name,
                 COALESCE(un.usename, '') AS username,
                 t.calls, t.total_exec_time,
                 CASE WHEN t.calls > 0
@@ -1851,14 +1896,15 @@ func buildTopQueriesSQL(
                 lc.collected_at AS client_observed_at
             FROM totals t
             JOIN latest_sample ls ON ls.queryid = t.queryid
+            LEFT JOIN db_names dn ON ls.dbid = dn.datid
             LEFT JOIN user_names un ON ls.userid = un.usesysid
             LEFT JOIN last_client lc
                 ON ls.queryid = lc.query_id
                AND ls.dbid = lc.datid
                AND ls.userid = lc.usesysid
-        )`, nameLookupWindowSQL, nameLookupWindowSQL, nameLookupWindowSQL,
-		lastClientQueryIDClause, queryIDClause, excludeCollectorClause,
-		databaseClause)
+        )`, statementDatabaseLookupSQL, nameLookupWindowSQL,
+		nameLookupWindowSQL, lastClientQueryIDClause, queryIDClause,
+		excludeCollectorClause, readingsDatabaseClause, databaseClause)
 
 	// The total is obtained with a separate COUNT(*) over the same CTE
 	// rather than a COUNT(*) OVER () window on the page query. A window
@@ -1896,7 +1942,9 @@ func buildTopQueriesSQL(
 	// been resolved to a different name through db_names.
 	pageSQL = fmt.Sprintf(`%s
         SELECT
-            page.queryid, page.database_name, page.username, qtext.query,
+            page.queryid, page.database_name,
+            COALESCE(page.sample_database_name, ''), page.username,
+            qtext.query,
             page.calls, page.total_exec_time, page.mean_exec_time,
             page.min_exec_time, page.max_exec_time, page.rows,
             page.shared_blks_hit, page.shared_blks_read,
@@ -2089,7 +2137,8 @@ func (h *PerfSummaryHandler) handleTopQueries(
 		// being dropped as an unscannable row.
 		var queryText *string
 		if err := rows.Scan(
-			&row.QueryID, &row.DatabaseName, &row.Username, &queryText,
+			&row.QueryID, &row.DatabaseName, &row.SampleDatabaseName,
+			&row.Username, &queryText,
 			&row.Calls, &row.TotalExecTime, &row.MeanExecTime,
 			&row.MinExecTime, &row.MaxExecTime, &row.Rows,
 			&row.SharedBlksHit, &row.SharedBlksRead,
@@ -2124,12 +2173,77 @@ func (h *PerfSummaryHandler) handleTopQueries(
 const headerTotalCount = "X-Total-Count"
 
 // nameLookupWindowSQL is the interval literal, spliced into
-// buildTopQueriesSQL as a constant rather than bound as a parameter, that
-// bounds how far before the latest pg_stat_statements snapshot the
-// db_names, user_names and last_client CTEs look for pg_stat_activity
-// samples. It is a Go constant with no caller-supplied content, so
-// interpolating it into the statement text is safe.
+// buildTopQueriesSQL and statementDatabaseLookupSQL as a constant rather
+// than bound as a parameter, that bounds how far before the latest
+// pg_stat_statements snapshot the db_names, user_names and last_client
+// CTEs look for samples. It is a Go constant with no caller-supplied
+// content, so interpolating it into the statement text is safe.
 const nameLookupWindowSQL = "1 hour"
+
+// statementDatabaseLookupSQL is the pair of CTEs, latest and db_names,
+// that both buildTopQueriesSQL and queryStatsSQLTemplate use to resolve a
+// pg_stat_statements dbid to the name of the database the statement ran
+// in. It is written without the leading WITH so that each statement can
+// place it first in its own CTE list, and it expects the connection ID as
+// $1. It contains no caller-supplied content.
+//
+// The database_name column recorded on a pg_stat_statements row is the
+// database the probe connected through, not the statement's database: the
+// probe runs in every database with the extension and reads the same
+// cluster-wide view each time, so a counter lands once per probing
+// database. The statement's own database is its dbid, which db_names maps
+// to a name from two sources. metrics.pg_stat_database is the primary one:
+// the collector records it in every database it monitors at every
+// collection, so it knows the OID of every monitored database whether or
+// not a backend happened to be caught in it. metrics.pg_stat_activity is
+// read as well because it is sampled server-wide, so it can also name a
+// database the collector never connects to, such as one the monitoring
+// role holds no CONNECT privilege on, provided a backend was seen there.
+// Issue #508 is the case this closes: before it, only pg_stat_activity was
+// consulted, and a statement whose database had no backend sampled in the
+// hour fell back to the probing database_name.
+//
+// Both reads are bounded to the nameLookupWindowSQL leading up to the
+// latest pg_stat_statements snapshot, because neither table has an index on
+// the OID and DISTINCT ON would otherwise sort every row in retention. The
+// upper bound also keeps a name observed after statement collection stopped
+// from renaming the statements already recorded. The
+// most recent observation of an OID wins whichever table it came from, so
+// a database renamed within the window resolves to its current name; the
+// trailing datname only makes a tie at one instant stable.
+//
+// An OID neither source knows still resolves to nothing, and the callers
+// fall back to the probing database_name. They apply that fallback after
+// keeping one copy of each counter per collection, so the counter is
+// reported under a single name rather than under every probing database.
+const statementDatabaseLookupSQL = `latest AS (
+            SELECT MAX(collected_at) AS collected_at
+            FROM metrics.pg_stat_statements
+            WHERE connection_id = $1
+        ),
+        db_names AS (
+            SELECT DISTINCT ON (datid) datid, datname
+            FROM (
+                SELECT datid, datname, collected_at
+                FROM metrics.pg_stat_database
+                WHERE connection_id = $1
+                  AND collected_at >= (SELECT collected_at FROM latest)
+                      - INTERVAL '` + nameLookupWindowSQL + `'
+                  AND collected_at <= (SELECT collected_at FROM latest)
+                  AND datid IS NOT NULL
+                  AND datname IS NOT NULL
+                UNION ALL
+                SELECT datid, datname, collected_at
+                FROM metrics.pg_stat_activity
+                WHERE connection_id = $1
+                  AND collected_at >= (SELECT collected_at FROM latest)
+                      - INTERVAL '` + nameLookupWindowSQL + `'
+                  AND collected_at <= (SELECT collected_at FROM latest)
+                  AND datid IS NOT NULL
+                  AND datname IS NOT NULL
+            ) observed
+            ORDER BY datid, collected_at DESC, datname
+        )`
 
 // respondEmptyTopQueries returns the empty top-queries result used when the
 // underlying metrics tables are missing. The endpoint treats an absent
@@ -2165,10 +2279,10 @@ func respondTopQueriesError(w http.ResponseWriter, connID int, err error) {
 // pg_stat_statements exposes cumulative counters, so the figures for a time
 // range are the summed deltas between consecutive samples rather than the
 // values of any single sample. One collection can hold several rows for the
-// same queryid (the probe records one row per database, role, and toplevel
-// flag), and each of those identities is an independent counter that can be
-// reset on its own, so the LAG is partitioned by identity and the deltas are
-// summed afterwards. Summing first and differencing second would let a
+// same queryid (pg_stat_statements keeps one per database, role, and
+// toplevel flag, identified by dbid, userid and toplevel), and each of those
+// identities is an independent counter that can be reset on its own, so the
+// LAG is partitioned by identity and the deltas are summed afterwards. Summing first and differencing second would let a
 // reset in one identity hide behind growth in its siblings: the summed
 // delta stays positive, the guard below never fires, and the pre-reset
 // total is silently subtracted from the post-reset one.
@@ -2186,25 +2300,51 @@ func respondTopQueriesError(w http.ResponseWriter, connID int, err error) {
 // the caller can distinguish "no usable data at all" from "data, but no calls
 // in this period".
 //
-// The %s is the optional database_name clause built by buildQueryStatsSQL;
-// with it the predicate covers the leading columns of
-// idx_pg_stat_statements_object, so the lookup is an index range scan rather
-// than a bitmap over every row of the connection in the window.
+// The probing database_name is not part of the identity, for the reason
+// given at statementDatabaseLookupSQL: one counter is stored once per
+// database the probe ran in, and differencing each copy separately would
+// count every call once per such database. readings therefore keeps one
+// copy per identity and collection, as buildTopQueriesSQL does, and without
+// joining db_names, which would cost the index order; valid_deltas resolves
+// the statement's own database from dbid instead.
+//
+// The first %s is statementDatabaseLookupSQL. The second is the optional
+// database_name clause built by buildQueryStatsSQL, applied in valid_deltas
+// to the name resolved from dbid, so that the drill-down, which binds the
+// database name the top-queries list reported for the statement, finds the
+// statement's counters whichever database they were probed through (issue
+// #508). It is applied after the LAG, as in buildTopQueriesSQL, so that a
+// fallback name that changes between collections cannot drop a delta. The
+// scan binds connection_id and queryid, the leading columns of
+// idx_pg_stat_statements_identity_time, whose key order is also the ORDER
+// BY of readings.
 const queryStatsSQLTemplate = `
-        WITH samples AS (
+        WITH %s,
+        readings AS (
+            SELECT DISTINCT ON (pss.userid, pss.dbid, pss.toplevel,
+                                pss.collected_at)
+                pss.userid, pss.dbid, pss.toplevel, pss.collected_at,
+                pss.database_name AS sample_database_name,
+                pss.calls, pss.total_exec_time
+            FROM metrics.pg_stat_statements pss
+            WHERE pss.connection_id = $1
+              AND pss.queryid = $2
+              AND pss.collected_at >= $3
+              AND pss.collected_at <= $4
+            ORDER BY pss.userid, pss.dbid, pss.toplevel, pss.collected_at,
+                     pss.database_name
+        ),
+        samples AS (
             SELECT
+                dbid,
+                sample_database_name,
                 calls,
                 total_exec_time,
                 LAG(calls) OVER identity AS prev_calls,
                 LAG(total_exec_time) OVER identity AS prev_time
-            FROM metrics.pg_stat_statements
-            WHERE connection_id = $1
-              AND queryid = $2
-              AND collected_at >= $3
-              AND collected_at <= $4
-              %s
+            FROM readings
             WINDOW identity AS (
-                PARTITION BY database_name, userid, dbid, toplevel
+                PARTITION BY userid, dbid, toplevel
                 ORDER BY collected_at
             )
         ),
@@ -2212,10 +2352,12 @@ const queryStatsSQLTemplate = `
             SELECT
                 (calls - prev_calls) AS delta_calls,
                 (total_exec_time - prev_time) AS delta_time
-            FROM samples
+            FROM samples s
+            LEFT JOIN db_names dn ON s.dbid = dn.datid
             WHERE prev_calls IS NOT NULL
               AND (calls - prev_calls) >= 0
               AND (total_exec_time - prev_time) >= 0
+              %s
         )
         SELECT COUNT(*),
                COALESCE(SUM(delta_calls), 0),
@@ -2235,10 +2377,13 @@ func buildQueryStatsSQL(
 	args = []any{connID, queryID, window.Start, window.End}
 	databaseClause := ""
 	if databaseName != "" {
-		databaseClause = fmt.Sprintf("AND database_name = $%d", len(args)+1)
+		databaseClause = fmt.Sprintf(
+			"AND COALESCE(dn.datname, s.sample_database_name) = $%d",
+			len(args)+1)
 		args = append(args, databaseName)
 	}
-	return fmt.Sprintf(queryStatsSQLTemplate, databaseClause), args
+	return fmt.Sprintf(queryStatsSQLTemplate, statementDatabaseLookupSQL,
+		databaseClause), args
 }
 
 // buildQueryStats turns the summed deltas into the response body. avg is
@@ -2323,9 +2468,9 @@ func (h *PerfSummaryHandler) handleQueryStats(
 		return
 	}
 
-	// Optional database_name filter, always bound as a parameter. The
-	// drill-down knows which database it is inspecting, and the extra
-	// predicate lets the statement use the object index.
+	// Optional database_name filter, always bound as a parameter. It
+	// matches the statement's own database, resolved from its dbid, which
+	// is the name the top-queries list reports for the statement.
 	databaseName := ParseQueryString(r, "database_name")
 
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)

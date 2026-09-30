@@ -34,6 +34,7 @@ const topQueriesTestSchema = `
 CREATE SCHEMA IF NOT EXISTS metrics;
 DROP TABLE IF EXISTS metrics.pg_stat_statements CASCADE;
 DROP TABLE IF EXISTS metrics.pg_stat_activity CASCADE;
+DROP TABLE IF EXISTS metrics.pg_stat_database CASCADE;
 
 CREATE TABLE metrics.pg_stat_statements (
     connection_id     integer     NOT NULL,
@@ -65,11 +66,20 @@ CREATE TABLE metrics.pg_stat_activity (
     client_hostname  text,
     query_id         bigint
 );
+
+CREATE TABLE metrics.pg_stat_database (
+    connection_id    integer     NOT NULL,
+    collected_at     timestamptz NOT NULL,
+    database_name    text        NOT NULL,
+    datid            bigint,
+    datname          text
+);
 `
 
 const topQueriesTestSchemaTeardown = `
 DROP TABLE IF EXISTS metrics.pg_stat_statements CASCADE;
 DROP TABLE IF EXISTS metrics.pg_stat_activity CASCADE;
+DROP TABLE IF EXISTS metrics.pg_stat_database CASCADE;
 `
 
 // topQueriesConnID is the connection the fixture is seeded against.

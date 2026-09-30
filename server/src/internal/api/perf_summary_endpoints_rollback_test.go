@@ -52,6 +52,7 @@ CREATE TABLE metrics.pg_database (
 CREATE TABLE metrics.pg_stat_database (
     connection_id  integer     NOT NULL,
     collected_at   timestamptz NOT NULL,
+    datid          oid,
     datname        text,
     numbackends    integer     NOT NULL DEFAULT 0,
     blks_hit       bigint      NOT NULL DEFAULT 0,

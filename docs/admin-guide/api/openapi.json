@@ -6296,7 +6296,7 @@
           {
             "name": "database_name",
             "in": "query",
-            "description": "Restrict the statistics to rows recorded against this database",
+            "description": "Restrict the statistics to the query's executions in this database",
             "schema": {
               "type": "string"
             }
@@ -13777,7 +13777,7 @@
           },
           "database_name": {
             "type": "string",
-            "description": "Database name where the query was executed"
+            "description": "Database name where the query was executed, resolved from pg_stat_statements.dbid; when the dbid cannot be resolved, one of the databases the statistics were collected through"
           },
           "max_exec_time": {
             "type": "number",
@@ -13803,6 +13803,10 @@
             "type": "integer",
             "format": "int64",
             "description": "Total rows returned"
+          },
+          "sample_database_name": {
+            "type": "string",
+            "description": "Database the statistics were collected through, which is the database_name of the query's pg_stat_statements metric rows; pass this, not database_name, to /api/v1/metrics/query for the query's time series"
           },
           "shared_blks_hit": {
             "type": "integer",

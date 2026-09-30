@@ -9383,7 +9383,7 @@
       },
       "post": {
         "summary": "Create user",
-        "description": "Creates a new user or service account. Requires manage_users permission.",
+        "description": "Creates a new user or service account. Requires manage_users permission; setting is_superuser also requires the caller to be a superuser.",
         "operationId": "createUser",
         "tags": [
           "RBAC Users"
@@ -9436,7 +9436,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_users permission",
+            "description": "Requires manage_users permission, and superuser privileges to send is_superuser",
             "content": {
               "application/json": {
                 "schema": {
@@ -9456,7 +9456,7 @@
     "/rbac/users/{id}": {
       "put": {
         "summary": "Update user",
-        "description": "Updates a user's details. Requires manage_users permission.",
+        "description": "Updates a user's details. Requires manage_users permission; setting or clearing is_superuser also requires the caller to be a superuser, as does updating any user who is already a superuser.",
         "operationId": "updateUser",
         "tags": [
           "RBAC Users"
@@ -9520,7 +9520,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_users permission",
+            "description": "Requires manage_users permission, and superuser privileges to send is_superuser or to update a superuser",
             "content": {
               "application/json": {
                 "schema": {
@@ -9548,7 +9548,7 @@
       },
       "delete": {
         "summary": "Delete user",
-        "description": "Deletes a user. Requires manage_users permission.",
+        "description": "Deletes a user. Requires manage_users permission, and superuser privileges when the user being deleted is a superuser.",
         "operationId": "deleteUser",
         "tags": [
           "RBAC Users"
@@ -9579,7 +9579,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_users permission",
+            "description": "Requires manage_users permission, and superuser privileges to delete a superuser",
             "content": {
               "application/json": {
                 "schema": {
@@ -13948,7 +13948,7 @@
           },
           "is_superuser": {
             "type": "boolean",
-            "description": "Whether the user is a superuser"
+            "description": "Whether the user is a superuser. Only a superuser may send this field; anyone else is refused with 403."
           },
           "password": {
             "type": "string",
@@ -14057,7 +14057,7 @@
           },
           "is_superuser": {
             "type": "boolean",
-            "description": "Whether the user is a superuser"
+            "description": "Whether the user is a superuser. Only a superuser may send this field; anyone else is refused with 403."
           },
           "password": {
             "type": "string",

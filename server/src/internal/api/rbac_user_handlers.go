@@ -10,6 +10,7 @@
 package api
 
 import (
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
@@ -100,6 +101,15 @@ func (h *RBACHandler) createUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// manage_users can be granted to a group, but superuser short-circuits
+	// every permission check, so only a superuser may say anything about
+	// superuser status. The field is refused whenever it is present rather
+	// than only when it would change something, which keeps the rule
+	// independent of the target's state at the moment of the check.
+	if req.IsSuperuser != nil && !h.requireSuperuser(w, r) {
+		return
+	}
+
 	if req.Username == "" {
 		RespondError(w, http.StatusBadRequest, "Username is required")
 		return
@@ -145,30 +155,26 @@ func (h *RBACHandler) createUser(w http.ResponseWriter, r *http.Request) {
 
 	if isServiceAccount {
 		if err := h.actorStore(r).CreateServiceAccount(req.Username, req.Annotation, req.DisplayName, req.Email); err != nil {
-			log.Printf("[ERROR] Failed to create service account %s: %v", req.Username, err)
-			RespondError(w, http.StatusInternalServerError, "Failed to create service account")
+			respondUserStoreError(w, err, "Failed to create service account", req.Username)
 			return
 		}
 	} else {
 		if err := h.actorStore(r).CreateUser(req.Username, req.Password, req.Annotation, req.DisplayName, req.Email); err != nil {
-			log.Printf("[ERROR] Failed to create user %s: %v", req.Username, err)
-			RespondError(w, http.StatusInternalServerError, "Failed to create user")
+			respondUserStoreError(w, err, "Failed to create user", req.Username)
 			return
 		}
 	}
 
 	if req.Enabled != nil && !*req.Enabled {
 		if err := h.actorStore(r).DisableUser(req.Username); err != nil {
-			log.Printf("[ERROR] Failed to disable user %s: %v", req.Username, err)
-			RespondError(w, http.StatusInternalServerError, "Failed to disable user")
+			respondUserStoreError(w, err, "Failed to disable user", req.Username)
 			return
 		}
 	}
 
 	if req.IsSuperuser != nil && *req.IsSuperuser {
 		if err := h.actorStore(r).SetUserSuperuser(req.Username, true); err != nil {
-			log.Printf("[ERROR] Failed to set superuser status for %s: %v", req.Username, err)
-			RespondError(w, http.StatusInternalServerError, "Failed to set superuser status")
+			respondUserStoreError(w, err, "Failed to set superuser status", req.Username)
 			return
 		}
 	}
@@ -195,9 +201,23 @@ func (h *RBACHandler) updateUser(w http.ResponseWriter, r *http.Request, userID 
 		return
 	}
 
+	// See createUser: only a superuser may set or clear superuser status,
+	// on any account including the caller's own.
+	if req.IsSuperuser != nil && !h.requireSuperuser(w, r) {
+		return
+	}
+
 	user, err := h.authStore.GetUserByID(userID)
 	if err != nil || user == nil {
 		RespondError(w, http.StatusNotFound, "User not found")
+		return
+	}
+
+	// Changing a superuser's password, profile or enabled state is as
+	// good as holding the role: a new password lets the caller sign in
+	// as that superuser, and disabling one can lock every administrator
+	// out. Only a superuser may therefore edit a superuser account.
+	if user.IsSuperuser && !h.requireSuperuser(w, r) {
 		return
 	}
 
@@ -205,22 +225,6 @@ func (h *RBACHandler) updateUser(w http.ResponseWriter, r *http.Request, userID 
 	if req.Password != nil && *req.Password != "" {
 		if err := auth.ValidatePassword(*req.Password); err != nil {
 			RespondError(w, http.StatusBadRequest, capitalizeFirst(err.Error()))
-			return
-		}
-
-		// The store refuses a password write to an account whose identity
-		// is managed elsewhere, and this endpoint sends the password,
-		// enabled and superuser changes as one transaction. Catching it
-		// here matters for more than the error message: an administrator
-		// who fills in the password field whilst also unticking "enabled"
-		// on a federated user would otherwise have the whole transaction
-		// rolled back behind a generic failure, and could reasonably
-		// believe they had disabled the account when they had not.
-		if user.AuthSource != auth.AuthSourceLocal {
-			RespondError(w, http.StatusBadRequest,
-				"This account signs in through an identity provider, so it cannot be "+
-					"given a password. Remove the password and apply the other changes, "+
-					"or unlink the account first.")
 			return
 		}
 	}
@@ -243,9 +247,15 @@ func (h *RBACHandler) updateUser(w http.ResponseWriter, r *http.Request, userID 
 		IsSuperuser: req.IsSuperuser,
 	}
 
+	// The store refuses a password write to an account whose identity is
+	// managed elsewhere, and applies the password, enabled and superuser
+	// changes as one transaction, so that refusal rolls back the rest of
+	// the request as well. It reaches the caller as a 400 naming the
+	// reason, which matters for more than the message: an administrator
+	// who fills in the password whilst unticking "enabled" on a federated
+	// user must not read a generic failure as the account being disabled.
 	if err := h.actorStore(r).UpdateUserAtomic(user.Username, update); err != nil {
-		log.Printf("[ERROR] Failed to update user %s: %v", user.Username, err)
-		RespondError(w, http.StatusInternalServerError, "Failed to update user")
+		respondUserStoreError(w, err, "Failed to update user", user.Username)
 		return
 	}
 
@@ -265,9 +275,13 @@ func (h *RBACHandler) deleteUser(w http.ResponseWriter, r *http.Request, userID 
 		return
 	}
 
+	// See updateUser: only a superuser may delete a superuser account.
+	if user.IsSuperuser && !h.requireSuperuser(w, r) {
+		return
+	}
+
 	if err := h.actorStore(r).DeleteUser(user.Username); err != nil {
-		log.Printf("[ERROR] Failed to delete user %s: %v", user.Username, err)
-		RespondError(w, http.StatusInternalServerError, "Failed to delete user")
+		respondUserStoreError(w, err, "Failed to delete user", user.Username)
 		return
 	}
 
@@ -438,6 +452,21 @@ func describeAuthSource(user *auth.StoredUser) (source, issuer string) {
 		source = authSourceUnknown
 	}
 	return source, auth.IssuerFromExternalSubject(user.ExternalSubject)
+}
+
+// respondUserStoreError answers a failed auth store call made on behalf of
+// the request. A refusal the store marks as invalid input is the caller's
+// to fix, so it is returned as a 400 carrying the store's own message; any
+// other error is logged and returned as a 500 with the fixed failure
+// message, so that database detail never reaches the client.
+func respondUserStoreError(w http.ResponseWriter, err error, failure, username string) {
+	var invalid *auth.InvalidInputError
+	if errors.As(err, &invalid) {
+		RespondError(w, http.StatusBadRequest, capitalizeFirst(invalid.Error()))
+		return
+	}
+	log.Printf("[ERROR] %s (user %s): %v", failure, username, err)
+	RespondError(w, http.StatusInternalServerError, failure)
 }
 
 // capitalizeFirst returns the string with its first character uppercased.

@@ -161,8 +161,8 @@ func TestRBACHandler_UpdateUser_StoreFailure(t *testing.T) {
 // TestRBACHandler_UpdateUser_EmptyAuthSourceRefusesPassword pins the reading
 // login applies: only an auth_source of exactly local accepts a password, so
 // an empty one, which the NOT NULL DEFAULT 'local' column should make
-// impossible, is refused a password here too rather than being let through to
-// a store that would refuse it anyway.
+// impossible, is refused a password too, and the store's refusal reaches the
+// caller as a 400 rather than a 500.
 func TestRBACHandler_UpdateUser_EmptyAuthSourceRefusesPassword(t *testing.T) {
 	env := newUpdateUserTestEnv(t)
 
@@ -178,5 +178,107 @@ func TestRBACHandler_UpdateUser_EmptyAuthSourceRefusesPassword(t *testing.T) {
 	}
 	if got := errorMessage(t, rec); !strings.Contains(got, "identity provider") {
 		t.Errorf("Expected the refusal to explain why, got %q", got)
+	}
+}
+
+// Triggers that abort every insert into, or update of, the users table,
+// standing in for whatever the database might refuse.
+const (
+	refuseUserInserts = `CREATE TRIGGER refuse_user_inserts BEFORE INSERT ON users
+        BEGIN SELECT RAISE(ABORT, 'forced failure'); END`
+	refuseUserUpdates = `CREATE TRIGGER refuse_user_updates BEFORE UPDATE ON users
+        BEGIN SELECT RAISE(ABORT, 'forced failure'); END`
+)
+
+// TestRBACHandler_CreateUser_StoreFailure covers each store call createUser
+// makes failing for a reason that is not the caller's: every one must answer
+// with its own generic 500 rather than the store's error text.
+func TestRBACHandler_CreateUser_StoreFailure(t *testing.T) {
+	tests := []struct {
+		name    string
+		trigger string
+		body    map[string]any
+		want    string
+	}{
+		{
+			name:    "user insert",
+			trigger: refuseUserInserts,
+			body:    map[string]any{"username": "newuser", "password": "Password1234"},
+			want:    "Failed to create user",
+		},
+		{
+			name:    "service account insert",
+			trigger: refuseUserInserts,
+			body:    map[string]any{"username": "newsvc", "is_service_account": true},
+			want:    "Failed to create service account",
+		},
+		{
+			name:    "disable",
+			trigger: refuseUserUpdates,
+			body:    map[string]any{"username": "newuser", "password": "Password1234", "enabled": false},
+			want:    "Failed to disable user",
+		},
+		{
+			name:    "superuser grant",
+			trigger: refuseUserUpdates,
+			body:    map[string]any{"username": "newuser", "password": "Password1234", "is_superuser": true},
+			want:    "Failed to set superuser status",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := newUpdateUserTestEnv(t)
+
+			if _, err := env.db.Exec(tt.trigger); err != nil {
+				t.Fatalf("creating the trigger: %v", err)
+			}
+
+			encoded, err := json.Marshal(tt.body)
+			if err != nil {
+				t.Fatalf("encoding the request body: %v", err)
+			}
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/rbac/users",
+				bytes.NewReader(encoded))
+			req.Header.Set("Content-Type", "application/json")
+			req = withSuperuser(req)
+			rec := httptest.NewRecorder()
+			env.handler.handleUsers(rec, req)
+
+			if rec.Code != http.StatusInternalServerError {
+				t.Fatalf("Expected status %d, got %d. Body: %s",
+					http.StatusInternalServerError, rec.Code, rec.Body.String())
+			}
+			if got := errorMessage(t, rec); got != tt.want {
+				t.Errorf("message = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestRBACHandler_DeleteUser_StoreFailure covers the store refusing the
+// deletion: a generic 500, and the account left in place.
+func TestRBACHandler_DeleteUser_StoreFailure(t *testing.T) {
+	env := newUpdateUserTestEnv(t)
+
+	if _, err := env.db.Exec(`CREATE TRIGGER refuse_user_deletes BEFORE DELETE ON users
+        BEGIN SELECT RAISE(ABORT, 'forced failure'); END`); err != nil {
+		t.Fatalf("creating the trigger: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodDelete,
+		"/api/v1/rbac/users/"+strconv.FormatInt(env.targetID, 10), nil)
+	req = withUser(req, env.adminID)
+	rec := httptest.NewRecorder()
+	env.handler.deleteUser(rec, req, env.targetID)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("Expected status %d, got %d. Body: %s",
+			http.StatusInternalServerError, rec.Code, rec.Body.String())
+	}
+	if got := errorMessage(t, rec); got != "Failed to delete user" {
+		t.Errorf("message = %q, want %q", got, "Failed to delete user")
+	}
+	if user, err := env.store.GetUserByID(env.targetID); err != nil || user == nil {
+		t.Errorf("the account was removed despite the failure: %v", err)
 	}
 }

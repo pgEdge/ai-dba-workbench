@@ -187,6 +187,17 @@ The regression tests live in
 `server/src/internal/api/rbac_issue207_clusters_test.go`. Mirror them
 when adding a new gated handler.
 
+### Never use a nil auth store for a permissive checker
+
+An `auth.RBACChecker` built on a nil `*auth.AuthStore` denies every
+check, superuser context included (issue #477). A test that only needs
+to get past the gate builds the checker on a real store and marks the
+request superuser; in package `api` that is `newTestRBACChecker(t)` or
+`newTestAuthStore(t)` (in `rbac_test_store_test.go`) plus
+`withSuperuser(req)`. A request helper that marks its request superuser
+must say so in its doc comment, and denial tests inline an
+unauthenticated request instead of calling it.
+
 ### Denial test (no Postgres required)
 
 ```go

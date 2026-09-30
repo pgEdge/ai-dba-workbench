@@ -183,18 +183,23 @@ func setupLatestTablesFixture(t *testing.T) *LatestSnapshotHandler {
 		}
 	}
 
-	// A nil authStore makes the RBAC checker treat the caller as a
-	// superuser, so the request reaches the query.
-	return &LatestSnapshotHandler{datastore: database.NewTestDatastore(pool)}
+	// getLatest marks the request superuser, so it passes the RBAC gate
+	// and reaches the query.
+	return &LatestSnapshotHandler{
+		datastore: database.NewTestDatastore(pool),
+		authStore: newTestAuthStore(t),
+	}
 }
 
 // getLatest issues a GET against the latest-snapshot handler with the given
 // query string and returns the recorder.
+// The request is marked superuser to pass the RBAC gate, so a denial
+// test must build its own request instead.
 func getLatest(t *testing.T, h *LatestSnapshotHandler, query string) *httptest.ResponseRecorder {
 	t.Helper()
 
-	req := httptest.NewRequest(http.MethodGet,
-		"/api/v1/metrics/latest?"+query, nil)
+	req := withSuperuser(httptest.NewRequest(http.MethodGet,
+		"/api/v1/metrics/latest?"+query, nil))
 	rec := httptest.NewRecorder()
 	h.handleLatestSnapshot(rec, req)
 	return rec
@@ -455,7 +460,10 @@ func TestLatestSnapshot_SchemaFiltersIgnoredWithoutSchemaColumn(t *testing.T) {
 		t.Fatalf("failed to insert fixture rows: %v", err)
 	}
 
-	h := &LatestSnapshotHandler{datastore: database.NewTestDatastore(pool)}
+	h := &LatestSnapshotHandler{
+		datastore: database.NewTestDatastore(pool),
+		authStore: newTestAuthStore(t),
+	}
 	resp := decodeLatest(t, getLatest(t, h,
 		"connection_id=1&probe_name="+latestNoSchemaProbe+
 			"&database_name=appdb&exclude_system_schemas=true&exclude_schemas=public"))
@@ -476,7 +484,10 @@ func TestLatestSnapshot_NoDimensionColumns(t *testing.T) {
 	createLatestFixtureTable(t, pool, latestNoDimensionProbe,
 		latestNoDimensionCreateSQL, latestNoDimensionDropSQL)
 
-	h := &LatestSnapshotHandler{datastore: database.NewTestDatastore(pool)}
+	h := &LatestSnapshotHandler{
+		datastore: database.NewTestDatastore(pool),
+		authStore: newTestAuthStore(t),
+	}
 	rec := getLatest(t, h,
 		"connection_id=1&probe_name="+latestNoDimensionProbe+"&order_by=value")
 	if rec.Code != http.StatusBadRequest {
@@ -545,7 +556,10 @@ func TestLatestSnapshot_DatastoreFailures(t *testing.T) {
 	// A closed pool fails every query, which is the simplest way to reach
 	// the handler's internal-error branches without a fake database.
 	pool.Close()
-	h := &LatestSnapshotHandler{datastore: database.NewTestDatastore(pool)}
+	h := &LatestSnapshotHandler{
+		datastore: database.NewTestDatastore(pool),
+		authStore: newTestAuthStore(t),
+	}
 
 	rec := getLatest(t, h, "connection_id=1&probe_name="+latestTablesProbe)
 	if rec.Code != http.StatusInternalServerError {

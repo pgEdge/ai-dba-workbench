@@ -118,7 +118,7 @@ func newTopQueriesTestHandler(
 	}
 
 	ds := database.NewTestDatastore(pool)
-	handler := NewPerfSummaryHandler(ds, nil)
+	handler := NewPerfSummaryHandler(ds, newTestAuthStore(t))
 	cleanup := func() {
 		_, _ = pool.Exec(context.Background(), topQueriesTestSchemaTeardown)
 		pool.Close()
@@ -240,14 +240,16 @@ func seedTopQueriesFixture(t *testing.T, pool *pgxpool.Pool) {
 
 // callTopQueries invokes the handler with the supplied raw query string and
 // returns the recorder for inspection.
+// The request is marked superuser, so it passes the RBAC gate on a real
+// test auth store.
 func callTopQueries(
 	t *testing.T,
 	h *PerfSummaryHandler,
 	rawQuery string,
 ) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodGet,
-		"/api/v1/metrics/top-queries?"+rawQuery, nil)
+	req := withSuperuser(httptest.NewRequest(http.MethodGet,
+		"/api/v1/metrics/top-queries?"+rawQuery, nil))
 	rec := httptest.NewRecorder()
 	h.handleTopQueries(rec, req)
 	return rec
@@ -1031,7 +1033,11 @@ func TestTopQueries_PermissionDenied(t *testing.T) {
 	}
 	h := NewPerfSummaryHandler(database.NewTestDatastore(pool), authStore)
 
-	rec := callTopQueries(t, h, "connection_id=4242&offset=1")
+	// An unauthenticated request: the helper would mark it superuser.
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/metrics/top-queries?connection_id=4242&offset=1", nil)
+	rec := httptest.NewRecorder()
+	h.handleTopQueries(rec, req)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403; body: %s", rec.Code,
 			rec.Body.String())

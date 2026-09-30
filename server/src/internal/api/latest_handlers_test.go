@@ -258,13 +258,13 @@ func TestLatestSnapshotHandler_MissingConnectionID(t *testing.T) {
 }
 
 func TestLatestSnapshotHandler_MissingProbeName(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet,
-		"/api/v1/metrics/latest?connection_id=1", nil)
+	req := withSuperuser(httptest.NewRequest(http.MethodGet,
+		"/api/v1/metrics/latest?connection_id=1", nil))
 	rec := httptest.NewRecorder()
 
-	// With nil authStore, the RBAC checker treats the caller as a
-	// superuser, so we reach the probe_name validation.
-	handler := &LatestSnapshotHandler{}
+	// A superuser caller passes the RBAC gate, so we reach the
+	// probe_name validation.
+	handler := &LatestSnapshotHandler{authStore: newTestAuthStore(t)}
 	handler.handleLatestSnapshot(rec, req)
 
 	if rec.Code != http.StatusBadRequest {

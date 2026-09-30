@@ -16,7 +16,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/database"
 )
 
@@ -359,7 +358,7 @@ func TestBlackoutHandler_RegisterRoutes_NotConfigured(t *testing.T) {
 
 func TestBlackoutHandler_CreateBlackout_ValidationErrors(t *testing.T) {
 	// Create handler with auth-disabled RBAC checker so permission checks pass
-	rbac := auth.NewRBACChecker(nil)
+	rbac := newTestRBACChecker(t)
 	handler := NewBlackoutHandler(nil, nil, rbac)
 
 	tests := []struct {
@@ -406,7 +405,7 @@ func TestBlackoutHandler_CreateBlackout_ValidationErrors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			body, _ := json.Marshal(tt.body)
-			req := httptest.NewRequest(http.MethodPost, "/api/v1/blackouts", bytes.NewReader(body))
+			req := withSuperuser(httptest.NewRequest(http.MethodPost, "/api/v1/blackouts", bytes.NewReader(body)))
 			req.Header.Set("Content-Type", "application/json")
 			rec := httptest.NewRecorder()
 
@@ -427,7 +426,7 @@ func TestBlackoutHandler_CreateBlackout_ValidationErrors(t *testing.T) {
 }
 
 func TestBlackoutHandler_CreateSchedule_ValidationErrors(t *testing.T) {
-	rbac := auth.NewRBACChecker(nil)
+	rbac := newTestRBACChecker(t)
 	handler := NewBlackoutHandler(nil, nil, rbac)
 
 	tests := []struct {
@@ -474,7 +473,7 @@ func TestBlackoutHandler_CreateSchedule_ValidationErrors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			body, _ := json.Marshal(tt.body)
-			req := httptest.NewRequest(http.MethodPost, "/api/v1/blackout-schedules", bytes.NewReader(body))
+			req := withSuperuser(httptest.NewRequest(http.MethodPost, "/api/v1/blackout-schedules", bytes.NewReader(body)))
 			req.Header.Set("Content-Type", "application/json")
 			rec := httptest.NewRecorder()
 
@@ -599,7 +598,7 @@ func TestBlackoutUpdateRequest_JSON(t *testing.T) {
 }
 
 func TestBlackoutHandler_CreateBlackout_InvalidEndTime(t *testing.T) {
-	rbac := auth.NewRBACChecker(nil)
+	rbac := newTestRBACChecker(t)
 	handler := NewBlackoutHandler(nil, nil, rbac)
 
 	body := BlackoutCreateRequest{
@@ -609,8 +608,8 @@ func TestBlackoutHandler_CreateBlackout_InvalidEndTime(t *testing.T) {
 		EndTime:   "not-a-time",
 	}
 	bodyBytes, _ := json.Marshal(body)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/blackouts",
-		bytes.NewReader(bodyBytes))
+	req := withSuperuser(httptest.NewRequest(http.MethodPost, "/api/v1/blackouts",
+		bytes.NewReader(bodyBytes)))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -631,7 +630,7 @@ func TestBlackoutHandler_CreateBlackout_InvalidEndTime(t *testing.T) {
 }
 
 func TestBlackoutHandler_UpdateSchedule_ValidationErrors(t *testing.T) {
-	rbac := auth.NewRBACChecker(nil)
+	rbac := newTestRBACChecker(t)
 	handler := NewBlackoutHandler(nil, nil, rbac)
 
 	tests := []struct {
@@ -691,8 +690,8 @@ func TestBlackoutHandler_UpdateSchedule_ValidationErrors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			body, _ := json.Marshal(tt.body)
-			req := httptest.NewRequest(http.MethodPut, "/api/v1/blackout-schedules/1",
-				bytes.NewReader(body))
+			req := withSuperuser(httptest.NewRequest(http.MethodPut, "/api/v1/blackout-schedules/1",
+				bytes.NewReader(body)))
 			req.Header.Set("Content-Type", "application/json")
 			rec := httptest.NewRecorder()
 

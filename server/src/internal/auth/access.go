@@ -27,7 +27,15 @@ type DatabaseAccessChecker struct{}
 // username for a given connection ID.
 type ConnectionSharingLookupFunc func(ctx context.Context, connectionID int) (isShared bool, ownerUsername string, err error)
 
-// RBACChecker handles role-based access control checks
+// RBACChecker handles role-based access control checks.
+//
+// A checker built without an auth store denies every check: no
+// superuser, no MCP item, no connection, no admin permission and no
+// visible connections. An authorisation primitive must fail closed, so
+// a missing store can never be mistaken for "no restrictions". Tests
+// that want a permissive checker build one on a real test store and a
+// superuser context, so the permissive case is visible where it is
+// used (see issue #477).
 type RBACChecker struct {
 	authStore           *AuthStore
 	connSharingLookupFn ConnectionSharingLookupFunc
@@ -102,9 +110,9 @@ func isNilDatastore(ds DatastoreSharingLookup) bool {
 // IsSuperuser checks if the current context has superuser privileges
 // Superusers bypass all privilege checks
 func (rc *RBACChecker) IsSuperuser(ctx context.Context) bool {
-	// Nil store - treat as superuser (full access)
+	// Nil store - deny (see RBACChecker)
 	if rc.authStore == nil {
-		return true
+		return false
 	}
 
 	return IsSuperuserFromContext(ctx)
@@ -166,9 +174,9 @@ func (rc *RBACChecker) applyConnectionTokenScope(
 // - The privilege is not registered (fail-safe for unknown tools)
 // - The privilege is registered but not public and user lacks group membership
 func (rc *RBACChecker) CanAccessMCPItem(ctx context.Context, identifier string) bool {
-	// Nil store - full access
+	// Nil store - deny (see RBACChecker)
 	if rc.authStore == nil {
-		return true
+		return false
 	}
 
 	// An API token whose ID did not survive into the context cannot have
@@ -237,9 +245,9 @@ func (rc *RBACChecker) CanAccessMCPItem(ctx context.Context, identifier string) 
 // CanAccessConnection checks if the current context can access a specific database connection
 // Returns (canAccess bool, accessLevel string) where accessLevel is "read" or "read_write"
 func (rc *RBACChecker) CanAccessConnection(ctx context.Context, connectionID int) (bool, string) {
-	// Nil store - full access
+	// Nil store - deny (see RBACChecker)
 	if rc.authStore == nil {
-		return true, AccessLevelReadWrite
+		return false, AccessLevelNone
 	}
 
 	// An API token whose ID did not survive into the context cannot have
@@ -362,9 +370,8 @@ func (rc *RBACChecker) GetEffectivePrivileges(ctx context.Context) *EffectivePri
 		AdminPermissions:     make(map[string]bool),
 	}
 
-	// Nil store - return empty (no restrictions means full access)
+	// Nil store - deny (see RBACChecker)
 	if rc.authStore == nil {
-		result.IsSuperuser = true
 		return result
 	}
 
@@ -546,9 +553,9 @@ type ConnectionVisibilityInfo struct {
 // sharing metadata; this allows the function to apply visibility rules
 // without performing an N+1 per-connection lookup.
 func (rc *RBACChecker) VisibleConnectionIDs(ctx context.Context, lister ConnectionVisibilityLister) (ids []int, allConnections bool, err error) {
-	// Nil store - full access.
+	// Nil store - deny (see RBACChecker)
 	if rc.authStore == nil {
-		return nil, true, nil
+		return nil, false, nil
 	}
 
 	// An API token whose ID did not survive into the context cannot have
@@ -645,9 +652,9 @@ func (rc *RBACChecker) VisibleConnectionIDs(ctx context.Context, lister Connecti
 
 // HasAdminPermission checks if the current context has a specific admin permission
 func (rc *RBACChecker) HasAdminPermission(ctx context.Context, permission string) bool {
-	// Nil store - full access
+	// Nil store - deny (see RBACChecker)
 	if rc.authStore == nil {
-		return true
+		return false
 	}
 
 	// An API token whose ID did not survive into the context cannot have

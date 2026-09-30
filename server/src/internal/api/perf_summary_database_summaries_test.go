@@ -103,7 +103,7 @@ func newDatabaseSummariesTestHandler(
 	}
 
 	ds := database.NewTestDatastore(pool)
-	handler := NewPerfSummaryHandler(ds, nil)
+	handler := NewPerfSummaryHandler(ds, newTestAuthStore(t))
 	cleanup := func() {
 		_, _ = pool.Exec(context.Background(),
 			databaseSummariesTestSchemaTeardown)
@@ -475,12 +475,14 @@ func TestDatabaseSummaries_ScanError(t *testing.T) {
 // doDatabaseSummariesRequest drives handleDatabaseSummaries over the full
 // HTTP path so that parameter parsing, the time-window resolver and the
 // response encoding are all exercised.
+// The request is marked superuser to pass the RBAC gate, so a denial
+// test must build its own request instead.
 func doDatabaseSummariesRequest(
 	h *PerfSummaryHandler,
 	query string,
 ) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(http.MethodGet,
-		"/api/v1/metrics/database-summaries?"+query, nil)
+	req := withSuperuser(httptest.NewRequest(http.MethodGet,
+		"/api/v1/metrics/database-summaries?"+query, nil))
 	rec := httptest.NewRecorder()
 	h.handleDatabaseSummaries(rec, req)
 	return rec

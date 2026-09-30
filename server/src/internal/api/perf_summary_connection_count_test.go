@@ -261,7 +261,7 @@ func newPerfSummaryTestHandler(
 		t.Fatalf("Failed to create performance summary test schema: %v", err)
 	}
 
-	handler := NewPerfSummaryHandler(database.NewTestDatastore(pool), nil)
+	handler := NewPerfSummaryHandler(database.NewTestDatastore(pool), newTestAuthStore(t))
 	cleanup := func() {
 		_, _ = pool.Exec(context.Background(), perfSummaryTestSchemaTeardown)
 		pool.Close()
@@ -313,9 +313,9 @@ func TestHandlePerfSummary_ReportsActiveConnections(t *testing.T) {
         (connection_id, collected_at, write_time, sync_time)
         VALUES ($1, $2, 100, 10), ($1, $3, 250, 30)`, connA, prev, latest)
 
-	req := httptest.NewRequest(http.MethodGet,
+	req := withSuperuser(httptest.NewRequest(http.MethodGet,
 		"/api/v1/metrics/performance-summary?connection_ids=81,82"+
-			"&time_range=24h", nil)
+			"&time_range=24h", nil))
 	rec := httptest.NewRecorder()
 
 	h.handlePerfSummary(rec, req)
@@ -406,7 +406,7 @@ func TestHandlePerfSummary_RejectsBadRequests(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, tc.url, nil)
+			req := withSuperuser(httptest.NewRequest(http.MethodGet, tc.url, nil))
 			rec := httptest.NewRecorder()
 
 			h.handlePerfSummary(rec, req)
@@ -458,7 +458,7 @@ func TestHandlePerfSummary_CustomWindow(t *testing.T) {
 		"&time_range=custom&time_start=" +
 		windowStart.Format(time.RFC3339) +
 		"&time_end=" + windowEnd.Format(time.RFC3339)
-	req := httptest.NewRequest(http.MethodGet, url, nil)
+	req := withSuperuser(httptest.NewRequest(http.MethodGet, url, nil))
 	rec := httptest.NewRecorder()
 
 	h.handlePerfSummary(rec, req)
@@ -515,8 +515,8 @@ func TestHandlePerfSummary_DefaultsToOneHour(t *testing.T) {
 	h, _, cleanup := newPerfSummaryTestHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet,
-		"/api/v1/metrics/performance-summary?connection_id=81", nil)
+	req := withSuperuser(httptest.NewRequest(http.MethodGet,
+		"/api/v1/metrics/performance-summary?connection_id=81", nil))
 	rec := httptest.NewRecorder()
 
 	h.handlePerfSummary(rec, req)
@@ -562,7 +562,7 @@ func TestHandlePerfSummary_ShortCustomWindowUsesBucketFloor(t *testing.T) {
 		"&time_range=custom&time_start=" +
 		windowStart.Format(time.RFC3339) +
 		"&time_end=" + windowEnd.Format(time.RFC3339)
-	req := httptest.NewRequest(http.MethodGet, url, nil)
+	req := withSuperuser(httptest.NewRequest(http.MethodGet, url, nil))
 	rec := httptest.NewRecorder()
 
 	h.handlePerfSummary(rec, req)
@@ -608,7 +608,7 @@ func TestHandlePerfSummary_ConnectionCountFollowsWindow(t *testing.T) {
 
 	get := func(url string) PerfConnectionResponse {
 		t.Helper()
-		req := httptest.NewRequest(http.MethodGet, url, nil)
+		req := withSuperuser(httptest.NewRequest(http.MethodGet, url, nil))
 		rec := httptest.NewRecorder()
 		h.handlePerfSummary(rec, req)
 		if rec.Code != http.StatusOK {

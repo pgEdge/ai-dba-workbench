@@ -16,24 +16,27 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/pgedge/ai-workbench/server/internal/auth"
 )
 
-// newTestConnectionHandlerWithRBAC creates a handler with auth disabled so
-// RBAC checks pass without requiring a database.
-func newTestConnectionHandlerWithRBAC() *ConnectionHandler {
-	rbac := auth.NewRBACChecker(nil)
-	return NewConnectionHandlerWithSecurity(nil, nil, rbac, false, nil, nil)
+// newTestConnectionHandlerWithRBAC creates a handler whose RBAC checker
+// sits on a real test auth store, with no datastore. Requests marked with
+// withSuperuser pass the RBAC checks; a nil store would deny them (issue
+// #477).
+func newTestConnectionHandlerWithRBAC(t *testing.T) *ConnectionHandler {
+	t.Helper()
+	return NewConnectionHandlerWithSecurity(nil, nil, newTestRBACChecker(t),
+		false, nil, nil)
 }
 
 func TestExecuteQuery_MethodNotAllowed(t *testing.T) {
-	handler := newTestConnectionHandlerWithRBAC()
+	handler := newTestConnectionHandlerWithRBAC(t)
 
 	methods := []string{http.MethodGet, http.MethodPut, http.MethodDelete, http.MethodPatch}
 	for _, method := range methods {
@@ -57,11 +60,11 @@ func TestExecuteQuery_MethodNotAllowed(t *testing.T) {
 }
 
 func TestExecuteQuery_EmptyQuery(t *testing.T) {
-	handler := newTestConnectionHandlerWithRBAC()
+	handler := newTestConnectionHandlerWithRBAC(t)
 
 	body := `{"query": ""}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections/1/query",
-		bytes.NewBufferString(body))
+	req := withSuperuser(httptest.NewRequest(http.MethodPost, "/api/v1/connections/1/query",
+		bytes.NewBufferString(body)))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -81,11 +84,11 @@ func TestExecuteQuery_EmptyQuery(t *testing.T) {
 }
 
 func TestExecuteQuery_WhitespaceOnlyQuery(t *testing.T) {
-	handler := newTestConnectionHandlerWithRBAC()
+	handler := newTestConnectionHandlerWithRBAC(t)
 
 	body := `{"query": "   "}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections/1/query",
-		bytes.NewBufferString(body))
+	req := withSuperuser(httptest.NewRequest(http.MethodPost, "/api/v1/connections/1/query",
+		bytes.NewBufferString(body)))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -97,11 +100,11 @@ func TestExecuteQuery_WhitespaceOnlyQuery(t *testing.T) {
 }
 
 func TestExecuteQuery_InvalidJSON(t *testing.T) {
-	handler := newTestConnectionHandlerWithRBAC()
+	handler := newTestConnectionHandlerWithRBAC(t)
 
 	body := `{invalid json}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections/1/query",
-		bytes.NewBufferString(body))
+	req := withSuperuser(httptest.NewRequest(http.MethodPost, "/api/v1/connections/1/query",
+		bytes.NewBufferString(body)))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -113,11 +116,11 @@ func TestExecuteQuery_InvalidJSON(t *testing.T) {
 }
 
 func TestExecuteQuery_NoDatastore(t *testing.T) {
-	handler := newTestConnectionHandlerWithRBAC()
+	handler := newTestConnectionHandlerWithRBAC(t)
 
 	body := `{"query": "SELECT 1"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections/1/query",
-		bytes.NewBufferString(body))
+	req := withSuperuser(httptest.NewRequest(http.MethodPost, "/api/v1/connections/1/query",
+		bytes.NewBufferString(body)))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -606,14 +609,23 @@ func TestStatementResult_ErrorOmitsErrorField(t *testing.T) {
 	}
 }
 
+// isNilPointerPanic reports whether a recovered value is the runtime's
+// nil pointer dereference, which is how executeQuery fails on the nil
+// datastore these tests use once it is past routing and RBAC.
+func isNilPointerPanic(r any) bool {
+	err, ok := r.(runtime.Error)
+	return ok && strings.Contains(err.Error(), "nil pointer dereference")
+}
+
 func TestConnectionSubpath_QueryRoute(t *testing.T) {
-	handler := newTestConnectionHandlerWithRBAC()
+	handler := newTestConnectionHandlerWithRBAC(t)
 
 	// Verify that /api/v1/connections/1/query routes to executeQuery
 	// by checking it does not return 404
 	body := `{"query": "SELECT 1"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections/1/query",
-		bytes.NewBufferString(body))
+	// Superuser, so that RBAC does not answer 403 before the query path
+	req := withSuperuser(httptest.NewRequest(http.MethodPost, "/api/v1/connections/1/query",
+		bytes.NewBufferString(body)))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -622,16 +634,18 @@ func TestConnectionSubpath_QueryRoute(t *testing.T) {
 	defer func() {
 		if r := recover(); r != nil {
 			// Expected: nil datastore causes a panic after routing succeeds
-			t.Log("Got expected panic after successful routing")
+			if !isNilPointerPanic(r) {
+				t.Fatalf("Expected a nil-datastore panic, got: %v", r)
+			}
+			return
+		}
+		// If no panic, verify routing succeeded and RBAC let it through
+		if rec.Code == http.StatusNotFound || rec.Code == http.StatusForbidden {
+			t.Errorf("Expected query route to reach executeQuery, got %d", rec.Code)
 		}
 	}()
 
 	handler.handleConnectionSubpath(rec, req)
-
-	// If no panic, verify we did not get a 404 (which would mean routing failed)
-	if rec.Code == http.StatusNotFound {
-		t.Error("Expected query route to be handled, got 404")
-	}
 }
 
 func TestStripLeadingComments(t *testing.T) {
@@ -779,13 +793,13 @@ func TestIsReadOnlyStatement(t *testing.T) {
 }
 
 func TestWriteStatements_RequireConfirmation(t *testing.T) {
-	handler := newTestConnectionHandlerWithRBAC()
+	handler := newTestConnectionHandlerWithRBAC(t)
 
 	// Send an ALTER SYSTEM without confirmed flag; the handler should
 	// return a confirmation response before touching the datastore.
 	body := `{"query": "ALTER SYSTEM SET work_mem = '16MB'"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections/1/query",
-		bytes.NewBufferString(body))
+	req := withSuperuser(httptest.NewRequest(http.MethodPost, "/api/v1/connections/1/query",
+		bytes.NewBufferString(body)))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -812,11 +826,11 @@ func TestWriteStatements_RequireConfirmation(t *testing.T) {
 }
 
 func TestMixedStatements_RequireConfirmation(t *testing.T) {
-	handler := newTestConnectionHandlerWithRBAC()
+	handler := newTestConnectionHandlerWithRBAC(t)
 
 	body := `{"query": "SELECT 1; ALTER SYSTEM SET work_mem = '16MB'; SELECT 2"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections/1/query",
-		bytes.NewBufferString(body))
+	req := withSuperuser(httptest.NewRequest(http.MethodPost, "/api/v1/connections/1/query",
+		bytes.NewBufferString(body)))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -843,20 +857,27 @@ func TestMixedStatements_RequireConfirmation(t *testing.T) {
 }
 
 func TestReadOnlyStatements_NoConfirmation(t *testing.T) {
-	handler := newTestConnectionHandlerWithRBAC()
+	handler := newTestConnectionHandlerWithRBAC(t)
 
 	// Pure read-only query should NOT trigger confirmation; it should
 	// proceed to the datastore path (which panics with nil datastore).
 	body := `{"query": "SELECT 1"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections/1/query",
-		bytes.NewBufferString(body))
+	// Superuser, so that RBAC does not answer 403 before the query path
+	req := withSuperuser(httptest.NewRequest(http.MethodPost, "/api/v1/connections/1/query",
+		bytes.NewBufferString(body)))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
 	panicked := false
 	defer func() {
 		if r := recover(); r != nil {
+			if !isNilPointerPanic(r) {
+				t.Fatalf("Expected a nil-datastore panic, got: %v", r)
+			}
 			panicked = true
+		}
+		if !panicked && rec.Code == http.StatusForbidden {
+			t.Fatalf("Expected RBAC to admit a superuser, got 403: %s", rec.Body.String())
 		}
 		if !panicked && rec.Code == http.StatusOK {
 			// If no panic and we got a 200, check that there is no

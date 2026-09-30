@@ -27,9 +27,27 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+// newExecuteTestAuthStore returns a real, empty auth store that is
+// closed when the test ends. An RBAC checker built without an auth store
+// denies every check (issue #477), so a test that needs to get past the
+// tool or resource gate pairs this store with superuserTokenContext.
+func newExecuteTestAuthStore(t *testing.T) *auth.AuthStore {
+	t.Helper()
+
+	store, err := auth.NewAuthStore(t.TempDir(), 0, 0, auth.AuditKeyForTesting())
+	if err != nil {
+		t.Fatalf("NewAuthStore: %v", err)
+	}
+	store.SetBcryptCostForTesting(t, bcrypt.MinCost)
+	t.Cleanup(func() { store.Close() })
+	return store
+}
+
 // newExecuteTestProvider returns a provider with no database wiring,
 // which is the shape a server started without a datastore has, together
-// with the client manager the caller must close.
+// with the client manager the caller must close. It is backed by a real
+// auth store, so a request passes the RBAC gate only when its context
+// comes from superuserTokenContext.
 func newExecuteTestProvider(t *testing.T, cfg *config.Config) (*ContextAwareProvider,
 	*database.ClientManager) {
 
@@ -42,9 +60,10 @@ func newExecuteTestProvider(t *testing.T, cfg *config.Config) (*ContextAwareProv
 		}
 	})
 
-	resourceReg := resources.NewContextAwareRegistry(clientManager, cfg, nil, nil)
-	return NewContextAwareProvider(clientManager, resourceReg, nil, cfg, nil, nil,
-		nil), clientManager
+	store := newExecuteTestAuthStore(t)
+	resourceReg := resources.NewContextAwareRegistry(clientManager, cfg, store, nil)
+	return NewContextAwareProvider(clientManager, resourceReg, nil, cfg, store,
+		nil, nil), clientManager
 }
 
 // tokenContext returns a context carrying a token hash, which every
@@ -52,6 +71,13 @@ func newExecuteTestProvider(t *testing.T, cfg *config.Config) (*ContextAwareProv
 func tokenContext() context.Context {
 	return context.WithValue(context.Background(), auth.TokenHashContextKey,
 		"execute-test-token-hash")
+}
+
+// superuserTokenContext returns tokenContext marked as a superuser
+// session, so the RBAC gate admits it and the test reaches the code
+// behind the gate.
+func superuserTokenContext() context.Context {
+	return context.WithValue(tokenContext(), auth.IsSuperuserContextKey, true)
 }
 
 // TestRegisterStatelessToolsKnowledgebase verifies that the
@@ -112,7 +138,7 @@ func TestResourceReaderAdapter(t *testing.T) {
 		t.Fatal("Expected the adapter to list the registry's resources")
 	}
 
-	content, err := adapter.Read(context.Background(), "pg://nonexistent")
+	content, err := adapter.Read(superuserTokenContext(), "pg://nonexistent")
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
@@ -259,7 +285,7 @@ func TestExecuteRefusesToolOutsideRBAC(t *testing.T) {
 func TestExecuteStatelessToolWithoutDatastore(t *testing.T) {
 	provider, _ := newExecuteTestProvider(t, &config.Config{})
 
-	response, err := provider.Execute(tokenContext(), "list_probes",
+	response, err := provider.Execute(superuserTokenContext(), "list_probes",
 		map[string]any{})
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
@@ -281,7 +307,7 @@ func TestExecuteStatelessToolWithoutDatastore(t *testing.T) {
 func TestExecuteReportsClientResolutionFailure(t *testing.T) {
 	provider, _ := newExecuteTestProvider(t, &config.Config{})
 
-	response, err := provider.Execute(tokenContext(), "query_database",
+	response, err := provider.Execute(superuserTokenContext(), "query_database",
 		map[string]any{"query": "SELECT 1"})
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
@@ -296,7 +322,7 @@ func TestExecuteReportsClientResolutionFailure(t *testing.T) {
 
 	// With connection_id present the provider must not answer with the
 	// session error; the tool's own resolver reports the outcome.
-	response, err = provider.Execute(tokenContext(), "query_database",
+	response, err = provider.Execute(superuserTokenContext(), "query_database",
 		map[string]any{"query": "SELECT 1", "connection_id": float64(4242)})
 	if err != nil {
 		t.Fatalf("Execute(connection_id): %v", err)
@@ -379,11 +405,12 @@ func TestExecuteCachesRegistryPerClient(t *testing.T) {
 	defer func() { _ = clientManager.CloseAll() }()
 
 	cfg := &config.Config{}
-	resourceReg := resources.NewContextAwareRegistry(clientManager, cfg, nil, nil)
+	store := newExecuteTestAuthStore(t)
+	resourceReg := resources.NewContextAwareRegistry(clientManager, cfg, store, nil)
 	provider := NewContextAwareProvider(clientManager, resourceReg, nil, cfg,
-		nil, nil, nil)
+		store, nil, nil)
 
-	ctx := tokenContext()
+	ctx := superuserTokenContext()
 
 	response, err := provider.Execute(ctx, "query_database", map[string]any{
 		"query": "SELECT 1 AS one",

@@ -161,3 +161,43 @@ func (h *RBACHandler) requireRenameInTokenScope(w http.ResponseWriter,
 		h.rbacChecker.GroupWithinTokenScope(ctx, groupID)
 	return h.requireGrantInTokenScope(w, r, inScope)
 }
+
+// federatedNameInTokenScope reports whether the acting caller may create
+// a group called name. Federation assigns federated users to a group by
+// name, so creating a group the OIDC group map names would put those
+// users into a group the token then shapes; a bounded token may not do
+// it. Any other name, a session, and a token unrestricted in every
+// kind, pass.
+func (h *RBACHandler) federatedNameInTokenScope(ctx context.Context,
+	name string) bool {
+
+	return !h.federatedGroups[name] || h.rbacChecker.TokenScopeUnrestricted(ctx)
+}
+
+// requireGroupDeleteInTokenScope refuses a bounded token deleting a
+// group the OIDC group map names, for the same reason as a rename of
+// one: federated users are matched to it by name, so deleting it, and
+// recreating it later, moves them between groups. The group is looked
+// up only when a federated name could be at stake, and a group that
+// does not exist is left to the delete to report.
+func (h *RBACHandler) requireGroupDeleteInTokenScope(w http.ResponseWriter,
+	r *http.Request, groupID int64) bool {
+
+	if len(h.federatedGroups) == 0 ||
+		h.rbacChecker.TokenScopeUnrestricted(r.Context()) {
+		return true
+	}
+
+	group, err := h.authStore.GetGroup(groupID)
+	if err != nil {
+		log.Printf("[ERROR] Failed to get group %d for delete check: %v", groupID, err)
+		const reason = "Failed to get group"
+		h.recordDenial(r, reason)
+		RespondError(w, http.StatusInternalServerError, reason)
+		return false
+	}
+	if group == nil {
+		return true
+	}
+	return h.requireGrantInTokenScope(w, r, !h.federatedGroups[group.Name])
+}

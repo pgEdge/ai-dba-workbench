@@ -11,6 +11,8 @@ package api
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -83,7 +85,8 @@ func newReachFixture(t *testing.T) (*reachFixture, func()) {
 
 // listConnections replaces the connections the handler's lister reports.
 func (f *reachFixture) listConnections(items ...database.ConnectionListItem) {
-	f.h.SetConnectionLister(database.NewSliceVisibilityLister(items))
+	f.lister.ConnectionVisibilityLister = database.NewSliceVisibilityLister(items)
+	f.h.SetConnectionLister(f.lister)
 }
 
 // mcpGroup creates a group holding the named MCP privilege.
@@ -543,7 +546,13 @@ func assertDenialRecorded(t *testing.T, store *auth.AuthStore, action, reason st
 	if events[0].Error != reason {
 		t.Errorf("Expected reason %q, got %q", reason, events[0].Error)
 	}
-	if !strings.Contains(string(events[0].Details), `"target":"/api/v1/`) {
+	var details struct {
+		Target string `json:"target"`
+	}
+	if err := json.Unmarshal(events[0].Details, &details); err != nil {
+		t.Fatalf("Failed to decode details %s: %v", events[0].Details, err)
+	}
+	if details.Target == "" || details.Target == unmatchedDenialTarget {
 		t.Errorf("Expected the denial to name its target, got %s", events[0].Details)
 	}
 }
@@ -578,4 +587,156 @@ func TestConnectionScopeRefusalIsAudited(t *testing.T) {
 		assertError(t, rec, http.StatusForbidden, connectionOutOfTokenScope)
 		assertDenialRecorded(t, store, tc.action, connectionOutOfTokenScope)
 	}
+}
+
+// =============================================================================
+// Security audit fixes (issue #471, audit of the denial coalescing)
+// =============================================================================
+
+// TestOwnedClusterGroupCountsTowardsReach covers VULN-103: alice owns a
+// cluster group whose members are connections 5 and 9, and the cluster
+// group handlers admit an owner, so the group's members are part of her
+// reach. A token whose scope covers 5 but not 9 may not reset her
+// password, delete or recreate her, mint her a token, or set or clear
+// the scope of a token she owns.
+func TestOwnedClusterGroupCountsTowardsReach(t *testing.T) {
+	f, cleanup := newReachFixture(t)
+	defer cleanup()
+	alice := f.user(t, "alice", 0)
+	_, aliceToken, err := f.store.CreateToken("alice", "alice's token", nil)
+	if err != nil {
+		t.Fatalf("CreateToken failed: %v", err)
+	}
+	userPath := fmt.Sprintf("/api/v1/rbac/users/%d", alice)
+	scopePath := fmt.Sprintf("/api/v1/rbac/tokens/%d/scope", aliceToken.ID)
+	reset := `{"password":"Another-Password-9"}`
+	mint := `{"owner_username":"alice"}`
+	// A scope that leaves the connection kind alone keeps the owner's
+	// whole connection reach.
+	narrow := fmt.Sprintf(`{"mcp_privileges":[%q]}`, reachToolInScope)
+
+	// Every member inside the scope: each route is allowed.
+	f.lister.owned["alice"] = []int{5, 7}
+	assertStatus(t, f.do(f.narrowed, http.MethodPut, userPath, reset), http.StatusOK)
+	assertStatus(t, f.do(f.narrowed, http.MethodPost, "/api/v1/rbac/tokens", mint),
+		http.StatusCreated)
+	assertStatus(t, f.do(f.narrowed, http.MethodPut, scopePath, narrow),
+		http.StatusNoContent)
+	assertStatus(t, f.do(f.narrowed, http.MethodDelete, scopePath, ""),
+		http.StatusNoContent)
+
+	// A member outside the scope: each route is refused.
+	f.lister.owned["alice"] = []int{5, 9}
+	assertGrantRefused(t, f.do(f.narrowed, http.MethodPut, userPath, reset))
+	assertGrantRefused(t, f.do(f.narrowed, http.MethodPost, "/api/v1/rbac/tokens", mint))
+	assertGrantRefused(t, f.do(f.narrowed, http.MethodPut, scopePath, narrow))
+	assertGrantRefused(t, f.do(f.narrowed, http.MethodDelete, userPath, ""))
+	if u, _ := f.store.GetUser("alice"); u == nil {
+		t.Fatal("Expected alice to survive the refusal")
+	}
+	assertStatus(t, f.do(f.session, http.MethodPut, scopePath, narrow), http.StatusNoContent)
+	assertGrantRefused(t, f.do(f.narrowed, http.MethodDelete, scopePath, ""))
+
+	// Ownership is matched by name, so a recreated alice owns the group.
+	assertStatus(t, f.do(f.session, http.MethodDelete, userPath, ""), http.StatusNoContent)
+	assertGrantRefused(t, f.do(f.narrowed, http.MethodPost, "/api/v1/rbac/users",
+		userBody("alice")))
+	assertStatus(t, f.do(f.wildcard, http.MethodPost, "/api/v1/rbac/users",
+		userBody("alice")), http.StatusCreated)
+
+	// A lookup that fails is refused, and open callers are unaffected.
+	f.lister.err = errors.New("lookup failed")
+	assertGrantRefused(t, f.do(f.narrowed, http.MethodPost, "/api/v1/rbac/users",
+		userBody("eve")))
+	for i, caller := range f.open() {
+		assertStatus(t, f.do(caller, http.MethodPost, "/api/v1/rbac/users",
+			userBody(fmt.Sprintf("open-%d", i))), http.StatusCreated)
+	}
+}
+
+// TestOwnedClusterGroupFailsClosedWithoutGroupLister checks that a
+// connection lister unable to enumerate owned cluster groups refuses a
+// bounded token.
+func TestOwnedClusterGroupFailsClosedWithoutGroupLister(t *testing.T) {
+	f, cleanup := newReachFixture(t)
+	defer cleanup()
+	f.h.SetConnectionLister(database.NewSliceVisibilityLister(
+		[]database.ConnectionListItem{{ID: 5, IsShared: true}}))
+
+	assertGrantRefused(t, f.do(f.narrowed, http.MethodPost, "/api/v1/rbac/users",
+		userBody("eve")))
+	assertStatus(t, f.do(f.session, http.MethodPost, "/api/v1/rbac/users",
+		userBody("eve")), http.StatusCreated)
+}
+
+// TestFederatedGroupCreateAndDeleteRespectTokenScope covers VULN-104:
+// federation finds a group by name, so a bounded token may neither
+// create nor delete a group the OIDC group map names, and each refusal
+// is audited.
+func TestFederatedGroupCreateAndDeleteRespectTokenScope(t *testing.T) {
+	f, cleanup := newReachFixture(t)
+	defer cleanup()
+	f.h.SetFederatedGroupMap(map[string]string{"idp-admins": "wb-admins"})
+	create := func(name string) string { return fmt.Sprintf(`{"name":%q}`, name) }
+	path := func(id int64) string { return fmt.Sprintf("/api/v1/rbac/groups/%d", id) }
+
+	assertGrantRefused(t, f.do(f.narrowed, http.MethodPost, "/api/v1/rbac/groups",
+		create("wb-admins")))
+	assertDenialRecorded(t, f.store, "group.create", grantOutOfTokenScope)
+	if groups, err := f.store.ListGroups(); err != nil || len(groups) != 0 {
+		t.Fatalf("Expected no group to be created, got %v (%v)", groups, err)
+	}
+	assertStatus(t, f.do(f.narrowed, http.MethodPost, "/api/v1/rbac/groups",
+		create("plain")), http.StatusCreated)
+
+	federated := f.group(t, "wb-admins", nil)
+	plain, err := f.store.GetGroupByName("plain")
+	if err != nil || plain == nil {
+		t.Fatalf("GetGroupByName failed: %v", err)
+	}
+	assertGrantRefused(t, f.do(f.narrowed, http.MethodDelete, path(federated), ""))
+	assertDenialRecorded(t, f.store, "group.delete", grantOutOfTokenScope)
+	if g, err := f.store.GetGroup(federated); err != nil || g == nil {
+		t.Fatalf("Expected wb-admins to survive, got %+v (%v)", g, err)
+	}
+	assertStatus(t, f.do(f.narrowed, http.MethodDelete, path(plain.ID), ""),
+		http.StatusNoContent)
+	// A group that does not exist is left to the delete to report.
+	if rec := f.do(f.narrowed, http.MethodDelete, path(9999), ""); rec.Code == http.StatusForbidden {
+		t.Errorf("Expected a missing group not to be refused on scope, got %s", rec.Body)
+	}
+
+	for i, caller := range f.open() {
+		assertStatus(t, f.do(caller, http.MethodDelete, path(federated), ""),
+			http.StatusNoContent)
+		assertStatus(t, f.do(caller, http.MethodPost, "/api/v1/rbac/groups",
+			create("wb-admins")), http.StatusCreated)
+		g, err := f.store.GetGroupByName("wb-admins")
+		if err != nil || g == nil {
+			t.Fatalf("caller %d: GetGroupByName failed: %v", i, err)
+		}
+		federated = g.ID
+	}
+}
+
+// TestDeleteGroupFailsClosedOnLookupError checks that a bounded token's
+// delete is refused with 500, and audited, when the group cannot be read
+// to see whether federation names it.
+func TestDeleteGroupFailsClosedOnLookupError(t *testing.T) {
+	h, store, dir, cleanup := createTestRBACHandlerWithDir(t)
+	defer cleanup()
+	h.SetFederatedGroupMap(map[string]string{"idp-admins": "wb-admins"})
+	_, _, _, narrowed, _ := scopedCallers(t, store)
+	groupID, err := store.CreateGroup("doomed", "")
+	if err != nil {
+		t.Fatalf("CreateGroup failed: %v", err)
+	}
+	dropAuthTable(t, dir, "user_groups")
+
+	req := narrowed.wrap(httptest.NewRequest(http.MethodDelete,
+		fmt.Sprintf("/api/v1/rbac/groups/%d", groupID), nil))
+	rec := httptest.NewRecorder()
+	h.handleGroupSubpath(rec, req)
+	assertStatus(t, rec, http.StatusInternalServerError)
+	assertDenialRecorded(t, store, "group.delete", "Failed to get group")
 }

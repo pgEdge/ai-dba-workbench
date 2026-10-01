@@ -8272,7 +8272,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_groups permission",
+            "description": "Requires manage_groups permission, or the request renames a group and the API token's connection, MCP or admin scope does not cover the access the group confers, or the old or new name is one the OIDC group map uses",
             "content": {
               "application/json": {
                 "schema": {
@@ -8293,6 +8293,16 @@
           },
           "409": {
             "description": "A group with this name already exists",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The group could not be read to check a rename against the API token's scope",
             "content": {
               "application/json": {
                 "schema": {
@@ -8560,7 +8570,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_groups permission",
+            "description": "Requires manage_groups permission, or the API token's connection, MCP or admin scope does not cover the access the group confers",
             "content": {
               "application/json": {
                 "schema": {

@@ -304,6 +304,45 @@ func (rc *RBACChecker) reachConnectionsInScope(ctx context.Context,
 	return rc.unrestrictedReachInTokenScope(ctx, p.username, lister)
 }
 
+// OwnedClusterGroupLister enumerates the member connections of the
+// cluster groups a user owns. The cluster group update and delete
+// handlers admit a group's owner as they admit a holder of
+// manage_connections, and either change reaches every member through
+// the group-scope blackouts, overrides and settings it rewrites or
+// drops, so those members are part of the owner's reach. The
+// connection lister passed to the grant checks must implement it as
+// well; one that does not fails the check closed.
+type OwnedClusterGroupLister interface {
+	GetOwnedClusterGroupConnectionIDs(ctx context.Context,
+		username string) ([]int, error)
+}
+
+// ownedClusterGroupsInTokenScope reports whether every member connection
+// of every cluster group username owns lies inside the acting token's
+// connection scope at read_write. A lister that cannot enumerate the
+// groups, or fails to, is out of scope.
+func (rc *RBACChecker) ownedClusterGroupsInTokenScope(ctx context.Context,
+	username string, lister ConnectionVisibilityLister) bool {
+
+	if username == "" {
+		return true
+	}
+	groups, ok := lister.(OwnedClusterGroupLister)
+	if !ok {
+		return false
+	}
+	members, err := groups.GetOwnedClusterGroupConnectionIDs(ctx, username)
+	if err != nil {
+		return false
+	}
+	for _, id := range members {
+		if !rc.CanGrantConnectionInTokenScope(ctx, id, AccessLevelReadWrite) {
+			return false
+		}
+	}
+	return true
+}
+
 // unrestrictedReachInTokenScope reports whether every connection that
 // username may open or change without a group grant lies inside the
 // acting token's connection scope at read_write.
@@ -317,12 +356,16 @@ func (rc *RBACChecker) reachConnectionsInScope(ctx context.Context,
 // is checked before the restriction is looked at. Ownership is matched
 // by username, as those handlers match it, so a name that already owns
 // a connection reaches it as soon as an account of that name exists.
-// With no lister the connections cannot be enumerated, so the check
-// fails closed.
+// The cluster groups the user owns count in the same way (see
+// OwnedClusterGroupLister). With no lister the connections cannot be
+// enumerated, so the check fails closed.
 func (rc *RBACChecker) unrestrictedReachInTokenScope(ctx context.Context,
 	username string, lister ConnectionVisibilityLister) bool {
 
 	if lister == nil {
+		return false
+	}
+	if !rc.ownedClusterGroupsInTokenScope(ctx, username, lister) {
 		return false
 	}
 	conns, err := lister.GetAllConnections(ctx)

@@ -851,3 +851,67 @@ func TestReachLookupsFailClosed(t *testing.T) {
 		})
 	}
 }
+
+// plainVisibilityLister enumerates connections but cannot list the
+// cluster groups a user owns.
+type plainVisibilityLister struct {
+	connections []ConnectionVisibilityInfo
+}
+
+func (p plainVisibilityLister) GetAllConnections(context.Context) ([]ConnectionVisibilityInfo, error) {
+	return p.connections, nil
+}
+
+// TestUnrestrictedReachCountsOwnedClusterGroups checks that the member
+// connections of a cluster group a user owns count towards the user's
+// reach, and that the check fails closed when the groups cannot be
+// listed.
+func TestUnrestrictedReachCountsOwnedClusterGroups(t *testing.T) {
+	f, cleanup := newGrantScopeFixture(t)
+	defer cleanup()
+	ctx := f.tokenCtx()
+	shared := []ConnectionVisibilityInfo{{ID: 5, IsShared: true}}
+
+	tests := []struct {
+		name   string
+		lister ConnectionVisibilityLister
+		want   bool
+	}{
+		{"no groups owned", &stubVisibilityLister{connections: shared}, true},
+		{"members in scope at read_write", &stubVisibilityLister{
+			connections: shared,
+			ownedGroups: map[string][]int{"target": {5}},
+		}, true},
+		{"a member outside the scope", &stubVisibilityLister{
+			connections: shared,
+			ownedGroups: map[string][]int{"target": {5, 9}},
+		}, false},
+		{"a member the scope holds read-only", &stubVisibilityLister{
+			connections: shared,
+			ownedGroups: map[string][]int{"target": {7}},
+		}, false},
+		{"another user's group", &stubVisibilityLister{
+			connections: shared,
+			ownedGroups: map[string][]int{"bob": {9}},
+		}, true},
+		{"lookup failure", &stubVisibilityLister{
+			connections: shared,
+			ownedErr:    errors.New("boom"),
+		}, false},
+		{"lister without group listing", plainVisibilityLister{connections: shared}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := f.checker.UserWithinTokenScope(ctx, f.userID, tt.lister); got != tt.want {
+				t.Errorf("UserWithinTokenScope = %v, want %v", got, tt.want)
+			}
+			if got := f.checker.NewUserWithinTokenScope(ctx, "target", tt.lister); got != tt.want {
+				t.Errorf("NewUserWithinTokenScope = %v, want %v", got, tt.want)
+			}
+		})
+	}
+
+	if !f.checker.ownedClusterGroupsInTokenScope(ctx, "", plainVisibilityLister{}) {
+		t.Error("An empty username owns no groups")
+	}
+}

@@ -10,6 +10,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -41,6 +42,26 @@ type grantFixture struct {
 	wildcard scopeCaller
 	narrowed scopeCaller
 	readOnly scopeCaller
+	lister   *testReachLister
+}
+
+// testReachLister is the connection lister the grant tests install: a
+// fixed set of connections, plus the member connections of the cluster
+// groups each user owns.
+type testReachLister struct {
+	auth.ConnectionVisibilityLister
+	owned map[string][]int
+	err   error
+}
+
+// GetOwnedClusterGroupConnectionIDs implements auth.OwnedClusterGroupLister.
+func (l *testReachLister) GetOwnedClusterGroupConnectionIDs(_ context.Context,
+	username string) ([]int, error) {
+
+	if l.err != nil {
+		return nil, l.err
+	}
+	return l.owned[username], nil
 }
 
 func newGrantFixture(t *testing.T) (*grantFixture, func()) {
@@ -49,12 +70,16 @@ func newGrantFixture(t *testing.T) (*grantFixture, func()) {
 	// Connections 5 and 7 are shared and lie inside the narrowed scope
 	// at read_write, so a new user's reach is in scope until a test
 	// lists a connection beyond it.
-	h.SetConnectionLister(database.NewSliceVisibilityLister(
-		[]database.ConnectionListItem{
-			{ID: 5, IsShared: true},
-			{ID: 7, IsShared: true},
-		}))
-	f := &grantFixture{h: h, store: store}
+	lister := &testReachLister{
+		ConnectionVisibilityLister: database.NewSliceVisibilityLister(
+			[]database.ConnectionListItem{
+				{ID: 5, IsShared: true},
+				{ID: 7, IsShared: true},
+			}),
+		owned: map[string][]int{},
+	}
+	h.SetConnectionLister(lister)
+	f := &grantFixture{h: h, store: store, lister: lister}
 	f.session, f.unscoped, f.wildcard, f.narrowed, f.readOnly = scopedCallers(t, store)
 	return f, cleanup
 }
@@ -83,6 +108,8 @@ func (f *grantFixture) do(caller scopeCaller, method, path,
 		f.h.handleUsers(rec, req)
 	case strings.HasPrefix(path, "/api/v1/rbac/users/"):
 		f.h.handleUserSubpath(rec, req)
+	case path == "/api/v1/rbac/groups":
+		f.h.handleGroups(rec, req)
 	case strings.HasPrefix(path, "/api/v1/rbac/groups/"):
 		f.h.handleGroupSubpath(rec, req)
 	case path == "/api/v1/rbac/tokens":

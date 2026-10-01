@@ -471,9 +471,18 @@ with `grantOutOfTokenScope`.
   username owns, restricted or not, at `read_write`. The owner check
   runs before the restricted skip because `updateConnection` and
   `deleteConnection` admit the owner whatever the group restriction.
-  That needs the datastore, so `RBACHandler.SetConnectionLister` must
-  be wired (it is, in `cmd/mcp-server/handlers.go`); a nil lister or a
-  lister error fails closed for a connection-bounded actor.
+  It also counts every member connection of a cluster group the
+  username owns, at `read_write`, because the cluster-group update and
+  delete handlers admit the group's owner as the connection handlers
+  do (`ownedClusterGroupsInTokenScope`, through the optional
+  `auth.OwnedClusterGroupLister` interface, which the datastore's
+  visibility lister implements with
+  `Datastore.GetOwnedClusterGroupConnectionIDs`). That needs the
+  datastore, so `RBACHandler.SetConnectionLister` must be wired (it
+  is, in `cmd/mcp-server/handlers.go`); a nil lister, a lister error,
+  or a lister without the owned-group method (such as
+  `NewSliceVisibilityLister`) fails closed for a connection-bounded
+  actor.
 - An empty MCP name list is not proof of an unrestricted MCP scope:
   `GetTokenMCPScope` joins away rows whose identifier no longer exists,
   so `actorMCPScope` asks `AuthStore.HasTokenMCPScope` for the raw row
@@ -485,7 +494,9 @@ with `grantOutOfTokenScope`.
   (`requireRenameInTokenScope`: the group must be within scope, and
   neither the old nor the new name may appear in the OIDC `group_map`
   that `RBACHandler.SetFederatedGroupMap` supplies, since federation
-  matches groups by name), `createUser` (superuser
+  matches groups by name), creating or deleting a group whose name the
+  OIDC `group_map` uses (`federatedNameInTokenScope`,
+  `requireGroupDeleteInTokenScope`), `createUser` (superuser
   needs `TokenScopeUnrestricted`), `updateUser` (`is_superuser`, and a
   password set or re-enable on a user beyond scope), `deleteUser`
   (ownership is matched by username, so delete-and-recreate would
@@ -558,28 +569,51 @@ failure is logged with `[ERROR]` and never changes the response.
 Denials are coalesced before they reach the store. `recordDenial`
 consults `admitDenial`, which keeps an in-memory map on `RBACHandler`
 keyed by `denialKey` (actor type, actor id, actor name, client IP,
-action, reason and the request path, capped at `maxDenialTargetLen`)
-under `denialMu`, so that two tokens of one user,
-or one token used from two addresses, never suppress each other's
-denials. The first denial for a key is written at once, identical
-denials within `denialCoalesceWindow` (60s) are counted instead of
-written, and the first denial after the window closes is written
-through `auth.RecordDeniedWithDetails` carrying
-`details.repeat_count`. The map evicts expired entries on every call
-and is capped at `maxDenialKeys` (10 000); an evicted entry that still
-held suppressed repeats is returned from `evictDenials` as a
-`denialSummary` and written by `recordDenialSummaries` once `denialMu`
-is released, as a row carrying `repeat_count` and `window_closed`, so
-a burst that stops before its window closes is still counted. Any new
-denial path must go through `recordDenial` rather than calling
-`RecordDenied` directly, or it loses the bound on how many rows one
-client can append. Every row and summary carries the path as
-`details.target`. A handler outside `RBACHandler` records through
-`RBACHandler.RecordDenial`, injected as a function: `ConnectionHandler`
-takes it via `SetDenialRecorder` and refuses through
-`refuseOutOfTokenScope`, with `deniedConnectionAction` naming the
-`connection.update`, `connection.delete` and
-`connection.cluster.update` actions.
+action, capped at `maxDenialActionLen`, and reason) under `denialMu`,
+so that two tokens of one user, or one token used from two addresses,
+never suppress each other's denials. The key must never hold a value
+the caller chooses without limit: the path is deliberately not in it,
+and `deniedRoute` maps an unrecognised method to `rbac.other` (only
+the nine standard methods get `rbac.<lowercase method>`), since
+either would let a client mint a fresh key, and so a fresh row, per
+request. The target instead goes in the row: `deniedRoute` normalises
+it to `kind/<id>` (a positive integer id) or `kind`, and
+`unmatchedDenialTarget` for a route it does not recognise. The first
+denial for a key is written at once with `details.target`, identical
+denials within `denialCoalesceWindow` (60s) are counted in a
+`denialWindow`, which keeps up to `maxDenialTargets` (20) distinct
+targets and counts the rest in `targets_truncated`, and the first
+denial after the window closes is written through
+`auth.RecordDeniedWithDetails` carrying `repeat_count`, `targets` and
+`targets_truncated`. Entries sit on an intrusive list ordered by
+`firstSeen` (`denialOldest`/`denialNewest`, kept by `pushNewestDenial`
+and `unlinkDenial`; not `container/list`, whose element type
+assertions errcheck flags), so `evictDenials` walks from the oldest
+end and stops at the first open window, which keeps each call
+amortised O(1) however many keys are held. The map is capped at
+`maxDenialKeys` (10 000); an evicted entry that still held suppressed
+repeats is returned as a `denialSummary` and written by
+`recordDenialSummaries` once `denialMu` is released, as a row carrying
+`window_closed` plus the window's fields, so a burst that stops
+before its window closes is still counted. Any new denial path must
+go through `recordDenial` rather than calling `RecordDenied`
+directly, or it loses the bound on how many rows one client can
+append. A handler outside `RBACHandler` records through
+`RBACHandler.RecordDenial`, injected as a function:
+`ConnectionHandler` takes it via `SetDenialRecorder` and refuses
+through `refuseOutOfTokenScope` (its `manage_connections` refusal on
+`PUT /connections/{id}/cluster` records too), and `ClusterHandler`,
+`AlertRuleHandler` and `NotificationChannelHandler` embed
+`denialAuditor`, whose recorder they pass to
+`requireAllConnectionsInTokenScope` and
+`requireConnectionsInTokenScope`; `cmd/mcp-server/handlers.go` wires
+all four. `requireTargetInTokenScope` and
+`requireBlackoutTargetInTokenScope` do not record yet.
+`deniedConnectionAction` names the `connection.update`,
+`connection.delete` and `connection.cluster.update` actions, and
+`deniedAPIRoute` names `cluster.*`, `cluster_group.*`,
+`notification_channel.*` and `alert_rule.*` (a write to a
+sub-resource is recorded as an update of its parent).
 
 Mutations in these handlers go through `h.actorStore(r)` rather than
 `h.authStore`, so the audit row names the acting user or token:

@@ -109,6 +109,18 @@ moved.
 - Connection ownership bypasses group restriction in `updateConnection`
   and `deleteConnection`, so every reach computation must count owned
   connections, restricted or not.
+- The cluster-group update and delete handlers admit a group's owner
+  as the connection handlers admit a connection's owner, so a user's
+  reach also counts every member connection of each cluster group
+  their username owns (`ownedClusterGroupsInTokenScope` in
+  `internal/auth/grant_scope.go`), failing closed when the groups
+  cannot be listed.
+- The denial-audit coalescing key (`denialKey` in
+  `internal/api/rbac_handlers.go`) must never contain a value the
+  caller chooses without limit, such as the request path, a resource
+  id or a non-standard HTTP method, or a client mints a fresh key, and
+  so a fresh audit row, per request. Such values belong in the row's
+  bounded `targets` list instead.
 - A blanket superuser gate is the exception, because it names nothing
   to intersect against: `RBACChecker.IsSuperuser` returns false for a
   token whose admin scope has been narrowed, which is what

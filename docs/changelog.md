@@ -571,18 +571,24 @@ project adheres to
   wildcard, or any admin permission; revoke a grant on or delete
   a group holding a connection outside it; add a member to, or
   remove one from, a group that reaches beyond it; rename such a
-  group, or rename any group from or to a name the OIDC
-  `group_map` uses; create a superuser, or any user who would
-  reach beyond it, which counts the public MCP items, every
-  shared connection no group restricts and every connection the
-  user owns, restricted or not; make a user a superuser; set the
+  group; create or delete a group the OIDC `group_map` names, or
+  rename any group from or to such a name; create a superuser, or any user who
+  would reach beyond it, which counts the public MCP items, every
+  shared connection no group restricts, every connection the user
+  owns, restricted or not, and every member of a cluster group the
+  user owns; make a user a superuser; set the
   password of, re-enable or delete a user who reaches beyond it,
   since deleting one frees the name, and the connections it
   owns, for whoever recreates it; create
   a token for such an owner; or set or clear another token's
   scope so that the other token reaches beyond it in any of the
-  three kinds. One MCP tool still reaches beyond a
-  connection scope: `query_datastore` runs read-only SQL over
+  three kinds. Refused requests are written to the RBAC audit
+  log, including those refused by the cluster, alert rule and
+  notification channel handlers; repeated refusals from one
+  caller are folded into a single row per minute that lists up
+  to 20 of the targets, so that a client cannot flood the log by
+  varying the path or the HTTP method. One MCP tool still
+  reaches beyond a connection scope: `query_datastore` runs read-only SQL over
   the whole datastore, including every connection's host,
   username and encrypted credentials, and #566 tracks limiting
   it to the connections the caller can read. A `read` entry

@@ -70,6 +70,11 @@ func (h *RBACHandler) createGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.requireGrantInTokenScope(w, r,
+		h.federatedNameInTokenScope(r.Context(), name)) {
+		return
+	}
+
 	groupID, err := h.actorStore(r).CreateGroup(name, req.Description)
 	if err != nil {
 		if errors.Is(err, auth.ErrGroupNameExists) {
@@ -313,6 +318,9 @@ func (h *RBACHandler) deleteGroup(w http.ResponseWriter, r *http.Request, groupI
 	}
 	if !h.requireGrantInTokenScope(w, r,
 		h.groupPrivilegesInTokenScope(r.Context(), groupID)) {
+		return
+	}
+	if !h.requireGroupDeleteInTokenScope(w, r, groupID) {
 		return
 	}
 

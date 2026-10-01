@@ -106,6 +106,12 @@ type RBACHandler struct {
 	authStore   *auth.AuthStore
 	rbacChecker *auth.RBACChecker
 
+	// connLister enumerates the monitored connections, so that the
+	// token-scope grant checks can work out which unrestricted
+	// connections a user reaches without a group grant. With none set
+	// those checks fail closed for a connection-bounded token.
+	connLister auth.ConnectionVisibilityLister
+
 	// denialMu guards denials, which is read and written from every
 	// request goroutine that is refused.
 	denialMu sync.Mutex
@@ -119,6 +125,12 @@ func NewRBACHandler(authStore *auth.AuthStore, rbacChecker *auth.RBACChecker) *R
 		rbacChecker: rbacChecker,
 		denials:     make(map[denialKey]*denialState),
 	}
+}
+
+// SetConnectionLister sets the lister the token-scope grant checks use
+// to enumerate the monitored connections.
+func (h *RBACHandler) SetConnectionLister(lister auth.ConnectionVisibilityLister) {
+	h.connLister = lister
 }
 
 // RegisterRoutes registers RBAC management routes on the mux

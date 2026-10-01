@@ -181,10 +181,10 @@ func TestTargetInTokenScope(t *testing.T) {
 		})
 	}
 
-	t.Run("nil store passes", func(t *testing.T) {
-		if !targetInTokenScope(context.Background(), auth.NewRBACChecker(nil),
+	t.Run("nil store fails closed", func(t *testing.T) {
+		if targetInTokenScope(context.Background(), auth.NewRBACChecker(nil),
 			"estate", nil) {
-			t.Error("Expected a checker without a store to pass")
+			t.Error("Expected a checker without a store to refuse")
 		}
 	})
 }

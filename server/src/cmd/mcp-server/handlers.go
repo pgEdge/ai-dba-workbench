@@ -272,6 +272,7 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 		// RBAC management endpoints
 		if deps.AuthStore != nil {
 			rbacHandler := api.NewRBACHandler(deps.AuthStore, rbacChecker)
+			rbacHandler.SetConnectionLister(database.NewVisibilityLister(deps.Datastore))
 			rbacHandler.RegisterRoutes(mux, authWrapper)
 			fmt.Fprintf(os.Stderr, "RBAC management: ENABLED\n")
 		}

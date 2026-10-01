@@ -757,8 +757,8 @@ func TestGetEffectivePrivilegesSuperuserReportsScopeLookupError(t *testing.T) {
 // TestConnectionInTokenScope checks the check that handlers gated on
 // ownership or an admin permission apply to a token's connection scope:
 // a narrowed scope admits only its connections, a session and an
-// unscoped token admit any, and an incomplete token context or an
-// unreadable scope denies.
+// unscoped token admit any, and an incomplete token context, an
+// unreadable scope or a checker without a store denies.
 func TestConnectionInTokenScope(t *testing.T) {
 	f, cleanup := newSuperuserScopeFixture(t)
 	defer cleanup()
@@ -786,8 +786,8 @@ func TestConnectionInTokenScope(t *testing.T) {
 	if f.checker.ConnectionInTokenScope(unidentifiedTokenCtx(), 1) {
 		t.Error("Expected an incomplete token context to be refused")
 	}
-	if !NewRBACChecker(nil).ConnectionInTokenScope(f.tokenCtx(), 2) {
-		t.Error("Expected a checker without a store to admit the caller")
+	if NewRBACChecker(nil).ConnectionInTokenScope(f.tokenCtx(), 2) {
+		t.Error("Expected a checker without a store to refuse the caller")
 	}
 
 	f.dropScopeTable(t, "token_connection_scope")
@@ -833,8 +833,8 @@ func TestAllConnectionsInTokenScope(t *testing.T) {
 	if f.checker.AllConnectionsInTokenScope(unidentifiedTokenCtx()) {
 		t.Error("Expected an incomplete token context to be refused")
 	}
-	if !NewRBACChecker(nil).AllConnectionsInTokenScope(f.tokenCtx()) {
-		t.Error("Expected a checker without a store to admit the caller")
+	if NewRBACChecker(nil).AllConnectionsInTokenScope(f.tokenCtx()) {
+		t.Error("Expected a checker without a store to refuse the caller")
 	}
 
 	f.setConnectionScope(t, []ScopedConnection{

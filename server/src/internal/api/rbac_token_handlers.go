@@ -333,12 +333,13 @@ func (h *RBACHandler) getTokenScope(w http.ResponseWriter, r *http.Request, toke
 // unaffected, and a token may still manage other tokens' scopes.
 //
 // A token may still change a *different* token's scope, and create a
-// token for another owner, but only within its own connection scope:
+// token for another owner, but only within its own scope:
 // tokenWithinActorScope and ownerWithinTokenScope refuse a result that
-// would reach further than the acting token (issue #471). What stays
-// open is tracked in issue #522: a token whose connection scope covers
-// every connection may still create an unscoped token for any owner,
-// including a superuser, and permission strings written into a scope
+// would reach further than the acting token in connections, MCP items
+// or admin permissions (issue #471). What stays open is tracked in
+// issue #522: a token unrestricted in all three kinds may still create
+// an unscoped token for any owner, including a superuser, even when its
+// own owner is not one, and permission strings written into a scope
 // are not validated against a known set.
 func (h *RBACHandler) refuseSelfScopeMutation(w http.ResponseWriter,
 	r *http.Request, tokenID int64) bool {
@@ -407,21 +408,29 @@ func (h *RBACHandler) setTokenScope(w http.ResponseWriter, r *http.Request, toke
 	}
 
 	// The token being changed must end up no wider than the acting
-	// token, judged on the connection scope it will hold afterwards
-	// (issue #471).
-	connections := req.Connections
-	if connections == nil && !h.rbacChecker.AllConnectionsInTokenScope(r.Context()) {
-		stored, ok := h.storedTokenConnections(tokenID)
+	// token, judged kind by kind on the scope it will hold afterwards:
+	// what the request supplies, and what is stored for any kind the
+	// request leaves alone (issue #471).
+	if !h.rbacChecker.TokenScopeUnrestricted(r.Context()) {
+		result, ok := h.storedTokenScope(tokenID)
 		if !ok {
-			log.Printf("[ERROR] Failed to read connection scope for token %d", tokenID)
+			log.Printf("[ERROR] Failed to read scope for token %d", tokenID)
 			RespondError(w, http.StatusInternalServerError, "Failed to get token scope")
 			return
 		}
-		connections = stored
-	}
-	if !h.requireGrantInTokenScope(w, r,
-		h.tokenWithinActorScope(r.Context(), tokenID, connections)) {
-		return
+		if req.Connections != nil {
+			result.Connections = req.Connections
+		}
+		if req.MCPPrivileges != nil {
+			result.MCPPrivileges = req.MCPPrivileges
+		}
+		if req.AdminPermissions != nil {
+			result.AdminPermissions = req.AdminPermissions
+		}
+		if !h.requireGrantInTokenScope(w, r,
+			h.tokenWithinActorScope(r.Context(), tokenID, result)) {
+			return
+		}
 	}
 
 	if req.MCPPrivileges != nil {
@@ -462,7 +471,7 @@ func (h *RBACHandler) clearTokenScope(w http.ResponseWriter, r *http.Request, to
 
 	// Clearing the scope leaves the token with its owner's whole access.
 	if !h.requireGrantInTokenScope(w, r,
-		h.tokenWithinActorScope(r.Context(), tokenID, nil)) {
+		h.tokenWithinActorScope(r.Context(), tokenID, auth.GrantedTokenScope{})) {
 		return
 	}
 

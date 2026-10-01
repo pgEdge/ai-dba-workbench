@@ -205,38 +205,20 @@ func TestReadTracesResourceReads(t *testing.T) {
 	ctx := context.WithValue(superuserCtx, auth.TokenHashContextKey,
 		"trace-token-hash")
 
-	// A single-text response, a multi-text response and a response with
-	// no text at all each take a different branch when the trace entry
-	// is assembled.
+	// An unknown resource answers without a client. A custom one needs
+	// a client, which this registry has not got, so its read stops at
+	// client resolution; the handler-shaped trace branches are covered
+	// by TestReadServesResourcesFromRealClient.
 	if _, err := registry.Read(ctx, "pg://nonexistent"); err != nil {
 		t.Fatalf("Read(unknown): %v", err)
 	}
-	registry.customResources["pg://multi"] = customResource{
-		definition: mcp.Resource{URI: "pg://multi", Name: "Multi"},
-		handler: func(context.Context, *database.Client) (mcp.ResourceContent, error) {
-			return mcp.ResourceContent{
-				URI: "pg://multi",
-				Contents: []mcp.ContentItem{
-					{Type: "text", Text: "one"},
-					{Type: "text", Text: "two"},
-				},
-			}, nil
-		},
+	custom, err := registry.Read(ctx, "pg://custom")
+	if err != nil {
+		t.Fatalf("Read(custom): %v", err)
 	}
-	registry.customResources["pg://empty"] = customResource{
-		definition: mcp.Resource{URI: "pg://empty", Name: "Empty"},
-		handler: func(context.Context, *database.Client) (mcp.ResourceContent, error) {
-			return mcp.ResourceContent{
-				URI:      "pg://empty",
-				Contents: []mcp.ContentItem{{Type: "text"}},
-			}, nil
-		},
-	}
-	if _, err := registry.Read(ctx, "pg://multi"); err != nil {
-		t.Fatalf("Read(multi): %v", err)
-	}
-	if _, err := registry.Read(ctx, "pg://empty"); err != nil {
-		t.Fatalf("Read(empty): %v", err)
+	if got := firstText(t, custom); !strings.Contains(got,
+		"no database connection configured") {
+		t.Errorf("Expected the client resolution error, got %q", got)
 	}
 
 	data, err := os.ReadFile(tracePath)
@@ -249,6 +231,9 @@ func TestReadTracesResourceReads(t *testing.T) {
 	}
 	if !strings.Contains(trace, "Resource not found") {
 		t.Errorf("Expected the trace to record the result, got: %s", trace)
+	}
+	if !strings.Contains(trace, "pg://custom") {
+		t.Errorf("Expected the trace to record the custom read, got: %s", trace)
 	}
 }
 
@@ -637,6 +622,26 @@ func TestReadServesResourcesFromRealClient(t *testing.T) {
 	if content.Contents[1].Text != "second" {
 		t.Errorf("Expected the second item to survive, got %q",
 			content.Contents[1].Text)
+	}
+
+	// A response whose only item has no text takes the trace's
+	// no-result branch.
+	registry.customResources["pg://empty"] = customResource{
+		definition: mcp.Resource{URI: "pg://empty", Name: "Empty"},
+		handler: func(context.Context, *database.Client) (mcp.ResourceContent, error) {
+			return mcp.ResourceContent{
+				URI:      "pg://empty",
+				Contents: []mcp.ContentItem{{Type: "text"}},
+			}, nil
+		},
+	}
+	content, err = registry.Read(ctx, "pg://empty")
+	if err != nil {
+		t.Fatalf("Read(empty): %v", err)
+	}
+	if len(content.Contents) != 1 || content.Contents[0].Text != "" {
+		t.Errorf("Expected the handler's single blank item, got %+v",
+			content.Contents)
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -31,16 +32,35 @@ import (
 const denialCoalesceWindow = 60 * time.Second
 
 // maxDenialKeys caps the coalescing map, so that a client varying the
-// actor name or the path cannot turn the memory saved on audit rows
+// actor name or the action cannot turn the memory saved on audit rows
 // into unbounded memory here instead. When the cap is reached the
-// oldest entry is dropped, which at worst records one extra row for
-// the denial whose entry was evicted.
+// oldest entry is dropped, and any repeats it held are written as a
+// summary row.
 const maxDenialKeys = 10000
+
+// maxDenialTargets caps how many distinct targets one window lists in
+// its audit row. Further targets are only counted, in
+// targets_truncated, so that a flood across many objects still costs
+// one bounded row.
+const maxDenialTargets = 20
+
+// maxDenialActionLen caps the action name a denial key carries. The
+// action is drawn from a fixed vocabulary, but the cap keeps the key
+// bounded whatever deniedAction returns.
+const maxDenialActionLen = 64
+
+// unmatchedDenialTarget is the target recorded for a refusal on a route
+// the action mapper does not recognize, so that nothing taken verbatim
+// from the request path reaches the key or the row.
+const unmatchedDenialTarget = "unmatched"
 
 // denialKey identifies a repeated denial. Two refusals coalesce only
 // when the same principal, identified by actor id as well as by name
 // so that two tokens of one user stay apart, is refused the same action
-// for the same reason from the same client address.
+// for the same reason from the same client address. The target is
+// deliberately not part of the key: a client may vary the object id
+// without limit, so keying on it would let one loop write a row per id.
+// The targets a window covers are listed in its row instead.
 type denialKey struct {
 	actorType string
 	actorID   int64
@@ -48,32 +68,17 @@ type denialKey struct {
 	actorIP   string
 	action    string
 	reason    string
-	target    string
-}
-
-// maxDenialTargetLen caps the request path a denial key and its audit
-// row carry, so that a long path cannot inflate either.
-const maxDenialTargetLen = 256
-
-// denialTarget is the request path a refusal was made on, capped at
-// maxDenialTargetLen bytes. It names the object the request would have
-// changed (for example /api/v1/rbac/groups/5/members/user/3), so that
-// refusals against different objects are neither merged into one row
-// nor recorded without saying what they were aimed at.
-func denialTarget(r *http.Request) string {
-	target := r.URL.Path
-	if len(target) > maxDenialTargetLen {
-		target = target[:maxDenialTargetLen]
-	}
-	return target
 }
 
 // denialKeyOf builds the coalescing key for one refusal. An actor with
 // no id, such as an unauthenticated caller, keys on zero.
-func denialKeyOf(actor auth.Actor, action, reason, target string) denialKey {
+func denialKeyOf(actor auth.Actor, action, reason string) denialKey {
 	var actorID int64
 	if actor.ID != nil {
 		actorID = *actor.ID
+	}
+	if len(action) > maxDenialActionLen {
+		action = action[:maxDenialActionLen]
 	}
 
 	return denialKey{
@@ -83,7 +88,6 @@ func denialKeyOf(actor auth.Actor, action, reason, target string) denialKey {
 		actorIP:   actor.IP,
 		action:    action,
 		reason:    reason,
-		target:    target,
 	}
 }
 
@@ -104,20 +108,56 @@ func (k denialKey) summaryActor() auth.Actor {
 	return actor
 }
 
+// denialWindow counts the denials a row stands for, and lists the
+// distinct targets they were aimed at, up to maxDenialTargets. truncated
+// counts the denials whose target was new once the list was full.
+type denialWindow struct {
+	count     int
+	targets   []string
+	truncated int
+}
+
+// note counts one more denial against target.
+func (w *denialWindow) note(target string) {
+	w.count++
+	for _, t := range w.targets {
+		if t == target {
+			return
+		}
+	}
+	if len(w.targets) < maxDenialTargets {
+		w.targets = append(w.targets, target)
+		return
+	}
+	w.truncated++
+}
+
+// addTo writes the window's count and targets into an audit row's
+// details.
+func (w *denialWindow) addTo(details map[string]any) {
+	details["repeat_count"] = w.count
+	details["targets"] = w.targets
+	details["targets_truncated"] = w.truncated
+}
+
 // denialState tracks one key's current window: when the window opened,
-// which is when the denial that was recorded happened, and how many
-// identical denials have been suppressed since.
+// which is when the denial that was recorded happened, and the
+// identical denials suppressed since. Every state is also on a list
+// ordered by firstSeen, oldest first, so that eviction looks only at
+// the entries it drops rather than scanning the map.
 type denialState struct {
+	key        denialKey
 	firstSeen  time.Time
-	suppressed int
+	suppressed denialWindow
+	prev, next *denialState
 }
 
 // denialSummary carries the repeats an evicted entry never got to
 // report, so that they are written as one summary row rather than
 // discarded with the entry.
 type denialSummary struct {
-	key        denialKey
-	suppressed int
+	key    denialKey
+	window denialWindow
 }
 
 // RBACHandler handles REST API requests for RBAC management
@@ -138,10 +178,13 @@ type RBACHandler struct {
 	// neither. The map is read at startup and changes only on restart.
 	federatedGroups map[string]bool
 
-	// denialMu guards denials, which is read and written from every
-	// request goroutine that is refused.
-	denialMu sync.Mutex
-	denials  map[denialKey]*denialState
+	// denialMu guards denials and the list running from denialOldest to
+	// denialNewest, which are read and written from every request
+	// goroutine that is refused.
+	denialMu     sync.Mutex
+	denials      map[denialKey]*denialState
+	denialOldest *denialState
+	denialNewest *denialState
 }
 
 // NewRBACHandler creates a new RBAC handler
@@ -223,12 +266,10 @@ func (h *RBACHandler) recordDenial(r *http.Request, reason string) {
 	}
 
 	actor := auth.ActorFromContext(r.Context())
-	action := deniedAction(r)
+	action, target := deniedRoute(r)
+	key := denialKeyOf(actor, action, reason)
 
-	target := denialTarget(r)
-
-	record, repeats, expired := h.admitDenial(
-		denialKeyOf(actor, action, reason, target), time.Now())
+	record, closed, expired := h.admitDenial(key, target, time.Now())
 
 	// Entries evicted by the call above may have carried suppressed
 	// repeats; they are written here, outside the lock the eviction
@@ -240,28 +281,29 @@ func (h *RBACHandler) recordDenial(r *http.Request, reason string) {
 	}
 
 	details := map[string]any{"target": target}
-	if repeats > 0 {
-		details["repeat_count"] = repeats
+	if closed.count > 0 {
+		closed.addTo(details)
 	}
 
-	if err := h.authStore.RecordDeniedWithDetails(actor, action, reason,
+	if err := h.authStore.RecordDeniedWithDetails(actor, key.action, reason,
 		details); err != nil {
-		log.Printf("[ERROR] Failed to record RBAC denial for %s %s: %v", r.Method, logging.SanitizeForLog(r.URL.Path), err) //nolint:gosec // G706: r.URL.Path passed through logging.SanitizeForLog
+		log.Printf("[ERROR] Failed to record RBAC denial for %s %s: %v", logging.SanitizeForLog(r.Method), logging.SanitizeForLog(r.URL.Path), err) //nolint:gosec // G706: r.Method and r.URL.Path passed through logging.SanitizeForLog
 	}
 }
 
 // admitDenial decides whether a denial is written or merely counted. It
 // returns true when the caller should record a row, together with the
-// number of identical denials that row stands for, which is zero unless
-// repeats were suppressed during the window that has just closed.
+// window that row closes, whose count is the number of denials the row
+// stands for and is zero unless repeats were suppressed during the
+// window that has just closed.
 //
 // The first denial for a key opens a window and is recorded at once, so
 // that a refusal is never invisible; identical denials inside the
-// window are counted instead of written; and the first denial after the
-// window closes is recorded, reporting the suppressed ones, and opens a
-// fresh window.
-func (h *RBACHandler) admitDenial(key denialKey, now time.Time) (bool, int,
-	[]denialSummary) {
+// window are counted, with their targets, instead of written; and the
+// first denial after the window closes is recorded, reporting the
+// suppressed ones and its own target, and opens a fresh window.
+func (h *RBACHandler) admitDenial(key denialKey, target string,
+	now time.Time) (bool, denialWindow, []denialSummary) {
 
 	h.denialMu.Lock()
 	defer h.denialMu.Unlock()
@@ -271,23 +313,57 @@ func (h *RBACHandler) admitDenial(key denialKey, now time.Time) (bool, int,
 	}
 
 	record := true
-	repeats := 0
+	var closed denialWindow
 
 	switch state, ok := h.denials[key]; {
 	case !ok:
-		h.denials[key] = &denialState{firstSeen: now}
+		state = &denialState{key: key, firstSeen: now}
+		h.denials[key] = state
+		h.pushNewestDenial(state)
 	case now.Sub(state.firstSeen) < denialCoalesceWindow:
-		state.suppressed++
+		state.suppressed.note(target)
 		record = false
 	default:
-		if state.suppressed > 0 {
-			repeats = state.suppressed + 1
+		if state.suppressed.count > 0 {
+			closed = state.suppressed
+			closed.note(target)
 		}
 		state.firstSeen = now
-		state.suppressed = 0
+		state.suppressed = denialWindow{}
+		h.unlinkDenial(state)
+		h.pushNewestDenial(state)
 	}
 
-	return record, repeats, h.evictDenials(key, now)
+	return record, closed, h.evictDenials(key, now)
+}
+
+// pushNewestDenial appends state to the newest end of the eviction
+// list. The caller must hold h.denialMu.
+func (h *RBACHandler) pushNewestDenial(state *denialState) {
+	state.prev = h.denialNewest
+	state.next = nil
+	if h.denialNewest != nil {
+		h.denialNewest.next = state
+	} else {
+		h.denialOldest = state
+	}
+	h.denialNewest = state
+}
+
+// unlinkDenial removes state from the eviction list. The caller must
+// hold h.denialMu.
+func (h *RBACHandler) unlinkDenial(state *denialState) {
+	if state.prev != nil {
+		state.prev.next = state.next
+	} else {
+		h.denialOldest = state.next
+	}
+	if state.next != nil {
+		state.next.prev = state.prev
+	} else {
+		h.denialNewest = state.prev
+	}
+	state.prev, state.next = nil, nil
 }
 
 // recordDenialSummaries writes one summary row per evicted entry that
@@ -297,73 +373,48 @@ func (h *RBACHandler) admitDenial(key denialKey, now time.Time) (bool, int,
 func (h *RBACHandler) recordDenialSummaries(r *http.Request,
 	expired []denialSummary) {
 
-	for _, summary := range expired {
-		details := map[string]any{
-			"repeat_count":  summary.suppressed,
-			"window_closed": true,
-			"target":        summary.key.target,
-		}
+	for i := range expired {
+		summary := &expired[i]
+		details := map[string]any{"window_closed": true}
+		summary.window.addTo(details)
 		if err := h.authStore.RecordDeniedWithDetails(summary.key.summaryActor(),
 			summary.key.action, summary.key.reason, details); err != nil {
-			log.Printf("[ERROR] Failed to record RBAC denial summary for %s %s: %v", r.Method, logging.SanitizeForLog(r.URL.Path), err) //nolint:gosec // G706: r.URL.Path passed through logging.SanitizeForLog
+			log.Printf("[ERROR] Failed to record RBAC denial summary for %s %s: %v", logging.SanitizeForLog(r.Method), logging.SanitizeForLog(r.URL.Path), err) //nolint:gosec // G706: r.Method and r.URL.Path passed through logging.SanitizeForLog
 		}
 	}
 }
 
-// evictDenials drops entries whose window has closed, and, if the map
-// is still at its cap, the oldest entry. The key just handled is kept
-// in both passes, because its window has only now been opened. Every
-// dropped entry that still held suppressed repeats is returned as a
-// summary for the caller to record once the lock is released. The
+// evictDenials drops entries from the oldest end of the eviction list
+// while their window has closed or the map is over its cap. The list is
+// ordered by firstSeen, so it stops at the first entry that is neither,
+// and the work done is proportional to the entries dropped. The key
+// just handled is kept, because its window has only now been opened.
+// Every dropped entry that still held suppressed repeats is returned as
+// a summary for the caller to record once the lock is released. The
 // caller must hold h.denialMu.
 func (h *RBACHandler) evictDenials(keep denialKey, now time.Time) []denialSummary {
 	var expired []denialSummary
 
-	drop := func(key denialKey, state *denialState) {
-		if state.suppressed > 0 {
-			expired = append(expired, denialSummary{
-				key:        key,
-				suppressed: state.suppressed,
-			})
-		}
-		delete(h.denials, key)
-	}
-
-	for key, state := range h.denials {
-		if key != keep && now.Sub(state.firstSeen) >= denialCoalesceWindow {
-			drop(key, state)
-		}
-	}
-
-	for len(h.denials) > maxDenialKeys {
-		oldestKey, oldestState, found := h.oldestDenial(keep)
-		if !found {
+	for state := h.denialOldest; state != nil; {
+		next := state.next
+		closed := now.Sub(state.firstSeen) >= denialCoalesceWindow
+		if !closed && len(h.denials) <= maxDenialKeys {
 			break
 		}
-		drop(oldestKey, oldestState)
+		if state.key != keep {
+			if state.suppressed.count > 0 {
+				expired = append(expired, denialSummary{
+					key:    state.key,
+					window: state.suppressed,
+				})
+			}
+			h.unlinkDenial(state)
+			delete(h.denials, state.key)
+		}
+		state = next
 	}
 
 	return expired
-}
-
-// oldestDenial returns the tracked entry whose window opened earliest,
-// skipping the key just handled. The caller must hold h.denialMu.
-func (h *RBACHandler) oldestDenial(keep denialKey) (denialKey, *denialState, bool) {
-	var oldestKey denialKey
-	var oldestState *denialState
-	var oldest time.Time
-	found := false
-
-	for key, state := range h.denials {
-		if key == keep {
-			continue
-		}
-		if !found || state.firstSeen.Before(oldest) {
-			oldestKey, oldestState, oldest, found = key, state, state.firstSeen, true
-		}
-	}
-
-	return oldestKey, oldestState, found
 }
 
 // requirePermission checks that the caller has the specified admin permission.
@@ -427,33 +478,128 @@ func rbacPathSegments(path string) ([]string, bool) {
 }
 
 // deniedAction maps a refused request to the audit action name it would
-// have recorded had it been allowed, so that a denial and the change it
-// was refused share a vocabulary. A request that matches no known route
-// shape records "rbac.<method>" in lower case, which keeps the event
-// rather than dropping it. Connection routes, whose token-scope
-// refusals are recorded here too, map through deniedConnectionAction.
+// have recorded had it been allowed; see deniedRoute.
 func deniedAction(r *http.Request) string {
-	fallback := "rbac." + strings.ToLower(r.Method)
+	action, _ := deniedRoute(r)
+	return action
+}
 
+// deniedRoute maps a refused request to the audit action name it would
+// have recorded had it been allowed, so that a denial and the change it
+// was refused share a vocabulary, and to the object it was aimed at.
+//
+// Neither result carries text taken verbatim from the request, so a
+// client cannot inflate the coalescing key or the audit row, nor split
+// one burst into a row per path. The target is the resource kind, plus
+// the numeric id parsed from the path where the route names one (for
+// example "groups/5" or "connections/7"); a route the mapper does not
+// recognize records unmatchedDenialTarget, and an action of
+// "rbac.<method>" in lower case, or "rbac.other" for a method outside
+// the standard set, which keeps the event rather than dropping it.
+func deniedRoute(r *http.Request) (action, target string) {
 	if action := deniedConnectionAction(r.Method, r.URL.Path); action != "" {
-		return action
+		return action, denialResourceTarget("connections",
+			strings.TrimPrefix(r.URL.Path, connectionPathPrefix))
 	}
 
-	parts, ok := rbacPathSegments(r.URL.Path)
+	if parts, ok := rbacPathSegments(r.URL.Path); ok {
+		if mapper, ok := deniedResourceActions[parts[0]]; ok {
+			if action := mapper(r.Method, parts); action != "" {
+				return action, denialResourceTarget(parts[0],
+					strings.Join(parts[1:], "/"))
+			}
+		}
+	}
+
+	if action, target := deniedAPIRoute(r.Method, r.URL.Path); action != "" {
+		return action, target
+	}
+
+	return fallbackDeniedAction(r.Method), unmatchedDenialTarget
+}
+
+// standardMethods is the set of HTTP methods a fallback action may
+// name. Any other method is recorded as "rbac.other", since the method
+// is the client's own text and is otherwise unbounded.
+var standardMethods = map[string]bool{
+	http.MethodGet:     true,
+	http.MethodHead:    true,
+	http.MethodPost:    true,
+	http.MethodPut:     true,
+	http.MethodPatch:   true,
+	http.MethodDelete:  true,
+	http.MethodConnect: true,
+	http.MethodOptions: true,
+	http.MethodTrace:   true,
+}
+
+// fallbackDeniedAction is the action recorded for a request on a route
+// the mapper does not recognize.
+func fallbackDeniedAction(method string) string {
+	if standardMethods[method] {
+		return "rbac." + strings.ToLower(method)
+	}
+	return "rbac.other"
+}
+
+// denialResourceTarget names the object a refusal was aimed at: kind,
+// which the caller takes from a fixed vocabulary, followed by the
+// numeric id that starts rest when there is one. The id is parsed and
+// formatted again, so a path that pads or otherwise varies it still
+// yields one target.
+func denialResourceTarget(kind, rest string) string {
+	idPart, _, _ := strings.Cut(strings.Trim(rest, "/"), "/")
+	id, err := strconv.ParseInt(idPart, 10, 64)
+	if err != nil || id <= 0 {
+		return kind
+	}
+	return kind + "/" + strconv.FormatInt(id, 10)
+}
+
+// apiPathPrefix is the common prefix of the REST routes.
+const apiPathPrefix = "/api/v1/"
+
+// deniedAPIResources maps the first path segment of the non-RBAC routes
+// whose token-scope refusals are audited to the resource name their
+// actions use.
+var deniedAPIResources = map[string]string{
+	"clusters":              "cluster",
+	"cluster-groups":        "cluster_group",
+	"notification-channels": "notification_channel",
+	"alert-rules":           "alert_rule",
+}
+
+// deniedAPIRoute maps a write on one of deniedAPIResources to
+// "<resource>.create", ".update" or ".delete" and the object it names.
+// A write below an object, such as adding a server to a cluster, is
+// recorded as an update of that object. It returns an empty action for
+// any other request.
+func deniedAPIRoute(method, path string) (action, target string) {
+	if !strings.HasPrefix(path, apiPathPrefix) {
+		return "", ""
+	}
+	parts := strings.Split(strings.Trim(
+		strings.TrimPrefix(path, apiPathPrefix), "/"), "/")
+	resource, ok := deniedAPIResources[parts[0]]
 	if !ok {
-		return fallback
+		return "", ""
 	}
 
-	mapper, ok := deniedResourceActions[parts[0]]
-	if !ok {
-		return fallback
+	var verb string
+	switch {
+	case method == http.MethodPost && len(parts) == 1:
+		verb = "create"
+	case method == http.MethodDelete && len(parts) == 2:
+		verb = "delete"
+	case method == http.MethodPost || method == http.MethodPut ||
+		method == http.MethodPatch || method == http.MethodDelete:
+		verb = "update"
+	default:
+		return "", ""
 	}
 
-	if action := mapper(r.Method, parts); action != "" {
-		return action
-	}
-
-	return fallback
+	return resource + "." + verb,
+		denialResourceTarget(parts[0], strings.Join(parts[1:], "/"))
 }
 
 // connectionPathPrefix is the prefix of the per-connection REST routes.

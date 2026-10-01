@@ -31,6 +31,9 @@ type NotificationChannelHandler struct {
 	rbacChecker     *auth.RBACChecker
 	hostValidator   *HostValidator
 	checkPermission func(http.ResponseWriter, *http.Request) bool
+
+	// denialAuditor audits this handler's token-scope refusals.
+	denialAuditor
 }
 
 // NewNotificationChannelHandlerWithSecurity creates a new notification channel handler with custom security settings
@@ -257,7 +260,7 @@ func (h *NotificationChannelHandler) createChannel(w http.ResponseWriter, r *htt
 	}
 	// A channel and its recipients serve alerts from every connection,
 	// so a token must cover every connection to change them (#471).
-	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker) {
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) {
 		return
 	}
 
@@ -422,7 +425,7 @@ func (h *NotificationChannelHandler) updateChannel(w http.ResponseWriter, r *htt
 	}
 	// A channel and its recipients serve alerts from every connection,
 	// so a token must cover every connection to change them (#471).
-	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker) {
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) {
 		return
 	}
 
@@ -634,7 +637,7 @@ func (h *NotificationChannelHandler) deleteChannel(w http.ResponseWriter, r *htt
 	}
 	// A channel and its recipients serve alerts from every connection,
 	// so a token must cover every connection to change them (#471).
-	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker) {
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) {
 		return
 	}
 
@@ -686,7 +689,7 @@ func (h *NotificationChannelHandler) createRecipient(w http.ResponseWriter, r *h
 	}
 	// A channel and its recipients serve alerts from every connection,
 	// so a token must cover every connection to change them (#471).
-	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker) {
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) {
 		return
 	}
 
@@ -741,7 +744,7 @@ func (h *NotificationChannelHandler) updateRecipient(w http.ResponseWriter, r *h
 	}
 	// A channel and its recipients serve alerts from every connection,
 	// so a token must cover every connection to change them (#471).
-	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker) {
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) {
 		return
 	}
 
@@ -788,7 +791,7 @@ func (h *NotificationChannelHandler) deleteRecipient(w http.ResponseWriter, r *h
 	}
 	// A channel and its recipients serve alerts from every connection,
 	// so a token must cover every connection to change them (#471).
-	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker) {
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) {
 		return
 	}
 

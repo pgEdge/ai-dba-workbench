@@ -82,30 +82,60 @@ func requireBlackoutTargetInTokenScope(w http.ResponseWriter, r *http.Request,
 	return false
 }
 
-// requireConnectionsInTokenScope answers 403 and returns false unless
-// every listed connection is in the acting token's connection scope at
-// read_write.
+// denialRecorder writes a refused request to the audit log through the
+// RBAC handler's coalescing denial recorder; the server wires it to
+// RBACHandler.RecordDenial. A nil recorder audits nothing, which is the
+// case when the server runs without an auth store.
+type denialRecorder func(*http.Request, string)
+
+// denialAuditor is embedded by the handlers whose token-scope refusals
+// are audited, and holds the recorder they pass to the scope checks.
+type denialAuditor struct {
+	denialRecorder denialRecorder
+}
+
+// SetDenialRecorder installs the function used to audit refused
+// requests; the server wires it to RBACHandler.RecordDenial.
+func (a *denialAuditor) SetDenialRecorder(record func(*http.Request, string)) {
+	a.denialRecorder = record
+}
+
+// refuse audits the refusal, when a recorder is set, and answers 403
+// with reason.
+func (record denialRecorder) refuse(w http.ResponseWriter, r *http.Request,
+	reason string) {
+
+	if record != nil {
+		record(r, reason)
+	}
+	RespondError(w, http.StatusForbidden, reason)
+}
+
+// requireConnectionsInTokenScope answers 403, auditing the refusal
+// through record, and returns false unless every listed connection is
+// in the acting token's connection scope at read_write.
 func requireConnectionsInTokenScope(w http.ResponseWriter, r *http.Request,
-	rc *auth.RBACChecker, connectionIDs ...int) bool {
+	rc *auth.RBACChecker, record denialRecorder, connectionIDs ...int) bool {
 
 	for _, id := range connectionIDs {
 		if !rc.ConnectionInTokenScope(r.Context(), id) {
-			RespondError(w, http.StatusForbidden, targetOutOfTokenScope)
+			record.refuse(w, r, targetOutOfTokenScope)
 			return false
 		}
 	}
 	return true
 }
 
-// requireAllConnectionsInTokenScope answers 403 and returns false unless
-// the acting token's connection scope covers every connection, which a
-// change to a cluster's definition or topology needs.
+// requireAllConnectionsInTokenScope answers 403, auditing the refusal
+// through record, and returns false unless the acting token's
+// connection scope covers every connection, which a change to a
+// cluster's definition or topology needs.
 func requireAllConnectionsInTokenScope(w http.ResponseWriter, r *http.Request,
-	rc *auth.RBACChecker) bool {
+	rc *auth.RBACChecker, record denialRecorder) bool {
 
 	if rc.AllConnectionsInTokenScope(r.Context()) {
 		return true
 	}
-	RespondError(w, http.StatusForbidden, targetOutOfTokenScope)
+	record.refuse(w, r, targetOutOfTokenScope)
 	return false
 }

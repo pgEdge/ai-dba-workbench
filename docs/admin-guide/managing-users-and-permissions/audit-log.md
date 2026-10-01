@@ -101,14 +101,19 @@ action the request would have used had it been allowed, so that a denial
 and the change it was refused share a vocabulary. Two action names
 appear only on denials: `audit.read`, for a refused read of the audit
 log itself, and `token.scope.set`, for a refused scope update, because a
-single endpoint covers all three scope types. A refused request that
-matches no known route records `rbac.` followed by the lower-case HTTP
-method, so that the denial is kept rather than dropped.
+single endpoint covers all three scope types. A token refused an update,
+a deletion or a cluster move of a connection outside its connection
+scope is recorded as `connection.update`, `connection.delete` or
+`connection.cluster.update`. A refused request that matches no known
+route records `rbac.` followed by the lower-case HTTP method, so that the
+denial is kept rather than dropped. Every denial carries the request
+path in `details.target`, so the event names the user, group, token or
+connection the request was aimed at.
 
 Repeated denials are coalesced rather than recorded one by one, because
 a client that retries a refused request in a loop would otherwise fill
 the log and bury the events that matter. The first denial for a given
-combination of actor, action and reason is recorded at once; identical
+combination of actor, action, reason and target is recorded at once; identical
 denials in the next sixty seconds are counted instead of recorded; and
 the first denial after that window is recorded with a
 `details.repeat_count` giving the number of attempts it stands for. If

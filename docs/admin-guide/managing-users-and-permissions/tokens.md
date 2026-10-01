@@ -84,9 +84,13 @@ the three scope types is refused with `403 Forbidden` when it tries to:
   becomes open to every user;
 - grant a group any admin permission, since admin permissions act across the
   whole estate;
-- add a user or a group to a group whose connections, MCP privileges or admin
-  permissions, including anything inherited from its parent groups, reach
-  beyond the token's scope;
+- add a user or a group to, or remove one from, a group whose connections,
+  MCP privileges or admin permissions, including anything inherited from its
+  parent groups, reach beyond the token's scope;
+- rename a group whose grants reach beyond the token's scope, or rename any
+  group from or to a Workbench group name that the OIDC `group_map` uses,
+  because federated sign-in matches groups by name and a rename would move
+  federated users into a different group;
 - create a user who would reach beyond the token's scope, which includes
   creating any superuser and, for a token whose connection scope is
   restricted, any user at all whilst a shared connection that no group
@@ -95,16 +99,20 @@ the three scope types is refused with `403 Forbidden` when it tries to:
 - make an existing user a superuser;
 - set the password of, re-enable or delete a user whose access reaches beyond
   the token's scope; the first two hand the token's holder that account, and
-  deleting one frees the username, and with it the unshared connections it
-  owns, for whoever recreates it;
+  deleting one frees the username, and with it the connections it owns, for
+  whoever recreates it;
 - create a token for an owner whose access reaches beyond the token's scope;
 - set or clear another token's scope so that the other token ends up reaching
   beyond the acting token's scope in any of the three scope types.
 
 A user's access, for these checks, counts the user's group grants, every
 public MCP item, every shared connection that no group restricts, and every
-unshared connection that the user's name owns. Sessions, and tokens with no
-restriction in any of the three scope types, are not affected by these bounds.
+connection that the user's name owns, at `read_write`, whether or not it is
+shared and whether or not a group restricts it, since a connection's owner
+can always edit or delete it. A token whose MCP scope lists only items that
+have since been deleted is treated as restricted to no MCP items at all.
+Sessions, and tokens with no restriction in any of the three scope types, are
+not affected by these bounds.
 
 One MCP tool still reaches beyond a token's connection scope, so a token that
 must stay within its connections should not be granted it. The

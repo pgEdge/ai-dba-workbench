@@ -466,14 +466,26 @@ with `grantOutOfTokenScope`.
   the owner's reach in that kind.
 - A user's reach counts group grants, public MCP items, and (through
   `unrestrictedReachInTokenScope`) every unrestricted connection the
-  user can see: shared ones, plus unshared ones their username owns
-  when the checker has a sharing lookup. That needs the datastore, so
-  `RBACHandler.SetConnectionLister` must be wired (it is, in
-  `cmd/mcp-server/handlers.go`); a nil lister or a lister error fails
-  closed for a connection-bounded actor.
+  user can see (shared ones, plus unshared ones their username owns
+  when the checker has a sharing lookup) and every connection their
+  username owns, restricted or not, at `read_write`. The owner check
+  runs before the restricted skip because `updateConnection` and
+  `deleteConnection` admit the owner whatever the group restriction.
+  That needs the datastore, so `RBACHandler.SetConnectionLister` must
+  be wired (it is, in `cmd/mcp-server/handlers.go`); a nil lister or a
+  lister error fails closed for a connection-bounded actor.
+- An empty MCP name list is not proof of an unrestricted MCP scope:
+  `GetTokenMCPScope` joins away rows whose identifier no longer exists,
+  so `actorMCPScope` asks `AuthStore.HasTokenMCPScope` for the raw row
+  count and treats orphaned rows as a scope that names nothing.
 - Gated routes: group connection grant and revoke, group MCP grant,
   group admin permission grant, deleting a group holding an
-  out-of-scope grant, adding a group member, `createUser` (superuser
+  out-of-scope grant, adding or removing a group member (either member
+  type, `GroupWithinTokenScope`), renaming a group
+  (`requireRenameInTokenScope`: the group must be within scope, and
+  neither the old nor the new name may appear in the OIDC `group_map`
+  that `RBACHandler.SetFederatedGroupMap` supplies, since federation
+  matches groups by name), `createUser` (superuser
   needs `TokenScopeUnrestricted`), `updateUser` (`is_superuser`, and a
   password set or re-enable on a user beyond scope), `deleteUser`
   (ownership is matched by username, so delete-and-recreate would
@@ -546,7 +558,8 @@ failure is logged with `[ERROR]` and never changes the response.
 Denials are coalesced before they reach the store. `recordDenial`
 consults `admitDenial`, which keeps an in-memory map on `RBACHandler`
 keyed by `denialKey` (actor type, actor id, actor name, client IP,
-action and reason) under `denialMu`, so that two tokens of one user,
+action, reason and the request path, capped at `maxDenialTargetLen`)
+under `denialMu`, so that two tokens of one user,
 or one token used from two addresses, never suppress each other's
 denials. The first denial for a key is written at once, identical
 denials within `denialCoalesceWindow` (60s) are counted instead of
@@ -560,7 +573,13 @@ is released, as a row carrying `repeat_count` and `window_closed`, so
 a burst that stops before its window closes is still counted. Any new
 denial path must go through `recordDenial` rather than calling
 `RecordDenied` directly, or it loses the bound on how many rows one
-client can append.
+client can append. Every row and summary carries the path as
+`details.target`. A handler outside `RBACHandler` records through
+`RBACHandler.RecordDenial`, injected as a function: `ConnectionHandler`
+takes it via `SetDenialRecorder` and refuses through
+`refuseOutOfTokenScope`, with `deniedConnectionAction` naming the
+`connection.update`, `connection.delete` and
+`connection.cluster.update` actions.
 
 Mutations in these handlers go through `h.actorStore(r)` rather than
 `h.authStore`, so the audit row names the acting user or token:

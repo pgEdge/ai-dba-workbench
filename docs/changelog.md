@@ -304,11 +304,14 @@ project adheres to
   deleted from the newest end of the log. Repeated denials are
   coalesced into one event per minute carrying a
   `details.repeat_count`, so a client retrying a refused request
-  cannot flood the log. Retention is controlled by the new
-  `http.auth.audit_retention_days` setting, which defaults to 90
-  days, and each purge records an `audit.purge` event naming the
-  cutoff it applied and the number of events it removed. Each
-  event's hash length-prefixes every field it covers, so a value
+  cannot flood the log; each denial names the request path it
+  refused in `details.target`, and a token refused a change to a
+  connection outside its scope is recorded too. Retention is
+  controlled by the new `http.auth.audit_retention_days`
+  setting, which defaults to 90 days, and each purge records an
+  `audit.purge` event naming the cutoff it applied and the
+  number of events it removed. Each event's hash
+  length-prefixes every field it covers, so a value
   containing a separator character cannot be made to stand for a
   different pair of columns, and records the version of that encoding
   in a `hash_version` field, which verification reads so that an event
@@ -566,13 +569,16 @@ project adheres to
   over an account that reaches further: it cannot grant a group
   a connection or an MCP privilege outside its scope, the MCP
   wildcard, or any admin permission; revoke a grant on or delete
-  a group holding a connection outside it; add a member to a
-  group that reaches beyond it; create a superuser, or any user
-  who would reach beyond it, which counts the public MCP items
-  and every shared connection no group restricts; make a user a
-  superuser; set the password of, re-enable or delete a user who
-  reaches beyond it, since deleting one frees the name, and the
-  unshared connections it owns, for whoever recreates it; create
+  a group holding a connection outside it; add a member to, or
+  remove one from, a group that reaches beyond it; rename such a
+  group, or rename any group from or to a name the OIDC
+  `group_map` uses; create a superuser, or any user who would
+  reach beyond it, which counts the public MCP items, every
+  shared connection no group restricts and every connection the
+  user owns, restricted or not; make a user a superuser; set the
+  password of, re-enable or delete a user who reaches beyond it,
+  since deleting one frees the name, and the connections it
+  owns, for whoever recreates it; create
   a token for such an owner; or set or clear another token's
   scope so that the other token reaches beyond it in any of the
   three kinds. One MCP tool still reaches beyond a

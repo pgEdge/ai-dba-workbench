@@ -106,6 +106,9 @@ moved.
   an analysis of an alert, and managing blackouts and blackout
   schedules on that server; the user ruled this intended, so do not
   report it as a finding.
+- Connection ownership bypasses group restriction in `updateConnection`
+  and `deleteConnection`, so every reach computation must count owned
+  connections, restricted or not.
 - A blanket superuser gate is the exception, because it names nothing
   to intersect against: `RBACChecker.IsSuperuser` returns false for a
   token whose admin scope has been narrowed, which is what

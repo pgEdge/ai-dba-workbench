@@ -26,6 +26,9 @@ type AlertRuleHandler struct {
 	authStore       *auth.AuthStore
 	rbacChecker     *auth.RBACChecker
 	checkPermission func(http.ResponseWriter, *http.Request) bool
+
+	// denialAuditor audits this handler's token-scope refusals.
+	denialAuditor
 }
 
 // NewAlertRuleHandler creates a new alert rule handler
@@ -131,7 +134,7 @@ func (h *AlertRuleHandler) updateAlertRule(w http.ResponseWriter, r *http.Reques
 	// An alert rule's defaults apply to every connection without an
 	// override, so a token must cover every connection to change one
 	// (issue #471).
-	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker) {
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) {
 		return
 	}
 

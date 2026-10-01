@@ -28,6 +28,9 @@ type ClusterHandler struct {
 	datastore   *database.Datastore
 	authStore   *auth.AuthStore
 	rbacChecker *auth.RBACChecker
+
+	// denialAuditor audits this handler's token-scope refusals.
+	denialAuditor
 }
 
 // NewClusterHandler creates a new cluster handler
@@ -539,7 +542,7 @@ func (h *ClusterHandler) createClusterGroup(w http.ResponseWriter, r *http.Reque
 	// container writes, a token must cover every connection (issue
 	// #471). The session lookup below refuses an API token today; this
 	// keeps the rule should that change.
-	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker) {
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) {
 		return
 	}
 
@@ -616,7 +619,7 @@ func (h *ClusterHandler) updateClusterGroup(w http.ResponseWriter, r *http.Reque
 	// A group's definition decides which group-wide blackouts,
 	// overrides and grants reach its members, so a token must cover
 	// every connection to change it (issue #471).
-	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker) {
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) {
 		return
 	}
 
@@ -710,7 +713,7 @@ func (h *ClusterHandler) deleteClusterGroup(w http.ResponseWriter, r *http.Reque
 	// blackouts, schedules, probe configs, alert thresholds and channel
 	// overrides that reach its members, so a token must cover every
 	// connection to do it (issue #471).
-	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker) {
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) {
 		return
 	}
 
@@ -833,7 +836,7 @@ func (h *ClusterHandler) createClusterInGroup(w http.ResponseWriter, r *http.Req
 	// configurations and overrides, and so does any connection later
 	// moved into it, so a token must cover every connection (issue
 	// #471).
-	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker) {
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) {
 		return
 	}
 
@@ -914,7 +917,7 @@ func (h *ClusterHandler) updateCluster(w http.ResponseWriter, r *http.Request, i
 	// A cluster's definition decides which cluster-wide blackouts,
 	// overrides and grants reach its members, so a token must cover
 	// every connection to change it (issue #471).
-	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker) {
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) {
 		return
 	}
 
@@ -985,7 +988,7 @@ func (h *ClusterHandler) deleteCluster(w http.ResponseWriter, r *http.Request, i
 	// A cluster's definition decides which cluster-wide blackouts,
 	// overrides and grants reach its members, so a token must cover
 	// every connection to change it (issue #471).
-	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker) {
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) {
 		return
 	}
 
@@ -1047,7 +1050,7 @@ func (h *ClusterHandler) updateAutoDetectedCluster(w http.ResponseWriter, r *htt
 	// A cluster's definition decides which cluster-wide blackouts,
 	// overrides and grants reach its members, so a token must cover
 	// every connection to change it (issue #471).
-	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker) {
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) {
 		return
 	}
 
@@ -1109,7 +1112,7 @@ func (h *ClusterHandler) deleteAutoDetectedCluster(w http.ResponseWriter, r *htt
 	// A cluster's definition decides which cluster-wide blackouts,
 	// overrides and grants reach its members, so a token must cover
 	// every connection to change it (issue #471).
-	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker) {
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) {
 		return
 	}
 
@@ -1182,7 +1185,7 @@ func (h *ClusterHandler) updateAutoDetectedGroup(w http.ResponseWriter, r *http.
 	// A group's definition decides which group-wide blackouts,
 	// overrides and grants reach its members, so a token must cover
 	// every connection to change it (issue #471).
-	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker) {
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) {
 		return
 	}
 
@@ -1299,7 +1302,7 @@ func (h *ClusterHandler) addServerToCluster(w http.ResponseWriter, r *http.Reque
 		RespondError(w, http.StatusBadRequest, "Invalid role")
 		return
 	}
-	if !requireConnectionsInTokenScope(w, r, h.rbacChecker, req.ConnectionID) {
+	if !requireConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder, req.ConnectionID) {
 		return
 	}
 
@@ -1367,7 +1370,7 @@ func (h *ClusterHandler) handleRemoveServerFromCluster(w http.ResponseWriter, r 
 		return
 	}
 
-	if !requireConnectionsInTokenScope(w, r, h.rbacChecker, connectionID) {
+	if !requireConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder, connectionID) {
 		return
 	}
 
@@ -1473,7 +1476,7 @@ func (h *ClusterHandler) handleCreateCluster(w http.ResponseWriter, r *http.Requ
 	// As on POST /cluster-groups/{id}/clusters: the new cluster, and
 	// any connection later moved into it, inherits its group's
 	// settings, so a token must cover every connection (issue #471).
-	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker) {
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) {
 		return
 	}
 
@@ -1578,7 +1581,7 @@ func (h *ClusterHandler) setConnectionRelationships(w http.ResponseWriter, r *ht
 	// Setting a source's relationships first deletes every manual
 	// relationship from it, whatever the target, so the token must
 	// cover every connection rather than only those the request names.
-	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker) {
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) {
 		return
 	}
 
@@ -1702,7 +1705,7 @@ func (h *ClusterHandler) handleDeleteRelationship(w http.ResponseWriter, r *http
 
 	// A relationship addressed by id could join any two connections, so
 	// deleting one needs a token that covers every connection.
-	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker) {
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) {
 		return
 	}
 
@@ -1731,7 +1734,7 @@ func (h *ClusterHandler) clearConnectionRelationships(w http.ResponseWriter, r *
 
 	// Clearing deletes every manual relationship from the source,
 	// whatever the target, so the token must cover every connection.
-	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker) {
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) {
 		return
 	}
 

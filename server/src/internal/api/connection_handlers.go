@@ -869,8 +869,11 @@ func (h *ConnectionHandler) handleUpdateConnectionCluster(w http.ResponseWriter,
 	// existence) but BEFORE DecodeJSONBody, so denied callers cannot
 	// probe payload shape via validation error messages.
 	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections) {
-		RespondError(w, http.StatusForbidden,
-			"Permission denied: requires manage_connections permission")
+		const reason = "Permission denied: requires manage_connections permission"
+		if h.denialRecorder != nil {
+			h.denialRecorder(r, reason)
+		}
+		RespondError(w, http.StatusForbidden, reason)
 		return
 	}
 	// Re-homing a connection changes it, so a read-only entry in the

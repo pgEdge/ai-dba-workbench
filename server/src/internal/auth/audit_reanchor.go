@@ -76,11 +76,18 @@ type auditReanchorScan struct {
 	headHash string
 
 	// through is the id of the last row that does not verify or does
-	// not link to its predecessor, valid only when historyEvents is
-	// above zero; digest covers every row up to it.
+	// not link to its predecessor, and throughHash its hash, valid only
+	// when historyEvents is above zero; digest covers every row up to
+	// it.
 	through       int64
+	throughHash   string
 	historyEvents int64
 	digest        string
+
+	// tail is the tail anchor as the scan found it, so that the
+	// transaction that writes the re-anchor sees whether it has changed
+	// since the plan checked it.
+	tail auditTailState
 
 	// failsAfterVerified records that a row failed after an earlier row
 	// had verified and linked, which a changed server secret does not
@@ -90,7 +97,7 @@ type auditReanchorScan struct {
 
 // scanAuditForReanchor reads the whole log, in id order, and finds the
 // rows a re-anchor would accept as history.
-func (s *AuthStore) scanAuditForReanchor(q auditQuerier) (auditReanchorScan,
+func (s *AuthStore) scanAuditForReanchor(q auditRowQuerier) (auditReanchorScan,
 	error) {
 
 	var scan auditReanchorScan
@@ -114,6 +121,7 @@ func (s *AuthStore) scanAuditForReanchor(q auditQuerier) (auditReanchorScan,
 		digest.add(&ev)
 		if bad {
 			scan.through = ev.ID
+			scan.throughHash = ev.Hash
 			scan.historyEvents = digest.events
 			scan.digest = digest.sum()
 		}
@@ -123,6 +131,9 @@ func (s *AuthStore) scanAuditForReanchor(q auditQuerier) (auditReanchorScan,
 		return nil
 	})
 	if err != nil {
+		return scan, err
+	}
+	if scan.tail, err = readAuditTailState(q); err != nil {
 		return scan, err
 	}
 
@@ -226,6 +237,16 @@ func (s *AuthStore) proveAuditReanchorPlan(plan *AuditRechainPlan,
 		plan.reanchor.through)
 	if err != nil {
 		return err
+	}
+	// The history is not proven while the tail anchor the previous
+	// secret left behind it does not show that nothing written under
+	// that secret is missing from its end.
+	if proof == nil {
+		proof, err = s.proveAuditReanchorTail(s.db, previousKey,
+			plan.reanchor.through, plan.reanchor.throughHash)
+		if err != nil {
+			return err
+		}
 	}
 	plan.HistoryProofErr = proof
 	plan.HistoryProven = proof == nil
@@ -411,7 +432,8 @@ func (s *AuthStore) reanchorAuditLogTx(actor Actor,
 	// cover the gap, so it is checked again under the write lock, where
 	// no-one else can change it before the event is written.
 	if plan.KeyMismatch {
-		if err := s.verifyAuditTail(); err != nil {
+		last := AuditEvent{ID: scan.through, Hash: scan.throughHash}
+		if err := s.verifyAuditTailAfterKeyChange(tx, last); err != nil {
 			return fmt.Errorf("%w (%w)", errAuditReanchorChanged, err)
 		}
 	}

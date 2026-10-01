@@ -429,10 +429,16 @@ client address, before and after snapshots and a hash chain.
   naming the newest event by id and hash under an HMAC with its own
   label; `recordAudit` decides before its insert (the insert moves
   `sqlite_sequence`) whether to move it on, and does so only from an
-  anchor that names the newest row and verifies, from an empty log
-  whose sequence never issued an id, or on rotation (anchor and newest
-  row both fail under the key). Anything else is left stranded as
-  evidence. Rows carry hash version 3; a v3 newest row with no anchor
+  anchor that names the newest row and verifies under the key in use,
+  or from an empty log whose sequence never issued an id. Anything
+  else, a changed secret included, is left stranded as evidence:
+  moving it on when both it and the newest row failed let a decoy row
+  copying the next row's hash get the anchor re-signed over a
+  truncated tail. In a log with the shape of a rotation,
+  `verifyAuditTailAfterKeyChange` accepts a stranded anchor only when
+  it names the last failing row, and `proveAuditReanchorTail` must
+  verify it under `-previous-secret-file` before `-confirm-rechain`
+  proceeds. Rows carry hash version 3; a v3 newest row with no anchor
   is tampering. `seedAuditTail` anchors a v2 log at open only when the
   sequence agrees and the newest row verifies under the key in use. The
   re-chain and re-anchor overwrite the anchor

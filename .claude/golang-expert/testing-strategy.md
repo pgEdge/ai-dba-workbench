@@ -129,7 +129,8 @@ in SQLite via `modernc.org/sqlite` and `database/sql`, so its SQL uses
 with `auth.NewAuthStore` and must:
 
 - Pass `auth.AuditKeyForTesting()` as the fourth argument. The store
-  keys its audit hash chain (hash version 2) with a key production
+  keys its audit hash chain (new rows are hash version 3, which hashes
+  as version 2 does; version 2 rows remain readable) with a key production
   derives from the server secret via `auth.DeriveAuditKey`, and
   `NewAuthStore` refuses an empty one, because a store without a key
   cannot write a single audited change. The test helper returns a fixed
@@ -160,6 +161,14 @@ append-only trigger must read `sqlite_master` through a raw
 `sql.Open("sqlite", ...)` connection, because opening an `AuthStore`
 runs `ensureAuditSchema`, which re-creates the trigger and would make
 the assertion pass either way.
+
+A test that expects `PurgeAuditEvents` to delete rows must build them
+through the store (`recordAuditInOwnTx`, backdating `OccurredAt`), not
+by raw INSERT: the purge verifies every row it removes and refuses a
+prefix holding a forged row such as `insertAuditRowAtID` writes, or one
+that does not start at genesis or the previous purge's recorded head.
+From `cmd/mcp-server` tests, use `auth.SeedAuditEventForTesting`, which
+does the same behind a `testing.Testing()` guard.
 
 Tests in `server/src/cmd/mcp-server` that run a CLI command go through
 `openAuthStoreCLI`, which resolves the audit key from the real server

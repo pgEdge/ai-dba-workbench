@@ -58,7 +58,7 @@ func TestRechainAuditLogCommandRewritesTheLog(t *testing.T) {
 	dir := unkeyedAuditStore(t, 3, 0)
 
 	var out bytes.Buffer
-	if err := rechainAuditLogCommand(dir, true, strings.NewReader(""),
+	if err := rechainAuditLogCommand(dir, confirmRechainOpts, strings.NewReader(""),
 		&out); err != nil {
 		t.Fatalf("Failed to re-chain the log: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestRechainAuditLogCommandPrintsBeforeItWrites(t *testing.T) {
 	dir := unkeyedAuditStore(t, 2, 0)
 
 	var out bytes.Buffer
-	if err := rechainAuditLogCommand(dir, false,
+	if err := rechainAuditLogCommand(dir, auditRechainOptions{},
 		strings.NewReader(auditRechainConfirmWord+"\n"), &out); err != nil {
 		t.Fatalf("Failed to re-chain the log: %v", err)
 	}
@@ -126,7 +126,7 @@ func TestRechainAuditLogCommandAbortsWithoutConfirmation(t *testing.T) {
 			dir := unkeyedAuditStore(t, 2, 0)
 
 			var out bytes.Buffer
-			if err := rechainAuditLogCommand(dir, false,
+			if err := rechainAuditLogCommand(dir, auditRechainOptions{},
 				strings.NewReader(tt.input), &out); err != nil {
 				t.Fatalf("Aborting is not an error: %v", err)
 			}
@@ -158,7 +158,7 @@ func TestRechainAuditLogCommandReportsABrokenLegacyChain(t *testing.T) {
 	dir := unkeyedAuditStore(t, 4, 2)
 
 	var out bytes.Buffer
-	if err := rechainAuditLogCommand(dir, false, strings.NewReader("\n"),
+	if err := rechainAuditLogCommand(dir, auditRechainOptions{}, strings.NewReader("\n"),
 		&out); err != nil {
 		t.Fatalf("Aborting is not an error: %v", err)
 	}
@@ -182,7 +182,7 @@ func TestRechainAuditLogCommandRefusesABrokenChainUnattended(t *testing.T) {
 	dir := unkeyedAuditStore(t, 4, 2)
 
 	var out bytes.Buffer
-	err := rechainAuditLogCommand(dir, true, strings.NewReader(""), &out)
+	err := rechainAuditLogCommand(dir, confirmRechainOpts, strings.NewReader(""), &out)
 	if err == nil {
 		t.Fatal("Expected the unattended re-chain to refuse a log that " +
 			"does not recompute")
@@ -212,7 +212,7 @@ func TestRechainAuditLogCommandRefusesABrokenChainUnattended(t *testing.T) {
 	// The interactive path is unchanged: the same log re-chains when an
 	// operator types the confirmation word.
 	out.Reset()
-	if err := rechainAuditLogCommand(dir, false,
+	if err := rechainAuditLogCommand(dir, auditRechainOptions{},
 		strings.NewReader(auditRechainConfirmWord+"\n"), &out); err != nil {
 		t.Fatalf("Expected the interactive re-chain to proceed: %v", err)
 	}
@@ -232,7 +232,7 @@ func TestRechainAuditLogCommandReportsAFailure(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	err := rechainAuditLogCommand(filepath.Join(blocker, "data"), true,
+	err := rechainAuditLogCommand(filepath.Join(blocker, "data"), confirmRechainOpts,
 		strings.NewReader(""), &out)
 	if err == nil {
 		t.Fatal("Expected an unusable data directory to be reported")
@@ -250,7 +250,7 @@ func TestRechainAuditLogCommandNeedsAKey(t *testing.T) {
 	useRealCLIAuditKey(t, missing)
 
 	var out bytes.Buffer
-	err := rechainAuditLogCommand(t.TempDir(), true, strings.NewReader(""),
+	err := rechainAuditLogCommand(t.TempDir(), confirmRechainOpts, strings.NewReader(""),
 		&out)
 	if err == nil {
 		t.Fatal("Expected the command to refuse to run without a secret")

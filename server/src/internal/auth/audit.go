@@ -75,7 +75,7 @@ const auditNoUpdateTriggerDDL = `
 
 // auditSchemaDDL is the whole audit schema, table, trigger and chain
 // index together, for callers that have no reason to tell them apart.
-const auditSchemaDDL = auditTableDDL + auditChainIndexDDL
+const auditSchemaDDL = auditTableDDL + auditChainIndexDDL + auditTailDDL
 
 // auditChainIndexDDL creates the unique index that keeps the chain
 // linear. It is separated from the rest of the schema only so that
@@ -269,7 +269,14 @@ func newEvent(actor Actor, action, targetType string, targetID *int64,
 // under the key with RechainAuditLog, so the unkeyed rendering survives
 // only as something the re-chain recomputes on its way past, and
 // auditHash refuses it outright.
-const auditHashVersion = 2
+//
+// Version 3 renders exactly as version 2 does, under its own label and
+// number, and marks a row written by a build that keeps the tail anchor
+// in audit_tail. The rendering did not need to change; what needed a
+// new number was the fact, because a newest row carrying version 3
+// with no anchor beside it has lost the anchor, and the number is
+// covered by the HMAC, so it cannot be relabelled; see audit_tail.go.
+const auditHashVersion = auditTailHashVersion
 
 const (
 	// auditHashV1Label is the first field of the version 1 rendering.
@@ -280,6 +287,9 @@ const (
 	// produce the same digest over the same fields even where the
 	// digest function is otherwise the same primitive.
 	auditHashV2Label = "v2"
+
+	// auditHashV3Label is the first field of the version 3 rendering.
+	auditHashV3Label = "v3"
 )
 
 // auditHashKeySalt is the fixed PBKDF2 salt separating the audit chain
@@ -370,6 +380,26 @@ func AuditKeyForTesting() []byte {
 	}
 
 	return []byte("pgedge-ai-workbench test audit key, not a secret!")
+}
+
+// SeedAuditEventForTesting appends one keyed audit event stamped at, as
+// the store would have written it then, so that a test outside this
+// package can exercise the retention purge on rows old enough to go.
+// It is exported, and guarded, for the reasons given for
+// SeedUnkeyedAuditLogForTesting below.
+func SeedAuditEventForTesting(s *AuthStore, at time.Time) error {
+	if !testing.Testing() {
+		panic("auth.SeedAuditEventForTesting was called outside a test " +
+			"binary: it writes audit rows with a chosen timestamp")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	ev := newEvent(systemActor, "test.seed", "", nil, "", nil)
+	ev.OccurredAt = at.UTC()
+
+	return s.recordAuditInOwnTx(ev)
 }
 
 // SeedUnkeyedAuditLogForTesting appends rows audit events hashed under
@@ -471,6 +501,8 @@ func auditHash(ev *AuditEvent, key []byte) (string, error) {
 			ErrAuditUnkeyedRow, ev.ID)
 	case 2:
 		return auditHashV2(ev, key)
+	case 3:
+		return auditHashKeyed(auditHashV3Label, ev, key)
 	default:
 		return "", fmt.Errorf("%w %d", errUnknownAuditHashVersion,
 			ev.HashVersion)
@@ -548,13 +580,21 @@ func auditHashV1(ev *AuditEvent) string {
 // rewrite a row and recompute every hash after it, whereas an HMAC
 // cannot be recomputed without the secret as well.
 func auditHashV2(ev *AuditEvent, key []byte) (string, error) {
+	return auditHashKeyed(auditHashV2Label, ev, key)
+}
+
+// auditHashKeyed is the keyed rendering shared by versions 2 and 3,
+// which differ only in the label and number they open with.
+func auditHashKeyed(label string, ev *AuditEvent, key []byte) (string,
+	error) {
+
 	if len(key) == 0 {
 		return "", errNoAuditKey
 	}
 
 	mac := hmac.New(sha256.New, key)
 	// hash.Hash.Write is documented never to return an error.
-	mac.Write(auditCanonical(auditHashV2Label, ev))
+	mac.Write(auditCanonical(label, ev))
 
 	return hex.EncodeToString(mac.Sum(nil)), nil
 }
@@ -789,6 +829,57 @@ type AuditRechainPlan struct {
 	// LegacyChainErr is why the recomputation failed, nil when it did
 	// not.
 	LegacyChainErr error
+
+	// Mode is which of the two re-chains the plan is for: a re-hash of
+	// a log inherited from a release before the keyed chain, or a
+	// re-anchor of a keyed log that no longer verifies. The fields
+	// below describe a re-anchor and are empty for a re-hash.
+	Mode AuditRechainMode
+
+	// Problem is why the log fails verification, or nil when it
+	// verifies and there is nothing to re-anchor. KeyMismatch reports
+	// that the failure has the shape a changed server secret leaves.
+	Problem     error
+	KeyMismatch bool
+
+	// HeadID and HeadHash identify the oldest row, which the re-anchor
+	// records as where the log now begins.
+	HeadID   int64
+	HeadHash string
+
+	// PreviousHead is where the newest purge or re-chain event said
+	// the log began, or nil when no such event records it.
+	PreviousHead *AuditRechainHead
+
+	// HistoryEvents is how many rows, from the oldest through
+	// HistoryThroughID, the re-anchor would accept as history: every
+	// row up to the last one that does not verify under the key in use
+	// or does not link to the row before it. Zero when there are none.
+	HistoryEvents    int64
+	HistoryThroughID int64
+
+	// PreviousKeyGiven reports that the re-chain was given the key of
+	// the server secret the history was written under, by
+	// RechainAuditLogWithPreviousKey. HistoryProven then reports that
+	// every row the re-anchor would accept as history verifies under
+	// it, links to the row before it and accounts for the head as the
+	// verifier requires, and HistoryProofErr says why not when it does
+	// not. Without the previous key the history is an unexplained run
+	// of failing rows, which anyone able to write auth.db can produce.
+	PreviousKeyGiven bool
+	HistoryProven    bool
+	HistoryProofErr  error
+
+	// LaterEventsVerify reports that at least one row after the history
+	// verifies under the key in use, which shows that the server has
+	// been writing under the current secret. A re-anchor signed under a
+	// secret that nothing else in the log was written under may be the
+	// wrong one, and the real secret would then refuse every purge.
+	LaterEventsVerify bool
+
+	// reanchor is the scan the figures above came from, which the
+	// transaction repeats and compares under the write lock.
+	reanchor auditReanchorScan
 }
 
 // AuditRechainResult reports what a re-chain did.
@@ -798,8 +889,16 @@ type AuditRechainResult struct {
 	Confirmed bool
 
 	// Events is the number of rows re-hashed, not counting the
-	// audit.rechain event the re-chain appends.
+	// audit.rechain event the re-chain appends. A re-anchor re-hashes
+	// nothing and leaves it zero.
 	Events int64
+
+	// Mode is which re-chain ran, or would have.
+	Mode AuditRechainMode
+
+	// UpToDate reports that the log already verified, so the operator
+	// was not asked and nothing was written.
+	UpToDate bool
 }
 
 // AuditRechainConfirm is shown the plan and returns whether to proceed.
@@ -811,7 +910,7 @@ type AuditRechainConfirm func(AuditRechainPlan) (bool, error)
 const auditActionRechain = "audit.rechain"
 
 // RechainAuditLog re-hashes every row of the audit log as a keyed
-// version 2 row under auditKey, in id order and in a single
+// row, at auditHashVersion, under auditKey, in id order and in a single
 // transaction, and appends an audit.rechain event recording that it
 // did. It is the one-time upgrade step for a database written by a
 // release that predates the keyed chain, and the only way to open such
@@ -830,7 +929,29 @@ const auditActionRechain = "audit.rechain"
 // log has not been altered since, and nothing whatever about what
 // happened before. That is why it is an operator's deliberate act and
 // not something a start-up does.
+//
+// On a log with no unkeyed rows it re-anchors instead (see
+// audit_reanchor.go): a log that verifies returns UpToDate without
+// calling confirm, and one that does not is left unchanged apart from
+// one appended audit.rechain event, which records where the log now
+// begins and which of its oldest rows are accepted as history.
 func RechainAuditLog(dataDir string, auditKey []byte, actor Actor,
+	confirm AuditRechainConfirm) (AuditRechainResult, error) {
+
+	return RechainAuditLogWithPreviousKey(dataDir, auditKey, nil, actor,
+		confirm)
+}
+
+// RechainAuditLogWithPreviousKey is RechainAuditLog given also the key
+// of the server secret a keyed log's older rows were written under, from
+// DeriveAuditKey, or nil when it is not known. A re-anchor then checks
+// the rows it would accept as history under that key and reports the
+// result in the plan (HistoryProven), which is what lets a caller
+// re-anchor without asking anyone: a changed secret is otherwise
+// indistinguishable from rows forged to look like one. The key is only
+// read with; nothing is signed under it.
+func RechainAuditLogWithPreviousKey(dataDir string, auditKey,
+	previousKey []byte, actor Actor,
 	confirm AuditRechainConfirm) (AuditRechainResult, error) {
 
 	if confirm == nil {
@@ -844,7 +965,7 @@ func RechainAuditLog(dataDir string, auditKey []byte, actor Actor,
 	}
 	defer store.Close()
 
-	return store.rechainAuditLog(actor, confirm)
+	return store.rechainAuditLog(actor, previousKey, confirm)
 }
 
 // rechainAuditLog is RechainAuditLog on an already-open store.
@@ -855,7 +976,7 @@ func RechainAuditLog(dataDir string, auditKey []byte, actor Actor,
 // whose store is doing nothing else. Holding it means the figures the
 // operator agreed to and the rows the transaction rewrites are the same
 // log as far as this process is concerned.
-func (s *AuthStore) rechainAuditLog(actor Actor,
+func (s *AuthStore) rechainAuditLog(actor Actor, previousKey []byte,
 	confirm AuditRechainConfirm) (AuditRechainResult, error) {
 
 	s.mu.Lock()
@@ -867,6 +988,13 @@ func (s *AuthStore) rechainAuditLog(actor Actor,
 	if err != nil {
 		return result, err
 	}
+	if plan.Mode == AuditRechainReanchor {
+		if err := s.proveAuditReanchorPlan(&plan, previousKey); err != nil {
+			return result, err
+		}
+		return s.reanchorAuditLog(actor, plan, confirm)
+	}
+	result.Mode = plan.Mode
 
 	proceed, err := confirm(plan)
 	if err != nil {
@@ -934,6 +1062,14 @@ func (s *AuthStore) auditRechainPlan() (AuditRechainPlan, error) {
 	plan.LegacyFirstBad = firstBad
 	plan.LegacyChainErr = legacyErr
 
+	plan.Mode = AuditRechainRehash
+	if unkeyed == 0 {
+		plan.Mode = AuditRechainReanchor
+		if err := s.auditReanchorPlan(&plan); err != nil {
+			return plan, err
+		}
+	}
+
 	return plan, nil
 }
 
@@ -998,8 +1134,8 @@ func (s *AuthStore) verifyLegacyAuditChain() (int64, error) {
 		switch ev.HashVersion {
 		case 1:
 			want = auditHashV1(&ev)
-		case 2:
-			computed, err := auditHashV2(&ev, s.auditKey)
+		case 2, 3:
+			computed, err := auditHash(&ev, s.auditKey)
 			if err != nil {
 				firstBad = ev.ID
 				return err
@@ -1189,6 +1325,11 @@ func (s *AuthStore) rechainAuditLogTx(actor Actor, plan AuditRechainPlan) (
 	if err := s.recordAudit(tx, ev); err != nil {
 		return 0, fmt.Errorf("failed to record the re-chain event: %w", err)
 	}
+	// Every hash in the log has just changed, so whatever the tail
+	// anchor named is gone; it starts again at the re-chain event.
+	if err := s.writeAuditTail(tx, ev); err != nil {
+		return 0, err
+	}
 
 	if err := tx.Commit(); err != nil {
 		return 0, fmt.Errorf("failed to commit the re-chain: %w", err)
@@ -1215,17 +1356,25 @@ func nullableText(v string) any {
 // the current UTC time; a non-zero one is kept as given. The timestamp
 // is stored in auditTimeLayout, a fixed-width RFC 3339 UTC rendering
 // that sorts lexically in timestamp order. On success the event's ID,
-// PrevHash, OccurredAt and Hash fields are populated.
+// PrevHash, OccurredAt and Hash fields are populated, and the tail
+// anchor in audit_tail is moved on to the new row when the state it
+// held until now allows; see audit_tail.go.
 func (s *AuthStore) recordAudit(tx *sql.Tx, ev *AuditEvent) error {
 	if ev == nil {
 		return errors.New("audit event is nil")
 	}
 
-	var prevHash string
-	err := tx.QueryRow(
-		"SELECT hash FROM audit_events ORDER BY id DESC LIMIT 1").Scan(&prevHash)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	// The newest row and the tail anchor are read together, before the
+	// insert, because whether the anchor may move on to this event
+	// depends on what it named until now.
+	before, err := readAuditTailState(tx)
+	if err != nil {
 		return fmt.Errorf("failed to read previous audit hash: %w", err)
+	}
+	prevHash := before.newestHash
+	advance, err := s.mayAdvanceAuditTail(tx, before)
+	if err != nil {
+		return err
 	}
 
 	if ev.OccurredAt.IsZero() {
@@ -1273,12 +1422,34 @@ func (s *AuthStore) recordAudit(tx *sql.Tx, ev *AuditEvent) error {
 	if err != nil {
 		return fmt.Errorf("failed to insert audit event: %w", err)
 	}
-
-	if id, err := result.LastInsertId(); err == nil {
-		ev.ID = id
+	// A trigger planted in auth.db can make the INSERT succeed without
+	// writing a row (RAISE(IGNORE)), which would commit the change the
+	// event describes with no record of it; verifyAuditSchema refuses
+	// such a trigger, and this refuses the write it would cause. It
+	// catches that trigger only: SQLite does not count rows a trigger
+	// changes, so one that deletes the event after it is written leaves
+	// the count at 1 and is caught only at verification, where
+	// verifyAuditSchema refuses any trigger it does not expect.
+	n, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to confirm audit event insert: %w", err)
+	}
+	if n != 1 {
+		return fmt.Errorf("failed to insert audit event: %d rows written, "+
+			"not 1; a trigger on audit_events may be discarding events",
+			n)
 	}
 
-	return nil
+	id, err := result.LastInsertId()
+	if err != nil {
+		return fmt.Errorf("failed to read the id of the audit event: %w", err)
+	}
+	ev.ID = id
+
+	if !advance {
+		return nil
+	}
+	return s.writeAuditTail(tx, ev)
 }
 
 // recordFailure records a failed mutation in its own short transaction,
@@ -1560,18 +1731,23 @@ func (s *AuthStore) ListAuditEvents(f AuditFilter) ([]AuditEvent, int, error) {
 // VerifyAuditChain recomputes every row's hash and checks that each row
 // links to its predecessor, returning the number of rows examined and
 // the id of the first row that fails. The first remaining row's
-// prev_hash is accepted as given, because the retention purge may have
-// removed the row it points at. Callers must check the error first: a
-// firstBad of 0 means the chain is intact only when err is nil, because
+// prev_hash cannot be checked against its predecessor, because the
+// retention purge may have removed the row it points at; the head is
+// instead checked against the record the newest purge or re-chain
+// event keeps of it, as audit_head.go describes, and a head with a
+// predecessor and no purge event at all is reported as a deletion. Rows
+// a re-chain accepted as history are checked against its digest rather
+// than the key; VerifyAuditLog reports how many there are. Callers must
+// check the error first: a firstBad of 0 means the chain is intact only when err is nil, because
 // a scan or iteration failure also reports firstBad 0.
 //
-// Every row must carry the keyed version 2 hash. A row claiming the
+// Every row must carry a keyed hash, version 2 or 3. A row claiming the
 // unkeyed version 1 rendering is refused by auditHash, because the
 // re-chain that an upgrade runs leaves none behind and nothing this
-// build writes produces one. The check that the version never falls
-// along the chain is redundant while 2 is the only admissible value,
-// and is kept because it costs nothing and will matter on the day a
-// version 3 exists.
+// build writes produces one. The version must never fall along the
+// chain: a version 2 row after a version 3 one was written by an older
+// build, or relabelled, and either way the tail anchor that version 3
+// promises is no longer being kept.
 //
 // Errors wrap one of the sentinels declared at the top of this file, so
 // a caller can tell tampering, a downgrade and a mislaid key apart
@@ -1580,108 +1756,45 @@ func (s *AuthStore) ListAuditEvents(f AuditFilter) ([]AuditEvent, int, error) {
 // What a clean result is worth is set out at verifyAuditTail, and it is
 // less than it looks: read that before relying on this.
 func (s *AuthStore) VerifyAuditChain() (int, int64, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	// A dropped index or trigger is strong evidence of tampering, not a
-	// configuration mishap: ensureAuditSchema re-creates both on every
-	// open, so their absence means they were removed since the last
-	// one. It carries the tampering sentinel so a monitor keyed on it
-	// sees this too.
-	if err := s.verifyAuditSchema(); err != nil {
-		return 0, 0, fmt.Errorf("%w: %w", ErrAuditChainBroken, err)
-	}
-
-	rows, err := s.db.Query(auditSelectInIDOrder)
-	if err != nil {
-		return 0, 0, fmt.Errorf("failed to query audit events: %w", err)
-	}
-	defer rows.Close()
-
-	count := 0
-	prevHash := ""
-	first := true
-	highestVersion := 0
-	// keyProven records that at least one row has verified under the
-	// key in use, which is what separates a log written under a
-	// different secret from a log that has been altered. Until one has,
-	// a row that does not verify is far more often a mislaid or rotated
-	// secret than a rewrite that began at the very first row.
-	keyProven := false
-
-	for rows.Next() {
-		ev, err := scanAuditEvent(rows.Scan)
-		if err != nil {
-			return count, 0, fmt.Errorf("failed to scan audit event: %w", err)
-		}
-		count++
-
-		if !first && ev.PrevHash != prevHash {
-			return count, ev.ID, fmt.Errorf("%w at row %d",
-				ErrAuditChainBroken, ev.ID)
-		}
-		if ev.HashVersion < highestVersion {
-			return count, ev.ID, fmt.Errorf(
-				"%w at row %d: version %d after version %d",
-				ErrAuditChainDowngraded, ev.ID, ev.HashVersion, highestVersion)
-		}
-
-		want, err := auditHash(&ev, s.auditKey)
-		if err != nil {
-			// The row names a rendering this store will not compute:
-			// the unkeyed version 1 digest, which anyone able to write
-			// the file can produce; a hash_version no release ever
-			// wrote; or the keyed rendering on a store opened without a
-			// key, which NewAuthStore no longer permits. All three are
-			// reported as tampering, so that a monitor watching for it
-			// sees a row relabelled out of reach of the verifier.
-			return count, ev.ID, fmt.Errorf(
-				"%w: audit row %d, written under hash version %d, cannot "+
-					"be verified by this store: %w",
-				ErrAuditChainBroken, ev.ID, ev.HashVersion, err)
-		}
-		if want != ev.Hash {
-			if !keyProven {
-				return count, ev.ID, fmt.Errorf(
-					"%w: audit row %d does not verify, and no row before it "+
-						"verified either, so nothing in this log has "+
-						"verified under the key in use; check that the "+
-						"server secret file is the one these rows were "+
-						"written under before treating this as tampering",
-					ErrAuditKeyMismatch, ev.ID)
-			}
-			return count, ev.ID, fmt.Errorf("%w at row %d",
-				ErrAuditChainBroken, ev.ID)
-		}
-		keyProven = true
-
-		highestVersion = ev.HashVersion
-		prevHash = ev.Hash
-		first = false
-	}
-	if err := rows.Err(); err != nil {
-		return count, 0, fmt.Errorf("failed to read audit events: %w", err)
-	}
-
-	if err := s.verifyAuditTail(); err != nil {
-		return count, 0, err
-	}
-
-	return count, 0, nil
+	report, err := s.VerifyAuditLog()
+	return report.Events, report.FirstBad, err
 }
 
 // verifyAuditSchema checks that the two schema objects the chain's
-// guarantees depend on are present: the unique index on prev_hash,
-// without which two rows may claim the same predecessor and fork the
-// log, and the BEFORE UPDATE trigger, without which a row can be
-// rewritten in place. ensureAuditSchema re-creates both on every open,
-// so their absence from a live database means they were dropped since,
-// and a chain that recomputes cleanly under those conditions has proved
-// nothing.
+// guarantees depend on are present and do what their names say: the
+// unique index on prev_hash, without which two rows may claim the same
+// predecessor and fork the log, and the BEFORE UPDATE trigger, without
+// which a row can be rewritten in place. ensureAuditSchema re-creates
+// both on every open, so their absence from a live database means they
+// were dropped since, and a chain that recomputes cleanly under those
+// conditions has proved nothing.
+//
+// The definitions are checked as well as the names, because
+// ensureAuditSchema creates both with IF NOT EXISTS and so never
+// replaces an object that merely has the right name. Anyone able to
+// write auth.db could otherwise swap in a unique index on some other
+// column, or a same-named trigger that does nothing, once, and fork or
+// rewrite the log thereafter with this check still passing. That is
+// no protection against such a writer, who can do a great deal else,
+// but it keeps the check meaning what it says.
 func (s *AuthStore) verifyAuditSchema() error {
-	var unique int
-	err := s.db.QueryRow(`SELECT "unique" FROM pragma_index_list('audit_events')
-         WHERE name = ?`, auditChainIndexName).Scan(&unique)
+	if err := s.verifyAuditChainIndex(); err != nil {
+		return err
+	}
+
+	return s.verifyAuditNoUpdateTrigger()
+}
+
+// verifyAuditChainIndex checks that idx_audit_prev_hash is a unique,
+// non-partial index on audit_events whose only key column is prev_hash.
+// A partial index enforces uniqueness only over the rows its WHERE
+// clause selects, which may be none, and an index over any other column
+// or columns allows two rows to name the same predecessor.
+func (s *AuthStore) verifyAuditChainIndex() error {
+	var unique, partial int
+	err := s.db.QueryRow(`SELECT "unique", partial
+         FROM pragma_index_list('audit_events') WHERE name = ?`,
+		auditChainIndexName).Scan(&unique, &partial)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return fmt.Errorf("audit chain unprotected: the unique index %s is "+
@@ -1694,22 +1807,103 @@ func (s *AuthStore) verifyAuditSchema() error {
 		return fmt.Errorf("audit chain unprotected: index %s on "+
 			"audit_events is not unique, so the chain may have forked",
 			auditChainIndexName)
+	case partial != 0:
+		return fmt.Errorf("audit chain unprotected: index %s on "+
+			"audit_events is partial, so it does not cover every row and "+
+			"the chain may have forked", auditChainIndexName)
 	}
 
-	var count int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master
-         WHERE type = 'trigger' AND name = ? AND tbl_name = 'audit_events'`,
-		auditNoUpdateTrigger).Scan(&count); err != nil {
+	// An expression in the key reports a NULL name, which COALESCE turns
+	// into an empty string so that it counts as a column that is not
+	// prev_hash rather than failing the scan.
+	var columns, onPrevHash int
+	if err := s.db.QueryRow(`SELECT COUNT(*),
+                COALESCE(SUM(COALESCE(name, '') = 'prev_hash'), 0)
+         FROM pragma_index_info(?)`, auditChainIndexName).
+		Scan(&columns, &onPrevHash); err != nil {
+		return fmt.Errorf("failed to read the columns of index %s: %w",
+			auditChainIndexName, err)
+	}
+	if columns != 1 || onPrevHash != 1 {
+		return fmt.Errorf("audit chain unprotected: index %s on "+
+			"audit_events is not an index on prev_hash alone (%d key "+
+			"column(s)), so the chain may have forked",
+			auditChainIndexName, columns)
+	}
+
+	return nil
+}
+
+// verifyAuditNoUpdateTrigger checks that audit_events_no_update exists
+// on audit_events, is exactly the trigger auditNoUpdateTriggerDDL
+// creates, and is the only trigger that touches audit_events at all.
+// Nothing short of the whole definition would do: a trigger with a WHEN
+// clause, or one that fires only on UPDATE OF some columns, still
+// contains BEFORE UPDATE and RAISE(ABORT, yet lets rows be rewritten.
+// And any other trigger is refused, whichever table it is on, because
+// one that discards chosen events with RAISE(IGNORE), or deletes them
+// as they arrive, leaves a chain that verifies with those events never
+// in it.
+func (s *AuthStore) verifyAuditNoUpdateTrigger() error {
+	rows, err := s.db.Query(`SELECT name, sql FROM sqlite_master
+         WHERE type = 'trigger'
+           AND (tbl_name = 'audit_events' COLLATE NOCASE
+                OR sql LIKE '%audit_events%')
+         ORDER BY name`)
+	if err != nil {
 		return fmt.Errorf("failed to look for trigger %s: %w",
 			auditNoUpdateTrigger, err)
 	}
-	if count == 0 {
+	defer rows.Close()
+
+	found := false
+	for rows.Next() {
+		var name string
+		var definition sql.NullString
+		if err := rows.Scan(&name, &definition); err != nil {
+			return fmt.Errorf("failed to look for trigger %s: %w",
+				auditNoUpdateTrigger, err)
+		}
+		if name != auditNoUpdateTrigger {
+			return fmt.Errorf("audit chain unprotected: the trigger %q "+
+				"is not one this server creates and acts on audit_events, "+
+				"so events may have been discarded or rewritten", name)
+		}
+		if normalizeSchemaSQL(definition.String) != expectedAuditTriggerSQL() {
+			return fmt.Errorf("audit chain unprotected: the trigger %s on "+
+				"audit_events does not match the definition this server "+
+				"creates, so rows may have been rewritten in place",
+				auditNoUpdateTrigger)
+		}
+		found = true
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("failed to look for trigger %s: %w",
+			auditNoUpdateTrigger, err)
+	}
+	if !found {
 		return fmt.Errorf("audit chain unprotected: the trigger %s is "+
 			"missing from audit_events, so rows may have been rewritten "+
 			"in place", auditNoUpdateTrigger)
 	}
 
 	return nil
+}
+
+// expectedAuditTriggerSQL is auditNoUpdateTriggerDDL as SQLite records
+// it in sqlite_master, normalised for comparison. SQLite stores the
+// statement text as written, less the IF NOT EXISTS clause and the
+// terminating semicolon.
+func expectedAuditTriggerSQL() string {
+	return strings.Replace(normalizeSchemaSQL(auditNoUpdateTriggerDDL),
+		"CREATE TRIGGER IF NOT EXISTS ", "CREATE TRIGGER ", 1)
+}
+
+// normalizeSchemaSQL collapses every run of whitespace to one space and
+// drops a trailing semicolon, so that two renderings of one statement
+// that differ only in layout compare equal.
+func normalizeSchemaSQL(text string) string {
+	return strings.TrimSuffix(strings.Join(strings.Fields(text), " "), ";")
 }
 
 // verifyAuditTail detects rows removed from the newest end of the log,
@@ -1751,9 +1945,11 @@ func (s *AuthStore) verifyAuditSchema() error {
 // read-only check in a transaction would contend with the server for
 // the write lock.
 //
-// What this is and is not. The check raises the cost of a careless
+// What this is and is not. The comparison raises the cost of a careless
 // deletion from one statement to three, and it catches the deletions an
-// operator or a script makes without meaning to hide anything.
+// operator or a script makes without meaning to hide anything; the tail
+// anchor, checked last by verifyAuditTailAnchor, is what catches the
+// third statement.
 //
 // Against a deliberate attacker it rests on the chain, and since hash
 // version 2 the chain is an HMAC keyed by a key derived from the server
@@ -1779,18 +1975,24 @@ func (s *AuthStore) verifyAuditSchema() error {
 //     Keeping those two apart is the entire protection against
 //     rewriting: the secret belongs in a file the account running the
 //     server can read and nothing else can.
-//   - Deleting the newest rows needs no secret at all. The rows left
-//     behind still verify, and nothing protects sqlite_sequence the way
-//     the no-update trigger protects audit_events, so an attacker with
-//     write access alone can delete the tail and write the sequence
-//     down to the new MAX(id) in one more statement, after which this
-//     check agrees. It catches a deletion that leaves the sequence
-//     alone, and nothing more.
-//   - Deleting the oldest rows outright is still accepted, because the
-//     first surviving row's prev_hash is taken as given: the retention
-//     purge is a legitimate producer of exactly that shape, and nothing
-//     distinguishes it from an attacker removing the beginning of the
-//     log.
+//   - Deleting the newest rows and writing sqlite_sequence down to
+//     match is caught by the tail anchor in audit_tail.go, not by the
+//     comparison here, which it defeats. The anchor has limits of its
+//     own: a copy of audit_tail saved earlier, restored together with
+//     the rows it names removed from the end, or an older copy of the
+//     whole file, passes, because nothing outside the file records how
+//     far the log had reached. Deleting every version 3 row with the
+//     anchor, and the sequence rewritten to match, leaves a log that
+//     looks as it did before this build first wrote to it, so an
+//     upgrade leaves exposed the events written before it. A log wiped
+//     entirely, anchor and sequence row included, reads as one that has
+//     never held an event.
+//   - Deleting the oldest rows is caught by the head check in
+//     audit_head.go only once a purge run by a build that records the
+//     head has removed something. Until then the newest audit.purge
+//     event, if there is one, says nothing about where the head should
+//     be, and the check can report a head with a predecessor only when
+//     no purge event survives at all.
 //   - The re-chain attests whatever the database said at the moment it
 //     ran. It is a one-time trust event, and everything before it rests
 //     on the operator having had good reason to believe the file.
@@ -1804,7 +2006,17 @@ func (s *AuthStore) verifyAuditSchema() error {
 // Treat a failed verification as evidence of tampering, never a
 // successful one as proof of its absence.
 func (s *AuthStore) verifyAuditTail() error {
-	present, err := s.sequenceTablePresent()
+	if err := verifyAuditSequence(s.db); err != nil {
+		return err
+	}
+
+	return s.verifyAuditTailAnchor(s.db)
+}
+
+// verifyAuditSequence is the comparison of MAX(id) with sqlite_sequence
+// that verifyAuditTail starts with, on a database or a transaction.
+func verifyAuditSequence(q auditRowQuerier) error {
+	present, err := auditSequenceTablePresent(q)
 	if err != nil {
 		return err
 	}
@@ -1816,7 +2028,7 @@ func (s *AuthStore) verifyAuditTail() error {
 	}
 
 	var newest, seq sql.NullInt64
-	if err := s.db.QueryRow(`
+	if err := q.QueryRow(`
         SELECT (SELECT MAX(id) FROM audit_events),
                (SELECT seq FROM sqlite_sequence WHERE name = 'audit_events')`).
 		Scan(&newest, &seq); err != nil {
@@ -1859,12 +2071,13 @@ func checkAuditTail(newest int64, seq sql.NullInt64) error {
 	return nil
 }
 
-// sequenceTablePresent reports whether sqlite_sequence exists at all.
-// SQLite creates it with the first AUTOINCREMENT table, which for this
-// store is the users table in the fresh-install schema.
-func (s *AuthStore) sequenceTablePresent() (bool, error) {
+// auditSequenceTablePresent reports whether sqlite_sequence exists at
+// all, on a database or a transaction. SQLite creates it with the first
+// AUTOINCREMENT table, which for this store is the users table in the
+// fresh-install schema.
+func auditSequenceTablePresent(q auditRowQuerier) (bool, error) {
 	var count int
-	if err := s.db.QueryRow(
+	if err := q.QueryRow(
 		`SELECT COUNT(*) FROM sqlite_master
          WHERE type = 'table' AND name = 'sqlite_sequence'`).
 		Scan(&count); err != nil {
@@ -1889,18 +2102,25 @@ const auditActionPurge = "audit.purge"
 //
 // A purge that removed anything records an audit.purge event of its
 // own, in the same transaction as the DELETE, so that the log always
-// explains its own missing prefix: an operator comparing the oldest
-// retained row against the retention window can tell a purge from a
-// deletion. The event is written by the system actor and carries no
-// target, because retention acts on the log as a whole.
+// explains its own missing prefix. The event names the row it left as
+// the oldest, by id and hash, which is what lets VerifyAuditChain tell
+// a purge from a deletion at the start of the log. The event is written
+// by the system actor and carries no target, because retention acts on
+// the log as a whole.
 //
-// It is a plain delete and nothing more. An earlier design had the
-// purge re-sign a boundary record when it removed the row that record
-// rested on, which turned retention, something that runs unattended
-// every few minutes, into a path that re-signed part of the log under
-// the real key; backdating one row was then enough to steer what got
-// signed. Nothing here writes a hash over a row it did not itself
-// create.
+// Before it deletes anything the purge verifies the rows it is about to
+// remove, and it refuses, deleting nothing, when they do not begin
+// where the previous purge left the head or do not chain through to the
+// row that will become the new one. audit_head.go explains why the
+// record needs that.
+//
+// It never re-signs a row. An earlier design had the purge re-sign a
+// boundary record when it removed the row that record rested on, which
+// turned retention, something that runs unattended every few minutes,
+// into a path that re-signed part of the log under the real key;
+// backdating one row was then enough to steer what got signed. Nothing
+// here writes a hash over a row it did not itself create, and the head
+// it records is a row that must still verify on its own.
 func (s *AuthStore) PurgeAuditEvents(olderThan time.Time) (removed int64, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1932,15 +2152,19 @@ func (s *AuthStore) PurgeAuditEvents(olderThan time.Time) (removed int64, err er
 	// exactly the disagreement verifyAuditTail reads to detect a
 	// truncated log. Retention runs unattended every few minutes, so
 	// that would be a deletion oracle an attacker need only wait for.
-	// id is insertion order, is assigned by SQLite on every server
-	// insert, and cannot be changed on an existing row because of the
-	// append-only trigger, so a prefix of ids is a prefix of the log. A
-	// writer of the file can name an id on INSERT, but a row inserted
-	// that way can only move the boundary earlier, never past the
-	// oldest row inside the window.
+	// id is insertion order and is assigned by SQLite on every server
+	// insert. The append-only trigger stops an UPDATE changing it, but a
+	// writer of the file can delete a row and insert it again at another
+	// id, and since the id is not covered by the hash the row still
+	// verifies there; so a prefix of ids is not by itself a prefix of
+	// the log. What makes it one is verifyAuditPurgePrefix, which
+	// requires the rows to be deleted to link, in id order, from the
+	// recorded head through to the new one. A row inserted at a chosen
+	// id can also only move the boundary earlier, never past the oldest
+	// row inside the window.
 	//
-	// When no row is inside the window the subquery yields NULL, the
-	// comparison is never true and nothing is deleted, which is a
+	// When no row is inside the window MIN(id) is NULL and nothing is
+	// deleted, which is a
 	// deliberate departure from deleting the whole log. NULL rather
 	// than a fixed value such as 0, because an INSERT may name a
 	// negative id and a fixed cut-off would delete below it. Over-
@@ -1950,10 +2174,40 @@ func (s *AuthStore) PurgeAuditEvents(olderThan time.Time) (removed int64, err er
 	// same oracle back: backdating every row would erase the log
 	// entirely and leave the appended audit.purge event as a fresh
 	// genesis row.
-	result, err := tx.Exec(`DELETE FROM audit_events
-        WHERE id < (SELECT MIN(id) FROM audit_events
-                    WHERE occurred_at >= ?)`,
-		olderThan.UTC().Format(auditTimeLayout))
+	var cut sql.NullInt64
+	if err := tx.QueryRow(`SELECT MIN(id) FROM audit_events
+        WHERE occurred_at >= ?`,
+		olderThan.UTC().Format(auditTimeLayout)).Scan(&cut); err != nil {
+		return 0, fmt.Errorf("failed to find the audit retention "+
+			"boundary: %w", err)
+	}
+	if !cut.Valid {
+		return 0, nil
+	}
+
+	// Most ticks remove nothing, and they should not pay for reading
+	// the head of the log to find that out.
+	var below int64
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM audit_events WHERE id < ?`,
+		cut.Int64).Scan(&below); err != nil {
+		return 0, fmt.Errorf("failed to count audit events to purge: %w", err)
+	}
+	if below == 0 {
+		return 0, nil
+	}
+
+	// The rows about to go are verified first, and the purge refuses
+	// rather than delete a prefix that does not begin where the last
+	// purge left the head or does not chain through to the row that
+	// becomes the new one. audit_head.go sets out why: the head record
+	// this purge writes would otherwise launder a deletion.
+	kept, err := s.verifyAuditPurgePrefix(tx, cut.Int64)
+	if err != nil {
+		return 0, err
+	}
+
+	result, err := tx.Exec(`DELETE FROM audit_events WHERE id < ?`,
+		cut.Int64)
 	if err != nil {
 		return 0, fmt.Errorf("failed to purge audit events: %w", err)
 	}
@@ -1964,11 +2218,21 @@ func (s *AuthStore) PurgeAuditEvents(olderThan time.Time) (removed int64, err er
 	}
 
 	if removed > 0 {
-		ev := newEvent(systemActor, auditActionPurge, "", nil, "",
-			map[string]any{
-				"older_than": olderThan.UTC().Format(time.RFC3339),
-				"removed":    removed,
-			})
+		details := map[string]any{
+			"older_than":           olderThan.UTC().Format(time.RFC3339),
+			"removed":              removed,
+			"oldest_retained_id":   kept.newHead.ID,
+			"oldest_retained_hash": kept.newHead.Hash,
+		}
+		// Rows a re-chain accepted as history that survive this purge
+		// stay accepted, under a digest of those that remain; the purge
+		// event is now the newest anchor, so it must carry them on.
+		if h := kept.history; h != nil {
+			details["history_through_id"] = *h.HistoryThroughID
+			details["history_events"] = h.HistoryEvents
+			details["history_digest"] = h.HistoryDigest
+		}
+		ev := newEvent(systemActor, auditActionPurge, "", nil, "", details)
 		if err = s.recordAudit(tx, ev); err != nil {
 			return 0, fmt.Errorf("failed to record audit purge event: %w", err)
 		}

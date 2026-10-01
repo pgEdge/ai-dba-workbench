@@ -278,6 +278,9 @@ func (h *RBACHandler) updateGroup(w http.ResponseWriter, r *http.Request, groupI
 			RespondError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		if !h.requireRenameInTokenScope(w, r, groupID, name) {
+			return
+		}
 	}
 
 	if err := h.actorStore(r).UpdateGroup(groupID, name, req.Description); err != nil {
@@ -408,6 +411,24 @@ func (h *RBACHandler) addGroupMember(w http.ResponseWriter, r *http.Request, gro
 }
 
 func (h *RBACHandler) removeGroupMember(w http.ResponseWriter, r *http.Request, groupID int64, memberType string, memberID int64) {
+	if memberType != "user" && memberType != "group" {
+		RespondError(w, http.StatusBadRequest,
+			"Invalid member type: must be 'user' or 'group'")
+		return
+	}
+
+	// Removing a member hides reach without removing it: a user dropped
+	// from the group that restricts a connection they own keeps that
+	// connection through ownership, but no longer appears to reach it
+	// through the group. The reach checks count owned connections for
+	// that reason; this gate also keeps a bounded token from editing the
+	// membership of any group whose grants its own scope does not cover
+	// (issue #471).
+	if !h.requireGrantInTokenScope(w, r,
+		h.rbacChecker.GroupWithinTokenScope(r.Context(), groupID)) {
+		return
+	}
+
 	switch memberType {
 	case "user":
 		if err := h.actorStore(r).RemoveUserFromGroup(groupID, memberID); err != nil {
@@ -421,10 +442,6 @@ func (h *RBACHandler) removeGroupMember(w http.ResponseWriter, r *http.Request, 
 			RespondError(w, http.StatusInternalServerError, "Failed to remove group from group")
 			return
 		}
-	default:
-		RespondError(w, http.StatusBadRequest,
-			"Invalid member type: must be 'user' or 'group'")
-		return
 	}
 
 	w.WriteHeader(http.StatusNoContent)

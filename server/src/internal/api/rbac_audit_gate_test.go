@@ -88,6 +88,8 @@ func dropAuthTable(t *testing.T, dataDir, table string) {
 		_, execErr = db.Exec("DROP TABLE connection_privileges")
 	case "group_admin_permissions":
 		_, execErr = db.Exec("DROP TABLE group_admin_permissions")
+	case "user_groups":
+		_, execErr = db.Exec("DROP TABLE user_groups")
 	default:
 		t.Fatalf("dropAuthTable: %q is not a droppable table", table)
 	}
@@ -461,8 +463,8 @@ func TestRecordDenialWritesRepeatCount(t *testing.T) {
 	if len(events) != 1 {
 		t.Fatalf("Expected the repeats to coalesce into 1 row, got %d", len(events))
 	}
-	if len(events[0].Details) != 0 {
-		t.Errorf("Expected no details on the first denial, got %s",
+	if string(events[0].Details) != `{"target":"/api/v1/rbac/audit"}` {
+		t.Errorf("Expected only the target on the first denial, got %s",
 			events[0].Details)
 	}
 
@@ -491,6 +493,70 @@ func TestRecordDenialWritesRepeatCount(t *testing.T) {
 	}
 	if details.RepeatCount != 3 {
 		t.Errorf("Expected repeat_count 3, got %d", details.RepeatCount)
+	}
+}
+
+// TestRecordDenialKeysOnTarget checks that refusals aimed at different
+// objects are recorded separately, each naming its target, rather than
+// merged into one row that says only how many there were, and that a
+// target is capped at maxDenialTargetLen.
+func TestRecordDenialKeysOnTarget(t *testing.T) {
+	handler, store, cleanup := createTestRBACHandler(t)
+	defer cleanup()
+
+	const reason = "Permission denied: this token's scope does not cover the access being granted"
+	long := "/api/v1/rbac/users/" + strings.Repeat("9", 2*maxDenialTargetLen)
+	for _, path := range []string{"/api/v1/rbac/users/3", "/api/v1/rbac/users/4",
+		"/api/v1/rbac/users/3", long} {
+		req := withUser(httptest.NewRequest(http.MethodDelete, path, nil), 7)
+		handler.recordDenial(req, reason)
+	}
+
+	events, _, err := store.ListAuditEvents(auth.AuditFilter{Action: "user.delete"})
+	if err != nil {
+		t.Fatalf("ListAuditEvents failed: %v", err)
+	}
+	if len(events) != 3 {
+		t.Fatalf("Expected one row per target, got %d", len(events))
+	}
+	targets := map[string]bool{}
+	for _, ev := range events {
+		var details struct {
+			Target string `json:"target"`
+		}
+		if err := json.Unmarshal(ev.Details, &details); err != nil {
+			t.Fatalf("Failed to decode details %s: %v", ev.Details, err)
+		}
+		if len(details.Target) > maxDenialTargetLen {
+			t.Errorf("Expected the target capped at %d bytes, got %d",
+				maxDenialTargetLen, len(details.Target))
+		}
+		targets[details.Target] = true
+	}
+	if !targets["/api/v1/rbac/users/3"] || !targets["/api/v1/rbac/users/4"] ||
+		!targets[long[:maxDenialTargetLen]] {
+		t.Errorf("Expected each target named once, got %v", targets)
+	}
+}
+
+// TestDeniedConnectionAction covers the action names given to refused
+// connection requests.
+func TestDeniedConnectionAction(t *testing.T) {
+	tests := []struct {
+		method, path, want string
+	}{
+		{http.MethodPut, "/api/v1/connections/5", "connection.update"},
+		{http.MethodDelete, "/api/v1/connections/5", "connection.delete"},
+		{http.MethodPut, "/api/v1/connections/5/cluster", "connection.cluster.update"},
+		{http.MethodGet, "/api/v1/connections/5", "rbac.get"},
+		{http.MethodPut, "/api/v1/connections/5/databases", "rbac.put"},
+		{http.MethodPut, "/api/v1/clusters/5", "rbac.put"},
+	}
+	for _, tt := range tests {
+		req := httptest.NewRequest(tt.method, tt.path, nil)
+		if got := deniedAction(req); got != tt.want {
+			t.Errorf("deniedAction(%s %s) = %q, want %q", tt.method, tt.path, got, tt.want)
+		}
 	}
 }
 

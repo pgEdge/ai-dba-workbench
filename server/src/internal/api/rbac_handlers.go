@@ -48,11 +48,29 @@ type denialKey struct {
 	actorIP   string
 	action    string
 	reason    string
+	target    string
+}
+
+// maxDenialTargetLen caps the request path a denial key and its audit
+// row carry, so that a long path cannot inflate either.
+const maxDenialTargetLen = 256
+
+// denialTarget is the request path a refusal was made on, capped at
+// maxDenialTargetLen bytes. It names the object the request would have
+// changed (for example /api/v1/rbac/groups/5/members/user/3), so that
+// refusals against different objects are neither merged into one row
+// nor recorded without saying what they were aimed at.
+func denialTarget(r *http.Request) string {
+	target := r.URL.Path
+	if len(target) > maxDenialTargetLen {
+		target = target[:maxDenialTargetLen]
+	}
+	return target
 }
 
 // denialKeyOf builds the coalescing key for one refusal. An actor with
 // no id, such as an unauthenticated caller, keys on zero.
-func denialKeyOf(actor auth.Actor, action, reason string) denialKey {
+func denialKeyOf(actor auth.Actor, action, reason, target string) denialKey {
 	var actorID int64
 	if actor.ID != nil {
 		actorID = *actor.ID
@@ -65,6 +83,7 @@ func denialKeyOf(actor auth.Actor, action, reason string) denialKey {
 		actorIP:   actor.IP,
 		action:    action,
 		reason:    reason,
+		target:    target,
 	}
 }
 
@@ -112,6 +131,13 @@ type RBACHandler struct {
 	// those checks fail closed for a connection-bounded token.
 	connLister auth.ConnectionVisibilityLister
 
+	// federatedGroups holds the Workbench group names the OIDC group map
+	// assigns federated users to. Federation matches a group by name, so
+	// renaming one of these, or renaming another group to one of them,
+	// moves federated users between groups; a bounded token may do
+	// neither. The map is read at startup and changes only on restart.
+	federatedGroups map[string]bool
+
 	// denialMu guards denials, which is read and written from every
 	// request goroutine that is refused.
 	denialMu sync.Mutex
@@ -131,6 +157,25 @@ func NewRBACHandler(authStore *auth.AuthStore, rbacChecker *auth.RBACChecker) *R
 // to enumerate the monitored connections.
 func (h *RBACHandler) SetConnectionLister(lister auth.ConnectionVisibilityLister) {
 	h.connLister = lister
+}
+
+// SetFederatedGroupMap records the Workbench groups the OIDC group map
+// (provider group to Workbench group) names, so that a bounded token
+// cannot rename a group into or out of it.
+func (h *RBACHandler) SetFederatedGroupMap(groupMap map[string]string) {
+	h.federatedGroups = make(map[string]bool, len(groupMap))
+	for _, workbenchGroup := range groupMap {
+		if workbenchGroup != "" {
+			h.federatedGroups[workbenchGroup] = true
+		}
+	}
+}
+
+// RecordDenial writes a denied audit event for a refusal made by another
+// handler, through the same coalescing as the RBAC handler's own
+// refusals.
+func (h *RBACHandler) RecordDenial(r *http.Request, reason string) {
+	h.recordDenial(r, reason)
 }
 
 // RegisterRoutes registers RBAC management routes on the mux
@@ -180,8 +225,10 @@ func (h *RBACHandler) recordDenial(r *http.Request, reason string) {
 	actor := auth.ActorFromContext(r.Context())
 	action := deniedAction(r)
 
-	record, repeats, expired := h.admitDenial(denialKeyOf(actor, action, reason),
-		time.Now())
+	target := denialTarget(r)
+
+	record, repeats, expired := h.admitDenial(
+		denialKeyOf(actor, action, reason, target), time.Now())
 
 	// Entries evicted by the call above may have carried suppressed
 	// repeats; they are written here, outside the lock the eviction
@@ -192,9 +239,9 @@ func (h *RBACHandler) recordDenial(r *http.Request, reason string) {
 		return
 	}
 
-	var details any
+	details := map[string]any{"target": target}
 	if repeats > 0 {
-		details = map[string]any{"repeat_count": repeats}
+		details["repeat_count"] = repeats
 	}
 
 	if err := h.authStore.RecordDeniedWithDetails(actor, action, reason,
@@ -254,6 +301,7 @@ func (h *RBACHandler) recordDenialSummaries(r *http.Request,
 		details := map[string]any{
 			"repeat_count":  summary.suppressed,
 			"window_closed": true,
+			"target":        summary.key.target,
 		}
 		if err := h.authStore.RecordDeniedWithDetails(summary.key.summaryActor(),
 			summary.key.action, summary.key.reason, details); err != nil {
@@ -350,11 +398,6 @@ func (h *RBACHandler) requireSuperuser(w http.ResponseWriter, r *http.Request) b
 // rbacPathPrefix is the common prefix of every RBAC REST route.
 const rbacPathPrefix = "/api/v1/rbac/"
 
-// deniedAction maps a refused request to the audit action name it would
-// have recorded had it been allowed, so that a denial and the change it
-// was refused share a vocabulary. A request that matches no known route
-// shape records "rbac.<method>" in lower case, which keeps the event
-// rather than dropping it.
 // deniedResourceActions maps the first RBAC path segment to the helper
 // that maps that resource's routes onto an action name. Each helper
 // returns an empty string when the request matches no known route
@@ -383,8 +426,18 @@ func rbacPathSegments(path string) ([]string, bool) {
 	return parts, true
 }
 
+// deniedAction maps a refused request to the audit action name it would
+// have recorded had it been allowed, so that a denial and the change it
+// was refused share a vocabulary. A request that matches no known route
+// shape records "rbac.<method>" in lower case, which keeps the event
+// rather than dropping it. Connection routes, whose token-scope
+// refusals are recorded here too, map through deniedConnectionAction.
 func deniedAction(r *http.Request) string {
 	fallback := "rbac." + strings.ToLower(r.Method)
+
+	if action := deniedConnectionAction(r.Method, r.URL.Path); action != "" {
+		return action
+	}
 
 	parts, ok := rbacPathSegments(r.URL.Path)
 	if !ok {
@@ -401,6 +454,31 @@ func deniedAction(r *http.Request) string {
 	}
 
 	return fallback
+}
+
+// connectionPathPrefix is the prefix of the per-connection REST routes.
+const connectionPathPrefix = "/api/v1/connections/"
+
+// deniedConnectionAction maps the connection routes whose token-scope
+// refusals are audited: PUT and DELETE /connections/{id}, and PUT
+// /connections/{id}/cluster. It returns an empty string for any other
+// request.
+func deniedConnectionAction(method, path string) string {
+	if !strings.HasPrefix(path, connectionPathPrefix) {
+		return ""
+	}
+	parts := strings.Split(strings.Trim(
+		strings.TrimPrefix(path, connectionPathPrefix), "/"), "/")
+
+	switch {
+	case len(parts) == 1 && method == http.MethodPut:
+		return "connection.update"
+	case len(parts) == 1 && method == http.MethodDelete:
+		return "connection.delete"
+	case len(parts) == 2 && parts[1] == "cluster" && method == http.MethodPut:
+		return "connection.cluster.update"
+	}
+	return ""
 }
 
 // deniedAuditAction maps the /audit routes.

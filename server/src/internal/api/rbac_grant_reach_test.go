@@ -375,3 +375,207 @@ func TestSetTokenScopeFailsClosedOnUnreadableScope(t *testing.T) {
 		})
 	}
 }
+
+// =============================================================================
+// Security audit fixes (issue #471, audit of 7fa4cca1)
+// =============================================================================
+
+// TestOwnedRestrictedConnectionCountsTowardsReach covers the audit's
+// takeover: alice owns connection 9, which a group restricts, and is no
+// longer in that group. updateConnection and deleteConnection admit an
+// owner whatever restricts the connection, so a token whose scope does
+// not cover connection 9 may not reset her password, delete her, or
+// recreate her account.
+func TestOwnedRestrictedConnectionCountsTowardsReach(t *testing.T) {
+	f, cleanup := newReachFixture(t)
+	defer cleanup()
+	f.group(t, "prod-dba", map[int]string{9: auth.AccessLevelReadWrite})
+	f.listConnections(
+		database.ConnectionListItem{ID: 5, IsShared: true},
+		database.ConnectionListItem{ID: 9, IsShared: true, OwnerUsername: "alice"},
+	)
+	alice := f.user(t, "alice", 0)
+	path := fmt.Sprintf("/api/v1/rbac/users/%d", alice)
+
+	assertGrantRefused(t, f.do(f.narrowed, http.MethodPut, path,
+		`{"password":"Another-Password-9"}`))
+	assertGrantRefused(t, f.do(f.narrowed, http.MethodDelete, path, ""))
+	if u, _ := f.store.GetUser("alice"); u == nil {
+		t.Fatal("Expected alice to survive the refusal")
+	}
+
+	assertStatus(t, f.do(f.session, http.MethodDelete, path, ""), http.StatusNoContent)
+	assertGrantRefused(t, f.do(f.narrowed, http.MethodPost, "/api/v1/rbac/users",
+		userBody("alice")))
+	if u, _ := f.store.GetUser("alice"); u != nil {
+		t.Fatal("Expected alice not to be recreated on refusal")
+	}
+	assertStatus(t, f.do(f.wildcard, http.MethodPost, "/api/v1/rbac/users",
+		userBody("alice")), http.StatusCreated)
+}
+
+// TestRemoveGroupMemberRespectsTokenScope checks that a bounded token
+// may not remove a user or a group from a group whose grants its scope
+// does not cover, and may from one whose grants it does.
+func TestRemoveGroupMemberRespectsTokenScope(t *testing.T) {
+	f, cleanup := newReachFixture(t)
+	defer cleanup()
+	prod := f.group(t, "prod-dba", map[int]string{9: auth.AccessLevelReadWrite})
+	child := f.group(t, "prod-child", nil)
+	if err := f.store.AddGroupToGroup(prod, child); err != nil {
+		t.Fatalf("AddGroupToGroup failed: %v", err)
+	}
+	alice := f.user(t, "alice", prod)
+	staff := f.group(t, "staff", map[int]string{5: auth.AccessLevelRead})
+	bob := f.user(t, "bob", staff)
+	member := func(group int64, kind string, id int64) string {
+		return fmt.Sprintf("/api/v1/rbac/groups/%d/members/%s/%d", group, kind, id)
+	}
+
+	assertGrantRefused(t, f.do(f.narrowed, http.MethodDelete, member(prod, "user", alice), ""))
+	assertGrantRefused(t, f.do(f.narrowed, http.MethodDelete, member(prod, "group", child), ""))
+	if groups, err := f.store.GetUserGroups(alice); err != nil || len(groups) != 1 {
+		t.Fatalf("Expected alice to stay in prod-dba, got %v (%v)", groups, err)
+	}
+	assertStatus(t, f.do(f.narrowed, http.MethodDelete, member(staff, "user", bob), ""),
+		http.StatusNoContent)
+	assertStatus(t, f.do(f.session, http.MethodDelete, member(prod, "user", alice), ""),
+		http.StatusNoContent)
+	assertStatus(t, f.do(f.unscoped, http.MethodDelete, member(prod, "group", child), ""),
+		http.StatusNoContent)
+}
+
+// TestRenameGroupRespectsTokenScope checks that a bounded token may
+// rename only a group whose grants its scope covers, and never a group
+// the OIDC group map names, or to such a name, since federation matches
+// groups by name.
+func TestRenameGroupRespectsTokenScope(t *testing.T) {
+	f, cleanup := newReachFixture(t)
+	defer cleanup()
+	f.h.SetFederatedGroupMap(map[string]string{
+		"idp-admins":  "wb-admins",
+		"idp-ops":     "wb-ops",
+		"idp-ignored": "",
+	})
+	prod := f.group(t, "prod-dba", map[int]string{9: auth.AccessLevelReadWrite})
+	federated := f.group(t, "wb-admins", nil)
+	plain := f.group(t, "plain", nil)
+	path := func(id int64) string { return fmt.Sprintf("/api/v1/rbac/groups/%d", id) }
+	rename := func(name string) string { return fmt.Sprintf(`{"name":%q}`, name) }
+
+	assertGrantRefused(t, f.do(f.narrowed, http.MethodPut, path(prod), rename("prod-dba-2")))
+	assertGrantRefused(t, f.do(f.narrowed, http.MethodPut, path(federated), rename("wb-other")))
+	assertGrantRefused(t, f.do(f.narrowed, http.MethodPut, path(plain), rename("wb-ops")))
+	if g, err := f.store.GetGroup(prod); err != nil || g.Name != "prod-dba" {
+		t.Fatalf("Expected prod-dba to keep its name, got %+v (%v)", g, err)
+	}
+
+	// A description-only update, or one that keeps the name, renames
+	// nothing.
+	assertStatus(t, f.do(f.narrowed, http.MethodPut, path(prod),
+		`{"description":"production"}`), http.StatusOK)
+	assertStatus(t, f.do(f.narrowed, http.MethodPut, path(federated),
+		`{"name":"wb-admins","description":"admins"}`), http.StatusOK)
+	assertStatus(t, f.do(f.narrowed, http.MethodPut, path(plain), rename("plain-2")),
+		http.StatusOK)
+	assertStatus(t, f.do(f.narrowed, http.MethodPut, path(9999), rename("ghost")),
+		http.StatusNotFound)
+	for i, caller := range f.open() {
+		assertStatus(t, f.do(caller, http.MethodPut, path(federated),
+			rename(fmt.Sprintf("wb-admins-%d", i))), http.StatusOK)
+	}
+}
+
+// TestRenameGroupFailsClosedOnLookupError checks that a bounded token's
+// rename is refused, and the refusal audited, when the group cannot be
+// read.
+func TestRenameGroupFailsClosedOnLookupError(t *testing.T) {
+	h, store, dir, cleanup := createTestRBACHandlerWithDir(t)
+	defer cleanup()
+	_, _, _, narrowed, _ := scopedCallers(t, store)
+	groupID, err := store.CreateGroup("doomed", "")
+	if err != nil {
+		t.Fatalf("CreateGroup failed: %v", err)
+	}
+	dropAuthTable(t, dir, "user_groups")
+
+	req := narrowed.wrap(httptest.NewRequest(http.MethodPut,
+		fmt.Sprintf("/api/v1/rbac/groups/%d", groupID),
+		strings.NewReader(`{"name":"renamed"}`)))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.handleGroupSubpath(rec, req)
+	assertStatus(t, rec, http.StatusInternalServerError)
+	assertDenialRecorded(t, store, "group.update", "Failed to get group")
+}
+
+// TestSetTokenScopeRecordsUnreadableScopeDenial checks that the 500
+// returned when the target's stored scope cannot be read is audited.
+func TestSetTokenScopeRecordsUnreadableScopeDenial(t *testing.T) {
+	h, store, dir, cleanup := createTestRBACHandlerWithDir(t)
+	defer cleanup()
+	_, _, _, narrowed, _ := scopedCallers(t, store)
+	target := mustCreateScopedToken(t, store, "svc-target", nil)
+	dropAuthTable(t, dir, "token_mcp_scope")
+
+	req := narrowed.wrap(httptest.NewRequest(http.MethodPut,
+		fmt.Sprintf("/api/v1/rbac/tokens/%d/scope", target),
+		strings.NewReader(`{"connections":[{"connection_id":5,"access_level":"read"}]}`)))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.handleTokenSubpath(rec, req)
+	assertStatus(t, rec, http.StatusInternalServerError)
+	assertDenialRecorded(t, store, "token.scope.set", "Failed to get token scope")
+}
+
+// assertDenialRecorded checks that exactly one denied event with the
+// given action and reason was written, and that it names its target.
+func assertDenialRecorded(t *testing.T, store *auth.AuthStore, action, reason string) {
+	t.Helper()
+	events, _, err := store.ListAuditEvents(auth.AuditFilter{
+		Action: action, Outcome: string(auth.OutcomeDenied)})
+	if err != nil {
+		t.Fatalf("ListAuditEvents failed: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("Expected 1 %s denial, got %d", action, len(events))
+	}
+	if events[0].Error != reason {
+		t.Errorf("Expected reason %q, got %q", reason, events[0].Error)
+	}
+	if !strings.Contains(string(events[0].Details), `"target":"/api/v1/`) {
+		t.Errorf("Expected the denial to name its target, got %s", events[0].Details)
+	}
+}
+
+// TestConnectionScopeRefusalIsAudited checks that the connection
+// handler's token-scope refusals on update and delete are written to
+// the audit log through the RBAC handler's denial recorder.
+func TestConnectionScopeRefusalIsAudited(t *testing.T) {
+	rbac, store, cleanup := createTestRBACHandler(t)
+	defer cleanup()
+	if err := store.CreateUser("conn-owner", "Password1234", "", "", ""); err != nil {
+		t.Fatalf("CreateUser failed: %v", err)
+	}
+	session, _, err := store.AuthenticateUser("conn-owner", "Password1234")
+	if err != nil {
+		t.Fatalf("AuthenticateUser failed: %v", err)
+	}
+	h := &ConnectionHandler{authStore: store, rbacChecker: auth.NewRBACChecker(store)}
+	h.SetDenialRecorder(rbac.RecordDenial)
+
+	for _, tc := range []struct {
+		method, action string
+		serve          func(http.ResponseWriter, *http.Request, int)
+	}{
+		{http.MethodPut, "connection.update", h.updateConnection},
+		{http.MethodDelete, "connection.delete", h.deleteConnection},
+	} {
+		req := withBearer(httptest.NewRequest(tc.method, "/api/v1/connections/9", nil), session)
+		req = withIncompleteToken(req)
+		rec := httptest.NewRecorder()
+		tc.serve(rec, req, 9)
+		assertError(t, rec, http.StatusForbidden, connectionOutOfTokenScope)
+		assertDenialRecorded(t, store, tc.action, connectionOutOfTokenScope)
+	}
+}

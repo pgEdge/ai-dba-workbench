@@ -415,7 +415,11 @@ func (h *RBACHandler) setTokenScope(w http.ResponseWriter, r *http.Request, toke
 		result, ok := h.storedTokenScope(tokenID)
 		if !ok {
 			log.Printf("[ERROR] Failed to read scope for token %d", tokenID)
-			RespondError(w, http.StatusInternalServerError, "Failed to get token scope")
+			// The change is refused, so it is recorded as a denial like
+			// the 403s around it.
+			const reason = "Failed to get token scope"
+			h.recordDenial(r, reason)
+			RespondError(w, http.StatusInternalServerError, reason)
 			return
 		}
 		if req.Connections != nil {

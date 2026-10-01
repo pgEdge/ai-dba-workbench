@@ -11,6 +11,7 @@ package api
 
 import (
 	"context"
+	"log"
 	"net/http"
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
@@ -126,4 +127,37 @@ func (h *RBACHandler) groupPrivilegesInTokenScope(ctx context.Context,
 		}
 	}
 	return true
+}
+
+// requireRenameInTokenScope refuses a group rename by a bounded token
+// when the group's access reaches beyond the token's scope, or when the
+// old or the new name is one the OIDC group map assigns federated users
+// to. Federation finds a group by name, so either rename would steer
+// federated users into access the token does not hold. A session, and a
+// token unrestricted in every kind, may rename freely; a rename that
+// keeps the current name is not a rename. A group that does not exist
+// is left to the update to report.
+func (h *RBACHandler) requireRenameInTokenScope(w http.ResponseWriter,
+	r *http.Request, groupID int64, name string) bool {
+
+	ctx := r.Context()
+	if h.rbacChecker.TokenScopeUnrestricted(ctx) {
+		return true
+	}
+
+	group, err := h.authStore.GetGroup(groupID)
+	if err != nil {
+		log.Printf("[ERROR] Failed to get group %d for rename check: %v", groupID, err)
+		const reason = "Failed to get group"
+		h.recordDenial(r, reason)
+		RespondError(w, http.StatusInternalServerError, reason)
+		return false
+	}
+	if group == nil || group.Name == name {
+		return true
+	}
+
+	inScope := !h.federatedGroups[group.Name] && !h.federatedGroups[name] &&
+		h.rbacChecker.GroupWithinTokenScope(ctx, groupID)
+	return h.requireGrantInTokenScope(w, r, inScope)
 }

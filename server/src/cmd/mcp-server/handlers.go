@@ -273,6 +273,13 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 		if deps.AuthStore != nil {
 			rbacHandler := api.NewRBACHandler(deps.AuthStore, rbacChecker)
 			rbacHandler.SetConnectionLister(database.NewVisibilityLister(deps.Datastore))
+			// Federation matches groups by name, so the RBAC handler
+			// must know which names the OIDC group map uses before it
+			// lets a bounded token rename a group (issue #471).
+			rbacHandler.SetFederatedGroupMap(deps.Config.HTTP.Auth.OIDC.GroupMap)
+			// Token-scope refusals on the connection routes are audited
+			// through the RBAC handler's coalescing denial recorder.
+			connHandler.SetDenialRecorder(rbacHandler.RecordDenial)
 			rbacHandler.RegisterRoutes(mux, authWrapper)
 			fmt.Fprintf(os.Stderr, "RBAC management: ENABLED\n")
 		}

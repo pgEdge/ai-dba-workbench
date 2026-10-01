@@ -604,24 +604,30 @@ project adheres to
   that carries no token identifier, are denied, and the
   `list_connections` tool returns an error rather than every
   connection when the caller's visible connections cannot be
-  resolved. Creating a cluster, or a cluster
-  group, also needs a connection scope that covers every
-  connection, since a connection later moved into it inherits
-  its group's settings; moving a connection into a cluster that
-  does not exist answers `404 Not Found`, as a hidden cluster
+  resolved. Creating a cluster also needs a connection scope
+  that covers every connection, since a connection later moved
+  into it inherits its group's settings, and a cluster group can
+  be created only from a browser session; moving a connection
+  into a cluster that does not exist answers `404 Not Found`, as a hidden cluster
   does, rather than `500`; and adding a server to a cluster
   refuses a role the server does not recognise with `400 Bad
-  Request`. Administrative grants are bounded by the connection
-  scope too, so a token can never give a user, a group or another
-  token access to a connection its own scope does not cover: a
-  token without every connection at `read_write` cannot grant a
-  group access beyond its scope or any admin permission, revoke
-  a grant on or delete a group holding a connection outside it,
-  add a member to a group that reaches beyond it, create a
-  superuser or make a user one, set the password of or re-enable
-  a user who reaches beyond it, create a token for such an owner,
-  or set or clear another token's scope so that the other token
-  reaches beyond it. One MCP tool still reaches beyond a
+  Request`. Administrative grants and account changes are
+  bounded by the whole token scope, so a token restricted in any
+  of its connection, MCP or admin scopes can never give a user,
+  a group or another token access beyond that scope, nor take
+  over an account that reaches further: it cannot grant a group
+  a connection or an MCP privilege outside its scope, the MCP
+  wildcard, or any admin permission; revoke a grant on or delete
+  a group holding a connection outside it; add a member to a
+  group that reaches beyond it; create a superuser, or any user
+  who would reach beyond it, which counts the public MCP items
+  and every shared connection no group restricts; make a user a
+  superuser; set the password of, re-enable or delete a user who
+  reaches beyond it, since deleting one frees the name, and the
+  unshared connections it owns, for whoever recreates it; create
+  a token for such an owner; or set or clear another token's
+  scope so that the other token reaches beyond it in any of the
+  three kinds. One MCP tool still reaches beyond a
   connection scope: `query_datastore` runs read-only SQL over
   the whole datastore, including every connection's host,
   username and encrypted credentials, and #566 tracks limiting

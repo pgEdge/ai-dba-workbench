@@ -497,33 +497,56 @@ to `read_write`. A new handler of this kind must call one of these
 helpers, and `token_scope_targets_test.go` and
 `token_scope_blackout_test.go` hold the table-driven cases to extend.
 
-Administrative grants are bounded by the acting token's connection
-scope too: a token may never give a user, a group or another token
-access to a connection its own scope does not cover. The checks live
-in `internal/auth/grant_scope.go` (`CanGrantConnectionInTokenScope`,
-`UserWithinTokenScope`, `GroupWithinTokenScope`,
-`ScopedConnectionsInTokenScope`) and the handler helpers in
+Administrative grants and account changes are bounded by the acting
+token's whole scope (connection, MCP and admin): a token may never give
+a user, a group or another token reach beyond its own scope, nor take
+over a principal that reaches further. The checks live in
+`internal/auth/grant_scope.go` and the handler helpers in
 `internal/api/rbac_grant_scope.go`; each refusal goes through
 `requireGrantInTokenScope`, which records the denial and answers 403
-with `grantOutOfTokenScope`. Gated today: a group connection grant
-(level must be within the scope entry) and revoke, any group admin
-permission grant, deleting a group holding an out-of-scope grant,
-adding a member to a group whose effective access (ancestors
-included) exceeds the scope or holds any admin permission, `is_superuser`
-true on user create or update, a password set or re-enable on a user
-who reaches beyond the scope, creating a token for such an owner, and
-setting or clearing another token's scope (an omitted `connections`
-is judged on the stored scope). Admin permissions and superuser status
-need `AllConnectionsInTokenScope`, since they act estate-wide; a
-lookup failure refuses. Revokes and group deletes are gated because a
-connection left with no group grant becomes unrestricted, opening a
-shared connection to every user. `UserWithinTokenScope` does not count
-privately owned (unshared) connections, because the RBAC handler has
-no datastore. The regression tests are in
-`internal/api/rbac_grant_scope_test.go`; each gate fails its test when
-reverted. PR #553 also edits the `is_superuser` handling in
-`createUser` and `updateUser`, so reconcile that gate when either
-merges.
+with `grantOutOfTokenScope`.
+
+- Grant checks: `CanGrantConnectionInTokenScope` (level within the
+  entry), `CanGrantMCPInTokenScope` (the `*` wildcard needs an
+  MCP-unrestricted actor), `AllConnectionsInTokenScope` for any admin
+  permission or superuser status, and `TokenScopeUnrestricted` (all
+  three kinds unrestricted) as the shortcut that skips everything.
+- Reach checks build a `principalReach` and compare it with the actor's
+  scope in every kind: `UserWithinTokenScope(ctx, userID, lister)`,
+  `NewUserWithinTokenScope(ctx, username, lister)` for a user not yet
+  created, `GroupWithinTokenScope` (ancestors included) and
+  `TokenScopeWithinTokenScope` for a token's resulting scope, where an
+  explicit entry is judged alone and an unrestricted kind falls back to
+  the owner's reach in that kind.
+- A user's reach counts group grants, public MCP items, and (through
+  `unrestrictedReachInTokenScope`) every unrestricted connection the
+  user can see: shared ones, plus unshared ones their username owns
+  when the checker has a sharing lookup. That needs the datastore, so
+  `RBACHandler.SetConnectionLister` must be wired (it is, in
+  `cmd/mcp-server/handlers.go`); a nil lister or a lister error fails
+  closed for a connection-bounded actor.
+- Gated routes: group connection grant and revoke, group MCP grant,
+  group admin permission grant, deleting a group holding an
+  out-of-scope grant, adding a group member, `createUser` (superuser
+  needs `TokenScopeUnrestricted`), `updateUser` (`is_superuser`, and a
+  password set or re-enable on a user beyond scope), `deleteUser`
+  (ownership is matched by username, so delete-and-recreate would
+  otherwise inherit unshared connections), `createToken` for an owner
+  beyond scope, and `setTokenScope` / `clearTokenScope`, which overlay
+  the request on the stored scope (`storedTokenScope`) and judge all
+  three kinds of the result.
+- Every grant and reach check returns false on a nil auth store, as
+  `ConnectionInTokenScope` and `AllConnectionsInTokenScope` do.
+
+Revokes and group deletes are gated because a connection left with no
+group grant becomes unrestricted, opening a shared connection to every
+user. Known gaps, deliberately left: a token unrestricted in all three
+kinds is treated as unbounded whatever its owner holds (#522), and
+`query_datastore` reaches beyond any connection scope (#566). The
+regression tests are in `internal/api/rbac_grant_scope_test.go` and
+`internal/api/rbac_grant_reach_test.go` (integration, real auth store),
+with unit cases in `internal/auth/grant_scope_test.go`; each gate fails
+its test when reverted.
 
 The scope PUT refuses an empty array for any kind with 400
 (`emptyScopeKind` in `rbac_token_handlers.go`), because an empty kind

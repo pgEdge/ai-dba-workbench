@@ -278,7 +278,7 @@ func TestEmptiedLogDoesNotStartAnAnchor(t *testing.T) {
 		ErrAuditChainBroken) {
 		t.Errorf("Expected the emptied log to fail, got %v", err)
 	}
-	if err := store.verifyAuditTailAnchor(); err == nil ||
+	if err := store.verifyAuditTailAnchor(store.db); err == nil ||
 		!strings.Contains(err.Error(), "tail anchor missing") {
 		t.Errorf("Expected the missing anchor to be reported, got %v", err)
 	}
@@ -433,7 +433,7 @@ func TestSeedReportsAClosedDatabase(t *testing.T) {
 	if err := store.seedAuditTail(); err == nil {
 		t.Error("Expected an error from a closed database")
 	}
-	if err := store.verifyAuditTailAnchor(); err == nil {
+	if err := store.verifyAuditTailAnchor(store.db); err == nil {
 		t.Error("Expected verifyAuditTailAnchor to report a closed database")
 	}
 }
@@ -459,11 +459,11 @@ func TestSeedReportsAMissingTailTable(t *testing.T) {
 	}
 }
 
-// TestTailAnchorFollowsARotatedSecret checks the key-change case: an
-// anchor written under the old secret names a row written under it too,
-// so neither verifies under the new one, and the anchor moves on under
-// the new secret rather than being stranded.
-func TestTailAnchorFollowsARotatedSecret(t *testing.T) {
+// TestTailAnchorStaysWithARotatedSecret checks the key-change case: an
+// anchor written under the old secret is not moved on under the new one,
+// and the tail check for a log with the shape of a rotation accepts it
+// only where it names the last row written under the old secret.
+func TestTailAnchorStaysWithARotatedSecret(t *testing.T) {
 	store, dir := newReopenableStore(t)
 	recordN(t, store, 2)
 
@@ -477,15 +477,38 @@ func TestTailAnchorFollowsARotatedSecret(t *testing.T) {
 	if rotated.auditTailVerifies(st) {
 		t.Fatal("Expected the old anchor not to verify under the new secret")
 	}
-	if err := rotated.verifyAuditTailAnchor(); err != nil {
-		t.Errorf("Expected a rotated anchor to be tolerated, got %v", err)
+	if err := rotated.verifyAuditTailAnchor(rotated.db); err == nil {
+		t.Error("Expected an anchor that does not verify to be refused")
+	}
+	last := AuditEvent{ID: st.anchorID, Hash: st.anchorHash}
+	if err := rotated.verifyAuditTailAfterKeyChange(rotated.db,
+		last); err != nil {
+		t.Errorf("Expected an anchor naming the last failing row to be "+
+			"accepted before any new event, got %v", err)
 	}
 
 	recordN(t, rotated, 1)
-	st = readTail(t, rotated)
-	if st.anchorID != 3 || !rotated.auditTailVerifies(st) {
-		t.Errorf("Expected the anchor to move on under the new secret, got %+v",
-			st)
+	after := readTail(t, rotated)
+	if after.anchorID != st.anchorID || after.anchorHash != st.anchorHash ||
+		after.anchorMAC != st.anchorMAC {
+		t.Errorf("Expected the anchor to stay where the old secret left "+
+			"it, got %+v", after)
+	}
+	if err := rotated.verifyAuditTailAfterKeyChange(rotated.db,
+		last); err != nil {
+		t.Errorf("Expected a stranded anchor naming the last failing row "+
+			"to be accepted, got %v", err)
+	}
+	newest := AuditEvent{ID: after.newestID, Hash: after.newestHash}
+	if err := rotated.verifyAuditTailAfterKeyChange(rotated.db,
+		newest); !errors.Is(err, ErrAuditChainBroken) {
+		t.Errorf("Expected an anchor naming another row to be refused, "+
+			"got %v", err)
+	}
+
+	if _, err := rotated.VerifyAuditLog(); !errors.Is(err,
+		ErrAuditKeyMismatch) {
+		t.Errorf("Expected a rotation to read as a key mismatch, got %v", err)
 	}
 }
 
@@ -669,5 +692,191 @@ func TestReadAuditSequenceReportsAFailedRead(t *testing.T) {
 	}
 	if _, err := auditSequenceUnused(store.db); err == nil {
 		t.Error("Expected auditSequenceUnused to report a closed database")
+	}
+}
+
+// TestTailAnchorIsNotResignedOverADecoy checks that a writer without the
+// secret cannot have the server re-sign the anchor over a truncated
+// tail: a decoy row that copies the hash of the new newest row, with the
+// anchor pointed at it, leaves the anchor where it was when the server
+// writes its next event, and deleting the decoy afterwards is reported.
+func TestTailAnchorIsNotResignedOverADecoy(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAudit(t)
+	defer cleanup()
+
+	recordN(t, store, 10)
+	rows := auditRowStates(t, store)
+	keptHash := rows[5].Hash
+
+	tamperDB(t, store.db, "DELETE FROM audit_events WHERE id > 6")
+	tamperDB(t, store.db, `INSERT INTO audit_events (id, occurred_at,
+            actor_type, actor_name, action, outcome, prev_hash, hash,
+            hash_version)
+        VALUES (7, ?, 'system', 'system', 'user.create', 'success',
+            'decoy', ?, 3)`,
+		time.Now().UTC().Format(auditTimeLayout), keptHash)
+	tamperDB(t, store.db, `UPDATE audit_tail SET event_id = 7,
+        event_hash = ?, mac = 'forged'`, keptHash)
+	tamperDB(t, store.db, `UPDATE sqlite_sequence SET seq = 7
+        WHERE name = 'audit_events'`)
+
+	recordN(t, store, 1)
+	if st := readTail(t, store); st.anchorID != 7 || st.anchorMAC != "forged" {
+		t.Fatalf("Expected the decoy anchor to be left alone, got %+v", st)
+	}
+
+	tamperDB(t, store.db, "DELETE FROM audit_events WHERE id = 7")
+	expectTailError(t, store, "tail missing")
+	if _, err := store.VerifyAuditLog(); errors.Is(err, ErrAuditKeyMismatch) {
+		t.Errorf("Expected tampering, not a key mismatch, got %v", err)
+	}
+}
+
+// truncateBeforeRotation writes four events under the test key, deletes
+// the newest and writes the sequence down to match, optionally points
+// the anchor at the new newest row without re-signing it, and then
+// writes one event under the rotated key. It returns the directory.
+func truncateBeforeRotation(t *testing.T, rename bool) string {
+	t.Helper()
+
+	store, dir := newReopenableStore(t)
+	recordN(t, store, 4)
+	rows := auditRowStates(t, store)
+	tamperDB(t, store.db, "DELETE FROM audit_events WHERE id = 4")
+	tamperDB(t, store.db, `UPDATE sqlite_sequence SET seq = 3
+        WHERE name = 'audit_events'`)
+	if rename {
+		tamperDB(t, store.db, `UPDATE audit_tail SET event_id = 3,
+            event_hash = ?`, rows[2].Hash)
+	}
+	store.Close()
+
+	rotated := openWithKey(t, dir, rotatedAuditKey)
+	recordN(t, rotated, 1)
+	rotated.Close()
+
+	return dir
+}
+
+// TestRotationDoesNotHideATruncatedTail checks the two ways a tail cut
+// from the rows written under the old secret can sit behind a rotation.
+// An anchor left naming a deleted row is tampering outright. One renamed
+// to the new last row under the old secret has the shape of a rotation,
+// and is read as a key mismatch, but the previous secret does not prove
+// it, so an unattended re-anchor is refused.
+func TestRotationDoesNotHideATruncatedTail(t *testing.T) {
+	t.Run("anchor left behind", func(t *testing.T) {
+		dir := truncateBeforeRotation(t, false)
+		store := openWithKey(t, dir, rotatedAuditKey)
+		_, err := store.VerifyAuditLog()
+		if !errors.Is(err, ErrAuditChainBroken) ||
+			errors.Is(err, ErrAuditKeyMismatch) {
+			t.Errorf("Expected tampering, got %v", err)
+		}
+	})
+
+	t.Run("anchor renamed", func(t *testing.T) {
+		dir := truncateBeforeRotation(t, true)
+		store := openWithKey(t, dir, rotatedAuditKey)
+		if _, err := store.VerifyAuditLog(); !errors.Is(err,
+			ErrAuditKeyMismatch) {
+			t.Fatalf("Expected a key mismatch, got %v", err)
+		}
+		store.Close()
+
+		plan := planWithPreviousKey(t, dir, rotatedAuditKey,
+			AuditKeyForTesting())
+		if !plan.KeyMismatch || plan.HistoryProven ||
+			!errors.Is(plan.HistoryProofErr, errAuditTailUnproven) {
+			t.Errorf("Expected the previous secret not to prove the tail, "+
+				"got %+v", plan)
+		}
+	})
+}
+
+// TestProveAuditReanchorTail checks each answer the previous secret can
+// give about the anchor.
+func TestProveAuditReanchorTail(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAudit(t)
+	defer cleanup()
+
+	if proof, err := store.proveAuditReanchorTail(store.db,
+		rotatedAuditKey, 0, ""); proof != nil || err != nil {
+		t.Errorf("Expected no anchor to need no proof, got %v, %v",
+			proof, err)
+	}
+
+	recordN(t, store, 3)
+	rows := auditRowStates(t, store)
+	if proof, err := store.proveAuditReanchorTail(store.db,
+		rotatedAuditKey, 0, ""); proof != nil || err != nil {
+		t.Errorf("Expected an anchor that verifies to need no proof, got "+
+			"%v, %v", proof, err)
+	}
+
+	// Seen from a store under another key, the anchor verifies only
+	// under the previous one.
+	other := &AuthStore{db: store.db, auditKey: rotatedAuditKey}
+	if proof, err := other.proveAuditReanchorTail(store.db,
+		AuditKeyForTesting(), rows[2].ID, rows[2].Hash); proof != nil ||
+		err != nil {
+		t.Errorf("Expected the anchor to be proven, got %v, %v", proof, err)
+	}
+	if proof, _ := other.proveAuditReanchorTail(store.db,
+		AuditKeyForTesting(), rows[1].ID,
+		rows[1].Hash); !errors.Is(proof, errAuditTailUnproven) ||
+		!strings.Contains(proof.Error(), "deleted from the end") {
+		t.Errorf("Expected an anchor past the history to be refused, got %v",
+			proof)
+	}
+	if proof, _ := other.proveAuditReanchorTail(store.db,
+		rotatedAuditKey, rows[2].ID,
+		rows[2].Hash); !errors.Is(proof, errAuditTailUnproven) {
+		t.Errorf("Expected an anchor under neither key to be refused, got %v",
+			proof)
+	}
+
+	store.db.Close()
+	if _, err := other.proveAuditReanchorTail(store.db,
+		AuditKeyForTesting(), 0, ""); err == nil {
+		t.Error("Expected a closed database to be reported")
+	}
+}
+
+// TestVerifyAuditTailAfterKeyChangeRefusals checks the states the
+// rotation-aware tail check refuses or cannot read.
+func TestVerifyAuditTailAfterKeyChangeRefusals(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAudit(t)
+	defer cleanup()
+
+	recordN(t, store, 2)
+	st := readTail(t, store)
+	last := AuditEvent{ID: st.newestID, Hash: st.newestHash}
+	if err := store.verifyAuditTailAfterKeyChange(store.db,
+		last); err != nil {
+		t.Errorf("Expected an anchor that verifies to pass, got %v", err)
+	}
+
+	tamperDB(t, store.db, "DELETE FROM audit_tail")
+	if err := store.verifyAuditTailAfterKeyChange(store.db,
+		last); !errors.Is(err, ErrAuditChainBroken) {
+		t.Errorf("Expected a missing anchor behind version 3 to be "+
+			"refused, got %v", err)
+	}
+
+	tamperDB(t, store.db, `UPDATE sqlite_sequence SET seq = 9
+        WHERE name = 'audit_events'`)
+	if err := store.verifyAuditTailAfterKeyChange(store.db,
+		last); !errors.Is(err, ErrAuditChainBroken) {
+		t.Errorf("Expected a sequence ahead of the log to be refused, got %v",
+			err)
+	}
+	tamperDB(t, store.db, `UPDATE sqlite_sequence SET seq = 2
+        WHERE name = 'audit_events'`)
+
+	tamperDB(t, store.db, "DROP TABLE audit_tail")
+	if err := store.verifyAuditTailAfterKeyChange(store.db,
+		last); err == nil {
+		t.Error("Expected a missing audit_tail table to be reported")
 	}
 }

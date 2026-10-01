@@ -688,8 +688,16 @@ newest event's id and hash under `auditTailMAC`, an HMAC with its own
 label. `recordAudit` reads the newest row and the anchor in one
 statement (`readAuditTailState`), asks `mayAdvanceAuditTail` before
 its INSERT, because the insert moves `sqlite_sequence`, and calls
-`writeAuditTail` afterwards only when that allowed it. A stranded
-anchor is left alone on purpose, so the evidence persists. New rows
+`writeAuditTail` afterwards only when that allowed it: an anchor that
+names the newest row and verifies under `s.auditKey`, or the first
+event of a never-used log. A stranded anchor, including one a changed
+secret left behind, is left alone on purpose, so the evidence persists.
+`verifyAuditTailAnchor` is reached only once every row verifies; a log
+with the shape of a rotation goes through
+`verifyAuditTailAfterKeyChange` (from `looksLikeKeyChange` and the
+re-anchor transaction), which accepts the anchor naming the last
+failing row, and `proveAuditReanchorTail` checks it under the previous
+key as part of `HistoryProven`. New rows
 carry `auditHashVersion` 3 (`auditTailHashVersion`), which renders as
 version 2 does under the label `v3`; a v3 newest row with no anchor
 fails verification. `initSchema` ends with `seedAuditTail`, which

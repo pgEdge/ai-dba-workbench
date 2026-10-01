@@ -330,9 +330,12 @@ func TestExecuteReportsClientResolutionFailure(t *testing.T) {
 	if len(response.Content) == 0 {
 		t.Fatal("Expected a response for the connection_id path")
 	}
-	if strings.Contains(response.Content[0].Text, "Database connection error") {
-		t.Errorf("Expected the resolver's answer, not the session error: %q",
-			response.Content[0].Text)
+	// The provider has no resolver wired, so the answer must be the
+	// resolver's own refusal; an access denial would pass the check
+	// above without reaching it.
+	if !strings.Contains(response.Content[0].Text,
+		"connection resolution is not available") {
+		t.Errorf("Expected the resolver's answer, got %q", response.Content[0].Text)
 	}
 }
 

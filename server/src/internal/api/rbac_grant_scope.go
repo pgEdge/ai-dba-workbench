@@ -17,15 +17,15 @@ import (
 )
 
 // grantOutOfTokenScope is the refusal given when an API token would
-// hand out access to a connection its own connection scope does not
-// cover.
-const grantOutOfTokenScope = "Permission denied: this token's connection scope does not cover the access being granted"
+// hand out access its own scope does not cover, in connections, MCP
+// items or admin permissions.
+const grantOutOfTokenScope = "Permission denied: this token's scope does not cover the access being granted"
 
 // requireGrantInTokenScope answers 403, recording the denial like the
 // other RBAC refusals, and returns false unless inScope holds. The RBAC
 // write handlers pass it the result of one of the RBACChecker grant
-// checks, so that a token bounded to some connections can never grant
-// a user, a group or another token access beyond them (issue #471).
+// checks, so that a token bounded in any scope kind can never grant a
+// user, a group or another token access beyond it (issue #471).
 // Session callers always pass those checks.
 func (h *RBACHandler) requireGrantInTokenScope(w http.ResponseWriter,
 	r *http.Request, inScope bool) bool {
@@ -38,59 +38,71 @@ func (h *RBACHandler) requireGrantInTokenScope(w http.ResponseWriter,
 	return false
 }
 
-// ownerWithinTokenScope reports whether the named user's access falls
-// inside the acting token's connection scope. The user is looked up
-// only when the acting token is bounded, and an unknown user is out of
+// userWithinTokenScope reports whether everything the user reaches
+// falls inside the acting token's scope, enumerating the unrestricted
+// connections through the handler's connection lister.
+func (h *RBACHandler) userWithinTokenScope(ctx context.Context,
+	userID int64) bool {
+
+	return h.rbacChecker.UserWithinTokenScope(ctx, userID, h.connLister)
+}
+
+// ownerWithinTokenScope reports whether a new token owned by the named
+// user, which starts with no scope and so reaches all the user does,
+// falls inside the acting token's scope. The user is looked up only
+// when the acting token is bounded, and an unknown user is out of
 // scope, so that the check cannot pass on a name that resolves to
 // nothing.
 func (h *RBACHandler) ownerWithinTokenScope(ctx context.Context,
 	username string) bool {
 
-	if h.rbacChecker.AllConnectionsInTokenScope(ctx) {
+	if h.rbacChecker.TokenScopeUnrestricted(ctx) {
 		return true
 	}
 	user, err := h.authStore.GetUser(username)
 	if err != nil || user == nil {
 		return false
 	}
-	return h.rbacChecker.UserWithinTokenScope(ctx, user.ID)
+	return h.userWithinTokenScope(ctx, user.ID)
 }
 
 // tokenWithinActorScope reports whether the token tokenID, once its
-// connection scope is the given one, reaches no further than the acting
-// token. A token's reach is its owner's access narrowed by its
-// connection scope, so a non-empty scope must itself be grantable by
-// the acting token, and an empty one, which leaves the token
-// unrestricted, needs the owner's whole access to be.
+// scope is the given one, reaches no further than the acting token, in
+// each of the three scope kinds.
 func (h *RBACHandler) tokenWithinActorScope(ctx context.Context,
-	tokenID int64, connections []auth.ScopedConnection) bool {
+	tokenID int64, scope auth.GrantedTokenScope) bool {
 
-	if h.rbacChecker.AllConnectionsInTokenScope(ctx) {
+	if h.rbacChecker.TokenScopeUnrestricted(ctx) {
 		return true
-	}
-	if len(connections) > 0 {
-		return h.rbacChecker.ScopedConnectionsInTokenScope(ctx, connections)
 	}
 	token, err := h.authStore.GetTokenByID(tokenID)
 	if err != nil || token == nil {
 		return false
 	}
-	return h.rbacChecker.UserWithinTokenScope(ctx, token.OwnerID)
+	return h.rbacChecker.TokenScopeWithinTokenScope(ctx, token.OwnerID,
+		scope, h.connLister)
 }
 
-// storedTokenConnections returns the connection scope already stored
-// for a token, so that a scope change that leaves the connections alone
-// is judged on the scope the token will keep. The second result is
-// false when the scope cannot be read.
-func (h *RBACHandler) storedTokenConnections(tokenID int64) ([]auth.ScopedConnection, bool) {
+// storedTokenScope returns the scope already stored for a token, in all
+// three kinds, so that a scope change that leaves a kind alone is
+// judged on what the token will keep in it. The second result is false
+// when the scope cannot be read.
+func (h *RBACHandler) storedTokenScope(tokenID int64) (auth.GrantedTokenScope, bool) {
+	var stored auth.GrantedTokenScope
 	scope, err := h.authStore.GetTokenScope(tokenID)
 	if err != nil {
-		return nil, false
+		return stored, false
 	}
-	if scope == nil {
-		return nil, true
+	if scope != nil {
+		stored.Connections = scope.Connections
 	}
-	return scope.Connections, true
+	if stored.MCPPrivileges, err = h.authStore.GetTokenMCPScope(tokenID); err != nil {
+		return stored, false
+	}
+	if stored.AdminPermissions, err = h.authStore.GetTokenAdminScope(tokenID); err != nil {
+		return stored, false
+	}
+	return stored, true
 }
 
 // groupPrivilegesInTokenScope reports whether every connection the

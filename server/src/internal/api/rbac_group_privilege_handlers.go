@@ -59,6 +59,15 @@ func (h *RBACHandler) handleGroupMCPPrivileges(w http.ResponseWriter, r *http.Re
 				return
 			}
 
+			// A token bounded by MCP scope may grant only the items its
+			// own scope covers, and never the wildcard, or it could hand
+			// a group, and so itself through membership, a tool such as
+			// query_datastore that it may not call (issue #471).
+			if !h.requireGrantInTokenScope(w, r,
+				h.rbacChecker.CanGrantMCPInTokenScope(r.Context(), req.Privilege)) {
+				return
+			}
+
 			if err := h.actorStore(r).GrantMCPPrivilegeByName(groupID, req.Privilege); err != nil {
 				log.Printf("[ERROR] Failed to grant MCP privilege %s to group %d: %v", logging.SanitizeForLog(req.Privilege), groupID, err) //nolint:gosec // G706: privilege passed through logging.SanitizeForLog
 				RespondError(w, http.StatusInternalServerError, "Failed to grant MCP privilege")

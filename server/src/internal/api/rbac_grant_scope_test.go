@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
+	"github.com/pgedge/ai-workbench/server/internal/database"
 )
 
 // =============================================================================
@@ -45,6 +46,14 @@ type grantFixture struct {
 func newGrantFixture(t *testing.T) (*grantFixture, func()) {
 	t.Helper()
 	h, store, cleanup := createTestRBACHandler(t)
+	// Connections 5 and 7 are shared and lie inside the narrowed scope
+	// at read_write, so a new user's reach is in scope until a test
+	// lists a connection beyond it.
+	h.SetConnectionLister(database.NewSliceVisibilityLister(
+		[]database.ConnectionListItem{
+			{ID: 5, IsShared: true},
+			{ID: 7, IsShared: true},
+		}))
 	f := &grantFixture{h: h, store: store}
 	f.session, f.unscoped, f.wildcard, f.narrowed, f.readOnly = scopedCallers(t, store)
 	return f, cleanup

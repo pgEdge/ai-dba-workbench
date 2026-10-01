@@ -215,9 +215,8 @@ func TestConnectionMutationHonoursTokenConnectionScope(t *testing.T) {
 }
 
 // TestConnectionInTokenScopeFailsClosed checks the helper's other
-// branches: a session is always in scope, a checker without a store
-// admits everything, and a token context that has lost its id is out
-// of scope.
+// branches: a session is always in scope, whilst a checker without a
+// store and a token context that has lost its id are out of scope.
 func TestConnectionInTokenScopeFailsClosed(t *testing.T) {
 	_, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
@@ -227,8 +226,8 @@ func TestConnectionInTokenScopeFailsClosed(t *testing.T) {
 	if !checker.ConnectionInTokenScope(session.Context(), 9) {
 		t.Error("Expected a session to be in scope")
 	}
-	if !auth.NewRBACChecker(nil).ConnectionInTokenScope(session.Context(), 9) {
-		t.Error("Expected a checker without a store to admit the caller")
+	if auth.NewRBACChecker(nil).ConnectionInTokenScope(session.Context(), 9) {
+		t.Error("Expected a checker without a store to refuse the caller")
 	}
 	lost := withSuperuserToken(httptest.NewRequest(http.MethodGet, "/", nil), 0)
 	if checker.ConnectionInTokenScope(lost.Context(), 9) {

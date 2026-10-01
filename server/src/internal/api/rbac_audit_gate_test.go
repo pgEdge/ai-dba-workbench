@@ -13,6 +13,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -324,33 +325,33 @@ func TestAdmitDenialCoalescesWithinWindow(t *testing.T) {
 	key := denialKeyFor("mallory", "user.create", "Permission denied")
 	start := time.Date(2026, 9, 15, 10, 0, 0, 0, time.UTC)
 
-	if record, repeats, _ := handler.admitDenial(key, start); !record || repeats != 0 {
-		t.Fatalf("First denial: expected (true, 0), got (%v, %d)", record, repeats)
+	if record, closed, _ := handler.admitDenial(key, "users", start); !record || closed.count != 0 {
+		t.Fatalf("First denial: expected (true, 0), got (%v, %d)", record, closed.count)
 	}
 	for i := 1; i <= 4; i++ {
 		at := start.Add(time.Duration(i) * time.Second)
-		if record, repeats, _ := handler.admitDenial(key, at); record || repeats != 0 {
+		if record, closed, _ := handler.admitDenial(key, "users", at); record || closed.count != 0 {
 			t.Errorf("Repeat %d: expected (false, 0), got (%v, %d)", i, record,
-				repeats)
+				closed.count)
 		}
 	}
 
 	after := start.Add(denialCoalesceWindow + time.Second)
-	record, repeats, _ := handler.admitDenial(key, after)
+	record, closed, _ := handler.admitDenial(key, "users", after)
 	if !record {
 		t.Fatal("Expected the denial after the window to be recorded")
 	}
-	if repeats != 5 {
+	if closed.count != 5 {
 		t.Errorf("Expected repeat_count 5 (4 suppressed plus this one), got %d",
-			repeats)
+			closed.count)
 	}
 
 	// The window has been reopened, so the next repeat is suppressed
 	// again and carries no stale count.
-	if record, repeats, _ := handler.admitDenial(key,
-		after.Add(time.Second)); record || repeats != 0 {
+	if record, closed, _ := handler.admitDenial(key, "users",
+		after.Add(time.Second)); record || closed.count != 0 {
 		t.Errorf("Expected the reopened window to suppress, got (%v, %d)",
-			record, repeats)
+			record, closed.count)
 	}
 }
 
@@ -363,12 +364,12 @@ func TestAdmitDenialWithoutRepeatsCarriesNoCount(t *testing.T) {
 	key := denialKeyFor("mallory", "user.create", "Permission denied")
 	start := time.Date(2026, 9, 15, 10, 0, 0, 0, time.UTC)
 
-	handler.admitDenial(key, start)
+	handler.admitDenial(key, "users", start)
 	// The entry is evicted as expired and then reinserted, so either
 	// path must report no repeats.
-	if record, repeats, _ := handler.admitDenial(key,
-		start.Add(2*denialCoalesceWindow)); !record || repeats != 0 {
-		t.Errorf("Expected (true, 0), got (%v, %d)", record, repeats)
+	if record, closed, _ := handler.admitDenial(key, "users",
+		start.Add(2*denialCoalesceWindow)); !record || closed.count != 0 {
+		t.Errorf("Expected (true, 0), got (%v, %d)", record, closed.count)
 	}
 }
 
@@ -385,12 +386,12 @@ func TestAdmitDenialSeparatesActors(t *testing.T) {
 	otherReason := denialKeyFor("mallory", "user.create", "Something else")
 
 	for _, key := range []denialKey{mallory, trudy, otherAction, otherReason} {
-		if record, _, _ := handler.admitDenial(key, start); !record {
+		if record, _, _ := handler.admitDenial(key, "users", start); !record {
 			t.Errorf("Expected the first denial for %+v to be recorded", key)
 		}
 	}
 	for _, key := range []denialKey{mallory, trudy, otherAction, otherReason} {
-		if record, _, _ := handler.admitDenial(key, start.Add(time.Second)); record {
+		if record, _, _ := handler.admitDenial(key, "users", start.Add(time.Second)); record {
 			t.Errorf("Expected the repeat for %+v to be suppressed", key)
 		}
 	}
@@ -405,13 +406,13 @@ func TestAdmitDenialEvictsExpiredEntries(t *testing.T) {
 	start := time.Date(2026, 9, 15, 10, 0, 0, 0, time.UTC)
 	for i := 0; i < 20; i++ {
 		handler.admitDenial(denialKeyFor("mallory",
-			"user.create", string(rune('a'+i))), start)
+			"user.create", string(rune('a'+i))), "users", start)
 	}
 	if got := len(handler.denials); got != 20 {
 		t.Fatalf("Expected 20 tracked keys, got %d", got)
 	}
 
-	handler.admitDenial(denialKeyFor("trudy", "user.create", "late"),
+	handler.admitDenial(denialKeyFor("trudy", "user.create", "late"), "users",
 		start.Add(2*denialCoalesceWindow))
 	if got := len(handler.denials); got != 1 {
 		t.Errorf("Expected the expired entries to be evicted, %d remain", got)
@@ -430,7 +431,7 @@ func TestAdmitDenialCapsMapSize(t *testing.T) {
 		// Every key is inside the same window, so nothing expires and
 		// only the cap can bound the map.
 		handler.admitDenial(denialKeyFor("mallory", "user.create",
-			"reason-"+string(rune(i))), start.Add(time.Duration(i)*time.Microsecond))
+			"reason-"+string(rune(i))), "users", start.Add(time.Duration(i)*time.Microsecond))
 	}
 
 	if got := len(handler.denials); got > maxDenialKeys {
@@ -463,7 +464,7 @@ func TestRecordDenialWritesRepeatCount(t *testing.T) {
 	if len(events) != 1 {
 		t.Fatalf("Expected the repeats to coalesce into 1 row, got %d", len(events))
 	}
-	if string(events[0].Details) != `{"target":"/api/v1/rbac/audit"}` {
+	if string(events[0].Details) != `{"target":"audit"}` {
 		t.Errorf("Expected only the target on the first denial, got %s",
 			events[0].Details)
 	}
@@ -496,46 +497,207 @@ func TestRecordDenialWritesRepeatCount(t *testing.T) {
 	}
 }
 
-// TestRecordDenialKeysOnTarget checks that refusals aimed at different
-// objects are recorded separately, each naming its target, rather than
-// merged into one row that says only how many there were, and that a
-// target is capped at maxDenialTargetLen.
-func TestRecordDenialKeysOnTarget(t *testing.T) {
+// TestRecordDenialCoalescesAcrossTargets checks that a flood of
+// refusals from one actor against many distinct objects writes one row
+// while the window is open, and that the row closing the window lists
+// the distinct targets, capped at maxDenialTargets, with the rest
+// counted in targets_truncated, rather than one row per path.
+func TestRecordDenialCoalescesAcrossTargets(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	const reason = "Permission denied: this token's scope does not cover the access being granted"
-	long := "/api/v1/rbac/users/" + strings.Repeat("9", 2*maxDenialTargetLen)
-	for _, path := range []string{"/api/v1/rbac/users/3", "/api/v1/rbac/users/4",
-		"/api/v1/rbac/users/3", long} {
-		req := withUser(httptest.NewRequest(http.MethodDelete, path, nil), 7)
+	const flood = 50
+	deny := func(id int) {
+		req := withUser(httptest.NewRequest(http.MethodDelete,
+			fmt.Sprintf("/api/v1/rbac/users/%d", id), nil), 7)
 		handler.recordDenial(req, reason)
 	}
+	for id := 1; id <= flood; id++ {
+		deny(id)
+	}
+	// Repeating a listed target adds to the count but not to the list.
+	deny(2)
 
 	events, _, err := store.ListAuditEvents(auth.AuditFilter{Action: "user.delete"})
 	if err != nil {
 		t.Fatalf("ListAuditEvents failed: %v", err)
 	}
-	if len(events) != 3 {
-		t.Fatalf("Expected one row per target, got %d", len(events))
+	if len(events) != 1 {
+		t.Fatalf("Expected the flood to coalesce into 1 row, got %d", len(events))
 	}
-	targets := map[string]bool{}
-	for _, ev := range events {
-		var details struct {
-			Target string `json:"target"`
-		}
-		if err := json.Unmarshal(ev.Details, &details); err != nil {
-			t.Fatalf("Failed to decode details %s: %v", ev.Details, err)
-		}
-		if len(details.Target) > maxDenialTargetLen {
-			t.Errorf("Expected the target capped at %d bytes, got %d",
-				maxDenialTargetLen, len(details.Target))
-		}
-		targets[details.Target] = true
+	if string(events[0].Details) != `{"target":"users/1"}` {
+		t.Errorf("Expected the first row to name users/1, got %s", events[0].Details)
 	}
-	if !targets["/api/v1/rbac/users/3"] || !targets["/api/v1/rbac/users/4"] ||
-		!targets[long[:maxDenialTargetLen]] {
-		t.Errorf("Expected each target named once, got %v", targets)
+	if got := len(handler.denials); got != 1 {
+		t.Errorf("Expected one coalescing key for the flood, got %d", got)
+	}
+
+	ageDenials(handler)
+	deny(flood + 1)
+
+	events, _, err = store.ListAuditEvents(auth.AuditFilter{Action: "user.delete"})
+	if err != nil {
+		t.Fatalf("ListAuditEvents failed: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("Expected 2 rows after the window closed, got %d", len(events))
+	}
+	var details struct {
+		Target           string   `json:"target"`
+		RepeatCount      int      `json:"repeat_count"`
+		Targets          []string `json:"targets"`
+		TargetsTruncated int      `json:"targets_truncated"`
+	}
+	if err := json.Unmarshal(events[0].Details, &details); err != nil {
+		t.Fatalf("Failed to decode details %s: %v", events[0].Details, err)
+	}
+	// 49 distinct suppressed targets plus one repeat, plus the closing
+	// denial itself.
+	if details.RepeatCount != flood+1 {
+		t.Errorf("Expected repeat_count %d, got %d", flood+1, details.RepeatCount)
+	}
+	if details.Target != fmt.Sprintf("users/%d", flood+1) {
+		t.Errorf("Expected the closing row to name its own target, got %q",
+			details.Target)
+	}
+	if len(details.Targets) != maxDenialTargets {
+		t.Fatalf("Expected %d targets listed, got %v", maxDenialTargets,
+			details.Targets)
+	}
+	if details.Targets[0] != "users/2" {
+		t.Errorf("Expected the first suppressed target first, got %v",
+			details.Targets)
+	}
+	// Targets users/22 to users/51 arrived after the list was full.
+	if details.TargetsTruncated != flood+1-1-maxDenialTargets {
+		t.Errorf("Expected targets_truncated %d, got %d",
+			flood+1-1-maxDenialTargets, details.TargetsTruncated)
+	}
+}
+
+// ageDenials moves every tracked window back past denialCoalesceWindow,
+// keeping their order, so that the next denial closes or evicts them.
+func ageDenials(handler *RBACHandler) {
+	handler.denialMu.Lock()
+	defer handler.denialMu.Unlock()
+	for _, state := range handler.denials {
+		state.firstSeen = state.firstSeen.Add(-2 * denialCoalesceWindow)
+	}
+}
+
+// TestRecordDenialSummaryListsTargets checks that the summary written
+// for an evicted entry lists the targets its suppressed repeats named.
+func TestRecordDenialSummaryListsTargets(t *testing.T) {
+	handler, store, cleanup := createTestRBACHandler(t)
+	defer cleanup()
+
+	const reason = "Permission denied: requires manage_groups permission"
+	for _, path := range []string{"/api/v1/rbac/groups/3", "/api/v1/rbac/groups/4",
+		"/api/v1/rbac/groups/0004", "/api/v1/rbac/groups/5/"} {
+		req := withUser(httptest.NewRequest(http.MethodDelete, path, nil), 7)
+		handler.recordDenial(req, reason)
+	}
+
+	ageDenials(handler)
+	handler.recordDenial(withUser(httptest.NewRequest(http.MethodPost,
+		"/api/v1/rbac/groups", nil), 7), reason)
+
+	events, _, err := store.ListAuditEvents(auth.AuditFilter{Action: "group.delete"})
+	if err != nil {
+		t.Fatalf("ListAuditEvents failed: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("Expected the first denial and its summary, got %d rows", len(events))
+	}
+	want := `{"repeat_count":3,"targets":["groups/4","groups/5"],"targets_truncated":0,"window_closed":true}`
+	if string(events[0].Details) != want {
+		t.Errorf("Expected summary %s, got %s", want, events[0].Details)
+	}
+}
+
+// TestDenialTargetNormalization covers the targets recorded for refused
+// requests: a kind and parsed id where the route names one, the kind
+// alone where it does not, and a constant for an unrecognized route, so
+// that nothing the caller writes in the path reaches the row verbatim.
+func TestDenialTargetNormalization(t *testing.T) {
+	long := "/api/v1/rbac/users/" + strings.Repeat("9", 4096)
+	tests := []struct {
+		method, path, action, target string
+	}{
+		{http.MethodDelete, "/api/v1/rbac/users/3", "user.delete", "users/3"},
+		{http.MethodDelete, "/api/v1/rbac/users/003", "user.delete", "users/3"},
+		{http.MethodDelete, long, "user.delete", "users"},
+		{http.MethodDelete, "/api/v1/rbac/users/-1", "user.delete", "users"},
+		{http.MethodPost, "/api/v1/rbac/users", "user.create", "users"},
+		{http.MethodDelete, "/api/v1/rbac/groups/5/members/user/3",
+			"group.member.remove", "groups/5"},
+		{http.MethodPut, "/api/v1/connections/7", "connection.update", "connections/7"},
+		{http.MethodPut, "/api/v1/connections/7/cluster", "connection.cluster.update",
+			"connections/7"},
+		{http.MethodPost, "/api/v1/clusters", "cluster.create", "clusters"},
+		{http.MethodDelete, "/api/v1/clusters/9", "cluster.delete", "clusters/9"},
+		{http.MethodPost, "/api/v1/clusters/9/servers", "cluster.update", "clusters/9"},
+		{http.MethodDelete, "/api/v1/clusters/9/servers/4", "cluster.update", "clusters/9"},
+		{http.MethodPut, "/api/v1/clusters/server-abc", "cluster.update", "clusters"},
+		{http.MethodPatch, "/api/v1/cluster-groups/2", "cluster_group.update",
+			"cluster-groups/2"},
+		{http.MethodDelete, "/api/v1/notification-channels/6/recipients/1",
+			"notification_channel.update", "notification-channels/6"},
+		{http.MethodPut, "/api/v1/alert-rules/8", "alert_rule.update", "alert-rules/8"},
+		{http.MethodGet, "/api/v1/alert-rules/8", "rbac.get", unmatchedDenialTarget},
+		{http.MethodPut, "/api/v1/widgets/8", "rbac.put", unmatchedDenialTarget},
+		{http.MethodPut, "/elsewhere", "rbac.put", unmatchedDenialTarget},
+		{http.MethodGet, "/api/v1/rbac/users/" + strings.Repeat("x", 300), "rbac.get",
+			unmatchedDenialTarget},
+	}
+	for _, tt := range tests {
+		req := httptest.NewRequest(tt.method, tt.path, nil)
+		action, target := deniedRoute(req)
+		if action != tt.action || target != tt.target {
+			t.Errorf("deniedRoute(%s %.60s) = (%q, %q), want (%q, %q)", tt.method,
+				tt.path, action, target, tt.action, tt.target)
+		}
+	}
+}
+
+// TestDeniedActionBoundsMethod checks that a method outside the
+// standard set is recorded as rbac.other, and that the key's action is
+// capped however long the action given to it.
+func TestDeniedActionBoundsMethod(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/widgets", nil)
+	req.Method = strings.Repeat("X", 4096)
+	if got := deniedAction(req); got != "rbac.other" {
+		t.Errorf("Expected rbac.other for a nonstandard method, got %q", got)
+	}
+	req.Method = http.MethodOptions
+	if got := deniedAction(req); got != "rbac.options" {
+		t.Errorf("Expected rbac.options, got %q", got)
+	}
+
+	key := denialKeyOf(auth.Actor{}, strings.Repeat("a", 4096), "reason")
+	if len(key.action) != maxDenialActionLen {
+		t.Errorf("Expected the action capped at %d bytes, got %d",
+			maxDenialActionLen, len(key.action))
+	}
+}
+
+// TestRecordDenialRecordsOddMethodAsOther checks the end-to-end path for a
+// nonstandard method: the row is written under rbac.other.
+func TestRecordDenialRecordsOddMethodAsOther(t *testing.T) {
+	handler, store, cleanup := createTestRBACHandler(t)
+	defer cleanup()
+
+	req := withUser(httptest.NewRequest(http.MethodGet, "/api/v1/rbac/audit", nil), 7)
+	req.Method = "BREW"
+	handler.recordDenial(req, "Permission denied")
+
+	events, _, err := store.ListAuditEvents(auth.AuditFilter{Action: "rbac.other"})
+	if err != nil {
+		t.Fatalf("ListAuditEvents failed: %v", err)
+	}
+	if len(events) != 1 || string(events[0].Details) != `{"target":"unmatched"}` {
+		t.Fatalf("Expected one rbac.other row naming no target, got %d", len(events))
 	}
 }
 
@@ -550,7 +712,7 @@ func TestDeniedConnectionAction(t *testing.T) {
 		{http.MethodPut, "/api/v1/connections/5/cluster", "connection.cluster.update"},
 		{http.MethodGet, "/api/v1/connections/5", "rbac.get"},
 		{http.MethodPut, "/api/v1/connections/5/databases", "rbac.put"},
-		{http.MethodPut, "/api/v1/clusters/5", "rbac.put"},
+		{http.MethodPut, "/api/v1/clusters/5", "cluster.update"},
 	}
 	for _, tt := range tests {
 		req := httptest.NewRequest(tt.method, tt.path, nil)
@@ -580,7 +742,7 @@ func TestAdmitDenialInitialisesMap(t *testing.T) {
 	handler := &RBACHandler{}
 
 	if record, _, _ := handler.admitDenial(
-		denialKeyFor("mallory", "user.create", "no"), time.Now()); !record {
+		denialKeyFor("mallory", "user.create", "no"), "users", time.Now()); !record {
 		t.Error("Expected the first denial to be recorded")
 	}
 	if len(handler.denials) != 1 {
@@ -696,8 +858,8 @@ func TestRecordDenialSummariesToleratesStoreFailure(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/rbac/audit", nil)
 	handler.recordDenialSummaries(req, []denialSummary{{
-		key:        denialKeyFor("mallory", "audit.read", "Permission denied"),
-		suppressed: 3,
+		key:    denialKeyFor("mallory", "audit.read", "Permission denied"),
+		window: denialWindow{count: 3, targets: []string{"audit"}},
 	}})
 }
 

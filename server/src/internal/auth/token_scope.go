@@ -563,6 +563,25 @@ func (s *AuthStore) GetTokenConnectionScope(tokenID int64) ([]int, error) {
 	return connections, nil
 }
 
+// HasTokenMCPScope reports whether a token has any MCP scope row at
+// all. It counts the raw rows, as IsMCPItemInTokenScope does, so a row
+// whose privilege identifier has since been deleted still marks the
+// token as MCP-restricted even though GetTokenMCPScope, which joins the
+// identifiers, no longer returns it.
+func (s *AuthStore) HasTokenMCPScope(tokenID int64) (bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var count int
+	if err := s.db.QueryRow(
+		"SELECT COUNT(*) FROM token_mcp_scope WHERE token_id = ?",
+		tokenID,
+	).Scan(&count); err != nil {
+		return false, fmt.Errorf("failed to check token MCP scope: %w", err)
+	}
+	return count > 0, nil
+}
+
 // GetTokenMCPScope returns the MCP privilege identifiers in scope for a token.
 // If the scope contains the wildcard sentinel (privilege_identifier_id = 0),
 // this returns ["*"].

@@ -35,6 +35,28 @@ type ConnectionHandler struct {
 	// breaking the shared datastore. When nil the handler falls back to
 	// newConnectionVisibilityLister(h.datastore).
 	visibilityListerFn func() auth.ConnectionVisibilityLister
+
+	// denialRecorder writes a refused request to the audit log through
+	// the RBAC handler's coalescing denial recorder, so a token-scope
+	// refusal here is audited the same way as one on an RBAC route.
+	// When nil, refusals are not audited (for example, when the server
+	// runs without an auth store).
+	denialRecorder func(*http.Request, string)
+}
+
+// SetDenialRecorder installs the function used to audit refused
+// requests; the server wires it to RBACHandler.RecordDenial.
+func (h *ConnectionHandler) SetDenialRecorder(record func(*http.Request, string)) {
+	h.denialRecorder = record
+}
+
+// refuseOutOfTokenScope audits a connection token-scope refusal and
+// responds 403 with connectionOutOfTokenScope.
+func (h *ConnectionHandler) refuseOutOfTokenScope(w http.ResponseWriter, r *http.Request) {
+	if h.denialRecorder != nil {
+		h.denialRecorder(r, connectionOutOfTokenScope)
+	}
+	RespondError(w, http.StatusForbidden, connectionOutOfTokenScope)
 }
 
 // NewConnectionHandlerWithSecurity creates a new connection handler with custom security settings
@@ -427,7 +449,7 @@ func (h *ConnectionHandler) updateConnection(w http.ResponseWriter, r *http.Requ
 	// the lookup so that a refusal does not reveal whether the
 	// connection exists.
 	if !h.rbacChecker.ConnectionInTokenScope(r.Context(), id) {
-		RespondError(w, http.StatusForbidden, connectionOutOfTokenScope)
+		h.refuseOutOfTokenScope(w, r)
 		return
 	}
 
@@ -536,7 +558,7 @@ func (h *ConnectionHandler) deleteConnection(w http.ResponseWriter, r *http.Requ
 	// the lookup so that a refusal does not reveal whether the
 	// connection exists.
 	if !h.rbacChecker.ConnectionInTokenScope(r.Context(), id) {
-		RespondError(w, http.StatusForbidden, connectionOutOfTokenScope)
+		h.refuseOutOfTokenScope(w, r)
 		return
 	}
 
@@ -856,7 +878,7 @@ func (h *ConnectionHandler) handleUpdateConnectionCluster(w http.ResponseWriter,
 	// cluster gets the same visibility check below as the cluster on
 	// POST /clusters/{id}/servers.
 	if !h.rbacChecker.ConnectionInTokenScope(r.Context(), connectionID) {
-		RespondError(w, http.StatusForbidden, connectionOutOfTokenScope)
+		h.refuseOutOfTokenScope(w, r)
 		return
 	}
 

@@ -449,6 +449,42 @@ func TestUnrestrictedReachFollowsOwnership(t *testing.T) {
 		t.Error("The target user owns nothing outside the scope")
 	}
 
+	// The update and delete handlers admit a connection's owner whatever
+	// groups restrict it, so an owned connection counts towards reach
+	// even when restricted, and needs read_write in the token's scope.
+	other, err := f.store.CreateGroup("prod-dba", "")
+	if err != nil {
+		t.Fatalf("CreateGroup failed: %v", err)
+	}
+	if err := f.store.GrantConnectionPrivilege(other, 8, AccessLevelRead); err != nil {
+		t.Fatalf("GrantConnectionPrivilege failed: %v", err)
+	}
+	owned := &stubVisibilityLister{connections: []ConnectionVisibilityInfo{
+		{ID: 5, IsShared: true},
+		{ID: 8, IsShared: true, OwnerUsername: "target"},
+	}}
+	if rc.UserWithinTokenScope(ctx, f.userID, owned) {
+		t.Error("A user owning a restricted connection outside the scope should be refused")
+	}
+	if rc.NewUserWithinTokenScope(ctx, "target", owned) {
+		t.Error("A new user named after the owner of a restricted connection should be refused")
+	}
+	if !rc.NewUserWithinTokenScope(ctx, "eve", owned) {
+		t.Error("A restricted connection owned by someone else should not count")
+	}
+	readOnlyOwned := &stubVisibilityLister{connections: []ConnectionVisibilityInfo{
+		{ID: 7, IsShared: false, OwnerUsername: "target"},
+	}}
+	if rc.UserWithinTokenScope(ctx, f.userID, readOnlyOwned) {
+		t.Error("An owned connection the scope holds read-only should be refused")
+	}
+	ownedInScope := &stubVisibilityLister{connections: []ConnectionVisibilityInfo{
+		{ID: 5, IsShared: false, OwnerUsername: "target"},
+	}}
+	if !rc.UserWithinTokenScope(ctx, f.userID, ownedInScope) {
+		t.Error("An owned connection the scope holds at read_write should be allowed")
+	}
+
 	broken := &stubVisibilityLister{connections: []ConnectionVisibilityInfo{
 		{ID: 5, IsShared: true},
 	}}
@@ -493,6 +529,59 @@ func TestCanGrantMCPInTokenScope(t *testing.T) {
 	f.store.Close()
 	if f.checker.CanGrantMCPInTokenScope(ctx, "list_things") {
 		t.Error("An unreadable MCP scope should fail closed")
+	}
+}
+
+// TestActorMCPScopeFailsClosedOnOrphanedRows checks that a token whose
+// only MCP scope row names a since-deleted identifier is treated as
+// restricted to nothing, as IsMCPItemInTokenScope treats it, rather than
+// as unrestricted because GetTokenMCPScope's join drops the row.
+func TestActorMCPScopeFailsClosedOnOrphanedRows(t *testing.T) {
+	f, cleanup := newGrantScopeFixture(t)
+	defer cleanup()
+	ctx := f.tokenCtx()
+	f.registerMCP(t, "ghost_tool", false)
+	f.registerMCP(t, "run_things", false)
+	f.setMCPScope(t, "ghost_tool")
+	mustExec(t, f.store, "DELETE FROM mcp_privilege_identifiers WHERE identifier = 'ghost_tool'")
+
+	names, err := f.store.GetTokenMCPScope(f.tokenID)
+	if err != nil || len(names) != 0 {
+		t.Fatalf("Expected the orphaned row to be dropped by the join, got %v, %v", names, err)
+	}
+	if inScope, err := f.store.IsMCPItemInTokenScope(f.tokenID, "run_things"); err != nil || inScope {
+		t.Fatalf("Expected the runtime check to refuse every item, got %v, %v", inScope, err)
+	}
+
+	if f.checker.CanGrantMCPInTokenScope(ctx, "run_things") {
+		t.Error("An orphaned MCP scope should not let the token grant an item")
+	}
+	if f.checker.CanGrantMCPInTokenScope(ctx, mcpScopeWildcard) {
+		t.Error("An orphaned MCP scope should not let the token grant the wildcard")
+	}
+	if f.checker.TokenScopeUnrestricted(ctx) {
+		t.Error("A token with an orphaned MCP scope is not unrestricted")
+	}
+}
+
+// TestHasTokenMCPScope covers the raw MCP scope row check and its
+// failure.
+func TestHasTokenMCPScope(t *testing.T) {
+	f, cleanup := newGrantScopeFixture(t)
+	defer cleanup()
+
+	if has, err := f.store.HasTokenMCPScope(f.tokenID); err != nil || has {
+		t.Errorf("Expected no MCP scope, got %v, %v", has, err)
+	}
+	f.registerMCP(t, "run_things", false)
+	f.setMCPScope(t, "run_things")
+	if has, err := f.store.HasTokenMCPScope(f.tokenID); err != nil || !has {
+		t.Errorf("Expected an MCP scope, got %v, %v", has, err)
+	}
+
+	dropScopeTable(t, f.store, "token_mcp_scope")
+	if _, err := f.store.HasTokenMCPScope(f.tokenID); err == nil {
+		t.Error("Expected an error once the MCP scope table is gone")
 	}
 }
 

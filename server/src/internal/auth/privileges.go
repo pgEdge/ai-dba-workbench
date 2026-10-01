@@ -763,12 +763,16 @@ func (s *AuthStore) ListGroupMCPPrivileges(groupID int64) ([]*MCPPrivilege, erro
 	}
 
 	// Check for wildcard (All MCP Privileges) grant
+	// The error is returned rather than read as "no wildcard": callers
+	// use this list to bound grants by a token's scope (issue #471), and
+	// an unread wildcard would understate the group's reach.
 	var wildcardCount int
-	//nolint:errcheck // Best effort; zero on error is acceptable
-	s.db.QueryRow(
+	if err := s.db.QueryRow(
 		"SELECT COUNT(*) FROM group_mcp_privileges WHERE group_id = ? AND privilege_identifier_id = ?",
 		groupID, MCPPrivilegeIDWildcard,
-	).Scan(&wildcardCount)
+	).Scan(&wildcardCount); err != nil {
+		return nil, fmt.Errorf("failed to check group MCP wildcard privilege: %w", err)
+	}
 	if wildcardCount > 0 {
 		privileges = append([]*MCPPrivilege{{Identifier: "*"}}, privileges...)
 	}
@@ -938,13 +942,17 @@ func (s *AuthStore) GetUserMCPPrivileges(userID int64) (map[string]bool, error) 
 		}
 		rows.Close()
 
-		// Check for wildcard MCP privilege (privilege_identifier_id = 0)
+		// Check for wildcard MCP privilege (privilege_identifier_id = 0).
+		// A failed check is an error, not "no wildcard", so that a
+		// caller bounding grants by this map cannot understate reach.
 		var wildcardCount int
-		err = s.db.QueryRow(
+		if err := s.db.QueryRow(
 			"SELECT COUNT(*) FROM group_mcp_privileges WHERE group_id = ? AND privilege_identifier_id = ?",
 			groupID, MCPPrivilegeIDWildcard,
-		).Scan(&wildcardCount)
-		if err == nil && wildcardCount > 0 {
+		).Scan(&wildcardCount); err != nil {
+			return nil, fmt.Errorf("failed to check user MCP wildcard privilege: %w", err)
+		}
+		if wildcardCount > 0 {
 			privileges["*"] = true
 		}
 	}
@@ -1335,8 +1343,12 @@ func (s *AuthStore) GetGroupEffectiveMCPPrivileges(groupID int64) ([]string, err
         JOIN ancestor_groups ag ON gmp.group_id = ag.group_id
         WHERE gmp.privilege_identifier_id = ?
     `
-	//nolint:errcheck // Best effort; zero on error is acceptable
-	s.db.QueryRow(wildcardQuery, groupID, MCPPrivilegeIDWildcard).Scan(&wildcardCount)
+	// The error is returned rather than read as "no wildcard", because
+	// GroupWithinTokenScope bounds grants by this list (issue #471) and
+	// an unread wildcard would understate the group's reach.
+	if err := s.db.QueryRow(wildcardQuery, groupID, MCPPrivilegeIDWildcard).Scan(&wildcardCount); err != nil {
+		return nil, fmt.Errorf("failed to check group effective MCP wildcard privilege: %w", err)
+	}
 	if wildcardCount > 0 {
 		privileges = append([]string{"*"}, privileges...)
 	}

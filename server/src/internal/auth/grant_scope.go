@@ -89,7 +89,22 @@ func (rc *RBACChecker) actorMCPScope(ctx context.Context) (
 		return nil, false, false
 	}
 	set, restricted = namedScope(names, mcpScopeWildcard)
-	return set, restricted, true
+	if restricted || len(names) > 0 {
+		return set, restricted, true
+	}
+	// GetTokenMCPScope joins the identifiers, so a scope whose every row
+	// names a since-deleted identifier comes back empty and would read as
+	// unrestricted. IsMCPItemInTokenScope counts the raw rows and treats
+	// such a token as restricted to nothing, so the raw count decides
+	// here too, and the actor fails closed with an empty set.
+	hasRows, err := rc.authStore.HasTokenMCPScope(tokenID)
+	if err != nil {
+		return nil, false, false
+	}
+	if hasRows {
+		return map[string]bool{}, true, true
+	}
+	return nil, false, true
 }
 
 // actorAdminScope reads the acting token's admin scope, on the same
@@ -290,18 +305,20 @@ func (rc *RBACChecker) reachConnectionsInScope(ctx context.Context,
 }
 
 // unrestrictedReachInTokenScope reports whether every connection that
-// username may open without a group grant lies inside the acting
-// token's connection scope at read_write.
+// username may open or change without a group grant lies inside the
+// acting token's connection scope at read_write.
 //
 // CanAccessConnection admits any user to a connection no group holds a
 // grant on, at read_write, when it is shared, and its owner when it is
 // not; with no sharing lookup wired it admits any user to every such
-// connection. A user's reach therefore takes in those connections, and
-// a new user's reach is nothing else. Ownership is matched by username,
-// as CanAccessConnection matches it, so a name that already owns an
-// unshared connection reaches it as soon as an account of that name
-// exists. With no lister the connections cannot be enumerated, so the
-// check fails closed.
+// connection. The connection update and delete handlers go further and
+// admit the owner whatever groups restrict the connection, so every
+// connection a user owns is part of their reach, restricted or not, and
+// is checked before the restriction is looked at. Ownership is matched
+// by username, as those handlers match it, so a name that already owns
+// a connection reaches it as soon as an account of that name exists.
+// With no lister the connections cannot be enumerated, so the check
+// fails closed.
 func (rc *RBACChecker) unrestrictedReachInTokenScope(ctx context.Context,
 	username string, lister ConnectionVisibilityLister) bool {
 
@@ -315,8 +332,13 @@ func (rc *RBACChecker) unrestrictedReachInTokenScope(ctx context.Context,
 	sharingKnown := rc.connSharingLookupFn != nil
 	for i := range conns {
 		info := &conns[i]
-		owned := username != "" && info.OwnerUsername == username
-		if sharingKnown && !info.IsShared && !owned {
+		if username != "" && info.OwnerUsername == username {
+			if !rc.CanGrantConnectionInTokenScope(ctx, info.ID, AccessLevelReadWrite) {
+				return false
+			}
+			continue
+		}
+		if sharingKnown && !info.IsShared {
 			continue
 		}
 		restricted, err := rc.authStore.IsConnectionAssignedToAnyGroup(info.ID)

@@ -151,6 +151,37 @@ func (d *Datastore) GetClusterGroup(ctx context.Context, id int) (*ClusterGroup,
 	return &g, nil
 }
 
+// GetOwnedClusterGroupConnectionIDs returns the connections that belong
+// to any cluster in a cluster group owned by username, which the token
+// scope grant checks count as part of that user's reach. Membership is
+// worked out as in getConnectionIDsForGroup.
+func (d *Datastore) GetOwnedClusterGroupConnectionIDs(ctx context.Context,
+	username string) ([]int, error) {
+
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	query := `
+        SELECT DISTINCT c.id
+        FROM cluster_groups g
+        JOIN clusters cl ON cl.group_id = g.id
+        JOIN connections c ON c.cluster_id = cl.id
+        WHERE g.owner_username = $1
+        ORDER BY c.id
+    `
+	rows, err := d.pool.Query(ctx, query, username)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query owned cluster group connections: %w", err)
+	}
+	ids, err := scanAll(rows, func(r pgx.Rows, id *int) error {
+		return r.Scan(id)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to read owned cluster group connections: %w", err)
+	}
+	return ids, nil
+}
+
 // CreateClusterGroup creates a new cluster group
 func (d *Datastore) CreateClusterGroup(ctx context.Context, name string, description *string) (*ClusterGroup, error) {
 	return d.CreateClusterGroupWithOwner(ctx, name, description, nil, true)

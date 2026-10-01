@@ -1200,6 +1200,21 @@ func TestCanAccessConnection_NoLookupFuncAllowsAccess(t *testing.T) {
 type stubVisibilityLister struct {
 	connections []ConnectionVisibilityInfo
 	err         error
+
+	// ownedGroups maps a username to the member connections of the
+	// cluster groups that user owns; ownedErr fails that lookup.
+	ownedGroups map[string][]int
+	ownedErr    error
+}
+
+// GetOwnedClusterGroupConnectionIDs implements OwnedClusterGroupLister.
+func (s *stubVisibilityLister) GetOwnedClusterGroupConnectionIDs(_ context.Context,
+	username string) ([]int, error) {
+
+	if s.ownedErr != nil {
+		return nil, s.ownedErr
+	}
+	return s.ownedGroups[username], nil
 }
 
 func (s *stubVisibilityLister) GetAllConnections(_ context.Context) ([]ConnectionVisibilityInfo, error) {

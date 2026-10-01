@@ -2011,7 +2011,17 @@ func normalizeSchemaSQL(text string) string {
 // Treat a failed verification as evidence of tampering, never a
 // successful one as proof of its absence.
 func (s *AuthStore) verifyAuditTail() error {
-	present, err := s.sequenceTablePresent()
+	if err := verifyAuditSequence(s.db); err != nil {
+		return err
+	}
+
+	return s.verifyAuditTailAnchor(s.db)
+}
+
+// verifyAuditSequence is the comparison of MAX(id) with sqlite_sequence
+// that verifyAuditTail starts with, on a database or a transaction.
+func verifyAuditSequence(q auditRowQuerier) error {
+	present, err := auditSequenceTablePresent(q)
 	if err != nil {
 		return err
 	}
@@ -2023,17 +2033,14 @@ func (s *AuthStore) verifyAuditTail() error {
 	}
 
 	var newest, seq sql.NullInt64
-	if err := s.db.QueryRow(`
+	if err := q.QueryRow(`
         SELECT (SELECT MAX(id) FROM audit_events),
                (SELECT seq FROM sqlite_sequence WHERE name = 'audit_events')`).
 		Scan(&newest, &seq); err != nil {
 		return fmt.Errorf("failed to read newest audit row and sequence: %w", err)
 	}
-	if err := checkAuditTail(newest.Int64, seq); err != nil {
-		return err
-	}
 
-	return s.verifyAuditTailAnchor()
+	return checkAuditTail(newest.Int64, seq)
 }
 
 // checkAuditTail is the comparison behind verifyAuditTail, separated so
@@ -2069,15 +2076,10 @@ func checkAuditTail(newest int64, seq sql.NullInt64) error {
 	return nil
 }
 
-// sequenceTablePresent reports whether sqlite_sequence exists at all.
-// SQLite creates it with the first AUTOINCREMENT table, which for this
-// store is the users table in the fresh-install schema.
-func (s *AuthStore) sequenceTablePresent() (bool, error) {
-	return auditSequenceTablePresent(s.db)
-}
-
-// auditSequenceTablePresent is sequenceTablePresent on a database or a
-// transaction.
+// auditSequenceTablePresent reports whether sqlite_sequence exists at
+// all, on a database or a transaction. SQLite creates it with the first
+// AUTOINCREMENT table, which for this store is the users table in the
+// fresh-install schema.
 func auditSequenceTablePresent(q auditRowQuerier) (bool, error) {
 	var count int
 	if err := q.QueryRow(

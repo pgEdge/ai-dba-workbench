@@ -539,16 +539,27 @@ Verification requires the tail record to name the newest event and to
 verify under the key, and reports status `2` when it names an event
 that is no longer the newest, when it does not verify, when it names an
 event but the log is empty, or when it is missing and the newest event
-is version 3. Rewriting the record to name the new newest event takes
-the server secret. Once the record names an event that has gone, the
-server leaves it as it is rather than moving it on, so the deletion is
-still reported however many events are written after it; only the
-re-chain, described below, gives the log a new tail record over one
-that does not verify. A secret changed since the record was written
-leaves both the record and the event it names failing under the new
-key, and the server treats that shape as a rotation, moving the record
-on under the new key, rather than as tampering, which the failing
-events already show.
+is version 3. Anyone able to write `auth.db` can point the record at
+another event, but without the server secret the record then fails to
+verify. The server moves the record on only when it names the newest
+event and verifies under the secret in use; once it names an event
+that has gone, or does not verify, the server leaves it as it is, so
+the deletion is still reported however many events are written after
+it, and only the re-chain, described below, gives the log a new tail
+record over one that does not qualify.
+
+A changed server secret is no exception: the record stays where the
+old secret left it, naming the last event written under that secret,
+whilst the server goes on writing events under the new one. Until the
+log is re-anchored, the record therefore does not protect the events
+written since the change. Verification accepts such a record only in a
+log with the shape a changed secret leaves, described above under
+status `3`, and only when it names the last event that fails under the
+current secret; a record naming any other event is reported with
+status `2`. The record written under the old secret cannot be checked
+without that secret, so an unattended re-anchor requires it to verify
+under `-previous-secret-file` as well, as described under
+[Recovering a Log That No Longer Verifies](#recovering-a-log-that-no-longer-verifies).
 
 A database written by a release that predates the tail record has no
 such record and version 2 events. The server writes the record when it
@@ -777,8 +788,11 @@ all of the following hold:
   and every event the re-anchor would accept as history
   verifies under that secret, links to the event before it, and
   accounts for the start of the log exactly as verification requires
-  of a log written under one secret. A forged event verifies under no
-  secret you hold, so the proof fails and the run stops.
+  of a log written under one secret, and the tail record the previous
+  secret left behind verifies under it and names the last of those
+  events, so that none written under it has been deleted from the end.
+  A forged event or tail record verifies under no secret you hold, so
+  the proof fails and the run stops.
 - At least one event after the history verifies under the current
   secret, which shows that the current secret is the one the server
   runs with; a re-anchor signed under the wrong secret would stop every

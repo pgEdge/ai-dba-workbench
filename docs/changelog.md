@@ -2478,8 +2478,14 @@ project adheres to
   version 3 event, the hash version new events now carry. An existing
   log is given a tail record when the store opens, provided nothing is
   missing from its end and its newest event verifies under the secret
-  in use; a record left naming a deleted event stays as
-  it is until an operator runs `-rechain-audit-log`. Running an earlier
+  in use. The server moves the record on only when it names the newest
+  event and verifies under the secret in use, so a record left naming a
+  deleted event, or pointed at a planted event without the secret,
+  stays as it is until an operator runs `-rechain-audit-log`. After a
+  change of server secret the record stays with the last event written
+  under the old one; verification accepts it there only in a log with
+  the shape of a changed secret, and `-confirm-rechain` requires it to
+  verify under `-previous-secret-file`. Running an earlier
   release against the same `auth.db` afterwards is reported as a
   version downgrade. (#544)
 

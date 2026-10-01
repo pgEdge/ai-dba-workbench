@@ -44,19 +44,28 @@ import (
 // sqlite_sequence agrees that nothing has been lost from its end.
 //
 // recordAudit only ever moves the anchor on from a state it can vouch
-// for: an anchor that verifies and names the row the new event links
-// to. An anchor that is missing, names some other row or does not
-// verify is left exactly as it is, so the evidence of a deletion
-// survives every event written after it rather than being overwritten
-// by the next one. The two exceptions are the first event of a log
-// that has never held one, which starts the anchor, and a changed
-// server secret: an anchor written under the old secret names a row
-// that was written under it too, so when neither verifies under the
-// key in use, the anchor is moved on under the new one. Anyone can
-// produce that shape by editing the newest row, but a row that does
-// not verify, other than at the start of the log, is itself reported
-// as tampering, so nothing is gained. Only the re-chain, an operator's
-// deliberate act, writes an anchor over one that does not qualify.
+// for: an anchor that verifies under the key in use and names the row
+// the new event links to. An anchor that is missing, names some other
+// row or does not verify is left exactly as it is, so the evidence of a
+// deletion survives every event written after it rather than being
+// overwritten by the next one. The one exception is the first event of
+// a log that has never held one, which starts the anchor. Only the
+// re-chain, an operator's deliberate act, writes an anchor over one
+// that does not qualify.
+//
+// A changed server secret is no exception. The anchor written under the
+// old secret stays where it was, naming the last row written under it,
+// and the rows written under the new secret go on without moving it.
+// Moving it on whenever neither it nor the row it names verified would
+// let anyone able to write auth.db have the server re-sign it over a
+// truncated tail: put back a row that copies the hash of the new newest
+// row and fails, point the anchor at it, wait for the server's next
+// event, which links past it, and delete it. Verification instead
+// accepts a stranded anchor in a log with the shape a changed secret
+// leaves only where it names the last row that fails
+// (verifyAuditTailAfterKeyChange), which is reported as a key mismatch,
+// and the re-anchor that follows checks it under the previous secret
+// when given one, which is what an unattended re-anchor needs.
 //
 // What it does not buy is set out at verifyAuditTail.
 
@@ -210,28 +219,14 @@ func (s *AuthStore) newestAuditRowVerifies(q auditRowQuerier,
 func (s *AuthStore) mayAdvanceAuditTail(tx *sql.Tx,
 	before auditTailState) (bool, error) {
 
-	switch {
-	case !before.hasAnchor && !before.hasNewest:
+	if !before.hasAnchor && !before.hasNewest {
 		// The first event of a log. A log that once held events and
 		// has been emptied still has its sqlite_sequence row, and is
 		// not started afresh.
 		return auditSequenceUnused(tx)
-	case !before.namesNewest():
-		return false, nil
-	case s.auditTailVerifies(before):
-		return true, nil
 	}
 
-	// The anchor names the newest row but does not verify. That is
-	// what a changed server secret leaves if the row does not verify
-	// either, since the two were written together under one key; if
-	// the row does verify, the anchor was altered.
-	verifies, err := s.newestAuditRowVerifies(tx, before)
-	if err != nil {
-		return false, err
-	}
-
-	return !verifies, nil
+	return before.namesNewest() && s.auditTailVerifies(before), nil
 }
 
 // auditSequenceUnused reports whether SQLite has never issued an id to
@@ -337,56 +332,139 @@ func (s *AuthStore) auditTailSeedable(tx *sql.Tx,
 }
 
 // verifyAuditTailAnchor checks that the anchor names the newest row and
-// verifies under the key, or that the log predates the anchor.
-//
-// An anchor that names the newest row but does not verify is accepted
-// when that row does not verify either, because the two were written
-// together under one key and a changed server secret leaves both
-// failing. VerifyAuditChain reaches this only once every row has
-// verified, so there it is always refused; the re-chain and the purge
-// ask it of a log that may have been written under another secret,
-// where the walk has already reported the rows that fail.
-func (s *AuthStore) verifyAuditTailAnchor() error {
-	st, err := readAuditTailState(s.db)
+// verifies under the key, or that the log predates the anchor. It is
+// reached only once every row has verified; a log whose oldest rows
+// fail, as a changed server secret leaves them, has its anchor checked
+// by verifyAuditTailAfterKeyChange instead.
+func (s *AuthStore) verifyAuditTailAnchor(q auditRowQuerier) error {
+	st, err := readAuditTailState(q)
 	if err != nil {
+		return err
+	}
+	if err := auditTailAnchorPresent(st); err != nil {
 		return err
 	}
 
 	switch {
 	case !st.hasAnchor:
-		if st.hasNewest && st.newestVersion >= auditTailHashVersion {
-			return fmt.Errorf("%w: audit chain tail anchor missing: the "+
-				"newest event, %d, was written by a build that records "+
-				"the newest event in audit_tail, but audit_tail is empty; "+
-				"it has been deleted, and events may have been deleted "+
-				"from the end of the log with it",
-				ErrAuditChainBroken, st.newestID)
-		}
 		return nil
-	case !st.hasNewest:
-		return fmt.Errorf("%w: audit chain tail missing: the log is empty, "+
-			"but the tail anchor records event %d as the newest; every "+
-			"event has been deleted", ErrAuditChainBroken, st.anchorID)
 	case !st.namesNewest():
 		return fmt.Errorf("%w: audit chain tail missing: the tail anchor "+
 			"records event %d as the newest, but the newest event is now "+
 			"%d; events have been deleted from the end of the log, or "+
 			"written to it by something other than this server",
 			ErrAuditChainBroken, st.anchorID, st.newestID)
-	case s.auditTailVerifies(st):
-		return nil
-	}
-
-	verifies, err := s.newestAuditRowVerifies(s.db, st)
-	if err != nil {
-		return err
-	}
-	if verifies {
+	case !s.auditTailVerifies(st):
 		return fmt.Errorf("%w: audit chain tail anchor altered: it names "+
 			"the newest event, %d, but does not verify under the key in "+
-			"use, although that event does", ErrAuditChainBroken,
-			st.newestID)
+			"use", ErrAuditChainBroken, st.newestID)
 	}
 
 	return nil
+}
+
+// auditTailAnchorPresent refuses the two states of the anchor that are
+// wrong whatever key the log was written under: none behind a newest
+// row that a build keeping the anchor wrote, and one naming an event in
+// a log that is empty.
+func auditTailAnchorPresent(st auditTailState) error {
+	switch {
+	case !st.hasAnchor && st.hasNewest &&
+		st.newestVersion >= auditTailHashVersion:
+		return fmt.Errorf("%w: audit chain tail anchor missing: the "+
+			"newest event, %d, was written by a build that records "+
+			"the newest event in audit_tail, but audit_tail is empty; "+
+			"it has been deleted, and events may have been deleted "+
+			"from the end of the log with it",
+			ErrAuditChainBroken, st.newestID)
+	case st.hasAnchor && !st.hasNewest:
+		return fmt.Errorf("%w: audit chain tail missing: the log is empty, "+
+			"but the tail anchor records event %d as the newest; every "+
+			"event has been deleted", ErrAuditChainBroken, st.anchorID)
+	}
+
+	return nil
+}
+
+// verifyAuditTailAfterKeyChange is the tail check for a log with the
+// shape a changed server secret leaves, whose oldest rows, through
+// lastFailing, fail under the key in use and whose later rows verify.
+// The anchor written under the old secret is never moved on under the
+// new one, so it is accepted where it names lastFailing, by id and
+// hash, without verifying under the key in use; it can be checked only
+// under the previous secret, which proveAuditReanchorTail does. An
+// anchor that verifies and names the newest row is accepted as well, as
+// seedAuditTail writes it over a log a release before the anchor went
+// on writing under the new secret. Anything else is a deletion from the
+// end of the log, which a rotation does not explain.
+func (s *AuthStore) verifyAuditTailAfterKeyChange(q auditRowQuerier,
+	lastFailing AuditEvent) error {
+
+	if err := verifyAuditSequence(q); err != nil {
+		return err
+	}
+	st, err := readAuditTailState(q)
+	if err != nil {
+		return err
+	}
+	if err := auditTailAnchorPresent(st); err != nil {
+		return err
+	}
+
+	switch {
+	case !st.hasAnchor:
+		return nil
+	case st.anchorID == lastFailing.ID && st.anchorHash == lastFailing.Hash &&
+		!s.auditTailVerifies(st):
+		return nil
+	case st.namesNewest() && s.auditTailVerifies(st):
+		return nil
+	}
+
+	return fmt.Errorf("%w: audit chain tail missing: the tail anchor "+
+		"records event %d, which is neither the newest event, %d, under "+
+		"the key in use nor the last event that fails under it, %d; "+
+		"events have been deleted from the end of the log, or the anchor "+
+		"altered", ErrAuditChainBroken, st.anchorID, st.newestID,
+		lastFailing.ID)
+}
+
+// errAuditTailUnproven wraps each reason proveAuditReanchorTail gives.
+var errAuditTailUnproven = errors.New("the tail anchor is not what the " +
+	"previous secret wrote")
+
+// proveAuditReanchorTail checks, under previousKey, an anchor that does
+// not verify under the key in use: it must verify under previousKey and
+// name the last row the re-anchor would accept as history, through,
+// whose hash is throughHash. That is where the previous secret left it,
+// since nothing moves it on under another. An anchor that is missing or
+// verifies under the key in use needs no proof. The returned error is
+// the reason the proof fails, or nil when it holds; a failure to read
+// the anchor is returned as the second value instead.
+func (s *AuthStore) proveAuditReanchorTail(q auditRowQuerier,
+	previousKey []byte, through int64, throughHash string) (proof error,
+	err error) {
+
+	st, err := readAuditTailState(q)
+	if err != nil {
+		return nil, err
+	}
+	if !st.hasAnchor || s.auditTailVerifies(st) {
+		return nil, nil
+	}
+
+	want, macErr := auditTailMAC(previousKey, st.anchorID, st.anchorHash)
+	if macErr != nil ||
+		!hmac.Equal([]byte(want), []byte(st.anchorMAC)) {
+		return fmt.Errorf("%w: it names event %d, but verifies under "+
+			"neither secret", errAuditTailUnproven, st.anchorID), nil
+	}
+	if st.anchorID != through || st.anchorHash != throughHash {
+		return fmt.Errorf("%w: it names event %d, but the last event "+
+			"written under that secret is now %d; events written under it "+
+			"have been deleted from the end of the log",
+			errAuditTailUnproven, st.anchorID, through), nil
+	}
+
+	return nil, nil
 }

@@ -53,9 +53,10 @@ admin permission. A token may change an override, a probe configuration or a
 cluster membership on a single server only when that connection is in its scope
 with `read_write` access; a change that applies to a cluster, a group or the
 whole estate, that alters an alert rule, a global probe configuration or a
-notification channel, that creates a cluster or a cluster group, or that alters
-a cluster's definition or relationships, needs a connection scope that covers
-every connection at `read_write`.
+notification channel, that creates a cluster, or that alters a cluster's
+definition or relationships, needs a connection scope that covers every
+connection at `read_write`. A cluster group can be created only from a browser
+session, so the server refuses an API token that tries, whatever its scope.
 
 A `read` entry in the connection scope means read-only access to the monitored
 server itself, so it still lets a token make changes that only record Workbench
@@ -68,31 +69,42 @@ Alert acknowledgement and analysis need only `read` access for a user too;
 blackout changes also need the `manage_blackouts` admin permission, for a user
 and a token alike.
 
-Administrative grants are bounded by the connection scope as well, so that a
-token can never give a user, a group or another token access to a connection
-its own scope does not cover. A token whose connection scope does not cover
-every connection at `read_write` is refused with `403 Forbidden` when it tries
-to:
+Administrative grants and account changes are bounded by the whole token
+scope, so that a token can never give a user, a group or another token access
+beyond its own connection, MCP or admin scope, and can never take over an
+account that reaches further than the token does. A token restricted in any of
+the three scope types is refused with `403 Forbidden` when it tries to:
 
 - grant a group access to a connection outside its scope, to every
   connection, or at `read_write` where its own entry is `read`;
+- grant a group an MCP privilege outside its MCP scope, or the `*` wildcard
+  when its MCP scope names specific items;
 - revoke a group's access to a connection outside its scope, or delete a group
   that holds a grant on one, because a connection left with no group grant
   becomes open to every user;
 - grant a group any admin permission, since admin permissions act across the
   whole estate;
-- add a user or a group to a group whose access, including anything inherited
-  from its parent groups, reaches beyond the token's scope or includes an
-  admin permission;
-- create a superuser, or make an existing user one;
-- set the password of, or re-enable, a user whose access reaches beyond the
-  token's scope, since either hands the token's holder that account;
+- add a user or a group to a group whose connections, MCP privileges or admin
+  permissions, including anything inherited from its parent groups, reach
+  beyond the token's scope;
+- create a user who would reach beyond the token's scope, which includes
+  creating any superuser and, for a token whose connection scope is
+  restricted, any user at all whilst a shared connection that no group
+  restricts lies outside that scope, since every user can reach such a
+  connection;
+- make an existing user a superuser;
+- set the password of, re-enable or delete a user whose access reaches beyond
+  the token's scope; the first two hand the token's holder that account, and
+  deleting one frees the username, and with it the unshared connections it
+  owns, for whoever recreates it;
 - create a token for an owner whose access reaches beyond the token's scope;
 - set or clear another token's scope so that the other token ends up reaching
-  beyond the acting token's scope.
+  beyond the acting token's scope in any of the three scope types.
 
-Sessions, tokens with no connection scope and tokens holding the
-`All Connections` entry at `read_write` are not affected by these bounds.
+A user's access, for these checks, counts the user's group grants, every
+public MCP item, every shared connection that no group restricts, and every
+unshared connection that the user's name owns. Sessions, and tokens with no
+restriction in any of the three scope types, are not affected by these bounds.
 
 One MCP tool still reaches beyond a token's connection scope, so a token that
 must stay within its connections should not be granted it. The

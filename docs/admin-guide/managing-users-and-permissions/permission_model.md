@@ -152,6 +152,13 @@ the owner holds `read_write` access through a group.
     token; a superuser holds every privilege, so the intersection is the
     token scope itself.
 
+A token scope also bounds what the token can hand out. A token restricted in
+any of its three scope types cannot grant a group, create or take over a user,
+mint a token for another owner, or set another token's scope in a way that
+reaches beyond its own connection, MCP or admin scope; the server refuses each
+such request with `403 Forbidden` and records the refusal in the RBAC audit
+log. [Token Management](tokens.md) lists every request the bound covers.
+
 Administrators [manage token scopes](tokens.md) with the `Administration`
 console or at the command line. The following flags control token scopes:
 

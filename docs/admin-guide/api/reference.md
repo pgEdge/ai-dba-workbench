@@ -301,12 +301,13 @@ end in the future is clamped to the present moment.
 | POST | `/api/v1/rbac/groups/{id}/members` | Add a group member. |
 | DELETE | `/api/v1/rbac/groups/{id}/members/{type}/{memberId}` | Remove a group member. |
 | GET | `/api/v1/rbac/groups/{id}/effective-privileges` | Get group effective privileges. |
-| GET | `/api/v1/rbac/groups/{id}/privileges/mcp` | Get group MCP tool privileges. |
-| PUT | `/api/v1/rbac/groups/{id}/privileges/mcp` | Set group MCP tool privileges. |
-| GET | `/api/v1/rbac/groups/{id}/privileges/connections` | Get group connection privileges. |
-| PUT | `/api/v1/rbac/groups/{id}/privileges/connections` | Set group connection privileges. |
-| GET | `/api/v1/rbac/groups/{id}/permissions` | Get group admin permissions. |
-| PUT | `/api/v1/rbac/groups/{id}/permissions` | Set group admin permissions. |
+| POST | `/api/v1/rbac/groups/{id}/privileges/mcp` | Grant a group an MCP privilege. |
+| DELETE | `/api/v1/rbac/groups/{id}/privileges/mcp?name={privilege}` | Revoke an MCP privilege from a group. |
+| POST | `/api/v1/rbac/groups/{id}/privileges/connections` | Grant a group connection access. |
+| DELETE | `/api/v1/rbac/groups/{id}/privileges/connections/{connection_id}` | Revoke a group's connection access. |
+| GET | `/api/v1/rbac/groups/{id}/permissions` | Get group admin permissions (superuser only). |
+| POST | `/api/v1/rbac/groups/{id}/permissions` | Grant a group an admin permission (superuser only). |
+| DELETE | `/api/v1/rbac/groups/{id}/permissions/{permission}` | Revoke an admin permission from a group (superuser only). |
 | GET | `/api/v1/rbac/tokens` | List all API tokens. |
 | POST | `/api/v1/rbac/tokens` | Create an API token. |
 | DELETE | `/api/v1/rbac/tokens/{id}` | Delete an API token. |

@@ -8481,7 +8481,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_groups permission, or the API token's connection scope does not cover the access the group confers",
+            "description": "Requires manage_groups permission, or the API token's connection, MCP or admin scope does not cover the access the group confers",
             "content": {
               "application/json": {
                 "schema": {
@@ -8618,7 +8618,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_permissions permission",
+            "description": "Requires superuser privileges, and an API token whose admin scope is unrestricted",
             "content": {
               "application/json": {
                 "schema": {
@@ -8634,10 +8634,10 @@
           }
         ]
       },
-      "put": {
-        "summary": "Set group admin permissions",
-        "description": "Sets the admin permissions for a group",
-        "operationId": "setGroupPermissions",
+      "post": {
+        "summary": "Grant a group an admin permission",
+        "description": "Grants a group one admin permission, or the wildcard '*' for every permission",
+        "operationId": "grantGroupPermission",
         "tags": [
           "RBAC Groups"
         ],
@@ -8653,22 +8653,31 @@
           }
         ],
         "requestBody": {
-          "description": "Permissions to set",
+          "description": "Admin permission to grant",
           "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "type": "object"
+                "type": "object",
+                "properties": {
+                  "permission": {
+                    "type": "string",
+                    "description": "Admin permission name, or '*'"
+                  }
+                },
+                "required": [
+                  "permission"
+                ]
               }
             }
           }
         },
         "responses": {
-          "200": {
-            "description": "Permissions updated"
+          "204": {
+            "description": "Permission granted"
           },
           "400": {
-            "description": "Invalid request",
+            "description": "Permission is required",
             "content": {
               "application/json": {
                 "schema": {
@@ -8688,7 +8697,67 @@
             }
           },
           "403": {
-            "description": "Requires manage_permissions permission, or the API token's connection scope does not cover every connection",
+            "description": "Requires superuser privileges, and an API token whose admin scope is unrestricted and whose connection scope covers every connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/rbac/groups/{id}/permissions/{permission}": {
+      "delete": {
+        "summary": "Revoke an admin permission from a group",
+        "description": "Revokes one admin permission from a group",
+        "operationId": "revokeGroupPermission",
+        "tags": [
+          "RBAC Groups"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Group ID",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "permission",
+            "in": "path",
+            "description": "Admin permission name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Permission revoked"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Requires superuser privileges, and an API token whose admin scope is unrestricted",
             "content": {
               "application/json": {
                 "schema": {
@@ -8706,66 +8775,10 @@
       }
     },
     "/rbac/groups/{id}/privileges/connections": {
-      "get": {
-        "summary": "Get group connection privileges",
-        "description": "Returns the connection-level privileges assigned to a group",
-        "operationId": "getGroupConnectionPrivileges",
-        "tags": [
-          "RBAC Groups"
-        ],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Group ID",
-            "required": true,
-            "schema": {
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Connection privileges",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Requires manage_permissions permission",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      },
-      "put": {
-        "summary": "Set group connection privileges",
-        "description": "Sets the connection-level privileges for a group",
-        "operationId": "setGroupConnectionPrivileges",
+      "post": {
+        "summary": "Grant a group connection access",
+        "description": "Grants a group read or read_write access to one connection; connection_id 0 grants every connection",
+        "operationId": "grantGroupConnectionPrivilege",
         "tags": [
           "RBAC Groups"
         ],
@@ -8781,22 +8794,40 @@
           }
         ],
         "requestBody": {
-          "description": "Connection privileges to set",
+          "description": "Connection privilege to grant",
           "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "type": "object"
+                "type": "object",
+                "properties": {
+                  "access_level": {
+                    "type": "string",
+                    "description": "Access level to grant",
+                    "enum": [
+                      "read",
+                      "read_write"
+                    ]
+                  },
+                  "connection_id": {
+                    "type": "integer",
+                    "description": "Connection ID, or 0 for every connection"
+                  }
+                },
+                "required": [
+                  "connection_id",
+                  "access_level"
+                ]
               }
             }
           }
         },
         "responses": {
-          "200": {
-            "description": "Privileges updated"
+          "204": {
+            "description": "Privilege granted"
           },
           "400": {
-            "description": "Invalid request",
+            "description": "Invalid connection_id or access_level",
             "content": {
               "application/json": {
                 "schema": {
@@ -8816,7 +8847,77 @@
             }
           },
           "403": {
-            "description": "Requires manage_permissions permission, or the API token's connection scope does not cover the connection and access level being granted or revoked",
+            "description": "Requires manage_permissions permission, or the API token's connection scope does not cover the connection and access level being granted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/rbac/groups/{id}/privileges/connections/{connection_id}": {
+      "delete": {
+        "summary": "Revoke a group's connection access",
+        "description": "Revokes a group's grant on one connection",
+        "operationId": "revokeGroupConnectionPrivilege",
+        "tags": [
+          "RBAC Groups"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Group ID",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "connection_id",
+            "in": "path",
+            "description": "Connection ID",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Privilege revoked"
+          },
+          "400": {
+            "description": "Invalid connection ID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Requires manage_permissions permission, or the API token's connection scope does not cover the connection, since revoking its last group grant lifts the restriction on it",
             "content": {
               "application/json": {
                 "schema": {
@@ -8834,66 +8935,10 @@
       }
     },
     "/rbac/groups/{id}/privileges/mcp": {
-      "get": {
-        "summary": "Get group MCP privileges",
-        "description": "Returns the MCP tool privileges assigned to a group",
-        "operationId": "getGroupMCPPrivileges",
-        "tags": [
-          "RBAC Groups"
-        ],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Group ID",
-            "required": true,
-            "schema": {
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "MCP privileges",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Requires manage_permissions permission",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      },
-      "put": {
-        "summary": "Set group MCP privileges",
-        "description": "Sets the MCP tool privileges for a group",
-        "operationId": "setGroupMCPPrivileges",
+      "post": {
+        "summary": "Grant a group an MCP privilege",
+        "description": "Grants a group one MCP tool, resource or prompt privilege by identifier, or the wildcard '*' for every item",
+        "operationId": "grantGroupMCPPrivilege",
         "tags": [
           "RBAC Groups"
         ],
@@ -8909,22 +8954,99 @@
           }
         ],
         "requestBody": {
-          "description": "MCP privileges to set",
+          "description": "MCP privilege to grant",
           "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "type": "object"
+                "type": "object",
+                "properties": {
+                  "privilege": {
+                    "type": "string",
+                    "description": "MCP privilege identifier, or '*'"
+                  }
+                },
+                "required": [
+                  "privilege"
+                ]
               }
             }
           }
         },
         "responses": {
-          "200": {
-            "description": "Privileges updated"
+          "204": {
+            "description": "Privilege granted"
           },
           "400": {
-            "description": "Invalid request",
+            "description": "Privilege is required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Requires manage_permissions permission, or the API token's MCP scope does not cover the privilege being granted; an MCP-bounded token may never grant the wildcard",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "delete": {
+        "summary": "Revoke an MCP privilege from a group",
+        "description": "Revokes one MCP privilege, named by the name query parameter, from a group",
+        "operationId": "revokeGroupMCPPrivilege",
+        "tags": [
+          "RBAC Groups"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Group ID",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "name",
+            "in": "query",
+            "description": "MCP privilege identifier to revoke",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Privilege revoked"
+          },
+          "400": {
+            "description": "Query parameter 'name' is required",
             "content": {
               "application/json": {
                 "schema": {
@@ -9102,7 +9224,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_token_scopes permission, or the API token's connection scope does not cover the new token owner's access",
+            "description": "Requires manage_token_scopes permission, or the API token's connection, MCP or admin scope does not cover the new token owner's access",
             "content": {
               "application/json": {
                 "schema": {
@@ -9281,7 +9403,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_token_scopes permission, refuses a change to the caller's own token, and refuses a scope that would reach beyond the API token's connection scope",
+            "description": "Requires manage_token_scopes permission, refuses a change to the caller's own token, and refuses a scope that would reach beyond the API token's connection, MCP or admin scope; each kind is judged on what the token will hold afterwards, and a kind left unrestricted on the owner's whole access in that kind",
             "content": {
               "application/json": {
                 "schema": {
@@ -9330,7 +9452,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_token_scopes permission, refuses a change to the caller's own token, and refuses clearing a scope when the token owner's access reaches beyond the API token's connection scope",
+            "description": "Requires manage_token_scopes permission, refuses a change to the caller's own token, and refuses clearing a scope when the token owner's access reaches beyond the API token's connection, MCP or admin scope",
             "content": {
               "application/json": {
                 "schema": {
@@ -9456,7 +9578,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_users permission, and superuser privileges to send is_superuser; also refused when the API token's connection scope does not cover every connection and is_superuser is true",
+            "description": "Requires manage_users permission, and superuser privileges to send is_superuser; also refused when the API token is bounded by a connection, MCP or admin scope and the new user would reach beyond it: a superuser needs a token unrestricted in all three, and any other new user reaches the shared connections no group restricts, any unshared connection its username already owns, and the public MCP items",
             "content": {
               "application/json": {
                 "schema": {
@@ -9540,7 +9662,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_users permission, and superuser privileges to send is_superuser or to update a superuser; also refused when the API token's connection scope does not cover the access being granted (setting is_superuser, or setting the password of or re-enabling a user who reaches beyond the scope)",
+            "description": "Requires manage_users permission, and superuser privileges to send is_superuser or to update a superuser; also refused when the API token's connection, MCP or admin scope does not cover the access being granted (setting is_superuser, or setting the password of or re-enabling a user whose group grants, unrestricted connections or public MCP items reach beyond the scope)",
             "content": {
               "application/json": {
                 "schema": {
@@ -9599,7 +9721,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_users permission, and superuser privileges to delete a superuser",
+            "description": "Requires manage_users permission, and superuser privileges to delete a superuser; also refused when the API token's connection, MCP or admin scope does not cover everything the user reaches, since connection ownership is recorded by username and passes to whoever recreates the name",
             "content": {
               "application/json": {
                 "schema": {
@@ -14109,7 +14231,7 @@
         "type": "http",
         "scheme": "bearer",
         "bearerFormat": "JWT",
-        "description": "Session token obtained from /auth/login, or an API token. Every request an API token makes is confined to the token's connection, MCP and admin scopes, even when its owner is a superuser, so a superuser-owned token can receive 403 where its owner's session would succeed. A token can never grant a user, a group or another token access to a connection its own connection scope does not cover, so creating a superuser, granting a group connection access or an admin permission, adding a group member, and setting another token's scope are refused with 403 when they would reach beyond it. A read entry allows alert acknowledgement and analysis, and blackout management, on that connection. The query_datastore tool still runs read-only SQL over the whole datastore, including every connection's stored credentials; issue #566 tracks limiting it to the connections the caller can read. A token whose admin scope names specific permissions may exercise those permissions, but cannot pass a gate that requires superuser status outright, such as the audit log. A token with no scope of a given kind, or one holding the * wildcard, is unrestricted on that surface."
+        "description": "Session token obtained from /auth/login, or an API token. Every request an API token makes is confined to the token's connection, MCP and admin scopes, even when its owner is a superuser, so a superuser-owned token can receive 403 where its owner's session would succeed. A token can never grant a user, a group or another token access its own connection, MCP or admin scope does not cover, so creating, deleting or taking over a user, granting a group connection access, an MCP privilege or an admin permission, adding a group member, minting a token for another owner, and setting or clearing another token's scope are refused with 403 when they would reach beyond it. A new user counts as reaching every shared connection no group restricts and every public MCP item. A read entry allows alert acknowledgement and analysis, and blackout management, on that connection. The query_datastore tool still runs read-only SQL over the whole datastore, including every connection's stored credentials; issue #566 tracks limiting it to the connections the caller can read. A token whose admin scope names specific permissions may exercise those permissions, but cannot pass a gate that requires superuser status outright, such as the audit log. A token with no scope of a given kind, or one holding the * wildcard, is unrestricted on that surface."
       }
     }
   }

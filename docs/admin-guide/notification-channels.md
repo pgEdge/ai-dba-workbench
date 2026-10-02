@@ -552,6 +552,14 @@ Optional fields such as `DatabaseName`, `MetricName`,
 `ClearedAt` should use `{{if .FieldName}}...{{end}}`
 conditionals in templates to handle empty values.
 
+A system alert, which reports a fault in the Workbench
+itself, belongs to no monitored server. Its notification
+carries `AI DBA Workbench alerter` as the `ServerName`, the
+host running the alerter as the `ServerHost`, `0` as the
+`ServerPort` and `0` as the `ConnectionID`. System alert
+notifications go to the estate default channels only, since
+channel overrides apply to a server, cluster or group.
+
 Time fields support formatting with the Go time layout
 syntax. In the following example, the `TriggeredAt`
 field uses ISO 8601 format:

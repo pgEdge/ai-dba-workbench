@@ -295,6 +295,17 @@ export const getSeverityColors = (theme: Theme): Record<string, string> => ({
     info: theme.palette.info.main,
 });
 
+/**
+ * Return the label for an alert type chip. Anything that is neither an
+ * anomaly nor a system alert is a threshold alert, which matches the
+ * server's default for alerts written before alert types existed.
+ */
+export const getAlertTypeLabel = (alertType: string | undefined): string => {
+    if (alertType === 'anomaly') {return 'Anomaly';}
+    if (alertType === 'system') {return 'System';}
+    return 'Threshold';
+};
+
 export const getAlertTypeColor = (theme: Theme, alertType: string) => {
     return alertType === 'anomaly'
         ? theme.palette.secondary.main

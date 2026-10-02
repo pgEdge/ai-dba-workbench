@@ -411,9 +411,9 @@ func buildSchemas() map[string]*OpenAPISchema {
 			Type: "object",
 			Properties: map[string]*OpenAPISchema{
 				"id":              {Type: "integer", Format: "int64", Description: "Alert ID"},
-				"connection_id":   {Type: "integer", Description: "Associated connection ID"},
-				"server_name":     {Type: "string", Description: "Server name"},
-				"alert_type":      {Type: "string", Description: "Type of alert"},
+				"connection_id":   {Type: "integer", Description: "Associated connection ID; null for a system alert", Nullable: true},
+				"server_name":     {Type: "string", Description: "Server name; empty for a system alert"},
+				"alert_type":      {Type: "string", Enum: []string{"threshold", "anomaly", "connection", "system"}, Description: "Type of alert; a system alert reports a fault in the Workbench itself and belongs to no connection"},
 				"severity":        {Type: "string", Enum: []string{"critical", "warning", "info"}, Description: "Alert severity"},
 				"status":          {Type: "string", Enum: []string{"active", "acknowledged", "cleared"}, Description: "Alert status"},
 				"title":           {Type: "string", Description: "Alert title"},
@@ -443,18 +443,13 @@ func buildSchemas() map[string]*OpenAPISchema {
 		"AlertCountsResult": {
 			Type: "object",
 			Properties: map[string]*OpenAPISchema{
-				"counts": {
-					Type: "object",
-					AdditionalProperties: &OpenAPISchema{
-						Type: "object",
-						Properties: map[string]*OpenAPISchema{
-							"critical": {Type: "integer"},
-							"warning":  {Type: "integer"},
-							"info":     {Type: "integer"},
-						},
-					},
-					Description: "Alert counts by server ID",
+				"total": {Type: "integer", Format: "int64", Description: "Active alerts the caller may see, system alerts included"},
+				"by_server": {
+					Type:                 "object",
+					AdditionalProperties: &OpenAPISchema{Type: "integer", Format: "int64"},
+					Description:          "Active alert count keyed by connection ID; system alerts are never included",
 				},
+				"system": {Type: "integer", Format: "int64", Description: "Active system alerts, which belong to no connection"},
 			},
 		},
 		"AcknowledgeRequest": {
@@ -2371,7 +2366,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/alerts": {
 			Get: &OpenAPIOperation{
 				Summary:     "List alerts",
-				Description: "Returns alerts with optional filtering",
+				Description: "Returns alerts with optional filtering. System alerts, which belong to no connection, are included only when neither connection_id nor connection_ids is given",
 				OperationID: "listAlerts",
 				Tags:        []string{"Alerts"},
 				Security:    bearerAuth,
@@ -2398,7 +2393,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/alerts/counts": {
 			Get: &OpenAPIOperation{
 				Summary:     "Get alert counts by server",
-				Description: "Returns counts of active alerts grouped by server and severity",
+				Description: "Returns counts of active alerts grouped by server, with system alerts counted separately",
 				OperationID: "getAlertCounts",
 				Tags:        []string{"Alerts"},
 				Security:    bearerAuth,
@@ -2413,7 +2408,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/alerts/acknowledge": {
 			Post: &OpenAPIOperation{
 				Summary:     "Acknowledge an alert",
-				Description: "Acknowledges an alert with an optional message",
+				Description: "Acknowledges an alert with an optional message. An alert on a connection needs access to that connection; a system alert, which has no connection, needs a superuser or the manage_alert_rules admin permission, and an API token must also hold manage_alert_rules in its admin scope if it has one",
 				OperationID: "acknowledgeAlert",
 				Tags:        []string{"Alerts"},
 				Security:    bearerAuth,
@@ -2440,7 +2435,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 			},
 			Delete: &OpenAPIOperation{
 				Summary:     "Unacknowledge an alert",
-				Description: "Removes acknowledgement from an alert",
+				Description: "Removes acknowledgement from an alert. An alert on a connection needs access to that connection; a system alert needs a superuser or the manage_alert_rules admin permission, bounded by an API token's admin scope as for acknowledgement",
 				OperationID: "unacknowledgeAlert",
 				Tags:        []string{"Alerts"},
 				Security:    bearerAuth,
@@ -2978,7 +2973,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/alerts/analysis": {
 			Put: &OpenAPIOperation{
 				Summary:     "Save AI analysis for alert",
-				Description: "Saves an AI-generated analysis for a specific alert",
+				Description: "Saves an AI-generated analysis for a specific alert, which needs access to the alert's connection. A system alert has no connection or metric to explain, so saving analysis on one is refused with 400 to every caller who may see system alerts, and with 403 to any caller who may not",
 				OperationID: "saveAlertAnalysis",
 				Tags:        []string{"Alerts"},
 				Security:    bearerAuth,
@@ -2990,7 +2985,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 							"application/json": {Schema: &OpenAPISchema{Type: "object", Properties: map[string]*OpenAPISchema{"status": {Type: "string"}}}},
 						},
 					},
-					"400": jsonResponse("ErrorResponse", "Invalid request"),
+					"400": jsonResponse("ErrorResponse", "Invalid request, or the alert is a system alert"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
 					"403": jsonResponse("ErrorResponse", "Access denied"),
 				},

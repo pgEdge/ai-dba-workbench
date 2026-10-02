@@ -12,6 +12,36 @@ project adheres to
 
 ### Added
 
+- Raise a system alert when anomaly detection is degraded by
+  a failing embedding or reasoning provider (#582). The
+  alerter counts consecutive failures for each tier (tier 2
+  embeddings, tier 3 classification and re-evaluation) and
+  provider, and raises one warning alert for the tier and
+  provider when the count reaches the new
+  `anomaly.provider_health.failure_threshold` option
+  (default 3), or at once when the embedding or reasoning
+  provider fails the new startup health check. The alert
+  names the provider, the model, the failure count and the
+  last error, clears on the next successful call to the
+  provider (from either tier 3 or re-evaluation for the
+  reasoning provider), is not raised again within five
+  minutes of clearing, and goes to the estate default
+  notification channels. System alerts use the new `system` alert type
+  and have no connection, which collector schema migration
+  18 allows; every user and API token with alert access sees
+  them, the REST API reports a `null` `connection_id` for
+  them, and `GET /api/v1/alerts/counts` gains a `system`
+  total. Acknowledging or restoring a system alert requires
+  a superuser or the `manage_alert_rules` admin permission,
+  bounded by an API token's admin scope, and the server
+  refuses to save AI analysis on a system alert with a 400
+  response. The web client lists system alerts on the estate
+  view with an "AI DBA Workbench" source label and a
+  "System" type chip in place of a server name, offers no AI
+  analysis for them, since they concern no monitored
+  connection, and shows their acknowledge and restore
+  actions only to a superuser or a holder of
+  `manage_alert_rules`.
 - Add the `probe_unavailable` built-in alert rule, which
   reports a probe that had been collecting and has stopped
   being available. Collector schema migration 16 seeds the

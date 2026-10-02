@@ -96,7 +96,8 @@ treatment. Give it the neutral outlined form instead:
 `variant="outlined"` with `color: 'text.primary'` for the label and
 `grey.500` in light mode or `grey.600` in dark mode for the border,
 which is what the "Federated" chip in the Type column of
-`components/AdminPanel/AdminUsers.tsx` does. The "Service Account"
+`components/AdminPanel/AdminUsers.tsx` and the "System" alert type
+chip in `components/StatusPanel/AlertChips.tsx` do. The "Service Account"
 chip in the same column still paints `info.main` on
 `alpha(info.main, 0.15)`; that is known debt, not a precedent.
 

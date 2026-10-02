@@ -171,6 +171,59 @@ the blackout only prevents new alerts from being created.
 See [Blackouts](../blackouts.md) for details on
 maintenance windows.
 
+## System Alerts
+
+A system alert reports a fault in the Workbench itself
+rather than in a monitored server; the alert type is
+`system` and the alert belongs to no connection. The
+alerter currently raises one kind of system alert, for an
+embedding or reasoning provider that keeps failing and so
+degrades anomaly detection.
+
+The alert title names the affected tier and provider, as
+in `Anomaly detection degraded: Tier 2 embedding provider
+ollama failing`. The description gives the model, the
+number of consecutive failures so far
+(or notes a failed startup check), what anomaly detection
+does whilst the provider fails, and the last error the
+provider returned, with any credentials removed. A network
+failure appears only as its category, such as `connection
+refused`, without the endpoint's address; the alerter log
+records the endpoint for the administrator. The alerter
+raises one alert for each tier and provider, at warning
+severity, and clears the alert on the next successful call
+to that provider; a successful tier 3 or re-evaluation call
+clears the alerts of both, since they share the reasoning
+provider. Once cleared, the alert is not raised again for
+five minutes.
+
+System alerts behave differently from connection alerts in
+the following ways:
+
+- every user and API token with access to alerts sees system
+  alerts, whatever connections the user or token may access.
+- a list of alerts filtered to particular connections leaves
+  system alerts out.
+- the alert counts report system alerts in a separate
+  `system` total rather than under a server.
+- blackouts, including estate blackouts, do not suppress
+  system alerts.
+- notifications go to the estate default channels, since
+  channel overrides apply to a server, cluster or group.
+- the event timeline leaves system alerts out.
+
+Only a superuser, or a user whose group holds the
+`manage_alert_rules` administrative permission, may
+acknowledge a system alert or restore an acknowledged one;
+an API token may do so only when its owner qualifies and
+the token's administrative scope, if it has one, includes
+`manage_alert_rules`. A system alert concerns no monitored
+server and has no metric to explain, so the server refuses
+to save an AI analysis on a system alert, answering the
+request with a 400 status. See
+[Alerter Configuration](../../getting-started/configuration/alerter.md#provider-health-provider_health)
+for the failure threshold.
+
 ## Related Documentation
 
 - [Alert Rule Reference](rule-reference.md) lists all

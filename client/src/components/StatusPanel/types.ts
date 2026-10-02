@@ -31,8 +31,11 @@ export interface ApiAlert {
     description?: string;
     triggered_at?: string;
     last_updated?: string;
+    // Omitted (the server encodes an empty name as absent) for a
+    // system alert.
     server_name?: string;
-    connection_id?: number;
+    // Null for a system alert, which belongs to no connection.
+    connection_id?: number | null;
     database_name?: string;
     object_name?: string;
     alert_type?: string;
@@ -68,7 +71,11 @@ export type TransformedAlert = {
     // Pre-formatted relative time for lastUpdated (mirrors `time`).
     lastUpdatedTime?: string;
     server?: string;
+    // Undefined for a system alert; see isSystem.
     connectionId?: number;
+    // True for a system alert, which the alerter raises about the
+    // Workbench itself rather than about a monitored server.
+    isSystem?: boolean;
     databaseName?: string;
     objectName?: string;
     alertType?: string;
@@ -97,6 +104,12 @@ export interface AlertItemProps {
     isUnacknowledging?: (alertId: number | string) => boolean;
     onAnalyze?: (alert: TransformedAlert) => void;
     onEditOverride?: (alert: TransformedAlert) => void;
+    /**
+     * Whether the current user may acknowledge and restore system
+     * alerts, which the server allows only to a superuser or a holder
+     * of manage_alert_rules. Defaults to false, hiding the action.
+     */
+    canAcknowledgeSystem?: boolean;
 }
 
 export interface GroupedAlertInstanceProps {
@@ -107,6 +120,12 @@ export interface GroupedAlertInstanceProps {
     isUnacknowledging?: (alertId: number | string) => boolean;
     onAnalyze?: (alert: TransformedAlert) => void;
     onEditOverride?: (alert: TransformedAlert) => void;
+    /**
+     * Whether the current user may acknowledge and restore system
+     * alerts, which the server allows only to a superuser or a holder
+     * of manage_alert_rules. Defaults to false, hiding the action.
+     */
+    canAcknowledgeSystem?: boolean;
 }
 
 export interface GroupedAlertItemProps {
@@ -118,6 +137,12 @@ export interface GroupedAlertItemProps {
     isUnacknowledging?: (alertId: number | string) => boolean;
     onAnalyze?: (alert: TransformedAlert) => void;
     onEditOverride?: (alert: TransformedAlert) => void;
+    /**
+     * Whether the current user may acknowledge and restore system
+     * alerts, which the server allows only to a superuser or a holder
+     * of manage_alert_rules. Defaults to false, hiding the action.
+     */
+    canAcknowledgeSystem?: boolean;
     onAcknowledgeGroup?: (alerts: TransformedAlert[]) => void;
 }
 
@@ -139,6 +164,12 @@ export interface AlertsSectionProps {
     isUnacknowledging?: (alertId: number | string) => boolean;
     onAnalyze?: (alert: TransformedAlert) => void;
     onEditOverride?: (alert: TransformedAlert) => void;
+    /**
+     * Whether the current user may acknowledge and restore system
+     * alerts, which the server allows only to a superuser or a holder
+     * of manage_alert_rules. Defaults to false, hiding the action.
+     */
+    canAcknowledgeSystem?: boolean;
     onAcknowledgeGroup?: (alerts: TransformedAlert[]) => void;
 }
 

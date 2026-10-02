@@ -60,6 +60,7 @@ const AlertsSection: React.FC<AlertsSectionProps> = ({
     onAnalyze,
     onEditOverride,
     onAcknowledgeGroup,
+    canAcknowledgeSystem = false,
 }) => {
     const theme = useTheme();
     const severityColors = getSeverityColors(theme);
@@ -169,6 +170,7 @@ const AlertsSection: React.FC<AlertsSectionProps> = ({
                     isUnacknowledging={isUnacknowledging}
                     onAnalyze={onAnalyze}
                     onEditOverride={onEditOverride}
+                    canAcknowledgeSystem={canAcknowledgeSystem}
                 />
             );
         }
@@ -184,6 +186,7 @@ const AlertsSection: React.FC<AlertsSectionProps> = ({
                 onAnalyze={onAnalyze}
                 onEditOverride={onEditOverride}
                 onAcknowledgeGroup={onAcknowledgeGroup}
+                canAcknowledgeSystem={canAcknowledgeSystem}
             />
         );
     };

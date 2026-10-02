@@ -210,7 +210,7 @@ func TestFirstSQLWord(t *testing.T) {
 }
 
 func TestValidateQuery_MethodNotAllowed(t *testing.T) {
-	handler := newTestConnectionHandlerWithRBAC()
+	handler := newTestConnectionHandlerWithRBAC(t)
 
 	for _, method := range []string{
 		http.MethodGet, http.MethodPut, http.MethodDelete, http.MethodPatch,
@@ -249,7 +249,7 @@ func TestValidateQuery_BadRequests(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			handler := newTestConnectionHandlerWithRBAC()
+			handler := newTestConnectionHandlerWithRBAC(t)
 			req := httptest.NewRequest(http.MethodPost,
 				"/api/v1/connections/1/query/validate",
 				bytes.NewBufferString(tt.body))
@@ -284,7 +284,7 @@ func TestValidateQuery_InvalidDatabaseName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			handler := newTestConnectionHandlerWithRBAC()
+			handler := newTestConnectionHandlerWithRBAC(t)
 			body, err := json.Marshal(queryValidateRequest{
 				Query: "SELECT 1", DatabaseName: tt.dbName,
 			})

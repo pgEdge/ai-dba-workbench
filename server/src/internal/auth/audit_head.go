@@ -284,10 +284,13 @@ func errAuditHeadNotRecorded(anchorEv *AuditEvent, rec auditAnchor,
 // be the oldest in the log when no anchor records where the log begins.
 // The first row the table ever held has id 1, because audit_events uses
 // AUTOINCREMENT and so never reuses an id, even after every row has been
-// deleted. An audit.purge or audit.rechain event is allowed as well,
-// since builds before the head record could purge the whole log and
-// leave their own event as the first. Neither can be forged without the
-// key: the row must still verify.
+// deleted. An audit.purge event is allowed as well, since builds before
+// the head record could purge the whole log and leave their own event
+// as the first; it cannot be forged without the key, because the row
+// must still verify. An audit.rechain event is not: a re-anchor refuses
+// an empty log, and a re-hash appends its event after the rows it
+// re-hashes, so neither leaves one with an empty prev_hash, and one put
+// in place after a wipe is not allowed to start the log.
 //
 // This does not reach a log emptied except for a genuine row 1, or with
 // a saved copy of it put back, because every row the server writes
@@ -298,7 +301,7 @@ func errAuditHeadNotRecorded(anchorEv *AuditEvent, rec auditAnchor,
 // catches an emptied log only when its new row is left where it was
 // written.
 func auditGenesisAllowed(ev *AuditEvent) bool {
-	return ev.ID == 1 || isAuditAnchorAction(ev.Action)
+	return ev.ID == 1 || ev.Action == auditActionPurge
 }
 
 // errAuditGenesisMoved reports an oldest row that starts a chain of its

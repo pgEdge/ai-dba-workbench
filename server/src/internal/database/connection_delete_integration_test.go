@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -583,5 +584,114 @@ func TestDeleteConnection_CommitFails(t *testing.T) {
 	}
 	if remaining != 1 {
 		t.Fatalf("expected connection to survive failed commit, got %d rows", remaining)
+	}
+}
+
+// TestDeleteConnection_DoesNotBlockDatastoreReaders locks in that
+// DeleteConnection does not take d.mu. A BEFORE DELETE trigger holds the
+// delete inside Postgres for several seconds, standing in for a long
+// cascade through metrics.*; once that delete is visibly sleeping in
+// pg_stat_activity, GetConnection (which takes d.mu.RLock) must return
+// for a different row whilst the delete is still running. Were
+// DeleteConnection to hold d.mu.Lock for the length of its transaction,
+// the reader would wait out the whole sleep.
+func TestDeleteConnection_DoesNotBlockDatastoreReaders(t *testing.T) {
+	ds, pool, cleanup := newConnUpdatePasswordTestDatastore(t)
+	defer cleanup()
+
+	// deleteSleep must match the pg_sleep(4) in the trigger below.
+	const deleteSleep = 4 * time.Second
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `
+        CREATE OR REPLACE FUNCTION slow_connection_delete_mu()
+        RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+            PERFORM pg_sleep(4);
+            RETURN OLD;
+        END;
+        $$;
+        DROP TRIGGER IF EXISTS slow_conn_delete_mu ON connections;
+        CREATE TRIGGER slow_conn_delete_mu
+        BEFORE DELETE ON connections
+        FOR EACH ROW EXECUTE FUNCTION slow_connection_delete_mu();
+    `); err != nil {
+		t.Fatalf("failed to install slow delete trigger: %v", err)
+	}
+	defer func() {
+		if _, err := pool.Exec(context.Background(),
+			`DROP FUNCTION IF EXISTS slow_connection_delete_mu() CASCADE`,
+		); err != nil {
+			t.Logf("slow delete trigger teardown failed: %v", err)
+		}
+	}()
+
+	var victimID, bystanderID int
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO connections (name) VALUES ('mu-victim') RETURNING id`,
+	).Scan(&victimID); err != nil {
+		t.Fatalf("insert victim connection: %v", err)
+	}
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO connections (name) VALUES ('mu-bystander') RETURNING id`,
+	).Scan(&bystanderID); err != nil {
+		t.Fatalf("insert bystander connection: %v", err)
+	}
+
+	deleteDone := make(chan error, 1)
+	go func() {
+		deleteDone <- ds.DeleteConnection(context.Background(), victimID)
+	}()
+
+	// Wait until the delete's backend is inside the trigger's sleep, so
+	// the reader below is known to overlap the running delete.
+	waitCtx, cancelWait := context.WithTimeout(ctx, 10*time.Second)
+	defer cancelWait()
+	for {
+		var sleeping bool
+		if err := pool.QueryRow(waitCtx, `
+            SELECT EXISTS (
+                SELECT 1 FROM pg_stat_activity
+                WHERE datname = current_database()
+                  AND wait_event = 'PgSleep'
+                  AND query LIKE 'DELETE FROM connections%'
+            )
+        `).Scan(&sleeping); err != nil {
+			t.Fatalf("waiting for the delete to start sleeping: %v", err)
+		}
+		if sleeping {
+			break
+		}
+		select {
+		case err := <-deleteDone:
+			t.Fatalf("DeleteConnection finished (err = %v) before it was seen sleeping", err)
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+
+	readCtx, cancelRead := context.WithTimeout(ctx, 2*deleteSleep)
+	defer cancelRead()
+	start := time.Now()
+	conn, err := ds.GetConnection(readCtx, bystanderID)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("GetConnection during a running delete failed: %v", err)
+	}
+	if conn.Name != "mu-bystander" {
+		t.Fatalf("GetConnection returned %q, want %q", conn.Name, "mu-bystander")
+	}
+
+	select {
+	case err := <-deleteDone:
+		t.Fatalf("GetConnection waited %v, until DeleteConnection had finished "+
+			"(err = %v); the delete must not hold d.mu", elapsed, err)
+	default:
+	}
+	if elapsed > deleteSleep/2 {
+		t.Fatalf("GetConnection took %v during a %v delete; the delete must not hold d.mu",
+			elapsed, deleteSleep)
+	}
+
+	if err := <-deleteDone; err != nil {
+		t.Fatalf("DeleteConnection failed: %v", err)
 	}
 }

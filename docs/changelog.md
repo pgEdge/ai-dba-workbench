@@ -363,7 +363,14 @@ project adheres to
   hold up the whole API. Twenty, alongside the collector's 25 and the
   alerter's 10, stays well inside the PostgreSQL default
   `max_connections` of 100. A configuration that leaves the option
-  unset now gets 20 rather than the connection library's own default.
+  unset now gets 20 rather than the connection library's own default;
+  one copied from the earlier example still sets `pool_max_conns: 4`
+  explicitly and keeps four until the line is changed or removed. The
+  pool is sized at start-up, so a configuration reload with `SIGHUP`
+  does not resize it and the server has to be restarted. An explicit
+  `pool_max_conns` also sizes each per-session pool that the server
+  opens to a monitored database, whilst an unset one leaves those
+  pools at the connection library's default.
 
 - Follow the dashboard time range selector in the database summaries
   section of the server dashboard, the Transaction Rate tile of the
@@ -875,7 +882,9 @@ project adheres to
   both as its deadline and as a transaction-local `statement_timeout`,
   and it carries on if the browser or a reverse proxy stops waiting
   for the response. It also no longer blocks the server's other
-  datastore requests whilst it runs.
+  datastore requests whilst it runs, although the collector's and the
+  alerter's writes for the connection being deleted wait for it to
+  finish, which can now take up to the same four minutes.
 
 - Fix alerts staying active for ever on a server an operator has
   stopped monitoring. The probes of an unmonitored connection leave

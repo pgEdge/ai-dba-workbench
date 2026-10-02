@@ -253,7 +253,9 @@ database:
   # reads the datastore shares this pool, and a single dashboard page
   # load issues more than twenty metrics requests at once. Allow for the
   # collector's and alerter's own pools when sizing it against the
-  # datastore's max_connections.
+  # datastore's max_connections. An explicit value also caps each
+  # per-session pool the server opens to a monitored database. Takes
+  # effect on restart, not on a SIGHUP reload.
   # Default: 20
   pool_max_conns: 20
 

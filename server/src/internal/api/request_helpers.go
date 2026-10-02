@@ -323,7 +323,8 @@ func RequirePOST(w http.ResponseWriter, r *http.Request) bool {
 // per connection: /metrics/performance-summary runs five sub-queries, a
 // GetConnection name lookup and an RBAC check for every ID, all inside one
 // read-only transaction under a single 30 second deadline, against a
-// datastore pool that defaults to four connections. Most endpoints need no
+// datastore pool of config.DefaultPoolMaxConns connections unless
+// pool_max_conns says otherwise. Most endpoints need no
 // such bound because their cost does not scale with a caller-supplied list
 // length; these do, so without a cap one authenticated request can cost
 // arbitrarily much, which is a cheap denial of service. It is the companion

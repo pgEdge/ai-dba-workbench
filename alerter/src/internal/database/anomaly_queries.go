@@ -13,6 +13,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
 
 	embeddingpkg "github.com/pgedge/ai-workbench/pkg/embedding"
 )
@@ -96,6 +97,23 @@ func (d *Datastore) GetUnprocessedAnomalyCandidates(ctx context.Context, limit i
 	}
 
 	return candidates, nil
+}
+
+// ExpireUnprocessedAnomalyCandidates marks every candidate detected before
+// the cutoff and still unprocessed as processed now, with no final
+// decision, so it never raises an alert and DeleteOldAnomalyCandidates
+// ages it out. The predicate matches idx_anomaly_candidates_unprocessed.
+func (d *Datastore) ExpireUnprocessedAnomalyCandidates(ctx context.Context, cutoff time.Time) (int64, error) {
+	result, err := d.pool.Exec(ctx, `
+		UPDATE anomaly_candidates
+		SET processed_at = now(), final_decision = NULL
+		WHERE processed_at IS NULL AND tier1_pass = true
+		  AND detected_at < $1
+	`, cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("failed to expire unprocessed candidates: %w", err)
+	}
+	return result.RowsAffected(), nil
 }
 
 // UpdateAnomalyCandidate updates a candidate with tier 2/3 results

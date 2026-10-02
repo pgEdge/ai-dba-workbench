@@ -499,6 +499,44 @@ Disabling Tier 2 causes candidates to pass directly to Tier 3.
 Disabling Tier 3 causes all Tier 1 candidates that pass Tier 2
 to generate alerts.
 
+Tier 1 never raises an alert on its own, because raw statistical
+detection is too noisy to alert on. Anomaly detection runs only
+whilst Tier 2 is enabled with an embedding provider or Tier 3 is
+enabled with a reasoning provider; disabling both tiers therefore
+disables anomaly detection, and Tier 1 stores no candidates. The
+alerter creates the providers at startup for the tiers enabled at
+that point, so the rule applies in two places:
+
+- At startup, the alerter sets `anomaly.enabled` to `false` and logs
+  `Anomaly detection auto-disabled: no LLM providers available` when
+  no provider initialises.
+- On a configuration reload, the alerter sets `anomaly.enabled` to
+  `false` and logs `Anomaly detection auto-disabled: no LLM provider
+  available for the enabled tiers` when no enabled tier has a
+  provider. A reload cannot add a provider, so enabling a tier that
+  was disabled at startup takes a restart.
+
+A processing run that is under way when a reload disables Tier 2 and
+Tier 3 stops before its next candidate, rather than letting the rest
+of the batch through with no tier result; the candidates it has not
+reached stay queued until a tier is enabled again or they expire.
+
+A candidate that stays unprocessed for too long is expired: the
+alerter marks it as processed with no final decision, so it raises
+no alert and the retention cleanup deletes it with the other
+processed candidates. The alerter logs the number of candidates it
+expires whenever that number is not zero. Expiry exists to clear
+candidates that nothing will ever process, so the cut-off is set
+well beyond the time a healthy queue needs to drain, and a genuine
+candidate that is merely waiting behind a backlog is still assessed.
+Each processing run handles up to 100 candidates in turn, and each
+Tier 3 call can take up to `anomaly.tier3.timeout_seconds`, so the
+cut-off is three times 100 Tier 3 timeouts, with a minimum of one
+hour; at the default timeout of 30 seconds the cut-off is two and a
+half hours. The alerter expires candidates before each processing
+run and during the retention cleanup, which also runs whilst anomaly
+detection is disabled.
+
 ## Monitoring Anomaly Detection
 
 The alerter logs anomaly detection activity at debug level. Enable

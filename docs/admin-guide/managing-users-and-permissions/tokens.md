@@ -106,11 +106,18 @@ the three scope types is refused with `403 Forbidden` when it tries to:
   beyond the acting token's scope in any of the three scope types.
 
 A user's access, for these checks, counts the user's group grants, every
-public MCP item, every shared connection that no group restricts, and every
-connection that the user's name owns, at `read_write`, whether or not it is
-shared and whether or not a group restricts it, since a connection's owner
-can always edit or delete it. A token whose MCP scope lists only items that
-have since been deleted is treated as restricted to no MCP items at all.
+public MCP item, every shared connection that no group restricts, every
+connection that the user's name owns, and every member connection of each
+cluster group the user's name owns, all at `read_write`, whether or not a
+connection is shared and whether or not a group restricts it, since an owner
+can always edit or delete what they own. A user or group holding the
+`manage_users`, `manage_groups`, `manage_permissions` or
+`manage_token_scopes` admin permission counts as reaching every MCP item and
+every admin permission, because each of those lets its holder acquire the
+rest, so only a token with no MCP or admin restriction can add a member to
+such a group or take over such a user. A token whose MCP scope lists only
+items that have since been deleted is treated as restricted to no MCP items
+at all.
 Sessions, and tokens with no restriction in any of the three scope types, are
 not affected by these bounds.
 

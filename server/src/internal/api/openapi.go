@@ -168,7 +168,11 @@ func buildSecuritySchemes() map[string]*OpenAPISecurityScheme {
 				"setting or clearing another token's scope are refused " +
 				"with 403 when they would reach beyond it. A new user " +
 				"counts as reaching every shared connection no group " +
-				"restricts and every public MCP item. A read entry allows alert " +
+				"restricts and every public MCP item, and a user or " +
+				"group holding manage_users, manage_groups, " +
+				"manage_permissions or manage_token_scopes counts as " +
+				"reaching every MCP item and admin permission, since " +
+				"each lets its holder acquire the rest. A read entry allows alert " +
 				"acknowledgement and analysis, and blackout management, " +
 				"on that connection. The query_datastore tool still runs " +
 				"read-only SQL over the whole datastore, including every " +
@@ -4120,7 +4124,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					},
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_users permission, and superuser privileges to send is_superuser; also refused when the API token is bounded by a connection, MCP or admin scope and the new user would reach beyond it: a superuser needs a token unrestricted in all three, and any other new user reaches the shared connections no group restricts, any unshared connection its username already owns, and the public MCP items"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_users permission, and superuser privileges to send is_superuser; also refused when the API token is bounded by a connection, MCP or admin scope and the new user would reach beyond it: a superuser needs a token unrestricted in all three, and any other new user reaches the shared connections no group restricts, any connection its username already owns, every member connection of a cluster group its username owns, and the public MCP items"),
 				},
 			},
 		},
@@ -4148,7 +4152,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					},
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_users permission, and superuser privileges to send is_superuser or to update a superuser; also refused when the API token's connection, MCP or admin scope does not cover the access being granted (setting is_superuser, or setting the password of or re-enabling a user whose group grants, unrestricted connections or public MCP items reach beyond the scope)"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_users permission, and superuser privileges to send is_superuser or to update a superuser; also refused when the API token's connection, MCP or admin scope does not cover the access being granted (setting is_superuser, or setting the password of or re-enabling a user whose group grants, unrestricted connections, owned connections, owned cluster groups' member connections or public MCP items reach beyond the scope)"),
 					"404": jsonResponse("ErrorResponse", "User not found"),
 				},
 			},
@@ -4235,7 +4239,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					},
 					"400": jsonResponse("ErrorResponse", "Invalid request body or group name"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_groups permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_groups permission, or the API token is restricted in any scope kind and the name is one the OIDC group map uses"),
 					"409": jsonResponse("ErrorResponse", "A group with this name already exists"),
 				},
 			},
@@ -4284,7 +4288,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 				Responses: map[string]OpenAPIResponse{
 					"204": {Description: "Group deleted"},
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_groups permission, or the API token's connection scope does not cover a connection the group holds a grant on"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_groups permission, or the API token's connection scope does not cover a connection the group holds a grant on, or the API token is restricted in any scope kind and the group's name is one the OIDC group map uses"),
 				},
 			},
 		},

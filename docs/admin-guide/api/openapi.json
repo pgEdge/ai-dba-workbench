@@ -8117,7 +8117,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_groups permission",
+            "description": "Requires manage_groups permission, or the API token is restricted in any scope kind and the name is one the OIDC group map uses",
             "content": {
               "application/json": {
                 "schema": {
@@ -8351,7 +8351,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_groups permission, or the API token's connection scope does not cover a connection the group holds a grant on",
+            "description": "Requires manage_groups permission, or the API token's connection scope does not cover a connection the group holds a grant on, or the API token is restricted in any scope kind and the group's name is one the OIDC group map uses",
             "content": {
               "application/json": {
                 "schema": {
@@ -9588,7 +9588,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_users permission, and superuser privileges to send is_superuser; also refused when the API token is bounded by a connection, MCP or admin scope and the new user would reach beyond it: a superuser needs a token unrestricted in all three, and any other new user reaches the shared connections no group restricts, any unshared connection its username already owns, and the public MCP items",
+            "description": "Requires manage_users permission, and superuser privileges to send is_superuser; also refused when the API token is bounded by a connection, MCP or admin scope and the new user would reach beyond it: a superuser needs a token unrestricted in all three, and any other new user reaches the shared connections no group restricts, any connection its username already owns, every member connection of a cluster group its username owns, and the public MCP items",
             "content": {
               "application/json": {
                 "schema": {
@@ -9672,7 +9672,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_users permission, and superuser privileges to send is_superuser or to update a superuser; also refused when the API token's connection, MCP or admin scope does not cover the access being granted (setting is_superuser, or setting the password of or re-enabling a user whose group grants, unrestricted connections or public MCP items reach beyond the scope)",
+            "description": "Requires manage_users permission, and superuser privileges to send is_superuser or to update a superuser; also refused when the API token's connection, MCP or admin scope does not cover the access being granted (setting is_superuser, or setting the password of or re-enabling a user whose group grants, unrestricted connections, owned connections, owned cluster groups' member connections or public MCP items reach beyond the scope)",
             "content": {
               "application/json": {
                 "schema": {
@@ -14241,7 +14241,7 @@
         "type": "http",
         "scheme": "bearer",
         "bearerFormat": "JWT",
-        "description": "Session token obtained from /auth/login, or an API token. Every request an API token makes is confined to the token's connection, MCP and admin scopes, even when its owner is a superuser, so a superuser-owned token can receive 403 where its owner's session would succeed. A token can never grant a user, a group or another token access its own connection, MCP or admin scope does not cover, so creating, deleting or taking over a user, granting a group connection access, an MCP privilege or an admin permission, adding a group member, minting a token for another owner, and setting or clearing another token's scope are refused with 403 when they would reach beyond it. A new user counts as reaching every shared connection no group restricts and every public MCP item. A read entry allows alert acknowledgement and analysis, and blackout management, on that connection. The query_datastore tool still runs read-only SQL over the whole datastore, including every connection's stored credentials; issue #566 tracks limiting it to the connections the caller can read. A token whose admin scope names specific permissions may exercise those permissions, but cannot pass a gate that requires superuser status outright, such as the audit log. A token with no scope of a given kind, or one holding the * wildcard, is unrestricted on that surface."
+        "description": "Session token obtained from /auth/login, or an API token. Every request an API token makes is confined to the token's connection, MCP and admin scopes, even when its owner is a superuser, so a superuser-owned token can receive 403 where its owner's session would succeed. A token can never grant a user, a group or another token access its own connection, MCP or admin scope does not cover, so creating, deleting or taking over a user, granting a group connection access, an MCP privilege or an admin permission, adding a group member, minting a token for another owner, and setting or clearing another token's scope are refused with 403 when they would reach beyond it. A new user counts as reaching every shared connection no group restricts and every public MCP item, and a user or group holding manage_users, manage_groups, manage_permissions or manage_token_scopes counts as reaching every MCP item and admin permission, since each lets its holder acquire the rest. A read entry allows alert acknowledgement and analysis, and blackout management, on that connection. The query_datastore tool still runs read-only SQL over the whole datastore, including every connection's stored credentials; issue #566 tracks limiting it to the connections the caller can read. A token whose admin scope names specific permissions may exercise those permissions, but cannot pass a gate that requires superuser status outright, such as the audit log. A token with no scope of a given kind, or one holding the * wildcard, is unrestricted on that surface."
       }
     }
   }

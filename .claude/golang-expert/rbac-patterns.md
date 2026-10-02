@@ -483,6 +483,15 @@ with `grantOutOfTokenScope`.
   or a lister without the owned-group method (such as
   `NewSliceVisibilityLister`) fails closed for a connection-bounded
   actor.
+- `manage_users`, `manage_groups`, `manage_permissions` and
+  `manage_token_scopes` (and the admin wildcard) each let a holder
+  acquire any MCP item or admin permission (password takeover, joining
+  any group, self-granting, widening a token), so
+  `principalReach.reachesEverything` makes `reachMCPInScope` and
+  `reachAdminInScope` treat a holder like a superuser: only a token
+  unrestricted in that kind covers them, even one whose admin scope
+  names the permission. Comparing names alone let an MCP- or
+  admin-bounded token escalate through an account it took over.
 - An empty MCP name list is not proof of an unrestricted MCP scope:
   `GetTokenMCPScope` joins away rows whose identifier no longer exists,
   so `actorMCPScope` asks `AuthStore.HasTokenMCPScope` for the raw row
@@ -614,6 +623,11 @@ all four. `requireTargetInTokenScope` and
 `deniedAPIRoute` names `cluster.*`, `cluster_group.*`,
 `notification_channel.*` and `alert_rule.*` (a write to a
 sub-resource is recorded as an update of its parent).
+`updateConnection` and `deleteConnection` call the session-only
+`getUserInfoCompat` first, so a real token gets 401 there; only the
+cluster move reaches an audited connection token-scope refusal, and
+the other two gates are defensive, so do not document them as
+reachable.
 
 Mutations in these handlers go through `h.actorStore(r)` rather than
 `h.authStore`, so the audit row names the acting user or token:

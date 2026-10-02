@@ -1079,6 +1079,10 @@ A `SIGHUP` signal reloads the following settings:
 - LLM proxy settings.
 - Knowledgebase settings.
 
+A database setting given on the command line at start-up,
+such as `-db-host`, keeps priority over the configuration
+file on every reload, as it does at start-up.
+
 Authentication settings and HTTP server settings
 require a full restart. A reload keeps the value the
 server started with and warns about each of the

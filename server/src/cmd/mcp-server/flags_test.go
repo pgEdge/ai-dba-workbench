@@ -306,12 +306,16 @@ func parseTestFlags(t *testing.T, args ...string) *Flags {
 // given, so a reload rebuilds the configuration the way start-up did.
 func TestToReloadCLIFlags(t *testing.T) {
 	f := parseTestFlags(t,
+		"-config", "/etc/test.yaml", "-addr", ":9090", "-trace-file", "trace.log",
 		"-tls", "-cert", "server.crt", "-key", "server.key", "-chain", "chain.pem",
 		"-db-host", "testhost", "-db-port", "5433", "-db-name", "testdb",
 		"-db-user", "testuser", "-db-password", "testpass", "-db-sslmode", "require")
 
 	got := f.ToReloadCLIFlags()
 	want := config.CLIFlags{
+		ConfigFileSet: true, ConfigFile: "/etc/test.yaml",
+		HTTPAddrSet: true, HTTPAddr: ":9090",
+		TraceFileSet: true, TraceFile: "trace.log",
 		TLSEnabledSet: true, TLSEnabled: true,
 		TLSCertSet: true, TLSCertFile: "server.crt",
 		TLSKeySet: true, TLSKeyFile: "server.key",

@@ -536,8 +536,11 @@ func (h *ConnectionHandler) deleteConnection(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Delete the connection
-	if err := h.datastore.DeleteConnection(ctx, id); err != nil {
+	// Delete the connection under its own, much longer budget; see
+	// connectionDeleteContext.
+	deleteCtx, deleteCancel := connectionDeleteContext(r.Context())
+	defer deleteCancel()
+	if err := h.datastore.DeleteConnection(deleteCtx, id); err != nil {
 		log.Printf("[ERROR] Failed to delete connection (id=%d): %v", id, err)
 		RespondError(w, http.StatusInternalServerError,
 			"Failed to delete connection")
@@ -545,6 +548,18 @@ func (h *ConnectionHandler) deleteConnection(w http.ResponseWriter, r *http.Requ
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// connectionDeleteContext returns the context for the DELETE itself. It
+// carries database.ConnectionDeleteTimeout rather than the ten seconds
+// the ownership lookup gets, because the delete cascades through the
+// connection's whole metrics history (issue #480). It is also detached
+// from the request's cancellation: a browser or reverse proxy that gives
+// up waiting would otherwise roll the delete back, and every retry would
+// fail the same way at whatever size the history had reached. The
+// deadline still bounds the work.
+func connectionDeleteContext(parent context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(parent), database.ConnectionDeleteTimeout)
 }
 
 // listDatabases handles GET /api/v1/connections/{id}/databases

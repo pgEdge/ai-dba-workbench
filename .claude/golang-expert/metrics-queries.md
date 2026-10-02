@@ -21,6 +21,28 @@ stripping the joins out, because it costs nothing and the cascade is the
 only thing standing between a stale metric row and a foreign key
 violation downstream.
 
+## Deleting a Connection
+
+Because of that cascade, `DELETE FROM connections` removes the
+connection's whole retention history and can take minutes, so it does
+not run under the budgets ordinary datastore calls get (issue #480).
+`database.ConnectionDeleteTimeout` (four minutes, kept under the HTTP
+server's 300 second `WriteTimeout`) is both the handler deadline, built
+by `connectionDeleteContext` in `api/connection_handlers.go` with
+`context.WithoutCancel` so that a client giving up does not roll the
+delete back, and a transaction-local `statement_timeout` that
+`DeleteConnection` sets with `set_config(..., true)` to override the
+pool-wide one. `DeleteConnection` deliberately does not take `d.mu`:
+holding the write lock through the cascade would stall every other
+datastore call. `TestDeleteConnection_OverridesPoolStatementTimeout`,
+`TestDeleteConnection_SurvivesRequestCancellation` and
+`TestDeleteConnection_DoesNotBlockDatastoreReaders` lock these
+properties in. If deletes outgrow four minutes, the next step is an
+asynchronous delete (hide the connection at once, reclaim its rows in
+the background), not a longer timeout; detaching partitions does not
+help directly, because the weekly partitions hold every connection's
+rows.
+
 ## Filter Orphans at Query Time
 
 Any query that reads from `metrics.*` and then feeds the result into a
@@ -1303,7 +1325,7 @@ the RBAC loop, the `GetConnection` name lookups and the read-only
 transaction do any work. That placement is the point: the fan-out on
 `/metrics/performance-summary` is five sub-queries, a name lookup and an
 RBAC check per ID, all under one 30 second deadline against a pool that
-defaults to four connections. The single `connection_id` path is
+defaults to twenty connections (`config.DefaultPoolMaxConns`). The single `connection_id` path is
 unaffected, and `handleConnectionGroups` already requires exactly one ID.
 Keep the cap in the parse helper rather than in each handler, and
 re-measure the fan-out before raising it.

@@ -22,8 +22,12 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
 )
 
-// connectionNotAccessibleMsg is the wording every connection-scoped tool
-// uses for a connection that is missing or that the caller may not access.
+// connectionNotAccessibleMsg is the wording resolveAccessibleConnection
+// returns for a connection that is missing or that the caller may not
+// access. Only the tools that call it (get_alert_history, get_blackouts,
+// get_metric_baselines and get_timeline_events) use it; other
+// connection-scoped tools, such as query_database, word their denials
+// differently.
 const connectionNotAccessibleMsg = "connection not found or not accessible"
 
 // maxConnectionSuggestions caps how many visible connections the

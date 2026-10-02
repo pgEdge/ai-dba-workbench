@@ -479,7 +479,11 @@ with the collector's default of 25 and the alerter's default of 10, it
 uses 55 of the 97 connections that the PostgreSQL default
 `max_connections` of 100 makes available to ordinary users. Raise the
 datastore's `max_connections` before raising any of the three pools
-past that total.
+past that total. The pool is sized when the server starts, so a change
+takes effect on restart rather than on a `SIGHUP` reload. When the
+option is set explicitly, the same value also caps each per-session
+pool that the server opens to a monitored database; when it is unset,
+those pools use the connection library's default.
 
 ### Embedding (`embedding`)
 

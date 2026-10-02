@@ -34,8 +34,9 @@ delete back, and a transaction-local `statement_timeout` that
 `DeleteConnection` sets with `set_config(..., true)` to override the
 pool-wide one. `DeleteConnection` deliberately does not take `d.mu`:
 holding the write lock through the cascade would stall every other
-datastore call. `TestDeleteConnection_OverridesPoolStatementTimeout`
-and `TestDeleteConnection_SurvivesRequestCancellation` lock both
+datastore call. `TestDeleteConnection_OverridesPoolStatementTimeout`,
+`TestDeleteConnection_SurvivesRequestCancellation` and
+`TestDeleteConnection_DoesNotBlockDatastoreReaders` lock these
 properties in. If deletes outgrow four minutes, the next step is an
 asynchronous delete (hide the connection at once, reclaim its rows in
 the background), not a longer timeout; detaching partitions does not

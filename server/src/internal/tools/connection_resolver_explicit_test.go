@@ -162,8 +162,10 @@ type resolverTestEnv struct {
 }
 
 // newResolverTestEnv builds a resolverTestEnv, skipping when no test
-// database is configured. A nil auth store grants full access, so the
-// tests exercise the resolver rather than the RBAC gate.
+// database is configured. The RBAC checker sits on a real test auth
+// store, since a nil store denies every check (issue #477); callers run
+// as a superuser so the tests exercise the resolver rather than the RBAC
+// gate.
 func newResolverTestEnv(t *testing.T) *resolverTestEnv {
 	t.Helper()
 
@@ -214,9 +216,12 @@ func newResolverTestEnv(t *testing.T) *resolverTestEnv {
 		t.Fatalf("Failed to insert connection: %v", err)
 	}
 
+	authStore, closeAuthStore := newRBACTestStore(t)
+
 	cm := database.NewClientManager(nil)
 	t.Cleanup(func() {
 		_ = cm.CloseAll()
+		closeAuthStore()
 		_, _ = pool.Exec(context.Background(),
 			"DROP SCHEMA IF EXISTS ai_wb_resolver_fixture CASCADE")
 		pool.Close()
@@ -225,7 +230,7 @@ func newResolverTestEnv(t *testing.T) *resolverTestEnv {
 	return &resolverTestEnv{
 		resolver: NewConnectionResolver(cm,
 			database.NewTestDatastoreWithSecret(pool, resolverTestSecret),
-			auth.NewRBACChecker(nil)),
+			auth.NewRBACChecker(authStore)),
 		pool:     pool,
 		clients:  cm,
 		connID:   connID,
@@ -251,7 +256,8 @@ func currentDatabase(t *testing.T, pool *pgxpool.Pool) string {
 // connection and the session key against a live database.
 func TestResolveExplicit_Database(t *testing.T) {
 	env := newResolverTestEnv(t)
-	ctx := context.Background()
+	ctx := context.WithValue(context.Background(),
+		auth.IsSuperuserContextKey, true)
 
 	t.Run("unknown connection", func(t *testing.T) {
 		resolved, resp := env.resolver.Resolve(ctx, map[string]any{

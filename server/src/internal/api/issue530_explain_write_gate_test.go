@@ -233,7 +233,7 @@ func TestIssue530_NeedsSimpleProtocol(t *testing.T) {
 // gets the confirmation prompt instead of a silent DELETE. The handler
 // answers before it reaches the nil datastore.
 func TestIssue530_ExplainAnalyzeDeleteRequiresConfirmation(t *testing.T) {
-	handler := newTestConnectionHandlerWithRBAC()
+	handler := newTestConnectionHandlerWithRBAC(t)
 
 	req := httptest.NewRequest(http.MethodPost,
 		"/api/v1/connections/1/query", strings.NewReader(issue530Payload))
@@ -960,7 +960,7 @@ func TestIssue530_ContainsDollarParamEitherReading(t *testing.T) {
 // confirmation prompt. The handler answers before it reaches the nil
 // datastore.
 func TestIssue530_StandardConformingStringsOffRequiresConfirmation(t *testing.T) {
-	handler := newTestConnectionHandlerWithRBAC()
+	handler := newTestConnectionHandlerWithRBAC(t)
 
 	query := `SELECT set_config('standard_conforming_strings', 'off', false); ` +
 		`WITH x AS (SELECT '\'' AS c), d AS (DELETE FROM t RETURNING *) ` +

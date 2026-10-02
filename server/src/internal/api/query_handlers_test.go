@@ -1196,7 +1196,7 @@ func TestExecuteQuery_RejectsInvalidDatabaseOverride(t *testing.T) {
 
 	for name, database := range names {
 		t.Run(name, func(t *testing.T) {
-			handler := newTestConnectionHandlerWithRBAC()
+			handler := newTestConnectionHandlerWithRBAC(t)
 
 			body, err := json.Marshal(map[string]string{
 				"query":         "SELECT 1",
@@ -1270,7 +1270,7 @@ func TestExecuteQuery_DatabaseOverrideInjectionIsEscaped(t *testing.T) {
 // stays narrow: a name PostgreSQL would accept is not rejected here, so
 // it fails later, at the connection, rather than at the gate.
 func TestExecuteQuery_AcceptsUnusualDatabaseOverride(t *testing.T) {
-	handler := newTestConnectionHandlerWithRBAC()
+	handler := newTestConnectionHandlerWithRBAC(t)
 
 	body := `{"query": "SELECT 1", "database_name": "my db-1.prod"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections/1/query",

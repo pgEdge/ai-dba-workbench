@@ -866,7 +866,10 @@ project adheres to
   and Tier 3 calls. The baselines now count client backends only, and
   the `connection_utilization_percent` baseline divides each sample by
   the `max_connections` value in force when that sample was collected
-  rather than by the current value. (#567)
+  rather than by the current value. Each baseline cycle now also
+  deletes the rows of a metric that it did not rewrite, such as an
+  hourly bucket that no longer has enough samples, so rows built from
+  the old values do not survive the upgrade. (#567)
 
 - Fix alerts staying active for ever on a server an operator has
   stopped monitoring. The probes of an unmonitored connection leave

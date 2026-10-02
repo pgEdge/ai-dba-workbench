@@ -13,6 +13,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
 
 	embeddingpkg "github.com/pgedge/ai-workbench/pkg/embedding"
 )
@@ -293,6 +294,26 @@ func (d *Datastore) DeleteBaselinesForUnsupportedMetrics(ctx context.Context) (i
 	`, BaselineSupportedMetrics())
 	if err != nil {
 		return 0, fmt.Errorf("failed to delete baselines for unsupported metrics: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
+// DeleteStaleMetricBaselines removes every metric_baselines row for
+// metricName whose last_calculated is before calculatedBefore, and
+// returns the number deleted. The baseline calculator passes the time
+// its cycle started, once it has rebuilt the metric, so the rows that
+// go are the ones the cycle did not rewrite: an hourly or daily bucket
+// that no longer has enough samples, or a connection or database with
+// no samples left in the lookback window. Without this such a row
+// would keep its old statistics for ever, which is how baselines built
+// before a historical query was corrected outlived the fix (#567).
+func (d *Datastore) DeleteStaleMetricBaselines(ctx context.Context, metricName string, calculatedBefore time.Time) (int64, error) {
+	tag, err := d.pool.Exec(ctx, `
+		DELETE FROM metric_baselines
+		WHERE metric_name = $1 AND last_calculated < $2
+	`, metricName, calculatedBefore)
+	if err != nil {
+		return 0, fmt.Errorf("failed to delete stale baselines for %s: %w", metricName, err)
 	}
 	return tag.RowsAffected(), nil
 }

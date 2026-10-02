@@ -94,7 +94,7 @@ func TestRechainAuditLogCommandRefusesAnInterleavedLog(t *testing.T) {
 	before := auditHashVersions(t, dir)
 
 	var out bytes.Buffer
-	err := rechainAuditLogCommand(dir, true, strings.NewReader(""), &out)
+	err := rechainAuditLogCommand(dir, confirmRechainOpts, strings.NewReader(""), &out)
 	if !errors.Is(err, auth.ErrAuditUnkeyedRow) {
 		t.Fatalf("Expected the command to refuse the interleaved log, got %v",
 			err)

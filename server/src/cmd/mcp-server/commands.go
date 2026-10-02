@@ -144,6 +144,10 @@ type cliCommand struct {
 	exitCode func(error) int
 }
 
+// cliExit ends the process after a command fails. It is a variable so
+// that the tests can run every command without the test binary exiting.
+var cliExit = os.Exit
+
 // runFirstSelected runs the first command its flag selects and reports
 // whether one ran. A command that fails reports the error and ends the
 // process, so no caller here sees one.
@@ -158,7 +162,7 @@ func runFirstSelected(commands []cliCommand) bool {
 			if cmd.exitCode != nil {
 				code = cmd.exitCode(err)
 			}
-			os.Exit(code)
+			cliExit(code)
 		}
 		return true
 	}
@@ -434,8 +438,10 @@ func runAuditCommands(f *Flags, dataDir string) bool {
 		{
 			selected: f.RechainAuditCmd,
 			run: func() error {
-				return rechainAuditLogCommand(dataDir, f.ConfirmRechain,
-					os.Stdin, os.Stdout)
+				return rechainAuditLogCommand(dataDir, auditRechainOptions{
+					assumeYes:          f.ConfirmRechain,
+					previousSecretFile: f.PreviousSecretFile,
+				}, os.Stdin, os.Stdout)
 			},
 		},
 	})

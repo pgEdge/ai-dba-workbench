@@ -32,10 +32,11 @@ const thinkingBlock pgllm.ContentBlockType = "thinking"
 // interface, which is fine because libReasoning only uses Chat/Model.
 type fakeChatClient struct {
 	pgllm.Client
-	gotReq pgllm.ChatRequest
-	resp   *pgllm.ChatResponse
-	err    error
-	model  string
+	gotReq   pgllm.ChatRequest
+	resp     *pgllm.ChatResponse
+	err      error
+	model    string
+	provider string
 }
 
 func (f *fakeChatClient) Chat(_ context.Context, req pgllm.ChatRequest) (*pgllm.ChatResponse, error) {
@@ -45,9 +46,12 @@ func (f *fakeChatClient) Chat(_ context.Context, req pgllm.ChatRequest) (*pgllm.
 
 func (f *fakeChatClient) Model() string { return f.model }
 
+func (f *fakeChatClient) Provider() string { return f.provider }
+
 func TestLibReasoningClassify(t *testing.T) {
 	fc := &fakeChatClient{
-		model: "claude-haiku-4-5",
+		model:    "claude-haiku-4-5",
+		provider: "anthropic",
 		resp: &pgllm.ChatResponse{Content: []pgllm.ContentBlock{
 			{Type: pgllm.BlockText, Text: `{"decision":"alert",`},
 			// A non-text block must be ignored by the concatenation.
@@ -82,6 +86,12 @@ func TestLibReasoningClassify(t *testing.T) {
 	}
 	if r.ModelName() != "claude-haiku-4-5" {
 		t.Fatalf("ModelName = %q", r.ModelName())
+	}
+	if r.ProviderName() != "anthropic" {
+		t.Fatalf("ProviderName = %q", r.ProviderName())
+	}
+	if r.SystemPrompt() != fc.gotReq.SystemPrompt {
+		t.Fatalf("SystemPrompt does not match the prompt Classify sent")
 	}
 }
 

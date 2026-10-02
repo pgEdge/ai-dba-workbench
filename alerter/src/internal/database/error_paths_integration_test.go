@@ -146,8 +146,11 @@ func TestAlertQueriesReturnErrorOnClosedPool(t *testing.T) {
 	if _, err := ds.GetAlertsByConnection(ctx, 1); err == nil {
 		t.Errorf("GetAlertsByConnection should error on closed pool")
 	}
-	if err := ds.UpdateAlertReevaluation(ctx, 1); err == nil {
+	if err := ds.UpdateAlertReevaluation(ctx, 1, nil); err == nil {
 		t.Errorf("UpdateAlertReevaluation should error on closed pool")
+	}
+	if err := ds.DeferAlertReevaluation(ctx, 1); err == nil {
+		t.Errorf("DeferAlertReevaluation should error on closed pool")
 	}
 }
 

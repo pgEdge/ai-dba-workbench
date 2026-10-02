@@ -361,6 +361,15 @@ func (e *Engine) processTier2And3(ctx context.Context) {
 			return
 		}
 
+		// A candidate whose metric no longer supports baselines was
+		// written before the metric was excluded (GitHub issue #576).
+		// Its z-score came from a baseline the sweep has since deleted,
+		// so suppress it rather than raise an alert from stale scoring.
+		if !database.SupportsBaselines(candidate.MetricName) {
+			e.suppressUnsupportedCandidate(ctx, candidate)
+			continue
+		}
+
 		// Checks that do not depend on the tier results run first, so
 		// a condition that persists across cycles does not buy an
 		// embedding and an LLM call on every cycle only for
@@ -429,6 +438,17 @@ func (e *Engine) markCandidateProcessed(ctx context.Context, candidate *database
 	if err := e.datastore.UpdateAnomalyCandidate(ctx, candidate); err != nil {
 		e.log("ERROR: Failed to update anomaly candidate: %v", err)
 	}
+}
+
+// suppressUnsupportedCandidate marks a candidate for a metric that no
+// longer supports baselines as processed and suppressed, without running
+// Tier 2 or Tier 3 or creating an alert.
+func (e *Engine) suppressUnsupportedCandidate(ctx context.Context, candidate *database.AnomalyCandidate) {
+	e.debugLog("Suppressing candidate %d: metric %s no longer supports baselines",
+		candidate.ID, candidate.MetricName)
+	decision := "suppress"
+	candidate.FinalDecision = &decision
+	e.markCandidateProcessed(ctx, candidate)
 }
 
 // processTier2 handles Tier 2 embedding similarity processing

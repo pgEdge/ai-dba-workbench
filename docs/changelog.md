@@ -795,9 +795,12 @@ project adheres to
   that exists for the `high_max_connections` threshold rule, and its
   baseline was built from a single sample, so it could never pass
   warm-up; the second is a presence count that is almost always zero,
-  and its threshold rule already covers it. Threshold rules on both
-  metrics are unchanged, and the alerter deletes their existing
-  baseline rows on its next baseline cycle. (#576)
+  and the `replication_slot_inactive` threshold rule on
+  `pg_replication_slots.inactive` already alerts on the condition it
+  counts. Threshold rules that read either metric are unchanged, the
+  alerter deletes their existing baseline rows on its next baseline
+  cycle, and it suppresses any anomaly candidate for them recorded
+  before the upgrade rather than raising an alert from it. (#576)
 
 - Fix the database summaries reporting a failed query as an empty
   success. Each sub-query logged its error and returned no rows, so a

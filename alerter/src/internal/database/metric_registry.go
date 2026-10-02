@@ -414,8 +414,10 @@ var metricRegistry = map[string]metricQueryConfig{
 	// The entry deliberately has no historical query, so SupportsBaselines
 	// is false and the metric is excluded from baselines and anomaly
 	// detection. It is a presence count that is almost always zero, like
-	// pg_replication_slots.inactive, and its threshold rule already covers
-	// it. See GitHub issue #576.
+	// pg_replication_slots.inactive, and the condition it counts is already
+	// alerted on by the replication_slot_inactive rule on that metric. No
+	// seeded rule reads inactive_count itself; the latest query stays for
+	// user-defined rules. See GitHub issue #576.
 	"pg_replication_slots.inactive_count": {
 		probeName: "pg_replication_slots",
 		latestSQL: `

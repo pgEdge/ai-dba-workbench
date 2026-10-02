@@ -17,18 +17,20 @@ import (
 	"time"
 )
 
-// thresholdOnlyMetrics are registry metrics that serve threshold rules
-// only and are deliberately excluded from baselines and anomaly
-// detection (GitHub issue #576): max_connections is a configuration
-// value, and inactive_count is a presence count that is almost always
-// zero.
+// thresholdOnlyMetrics are registry metrics that are available to
+// threshold rules only and are deliberately excluded from baselines and
+// anomaly detection (GitHub issue #576): max_connections is a
+// configuration value read by the seeded high_max_connections rule, and
+// inactive_count is a presence count that is almost always zero, whose
+// condition the seeded replication_slot_inactive rule on
+// pg_replication_slots.inactive already covers.
 var thresholdOnlyMetrics = []string{
 	"pg_replication_slots.inactive_count",
 	"pg_settings.max_connections",
 }
 
 // TestThresholdOnlyMetrics_NotBaselined pins the exclusion: each metric
-// keeps a latest query for its threshold rule, has no historical query,
+// keeps the latest query threshold rules read, has no historical query,
 // is rejected by SupportsBaselines and is absent from the list the
 // baseline sweep keeps.
 func TestThresholdOnlyMetrics_NotBaselined(t *testing.T) {
@@ -40,7 +42,7 @@ func TestThresholdOnlyMetrics_NotBaselined(t *testing.T) {
 			t.Fatalf("%s is missing from the registry", name)
 		}
 		if strings.TrimSpace(cfg.latestSQL) == "" {
-			t.Errorf("%s lost its latest query; its threshold rule needs it", name)
+			t.Errorf("%s lost its latest query; threshold rules need it", name)
 		}
 		if cfg.historicalSQL != "" {
 			t.Errorf("%s has a historical query; it must not be baselined", name)

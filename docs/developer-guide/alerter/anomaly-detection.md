@@ -110,8 +110,10 @@ query and are therefore never baselined or scored:
 - `pg_node_role.subscription_worker_down`
 - `pg_replication_slots.inactive`
 - `pg_replication_slots.inactive_count`, deliberately: it is a
-  presence count that is almost always zero, and its threshold rule
-  already covers it.
+  presence count that is almost always zero, and the
+  `replication_slot_inactive` threshold rule on
+  `pg_replication_slots.inactive` already alerts on the condition it
+  counts.
 - `pg_replication_slots.retained_bytes`
 - `pg_settings.max_connections`, deliberately: it is a configuration
   value that exists for the `high_max_connections` threshold rule.

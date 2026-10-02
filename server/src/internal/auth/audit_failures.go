@@ -264,6 +264,30 @@ func (c *failureCoalescer) drain(now time.Time, all bool) []failureSummary {
 	return sortSummaries(expired)
 }
 
+// restore puts back the entries behind summaries that could not be
+// written, so that a later sweep, or Close, can try again rather than
+// the counts being lost with a failed transaction. An entry that has
+// been re-created since the drain is left as it is.
+func (c *failureCoalescer) restore(summaries []failureSummary) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.entries == nil {
+		c.entries = make(map[failureKey]*failureState)
+	}
+	for i := range summaries {
+		summary := &summaries[i]
+		if _, ok := c.entries[summary.key]; ok {
+			continue
+		}
+		c.entries[summary.key] = &failureState{
+			firstSeen:  summary.firstSeen,
+			lastSeen:   summary.lastSeen,
+			suppressed: summary.suppressed,
+		}
+	}
+}
+
 // drop deletes one entry, appending a summary to expired if the entry
 // still held suppressed repeats, and returns the extended slice. The
 // caller must hold c.mu.
@@ -306,10 +330,11 @@ func (s *AuthStore) writeFailure(ev *AuditEvent) {
 // writeFailureSummaries records a summary row for each entry in one
 // transaction, so that a large batch of closed windows holds s.mu for
 // one commit rather than one per row. Errors are logged, as in
-// writeFailure. The caller must hold s.mu.
-func (s *AuthStore) writeFailureSummaries(summaries []failureSummary) {
+// writeFailure, and reported by returning false. The caller must hold
+// s.mu.
+func (s *AuthStore) writeFailureSummaries(summaries []failureSummary) bool {
 	if len(summaries) == 0 {
-		return
+		return true
 	}
 
 	events := make([]*AuditEvent, len(summaries))
@@ -320,7 +345,10 @@ func (s *AuthStore) writeFailureSummaries(summaries []failureSummary) {
 	if err := s.recordAuditInOwnTx(events...); err != nil {
 		log.Printf("[ERROR] Failed to record %d audit failure summary event(s): %v",
 			len(events), err)
+		return false
 	}
+
+	return true
 }
 
 // SweepAuditFailures writes a summary row for every coalesced failure
@@ -334,12 +362,16 @@ func (s *AuthStore) SweepAuditFailures() {
 
 // sweepAuditFailures drains the coalescer at now, every entry when all
 // is true or only those whose window has closed otherwise, and writes
-// the summaries.
+// the summaries. If the write fails the drained entries are put back,
+// so that the next sweep or Close tries again.
 func (s *AuthStore) sweepAuditFailures(now time.Time, all bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.writeFailureSummaries(s.failures.drain(now, all))
+	summaries := s.failures.drain(now, all)
+	if !s.writeFailureSummaries(summaries) {
+		s.failures.restore(summaries)
+	}
 }
 
 // coalesceFailure runs one failure through the coalescer at now,

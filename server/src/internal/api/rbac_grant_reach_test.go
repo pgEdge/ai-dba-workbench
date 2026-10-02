@@ -299,6 +299,46 @@ func TestGroupMembershipRespectsMCPAndAdminScope(t *testing.T) {
 		http.StatusNoContent)
 }
 
+// TestAccountTakeoverPermissionsReachEverything covers the 1 October
+// review: manage_users, manage_groups, manage_permissions and
+// manage_token_scopes each let their holder acquire any MCP item or
+// admin permission, so a token bounded in either kind may not add
+// someone to a group holding one, nor reset the password of a user who
+// already holds one, even when its admin scope names the permission.
+func TestAccountTakeoverPermissionsReachEverything(t *testing.T) {
+	f, cleanup := newReachFixture(t)
+	defer cleanup()
+	members := func(id int64) string {
+		return fmt.Sprintf("/api/v1/rbac/groups/%d/members", id)
+	}
+	reset := `{"password":"Another-Password-9"}`
+
+	for _, perm := range []string{
+		auth.PermManageUsers, auth.PermManageGroups,
+		auth.PermManagePermissions, auth.PermManageTokenScopes,
+	} {
+		holders := f.group(t, "holders-"+perm, nil)
+		if err := f.store.GrantAdminPermission(holders, perm); err != nil {
+			t.Fatalf("GrantAdminPermission failed: %v", err)
+		}
+		joiner := f.user(t, "joiner-"+perm, 0)
+		holder := f.user(t, "holder-"+perm, holders)
+		body := fmt.Sprintf(`{"user_id":%d}`, joiner)
+		userPath := fmt.Sprintf("/api/v1/rbac/users/%d", holder)
+
+		for _, caller := range []scopeCaller{f.mcpNarrowed, f.adminNarrowed} {
+			assertGrantRefused(t, f.do(caller, http.MethodPost, members(holders), body))
+			assertGrantRefused(t, f.do(caller, http.MethodPut, userPath, reset))
+		}
+		if groups, err := f.store.GetUserGroups(joiner); err != nil || len(groups) != 0 {
+			t.Fatalf("Expected no membership to be written, got %v (%v)", groups, err)
+		}
+		for _, caller := range f.open() {
+			assertStatus(t, f.do(caller, http.MethodPut, userPath, reset), http.StatusOK)
+		}
+	}
+}
+
 // TestCreateTokenRespectsMCPScope checks that a token bounded by MCP
 // scope may not mint a token for an owner who holds an MCP item beyond
 // it.
@@ -559,7 +599,13 @@ func assertDenialRecorded(t *testing.T, store *auth.AuthStore, action, reason st
 
 // TestConnectionScopeRefusalIsAudited checks that the connection
 // handler's token-scope refusals on update and delete are written to
-// the audit log through the RBAC handler's denial recorder.
+// the audit log through the RBAC handler's denial recorder. Both
+// handlers accept only a session bearer today (getUserInfoCompat
+// answers 401 to an API token), so no real token reaches these gates;
+// the test pairs a session bearer with an incomplete token context to
+// exercise the defensive check that stands ready should that change.
+// TestConnectionClusterMoveScopeRefusalIsAudited covers the refusal a
+// real token does reach.
 func TestConnectionScopeRefusalIsAudited(t *testing.T) {
 	rbac, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
@@ -587,6 +633,37 @@ func TestConnectionScopeRefusalIsAudited(t *testing.T) {
 		assertError(t, rec, http.StatusForbidden, connectionOutOfTokenScope)
 		assertDenialRecorded(t, store, tc.action, connectionOutOfTokenScope)
 	}
+}
+
+// TestConnectionClusterMoveScopeRefusalIsAudited checks that a token
+// whose connection scope names a connection only at read, and so can
+// see it, is refused moving it between clusters with an audited
+// connection.cluster.update denial.
+func TestConnectionClusterMoveScopeRefusalIsAudited(t *testing.T) {
+	rbac, store, cleanup := createTestRBACHandler(t)
+	defer cleanup()
+	if err := store.CreateServiceAccount("svc-mover", "", "", ""); err != nil {
+		t.Fatalf("CreateServiceAccount failed: %v", err)
+	}
+	_, token, err := store.CreateToken("svc-mover", "cluster move", nil)
+	if err != nil {
+		t.Fatalf("CreateToken failed: %v", err)
+	}
+	if err := store.SetTokenConnectionScope(token.ID, []auth.ScopedConnection{
+		{ConnectionID: 7, AccessLevel: auth.AccessLevelRead},
+	}); err != nil {
+		t.Fatalf("SetTokenConnectionScope failed: %v", err)
+	}
+	h := &ConnectionHandler{authStore: store, rbacChecker: auth.NewRBACChecker(store)}
+	h.SetDenialRecorder(rbac.RecordDenial)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/connections/7/cluster",
+		strings.NewReader(`{"cluster_id":1}`))
+	req = withSuperuserToken(req, token.ID)
+	rec := httptest.NewRecorder()
+	h.handleUpdateConnectionCluster(rec, req, 7)
+	assertError(t, rec, http.StatusForbidden, connectionOutOfTokenScope)
+	assertDenialRecorded(t, store, "connection.cluster.update", connectionOutOfTokenScope)
 }
 
 // =============================================================================

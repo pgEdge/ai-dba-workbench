@@ -255,6 +255,21 @@ func setupIntegration(t *testing.T) *integrationFixture {
 			return
 		}
 
+		// Until the fixture below takes ownership, teardownIntegration
+		// cannot see dbName, so any early return must drop it here or it
+		// leaks (issue #486). Deferred calls run last in, first out, so
+		// this runs before adminPool.Close and cancel.
+		fixtureOwnsDB := false
+		defer func() {
+			if fixtureOwnsDB {
+				return
+			}
+			if _, dropErr := adminPool.Exec(ctx, fmt.Sprintf(
+				"DROP DATABASE IF EXISTS %s WITH (FORCE)", dbName)); dropErr != nil {
+				fmt.Printf("warning: drop %s after setup failure: %v\n", dbName, dropErr)
+			}
+		}()
+
 		// Build a Datastore that points at the new DB. NewDatastore runs
 		// migrations automatically, so the connections / probe_configs
 		// tables exist on return.
@@ -262,12 +277,6 @@ func setupIntegration(t *testing.T) *integrationFixture {
 		dsCfg.database = dbName
 		ds, err := database.NewDatastore(&dsCfg)
 		if err != nil {
-			// Best-effort cleanup of the freshly created DB; the test is
-			// already aborting via integrationSkip, so report-and-continue
-			// is appropriate here.
-			if _, dropErr := adminPool.Exec(ctx, fmt.Sprintf("DROP DATABASE %s WITH (FORCE)", dbName)); dropErr != nil {
-				fmt.Printf("warning: drop %s after NewDatastore failure: %v\n", dbName, dropErr)
-			}
 			integrationSkip = fmt.Sprintf("NewDatastore: %v", err)
 			return
 		}
@@ -277,10 +286,7 @@ func setupIntegration(t *testing.T) *integrationFixture {
 		// without password_encrypted set, the scheduler builds incomplete
 		// connection strings and probe execution fails with SASL auth.
 		// Local trust-auth setups have an empty rawPassword and skip
-		// encryption entirely, leaving password_encrypted NULL. If
-		// encryption fails the integration teardown still drops the
-		// freshly-created database via teardownIntegration, so we don't
-		// need an explicit DROP here.
+		// encryption entirely, leaving password_encrypted NULL.
 		var encryptedPassword string
 		if base.password != "" {
 			enc, encErr := crypto.EncryptPassword(base.password, testServerSecret)
@@ -356,6 +362,7 @@ func setupIntegration(t *testing.T) *integrationFixture {
 			rawPassword:       base.password,
 			passwordEncrypted: encryptedPassword,
 		}
+		fixtureOwnsDB = true
 	})
 
 	if integrationSkip != "" {

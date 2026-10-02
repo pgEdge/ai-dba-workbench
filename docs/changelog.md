@@ -336,9 +336,9 @@ project adheres to
   deleted from the newest end of the log. Repeated denials are
   coalesced into one event per minute carrying a
   `details.repeat_count`, so a client retrying a refused request
-  cannot flood the log; each denial names the request path it
-  refused in `details.target`, and a token refused a change to a
-  connection outside its scope is recorded too. Retention is
+  cannot flood the log; each denial names the object it was
+  aimed at in `details.target`, such as `users/12`, and a token
+  refused moving a connection between clusters is recorded too. Retention is
   controlled by the new `http.auth.audit_retention_days`
   setting, which defaults to 90 days, and each purge records an
   `audit.purge` event naming the cutoff it applied and the
@@ -634,7 +634,12 @@ project adheres to
   owns, for whoever recreates it; create
   a token for such an owner; or set or clear another token's
   scope so that the other token reaches beyond it in any of the
-  three kinds. Refused requests are written to the RBAC audit
+  three kinds. A user or group holding `manage_users`,
+  `manage_groups`, `manage_permissions` or `manage_token_scopes`
+  counts as reaching every MCP item and admin permission, since
+  each lets its holder acquire the rest, so a token restricted in
+  either kind cannot add a member to such a group or take over
+  such a user. Refused requests are written to the RBAC audit
   log, including those refused by the cluster, alert rule and
   notification channel handlers; repeated refusals from one
   caller are folded into a single row per minute that lists up

@@ -707,8 +707,8 @@ func TestGetTimelineEventsIntegrationUnknownConnectionID(t *testing.T) {
 	if !resp.IsError {
 		t.Fatal("expected error response for unknown connection_id")
 	}
-	if !strings.Contains(resp.Content[0].Text, "does not exist") {
-		t.Errorf("expected 'does not exist' error, got: %s", resp.Content[0].Text)
+	if !strings.Contains(resp.Content[0].Text, "not found or not accessible") {
+		t.Errorf("expected 'not found or not accessible' error, got: %s", resp.Content[0].Text)
 	}
 }
 
@@ -959,7 +959,7 @@ func TestGetTimelineEventsRBACDeniesExplicitConnectionID(t *testing.T) {
 	if !resp.IsError {
 		t.Fatalf("expected access denied, got: %+v", resp.Content)
 	}
-	if !strings.Contains(resp.Content[0].Text, "Access denied") {
-		t.Errorf("expected access denied message, got: %s", resp.Content[0].Text)
+	if !strings.Contains(resp.Content[0].Text, "not found or not accessible") {
+		t.Errorf("expected not-found denial message, got: %s", resp.Content[0].Text)
 	}
 }

@@ -62,7 +62,7 @@ func TestTools_NilRBAC_SingleConnectionDenied(t *testing.T) {
 			// Denied and missing connections share a message so that the
 			// response is not an existence oracle.
 			text := resp.Content[0].Text
-			if !strings.Contains(text, "does not exist") && !strings.Contains(text, "not found or not accessible") {
+			if !strings.Contains(text, "not found or not accessible") {
 				t.Errorf("expected a not-found denial, got: %s", text)
 			}
 		})
@@ -91,38 +91,35 @@ func TestTools_NilRBAC_AllConnectionsEmpty(t *testing.T) {
 }
 
 // TestTools_NilRBAC_ExistingConnectionDenied checks every
-// single-connection tool against a real connection, so that a tool which
-// skipped its access check would find the connection and answer
-// something other than the denial asserted here.
+// single-connection tool against a real connection: a nil checker denies
+// it with the same message as a missing one, and a tool which skipped its
+// access check would find the connection and answer something else.
 func TestTools_NilRBAC_ExistingConnectionDenied(t *testing.T) {
 	pool, _, cleanup := newToolsTestPool(t)
 	defer cleanup()
 	connID := seedBaselineConnection(t, pool, "denied-conn", true, "")
 
-	for name, tc := range map[string]struct {
-		tool Tool
-		want string
-	}{
-		"get_alert_history":    {GetAlertHistoryTool(pool, nil, nil), "Access denied"},
-		"get_blackouts":        {GetBlackoutsTool(pool, nil, nil), "Access denied"},
-		"get_metric_baselines": {GetMetricBaselinesTool(pool, nil, nil), "Access denied"},
-		"get_timeline_events":  {GetTimelineEventsTool(database.NewTestDatastore(pool), nil, nil), "Access denied"},
-		"query_metrics":        {QueryMetricsTool(pool, nil), "not found or not accessible"},
+	for name, tool := range map[string]Tool{
+		"get_alert_history":    GetAlertHistoryTool(pool, nil, nil),
+		"get_blackouts":        GetBlackoutsTool(pool, nil, nil),
+		"get_metric_baselines": GetMetricBaselinesTool(pool, nil, nil),
+		"get_timeline_events":  GetTimelineEventsTool(database.NewTestDatastore(pool), nil, nil),
+		"query_metrics":        QueryMetricsTool(pool, nil),
 	} {
 		t.Run(name, func(t *testing.T) {
 			args := map[string]any{"connection_id": float64(connID)}
 			if name == "query_metrics" {
 				args["probe_name"] = "pg_stat_activity"
 			}
-			resp, err := asSuperuser(tc.tool).Handler(args)
+			resp, err := asSuperuser(tool).Handler(args)
 			if err != nil {
 				t.Fatalf("handler returned error: %v", err)
 			}
 			if !resp.IsError || len(resp.Content) == 0 {
 				t.Fatalf("expected an error response, got: %+v", resp)
 			}
-			if text := resp.Content[0].Text; !strings.Contains(text, tc.want) {
-				t.Errorf("expected %q, got: %s", tc.want, text)
+			if text := resp.Content[0].Text; !strings.Contains(text, "not found or not accessible") {
+				t.Errorf("expected a not-found denial, got: %s", text)
 			}
 		})
 	}

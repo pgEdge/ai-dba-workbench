@@ -138,35 +138,13 @@ Returns TSV data with:
 				}
 				singleConnection = true
 
-				// Verify the connection_id exists
-				err = pool.QueryRow(ctx, "SELECT name FROM connections WHERE id = $1", connectionID).Scan(&connName)
-				if err != nil {
-					rows, qerr := pool.Query(ctx, "SELECT id, name FROM connections ORDER BY id LIMIT 20")
-					if qerr == nil {
-						defer rows.Close()
-						var validIDs []string
-						for rows.Next() {
-							var id int
-							var name string
-							if rows.Scan(&id, &name) == nil {
-								validIDs = append(validIDs, fmt.Sprintf("%d (%s)", id, name))
-							}
-						}
-						if len(validIDs) > 0 {
-							return mcp.NewToolError(fmt.Sprintf(
-								"Connection ID %d does not exist. Valid connection IDs are: %s. "+
-									"Use list_connections to see all available connections.",
-								connectionID, strings.Join(validIDs, ", ")))
-						}
-					}
-					return mcp.NewToolError(fmt.Sprintf("Connection ID %d does not exist. Use list_connections to see available connections.", connectionID))
+				// RBAC: check access before looking the connection up, so
+				// missing and forbidden IDs give the same response.
+				name, resp := resolveAccessibleConnection(ctx, pool, rbacChecker, visibilityLister, connectionID)
+				if resp != nil {
+					return *resp, nil
 				}
-
-				// RBAC: verify access to the specified connection
-				canAccess, _ := rbacChecker.CanAccessConnection(ctx, connectionID)
-				if !canAccess {
-					return mcp.NewToolError(fmt.Sprintf("Access denied: you do not have permission to access connection ID %d.", connectionID))
-				}
+				connName = name
 			}
 
 			// Build accessible connection filter for multi-connection mode.

@@ -171,7 +171,7 @@ func TestGetAlertHistoryTool_Coverage(t *testing.T) {
 	// With no connections at all the error names none.
 	runToolCases(t, GetAlertHistoryTool(pool, testRBACChecker(t), nil), []toolCase{
 		{name: "unknown connection, none exist", args: map[string]any{"connection_id": float64(999)},
-			wantErr: true, want: "does not exist. Use list_connections"},
+			wantErr: true, want: "connection not found or not accessible. Use list_connections to see the connections you can access."},
 	})
 
 	connID := seedBaselineConnection(t, pool, "alerts-conn", true, "")
@@ -182,8 +182,8 @@ func TestGetAlertHistoryTool_Coverage(t *testing.T) {
 		{name: "no context", raw: true, wantErr: true, want: "Failed to query alerts"},
 		{name: "invalid connection_id", args: map[string]any{"connection_id": "x"},
 			wantErr: true, want: "Invalid 'connection_id'"},
-		{name: "unknown connection lists valid IDs", args: map[string]any{"connection_id": float64(999)},
-			wantErr: true, want: "Valid connection IDs are"},
+		{name: "unknown connection lists visible IDs", args: map[string]any{"connection_id": float64(999)},
+			wantErr: true, want: "Connections you can access include: "},
 		{name: "single connection", args: map[string]any{"connection_id": float64(connID)},
 			wantErr: true, want: "Failed to query alerts"},
 		{name: "restricted all connections", args: map[string]any{"__context": restricted},
@@ -218,7 +218,7 @@ func TestGetAlertHistoryTool_Coverage(t *testing.T) {
 			want: "You do not have access to any connections"},
 		{name: "private connection denied", args: map[string]any{
 			"__context": restricted, "connection_id": float64(connID)},
-			wantErr: true, want: "Access denied"},
+			wantErr: true, want: "connection not found or not accessible."},
 	})
 }
 
@@ -231,7 +231,7 @@ func TestGetBlackoutsTool_Coverage(t *testing.T) {
 
 	runToolCases(t, GetBlackoutsTool(pool, testRBACChecker(t), nil), []toolCase{
 		{name: "unknown connection, none exist", args: map[string]any{"connection_id": float64(999)},
-			wantErr: true, want: "does not exist. Use list_connections"},
+			wantErr: true, want: "connection not found or not accessible. Use list_connections to see the connections you can access."},
 	})
 
 	connID := seedBaselineConnection(t, pool, "blackouts-conn", true, "")
@@ -241,8 +241,8 @@ func TestGetBlackoutsTool_Coverage(t *testing.T) {
 		{name: "no context", raw: true, wantErr: true, want: "Failed to query blackouts"},
 		{name: "invalid connection_id", args: map[string]any{"connection_id": "x"},
 			wantErr: true, want: "Invalid 'connection_id'"},
-		{name: "unknown connection lists valid IDs", args: map[string]any{"connection_id": float64(999)},
-			wantErr: true, want: "Valid connection IDs are"},
+		{name: "unknown connection lists visible IDs", args: map[string]any{"connection_id": float64(999)},
+			wantErr: true, want: "Connections you can access include: "},
 		{name: "single connection", args: map[string]any{"connection_id": float64(connID)},
 			wantErr: true, want: "Failed to query blackouts"},
 		{name: "restricted all connections", args: map[string]any{
@@ -263,7 +263,7 @@ func TestGetBlackoutsTool_Coverage(t *testing.T) {
 			want: "You do not have access to any connections"},
 		{name: "private connection denied", args: map[string]any{
 			"__context": restrictedUserContext(), "connection_id": float64(connID)},
-			wantErr: true, want: "Access denied"},
+			wantErr: true, want: "connection not found or not accessible."},
 	})
 }
 

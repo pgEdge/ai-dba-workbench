@@ -240,7 +240,7 @@ func buildTimelineRequest(
 ) (timelineRequest, *mcp.ToolResponse, error) {
 	var req timelineRequest
 
-	single, connID, connName, resp, err := resolveTimelineConnection(ctx, args, datastore.GetPool(), rbacChecker)
+	single, connID, connName, resp, err := resolveTimelineConnection(ctx, args, datastore.GetPool(), rbacChecker, visibilityLister)
 	if resp != nil {
 		return req, resp, err
 	}
@@ -300,16 +300,17 @@ func timelineFilterFromRequest(req timelineRequest) database.TimelineFilter {
 }
 
 // resolveTimelineConnection parses an optional connection_id argument,
-// looks up the connection name when a pool is available, and performs
-// the per-connection RBAC check. When connection_id is absent it
-// returns singleConnection=false and a nil short-circuit response. A
-// non-nil *mcp.ToolResponse indicates the caller should return that
-// response immediately.
+// performs the per-connection RBAC check and then looks up the connection
+// name when a pool is available. When connection_id is absent it returns
+// singleConnection=false and a nil short-circuit response. A non-nil
+// *mcp.ToolResponse indicates the caller should return that response
+// immediately.
 func resolveTimelineConnection(
 	ctx context.Context,
 	args map[string]any,
 	pool *pgxpool.Pool,
 	rbacChecker *auth.RBACChecker,
+	visibilityLister auth.ConnectionVisibilityLister,
 ) (bool, int, string, *mcp.ToolResponse, error) {
 	if _, hasConnID := args["connection_id"]; !hasConnID {
 		return false, 0, "", nil, nil
@@ -321,18 +322,11 @@ func resolveTimelineConnection(
 		return false, 0, "", &resp, rerr
 	}
 
-	var connName string
-	if pool != nil {
-		if qerr := pool.QueryRow(ctx, "SELECT name FROM connections WHERE id = $1", cid).Scan(&connName); qerr != nil {
-			resp, rerr := mcp.NewToolError(fmt.Sprintf("Connection ID %d does not exist. Use list_connections to see available connections.", cid))
-			return false, 0, "", &resp, rerr
-		}
-	}
-
-	canAccess, _ := rbacChecker.CanAccessConnection(ctx, cid)
-	if !canAccess {
-		resp, rerr := mcp.NewToolError(fmt.Sprintf("Access denied: you do not have permission to access connection ID %d.", cid))
-		return false, 0, "", &resp, rerr
+	// RBAC: check access before looking the connection up, so missing
+	// and forbidden IDs give the same response.
+	connName, resp := resolveAccessibleConnection(ctx, pool, rbacChecker, visibilityLister, cid)
+	if resp != nil {
+		return false, 0, "", resp, nil
 	}
 
 	return true, cid, connName, nil, nil

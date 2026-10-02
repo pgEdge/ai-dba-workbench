@@ -1206,6 +1206,14 @@ which is why the Tier 1 tests in `anomalies_test.go` need no alerts
 table; `TestDetectAnomaliesSkipsCandidatesThatCannotAlert` covers each
 check.
 
+`processTier2And3` reads the config at the top of each loop iteration
+and returns when `!cfg.Anomaly.Enabled ||
+!e.anomalyProcessingAvailable(cfg)`, because a reload mid-pass that
+disables Tier 2 and Tier 3 would otherwise send the rest of the batch
+to `determineFinalDecision` with no tier result, which defaults to
+`alert` (#581). `TestProcessTier2And3StopsWhenReloadDisablesTiers`
+fires the reload from inside the first Tier 3 call.
+
 ## Time-Window Resolution (server)
 
 Every dashboard metrics query runs against an absolute window, and the

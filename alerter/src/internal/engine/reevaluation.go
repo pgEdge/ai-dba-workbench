@@ -210,14 +210,15 @@ func (e *Engine) recordReevaluation(ctx context.Context, alertID int64, fingerpr
 }
 
 // reevaluationFingerprint returns a hex SHA-256 of everything that shapes
-// the re-evaluation answer: the reasoning model's name and the prompt
-// built from the given inputs, with the re-evaluation count zeroed. The
-// count changes on every call but says nothing new about the alert, so
-// including it would make every fingerprint unique. Hashing the rendered
-// prompt rather than a hand-picked subset of fields means any input the
-// prompt shows (the alert's value and baseline, its acknowledgement, past
-// acknowledgements, the other alerts on the server and the cluster
-// context), and any change to the prompt's wording, invalidates it.
+// the re-evaluation answer: the reasoning provider's name, its model, the
+// system prompt it sends, and the prompt built from the given inputs,
+// with the re-evaluation count zeroed. The count changes on every call
+// but says nothing new about the alert, so including it would make every
+// fingerprint unique. Hashing the rendered prompt rather than a
+// hand-picked subset of fields means any input the prompt shows (the
+// alert's value and baseline, its acknowledgement, past acknowledgements,
+// the other alerts on the server and the cluster context), and any change
+// to the wording of either prompt, invalidates it.
 func (e *Engine) reevaluationFingerprint(
 	alert *database.AcknowledgedAnomalyAlert,
 	historicalAcks []*database.AcknowledgedAnomalyAlert,
@@ -229,10 +230,14 @@ func (e *Engine) reevaluationFingerprint(
 	stable.ReevaluationCount = 0
 
 	h := sha256.New()
-	if e.reasoningProvider != nil {
-		h.Write([]byte(e.reasoningProvider.ModelName()))
+	if p := e.reasoningProvider; p != nil {
+		// Each part is followed by a NUL so that text moving from one
+		// part to the next cannot produce the same hash.
+		for _, part := range []string{p.ProviderName(), p.ModelName(), p.SystemPrompt()} {
+			h.Write([]byte(part))
+			h.Write([]byte{0})
+		}
 	}
-	h.Write([]byte{0})
 	h.Write([]byte(e.buildReevaluationPrompt(&stable, historicalAcks, connectionAlerts, clusterPeers, clusterAlerts)))
 	return hex.EncodeToString(h.Sum(nil))
 }

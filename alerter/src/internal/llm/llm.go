@@ -50,6 +50,15 @@ type ReasoningProvider interface {
 
 	// ModelName returns the name of the reasoning model being used.
 	ModelName() string
+
+	// ProviderName returns the name of the LLM provider that serves the
+	// model, such as "anthropic" or "openai".
+	ProviderName() string
+
+	// SystemPrompt returns the system prompt that Classify sends with
+	// every request, so callers that cache a decision can tell when the
+	// instructions behind it have changed.
+	SystemPrompt() string
 }
 
 // classificationSystemPrompt is the system prompt for anomaly classification.

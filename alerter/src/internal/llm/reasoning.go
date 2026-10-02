@@ -103,6 +103,17 @@ func (r *libReasoning) ModelName() string {
 	return r.client.Model()
 }
 
+// ProviderName returns the provider name reported by the client.
+func (r *libReasoning) ProviderName() string {
+	return r.client.Provider()
+}
+
+// SystemPrompt returns the classification system prompt that Classify
+// sends with every request.
+func (r *libReasoning) SystemPrompt() string {
+	return classificationSystemPrompt
+}
+
 // newLibReasoning builds a libReasoning for the named provider. When model
 // is empty, the per-provider default from defaultReasoningModels is used.
 // When maxTokens is zero or negative, DefaultReasoningMaxTokens is used, so

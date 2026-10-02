@@ -383,6 +383,17 @@ func (e *Engine) processTier2And3(ctx context.Context) {
 			return
 		}
 
+		// A reload during the pass can disable Tier 2 and Tier 3, and
+		// the rest of the batch would then reach determineFinalDecision
+		// with no tier result and default to an alert. Stop instead,
+		// leaving the remaining candidates for a later re-enable or for
+		// expiry (issue #581).
+		cfg := e.getConfig()
+		if !cfg.Anomaly.Enabled || !e.anomalyProcessingAvailable(cfg) {
+			e.debugLog("Stopping Tier 2 and Tier 3 pass: anomaly processing is no longer available")
+			return
+		}
+
 		// Checks that do not depend on the tier results run first, so
 		// a condition that persists across cycles does not buy an
 		// embedding and an LLM call on every cycle only for
@@ -402,7 +413,6 @@ func (e *Engine) processTier2And3(ctx context.Context) {
 		var similarAnomalies []*database.SimilarAnomaly
 		var embedding []float32
 
-		cfg := e.getConfig()
 		sensitivity := cfg.Anomaly.Tier1.DefaultSensitivity
 
 		// Tier 2: Embedding similarity

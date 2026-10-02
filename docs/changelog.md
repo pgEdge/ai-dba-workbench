@@ -890,19 +890,20 @@ project adheres to
   when one applies. (#577)
 
 - Fix anomaly candidates accumulating for ever after a configuration
-  reload that left no tier after Tier 1 able to process them. At
-  startup the alerter already disables anomaly detection when no
-  Tier 2 or Tier 3 provider is available, because Tier 1 alone is
-  too noisy to alert on, but a reload did not repeat the check: the
-  running detector kept storing Tier 1 candidates that nothing
-  processed, and the retention cleanup only deletes processed
-  candidates. A reload now applies the startup rule, Tier 1 stores no
-  candidate unless Tier 2 or Tier 3 can process it, and a candidate
-  left unprocessed for longer than three times 100 Tier 3 timeouts
-  (two and a half hours by default, and never less than one hour) is
-  marked as processed with no final decision and counted in the log,
-  so the backlog raises no stale alerts and ages out through the
-  normal retention cleanup. (#581)
+  reload that left no tier after Tier 1 able to process them. At startup
+  the alerter already disables anomaly detection when no Tier 2 or Tier
+  3 provider is available, because Tier 1 alone is too noisy to alert
+  on, but a reload did not repeat the check: the running detector kept
+  storing Tier 1 candidates that nothing processed, and the retention
+  cleanup only deletes processed candidates. A reload now applies the
+  startup rule, Tier 1 stores no candidate unless Tier 2 or Tier 3 can
+  process it, a processing run under way when the reload lands stops
+  rather than alerting on the rest of its batch, and a candidate left
+  unprocessed for longer than three times 100 Tier 3 timeouts (two and a
+  half hours by default, and never less than one hour) is marked as
+  processed with no final decision and counted in the log, so the
+  backlog raises no stale alerts and ages out through the normal
+  retention cleanup. (#581)
 
 - Fix alerts staying active for ever on a server an operator has
   stopped monitoring. The probes of an unmonitored connection leave

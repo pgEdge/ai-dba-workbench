@@ -516,6 +516,11 @@ that point, so the rule applies in two places:
   provider. A reload cannot add a provider, so enabling a tier that
   was disabled at startup takes a restart.
 
+A processing run that is under way when a reload disables Tier 2 and
+Tier 3 stops before its next candidate, rather than letting the rest
+of the batch through with no tier result; the candidates it has not
+reached stay queued until a tier is enabled again or they expire.
+
 A candidate that stays unprocessed for too long is expired: the
 alerter marks it as processed with no final decision, so it raises
 no alert and the retention cleanup deletes it with the other

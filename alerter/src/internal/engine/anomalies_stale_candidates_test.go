@@ -179,6 +179,83 @@ func TestProcessTier2And3ExpiresStaleCandidates(t *testing.T) {
 	}
 }
 
+// TestProcessTier2And3StopsWhenReloadDisablesTiers checks that a reload
+// which disables Tier 2 and Tier 3 part-way through a pass stops it: the
+// rest of the batch would otherwise reach determineFinalDecision with no
+// tier result and raise a raw Tier 1 alert. The unprocessed candidates
+// stay queued for a later re-enable or for expiry. With nothing stale, the
+// pass must not log an expiry either.
+func TestProcessTier2And3StopsWhenReloadDisablesTiers(t *testing.T) {
+	engine, ds, pool, cleanup := newDetectAnomaliesEnv(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	reasoner := &countingReasoningProvider{}
+	reasoner.onClassify = func() {
+		if reasoner.calls.Load() != 1 {
+			return
+		}
+		cfg := config.NewConfig()
+		cfg.Anomaly.Tier2.Enabled = false
+		cfg.Anomaly.Tier3.Enabled = false
+		engine.ReloadConfig(cfg)
+	}
+	engine.reasoningProvider = suppressingCounter{reasoner}
+
+	var connID int
+	if err := pool.QueryRow(ctx, insertAnomalyConnectionSQL,
+		"reload-mid-pass").Scan(&connID); err != nil {
+		t.Fatalf("failed to insert connection: %v", err)
+	}
+
+	const total = 5
+	ids := make([]int64, 0, total)
+	for i := 0; i < total; i++ {
+		c := &database.AnomalyCandidate{
+			ConnectionID: connID,
+			MetricName:   "pg_settings.max_connections",
+			MetricValue:  float64(900 + i),
+			ZScore:       10,
+			DetectedAt:   time.Now().Add(time.Duration(i-total) * time.Second),
+			Context:      "{}",
+			Tier1Pass:    true,
+		}
+		if err := ds.CreateAnomalyCandidate(ctx, c); err != nil {
+			t.Fatalf("CreateAnomalyCandidate: %v", err)
+		}
+		ids = append(ids, c.ID)
+	}
+
+	output := captureStderr(t, func() { engine.processTier2And3(ctx) })
+
+	if strings.Contains(output, "Expired") {
+		t.Errorf("expiry logged with nothing stale:\n%s", output)
+	}
+	if got := reasoner.calls.Load(); got != 1 {
+		t.Errorf("Tier 3 calls = %d, want 1 (the pass should stop after the reload)", got)
+	}
+
+	processed := 0
+	for _, id := range ids {
+		got, err := ds.GetAnomalyCandidateByID(ctx, id)
+		if err != nil {
+			t.Fatalf("GetAnomalyCandidateByID(%d): %v", id, err)
+		}
+		if got.ProcessedAt == nil {
+			continue
+		}
+		processed++
+		if got.FinalDecision == nil {
+			t.Errorf("candidate %d final_decision = NULL, want suppress", id)
+		} else if *got.FinalDecision != "suppress" {
+			t.Errorf("candidate %d final_decision = %q, want suppress", id, *got.FinalDecision)
+		}
+	}
+	if processed != 1 {
+		t.Errorf("processed candidates = %d, want 1; the rest should stay queued", processed)
+	}
+}
+
 // TestExpireStaleAnomalyCandidatesLogsFailure checks that a failing expiry
 // is logged at default verbosity and does not stop the caller.
 func TestExpireStaleAnomalyCandidatesLogsFailure(t *testing.T) {

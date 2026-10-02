@@ -372,3 +372,46 @@ func TestListDatabases(t *testing.T) {
 		}
 	})
 }
+
+// TestNewDatastoreConfigErrors covers the configuration checks that run
+// before, and the connection check that runs after, the pool is built.
+func TestNewDatastoreConfigErrors(t *testing.T) {
+	if _, err := NewDatastore(nil, "s"); err == nil {
+		t.Error("expected an error for a nil configuration")
+	}
+
+	cfg := testDatastoreConfig(t)
+
+	bad := *cfg
+	bad.SSLMode = "bogus"
+	if _, err := NewDatastore(&bad, "s"); err == nil ||
+		!strings.Contains(err.Error(), "parse") {
+		t.Errorf("err = %v, want a parse error", err)
+	}
+
+	bad = *cfg
+	bad.PoolMaxConnIdleTime = "soon"
+	if _, err := NewDatastore(&bad, "s"); err == nil ||
+		!strings.Contains(err.Error(), "pool_max_conn_idle_time") {
+		t.Errorf("err = %v, want an idle time error", err)
+	}
+
+	bad = *cfg
+	bad.Host = "127.0.0.1"
+	bad.Port = 1
+	if _, err := NewDatastore(&bad, "s"); err == nil ||
+		!strings.Contains(err.Error(), "connect to datastore") {
+		t.Errorf("err = %v, want a connection error", err)
+	}
+
+	good := *cfg
+	good.PoolMaxConnIdleTime = "5m"
+	ds, err := NewDatastore(&good, "s")
+	if err != nil {
+		t.Fatalf("NewDatastore: %v", err)
+	}
+	defer ds.Close()
+	if got := ds.GetPool().Config().MaxConnIdleTime.String(); got != "5m0s" {
+		t.Errorf("MaxConnIdleTime = %s, want 5m0s", got)
+	}
+}

@@ -12,6 +12,7 @@ package main
 import (
 	"bytes"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -219,6 +220,70 @@ func TestRechainAuditLogCommandRefusesABrokenChainUnattended(t *testing.T) {
 	if !strings.Contains(out.String(), "re-hashed") {
 		t.Errorf("Expected the interactive run to rewrite the log, got:\n%s",
 			out.String())
+	}
+}
+
+// TestRechainAuditLogCommandRefusesAPreviousSecretForARehash checks
+// that the documented unattended recovery, -confirm-rechain with
+// -previous-secret-file, does not re-hash an unkeyed log. A writer who
+// replaces a keyed log with unkeyed rows needs no key to do it, and the
+// previous secret proves nothing about them, so the command refuses
+// before writing anything, interactively as well as unattended.
+func TestRechainAuditLogCommandRefusesAPreviousSecretForARehash(t *testing.T) {
+	secretFile := writeSecretFile(t, olderServerSecret)
+
+	for name, opts := range map[string]auditRechainOptions{
+		"unattended":  {assumeYes: true, previousSecretFile: secretFile},
+		"interactive": {previousSecretFile: secretFile},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := unkeyedAuditStore(t, 3, 0)
+
+			var out bytes.Buffer
+			err := rechainAuditLogCommand(dir, opts,
+				strings.NewReader(auditRechainConfirmWord+"\n"), &out)
+			if err == nil || !strings.Contains(err.Error(),
+				"would be re-hashed instead") {
+				t.Fatalf("expected a refusal of the previous secret, got %v",
+					err)
+			}
+			for _, v := range auditHashVersions(t, dir) {
+				if v != 1 {
+					t.Fatalf("expected every row to stay unkeyed, got "+
+						"versions %v", auditHashVersions(t, dir))
+				}
+			}
+		})
+	}
+}
+
+// TestRechainAuditLogCommandAsksOnlyOnATerminal checks that the re-hash
+// prompt, like the re-anchor's, refuses input that is not a terminal
+// without reading it, so that a confirmation word piped in by a script
+// does not re-hash the log.
+func TestRechainAuditLogCommandAsksOnlyOnATerminal(t *testing.T) {
+	saved := auditInputIsTerminal
+	auditInputIsTerminal = func(io.Reader) bool { return false }
+	t.Cleanup(func() { auditInputIsTerminal = saved })
+
+	dir := unkeyedAuditStore(t, 2, 0)
+
+	var out bytes.Buffer
+	err := rechainAuditLogCommand(dir, auditRechainOptions{},
+		strings.NewReader(auditRechainConfirmWord+"\n"), &out)
+	if err == nil || !strings.Contains(err.Error(), "on a terminal") ||
+		!strings.Contains(err.Error(), "unattended with -confirm-rechain") {
+		t.Fatalf("expected a refusal for input that is not a terminal, "+
+			"got %v", err)
+	}
+	if strings.Contains(out.String(), "to proceed") {
+		t.Errorf("expected no prompt, got:\n%s", out.String())
+	}
+	for _, v := range auditHashVersions(t, dir) {
+		if v != 1 {
+			t.Fatalf("expected every row to stay unkeyed, got versions %v",
+				auditHashVersions(t, dir))
+		}
 	}
 }
 

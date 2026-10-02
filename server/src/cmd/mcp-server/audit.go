@@ -353,6 +353,22 @@ func rechainAuditLogCommand(dataDir string, opts auditRechainOptions,
 			}
 
 			printAuditRechainPlan(out, dataDir, plan)
+			if opts.previousSecretFile != "" {
+				// The previous secret proves the history a re-anchor
+				// accepts, and a re-hash has none: it signs unkeyed
+				// rows that anyone able to write auth.db could have
+				// written. Proceeding would let an operator believe
+				// the secret had vouched for them.
+				return false, errors.New(
+					"-previous-secret-file proves the history a " +
+						"re-anchor of a keyed log accepts, but this log " +
+						"is unkeyed and would be re-hashed instead, which " +
+						"no secret can vouch for, so nothing has been " +
+						"changed. If this server has only ever written " +
+						"keyed events, the log has been replaced: restore " +
+						"auth.db from a known-good copy. Otherwise re-chain " +
+						"without -previous-secret-file")
+			}
 			if assumeYes {
 				// An unattended run has nobody to weigh the warning
 				// the plan has just printed, so a log that does not
@@ -374,6 +390,10 @@ func rechainAuditLogCommand(dataDir string, opts auditRechainOptions,
 				return true, nil
 			}
 
+			if err := requireAuditTerminal(in, "the re-chain",
+				"-confirm-rechain"); err != nil {
+				return false, err
+			}
 			return confirmAuditRechain(in, out)
 		})
 	if err != nil {
@@ -441,6 +461,21 @@ var auditInputIsTerminal = defaultAuditInputIsTerminal
 func defaultAuditInputIsTerminal(in io.Reader) bool {
 	f, ok := in.(*os.File)
 	return ok && term.IsTerminal(int(f.Fd()))
+}
+
+// requireAuditTerminal refuses an interactive confirmation whose input
+// is not a terminal, without reading it, so that a confirmation word a
+// script pipes in is not taken for an operator having read the plan.
+// what names the operation and unattended the flags that run it without
+// a prompt.
+func requireAuditTerminal(in io.Reader, what, unattended string) error {
+	if auditInputIsTerminal(in) {
+		return nil
+	}
+
+	return fmt.Errorf("%s asks for confirmation on a terminal, and its "+
+		"input is not one, so nothing has been changed. Run it "+
+		"interactively, or unattended with %s", what, unattended)
 }
 
 // auditRechainConfirmWord is what an interactive operator must type. It
@@ -691,11 +726,9 @@ func confirmAuditReanchor(in io.Reader, out io.Writer, assumeYes bool,
 	plan auth.AuditRechainPlan) (bool, error) {
 
 	if !assumeYes {
-		if !auditInputIsTerminal(in) {
-			return false, errors.New("the re-anchor asks for confirmation " +
-				"on a terminal, and its input is not one, so nothing has " +
-				"been changed. Run it interactively, or unattended with " +
-				"-confirm-rechain and -previous-secret-file")
+		if err := requireAuditTerminal(in, "the re-anchor",
+			"-confirm-rechain and -previous-secret-file"); err != nil {
+			return false, err
 		}
 		return confirmAuditRechain(in, out)
 	}

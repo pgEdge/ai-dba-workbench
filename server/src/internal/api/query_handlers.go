@@ -355,8 +355,8 @@ func (h *ConnectionHandler) executeQuery(w http.ResponseWriter, r *http.Request,
 	poolConfig.ConnConfig.RuntimeParams["application_name"] = "pgEdge AI DBA Workbench - Query"
 	// The classifier reads the statement text as UTF-8. A startup
 	// parameter overrides any client_encoding default set on the role or
-	// the database, and requireUTF8 stops a read-only batch if one of
-	// its statements changes the setting (see requireUTF8).
+	// the database, and requireUTF8 stops a batch if one of its
+	// statements changes the setting (see requireUTF8).
 	poolConfig.ConnConfig.RuntimeParams["client_encoding"] = "UTF8"
 
 	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
@@ -463,31 +463,42 @@ func (h *ConnectionHandler) executeQuery(w http.ResponseWriter, r *http.Request,
 		}
 	} else {
 		// Write path: execute each statement individually outside a
-		// transaction so that statements like ALTER SYSTEM work.
+		// transaction so that statements like ALTER SYSTEM work. Every
+		// statement runs on the one acquired connection so that
+		// requireUTF8 can read the client_encoding it left behind.
+		poolConn, err := pool.Acquire(ctx)
+		if err != nil {
+			log.Printf("[ERROR] Failed to acquire connection for query: %v", err)
+			RespondError(w, http.StatusInternalServerError,
+				"Failed to connect to database")
+			return
+		}
+		defer poolConn.Release()
+		pgConn := poolConn.Conn().PgConn()
+
 		for _, stmt := range statements {
+			var result statementResult
 			if isReadOnlyStatement(stmt) {
-				result := runStatement(ctx, pool, stmt, limit, connectionID)
-				results = append(results, result)
-				if result.Error != "" {
-					break
+				result = runStatement(ctx, poolConn, stmt, limit, connectionID)
+			} else if _, err := poolConn.Exec(ctx, stmt); err != nil {
+				log.Printf("[ERROR] Write statement failed (connection=%d): %v",
+					connectionID, err)
+				result = statementResult{
+					Query: stmt,
+					Error: safeQueryError("Execution error", err),
 				}
 			} else {
-				_, err := pool.Exec(ctx, stmt)
-				if err != nil {
-					log.Printf("[ERROR] Write statement failed (connection=%d): %v",
-						connectionID, err)
-					results = append(results, statementResult{
-						Query: stmt,
-						Error: safeQueryError("Execution error", err),
-					})
-					break
-				}
-				results = append(results, statementResult{
+				result = statementResult{
 					Query:    stmt,
 					Columns:  []string{"result"},
 					Rows:     [][]string{{"Statement executed successfully"}},
 					RowCount: 1,
-				})
+				}
+			}
+			result = requireUTF8(pgConn, result, connectionID)
+			results = append(results, result)
+			if result.Error != "" {
+				break
 			}
 		}
 	}
@@ -1455,8 +1466,9 @@ const clientEncodingChangedError = "Query error: client_encoding must " +
 // character, but to the classifier 0x5C is a backslash escaping the
 // quote, which hides the code after it. No second reading can cover
 // every such encoding, so the setting is held at UTF8 instead. The write
-// path needs no such check, because its caller has already confirmed the
-// batch and holds write access to the connection.
+// path applies the same check: its confirmation prompt lists only the
+// statements classified as writes, so a write hidden in a statement
+// lexed under the new encoding would otherwise run without being listed.
 func requireUTF8(pgConn *pgconn.PgConn, result statementResult, connectionID int) statementResult {
 	if result.Error != "" || pgConn.ParameterStatus("client_encoding") == "UTF8" {
 		return result

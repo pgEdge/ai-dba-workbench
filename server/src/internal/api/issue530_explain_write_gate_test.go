@@ -1139,6 +1139,59 @@ func TestIssue530_ClientEncodingChangeStopsReadOnlyBatch(t *testing.T) {
 	}
 }
 
+// TestIssue530_ClientEncodingChangeStopsConfirmedWriteBatch proves that
+// the confirmed write path also ends the batch once a statement moves
+// the connection off UTF8, so a statement after it is never lexed under
+// the new encoding. The confirmation prompt lists only the statements
+// classified as writes, so without this a write hidden that way would
+// run without being listed.
+func TestIssue530_ClientEncodingChangeStopsConfirmedWriteBatch(t *testing.T) {
+	h, pool, target, cleanup := newQueryExecTestHandler(t)
+	defer cleanup()
+
+	connID := seedQueryExecConnection(t, pool, target, target.host, target.port)
+
+	tests := []struct {
+		name  string
+		query string
+		want  int
+	}{
+		{"write statement changes the encoding",
+			"SET client_encoding = 'SJIS'; SELECT 1", 1},
+		{"read statement changes the encoding",
+			"CREATE TEMP TABLE issue530_enc (a int); " +
+				"SELECT set_config('client_encoding', 'SJIS', false); SELECT 1", 2},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body, err := json.Marshal(queryRequest{Query: tt.query,
+				Confirmed: true})
+			if err != nil {
+				t.Fatalf("failed to encode the request: %v", err)
+			}
+			rec := postQuery(t, h, connID, string(body))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d (body %q)",
+					rec.Code, http.StatusOK, rec.Body.String())
+			}
+			resp := decodeMultiQuery(t, rec)
+			if len(resp.Results) != tt.want {
+				t.Fatalf("results = %+v, want %d (the batch stops at the change)",
+					resp.Results, tt.want)
+			}
+			for _, r := range resp.Results[:tt.want-1] {
+				if r.Error != "" {
+					t.Errorf("unexpected error before the change: %q", r.Error)
+				}
+			}
+			if got := resp.Results[tt.want-1].Error; got != clientEncodingChangedError {
+				t.Errorf("error = %q, want %q", got, clientEncodingChangedError)
+			}
+		})
+	}
+}
+
 // TestIssue530_ClientEncodingPinnedAtStartup proves that the query
 // connection starts on UTF8 even when the database's own default says
 // otherwise, because the startup parameter takes precedence over it.

@@ -2085,9 +2085,10 @@ project adheres to
   earlier statement in the same request can turn that setting off, and
   a string literal that continues onto a later line keeps the escapes
   of the literal it continues. The query connection now starts on the
-  `UTF8` client encoding, and a read-only request stops at any statement
-  that changes it, because in encodings such as `SJIS` a multibyte
-  character can end in a byte the classifier would read as a backslash.
+  `UTF8` client encoding, and a request, whether read-only or a
+  confirmed write, stops at any statement that changes it, because in
+  encodings such as `SJIS` a multibyte character can end in a byte the
+  classifier would read as a backslash.
   Statements that do run over the simple query protocol are now held
   inside the same read-only transaction as the rest of the read path.
   The fix needs no restart beyond the upgrade itself and no database

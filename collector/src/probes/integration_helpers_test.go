@@ -75,7 +75,7 @@ func teardownIntegrationPool() {
 	ctx, cancel := context.WithTimeout(
 		context.Background(), 30*time.Second)
 	defer cancel()
-	adminPool, err := pgxpool.New(ctx, adminConnStr)
+	adminPool, err := newProbeAdminPool(ctx, adminConnStr)
 	if err != nil {
 		return
 	}
@@ -103,6 +103,17 @@ func integrationConnString() (string, bool) {
 		return u, true
 	}
 	return "", false
+}
+
+// newProbeAdminPool opens a single-connection pool for CREATE and DROP
+// DATABASE; anything larger only adds idle backends (issue #486).
+func newProbeAdminPool(ctx context.Context, connStr string) (*pgxpool.Pool, error) {
+	cfg, err := pgxpool.ParseConfig(connStr)
+	if err != nil {
+		return nil, err
+	}
+	cfg.MaxConns = 1
+	return pgxpool.NewWithConfig(ctx, cfg)
 }
 
 // replaceProbeDatabase swaps the dbname in either a postgres URL or a
@@ -216,7 +227,7 @@ func requireIntegrationPool(t *testing.T) *pgxpool.Pool {
 			context.Background(), 30*time.Second)
 		defer cancel()
 
-		adminPool, err := pgxpool.New(ctx, adminConnStr)
+		adminPool, err := newProbeAdminPool(ctx, adminConnStr)
 		if err != nil {
 			integration.err = fmt.Errorf(
 				"connect to admin db: %w", err)

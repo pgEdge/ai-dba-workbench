@@ -42,7 +42,7 @@ func createScratchDatabase(t *testing.T, suffix string) *pgxpool.Pool {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	adminPool, err := pgxpool.New(ctx, replaceProbeDatabase(base, "postgres"))
+	adminPool, err := newProbeAdminPool(ctx, replaceProbeDatabase(base, "postgres"))
 	if err != nil {
 		t.Skipf("connect to admin database: %v", err)
 	}
@@ -65,7 +65,7 @@ func createScratchDatabase(t *testing.T, suffix string) *pgxpool.Pool {
 			context.Background(), 30*time.Second)
 		defer dropCancel()
 
-		dropPool, dropErr := pgxpool.New(dropCtx,
+		dropPool, dropErr := newProbeAdminPool(dropCtx,
 			replaceProbeDatabase(base, "postgres"))
 		if dropErr != nil {
 			t.Logf("drop scratch database %s: %v", name, dropErr)

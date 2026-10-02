@@ -93,8 +93,9 @@ func seedListConnections(t *testing.T, pool interface {
 }
 
 // TestListConnectionsListsVisibleConnections checks the success path:
-// without a checker every connection is listed with its status, and
-// with one the list is confined to the caller's visible connections.
+// a nil checker lists nothing (issue #561), a signed-in superuser sees
+// every connection with its status, and an ordinary user is confined to
+// the connections visible to them.
 func TestListConnectionsListsVisibleConnections(t *testing.T) {
 	pool, ds, cleanup := newToolsTestPool(t)
 	defer cleanup()
@@ -102,20 +103,38 @@ func TestListConnectionsListsVisibleConnections(t *testing.T) {
 
 	resp, err := ListConnectionsTool(pool, nil, nil).Handler(map[string]any{})
 	if err != nil || resp.IsError {
-		t.Fatalf("Unfiltered listing failed: %v %+v", err, resp.Content)
+		t.Fatalf("Nil-checker listing failed: %v %+v", err, resp.Content)
 	}
 	body := resp.Content[0].Text
-	for _, want := range []string{
-		"Found 2 connections (1 monitored)",
-		"alice-conn", "bob-conn", "appdb", "offline", "connection refused",
-	} {
-		if !strings.Contains(body, want) {
-			t.Errorf("Unfiltered listing: expected %q in %q", want, body)
+	if body != "You do not have access to any connections." {
+		t.Errorf("Nil-checker listing: expected no access, got %q", body)
+	}
+	for _, leaked := range []string{"alice-conn", "bob-conn"} {
+		if strings.Contains(body, leaked) {
+			t.Errorf("Nil-checker listing leaked %q: %q", leaked, body)
 		}
 	}
 
 	authStore, authCleanup := newRBACTestStore(t)
 	defer authCleanup()
+
+	resp, err = ListConnectionsTool(pool, auth.NewRBACChecker(authStore),
+		database.NewVisibilityLister(ds)).Handler(map[string]any{
+		"__context": superuserContext(),
+	})
+	if err != nil || resp.IsError {
+		t.Fatalf("Superuser listing failed: %v %+v", err, resp.Content)
+	}
+	body = resp.Content[0].Text
+	for _, want := range []string{
+		"Found 2 connections (1 monitored)",
+		"alice-conn", "bob-conn", "appdb", "offline", "connection refused",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("Superuser listing: expected %q in %q", want, body)
+		}
+	}
+
 	if err := authStore.CreateUser("bob", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}

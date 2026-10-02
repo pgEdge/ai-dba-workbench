@@ -983,3 +983,50 @@ func TestReachOrdinaryAdminPermissionUnderMCPScope(t *testing.T) {
 		t.Error("manage_blackouts should stay within a scope naming it")
 	}
 }
+
+// TestTokenScopeChecksNilChecker verifies that every token-scope check
+// on a nil checker denies rather than panics, matching the fail-closed
+// contract the other checks hold for a nil receiver (issue #561), so a
+// caller handed no checker can never widen a token's reach.
+func TestTokenScopeChecksNilChecker(t *testing.T) {
+	var checker *RBACChecker
+	contexts := map[string]context.Context{
+		"session": context.Background(),
+		"superuser": context.WithValue(context.Background(),
+			IsSuperuserContextKey, true),
+	}
+	scope := GrantedTokenScope{
+		Connections: []ScopedConnection{{ConnectionID: 1,
+			AccessLevel: AccessLevelRead}},
+	}
+
+	for name, ctx := range contexts {
+		t.Run(name, func(t *testing.T) {
+			checks := map[string]bool{
+				"ConnectionInTokenScope": checker.ConnectionInTokenScope(ctx, 1),
+				"AllConnectionsInTokenScope": checker.AllConnectionsInTokenScope(
+					ctx),
+				"CanGrantConnectionInTokenScope": checker.CanGrantConnectionInTokenScope(
+					ctx, 1, AccessLevelRead),
+				"ConnectionReadableInTokenScope": checker.ConnectionReadableInTokenScope(
+					ctx, 1),
+				"CanGrantMCPInTokenScope": checker.CanGrantMCPInTokenScope(ctx,
+					"any_tool"),
+				"TokenScopeUnrestricted": checker.TokenScopeUnrestricted(ctx),
+				"UserWithinTokenScope":   checker.UserWithinTokenScope(ctx, 1, nil),
+				"NewUserWithinTokenScope": checker.NewUserWithinTokenScope(ctx,
+					"alice", nil),
+				"GroupWithinTokenScope": checker.GroupWithinTokenScope(ctx, 1),
+				"ScopedConnectionsInTokenScope": checker.ScopedConnectionsInTokenScope(
+					ctx, scope.Connections),
+				"TokenScopeWithinTokenScope": checker.TokenScopeWithinTokenScope(
+					ctx, 1, scope, nil),
+			}
+			for check, allowed := range checks {
+				if allowed {
+					t.Errorf("%s: expected a nil checker to deny", check)
+				}
+			}
+		})
+	}
+}

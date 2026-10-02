@@ -73,13 +73,6 @@ func tokenContext() context.Context {
 		"execute-test-token-hash")
 }
 
-// superuserTokenContext returns tokenContext marked as a superuser
-// session, so the RBAC gate admits it and the test reaches the code
-// behind the gate.
-func superuserTokenContext() context.Context {
-	return context.WithValue(tokenContext(), auth.IsSuperuserContextKey, true)
-}
-
 // TestRegisterStatelessToolsKnowledgebase verifies that the
 // knowledgebase tool is registered only when the configured database
 // file is actually present, since registering it otherwise would offer

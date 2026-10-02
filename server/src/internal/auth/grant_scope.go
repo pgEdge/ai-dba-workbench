@@ -44,10 +44,10 @@ type GrantedTokenScope struct {
 
 // actingToken reports how a grant check should treat the caller: as a
 // session (no token, so nothing to bound), as a token to check, or as
-// out of scope outright because the checker has no store or the token
-// context has lost its id.
+// out of scope outright because the checker is nil or has no store, or
+// the token context has lost its id.
 func (rc *RBACChecker) actingToken(ctx context.Context) (tokenID int64, ok bool) {
-	if rc.authStore == nil || tokenContextIncomplete(ctx) {
+	if rc == nil || rc.authStore == nil || tokenContextIncomplete(ctx) {
 		return 0, false
 	}
 	return GetTokenIDFromContext(ctx), true

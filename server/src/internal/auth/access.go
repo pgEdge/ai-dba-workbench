@@ -1025,9 +1025,9 @@ func (rc *RBACChecker) HasWriteAccess(ctx context.Context, connectionID int) boo
 // wildcard at read_write; a read-only scope entry is not. A token
 // context missing its id, or a scope that cannot be read, is out of
 // scope, because neither may widen access; so is every connection for
-// a checker with no auth store, which cannot read any scope.
+// a nil checker or one with no auth store, which cannot read any scope.
 func (rc *RBACChecker) ConnectionInTokenScope(ctx context.Context, connectionID int) bool {
-	if rc.authStore == nil {
+	if rc == nil || rc.authStore == nil {
 		return false
 	}
 	if tokenContextIncomplete(ctx) {

@@ -62,7 +62,7 @@ func TestTier2WideEmbeddingLogsErrorAtDefaultVerbosity(t *testing.T) {
 	}
 	candidate := &database.AnomalyCandidate{
 		ConnectionID: connID,
-		MetricName:   "pg_settings.max_connections",
+		MetricName:   "pg_sys_load_avg_info.load_avg_fifteen_minutes",
 		MetricValue:  999,
 		ZScore:       10,
 		DetectedAt:   time.Now(),
@@ -173,7 +173,7 @@ func TestTier2SimilarityDecisions(t *testing.T) {
 		t.Helper()
 		c := &database.AnomalyCandidate{
 			ConnectionID: connID,
-			MetricName:   "pg_settings.max_connections",
+			MetricName:   "pg_sys_load_avg_info.load_avg_fifteen_minutes",
 			MetricValue:  999,
 			ZScore:       10,
 			Context:      "{}",

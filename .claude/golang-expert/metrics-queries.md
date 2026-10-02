@@ -1171,7 +1171,9 @@ conventions from that change hold across both:
   `pg_replication_slots.inactive_count` (a presence count that is almost
   always zero); `baseline_exclusions_integration_test.go` pins both
   (#576). Removing a historical query needs no migration, because the
-  sweep deletes the metric's old baseline rows on the next cycle. The
+  sweep deletes the metric's old baseline rows on the next cycle, and
+  `processTier2And3` suppresses, without running Tier 2 or 3, any
+  pending candidate whose metric fails `SupportsBaselines`. The
   engine's detection tests use
   `pg_sys_load_avg_info.load_avg_fifteen_minutes` as their baselined
   metric.

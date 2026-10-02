@@ -161,9 +161,23 @@ func (s *AuthStore) auditReanchorPlan(plan *AuditRechainPlan) error {
 	if err != nil {
 		return err
 	}
+	// An empty log that fails verification has had its events deleted,
+	// and leaves no event for a starting point to record, so the
+	// re-anchor would start a chain of its own with an empty prev_hash.
+	// Such an event, kept and put back after a later wipe, would verify
+	// wherever it stood, so none is written. The first event the server
+	// writes gives a later re-anchor something to record.
+	if scan.events == 0 {
+		return fmt.Errorf("refusing to re-chain the audit log, which "+
+			"fails verification (%w) but holds no events, so there is no "+
+			"event for a new starting point to record. Restore auth.db "+
+			"from a known-good copy, or re-chain again once the server "+
+			"has written an event", problem)
+	}
 	// The verifier read the log before this scan did, and a writer in
 	// between could have added a failing row that the scan would accept
-	// as history. -confirm-rechain acts on KeyMismatch alone, so it must
+	// as history. -confirm-rechain trusts KeyMismatch only together
+	// with the evidence proveAuditReanchorPlan gathers, so it must
 	// describe the rows the re-anchor accepts, not the ones the verifier
 	// saw.
 	if scan.failsAfterVerified {

@@ -963,3 +963,42 @@ func TestSeedAuditEventForTesting(t *testing.T) {
 			firstBad, err)
 	}
 }
+
+// TestReanchorRefusesAnEmptyLog checks that a log emptied by hand, which
+// fails verification because the sequence shows events were written, is
+// not re-anchored: there is no event for a starting point to record,
+// and the event a re-anchor would write would start a chain of its own
+// that a later wipe could put back. The operator is not asked, and
+// nothing is written.
+func TestReanchorRefusesAnEmptyLog(t *testing.T) {
+	store, dir := newReopenableStore(t)
+	now := time.Now().UTC()
+	recordAt(t, store, "alice", now)
+	recordAt(t, store, "bob", now)
+	emptyAuditLog(t, store)
+	store.Close()
+
+	asked := false
+	_, err := RechainAuditLog(dir, AuditKeyForTesting(), systemActor,
+		func(AuditRechainPlan) (bool, error) {
+			asked = true
+			return true, nil
+		})
+	if !errors.Is(err, ErrAuditChainBroken) ||
+		!strings.Contains(err.Error(), "holds no events") {
+		t.Fatalf("Expected the re-anchor to refuse an empty log, got %v",
+			err)
+	}
+	if asked {
+		t.Error("Expected the operator not to be asked")
+	}
+
+	reopened, err := reopenStore(t, dir)
+	if err != nil {
+		t.Fatalf("Failed to reopen the store: %v", err)
+	}
+	defer reopened.Close()
+	if n := auditRowCount(t, reopened); n != 0 {
+		t.Errorf("Expected nothing to be written, got %d row(s)", n)
+	}
+}

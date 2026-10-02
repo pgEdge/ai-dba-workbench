@@ -690,7 +690,7 @@ func TestAuditGenesisAllowed(t *testing.T) {
 		{"the first event", 1, "user.create", true},
 		{"a later event", 5, "user.create", false},
 		{"a purge event", 5, auditActionPurge, true},
-		{"a re-chain event", 5, auditActionRechain, true},
+		{"a re-chain event", 5, auditActionRechain, false},
 	}
 
 	for _, tt := range tests {
@@ -725,6 +725,33 @@ func TestVerifyAcceptsAPurgeEventAsGenesis(t *testing.T) {
 	if _, firstBad, err := store.VerifyAuditChain(); err != nil {
 		t.Errorf("Expected the log to verify: firstBad=%d err=%v",
 			firstBad, err)
+	}
+}
+
+// TestVerifyRefusesARechainEventAsGenesis checks that a signed
+// audit.rechain event with an empty prev_hash, kept from an earlier log
+// and put back after a wipe, does not start the log: only a purge event
+// may, because only builds that predate the head record could leave
+// one there legitimately.
+func TestVerifyRefusesARechainEventAsGenesis(t *testing.T) {
+	store, _ := newReopenableStore(t)
+	now := time.Now().UTC()
+	recordAt(t, store, "alice", now)
+	recordAt(t, store, "bob", now)
+	emptyAuditLog(t, store)
+
+	replayed := newEvent(systemActor, auditActionRechain, "", nil, "",
+		map[string]any{"mode": string(AuditRechainReanchor)})
+	if err := store.recordAuditInOwnTx(replayed); err != nil {
+		t.Fatalf("Failed to record the re-chain event: %v", err)
+	}
+	recordAt(t, store, "carol", now)
+
+	_, _, err := store.VerifyAuditChain()
+	if !errors.Is(err, ErrAuditChainBroken) ||
+		!strings.Contains(err.Error(), "starts a new chain") {
+		t.Fatalf("Expected the replayed re-chain event to be refused as "+
+			"the start of the log, got %v", err)
 	}
 }
 

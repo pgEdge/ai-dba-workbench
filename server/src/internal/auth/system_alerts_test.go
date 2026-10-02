@@ -53,7 +53,7 @@ func TestCanSeeSystemAlerts(t *testing.T) {
 		want    bool
 	}{
 		{"nil checker denies", nil, systemAlertCtx(true, false, 1, 0), false},
-		{"no auth store allows", NewRBACChecker(nil), context.Background(), true},
+		{"no auth store denies", NewRBACChecker(nil), systemAlertCtx(true, false, 1, 0), false},
 		{"token context without token ID denies", checker, systemAlertCtx(true, true, 1, 0), false},
 		{"superuser allows", checker, systemAlertCtx(true, false, 1, 0), true},
 		{"no user ID denies", checker, systemAlertCtx(false, false, 0, 0), false},
@@ -141,7 +141,7 @@ func TestCanManageSystemAlerts(t *testing.T) {
 		want    bool
 	}{
 		{"nil checker denies", nil, systemAlertCtx(true, false, 1, 0), false},
-		{"no auth store allows", NewRBACChecker(nil), context.Background(), true},
+		{"no auth store denies", NewRBACChecker(nil), systemAlertCtx(true, false, 1, 0), false},
 		{"token context without token ID denies", checker, systemAlertCtx(true, true, holderID, 0), false},
 		{"superuser allows", checker, systemAlertCtx(true, false, 1, 0), true},
 		{"no user ID denies", checker, systemAlertCtx(false, false, 0, 0), false},

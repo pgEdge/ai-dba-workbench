@@ -317,19 +317,24 @@ func TestAlertHandler_Mutation_SystemAlert(t *testing.T) {
 		handler   *AlertHandler
 		as        func(*http.Request) *http.Request
 		ackStatus int
+		// saveStatus is 400 for a caller who can see system alerts and
+		// 403 for one who cannot.
+		saveStatus int
 	}{
-		{"superuser", f.handler, withSuperuser, http.StatusOK},
+		{"superuser", f.handler, withSuperuser, http.StatusOK, http.StatusBadRequest},
 		{"manage_alert_rules holder", f.handler, func(r *http.Request) *http.Request {
 			return withUsername(withUser(r, holderID), "rules_admin")
-		}, http.StatusOK},
+		}, http.StatusOK, http.StatusBadRequest},
 		{"token scoped to the grant", f.handler, func(r *http.Request) *http.Request {
 			return withToken(r, holderID, grantedToken)
-		}, http.StatusOK},
+		}, http.StatusOK, http.StatusBadRequest},
 		{"token scoped without the grant", f.handler, func(r *http.Request) *http.Request {
 			return withToken(r, holderID, withoutGrantToken)
-		}, http.StatusForbidden},
-		{"plain user", f.handler, f.bob, http.StatusForbidden},
-		{"no-auth mode", noAuth, func(r *http.Request) *http.Request { return r }, http.StatusOK},
+		}, http.StatusForbidden, http.StatusBadRequest},
+		{"plain user", f.handler, f.bob, http.StatusForbidden, http.StatusBadRequest},
+		// A checker without an auth store fails closed (issue #477),
+		// even for a superuser.
+		{"no auth store", noAuth, withSuperuser, http.StatusForbidden, http.StatusForbidden},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -345,7 +350,7 @@ func TestAlertHandler_Mutation_SystemAlert(t *testing.T) {
 			requireStatus(t, call(unack, http.MethodDelete,
 				"/api/v1/alerts/acknowledge?alert_id="+sys, ""), tt.ackStatus)
 			requireStatus(t, call(save, http.MethodPut, "/api/v1/alerts/analysis",
-				`{"alert_id": `+sys+`, "analysis": "provider down"}`), http.StatusBadRequest)
+				`{"alert_id": `+sys+`, "analysis": "provider down"}`), tt.saveStatus)
 		})
 	}
 

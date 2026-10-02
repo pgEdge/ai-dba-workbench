@@ -23,6 +23,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/pkg/rollback"
+	"github.com/pgedge/ai-workbench/server/internal/database"
 	"github.com/pgedge/ai-workbench/server/internal/tsv"
 )
 
@@ -323,23 +324,7 @@ func (h *ConnectionHandler) executeQuery(w http.ResponseWriter, r *http.Request,
 	connStr := h.datastore.BuildConnectionString(conn, password, databaseName)
 
 	// Create a temporary pool for this query
-	poolConfig, err := pgxpool.ParseConfig(connStr)
-	if err != nil {
-		log.Printf("[ERROR] Failed to parse connection string for query: %v", err)
-		RespondError(w, http.StatusInternalServerError,
-			"Failed to connect to database")
-		return
-	}
-
-	// Configure the pool for single-use with minimal resources
-	poolConfig.MaxConns = 1
-	poolConfig.MinConns = 0
-	if poolConfig.ConnConfig.RuntimeParams == nil {
-		poolConfig.ConnConfig.RuntimeParams = make(map[string]string)
-	}
-	poolConfig.ConnConfig.RuntimeParams["application_name"] = "pgEdge AI DBA Workbench - Query"
-
-	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
+	pool, err := openQueryPool(ctx, connStr, "pgEdge AI DBA Workbench - Query")
 	if err != nil {
 		log.Printf("[ERROR] Failed to connect for query (connection=%d): %v", connectionID, err)
 		RespondError(w, http.StatusInternalServerError,
@@ -856,4 +841,438 @@ func formatValueForJSON(v any) (result string) {
 		}
 	}()
 	return tsv.FormatValue(v)
+}
+
+// Statement validation statuses reported by validateQuery.
+const (
+	// validationValid means EXPLAIN planned the statement.
+	validationValid = "valid"
+	// validationInvalid means EXPLAIN rejected the statement.
+	validationInvalid = "invalid"
+	// validationUnsupported means the statement could not be planned at
+	// all, so nothing can be said about whether it would run.
+	validationUnsupported = "unsupported"
+)
+
+// validateTimeout bounds the whole validation request.
+const validateTimeout = 15 * time.Second
+
+// validateStatementTimeout bounds each EXPLAIN inside the validation
+// transaction, so a statement that plans slowly cannot hold the
+// connection for the whole request timeout.
+const validateStatementTimeout = "5s"
+
+// genericPlanMinVersionNum is the server_version_num of the first
+// release with EXPLAIN (GENERIC_PLAN), which is PostgreSQL 16.
+const genericPlanMinVersionNum = 160000
+
+// validateSavepoint is the savepoint each statement is planned under,
+// so that a statement PostgreSQL rejects does not abort the
+// transaction for the statements that follow it.
+const validateSavepoint = "workbench_validate"
+
+// queryValidateRequest is the JSON request body for validating a query
+// without executing it.
+type queryValidateRequest struct {
+	Query        string `json:"query"`
+	DatabaseName string `json:"database_name,omitempty"`
+}
+
+// statementValidation reports the outcome of validating a single
+// statement. Error carries the sanitized PostgreSQL message when
+// Status is invalid, and the reason validation was not possible when
+// Status is unsupported.
+type statementValidation struct {
+	Query  string `json:"query"`
+	Status string `json:"status"`
+	Error  string `json:"error"`
+}
+
+// queryValidateResponse is the JSON response for query validation.
+// Valid is true when no statement was rejected; an unsupported
+// statement does not make the request invalid, because nothing was
+// found wrong with it.
+type queryValidateResponse struct {
+	Valid           bool                  `json:"valid"`
+	TotalStatements int                   `json:"total_statements"`
+	Statements      []statementValidation `json:"statements"`
+}
+
+// checkDatabaseOverride validates an optional database override with
+// database.ValidateDatabaseName. An empty name means no override and
+// passes. On failure it writes a 400 response and returns false.
+func checkDatabaseOverride(w http.ResponseWriter, name string) bool {
+	if name == "" {
+		return true
+	}
+	if err := database.ValidateDatabaseName(name); err != nil {
+		RespondError(w, http.StatusBadRequest,
+			"Invalid database name: "+err.Error())
+		return false
+	}
+	return true
+}
+
+// validateQuery handles POST /api/v1/connections/{id}/query/validate.
+// It plans each statement with EXPLAIN inside a read-only transaction
+// that is always rolled back, so no statement is ever executed. Only
+// read access to the connection is required, because nothing is run.
+func (h *ConnectionHandler) validateQuery(w http.ResponseWriter, r *http.Request, connectionID int) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST")
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Check RBAC access to this connection, before the body is decoded.
+	canAccess, _ := h.rbacChecker.CanAccessConnection(r.Context(), connectionID)
+	if !canAccess {
+		RespondError(w, http.StatusForbidden,
+			"Permission denied: you do not have access to this connection")
+		return
+	}
+
+	var req queryValidateRequest
+	if !DecodeJSONBody(w, r, &req) {
+		return
+	}
+
+	query := strings.TrimSpace(req.Query)
+	if query == "" {
+		RespondError(w, http.StatusBadRequest, "Query is required")
+		return
+	}
+
+	statements := splitStatements(query)
+	if len(statements) == 0 {
+		RespondError(w, http.StatusBadRequest, "Query is required")
+		return
+	}
+
+	// Validate the optional database override before it reaches the
+	// connection string, and before any datastore work, matching the
+	// check on the execute endpoint.
+	if !checkDatabaseOverride(w, req.DatabaseName) {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), validateTimeout)
+	defer cancel()
+
+	conn, password, err := h.datastore.GetConnectionWithPassword(ctx, connectionID)
+	if err != nil {
+		log.Printf("[ERROR] Connection not found for validation (id=%d): %v",
+			connectionID, err)
+		RespondError(w, http.StatusNotFound, "Connection not found")
+		return
+	}
+
+	connStr := h.datastore.BuildConnectionString(conn, password, req.DatabaseName)
+	pool, err := openQueryPool(ctx, connStr,
+		"pgEdge AI DBA Workbench - Validate")
+	if err != nil {
+		log.Printf("[ERROR] Failed to connect for validation (connection=%d): %v",
+			connectionID, err)
+		RespondError(w, http.StatusInternalServerError,
+			"Failed to connect to database")
+		return
+	}
+	defer pool.Close()
+
+	results, err := validateStatements(ctx, pool, statements)
+	if err != nil {
+		log.Printf("[ERROR] Failed to validate query (connection=%d): %v",
+			connectionID, err)
+		RespondError(w, http.StatusInternalServerError,
+			"Failed to validate query")
+		return
+	}
+
+	valid := true
+	for _, result := range results {
+		if result.Status == validationInvalid {
+			valid = false
+			break
+		}
+	}
+
+	RespondJSON(w, http.StatusOK, queryValidateResponse{
+		Valid:           valid,
+		TotalStatements: len(results),
+		Statements:      results,
+	})
+}
+
+// openQueryPool creates a single-connection pool for one request
+// against a monitored database, tagged with the given application
+// name so the monitored server can attribute the session.
+func openQueryPool(ctx context.Context, connStr, appName string) (*pgxpool.Pool, error) {
+	poolConfig, err := pgxpool.ParseConfig(connStr)
+	if err != nil {
+		return nil, fmt.Errorf("parse connection string: %w", err)
+	}
+
+	poolConfig.MaxConns = 1
+	poolConfig.MinConns = 0
+	if poolConfig.ConnConfig.RuntimeParams == nil {
+		poolConfig.ConnConfig.RuntimeParams = make(map[string]string)
+	}
+	poolConfig.ConnConfig.RuntimeParams["application_name"] = appName
+
+	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
+	if err != nil {
+		return nil, fmt.Errorf("connect: %w", err)
+	}
+	return pool, nil
+}
+
+// validateStatements plans every statement inside one read-only
+// transaction that is always rolled back. An error return means the
+// transaction could not be set up at all; a statement PostgreSQL
+// rejects is reported in the results rather than as an error.
+func validateStatements(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	statements []string,
+) ([]statementValidation, error) {
+	poolConn, err := pool.Acquire(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("acquire connection: %w", err)
+	}
+	defer poolConn.Release()
+
+	tx, err := poolConn.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin transaction: %w", err)
+	}
+	defer func() {
+		_ = rollback.Tx(ctx, tx) //nolint:errcheck // see pkg/rollback
+	}()
+
+	if _, err := tx.Exec(ctx, "SET TRANSACTION READ ONLY"); err != nil {
+		return nil, fmt.Errorf("set transaction read-only: %w", err)
+	}
+	if _, err := tx.Exec(ctx,
+		"SET LOCAL statement_timeout = '"+validateStatementTimeout+"'"); err != nil {
+		return nil, fmt.Errorf("set statement timeout: %w", err)
+	}
+
+	genericPlan, err := supportsGenericPlan(ctx, tx)
+	if err != nil {
+		return nil, fmt.Errorf("read server version: %w", err)
+	}
+
+	pgConn := poolConn.Conn().PgConn()
+	results := make([]statementValidation, 0, len(statements))
+	for _, stmt := range statements {
+		results = append(results,
+			validateStatement(ctx, tx, pgConn, stmt, genericPlan))
+
+		if err := validationInterrupted(ctx, pgConn.TxStatus()); err != nil {
+			return nil, err
+		}
+	}
+	return results, nil
+}
+
+// validationInterrupted reports why validation cannot carry on after a
+// statement, or nil when it can. A request that has run out of time has
+// not checked the statements still to come, so it must not go on to
+// report them as valid. And every statement must leave the read-only
+// transaction open: if one ended it, whatever follows would run
+// outside it, so validation fails closed rather than trusting the
+// shape of its input.
+func validationInterrupted(ctx context.Context, txStatus byte) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("validation did not finish: %w", err)
+	}
+	if txStatus == txStatusIdle {
+		return errors.New("the validation transaction ended " +
+			"before validation finished")
+	}
+	return nil
+}
+
+// txStatusIdle is the ReadyForQuery transaction status PostgreSQL
+// reports when the session is not inside a transaction block.
+const txStatusIdle = 'I'
+
+// sqlStateQueryCanceled is the SQLSTATE PostgreSQL raises when a
+// statement is stopped early, including by statement_timeout.
+const sqlStateQueryCanceled = "57014"
+
+// supportsGenericPlan reports whether the server is new enough for
+// EXPLAIN (GENERIC_PLAN), which arrived in PostgreSQL 16.
+func supportsGenericPlan(ctx context.Context, tx pgx.Tx) (bool, error) {
+	var versionNum int
+	err := tx.QueryRow(ctx,
+		"SELECT current_setting('server_version_num')::int").Scan(&versionNum)
+	if err != nil {
+		return false, err
+	}
+	return versionNum >= genericPlanMinVersionNum, nil
+}
+
+// validateStatement plans one statement under its own savepoint, so
+// that a rejected statement leaves the transaction usable for the
+// statements that follow it.
+func validateStatement(
+	ctx context.Context,
+	tx pgx.Tx,
+	pgConn *pgconn.PgConn,
+	stmt string,
+	genericPlan bool,
+) statementValidation {
+	explainSQL, reason := explainCommand(stmt, genericPlan)
+	if explainSQL == "" {
+		return statementValidation{
+			Query:  stmt,
+			Status: validationUnsupported,
+			Error:  reason,
+		}
+	}
+
+	if _, err := tx.Exec(ctx, "SAVEPOINT "+validateSavepoint); err != nil {
+		log.Printf("[ERROR] Failed to create validation savepoint: %v", err)
+		return statementValidation{
+			Query:  stmt,
+			Status: validationUnsupported,
+			Error:  "the database rejected the validation savepoint, so the statement was not validated",
+		}
+	}
+
+	err := runExplain(ctx, pgConn, explainSQL)
+
+	// Undo any error state and drop the savepoint again. Both are best
+	// effort: a failure here shows up as an error on the next statement.
+	_ = rollback.ToSavepoint[pgconn.CommandTag](ctx, tx, validateSavepoint) //nolint:errcheck // see pkg/rollback
+	_, _ = tx.Exec(ctx, "RELEASE SAVEPOINT "+validateSavepoint)             //nolint:errcheck // best effort, see comment above
+
+	if err == nil {
+		return statementValidation{Query: stmt, Status: validationValid}
+	}
+
+	// Running out of time says nothing about whether the statement is
+	// valid, so it must not be reported as a rejection.
+	var pgErr *pgconn.PgError
+	if ctx.Err() != nil ||
+		(errors.As(err, &pgErr) && pgErr.Code == sqlStateQueryCanceled) {
+		return statementValidation{
+			Query:  stmt,
+			Status: validationUnsupported,
+			Error:  "planning the statement timed out, so it was not validated",
+		}
+	}
+
+	return statementValidation{
+		Query:  stmt,
+		Status: validationInvalid,
+		Error:  safeQueryError("Validation error", err),
+	}
+}
+
+// runExplain runs one EXPLAIN on the transaction's own connection
+// over the extended query protocol, binding every $N placeholder to
+// NULL; EXPLAIN (GENERIC_PLAN) ignores the values, and a statement
+// without placeholders binds none. The extended protocol matters for
+// safety: PostgreSQL refuses to prepare more than one command, so SQL
+// the splitter failed to divide is rejected rather than run, whereas
+// the simple protocol would execute every command in it, including a
+// COMMIT that ends the read-only transaction.
+func runExplain(ctx context.Context, pgConn *pgconn.PgConn, explainSQL string) error {
+	sd, err := pgConn.Prepare(ctx, "", explainSQL, nil)
+	if err != nil {
+		return err
+	}
+	params := make([][]byte, len(sd.ParamOIDs))
+	// The plan itself is discarded; only the error matters.
+	return pgConn.ExecPrepared(ctx, "", params, nil, nil).Read().Err
+}
+
+// explainCommand returns the EXPLAIN command that validates stmt, or
+// an empty string and the reason validation is not possible. The
+// command is built from the statement with its leading comments
+// stripped, so that a leading line comment cannot comment out the
+// EXPLAIN keyword.
+func explainCommand(stmt string, genericPlan bool) (string, string) {
+	body := strings.TrimSpace(stripLeadingComments(stmt))
+	if body == "" {
+		return "", "the statement contains no SQL, so it was not validated"
+	}
+	upper := strings.ToUpper(body)
+
+	// An EXPLAIN the caller wrote is planned as it stands, except that
+	// EXPLAIN ANALYZE would run the statement it explains.
+	if strings.HasPrefix(upper, "EXPLAIN") {
+		if containsSQLKeyword(upper, "ANALYZE") ||
+			containsSQLKeyword(upper, "ANALYSE") { //nolint:misspell // ANALYSE is a PostgreSQL keyword
+			return "", "EXPLAIN ANALYZE runs the statement it explains, " +
+				"so it was not validated"
+		}
+		if containsDollarParam(body) {
+			return "", "the statement is an EXPLAIN carrying parameter " +
+				"placeholders ($1, $2, ...), so it was not validated"
+		}
+		return body, ""
+	}
+
+	if !isExplainableStatement(upper) {
+		return "", fmt.Sprintf(
+			"PostgreSQL cannot plan a %s statement with EXPLAIN, "+
+				"so it was not validated", firstSQLWord(upper))
+	}
+
+	if containsDollarParam(body) {
+		if !genericPlan {
+			return "", "the statement carries parameter placeholders " +
+				"($1, $2, ...) and this server predates EXPLAIN " +
+				"(GENERIC_PLAN), added in PostgreSQL 16, so it was not validated"
+		}
+		return "EXPLAIN (GENERIC_PLAN) " + body, ""
+	}
+
+	return "EXPLAIN " + body, ""
+}
+
+// explainableStatements are the statement kinds this endpoint plans.
+// PostgreSQL will also EXPLAIN a handful of others (EXECUTE, DECLARE,
+// CREATE TABLE AS, REFRESH MATERIALIZED VIEW), which are deliberately
+// left out: each depends on session or catalog state that
+// validation cannot assume, so reporting them as unsupported is more
+// honest than planning them.
+var explainableStatements = []string{
+	"SELECT",
+	"WITH",
+	"INSERT",
+	"UPDATE",
+	"DELETE",
+	"MERGE",
+	"VALUES",
+	"TABLE",
+}
+
+// isExplainableStatement reports whether an upper-cased statement body
+// begins with a keyword EXPLAIN can plan.
+func isExplainableStatement(upper string) bool {
+	word := firstSQLWord(upper)
+	for _, kw := range explainableStatements {
+		if word == kw {
+			return true
+		}
+	}
+	return false
+}
+
+// firstSQLWord returns the leading run of identifier characters in an
+// upper-cased statement body, or "unrecognized" when the body starts
+// with something else, such as an opening parenthesis.
+func firstSQLWord(upper string) string {
+	end := 0
+	for end < len(upper) && isIdentChar(upper[end]) {
+		end++
+	}
+	if end == 0 {
+		return "unrecognized"
+	}
+	return upper[:end]
 }

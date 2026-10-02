@@ -94,6 +94,7 @@ The API provides endpoints in the following categories.
 | PUT | `/api/v1/connections/{id}` | Update a connection. |
 | DELETE | `/api/v1/connections/{id}` | Delete a connection. |
 | GET | `/api/v1/connections/{id}/databases` | List databases for a connection. |
+| POST | `/api/v1/connections/{id}/query/validate` | Validate SQL against a connection without executing it. |
 | GET | `/api/v1/connections/current` | Get the current connection. |
 | POST | `/api/v1/connections/current` | Set the current connection. |
 | DELETE | `/api/v1/connections/current` | Clear the current connection. |

@@ -16,6 +16,7 @@ import { getKnowledgebaseTool, type AnalysisTool } from '../utils/mcpTools';
 import { ALERT_ANALYSIS_TOOLS } from '../utils/analysisTools';
 import { SQL_CODE_BLOCK_RULES } from '../utils/analysisPrompts';
 import { runAgenticLoop } from '../utils/agenticLoop';
+import { createSqlValidator } from '../utils/sqlValidation';
 import { fetchTimelineEventsCentered } from '../utils/timelineEvents';
 import type { Message } from '../types/llm';
 import { useAnalysisState } from './useAnalysisState';
@@ -198,6 +199,7 @@ Provide remediation recommendations and any threshold tuning suggestions.`;
                 maxIterations,
                 onActiveTools: setActiveTools,
                 onProgress: setProgressMessage,
+                validateSqlBlocks: createSqlValidator(alert.connectionId),
             });
 
             setAnalysis(analysisText);

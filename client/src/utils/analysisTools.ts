@@ -176,6 +176,9 @@ export const ALERT_ANALYSIS_TOOLS: AnalysisTool[] = [
     TOOL_GET_METRIC_BASELINES,
     TOOL_QUERY_METRICS,
     TOOL_GET_BLACKOUTS,
+    // Alert analysis emits remediation SQL, so it needs a way to
+    // confirm real object and column names rather than guessing them.
+    TOOL_GET_SCHEMA_INFO,
     TOOL_TEST_QUERY,
 ];
 

@@ -19,6 +19,10 @@ import {
     SQL_PLACEHOLDER_RULES,
 } from '../utils/analysisPrompts';
 import { runAgenticLoop } from '../utils/agenticLoop';
+import {
+    createSqlValidator,
+    createRoutedSqlValidator,
+} from '../utils/sqlValidation';
 import { fetchTimelineEventsCentered } from '../utils/timelineEvents';
 import type { Message } from '../types/llm';
 import { ANALYSIS_CACHE_TTL_MS } from '../utils/textHelpers';
@@ -203,6 +207,12 @@ Analyze performance metrics, schema design, security configuration, and replicat
 
         setProgressMessage('Starting analysis...');
 
+        // Cluster blocks carry a `-- connection_id: N` routing comment,
+        // so the routed validator picks the right server per block.
+        const validateSqlBlocks = input.type === 'server'
+            ? createSqlValidator(Number(input.id))
+            : createRoutedSqlValidator();
+
         try {
             const analysisText = await runAgenticLoop({
                 messages,
@@ -211,6 +221,7 @@ Analyze performance metrics, schema design, security configuration, and replicat
                 maxIterations,
                 onActiveTools: setActiveTools,
                 onProgress: setProgressMessage,
+                validateSqlBlocks,
             });
 
             setAnalysis(analysisText);

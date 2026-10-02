@@ -20,19 +20,6 @@ import (
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
 )
 
-// countingEmbeddingProvider records how many embeddings it was asked
-// for, so a test can tell whether Tier 2 ran for a candidate.
-type countingEmbeddingProvider struct {
-	calls int
-}
-
-func (p *countingEmbeddingProvider) GenerateEmbedding(context.Context, string) ([]float32, error) {
-	p.calls++
-	return []float32{1, 0, 0}, nil
-}
-
-func (p *countingEmbeddingProvider) ModelName() string { return "counting-model" }
-
 // TestProcessTier2And3SuppressesUnsupportedMetricCandidates covers a
 // candidate left over from before its metric was excluded from baselines
 // (GitHub issue #576). It must be marked processed and suppressed
@@ -84,8 +71,8 @@ func TestProcessTier2And3SuppressesUnsupportedMetricCandidates(t *testing.T) {
 		engine.processTier2And3(ctx)
 	})
 
-	if provider.calls != 1 {
-		t.Errorf("embedding calls = %d, want 1 (the supported candidate only)", provider.calls)
+	if got := provider.calls.Load(); got != 1 {
+		t.Errorf("embedding calls = %d, want 1 (the supported candidate only)", got)
 	}
 
 	for _, c := range stale {

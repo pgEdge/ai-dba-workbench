@@ -1251,7 +1251,8 @@ helper.
 
 Tier 2 (an embedding call) and Tier 3 (an LLM call) are billed per
 candidate, so `processTier2And3` runs `anomalyAlertSkipReason` before
-either (#568). It holds every check whose outcome does not depend on the
+either (#568), after first suppressing any candidate whose metric fails
+`SupportsBaselines` (#576). It holds every check whose outcome does not depend on the
 tier results, in this order: blackout, open (`active` or `acknowledged`)
 anomaly alert for the same metric, connection and database (which sets
 `candidate.AlertID` to it), re-evaluation suppression, false-positive

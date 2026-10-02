@@ -25,6 +25,13 @@ import (
 func (e *Engine) calculateBaselines(ctx context.Context) {
 	e.debugLog("Calculating baselines...")
 
+	// Every row this cycle writes carries a last_calculated at or after
+	// cycleStart, so once a metric has been rebuilt any row of it older
+	// than this was not rewritten and is pruned. Truncating to the
+	// microsecond matches PostgreSQL's timestamptz precision, so a row
+	// written in the same microsecond can never compare as older.
+	cycleStart := time.Now().Truncate(time.Microsecond)
+
 	// Get all active connections
 	connections, err := e.datastore.GetActiveConnections(ctx)
 	if err != nil {
@@ -91,6 +98,7 @@ func (e *Engine) calculateBaselines(ctx context.Context) {
 		}
 
 		if len(histValues) == 0 {
+			e.pruneStaleBaselines(ctx, rule.MetricName, cycleStart)
 			continue
 		}
 
@@ -140,9 +148,31 @@ func (e *Engine) calculateBaselines(ctx context.Context) {
 			// Calculate daily baselines (by day of week)
 			e.calculateDailyBaselines(ctx, key.connectionID, dbNamePtr, rule.MetricName, values, minSamplesForTimePeriod, earliest)
 		}
+
+		e.pruneStaleBaselines(ctx, rule.MetricName, cycleStart)
 	}
 
 	e.log("Baseline calculation complete")
+}
+
+// pruneStaleBaselines deletes the metric's baseline rows that the
+// current cycle did not rewrite. An hourly or daily bucket is upserted
+// only while it holds enough samples, and a connection or database is
+// visited only while it has samples in the lookback window, so without
+// this a row that stops qualifying keeps its last statistics for ever
+// and goes on being scored against. That is how baselines built before
+// a historical query was corrected would have outlived the fix (#567).
+// It runs only after the metric's historical query has succeeded, so a
+// failed query never empties a metric's baselines.
+func (e *Engine) pruneStaleBaselines(ctx context.Context, metricName string, cycleStart time.Time) {
+	deleted, err := e.datastore.DeleteStaleMetricBaselines(ctx, metricName, cycleStart)
+	if err != nil {
+		e.log("ERROR: Failed to delete stale baselines for metric %s: %v", metricName, err)
+		return
+	}
+	if deleted > 0 {
+		e.debugLog("Deleted %d stale baseline rows for metric %s", deleted, metricName)
+	}
 }
 
 // calculateAllBaseline calculates the global 'all' baseline for a metric.

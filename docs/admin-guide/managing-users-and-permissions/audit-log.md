@@ -4,9 +4,9 @@ The Workbench records changes to users, tokens, groups, group
 memberships and privileges in an audit log, along with the requests
 that were refused for want of a permission, so that you can answer
 questions such as who revoked a colleague's access and when. Repeated
-denials are coalesced rather than recorded one by one, as described
-under [Recorded Actions](#recorded-actions). Each event
-names the principal that made the change, the address the request came
+denials and failures are coalesced rather than recorded one by one, as
+described under [Recorded Actions](#recorded-actions). Each event names
+the principal that made the change, the address the request came
 from, the object that was targeted, the state the change replaced and
 whether the change succeeded. Events live in the `audit_events` table of
 the server's `auth.db` authentication store. A change that succeeds
@@ -117,6 +117,22 @@ attempts are written as a summary event of their own, carrying
 `details.repeat_count` alongside `details.window_closed`, so a burst
 that stops is still counted rather than lost.
 
+Repeated failures are coalesced in the same way, because a caller
+holding a mutation permission could otherwise fill the log by
+repeating a request that always fails, such as creating a user that
+already exists. Two failures are identical when they share the actor,
+the client address, the action, the target and the error text. A
+failure summary event also carries `details.first_seen` and
+`details.last_seen`, the times of the first and last attempt it
+stands for, because the event itself is stamped when it is written.
+The server writes the summary for a burst that has stopped at its
+next periodic cleanup, which runs every five minutes, or sooner if a
+later failure arrives first; a clean shutdown writes a summary for
+every window that is still open, so only a crash loses the counts of
+the open windows. The server keeps the coalescing state in memory, so
+a restart starts every window afresh, and servers sharing one
+`auth.db` coalesce independently.
+
 ## Actor Types
 
 Each event names the kind of principal that caused the change in the
@@ -154,7 +170,8 @@ records a change that was attempted and errored, and a `denied` event
 records a change that an authorisation check refused before it reached
 the store. Both `failure` and `denied` events carry the reason in the
 `error` field, and a `denied` event names the permission the caller was
-missing.
+missing. The server caps the `error` text at 500 bytes, ending a
+shortened value with `... (truncated)`.
 
 Most events also carry a `details` field holding a JSON object. A change
 that replaces existing state, such as a user update or any delete,

@@ -1289,21 +1289,18 @@ func (s *AuthStore) recordAudit(tx *sql.Tx, ev *AuditEvent) error {
 // so a still-open write transaction leaves this second one blocked for
 // the connection's five-second busy timeout and the event is then lost. Errors are logged rather than
 // returned: an audit failure must never mask the mutation error the
-// caller is about to report.
+// caller is about to report. Identical failures are coalesced and the
+// error text is capped, as audit_failures.go describes.
 func (s *AuthStore) recordFailure(actor Actor, action, targetType string,
 	targetID *int64, targetName string, cause error) {
 
-	ev := newEvent(actor, action, targetType, targetID, targetName, nil)
-	ev.Outcome = OutcomeFailure
+	errText := "unknown error"
 	if cause != nil {
-		ev.Error = cause.Error()
-	} else {
-		ev.Error = "unknown error"
+		errText = capAuditError(cause.Error())
 	}
 
-	if err := s.recordAuditInOwnTx(ev); err != nil {
-		log.Printf("[ERROR] Failed to record audit failure event: %v", err)
-	}
+	s.coalesceFailure(failureKeyOf(actor, action, targetType, targetID,
+		targetName, errText), time.Now())
 }
 
 // auditTarget carries the action and target of an in-progress mutation
@@ -1355,7 +1352,7 @@ func (s *AuthStore) RecordDeniedWithDetails(actor Actor, action,
 
 	ev := newEvent(actor, action, "", nil, "", details)
 	ev.Outcome = OutcomeDenied
-	ev.Error = reason
+	ev.Error = capAuditError(reason)
 
 	if err := s.recordAuditInOwnTx(ev); err != nil {
 		return fmt.Errorf("failed to record denial: %w", err)
@@ -1364,9 +1361,10 @@ func (s *AuthStore) RecordDeniedWithDetails(actor Actor, action,
 	return nil
 }
 
-// recordAuditInOwnTx wraps recordAudit in a transaction of its own. The
-// caller must already hold s.mu.
-func (s *AuthStore) recordAuditInOwnTx(ev *AuditEvent) error {
+// recordAuditInOwnTx records one or more events, in order, in a
+// transaction of its own; either all of them are written or none is.
+// The caller must already hold s.mu.
+func (s *AuthStore) recordAuditInOwnTx(evs ...*AuditEvent) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return fmt.Errorf("failed to begin audit transaction: %w", err)
@@ -1380,8 +1378,10 @@ func (s *AuthStore) recordAuditInOwnTx(ev *AuditEvent) error {
 		}
 	}()
 
-	if err := s.recordAudit(tx, ev); err != nil {
-		return err
+	for _, ev := range evs {
+		if err := s.recordAudit(tx, ev); err != nil {
+			return err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("failed to commit audit event: %w", err)

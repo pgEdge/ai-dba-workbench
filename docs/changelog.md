@@ -1774,6 +1774,21 @@ project adheres to
   subdomain log a user in to the attacker's account (login CSRF).
   (#506)
 
+- Coalesce repeated `failure` events in the RBAC audit log, as
+  denials already were, so that a caller holding a mutation
+  permission can no longer bury the events that matter by
+  repeating a request that always fails, such as creating a user
+  that already exists. Identical failures, meaning the same
+  actor, address, action, target and error, are counted rather
+  than recorded for sixty seconds after the one that was
+  recorded, and the count appears in `details.repeat_count` on
+  the next such failure or on a summary event of its own, which
+  the server writes at its next periodic cleanup once the burst
+  stops, or at a clean shutdown for any window still open. The
+  `error` text of `failure` and `denied` events is now capped at
+  500 bytes, and `-list-audit` escapes control characters in the
+  action column as it already did in the others. (#503)
+
 - Stop the Slack, Mattermost and generic webhook channels putting their
   endpoint URL into the alerter log, into
   `notification_history.error_message` and into the server log when a

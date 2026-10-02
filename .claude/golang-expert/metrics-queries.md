@@ -1201,9 +1201,10 @@ false-positive alert is `acknowledged` and so already open;
 (#577), since such a row would only be marked processed with no tier
 run and later deleted. The check in `processTier2And3` stays, for
 candidates created before the condition began. With the alert tables
-missing every lookup errors and the candidate is still written, which
-is why the Tier 1 tests in `anomalies_test.go` need no alerts table;
-`TestDetectAnomaliesSkipsCandidatesThatCannotAlert` covers each check.
+missing every alert lookup errors and the candidate is still written,
+which is why the Tier 1 tests in `anomalies_test.go` need no alerts
+table; `TestDetectAnomaliesSkipsCandidatesThatCannotAlert` covers each
+check.
 
 ## Time-Window Resolution (server)
 

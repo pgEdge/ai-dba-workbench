@@ -343,6 +343,18 @@ func (e *Engine) detectAnomalyForValue(
 		Tier1Pass:    true,
 	}
 
+	// A candidate that could never raise an alert would only be
+	// written, marked processed by processTier2And3 without any tier
+	// running, and later deleted, so a condition that persists under
+	// an open alert, a blackout or a suppression would add a row per
+	// value on every cycle (issue #577). processTier2And3 repeats the
+	// checks for candidates created before one of them applied.
+	if reason := e.anomalyAlertSkipReason(ctx, candidate); reason != "" {
+		e.debugLog("Not recording anomaly candidate for %s on connection %d: %s",
+			metricName, connID, reason)
+		return
+	}
+
 	if err := e.datastore.CreateAnomalyCandidate(ctx, candidate); err != nil {
 		e.log("ERROR: Failed to create anomaly candidate: %v", err)
 	}
@@ -637,6 +649,11 @@ func (e *Engine) determineFinalDecision(candidate *database.AnomalyCandidate) {
 // returns a short reason when one applies and "" otherwise. When an open
 // alert exists, candidate.AlertID is set to it so the candidate is
 // recorded against that alert.
+//
+// It runs three times over a candidate's life: in detectAnomalyForValue,
+// before the candidate is created (issue #577); in processTier2And3,
+// before the paid tiers (issue #568); and in createAnomalyAlert, before
+// the alert is written.
 //
 // The order is significant: an acknowledged alert marked as a false
 // positive is also an open alert, so the duplicate check claims it first

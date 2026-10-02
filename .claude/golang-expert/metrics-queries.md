@@ -1196,6 +1196,16 @@ is only reachable when the open-alert lookup fails, because a
 false-positive alert is `acknowledged` and so already open;
 `TestProcessTier2And3SkipsPaidTiers` forces that failure to cover it.
 
+`detectAnomalyForValue` runs the same helper before
+`CreateAnomalyCandidate` and writes no row when it returns a reason
+(#577), since such a row would only be marked processed with no tier
+run and later deleted. The check in `processTier2And3` stays, for
+candidates created before the condition began. With the alert tables
+missing every alert lookup errors and the candidate is still written,
+which is why the Tier 1 tests in `anomalies_test.go` need no alerts
+table; `TestDetectAnomaliesSkipsCandidatesThatCannotAlert` covers each
+check.
+
 ## Time-Window Resolution (server)
 
 Every dashboard metrics query runs against an absolute window, and the

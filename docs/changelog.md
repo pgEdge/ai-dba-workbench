@@ -855,6 +855,15 @@ project adheres to
   just before an alert is created, since a blackout or an
   acknowledgement can arrive during a slow Tier 3 call. (#568)
 
+- Fix the alerter writing an anomaly candidate on every evaluation
+  cycle for a condition that could not raise an alert. Tier 1 stored
+  a candidate for each anomalous value even whilst an open anomaly
+  alert, a database-scoped blackout or a suppression applied, so a
+  persistent condition added a row per metric, connection and
+  database every cycle, each later marked as processed and deleted.
+  Tier 1 now runs the pre-tier checks first and stores no candidate
+  when one applies. (#577)
+
 - Fix alerts staying active for ever on a server an operator has
   stopped monitoring. The probes of an unmonitored connection leave
   the staleness view, so every alert on it was judged to have a probe

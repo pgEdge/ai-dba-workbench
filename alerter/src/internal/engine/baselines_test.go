@@ -955,14 +955,14 @@ func TestCalculateBaselinesErrorBranches(t *testing.T) {
 		"baseline-error-branches").Scan(&connID); err != nil {
 		t.Fatalf("failed to insert connection: %v", err)
 	}
-	if _, err := pool.Exec(ctx, insertAnomalyPgSettingsSQL, connID, "100"); err != nil {
-		t.Fatalf("failed to insert pg_settings sample: %v", err)
+	if _, err := pool.Exec(ctx, insertAnomalyLoadAvgSQL, connID, "100"); err != nil {
+		t.Fatalf("failed to insert load average sample: %v", err)
 	}
 	// pg_stat_activity.count has a historical query, but the detection
 	// schema has no metrics.pg_stat_activity table, so the query fails.
 	for _, r := range []struct{ name, metric string }{
 		{"error_branch_missing_table", "pg_stat_activity.count"},
-		{"error_branch_good", "pg_settings.max_connections"},
+		{"error_branch_good", "pg_sys_load_avg_info.load_avg_fifteen_minutes"},
 	} {
 		if _, err := pool.Exec(ctx, insertAnomalyRuleForMetricSQL, r.name, r.metric); err != nil {
 			t.Fatalf("failed to insert rule %s: %v", r.name, err)
@@ -994,12 +994,12 @@ func TestCalculateBaselinesErrorBranches(t *testing.T) {
 		t.Errorf("hourly tier wrongly reported unreachable:\n%s", output)
 	}
 
-	baselines, err := engine.datastore.GetMetricBaselines(ctx, connID, "pg_settings.max_connections", nil)
+	baselines, err := engine.datastore.GetMetricBaselines(ctx, connID, "pg_sys_load_avg_info.load_avg_fifteen_minutes", nil)
 	if err != nil {
 		t.Fatalf("GetMetricBaselines failed: %v", err)
 	}
 	if len(baselines) != 1 || baselines[0].Mean != 100 {
-		t.Fatalf("expected one max_connections baseline with mean 100, got %+v", baselines)
+		t.Fatalf("expected one load average baseline with mean 100, got %+v", baselines)
 	}
 	missing, err := engine.datastore.GetMetricBaselines(ctx, connID, "pg_stat_activity.count", nil)
 	if err != nil {

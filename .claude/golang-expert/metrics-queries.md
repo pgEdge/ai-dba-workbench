@@ -1119,9 +1119,20 @@ conventions from that change hold across both:
   runs once per `calculateBaselines` cycle, binding
   `BaselineSupportedMetrics()` as a `text[]` and deleting
   `metric_name <> ALL($1)`, so rows the old fallback wrote disappear.
-  `TestAuditC7HistoricalSQLCoverage` pins by name the thirteen registry
-  entries that still have no historical query; giving them one is a
-  follow-up, and any entry gaining one must be removed from that list.
+  `TestAuditC7HistoricalSQLCoverage` pins by name the fifteen registry
+  entries that have no historical query, and any entry gaining one must
+  be removed from that list. Two are excluded on purpose and must not
+  gain one: `pg_settings.max_connections` (a configuration value that
+  exists for the `high_max_connections` threshold rule) and
+  `pg_replication_slots.inactive_count` (a presence count that is almost
+  always zero); `baseline_exclusions_integration_test.go` pins both
+  (#576). Removing a historical query needs no migration, because the
+  sweep deletes the metric's old baseline rows on the next cycle, and
+  `processTier2And3` suppresses, without running Tier 2 or 3, any
+  pending candidate whose metric fails `SupportsBaselines`. The
+  engine's detection tests use
+  `pg_sys_load_avg_info.load_avg_fifteen_minutes` as their baselined
+  metric.
 
 - `GetMetricBaselines(ctx, connID, metric, dbName *string)` is scoped to
   one database with the same NULL-aware predicate as
@@ -1180,7 +1191,8 @@ helper.
 
 Tier 2 (an embedding call) and Tier 3 (an LLM call) are billed per
 candidate, so `processTier2And3` runs `anomalyAlertSkipReason` before
-either (#568). It holds every check whose outcome does not depend on the
+either (#568), after first suppressing any candidate whose metric fails
+`SupportsBaselines` (#576). It holds every check whose outcome does not depend on the
 tier results, in this order: blackout, open (`active` or `acknowledged`)
 anomaly alert for the same metric, connection and database (which sets
 `candidate.AlertID` to it), re-evaluation suppression, false-positive

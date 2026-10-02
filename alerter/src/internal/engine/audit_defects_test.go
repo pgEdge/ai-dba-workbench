@@ -423,7 +423,7 @@ func TestAuditC6DetectAnomaliesPrefersTimeAwareBaselines(t *testing.T) {
 
 	ctx := context.Background()
 	now := time.Now().UTC()
-	const metric = "pg_settings.max_connections"
+	const metric = "pg_sys_load_avg_info.load_avg_fifteen_minutes"
 
 	if _, err := pool.Exec(ctx, insertAnomalyAlertRuleSQL,
 		"audit_c6_rule", metric); err != nil {
@@ -510,8 +510,8 @@ func TestAuditC6DetectAnomaliesPrefersTimeAwareBaselines(t *testing.T) {
 			if _, err := pool.Exec(ctx, `DELETE FROM metric_baselines`); err != nil {
 				t.Fatalf("delete metric_baselines failed: %v", err)
 			}
-			if _, err := pool.Exec(ctx, `DELETE FROM metrics.pg_settings`); err != nil {
-				t.Fatalf("delete metrics.pg_settings failed: %v", err)
+			if _, err := pool.Exec(ctx, `DELETE FROM metrics.pg_sys_load_avg_info`); err != nil {
+				t.Fatalf("delete metrics.pg_sys_load_avg_info failed: %v", err)
 			}
 			if _, err := pool.Exec(ctx, `DELETE FROM connections`); err != nil {
 				t.Fatalf("delete connections failed: %v", err)
@@ -522,9 +522,9 @@ func TestAuditC6DetectAnomaliesPrefersTimeAwareBaselines(t *testing.T) {
 				"audit-c6").Scan(&connID); err != nil {
 				t.Fatalf("failed to insert connection: %v", err)
 			}
-			if _, err := pool.Exec(ctx, insertAnomalyPgSettingsSQL,
+			if _, err := pool.Exec(ctx, insertAnomalyLoadAvgSQL,
 				connID, "500"); err != nil {
-				t.Fatalf("failed to insert pg_settings sample: %v", err)
+				t.Fatalf("failed to insert load average sample: %v", err)
 			}
 
 			for _, r := range tc.rows {
@@ -584,7 +584,7 @@ func TestAuditC7UnsupportedMetricsAreExcluded(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC()
 	const unsupported = "pg_replication_slots.inactive"
-	const supported = "pg_settings.max_connections"
+	const supported = "pg_sys_load_avg_info.load_avg_fifteen_minutes"
 
 	if _, err := pool.Exec(ctx, createSlotsTableSQL); err != nil {
 		t.Fatalf("failed to create metrics.pg_replication_slots: %v", err)
@@ -617,9 +617,9 @@ func TestAuditC7UnsupportedMetricsAreExcluded(t *testing.T) {
     `, connID); err != nil {
 		t.Fatalf("failed to seed replication slot: %v", err)
 	}
-	if _, err := pool.Exec(ctx, insertAnomalyPgSettingsSQL,
+	if _, err := pool.Exec(ctx, insertAnomalyLoadAvgSQL,
 		connID, "500"); err != nil {
-		t.Fatalf("failed to insert pg_settings sample: %v", err)
+		t.Fatalf("failed to insert load average sample: %v", err)
 	}
 
 	if database.SupportsBaselines(unsupported) {
@@ -629,7 +629,7 @@ func TestAuditC7UnsupportedMetricsAreExcluded(t *testing.T) {
 	// Leftovers from the old fallback: a cold row for the unsupported
 	// metric and one for the unregistered metric_staleness. The
 	// supported metric's row is written by calculateBaselines itself
-	// from the pg_settings sample and must be the only one to survive.
+	// from the load average sample and must be the only one to survive.
 	for _, metric := range []string{unsupported, "metric_staleness"} {
 		seedAuditBaseline(t, ds, &database.MetricBaseline{
 			ConnectionID:   connID,

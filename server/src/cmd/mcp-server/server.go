@@ -557,14 +557,23 @@ func (s *Server) startTokenCleanup() {
 			case <-s.ctx.Done():
 				return
 			case <-ticker.C:
-				if removed, hashes := s.authStore.CleanupExpiredTokens(); removed > 0 {
-					fmt.Fprintf(os.Stderr, "Removed %d expired token(s)\n", removed)
-					s.cleanupExpiredConnections(hashes)
-				}
-				s.purgeAuditEvents()
+				s.runCleanupTick()
 			}
 		}
 	}()
+}
+
+// runCleanupTick does one round of the periodic cleanup: it removes
+// expired tokens and the connections they owned, purges audit events
+// past their retention, and writes the counts of coalesced audit
+// failures whose window has closed.
+func (s *Server) runCleanupTick() {
+	if removed, hashes := s.authStore.CleanupExpiredTokens(); removed > 0 {
+		fmt.Fprintf(os.Stderr, "Removed %d expired token(s)\n", removed)
+		s.cleanupExpiredConnections(hashes)
+	}
+	s.purgeAuditEvents()
+	s.authStore.SweepAuditFailures()
 }
 
 // purgeAuditEvents deletes RBAC audit events older than the

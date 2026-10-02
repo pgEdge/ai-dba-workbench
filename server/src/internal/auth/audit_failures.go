@@ -12,6 +12,7 @@ package auth
 
 import (
 	"log"
+	"sort"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -124,19 +125,36 @@ func (k failureKey) event(details any) *AuditEvent {
 }
 
 // failureState tracks one key's current window: when it opened, which
-// is when the failure that was recorded happened, and how many
-// identical failures have been suppressed since.
+// is when the failure that was recorded happened, when the latest
+// identical failure arrived, and how many have been suppressed since
+// the window opened.
 type failureState struct {
 	firstSeen  time.Time
+	lastSeen   time.Time
 	suppressed int
 }
 
 // failureSummary carries the repeats an evicted entry never got to
 // report, so that they are written as one summary row rather than
-// discarded with the entry.
+// discarded with the entry. firstSeen and lastSeen bound the window the
+// repeats fell in, because the summary row itself is stamped when it is
+// written, which can be long after the burst.
 type failureSummary struct {
 	key        failureKey
 	suppressed int
+	firstSeen  time.Time
+	lastSeen   time.Time
+}
+
+// event builds the summary row for the entry, attributed exactly as the
+// failures it counts.
+func (f failureSummary) event() *AuditEvent {
+	return f.key.event(map[string]any{
+		"repeat_count":  f.suppressed,
+		"window_closed": true,
+		"first_seen":    f.firstSeen.UTC().Format(auditTimeLayout),
+		"last_seen":     f.lastSeen.UTC().Format(auditTimeLayout),
+	})
 }
 
 // failureCoalescer decides which failures are written and which are
@@ -173,15 +191,17 @@ func (c *failureCoalescer) admit(key failureKey, now time.Time) (bool, int,
 
 	switch state, ok := c.entries[key]; {
 	case !ok:
-		c.entries[key] = &failureState{firstSeen: now}
+		c.entries[key] = &failureState{firstSeen: now, lastSeen: now}
 	case now.Sub(state.firstSeen) < failureCoalesceWindow:
 		state.suppressed++
+		state.lastSeen = now
 		record = false
 	default:
 		if state.suppressed > 0 {
 			repeats = state.suppressed + 1
 		}
 		state.firstSeen = now
+		state.lastSeen = now
 		state.suppressed = 0
 	}
 
@@ -198,13 +218,7 @@ func (c *failureCoalescer) evict(keep failureKey,
 	var expired []failureSummary
 
 	drop := func(key failureKey, state *failureState) {
-		if state.suppressed > 0 {
-			expired = append(expired, failureSummary{
-				key:        key,
-				suppressed: state.suppressed,
-			})
-		}
-		delete(c.entries, key)
+		expired = c.drop(expired, key, state)
 	}
 
 	for key, state := range c.entries {
@@ -227,7 +241,57 @@ func (c *failureCoalescer) evict(keep failureKey,
 		drop(oldestKey, oldestState)
 	}
 
+	return sortSummaries(expired)
+}
+
+// drain removes the entries whose window has closed by now, or every
+// entry when all is true, and returns a summary for each one that still
+// held suppressed repeats. It lets a periodic sweep write the counts of
+// a burst that has stopped, rather than waiting for an unrelated later
+// failure to evict it, and lets shutdown write the counts of windows
+// that are still open rather than discarding them.
+func (c *failureCoalescer) drain(now time.Time, all bool) []failureSummary {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	var expired []failureSummary
+	for key, state := range c.entries {
+		if all || now.Sub(state.firstSeen) >= failureCoalesceWindow {
+			expired = c.drop(expired, key, state)
+		}
+	}
+
+	return sortSummaries(expired)
+}
+
+// drop deletes one entry, appending a summary to expired if the entry
+// still held suppressed repeats, and returns the extended slice. The
+// caller must hold c.mu.
+func (c *failureCoalescer) drop(expired []failureSummary, key failureKey,
+	state *failureState) []failureSummary {
+
+	if state.suppressed > 0 {
+		expired = append(expired, failureSummary{
+			key:        key,
+			suppressed: state.suppressed,
+			firstSeen:  state.firstSeen,
+			lastSeen:   state.lastSeen,
+		})
+	}
+	delete(c.entries, key)
+
 	return expired
+}
+
+// sortSummaries orders summaries by the start of their window, so that
+// the rows appear in the log in the order the bursts began rather than
+// in map iteration order.
+func sortSummaries(summaries []failureSummary) []failureSummary {
+	sort.SliceStable(summaries, func(i, j int) bool {
+		return summaries[i].firstSeen.Before(summaries[j].firstSeen)
+	})
+
+	return summaries
 }
 
 // writeFailure records one failure event in its own transaction,
@@ -239,6 +303,45 @@ func (s *AuthStore) writeFailure(ev *AuditEvent) {
 	}
 }
 
+// writeFailureSummaries records a summary row for each entry in one
+// transaction, so that a large batch of closed windows holds s.mu for
+// one commit rather than one per row. Errors are logged, as in
+// writeFailure. The caller must hold s.mu.
+func (s *AuthStore) writeFailureSummaries(summaries []failureSummary) {
+	if len(summaries) == 0 {
+		return
+	}
+
+	events := make([]*AuditEvent, len(summaries))
+	for i := range summaries {
+		events[i] = summaries[i].event()
+	}
+
+	if err := s.recordAuditInOwnTx(events...); err != nil {
+		log.Printf("[ERROR] Failed to record %d audit failure summary event(s): %v",
+			len(events), err)
+	}
+}
+
+// SweepAuditFailures writes a summary row for every coalesced failure
+// whose window has closed and that still holds suppressed repeats, so
+// that the count of a burst which simply stops reaches the log without
+// waiting for a later failure to evict it. The server calls it on its
+// periodic cleanup tick, and Close writes the windows still open.
+func (s *AuthStore) SweepAuditFailures() {
+	s.sweepAuditFailures(time.Now(), false)
+}
+
+// sweepAuditFailures drains the coalescer at now, every entry when all
+// is true or only those whose window has closed otherwise, and writes
+// the summaries.
+func (s *AuthStore) sweepAuditFailures(now time.Time, all bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.writeFailureSummaries(s.failures.drain(now, all))
+}
+
 // coalesceFailure runs one failure through the coalescer at now,
 // writing a summary row for every evicted entry that held suppressed
 // repeats and then, if admitted, the failure itself. The caller must
@@ -246,13 +349,7 @@ func (s *AuthStore) writeFailure(ev *AuditEvent) {
 func (s *AuthStore) coalesceFailure(key failureKey, now time.Time) {
 	record, repeats, expired := s.failures.admit(key, now)
 
-	for i := range expired {
-		summary := &expired[i]
-		s.writeFailure(summary.key.event(map[string]any{
-			"repeat_count":  summary.suppressed,
-			"window_closed": true,
-		}))
-	}
+	s.writeFailureSummaries(expired)
 
 	if !record {
 		return

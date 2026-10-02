@@ -121,10 +121,17 @@ Repeated failures are coalesced in the same way, because a caller
 holding a mutation permission could otherwise fill the log by
 repeating a request that always fails, such as creating a user that
 already exists. Two failures are identical when they share the actor,
-the client address, the action, the target and the error text. The
-server keeps the coalescing state in memory, so a restart starts every
-window afresh, and servers sharing one `auth.db` coalesce
-independently.
+the client address, the action, the target and the error text. A
+failure summary event also carries `details.first_seen` and
+`details.last_seen`, the times of the first and last attempt it
+stands for, because the event itself is stamped when it is written.
+The server writes the summary for a burst that has stopped at its
+next periodic cleanup, which runs every five minutes, or sooner if a
+later failure arrives first; a clean shutdown writes a summary for
+every window that is still open, so only a crash loses the counts of
+the open windows. The server keeps the coalescing state in memory, so
+a restart starts every window afresh, and servers sharing one
+`auth.db` coalesce independently.
 
 ## Actor Types
 

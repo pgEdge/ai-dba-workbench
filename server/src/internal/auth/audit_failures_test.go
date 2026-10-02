@@ -142,6 +142,12 @@ func TestFailureCoalescerSummarisesExpired(t *testing.T) {
 		expired[0].suppressed != 2 {
 		t.Fatalf("expired = %+v, want one summary of 2 for bob", expired)
 	}
+	if !expired[0].firstSeen.Equal(start) ||
+		!expired[0].lastSeen.Equal(start.Add(2*time.Second)) {
+		t.Errorf("summary window = %v to %v, want %v to %v",
+			expired[0].firstSeen, expired[0].lastSeen, start,
+			start.Add(2*time.Second))
+	}
 	if len(c.entries) != 1 {
 		t.Errorf("expected only the new key to remain, got %d", len(c.entries))
 	}
@@ -315,4 +321,191 @@ func TestWriteFailureLogsStoreError(t *testing.T) {
 		t.Fatalf("closing the database failed: %v", err)
 	}
 	store.writeFailure(failureKeyFor("bob").event(nil))
+}
+
+// TestFailureCoalescerDrain checks that a sweep takes only the windows
+// that have closed, that a final drain takes every window, that both
+// report only entries holding repeats, and that summaries come back
+// in the order their windows opened.
+func TestFailureCoalescerDrain(t *testing.T) {
+	var c failureCoalescer
+	start := time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)
+	early := failureKeyFor("early")
+	late := failureKeyFor("late")
+	quiet := failureKeyFor("quiet")
+	open := failureKeyFor("open")
+
+	// Admit late before early so that map order cannot pass for the
+	// sort.
+	c.admit(late, start.Add(time.Second))
+	c.admit(late, start.Add(2*time.Second))
+	c.admit(early, start)
+	c.admit(early, start.Add(3*time.Second))
+	c.admit(quiet, start)
+	c.admit(open, start.Add(30*time.Second))
+	c.admit(open, start.Add(31*time.Second))
+
+	swept := c.drain(start.Add(failureCoalesceWindow+2*time.Second), false)
+	if len(swept) != 2 || swept[0].key != early || swept[1].key != late {
+		t.Fatalf("swept = %+v, want early then late", swept)
+	}
+	if len(c.entries) != 1 {
+		t.Fatalf("expected only the open window to remain, got %d",
+			len(c.entries))
+	}
+
+	final := c.drain(start, true)
+	if len(final) != 1 || final[0].key != open || final[0].suppressed != 1 {
+		t.Fatalf("final = %+v, want one summary of 1 for open", final)
+	}
+	if len(c.entries) != 0 {
+		t.Errorf("expected a final drain to empty the map, got %d",
+			len(c.entries))
+	}
+	if got := c.drain(start, true); len(got) != 0 {
+		t.Errorf("draining an empty coalescer returned %+v", got)
+	}
+}
+
+func TestFailureSummaryEventCarriesWindow(t *testing.T) {
+	start := time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)
+	summary := failureSummary{
+		key:        failureKeyFor("bob"),
+		suppressed: 3,
+		firstSeen:  start,
+		lastSeen:   start.Add(30 * time.Second),
+	}
+
+	ev := summary.event()
+	details := auditDetails(t, *ev)
+	if details["repeat_count"] != float64(3) || details["window_closed"] != true {
+		t.Errorf("unexpected summary details %v", details)
+	}
+	if details["first_seen"] != start.Format(auditTimeLayout) ||
+		details["last_seen"] != start.Add(30*time.Second).Format(auditTimeLayout) {
+		t.Errorf("unexpected summary window %v to %v",
+			details["first_seen"], details["last_seen"])
+	}
+}
+
+// ageEntry moves one tracked window's start back by d.
+func ageEntry(s *AuthStore, key failureKey, d time.Duration) {
+	s.failures.mu.Lock()
+	defer s.failures.mu.Unlock()
+	state := s.failures.entries[key]
+	state.firstSeen = state.firstSeen.Add(-d)
+}
+
+// repeatFailure records the same failure n times through the store.
+func repeatFailure(s *AuthStore, target string, n int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := 0; i < n; i++ {
+		s.recordFailure(testActor(), "user.create", "user", nil, target,
+			errors.New("user already exists"))
+	}
+}
+
+// TestSweepAuditFailuresWritesClosedWindows checks that the periodic
+// sweep writes a burst that has stopped, in one batch that keeps the
+// chain intact, and leaves a window that is still open alone.
+func TestSweepAuditFailuresWritesClosedWindows(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAudit(t)
+	defer cleanup()
+
+	repeatFailure(store, "bob", 4)
+	repeatFailure(store, "carol", 3)
+	repeatFailure(store, "dave", 2)
+	ageEntry(store, failureKeyFor("bob"), failureCoalesceWindow)
+	ageEntry(store, failureKeyFor("carol"), failureCoalesceWindow)
+
+	before := auditEventCount(t, store)
+	store.SweepAuditFailures()
+	if got := auditEventCount(t, store) - before; got != 2 {
+		t.Fatalf("expected summaries for bob and carol, got %d rows", got)
+	}
+
+	events, _, err := store.ListAuditEvents(AuditFilter{Limit: 2})
+	if err != nil {
+		t.Fatalf("ListAuditEvents failed: %v", err)
+	}
+	counts := map[string]any{}
+	for _, ev := range events {
+		details := auditDetails(t, ev)
+		if details["window_closed"] != true || details["first_seen"] == nil ||
+			details["last_seen"] == nil {
+			t.Errorf("unexpected summary details %v", details)
+		}
+		counts[ev.TargetName] = details["repeat_count"]
+	}
+	if counts["bob"] != float64(3) || counts["carol"] != float64(2) {
+		t.Errorf("unexpected summary counts %v", counts)
+	}
+
+	if _, ok := store.failures.entries[failureKeyFor("dave")]; !ok {
+		t.Error("the sweep dropped a window that is still open")
+	}
+
+	_, firstBad, err := store.VerifyAuditChain()
+	if err != nil || firstBad != 0 {
+		t.Errorf("chain broken after a batched sweep: firstBad %d, err %v",
+			firstBad, err)
+	}
+}
+
+// TestCloseWritesOpenFailureWindows checks that a clean shutdown writes
+// the counts of windows still open rather than discarding them.
+func TestCloseWritesOpenFailureWindows(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewAuthStore(dir, 0, 0, AuditKeyForTesting())
+	if err != nil {
+		t.Fatalf("NewAuthStore failed: %v", err)
+	}
+
+	repeatFailure(store, "bob", 100)
+	repeatFailure(store, "carol", 1)
+	before := auditEventCount(t, store)
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	reopened, err := NewAuthStore(dir, 0, 0, AuditKeyForTesting())
+	if err != nil {
+		t.Fatalf("reopening the store failed: %v", err)
+	}
+	defer reopened.Close()
+
+	if got := auditEventCount(t, reopened) - before; got != 1 {
+		t.Fatalf("expected one summary row written at Close, got %d", got)
+	}
+	ev := lastAuditEvent(t, reopened)
+	details := auditDetails(t, ev)
+	if ev.TargetName != "bob" || details["repeat_count"] != float64(99) ||
+		details["window_closed"] != true {
+		t.Errorf("unexpected shutdown summary %q %v", ev.TargetName, details)
+	}
+
+	_, firstBad, err := reopened.VerifyAuditChain()
+	if err != nil || firstBad != 0 {
+		t.Errorf("chain broken after the shutdown summary: firstBad %d, err %v",
+			firstBad, err)
+	}
+}
+
+// TestWriteFailureSummariesLogsStoreError checks that a batch of
+// summaries that cannot be written is logged rather than returned or
+// panicking.
+func TestWriteFailureSummariesLogsStoreError(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAudit(t)
+	defer cleanup()
+
+	if err := store.db.Close(); err != nil {
+		t.Fatalf("closing the database failed: %v", err)
+	}
+	store.mu.Lock()
+	store.writeFailureSummaries([]failureSummary{{
+		key:        failureKeyFor("bob"),
+		suppressed: 1,
+	}})
+	store.mu.Unlock()
 }

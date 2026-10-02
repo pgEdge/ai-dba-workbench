@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/pgedge/ai-workbench/alerter/internal/config"
@@ -206,14 +207,25 @@ func (h *trackerHarness) open() *database.Alert {
 }
 
 func (h *trackerHarness) loggedContaining(s string) bool {
+	return h.countLogged(s) > 0
+}
+
+func (h *trackerHarness) countLogged(s string) int {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	n := 0
 	for _, l := range h.logged {
 		if strings.Contains(l, s) {
-			return true
+			n++
 		}
 	}
-	return false
+	return n
+}
+
+// disableCooldown lets a test raise an alert again straight after a
+// clear.
+func (h *trackerHarness) disableCooldown() {
+	h.tracker.cooldown = 0
 }
 
 func TestProviderHealth_RaisesAtThresholdAndClearsOnSuccess(t *testing.T) {
@@ -252,14 +264,21 @@ func TestProviderHealth_RaisesAtThresholdAndClearsOnSuccess(t *testing.T) {
 		t.Fatalf("notifications = %v, want one fire", h.notes)
 	}
 
-	// Further failures with the same error neither re-raise nor rewrite.
+	// A further failure with the same error does not re-raise, but
+	// rewrites the text with the new count, without logging the
+	// unchanged error again.
 	h.fail("model gpt-x does not exist")
-	if h.store.creates != 1 || h.store.updates != 0 {
-		t.Errorf("creates %d, updates %d after a repeat failure", h.store.creates, h.store.updates)
+	if h.store.creates != 1 || h.store.updates != 1 ||
+		!strings.Contains(h.open().Description, "4 consecutive") {
+		t.Errorf("creates %d, updates %d, description %q after a repeat failure",
+			h.store.creates, h.store.updates, h.open().Description)
+	}
+	if n := h.countLogged("call failed"); n != 1 {
+		t.Errorf("call error logged %d times, want once", n)
 	}
 	// A different error rewrites the text.
 	h.fail("rate limited")
-	if h.store.updates != 1 || !strings.Contains(h.open().Description, "rate limited") {
+	if h.store.updates != 2 || !strings.Contains(h.open().Description, "rate limited") {
 		t.Errorf("error change not recorded: updates %d", h.store.updates)
 	}
 
@@ -272,11 +291,115 @@ func TestProviderHealth_RaisesAtThresholdAndClearsOnSuccess(t *testing.T) {
 	}
 
 	// The count restarted: two failures stay below the threshold.
+	h.disableCooldown()
 	h.fail("boom")
 	h.fail("boom")
 	if h.open() != nil {
 		t.Error("count was not reset by the success")
 	}
+}
+
+func TestProviderHealth_CooldownBoundsAFlakyProvider(t *testing.T) {
+	h := newTrackerHarness(3)
+	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+	h.tracker.now = func() time.Time { return now }
+
+	h.fail("401")
+	h.fail("401")
+	h.fail("401")
+	h.succeed()
+	if len(h.notes) != 2 {
+		t.Fatalf("notifications = %v, want fire then clear", h.notes)
+	}
+
+	// Inside the cooldown, runs of failures at or past the threshold
+	// raise nothing.
+	for i := 0; i < 10; i++ {
+		now = now.Add(10 * time.Second)
+		h.fail("401")
+		h.fail("401")
+		h.fail("401")
+		h.succeed()
+	}
+	if h.store.creates != 1 || len(h.notes) != 2 {
+		t.Fatalf("creates %d, notifications %v inside the cooldown", h.store.creates, h.notes)
+	}
+
+	// Once the cooldown has passed, the next run at the threshold
+	// raises the alert again.
+	now = now.Add(AlertCooldownPeriod)
+	h.fail("401")
+	h.fail("401")
+	if h.open() != nil {
+		t.Fatal("alert raised below the threshold after the cooldown")
+	}
+	h.fail("401")
+	if h.open() == nil || h.store.creates != 2 {
+		t.Errorf("alert not raised after the cooldown: creates %d", h.store.creates)
+	}
+}
+
+func TestProviderHealth_StartupCheckIgnoresCooldown(t *testing.T) {
+	h := newTrackerHarness(3)
+	h.fail("401")
+	h.fail("401")
+	h.fail("401")
+	h.succeed()
+	h.tracker.record(context.Background(), providerTierEmbedding, "openai",
+		"text-embedding-3-small", errors.New("401"), true)
+	if h.open() == nil {
+		t.Error("startup check failure did not raise within the cooldown")
+	}
+}
+
+func TestProviderHealth_ReasoningSuccessClearsBothReasoningTiers(t *testing.T) {
+	cls := providerHealthKey(providerTierClassification, "anthropic")
+	reeval := providerHealthKey(providerTierReevaluation, "anthropic")
+	succeed := func(h *trackerHarness, tier providerTier) {
+		h.tracker.record(context.Background(), tier, "anthropic", "claude-x", nil, false)
+	}
+
+	t.Run("tier 3 success clears a re-evaluation alert", func(t *testing.T) {
+		// No acknowledged alert is due, so no re-evaluation call will
+		// ever clear the alert itself.
+		h := newTrackerHarness(3)
+		alert := h.store.put(reeval)
+		succeed(h, providerTierClassification)
+		if alert.Status != "cleared" {
+			t.Error("re-evaluation alert outlived a successful Tier 3 call")
+		}
+	})
+	t.Run("re-evaluation success clears a tier 3 alert", func(t *testing.T) {
+		h := newTrackerHarness(3)
+		alert := h.store.put(cls)
+		succeed(h, providerTierReevaluation)
+		if alert.Status != "cleared" {
+			t.Error("Tier 3 alert outlived a successful re-evaluation call")
+		}
+	})
+	t.Run("a reasoning success resets both counts", func(t *testing.T) {
+		h := newTrackerHarness(3)
+		fail := func() {
+			h.tracker.record(withProviderTier(context.Background(), providerTierReevaluation),
+				providerTierReevaluation, "anthropic", "claude-x", errors.New("down"), false)
+		}
+		fail()
+		fail()
+		succeed(h, providerTierClassification)
+		fail()
+		fail()
+		if h.store.openFor(reeval) != nil {
+			t.Error("re-evaluation count survived a Tier 3 success")
+		}
+	})
+	t.Run("a reasoning success leaves the embedding alert alone", func(t *testing.T) {
+		h := newTrackerHarness(3)
+		alert := h.store.put(providerHealthKey(providerTierEmbedding, "anthropic"))
+		succeed(h, providerTierClassification)
+		if alert.Status == "cleared" {
+			t.Error("embedding alert cleared by a reasoning success")
+		}
+	})
 }
 
 func TestProviderHealth_SuccessWithNothingOpen(t *testing.T) {
@@ -430,8 +553,8 @@ func TestProviderHealth_StoreFailures(t *testing.T) {
 			t.Errorf("updates %d, notes %v", h.store.updates, h.notes)
 		}
 		h.fail("boom")
-		if h.store.updates != 1 {
-			t.Error("unchanged error rewritten after a conflict")
+		if h.store.updates != 2 || !strings.Contains(h.open().Description, "2 consecutive") {
+			t.Errorf("count not refreshed after a conflict: updates %d", h.store.updates)
 		}
 	})
 	t.Run("conflicting create with a failed update", func(t *testing.T) {
@@ -683,8 +806,10 @@ func TestCheckProviderHealth(t *testing.T) {
 		if old.Status != "cleared" {
 			t.Error("alert from a previous run not cleared by a healthy check")
 		}
-		if reeval.Status == "cleared" {
-			t.Error("re-evaluation alert cleared although that tier is still configured")
+		// With no acknowledged alert due, nothing else would ever call
+		// the provider for re-evaluation, so the check clears it too.
+		if reeval.Status != "cleared" {
+			t.Error("re-evaluation alert not cleared by a healthy reasoning check")
 		}
 	})
 	t.Run("anomaly detection off clears everything and checks nothing", func(t *testing.T) {

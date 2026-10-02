@@ -309,17 +309,23 @@ The alerter counts consecutive failures separately for tier
 2 embeddings, tier 3 classification and re-evaluation, and
 for each provider. When one count reaches the threshold, the
 alerter raises a single warning alert for that tier and
-provider; the next successful call from that tier to that
-provider clears the alert. A call cancelled before it
+provider, and updates the alert's failure count as further
+calls fail. The next successful call to that provider resets
+the count and clears the alert; tier 3 classification and
+re-evaluation share the reasoning provider, so a successful
+call from either clears the alerts of both. After clearing
+an alert, the alerter does not raise it again for five
+minutes, so that a provider that fails intermittently cannot
+send a burst of notifications. A call cancelled before it
 completes counts as neither a failure nor a success,
 although a call that times out counts as a failure.
 
 When anomaly detection is enabled, the alerter also checks
 the providers of the enabled tiers at startup. A failed
 check raises the alert for its tier immediately, whatever
-the threshold. A failed reasoning check raises the tier 3
-alert when tier 3 is enabled, and the re-evaluation alert
-when only re-evaluation uses the reasoning provider. At
+the threshold or the five-minute wait; a failed reasoning
+check raises the tier 3 alert. A successful reasoning check
+clears both the tier 3 and the re-evaluation alerts. At
 startup the alerter also clears any open provider alert for
 a tier or provider that is no longer configured or enabled.
 See

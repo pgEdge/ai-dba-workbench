@@ -183,7 +183,7 @@ degrades anomaly detection.
 The alert title names the affected tier and provider, as
 in `Anomaly detection degraded: Tier 2 embedding provider
 ollama failing`. The description gives the model, the
-number of consecutive failures when the alert was raised
+number of consecutive failures so far
 (or notes a failed startup check), what anomaly detection
 does whilst the provider fails, and the last error the
 provider returned, with any credentials removed. A network
@@ -192,7 +192,10 @@ refused`, without the endpoint's address; the alerter log
 records the endpoint for the administrator. The alerter
 raises one alert for each tier and provider, at warning
 severity, and clears the alert on the next successful call
-from that tier to that provider.
+to that provider; a successful tier 3 or re-evaluation call
+clears the alerts of both, since they share the reasoning
+provider. Once cleared, the alert is not raised again for
+five minutes.
 
 System alerts behave differently from connection alerts in
 the following ways:

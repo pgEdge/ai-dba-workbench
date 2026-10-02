@@ -86,6 +86,17 @@ func (t providerTier) consequence() string {
 	}
 }
 
+// sharedTiers returns the tiers whose calls go to the same provider
+// client as tier's: Tier 3 classification and re-evaluation share the
+// reasoning provider, so a successful call from either shows that the
+// provider answers again.
+func (t providerTier) sharedTiers() []providerTier {
+	if t == providerTierEmbedding {
+		return []providerTier{providerTierEmbedding}
+	}
+	return []providerTier{providerTierClassification, providerTierReevaluation}
+}
+
 // providerHealthKeyPrefix starts the metric_name of every provider
 // health system alert.
 const providerHealthKeyPrefix = "llm_provider_health."
@@ -156,6 +167,14 @@ type providerHealthState struct {
 
 	// lastError is the redacted error the open alert last reported.
 	lastError string
+
+	// reportedFailures is the failure count the open alert last
+	// reported.
+	reportedFailures int
+
+	// clearedAt is when this process last cleared the alert, which
+	// starts the re-raise cooldown.
+	clearedAt time.Time
 }
 
 // providerHealthTracker counts consecutive provider failures per tier
@@ -166,6 +185,10 @@ type providerHealthTracker struct {
 	threshold func() int
 	secrets   func() []string
 	log       func(string, ...any)
+
+	// now and cooldown time the re-raise cooldown; tests replace them.
+	now      func() time.Time
+	cooldown time.Duration
 
 	mu     sync.Mutex
 	states map[string]*providerHealthState
@@ -187,6 +210,8 @@ func newProviderHealthTracker(
 		threshold: threshold,
 		secrets:   secrets,
 		log:       log,
+		now:       time.Now,
+		cooldown:  AlertCooldownPeriod,
 		states:    make(map[string]*providerHealthState),
 	}
 }
@@ -204,7 +229,15 @@ func (t *providerHealthTracker) state(key string) *providerHealthState {
 }
 
 // record notes the outcome of one provider call. immediate opens the
-// alert on this failure whatever the threshold, for the startup check.
+// alert on this failure whatever the threshold and cooldown, for the
+// startup check.
+//
+// A success resets the count and clears the alert of every tier that
+// shares the provider, so a re-evaluation alert does not outlive the
+// fault just because no acknowledged alert is due for re-evaluation.
+// Once cleared, an alert is not raised again within the cooldown, the
+// same flapping guard the threshold alerts use, so a provider that fails
+// intermittently cannot fire and clear it on every short run of errors.
 //
 // A call abandoned because its context was canceled says nothing about
 // the provider, so it is neither a failure nor a success. A deadline is
@@ -216,33 +249,51 @@ func (t *providerHealthTracker) record(ctx context.Context, tier providerTier,
 		return
 	}
 
-	key := providerHealthKey(tier, provider)
-	st := t.state(key)
-	st.mu.Lock()
-	defer st.mu.Unlock()
-
 	// The call's own context may already have expired, which is often
 	// why it failed; datastore writes must still happen.
 	dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), providerHealthDBTimeout)
 	defer cancel()
 
 	if callErr == nil {
-		st.failures = 0
-		if !t.load(dbCtx, key, st) || st.alertID == 0 {
-			return
+		for _, shared := range tier.sharedTiers() {
+			t.recordSuccess(dbCtx, providerHealthKey(shared, provider))
 		}
-		t.clear(dbCtx, key, st, "the next call succeeded")
 		return
 	}
 
+	key := providerHealthKey(tier, provider)
+	st := t.state(key)
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
 	st.failures++
-	if !immediate && st.failures < t.effectiveThreshold() {
+	if !immediate && (st.failures < t.effectiveThreshold() || t.coolingDown(st)) {
 		return
 	}
 	if !t.load(dbCtx, key, st) {
 		return
 	}
 	t.raise(dbCtx, key, st, tier, provider, model, callErr, immediate)
+}
+
+// recordSuccess resets the failure count for key and clears its alert
+// if one is open.
+func (t *providerHealthTracker) recordSuccess(dbCtx context.Context, key string) {
+	st := t.state(key)
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	st.failures = 0
+	if !t.load(dbCtx, key, st) || st.alertID == 0 {
+		return
+	}
+	t.clear(dbCtx, key, st, "the next call succeeded")
+}
+
+// coolingDown reports whether this process cleared the alert for st too
+// recently to raise it again. The caller holds st.mu.
+func (t *providerHealthTracker) coolingDown(st *providerHealthState) bool {
+	return !st.clearedAt.IsZero() && t.now().Sub(st.clearedAt) < t.cooldown
 }
 
 // effectiveThreshold is the configured failure threshold, or the default
@@ -255,8 +306,8 @@ func (t *providerHealthTracker) effectiveThreshold() int {
 }
 
 // raise opens the provider health alert for key, or refreshes the open
-// one when the provider's error has changed. The caller holds st.mu and
-// has loaded st.
+// one when the provider's error or the failure count has changed. The
+// caller holds st.mu and has loaded st.
 func (t *providerHealthTracker) raise(dbCtx context.Context, key string, st *providerHealthState,
 	tier providerTier, provider, model string, callErr error, immediate bool) {
 	secrets := t.secrets()
@@ -264,10 +315,13 @@ func (t *providerHealthTracker) raise(dbCtx context.Context, key string, st *pro
 	description := providerHealthDescription(tier, provider, model, st.failures, immediate, lastError)
 	details := providerHealthDetails(tier, provider, model, st.failures, immediate, lastError)
 
-	if st.alertID != 0 && lastError == st.lastError {
+	errorChanged := st.alertID == 0 || lastError != st.lastError
+	if !errorChanged && st.failures == st.reportedFailures {
 		return
 	}
-	t.logCallError(key, callErr, secrets)
+	if errorChanged {
+		t.logCallError(key, callErr, secrets)
+	}
 	// refresh reports false when another process cleared the alert this
 	// one still held, in which case a new alert is raised below.
 	if st.alertID != 0 && t.refresh(dbCtx, key, st, st.alertID, description, details, lastError) {
@@ -296,12 +350,13 @@ func (t *providerHealthTracker) raise(dbCtx context.Context, key string, st *pro
 		return
 	}
 	st.lastError = lastError
+	st.reportedFailures = st.failures
 	t.log("Provider health alert raised: %s (%s)", alert.Title, lastError)
 	t.notify(opened, database.NotificationTypeAlertFire)
 }
 
 // refresh rewrites an open provider health alert's text, recording
-// lastError only once the write has succeeded so that a failed write is
+// lastError and the failure count only once the write has succeeded so that a failed write is
 // retried on the next failure. It reports false, and forgets the alert,
 // when the alert is no longer open, as happens when another alerter
 // process cleared it; any other outcome reports true.
@@ -312,11 +367,13 @@ func (t *providerHealthTracker) refresh(dbCtx context.Context, key string, st *p
 	case errors.Is(err, database.ErrSystemAlertNotOpen):
 		st.alertID = 0
 		st.lastError = ""
+		st.reportedFailures = 0
 		return false
 	case err != nil:
 		t.log("ERROR: Failed to update provider health alert %s: %v", key, err)
 	default:
 		st.lastError = lastError
+		st.reportedFailures = st.failures
 	}
 	return true
 }
@@ -358,6 +415,8 @@ func (t *providerHealthTracker) clear(ctx context.Context, key string, st *provi
 	}
 	st.alertID = 0
 	st.lastError = ""
+	st.reportedFailures = 0
+	st.clearedAt = t.now()
 	t.log("Provider health alert cleared: %s (%s)", key, why)
 
 	cleared, err := t.store.GetAlert(ctx, id)
@@ -405,7 +464,7 @@ func providerHealthDescription(tier providerTier, provider, model string,
 		what = fmt.Sprintf("%d consecutive %s calls to provider %s (model %s) have failed.",
 			failures, strings.ToLower(tier.label()), provider, model)
 	}
-	return fmt.Sprintf("%s %s The alert clears on the next successful call. Last error: %s",
+	return fmt.Sprintf("%s %s The alert clears on the next successful call to the provider. Last error: %s",
 		what, tier.consequence(), lastError)
 }
 
@@ -457,9 +516,10 @@ const redactedMarker = "[REDACTED]"
 
 // providerMarkup replaces the characters Slack mrkdwn and Mattermost
 // Markdown treat as links or mentions (<url|text>, <!channel>,
-// [text](url), @channel). The notifiers for those channels only
-// JSON-escape an alert description, so provider text must not carry
-// markup into it.
+// [text](url), @channel). The Slack and Mattermost notifiers escape
+// their own markup, but the provider's text reaches the web client,
+// email and webhook payloads too, so it is kept free of markup here as
+// well.
 var providerMarkup = strings.NewReplacer(
 	"<", "(", ">", ")", "[", "(", "]", ")", "@", "＠",
 )
@@ -737,10 +797,13 @@ func (e *Engine) activeProviderHealthKeys() map[string]bool {
 	return active
 }
 
-// reasoningHealthTier is the tier a reasoning provider health check is
-// recorded against: Tier 3 classification while it is enabled, otherwise
-// re-evaluation while that is enabled. It reports false when neither
-// uses the reasoning provider.
+// reasoningHealthTier is the tier a failed reasoning provider health
+// check raises its alert for: Tier 3 classification while it is enabled,
+// otherwise re-evaluation while that is enabled. The reasoning provider
+// is built only when Tier 3 is enabled at startup, so re-evaluation is
+// chosen only when a configuration reload has disabled Tier 3 since. A
+// successful check clears the alerts of both tiers either way. It
+// reports false when neither uses the reasoning provider.
 func reasoningHealthTier(cfg *config.Config) (providerTier, bool) {
 	switch {
 	case cfg.Anomaly.Tier3.Enabled:

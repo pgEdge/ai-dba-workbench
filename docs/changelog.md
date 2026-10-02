@@ -21,10 +21,12 @@ project adheres to
   `anomaly.provider_health.failure_threshold` option
   (default 3), or at once when the embedding or reasoning
   provider fails the new startup health check. The alert
-  names the provider, the
-  model and the last error, clears on the next successful
-  call, and goes to the estate default notification
-  channels. System alerts use the new `system` alert type
+  names the provider, the model, the failure count and the
+  last error, clears on the next successful call to the
+  provider (from either tier 3 or re-evaluation for the
+  reasoning provider), is not raised again within five
+  minutes of clearing, and goes to the estate default
+  notification channels. System alerts use the new `system` alert type
   and have no connection, which collector schema migration
   18 allows; every user and API token with alert access sees
   them, the REST API reports a `null` `connection_id` for

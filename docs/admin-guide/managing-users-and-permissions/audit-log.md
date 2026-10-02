@@ -506,15 +506,18 @@ behind.
 
 An oldest event that starts a chain of its own, with no predecessor at
 all, is accepted only where it is event 1, where it is itself a purge
-or re-anchor event, or where an anchor records it. SQLite never reuses
-an identifier in the `audit_events` table, even once every row has
-been deleted, so the first event the log ever held is always event 1;
-a new chain starting above it is what emptying the table and letting
-the server write one more event leaves, and verification reports it
-with status `2`. Purge and re-anchor events are allowed because
-earlier builds could purge the whole log and leave their own event as
-the first. The purge refuses such a log as well. An emptied log that
-you have accounted for recovers with an interactive re-anchor, as
+event, or where an anchor records it. SQLite never reuses an
+identifier in the `audit_events` table, even once every row has been
+deleted, so the first event the log ever held is always event 1; a new
+chain starting above it is what emptying the table and letting the
+server write one more event leaves, and verification reports it with
+status `2`. Purge events are allowed because earlier builds could
+purge the whole log and leave their own event as the first. A
+re-anchor event is not, since no re-anchor starts a chain of its own,
+so one kept from an earlier log and put back after the log is emptied
+is reported in the same way. The purge refuses such a log as well. An
+emptied log that you have accounted for, and to which the server has
+since written an event, recovers with an interactive re-anchor, as
 described under
 [Recovering a Log That No Longer Verifies](#recovering-a-log-that-no-longer-verifies).
 
@@ -546,8 +549,12 @@ The command prints what it has found, which is the number of events,
 how many of them are unkeyed, the oldest and newest timestamps, and
 whether the log recomputes under the rules each event was written with,
 and then asks you to type `rechain` before it writes anything. Pass
-`-confirm-rechain` to answer in advance for an unattended run. It
-re-hashes every event as a keyed event in a single transaction, links
+`-confirm-rechain` to answer in advance for an unattended run. The
+prompt is shown only on a terminal; when the command's input is not a
+terminal and `-confirm-rechain` is not given, it refuses without
+reading anything, so that a confirmation piped in by a script is not
+mistaken for an operator having read the figures. It re-hashes every
+event as a keyed event in a single transaction, links
 each one to the new hash of the event before it, and records the
 re-chain itself as an `audit.rechain` event at the end of the log.
 Verify the result immediately afterwards with `-verify-audit-log`.
@@ -569,8 +576,18 @@ does by itself.
 A database created at this release or later never needs it, because
 every event in it was keyed from the start.
 
-The command refuses outright in three cases, and writes nothing in any
-of them. The first is a log that holds keyed and unkeyed events
+The `-previous-secret-file` flag proves the history a re-anchor of a
+keyed log accepts, and has no part in a re-hash. Writing unkeyed
+events needs no key, so someone able to write `auth.db` can replace a
+keyed log with unkeyed events that a re-hash would then sign, and no
+secret can vouch for them. When `-previous-secret-file` is given and
+the log would be re-hashed, the command therefore refuses and writes
+nothing, interactively or not. If the server has only ever written
+keyed events, an unkeyed log means the file has been replaced: restore
+`auth.db` from a known-good copy.
+
+The command refuses outright in three further cases, and writes
+nothing in any of them. The first is a log that holds keyed and unkeyed events
 together, whatever order they sit in. An upgraded database holds its
 inherited unkeyed events and nothing else, so a log holding both means
 unkeyed events were written into a log that was already keyed, which no
@@ -679,7 +696,8 @@ all of the following hold:
   accepts everything through the last failing event as history, so a
   rotated secret cannot carry a later deletion or edit through.
 - `-previous-secret-file` names the secret file the older events were
-  written under, and every event the re-anchor would accept as history
+  written under (it is refused for a log that would be re-hashed),
+  and every event the re-anchor would accept as history
   verifies under that secret, links to the event before it, and
   accounts for the start of the log exactly as verification requires
   of a log written under one secret. A forged event verifies under no
@@ -712,7 +730,10 @@ Where every event verifies and the failure is in where the log begins
 or ends, such as events lost from the tail, the re-anchor accepts no
 history, and the plan warns that recording a new starting point removes
 the evidence of the failure from the log; afterwards only the recorded
-reason shows that it was there.
+reason shows that it was there. A log that holds no events at all is
+refused rather than re-anchored, because there is no event for a
+starting point to record; restore `auth.db` from a known-good copy, or
+run the re-anchor again once the server has written an event.
 
 The re-anchor never deletes, rewrites or re-signs an existing event.
 It appends one `audit.rechain` event, signed under the current server
@@ -794,19 +815,23 @@ written by builds that predate the record, verification can say only
 whether some purge event survives to explain a missing predecessor, so
 a deletion from the start of that log still verifies until the next
 purge removes something and records the oldest event. Once the record
-exists, removing the oldest events and every purge
-event that mentions them is no longer enough: the newest surviving
-purge event names an oldest event that is not there, and it cannot be
-rewritten without the server secret. Events deleted and later put
-back exactly as they were, from a copy, leave nothing to find. Where
-no purge has recorded the oldest event, deleting every event except
+exists, removing the oldest events and every purge event that mentions
+them is no longer enough whilst any later event survives: either the
+newest surviving purge event names an oldest event that is not there,
+and it cannot be rewritten without the server secret, or the oldest
+surviving event follows a predecessor that no purge event accounts
+for. Emptying the log entirely removes the record along with
+everything else, and leaves only the cases below. Events deleted and
+later put back exactly as they were, from a copy, leave nothing to
+find. Where no purge record survives, deleting every event except
 event 1, or deleting them all and putting back a copy of event 1, is
 the same as deleting the newest events: every event the server writes
 afterwards links to event 1, and nothing in the file tells that log
 from one that never grew. An event's identifier is not part of its
 hash either, so someone who can write the database can empty the log,
-wait for the server to write one more event and move that event to
-identifier 1, and the log verifies for the same reason.
+whether or not a purge had recorded where it began, wait for the
+server to write one more event and move that event to identifier 1,
+and the log verifies for the same reason.
 
 The re-chain blesses whatever the database contained at the moment it
 ran, as described above, so on an upgraded installation the keyed chain

@@ -241,7 +241,8 @@ client address, before and after snapshots and a hash chain.
   re-anchor's history runs to the last failing row anywhere, so a
   verdict drawn from the leading rows let `-confirm-rechain` launder a
   later deletion. `classifyUnverifiedRow`, and the purge's
-  `auditPurgeUnverified`, also never report a key mismatch when a verified anchor recording a head exists
+  `auditPurgeUnverified`, also never report a key mismatch when a
+  verified anchor recording a head exists
   (`anchorFound`): the verifier returns on the first bad row before the
   history-digest and head checks, so asking would let one edit just
   past an anchor's head or history launder a deletion there (both fixed
@@ -249,7 +250,8 @@ client address, before and after snapshots and a hash chain.
   path). `scanAuditForReanchor` re-derives the shape
   (`failsAfterVerified`) and clears `KeyMismatch` if a row was written
   between the verify and the scan, and `reanchorAuditLogTx` re-runs
-  `verifyAuditTail` under the write lock on a key mismatch; otherwise it is `ErrAuditChainBroken`, and downgrades and unkeyed
+  `verifyAuditTail` under the write lock on a key mismatch; otherwise
+  it is `ErrAuditChainBroken`, and downgrades and unkeyed
   rows are exit 2 as well. An attacker who rewrites the oldest rows
   keeping their links therefore gets the key-mismatch wording; exit 3
   is advice, not proof of innocence.
@@ -296,12 +298,15 @@ plainly rather than crediting the design with more than it does.
   on a log whose purge events all predate the record does the weak
   fallback apply (a missing predecessor passes if any `audit.purge` row
   survives). With no record, a genesis row (`prev_hash` "") is accepted
-  only at id 1 or as an anchor row (`auditGenesisAllowed`), so an
-  emptied table plus one new event fails; emptying all but a genuine
+  only at id 1 or as an `audit.purge` row (`auditGenesisAllowed`), so
+  an emptied table plus one new event fails, as does a replayed
+  re-anchor event, since a re-anchor refuses an empty log; emptying all
+  but a genuine
   row 1, or restoring a copy of it, is tail truncation (#544) and still
   passes. The id is not in the hash, so moving the new event to id 1
   (delete and reinsert with an explicit id) passes too; comparing a
-  recorded `oldest_retained_id` would add nothing for the same reason. The purge refuses, and retention
+  recorded `oldest_retained_id` would add nothing for the same
+  reason. The purge refuses, and retention
   stalls, on a prefix that does not verify and link from the recorded
   head, including for benign causes such as a rotated secret, until an
   operator re-anchors with `-rechain-audit-log`.
@@ -321,9 +326,13 @@ plainly rather than crediting the design with more than it does.
   verifies under the current key (`LaterEventsVerify`, against a run
   under the wrong secret). One previous key cannot prove an A-B-A
   rotation or history containing an earlier re-anchor's history; those
-  need an interactive run. The interactive prompt requires a terminal
-  (`auditInputIsTerminal`), so piped stdin cannot answer it; the legacy
-  re-hash prompt does not have that check. `previous_*` head fields are
+  need an interactive run. Both prompts, re-anchor and legacy re-hash,
+  require a terminal (`requireAuditTerminal`), so piped stdin cannot
+  answer them. `-previous-secret-file` is refused when the log would be
+  re-hashed, since no key vouches for unkeyed rows: a script that
+  passes it for a keyed log must not have a fabricated v1 log re-hashed
+  in its place.
+  `previous_*` head fields are
   signed into the event only when the previous anchor verified, and the
   CLI prints file-sourced hashes only if they are 64 lowercase hex
   (`auditPlanHash`).

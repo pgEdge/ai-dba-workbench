@@ -1806,8 +1806,11 @@ project adheres to
   written under and every event accepted as history verifies under it,
   and at least one later event verifies under the current secret; the
   shape alone is something anyone able to write `auth.db` can forge.
-  The re-anchor
-  deletes, rewrites and re-signs nothing: it appends one signed
+  `-previous-secret-file` proves only a re-anchor's history, so the
+  command refuses it for a log that would be re-hashed, and the
+  re-hash prompt likewise refuses input that is not a terminal. A log
+  emptied of every event is refused rather than re-anchored. The
+  re-anchor deletes, rewrites and re-signs nothing: it appends one signed
   `audit.rechain` event that records the new starting point and accepts
   the oldest events, through the last one that fails, as history bound
   by a digest, so retention can purge them again. History events are no

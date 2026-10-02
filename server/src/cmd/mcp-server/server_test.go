@@ -425,3 +425,45 @@ func TestPurgeAuditEventsLogsError(t *testing.T) {
 	// Must not panic; the error is only logged.
 	s.purgeAuditEvents()
 }
+
+func TestRunCleanupTickRemovesExpiredTokens(t *testing.T) {
+	store, _ := newWrapperTestStore(t)
+
+	db, err := sql.Open("sqlite", store.Path())
+	if err != nil {
+		t.Fatalf("failed to open auth db: %v", err)
+	}
+	defer db.Close()
+
+	res, err := db.Exec(`INSERT INTO tokens (token_hash, owner_id, expires_at)
+		SELECT 'expired-token-hash', id, ? FROM users WHERE username = 'wrapper'`,
+		time.Now().Add(-time.Hour).UTC())
+	if err != nil {
+		t.Fatalf("failed to seed an expired token: %v", err)
+	}
+	if n, err := res.RowsAffected(); err != nil || n != 1 {
+		t.Fatalf("seeded %d expired token(s) (err %v), want 1", n, err)
+	}
+
+	zero := 0
+	s := &Server{
+		cfg: &config.Config{
+			HTTP: config.HTTPConfig{
+				Auth: config.AuthConfig{AuditRetentionDaysPtr: &zero},
+			},
+		},
+		authStore:     store,
+		clientManager: database.NewClientManager(nil),
+	}
+
+	s.runCleanupTick()
+
+	var remaining int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM tokens
+		WHERE token_hash = 'expired-token-hash'`).Scan(&remaining); err != nil {
+		t.Fatalf("failed to count tokens: %v", err)
+	}
+	if remaining != 0 {
+		t.Errorf("expired token still present after the cleanup tick")
+	}
+}

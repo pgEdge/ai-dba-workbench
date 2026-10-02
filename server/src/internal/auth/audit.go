@@ -1494,9 +1494,10 @@ func (s *AuthStore) RecordDeniedWithDetails(actor Actor, action,
 	return nil
 }
 
-// recordAuditInOwnTx wraps recordAudit in a transaction of its own. The
-// caller must already hold s.mu.
-func (s *AuthStore) recordAuditInOwnTx(ev *AuditEvent) error {
+// recordAuditInOwnTx records one or more events, in order, in a
+// transaction of its own; either all of them are written or none is.
+// The caller must already hold s.mu.
+func (s *AuthStore) recordAuditInOwnTx(evs ...*AuditEvent) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return fmt.Errorf("failed to begin audit transaction: %w", err)
@@ -1510,8 +1511,10 @@ func (s *AuthStore) recordAuditInOwnTx(ev *AuditEvent) error {
 		}
 	}()
 
-	if err := s.recordAudit(tx, ev); err != nil {
-		return err
+	for _, ev := range evs {
+		if err := s.recordAudit(tx, ev); err != nil {
+			return err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("failed to commit audit event: %w", err)

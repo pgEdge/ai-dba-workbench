@@ -50,7 +50,9 @@ func (p *countingReasoningProvider) Classify(context.Context, string) (string, e
 	return `{"decision": "alert", "confidence": 0.9, "reasoning": "test"}`, nil
 }
 
-func (p *countingReasoningProvider) ModelName() string { return "counting-reasoner" }
+func (p *countingReasoningProvider) ModelName() string    { return "counting-reasoner" }
+func (p *countingReasoningProvider) ProviderName() string { return "counting" }
+func (p *countingReasoningProvider) SystemPrompt() string { return "counting system prompt" }
 
 // tierSkipAlertsSchema adds the alert tables that the pre-tier checks and
 // createAnomalyAlert read and write to the detection test schema.

@@ -785,12 +785,13 @@ project adheres to
   since the last "keep" answer. When the LLM answers "keep", the
   alerter now stores a hash of the prompt inputs (the alert's value
   and baseline, its acknowledgement, past acknowledgements of the
-  metric, the other alerts on the server, the cluster context and the
-  reasoning model, but not the re-evaluation count) in the new
-  `alerts.reevaluation_fingerprint` column, and skips the call while
-  the hash is unchanged. A new acknowledgement, a change in the
-  server's other alerts or a new model sends the alert to the LLM
-  again. A failed call, a response that contains no decision, or one
+  metric, the other alerts on the server, the cluster context, the
+  reasoning provider and model and the system prompt, but not the
+  re-evaluation count) in the new `alerts.reevaluation_fingerprint`
+  column, and skips the call whilst the hash is unchanged. A new
+  acknowledgement, a change in the server's other alerts, a new
+  provider or model, or a reworded system prompt sends the alert to
+  the LLM again. A failed call, a response that contains no decision, or one
   made when part of the context could not be read stores no hash, so
   the alert is retried when next due. The collector adds the column
   in schema migration 18, so upgrade the collector before the

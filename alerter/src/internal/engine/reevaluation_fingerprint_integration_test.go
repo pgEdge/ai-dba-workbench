@@ -31,6 +31,8 @@ type scriptedReasoningProvider struct {
 	response string
 	err      error
 	model    string
+	provider string
+	system   string
 	calls    int
 }
 
@@ -45,6 +47,18 @@ func (p *scriptedReasoningProvider) ModelName() string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.model
+}
+
+func (p *scriptedReasoningProvider) ProviderName() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.provider
+}
+
+func (p *scriptedReasoningProvider) SystemPrompt() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.system
 }
 
 func (p *scriptedReasoningProvider) callCount() int {
@@ -106,7 +120,12 @@ func newReevaluationTestEnv(t *testing.T) *reevaluationTestEnv {
 	cfg.Anomaly.Reevaluation.IntervalSeconds = 300
 	cfg.Anomaly.Reevaluation.MaxPerCycle = 10
 
-	provider := &scriptedReasoningProvider{response: keepResponse, model: "model-a"}
+	provider := &scriptedReasoningProvider{
+		response: keepResponse,
+		model:    "model-a",
+		provider: "provider-a",
+		system:   "system prompt v1",
+	}
 	return &reevaluationTestEnv{
 		engine:   &Engine{config: cfg, datastore: ds, reasoningProvider: provider},
 		pool:     pool,
@@ -168,8 +187,8 @@ func (env *reevaluationTestEnv) run() {
 
 // TestReevaluationSkipsUnchangedKeep checks that a "keep" is reused while
 // nothing the prompt shows has changed, and that the LLM is asked again
-// once the other alerts on the server, the reasoning model, or the
-// acknowledgement change.
+// once the other alerts on the server, the reasoning provider, model or
+// system prompt, or the acknowledgement change.
 func TestReevaluationSkipsUnchangedKeep(t *testing.T) {
 	env := newReevaluationTestEnv(t)
 	metric := "pg_stat_database.xact_commit"
@@ -227,6 +246,27 @@ func TestReevaluationSkipsUnchangedKeep(t *testing.T) {
 		t.Errorf("model change did not trigger a call: calls=%d", env.provider.callCount())
 	}
 
+	// So does a different provider serving a model of the same name.
+	env.provider.mu.Lock()
+	env.provider.provider = "provider-b"
+	env.provider.mu.Unlock()
+	env.makeDue(t)
+	env.run()
+	if env.provider.callCount() != 4 {
+		t.Errorf("provider change did not trigger a call: calls=%d", env.provider.callCount())
+	}
+
+	// And a reworded system prompt, since the stored keep answered the
+	// old instructions.
+	env.provider.mu.Lock()
+	env.provider.system = "system prompt v2"
+	env.provider.mu.Unlock()
+	env.makeDue(t)
+	env.run()
+	if env.provider.callCount() != 5 {
+		t.Errorf("system prompt change did not trigger a call: calls=%d", env.provider.callCount())
+	}
+
 	// A fresh acknowledgement with a new message changes the prompt too.
 	if _, err := env.pool.Exec(context.Background(), `
 		INSERT INTO alert_acknowledgments (alert_id, acknowledged_by, acknowledged_at,
@@ -237,7 +277,7 @@ func TestReevaluationSkipsUnchangedKeep(t *testing.T) {
 	}
 	env.makeDue(t)
 	env.run()
-	if env.provider.callCount() != 4 {
+	if env.provider.callCount() != 6 {
 		t.Errorf("new acknowledgement did not trigger a call: calls=%d", env.provider.callCount())
 	}
 }
@@ -374,7 +414,8 @@ func TestParseReevaluationResponseFound(t *testing.T) {
 func TestReevaluationFingerprintIgnoresCount(t *testing.T) {
 	metric := "m"
 	value := 1.0
-	e := &Engine{reasoningProvider: &scriptedReasoningProvider{model: "x"}}
+	p := &scriptedReasoningProvider{model: "x"}
+	e := &Engine{reasoningProvider: p}
 	a := &database.AcknowledgedAnomalyAlert{ID: 1, MetricName: &metric, MetricValue: &value}
 
 	base := e.reevaluationFingerprint(a, nil, nil, nil, nil)
@@ -389,6 +430,29 @@ func TestReevaluationFingerprintIgnoresCount(t *testing.T) {
 	a.MetricValue = &other
 	if got := e.reevaluationFingerprint(a, nil, nil, nil, nil); got == base {
 		t.Error("fingerprint did not change with the metric value")
+	}
+
+	// The provider name, model and system prompt each change it, and a
+	// NUL between them stops text moving from one to the next from
+	// producing the same hash.
+	base = e.reevaluationFingerprint(a, nil, nil, nil, nil)
+	for _, change := range []struct {
+		name                    string
+		provider, model, system string
+	}{
+		{"provider", "p2", "x", ""},
+		{"model", "", "x2", ""},
+		{"system prompt", "", "x", "be terse"},
+		{"boundary", "", "", "x"},
+	} {
+		p.provider, p.model, p.system = change.provider, change.model, change.system
+		if got := e.reevaluationFingerprint(a, nil, nil, nil, nil); got == base {
+			t.Errorf("fingerprint did not change with the %s", change.name)
+		}
+	}
+	p.provider, p.model, p.system = "", "x", ""
+	if got := e.reevaluationFingerprint(a, nil, nil, nil, nil); got != base {
+		t.Errorf("fingerprint not reproducible: %s != %s", got, base)
 	}
 
 	// Without a provider the fingerprint is still computed.

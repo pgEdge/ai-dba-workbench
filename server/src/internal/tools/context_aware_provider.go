@@ -483,9 +483,8 @@ func (p *ContextAwareProvider) Execute(ctx context.Context, name string, args ma
 					session, err := p.authStore.GetConnectionSession(tokenHash)
 					if err == nil && session != nil {
 						// Verify token still has access before injecting
-						if p.rbacChecker == nil {
-							args["connection_id"] = float64(session.ConnectionID)
-						} else if canAccess, _ := p.rbacChecker.CanAccessConnection(ctx, session.ConnectionID); canAccess {
+						// (a nil checker denies, issue #561)
+						if canAccess, _ := p.rbacChecker.CanAccessConnection(ctx, session.ConnectionID); canAccess {
 							args["connection_id"] = float64(session.ConnectionID)
 						}
 						// If access denied, don't inject - let tool report "connection_id required"

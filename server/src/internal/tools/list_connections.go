@@ -33,9 +33,9 @@ type MonitoredConnectionInfo struct {
 }
 
 // ListConnectionsTool creates the list_connections tool for listing monitored connections.
-// When rbacChecker and visibilityLister are non-nil, the returned list is
-// filtered to connections the caller can see. Pass nil for both in tests
-// or when RBAC is not configured.
+// The returned list is filtered to connections the caller can see. A nil
+// rbacChecker denies, so the list is empty (issue #561); a nil
+// visibilityLister limits a non-superuser to their direct grants.
 func ListConnectionsTool(pool *pgxpool.Pool, rbacChecker *auth.RBACChecker, visibilityLister auth.ConnectionVisibilityLister) Tool {
 	return Tool{
 		Definition: mcp.Tool{
@@ -165,24 +165,26 @@ CRITICAL: Never silently analyze multiple connections. Always get explicit user 
 			// between "no connections exist" and "user has no access".
 			totalConnectionsBeforeFilter := len(connections)
 
-			// RBAC: filter connections to the caller's visible set.
-			if rbacChecker != nil {
-				visible, allConns, visErr := rbacChecker.VisibleConnectionIDs(ctx, visibilityLister)
-				if visErr != nil {
-					fmt.Fprintf(os.Stderr, "ERROR: list_connections: failed to resolve visible connections: %v\n", visErr)
-				} else if !allConns {
-					visibleSet := make(map[int]bool, len(visible))
-					for _, id := range visible {
-						visibleSet[id] = true
-					}
-					filtered := make([]MonitoredConnectionInfo, 0, len(connections))
-					for _, conn := range connections {
-						if visibleSet[conn.ID] {
-							filtered = append(filtered, conn)
-						}
-					}
-					connections = filtered
+			// RBAC: filter connections to the caller's visible set. A nil
+			// checker reports no visible connections, so it shows nothing
+			// (issue #561).
+			visible, allConns, visErr := rbacChecker.VisibleConnectionIDs(ctx, visibilityLister)
+			if visErr != nil {
+				fmt.Fprintf(os.Stderr, "ERROR: list_connections: failed to resolve visible connections: %v\n", visErr)
+				return mcp.NewToolError("Failed to resolve accessible connections")
+			}
+			if !allConns {
+				visibleSet := make(map[int]bool, len(visible))
+				for _, id := range visible {
+					visibleSet[id] = true
 				}
+				filtered := make([]MonitoredConnectionInfo, 0, len(connections))
+				for _, conn := range connections {
+					if visibleSet[conn.ID] {
+						filtered = append(filtered, conn)
+					}
+				}
+				connections = filtered
 			}
 
 			if len(connections) == 0 {

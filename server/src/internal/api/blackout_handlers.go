@@ -38,9 +38,7 @@ func NewBlackoutHandler(datastore *database.Datastore, authStore *auth.AuthStore
 		authStore:   authStore,
 		rbacChecker: rbacChecker,
 	}
-	if rbacChecker != nil {
-		h.checkPermission = RequireAdminPermission(rbacChecker, auth.PermManageBlackouts, "manage blackouts")
-	}
+	h.checkPermission = RequireAdminPermission(rbacChecker, auth.PermManageBlackouts, "manage blackouts")
 	return h
 }
 

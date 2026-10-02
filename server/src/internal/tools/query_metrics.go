@@ -24,9 +24,8 @@ import (
 
 // QueryMetricsTool creates the query_metrics tool for querying collected metrics.
 // The rbacChecker is consulted before any datastore read so that callers cannot
-// query metrics for connections they are not permitted to see. It may be nil
-// in unit tests or when auth is not configured; a nil checker opens access
-// (matching the behavior of other tools in this package).
+// query metrics for connections they are not permitted to see. A nil checker
+// denies every connection (issue #561).
 func QueryMetricsTool(pool *pgxpool.Pool, rbacChecker *auth.RBACChecker) Tool {
 	return Tool{
 		Definition: mcp.Tool{
@@ -180,11 +179,9 @@ To manage response sizes:
 			// datastore read. Combined with the unified error below, this
 			// prevents the tool from being used to enumerate connection IDs
 			// or names the caller cannot see.
-			if rbacChecker != nil {
-				canAccess, _ := rbacChecker.CanAccessConnection(ctx, connectionID)
-				if !canAccess {
-					return mcp.NewToolError("connection not found or not accessible")
-				}
+			canAccess, _ := rbacChecker.CanAccessConnection(ctx, connectionID)
+			if !canAccess {
+				return mcp.NewToolError("connection not found or not accessible")
 			}
 
 			// Verify the connection_id exists in the connections table.

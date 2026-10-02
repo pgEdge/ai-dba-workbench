@@ -36,6 +36,11 @@ type ConnectionSharingLookupFunc func(ctx context.Context, connectionID int) (is
 // that want a permissive checker build one on a real test store and a
 // superuser context, so the permissive case is visible where it is
 // used (see issue #477).
+//
+// A nil *RBACChecker denies in exactly the same way, so a caller that
+// was handed no checker at all can call its methods without a nil guard
+// and still fail closed. Callers must not skip a check because the
+// checker is nil; a skipped check is unrestricted access (issue #561).
 type RBACChecker struct {
 	authStore           *AuthStore
 	connSharingLookupFn ConnectionSharingLookupFunc
@@ -110,8 +115,8 @@ func isNilDatastore(ds DatastoreSharingLookup) bool {
 // IsSuperuser checks if the current context has superuser privileges
 // Superusers bypass all privilege checks
 func (rc *RBACChecker) IsSuperuser(ctx context.Context) bool {
-	// Nil store - deny (see RBACChecker)
-	if rc.authStore == nil {
+	// Nil checker or nil store - deny (see RBACChecker)
+	if rc == nil || rc.authStore == nil {
 		return false
 	}
 
@@ -174,8 +179,8 @@ func (rc *RBACChecker) applyConnectionTokenScope(
 // - The privilege is not registered (fail-safe for unknown tools)
 // - The privilege is registered but not public and user lacks group membership
 func (rc *RBACChecker) CanAccessMCPItem(ctx context.Context, identifier string) bool {
-	// Nil store - deny (see RBACChecker)
-	if rc.authStore == nil {
+	// Nil checker or nil store - deny (see RBACChecker)
+	if rc == nil || rc.authStore == nil {
 		return false
 	}
 
@@ -245,8 +250,8 @@ func (rc *RBACChecker) CanAccessMCPItem(ctx context.Context, identifier string) 
 // CanAccessConnection checks if the current context can access a specific database connection
 // Returns (canAccess bool, accessLevel string) where accessLevel is "read" or "read_write"
 func (rc *RBACChecker) CanAccessConnection(ctx context.Context, connectionID int) (bool, string) {
-	// Nil store - deny (see RBACChecker)
-	if rc.authStore == nil {
+	// Nil checker or nil store - deny (see RBACChecker)
+	if rc == nil || rc.authStore == nil {
 		return false, AccessLevelNone
 	}
 
@@ -370,8 +375,8 @@ func (rc *RBACChecker) GetEffectivePrivileges(ctx context.Context) *EffectivePri
 		AdminPermissions:     make(map[string]bool),
 	}
 
-	// Nil store - deny (see RBACChecker)
-	if rc.authStore == nil {
+	// Nil checker or nil store - deny (see RBACChecker)
+	if rc == nil || rc.authStore == nil {
 		return result
 	}
 
@@ -553,8 +558,8 @@ type ConnectionVisibilityInfo struct {
 // sharing metadata; this allows the function to apply visibility rules
 // without performing an N+1 per-connection lookup.
 func (rc *RBACChecker) VisibleConnectionIDs(ctx context.Context, lister ConnectionVisibilityLister) (ids []int, allConnections bool, err error) {
-	// Nil store - deny (see RBACChecker)
-	if rc.authStore == nil {
+	// Nil checker or nil store - deny (see RBACChecker)
+	if rc == nil || rc.authStore == nil {
 		return nil, false, nil
 	}
 
@@ -652,8 +657,8 @@ func (rc *RBACChecker) VisibleConnectionIDs(ctx context.Context, lister Connecti
 
 // HasAdminPermission checks if the current context has a specific admin permission
 func (rc *RBACChecker) HasAdminPermission(ctx context.Context, permission string) bool {
-	// Nil store - deny (see RBACChecker)
-	if rc.authStore == nil {
+	// Nil checker or nil store - deny (see RBACChecker)
+	if rc == nil || rc.authStore == nil {
 		return false
 	}
 

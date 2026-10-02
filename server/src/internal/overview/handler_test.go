@@ -62,17 +62,45 @@ func newTestOverview(summary string) *Overview {
 // newTestHandler creates a Handler backed by a stubbed Generator whose
 // fields are set directly. The Generator has no datastore or LLM config,
 // so only GetOverview (reading g.current) works without further setup.
-func newTestHandler() *Handler {
+func newTestHandler(t *testing.T) *Handler {
+	t.Helper()
 	g := &Generator{
 		scopedCache: make(map[string]*scopedEntry),
 	}
-	return NewHandler(g, NewHub())
+	return newTestHandlerFor(t, g, NewHub())
 }
 
-// doRequest sends an HTTP request to the handler and returns the recorder.
+// newTestHandlerFor builds a Handler on the given generator and hub with
+// a real RBAC checker and no datastore. The checker admits only a
+// superuser context (see asSuperuser), since a nil checker denies every
+// caller (issue #561).
+func newTestHandlerFor(t *testing.T, g *Generator, hub *Hub) *Handler {
+	t.Helper()
+	store, cleanup := newRBACTestStore(t)
+	t.Cleanup(cleanup)
+	return NewHandlerWithRBAC(g, hub, auth.NewRBACChecker(store), nil)
+}
+
+// superuserContext returns a context that the RBAC checker treats as a
+// superuser.
+func superuserContext() context.Context {
+	return context.WithValue(context.Background(), auth.IsSuperuserContextKey, true)
+}
+
+// asSuperuser wraps next so that every request it serves carries a
+// superuser context.
+func asSuperuser(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), auth.IsSuperuserContextKey, true)
+		next(w, r.WithContext(ctx))
+	}
+}
+
+// doRequest sends an HTTP request to the handler as a superuser and
+// returns the recorder.
 func doRequest(t *testing.T, h *Handler, method, target string) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(method, target, nil)
+	req := httptest.NewRequest(method, target, nil).WithContext(superuserContext())
 	rr := httptest.NewRecorder()
 	h.handleOverview(rr, req)
 	return rr
@@ -81,7 +109,7 @@ func doRequest(t *testing.T, h *Handler, method, target string) *httptest.Respon
 // --- handler tests ---------------------------------------------------------
 
 func TestHandleOverview_MethodNotAllowed(t *testing.T) {
-	h := newTestHandler()
+	h := newTestHandler(t)
 
 	methods := []string{http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch}
 	for _, m := range methods {
@@ -95,7 +123,7 @@ func TestHandleOverview_MethodNotAllowed(t *testing.T) {
 }
 
 func TestHandleOverview_EstateWide(t *testing.T) {
-	h := newTestHandler()
+	h := newTestHandler(t)
 	h.generator.mu.Lock()
 	h.generator.current = newTestOverview("All systems healthy.")
 	h.generator.mu.Unlock()
@@ -116,7 +144,7 @@ func TestHandleOverview_EstateWide(t *testing.T) {
 }
 
 func TestHandleOverview_EstateWideGenerating(t *testing.T) {
-	h := newTestHandler()
+	h := newTestHandler(t)
 	// current is nil by default, so the handler should return "generating".
 
 	rr := doRequest(t, h, http.MethodGet, "/api/v1/overview")
@@ -138,7 +166,7 @@ func TestHandleOverview_EstateWideGenerating(t *testing.T) {
 }
 
 func TestHandleOverview_ContentTypeAndLinkHeaders(t *testing.T) {
-	h := newTestHandler()
+	h := newTestHandler(t)
 
 	rr := doRequest(t, h, http.MethodGet, "/api/v1/overview")
 
@@ -155,7 +183,7 @@ func TestHandleOverview_ContentTypeAndLinkHeaders(t *testing.T) {
 }
 
 func TestHandleOverview_InvalidScopeType(t *testing.T) {
-	h := newTestHandler()
+	h := newTestHandler(t)
 
 	rr := doRequest(t, h, http.MethodGet, "/api/v1/overview?scope_type=invalid&scope_id=1")
 
@@ -165,7 +193,7 @@ func TestHandleOverview_InvalidScopeType(t *testing.T) {
 }
 
 func TestHandleOverview_MissingScopeID(t *testing.T) {
-	h := newTestHandler()
+	h := newTestHandler(t)
 
 	rr := doRequest(t, h, http.MethodGet, "/api/v1/overview?scope_type=server")
 
@@ -175,7 +203,7 @@ func TestHandleOverview_MissingScopeID(t *testing.T) {
 }
 
 func TestHandleOverview_MissingScopeType(t *testing.T) {
-	h := newTestHandler()
+	h := newTestHandler(t)
 
 	rr := doRequest(t, h, http.MethodGet, "/api/v1/overview?scope_id=5")
 
@@ -185,7 +213,7 @@ func TestHandleOverview_MissingScopeType(t *testing.T) {
 }
 
 func TestHandleOverview_InvalidScopeID(t *testing.T) {
-	h := newTestHandler()
+	h := newTestHandler(t)
 
 	tests := []struct {
 		name  string
@@ -207,7 +235,7 @@ func TestHandleOverview_InvalidScopeID(t *testing.T) {
 }
 
 func TestHandleOverview_InvalidConnectionIDs(t *testing.T) {
-	h := newTestHandler()
+	h := newTestHandler(t)
 
 	tests := []struct {
 		name  string
@@ -233,7 +261,7 @@ func TestHandleOverview_EmptyConnectionIDs(t *testing.T) {
 	// An empty connection_ids parameter is treated as absent by the
 	// Go URL query parser, so the handler falls through to the
 	// estate-wide path and returns "generating" (200).
-	h := newTestHandler()
+	h := newTestHandler(t)
 
 	rr := doRequest(t, h, http.MethodGet, "/api/v1/overview?connection_ids=")
 
@@ -244,7 +272,7 @@ func TestHandleOverview_EmptyConnectionIDs(t *testing.T) {
 }
 
 func TestHandleOverview_WhitespaceOnlyConnectionIDs(t *testing.T) {
-	h := newTestHandler()
+	h := newTestHandler(t)
 
 	rr := doRequest(t, h, http.MethodGet, "/api/v1/overview?connection_ids=%20%20")
 
@@ -431,7 +459,7 @@ func TestHandleOverview_EstateWideRefresh(t *testing.T) {
 	// with a nil datastore the call panics. Catching the panic proves
 	// that ForceRefresh was invoked (cache bypass) rather than silently
 	// returning the cached overview.
-	h := newTestHandler()
+	h := newTestHandler(t)
 	h.generator.ctx = context.Background()
 	h.generator.mu.Lock()
 	h.generator.current = newTestOverview("Cached estate overview.")
@@ -450,7 +478,7 @@ func TestHandleOverview_ScopedRefreshTrue(t *testing.T) {
 	// A fresh cached entry exists for server:1, so refresh=false would
 	// return it. With refresh=true the generator attempts to regenerate
 	// from the datastore, which panics on nil datastore.
-	h := newTestHandler()
+	h := newTestHandler(t)
 	h.generator.ctx = context.Background()
 
 	// Pre-populate a fresh cached scoped entry.
@@ -494,7 +522,7 @@ func TestHandleOverview_ConnectionsRefreshTrue(t *testing.T) {
 	// Verify that refresh=true for a connections request bypasses the
 	// cache. A fresh cached entry exists, so refresh=false returns it.
 	// With refresh=true the generator tries to regenerate and panics.
-	h := newTestHandler()
+	h := newTestHandler(t)
 	h.generator.ctx = context.Background()
 
 	now := time.Now().UTC()
@@ -547,7 +575,7 @@ func invokePanics(fn func()) (panicked bool) {
 // --- SSE handler tests ------------------------------------------------------
 
 func TestHandleSSE_MethodNotAllowed(t *testing.T) {
-	h := newTestHandler()
+	h := newTestHandler(t)
 	methods := []string{http.MethodPost, http.MethodPut, http.MethodDelete}
 	for _, m := range methods {
 		t.Run(m, func(t *testing.T) {
@@ -562,7 +590,7 @@ func TestHandleSSE_MethodNotAllowed(t *testing.T) {
 }
 
 func TestHandleSSE_InvalidScopeParams(t *testing.T) {
-	h := newTestHandler()
+	h := newTestHandler(t)
 	tests := []struct {
 		name  string
 		query string
@@ -592,7 +620,7 @@ func TestHandleSSE_ImmediateCachedOverview(t *testing.T) {
 		scopedCache: make(map[string]*scopedEntry),
 	}
 	hub := NewHub()
-	h := NewHandler(g, hub)
+	h := newTestHandlerFor(t, g, hub)
 
 	// Set a cached estate overview.
 	g.mu.Lock()
@@ -601,7 +629,7 @@ func TestHandleSSE_ImmediateCachedOverview(t *testing.T) {
 
 	// Create test server.
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/v1/overview/stream", h.handleSSE)
+	mux.HandleFunc("/api/v1/overview/stream", asSuperuser(h.handleSSE))
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
@@ -651,10 +679,10 @@ func TestHandleSSE_BroadcastDelivery(t *testing.T) {
 		scopedCache: make(map[string]*scopedEntry),
 	}
 	hub := NewHub()
-	h := NewHandler(g, hub)
+	h := newTestHandlerFor(t, g, hub)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/v1/overview/stream", h.handleSSE)
+	mux.HandleFunc("/api/v1/overview/stream", asSuperuser(h.handleSSE))
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
@@ -700,10 +728,10 @@ func TestHandleSSE_SubscriberCleanupOnDisconnect(t *testing.T) {
 		scopedCache: make(map[string]*scopedEntry),
 	}
 	hub := NewHub()
-	h := NewHandler(g, hub)
+	h := newTestHandlerFor(t, g, hub)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/v1/overview/stream", h.handleSSE)
+	mux.HandleFunc("/api/v1/overview/stream", asSuperuser(h.handleSSE))
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 

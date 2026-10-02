@@ -491,7 +491,30 @@ func TestRBACCheckerNilStore(t *testing.T) {
 	// A checker without an auth store must deny every check, even for a
 	// context that claims superuser, so that a nil store can never be
 	// mistaken for "no restrictions" (issue #477).
-	checker := NewRBACChecker(nil)
+	assertCheckerDeniesEverything(t, NewRBACChecker(nil))
+}
+
+func TestRBACCheckerNilReceiver(t *testing.T) {
+	// A nil checker must deny exactly as a store-less one does, so that
+	// a caller handed no checker fails closed instead of panicking or
+	// skipping the check (issue #561).
+	var checker *RBACChecker
+	assertCheckerDeniesEverything(t, checker)
+
+	ids, all, err := checker.VisibleConnectionIDs(
+		context.WithValue(context.Background(), IsSuperuserContextKey, true),
+		nil)
+	if err != nil || all || len(ids) != 0 {
+		t.Errorf("Expected no visible connections from a nil checker, got %v/%v/%v",
+			ids, all, err)
+	}
+}
+
+// assertCheckerDeniesEverything checks that every access method on
+// checker denies, for an anonymous context and for one that claims
+// superuser.
+func assertCheckerDeniesEverything(t *testing.T, checker *RBACChecker) {
+	t.Helper()
 	contexts := map[string]context.Context{
 		"anonymous": context.Background(),
 		"superuser": context.WithValue(context.Background(),

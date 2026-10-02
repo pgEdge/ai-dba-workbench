@@ -508,15 +508,17 @@ partial, and `pragma_index_info` to report exactly one key column,
 `audit_events` or whose SQL mentions it (a `RAISE(IGNORE)` trigger
 would drop chosen events with the chain intact; `recordAudit` also
 fails unless its INSERT wrote one row), and compares the trigger's
-`sqlite_master.sql` against `expectedAuditTriggerSQL()`, which is `auditNoUpdateTriggerDDL`
-with whitespace collapsed, `IF NOT EXISTS` removed and the trailing
+`sqlite_master.sql` against `expectedAuditTriggerSQL()`, which is
+`auditNoUpdateTriggerDDL` with whitespace collapsed, `IF NOT EXISTS`
+removed and the trailing
 `;` trimmed, because SQLite stores the statement minus those two. So
 changing `auditNoUpdateTriggerDDL` changes what verification accepts;
 an existing database keeps its old trigger text, since the DDL is
 `IF NOT EXISTS`, so a change there also needs a migration that drops
 and re-creates the trigger. `TestVerifyAuditSchemaChecksDefinitions`
-in `audit_head_test.go` holds the same-named impostor cases. `TestReopenRestoresAuditSchemaObjects`
-and `TestReopenRefusesForkedChain` in `audit_test.go` go through
+in `audit_head_test.go` holds the same-named impostor cases.
+`TestReopenRestoresAuditSchemaObjects` and
+`TestReopenRefusesForkedChain` in `audit_test.go` go through
 `NewAuthStore` rather than calling a migration directly; keep any new
 schema test on that path, because a test that calls the migration
 skips the gate it is meant to check.
@@ -645,15 +647,20 @@ oldest row's hash to equal the newest purge's record, and, when no
 purge records one, reports a non-empty leading `prev_hash` only if no
 `audit.purge` row survives at all (the weak fallback for purge events
 written before the record). With no head record, an oldest row with
-`prev_hash` "" must be id 1 or an anchor row (`auditGenesisAllowed`):
-AUTOINCREMENT never reuses ids, so a new chain above 1 is an emptied
-table (unless someone reinserted the row at id 1: ids are not hashed). Tests that empty `audit_events` by hand must expect
-`ErrAuditChainBroken` or re-anchor afterwards. The record is worthless unless the purge
+`prev_hash` "" must be id 1 or an `audit.purge` row
+(`auditGenesisAllowed`): AUTOINCREMENT never reuses ids, so a new chain
+above 1 is an emptied table (unless someone reinserted the row at id 1:
+ids are not hashed). A rechain row is not admitted, because a re-anchor
+refuses an empty log (`auditReanchorPlan`), so a replayed re-anchor
+event cannot start a chain, and a re-hash appends after its rows. Tests
+that empty `audit_events` by hand must expect `ErrAuditChainBroken`.
+The record is worthless unless the purge
 cannot be steered into writing a new one over a deletion, so before
 deleting, `verifyAuditPurgePrefix` checks, in the purge transaction,
 that the rows up to and including the new head start at the previous
 purge's recorded hash (or at a genesis row with `prev_hash` "" that
-`auditGenesisAllowed` admits when no purge exists; anywhere only when no purge event records a head, since a
+`auditGenesisAllowed` admits when no purge exists; anywhere only when
+no purge event records a head, since a
 record-less purge never overrides an older recorded one, in either the
 purge or `auditHeadCheck`, or a replayed pre-record event would reopen
 the weak case), that
@@ -697,7 +704,8 @@ recompute is classified by `classifyUnverifiedRow`: only when no row
 outside the history has yet verified (`keyProven`), no verified anchor
 recording a head was found (`anchorFound`, since such an anchor
 postdates any rotation; the purge's `auditPurgeUnverified` takes the
-same flag), and `looksLikeKeyChange` finds a run of failing rows, each linked to the
+same flag), and `looksLikeKeyChange` finds a run of failing rows,
+each linked to the
 one before, followed by the end of the log or by rows that all verify
 and link (it walks the whole log, then requires `verifyAuditTail`),
 is it `ErrAuditKeyMismatch` (CLI exit 3,

@@ -509,3 +509,42 @@ func TestWriteFailureSummariesLogsStoreError(t *testing.T) {
 	}})
 	store.mu.Unlock()
 }
+
+// TestSweepAuditFailuresRestoresOnWriteError checks that a sweep whose
+// write fails puts the drained entries back for a later attempt, and
+// that restore leaves alone an entry re-created since the drain.
+func TestSweepAuditFailuresRestoresOnWriteError(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAudit(t)
+	defer cleanup()
+
+	repeatFailure(store, "bob", 3)
+	ageEntry(store, failureKeyFor("bob"), failureCoalesceWindow)
+	if err := store.db.Close(); err != nil {
+		t.Fatalf("closing the database failed: %v", err)
+	}
+
+	store.sweepAuditFailures(time.Now(), false)
+
+	state, ok := store.failures.entries[failureKeyFor("bob")]
+	if !ok || state.suppressed != 2 {
+		t.Fatalf("expected bob restored with 2 repeats, got %+v", state)
+	}
+
+	fresh := &failureState{firstSeen: time.Now()}
+	store.failures.entries[failureKeyFor("bob")] = fresh
+	store.failures.restore([]failureSummary{{
+		key:        failureKeyFor("bob"),
+		suppressed: 5,
+	}})
+	if store.failures.entries[failureKeyFor("bob")] != fresh {
+		t.Error("restore replaced an entry re-created since the drain")
+	}
+
+	var empty failureCoalescer
+	empty.restore([]failureSummary{{key: failureKeyFor("carol"),
+		suppressed: 1}})
+	if len(empty.entries) != 1 {
+		t.Errorf("restore into an empty coalescer kept %d entries",
+			len(empty.entries))
+	}
+}

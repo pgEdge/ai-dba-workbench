@@ -915,3 +915,71 @@ func TestUnrestrictedReachCountsOwnedClusterGroups(t *testing.T) {
 		t.Error("An empty username owns no groups")
 	}
 }
+
+// TestReachEverythingAdminPermissions checks that an admin permission
+// able to acquire any MCP item or admin permission counts as reaching
+// all of them, so that a token bounded in either kind may neither add
+// someone to a group holding it nor take over a user who does.
+func TestReachEverythingAdminPermissions(t *testing.T) {
+	for _, perm := range reachEverythingAdminPermissions {
+		t.Run(perm, func(t *testing.T) {
+			f, cleanup := newGrantScopeFixture(t)
+			defer cleanup()
+			ctx := f.tokenCtx()
+			f.registerMCP(t, "list_things", false)
+			if err := f.store.ClearTokenScope(f.tokenID); err != nil {
+				t.Fatalf("ClearTokenScope failed: %v", err)
+			}
+			if err := f.store.GrantAdminPermission(f.groupID, perm); err != nil {
+				t.Fatalf("GrantAdminPermission failed: %v", err)
+			}
+
+			if !f.checker.GroupWithinTokenScope(ctx, f.groupID) ||
+				!f.checker.UserWithinTokenScope(ctx, f.userID, f.lister) {
+				t.Fatal("An unrestricted token should cover the holder")
+			}
+
+			f.setMCPScope(t, "list_things")
+			if f.checker.GroupWithinTokenScope(ctx, f.groupID) ||
+				f.checker.UserWithinTokenScope(ctx, f.userID, f.lister) {
+				t.Error("The holder should be outside an MCP-bounded scope")
+			}
+
+			if err := f.store.ClearTokenScope(f.tokenID); err != nil {
+				t.Fatalf("ClearTokenScope failed: %v", err)
+			}
+			named := perm
+			if named == AdminPermissionWildcard {
+				named = PermManageUsers
+			}
+			f.setAdminScope(t, named, PermManageBlackouts)
+			if f.checker.GroupWithinTokenScope(ctx, f.groupID) ||
+				f.checker.UserWithinTokenScope(ctx, f.userID, f.lister) {
+				t.Error("The holder should be outside an admin-bounded " +
+					"scope, even one naming the permission")
+			}
+		})
+	}
+}
+
+// TestReachOrdinaryAdminPermissionUnderMCPScope is the control for
+// TestReachEverythingAdminPermissions: an admin permission that cannot
+// acquire MCP items leaves an MCP-bounded token free to add a holder.
+func TestReachOrdinaryAdminPermissionUnderMCPScope(t *testing.T) {
+	f, cleanup := newGrantScopeFixture(t)
+	defer cleanup()
+	ctx := f.tokenCtx()
+	f.registerMCP(t, "list_things", false)
+	if err := f.store.ClearTokenScope(f.tokenID); err != nil {
+		t.Fatalf("ClearTokenScope failed: %v", err)
+	}
+	f.setMCPScope(t, "list_things")
+	f.setAdminScope(t, PermManageBlackouts)
+	if err := f.store.GrantAdminPermission(f.groupID, PermManageBlackouts); err != nil {
+		t.Fatalf("GrantAdminPermission failed: %v", err)
+	}
+	if !f.checker.GroupWithinTokenScope(ctx, f.groupID) ||
+		!f.checker.UserWithinTokenScope(ctx, f.userID, f.lister) {
+		t.Error("manage_blackouts should stay within a scope naming it")
+	}
+}

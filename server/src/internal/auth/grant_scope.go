@@ -216,6 +216,38 @@ type principalReach struct {
 	admin     map[string]bool
 }
 
+// reachEverythingAdminPermissions are the admin permissions that let
+// their holder acquire any MCP item or admin permission for themselves:
+// manage_users takes over any account by setting its password,
+// manage_groups joins any group, manage_permissions grants any MCP item
+// or admin permission to a group the holder belongs to, and
+// manage_token_scopes widens any token's scope. The admin wildcard
+// includes all four.
+var reachEverythingAdminPermissions = []string{
+	PermManageUsers,
+	PermManageGroups,
+	PermManagePermissions,
+	PermManageTokenScopes,
+	AdminPermissionWildcard,
+}
+
+// reachesEverything reports whether p reaches every MCP item and admin
+// permission, being a superuser or holding an admin permission that can
+// acquire them (see reachEverythingAdminPermissions). A name-by-name
+// comparison would miss what such a holder can grant themselves, so
+// only a token unrestricted in the kind covers it.
+func (p *principalReach) reachesEverything() bool {
+	if p.superuser {
+		return true
+	}
+	for _, perm := range reachEverythingAdminPermissions {
+		if p.admin[perm] {
+			return true
+		}
+	}
+	return false
+}
+
 // loadUserReach reads what the given user reaches through the groups
 // they belong to. ok is false when the user is unknown or a lookup
 // fails.
@@ -399,8 +431,9 @@ func (rc *RBACChecker) unrestrictedReachInTokenScope(ctx context.Context,
 }
 
 // reachMCPInScope reports whether the MCP items p reaches all fall
-// inside the acting token's MCP scope. A superuser, and a holder of the
-// wildcard, reach every item; a user also reaches every public item.
+// inside the acting token's MCP scope. A holder of the wildcard reaches
+// every item, as does anyone p.reachesEverything covers; a user also
+// reaches every public item.
 func (rc *RBACChecker) reachMCPInScope(ctx context.Context,
 	p *principalReach) bool {
 
@@ -411,7 +444,7 @@ func (rc *RBACChecker) reachMCPInScope(ctx context.Context,
 	if !restricted {
 		return true
 	}
-	if p.superuser || p.mcp[mcpScopeWildcard] {
+	if p.reachesEverything() || p.mcp[mcpScopeWildcard] {
 		return false
 	}
 	for name := range p.mcp {
@@ -436,7 +469,8 @@ func (rc *RBACChecker) reachMCPInScope(ctx context.Context,
 
 // reachAdminInScope reports whether the admin permissions p holds all
 // fall inside the acting token's admin scope. A superuser holds every
-// permission.
+// permission, and a holder of one that can acquire the rest reaches
+// them (see reachesEverything).
 func (rc *RBACChecker) reachAdminInScope(ctx context.Context,
 	p *principalReach) bool {
 
@@ -447,7 +481,7 @@ func (rc *RBACChecker) reachAdminInScope(ctx context.Context,
 	if !restricted {
 		return true
 	}
-	if p.superuser {
+	if p.reachesEverything() {
 		return false
 	}
 	for perm := range p.admin {

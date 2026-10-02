@@ -154,6 +154,18 @@ connection, so the active-alert check in `GetActiveAnomalyAlert`
 deduplicates per database rather than collapsing every database
 on the connection into one alert.
 
+### Stale Baseline Rows
+
+The baseline calculator writes an `hourly` or `daily` row only
+while that bucket holds at least three samples, and visits a
+connection or database only while it has samples inside
+`baselines.lookback_days`. Once it has rebuilt a metric, it deletes
+every row of that metric whose `last_calculated` timestamp is older
+than the start of the current cycle, because the cycle did not
+rewrite those rows and their statistics no longer describe the
+data. A metric whose historical query fails keeps its rows for that
+cycle, so a transient error never empties its baselines.
+
 ### Baseline Selection
 
 The `selectBaseline` helper in

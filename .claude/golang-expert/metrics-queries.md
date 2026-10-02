@@ -1186,6 +1186,18 @@ conventions from that change hold across both:
   local too, so without the shared helper an alerter in a non-UTC zone
   would write rows under one key and look them up under another.
 
+- Rows the cycle does not rewrite are pruned (#567, PR #569 review).
+  `calculateBaselines` captures `cycleStart` (truncated to the
+  microsecond) and, after each metric's historical query succeeds,
+  calls `pruneStaleBaselines`, which runs
+  `DeleteStaleMetricBaselines(metric, cycleStart)` to delete that
+  metric's rows with `last_calculated < cycleStart`. This covers
+  buckets that drop below `minSamplesForTimePeriod`, groups with no
+  samples left in the lookback, and metrics whose query returns
+  nothing; a failed query skips the prune. Upserts must keep setting
+  `LastCalculated` to `time.Now()`, or the prune deletes fresh rows.
+  `engine/baselines_stale_integration_test.go` pins it.
+
 `detectAnomalies` loops rules on the outside so `GetLatestMetricValues`
 runs once per rule, resolves the blacked-out connection set once per
 run, and scores every latest value for a connection (one per database

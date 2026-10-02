@@ -10,8 +10,9 @@ The Workbench uses two kinds of tokens:
   or regular users. A service account may only authenticate with a token.
 
 A token's scope restricts it to a subset of the owning user's permissions. A
-token without scope restrictions inherits the full access of the owner. The
-system supports three scope types:
+token without scope restrictions inherits the full access of the owner. A
+token that a superuser owns is restricted by its scope in the same way as
+any other token. The system supports three scope types:
 
 - *Connection scope* limits the token to specific database connections with a
   per-connection access level of `read` or `read_write`. A token scope can
@@ -33,7 +34,105 @@ that type:
   holds.
 
 The effective access for a scoped token equals the intersection of the owner's
-group-level access and the token scope.
+access and the token scope. A superuser holds every privilege, so the
+intersection for a superuser's token is the token scope itself.
+
+A scope type left empty places no restriction on that type. To lift the
+restriction on one type, set that type to its wildcard; to lift every
+restriction, clear the token's scope. The `PUT /api/v1/rbac/tokens/{id}/scope`
+endpoint refuses an empty list for any scope type with `400 Bad Request`, and
+leaves a scope type that the request omits unchanged. The Workbench console
+follows the same rule: saving a token with every scope type empty clears the
+scope, but emptying one restricted type whilst another stays restricted is
+refused.
+
+The connection scope also governs changes to blackouts, blackout schedules,
+alert, probe and channel overrides, alert rules, probe configurations,
+notification channels and clusters, even though those endpoints are gated on an
+admin permission. A token may change an override, a probe configuration or a
+cluster membership on a single server only when that connection is in its scope
+with `read_write` access; a change that applies to a cluster, a group or the
+whole estate, that alters an alert rule, a global probe configuration or a
+notification channel, that creates a cluster, or that alters a cluster's
+definition or relationships, needs a connection scope that covers every
+connection at `read_write`. A cluster group can be created only from a browser
+session, so the server refuses an API token that tries, whatever its scope.
+
+A `read` entry in the connection scope means read-only access to the monitored
+server itself, so it still lets a token make changes that only record Workbench
+metadata about that server. A token holding a `read` entry for a connection can
+acknowledge or unacknowledge an alert on it, save an analysis of the alert,
+and create, change, stop or delete a blackout or blackout schedule on that
+server; a blackout that covers a cluster, a group or the whole estate needs the
+`All Connections` entry at either access level. This is intended behaviour.
+Alert acknowledgement and analysis need only `read` access for a user too;
+blackout changes also need the `manage_blackouts` admin permission, for a user
+and a token alike.
+
+Administrative grants and account changes are bounded by the whole token
+scope, so that a token can never give a user, a group or another token access
+beyond its own connection, MCP or admin scope, and can never take over an
+account that reaches further than the token does. A token restricted in any of
+the three scope types is refused with `403 Forbidden` when it tries to:
+
+- grant a group access to a connection outside its scope, to every
+  connection, or at `read_write` where its own entry is `read`;
+- grant a group an MCP privilege outside its MCP scope, or the `*` wildcard
+  when its MCP scope names specific items;
+- revoke a group's access to a connection outside its scope, or delete a group
+  that holds a grant on one, because a connection left with no group grant
+  becomes open to every user;
+- grant a group any admin permission, since admin permissions act across the
+  whole estate;
+- add a user or a group to, or remove one from, a group whose connections,
+  MCP privileges or admin permissions, including anything inherited from its
+  parent groups, reach beyond the token's scope;
+- rename a group whose grants reach beyond the token's scope, or rename any
+  group from or to a Workbench group name that the OIDC `group_map` uses,
+  because federated sign-in matches groups by name and a rename would move
+  federated users into a different group;
+- create a user who would reach beyond the token's scope, which includes
+  creating any superuser and, for a token whose connection scope is
+  restricted, any user at all whilst a shared connection that no group
+  restricts lies outside that scope, since every user can reach such a
+  connection;
+- make an existing user a superuser;
+- set the password of, re-enable or delete a user whose access reaches beyond
+  the token's scope; the first two hand the token's holder that account, and
+  deleting one frees the username, and with it the connections it owns, for
+  whoever recreates it;
+- create a token for an owner whose access reaches beyond the token's scope;
+- set or clear another token's scope so that the other token ends up reaching
+  beyond the acting token's scope in any of the three scope types.
+
+A user's access, for these checks, counts the user's group grants, every
+public MCP item, every shared connection that no group restricts, every
+connection that the user's name owns, and every member connection of each
+cluster group the user's name owns, all at `read_write`, whether or not a
+connection is shared and whether or not a group restricts it, since an owner
+can always edit or delete what they own. A user or group holding the
+`manage_users`, `manage_groups`, `manage_permissions` or
+`manage_token_scopes` admin permission counts as reaching every MCP item and
+every admin permission, because each of those lets its holder acquire the
+rest, so only a token with no MCP or admin restriction can add a member to
+such a group or take over such a user. A token whose MCP scope lists only
+items that have since been deleted is treated as restricted to no MCP items
+at all.
+Sessions, and tokens with no restriction in any of the three scope types, are
+not affected by these bounds.
+
+One MCP tool still reaches beyond a token's connection scope, so a token that
+must stay within its connections should not be granted it. The
+`query_datastore` tool runs read-only SQL over the whole datastore, including
+the `connections` table, so it can read every connection's host, username and
+encrypted credentials as well as every connection's metrics; issue #566 tracks
+limiting it to the connections the caller can read.
+
+The MCP privilege scope applies to public MCP tools as well, so a token whose
+MCP scope names specific tools can call only those tools, apart from
+`test_query`, which validates a query without running it and is available to
+every token. The server refuses an MCP scope that names an identifier it does
+not recognise.
 
 !!! note
 

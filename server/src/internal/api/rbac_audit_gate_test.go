@@ -11,15 +11,111 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
+	"golang.org/x/crypto/bcrypt"
+	_ "modernc.org/sqlite"
 )
+
+// createTestRBACHandlerWithDir is createTestRBACHandler with the data
+// directory exposed, so that a test can reach into the auth database
+// and break one table on purpose.
+func createTestRBACHandlerWithDir(t *testing.T) (*RBACHandler, *auth.AuthStore,
+	string, func()) {
+
+	t.Helper()
+
+	dir, err := os.MkdirTemp("", "rbac-audit-gate-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+
+	store, err := auth.NewAuthStore(dir, 0, 0, auth.AuditKeyForTesting())
+	if err != nil {
+		os.RemoveAll(dir)
+		t.Fatalf("Failed to create auth store: %v", err)
+	}
+	store.SetBcryptCostForTesting(t, bcrypt.MinCost)
+
+	handler := NewRBACHandler(store, auth.NewRBACChecker(store))
+	cleanup := func() {
+		store.Close()
+		os.RemoveAll(dir)
+	}
+
+	return handler, store, dir, cleanup
+}
+
+// dropAuthTable drops one table from the auth database behind the
+// running store, so that exactly one lookup fails whilst every other
+// query keeps working. Closing the whole store would deny for any
+// reason at all, which would not test the branch under examination.
+func dropAuthTable(t *testing.T, dataDir, table string) {
+	t.Helper()
+
+	db, err := sql.Open("sqlite", filepath.Join(dataDir, "auth.db"))
+	if err != nil {
+		t.Fatalf("Failed to open the auth database: %v", err)
+	}
+	defer db.Close()
+
+	// Each permitted name has its own arm holding a fully literal
+	// statement, so that no table name is ever interpolated into SQL,
+	// and a name that is not on the list fails the test where it was
+	// asked for rather than as an opaque SQL error at the driver.
+	var execErr error
+	switch table {
+	case "tokens":
+		_, execErr = db.Exec("DROP TABLE tokens")
+	case "token_connection_scope":
+		_, execErr = db.Exec("DROP TABLE token_connection_scope")
+	case "token_mcp_scope":
+		_, execErr = db.Exec("DROP TABLE token_mcp_scope")
+	case "token_admin_scope":
+		_, execErr = db.Exec("DROP TABLE token_admin_scope")
+	case "group_memberships":
+		_, execErr = db.Exec("DROP TABLE group_memberships")
+	case "connection_privileges":
+		_, execErr = db.Exec("DROP TABLE connection_privileges")
+	case "group_admin_permissions":
+		_, execErr = db.Exec("DROP TABLE group_admin_permissions")
+	case "user_groups":
+		_, execErr = db.Exec("DROP TABLE user_groups")
+	default:
+		t.Fatalf("dropAuthTable: %q is not a droppable table", table)
+	}
+	if execErr != nil {
+		t.Fatalf("Failed to drop %s: %v", table, execErr)
+	}
+}
+
+// singleDenialEvent returns the one recorded audit.read denial,
+// failing the test when there is not exactly one.
+func singleDenialEvent(t *testing.T, store *auth.AuthStore) auth.AuditEvent {
+	t.Helper()
+
+	events, _, err := store.ListAuditEvents(auth.AuditFilter{
+		Action:  "audit.read",
+		Outcome: string(auth.OutcomeDenied),
+	})
+	if err != nil {
+		t.Fatalf("ListAuditEvents failed: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("Expected one denial event, got %d", len(events))
+	}
+	return events[0]
+}
 
 // withSuperuserToken presents the request as a superuser authenticated
 // by the given API token.
@@ -64,7 +160,10 @@ func mustCreateScopedToken(t *testing.T, store *auth.AuthStore,
 
 // TestRBACHandlerAuditRejectsScopedToken checks that a superuser's
 // token whose admin scope was narrowed cannot read the audit log, and
-// that the refusal is itself audited.
+// that the refusal is itself audited. The refusal now comes from
+// requireSuperuser, because a narrowed admin scope withdraws the
+// token's superuser status outright; the audit endpoint no longer
+// carries a gate of its own.
 func TestRBACHandlerAuditRejectsScopedToken(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
@@ -76,19 +175,27 @@ func TestRBACHandlerAuditRejectsScopedToken(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("Expected 403, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if body := rec.Body.String(); !strings.Contains(body, "token admin scope") {
-		t.Errorf("Expected a scope message, got %q", body)
+	if body := rec.Body.String(); !strings.Contains(body, "superuser privileges") {
+		t.Errorf("Expected a superuser refusal, got %q", body)
 	}
 
-	events, _, err := store.ListAuditEvents(auth.AuditFilter{
-		Action:  "audit.read",
-		Outcome: string(auth.OutcomeDenied),
-	})
-	if err != nil {
-		t.Fatalf("ListAuditEvents failed: %v", err)
+	// requireSuperuser emits the same sentence for every refusal, so
+	// the branch is identified by what was recorded and by what the
+	// same token can still do: the audit event names the acting token,
+	// meaning it was identified and its scope was read, and the
+	// permission its scope names is still allowed, meaning this is the
+	// blanket gate refusing rather than the token being cut off.
+	event := singleDenialEvent(t, store)
+	if event.ActorType != auth.ActorToken || event.ActorID == nil ||
+		*event.ActorID != tokenID {
+		t.Errorf("Expected the denial to name token %d, got %s/%v", tokenID,
+			event.ActorType, event.ActorID)
 	}
-	if len(events) != 1 {
-		t.Fatalf("Expected one denial event, got %d", len(events))
+
+	req := withSuperuserToken(
+		httptest.NewRequest(http.MethodGet, "/api/v1/rbac/users", nil), tokenID)
+	if !handler.rbacChecker.HasAdminPermission(req.Context(), auth.PermManageUsers) {
+		t.Error("Expected the scoped permission to remain allowed")
 	}
 }
 
@@ -129,9 +236,9 @@ func TestRBACHandlerAuditAllowsSessionSuperuser(t *testing.T) {
 
 // TestRBACHandlerAuditTokenWithoutIDIsRefused covers an API-token
 // request that carries no acting token id. Its admin scope cannot be
-// checked, so the request is refused rather than passed through on the
-// superuser decision alone: a route mounted without createAuthWrapper
-// must fail here, not be waved on.
+// checked, so its superuser status cannot be confirmed and the request
+// is refused: a route mounted without createAuthWrapper must fail
+// here, not be waved on.
 func TestRBACHandlerAuditTokenWithoutIDIsRefused(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
@@ -140,19 +247,20 @@ func TestRBACHandlerAuditTokenWithoutIDIsRefused(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("Expected 403, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "could not be identified") {
+	if !strings.Contains(rec.Body.String(), "superuser privileges") {
 		t.Errorf("Expected the refusal to say why, got %s", rec.Body.String())
 	}
 
-	events, _, err := store.ListAuditEvents(auth.AuditFilter{
-		Action: "audit.read", Outcome: string(auth.OutcomeDenied),
-	})
-	if err != nil {
-		t.Fatalf("ListAuditEvents failed: %v", err)
+	// This branch is told apart from a scope refusal by the actor: no
+	// token id survived into the context, so nothing could be
+	// identified and the denial is recorded against no token at all.
+	event := singleDenialEvent(t, store)
+	if event.ActorID != nil {
+		t.Errorf("Expected the denial to name no acting token, got %v",
+			*event.ActorID)
 	}
-	if len(events) != 1 {
-		t.Fatalf("Expected the refusal to be recorded once, got %d rows",
-			len(events))
+	if event.ActorType == auth.ActorToken {
+		t.Error("Expected an unidentified caller not to be recorded as a token")
 	}
 }
 
@@ -160,16 +268,35 @@ func TestRBACHandlerAuditTokenWithoutIDIsRefused(t *testing.T) {
 // lookup which errors refuses the request rather than letting it
 // through.
 func TestRBACHandlerAuditScopeLookupFailureDenies(t *testing.T) {
-	handler, store, cleanup := createTestRBACHandler(t)
+	handler, store, dir, cleanup := createTestRBACHandlerWithDir(t)
 	defer cleanup()
 
 	tokenID := mustCreateScopedToken(t, store, "svc-broken",
 		[]string{auth.PermManageUsers})
-	store.Close()
+
+	// Only the admin scope lookup is broken; the rest of the store
+	// keeps working, so a 403 here can only have come from the failed
+	// lookup, and the denial is still recorded.
+	dropAuthTable(t, dir, "token_admin_scope")
 
 	rec := auditTokenRequest(handler, tokenID)
 	if rec.Code != http.StatusForbidden {
 		t.Errorf("Expected 403 when the scope cannot be read, got %d", rec.Code)
+	}
+
+	event := singleDenialEvent(t, store)
+	if event.ActorID == nil || *event.ActorID != tokenID {
+		t.Errorf("Expected the denial to name token %d, got %v", tokenID,
+			event.ActorID)
+	}
+
+	// Unlike a narrowed scope, an unreadable one denies the named
+	// permission too, which is what separates this branch from the
+	// refusal in TestRBACHandlerAuditRejectsScopedToken.
+	req := withSuperuserToken(
+		httptest.NewRequest(http.MethodGet, "/api/v1/rbac/users", nil), tokenID)
+	if handler.rbacChecker.HasAdminPermission(req.Context(), auth.PermManageUsers) {
+		t.Error("Expected an unreadable scope to deny the permission as well")
 	}
 }
 
@@ -198,33 +325,33 @@ func TestAdmitDenialCoalescesWithinWindow(t *testing.T) {
 	key := denialKeyFor("mallory", "user.create", "Permission denied")
 	start := time.Date(2026, 9, 15, 10, 0, 0, 0, time.UTC)
 
-	if record, repeats, _ := handler.admitDenial(key, start); !record || repeats != 0 {
-		t.Fatalf("First denial: expected (true, 0), got (%v, %d)", record, repeats)
+	if record, closed, _ := handler.admitDenial(key, "users", start); !record || closed.count != 0 {
+		t.Fatalf("First denial: expected (true, 0), got (%v, %d)", record, closed.count)
 	}
 	for i := 1; i <= 4; i++ {
 		at := start.Add(time.Duration(i) * time.Second)
-		if record, repeats, _ := handler.admitDenial(key, at); record || repeats != 0 {
+		if record, closed, _ := handler.admitDenial(key, "users", at); record || closed.count != 0 {
 			t.Errorf("Repeat %d: expected (false, 0), got (%v, %d)", i, record,
-				repeats)
+				closed.count)
 		}
 	}
 
 	after := start.Add(denialCoalesceWindow + time.Second)
-	record, repeats, _ := handler.admitDenial(key, after)
+	record, closed, _ := handler.admitDenial(key, "users", after)
 	if !record {
 		t.Fatal("Expected the denial after the window to be recorded")
 	}
-	if repeats != 5 {
+	if closed.count != 5 {
 		t.Errorf("Expected repeat_count 5 (4 suppressed plus this one), got %d",
-			repeats)
+			closed.count)
 	}
 
 	// The window has been reopened, so the next repeat is suppressed
 	// again and carries no stale count.
-	if record, repeats, _ := handler.admitDenial(key,
-		after.Add(time.Second)); record || repeats != 0 {
+	if record, closed, _ := handler.admitDenial(key, "users",
+		after.Add(time.Second)); record || closed.count != 0 {
 		t.Errorf("Expected the reopened window to suppress, got (%v, %d)",
-			record, repeats)
+			record, closed.count)
 	}
 }
 
@@ -237,12 +364,12 @@ func TestAdmitDenialWithoutRepeatsCarriesNoCount(t *testing.T) {
 	key := denialKeyFor("mallory", "user.create", "Permission denied")
 	start := time.Date(2026, 9, 15, 10, 0, 0, 0, time.UTC)
 
-	handler.admitDenial(key, start)
+	handler.admitDenial(key, "users", start)
 	// The entry is evicted as expired and then reinserted, so either
 	// path must report no repeats.
-	if record, repeats, _ := handler.admitDenial(key,
-		start.Add(2*denialCoalesceWindow)); !record || repeats != 0 {
-		t.Errorf("Expected (true, 0), got (%v, %d)", record, repeats)
+	if record, closed, _ := handler.admitDenial(key, "users",
+		start.Add(2*denialCoalesceWindow)); !record || closed.count != 0 {
+		t.Errorf("Expected (true, 0), got (%v, %d)", record, closed.count)
 	}
 }
 
@@ -259,12 +386,12 @@ func TestAdmitDenialSeparatesActors(t *testing.T) {
 	otherReason := denialKeyFor("mallory", "user.create", "Something else")
 
 	for _, key := range []denialKey{mallory, trudy, otherAction, otherReason} {
-		if record, _, _ := handler.admitDenial(key, start); !record {
+		if record, _, _ := handler.admitDenial(key, "users", start); !record {
 			t.Errorf("Expected the first denial for %+v to be recorded", key)
 		}
 	}
 	for _, key := range []denialKey{mallory, trudy, otherAction, otherReason} {
-		if record, _, _ := handler.admitDenial(key, start.Add(time.Second)); record {
+		if record, _, _ := handler.admitDenial(key, "users", start.Add(time.Second)); record {
 			t.Errorf("Expected the repeat for %+v to be suppressed", key)
 		}
 	}
@@ -279,13 +406,13 @@ func TestAdmitDenialEvictsExpiredEntries(t *testing.T) {
 	start := time.Date(2026, 9, 15, 10, 0, 0, 0, time.UTC)
 	for i := 0; i < 20; i++ {
 		handler.admitDenial(denialKeyFor("mallory",
-			"user.create", string(rune('a'+i))), start)
+			"user.create", string(rune('a'+i))), "users", start)
 	}
 	if got := len(handler.denials); got != 20 {
 		t.Fatalf("Expected 20 tracked keys, got %d", got)
 	}
 
-	handler.admitDenial(denialKeyFor("trudy", "user.create", "late"),
+	handler.admitDenial(denialKeyFor("trudy", "user.create", "late"), "users",
 		start.Add(2*denialCoalesceWindow))
 	if got := len(handler.denials); got != 1 {
 		t.Errorf("Expected the expired entries to be evicted, %d remain", got)
@@ -304,7 +431,7 @@ func TestAdmitDenialCapsMapSize(t *testing.T) {
 		// Every key is inside the same window, so nothing expires and
 		// only the cap can bound the map.
 		handler.admitDenial(denialKeyFor("mallory", "user.create",
-			"reason-"+string(rune(i))), start.Add(time.Duration(i)*time.Microsecond))
+			"reason-"+string(rune(i))), "users", start.Add(time.Duration(i)*time.Microsecond))
 	}
 
 	if got := len(handler.denials); got > maxDenialKeys {
@@ -337,8 +464,8 @@ func TestRecordDenialWritesRepeatCount(t *testing.T) {
 	if len(events) != 1 {
 		t.Fatalf("Expected the repeats to coalesce into 1 row, got %d", len(events))
 	}
-	if len(events[0].Details) != 0 {
-		t.Errorf("Expected no details on the first denial, got %s",
+	if string(events[0].Details) != `{"target":"audit"}` {
+		t.Errorf("Expected only the target on the first denial, got %s",
 			events[0].Details)
 	}
 
@@ -370,6 +497,231 @@ func TestRecordDenialWritesRepeatCount(t *testing.T) {
 	}
 }
 
+// TestRecordDenialCoalescesAcrossTargets checks that a flood of
+// refusals from one actor against many distinct objects writes one row
+// while the window is open, and that the row closing the window lists
+// the distinct targets, capped at maxDenialTargets, with the rest
+// counted in targets_truncated, rather than one row per path.
+func TestRecordDenialCoalescesAcrossTargets(t *testing.T) {
+	handler, store, cleanup := createTestRBACHandler(t)
+	defer cleanup()
+
+	const reason = "Permission denied: this token's scope does not cover the access being granted"
+	const flood = 50
+	deny := func(id int) {
+		req := withUser(httptest.NewRequest(http.MethodDelete,
+			fmt.Sprintf("/api/v1/rbac/users/%d", id), nil), 7)
+		handler.recordDenial(req, reason)
+	}
+	for id := 1; id <= flood; id++ {
+		deny(id)
+	}
+	// Repeating a listed target adds to the count but not to the list.
+	deny(2)
+
+	events, _, err := store.ListAuditEvents(auth.AuditFilter{Action: "user.delete"})
+	if err != nil {
+		t.Fatalf("ListAuditEvents failed: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("Expected the flood to coalesce into 1 row, got %d", len(events))
+	}
+	if string(events[0].Details) != `{"target":"users/1"}` {
+		t.Errorf("Expected the first row to name users/1, got %s", events[0].Details)
+	}
+	if got := len(handler.denials); got != 1 {
+		t.Errorf("Expected one coalescing key for the flood, got %d", got)
+	}
+
+	ageDenials(handler)
+	deny(flood + 1)
+
+	events, _, err = store.ListAuditEvents(auth.AuditFilter{Action: "user.delete"})
+	if err != nil {
+		t.Fatalf("ListAuditEvents failed: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("Expected 2 rows after the window closed, got %d", len(events))
+	}
+	var details struct {
+		Target           string   `json:"target"`
+		RepeatCount      int      `json:"repeat_count"`
+		Targets          []string `json:"targets"`
+		TargetsTruncated int      `json:"targets_truncated"`
+	}
+	if err := json.Unmarshal(events[0].Details, &details); err != nil {
+		t.Fatalf("Failed to decode details %s: %v", events[0].Details, err)
+	}
+	// 49 distinct suppressed targets plus one repeat, plus the closing
+	// denial itself.
+	if details.RepeatCount != flood+1 {
+		t.Errorf("Expected repeat_count %d, got %d", flood+1, details.RepeatCount)
+	}
+	if details.Target != fmt.Sprintf("users/%d", flood+1) {
+		t.Errorf("Expected the closing row to name its own target, got %q",
+			details.Target)
+	}
+	if len(details.Targets) != maxDenialTargets {
+		t.Fatalf("Expected %d targets listed, got %v", maxDenialTargets,
+			details.Targets)
+	}
+	if details.Targets[0] != "users/2" {
+		t.Errorf("Expected the first suppressed target first, got %v",
+			details.Targets)
+	}
+	// Targets users/22 to users/51 arrived after the list was full.
+	if details.TargetsTruncated != flood+1-1-maxDenialTargets {
+		t.Errorf("Expected targets_truncated %d, got %d",
+			flood+1-1-maxDenialTargets, details.TargetsTruncated)
+	}
+}
+
+// ageDenials moves every tracked window back past denialCoalesceWindow,
+// keeping their order, so that the next denial closes or evicts them.
+func ageDenials(handler *RBACHandler) {
+	handler.denialMu.Lock()
+	defer handler.denialMu.Unlock()
+	for _, state := range handler.denials {
+		state.firstSeen = state.firstSeen.Add(-2 * denialCoalesceWindow)
+	}
+}
+
+// TestRecordDenialSummaryListsTargets checks that the summary written
+// for an evicted entry lists the targets its suppressed repeats named.
+func TestRecordDenialSummaryListsTargets(t *testing.T) {
+	handler, store, cleanup := createTestRBACHandler(t)
+	defer cleanup()
+
+	const reason = "Permission denied: requires manage_groups permission"
+	for _, path := range []string{"/api/v1/rbac/groups/3", "/api/v1/rbac/groups/4",
+		"/api/v1/rbac/groups/0004", "/api/v1/rbac/groups/5/"} {
+		req := withUser(httptest.NewRequest(http.MethodDelete, path, nil), 7)
+		handler.recordDenial(req, reason)
+	}
+
+	ageDenials(handler)
+	handler.recordDenial(withUser(httptest.NewRequest(http.MethodPost,
+		"/api/v1/rbac/groups", nil), 7), reason)
+
+	events, _, err := store.ListAuditEvents(auth.AuditFilter{Action: "group.delete"})
+	if err != nil {
+		t.Fatalf("ListAuditEvents failed: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("Expected the first denial and its summary, got %d rows", len(events))
+	}
+	want := `{"repeat_count":3,"targets":["groups/4","groups/5"],"targets_truncated":0,"window_closed":true}`
+	if string(events[0].Details) != want {
+		t.Errorf("Expected summary %s, got %s", want, events[0].Details)
+	}
+}
+
+// TestDenialTargetNormalization covers the targets recorded for refused
+// requests: a kind and parsed id where the route names one, the kind
+// alone where it does not, and a constant for an unrecognized route, so
+// that nothing the caller writes in the path reaches the row verbatim.
+func TestDenialTargetNormalization(t *testing.T) {
+	long := "/api/v1/rbac/users/" + strings.Repeat("9", 4096)
+	tests := []struct {
+		method, path, action, target string
+	}{
+		{http.MethodDelete, "/api/v1/rbac/users/3", "user.delete", "users/3"},
+		{http.MethodDelete, "/api/v1/rbac/users/003", "user.delete", "users/3"},
+		{http.MethodDelete, long, "user.delete", "users"},
+		{http.MethodDelete, "/api/v1/rbac/users/-1", "user.delete", "users"},
+		{http.MethodPost, "/api/v1/rbac/users", "user.create", "users"},
+		{http.MethodDelete, "/api/v1/rbac/groups/5/members/user/3",
+			"group.member.remove", "groups/5"},
+		{http.MethodPut, "/api/v1/connections/7", "connection.update", "connections/7"},
+		{http.MethodPut, "/api/v1/connections/7/cluster", "connection.cluster.update",
+			"connections/7"},
+		{http.MethodPost, "/api/v1/clusters", "cluster.create", "clusters"},
+		{http.MethodDelete, "/api/v1/clusters/9", "cluster.delete", "clusters/9"},
+		{http.MethodPost, "/api/v1/clusters/9/servers", "cluster.update", "clusters/9"},
+		{http.MethodDelete, "/api/v1/clusters/9/servers/4", "cluster.update", "clusters/9"},
+		{http.MethodPut, "/api/v1/clusters/server-abc", "cluster.update", "clusters"},
+		{http.MethodPatch, "/api/v1/cluster-groups/2", "cluster_group.update",
+			"cluster-groups/2"},
+		{http.MethodDelete, "/api/v1/notification-channels/6/recipients/1",
+			"notification_channel.update", "notification-channels/6"},
+		{http.MethodPut, "/api/v1/alert-rules/8", "alert_rule.update", "alert-rules/8"},
+		{http.MethodGet, "/api/v1/alert-rules/8", "rbac.get", unmatchedDenialTarget},
+		{http.MethodPut, "/api/v1/widgets/8", "rbac.put", unmatchedDenialTarget},
+		{http.MethodPut, "/elsewhere", "rbac.put", unmatchedDenialTarget},
+		{http.MethodGet, "/api/v1/rbac/users/" + strings.Repeat("x", 300), "rbac.get",
+			unmatchedDenialTarget},
+	}
+	for _, tt := range tests {
+		req := httptest.NewRequest(tt.method, tt.path, nil)
+		action, target := deniedRoute(req)
+		if action != tt.action || target != tt.target {
+			t.Errorf("deniedRoute(%s %.60s) = (%q, %q), want (%q, %q)", tt.method,
+				tt.path, action, target, tt.action, tt.target)
+		}
+	}
+}
+
+// TestDeniedActionBoundsMethod checks that a method outside the
+// standard set is recorded as rbac.other, and that the key's action is
+// capped however long the action given to it.
+func TestDeniedActionBoundsMethod(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/widgets", nil)
+	req.Method = strings.Repeat("X", 4096)
+	if got := deniedAction(req); got != "rbac.other" {
+		t.Errorf("Expected rbac.other for a nonstandard method, got %q", got)
+	}
+	req.Method = http.MethodOptions
+	if got := deniedAction(req); got != "rbac.options" {
+		t.Errorf("Expected rbac.options, got %q", got)
+	}
+
+	key := denialKeyOf(auth.Actor{}, strings.Repeat("a", 4096), "reason")
+	if len(key.action) != maxDenialActionLen {
+		t.Errorf("Expected the action capped at %d bytes, got %d",
+			maxDenialActionLen, len(key.action))
+	}
+}
+
+// TestRecordDenialRecordsOddMethodAsOther checks the end-to-end path for a
+// nonstandard method: the row is written under rbac.other.
+func TestRecordDenialRecordsOddMethodAsOther(t *testing.T) {
+	handler, store, cleanup := createTestRBACHandler(t)
+	defer cleanup()
+
+	req := withUser(httptest.NewRequest(http.MethodGet, "/api/v1/rbac/audit", nil), 7)
+	req.Method = "BREW"
+	handler.recordDenial(req, "Permission denied")
+
+	events, _, err := store.ListAuditEvents(auth.AuditFilter{Action: "rbac.other"})
+	if err != nil {
+		t.Fatalf("ListAuditEvents failed: %v", err)
+	}
+	if len(events) != 1 || string(events[0].Details) != `{"target":"unmatched"}` {
+		t.Fatalf("Expected one rbac.other row naming no target, got %d", len(events))
+	}
+}
+
+// TestDeniedConnectionAction covers the action names given to refused
+// connection requests.
+func TestDeniedConnectionAction(t *testing.T) {
+	tests := []struct {
+		method, path, want string
+	}{
+		{http.MethodPut, "/api/v1/connections/5", "connection.update"},
+		{http.MethodDelete, "/api/v1/connections/5", "connection.delete"},
+		{http.MethodPut, "/api/v1/connections/5/cluster", "connection.cluster.update"},
+		{http.MethodGet, "/api/v1/connections/5", "rbac.get"},
+		{http.MethodPut, "/api/v1/connections/5/databases", "rbac.put"},
+		{http.MethodPut, "/api/v1/clusters/5", "cluster.update"},
+	}
+	for _, tt := range tests {
+		req := httptest.NewRequest(tt.method, tt.path, nil)
+		if got := deniedAction(req); got != tt.want {
+			t.Errorf("deniedAction(%s %s) = %q, want %q", tt.method, tt.path, got, tt.want)
+		}
+	}
+}
+
 // TestRecordDenialToleratesNilStore keeps the nil-store behavior that
 // a partially constructed handler relies on.
 func TestRecordDenialToleratesNilStore(t *testing.T) {
@@ -390,7 +742,7 @@ func TestAdmitDenialInitialisesMap(t *testing.T) {
 	handler := &RBACHandler{}
 
 	if record, _, _ := handler.admitDenial(
-		denialKeyFor("mallory", "user.create", "no"), time.Now()); !record {
+		denialKeyFor("mallory", "user.create", "no"), "users", time.Now()); !record {
 		t.Error("Expected the first denial to be recorded")
 	}
 	if len(handler.denials) != 1 {
@@ -506,8 +858,8 @@ func TestRecordDenialSummariesToleratesStoreFailure(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/rbac/audit", nil)
 	handler.recordDenialSummaries(req, []denialSummary{{
-		key:        denialKeyFor("mallory", "audit.read", "Permission denied"),
-		suppressed: 3,
+		key:    denialKeyFor("mallory", "audit.read", "Permission denied"),
+		window: denialWindow{count: 3, targets: []string{"audit"}},
 	}})
 }
 

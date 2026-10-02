@@ -101,21 +101,38 @@ action the request would have used had it been allowed, so that a denial
 and the change it was refused share a vocabulary. Two action names
 appear only on denials: `audit.read`, for a refused read of the audit
 log itself, and `token.scope.set`, for a refused scope update, because a
-single endpoint covers all three scope types. A refused request that
-matches no known route records `rbac.` followed by the lower-case HTTP
-method, so that the denial is kept rather than dropped.
+single endpoint covers all three scope types. A token refused a cluster
+move of a connection that its connection scope names only at `read` is
+recorded as `connection.cluster.update`; a connection the token cannot
+see at all is refused as though it did not exist, and that refusal is not
+recorded. A refused request that matches no known route records `rbac.`
+followed by the lower-case HTTP method, so that the denial is kept rather
+than dropped, and any method outside the standard HTTP set records
+`rbac.other`.
+
+Each denial names the object the request was aimed at in
+`details.target`, as the kind of object followed by its numeric
+identifier, such as `users/12` or `connections/7`, or as the kind alone,
+such as `users`, when the request names no single object. A request
+that matches no known route records a target of `unmatched`, so that
+nothing taken verbatim from the request path reaches the log.
 
 Repeated denials are coalesced rather than recorded one by one, because
 a client that retries a refused request in a loop would otherwise fill
 the log and bury the events that matter. The first denial for a given
-combination of actor, action and reason is recorded at once; identical
-denials in the next sixty seconds are counted instead of recorded; and
-the first denial after that window is recorded with a
-`details.repeat_count` giving the number of attempts it stands for. If
-no further denial arrives after the window closes, the suppressed
-attempts are written as a summary event of their own, carrying
-`details.repeat_count` alongside `details.window_closed`, so a burst
-that stops is still counted rather than lost.
+combination of actor, client address, action and reason is recorded at
+once; identical denials in the next sixty seconds are counted instead of
+recorded, whatever object each was aimed at; and the first denial after
+that window is recorded with a `details.repeat_count` giving the number
+of attempts it stands for. If no further denial arrives after the window
+closes, the suppressed attempts are written as a summary event of their
+own, carrying `details.repeat_count` alongside `details.window_closed`,
+so a burst that stops is still counted rather than lost. Either row
+lists, in `details.targets`, up to 20 distinct targets the coalesced
+denials were aimed at, and counts in `details.targets_truncated` the
+denials whose target did not fit in that list. The target is left out
+of the coalescing key deliberately, so that a client cannot write a row
+per attempt by varying the identifier it asks for.
 
 ## Actor Types
 

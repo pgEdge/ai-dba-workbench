@@ -59,6 +59,15 @@ func (h *RBACHandler) handleGroupMCPPrivileges(w http.ResponseWriter, r *http.Re
 				return
 			}
 
+			// A token bounded by MCP scope may grant only the items its
+			// own scope covers, and never the wildcard, or it could hand
+			// a group, and so itself through membership, a tool such as
+			// query_datastore that it may not call (issue #471).
+			if !h.requireGrantInTokenScope(w, r,
+				h.rbacChecker.CanGrantMCPInTokenScope(r.Context(), req.Privilege)) {
+				return
+			}
+
 			if err := h.actorStore(r).GrantMCPPrivilegeByName(groupID, req.Privilege); err != nil {
 				log.Printf("[ERROR] Failed to grant MCP privilege %s to group %d: %v", logging.SanitizeForLog(req.Privilege), groupID, err) //nolint:gosec // G706: privilege passed through logging.SanitizeForLog
 				RespondError(w, http.StatusInternalServerError, "Failed to grant MCP privilege")
@@ -116,6 +125,14 @@ func (h *RBACHandler) handleGroupConnectionPrivileges(w http.ResponseWriter, r *
 			return
 		}
 
+		// A token may grant only what its own connection scope covers
+		// (issue #471).
+		if !h.requireGrantInTokenScope(w, r,
+			h.rbacChecker.CanGrantConnectionInTokenScope(r.Context(),
+				req.ConnectionID, req.AccessLevel)) {
+			return
+		}
+
 		if err := h.actorStore(r).GrantConnectionPrivilege(groupID, req.ConnectionID, req.AccessLevel); err != nil {
 			log.Printf("[ERROR] Failed to grant connection privilege for conn %d to group %d: %v", req.ConnectionID, groupID, err)
 			RespondError(w, http.StatusInternalServerError, "Failed to grant connection privilege")
@@ -136,6 +153,14 @@ func (h *RBACHandler) handleGroupConnectionPrivileges(w http.ResponseWriter, r *
 		connID, err := strconv.Atoi(remaining[0])
 		if err != nil {
 			RespondError(w, http.StatusBadRequest, "Invalid connection ID")
+			return
+		}
+
+		// Revoking the last group grant on a connection lifts its group
+		// restriction, which opens a shared connection to every user, so
+		// a revoke needs the connection in scope too (issue #471).
+		if !h.requireGrantInTokenScope(w, r,
+			h.rbacChecker.ConnectionInTokenScope(r.Context(), connID)) {
 			return
 		}
 
@@ -214,6 +239,13 @@ func (h *RBACHandler) grantGroupPermission(w http.ResponseWriter, r *http.Reques
 	}
 	if req.Permission == "" {
 		RespondError(w, http.StatusBadRequest, "Permission is required")
+		return
+	}
+
+	// An admin permission acts across the whole estate, so only a token
+	// that covers every connection may grant one (issue #471).
+	if !h.requireGrantInTokenScope(w, r,
+		h.rbacChecker.AllConnectionsInTokenScope(r.Context())) {
 		return
 	}
 

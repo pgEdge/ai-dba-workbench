@@ -32,6 +32,8 @@ export interface ScopeMultiSelectProps<T extends { id: string | number; _isAll?:
     allOption: T;
     /** Whether the field is disabled. */
     disabled?: boolean;
+    /** Helper text shown whilst nothing is selected. */
+    emptyHelperText?: string;
 }
 
 /**
@@ -50,6 +52,7 @@ function ScopeMultiSelect<T extends { id: string | number; _isAll?: boolean }>({
     getOptionLabel,
     allOption,
     disabled = false,
+    emptyHelperText,
 }: ScopeMultiSelectProps<T>): React.ReactElement {
     // Build the filtered options list based on current selection
     const filteredOptions = React.useMemo(() => {
@@ -106,6 +109,7 @@ function ScopeMultiSelect<T extends { id: string | number; _isAll?: boolean }>({
                     {...params}
                     label={label}
                     margin="dense"
+                    helperText={value.length === 0 ? emptyHelperText : undefined}
                     InputLabelProps={{
                         ...params.InputLabelProps,
                         shrink: true,

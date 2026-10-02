@@ -31,6 +31,9 @@ type NotificationChannelHandler struct {
 	rbacChecker     *auth.RBACChecker
 	hostValidator   *HostValidator
 	checkPermission func(http.ResponseWriter, *http.Request) bool
+
+	// denialAuditor audits this handler's token-scope refusals.
+	denialAuditor
 }
 
 // NewNotificationChannelHandlerWithSecurity creates a new notification channel handler with custom security settings
@@ -255,6 +258,11 @@ func (h *NotificationChannelHandler) createChannel(w http.ResponseWriter, r *htt
 	if !h.checkPermission(w, r) {
 		return
 	}
+	// A channel and its recipients serve alerts from every connection,
+	// so a token must cover every connection to change them (#471).
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) {
+		return
+	}
 
 	var req NotificationChannelCreateRequest
 	if !DecodeJSONBody(w, r, &req) {
@@ -413,6 +421,11 @@ func (h *NotificationChannelHandler) createChannel(w http.ResponseWriter, r *htt
 // updateChannel handles PUT /api/v1/notification-channels/{id}
 func (h *NotificationChannelHandler) updateChannel(w http.ResponseWriter, r *http.Request, id int64) {
 	if !h.checkPermission(w, r) {
+		return
+	}
+	// A channel and its recipients serve alerts from every connection,
+	// so a token must cover every connection to change them (#471).
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) {
 		return
 	}
 
@@ -622,6 +635,11 @@ func (h *NotificationChannelHandler) deleteChannel(w http.ResponseWriter, r *htt
 	if !h.checkPermission(w, r) {
 		return
 	}
+	// A channel and its recipients serve alerts from every connection,
+	// so a token must cover every connection to change them (#471).
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) {
+		return
+	}
 
 	if err := h.datastore.DeleteNotificationChannel(r.Context(), id); err != nil {
 		if errors.Is(err, database.ErrNotificationChannelNotFound) {
@@ -667,6 +685,11 @@ func (h *NotificationChannelHandler) listRecipients(w http.ResponseWriter, r *ht
 // createRecipient handles POST /api/v1/notification-channels/{id}/recipients
 func (h *NotificationChannelHandler) createRecipient(w http.ResponseWriter, r *http.Request, channelID int64) {
 	if !h.checkPermission(w, r) {
+		return
+	}
+	// A channel and its recipients serve alerts from every connection,
+	// so a token must cover every connection to change them (#471).
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) {
 		return
 	}
 
@@ -719,6 +742,11 @@ func (h *NotificationChannelHandler) updateRecipient(w http.ResponseWriter, r *h
 	if !h.checkPermission(w, r) {
 		return
 	}
+	// A channel and its recipients serve alerts from every connection,
+	// so a token must cover every connection to change them (#471).
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) {
+		return
+	}
 
 	var req EmailRecipientRequest
 	if !DecodeJSONBody(w, r, &req) {
@@ -759,6 +787,11 @@ func (h *NotificationChannelHandler) updateRecipient(w http.ResponseWriter, r *h
 // deleteRecipient handles DELETE /api/v1/notification-channels/{id}/recipients/{recipientId}
 func (h *NotificationChannelHandler) deleteRecipient(w http.ResponseWriter, r *http.Request, recipientID int64) {
 	if !h.checkPermission(w, r) {
+		return
+	}
+	// A channel and its recipients serve alerts from every connection,
+	// so a token must cover every connection to change them (#471).
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) {
 		return
 	}
 

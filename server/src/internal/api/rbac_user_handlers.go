@@ -153,6 +153,21 @@ func (h *RBACHandler) createUser(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// A token bounded in any scope kind may create only a user who
+	// reaches no further than the token (issue #471). A superuser
+	// reaches everything, so only an unrestricted token may create one;
+	// any other new user still reaches the unrestricted connections open
+	// to every user, any unshared connection its name already owns, and
+	// the public MCP items, and those must fall inside the token's scope.
+	newUserInScope := h.rbacChecker.NewUserWithinTokenScope(r.Context(),
+		req.Username, h.connLister)
+	if req.IsSuperuser != nil && *req.IsSuperuser {
+		newUserInScope = h.rbacChecker.TokenScopeUnrestricted(r.Context())
+	}
+	if !h.requireGrantInTokenScope(w, r, newUserInScope) {
+		return
+	}
+
 	if isServiceAccount {
 		if err := h.actorStore(r).CreateServiceAccount(req.Username, req.Annotation, req.DisplayName, req.Email); err != nil {
 			respondUserStoreError(w, err, "Failed to create service account", req.Username)
@@ -237,6 +252,22 @@ func (h *RBACHandler) updateUser(w http.ResponseWriter, r *http.Request, userID 
 		}
 	}
 
+	// A token bounded in any scope kind may not make a superuser, and
+	// may not set the password of, or re-enable, an account that reaches
+	// further than the token does, since either would hand the token's
+	// holder that account's access (issue #471).
+	if req.IsSuperuser != nil && *req.IsSuperuser &&
+		!h.requireGrantInTokenScope(w, r,
+			h.rbacChecker.TokenScopeUnrestricted(r.Context())) {
+		return
+	}
+	takesOver := (req.Password != nil && *req.Password != "") ||
+		(req.Enabled != nil && *req.Enabled)
+	if takesOver && !h.requireGrantInTokenScope(w, r,
+		h.userWithinTokenScope(r.Context(), userID)) {
+		return
+	}
+
 	// Use atomic update to ensure all changes succeed or fail together
 	update := auth.UserUpdate{
 		Password:    req.Password,
@@ -277,6 +308,16 @@ func (h *RBACHandler) deleteUser(w http.ResponseWriter, r *http.Request, userID 
 
 	// See updateUser: only a superuser may delete a superuser account.
 	if user.IsSuperuser && !h.requireSuperuser(w, r) {
+		return
+	}
+
+	// Connection ownership is recorded by username, so a deleted
+	// account's unshared connections pass to whoever next takes the
+	// name. A bounded token may therefore delete only an account that
+	// reaches no further than the token, or delete-and-recreate would
+	// hand it that account's connections (issue #471).
+	if !h.requireGrantInTokenScope(w, r,
+		h.userWithinTokenScope(r.Context(), userID)) {
 		return
 	}
 

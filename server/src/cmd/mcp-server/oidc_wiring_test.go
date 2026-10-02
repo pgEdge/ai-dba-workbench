@@ -383,6 +383,16 @@ func TestLogOIDCStartupWarnings(t *testing.T) {
 				"required for production deployments",
 			},
 		},
+		"no trusted proxies with server-side TLS": {
+			// tls.enabled makes every request provably HTTPS, so the
+			// prefix is used and the login CSRF notice would be wrong.
+			mutate: func(cfg *config.Config) {
+				cfg.HTTP.TrustedProxies = nil
+				cfg.HTTP.TLS.Enabled = true
+			},
+			want:    []string{"http.trusted_proxies is empty"},
+			notWant: []string{"__Host-", "login CSRF"},
+		},
 		"superuser group": {
 			mutate: func(cfg *config.Config) { cfg.HTTP.Auth.OIDC.SuperuserGroup = "workbench-admins" },
 			want: []string{

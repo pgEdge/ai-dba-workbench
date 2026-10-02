@@ -1467,6 +1467,7 @@ func TestLocalAuthDefaultsToEnabled(t *testing.T) {
 func TestLocalAuthCanBeDisabledExplicitly(t *testing.T) {
 	path := writeTempConfig(t, `
 http:
+  trusted_proxies: ["10.0.0.0/8"]
   auth:
     local:
       enabled: false
@@ -1516,6 +1517,7 @@ func TestOIDCClientSecretReadFromFile(t *testing.T) {
 	}
 	path := writeTempConfig(t, fmt.Sprintf(`
 http:
+  trusted_proxies: ["10.0.0.0/8"]
   auth:
     oidc:
       enabled: true
@@ -1549,6 +1551,7 @@ func TestMarshalDoesNotLeakOIDCClientSecret(t *testing.T) {
 	}
 	path := writeTempConfig(t, fmt.Sprintf(`
 http:
+  trusted_proxies: ["10.0.0.0/8"]
   auth:
     oidc:
       enabled: true
@@ -1639,6 +1642,7 @@ func TestValidateConfigRejectsIncompleteOIDC(t *testing.T) {
 
 func TestValidateConfigAcceptsCompleteOIDC(t *testing.T) {
 	cfg := defaultConfig()
+	cfg.HTTP.TrustedProxies = []string{"10.0.0.0/8"}
 	cfg.HTTP.Auth.OIDC = OIDCConfig{
 		Enabled:      boolPtr(true),
 		Issuer:       "https://idp.example.com",
@@ -1676,6 +1680,7 @@ func TestValidateConfigAllowsBareConfigWithNoAuthBlock(t *testing.T) {
 // OIDC is fully configured and enabled.
 func TestValidateConfigAllowsOIDCOnly(t *testing.T) {
 	cfg := defaultConfig()
+	cfg.HTTP.TrustedProxies = []string{"10.0.0.0/8"}
 	disabled := false
 	cfg.HTTP.Auth.Local.Enabled = &disabled
 	cfg.HTTP.Auth.OIDC = OIDCConfig{

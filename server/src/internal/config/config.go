@@ -304,6 +304,16 @@ type OIDCConfig struct {
 	AllowedEmailDomains []string          `yaml:"allowed_email_domains" json:"allowed_email_domains"`
 	SuperuserGroup      string            `yaml:"superuser_group" json:"superuser_group"`
 	GroupMap            map[string]string `yaml:"group_map" json:"group_map"`
+
+	// AllowUnprefixedStateCookie acknowledges that, behind a
+	// TLS-terminating reverse proxy with no http.trusted_proxies, the
+	// login state cookie cannot use the "__Host-" name prefix, and so a
+	// sibling subdomain able to set cookies can plant its own login state
+	// and log a victim in as the attacker (login CSRF). Validation refuses
+	// that configuration unless this is true; see
+	// validateOIDCStateCookiePrefix. It is a pointer for the same reason
+	// ProvisionUsers is; read it through UnprefixedStateCookieAllowed.
+	AllowUnprefixedStateCookie *bool `yaml:"allow_unprefixed_state_cookie" json:"allow_unprefixed_state_cookie"`
 }
 
 // EffectiveClientSecret returns the OIDC client secret to use. An inline
@@ -331,6 +341,14 @@ func (o OIDCConfig) IsEnabled() bool {
 // identities it has never seen.
 func (o OIDCConfig) ProvisionUsersEnabled() bool {
 	return o.ProvisionUsers != nil && *o.ProvisionUsers
+}
+
+// UnprefixedStateCookieAllowed returns the effective value of
+// AllowUnprefixedStateCookie, defaulting to false when the pointer is
+// nil: an operator who has said nothing has not accepted the login CSRF
+// exposure the setting acknowledges.
+func (o OIDCConfig) UnprefixedStateCookieAllowed() bool {
+	return o.AllowUnprefixedStateCookie != nil && *o.AllowUnprefixedStateCookie
 }
 
 // LocalEnabled returns the effective value of Local.Enabled, defaulting to
@@ -999,6 +1017,9 @@ func mergeConfig(dest, src *Config) {
 	if len(src.HTTP.Auth.OIDC.GroupMap) > 0 {
 		dest.HTTP.Auth.OIDC.GroupMap = src.HTTP.Auth.OIDC.GroupMap
 	}
+	if src.HTTP.Auth.OIDC.AllowUnprefixedStateCookie != nil {
+		dest.HTTP.Auth.OIDC.AllowUnprefixedStateCookie = src.HTTP.Auth.OIDC.AllowUnprefixedStateCookie
+	}
 
 	// Database - if source has database defined, use it
 	if src.Database != nil {
@@ -1469,6 +1490,9 @@ func validateConfig(cfg *Config) error {
 		if err := validateOIDCRedirectURL(oidc.RedirectURL); err != nil {
 			return err
 		}
+		if err := validateOIDCStateCookiePrefix(cfg); err != nil {
+			return err
+		}
 	}
 
 	// Refuse a configuration that leaves no way to log into the Workbench
@@ -1532,6 +1556,46 @@ func validateOIDCRedirectURL(raw string) error {
 	}
 
 	return nil
+}
+
+// validateOIDCStateCookiePrefix refuses a federated login configuration
+// whose login state cookie would be written without the "__Host-" name
+// prefix on a deployment served over HTTPS, unless the operator has
+// accepted that with http.auth.oidc.allow_unprefixed_state_cookie.
+//
+// The prefix is what stops a sibling subdomain that can set cookies for
+// the parent domain from overwriting the state cookie. Without it, an
+// attacker there can start a login of their own, plant their sealed
+// state over the victim's, and send the victim to the callback with the
+// attacker's code and state, so that the victim ends up logged in as the
+// attacker. The server writes the prefixed name only for a request it
+// knows arrived over HTTPS: with tls.enabled, or with X-Forwarded-Proto
+// from an address on http.trusted_proxies (requestIsProvablySecure in
+// internal/api). With neither, every login behind a proxy uses the plain
+// name.
+//
+// The rule applies only when redirect_url is https. validateOIDCRedirectURL
+// permits http solely for a loopback host, which is local development
+// with no proxy in front; the browser cannot hold a "__Host-" cookie over
+// plain HTTP whatever this server is told, so refusing would demand an
+// opt-out that protects nothing. An https redirect_url on a server that
+// does not terminate TLS itself means a TLS-terminating proxy is in
+// front, which is exactly the deployment the prefix is lost on.
+func validateOIDCStateCookiePrefix(cfg *Config) error {
+	oidc := cfg.HTTP.Auth.OIDC
+	if cfg.HTTP.TLS.Enabled || len(cfg.HTTP.TrustedProxies) > 0 || oidc.UnprefixedStateCookieAllowed() {
+		return nil
+	}
+	parsed, err := url.Parse(oidc.RedirectURL)
+	if err != nil || !strings.EqualFold(parsed.Scheme, "https") {
+		return nil
+	}
+	return fmt.Errorf(
+		"http.trusted_proxies is empty and http.tls.enabled is false, so behind the " +
+			"reverse proxy that serves redirect_url over https the OIDC login state cookie " +
+			"cannot use the __Host- prefix, which lets a sibling subdomain log users in as " +
+			"an attacker (login CSRF): set http.trusted_proxies to the proxy's address, or " +
+			"set http.auth.oidc.allow_unprefixed_state_cookie: true to accept the risk")
 }
 
 // isLoopbackHost reports whether host is the local machine by a name or

@@ -98,7 +98,10 @@ would send the session cookie in clear on any
 plain-HTTP request to the same host. The list still
 matters to that header for one thing: the federated
 login state cookie uses the `__Host-` name prefix only
-when the header came from a listed proxy.
+when the header came from a listed proxy, so a
+TLS-terminating proxy deployment with federated login
+enabled and no list refuses to start unless
+`http.auth.oidc.allow_unprefixed_state_cookie` is set.
 
 ## Direct TLS on the Server
 

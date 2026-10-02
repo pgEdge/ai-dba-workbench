@@ -144,6 +144,7 @@ http:
 func TestValidateConfigAcceptsAProxyPrefixedRedirectURL(t *testing.T) {
 	path := writeTempConfig(t, `
 http:
+  trusted_proxies: ["10.0.0.0/8"]
   auth:
     oidc:
       enabled: true
@@ -163,6 +164,7 @@ http:
 func oidcConfigYAML(provisionUsers string) string {
 	yaml := `
 http:
+  trusted_proxies: ["10.0.0.0/8"]
   auth:
     oidc:
       enabled: true

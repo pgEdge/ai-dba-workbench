@@ -154,8 +154,10 @@ that limit:
   pool's `Close` as a cleanup before the drop (cleanups run last in,
   first out). A `defer adminPool.Close()` runs before any cleanup, so
   the drop hits a closed pool and the database leaks.
-- Admin pools used only for `CREATE`/`DROP DATABASE` carry
-  `pool_max_conns=1` in their DSN.
+- Admin pools used only for `CREATE`/`DROP DATABASE` are capped at one
+  connection: `pool_max_conns=1` in the DSN, or `MaxConns = 1` on the
+  parsed config via `newAdminPool` (`database`) or `newProbeAdminPool`
+  (`probes`).
 
 ## The SQLite Auth Store
 

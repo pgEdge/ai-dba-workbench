@@ -105,7 +105,7 @@ func gcTestDatastore(t *testing.T) (*database.Datastore, func()) {
 	cfg := gcTestEnv(t)
 	ctx := context.Background()
 
-	admin := fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=disable",
+	admin := fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=disable&pool_max_conns=1",
 		cfg.username, cfg.password, cfg.host, cfg.port, cfg.database)
 	adminPool, err := pgxpool.New(ctx, admin)
 	if err != nil {
@@ -117,7 +117,9 @@ func gcTestDatastore(t *testing.T) (*database.Datastore, func()) {
 	// a bindable parameter, and a prepared string keeps the intent clear.
 	quoted := pgx.Identifier{name}.Sanitize()
 	createSQL := "CREATE DATABASE " + quoted
-	dropSQL := "DROP DATABASE IF EXISTS " + quoted
+	// FORCE terminates any backend a test left connected, which would
+	// otherwise make the drop fail and leak the database (issue #486).
+	dropSQL := "DROP DATABASE IF EXISTS " + quoted + " WITH (FORCE)"
 	if _, err := adminPool.Exec(ctx, createSQL); err != nil {
 		adminPool.Close()
 		t.Skipf("cannot create a test database: %v", err)

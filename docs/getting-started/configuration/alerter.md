@@ -318,7 +318,11 @@ an alert, the alerter does not raise it again for five
 minutes, so that a provider that fails intermittently cannot
 send a burst of notifications. A call cancelled before it
 completes counts as neither a failure nor a success,
-although a call that times out counts as a failure.
+although a call that times out counts as a failure. A tier
+3 or re-evaluation call also counts as a failure when the
+provider answers with a response that holds no decision the
+alerter can parse, since anomaly detection then falls back
+to its default decision just as it does when the call fails.
 
 When anomaly detection is enabled, the alerter also checks
 the providers of the enabled tiers at startup. A failed

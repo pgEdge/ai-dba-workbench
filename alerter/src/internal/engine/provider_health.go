@@ -21,7 +21,10 @@ package engine
 // the engine holds, so the call sites in anomalies.go and reevaluation.go
 // are untouched. Which caller an outcome belongs to is carried in the
 // context: the re-evaluation worker's context is tagged when it starts,
-// and an untagged Classify call is Tier 3 classification.
+// and an untagged Classify call is Tier 3 classification. A reasoning
+// call that returns a response holding no verdict the tier can parse
+// counts as a failure, since the caller falls back to its fail-safe
+// decision just as it does when the call errors (GitHub issue #594).
 
 import (
 	"context"
@@ -121,6 +124,13 @@ const providerHealthCheckText = "pgEdge AI DBA Workbench alerter health check"
 // only whether the call succeeds matters, not what it answers.
 const providerHealthCheckPrompt = "This is a connectivity check from the " +
 	"pgEdge AI DBA Workbench alerter. Reply with the single word OK."
+
+// errUnparseableVerdict is the failure recorded when the reasoning
+// provider answers a Tier 3 or re-evaluation call with a response that
+// holds no verdict. The response itself is left out, since the alert
+// text must not repeat whatever the model returned.
+var errUnparseableVerdict = errors.New("the provider answered, but the " +
+	"response held no verdict the alerter could parse")
 
 // providerTierContextKey is the context key for the tier tag.
 type providerTierContextKey struct{}
@@ -657,8 +667,25 @@ type healthTrackingReasoning struct {
 func (h *healthTrackingReasoning) Classify(ctx context.Context, prompt string) (string, error) {
 	response, err := h.inner.Classify(ctx, prompt)
 	tier := providerTierFromContext(ctx, providerTierClassification)
-	h.tracker.record(ctx, tier, h.provider, h.inner.ModelName(), err, false)
+	outcome := err
+	if outcome == nil && !verdictParses(tier, response) {
+		outcome = errUnparseableVerdict
+	}
+	h.tracker.record(ctx, tier, h.provider, h.inner.ModelName(), outcome, false)
 	return response, err
+}
+
+// verdictParses reports whether response holds a decision the caller of
+// tier can use, parsed the way that caller parses it: a re-evaluation
+// call needs a clear or keep decision, and a Tier 3 call an alert or
+// suppress decision.
+func verdictParses(tier providerTier, response string) bool {
+	cfg := anomalyDecisionConfig
+	if tier == providerTierReevaluation {
+		cfg = reevaluationDecisionConfig
+	}
+	_, _, found := parseLLMDecisionFound(response, cfg)
+	return found
 }
 
 // ModelName implements llm.ReasoningProvider.

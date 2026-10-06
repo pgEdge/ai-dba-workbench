@@ -1923,7 +1923,9 @@ project adheres to
   predecessor and no purge event survives to account for it, or when it
   starts a new chain above event 1 with no purge or re-anchor event
   recording where the log begins, which is what emptying the table and
-  letting the server write one more event leaves. The purge
+  letting the server write one more event leaves. Event identifiers are
+  not hashed, so someone who also moves that event to identifier 1 and
+  lowers its `sqlite_sequence` entry to match still passes. The purge
   now also verifies the events it is about to delete, requiring them to
   start where the previous purge left off, to verify under the server
   secret and to link through to the new oldest event, so that one

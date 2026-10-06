@@ -189,9 +189,9 @@ connection grants cannot govern them. The gate is
 `RBACChecker.CanSeeSystemAlerts` in
 `server/src/internal/auth/system_alerts.go`: it denies a nil checker,
 a checker with no auth store (as every RBACChecker method does since
-#477), an incomplete token context, a context with no user ID and a
-token whose scope cannot be read, and grants every other authenticated
-caller, whatever their connection scope.
+issue #477), an incomplete token context, a context with no user ID and
+a token whose scope cannot be read, and grants every other
+authenticated caller, whatever their connection scope.
 
 Callers apply it through two filter flags on
 `database.AlertListFilter`: `IncludeSystem` ORs system alerts into the

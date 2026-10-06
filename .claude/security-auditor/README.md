@@ -474,7 +474,8 @@ plainly rather than crediting the design with more than it does.
   the anchor (sequence rewritten) returns the log to its pre-upgrade v2
   state; deleting every row since the last rotation plus slot 2
   (sequence rewritten) returns it to the moment of the rotation, which
-  verifies as exit 3 and which `-confirm-rechain` accepts; and wiping
+  verifies as exit 3, which `-confirm-rechain` refuses until the server
+  writes its next row (`LaterEventsVerify`) and accepts after; and wiping
   the log, anchor and sequence row reads as empty. In a log never
   rotated, failing row 1 and pointing the primary at it turns a tail
   cut into exit 3 only via a decoy and a server write, and

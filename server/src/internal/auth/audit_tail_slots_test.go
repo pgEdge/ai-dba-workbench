@@ -646,3 +646,17 @@ func TestRotationMomentReplayIsTheDocumentedLimit(t *testing.T) {
 			"later event verifies, got %+v", plan)
 	}
 }
+
+// TestRotatedLogWithoutAnAnchorIsAccepted checks that a rotated log no
+// release that keeps the tail anchor has written to, so with no anchor
+// at all, has nothing for the rotated tail check to hold it to.
+func TestRotatedLogWithoutAnAnchorIsAccepted(t *testing.T) {
+	store, _ := newReopenableStore(t)
+	st := auditTailState{hasNewest: true, newestID: 4,
+		newestVersion: auditTailHashVersion - 1}
+	if err := store.checkRotatedAuditTail(st,
+		AuditEvent{ID: 2}); err != nil {
+		t.Errorf("Expected a log with no anchor to be accepted, got %v",
+			err)
+	}
+}

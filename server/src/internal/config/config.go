@@ -1419,12 +1419,15 @@ func applyCLIFlags(cfg *Config, flags CLIFlags) {
 	// Database CLI flags
 	// Create a default database if none exists and any DB flag is set
 	if cfg.Database == nil && (flags.DBHostSet || flags.DBPortSet || flags.DBNameSet || flags.DBUserSet || flags.DBPassSet || flags.DBSSLSet) {
+		// PoolMaxConns stays unset, as it does when the YAML omits it:
+		// NewDatastore then sizes the datastore pool at DefaultPoolMaxConns,
+		// and per-session pools to monitored databases keep the connection
+		// library's default.
 		cfg.Database = &DatabaseConfig{
 			Host:                "localhost",
 			Port:                5432,
 			Database:            "postgres",
 			SSLMode:             "prefer",
-			PoolMaxConns:        DefaultPoolMaxConns,
 			PoolMinConns:        0,
 			PoolMaxConnIdleTime: "30m",
 			StatementTimeout:    "30s",

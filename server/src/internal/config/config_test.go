@@ -811,7 +811,6 @@ func TestApplyCLIFlagsEveryFlag(t *testing.T) {
 		User:                "cliuser",
 		Password:            "clipass",
 		SSLMode:             "require",
-		PoolMaxConns:        DefaultPoolMaxConns,
 		PoolMaxConnIdleTime: "30m",
 		StatementTimeout:    "30s",
 	}

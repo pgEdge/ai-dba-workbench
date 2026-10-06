@@ -396,11 +396,14 @@ project adheres to
   unset now gets 20 rather than the connection library's own default;
   one copied from the earlier example still sets `pool_max_conns: 4`
   explicitly and keeps four until the line is changed or removed. The
-  pool is sized at start-up, so a configuration reload with `SIGHUP`
-  does not resize it and the server has to be restarted. An explicit
-  `pool_max_conns` also sizes each per-session pool that the server
-  opens to a monitored database, whilst an unset one leaves those
-  pools at the connection library's default.
+  datastore pool is sized at start-up, so a configuration reload with
+  `SIGHUP` does not resize it and the server has to be restarted. An
+  explicit `pool_max_conns` also sizes each per-session pool that the
+  server opens to a monitored database, including pools opened after
+  a `SIGHUP` reload, whilst an unset one leaves those pools at the
+  connection library's default; a database configured only through
+  the `-db-*` command-line flags now leaves it unset too, where it
+  previously set four.
 
 - Follow the dashboard time range selector in the database summaries
   section of the server dashboard, the Transaction Rate tile of the

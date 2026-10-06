@@ -87,15 +87,15 @@ CREATE TABLE cluster_node_relationships (
 `
 
 const (
-	covSecret   = "connection-coverage-test-secret-0123456789"
-	covAllowed  = "db.example.test"
-	covBlocked  = "blocked.example.test"
-	covOwner    = "conncov_owner"
-	covAdmin    = "conncov_admin"
-	covOther    = "conncov_other"
-	covConnID   = 8100
-	covMissing  = 8999
-	covPassword = "Password1234"
+	covSecret    = "connection-coverage-test-secret-0123456789"
+	covAllowed   = "db.example.test"
+	covBlocked   = "blocked.example.test"
+	connCovOwner = "conncov_owner"
+	covAdmin     = "conncov_admin"
+	covOther     = "conncov_other"
+	covConnID    = 8100
+	covMissing   = 8999
+	covPassword  = "Password1234"
 )
 
 // connCoverageUser is an authenticated caller: its session token for
@@ -108,7 +108,7 @@ type connCoverageUser struct {
 }
 
 // connCoverageHarness wires the handler to a real datastore and auth
-// store and seeds one connection (covConnID) owned by covOwner.
+// store and seeds one connection (covConnID) owned by connCovOwner.
 type connCoverageHarness struct {
 	t       *testing.T
 	handler *ConnectionHandler
@@ -162,7 +162,7 @@ func newConnCoverageHarness(t *testing.T) *connCoverageHarness {
 		pool:  pool,
 		store: store,
 	}
-	h.owner = h.newUser(covOwner, nil)
+	h.owner = h.newUser(connCovOwner, nil)
 	h.admin = h.newUser(covAdmin, []string{auth.PermManageConnections})
 	h.other = h.newUser(covOther, nil)
 
@@ -189,7 +189,7 @@ func newConnCoverageHarness(t *testing.T) *connCoverageHarness {
 	h.handler = NewConnectionHandlerWithSecurity(h.ds, store, checker, true,
 		[]string{covAllowed}, []string{covBlocked})
 
-	seedIssue269Connection(t, pool, covConnID, covOwner, "coverage-target")
+	seedIssue269Connection(t, pool, covConnID, connCovOwner, "coverage-target")
 	return h
 }
 
@@ -538,7 +538,7 @@ func TestConnectionCoverage_ListDatabases(t *testing.T) {
             INSERT INTO connections (id, name, host, port, database_name,
                 username, password_encrypted, owner_username, sslmode)
             VALUES (8101, 'self', $1, $2, $3, $4, $5, $6, 'disable')`,
-			cfg.Host, int(cfg.Port), cfg.Database, cfg.User, encrypted, covOwner)
+			cfg.Host, int(cfg.Port), cfg.Database, cfg.User, encrypted, connCovOwner)
 
 		rec := h.serve(h.request(http.MethodGet, "/api/v1/connections/8101/databases", nil, &su))
 		assertStatus(t, rec, http.StatusOK)
@@ -691,8 +691,8 @@ func TestConnectionCoverage_GetConnectionCluster(t *testing.T) {
 
 	h.exec(`INSERT INTO clusters (id, name, replication_type) VALUES
         (500, 'alpha', 'spock'), (501, 'beta', 'binary')`)
-	seedIssue269Connection(t, h.pool, 8102, covOwner, "peer")
-	seedIssue269Connection(t, h.pool, 8103, covOwner, "unrelated")
+	seedIssue269Connection(t, h.pool, 8102, connCovOwner, "peer")
+	seedIssue269Connection(t, h.pool, 8103, connCovOwner, "unrelated")
 	h.exec(`UPDATE connections SET cluster_id = 500, role = 'primary' WHERE id IN (8100, 8102, 8103)`)
 	h.exec(`INSERT INTO cluster_node_relationships
         (cluster_id, source_connection_id, target_connection_id, relationship_type)

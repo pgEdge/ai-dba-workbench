@@ -205,6 +205,17 @@ func TestPgStatActivityProbe_StoresQueryID(t *testing.T) {
 		t.Fatalf("read back sleeper row: %v", err)
 	}
 
+	// A backend can report state 'active' a moment before its query_id
+	// is published, so a NULL seen while polling may be stale. The
+	// sleeper runs a single statement, so its identifier only ever moves
+	// from NULL to one fixed value; re-read it once the probe has run.
+	if expected == nil {
+		if err := conn.QueryRow(ctx, sleeperQuery, sleeperPID).
+			Scan(new(*string), &expected); err != nil {
+			t.Fatalf("re-read sleeper query_id: %v", err)
+		}
+	}
+
 	switch {
 	case expected == nil && stored != nil:
 		t.Errorf("stored query_id = %d, want NULL", *stored)

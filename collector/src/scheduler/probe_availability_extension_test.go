@@ -230,7 +230,7 @@ func TestGetDatabaseList_SkipsDatabasesWithoutConnectPrivilege(t *testing.T) {
 	allowedDB := fmt.Sprintf("t440_connect_%d", suffix)
 
 	adminPool, err := pgxpool.New(ctx, fmt.Sprintf(
-		"host=%s port=%d user=%s password=%s sslmode=disable dbname=postgres",
+		"host=%s port=%d user=%s password=%s sslmode=disable dbname=postgres pool_max_conns=1",
 		f.host, f.port, f.username, f.rawPassword))
 	if err != nil {
 		t.Skipf("connect to admin database: %v", err)
@@ -293,7 +293,7 @@ func TestGetDatabaseList_SkipsDatabasesWithoutConnectPrivilege(t *testing.T) {
 	// Enumerate as the unprivileged role, which is what a monitoring
 	// user is in practice.
 	rolePool, err := pgxpool.New(ctx, fmt.Sprintf(
-		"host=%s port=%d user=%s password=%s sslmode=disable dbname=postgres",
+		"host=%s port=%d user=%s password=%s sslmode=disable dbname=postgres pool_max_conns=1",
 		f.host, f.port, roleName, rolePassword))
 	if err != nil {
 		t.Skipf("connect as the test role: %v", err)

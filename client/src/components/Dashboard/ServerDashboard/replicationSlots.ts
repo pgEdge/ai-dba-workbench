@@ -180,11 +180,11 @@ const ACTIVE_DISPLAY: WalStatusDisplay = {
     description: 'A consumer is connected to this slot',
 };
 
-/** Display for a slot with no consumer; it still holds back WAL. */
+/** Display for a slot with no connected consumer. */
 const INACTIVE_DISPLAY: WalStatusDisplay = {
     label: 'Inactive',
     health: 'warning',
-    description: 'No consumer is connected; the slot still retains WAL',
+    description: 'No consumer is connected to this slot',
 };
 
 /** Display for a slot whose activity was not reported. */
@@ -196,7 +196,9 @@ const UNKNOWN_ACTIVITY_DISPLAY: WalStatusDisplay = {
 
 /**
  * Describe whether a slot has a connected consumer. An inactive slot
- * still prevents WAL removal, which is why it is drawn as a warning.
+ * is drawn as a warning because it can hold back WAL removal until
+ * its consumer returns; how much WAL it actually keeps is the WAL
+ * status's job to say.
  */
 export const describeActivity = (active: boolean | null): WalStatusDisplay => {
     if (active === null) { return UNKNOWN_ACTIVITY_DISPLAY; }

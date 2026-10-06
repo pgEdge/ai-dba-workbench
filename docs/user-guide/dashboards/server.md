@@ -131,8 +131,10 @@ table shows the following columns for each slot:
   or logical.
 - The Status column shows Active when a consumer is
   connected to the slot and Inactive when none is. An
-  inactive slot still prevents PostgreSQL from removing
-  the WAL the slot needs, so it is shown as a warning.
+  inactive slot can stop PostgreSQL from removing WAL
+  until its consumer returns, so it is shown as a
+  warning; the WAL Status column shows whether the WAL
+  is still kept.
 - The WAL Status column shows how safe the slot's WAL
   is. Reserved (green) means the WAL is within
   `max_wal_size`; Extended (amber) means it exceeds

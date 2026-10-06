@@ -1990,7 +1990,8 @@ func normalizeSchemaSQL(text string) string {
 //     deleting every row written since the last change of secret with
 //     the current-key anchor, and the sequence rewritten to match,
 //     leaves the log as it was at the change, which reads as a key
-//     mismatch and which the unattended re-anchor accepts. A log wiped
+//     mismatch; the unattended re-anchor refuses it until the server
+//     writes its next row, and accepts it from then on. A log wiped
 //     entirely, anchor and sequence row included, reads as one that has
 //     never held an event.
 //   - Deleting the oldest rows is caught by the head check in

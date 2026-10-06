@@ -924,7 +924,9 @@ from the end. In the same way, deleting every event written since the
 server secret last changed, together with the second tail record, and
 setting the record of the highest identifier to match, leaves a log
 that looks as it did at the moment of the change; verification still
-reports status `3`, and an unattended re-anchor accepts it. A log
+reports status `3`. An unattended re-anchor refuses that log, because
+no event verifies under the current secret, but accepts it once the
+server has written its next event. A log
 emptied entirely, with the tail record and the record of the highest
 identifier removed as well, reads as one that has never held an event.
 

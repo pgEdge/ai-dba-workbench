@@ -611,3 +611,38 @@ func TestResetAuditTailReportsAFailedWrite(t *testing.T) {
 		t.Error("Expected the failed write to be reported")
 	}
 }
+
+// TestRotationMomentReplayIsTheDocumentedLimit pins the limit the
+// documentation states: every event written since a rotation deleted,
+// with the current-key anchor and the sequence to match, returns the log
+// to the moment of the rotation. That reads as a key mismatch; the
+// unattended re-anchor refuses it while no event verifies under the
+// current secret, and accepts it once the server has written one.
+func TestRotationMomentReplayIsTheDocumentedLimit(t *testing.T) {
+	store, dir := writeUnderKeys(t, 4, rotatedAuditKey)
+	deleteAuditRows(t, store, 5, 6, 7, 8)
+	tamperDB(t, store.db, `DELETE FROM audit_tail WHERE id = 2`)
+	tamperDB(t, store.db, `UPDATE sqlite_sequence SET seq = 4
+        WHERE name = 'audit_events'`)
+	expectKeyMismatch(t, store)
+	store.Close()
+
+	plan := planWithPreviousKey(t, dir, rotatedAuditKey,
+		AuditKeyForTesting())
+	if plan.LaterEventsVerify || unattendedReanchorAccepts(plan) {
+		t.Errorf("Expected the unattended re-anchor to refuse with no "+
+			"later event, got %+v", plan)
+	}
+
+	store = openWithKey(t, dir, rotatedAuditKey)
+	recordN(t, store, 1)
+	expectKeyMismatch(t, store)
+	store.Close()
+
+	plan = planWithPreviousKey(t, dir, rotatedAuditKey,
+		AuditKeyForTesting())
+	if !unattendedReanchorAccepts(plan) {
+		t.Errorf("Expected the unattended re-anchor to accept once a "+
+			"later event verifies, got %+v", plan)
+	}
+}

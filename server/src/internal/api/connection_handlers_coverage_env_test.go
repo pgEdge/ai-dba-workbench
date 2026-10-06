@@ -34,11 +34,10 @@ import (
 // GetClusterRelationships, AssignConnectionToCluster and
 // ResetMembershipSource). The trigger lets a test force DeleteConnection
 // to fail for one named row so the handler's 500 path can be reached.
+// It is created inside connHandlerCoverageSchemaName, selected through
+// search_path, so it never drops or alters the public-schema tables
+// that other packages' integration tests build in the same database.
 const connHandlerCoverageSchema = `
-DROP TABLE IF EXISTS cluster_node_relationships CASCADE;
-DROP TABLE IF EXISTS connections CASCADE;
-DROP TABLE IF EXISTS clusters CASCADE;
-DROP FUNCTION IF EXISTS conn_handler_cov_block_delete() CASCADE;
 CREATE TABLE clusters (
     id SERIAL PRIMARY KEY,
     group_id INTEGER,
@@ -96,14 +95,9 @@ CREATE TRIGGER conn_handler_cov_block_delete
     FOR EACH ROW EXECUTE FUNCTION conn_handler_cov_block_delete();
 `
 
-// connHandlerCoverageTeardown removes everything the schema above
-// creates, so later tests in the package start from a clean database.
-const connHandlerCoverageTeardown = `
-DROP TABLE IF EXISTS cluster_node_relationships CASCADE;
-DROP TABLE IF EXISTS connections CASCADE;
-DROP TABLE IF EXISTS clusters CASCADE;
-DROP FUNCTION IF EXISTS conn_handler_cov_block_delete() CASCADE;
-`
+// connHandlerCoverageSchemaName is the schema the fixture above is built
+// in; it is dropped before and after each test.
+const connHandlerCoverageSchemaName = "api_conn_handler_cov"
 
 // Fixture connection IDs. ownedConnID is unshared and owned by the
 // unprivileged owner; foreignConnID is unshared and owned by someone
@@ -151,24 +145,27 @@ func newConnHandlerEnv(t *testing.T) *connHandlerEnv {
 	}
 
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, connStr)
-	if err != nil {
-		t.Skipf("Could not connect to test database: %v", err)
+	dropSchema := "DROP SCHEMA IF EXISTS " + connHandlerCoverageSchemaName + " CASCADE"
+	admin := covPoolForSchema(t, connStr, "public")
+	if _, err := admin.Exec(ctx, dropSchema); err != nil {
+		admin.Close()
+		t.Fatalf("Failed to drop stale connection handler schema: %v", err)
 	}
-	if err := pool.Ping(ctx); err != nil {
-		pool.Close()
-		t.Skipf("Test database ping failed: %v", err)
-	}
-	if _, err := pool.Exec(ctx, connHandlerCoverageSchema); err != nil {
-		pool.Close()
+	if _, err := admin.Exec(ctx, "CREATE SCHEMA "+connHandlerCoverageSchemaName); err != nil {
+		admin.Close()
 		t.Fatalf("Failed to create connection handler schema: %v", err)
 	}
+	pool := covPoolForSchema(t, connStr, connHandlerCoverageSchemaName)
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), connHandlerCoverageTeardown)
 		pool.Close()
+		_, _ = admin.Exec(context.Background(), dropSchema)
+		admin.Close()
 	})
+	if _, err := pool.Exec(ctx, connHandlerCoverageSchema); err != nil {
+		t.Fatalf("Failed to create connection handler tables: %v", err)
+	}
 
-	_, err = pool.Exec(ctx, `
+	_, err := pool.Exec(ctx, `
         INSERT INTO clusters (id, name, replication_type)
         VALUES ($1, 'fixture-cluster', 'spock');
         `, fixtureClusterID)

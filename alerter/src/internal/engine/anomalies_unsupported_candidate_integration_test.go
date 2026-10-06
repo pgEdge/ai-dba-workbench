@@ -84,7 +84,7 @@ func TestProcessTier2And3SuppressesUnsupportedMetricCandidates(t *testing.T) {
 			t.Errorf("%s candidate was not marked processed", c.MetricName)
 		}
 		if stored.FinalDecision == nil || *stored.FinalDecision != "suppress" {
-			t.Errorf("%s final decision = %v, want suppress", c.MetricName, stored.FinalDecision)
+			t.Errorf("%s final decision = %s, want suppress", c.MetricName, formatOptionalString(stored.FinalDecision))
 		}
 		if stored.Tier2Pass != nil {
 			t.Errorf("%s reached Tier 2 (Tier2Pass = %v)", c.MetricName, *stored.Tier2Pass)
@@ -99,7 +99,7 @@ func TestProcessTier2And3SuppressesUnsupportedMetricCandidates(t *testing.T) {
 		t.Error("supported candidate was not marked processed")
 	}
 	if stored.FinalDecision == nil || *stored.FinalDecision != "alert" {
-		t.Errorf("supported final decision = %v, want alert", stored.FinalDecision)
+		t.Errorf("supported final decision = %s, want alert", formatOptionalString(stored.FinalDecision))
 	}
 }
 
@@ -129,7 +129,7 @@ func TestSuppressUnsupportedCandidateLogsUpdateFailure(t *testing.T) {
 		t.Errorf("log output missing the update failure:\n%s", output)
 	}
 	if candidate.FinalDecision == nil || *candidate.FinalDecision != "suppress" {
-		t.Errorf("final decision = %v, want suppress", candidate.FinalDecision)
+		t.Errorf("final decision = %s, want suppress", formatOptionalString(candidate.FinalDecision))
 	}
 	if candidate.ProcessedAt == nil {
 		t.Error("expected ProcessedAt to be set")

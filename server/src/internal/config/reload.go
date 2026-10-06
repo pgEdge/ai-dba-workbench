@@ -209,15 +209,6 @@ func (rc *ReloadableConfig) checkALoginMethodSurvives(newConfig *Config) error {
 func (rc *ReloadableConfig) logOIDCChanges(newConfig *Config) {
 	old := rc.config.HTTP.Auth.OIDC
 	cur := newConfig.HTTP.Auth.OIDC
-	restart := func(name string) {
-		fmt.Fprintf(os.Stderr, "  WARNING: http.auth.oidc.%s changed - requires restart\n", name)
-	}
-	applied := func(name string) {
-		fmt.Fprintf(os.Stderr, "  NOTE: http.auth.oidc.%s changed - applied\n", name)
-	}
-	warn := func(detail string) {
-		fmt.Fprintf(os.Stderr, "  WARNING: http.auth.oidc.%s\n", detail)
-	}
 
 	// Switching federated login off always applies, since the handler
 	// checks enabled on every request. Switching it on applies only when
@@ -226,82 +217,112 @@ func (rc *ReloadableConfig) logOIDCChanges(newConfig *Config) {
 	startedWithOIDC := rc.startup != nil && rc.startup.HTTP.Auth.OIDC.IsEnabled()
 	if old.IsEnabled() != cur.IsEnabled() {
 		if cur.IsEnabled() && !startedWithOIDC {
-			restart("enabled")
+			restartRequiredOIDCSetting("enabled")
 		} else {
-			applied("enabled")
+			appliedOIDCSetting("enabled")
 		}
 	}
 
-	if old.Issuer != cur.Issuer {
-		restart("issuer")
+	for _, name := range changedOIDCSettings(oidcProviderSettings(old, cur)) {
+		restartRequiredOIDCSetting(name)
 	}
-	if old.ClientID != cur.ClientID {
-		restart("client_id")
-	}
-	if old.EffectiveClientSecret() != cur.EffectiveClientSecret() {
-		restart("client_secret")
-	}
-	if old.RedirectURL != cur.RedirectURL {
-		restart("redirect_url")
-	}
-	if !reflect.DeepEqual(old.Scopes, cur.Scopes) {
-		restart("scopes")
-	}
-	if old.UsernameClaim != cur.UsernameClaim {
-		restart("username_claim")
-	}
-	if old.DisplayNameClaim != cur.DisplayNameClaim {
-		restart("display_name_claim")
-	}
-	if old.GroupsClaim != cur.GroupsClaim {
-		restart("groups_claim")
+	for _, name := range changedOIDCSettings(oidcPolicySettings(old, cur)) {
+		appliedOIDCSetting(name)
 	}
 
 	// A change that widens who may sign in, or what they get, is applied
-	// like any other, but is logged as a warning so that it stands out in
-	// the journal of a reload that also carried routine changes.
-	if old.ProvisionUsersEnabled() != cur.ProvisionUsersEnabled() {
-		applied("provision_users")
-		if cur.ProvisionUsersEnabled() {
-			warn("provision_users switched on: any identity the provider " +
-				"vouches for may now create an account")
+	// like any other, but is logged as a warning as well so that it stands
+	// out in the journal of a reload that also carried routine changes.
+	for _, detail := range oidcAccessWarnings(old, cur) {
+		fmt.Fprintf(os.Stderr, "  WARNING: http.auth.oidc.%s\n", detail)
+	}
+}
+
+// oidcSettingChange records whether one http.auth.oidc setting differs
+// between two configurations.
+type oidcSettingChange struct {
+	name    string
+	changed bool
+}
+
+// oidcProviderSettings compares the settings the identity provider is
+// built from at start-up, which only a restart can apply.
+func oidcProviderSettings(old, cur OIDCConfig) []oidcSettingChange {
+	return []oidcSettingChange{
+		{"issuer", old.Issuer != cur.Issuer},
+		{"client_id", old.ClientID != cur.ClientID},
+		{"client_secret", old.EffectiveClientSecret() != cur.EffectiveClientSecret()},
+		{"redirect_url", old.RedirectURL != cur.RedirectURL},
+		{"scopes", !reflect.DeepEqual(old.Scopes, cur.Scopes)},
+		{"username_claim", old.UsernameClaim != cur.UsernameClaim},
+		{"display_name_claim", old.DisplayNameClaim != cur.DisplayNameClaim},
+		{"groups_claim", old.GroupsClaim != cur.GroupsClaim},
+	}
+}
+
+// oidcPolicySettings compares the login policy settings, which the
+// handlers read on every request and a reload therefore applies.
+func oidcPolicySettings(old, cur OIDCConfig) []oidcSettingChange {
+	return []oidcSettingChange{
+		{"provision_users", old.ProvisionUsersEnabled() != cur.ProvisionUsersEnabled()},
+		{"allowed_email_domains", !reflect.DeepEqual(old.AllowedEmailDomains, cur.AllowedEmailDomains)},
+		{"superuser_group", old.SuperuserGroup != cur.SuperuserGroup},
+		{"group_map", !reflect.DeepEqual(old.GroupMap, cur.GroupMap)},
+		{"button_label", old.ButtonLabel != cur.ButtonLabel},
+	}
+}
+
+// changedOIDCSettings returns, in order, the names of the settings that
+// changed.
+func changedOIDCSettings(settings []oidcSettingChange) []string {
+	var names []string
+	for _, s := range settings {
+		if s.changed {
+			names = append(names, s.name)
 		}
 	}
-	if !reflect.DeepEqual(old.AllowedEmailDomains, cur.AllowedEmailDomains) {
-		applied("allowed_email_domains")
-		if len(old.AllowedEmailDomains) > 0 && len(cur.AllowedEmailDomains) == 0 {
-			warn("allowed_email_domains emptied: identities from any email " +
-				"domain may now sign in")
-		}
+	return names
+}
+
+func restartRequiredOIDCSetting(name string) {
+	fmt.Fprintf(os.Stderr, "  WARNING: http.auth.oidc.%s changed - requires restart\n", name)
+}
+
+func appliedOIDCSetting(name string) {
+	fmt.Fprintf(os.Stderr, "  NOTE: http.auth.oidc.%s changed - applied\n", name)
+}
+
+// oidcAccessWarnings describes the policy changes that widen access, or
+// that look like a revocation but revoke nothing.
+func oidcAccessWarnings(old, cur OIDCConfig) []string {
+	var warnings []string
+	if !old.ProvisionUsersEnabled() && cur.ProvisionUsersEnabled() {
+		warnings = append(warnings, "provision_users switched on: any identity "+
+			"the provider vouches for may now create an account")
 	}
-	if old.SuperuserGroup != cur.SuperuserGroup {
-		applied("superuser_group")
-		switch {
-		case cur.SuperuserGroup == "":
-			// ReconcileFederatedGroups leaves is_superuser alone when no
-			// superuser group is configured, so clearing it freezes every
-			// federated superuser rather than demoting anyone.
-			warn("superuser_group cleared: federated users keep their " +
-				"current superuser status, which no login will now change")
-		case old.SuperuserGroup == "":
-			warn("superuser_group set: members of " + cur.SuperuserGroup +
-				" become superusers at their next login")
-		}
+	if len(old.AllowedEmailDomains) > 0 && len(cur.AllowedEmailDomains) == 0 {
+		warnings = append(warnings, "allowed_email_domains emptied: identities "+
+			"from any email domain may now sign in")
 	}
-	if !reflect.DeepEqual(old.GroupMap, cur.GroupMap) {
-		applied("group_map")
-		// Only the Workbench groups group_map names are reconciled, so a
-		// group that drops out of it keeps the members it has; see the
-		// SSO guide.
-		for _, group := range unmanagedWorkbenchGroups(old.GroupMap, cur.GroupMap) {
-			warn("group_map no longer manages Workbench group " + group +
-				": its federated members keep it; map it to another " +
-				"provider group instead to revoke membership")
-		}
+	if old.SuperuserGroup != "" && cur.SuperuserGroup == "" {
+		// ReconcileFederatedGroups leaves is_superuser alone when no
+		// superuser group is configured, so clearing it freezes every
+		// federated superuser rather than demoting anyone.
+		warnings = append(warnings, "superuser_group cleared: federated users "+
+			"keep their current superuser status, which no login will now change")
 	}
-	if old.ButtonLabel != cur.ButtonLabel {
-		applied("button_label")
+	if old.SuperuserGroup == "" && cur.SuperuserGroup != "" {
+		warnings = append(warnings, "superuser_group set: members of "+
+			cur.SuperuserGroup+" become superusers at their next login")
 	}
+	// Only the Workbench groups group_map names are reconciled, so a group
+	// that drops out of it keeps the members it has; see the SSO guide.
+	for _, group := range unmanagedWorkbenchGroups(old.GroupMap, cur.GroupMap) {
+		warnings = append(warnings, "group_map no longer manages Workbench group "+
+			group+": its federated members keep it; map it to another provider "+
+			"group instead to revoke membership")
+	}
+	return warnings
 }
 
 // unmanagedWorkbenchGroups returns, sorted, the Workbench groups that

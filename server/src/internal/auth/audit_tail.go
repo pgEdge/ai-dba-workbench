@@ -430,10 +430,17 @@ func (s *AuthStore) planAuditTailMove(tx *sql.Tx,
 		return auditTailAdvanceCurrent, nil
 	}
 
-	// What is left that may move follows a change of secret: the slot
-	// naming the newest row fails under the key in use. The row it
-	// names was written under the same secret as the anchor, so it must
-	// fail too; if it verifies, the anchor was altered.
+	return s.planAuditTailMoveAfterKeyChange(tx, before)
+}
+
+// planAuditTailMoveAfterKeyChange decides the moves planAuditTailMove
+// leaves over, which follow a change of secret: the slot naming the
+// newest row fails under the key in use. The row it names was written
+// under the same secret as the anchor, so it must fail too; if it
+// verifies, the anchor was altered, and nothing moves.
+func (s *AuthStore) planAuditTailMoveAfterKeyChange(tx *sql.Tx,
+	before auditTailState) (auditTailMove, error) {
+
 	var move auditTailMove
 	switch {
 	case before.namesNewest() && !before.hasCurrent:
@@ -714,6 +721,15 @@ func (s *AuthStore) verifyAuditTailAfterKeyChange(q auditRowQuerier,
 	if err := auditTailAnchorPresent(st); err != nil {
 		return err
 	}
+
+	return s.checkRotatedAuditTail(st, lastFailing)
+}
+
+// checkRotatedAuditTail applies the rules verifyAuditTailAfterKeyChange
+// describes to st, the anchors of a log whose rows through lastFailing
+// fail under the key in use.
+func (s *AuthStore) checkRotatedAuditTail(st auditTailState,
+	lastFailing AuditEvent) error {
 
 	switch {
 	case !st.hasAnchor:

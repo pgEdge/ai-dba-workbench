@@ -9,7 +9,7 @@
  */
 
 // Integration tests for the get_alert_history tool against the alerts
-// table in its collector migration v18 shape, in which a system alert
+// table in its collector migration v19 shape, in which a system alert
 // (GitHub issue #582) has a NULL connection_id. They reuse the pool and
 // connections table from tools_integration_test.go and skip when
 // TEST_AI_WORKBENCH_SERVER is unset.
@@ -27,7 +27,7 @@ import (
 )
 
 // systemAlertHistorySchema adds the alert tables the tool reads, limited
-// to the columns it references, in their migration v18 shape.
+// to the columns it references, in their migration v19 shape.
 const systemAlertHistorySchema = `
 DROP TABLE IF EXISTS alert_acknowledgments CASCADE;
 DROP TABLE IF EXISTS alerts CASCADE;

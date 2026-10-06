@@ -19,7 +19,7 @@ import (
 )
 
 // systemAlertsV18SQL brings the unack test schema's alerts table to its
-// collector migration v18 shape, in which a system alert (GitHub issue
+// collector migration v19 shape, in which a system alert (GitHub issue
 // #582) has a NULL connection_id.
 const systemAlertsV18SQL = `
 ALTER TABLE alerts ALTER COLUMN connection_id DROP NOT NULL;
@@ -46,7 +46,7 @@ func newSystemAlertsFixture(t *testing.T) *systemAlertsFixture {
 	ds, pool, cleanup := newUnackAlertTestDatastore(t)
 	t.Cleanup(cleanup)
 	if _, err := pool.Exec(context.Background(), systemAlertsV18SQL); err != nil {
-		t.Fatalf("apply v18 alerts shape: %v", err)
+		t.Fatalf("apply v19 alerts shape: %v", err)
 	}
 	f := &systemAlertsFixture{
 		ds:    ds,

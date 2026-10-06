@@ -184,7 +184,7 @@ table, migrate these two handlers to Variant 2.
 ## System Alerts Have No Connection (Issue #582)
 
 Alerts with `alert_type = 'system'` carry a NULL `connection_id`
-(collector migration v18, CHECK `alerts_system_connection_check`), so
+(collector migration v19, CHECK `alerts_system_connection_check`), so
 connection grants cannot govern them. The gate is
 `RBACChecker.CanSeeSystemAlerts` in
 `server/src/internal/auth/system_alerts.go`: it denies a nil checker,

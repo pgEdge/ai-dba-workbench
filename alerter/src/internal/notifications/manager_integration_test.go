@@ -28,7 +28,7 @@ import (
 const managerTestSchemaName = "notifications_manager_test"
 
 // managerTestSchemaSQL creates the tables the Manager's datastore calls
-// read and write, with the alerts table in the shape the collector's v18
+// read and write, with the alerts table in the shape the collector's v19
 // migration gives it, so that it holds system alerts. Some foreign keys
 // are left out so that a test can point a row at something missing and
 // drive the Manager's error handling.

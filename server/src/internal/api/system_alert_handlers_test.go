@@ -32,7 +32,7 @@ import (
 // =============================================================================
 
 // systemAlertHandlerSchema holds the connections columns the visibility
-// lister reads and the collector migration v18 shape of the alerts table.
+// lister reads and the collector migration v19 shape of the alerts table.
 const systemAlertHandlerSchema = `
 DROP TABLE IF EXISTS alert_acknowledgments CASCADE;
 DROP TABLE IF EXISTS alerts CASCADE;

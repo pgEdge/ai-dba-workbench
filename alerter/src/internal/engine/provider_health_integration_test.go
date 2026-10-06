@@ -19,7 +19,7 @@ import (
 )
 
 // providerHealthSchemaSQL gives the fixture's alerts table the shape the
-// collector's v18 migration produces, so that it can hold system alerts.
+// collector's v19 migration produces, so that it can hold system alerts.
 const providerHealthSchemaSQL = `
 ALTER TABLE alerts DROP CONSTRAINT alerts_alert_type_check;
 ALTER TABLE alerts ADD CONSTRAINT alerts_alert_type_check

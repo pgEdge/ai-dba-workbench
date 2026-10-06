@@ -28,7 +28,7 @@ project adheres to
   minutes of clearing, and goes to the estate default
   notification channels. System alerts use the new `system` alert type
   and have no connection, which collector schema migration
-  18 allows; every user and API token with alert access sees
+  19 allows; every user and API token with alert access sees
   them, the REST API reports a `null` `connection_id` for
   them, and `GET /api/v1/alerts/counts` gains a `system`
   total. Acknowledging or restoring a system alert requires

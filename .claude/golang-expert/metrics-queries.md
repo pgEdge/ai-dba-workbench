@@ -971,8 +971,8 @@ so several affected probes on one connection raise one alert each.
 metric name to the SQL that produces its value. A query error there is
 swallowed by `evaluateRuleForAllConnections` in
 `alerter/src/internal/engine/thresholds.go`, which logs at debug level and
-moves on, so a broken metric looks exactly like an idle one. Six rules
-that follow from that, all learned the hard way in #406 and #407:
+moves on, so a broken metric looks exactly like an idle one. The rules
+that follow from that, most learned the hard way in #406 and #407:
 
 - The metric name is not the table name. `pg_stat_archiver.*` metrics read
   `metrics.pg_stat_wal`, because the collector consolidates the archiver
@@ -1063,6 +1063,28 @@ that follow from that, all learned the hard way in #406 and #407:
   newest sample shares, so the window is sorted once: the ascending-`LAG`
   plus descending-`ROW_NUMBER` form sorted it twice and measured about a
   third slower on 24,000 rows in the window.
+
+- A `historicalSQL` must apply every non-time row filter its
+  `latestSQL` applies (it keeps its own lookback window rather than
+  copying the `latestSQL` freshness cutoff), because Tier 1 scores the
+  live value against a baseline built from the historical rows, and a
+  baseline computed over a different row set is a different statistic.
+  Every `pg_stat_activity` entry filters
+  `backend_type = 'client backend'` in both queries; the historical
+  queries of `connection_utilization_percent`, `blocked_count`,
+  `idle_in_transaction_seconds`, `max_query_duration_seconds` and
+  `max_xact_duration_seconds` once omitted it, so baselines counted the
+  checkpointer, walwriter, autovacuum workers and walsenders, and
+  `connection_utilization_percent` scored a negative anomaly on every
+  cycle (#567). Any denominator must also be the value in force when
+  each sample was taken: that entry's historical `max_conns` CTE builds
+  `[valid_from, valid_to)` ranges over the `pg_settings` snapshots with
+  `LAG`/`LEAD`, the first range open below so samples written before
+  the settings probe's first snapshot are kept.
+  `metric_registry_activity_integration_test.go` loads one snapshot of
+  client and background rows per metric and asserts both queries agree
+  on it; add a case there when an activity entry gains a historical
+  query.
 
 - `system_stats` columns are platform-specific. `processor_time_percent`,
   `user_time_percent`, `privileged_time_percent` and
@@ -1164,6 +1186,22 @@ conventions from that change hold across both:
   process's local zone unless `ScanLocation` is set, and `time.Now()` is
   local too, so without the shared helper an alerter in a non-UTC zone
   would write rows under one key and look them up under another.
+
+- Rows the cycle does not rewrite are pruned (#567, PR #569 review).
+  `calculateBaselines` captures `cycleStart` (truncated to the
+  microsecond) and, after each metric's historical query succeeds,
+  calls `pruneStaleBaselines`, which runs
+  `DeleteStaleMetricBaselines(metric, cycleStart)` to delete that
+  metric's rows with `last_calculated < cycleStart`. This covers
+  buckets that drop below `minSamplesForTimePeriod`, groups with no
+  samples left in the lookback, and metrics whose query returns
+  nothing. A failed historical query skips the prune, and so does any
+  failed upsert for the metric (the `calculate*Baseline` helpers return
+  false), since a row that failed to upsert keeps its old
+  `last_calculated` and would otherwise be deleted. Upserts must keep
+  setting `LastCalculated` to `time.Now()`, or the prune deletes fresh
+  rows.
+  `engine/baselines_stale_integration_test.go` pins it.
 
 `detectAnomalies` loops rules on the outside so `GetLatestMetricValues`
 runs once per rule, resolves the blacked-out connection set once per
@@ -1864,3 +1902,7 @@ run.
   (`collectDatabaseSummaries`, `respondDatabaseSummariesError`), with
   `42P01` kept as an empty success and NULL-tolerant scans in the five
   helpers.
+- #567: The `pg_stat_activity` historical queries gained the latest
+  queries' `backend_type = 'client backend'` filter, and
+  `connection_utilization_percent`'s historical denominator became the
+  `max_connections` in force at each sample.

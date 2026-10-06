@@ -443,20 +443,40 @@ client address, before and after snapshots and a hash chain.
   point the primary at a decoy, let the server start slot 2, delete
   the decoy, restore the primary). A second rotation promotes slot 2
   unchanged into slot 1 at the first event under the third key, so
-  A-B-C reads as exit 3; promoting a planted slot 2 gains nothing,
-  since slot 2 is then bound to the planted value. In a rotation-shaped
+  A-B-C reads as exit 3; slot 1 keeps the slot-1 fields promotion
+  overwrote in `bound_event_id`, `bound_event_hash` and `bound_mac`
+  (set only by promotion, only on id 1), because the promoted MAC is
+  the slot-2 rendering over them, and `primaryTailVerifiesUnder`
+  checks a promoted slot 1 with that rendering. Between a rotation and
+  the first write under the new key, case 4 of `checkRotatedAuditTail`
+  can match slot 2 by id and hash only (security audit VULN-001), so
+  cutting old-key rows, rewriting the sequence and planting slot 2
+  verifies as exit 3, before and after promotion; only
+  `-previous-secret-file` catches it. `proveAuditReanchorTail` checks
+  slot 2 under the previous key while it fails under the current one
+  (before promotion), else slot 1 binding-aware, and
+  `proveAuditReanchorPlan` runs it even when the history proof failed,
+  so the reason names the tail. Operators are told to re-anchor with
+  the previous secret after each rotation, before the next. A genuine
+  log spanning three keys never proves unattended: `proveAuditHistory`
+  needs every history row under one previous key. In a rotation-shaped
   log, `verifyAuditTailAfterKeyChange` requires the primary at the last
   failing row and slot 2 at the newest row, verifying; a log where
   every row verifies checks the primary alone. `proveAuditReanchorTail`
-  must verify the primary under `-previous-secret-file` before
-  `-confirm-rechain` proceeds. Rows carry hash version 3; a v3 newest
-  row with no primary is tampering. `seedAuditTail` anchors a v2 log at
-  open only when the sequence agrees and the newest row verifies under
-  the key in use. The re-chain and re-anchor reset both slots
-  (`resetAuditTail`), and `migrateAuditTailSlots` rebuilds a
-  pre-release single-slot table whose `CHECK (id = 1)` would refuse
-  slot 2. Any new path that writes `audit_tail`, or any "self-heal"
-  that seeds an anchor when it is found missing, reopens #544.
+  must verify under `-previous-secret-file` before `-confirm-rechain`
+  proceeds. Rows carry hash version 3; a v3 newest row with no primary
+  is tampering. `seedAuditTail` anchors a v2 log at open only when the
+  sequence agrees and the newest row verifies under the key in use.
+  The re-chain and re-anchor reset both slots (`resetAuditTail`).
+  `ensureAuditSchema` refuses any trigger acting on `audit_tail`
+  (before migrating, whose rename would drop it), migrates the two
+  pre-release definitions (`auditTailLegacyDDLs`) and then requires the
+  normalised definition to equal `auditTailDDL`; failures wrap
+  `ErrAuditChainBroken`, and `verifyAuditSchema` repeats the check, so
+  `-verify-audit-log` exits 2. Starting and promoting slot 2 each log a
+  `[WARN]` to the server log. Any new path that writes `audit_tail`,
+  or any "self-heal" that seeds an anchor when it is found missing,
+  reopens #544.
 - Snapshots never carry `password_hash`, and no token material reaches
   a row, a log line or a response.
 
@@ -479,8 +499,12 @@ plainly rather than crediting the design with more than it does.
   the log, anchor and sequence row reads as empty. In a log never
   rotated, failing row 1 and pointing the primary at it turns a tail
   cut into exit 3 only via a decoy and a server write, and
-  `-confirm-rechain` refuses it.
-  Triggers planted on `audit_tail` can only cause false failures.
+  `-confirm-rechain` refuses it. Exit 3 vouches for nothing written
+  under the previous key (VULN-002): verification checks neither those
+  rows nor slot 1, so a cut back to any earlier old-key row reads as
+  exit 3; only `-previous-secret-file` on the re-anchor checks them,
+  and the interactive re-anchor warns "NOT PROVEN" before asking.
+  `-verify-audit-log` deliberately takes no previous secret.
 - Head deletion (#502) is caught against the head the newest purge
   event recorded (`oldest_retained_hash`); a record-less purge event
   never overrides an older recorded one, in the verifier

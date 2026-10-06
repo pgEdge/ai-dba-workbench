@@ -240,13 +240,21 @@ func (s *AuthStore) proveAuditReanchorPlan(plan *AuditRechainPlan,
 	}
 	// The history is not proven while the tail anchor the previous
 	// secret left behind it does not show that nothing written under
-	// that secret is missing from its end.
-	if proof == nil {
-		proof, err = s.proveAuditReanchorTail(s.db, previousKey,
-			plan.reanchor.through, plan.reanchor.throughHash)
-		if err != nil {
-			return err
-		}
+	// that secret is missing from its end. The anchor is checked even
+	// where the rows already fail, as they do in a log written under
+	// more than two secrets, so that the plan says whether events have
+	// also been deleted from the end of those written under the
+	// previous one.
+	tailProof, err := s.proveAuditReanchorTail(s.db, previousKey,
+		plan.reanchor.through, plan.reanchor.throughHash)
+	if err != nil {
+		return err
+	}
+	switch {
+	case proof == nil:
+		proof = tailProof
+	case tailProof != nil:
+		proof = fmt.Errorf("%w; and %w", proof, tailProof)
 	}
 	plan.HistoryProofErr = proof
 	plan.HistoryProven = proof == nil

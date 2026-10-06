@@ -142,7 +142,8 @@ func TestReanchorCommandDeclinedChangesNothing(t *testing.T) {
 	assertOutputContains(t, out.String(), "Verification fails:",
 		"do not proceed", "Oldest event accepted:", "Its hash:",
 		"Previously recorded:   (none)", "Accepted as history:",
-		"no longer shown to have been written", "to proceed",
+		"no longer shown to have been written", "WARNING: NOT PROVEN",
+		"no previous secret was given", "to proceed",
 		"Aborted. Nothing has been changed.")
 
 	err := verifyAuditLogCommand(dir)
@@ -611,6 +612,48 @@ func TestPrintAuditReanchorEvidence(t *testing.T) {
 			if tt.never != "" && strings.Contains(out.String(), tt.never) {
 				t.Errorf("expected %q to be removed, got %q", tt.never,
 					out.String())
+			}
+		})
+	}
+}
+
+// TestPrintAuditReanchorWarning checks the warning repeated before the
+// question: only when there is history nothing has proven, with the
+// reason, cleaned of control characters, when a previous secret was
+// given.
+func TestPrintAuditReanchorWarning(t *testing.T) {
+	tests := []struct {
+		name  string
+		plan  auth.AuditRechainPlan
+		wants []string
+	}{
+		{name: "no history", plan: auth.AuditRechainPlan{}},
+		{name: "proven", plan: auth.AuditRechainPlan{HistoryEvents: 3,
+			PreviousKeyGiven: true, HistoryProven: true}},
+		{name: "no previous secret", plan: auth.AuditRechainPlan{
+			HistoryEvents: 3},
+			wants: []string{"NOT PROVEN", "the 3 event(s)",
+				"no previous secret was given"}},
+		{name: "unproven", plan: auth.AuditRechainPlan{HistoryEvents: 2,
+			PreviousKeyGiven: true,
+			HistoryProofErr:  errors.New("tail \x1b[2Jrefused")},
+			wants: []string{"NOT PROVEN", "tail", "refused"}},
+		{name: "unproven without a reason", plan: auth.AuditRechainPlan{
+			HistoryEvents: 2, PreviousKeyGiven: true},
+			wants: []string{"NOT PROVEN", "(no reason given)"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var out bytes.Buffer
+			printAuditReanchorWarning(&out, tt.plan)
+			if len(tt.wants) == 0 && out.Len() != 0 {
+				t.Errorf("expected nothing, got:\n%s", out.String())
+			}
+			assertOutputContains(t, out.String(), tt.wants...)
+			if strings.Contains(out.String(), "\x1b") {
+				t.Errorf("expected control characters to be removed, got "+
+					"%q", out.String())
 			}
 		})
 	}

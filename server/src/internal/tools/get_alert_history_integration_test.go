@@ -305,7 +305,7 @@ func TestGetAlertHistoryArgumentsIntegration(t *testing.T) {
 		want string
 	}{
 		{"connection_id not an integer", map[string]any{"connection_id": "x"}, "Invalid 'connection_id'"},
-		{"unknown connection", map[string]any{"connection_id": 99999}, "Valid connection IDs are"},
+		{"unknown connection", map[string]any{"connection_id": 99999}, "Connections you can access include"},
 		{"rule_id not an integer", map[string]any{"rule_id": "x"}, "Invalid 'rule_id'"},
 		{"time_start unparseable", map[string]any{"time_start": "soon"}, "Invalid 'time_start'"},
 		{"limit out of range", map[string]any{"limit": 500}, "Invalid 'limit'"},
@@ -345,14 +345,16 @@ func TestGetAlertHistoryArgumentsIntegration(t *testing.T) {
 		if err != nil {
 			t.Fatalf("handler error: %v", err)
 		}
-		if !resp.IsError || !strings.Contains(resp.Content[0].Text, "Use list_connections to see available connections") {
+		if !resp.IsError || !strings.Contains(resp.Content[0].Text, "Use list_connections to see the connections you can access") {
 			t.Errorf("unexpected response %+v", resp.Content)
 		}
 	})
 }
 
 // TestGetAlertHistorySingleConnectionDeniedIntegration proves the
-// single-connection gate refuses a connection the caller cannot see.
+// single-connection gate refuses a connection the caller cannot see, with
+// the same message as for a connection that does not exist (GitHub issue
+// #571).
 func TestGetAlertHistorySingleConnectionDeniedIntegration(t *testing.T) {
 	f := newAlertHistoryFixture(t)
 	store, authCleanup := newRBACTestStore(t)
@@ -365,7 +367,7 @@ func TestGetAlertHistorySingleConnectionDeniedIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("handler error: %v", err)
 	}
-	if !resp.IsError || !strings.Contains(resp.Content[0].Text, "Access denied") {
+	if !resp.IsError || !strings.Contains(resp.Content[0].Text, connectionNotAccessibleMsg) {
 		t.Errorf("expected access denied, got %+v", resp.Content)
 	}
 }

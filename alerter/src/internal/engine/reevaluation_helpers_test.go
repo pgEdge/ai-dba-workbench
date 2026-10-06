@@ -356,7 +356,7 @@ func TestParseReevaluationResponseEdgeCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			decision, confidence := parseReevaluationResponse(tt.response)
+			decision, confidence, _ := parseReevaluationResponse(tt.response)
 			if decision != tt.expectedDecision {
 				t.Errorf("parseReevaluationResponse(%q) = %q, expected %q",
 					tt.response, decision, tt.expectedDecision)

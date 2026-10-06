@@ -94,8 +94,9 @@ func stripCodeFence(s string) string {
 // parseDecisionJSON attempts to decode response as a decision object, first
 // directly, then after stripping markdown fences, then by extracting an
 // embedded JSON object. It returns the canonical decision, its confidence,
-// and whether a valid decision was found.
-func parseDecisionJSON(response string, cfg llmDecisionConfig) (string, float64, bool) {
+// whether a valid decision was found, and whether any candidate decoded as
+// JSON at all.
+func parseDecisionJSON(response string, cfg llmDecisionConfig) (decision string, confidence float64, ok bool, parsed bool) {
 	candidates := []string{
 		response,
 		stripCodeFence(response),
@@ -119,12 +120,13 @@ func parseDecisionJSON(response string, cfg llmDecisionConfig) (string, float64,
 		if err := json.Unmarshal([]byte(candidate), &result); err != nil {
 			continue
 		}
-		if canonical, ok := cfg.ValidDecisions[strings.ToLower(result.Decision)]; ok {
-			return canonical, result.Confidence, true
+		parsed = true
+		if canonical, valid := cfg.ValidDecisions[strings.ToLower(result.Decision)]; valid {
+			return canonical, result.Confidence, true, true
 		}
 	}
 
-	return "", 0, false
+	return "", 0, false, parsed
 }
 
 // parseLLMDecision parses an LLM response string into a decision and
@@ -132,9 +134,22 @@ func parseDecisionJSON(response string, cfg llmDecisionConfig) (string, float64,
 // JSON parsing (tolerating markdown code fences and surrounding prose),
 // then falls back to deterministic keyword matching in the response text.
 func parseLLMDecision(response string, cfg llmDecisionConfig) (string, float64) {
+	decision, confidence, _ := parseLLMDecisionFound(response, cfg)
+	return decision, confidence
+}
+
+// parseLLMDecisionFound behaves as parseLLMDecision, and also reports
+// whether the response actually contained a decision. It returns false
+// when neither the JSON nor the keyword matching found one and the
+// configured default was returned in its place, and also when the
+// response was JSON without a recognized decision: a keyword found in
+// its reasoning text is still returned, so parseLLMDecision behaves as
+// before, but it is not the model's decision.
+func parseLLMDecisionFound(response string, cfg llmDecisionConfig) (string, float64, bool) {
 	// Try JSON parsing first, including fenced and embedded variants.
-	if decision, confidence, ok := parseDecisionJSON(response, cfg); ok {
-		return decision, confidence
+	decision, confidence, ok, parsedJSON := parseDecisionJSON(response, cfg)
+	if ok {
+		return decision, confidence, true
 	}
 
 	// Fall back to text matching. Keyword groups are evaluated in order so
@@ -144,12 +159,12 @@ func parseLLMDecision(response string, cfg llmDecisionConfig) (string, float64) 
 	for _, group := range cfg.TextKeywords {
 		for _, keyword := range group.Keywords {
 			if strings.Contains(lowerResponse, keyword) {
-				return group.Decision, cfg.FallbackConfidence
+				return group.Decision, cfg.FallbackConfidence, !parsedJSON
 			}
 		}
 	}
 
-	return cfg.DefaultDecision, cfg.DefaultConfidence
+	return cfg.DefaultDecision, cfg.DefaultConfidence, false
 }
 
 // reevaluationDecisionConfig returns the parsing configuration for

@@ -341,7 +341,7 @@ func TestClearAlertAndUpdateAlertReevaluation(t *testing.T) {
 	}
 
 	// UpdateAlertReevaluation increments count.
-	if err := ds.UpdateAlertReevaluation(ctx, id); err != nil {
+	if err := ds.UpdateAlertReevaluation(ctx, id, nil); err != nil {
 		t.Fatalf("UpdateAlertReevaluation: %v", err)
 	}
 	var count int
@@ -350,6 +350,72 @@ func TestClearAlertAndUpdateAlertReevaluation(t *testing.T) {
 	}
 	if count != 1 {
 		t.Errorf("reevaluation_count = %d, want 1", count)
+	}
+}
+
+// readReevaluationState returns the re-evaluation count, fingerprint and
+// last re-evaluated time stored for an alert.
+func readReevaluationState(t *testing.T, pool *pgxpool.Pool, id int64) (int, *string, *time.Time) {
+	t.Helper()
+	var count int
+	var fp *string
+	var at *time.Time
+	if err := pool.QueryRow(context.Background(), `
+		SELECT reevaluation_count, reevaluation_fingerprint, last_reevaluated_at
+		FROM alerts WHERE id = $1
+	`, id).Scan(&count, &fp, &at); err != nil {
+		t.Fatalf("read re-evaluation state of alert %d: %v", id, err)
+	}
+	return count, fp, at
+}
+
+// TestReevaluationFingerprintLifecycle covers storing, clearing and
+// deferring a re-evaluation fingerprint (GitHub issue #575): a "keep"
+// stores it, DeferAlertReevaluation moves only the timestamp, and a nil
+// fingerprint clears the stored one.
+func TestReevaluationFingerprintLifecycle(t *testing.T) {
+	ds, pool, cleanup := newFullTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	connID := insertTestConnection(t, pool, "fp-conn")
+	ruleID := insertTestRule(t, pool, "fp_rule", "x", ">", 1, "warning", true)
+	id := insertActiveThresholdAlert(t, pool, connID, ruleID, nil)
+
+	fp := "abc123"
+	if err := ds.UpdateAlertReevaluation(ctx, id, &fp); err != nil {
+		t.Fatalf("UpdateAlertReevaluation with fingerprint: %v", err)
+	}
+	count, got, first := readReevaluationState(t, pool, id)
+	if count != 1 || got == nil || *got != fp || first == nil {
+		t.Fatalf("after keep: count=%d fingerprint=%v at=%v, want 1, %q, set", count, got, first, fp)
+	}
+
+	// Backdate the timestamp so the deferral is visible.
+	if _, err := pool.Exec(ctx,
+		`UPDATE alerts SET last_reevaluated_at = NOW() - INTERVAL '1 hour' WHERE id = $1`, id); err != nil {
+		t.Fatalf("backdate last_reevaluated_at: %v", err)
+	}
+	if err := ds.DeferAlertReevaluation(ctx, id); err != nil {
+		t.Fatalf("DeferAlertReevaluation: %v", err)
+	}
+	count, got, deferred := readReevaluationState(t, pool, id)
+	if count != 1 {
+		t.Errorf("deferral changed reevaluation_count to %d, want 1", count)
+	}
+	if got == nil || *got != fp {
+		t.Errorf("deferral changed fingerprint to %v, want %q", got, fp)
+	}
+	if deferred == nil || time.Since(*deferred) > time.Minute {
+		t.Errorf("deferral left last_reevaluated_at at %v, want about now", deferred)
+	}
+
+	if err := ds.UpdateAlertReevaluation(ctx, id, nil); err != nil {
+		t.Fatalf("UpdateAlertReevaluation without fingerprint: %v", err)
+	}
+	count, got, _ = readReevaluationState(t, pool, id)
+	if count != 2 || got != nil {
+		t.Errorf("after failed call: count=%d fingerprint=%v, want 2, nil", count, got)
 	}
 }
 

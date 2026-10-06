@@ -165,7 +165,8 @@ CREATE TABLE alerts (
     ai_analysis TEXT,
     ai_analysis_metric_value REAL,
     last_reevaluated_at TIMESTAMPTZ,
-    reevaluation_count INTEGER NOT NULL DEFAULT 0
+    reevaluation_count INTEGER NOT NULL DEFAULT 0,
+    reevaluation_fingerprint TEXT
 );
 
 CREATE TABLE alert_acknowledgments (

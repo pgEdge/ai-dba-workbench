@@ -94,16 +94,46 @@ http:
         workbench-readonly: Read Only
 ```
 
-Every setting in the `http.auth` section is read once, while the server
-is starting, and is then held for the life of the process. None of them
-can be changed by reloading the configuration: sending `SIGHUP` re-reads
-the file and reports each changed authentication setting as requiring a
-restart, but the running server goes on using the values it started
-with. That applies to `local.enabled` and to every OIDC option, the
-claim names and the authorisation mapping included, so narrowing
-`allowed_email_domains` or removing a group from `group_map` whilst
-containing an incident takes effect only once the server has been
-restarted.
+Sending `SIGHUP` re-reads the configuration file, and the server logs
+each changed authentication setting as either applied or requiring a
+restart. The login policy applies from the next login without a
+restart: `provision_users`, `allowed_email_domains`, `superuser_group`,
+`group_map`, `button_label`, and setting `enabled` to `false`, which
+switches federated login off at once and refuses a login that is
+already in progress. A reload therefore lets you stop just-in-time
+provisioning, narrow the allowed email domains or remap a Workbench
+group away from a compromised provider group whilst containing an
+incident. The changes take effect at each person's next login, as
+described in Revocation and Its Limits below, and a Workbench group
+removed from `group_map` altogether stops being reconciled and keeps
+its current members, so remap the group rather than removing it when
+the aim is to revoke membership. Clearing `superuser_group` likewise
+revokes nothing: federated users keep their current superuser status,
+and no later login changes it, so point the setting at a group that no
+one belongs to when the aim is to demote every federated superuser.
+
+Switching federated login off stops new federated logins only. Sessions
+already established and API tokens already issued stay valid until they
+expire, so follow the steps in Revocation and Its Limits below to cut
+them off at once. When the server started with `local.enabled` set to
+`false`, a reload that switches federated login off is refused and the
+previous configuration is kept, because local login cannot be switched
+back on without a restart and the server would otherwise be left with
+no way to sign in.
+
+The server logs a warning, as well as the note that the change applied,
+when a reload widens access: switching `provision_users` on, emptying
+`allowed_email_domains`, setting or clearing `superuser_group`, or
+removing a Workbench group from `group_map`.
+
+The identity provider connection is built once, at start-up, from
+`issuer`, `client_id`, `client_secret`, `client_secret_file`,
+`redirect_url`, `scopes` and the three claim names, so a change to any
+of those requires a restart. Setting `enabled` to `true` applies on
+reload only when the server started with federated login switched on;
+otherwise no provider was discovered and the server must be restarted.
+`local.enabled` and `max_failed_attempts_before_lockout` also require a
+restart.
 
 ### Local Login Settings
 

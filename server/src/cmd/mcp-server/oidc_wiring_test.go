@@ -172,8 +172,10 @@ func TestAuthCapabilitiesReportsTheLoginPageState(t *testing.T) {
 }
 
 func TestHandleCapabilitiesReportsTheAuthBlock(t *testing.T) {
-	handler := handleCapabilities(true, 50, authCapabilitiesInfo{
-		LocalEnabled: true, OIDCEnabled: true, OIDCLabel: "Sign in with Acme",
+	handler := handleCapabilities(true, 50, func() authCapabilitiesInfo {
+		return authCapabilitiesInfo{
+			LocalEnabled: true, OIDCEnabled: true, OIDCLabel: "Sign in with Acme",
+		}
 	})
 
 	rec := httptest.NewRecorder()
@@ -292,7 +294,9 @@ func TestSetupHandlersRedirectsTheOIDCStartEndpointWhenDisabled(t *testing.T) {
 }
 
 func TestHandleCapabilitiesRejectsNonGET(t *testing.T) {
-	handler := handleCapabilities(false, 50, authCapabilitiesInfo{LocalEnabled: true})
+	handler := handleCapabilities(false, 50, func() authCapabilitiesInfo {
+		return authCapabilitiesInfo{LocalEnabled: true}
+	})
 
 	rec := httptest.NewRecorder()
 	handler(rec, httptest.NewRequest(http.MethodPost, "/api/v1/capabilities", nil))

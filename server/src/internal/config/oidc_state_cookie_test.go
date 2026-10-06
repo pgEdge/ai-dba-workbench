@@ -154,8 +154,8 @@ func TestUnprefixedStateCookieAllowedDefaultsToFalse(t *testing.T) {
 }
 
 // TestReloadRefusesAnUnprefixedStateCookie checks that a SIGHUP reload
-// applies the same rule as start-up. The OIDC settings take effect only
-// at a restart, so the running server is unaffected either way, but a
+// applies the same rule as start-up. The state cookie's name is fixed at
+// start-up, so the running server is unaffected either way, but a
 // reload that accepted the file would leave a configuration on disk that
 // the next start refuses; rejecting it now tells the operator at once.
 func TestReloadRefusesAnUnprefixedStateCookie(t *testing.T) {

@@ -704,6 +704,11 @@ func (s *Server) Run(flags *Flags, configPath string) error {
 	// This ensures X-Forwarded-For headers are only trusted from configured proxies
 	ipExtractor := auth.NewIPExtractor(s.cfg.HTTP.TrustedProxies)
 
+	// The reloadable configuration is created before the handlers so
+	// that those which apply a reload live can read through it; the
+	// SIGHUP listener below is what drives it.
+	reloadableCfg := config.NewReloadableConfig(s.cfg, configPath, flags.ToReloadCLIFlags())
+
 	// Setup HTTP handlers
 	deps := &HandlerDependencies{
 		AuthStore:    s.authStore,
@@ -719,6 +724,7 @@ func (s *Server) Run(flags *Flags, configPath string) error {
 
 		OIDCProvider: s.oidcProvider,
 		OIDCStateKey: s.oidcStateKey,
+		LiveConfig:   reloadableCfg.Get,
 
 		RegisterCloser: s.registerHandlerCloser,
 	}
@@ -728,7 +734,7 @@ func (s *Server) Run(flags *Flags, configPath string) error {
 	s.logStartupInfo()
 
 	// Setup SIGHUP handler for configuration reload; Close stops it.
-	s.registerHandlerCloser(s.setupSIGHUP(flags, configPath))
+	s.registerHandlerCloser(s.setupSIGHUP(reloadableCfg))
 
 	// Setup SIGTERM/SIGINT handler for graceful shutdown and Go
 	// coverage-counter flush.
@@ -801,10 +807,7 @@ func (s *Server) setupShutdownHandler() {
 // returns a function that unregisters the handler and waits for its
 // goroutine to exit, so no reload can write to os.Stderr afterwards;
 // the function is safe to call more than once.
-func (s *Server) setupSIGHUP(flags *Flags, configPath string) func() {
-	cliFlags := flags.ToReloadCLIFlags()
-	reloadableCfg := config.NewReloadableConfig(s.cfg, configPath, cliFlags)
-
+func (s *Server) setupSIGHUP(reloadableCfg *config.ReloadableConfig) func() {
 	// Register callback to update client manager when database config changes
 	reloadableCfg.OnReload(func(newCfg *config.Config) {
 		s.clientManager.UpdateDatabaseConfig(newCfg.Database)

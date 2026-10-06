@@ -385,6 +385,22 @@ project adheres to
 
 ### Changed
 
+- Apply the federated login policy under `http.auth.oidc` on a
+  `SIGHUP` configuration reload instead of requiring a restart (#484).
+  `provision_users`, `allowed_email_domains`, `superuser_group`,
+  `group_map` and `button_label` now take effect from the next login,
+  and setting `enabled` to `false` switches federated login off at
+  once, so an operator can stop just-in-time provisioning or narrow
+  who may sign in whilst containing an incident. The reload log
+  reports each of these as applied, and warns when a change widens
+  access. A reload that switches federated login off is refused when
+  the server started with local login off, since that would leave no
+  way to sign in. The issuer, client ID, client
+  secret, redirect URL, scopes and claim names still require a
+  restart, as does switching federated login on when the server
+  started with it off, because the identity provider connection is
+  built from them at start-up.
+
 - Raise the default size of the server's datastore connection pool,
   `database.pool_max_conns`, from 4 to 20 (#478). Every API request
   that reads the datastore shares that pool, and a single dashboard

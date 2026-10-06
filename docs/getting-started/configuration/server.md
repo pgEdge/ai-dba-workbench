@@ -1100,13 +1100,16 @@ A `SIGHUP` signal reloads the following settings:
 - Database connection settings.
 - LLM proxy settings.
 - Knowledgebase settings.
+- The federated login policy under `http.auth.oidc`, as
+  described in
+  [Single Sign-On](../../admin-guide/managing-users-and-permissions/sso.md).
 
 A database setting given on the command line at start-up,
 such as `-db-host`, keeps priority over the configuration
 file on every reload, as it does at start-up.
 
-Authentication settings and HTTP server settings
-require a full restart. A reload keeps the value the
+The other authentication settings and the HTTP server
+settings require a full restart. A reload keeps the value the
 server started with and warns about each of the
 settings whose change it detects, among them
 `http.auth.max_failed_attempts_before_lockout`, which

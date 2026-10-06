@@ -435,7 +435,8 @@ func TestSetupSIGHUPReloadsTheConfiguration(t *testing.T) {
 	out := captureStderr(t, func() {
 		// Stop the handler before captureStderr restores os.Stderr, so
 		// no reload can write to the closed pipe.
-		stop := server.setupSIGHUP(&Flags{}, configPath)
+		stop := server.setupSIGHUP(config.NewReloadableConfig(cfg, configPath,
+			(&Flags{}).ToReloadCLIFlags()))
 		defer stop()
 		defer stop() // a second call must be a no-op
 		if err := syscall.Kill(os.Getpid(), syscall.SIGHUP); err != nil {

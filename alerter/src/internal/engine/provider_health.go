@@ -666,6 +666,19 @@ func (h *healthTrackingReasoning) ModelName() string {
 	return h.inner.ModelName()
 }
 
+// ProviderName implements llm.ReasoningProvider. It is the wrapped
+// provider's own name, so the re-evaluation fingerprint (GitHub issue
+// #575) is the same with or without health tracking.
+func (h *healthTrackingReasoning) ProviderName() string {
+	return h.inner.ProviderName()
+}
+
+// SystemPrompt implements llm.ReasoningProvider by delegating to the
+// wrapped provider.
+func (h *healthTrackingReasoning) SystemPrompt() string {
+	return h.inner.SystemPrompt()
+}
+
 // healthCheck makes one cheap call and raises the alert for tier at
 // once if it fails.
 func (h *healthTrackingReasoning) healthCheck(ctx context.Context, tier providerTier) error {

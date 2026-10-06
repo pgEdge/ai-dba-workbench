@@ -721,7 +721,9 @@ func (f *fakeReasoner) Classify(context.Context, string) (string, error) {
 	return "OK", nil
 }
 
-func (f *fakeReasoner) ModelName() string { return "reason-model" }
+func (f *fakeReasoner) ModelName() string    { return "reason-model" }
+func (f *fakeReasoner) ProviderName() string { return "reason-provider" }
+func (f *fakeReasoner) SystemPrompt() string { return "reason system prompt" }
 
 func TestHealthTrackingWrappers(t *testing.T) {
 	h := newTrackerHarness(1)
@@ -933,4 +935,17 @@ func TestInitProviderHealth(t *testing.T) {
 			t.Error("unexpected wrapping")
 		}
 	})
+}
+
+// TestHealthTrackingReasoningDelegatesIdentity pins that the wrapper
+// reports the wrapped provider's name and system prompt, which feed the
+// re-evaluation fingerprint (GitHub issue #575).
+func TestHealthTrackingReasoningDelegatesIdentity(t *testing.T) {
+	rsn := &healthTrackingReasoning{inner: &fakeReasoner{}, provider: "anthropic"}
+	if got := rsn.ProviderName(); got != "reason-provider" {
+		t.Errorf("ProviderName() = %q, want the wrapped provider's", got)
+	}
+	if got := rsn.SystemPrompt(); got != "reason system prompt" {
+		t.Errorf("SystemPrompt() = %q, want the wrapped provider's", got)
+	}
 }

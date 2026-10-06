@@ -443,10 +443,11 @@ func (s *AuthStore) reanchorAuditLogTx(actor Actor,
 	if err := s.recordAudit(tx, ev); err != nil {
 		return fmt.Errorf("failed to record the re-chain event: %w", err)
 	}
-	// The operator has accepted the log as it stands, so the tail
-	// anchor names the re-chain event from now on, whatever it named
-	// before. What it named is in the reason when that was the problem.
-	if err := s.writeAuditTail(tx, ev); err != nil {
+	// The operator has accepted the log as it stands, so the primary
+	// tail anchor names the re-chain event from now on, whatever it
+	// named before, and the current-key anchor is removed. What they
+	// named is in the reason when that was the problem.
+	if err := s.resetAuditTail(tx, ev); err != nil {
 		return err
 	}
 

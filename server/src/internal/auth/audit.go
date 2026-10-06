@@ -1326,8 +1326,8 @@ func (s *AuthStore) rechainAuditLogTx(actor Actor, plan AuditRechainPlan) (
 		return 0, fmt.Errorf("failed to record the re-chain event: %w", err)
 	}
 	// Every hash in the log has just changed, so whatever the tail
-	// anchor named is gone; it starts again at the re-chain event.
-	if err := s.writeAuditTail(tx, ev); err != nil {
+	// anchors named is gone; they start again at the re-chain event.
+	if err := s.resetAuditTail(tx, ev); err != nil {
 		return 0, err
 	}
 
@@ -1364,15 +1364,15 @@ func (s *AuthStore) recordAudit(tx *sql.Tx, ev *AuditEvent) error {
 		return errors.New("audit event is nil")
 	}
 
-	// The newest row and the tail anchor are read together, before the
-	// insert, because whether the anchor may move on to this event
+	// The newest row and the tail anchors are read together, before the
+	// insert, because whether an anchor may move on to this event
 	// depends on what it named until now.
 	before, err := readAuditTailState(tx)
 	if err != nil {
 		return fmt.Errorf("failed to read previous audit hash: %w", err)
 	}
 	prevHash := before.newestHash
-	advance, err := s.mayAdvanceAuditTail(tx, before)
+	move, err := s.planAuditTailMove(tx, before)
 	if err != nil {
 		return err
 	}
@@ -1446,10 +1446,7 @@ func (s *AuthStore) recordAudit(tx *sql.Tx, ev *AuditEvent) error {
 	}
 	ev.ID = id
 
-	if !advance {
-		return nil
-	}
-	return s.writeAuditTail(tx, ev)
+	return s.applyAuditTailMove(tx, move, before, ev)
 }
 
 // recordFailure records a failed mutation in its own short transaction,
@@ -1989,7 +1986,11 @@ func normalizeSchemaSQL(text string) string {
 //     far the log had reached. Deleting every version 3 row with the
 //     anchor, and the sequence rewritten to match, leaves a log that
 //     looks as it did before this build first wrote to it, so an
-//     upgrade leaves exposed the events written before it. A log wiped
+//     upgrade leaves exposed the events written before it. Likewise,
+//     deleting every row written since the last change of secret with
+//     the current-key anchor, and the sequence rewritten to match,
+//     leaves the log as it was at the change, which reads as a key
+//     mismatch and which the unattended re-anchor accepts. A log wiped
 //     entirely, anchor and sequence row included, reads as one that has
 //     never held an event.
 //   - Deleting the oldest rows is caught by the head check in

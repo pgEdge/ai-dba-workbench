@@ -2483,9 +2483,13 @@ project adheres to
   deleted event, or pointed at a planted event without the secret,
   stays as it is until an operator runs `-rechain-audit-log`. After a
   change of server secret the record stays with the last event written
-  under the old one; verification accepts it there only in a log with
-  the shape of a changed secret, and `-confirm-rechain` requires it to
-  verify under `-previous-secret-file`. Running an earlier
+  under the old one, where verification accepts it only in a log with
+  the shape of a changed secret and `-confirm-rechain` requires it to
+  verify under `-previous-secret-file`, and a second record covers the
+  events written under the new secret, so deleting them is reported
+  with status 2 as well. A second change of secret before the log is
+  re-anchored moves the second record into the first's place, so such
+  a log still reports status 3. Running an earlier
   release against the same `auth.db` afterwards is reported as a
   version downgrade. (#544)
 

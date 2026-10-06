@@ -589,6 +589,9 @@ func (s *AuthStore) ensureAuditSchema() error {
 	if _, err := s.db.Exec(auditTailDDL); err != nil {
 		return fmt.Errorf("failed to create audit_tail table: %w", err)
 	}
+	if err := s.migrateAuditTailSlots(); err != nil {
+		return err
+	}
 
 	if _, err := s.db.Exec(auditChainIndexDDL); err != nil {
 		return fmt.Errorf(

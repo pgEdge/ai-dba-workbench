@@ -425,26 +425,38 @@ client address, before and after snapshots and a hash chain.
   status. `MAX(id)` and the sequence are read by one statement, so a
   server insert whilst the CLI, which opens its own store, is verifying
   cannot separate them.
-- The tail anchor (`audit_tail.go`, #544) is one `audit_tail` row
-  naming the newest event by id and hash under an HMAC with its own
-  label; `recordAudit` decides before its insert (the insert moves
-  `sqlite_sequence`) whether to move it on, and does so only from an
-  anchor that names the newest row and verifies under the key in use,
-  or from an empty log whose sequence never issued an id. Anything
-  else, a changed secret included, is left stranded as evidence:
-  moving it on when both it and the newest row failed let a decoy row
-  copying the next row's hash get the anchor re-signed over a
-  truncated tail. In a log with the shape of a rotation,
-  `verifyAuditTailAfterKeyChange` accepts a stranded anchor only when
-  it names the last failing row, and `proveAuditReanchorTail` must
-  verify it under `-previous-secret-file` before `-confirm-rechain`
-  proceeds. Rows carry hash version 3; a v3 newest row with no anchor
-  is tampering. `seedAuditTail` anchors a v2 log at open only when the
-  sequence agrees and the newest row verifies under the key in use. The
-  re-chain and re-anchor overwrite the anchor
-  unconditionally. Any new path that writes `audit_tail`, or any
-  "self-heal" that seeds an anchor when it is found missing, reopens
-  #544.
+- The tail anchor (`audit_tail.go`, #544) is two `audit_tail` slots.
+  The primary (id 1) names the newest event by id and hash under an
+  HMAC with its own label; `planAuditTailMove` decides before the
+  insert (the insert moves `sqlite_sequence`), and moves it on only
+  when it names the newest row and verifies under the key in use, or
+  for the first event of a log whose sequence never issued an id.
+  Anything else is left stranded as evidence: moving it on when both
+  it and the newest row failed let a decoy row copying the next row's
+  hash get the anchor re-signed over a truncated tail. A changed
+  secret strands the primary at the last row under the old key, and
+  the current-key slot (id 2) covers the rows after it: started when
+  the primary names the newest row, both fail and slot 2 is absent,
+  then advanced by the same rule. Its HMAC (`auditTailCurrentMAC`) also
+  covers the whole primary row, because without that the decoy works
+  again against a rotated log (save the primary, cut, delete slot 2,
+  point the primary at a decoy, let the server start slot 2, delete
+  the decoy, restore the primary). A second rotation promotes slot 2
+  unchanged into slot 1 at the first event under the third key, so
+  A-B-C reads as exit 3; promoting a planted slot 2 gains nothing,
+  since slot 2 is then bound to the planted value. In a rotation-shaped
+  log, `verifyAuditTailAfterKeyChange` requires the primary at the last
+  failing row and slot 2 at the newest row, verifying; a log where
+  every row verifies checks the primary alone. `proveAuditReanchorTail`
+  must verify the primary under `-previous-secret-file` before
+  `-confirm-rechain` proceeds. Rows carry hash version 3; a v3 newest
+  row with no primary is tampering. `seedAuditTail` anchors a v2 log at
+  open only when the sequence agrees and the newest row verifies under
+  the key in use. The re-chain and re-anchor reset both slots
+  (`resetAuditTail`), and `migrateAuditTailSlots` rebuilds a
+  pre-release single-slot table whose `CHECK (id = 1)` would refuse
+  slot 2. Any new path that writes `audit_tail`, or any "self-heal"
+  that seeds an anchor when it is found missing, reopens #544.
 - Snapshots never carry `password_hash`, and no token material reaches
   a row, a log line or a response.
 
@@ -460,7 +472,13 @@ plainly rather than crediting the design with more than it does.
   file: restoring an older `audit_tail` row with the rows after it
   deleted, or an older whole file, passes; deleting every v3 row plus
   the anchor (sequence rewritten) returns the log to its pre-upgrade v2
-  state; and wiping the log, anchor and sequence row reads as empty.
+  state; deleting every row since the last rotation plus slot 2
+  (sequence rewritten) returns it to the moment of the rotation, which
+  verifies as exit 3 and which `-confirm-rechain` accepts; and wiping
+  the log, anchor and sequence row reads as empty. In a log never
+  rotated, failing row 1 and pointing the primary at it turns a tail
+  cut into exit 3 only via a decoy and a server write, and
+  `-confirm-rechain` refuses it.
   Triggers planted on `audit_tail` can only cause false failures.
 - Head deletion (#502) is caught against the head the newest purge
   event recorded (`oldest_retained_hash`); a record-less purge event

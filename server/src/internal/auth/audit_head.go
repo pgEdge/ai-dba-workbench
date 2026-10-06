@@ -422,9 +422,9 @@ var errStopAuditWalk = errors.New("stop the audit walk")
 // the shape a changed server secret leaves: one or more rows that do
 // not verify under the key in use, each linked to the one before it,
 // followed either by the end of the log or by rows that all verify and
-// each link to the one before, with no rows lost from the tail and the
-// tail anchor where the old secret left it
-// (verifyAuditTailAfterKeyChange). The server keeps writing after its
+// each link to the one before, with no rows lost from the tail: the
+// primary tail anchor where the old secret left it, and the current-key
+// anchor at the newest row (verifyAuditTailAfterKeyChange). The server keeps writing after its
 // secret changes, and each new row chains onto the last one written
 // under the old secret, so that is exactly what a rotation looks like;
 // a row forged or altered by someone without the key usually breaks a

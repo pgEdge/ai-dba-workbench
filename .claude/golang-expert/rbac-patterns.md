@@ -1125,30 +1125,37 @@ exits 1. `sqlite_sequence` itself is unprotected, so a tail deleted and
 then matched by writing the sequence down passes that comparison, and
 `verifyAuditTail` then calls `verifyAuditTailAnchor` (#544).
 
-The tail anchor lives in `audit_tail.go`: a single-row `audit_tail`
-table (`auditTailDDL`, created by `ensureAuditSchema`) holding the
-newest event's id and hash under `auditTailMAC`, an HMAC with its own
-label. `recordAudit` reads the newest row and the anchor in one
-statement (`readAuditTailState`), asks `mayAdvanceAuditTail` before
-its INSERT, because the insert moves `sqlite_sequence`, and calls
-`writeAuditTail` afterwards only when that allowed it: an anchor that
-names the newest row and verifies under `s.auditKey`, or the first
-event of a never-used log. A stranded anchor, including one a changed
-secret left behind, is left alone on purpose, so the evidence persists.
-`verifyAuditTailAnchor` is reached only once every row verifies; a log
-with the shape of a rotation goes through
-`verifyAuditTailAfterKeyChange` (from `looksLikeKeyChange` and the
-re-anchor transaction), which accepts the anchor naming the last
-failing row, and `proveAuditReanchorTail` checks it under the previous
-key as part of `HistoryProven`. New rows
+The tail anchor lives in `audit_tail.go`: an `audit_tail` table
+(`auditTailDDL`, created by `ensureAuditSchema`, which then runs
+`migrateAuditTailSlots` to rebuild a pre-release `CHECK (id = 1)`
+table) with two slots. Slot 1, the primary, holds the newest event's
+id and hash under `auditTailMAC`, an HMAC with its own label. Slot 2,
+the current-key anchor, exists only after a change of secret and holds
+the newest row under `auditTailCurrentMAC`, which also covers the whole
+of slot 1. `recordAudit` reads the newest row and both slots in one
+statement (`readAuditTailState`), asks `planAuditTailMove` before its
+INSERT, because the insert moves `sqlite_sequence`, and calls
+`applyAuditTailMove` afterwards. The moves: advance slot 1 when it
+names the newest row and verifies under `s.auditKey`, or for the first
+event of a never-used log; advance slot 2 by the same rule; start slot
+2 when slot 1 names the newest row, both fail and slot 2 is absent;
+promote slot 2 unchanged into slot 1, and start slot 2 afresh, when
+slot 2 names the newest row and both fail (a second rotation).
+Anything else is left alone on purpose, so the evidence persists.
+`verifyAuditTailAnchor` is reached only once every row verifies and
+ignores slot 2; a rotation-shaped log goes to
+`verifyAuditTailAfterKeyChange`, which requires slot 1 at the last
+failing row and slot 2 at the newest row (`verifyAuditTailCurrent`),
+and `proveAuditReanchorTail` checks slot 1 under the previous key as
+part of `HistoryProven`. New rows
 carry `auditHashVersion` 3 (`auditTailHashVersion`), which renders as
 version 2 does under the label `v3`; a v3 newest row with no anchor
 fails verification. `initSchema` ends with `seedAuditTail`, which
 anchors a v2 log only when `checkAuditTail` agrees and the newest row
 verifies under `s.auditKey` (an anchor signed under a wrong secret
 would read as altered under the right one and never advance). The
-re-chain and re-anchor call `writeAuditTail` after `recordAudit`
-unconditionally.
+re-chain and re-anchor call `resetAuditTail` after `recordAudit`
+unconditionally, which rewrites slot 1 and deletes slot 2.
 Test fixtures that insert `audit_events` rows by hand at version 3
 must also leave the anchor naming the newest row, or verification
 fails; `audit_tail_test.go` has `insertVersion2Log` for a

@@ -531,10 +531,10 @@ func TestRotationDoesNotExcuseAnAlteredAnchor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("readAuditTailState failed: %v", err)
 	}
-	advance, err := store.mayAdvanceAuditTail(tx, st)
-	if err != nil || advance {
-		t.Errorf("Expected an altered anchor not to advance, got %v and %v",
-			advance, err)
+	move, err := store.planAuditTailMove(tx, st)
+	if err != nil || move != auditTailStay {
+		t.Errorf("Expected an altered anchor not to move, got %v and %v",
+			move, err)
 	}
 }
 

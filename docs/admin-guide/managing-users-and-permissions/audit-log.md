@@ -549,17 +549,33 @@ it, and only the re-chain, described below, gives the log a new tail
 record over one that does not qualify.
 
 A changed server secret is no exception: the record stays where the
-old secret left it, naming the last event written under that secret,
-whilst the server goes on writing events under the new one. Until the
-log is re-anchored, the record therefore does not protect the events
-written since the change. Verification accepts such a record only in a
-log with the shape a changed secret leaves, described above under
-status `3`, and only when it names the last event that fails under the
-current secret; a record naming any other event is reported with
-status `2`. The record written under the old secret cannot be checked
-without that secret, so an unattended re-anchor requires it to verify
-under `-previous-secret-file` as well, as described under
+old secret left it, naming the last event written under that secret.
+The events the server goes on writing under the new secret are covered
+by a second tail record in the same table, which the server starts at
+the first of them and moves on by the same rule; its keyed hash also
+covers the first record, so neither can be swapped for an earlier copy
+on its own. Verification accepts the first record only in a log with
+the shape a changed secret leaves, described above under status `3`,
+and only when it names the last event that fails under the current
+secret, and then requires the second record to name the newest event
+and to verify under the current secret; anything else is reported with
+status `2`, so deleting the newest events is caught after a change of
+secret as it is before one. The record written under the old secret
+cannot be checked without that secret, so an unattended re-anchor
+requires it to verify under `-previous-secret-file` as well, as
+described under
 [Recovering a Log That No Longer Verifies](#recovering-a-log-that-no-longer-verifies).
+A re-anchor or re-chain leaves a single record naming its own event.
+
+If the secret changes a second time before the log is re-anchored, the
+server moves the second record into the place of the first when it
+writes its first event under the newest secret, and starts the second
+record again at that event. The records then name the last event
+written under the secret before and the newest event, which is what
+verification asks of them, so the log reports status `3` rather than
+`2`. Events written under the oldest secret are no longer at the end of
+the log, and the chain itself catches their deletion, because the first
+event written after them links to the last of them.
 
 A database written by a release that predates the tail record has no
 such record and version 2 events. The server writes the record when it
@@ -779,10 +795,14 @@ one the next event links to, and the result looks exactly like a
 changed secret. An unattended re-anchor therefore proceeds only when
 all of the following hold:
 
-- The failure has the shape a changed secret leaves, with nothing lost
-  from the tail. The whole log is checked, because the re-anchor
-  accepts everything through the last failing event as history, so a
-  rotated secret cannot carry a later deletion or edit through.
+- The failure has the shape a changed secret leaves, and both tail
+  records are where verification requires them. The whole log is
+  checked, because the re-anchor accepts everything through the last
+  failing event as history, so a rotated secret cannot carry a later
+  deletion or edit through. This shows that nothing has been deleted
+  from the end of the log since the server last wrote to it, within
+  the limits described under
+  [What Verification Does and Does Not Show](#what-verification-does-and-does-not-show).
 - `-previous-secret-file` names the secret file the older events were
   written under (it is refused for a log that would be re-hashed),
   and every event the re-anchor would accept as history
@@ -900,9 +920,13 @@ every version 3 event together with the tail record, and setting the
 record of the highest identifier to match, leaves a log that looks as
 it did before the first release that keeps the tail record wrote to it,
 so the events written before that upgrade remain exposed to deletion
-from the end. A log emptied entirely, with the tail record and the
-record of the highest identifier removed as well, reads as one that has
-never held an event.
+from the end. In the same way, deleting every event written since the
+server secret last changed, together with the second tail record, and
+setting the record of the highest identifier to match, leaves a log
+that looks as it did at the moment of the change; verification still
+reports status `3`, and an unattended re-anchor accepts it. A log
+emptied entirely, with the tail record and the record of the highest
+identifier removed as well, reads as one that has never held an event.
 
 Deleting the oldest events is caught precisely only once a purge has
 recorded where the log begins. On a log whose purge events were all

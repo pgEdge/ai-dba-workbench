@@ -385,6 +385,26 @@ project adheres to
 
 ### Changed
 
+- Raise the default size of the server's datastore connection pool,
+  `database.pool_max_conns`, from 4 to 20 (#478). Every API request
+  that reads the datastore shares that pool, and a single dashboard
+  page load issues more than twenty metrics requests at once, so four
+  connections made a page wait on itself and let a few slow requests
+  hold up the whole API. Twenty, alongside the collector's 25 and the
+  alerter's 10, stays well inside the PostgreSQL default
+  `max_connections` of 100. A configuration that leaves the option
+  unset now gets 20 rather than the connection library's own default;
+  one copied from the earlier example still sets `pool_max_conns: 4`
+  explicitly and keeps four until the line is changed or removed. The
+  datastore pool is sized at start-up, so a configuration reload with
+  `SIGHUP` does not resize it and the server has to be restarted. An
+  explicit `pool_max_conns` also sizes each per-session pool that the
+  server opens to a monitored database, including pools opened after
+  a `SIGHUP` reload, whilst an unset one leaves those pools at the
+  connection library's default; a database configured only through
+  the `-db-*` command-line flags now leaves it unset too, where it
+  previously set four.
+
 - Follow the dashboard time range selector in the database summaries
   section of the server dashboard, the Transaction Rate tile of the
   estate dashboard and the comparative charts of the cluster
@@ -950,6 +970,20 @@ project adheres to
   deletes the rows of a metric that it did not rewrite, such as an
   hourly bucket that no longer has enough samples, so rows built from
   the old values do not survive the upgrade. (#567)
+
+- Fix deleting a connection that has been collecting for a while. The
+  delete removes the connection's whole metrics history through a
+  cascade across every `metrics.*` table, but it ran under the same
+  ten second deadline as a simple lookup and under the datastore
+  pool's 30 second `statement_timeout`, so for a long-lived connection
+  it was cancelled partway, rolled back and failed again on every
+  retry (#480). The delete now has a budget of four minutes, applied
+  both as its deadline and as a transaction-local `statement_timeout`,
+  and it carries on if the browser or a reverse proxy stops waiting
+  for the response. It also no longer blocks the server's other
+  datastore requests whilst it runs, although the collector's and the
+  alerter's writes for the connection being deleted wait for it to
+  finish, which can now take up to the same four minutes.
 
 - Fix alerts staying active for ever on a server an operator has
   stopped monitoring. The probes of an unmonitored connection leave

@@ -393,6 +393,18 @@ type TLSConfig struct {
 	ChainFile string `yaml:"chain_file"`
 }
 
+// DefaultPoolMaxConns is the size of the server's datastore pool when
+// pool_max_conns is not set. Every API endpoint that reads the datastore
+// draws from this one pool, and a single server dashboard page load
+// issues more than twenty metrics requests at once, so the previous
+// default of four queued a page behind itself and let a few slow requests
+// starve the whole API (issue #478). Twenty lets one dashboard load run
+// largely in parallel with room for a second user, whilst keeping the
+// server, the collector (25 by default) and the alerter (10 by default)
+// to 55 of the 97 connections that PostgreSQL's default max_connections
+// of 100 leaves once superuser_reserved_connections is taken out.
+const DefaultPoolMaxConns = 20
+
 // DatabaseConfig holds database connection settings
 type DatabaseConfig struct {
 	Host         string `yaml:"host"`          // Database host (default: localhost)
@@ -411,7 +423,7 @@ type DatabaseConfig struct {
 	resolvedPassword string `yaml:"-" json:"-"`
 
 	// Connection pool settings
-	PoolMaxConns        int    `yaml:"pool_max_conns"`          // Maximum number of connections (default: 4)
+	PoolMaxConns        int    `yaml:"pool_max_conns"`          // Maximum number of connections (default: DefaultPoolMaxConns)
 	PoolMinConns        int    `yaml:"pool_min_conns"`          // Minimum number of connections (default: 0)
 	PoolMaxConnIdleTime string `yaml:"pool_max_conn_idle_time"` // Max time a connection can be idle before being closed (default: 30m)
 
@@ -1407,12 +1419,15 @@ func applyCLIFlags(cfg *Config, flags CLIFlags) {
 	// Database CLI flags
 	// Create a default database if none exists and any DB flag is set
 	if cfg.Database == nil && (flags.DBHostSet || flags.DBPortSet || flags.DBNameSet || flags.DBUserSet || flags.DBPassSet || flags.DBSSLSet) {
+		// PoolMaxConns stays unset, as it does when the YAML omits it:
+		// NewDatastore then sizes the datastore pool at DefaultPoolMaxConns,
+		// and per-session pools to monitored databases keep the connection
+		// library's default.
 		cfg.Database = &DatabaseConfig{
 			Host:                "localhost",
 			Port:                5432,
 			Database:            "postgres",
 			SSLMode:             "prefer",
-			PoolMaxConns:        4,
 			PoolMinConns:        0,
 			PoolMaxConnIdleTime: "30m",
 			StatementTimeout:    "30s",

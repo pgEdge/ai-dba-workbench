@@ -1237,8 +1237,10 @@ func TestIssue530_ClientEncodingPinnedAtStartup(t *testing.T) {
 // as a success whilst the pool discards the work, and that a batch
 // which does close its transaction keeps what it did. Both the pgx
 // write path and the simple-protocol branch are covered; the
-// GENERIC_PLAN EXPLAIN routes a batch onto the latter and needs
-// PostgreSQL 16 or later.
+// GENERIC_PLAN EXPLAIN routes a batch onto the latter. It needs
+// PostgreSQL 16 or later to succeed, so the one case that depends on it
+// succeeding is skipped on an older server, where it errors and the
+// transaction is rolled back like the open cases.
 func TestIssue530_ConfirmedBatchLeavingTransactionOpen(t *testing.T) {
 	h, pool, target, cleanup := newQueryExecTestHandler(t)
 	defer cleanup()
@@ -1246,6 +1248,11 @@ func TestIssue530_ConfirmedBatchLeavingTransactionOpen(t *testing.T) {
 	connID := seedQueryExecConnection(t, pool, target, target.host, target.port)
 
 	ctx := context.Background()
+	var serverVersion int
+	if err := pool.QueryRow(ctx,
+		"SELECT current_setting('server_version_num')::int").Scan(&serverVersion); err != nil {
+		t.Fatalf("failed to read the server version: %v", err)
+	}
 	const explain = "EXPLAIN (GENERIC_PLAN) SELECT 1 WHERE 1 = $1"
 	tests := []struct {
 		name      string
@@ -1253,22 +1260,27 @@ func TestIssue530_ConfirmedBatchLeavingTransactionOpen(t *testing.T) {
 		results   int
 		openError bool
 		rowsLeft  int
+		needsPG16 bool
 	}{
 		{"open transaction on the write path",
-			"BEGIN; DELETE FROM issue530_txn", 3, true, 2},
+			"BEGIN; DELETE FROM issue530_txn", 3, true, 2, false},
 		{"closed transaction on the write path",
-			"BEGIN; DELETE FROM issue530_txn; COMMIT", 3, false, 0},
+			"BEGIN; DELETE FROM issue530_txn; COMMIT", 3, false, 0, false},
 		{"open transaction on the simple-protocol branch",
-			"BEGIN; DELETE FROM issue530_txn; " + explain, 4, true, 2},
+			"BEGIN; DELETE FROM issue530_txn; " + explain, 4, true, 2, false},
 		{"closed transaction on the simple-protocol branch",
 			"BEGIN; DELETE FROM issue530_txn; " + explain + "; COMMIT",
-			4, false, 0},
+			4, false, 0, true},
 		{"failed statement inside an open transaction",
-			"BEGIN; DELETE FROM issue530_txn; SELECT 1/0", 4, true, 2},
+			"BEGIN; DELETE FROM issue530_txn; SELECT 1/0", 4, true, 2, false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if tt.needsPG16 && serverVersion < 160000 {
+				t.Skipf("GENERIC_PLAN needs PostgreSQL 16 or later (server %d)",
+					serverVersion)
+			}
 			if _, err := pool.Exec(ctx, `DROP TABLE IF EXISTS issue530_txn;
 				CREATE TABLE issue530_txn (a int);
 				INSERT INTO issue530_txn VALUES (1), (2)`); err != nil {

@@ -296,6 +296,17 @@ func auditVerifyExitCode(err error) int {
 // would soon stop believing the message when it mattered.
 func verifyAuditLogCommand(dataDir string) error {
 	store, err := openAuthStoreCLI(dataDir)
+	if errors.Is(err, auth.ErrAuditChainBroken) {
+		// The store refuses to open over an audit_tail table it did not
+		// create, which is as much tampering as a row that fails.
+		return &auditVerifyError{
+			code: auditExitTampered,
+			err: fmt.Errorf("failed to open auth store: %w\n"+
+				"       Treat this as possible tampering; the server will "+
+				"not start until auth.db is restored from a known-good "+
+				"copy", err),
+		}
+	}
 	if err != nil {
 		return fmt.Errorf("failed to open auth store: %w", err)
 	}
@@ -708,6 +719,29 @@ func printAuditReanchorEvidence(out io.Writer, plan auth.AuditRechainPlan) {
 		"that would be accepted\nas history: %s\n", reason)
 }
 
+// printAuditReanchorWarning repeats, just before the question, that
+// nothing has proven the events the re-anchor would accept as history,
+// when nothing has. Verification checks no event written under the
+// previous secret, so without that proof the log may have been cut back
+// to any of them, not just to the change of secret.
+func printAuditReanchorWarning(out io.Writer, plan auth.AuditRechainPlan) {
+	if plan.HistoryProven || plan.HistoryEvents == 0 {
+		return
+	}
+
+	reason := "no previous secret was given (-previous-secret-file)"
+	if plan.PreviousKeyGiven {
+		reason = "(no reason given)"
+		if plan.HistoryProofErr != nil {
+			reason = logging.SanitizeForLog(plan.HistoryProofErr.Error())
+		}
+	}
+	fmt.Fprintf(out, "\nWARNING: NOT PROVEN. Nothing shows that the %d "+
+		"event(s) accepted as history\nare the ones the previous secret "+
+		"wrote, or that none were deleted from\ntheir end: %s\n",
+		plan.HistoryEvents, reason)
+}
+
 // confirmAuditReanchor decides whether a re-anchor proceeds.
 //
 // An interactive run asks, and only on a terminal: the question is for
@@ -730,6 +764,7 @@ func confirmAuditReanchor(in io.Reader, out io.Writer, assumeYes bool,
 			"-confirm-rechain and -previous-secret-file"); err != nil {
 			return false, err
 		}
+		printAuditReanchorWarning(out, plan)
 		return confirmAuditRechain(in, out)
 	}
 

@@ -2489,7 +2489,14 @@ project adheres to
   events written under the new secret, so deleting them is reported
   with status 2 as well. A second change of secret before the log is
   re-anchored moves the second record into the first's place, so such
-  a log still reports status 3. Running an earlier
+  a log still reports status 3, and the server logs a warning whenever
+  it starts or moves the second record. Status 3 vouches for nothing
+  written under the previous secret, so re-anchor with
+  `-previous-secret-file` after each change of secret; an interactive
+  re-anchor without that proof now warns that the history is not
+  proven before it asks. The server refuses to open, and verification
+  exits with status 2, when the `audit_tail` table differs from the one
+  the server creates or a trigger acts on it. Running an earlier
   release against the same `auth.db` afterwards is reported as a
   version downgrade. (#544)
 

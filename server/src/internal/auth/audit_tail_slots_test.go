@@ -341,7 +341,8 @@ func TestResetAuditTailReportsAFailedDelete(t *testing.T) {
 	defer cleanup()
 
 	recordN(t, store, 1)
-	tamperDB(t, store.db, `INSERT INTO audit_tail VALUES (2, 1, 'h', 'm')`)
+	tamperDB(t, store.db, `INSERT INTO audit_tail (id, event_id, event_hash,
+        mac) VALUES (2, 1, 'h', 'm')`)
 	tamperDB(t, store.db, `CREATE TRIGGER audit_tail_keep BEFORE DELETE
         ON audit_tail BEGIN SELECT RAISE(ABORT, 'kept'); END`)
 	tx, err := store.db.Begin()
@@ -542,7 +543,7 @@ func TestMigrateAuditTailSlots(t *testing.T) {
 	}
 	expectKeyMismatch(t, store)
 
-	if err := store.migrateAuditTailSlots(); err != nil {
+	if err := store.migrateAuditTailSchema(); err != nil {
 		t.Errorf("Expected a second migration to do nothing, got %v", err)
 	}
 }
@@ -556,9 +557,9 @@ func TestMigrateAuditTailSlotsReportsFailures(t *testing.T) {
 
 	tamperDB(t, store.db, "DROP TABLE audit_tail")
 	tamperDB(t, store.db, singleSlotTailDDL)
-	tamperDB(t, store.db, "CREATE TABLE audit_tail_single_slot (x)")
-	if err := store.migrateAuditTailSlots(); err == nil ||
-		!strings.Contains(err.Error(), "two anchor slots") {
+	tamperDB(t, store.db, "CREATE TABLE audit_tail_legacy (x)")
+	if err := store.migrateAuditTailSchema(); err == nil ||
+		!strings.Contains(err.Error(), "the current definition") {
 		t.Errorf("Expected the blocked rename to be reported, got %v", err)
 	}
 	if def := auditTailDefinition(t, store); !strings.Contains(
@@ -567,12 +568,12 @@ func TestMigrateAuditTailSlotsReportsFailures(t *testing.T) {
 	}
 
 	tamperDB(t, store.db, "DROP TABLE audit_tail")
-	if err := store.migrateAuditTailSlots(); err == nil {
+	if err := store.migrateAuditTailSchema(); err == nil {
 		t.Error("Expected a missing audit_tail table to be reported")
 	}
 
 	store.db.Close()
-	if err := store.migrateAuditTailSlots(); err == nil {
+	if err := store.migrateAuditTailSchema(); err == nil {
 		t.Error("Expected a closed database to be reported")
 	}
 }
@@ -584,11 +585,11 @@ func TestOpenReportsAFailedTailMigration(t *testing.T) {
 	store, dir := newReopenableStore(t)
 	tamperDB(t, store.db, "DROP TABLE audit_tail")
 	tamperDB(t, store.db, singleSlotTailDDL)
-	tamperDB(t, store.db, "CREATE TABLE audit_tail_single_slot (x)")
+	tamperDB(t, store.db, "CREATE TABLE audit_tail_legacy (x)")
 	store.Close()
 
 	if _, err := reopenStore(t, dir); err == nil ||
-		!strings.Contains(err.Error(), "two anchor slots") {
+		!strings.Contains(err.Error(), "the current definition") {
 		t.Errorf("Expected the open to fail on the migration, got %v", err)
 	}
 }

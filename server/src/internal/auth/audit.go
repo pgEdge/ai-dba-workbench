@@ -1779,12 +1779,19 @@ func (s *AuthStore) VerifyAuditChain() (int, int64, error) {
 // rewrite the log thereafter with this check still passing. That is
 // no protection against such a writer, who can do a great deal else,
 // but it keeps the check meaning what it says.
+//
+// audit_tail is checked the same way (verifyAuditTailSchema): its
+// definition must be the one this server creates, and nothing may
+// trigger on it.
 func (s *AuthStore) verifyAuditSchema() error {
 	if err := s.verifyAuditChainIndex(); err != nil {
 		return err
 	}
+	if err := s.verifyAuditNoUpdateTrigger(); err != nil {
+		return err
+	}
 
-	return s.verifyAuditNoUpdateTrigger()
+	return s.verifyAuditTailSchema()
 }
 
 // verifyAuditChainIndex checks that idx_audit_prev_hash is a unique,

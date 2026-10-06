@@ -569,13 +569,37 @@ A re-anchor or re-chain leaves a single record naming its own event.
 
 If the secret changes a second time before the log is re-anchored, the
 server moves the second record into the place of the first when it
-writes its first event under the newest secret, and starts the second
-record again at that event. The records then name the last event
-written under the secret before and the newest event, which is what
-verification asks of them, so the log reports status `3` rather than
-`2`. Events written under the oldest secret are no longer at the end of
-the log, and the chain itself catches their deletion, because the first
-event written after them links to the last of them.
+writes its first event under the newest secret, keeping beside it the
+first record it replaces, over which its keyed hash was computed, and
+starts the second record again at that event. The records then name the
+last event written under the secret before and the newest event, which
+is what verification asks of them, so the log reports status `3` rather
+than `2`. Events written under the oldest secret are no longer at the
+end of the log, and the chain itself catches their deletion, because
+the first event written after them links to the last of them. The
+server writes a warning to its own log each time it starts the second
+record and each time it moves it into the place of the first.
+
+Until the server writes its first event under a new secret, neither
+record verifies under the secret in use, so verification can check the
+second record only by the event it names. Someone able to write
+`auth.db` in that window can delete the newest events written under the
+previous secret, set the record of the highest identifier to match, and
+point the second record at the new newest event; verification reports
+status `3`, both then and after the server moves that record into the
+place of the first. A re-anchor given the previous secret with
+`-previous-secret-file` checks the record against it and refuses the
+log, so re-anchor with `-previous-secret-file` after each change of
+secret, and before the next; doing so also keeps the log from spanning
+more than two secrets, which no unattended re-anchor can prove.
+
+The server checks the definition of the `audit_tail` table each time it
+opens the store, and verification checks it again. A table that differs
+from the one the server creates, or any trigger that acts on it, could
+stop the tail records from moving on or keep them where an earlier
+state left them, so the server refuses to open such a store, and
+`-verify-audit-log` reports status `2`, until `auth.db` is restored
+from a known-good copy.
 
 A database written by a release that predates the tail record has no
 such record and version 2 events. The server writes the record when it
@@ -926,7 +950,15 @@ setting the record of the highest identifier to match, leaves a log
 that looks as it did at the moment of the change; verification still
 reports status `3`. An unattended re-anchor refuses that log, because
 no event verifies under the current secret, but accepts it once the
-server has written its next event. A log
+server has written its next event. More generally, status `3` vouches
+for nothing written under the previous secret: verification checks
+neither those events nor the tail record written alongside them, so
+someone able to write `auth.db` can cut the log back to any earlier
+event written under that secret, not just to the moment it changed, and
+still see status `3`. Only a re-anchor given the previous secret with
+`-previous-secret-file` checks those events and that record; an
+interactive re-anchor without it warns, just before it asks, that
+nothing has proven them. A log
 emptied entirely, with the tail record and the record of the highest
 identifier removed as well, reads as one that has never held an event.
 

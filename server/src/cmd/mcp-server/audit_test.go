@@ -555,6 +555,34 @@ func TestVerifyAuditLogCommandReportsKeyMismatch(t *testing.T) {
 	}
 }
 
+// TestVerifyAuditLogCommandReportsAnAlteredTailTable checks that a
+// store refusing to open over a trigger on audit_tail is reported with
+// the tampering exit status rather than as an ordinary failure.
+func TestVerifyAuditLogCommandReportsAnAlteredTailTable(t *testing.T) {
+	dir := t.TempDir()
+	addCurrentKeyEvents(t, dir, "alice")
+
+	db, err := sql.Open("sqlite", filepath.Join(dir, "auth.db"))
+	if err != nil {
+		t.Fatalf("failed to open auth.db: %v", err)
+	}
+	if _, err := db.Exec(`CREATE TRIGGER audit_tail_keep BEFORE UPDATE
+        ON audit_tail BEGIN SELECT RAISE(IGNORE); END`); err != nil {
+		t.Fatalf("failed to add the trigger: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("failed to close auth.db: %v", err)
+	}
+
+	err = verifyAuditLogCommand(dir)
+	if got := auditVerifyExitCode(err); got != auditExitTampered {
+		t.Errorf("expected exit status %d, got %d: %v", auditExitTampered,
+			got, err)
+	}
+	assertOutputContains(t, fmt.Sprint(err), "audit_tail_keep",
+		"possible tampering")
+}
+
 // tamperAuditRow edits the action of the newest audit row in place,
 // dropping and recreating the append-only trigger so the update is
 // allowed, and returns the id of the row it changed.

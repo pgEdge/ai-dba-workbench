@@ -16,6 +16,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 )
@@ -102,17 +103,30 @@ import (
 // but by then it no longer protects anything: the rows written under
 // the oldest secret are not at the end of the log, and the first row
 // written under the next secret links to the last of them, so the chain
-// itself catches their deletion. Nor does promotion help a writer
-// without the secret: a value they plant in the current-key anchor
-// carries a MAC that verifies under no secret, and once promoted into
-// the primary slot the re-anchor's check under the previous secret
-// refuses it, as it refuses one planted in the primary slot directly;
-// and the current-key anchor written alongside is bound to that value,
-// so putting the earlier primary anchor back afterwards fails it. A
-// promoted primary anchor carries the current-key rendering, so the
-// re-anchor's check under the previous secret refuses it as well, but
-// no unattended re-anchor of such a log can succeed anyway: its history
-// spans two earlier secrets, and the one given proves only part of it.
+// itself catches their deletion.
+//
+// Promotion copies the current-key anchor's HMAC unchanged, but that
+// HMAC was computed over the primary anchor it replaces, so the primary
+// slot keeps those three overwritten values in its bound_* columns, and
+// a promoted primary anchor is checked under the previous secret with
+// the current-key rendering over them (primaryTailVerifiesUnder). The
+// columns are set only by promotion, and only on the primary slot.
+//
+// A value planted in the current-key anchor between a change of secret
+// and the first event written under the new one is accepted by
+// verification: in that window both anchors fail under the key in use,
+// so checkRotatedAuditTail can match the current-key anchor only by the
+// event it names, and once promoted it is a primary anchor the key in
+// use cannot check either. A writer can so cut events written under the
+// previous secret from the end of the log and point the current-key
+// anchor at the new newest row, and verification reports only the key
+// mismatch, before and after the promotion. The previous secret refuses
+// the plant in both states (proveAuditReanchorTail), so a re-anchor
+// given it catches the cut; operators re-anchor with the previous
+// secret after each change of secret, before the next, which also keeps
+// a log from spanning more than two secrets. The current-key anchor
+// written alongside a promotion is bound to the promoted value, so
+// putting the earlier primary anchor back afterwards fails it.
 //
 // The re-chain and the re-anchor accept the log as it stands, so they
 // reset both slots: the primary anchor names the event they write, and
@@ -146,8 +160,10 @@ const (
 	auditTailCurrent = 2
 )
 
-// auditTailDDL creates the table holding the tail anchors. The CHECK
-// keeps it to the two slots.
+// auditTailDDL creates the table holding the tail anchors. The first
+// CHECK keeps it to the two slots; the bound_ columns hold, on a primary
+// anchor promoted from the current-key slot, the primary anchor its HMAC
+// was computed beside, and are set together or not at all.
 const auditTailDDL = `
     -- The newest audit event, by id and hash, under an HMAC keyed by
     -- the server secret, and after a change of secret the newest event
@@ -156,14 +172,36 @@ const auditTailDDL = `
         id INTEGER PRIMARY KEY CHECK (id IN (1, 2)),
         event_id INTEGER NOT NULL,
         event_hash TEXT NOT NULL,
-        mac TEXT NOT NULL
+        mac TEXT NOT NULL,
+        bound_event_id INTEGER,
+        bound_event_hash TEXT,
+        bound_mac TEXT,
+        CHECK ((bound_event_id IS NULL) = (bound_event_hash IS NULL)
+            AND (bound_event_id IS NULL) = (bound_mac IS NULL)
+            AND (id = 1 OR bound_event_id IS NULL))
     );
 `
 
-// auditTailSingleSlotCheck is the CHECK clause, as normalizeSchemaSQL
-// renders it, of an audit_tail table created before the current-key
-// anchor existed, which has room for the primary anchor only.
-const auditTailSingleSlotCheck = "CHECK (id = 1)"
+// auditTailLegacyDDLs are the definitions of audit_tail that
+// pre-release builds of the anchor created, which migrateAuditTailSchema
+// rebuilds as auditTailDDL. No release created either. Any other
+// definition is refused by verifyAuditTailSchema rather than rebuilt.
+var auditTailLegacyDDLs = []string{
+	// Room for the primary anchor only.
+	`CREATE TABLE IF NOT EXISTS audit_tail (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        event_id INTEGER NOT NULL,
+        event_hash TEXT NOT NULL,
+        mac TEXT NOT NULL
+    );`,
+	// Both slots, without the columns a promoted anchor needs.
+	`CREATE TABLE IF NOT EXISTS audit_tail (
+        id INTEGER PRIMARY KEY CHECK (id IN (1, 2)),
+        event_id INTEGER NOT NULL,
+        event_hash TEXT NOT NULL,
+        mac TEXT NOT NULL
+    );`,
+}
 
 // auditSelectTailState reads the newest row and both anchors in a
 // single statement, so that they come from one consistent snapshot: a
@@ -172,6 +210,7 @@ const auditTailSingleSlotCheck = "CHECK (id = 1)"
 // returns exactly one row whether or not any of them exists.
 const auditSelectTailState = `SELECT e.id, e.hash, e.hash_version,
         t.event_id, t.event_hash, t.mac,
+        t.bound_event_id, t.bound_event_hash, t.bound_mac,
         c.event_id, c.event_hash, c.mac
     FROM (SELECT 1) AS one
     LEFT JOIN (SELECT id, hash, hash_version FROM audit_events
@@ -179,11 +218,26 @@ const auditSelectTailState = `SELECT e.id, e.hash, e.hash_version,
     LEFT JOIN audit_tail AS t ON t.id = 1
     LEFT JOIN audit_tail AS c ON c.id = 2`
 
-// auditUpsertTail writes one anchor slot.
-const auditUpsertTail = `INSERT INTO audit_tail (id, event_id, event_hash, mac)
-    VALUES (?, ?, ?, ?)
+// auditUpsertTail writes one anchor slot, binding columns included.
+const auditUpsertTail = `INSERT INTO audit_tail (id, event_id, event_hash,
+        mac, bound_event_id, bound_event_hash, bound_mac)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (id) DO UPDATE SET event_id = excluded.event_id,
-        event_hash = excluded.event_hash, mac = excluded.mac`
+        event_hash = excluded.event_hash, mac = excluded.mac,
+        bound_event_id = excluded.bound_event_id,
+        bound_event_hash = excluded.bound_event_hash,
+        bound_mac = excluded.bound_mac`
+
+// auditTailBinding is a primary anchor as a current-key anchor's HMAC
+// covers it: see auditTailCurrentMAC. A primary anchor promoted from the
+// current-key slot keeps the one its HMAC was computed beside, because
+// promotion overwrites it and the HMAC cannot be checked without it.
+type auditTailBinding struct {
+	valid bool
+	id    int64
+	hash  string
+	mac   string
+}
 
 // auditTailState is the newest row and the anchors, as read together.
 // The anchor fields describe the primary anchor, and the current fields
@@ -198,6 +252,10 @@ type auditTailState struct {
 	anchorID   int64
 	anchorHash string
 	anchorMAC  string
+
+	// bound is set on a primary anchor promoted from the current-key
+	// slot, whose HMAC is a current-key HMAC bound to it.
+	bound auditTailBinding
 
 	hasCurrent  bool
 	currentID   int64
@@ -230,9 +288,12 @@ func readAuditTailState(q auditRowQuerier) (auditTailState, error) {
 	var newestID, newestVersion, anchorID, currentID sql.NullInt64
 	var newestHash, anchorHash, anchorMAC sql.NullString
 	var currentHash, currentMAC sql.NullString
+	var boundID sql.NullInt64
+	var boundHash, boundMAC sql.NullString
 	if err := q.QueryRow(auditSelectTailState).Scan(&newestID, &newestHash,
-		&newestVersion, &anchorID, &anchorHash, &anchorMAC, &currentID,
-		&currentHash, &currentMAC); err != nil {
+		&newestVersion, &anchorID, &anchorHash, &anchorMAC, &boundID,
+		&boundHash, &boundMAC, &currentID, &currentHash,
+		&currentMAC); err != nil {
 		return st, fmt.Errorf("failed to read the audit tail anchor: %w", err)
 	}
 
@@ -244,6 +305,8 @@ func readAuditTailState(q auditRowQuerier) (auditTailState, error) {
 	st.anchorID = anchorID.Int64
 	st.anchorHash = anchorHash.String
 	st.anchorMAC = anchorMAC.String
+	st.bound = auditTailBinding{valid: boundID.Valid, id: boundID.Int64,
+		hash: boundHash.String, mac: boundMAC.String}
 	st.hasCurrent = currentID.Valid
 	st.currentID = currentID.Int64
 	st.currentHash = currentHash.String
@@ -297,28 +360,54 @@ func auditTailMACVerifies(key []byte, id int64, hash, mac string) bool {
 	return err == nil && hmac.Equal([]byte(want), []byte(mac))
 }
 
+// primaryTailVerifiesUnder reports whether the primary anchor's HMAC
+// recomputes under key: as a current-key HMAC over the anchor it is
+// bound to, for one promoted from the current-key slot, and as a
+// primary HMAC otherwise.
+func primaryTailVerifiesUnder(key []byte, st auditTailState) bool {
+	if !st.bound.valid {
+		return auditTailMACVerifies(key, st.anchorID, st.anchorHash,
+			st.anchorMAC)
+	}
+
+	want, err := auditTailCurrentMAC(key, st.anchorID, st.anchorHash,
+		st.bound.id, st.bound.hash, st.bound.mac)
+	return err == nil && hmac.Equal([]byte(want), []byte(st.anchorMAC))
+}
+
+// currentTailVerifiesUnder reports whether the current-key anchor's
+// HMAC recomputes under key, over the primary anchor as it now stands.
+func currentTailVerifiesUnder(key []byte, st auditTailState) bool {
+	want, err := auditTailCurrentMAC(key, st.currentID, st.currentHash,
+		st.anchorID, st.anchorHash, st.anchorMAC)
+	return err == nil && st.hasAnchor &&
+		hmac.Equal([]byte(want), []byte(st.currentMAC))
+}
+
 // auditTailVerifies reports whether the primary anchor's HMAC
 // recomputes under the store's key.
 func (s *AuthStore) auditTailVerifies(st auditTailState) bool {
-	return auditTailMACVerifies(s.auditKey, st.anchorID, st.anchorHash,
-		st.anchorMAC)
+	return primaryTailVerifiesUnder(s.auditKey, st)
 }
 
 // currentTailVerifies reports whether the current-key anchor's HMAC
 // recomputes under the store's key, over the primary anchor as it now
 // stands.
 func (s *AuthStore) currentTailVerifies(st auditTailState) bool {
-	want, err := auditTailCurrentMAC(s.auditKey, st.currentID,
-		st.currentHash, st.anchorID, st.anchorHash, st.anchorMAC)
-	return err == nil && st.hasAnchor &&
-		hmac.Equal([]byte(want), []byte(st.currentMAC))
+	return currentTailVerifiesUnder(s.auditKey, st)
 }
 
-// writeAuditTailSlot writes one anchor slot as given.
+// writeAuditTailSlot writes one anchor slot as given, with bound as its
+// binding columns, which only a promoted primary anchor sets.
 func writeAuditTailSlot(tx *sql.Tx, slot int, id int64, hash,
-	mac string) error {
+	mac string, bound auditTailBinding) error {
 
-	if _, err := tx.Exec(auditUpsertTail, slot, id, hash, mac); err != nil {
+	var boundID, boundHash, boundMAC any
+	if bound.valid {
+		boundID, boundHash, boundMAC = bound.id, bound.hash, bound.mac
+	}
+	if _, err := tx.Exec(auditUpsertTail, slot, id, hash, mac, boundID,
+		boundHash, boundMAC); err != nil {
 		return fmt.Errorf("failed to write the audit tail anchor: %w", err)
 	}
 
@@ -333,7 +422,8 @@ func (s *AuthStore) writeAuditTail(tx *sql.Tx, ev *AuditEvent) error {
 		return fmt.Errorf("failed to sign the audit tail anchor: %w", err)
 	}
 
-	return writeAuditTailSlot(tx, auditTailPrimary, ev.ID, ev.Hash, mac)
+	return writeAuditTailSlot(tx, auditTailPrimary, ev.ID, ev.Hash, mac,
+		auditTailBinding{})
 }
 
 // writeAuditTailCurrent makes the current-key anchor name ev, which must
@@ -348,7 +438,8 @@ func (s *AuthStore) writeAuditTailCurrent(tx *sql.Tx, ev *AuditEvent,
 		return fmt.Errorf("failed to sign the audit tail anchor: %w", err)
 	}
 
-	return writeAuditTailSlot(tx, auditTailCurrent, ev.ID, ev.Hash, mac)
+	return writeAuditTailSlot(tx, auditTailCurrent, ev.ID, ev.Hash, mac,
+		auditTailBinding{})
 }
 
 // resetAuditTail makes the primary anchor name ev, which must be the
@@ -460,6 +551,14 @@ func (s *AuthStore) planAuditTailMoveAfterKeyChange(tx *sql.Tx,
 
 // applyAuditTailMove carries out move for ev, the event recordAudit has
 // just inserted, from before, the state read ahead of the insert.
+//
+// Starting or promoting the current-key anchor is logged as a warning
+// to the server's log, since each means the secret has changed and the
+// events written under the one before are protected only until the
+// operator re-anchors with it (see verifyAuditTail). The line is
+// written before the caller commits, so a transaction that then rolls
+// back logs one for a move that did not happen; the next event repeats
+// it.
 func (s *AuthStore) applyAuditTailMove(tx *sql.Tx, move auditTailMove,
 	before auditTailState, ev *AuditEvent) error {
 
@@ -467,11 +566,28 @@ func (s *AuthStore) applyAuditTailMove(tx *sql.Tx, move auditTailMove,
 	case auditTailAdvance:
 		return s.writeAuditTail(tx, ev)
 	case auditTailAdvanceCurrent:
+		if !before.hasCurrent {
+			log.Printf("[WARN] Audit log: event %d does not verify under "+
+				"the server secret in use, so the secret has changed; "+
+				"starting a second tail anchor at event %d. Run "+
+				"'ai-dba-server -rechain-audit-log -previous-secret-file' "+
+				"with the previous secret before the secret changes again",
+				before.anchorID, ev.ID)
+		}
 		return s.writeAuditTailCurrent(tx, ev, before.anchorID,
 			before.anchorHash, before.anchorMAC)
 	case auditTailPromote:
+		log.Printf("[WARN] Audit log: event %d does not verify under the "+
+			"server secret in use, so the secret has changed again since "+
+			"the last re-anchor; moving the second tail anchor into the "+
+			"first and starting it again at event %d. Events written under "+
+			"the secrets before can no longer be proven by one previous "+
+			"secret: run 'ai-dba-server -rechain-audit-log' and review the "+
+			"plan", before.currentID, ev.ID)
 		if err := writeAuditTailSlot(tx, auditTailPrimary, before.currentID,
-			before.currentHash, before.currentMAC); err != nil {
+			before.currentHash, before.currentMAC, auditTailBinding{
+				valid: true, id: before.anchorID, hash: before.anchorHash,
+				mac: before.anchorMAC}); err != nil {
 			return err
 		}
 		return s.writeAuditTailCurrent(tx, ev, before.currentID,
@@ -511,24 +627,57 @@ func readAuditSequence(q auditRowQuerier) (bool, sql.NullInt64, error) {
 	return true, seq, nil
 }
 
-// migrateAuditTailSlots rebuilds an audit_tail table created before the
-// current-key anchor existed, whose CHECK allows the primary anchor
-// only, so that it can hold both. No release created that table, only
-// pre-release builds of the anchor, but a server running against one
-// would fail every audited change once a rotation called for the second
-// slot. CHECK constraints cannot be altered in SQLite, so the table is
-// renamed, created afresh and refilled, in one transaction that leaves
-// the old table untouched if it fails. A table that already allows both
-// is left alone, so ensureAuditSchema can call this on every open.
-func (s *AuthStore) migrateAuditTailSlots() error {
+// expectedTableSQL is ddl, a CREATE TABLE IF NOT EXISTS statement
+// opened by comments, as SQLite records it in sqlite_master, normalised
+// for comparison: SQLite keeps the statement from CREATE onwards, less
+// the IF NOT EXISTS clause and the terminating semicolon.
+func expectedTableSQL(ddl string) string {
+	text := normalizeSchemaSQL(ddl)
+	if i := strings.Index(text, "CREATE TABLE"); i >= 0 {
+		text = text[i:]
+	}
+
+	return strings.Replace(text, "CREATE TABLE IF NOT EXISTS ",
+		"CREATE TABLE ", 1)
+}
+
+// readAuditTailDefinition reads the CREATE TABLE statement recorded for
+// audit_tail, normalised for comparison.
+func (s *AuthStore) readAuditTailDefinition() (string, error) {
 	var definition string
 	if err := s.db.QueryRow(`SELECT sql FROM sqlite_master
          WHERE type = 'table' AND name = 'audit_tail'`).
 		Scan(&definition); err != nil {
-		return fmt.Errorf("failed to read the audit_tail definition: %w", err)
+		return "", fmt.Errorf("failed to read the audit_tail definition: %w",
+			err)
 	}
-	if !strings.Contains(normalizeSchemaSQL(definition),
-		auditTailSingleSlotCheck) {
+
+	return normalizeSchemaSQL(definition), nil
+}
+
+// migrateAuditTailSchema rebuilds an audit_tail table that a
+// pre-release build of the anchor created (auditTailLegacyDDLs) as
+// auditTailDDL. A server running against one would fail every audited
+// change once a rotation called for the second slot or a promotion for
+// the binding columns. CHECK constraints cannot be altered in SQLite,
+// so the table is renamed, created afresh and refilled, in one
+// transaction that leaves the old table untouched if it fails. Any
+// other definition is left alone, so ensureAuditSchema can call this on
+// every open; verifyAuditTailSchema refuses one that is not auditTailDDL.
+//
+// The rename carries any trigger on audit_tail with it, and the drop
+// then removes it, so ensureAuditSchema checks for triggers first:
+// otherwise the migration would erase the evidence of one.
+func (s *AuthStore) migrateAuditTailSchema() error {
+	definition, err := s.readAuditTailDefinition()
+	if err != nil {
+		return err
+	}
+	legacy := false
+	for _, ddl := range auditTailLegacyDDLs {
+		legacy = legacy || definition == expectedTableSQL(ddl)
+	}
+	if !legacy {
 		return nil
 	}
 
@@ -546,15 +695,15 @@ func (s *AuthStore) migrateAuditTailSlots() error {
 	}()
 
 	for _, stmt := range []string{
-		"ALTER TABLE audit_tail RENAME TO audit_tail_single_slot",
+		"ALTER TABLE audit_tail RENAME TO audit_tail_legacy",
 		auditTailDDL,
 		`INSERT INTO audit_tail (id, event_id, event_hash, mac)
-         SELECT id, event_id, event_hash, mac FROM audit_tail_single_slot`,
-		"DROP TABLE audit_tail_single_slot",
+         SELECT id, event_id, event_hash, mac FROM audit_tail_legacy`,
+		"DROP TABLE audit_tail_legacy",
 	} {
 		if _, err := tx.Exec(stmt); err != nil {
-			return fmt.Errorf("failed to migrate audit_tail to two anchor "+
-				"slots: %w", err)
+			return fmt.Errorf("failed to migrate audit_tail to the current "+
+				"definition: %w", err)
 		}
 	}
 	if err := tx.Commit(); err != nil {
@@ -564,6 +713,54 @@ func (s *AuthStore) migrateAuditTailSlots() error {
 	committed = true
 
 	return nil
+}
+
+// verifyAuditTailSchema checks that audit_tail is exactly the table
+// auditTailDDL creates and that no trigger acts on it. The anchors mean
+// what this file says only while the table holds what the server writes
+// and nothing else changes it: a trigger could discard or rewrite every
+// anchor write, or an altered definition refuse one, so that every
+// audited change failed or no anchor ever moved. ensureAuditSchema
+// calls it on every open, so the server refuses to start rather than
+// run with either, and verifyAuditSchema calls it too.
+func (s *AuthStore) verifyAuditTailSchema() error {
+	if err := s.verifyAuditTailNoTrigger(); err != nil {
+		return err
+	}
+
+	definition, err := s.readAuditTailDefinition()
+	if err != nil {
+		return err
+	}
+	if definition != expectedTableSQL(auditTailDDL) {
+		return errors.New("audit chain unprotected: the audit_tail table " +
+			"does not match the definition this server creates, so the " +
+			"tail anchors it holds may not be what the server wrote")
+	}
+
+	return nil
+}
+
+// verifyAuditTailNoTrigger refuses any trigger on audit_tail, or that
+// names it, since this server creates none.
+func (s *AuthStore) verifyAuditTailNoTrigger() error {
+	var name string
+	err := s.db.QueryRow(`SELECT name FROM sqlite_master
+         WHERE type = 'trigger'
+           AND (tbl_name = 'audit_tail' COLLATE NOCASE
+                OR sql LIKE '%audit_tail%')
+         ORDER BY name LIMIT 1`).Scan(&name)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return nil
+	case err != nil:
+		return fmt.Errorf("failed to look for triggers on audit_tail: %w", err)
+	}
+
+	return fmt.Errorf("audit chain unprotected: the trigger %q acts on "+
+		"audit_tail, which this server gives no trigger, so the tail "+
+		"anchors may have been discarded or rewritten as they were "+
+		"written; drop it once you have found out who created it", name)
 }
 
 // seedAuditTail anchors a log written before the anchor existed, whose
@@ -805,15 +1002,27 @@ func (s *AuthStore) verifyAuditTailCurrent(st auditTailState,
 var errAuditTailUnproven = errors.New("the tail anchor is not what the " +
 	"previous secret wrote")
 
-// proveAuditReanchorTail checks, under previousKey, a primary anchor
-// that does not verify under the key in use: it must verify under
-// previousKey and name the last row the re-anchor would accept as
-// history, through, whose hash is throughHash. That is where the
-// previous secret left it, since nothing moves it on under another. An
-// anchor that is missing or verifies under the key in use needs no
-// proof. The returned error is the reason the proof fails, or nil when
-// it holds; a failure to read the anchor is returned as the second
-// value instead.
+// proveAuditReanchorTail checks, under previousKey, the anchor the
+// previous secret left behind: it must verify under previousKey and
+// name the last row the re-anchor would accept as history, through,
+// whose hash is throughHash. That is where the previous secret left it,
+// since nothing moves it on under another. Which anchor that is depends
+// on the state the log is in:
+//
+//   - a current-key anchor that fails under the key in use was written
+//     under the previous secret, which has changed again since without
+//     an event being written under the new one, so it is that anchor,
+//     checked bound to the primary anchor beside it;
+//   - otherwise it is the primary anchor, checked as a current-key
+//     anchor bound to the one it was promoted beside where it was
+//     promoted (primaryTailVerifiesUnder), so that a value planted in
+//     the current-key slot and then promoted is refused like one
+//     planted in the primary slot directly.
+//
+// A primary anchor that is missing or verifies under the key in use,
+// with no failing current-key anchor beside it, needs no proof. The
+// returned error is the reason the proof fails, or nil when it holds; a
+// failure to read the anchors is returned as the second value instead.
 func (s *AuthStore) proveAuditReanchorTail(q auditRowQuerier,
 	previousKey []byte, through int64, throughHash string) (proof error,
 	err error) {
@@ -822,20 +1031,28 @@ func (s *AuthStore) proveAuditReanchorTail(q auditRowQuerier,
 	if err != nil {
 		return nil, err
 	}
-	if !st.hasAnchor || s.auditTailVerifies(st) {
+
+	slot, id, hash := "tail anchor", st.anchorID, st.anchorHash
+	switch {
+	case st.hasCurrent && !s.currentTailVerifies(st):
+		slot, id, hash = "tail anchor for the newest events", st.currentID,
+			st.currentHash
+		if !currentTailVerifiesUnder(previousKey, st) {
+			return fmt.Errorf("%w: the %s names event %d, but verifies "+
+				"under neither secret", errAuditTailUnproven, slot, id), nil
+		}
+	case !st.hasAnchor || s.auditTailVerifies(st):
 		return nil, nil
+	case !primaryTailVerifiesUnder(previousKey, st):
+		return fmt.Errorf("%w: the %s names event %d, but verifies under "+
+			"neither secret", errAuditTailUnproven, slot, id), nil
 	}
 
-	if !auditTailMACVerifies(previousKey, st.anchorID, st.anchorHash,
-		st.anchorMAC) {
-		return fmt.Errorf("%w: it names event %d, but verifies under "+
-			"neither secret", errAuditTailUnproven, st.anchorID), nil
-	}
-	if st.anchorID != through || st.anchorHash != throughHash {
-		return fmt.Errorf("%w: it names event %d, but the last event "+
+	if id != through || hash != throughHash {
+		return fmt.Errorf("%w: the %s names event %d, but the last event "+
 			"written under that secret is now %d; events written under it "+
 			"have been deleted from the end of the log",
-			errAuditTailUnproven, st.anchorID, through), nil
+			errAuditTailUnproven, slot, id, through), nil
 	}
 
 	return nil, nil

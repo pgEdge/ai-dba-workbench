@@ -589,8 +589,19 @@ func (s *AuthStore) ensureAuditSchema() error {
 	if _, err := s.db.Exec(auditTailDDL); err != nil {
 		return fmt.Errorf("failed to create audit_tail table: %w", err)
 	}
-	if err := s.migrateAuditTailSlots(); err != nil {
+	// A trigger on audit_tail is refused before the migration, whose
+	// rename and drop would remove it, and the definition after it.
+	// Both are tampering, so they carry the tampering sentinel, and the
+	// server refuses to open rather than run with anchors it cannot
+	// rely on.
+	if err := s.verifyAuditTailNoTrigger(); err != nil {
+		return fmt.Errorf("%w: %w", ErrAuditChainBroken, err)
+	}
+	if err := s.migrateAuditTailSchema(); err != nil {
 		return err
+	}
+	if err := s.verifyAuditTailSchema(); err != nil {
+		return fmt.Errorf("%w: %w", ErrAuditChainBroken, err)
 	}
 
 	if _, err := s.db.Exec(auditChainIndexDDL); err != nil {

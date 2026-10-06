@@ -231,6 +231,20 @@ whether an account is enabled or disabled:
 ./bin/ai-dba-server -enable-user -username charlie
 ```
 
+The server always keeps at least one enabled superuser, so that someone can
+still administer the server through the API and the Workbench console. The
+server refuses any change that would leave no enabled superuser, whether the
+change updates, disables, removes superuser status from or deletes the
+account. The API answers such a request with `409 Conflict`, and the
+`-disable-user`, `-unset-superuser` and `-delete-user` commands fail with the
+same error at the command line. A service
+account that is an enabled superuser counts towards the total, because the
+service account's tokens can still administer the server. Re-enabling a
+disabled superuser is always allowed; to demote or remove the last
+superuser, first promote or enable another account. An account lockout after
+repeated failed sign-ins is not refused in this way; use `-enable-user` to
+recover a locked superuser account.
+
 ### Deleting an Account
 
 You can use the Workbench console or the command line to delete a user or

@@ -33,6 +33,16 @@ that type:
 - `All Admin Permissions` uses `*` to match every ADMIN permission the owner
   holds.
 
+A connection scope either holds the `All Connections` entry alone or names
+particular connections, each one once. The server refuses a connection scope
+that combines `connection_id=0` with entries for particular connections, that
+names a connection more than once, or that names a negative connection ID; the
+API answers such a request with `400 Bad Request`, and the
+`-scope-token-connections` command fails with an error. In either case the
+token's stored scope stays as it was. The server also refuses an admin
+permission scope that names an unknown admin permission with
+`400 Bad Request`.
+
 The effective access for a scoped token equals the intersection of the owner's
 access and the token scope. A superuser holds every privilege, so the
 intersection for a superuser's token is the token scope itself.
@@ -73,6 +83,19 @@ A token's access also bounds the administrative changes the token can make,
 so a token can never give a user, a group or another token more than it holds
 itself. The [Bounding What a Token Can Grant](#bounding-what-a-token-can-grant)
 section explains the design and lists every request the bound covers.
+
+A token that a superuser owns carries the superuser role, so the server
+guards such tokens more closely. Creating a token for a superuser, and
+setting the scope of, clearing the scope of, or deleting a token that a
+superuser owns, each need a superuser's browser session or a superuser's
+token whose admin permission scope is unset or holds the `*` wildcard; the
+server refuses any other caller with `403 Forbidden`. A token acting on itself
+is exempt from this rule, so a token can narrow its own scope or delete itself.
+The ceiling still applies to a token changing itself, and also refuses any
+scope change that would widen a superuser's token unless the acting token
+holds everything a superuser does. The command-line scope and token commands
+work directly on the authentication database, so these checks do not apply
+to them.
 
 One MCP tool still reaches beyond a token's connection scope, so a token that
 must stay within its connections should not be granted it. The
@@ -331,7 +354,10 @@ Revoking the last group grant on a connection is stricter, and needs
 no longer restricted to groups, so a shared connection becomes open to every
 user; removing the last grant therefore needs the access that granting
 `read_write` to every user would need. The server applies this rule to the
-last grant on any connection, shared or not.
+last grant on any connection, shared or not. The server decides whether a
+revoke or a group deletion removes a connection's last grant inside the same
+transaction as the change, so a concurrent change cannot let a token lift a
+restriction that the token could not lift on its own.
 
 Granting the `All Connections` entry at an access level needs the token to
 hold every connection, present and future, at that level. That access comes
@@ -441,6 +467,18 @@ Clearing a token's scope gives the token its owner's whole access. For each
 scope type that the token restricts today, the owner's whole access of that
 type must lie within the acting token's access, and each connection entry the
 clear drops needs at least `read` access.
+
+A token that a superuser owns is bounded by its scope alone, so widening its
+scope hands out superuser access. Before the ceiling applies, the server
+requires a superuser's session or a superuser's token with an unrestricted
+admin permission scope to set or clear the scope of such a token, or to
+delete it; a token acting on itself is exempt from that requirement. The
+ceiling then refuses any change that widens a superuser's token, whether the
+change raises a connection entry above the level the token allows today or
+adds an MCP item or admin permission to a restricted scope type, unless the
+acting token holds everything a superuser does. Clearing the scope of a
+superuser's token that is restricted in any scope type widens the token in
+the same way, and needs the same.
 
 ### Counting a User's Access
 

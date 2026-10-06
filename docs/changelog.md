@@ -696,6 +696,33 @@ project adheres to
   is asked to do so that it matches the scope the token holds.
   (#471)
 
+- Close further gaps in API token scopes and superuser
+  administration. A token connection scope that combines the
+  `All Connections` entry (connection 0) with particular
+  connections, names a connection twice or names a negative
+  connection ID is now refused with `400 Bad Request` by the API
+  and with an error by the `-scope-token-connections` command,
+  leaving the stored scope unchanged, because the access check and
+  the grant ceiling read a mixed scope differently. An admin
+  permission scope that names an unknown admin permission is
+  also refused with `400 Bad Request`. Creating a
+  token for a superuser, and setting or clearing the scope of, or
+  deleting, a token that a superuser owns now needs a superuser's
+  session or a superuser's token with an unrestricted admin
+  permission scope, although a token may still narrow or delete
+  itself; the token grant ceiling also refuses any change that
+  widens a superuser's token unless the acting token holds
+  everything a superuser does. Whether revoking a connection grant
+  or deleting a group removes a connection's last group grant is
+  now decided inside the same transaction as the change, so a
+  concurrent change cannot let a token lift that restriction
+  without `read_write` access. The server also refuses, with
+  `409 Conflict` from the API and an error from the
+  `-disable-user`, `-unset-superuser` and `-delete-user` commands,
+  any change that would leave no enabled superuser; enabled
+  service accounts that are superusers count towards the total.
+  (#471, #528)
+
 - Change the alerter's default Gemini reasoning model from
   `gemini-2.5-flash` to `gemini-3.6-flash`. Google no longer offers
   `gemini-2.5-flash` to new API keys, answering every request with a

@@ -169,6 +169,9 @@ console or at the command line. The following flags control token scopes:
 
 - The `-scope-token-connections` flag sets the connection scope for a token;
   pass connection IDs with `-scope-connections` as a comma-separated list.
+  The command refuses a list that combines connection `0`, the
+  `All Connections` entry, with particular connections, or that names a
+  connection twice, and leaves the stored scope unchanged.
 - The `-scope-token-tools` flag sets the MCP tool scope for a token; pass
   tool names with `-scope-tools` as a comma-separated list.
 - The `-show-token-scope` flag displays the current scope for a token,

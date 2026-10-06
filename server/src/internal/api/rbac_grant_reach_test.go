@@ -339,6 +339,60 @@ func TestAccountTakeoverPermissionsReachEverything(t *testing.T) {
 	}
 }
 
+// TestAdminPermissionGrantNeedsUnrestrictedToken covers the 5 October
+// review's chain: a token bounded only in its MCP scope created a user,
+// set her password, added her to an empty group and then granted that
+// group manage_permissions, through which her session could grant the
+// MCP item the token itself was refused. Granting any admin permission
+// now needs a token restricted in none of the three kinds, so the chain
+// stops at the grant; an admin-bounded token is stopped there too, by
+// the superuser gate in front of it.
+func TestAdminPermissionGrantNeedsUnrestrictedToken(t *testing.T) {
+	f, cleanup := newReachFixture(t)
+	defer cleanup()
+
+	for i, caller := range []scopeCaller{f.mcpNarrowed, f.adminNarrowed} {
+		name := fmt.Sprintf("erin-%d", i)
+		assertStatus(t, f.do(caller, http.MethodPost, "/api/v1/rbac/users",
+			userBody(name)), http.StatusCreated)
+		userID, err := f.store.GetUserID(name)
+		if err != nil {
+			t.Fatalf("GetUserID failed: %v", err)
+		}
+		assertStatus(t, f.do(caller, http.MethodPut,
+			fmt.Sprintf("/api/v1/rbac/users/%d", userID),
+			`{"password":"Another-Password-9"}`), http.StatusOK)
+
+		groupID := f.group(t, fmt.Sprintf("empty-%d", i), nil)
+		assertStatus(t, f.do(caller, http.MethodPost,
+			fmt.Sprintf("/api/v1/rbac/groups/%d/members", groupID),
+			fmt.Sprintf(`{"user_id":%d}`, userID)), http.StatusNoContent)
+
+		permissions := fmt.Sprintf("/api/v1/rbac/groups/%d/permissions", groupID)
+		for _, perm := range []string{
+			auth.PermManagePermissions, auth.PermManageBlackouts,
+		} {
+			rec := f.do(caller, http.MethodPost, permissions,
+				fmt.Sprintf(`{"permission":%q}`, perm))
+			if caller.name == f.mcpNarrowed.name {
+				assertGrantRefused(t, rec)
+			} else {
+				// A narrowed admin scope already fails the blanket
+				// superuser gate in front of the grant.
+				assertStatus(t, rec, http.StatusForbidden)
+			}
+		}
+		if perms, err := f.store.ListGroupAdminPermissions(groupID); err != nil ||
+			len(perms) != 0 {
+			t.Fatalf("Expected no permission to be written, got %v (%v)", perms, err)
+		}
+		for _, open := range f.open() {
+			assertStatus(t, f.do(open, http.MethodPost, permissions,
+				`{"permission":"manage_permissions"}`), http.StatusNoContent)
+		}
+	}
+}
+
 // TestCreateTokenRespectsMCPScope checks that a token bounded by MCP
 // scope may not mint a token for an owner who holds an MCP item beyond
 // it.

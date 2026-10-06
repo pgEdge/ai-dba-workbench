@@ -242,10 +242,14 @@ func (h *RBACHandler) grantGroupPermission(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// An admin permission acts across the whole estate, so only a token
-	// that covers every connection may grant one (issue #471).
+	// An admin permission acts across the whole estate, and several of
+	// them let a holder acquire every MCP item and admin permission, so
+	// only a token unrestricted in all three scope kinds may grant one.
+	// Gating on the connection scope alone let an MCP-bounded token
+	// plant manage_permissions on a group it could then take over
+	// (issue #471).
 	if !h.requireGrantInTokenScope(w, r,
-		h.rbacChecker.AllConnectionsInTokenScope(r.Context())) {
+		h.rbacChecker.TokenScopeUnrestricted(r.Context())) {
 		return
 	}
 

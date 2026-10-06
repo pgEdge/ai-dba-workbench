@@ -166,7 +166,9 @@ func buildSecuritySchemes() map[string]*OpenAPISecurityScheme {
 				"MCP privilege or an admin permission, adding a group " +
 				"member, minting a token for another owner, and " +
 				"setting or clearing another token's scope are refused " +
-				"with 403 when they would reach beyond it. A new user " +
+				"with 403 when they would reach beyond it; granting an " +
+				"admin permission needs a token restricted in none of " +
+				"the three kinds. A new user " +
 				"counts as reaching every shared connection no group " +
 				"restricts and every public MCP item, and a user or " +
 				"group holding manage_users, manage_groups, " +
@@ -4480,7 +4482,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"204": {Description: "Permission granted"},
 					"400": jsonResponse("ErrorResponse", "Permission is required"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires superuser privileges, and an API token whose admin scope is unrestricted and whose connection scope covers every connection"),
+					"403": jsonResponse("ErrorResponse", "Requires superuser privileges, and an API token unrestricted in all three scope kinds: every connection at read_write, and no MCP or admin restriction"),
 				},
 			},
 		},

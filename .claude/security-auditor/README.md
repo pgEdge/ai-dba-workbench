@@ -56,14 +56,21 @@ moved.
   so a stopped collector, a stalled probe or a disabled one leaves the
   alert active (issue #407).
 - Visibility is per user: connections are scoped to their owner or to
-  groups the user belongs to. Handlers do not hide existence: a caller
-  without access to a connection gets 403, and several of them echo the
-  requested connection ID in the message (see `handleTopQueries` and its
-  neighbours in `internal/api/perf_summary_handlers.go`, and
-  `getConnection` in `internal/api/connection_handlers.go`). 404 is
-  reserved for resources that genuinely do not exist. Judge any
-  enumeration concern against that convention rather than assuming a
-  404-for-everything model.
+  groups the user belongs to. The REST handlers do not hide existence:
+  a caller without access to a connection gets 403, and several of them
+  echo the requested connection ID in the message (see
+  `handleTopQueries` and its neighbours in
+  `internal/api/perf_summary_handlers.go`, and `getConnection` in
+  `internal/api/connection_handlers.go`). 404 is reserved for resources
+  that genuinely do not exist. Judge any REST enumeration concern
+  against that convention rather than assuming a 404-for-everything
+  model.
+- The MCP tools that go through `resolveAccessibleConnection` in
+  `server/src/internal/tools/connection_access.go` (`get_alert_history`,
+  `get_blackouts`, `get_metric_baselines` and `get_timeline_events`) do
+  hide existence: a missing ID, a forbidden ID and a failed access check
+  get the same "connection not found or not accessible" response, and
+  the suggestions list only `VisibleConnectionIDs` (issue #571).
 - An API token's connection scope is a third constraint, intersected
   with both of the above. `CanAccessConnection` and
   `VisibleConnectionIDs` in `server/src/internal/auth/access.go` apply

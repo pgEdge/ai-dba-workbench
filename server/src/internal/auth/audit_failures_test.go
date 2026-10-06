@@ -551,7 +551,9 @@ func TestSweepAuditFailuresRestoresOnWriteError(t *testing.T) {
 
 // TestCoalesceFailureRestoresOnWriteError checks that a summary the
 // evict path cannot write is put back, as the sweep does, rather than
-// its count being lost with the failed transaction.
+// its count being lost with the failed transaction, and that a failure
+// whose own row cannot be written does not leave a window open to
+// suppress the identical failures after it.
 func TestCoalesceFailureRestoresOnWriteError(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAudit(t)
 	defer cleanup()
@@ -567,6 +569,9 @@ func TestCoalesceFailureRestoresOnWriteError(t *testing.T) {
 	state, ok := store.failures.entries[failureKeyFor("bob")]
 	if !ok || state.suppressed != 2 {
 		t.Fatalf("expected bob restored with 2 repeats, got %+v", state)
+	}
+	if _, ok := store.failures.entries[failureKeyFor("carol")]; ok {
+		t.Error("a failure whose row was not written left its window open")
 	}
 }
 

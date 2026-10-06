@@ -325,13 +325,25 @@ func sortSummaries(summaries []failureSummary) []failureSummary {
 	return summaries
 }
 
+// forget drops the entry for key, so that the next identical failure
+// opens a fresh window and is recorded.
+func (c *failureCoalescer) forget(key failureKey) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	delete(c.entries, key)
+}
+
 // writeFailure records one failure event in its own transaction,
 // logging rather than returning an error, for the reason recordFailure
-// gives.
-func (s *AuthStore) writeFailure(ev *AuditEvent) {
+// gives, and reports whether the event was written.
+func (s *AuthStore) writeFailure(ev *AuditEvent) bool {
 	if err := s.recordAuditInOwnTx(ev); err != nil {
 		log.Printf("[ERROR] Failed to record audit failure event: %v", err)
+		return false
 	}
+
+	return true
 }
 
 // writeFailureSummaries records a summary row for each entry in one
@@ -416,8 +428,12 @@ func (s *AuthStore) sweepAuditFailures(now time.Time, all bool) {
 // coalesceFailure runs one failure through the coalescer at now,
 // writing a summary row for every evicted entry that held suppressed
 // repeats and then, if admitted, the failure itself. Summaries that
-// cannot be written are put back, as the sweep does. The caller must
-// hold s.mu, as recordFailure requires.
+// cannot be written are put back, as the sweep does. If the failure
+// itself cannot be written its window is dropped again, so that the
+// identical failures after it are recorded rather than suppressed
+// behind a row that never reached the log. The caller must hold s.mu,
+// as recordFailure requires, which keeps another failure for the same
+// key from slipping in between the write and the drop.
 func (s *AuthStore) coalesceFailure(key failureKey, now time.Time) {
 	record, repeats, expired := s.failures.admit(key, now)
 
@@ -433,5 +449,7 @@ func (s *AuthStore) coalesceFailure(key failureKey, now time.Time) {
 	if repeats > 0 {
 		details = map[string]any{"repeat_count": repeats}
 	}
-	s.writeFailure(key.event(details))
+	if !s.writeFailure(key.event(details)) {
+		s.failures.forget(key)
+	}
 }

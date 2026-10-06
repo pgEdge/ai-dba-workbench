@@ -2011,14 +2011,15 @@ project adheres to
 - Coalesce repeated `failure` events in the RBAC audit log, as
   denials already were, so that a caller holding a mutation
   permission can no longer bury the events that matter by
-  repeating a request that always fails, such as creating a user
+  repeating a request that always fails, such as creating a group
   that already exists. Identical failures, meaning the same
   actor, address, action, target and error, are counted rather
   than recorded for sixty seconds after the one that was
   recorded, and the count appears in `details.repeat_count` on
   the next such failure or on a summary event of its own, which
   the server writes at its next periodic cleanup once the burst
-  stops, or at a clean shutdown for any window still open. The
+  stops, or at a clean shutdown, including one requested with
+  `SIGTERM` or `SIGINT`, for any window still open. The
   `error` text of `failure` and `denied` events is now capped at
   500 bytes, and `-list-audit` escapes control characters in the
   action column as it already did in the others. (#503)

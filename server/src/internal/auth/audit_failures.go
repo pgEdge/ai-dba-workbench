@@ -14,6 +14,7 @@ import (
 	"log"
 	"sort"
 	"sync"
+	"testing"
 	"time"
 	"unicode/utf8"
 )
@@ -267,7 +268,10 @@ func (c *failureCoalescer) drain(now time.Time, all bool) []failureSummary {
 // restore puts back the entries behind summaries that could not be
 // written, so that a later sweep, or Close, can try again rather than
 // the counts being lost with a failed transaction. An entry that has
-// been re-created since the drain is left as it is.
+// been re-created since the drain is left as it is, and nothing is put
+// back once the map is at its cap, so that a store that keeps failing
+// its writes cannot grow the map without bound; the counts so dropped
+// have already been logged with the failed write.
 func (c *failureCoalescer) restore(summaries []failureSummary) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -277,6 +281,9 @@ func (c *failureCoalescer) restore(summaries []failureSummary) {
 	}
 	for i := range summaries {
 		summary := &summaries[i]
+		if len(c.entries) >= maxFailureKeys {
+			return
+		}
 		if _, ok := c.entries[summary.key]; ok {
 			continue
 		}
@@ -355,9 +362,41 @@ func (s *AuthStore) writeFailureSummaries(summaries []failureSummary) bool {
 // whose window has closed and that still holds suppressed repeats, so
 // that the count of a burst which simply stops reaches the log without
 // waiting for a later failure to evict it. The server calls it on its
-// periodic cleanup tick, and Close writes the windows still open.
+// periodic cleanup tick, and FlushAuditFailures writes the windows
+// still open.
 func (s *AuthStore) SweepAuditFailures() {
 	s.sweepAuditFailures(time.Now(), false)
+}
+
+// FlushAuditFailures writes a summary row for every coalesced failure
+// that still holds suppressed repeats, whether or not its window has
+// closed, so that a clean shutdown does not discard their counts. Close
+// calls it, and so does the server's SIGTERM and SIGINT handler, which
+// exits the process without reaching Close. Calling it again, or
+// after Close, finds nothing left to write.
+func (s *AuthStore) FlushAuditFailures() {
+	s.sweepAuditFailures(time.Now(), true)
+}
+
+// AgeAuditFailuresForTesting moves the start of every open coalescing
+// window back by d, so that a test can close windows without waiting
+// out failureCoalesceWindow. It is exported for the reason
+// AuditKeyForTesting is, since its callers include the cmd/mcp-server
+// test binary, and the same testing.Testing guard keeps it unreachable
+// from the server.
+func AgeAuditFailuresForTesting(s *AuthStore, d time.Duration) {
+	if !testing.Testing() {
+		panic("auth.AgeAuditFailuresForTesting was called outside a " +
+			"test binary")
+	}
+
+	s.failures.mu.Lock()
+	defer s.failures.mu.Unlock()
+
+	for _, state := range s.failures.entries {
+		state.firstSeen = state.firstSeen.Add(-d)
+		state.lastSeen = state.lastSeen.Add(-d)
+	}
 }
 
 // sweepAuditFailures drains the coalescer at now, every entry when all
@@ -376,12 +415,15 @@ func (s *AuthStore) sweepAuditFailures(now time.Time, all bool) {
 
 // coalesceFailure runs one failure through the coalescer at now,
 // writing a summary row for every evicted entry that held suppressed
-// repeats and then, if admitted, the failure itself. The caller must
+// repeats and then, if admitted, the failure itself. Summaries that
+// cannot be written are put back, as the sweep does. The caller must
 // hold s.mu, as recordFailure requires.
 func (s *AuthStore) coalesceFailure(key failureKey, now time.Time) {
 	record, repeats, expired := s.failures.admit(key, now)
 
-	s.writeFailureSummaries(expired)
+	if !s.writeFailureSummaries(expired) {
+		s.failures.restore(expired)
+	}
 
 	if !record {
 		return

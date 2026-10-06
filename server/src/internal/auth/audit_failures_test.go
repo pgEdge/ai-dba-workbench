@@ -548,3 +548,73 @@ func TestSweepAuditFailuresRestoresOnWriteError(t *testing.T) {
 			len(empty.entries))
 	}
 }
+
+// TestCoalesceFailureRestoresOnWriteError checks that a summary the
+// evict path cannot write is put back, as the sweep does, rather than
+// its count being lost with the failed transaction.
+func TestCoalesceFailureRestoresOnWriteError(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAudit(t)
+	defer cleanup()
+
+	repeatFailure(store, "bob", 3)
+	ageEntry(store, failureKeyFor("bob"), failureCoalesceWindow)
+	if err := store.db.Close(); err != nil {
+		t.Fatalf("closing the database failed: %v", err)
+	}
+
+	repeatFailure(store, "carol", 1)
+
+	state, ok := store.failures.entries[failureKeyFor("bob")]
+	if !ok || state.suppressed != 2 {
+		t.Fatalf("expected bob restored with 2 repeats, got %+v", state)
+	}
+}
+
+// TestFailureCoalescerRestoreStopsAtCap checks that restore never takes
+// the map past its cap, so a store whose writes keep failing cannot
+// grow it without bound.
+func TestFailureCoalescerRestoreStopsAtCap(t *testing.T) {
+	var c failureCoalescer
+	start := time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)
+	for i := 0; i < maxFailureKeys; i++ {
+		c.admit(failureKeyFor(fmt.Sprintf("target-%d", i)), start)
+	}
+
+	c.restore([]failureSummary{{key: failureKeyFor("evicted"),
+		suppressed: 1}})
+	if len(c.entries) != maxFailureKeys {
+		t.Errorf("restore took the map to %d entries, cap %d",
+			len(c.entries), maxFailureKeys)
+	}
+	if _, ok := c.entries[failureKeyFor("evicted")]; ok {
+		t.Error("restore added an entry past the cap")
+	}
+}
+
+// TestFlushAuditFailuresWritesOnce checks that the exported sweep
+// writes a window aged shut by AgeAuditFailuresForTesting, that a flush
+// writes a window still open, and that a second flush finds nothing
+// left to write.
+func TestFlushAuditFailuresWritesOnce(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAudit(t)
+	defer cleanup()
+
+	repeatFailure(store, "bob", 3)
+	AgeAuditFailuresForTesting(store, failureCoalesceWindow)
+	before := auditEventCount(t, store)
+	store.SweepAuditFailures()
+	if got := auditEventCount(t, store) - before; got != 1 {
+		t.Fatalf("expected the sweep to write one summary, got %d", got)
+	}
+	if details := auditDetails(t, lastAuditEvent(t, store)); details["repeat_count"] != float64(2) {
+		t.Errorf("unexpected sweep summary %v", details)
+	}
+
+	repeatFailure(store, "carol", 2)
+	before = auditEventCount(t, store)
+	store.FlushAuditFailures()
+	store.FlushAuditFailures()
+	if got := auditEventCount(t, store) - before; got != 1 {
+		t.Errorf("expected two flushes to write one summary, got %d", got)
+	}
+}

@@ -12,6 +12,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -22,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
 )
 
@@ -406,4 +408,85 @@ func TestRealCoverageWriter_PointsAtRuntime(t *testing.T) {
 	for _, m := range matches {
 		_ = os.Remove(m)
 	}
+}
+
+// repeatGroupCreateFailure creates the group name n+1 times, so that
+// the first call succeeds and the n duplicates each reach the store's
+// failure path, which records the first and coalesces the rest.
+func repeatGroupCreateFailure(t *testing.T, store *auth.AuthStore,
+	name string, n int) {
+
+	t.Helper()
+	if _, err := store.CreateGroup(name, ""); err != nil {
+		t.Fatalf("failed to create group %q: %v", name, err)
+	}
+	for i := 0; i < n; i++ {
+		if _, err := store.CreateGroup(name, ""); err == nil {
+			t.Fatalf("creating group %q again succeeded", name)
+		}
+	}
+}
+
+// groupCreateRepeatCounts returns details.repeat_count for every
+// group.create failure row, oldest first, with 0 for a row that has
+// none.
+func groupCreateRepeatCounts(t *testing.T, store *auth.AuthStore) []float64 {
+	t.Helper()
+
+	events, _, err := store.ListAuditEvents(auth.AuditFilter{
+		Action:  "group.create",
+		Outcome: "failure",
+		Limit:   100,
+	})
+	if err != nil {
+		t.Fatalf("failed to list audit events: %v", err)
+	}
+
+	counts := make([]float64, 0, len(events))
+	for i := len(events) - 1; i >= 0; i-- {
+		var details map[string]any
+		if len(events[i].Details) > 0 {
+			if err := json.Unmarshal(events[i].Details, &details); err != nil {
+				t.Fatalf("failed to decode audit details: %v", err)
+			}
+		}
+		count, _ := details["repeat_count"].(float64)
+		counts = append(counts, count)
+	}
+
+	return counts
+}
+
+// TestRunShutdown_FlushesAuditFailures drives runShutdown with the
+// server's own dependencies, as the SIGTERM and SIGINT handler does,
+// and checks that the suppressed counts of an open failure window
+// reach the audit log even though the process exits without calling
+// Server.Close.
+func TestRunShutdown_FlushesAuditFailures(t *testing.T) {
+	store, _ := newWrapperTestStore(t)
+	repeatGroupCreateFailure(t, store, "duplicate-group", 10)
+
+	s := &Server{authStore: store}
+	deps := s.shutdownDeps()
+	// The fixture has no MCP server, and a nil *mcp.Server in the
+	// interface field is not a nil interface, so leave the drain out.
+	deps.server = nil
+	exitCode := -1
+	deps.logger = &bytes.Buffer{}
+	deps.gocoverdir = ""
+	deps.exit = func(code int) { exitCode = code }
+
+	runShutdown(deps)
+
+	if exitCode != 0 {
+		t.Errorf("exit code = %d, want 0", exitCode)
+	}
+	got := groupCreateRepeatCounts(t, store)
+	if len(got) != 2 || got[0] != 0 || got[1] != 9 {
+		t.Errorf("group.create failure repeat counts = %v, want [0 9]", got)
+	}
+
+	// A flush with no auth store, as in a server that never opened
+	// one, must do nothing rather than panic.
+	(&Server{}).flushAuditFailures()
 }

@@ -437,7 +437,7 @@ func TestRunCleanupTickRemovesExpiredTokens(t *testing.T) {
 
 	res, err := db.Exec(`INSERT INTO tokens (token_hash, owner_id, expires_at)
 		SELECT 'expired-token-hash', id, ? FROM users WHERE username = 'wrapper'`,
-		time.Now().Add(-time.Hour).UTC())
+		time.Now().Add(-time.Hour))
 	if err != nil {
 		t.Fatalf("failed to seed an expired token: %v", err)
 	}
@@ -456,7 +456,17 @@ func TestRunCleanupTickRemovesExpiredTokens(t *testing.T) {
 		clientManager: database.NewClientManager(nil),
 	}
 
+	// A burst of failures whose window has closed must be written by
+	// the tick's sweep, which is its only production path for a burst
+	// that simply stops.
+	repeatGroupCreateFailure(t, store, "duplicate-group", 3)
+	auth.AgeAuditFailuresForTesting(store, time.Hour)
+
 	s.runCleanupTick()
+
+	if got := groupCreateRepeatCounts(t, store); len(got) != 2 || got[1] != 2 {
+		t.Errorf("group.create failure repeat counts = %v, want [0 2]", got)
+	}
 
 	var remaining int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM tokens

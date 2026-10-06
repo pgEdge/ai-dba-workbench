@@ -793,17 +793,36 @@ func (s *Server) logStartupInfo() {
 // not call this helper; its short-lived os.Exit(0) already triggers
 // the runtime's normal counter flush.
 //
-// The closer slot is intentionally left nil: main.go already defers
+// The closer is deliberately not s.Close: main.go already defers
 // s.Close on a clean RunHTTP return, and racing that defer against
 // a goroutine-driven Close has caused double-close panics in past
-// graceful-shutdown implementations. Flushing coverage and forcing
-// exit(0) is the only thing the runtime cannot do on its own.
+// graceful-shutdown implementations. The handler exits the process
+// without reaching that defer, though, so its closer writes the
+// suppressed counts of coalesced audit failures, which would otherwise
+// be lost; that is safe beside the deferred Close, since both take the
+// auth store's lock and whichever runs second finds nothing to write.
 func (s *Server) setupShutdownHandler() {
-	installShutdownHandler(shutdownDeps{
+	installShutdownHandler(s.shutdownDeps())
+}
+
+// shutdownDeps returns the production dependencies for the
+// SIGTERM/SIGINT handler; it is split out so that tests can drive
+// runShutdown with them.
+func (s *Server) shutdownDeps() shutdownDeps {
+	return shutdownDeps{
 		server:      s.mcpServer,
+		closer:      s.flushAuditFailures,
 		gocoverdir:  os.Getenv("GOCOVERDIR"),
 		writeCounts: realCoverageWriter,
-	})
+	}
+}
+
+// flushAuditFailures writes a summary row for every coalesced audit
+// failure that still holds suppressed repeats.
+func (s *Server) flushAuditFailures() {
+	if s.authStore != nil {
+		s.authStore.FlushAuditFailures()
+	}
 }
 
 // setupSIGHUP sets up the SIGHUP handler for configuration reload. It

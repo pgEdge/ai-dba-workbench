@@ -144,7 +144,7 @@ that stops is still counted rather than lost.
 
 Repeated failures are coalesced in the same way, because a caller
 holding a mutation permission could otherwise fill the log by
-repeating a request that always fails, such as creating a user that
+repeating a request that always fails, such as creating a group that
 already exists. Two failures are identical when they share the actor,
 the client address, the action, the target and the error text. A
 failure summary event also carries `details.first_seen` and
@@ -152,9 +152,10 @@ failure summary event also carries `details.first_seen` and
 stands for, because the event itself is stamped when it is written.
 The server writes the summary for a burst that has stopped at its
 next periodic cleanup, which runs every five minutes, or sooner if a
-later failure arrives first; a clean shutdown writes a summary for
-every window that is still open, so only a crash loses the counts of
-the open windows. The server keeps the coalescing state in memory, so
+later failure arrives first; a clean shutdown, including one
+requested with `SIGTERM` or `SIGINT`, writes a summary for every
+window that is still open, so only a crash loses the counts of the
+open windows. The server keeps the coalescing state in memory, so
 a restart starts every window afresh, and servers sharing one
 `auth.db` coalesce independently.
 

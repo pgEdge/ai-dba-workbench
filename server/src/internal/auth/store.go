@@ -918,7 +918,7 @@ func (s *AuthStore) initSchema() error {
 // closes the database connection.
 func (s *AuthStore) Close() error {
 	s.StopSessionCleanup()
-	s.sweepAuditFailures(time.Now(), true)
+	s.FlushAuditFailures()
 	return s.db.Close()
 }
 

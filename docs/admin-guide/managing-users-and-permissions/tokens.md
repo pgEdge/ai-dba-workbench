@@ -121,6 +121,14 @@ at all.
 Sessions, and tokens with no restriction in any of the three scope types, are
 not affected by these bounds.
 
+These bounds stop a token widening anyone's access, but they do not stop a
+bounded token removing access or changing accounts in other ways. Whatever its
+connection or MCP scope, a token holding the relevant admin permissions can
+still revoke any group's MCP privileges or admin permissions, edit or disable
+any user (a superuser too, when the token's admin scope is unrestricted), and
+delete any token. Issue a token with those permissions only to a holder you
+would trust with such changes across the whole estate.
+
 One MCP tool still reaches beyond a token's connection scope, so a token that
 must stay within its connections should not be granted it. The
 `query_datastore` tool runs read-only SQL over the whole datastore, including

@@ -105,23 +105,29 @@ moved.
   The cluster-group create, update and delete routes accept session
   tokens only (`getUserInfoCompat` answers 401 to an API token), and
   carry the same all-connections gate in case that ever changes.
-- Grants are bounded by the acting token's whole scope, connection,
-  MCP and admin kinds alike (`internal/auth/grant_scope.go`,
-  `internal/api/rbac_grant_scope.go`): group connection, MCP and
-  admin grants and revokes, group membership, rename and deletion,
-  user creation, `is_superuser`, password set, re-enable and user
-  deletion, token creation for an owner, and another token's scope
-  change or clear. A principal's reach counts owned connections and
-  owned cluster groups, and a holder of `manage_users`,
-  `manage_groups`, `manage_permissions` or `manage_token_scopes`
-  reaches every MCP item and admin permission. Separately from the
-  grant bounds, `query_datastore` reads beyond a token's connection
-  scope (read-only SQL over the whole datastore, `connections`
-  credentials included), which #566 tracks. A `read`
-  connection entry allows acknowledging, unacknowledging and saving
-  an analysis of an alert, and managing blackouts and blackout
-  schedules on that server; the user ruled this intended, so do not
-  report it as a finding.
+- Grants are bounded by the acting token's whole scope, connection, MCP
+  and admin kinds alike (`internal/auth/grant_scope.go`,
+  `internal/api/rbac_grant_scope.go`): group connection grants and
+  revokes, MCP grants, admin permission grants (which need
+  `TokenScopeUnrestricted`, all three kinds unrestricted, since several
+  admin permissions let a holder acquire the rest), group membership,
+  rename and deletion, user creation, `is_superuser`, password set,
+  re-enable and user deletion, token creation for an owner, and another
+  token's scope change or clear. A principal's reach counts owned
+  connections and owned cluster groups, and a holder of `manage_users`,
+  `manage_groups`, `manage_permissions` or `manage_token_scopes` reaches
+  every MCP item and admin permission. Known gaps, which do not widen
+  anyone's reach and are documented in `tokens.md`: a bounded token can
+  still revoke any group's MCP privileges or admin permissions, edit or
+  disable any user (a superuser too when its admin scope is
+  unrestricted), and delete any token; these are not scope-gated.
+  Separately from the grant bounds, `query_datastore` reads beyond a
+  token's connection scope (read-only SQL over the whole datastore,
+  `connections` credentials included), which #566 tracks. A `read`
+  connection entry allows acknowledging, unacknowledging and saving an
+  analysis of an alert, and managing blackouts and blackout schedules on
+  that server; the user ruled this intended, so do not report it as a
+  finding.
 - Connection ownership bypasses group restriction in `updateConnection`
   and `deleteConnection`, so every reach computation must count owned
   connections, restricted or not.

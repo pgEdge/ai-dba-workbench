@@ -508,9 +508,11 @@ with `grantOutOfTokenScope`.
 
 - Grant checks: `CanGrantConnectionInTokenScope` (level within the
   entry), `CanGrantMCPInTokenScope` (the `*` wildcard needs an
-  MCP-unrestricted actor), `AllConnectionsInTokenScope` for any admin
-  permission or superuser status, and `TokenScopeUnrestricted` (all
-  three kinds unrestricted) as the shortcut that skips everything.
+  MCP-unrestricted actor), and `TokenScopeUnrestricted` (all three
+  kinds unrestricted) for any admin permission grant or superuser
+  status, and as the shortcut that skips everything else. An admin
+  permission grant gated on connection scope alone let an MCP-bounded
+  token plant `manage_permissions` on a group it then took over.
 - Reach checks build a `principalReach` and compare it with the actor's
   scope in every kind: `UserWithinTokenScope(ctx, userID, lister)`,
   `NewUserWithinTokenScope(ctx, username, lister)` for a user not yet
@@ -551,16 +553,16 @@ with `grantOutOfTokenScope`.
   so `actorMCPScope` asks `AuthStore.HasTokenMCPScope` for the raw row
   count and treats orphaned rows as a scope that names nothing.
 - Gated routes: group connection grant and revoke, group MCP grant,
-  group admin permission grant, deleting a group holding an
-  out-of-scope grant, adding or removing a group member (either member
-  type, `GroupWithinTokenScope`), renaming a group
+  group admin permission grant (`TokenScopeUnrestricted`), deleting a
+  group holding an out-of-scope grant, adding or removing a group member
+  (either member type, `GroupWithinTokenScope`), renaming a group
   (`requireRenameInTokenScope`: the group must be within scope, and
   neither the old nor the new name may appear in the OIDC `group_map`
   that `RBACHandler.SetFederatedGroupMap` supplies, since federation
   matches groups by name), creating or deleting a group whose name the
   OIDC `group_map` uses (`federatedNameInTokenScope`,
-  `requireGroupDeleteInTokenScope`), `createUser` (superuser
-  needs `TokenScopeUnrestricted`), `updateUser` (`is_superuser`, and a
+  `requireGroupDeleteInTokenScope`), `createUser` (superuser needs
+  `TokenScopeUnrestricted`), `updateUser` (`is_superuser`, and a
   password set or re-enable on a user beyond scope), `deleteUser`
   (ownership is matched by username, so delete-and-recreate would
   otherwise inherit unshared connections), `createToken` for an owner
@@ -573,8 +575,12 @@ with `grantOutOfTokenScope`.
 Revokes and group deletes are gated because a connection left with no
 group grant becomes unrestricted, opening a shared connection to every
 user. Known gaps, deliberately left: a token unrestricted in all three
-kinds is treated as unbounded whatever its owner holds (#522), and
-`query_datastore` reaches beyond any connection scope (#566). The
+kinds is treated as unbounded whatever its owner holds (#522),
+`query_datastore` reaches beyond any connection scope (#566), and
+actions that widen nobody's reach are not scope-gated: revoking a
+group's MCP privileges or admin permissions, editing or disabling a
+user (a superuser too when the token's admin scope is unrestricted),
+and deleting a token. The
 regression tests are in `internal/api/rbac_grant_scope_test.go` and
 `internal/api/rbac_grant_reach_test.go` (integration, real auth store),
 with unit cases in `internal/auth/grant_scope_test.go`; each gate fails

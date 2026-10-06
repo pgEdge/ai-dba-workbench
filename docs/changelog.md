@@ -2088,7 +2088,12 @@ project adheres to
   `UTF8` client encoding, and a request, whether read-only or a
   confirmed write, stops at any statement that changes it, because in
   encodings such as `SJIS` a multibyte character can end in a byte the
-  classifier would read as a backslash.
+  classifier would read as a backslash. To make that check possible,
+  the statements of a confirmed write now run on a single connection,
+  so a `BEGIN` and `COMMIT` in the same request take effect together;
+  a request that leaves a transaction open is rolled back and reports
+  an error, rather than listing each statement as a success whilst
+  discarding their work.
   Statements that do run over the simple query protocol are now held
   inside the same read-only transaction as the rest of the read path.
   The fix needs no restart beyond the upgrade itself and no database

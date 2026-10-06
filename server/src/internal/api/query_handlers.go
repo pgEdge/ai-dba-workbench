@@ -393,8 +393,12 @@ func (h *ConnectionHandler) executeQuery(w http.ResponseWriter, r *http.Request,
 		}
 		defer poolConn.Release()
 
-		results := runSimpleStatements(ctx, poolConn.Conn().PgConn(),
-			statements, limit, connectionID, allReadOnly)
+		pgConn := poolConn.Conn().PgConn()
+		results := runSimpleStatements(ctx, pgConn, statements, limit,
+			connectionID, allReadOnly)
+		if !allReadOnly {
+			results = endOpenTransaction(ctx, pgConn, results, connectionID)
+		}
 
 		RespondJSON(w, http.StatusOK, multiQueryResponse{
 			Results:         results,
@@ -501,6 +505,7 @@ func (h *ConnectionHandler) executeQuery(w http.ResponseWriter, r *http.Request,
 				break
 			}
 		}
+		results = endOpenTransaction(ctx, pgConn, results, connectionID)
 	}
 
 	resp := multiQueryResponse{
@@ -1479,6 +1484,40 @@ func requireUTF8(pgConn *pgconn.PgConn, result statementResult, connectionID int
 		Query: result.Query,
 		Error: clientEncodingChangedError,
 	}
+}
+
+// openTransactionError is the error reported for a confirmed batch that
+// left a transaction open.
+const openTransactionError = "Transaction error: the statements left " +
+	"a transaction open, so it was rolled back and nothing done inside it " +
+	"was kept; end the transaction with COMMIT or ROLLBACK in the same request"
+
+// endOpenTransaction rolls back a transaction that a confirmed batch
+// opened and did not close, and adds a result saying so. The write path
+// runs every statement on one connection, so a BEGIN in the batch
+// carries over to the statements after it, and the connection goes back
+// to a pool that destroys a connection released mid-transaction, which
+// discards that work. Without this result the batch would report each
+// statement as having succeeded although none of its work in the
+// transaction was kept.
+func endOpenTransaction(
+	ctx context.Context,
+	pgConn *pgconn.PgConn,
+	results []statementResult,
+	connectionID int,
+) []statementResult {
+	if pgConn.TxStatus() == 'I' {
+		return results
+	}
+	log.Printf("[WARN] Query left a transaction open; rolling it back (connection=%d)",
+		connectionID)
+	rollbackSimple(ctx, func(execCtx context.Context, sql string) error {
+		return pgConn.Exec(execCtx, sql).Close()
+	}, connectionID)
+	return append(results, statementResult{
+		Query: "ROLLBACK",
+		Error: openTransactionError,
+	})
 }
 
 // runSimpleStatements executes statements over the simple query

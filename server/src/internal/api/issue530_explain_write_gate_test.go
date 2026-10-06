@@ -1230,3 +1230,90 @@ func TestIssue530_ClientEncodingPinnedAtStartup(t *testing.T) {
 		t.Errorf("client_encoding = %q, want UTF8", got)
 	}
 }
+
+// TestIssue530_ConfirmedBatchLeavingTransactionOpen proves that a
+// confirmed batch which opens a transaction and does not close it is
+// rolled back and reported as such, rather than listing each statement
+// as a success whilst the pool discards the work, and that a batch
+// which does close its transaction keeps what it did. Both the pgx
+// write path and the simple-protocol branch are covered; the
+// GENERIC_PLAN EXPLAIN routes a batch onto the latter and needs
+// PostgreSQL 16 or later.
+func TestIssue530_ConfirmedBatchLeavingTransactionOpen(t *testing.T) {
+	h, pool, target, cleanup := newQueryExecTestHandler(t)
+	defer cleanup()
+
+	connID := seedQueryExecConnection(t, pool, target, target.host, target.port)
+
+	ctx := context.Background()
+	const explain = "EXPLAIN (GENERIC_PLAN) SELECT 1 WHERE 1 = $1"
+	tests := []struct {
+		name      string
+		query     string
+		results   int
+		openError bool
+		rowsLeft  int
+	}{
+		{"open transaction on the write path",
+			"BEGIN; DELETE FROM issue530_txn", 3, true, 2},
+		{"closed transaction on the write path",
+			"BEGIN; DELETE FROM issue530_txn; COMMIT", 3, false, 0},
+		{"open transaction on the simple-protocol branch",
+			"BEGIN; DELETE FROM issue530_txn; " + explain, 4, true, 2},
+		{"closed transaction on the simple-protocol branch",
+			"BEGIN; DELETE FROM issue530_txn; " + explain + "; COMMIT",
+			4, false, 0},
+		{"failed statement inside an open transaction",
+			"BEGIN; DELETE FROM issue530_txn; SELECT 1/0", 4, true, 2},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := pool.Exec(ctx, `DROP TABLE IF EXISTS issue530_txn;
+				CREATE TABLE issue530_txn (a int);
+				INSERT INTO issue530_txn VALUES (1), (2)`); err != nil {
+				t.Fatalf("failed to create the probe table: %v", err)
+			}
+			defer func() {
+				_, _ = pool.Exec(ctx, "DROP TABLE IF EXISTS issue530_txn")
+			}()
+
+			body, err := json.Marshal(queryRequest{Query: tt.query,
+				Confirmed: true})
+			if err != nil {
+				t.Fatalf("failed to encode the request: %v", err)
+			}
+			rec := postQuery(t, h, connID, string(body))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d (body %q)",
+					rec.Code, http.StatusOK, rec.Body.String())
+			}
+			resp := decodeMultiQuery(t, rec)
+			if len(resp.Results) != tt.results {
+				t.Fatalf("results = %+v, want %d", resp.Results, tt.results)
+			}
+			last := resp.Results[len(resp.Results)-1]
+			if tt.openError {
+				if last.Query != "ROLLBACK" || last.Error != openTransactionError {
+					t.Errorf("last result = %+v, want the open-transaction error",
+						last)
+				}
+			} else {
+				for _, r := range resp.Results {
+					if r.Error != "" {
+						t.Errorf("unexpected error for %q: %q", r.Query, r.Error)
+					}
+				}
+			}
+
+			var rows int
+			if err := pool.QueryRow(ctx,
+				"SELECT count(*) FROM issue530_txn").Scan(&rows); err != nil {
+				t.Fatalf("failed to count the probe rows: %v", err)
+			}
+			if rows != tt.rowsLeft {
+				t.Errorf("rows left = %d, want %d", rows, tt.rowsLeft)
+			}
+		})
+	}
+}

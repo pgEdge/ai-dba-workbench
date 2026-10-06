@@ -113,6 +113,12 @@ displays a confirmation prompt listing the detected
 statements. The user must click Execute to proceed or
 Cancel to abort.
 
+Confirmed statements run in order on a single database
+connection, so a `BEGIN` and its `COMMIT` in the same code
+block take effect together. If the statements leave a
+transaction open, the system rolls it back and reports an
+error, and nothing done inside that transaction is kept.
+
 ### SQL Validation
 
 The system extracts only executable SQL from code blocks.

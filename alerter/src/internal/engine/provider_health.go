@@ -23,8 +23,10 @@ package engine
 // context: the re-evaluation worker's context is tagged when it starts,
 // and an untagged Classify call is Tier 3 classification. A reasoning
 // call that returns a response holding no verdict the tier can parse
-// counts as a failure, since the caller falls back to its fail-safe
-// decision just as it does when the call errors (GitHub issue #594).
+// counts as a failure, since the model is not doing its job even though
+// the call succeeded (GitHub issue #594). The caller may still act on a
+// keyword found in such a response, or on its default decision; the
+// tracker records only that the model gave no verdict.
 
 import (
 	"context"

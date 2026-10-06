@@ -30,11 +30,13 @@ export const CONNECTION_ID_COMMENT_RE = /^--\s*connection_id:\s*(\d+)\s*\n/;
 /**
  * Regex matching a `$N` bind-parameter placeholder.
  *
- * Mirrors the `hasParameters` check in `useQueryPlan`: a statement
+ * Follows the `hasParameters` check in `useQueryPlan`: a statement
  * carrying placeholders is a template, not something the user can run
- * without supplying values.
+ * without supplying values. A `$` preceded by an identifier character is
+ * part of an identifier such as `col$1`, which PostgreSQL allows after
+ * the first character, so it is not a placeholder.
  */
-export const SQL_PARAMETER_RE = /\$\d+/;
+export const SQL_PARAMETER_RE = /(?<![\p{L}\p{N}_$])\$\d+/u;
 
 /**
  * Regex matching the opening delimiter of a dollar-quoted string, either

@@ -269,6 +269,17 @@ describe('hasSqlParameters', () => {
         )).toBe(false);
     });
 
+    it('ignores a dollar-digit sequence inside an identifier', () => {
+        expect(hasSqlParameters('SELECT col$1 FROM foo$2;')).toBe(false);
+        expect(hasSqlParameters('SELECT x$1$ FROM t;')).toBe(false);
+        expect(hasSqlParameters('SELECT é$1 FROM t;')).toBe(false);
+    });
+
+    it('still detects a placeholder after an operator or parenthesis', () => {
+        expect(hasSqlParameters('SELECT * FROM t WHERE id=$1;')).toBe(true);
+        expect(hasSqlParameters('SELECT f($1);')).toBe(true);
+    });
+
     it('ignores a placeholder inside a comment or literal', () => {
         expect(hasSqlParameters('SELECT 1; -- use $1 here')).toBe(false);
         expect(hasSqlParameters("SELECT 'costs $5' AS x;")).toBe(false);

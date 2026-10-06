@@ -209,10 +209,12 @@ func (e *Engine) recordReevaluation(ctx context.Context, alertID int64, fingerpr
 	}
 }
 
-// reevaluationFingerprint returns a hex SHA-256 of everything that shapes
-// the re-evaluation answer: the reasoning provider's name, its model, the
-// system prompt it sends, and the prompt built from the given inputs,
-// with the re-evaluation count zeroed. The count changes on every call
+// reevaluationFingerprint returns a hex SHA-256 of four parts: the
+// reasoning provider's name, its model, the system prompt it sends, and
+// the prompt built from the given inputs, with the re-evaluation count
+// zeroed. The request settings (the temperature and llm.max_tokens) are
+// not hashed, so changing either does not send a stored "keep" back to
+// the LLM before the alert's inputs change. The count changes on every call
 // but says nothing new about the alert, so including it would make every
 // fingerprint unique. Hashing the rendered prompt rather than a
 // hand-picked subset of fields means any input the prompt shows (the

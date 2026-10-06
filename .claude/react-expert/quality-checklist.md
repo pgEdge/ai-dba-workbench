@@ -279,6 +279,26 @@ from the latest `pg_server_info` row through the latest-row mode of
 that probe only stores a row when the server configuration changes
 and a bucketed query would usually come back empty.
 
+### Latest-snapshot tables
+
+A section that lists a probe's current entities, such as the
+Replication Slots section, reads `/api/v1/metrics/latest` (one row per
+entity, last hour only, `limit` at most 100, `connection_id` and
+`collected_at` stripped) and deliberately ignores the dashboard time
+range. Two server behaviours matter when adding one:
+
+- The entity keys are the probe's text-typed columns, less those in
+  `textStatusColumns` in `server/src/internal/metrics/query.go`. A
+  text status that changes over time (`wal_status`) must be listed
+  there, or one entity comes back as one row per status and the
+  client cannot tell which is current.
+- `NUMERIC` columns arrive as JSON numbers (`normalizeNumeric` in
+  `server/src/internal/api/latest_handlers.go`), or `null` when not
+  finite. Still parse defensively, as `normaliseSlotRows` in
+  `ServerDashboard/replicationSlots.ts` does, and keep the shaping in
+  a pure helper module beside the section, with the fetch in a hook
+  (`hooks/useReplicationSlots.ts`).
+
 ### Ratios and gaps
 
 A ratio derived from counters must be computed per interval, never

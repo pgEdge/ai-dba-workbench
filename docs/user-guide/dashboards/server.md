@@ -104,6 +104,58 @@ The section displays the following charts:
 - The Checkpoint Buffers Written chart plots the
   buffers that checkpoints wrote per second.
 
+## Replication Slots
+
+The replication slots section lists the replication
+slots on the server, from the most recent snapshot the
+collector took in the last hour. The section does not
+follow the dashboard time range selector; it always
+shows the slots as they are now.
+
+When the collector has detected replication between this
+server and others in its cluster, the section first
+names them:
+
+- The Upstream line lists the servers this server
+  streams from, subscribes to, or replicates with.
+- The Downstream line lists the standbys that stream
+  from this server and the subscribers that subscribe
+  to it; these are usually the consumers of its slots.
+
+A summary line counts the slots, the active and
+inactive slots, and the slots whose WAL is at risk. The
+table shows the following columns for each slot:
+
+- The Slot column shows the slot name.
+- The Type column shows whether the slot is physical
+  or logical.
+- The Status column shows Active when a consumer is
+  connected to the slot and Inactive when none is. An
+  inactive slot still prevents PostgreSQL from removing
+  the WAL the slot needs, so it is shown as a warning.
+- The WAL Status column shows how safe the slot's WAL
+  is. Reserved (green) means the WAL is within
+  `max_wal_size`; Extended (amber) means it exceeds
+  `max_wal_size` but is still kept; Unreserved (red)
+  means the WAL will be removed at the next checkpoint
+  unless the consumer catches up; and Lost (red) means
+  the WAL has gone and the slot can no longer be used.
+  Servers older than PostgreSQL 13 do not report a WAL
+  status, so the column shows Not reported.
+- The Retained WAL column shows how much WAL the slot
+  is holding back.
+- The Safe WAL Size column shows how much more WAL can
+  be written before the slot is at risk of losing WAL.
+  It shows Unlimited when `max_slot_wal_keep_size` is
+  `-1`, which means the slot can retain WAL until the
+  disk fills.
+
+The section lists up to 100 slots by name, and notes the
+total when a server has more. The collector records
+only slots that have reserved WAL, so a slot that has
+never been used, or whose WAL has already been lost,
+does not appear in the list.
+
 ## Database Summaries
 
 The database summaries section lists all databases on

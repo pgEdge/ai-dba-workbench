@@ -14,6 +14,7 @@ import Typography from '@mui/material/Typography';
 import SystemResourcesSection from './SystemResourcesSection';
 import PostgresOverviewSection from './PostgresOverviewSection';
 import WalReplicationSection from './WalReplicationSection';
+import ReplicationSlotsSection from './ReplicationSlotsSection';
 import DatabaseSummariesSection from './DatabaseSummariesSection';
 import ConnectionsSection from './ConnectionsSection';
 import TopQueriesSection from '../TopQueriesSection';
@@ -23,8 +24,9 @@ import type { ServerSelection } from '../../../types/selection';
  * ServerDashboard provides comprehensive server health and
  * performance information organized in collapsible sections.
  * It displays system resources, PostgreSQL metrics, WAL and
- * replication status, database summaries, active connections
- * grouped by user, client, and database, and top queries.
+ * replication status, replication slot health, database
+ * summaries, active connections grouped by user, client, and
+ * database, and top queries.
  */
 const ServerDashboard: React.FC<{ selection: ServerSelection }> = ({
     selection,
@@ -49,6 +51,7 @@ const ServerDashboard: React.FC<{ selection: ServerSelection }> = ({
             <SystemResourcesSection connectionId={connectionId} connectionName={connectionName} />
             <PostgresOverviewSection connectionId={connectionId} connectionName={connectionName} />
             <WalReplicationSection connectionId={connectionId} connectionName={connectionName} />
+            <ReplicationSlotsSection connectionId={connectionId} connectionName={connectionName} />
             <DatabaseSummariesSection connectionId={connectionId} connectionName={connectionName} />
             <ConnectionsSection connectionId={connectionId} connectionName={connectionName} />
             <TopQueriesSection connectionId={connectionId} connectionName={connectionName} />

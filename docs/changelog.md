@@ -385,6 +385,20 @@ project adheres to
   reconciled at every sign-in, which is the usual explanation
   for a superuser flag that keeps reverting. (#483)
 
+- Add a Replication Slots section to the server dashboard,
+  after WAL and Replication (#347). It lists the server's
+  replication slots from the collector's latest
+  `pg_replication_slots` snapshot with each slot's type,
+  whether a consumer is connected (Active or Inactive), its
+  WAL status (Reserved, Extended, Unreserved or Lost), the
+  WAL it retains and its safe WAL size, with a summary of
+  the active, inactive and at-risk slots. Above the table it
+  names the servers this one replicates from and the
+  standbys and subscribers that replicate from it, as the
+  collector detected them in the cluster topology. The
+  collector does not record slots that have never reserved
+  WAL or that have lost it, so those do not appear.
+
 ### Changed
 
 - Raise the default size of the server's datastore connection pool,
@@ -840,6 +854,15 @@ project adheres to
   still takes precedence when both are given. The datastore
   password is also now excluded when the server's configuration is
   serialised to JSON, as the OIDC client secret already was. (#591)
+
+- Fix `GET /api/v1/metrics/latest` returning `NUMERIC` columns,
+  such as the replication slot `retained_bytes`, as unreadable
+  strings like `{123456789 0 false finite true}`; they are now
+  JSON numbers, or `null` when the value is not finite. The
+  endpoint also no longer treats a replication slot's
+  `wal_status` as part of the slot's identity, so a slot whose
+  status changed within the hour is reported once with its
+  current status rather than once for each status. (#347)
 
 - Keep the server's command-line overrides across a `SIGHUP`
   configuration reload. A reload applied none of the flags given at

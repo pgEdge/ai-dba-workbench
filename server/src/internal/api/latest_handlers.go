@@ -12,12 +12,14 @@ package api
 import (
 	"context"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/database"
@@ -634,7 +636,24 @@ func normalizeValue(v any) any {
 		return val
 	case time.Time:
 		return val.Format(time.RFC3339)
+	case pgtype.Numeric:
+		return normalizeNumeric(val)
 	default:
 		return fmt.Sprintf("%v", val)
 	}
+}
+
+// normalizeNumeric converts a NUMERIC value, which pgx scans into a
+// pgtype.Numeric struct, to a float64. Without it the struct falls to
+// the default case and is printed as its fields (for example
+// "{123456789 0 false finite true}"), which is how a column such as
+// pg_replication_slots.retained_bytes would otherwise reach the client.
+// NULL, NaN and the infinities have no JSON number form and become null.
+func normalizeNumeric(val pgtype.Numeric) any {
+	f, err := val.Float64Value()
+	if err != nil || !f.Valid || math.IsNaN(f.Float64) ||
+		math.IsInf(f.Float64, 0) {
+		return nil
+	}
+	return f.Float64
 }

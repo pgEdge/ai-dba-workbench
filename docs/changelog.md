@@ -614,37 +614,66 @@ project adheres to
   into a cluster that does not exist answers `404 Not Found`, as a hidden cluster
   does, rather than `500`; and adding a server to a cluster
   refuses a role the server does not recognise with `400 Bad
-  Request`. Administrative grants and account changes are
-  bounded by the whole token scope, so a token restricted in any
-  of its connection, MCP or admin scopes can never give a user,
-  a group or another token access beyond that scope, nor take
-  over an account that reaches further: it cannot grant a group
-  a connection or an MCP privilege outside its scope, the MCP
-  wildcard, or any admin permission; revoke a grant on or delete
-  a group holding a connection outside it; add a member to, or
-  remove one from, a group that reaches beyond it; rename such a
-  group; create or delete a group the OIDC `group_map` names, or
-  rename any group from or to such a name; create a superuser, or any user who
-  would reach beyond it, which counts the public MCP items, every
-  shared connection no group restricts, every connection the user
-  owns, restricted or not, and every member of a cluster group the
-  user owns; make a user a superuser; set the
-  password of, re-enable or delete a user who reaches beyond it,
-  since deleting one frees the name, and the connections it
-  owns, for whoever recreates it; create
-  a token for such an owner; or set or clear another token's
-  scope so that the other token reaches beyond it in any of the
-  three kinds. A user or group holding `manage_users`,
-  `manage_groups`, `manage_permissions` or `manage_token_scopes`
-  counts as reaching every MCP item and admin permission, since
-  each lets its holder acquire the rest, so a token restricted in
-  either kind cannot add a member to such a group or take over
-  such a user. Refused requests are written to the RBAC audit
-  log, including those refused by the cluster, alert rule and
-  notification channel handlers; repeated refusals from one
-  caller are folded into a single row per minute that lists up
-  to 20 of the targets, so that a client cannot flood the log by
-  varying the path or the HTTP method. One MCP tool still
+  Request`. Administrative grants and account changes made
+  with a token are bounded by a ceiling: the token's own access,
+  which is its owner's privileges narrowed by its scope, judged
+  one connection and access level, MCP item and admin permission
+  at a time. The connection and MCP scopes limit what a token can
+  reach and the admin scope limits which administrative actions
+  it can perform, but without the ceiling a token holding
+  `manage_permissions` could grant its owner's group, or a
+  confederate's, a server it was deliberately blocked from; with
+  it, no chain of grants can exceed what the token already holds.
+  A token with no access to a connection can grant nothing on it,
+  one with `read` can grant `read`, and one with `read_write` can
+  grant either; revoking needs `read`, so that a token cannot
+  probe for servers it cannot see, and revoking a connection's
+  last group grant, which lifts its group restriction, needs
+  `read_write`. Granting the `All Connections` entry needs every
+  connection at that level, and an MCP privilege needs the token
+  to be able to call it. Granting an admin permission, which
+  only a superuser's token with an unrestricted admin scope may
+  do, needs every connection at `read_write`; granting
+  `manage_users`, `manage_groups`, `manage_permissions`,
+  `manage_token_scopes` or `*` also needs an unrestricted MCP
+  scope, because a member's browser session is not bounded by
+  any token. Adding a member to a group needs the
+  group's whole access, inherited grants included, within the
+  ceiling, as does renaming the group; removing a member, or
+  deleting the group, needs `read` on each connection the group
+  confers, and deleting it needs `read_write` on any connection
+  where it holds the last grant. A token also cannot create a
+  user, set a user's password, re-enable or delete a user, or
+  create a token for an owner, where that user reaches beyond the
+  token, which counts the public MCP items, every shared
+  connection no group restricts, every connection the user owns,
+  restricted or not, and every member of a cluster group the
+  user owns; cannot create or promote a superuser unless it is a
+  superuser's token whose connection scope is unset or holds
+  `All Connections` at `read_write` and whose MCP and admin
+  scopes are unset or hold their wildcards, the
+  same bar that applies to creating, renaming from or to, or
+  deleting a group the OIDC `group_map` names; and cannot change
+  any token's scope, its own included, so that it gains access
+  beyond the acting token's, although it may narrow a scope
+  given `read` on each connection entry it names or drops. A
+  user or group holding any admin permission counts as reaching
+  every connection at `read_write`, and one holding
+  `manage_users`, `manage_groups`, `manage_permissions` or
+  `manage_token_scopes` counts as reaching every MCP item and
+  admin permission, since each lets its holder acquire the
+  rest. As an accepted trade-off, a token
+  with `read` on a connection and `manage_permissions` can revoke
+  another group's `read_write` on it; revoking MCP privileges and
+  admin permissions, changing a user's profile, disabling a user,
+  clearing superuser status and deleting tokens are not bounded
+  by the ceiling. Refused requests are
+  written to the RBAC audit log, including those refused by the
+  cluster, alert rule and notification channel handlers;
+  repeated refusals from one caller are folded into a single
+  row per minute that lists up to 20 of the targets, so that a
+  client cannot flood the log by varying the path or the HTTP
+  method. One MCP tool still
   reaches beyond a connection scope: `query_datastore` runs read-only SQL over
   the whole datastore, including every connection's host,
   username and encrypted credentials, and #566 tracks limiting

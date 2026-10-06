@@ -152,13 +152,17 @@ the owner holds `read_write` access through a group.
     token; a superuser holds every privilege, so the intersection is the
     token scope itself.
 
-A token's effective access also bounds what the token can hand out. No token
-can grant a group, create or take over a user, mint a token for another owner,
-or set any token's scope, its own included, in a way that reaches beyond its
-own effective access, judged for each connection and access level, MCP item
-and admin permission; the server refuses each such request with
-`403 Forbidden` and records the refusal in the RBAC audit log.
-[Token Management](tokens.md) lists every request the bound covers.
+A token's effective access also bounds what the token can hand out. The
+connection and MCP privilege scopes limit what a token can reach, and the
+admin permission scope limits which administrative actions the token can
+perform; a token acting as an administrator can, in addition, grant only what
+it holds itself. No token can grant a group, create or take over a user, mint
+a token for another owner, or set any token's scope, its own included, in a
+way that reaches beyond its own effective access, judged for each connection
+and access level, MCP item and admin permission. The server refuses each such
+request with `403 Forbidden` and records the refusal in the RBAC audit log.
+The [Bounding What a Token Can Grant](tokens.md#bounding-what-a-token-can-grant)
+section explains the design and lists every request the bound covers.
 
 Administrators [manage token scopes](tokens.md) with the `Administration`
 console or at the command line. The following flags control token scopes:

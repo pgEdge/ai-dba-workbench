@@ -126,6 +126,72 @@ func TestGetUnprocessedAndUpdateAnomalyCandidate(t *testing.T) {
 	}
 }
 
+func TestExpireUnprocessedAnomalyCandidates(t *testing.T) {
+	ds, pool, cleanup := newFullTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	connID := insertTestConnection(t, pool, "expire-conn")
+	now := time.Now()
+	cutoff := now.Add(-10 * time.Minute)
+
+	create := func(metric string, detectedAt time.Time) *AnomalyCandidate {
+		t.Helper()
+		c := &AnomalyCandidate{
+			ConnectionID: connID, MetricName: metric, MetricValue: 1, ZScore: 4,
+			DetectedAt: detectedAt, Context: "{}", Tier1Pass: true,
+		}
+		if err := ds.CreateAnomalyCandidate(ctx, c); err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	stale := create("stale", now.Add(-time.Hour))
+	fresh := create("fresh", now)
+	done := create("done", now.Add(-time.Hour))
+	processedAt := now.Add(-30 * time.Minute)
+	decision := "alert"
+	done.ProcessedAt = &processedAt
+	done.FinalDecision = &decision
+	if err := ds.UpdateAnomalyCandidate(ctx, done); err != nil {
+		t.Fatalf("UpdateAnomalyCandidate: %v", err)
+	}
+
+	expired, err := ds.ExpireUnprocessedAnomalyCandidates(ctx, cutoff)
+	if err != nil {
+		t.Fatalf("ExpireUnprocessedAnomalyCandidates: %v", err)
+	}
+	if expired != 1 {
+		t.Errorf("expired = %d, want 1", expired)
+	}
+
+	got, err := ds.GetAnomalyCandidateByID(ctx, stale.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ProcessedAt == nil || got.FinalDecision != nil {
+		t.Errorf("stale: processed_at = %v, final_decision = %v; want processed with no decision",
+			got.ProcessedAt, got.FinalDecision)
+	}
+	if got, err = ds.GetAnomalyCandidateByID(ctx, fresh.ID); err != nil {
+		t.Fatal(err)
+	} else if got.ProcessedAt != nil {
+		t.Errorf("fresh: processed_at = %v, want NULL", got.ProcessedAt)
+	}
+	if got, err = ds.GetAnomalyCandidateByID(ctx, done.ID); err != nil {
+		t.Fatal(err)
+	} else if got.FinalDecision == nil || *got.FinalDecision != "alert" ||
+		got.ProcessedAt == nil || !got.ProcessedAt.Equal(processedAt.Truncate(time.Microsecond)) {
+		t.Errorf("done: processed_at = %v, final_decision = %v; want unchanged",
+			got.ProcessedAt, got.FinalDecision)
+	}
+
+	// A second run finds nothing left to expire.
+	if expired, err = ds.ExpireUnprocessedAnomalyCandidates(ctx, cutoff); err != nil || expired != 0 {
+		t.Errorf("second run = %d, %v; want 0, nil", expired, err)
+	}
+}
+
 func TestStoreAnomalyEmbeddingAndFindSimilar(t *testing.T) {
 	ds, pool, cleanup := newFullTestDatastore(t)
 	defer cleanup()

@@ -169,6 +169,9 @@ func TestAnomalyQueriesReturnErrorOnClosedPool(t *testing.T) {
 	if _, err := ds.GetUnprocessedAnomalyCandidates(ctx, 10); err == nil {
 		t.Errorf("GetUnprocessedAnomalyCandidates should error on closed pool")
 	}
+	if _, err := ds.ExpireUnprocessedAnomalyCandidates(ctx, time.Now()); err == nil {
+		t.Errorf("ExpireUnprocessedAnomalyCandidates should error on closed pool")
+	}
 	if err := ds.UpdateAnomalyCandidate(ctx, c); err == nil {
 		t.Errorf("UpdateAnomalyCandidate should error on closed pool")
 	}

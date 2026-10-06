@@ -15,6 +15,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
 	embeddingpkg "github.com/pgedge/ai-workbench/pkg/embedding"
@@ -64,6 +65,7 @@ func TestTier2WideEmbeddingLogsErrorAtDefaultVerbosity(t *testing.T) {
 		MetricName:   "pg_settings.max_connections",
 		MetricValue:  999,
 		ZScore:       10,
+		DetectedAt:   time.Now(),
 		Context:      "{}",
 		Tier1Pass:    true,
 	}

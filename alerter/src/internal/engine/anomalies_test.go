@@ -440,6 +440,20 @@ const (
     `
 )
 
+// suppressingReasoningProvider is a Tier 3 stub that classifies every
+// candidate as a false positive.
+type suppressingReasoningProvider struct{}
+
+func (suppressingReasoningProvider) Classify(context.Context, string) (string, error) {
+	return `{"decision": "suppress", "confidence": 0.9, "reasoning": "test"}`, nil
+}
+
+func (suppressingReasoningProvider) ModelName() string    { return "suppressing-reasoner" }
+func (suppressingReasoningProvider) ProviderName() string { return "suppressing" }
+func (suppressingReasoningProvider) SystemPrompt() string {
+	return "suppressing system prompt"
+}
+
 // newDetectAnomaliesEnv builds the integration-test environment used
 // by TestDetectAppliesGatesAndCap. The test is skipped if
 // TEST_AI_WORKBENCH_SERVER is not set or the test database is
@@ -468,13 +482,15 @@ func newDetectAnomaliesEnv(t *testing.T) (*Engine, *database.Datastore, *pgxpool
 
 	cfg := config.NewConfig()
 	cfg.Anomaly.Tier1.Enabled = true
-	// Disable tier 2/3 so the test scopes strictly to the Tier 1
-	// gated detection loop and does not depend on LLM providers
-	// or embedding tables.
+	// Detection writes no candidates unless a later tier can process
+	// them (issue #581), so Tier 3 runs against a stub that suppresses
+	// everything: the tests stay scoped to the Tier 1 loop, need no
+	// embedding tables and raise no alerts.
 	cfg.Anomaly.Tier2.Enabled = false
-	cfg.Anomaly.Tier3.Enabled = false
+	cfg.Anomaly.Tier3.Enabled = true
 
 	engine := NewEngine(cfg, ds, false)
+	engine.reasoningProvider = suppressingReasoningProvider{}
 
 	cleanup := func() {
 		if _, err := pool.Exec(context.Background(),
@@ -942,29 +958,79 @@ func TestDetectAnomaliesBranchCoverage(t *testing.T) {
 		}
 	})
 
-	t.Run("tier2 enabled invokes processTier2And3", func(t *testing.T) {
-		// Cover the post-loop branch that dispatches into
-		// processTier2And3 when Tier 2 or Tier 3 is enabled.
-		// processTier2And3 is well-tested elsewhere; here we
-		// only need the dispatch line itself to execute. With no
-		// embedding provider configured and no candidates pending
-		// the dispatch is a fast no-op.
+	t.Run("no usable tier after tier 1 writes no candidates", func(t *testing.T) {
+		// With no later tier able to process a candidate, detection
+		// is off (issue #581): both tiers disabled, or a tier enabled
+		// without its provider, as a reload can leave it.
+		cfg := engine.getConfig()
+		reasoner := engine.reasoningProvider
+		defer func() {
+			cfg.Anomaly.Tier2.Enabled = false
+			cfg.Anomaly.Tier3.Enabled = true
+			engine.reasoningProvider = reasoner
+		}()
+
+		for _, tc := range []struct {
+			name         string
+			tier2, tier3 bool
+			withReasoner bool
+		}{
+			{name: "both tiers disabled", withReasoner: true},
+			{name: "tier 2 enabled without embedding provider", tier2: true, withReasoner: true},
+			{name: "tier 3 enabled without reasoning provider", tier3: true},
+		} {
+			resetState(t)
+			connID := insertConn(t, "no-usable-tier")
+			insertSetting(t, connID, 999)
+			insertBaseline(t, connID, 10, 0.0001)
+
+			cfg.Anomaly.Tier2.Enabled = tc.tier2
+			cfg.Anomaly.Tier3.Enabled = tc.tier3
+			engine.reasoningProvider = nil
+			if tc.withReasoner {
+				engine.reasoningProvider = reasoner
+			}
+			engine.detectAnomalies(ctx)
+
+			if got := countCandidates(t, connID); got != 0 {
+				t.Errorf("%s: expected 0 candidates, got %d", tc.name, got)
+			}
+		}
+	})
+
+	t.Run("anomaly detection disabled writes no candidates", func(t *testing.T) {
 		resetState(t)
-		connID := insertConn(t, "tier2-enabled")
+		connID := insertConn(t, "anomaly-disabled")
 		insertSetting(t, connID, 999)
 		insertBaseline(t, connID, 10, 0.0001)
 
 		cfg := engine.getConfig()
-		orig2 := cfg.Anomaly.Tier2.Enabled
-		cfg.Anomaly.Tier2.Enabled = true
+		cfg.Anomaly.Enabled = false
 		engine.detectAnomalies(ctx)
-		cfg.Anomaly.Tier2.Enabled = orig2
+		cfg.Anomaly.Enabled = true
 
-		// Sanity: the Tier 1 path still emitted a candidate
-		// because the baseline is warm and the value is well
-		// above the mean.
-		if got := countCandidates(t, connID); got == 0 {
-			t.Error("expected Tier 1 to still emit a candidate")
+		if got := countCandidates(t, connID); got != 0 {
+			t.Errorf("expected 0 candidates when anomaly detection disabled, got %d", got)
+		}
+	})
+
+	t.Run("tier 3 available processes the candidate", func(t *testing.T) {
+		resetState(t)
+		connID := insertConn(t, "tier3-available")
+		insertSetting(t, connID, 999)
+		insertBaseline(t, connID, 10, 0.0001)
+
+		engine.detectAnomalies(ctx)
+
+		var n int
+		if err := pool.QueryRow(ctx, `
+			SELECT count(*) FROM anomaly_candidates
+			WHERE connection_id = $1 AND processed_at IS NOT NULL
+			  AND final_decision = 'suppress'`, connID).Scan(&n); err != nil {
+			t.Fatalf("failed to count processed candidates: %v", err)
+		}
+		if n != 1 {
+			t.Errorf("expected 1 candidate processed by Tier 3, got %d", n)
 		}
 	})
 

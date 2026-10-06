@@ -11,6 +11,7 @@ package engine
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -26,18 +27,30 @@ import (
 // asserts the surviving state rather than a returned error.
 
 const (
-	// createAnomalyCandidatesTableSQL carries the two columns
-	// DeleteOldAnomalyCandidates reads. The Spock test schema does not
-	// create the table, so the tests that exercise the candidate sweep
-	// create it themselves.
+	// createAnomalyCandidatesTableSQL carries the columns
+	// ExpireUnprocessedAnomalyCandidates and DeleteOldAnomalyCandidates
+	// read and write. The Spock test schema does not create the table,
+	// so the tests that exercise the candidate sweep create it
+	// themselves, replacing any copy an earlier test left behind.
 	createAnomalyCandidatesTableSQL = `
+        DROP TABLE IF EXISTS anomaly_candidates CASCADE;
         CREATE TABLE anomaly_candidates (
             id BIGSERIAL PRIMARY KEY,
             connection_id INTEGER NOT NULL,
             metric_name TEXT NOT NULL,
             metric_value REAL,
+            detected_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            tier1_pass BOOLEAN NOT NULL DEFAULT TRUE,
+            final_decision TEXT,
             processed_at TIMESTAMPTZ
         )
+    `
+
+	insertUnprocessedCandidateSQL = `
+        INSERT INTO anomaly_candidates
+            (connection_id, metric_name, metric_value, detected_at)
+        VALUES ($1, 'pg_stat_activity.count', 1, $2)
+        RETURNING id
     `
 
 	insertProcessedCandidateSQL = `
@@ -115,6 +128,57 @@ func TestCleanupOldData_DeletesAgedRows(t *testing.T) {
 	}
 	if got := countRows(t, pool, countCandidatesSQL); got != 1 {
 		t.Errorf("anomaly candidates remaining = %d, want 1 (only the recent one)", got)
+	}
+}
+
+// TestCleanupOldData_ExpiresStaleUnprocessedCandidates covers issue #581:
+// a candidate that was never processed, because anomaly detection had no
+// usable tier after Tier 1, is stamped processed with no final decision so
+// a later sweep can age it out, whilst a fresh unprocessed candidate is
+// left for the detector.
+func TestCleanupOldData_ExpiresStaleUnprocessedCandidates(t *testing.T) {
+	engine, _, pool, cleanup := newEngineSpockTestEnv(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, createAnomalyCandidatesTableSQL); err != nil {
+		t.Fatalf("failed to create anomaly_candidates: %v", err)
+	}
+	if _, err := pool.Exec(ctx, setRetentionDaysSQL, 30); err != nil {
+		t.Fatalf("failed to set retention_days: %v", err)
+	}
+	connID := insertTestConnection(t, pool, "cleanup-stale-candidates")
+
+	var staleID, freshID int64
+	if err := pool.QueryRow(ctx, insertUnprocessedCandidateSQL, connID,
+		time.Now().UTC().AddDate(0, 0, -60)).Scan(&staleID); err != nil {
+		t.Fatalf("failed to insert stale candidate: %v", err)
+	}
+	if err := pool.QueryRow(ctx, insertUnprocessedCandidateSQL, connID,
+		time.Now().UTC()).Scan(&freshID); err != nil {
+		t.Fatalf("failed to insert fresh candidate: %v", err)
+	}
+
+	output := captureStderr(t, func() { engine.cleanupOldData(ctx) })
+	if !strings.Contains(output, "Expired 1 anomaly candidates") {
+		t.Errorf("log output missing the expiry count:\n%s", output)
+	}
+
+	state := func(id int64) (processed bool, decision *string) {
+		t.Helper()
+		if err := pool.QueryRow(ctx, `
+            SELECT processed_at IS NOT NULL, final_decision
+            FROM anomaly_candidates WHERE id = $1`, id).Scan(&processed, &decision); err != nil {
+			t.Fatalf("failed to read candidate %d: %v", id, err)
+		}
+		return processed, decision
+	}
+	if processed, decision := state(staleID); !processed || decision != nil {
+		t.Errorf("stale candidate processed = %v, final_decision = %v; want processed with no decision",
+			processed, decision)
+	}
+	if processed, _ := state(freshID); processed {
+		t.Error("fresh candidate should be left unprocessed")
 	}
 }
 

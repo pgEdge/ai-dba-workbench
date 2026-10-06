@@ -593,44 +593,16 @@ func TestConnectionHandler_GetCurrentConnection_SharedNonOwner_NotDenied(t *test
 // nil datastore, newConnectionVisibilityLister returns nil and the
 // auth-store-backed path still resolves correctly.
 //
-// - Zero-grant non-owner user: VisibleConnectionIDs returns an empty
-//   set and the handler short-circuits to {"alerts":[], "total":0}
-//   without touching the datastore.
+// - Zero-grant non-owner user filtering to an unshared connection:
+//   the handler short-circuits to {"alerts":[], "total":0} without
+//   touching the datastore. Unfiltered, the same user now reaches the
+//   datastore for system alerts (GitHub issue #582); that path is
+//   covered against a real datastore in system_alert_handlers_test.go.
 // - Group-granted user: VisibleConnectionIDs returns the granted IDs
 //   and the handler proceeds to h.datastore.GetAlerts, which panics
 //   against a nil datastore. The test recovers and verifies the empty
 //   shortcut did NOT fire.
 // =============================================================================
-
-func TestAlertHandler_HandleAlerts_NonOwnerUnshared_EmptyResult(t *testing.T) {
-	_, store, cleanup := createTestRBACHandler(t)
-	defer cleanup()
-
-	bobID := newTestUser(t, store, "bob")
-
-	checker := mockSharingChecker(t, store, rbacUnsharedConnID, "alice", false)
-	handler := NewAlertHandler(nil, store, checker)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/alerts", nil)
-	req = withUser(req, bobID)
-	req = withUsername(req, "bob")
-	rec := httptest.NewRecorder()
-
-	handler.handleAlerts(rec, req)
-
-	requireStatus(t, rec, http.StatusOK)
-
-	var body database.AlertListResult
-	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
-		t.Fatalf("Decode response: %v", err)
-	}
-	if len(body.Alerts) != 0 {
-		t.Errorf("Expected zero alerts, got %d", len(body.Alerts))
-	}
-	if body.Total != 0 {
-		t.Errorf("Expected Total=0, got %d", body.Total)
-	}
-}
 
 func TestAlertHandler_HandleAlerts_FilterToUnshared_EmptyResult(t *testing.T) {
 	// Even when the caller requests a specific unshared connection via
@@ -701,49 +673,15 @@ func TestAlertHandler_HandleAlerts_GroupGranted_ProceedsPastGate(t *testing.T) {
 // AlertHandler.handleAlertCounts — issue #67 regression coverage
 //
 // The issue #67 refactor moved VisibleConnectionIDs AHEAD of
-// GetAlertCounts so a zero-grant caller short-circuits to the empty
-// counts response without touching the datastore. With a nil datastore
-// we can now assert that behavior purely from the HTTP boundary: denial
-// returns 200 + {total:0, by_server:{}} without panicking on the
-// datastore call.
+// GetAlertCounts. Since GitHub issue #582 a zero-grant user still
+// reaches GetAlertCounts for the system alerts, and only a caller who
+// may not see them short-circuits; system_alert_handlers_test.go covers
+// both against a real datastore.
 //
 // The group-granted positive path panics against the nil datastore at
 // GetAlertCounts; the test recovers and verifies that the empty
 // short-circuit did NOT fire.
 // =============================================================================
-
-// TestAlertHandler_HandleAlertCounts_NonOwnerUnshared_EmptyResult verifies
-// that a zero-grant caller receives {total:0, by_server:{}} without
-// invoking GetAlertCounts against the datastore.
-func TestAlertHandler_HandleAlertCounts_NonOwnerUnshared_EmptyResult(t *testing.T) {
-	_, store, cleanup := createTestRBACHandler(t)
-	defer cleanup()
-
-	bobID := newTestUser(t, store, "bob")
-
-	checker := mockSharingChecker(t, store, rbacUnsharedConnID, "alice", false)
-	handler := NewAlertHandler(nil, store, checker)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/alerts/counts", nil)
-	req = withUser(req, bobID)
-	req = withUsername(req, "bob")
-	rec := httptest.NewRecorder()
-
-	handler.handleAlertCounts(rec, req)
-
-	requireStatus(t, rec, http.StatusOK)
-
-	var body database.AlertCountsResult
-	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
-		t.Fatalf("Decode response: %v", err)
-	}
-	if body.Total != 0 {
-		t.Errorf("Expected Total=0, got %d", body.Total)
-	}
-	if len(body.ByServer) != 0 {
-		t.Errorf("Expected empty ByServer, got %+v", body.ByServer)
-	}
-}
 
 // TestAlertHandler_HandleAlertCounts_GroupGranted_ProceedsPastGate
 // verifies that a group-granted caller is not short-circuited by the
@@ -826,16 +764,21 @@ func TestAlertHandler_HandleAlertCounts_Superuser_ProceedsPastGate(t *testing.T)
 // that the resolver DID run (the RBAC check depends on it).
 type fakeAlertResolver struct {
 	connID int
+	system bool // resolve as a system alert, which has no connection
 	calls  int
 	err    error
 }
 
-func (f *fakeAlertResolver) GetAlertConnectionID(_ context.Context, _ int64) (int, error) {
+func (f *fakeAlertResolver) GetAlertConnectionID(_ context.Context, _ int64) (*int, error) {
 	f.calls++
 	if f.err != nil {
-		return 0, f.err
+		return nil, f.err
 	}
-	return f.connID, nil
+	if f.system {
+		return nil, nil
+	}
+	id := f.connID
+	return &id, nil
 }
 
 // alertMutationInvoker is the minimal shape of a mutation handler method

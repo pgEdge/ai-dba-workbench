@@ -36,6 +36,7 @@ import { useDashboard } from '../../contexts/useDashboard';
 import { apiPost, apiGet, apiDelete, ApiError } from '../../utils/apiClient';
 import { collectServers } from '../../utils/clusterHelpers';
 import { logger } from '../../utils/logger';
+import { isSystemAlertRecord } from '../../utils/systemAlerts';
 import EventTimeline from '../EventTimeline';
 import BlackoutPanel from '../BlackoutPanel';
 import AlertAnalysisDialog from '../AlertAnalysisDialog';
@@ -298,7 +299,10 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
                 ? formatRelativeTime(alert.last_updated)
                 : undefined,
             server: alert.server_name,
-            connectionId: alert.connection_id,
+            // A system alert has a null connection_id; map it to
+            // undefined so no consumer mistakes it for a connection.
+            connectionId: alert.connection_id ?? undefined,
+            isSystem: isSystemAlertRecord(alert.alert_type, alert.connection_id),
             databaseName: alert.database_name,
             objectName: alert.object_name,
             // Threshold info
@@ -441,6 +445,16 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
             return true;
         }
 
+        // A cluster with no servers has nothing to report. Fetching
+        // without a connection filter would return every alert in the
+        // estate, system alerts included, and show them as the
+        // cluster's.
+        if (selection.type === 'cluster' && !selection.serverIds?.length) {
+            setAlerts([]);
+            setLoading(false);
+            return true;
+        }
+
         // Only show loading on initial fetch to prevent flashing (use ref to avoid re-renders)
         if (!initialLoadDoneRef.current) {
             setLoading(true);
@@ -452,10 +466,11 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
             let url = '/api/v1/alerts?exclude_cleared=true';
             if (selection.type === 'server') {
                 url += `&connection_id=${selection.id}&limit=50`;
-            } else if (selection.type === 'cluster' && selection.serverIds?.length) {
+            } else if (selection.type === 'cluster') {
                 url += `&connection_ids=${selection.serverIds.join(',')}&limit=50`;
             }
-            // For estate, fetch all alerts (no connection filter, no limit)
+            // For estate, fetch all alerts (no connection filter, no
+            // limit); the server adds the system alerts only here.
 
             const data = await apiGet<{ alerts?: ApiAlert[] }>(url);
             const transformedAlerts = transformAlerts(data.alerts || []);
@@ -770,6 +785,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
                     onAnalyze={aiEnabled ? handleAnalyze : undefined}
                     onEditOverride={hasPermission('manage_alert_rules') ? handleEditOverride : undefined}
                     onAcknowledgeGroup={handleAcknowledgeGroup}
+                    canAcknowledgeSystem={hasPermission('manage_alert_rules')}
                 />
 
                 {/* Topology (cluster only) */}

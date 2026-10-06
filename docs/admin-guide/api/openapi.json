@@ -568,7 +568,7 @@
     "/alerts": {
       "get": {
         "summary": "List alerts",
-        "description": "Returns alerts with optional filtering",
+        "description": "Returns alerts with optional filtering. System alerts, which belong to no connection, are included only when neither connection_id nor connection_ids is given",
         "operationId": "listAlerts",
         "tags": [
           "Alerts"
@@ -697,7 +697,7 @@
     "/alerts/acknowledge": {
       "post": {
         "summary": "Acknowledge an alert",
-        "description": "Acknowledges an alert with an optional message",
+        "description": "Acknowledges an alert with an optional message. An alert on a connection needs access to that connection; a system alert, which has no connection, needs a superuser or the manage_alert_rules admin permission, and an API token must also hold manage_alert_rules in its admin scope if it has one",
         "operationId": "acknowledgeAlert",
         "tags": [
           "Alerts"
@@ -779,7 +779,7 @@
       },
       "delete": {
         "summary": "Unacknowledge an alert",
-        "description": "Removes acknowledgement from an alert",
+        "description": "Removes acknowledgement from an alert. An alert on a connection needs access to that connection; a system alert needs a superuser or the manage_alert_rules admin permission, bounded by an API token's admin scope as for acknowledgement",
         "operationId": "unacknowledgeAlert",
         "tags": [
           "Alerts"
@@ -883,7 +883,7 @@
     "/alerts/analysis": {
       "put": {
         "summary": "Save AI analysis for alert",
-        "description": "Saves an AI-generated analysis for a specific alert",
+        "description": "Saves an AI-generated analysis for a specific alert, which needs access to the alert's connection. A system alert has no connection or metric to explain, so saving analysis on one is refused with 400 to every caller who may see system alerts, and with 403 to any caller who may not",
         "operationId": "saveAlertAnalysis",
         "tags": [
           "Alerts"
@@ -916,7 +916,7 @@
             }
           },
           "400": {
-            "description": "Invalid request",
+            "description": "Invalid request, or the alert is a system alert",
             "content": {
               "application/json": {
                 "schema": {
@@ -956,7 +956,7 @@
     "/alerts/counts": {
       "get": {
         "summary": "Get alert counts by server",
-        "description": "Returns counts of active alerts grouped by server and severity",
+        "description": "Returns counts of active alerts grouped by server, with system alerts counted separately",
         "operationId": "getAlertCounts",
         "tags": [
           "Alerts"
@@ -10040,7 +10040,13 @@
           },
           "alert_type": {
             "type": "string",
-            "description": "Type of alert"
+            "description": "Type of alert; a system alert reports a fault in the Workbench itself and belongs to no connection",
+            "enum": [
+              "threshold",
+              "anomaly",
+              "connection",
+              "system"
+            ]
           },
           "cleared_at": {
             "type": "string",
@@ -10050,7 +10056,8 @@
           },
           "connection_id": {
             "type": "integer",
-            "description": "Associated connection ID"
+            "description": "Associated connection ID; null for a system alert",
+            "nullable": true
           },
           "false_positive": {
             "type": "boolean",
@@ -10088,7 +10095,7 @@
           },
           "server_name": {
             "type": "string",
-            "description": "Server name"
+            "description": "Server name; empty for a system alert"
           },
           "severity": {
             "type": "string",
@@ -10122,23 +10129,23 @@
       "AlertCountsResult": {
         "type": "object",
         "properties": {
-          "counts": {
+          "by_server": {
             "type": "object",
-            "description": "Alert counts by server ID",
+            "description": "Active alert count keyed by connection ID; system alerts are never included",
             "additionalProperties": {
-              "type": "object",
-              "properties": {
-                "critical": {
-                  "type": "integer"
-                },
-                "info": {
-                  "type": "integer"
-                },
-                "warning": {
-                  "type": "integer"
-                }
-              }
+              "type": "integer",
+              "format": "int64"
             }
+          },
+          "system": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Active system alerts, which belong to no connection"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Active alerts the caller may see, system alerts included"
           }
         }
       },

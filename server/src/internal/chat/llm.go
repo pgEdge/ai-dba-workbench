@@ -111,9 +111,11 @@ Alert Configuration:
 - alert_thresholds: Per-scope threshold overrides. Columns: id, rule_id, scope
   (group/cluster/server), scope_id, warning_value, critical_value, enabled
 - alerts: Active and historical alerts. Columns: id, connection_id, alert_type
-  (threshold/anomaly/connection), rule_id, metric_name, severity (warning/critical),
+  (threshold/anomaly/connection/system), rule_id, metric_name, severity (warning/critical),
   current_value, threshold_value, message, status (active/resolved/acknowledged),
-  started_at, resolved_at
+  started_at, resolved_at. A 'system' alert concerns the Workbench itself (for
+  example a failing LLM provider degrading anomaly detection) and has a NULL
+  connection_id.
 - alert_acknowledgments: Acknowledgments. Columns: id, alert_id, acknowledged_by,
   acknowledged_at, note
 

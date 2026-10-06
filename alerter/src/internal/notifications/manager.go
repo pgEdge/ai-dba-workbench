@@ -13,6 +13,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/pgedge/ai-workbench/alerter/internal/config"
@@ -134,7 +135,7 @@ func (m *Manager) SendAlertNotification(ctx context.Context, alert *database.Ale
 	}
 
 	// Get connection info for the payload
-	serverName, serverHost, serverPort, err := m.datastore.GetConnectionInfo(ctx, alert.ConnectionID)
+	serverName, serverHost, serverPort, err := m.connectionInfo(ctx, alert)
 	if err != nil {
 		m.log("WARNING: Failed to get connection info: %v", err)
 		serverName = fmt.Sprintf("Connection %d", alert.ConnectionID)
@@ -151,7 +152,7 @@ func (m *Manager) SendAlertNotification(ctx context.Context, alert *database.Ale
 		history := &database.NotificationHistory{
 			AlertID:          &alert.ID,
 			ChannelID:        &channel.ID,
-			ConnectionID:     &alert.ConnectionID,
+			ConnectionID:     historyConnectionID(alert),
 			NotificationType: notifType,
 			Status:           database.NotificationStatusPending,
 			AttemptCount:     0,
@@ -208,10 +209,9 @@ func (m *Manager) ProcessPendingNotifications(ctx context.Context) error {
 		}
 
 		// Get connection info
-		connectionID := alert.ConnectionID
-		serverName, serverHost, serverPort, err := m.datastore.GetConnectionInfo(ctx, connectionID)
+		serverName, serverHost, serverPort, err := m.connectionInfo(ctx, alert)
 		if err != nil {
-			m.debugLog("Failed to get connection info for %d: %v", connectionID, err)
+			m.debugLog("Failed to get connection info for %d: %v", alert.ConnectionID, err)
 		}
 
 		// Build payload
@@ -241,7 +241,7 @@ func (m *Manager) ProcessReminders(ctx context.Context) error {
 		}
 
 		// Get connection info
-		serverName, serverHost, serverPort, err := m.datastore.GetConnectionInfo(ctx, reminder.Alert.ConnectionID)
+		serverName, serverHost, serverPort, err := m.connectionInfo(ctx, reminder.Alert)
 		if err != nil {
 			m.debugLog("Failed to get connection info for %d: %v", reminder.Alert.ConnectionID, err)
 		}
@@ -264,7 +264,7 @@ func (m *Manager) ProcessReminders(ctx context.Context) error {
 		history := &database.NotificationHistory{
 			AlertID:          &reminder.Alert.ID,
 			ChannelID:        &reminder.Channel.ID,
-			ConnectionID:     &reminder.Alert.ConnectionID,
+			ConnectionID:     historyConnectionID(reminder.Alert),
 			NotificationType: database.NotificationTypeReminder,
 			Status:           database.NotificationStatusPending,
 			AttemptCount:     0,
@@ -289,6 +289,38 @@ func (m *Manager) ProcessReminders(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// SystemAlertServerName is the server name a notification carries for a
+// system alert, which concerns the alerter itself rather than a monitored
+// server. See GitHub issue #582.
+const SystemAlertServerName = "AI DBA Workbench alerter"
+
+// hostname is os.Hostname, replaceable in tests.
+var hostname = os.Hostname
+
+// connectionInfo returns the server a notification about alert should
+// name. A system alert has no connection, so it names the alerter and
+// the host it runs on, with port 0, instead of looking a connection up.
+func (m *Manager) connectionInfo(ctx context.Context, alert *database.Alert) (name, host string, port int, err error) {
+	if alert.IsSystem() {
+		host, err := hostname()
+		if err != nil || host == "" {
+			host = "localhost"
+		}
+		return SystemAlertServerName, host, 0, nil
+	}
+	return m.datastore.GetConnectionInfo(ctx, alert.ConnectionID)
+}
+
+// historyConnectionID is the connection a notification_history row for
+// alert records: none for a system alert, whose connection_id is NULL.
+func historyConnectionID(alert *database.Alert) *int {
+	if alert.IsSystem() {
+		return nil
+	}
+	id := alert.ConnectionID
+	return &id
 }
 
 // processNotification sends a notification and updates history

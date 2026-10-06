@@ -31,12 +31,19 @@ var ErrAlertNotFound = errors.New("alert not found")
 // rather than the generic 500 the previous implementation produced.
 var ErrAlertNotAcknowledged = errors.New("alert is not currently acknowledged")
 
+// AlertTypeSystem is the alert_type of an alert the alerter raises about
+// itself rather than about a monitored connection, such as anomaly
+// detection degrading because an LLM provider keeps failing (GitHub
+// issue #582). A system alert has a NULL connection_id.
+const AlertTypeSystem = "system"
+
 // Alert represents an alert from the alerter
 type Alert struct {
-	ID             int64      `json:"id"`
-	AlertType      string     `json:"alert_type"`
-	RuleID         *int64     `json:"rule_id,omitempty"`
-	ConnectionID   int        `json:"connection_id"`
+	ID        int64  `json:"id"`
+	AlertType string `json:"alert_type"`
+	RuleID    *int64 `json:"rule_id,omitempty"`
+	// ConnectionID is nil, and encodes as JSON null, for a system alert.
+	ConnectionID   *int       `json:"connection_id"`
 	DatabaseName   *string    `json:"database_name,omitempty"`
 	ObjectName     *string    `json:"object_name,omitempty"`
 	ProbeName      *string    `json:"probe_name,omitempty"`
@@ -77,8 +84,18 @@ type AlertListFilter struct {
 	StartTime      *time.Time
 	EndTime        *time.Time
 	ExcludeCleared bool // If true, only return alerts where cleared_at IS NULL
-	Limit          int
-	Offset         int
+	// IncludeSystem adds system alerts to the result alongside the
+	// alerts the connection filters select. When false, system alerts
+	// are left out whatever the other filters say, so a caller has to
+	// opt in once it has checked auth.RBACChecker.CanSeeSystemAlerts.
+	IncludeSystem bool
+	// SystemOnly restricts the result to system alerts, ignoring
+	// ConnectionID and ConnectionIDs. It serves a caller who may see
+	// system alerts but no connection, for whom an empty connection
+	// filter would otherwise mean every connection.
+	SystemOnly bool
+	Limit      int
+	Offset     int
 }
 
 // AlertListResult holds the result of listing alerts
@@ -87,10 +104,13 @@ type AlertListResult struct {
 	Total  int64   `json:"total"`
 }
 
-// AlertCountsResult contains alert counts grouped by server
+// AlertCountsResult contains alert counts grouped by server. System
+// alerts have no server, so they are counted in System and in Total but
+// never in ByServer.
 type AlertCountsResult struct {
 	Total    int64         `json:"total"`
 	ByServer map[int]int64 `json:"by_server"`
+	System   int64         `json:"system"`
 }
 
 // AcknowledgeAlertRequest contains the data for acknowledging an alert
@@ -111,21 +131,26 @@ func (d *Datastore) GetAlerts(ctx context.Context, filter AlertListFilter) (*Ale
 	args := []any{}
 	argNum := 1
 
-	if filter.ConnectionID != nil {
-		conditions = append(conditions, fmt.Sprintf("a.connection_id = $%d", argNum))
+	// SystemOnly ignores the connection filters, so they bind no
+	// arguments; binding them would leave unused placeholders.
+	var connConditions []string
+	if filter.ConnectionID != nil && !filter.SystemOnly {
+		connConditions = append(connConditions, fmt.Sprintf("a.connection_id = $%d", argNum))
 		args = append(args, *filter.ConnectionID)
 		argNum++
 	}
 
-	if len(filter.ConnectionIDs) > 0 {
+	if len(filter.ConnectionIDs) > 0 && !filter.SystemOnly {
 		placeholders := make([]string, len(filter.ConnectionIDs))
 		for i, id := range filter.ConnectionIDs {
 			placeholders[i] = fmt.Sprintf("$%d", argNum)
 			args = append(args, id)
 			argNum++
 		}
-		conditions = append(conditions, fmt.Sprintf("a.connection_id IN (%s)", strings.Join(placeholders, ", ")))
+		connConditions = append(connConditions, fmt.Sprintf("a.connection_id IN (%s)", strings.Join(placeholders, ", ")))
 	}
+
+	conditions = append(conditions, alertConnectionCondition(connConditions, filter.IncludeSystem, filter.SystemOnly))
 
 	if filter.Status != nil {
 		conditions = append(conditions, fmt.Sprintf("a.status = $%d", argNum))
@@ -197,7 +222,8 @@ func (d *Datastore) GetAlerts(ctx context.Context, filter AlertListFilter) (*Ale
 		       a.threshold_value, a.operator, a.severity, a.title, a.description,
 		       a.correlation_id, a.status, a.triggered_at, a.cleared_at,
 		       a.last_updated, a.anomaly_score, a.anomaly_details,
-		       COALESCE(c.name, 'Unknown') as server_name,
+		       CASE WHEN a.alert_type = 'system' THEN ''
+		            ELSE COALESCE(c.name, 'Unknown') END as server_name,
 		       ack.acknowledged_at, ack.acknowledged_by, ack.message, ack.false_positive,
 		       a.ai_analysis, a.ai_analysis_metric_value
 		FROM alerts a
@@ -255,15 +281,57 @@ func (d *Datastore) GetAlerts(ctx context.Context, filter AlertListFilter) (*Ale
 	}, nil
 }
 
+// alertConnectionCondition combines the connection conditions of an
+// alert listing into one condition, admitting system alerts beside them
+// only when includeSystem is set. With no connection conditions it
+// admits every connection's alerts, and system alerts only on request.
+// systemOnly overrides both and admits system alerts alone. Every input
+// is a fixed string or a positional placeholder, never a caller-supplied
+// value.
+func alertConnectionCondition(connConditions []string, includeSystem, systemOnly bool) string {
+	if systemOnly {
+		return "a.alert_type = 'system'"
+	}
+	if len(connConditions) == 0 {
+		if includeSystem {
+			return "TRUE"
+		}
+		return "a.connection_id IS NOT NULL"
+	}
+	joined := strings.Join(connConditions, " AND ")
+	if includeSystem {
+		return "((" + joined + ") OR a.alert_type = 'system')"
+	}
+	return joined
+}
+
+// alertCountsSQL counts the active alerts per connection. $1 is the
+// caller's connection allow-list, or NULL for every connection; $2 adds
+// the system alerts, which have a NULL connection_id and so come back as
+// one row with a NULL connection.
+const alertCountsSQL = `
+		SELECT connection_id, COUNT(*) AS count
+		FROM alerts
+		WHERE status = 'active'
+		  AND ((connection_id IS NOT NULL
+		        AND ($1::int[] IS NULL OR connection_id = ANY($1)))
+		       OR ($2 AND alert_type = 'system'))
+		GROUP BY connection_id
+	`
+
 // GetAlertCounts returns counts of active alerts grouped by connection_id.
 // When connectionIDs is non-nil, the query is restricted to alerts whose
 // connection_id appears in the slice. A nil slice means "no filter"
-// (superuser or wildcard-scoped caller); an empty non-nil slice returns
-// an empty result without touching the database.
-func (d *Datastore) GetAlertCounts(ctx context.Context, connectionIDs []int) (*AlertCountsResult, error) {
+// (superuser or wildcard-scoped caller). includeSystem adds the active
+// system alerts to System and Total; the caller sets it only once
+// auth.RBACChecker.CanSeeSystemAlerts has allowed it. An empty non-nil
+// slice without includeSystem returns an empty result without touching
+// the database.
+func (d *Datastore) GetAlertCounts(ctx context.Context, connectionIDs []int, includeSystem bool) (*AlertCountsResult, error) {
 	// An explicit empty allow-list means the caller can see no
-	// connections; avoid the database round-trip entirely.
-	if connectionIDs != nil && len(connectionIDs) == 0 {
+	// connections; avoid the database round-trip entirely unless the
+	// caller may still see system alerts.
+	if connectionIDs != nil && len(connectionIDs) == 0 && !includeSystem {
 		return &AlertCountsResult{
 			Total:    0,
 			ByServer: make(map[int]int64),
@@ -273,81 +341,54 @@ func (d *Datastore) GetAlertCounts(ctx context.Context, connectionIDs []int) (*A
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 
-	var (
-		total    int64
-		rows     pgx.Rows
-		queryErr error
-	)
-
-	if connectionIDs == nil {
-		queryErr = d.pool.QueryRow(ctx, `
-			SELECT COUNT(*)
-			FROM alerts
-			WHERE status = 'active'
-		`).Scan(&total)
-		if queryErr != nil {
-			return nil, fmt.Errorf("failed to count total alerts: %w", queryErr)
-		}
-
-		rows, queryErr = d.pool.Query(ctx, `
-			SELECT connection_id, COUNT(*) as count
-			FROM alerts
-			WHERE status = 'active'
-			GROUP BY connection_id
-		`)
-	} else {
-		queryErr = d.pool.QueryRow(ctx, `
-			SELECT COUNT(*)
-			FROM alerts
-			WHERE status = 'active'
-			  AND connection_id = ANY($1)
-		`, connectionIDs).Scan(&total)
-		if queryErr != nil {
-			return nil, fmt.Errorf("failed to count total alerts: %w", queryErr)
-		}
-
-		rows, queryErr = d.pool.Query(ctx, `
-			SELECT connection_id, COUNT(*) as count
-			FROM alerts
-			WHERE status = 'active'
-			  AND connection_id = ANY($1)
-			GROUP BY connection_id
-		`, connectionIDs)
+	// A nil slice must reach the query as NULL, meaning every
+	// connection, and an empty one as an empty array, meaning none.
+	var allowList any
+	if connectionIDs != nil {
+		allowList = connectionIDs
 	}
-	if queryErr != nil {
-		return nil, fmt.Errorf("failed to query alert counts: %w", queryErr)
+
+	rows, err := d.pool.Query(ctx, alertCountsSQL, allowList, includeSystem)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query alert counts: %w", err)
 	}
 	defer rows.Close()
 
-	byServer := make(map[int]int64)
+	result := &AlertCountsResult{ByServer: make(map[int]int64)}
 	for rows.Next() {
-		var connID int
+		var connID *int
 		var count int64
 		if err := rows.Scan(&connID, &count); err != nil {
 			return nil, fmt.Errorf("failed to scan alert count: %w", err)
 		}
-		byServer[connID] = count
+		if connID == nil {
+			result.System += count
+		} else {
+			result.ByServer[*connID] = count
+		}
+		result.Total += count
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("failed to iterate alert counts: %w", err)
 	}
 
-	return &AlertCountsResult{
-		Total:    total,
-		ByServer: byServer,
-	}, nil
+	return result, nil
 }
 
-// GetAlertConnectionID returns the connection_id for the given alert.
-func (d *Datastore) GetAlertConnectionID(ctx context.Context, alertID int64) (int, error) {
+// GetAlertConnectionID returns the connection_id for the given alert,
+// which is nil for a system alert.
+func (d *Datastore) GetAlertConnectionID(ctx context.Context, alertID int64) (*int, error) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 
-	var connectionID int
+	// A NULL connection_id is a system alert: the collector's
+	// alerts_system_connection_check constraint allows it for no other
+	// alert type.
+	var connectionID *int
 	err := d.pool.QueryRow(ctx,
 		"SELECT connection_id FROM alerts WHERE id = $1", alertID).Scan(&connectionID)
 	if err != nil {
-		return 0, fmt.Errorf("failed to get alert connection ID: %w", err)
+		return nil, fmt.Errorf("failed to get alert connection ID: %w", err)
 	}
 	return connectionID, nil
 }

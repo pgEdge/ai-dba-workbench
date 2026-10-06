@@ -53,6 +53,12 @@ If NO connection is selected (connected: false):
 When connection_id is omitted, returns alerts across all connections the
 user has access to. Each row includes connection_id and connection_name
 so you can identify which connection each alert belongs to.
+
+System alerts concern the Workbench itself rather than a monitored server,
+for example anomaly detection running degraded because an embedding or
+reasoning LLM provider keeps failing. They appear only when connection_id
+is omitted, with an empty connection_id and the connection_name
+"AI DBA Workbench alerter".
 </important_behavior>
 
 <critical_status_behavior>
@@ -80,8 +86,8 @@ should always be shown regardless of when they were triggered.
 
 <output>
 Returns TSV data with:
-- connection_id: Connection ID (included when querying across all connections)
-- connection_name: Connection name (included when querying across all connections)
+- connection_id: Connection ID (included when querying across all connections; empty for a system alert)
+- connection_name: Connection name (included when querying across all connections; "AI DBA Workbench alerter" for a system alert)
 - id: Alert ID
 - triggered_at: When the alert was triggered
 - severity: Alert severity (info, warning, critical)
@@ -183,8 +189,14 @@ Returns TSV data with:
 			// to group/token grants, and returns an explicit
 			// allConnections flag so callers cannot confuse "full access"
 			// with "no grants".
+			//
+			// System alerts belong to no connection, so connection grants
+			// do not govern them; CanSeeSystemAlerts does, failing closed
+			// (GitHub issue #582). A nil checker denies both, as every
+			// RBACChecker method does.
 			var accessibleIDs []int
 			allConnections := true
+			includeSystem := !singleConnection
 			if !singleConnection {
 				ids, all, err := rbacChecker.VisibleConnectionIDs(ctx, visibilityLister)
 				if err != nil {
@@ -192,7 +204,8 @@ Returns TSV data with:
 				}
 				accessibleIDs = ids
 				allConnections = all
-				if !allConnections && len(accessibleIDs) == 0 {
+				includeSystem = rbacChecker.CanSeeSystemAlerts(ctx)
+				if !allConnections && len(accessibleIDs) == 0 && !includeSystem {
 					return mcp.NewToolSuccess("No alerts found. You do not have access to any connections.")
 				}
 			}
@@ -273,7 +286,7 @@ Returns TSV data with:
 				return alertHistorySingleConnection(ctx, pool, connectionID, connName,
 					timeStart, statusParam, statusFilter, ruleID, metricName, limit, offset)
 			}
-			return alertHistoryAllConnections(ctx, pool, allConnections, accessibleIDs,
+			return alertHistoryAllConnections(ctx, pool, allConnections, accessibleIDs, includeSystem,
 				timeStart, statusParam, statusFilter, ruleID, metricName, limit, offset)
 		},
 	}
@@ -383,25 +396,35 @@ func alertHistorySingleConnection(
 	return mcp.NewToolSuccess(sb.String())
 }
 
-// alertHistoryAllConnections queries alerts across all accessible connections
+// systemAlertConnectionName labels a system alert, which belongs to no
+// connection, in the connection_name column. It matches the server name
+// the alerter gives system alerts in notifications.
+const systemAlertConnectionName = "AI DBA Workbench alerter"
+
+// alertHistoryAllConnections queries alerts across all accessible
+// connections, and the system alerts too when includeSystem is set.
 func alertHistoryAllConnections(
 	ctx context.Context, pool *pgxpool.Pool,
-	allConnections bool, accessibleIDs []int,
+	allConnections bool, accessibleIDs []int, includeSystem bool,
 	timeStart *time.Time, statusParam *string, statusFilter string,
 	ruleID *int, metricName *string, limit, offset int,
 ) (mcp.ToolResponse, error) {
 	// Build connection filter clause
 	connFilter, connArgs := buildConnectionFilter("a.connection_id", allConnections, accessibleIDs)
 
-	// Build the parameterised query; parameter positions start after connection args
-	paramIdx := len(connArgs) + 1
+	// Build the parameterised query; the system alert switch follows the
+	// connection args, and the other parameters follow it. A connection
+	// alert still needs its connection row, as under the inner join this
+	// query used before system alerts existed.
+	systemIdx := len(connArgs) + 1
+	paramIdx := systemIdx + 1
 	query := fmt.Sprintf(`
         SELECT a.id, a.connection_id, c.name AS connection_name,
                a.triggered_at, a.severity, a.title, a.description, a.metric_name,
                a.metric_value, a.threshold_value, a.operator, a.status, a.cleared_at,
                ack.false_positive, ack.acknowledged_by, ack.message
         FROM alerts a
-        JOIN connections c ON c.id = a.connection_id
+        LEFT JOIN connections c ON c.id = a.connection_id
         LEFT JOIN LATERAL (
             SELECT acknowledged_at, acknowledged_by, message, false_positive
             FROM alert_acknowledgments
@@ -409,7 +432,8 @@ func alertHistoryAllConnections(
             ORDER BY acknowledged_at DESC
             LIMIT 1
         ) ack ON true
-        WHERE %s
+        WHERE ((c.id IS NOT NULL AND %s)
+               OR ($%d::boolean AND a.alert_type = 'system' AND a.connection_id IS NULL))
           AND ($%d::timestamp IS NULL OR a.triggered_at >= $%d)
           AND ($%d::text IS NULL OR $%d = 'all' OR a.status = $%d)
           AND ($%d::bigint IS NULL OR a.rule_id = $%d)
@@ -417,7 +441,7 @@ func alertHistoryAllConnections(
         ORDER BY a.triggered_at DESC
         LIMIT $%d OFFSET $%d
     `,
-		connFilter,
+		connFilter, systemIdx,
 		paramIdx, paramIdx,
 		paramIdx+1, paramIdx+1, paramIdx+1,
 		paramIdx+2, paramIdx+2,
@@ -425,8 +449,9 @@ func alertHistoryAllConnections(
 		paramIdx+4, paramIdx+5,
 	)
 
-	queryArgs := make([]any, 0, len(connArgs)+6)
+	queryArgs := make([]any, 0, len(connArgs)+7)
 	queryArgs = append(queryArgs, connArgs...)
+	queryArgs = append(queryArgs, includeSystem)
 	queryArgs = append(queryArgs, timeStart, statusParam, ruleID, metricName, limit, offset)
 
 	rows, err := pool.Query(ctx, query, queryArgs...)
@@ -452,8 +477,8 @@ func alertHistoryAllConnections(
 	for rows.Next() {
 		var (
 			id             int64
-			connID         int
-			connNameVal    string
+			connID         *int
+			connNameVal    *string
 			triggeredAt    time.Time
 			severity       string
 			title          string
@@ -475,9 +500,14 @@ func alertHistoryAllConnections(
 			return mcp.NewToolError(fmt.Sprintf("Failed to scan row: %v", err))
 		}
 
-		fmt.Fprintf(&sb, "%d\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			connID,
-			tsv.FormatValue(connNameVal),
+		connIDText, connNameText := "", systemAlertConnectionName
+		if connID != nil {
+			connIDText = fmt.Sprintf("%d", *connID)
+			connNameText = formatOptionalString(connNameVal)
+		}
+		fmt.Fprintf(&sb, "%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			connIDText,
+			tsv.FormatValue(connNameText),
 			id,
 			triggeredAt.Format(time.RFC3339),
 			severity,

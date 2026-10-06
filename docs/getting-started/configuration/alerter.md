@@ -288,6 +288,59 @@ classification for complex anomalies.
 | `enabled` | boolean | `true` | Enable tier 3 |
 | `timeout_seconds` | integer | `30` | LLM API timeout |
 
+#### Provider Health (`provider_health`)
+
+The `anomaly.provider_health` section controls the system
+alert that the alerter raises when calls to the embedding or
+reasoning provider keep failing. Whilst a provider fails,
+anomaly detection runs in a degraded mode: tier 2 compares
+no candidate with past anomalies, tier 3 raises each
+candidate that reaches the tier without LLM classification,
+and the re-evaluation worker leaves acknowledged anomaly
+alerts unchanged.
+
+The following table describes the provider health option:
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `failure_threshold` | integer | `3` | Consecutive failed calls that raise the alert; must be at least 1 |
+
+The alerter counts consecutive failures separately for tier
+2 embeddings, tier 3 classification and re-evaluation, and
+for each provider. When one count reaches the threshold, the
+alerter raises a single warning alert for that tier and
+provider, and updates the alert's failure count as further
+calls fail. The next successful call to that provider resets
+the count and clears the alert; tier 3 classification and
+re-evaluation share the reasoning provider, so a successful
+call from either clears the alerts of both. After clearing
+an alert, the alerter does not raise it again for five
+minutes, so that a provider that fails intermittently cannot
+send a burst of notifications. A call cancelled before it
+completes counts as neither a failure nor a success,
+although a call that times out counts as a failure.
+
+When anomaly detection is enabled, the alerter also checks
+the providers of the enabled tiers at startup. A failed
+check raises the alert for its tier immediately, whatever
+the threshold or the five-minute wait; a failed reasoning
+check raises the tier 3 alert. A successful reasoning check
+clears both the tier 3 and the re-evaluation alerts. At
+startup the alerter also clears any open provider alert for
+a tier or provider that is no longer configured or enabled.
+See
+[System Alerts](../../user-guide/alerts/index.md#system-alerts)
+for how the alert appears.
+
+In the following example, the alerter raises the alert after
+five consecutive failures:
+
+```yaml
+anomaly:
+  provider_health:
+    failure_threshold: 5
+```
+
 ### Baseline Calculation (`baselines`)
 
 The `baselines` section configures baseline metric

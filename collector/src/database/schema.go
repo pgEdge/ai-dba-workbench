@@ -3610,6 +3610,81 @@ func (sm *SchemaManager) registerMigrations() {
 			return nil
 		},
 	})
+
+	// Migration #19: Allow system alerts that belong to no monitored
+	// connection. See GitHub issue #582.
+	//
+	// The alerter raises a 'system' alert when an embedding or reasoning
+	// provider keeps failing, because anomaly detection then degrades
+	// silently. Such an alert concerns the alerter itself rather than a
+	// monitored server, so connection_id becomes nullable, NULL exactly
+	// when alert_type is 'system'. The foreign key and its ON DELETE
+	// CASCADE are kept for every other alert.
+	//
+	// The original alert_type CHECK was declared inline and so carries a
+	// generated name; the DO block drops every single-column CHECK on
+	// alert_type whatever it is called, and a named one replaces it. The
+	// partial unique index is the database-side guarantee that at most
+	// one open system alert exists per tier and provider, whose key the
+	// alerter stores in metric_name. Every statement is idempotent.
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     19,
+		Description: "Allow system alerts with no connection",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			_, err := tx.Exec(ctx, `
+				DO $$
+				DECLARE
+					con RECORD;
+				BEGIN
+					FOR con IN
+						SELECT c.conname
+						FROM pg_constraint c
+						JOIN pg_attribute a
+						  ON a.attrelid = c.conrelid
+						 AND a.attnum = ANY (c.conkey)
+						WHERE c.conrelid = 'alerts'::regclass
+						  AND c.contype = 'c'
+						  AND a.attname = 'alert_type'
+						  AND cardinality(c.conkey) = 1
+					LOOP
+						EXECUTE format('ALTER TABLE alerts DROP CONSTRAINT %I', con.conname);
+					END LOOP;
+				END
+				$$;
+
+				ALTER TABLE alerts
+					ADD CONSTRAINT alerts_alert_type_check
+					CHECK (alert_type IN ('threshold', 'anomaly', 'connection', 'system'));
+
+				ALTER TABLE alerts ALTER COLUMN connection_id DROP NOT NULL;
+
+				ALTER TABLE alerts DROP CONSTRAINT IF EXISTS alerts_system_connection_check;
+				ALTER TABLE alerts
+					ADD CONSTRAINT alerts_system_connection_check
+					CHECK ((alert_type = 'system') = (connection_id IS NULL));
+
+				CREATE UNIQUE INDEX IF NOT EXISTS idx_alerts_system_open
+					ON alerts(metric_name)
+					WHERE alert_type = 'system' AND status <> 'cleared';
+
+				COMMENT ON TABLE alerts IS
+					'Active and historical alerts from threshold, anomaly and connection detection, plus system alerts about the alerter itself';
+				COMMENT ON COLUMN alerts.alert_type IS
+					'threshold, anomaly or connection for alerts about a monitored server; system for alerts about the alerter itself, such as a failing LLM provider';
+				COMMENT ON COLUMN alerts.connection_id IS
+					'Monitored connection the alert concerns; NULL exactly when alert_type is system';
+				COMMENT ON INDEX idx_alerts_system_open IS
+					'At most one open (active or acknowledged) system alert per key, which the alerter stores in metric_name';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to allow system alerts in alerts: %w", err)
+			}
+
+			return nil
+		},
+	})
 }
 
 // Migrate applies all pending migrations

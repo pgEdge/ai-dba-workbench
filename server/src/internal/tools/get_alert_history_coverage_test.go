@@ -30,7 +30,8 @@ DROP TABLE IF EXISTS alerts CASCADE;
 
 CREATE TABLE alerts (
     id BIGSERIAL PRIMARY KEY,
-    connection_id INTEGER NOT NULL,
+    alert_type TEXT NOT NULL DEFAULT 'threshold',
+    connection_id INTEGER,
     rule_id BIGINT,
     triggered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     severity TEXT NOT NULL,

@@ -52,6 +52,12 @@ func (e *Engine) cleanResolvedAlerts(ctx context.Context) {
 			return
 		}
 
+		// A system alert concerns the alerter, not a connection, and is
+		// cleared by whatever raised it. See GitHub issue #582.
+		if alert.IsSystem() {
+			continue
+		}
+
 		// This check sits outside the threshold branch below because it
 		// applies to an alert of any type: an anomaly or connection alert
 		// on a connection nobody is monitoring is as stuck as a threshold

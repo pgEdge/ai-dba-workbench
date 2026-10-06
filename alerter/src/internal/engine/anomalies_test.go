@@ -448,7 +448,11 @@ func (suppressingReasoningProvider) Classify(context.Context, string) (string, e
 	return `{"decision": "suppress", "confidence": 0.9, "reasoning": "test"}`, nil
 }
 
-func (suppressingReasoningProvider) ModelName() string { return "suppressing-reasoner" }
+func (suppressingReasoningProvider) ModelName() string    { return "suppressing-reasoner" }
+func (suppressingReasoningProvider) ProviderName() string { return "suppressing" }
+func (suppressingReasoningProvider) SystemPrompt() string {
+	return "suppressing system prompt"
+}
 
 // newDetectAnomaliesEnv builds the integration-test environment used
 // by TestDetectAppliesGatesAndCap. The test is skipped if

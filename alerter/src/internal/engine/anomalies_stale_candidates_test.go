@@ -285,4 +285,8 @@ func (s suppressingCounter) Classify(ctx context.Context, prompt string) (string
 	return suppressingReasoningProvider{}.Classify(ctx, prompt)
 }
 
-func (s suppressingCounter) ModelName() string { return "suppressing-counter" }
+func (s suppressingCounter) ModelName() string    { return "suppressing-counter" }
+func (s suppressingCounter) ProviderName() string { return "suppressing" }
+func (s suppressingCounter) SystemPrompt() string {
+	return "suppressing counter system prompt"
+}

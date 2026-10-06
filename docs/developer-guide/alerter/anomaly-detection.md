@@ -163,8 +163,11 @@ connection or database only while it has samples inside
 every row of that metric whose `last_calculated` timestamp is older
 than the start of the current cycle, because the cycle did not
 rewrite those rows and their statistics no longer describe the
-data. A metric whose historical query fails keeps its rows for that
-cycle, so a transient error never empties its baselines.
+data. A metric whose historical query fails, or for which any
+baseline row fails to upsert, keeps its rows for that cycle; a row
+that failed to upsert still carries the previous cycle's timestamp,
+so pruning would otherwise delete the very row the cycle could not
+refresh.
 
 ### Baseline Selection
 

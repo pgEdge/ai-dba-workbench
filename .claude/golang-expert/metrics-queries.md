@@ -1066,9 +1066,10 @@ that follow from that, most learned the hard way in #406 and #407:
 
 - A `historicalSQL` must apply every non-time row filter its
   `latestSQL` applies (it keeps its own lookback window rather than
-  copying the `latestSQL` freshness cutoff), because Tier 1 scores the live value against a baseline built from
-  the historical rows, and a baseline computed over a different row set
-  is a different statistic. Every `pg_stat_activity` entry filters
+  copying the `latestSQL` freshness cutoff), because Tier 1 scores the
+  live value against a baseline built from the historical rows, and a
+  baseline computed over a different row set is a different statistic.
+  Every `pg_stat_activity` entry filters
   `backend_type = 'client backend'` in both queries; the historical
   queries of `connection_utilization_percent`, `blocked_count`,
   `idle_in_transaction_seconds`, `max_query_duration_seconds` and
@@ -1194,8 +1195,12 @@ conventions from that change hold across both:
   metric's rows with `last_calculated < cycleStart`. This covers
   buckets that drop below `minSamplesForTimePeriod`, groups with no
   samples left in the lookback, and metrics whose query returns
-  nothing; a failed query skips the prune. Upserts must keep setting
-  `LastCalculated` to `time.Now()`, or the prune deletes fresh rows.
+  nothing. A failed historical query skips the prune, and so does any
+  failed upsert for the metric (the `calculate*Baseline` helpers return
+  false), since a row that failed to upsert keeps its old
+  `last_calculated` and would otherwise be deleted. Upserts must keep
+  setting `LastCalculated` to `time.Now()`, or the prune deletes fresh
+  rows.
   `engine/baselines_stale_integration_test.go` pins it.
 
 `detectAnomalies` loops rules on the outside so `GetLatestMetricValues`

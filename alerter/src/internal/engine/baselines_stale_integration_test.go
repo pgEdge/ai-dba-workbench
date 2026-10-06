@@ -192,3 +192,106 @@ func TestPruneStaleBaselinesLogsFailure(t *testing.T) {
 		t.Errorf("expected prune failure to be logged, got:\n%s", output)
 	}
 }
+
+// TestCalculateBaselinesKeepsRowsWhenUpsertFails covers a cycle whose
+// historical query succeeds but whose writes to metric_baselines fail.
+// A row that failed to upsert keeps the previous cycle's
+// last_calculated, so pruning after it would delete the very rows the
+// cycle could not refresh and leave the connection with no baseline
+// until the next cycle. The prune is skipped instead, and every seeded
+// row survives untouched.
+func TestCalculateBaselinesKeepsRowsWhenUpsertFails(t *testing.T) {
+	engine, _, pool, cleanup := newBaselinesIntegrationEnv(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	const metric = "pg_stat_activity.count"
+	connID := insertBaselinesTestConnection(t, pool, "upsert-fail-conn")
+	insertBaselinesTestAlertRule(t, pool, "upsert-fail-rule", metric)
+
+	// Three samples in one hour of one day, so the 'all', hourly and
+	// daily upserts are all attempted.
+	base := time.Now().UTC().Truncate(time.Hour).Add(-26 * time.Hour)
+	for i := 0; i < 3; i++ {
+		seedStatActivitySample(t, pool, connID, base.Add(time.Duration(i*10)*time.Minute))
+	}
+
+	insertStaleBaseline(t, pool, connID, metric, "all", nil, 12)
+	insertStaleBaseline(t, pool, connID, metric, "hourly", base.Hour(), 12)
+	insertStaleBaseline(t, pool, connID, metric, "hourly", (base.Hour()+3)%24, 12)
+
+	// Reject inserts and updates, but not deletes, on metric_baselines.
+	// The trigger goes with the table at teardown; the function is
+	// dropped here.
+	if _, err := pool.Exec(ctx, `
+        CREATE OR REPLACE FUNCTION reject_baseline_write() RETURNS trigger AS $$
+        BEGIN
+            RAISE EXCEPTION 'baseline writes are rejected by this test';
+        END;
+        $$ LANGUAGE plpgsql;
+        CREATE TRIGGER reject_baseline_write
+            BEFORE INSERT OR UPDATE ON metric_baselines
+            FOR EACH ROW EXECUTE FUNCTION reject_baseline_write();
+    `); err != nil {
+		t.Fatalf("failed to install write trigger: %v", err)
+	}
+	defer func() {
+		if _, err := pool.Exec(context.Background(),
+			`DROP FUNCTION IF EXISTS reject_baseline_write() CASCADE`); err != nil {
+			t.Errorf("failed to drop write trigger function: %v", err)
+		}
+	}()
+
+	output := captureStderr(t, func() {
+		engine.calculateBaselines(ctx)
+	})
+
+	for _, want := range []string{
+		"ERROR: Failed to upsert 'all' baseline for " + metric,
+		"ERROR: Failed to upsert hourly baseline for " + metric,
+		"ERROR: Failed to upsert daily baseline for " + metric,
+		"WARNING: Skipping stale baseline prune for metric " + metric,
+	} {
+		if !strings.Contains(output, want) {
+			t.Errorf("expected %q in output:\n%s", want, output)
+		}
+	}
+
+	if got := readStaleBaselineRows(t, pool, connID); len(got) != 3 {
+		t.Errorf("expected all 3 seeded rows to survive a failed upsert, got %+v", got)
+	}
+}
+
+// TestCalculateBaselinesKeepsRowsWhenQueryFails covers a cycle whose
+// historical query fails: nothing was rebuilt, so nothing may be
+// pruned, and the seeded row survives.
+func TestCalculateBaselinesKeepsRowsWhenQueryFails(t *testing.T) {
+	engine, _, pool, cleanup := newBaselinesIntegrationEnv(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	const metric = "pg_stat_activity.count"
+	connID := insertBaselinesTestConnection(t, pool, "query-fail-conn")
+	insertBaselinesTestAlertRule(t, pool, "query-fail-rule", metric)
+	insertStaleBaseline(t, pool, connID, metric, "all", nil, 12)
+
+	// The teardown drops the whole metrics schema, so the renamed
+	// table needs no restoring.
+	if _, err := pool.Exec(ctx,
+		`ALTER TABLE metrics.pg_stat_activity RENAME TO pg_stat_activity_hidden`); err != nil {
+		t.Fatalf("failed to rename pg_stat_activity: %v", err)
+	}
+
+	output := captureStderr(t, func() {
+		engine.calculateBaselines(ctx)
+	})
+	if !strings.Contains(output, "ERROR: Failed to get historical data for metric "+metric) {
+		t.Errorf("expected historical query failure to be logged, got:\n%s", output)
+	}
+
+	got := readStaleBaselineRows(t, pool, connID)
+	want := []staleBaselineRow{{metric, "all", -1, 12}}
+	if len(got) != 1 || got[0] != want[0] {
+		t.Errorf("baselines = %+v, want %+v", got, want)
+	}
+}

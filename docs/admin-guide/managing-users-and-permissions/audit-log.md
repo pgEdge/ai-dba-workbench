@@ -831,7 +831,12 @@ from one that never grew. An event's identifier is not part of its
 hash either, so someone who can write the database can empty the log,
 whether or not a purge had recorded where it began, wait for the
 server to write one more event and move that event to identifier 1,
-and the log verifies for the same reason.
+and the log verifies for the same reason. A purge event written before
+purges recorded where the log began works the same way: someone who
+kept a copy of one can empty the log, put that event back under any
+identifier, and wait for the server to write one more event, and the
+log verifies, because the purge that recorded the head was deleted
+with everything else and the old event carries no record to check.
 
 The re-chain blesses whatever the database contained at the moment it
 ran, as described above, so on an upgraded installation the keyed chain

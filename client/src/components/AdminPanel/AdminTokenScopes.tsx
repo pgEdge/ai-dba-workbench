@@ -28,6 +28,8 @@ import {
     ALL_MCP_OPTION,
     ALL_ADMIN_OPTION,
     isMcpWildcardId,
+    ALL_CONNECTIONS_ID,
+    ALL_CONNECTIONS_LABEL,
     filterMcpPrivileges,
     filterAdminPermissions,
 } from './tokens';
@@ -259,6 +261,27 @@ const AdminTokenScopes: React.FC = () => {
         }
     };
 
+    /**
+     * Deletes a token just created whose scope the server then refused,
+     * since it would otherwise hold its owner's whole access, and
+     * returns the message to show for the refusal.
+     */
+    const discardUnscopedToken = async (
+        tokenId: number,
+        reason: string,
+    ): Promise<string> => {
+        try {
+            await apiDelete(`/api/v1/rbac/tokens/${tokenId}`);
+            return `The token was not created because its scope was ` +
+                `refused: ${reason}`;
+        } catch {
+            void fetchData();
+            return `The token was created, but its scope was refused ` +
+                `(${reason}) and the token could not be deleted, so it ` +
+                "holds its owner's whole access. Delete it from the list.";
+        }
+    };
+
     // Create token
     const handleCreateToken = async () => {
         if (!createOwner || !createAnnotation.trim()) {
@@ -272,15 +295,23 @@ const AdminTokenScopes: React.FC = () => {
                 annotation: createAnnotation.trim(),
                 expires_in: createExpiry,
             };
-            const data = await apiPost<CreateTokenResponse>('/api/v1/rbac/tokens', body);
-
             const scopeBody = buildScopeBody(
                 createConnections,
                 createMcpPrivileges,
                 createAdminPermissions,
             );
+            const data = await apiPost<CreateTokenResponse>('/api/v1/rbac/tokens', body);
+
             if (Object.keys(scopeBody).length > 0) {
-                await apiPut(`/api/v1/rbac/tokens/${data.id}/scope`, scopeBody);
+                try {
+                    await apiPut(`/api/v1/rbac/tokens/${data.id}/scope`, scopeBody);
+                } catch (scopeErr: unknown) {
+                    // The token exists but holds its owner's whole
+                    // access, so it must not outlive the refusal.
+                    throw new Error(await discardUnscopedToken(
+                        data.id, extractErrorMessage(scopeErr),
+                    ));
+                }
             }
 
             setCreateOpen(false);
@@ -322,11 +353,18 @@ const AdminTokenScopes: React.FC = () => {
     const handleOpenEdit = async (token: Token) => {
         setEditToken(token);
         const scopeConns = token.scope?.connections ?? [];
+        // The scope is loaded as stored, even one that breaks the
+        // server's rules; the dialog explains such a scope and blocks
+        // saving until it is resolved.
         setEditConnections(scopeConns.map((sc: TokenScopeConnection) => {
             const conn = connections.find((c) => c.id === sc.connection_id);
+            let name = conn ? conn.name : `Connection ${sc.connection_id}`;
+            if (sc.connection_id === ALL_CONNECTIONS_ID) {
+                name = ALL_CONNECTIONS_LABEL;
+            }
             return {
                 id: sc.connection_id,
-                name: conn ? conn.name : `Connection ${sc.connection_id}`,
+                name,
                 access_level: sc.access_level || 'read_write',
             };
         }));

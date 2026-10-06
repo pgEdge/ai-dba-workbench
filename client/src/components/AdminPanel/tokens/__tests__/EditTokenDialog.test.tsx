@@ -77,6 +77,29 @@ describe('EditTokenDialog', () => {
         vi.clearAllMocks();
     });
 
+    it('explains a mixed connection scope and blocks saving it', () => {
+        renderComponent({
+            scopedConnections: [
+                { id: 0, name: "All the owner's connections", access_level: 'read' },
+                { id: 1, name: 'Primary DB', access_level: 'read' },
+            ],
+        });
+        expect(screen.getByRole('alert')).toHaveTextContent(
+            /combines "All the owner's connections" with entries for particular connections/,
+        );
+        expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+    });
+
+    it('allows saving a connection scope the server accepts', () => {
+        renderComponent({
+            scopedConnections: [
+                { id: 1, name: 'Primary DB', access_level: 'read' },
+            ],
+        });
+        expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Save' })).not.toBeDisabled();
+    });
+
     it('renders dialog title with token name', () => {
         renderComponent();
         expect(screen.getByText('Edit token: Test Token')).toBeInTheDocument();

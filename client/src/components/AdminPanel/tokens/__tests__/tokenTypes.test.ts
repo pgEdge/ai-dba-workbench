@@ -18,7 +18,66 @@ import {
     EXPIRY_OPTIONS,
     MCP_WILDCARD_ID,
     isMcpWildcardId,
+    ALL_CONNECTIONS_ID,
+    ALL_CONNECTIONS_LABEL,
+    addScopedConnection,
+    connectionScopeProblem,
 } from '../tokenTypes';
+import type { ScopedConnection } from '../tokenTypes';
+
+const ALL: ScopedConnection = {
+    id: ALL_CONNECTIONS_ID,
+    name: ALL_CONNECTIONS_LABEL,
+    access_level: 'read',
+};
+const PRIMARY: ScopedConnection = { id: 1, name: 'Primary DB', access_level: 'read' };
+const REPLICA: ScopedConnection = { id: 2, name: 'Replica DB', access_level: 'read_write' };
+
+describe('connection scope rules', () => {
+    describe('addScopedConnection', () => {
+        it('appends a particular connection', () => {
+            expect(addScopedConnection([PRIMARY], REPLICA)).toEqual([PRIMARY, REPLICA]);
+        });
+
+        it('does not add a connection already in the scope', () => {
+            const scoped = [PRIMARY];
+            expect(addScopedConnection(scoped, { ...PRIMARY, access_level: 'read_write' }))
+                .toBe(scoped);
+        });
+
+        it('replaces particular connections with all connections', () => {
+            expect(addScopedConnection([PRIMARY, REPLICA], ALL)).toEqual([ALL]);
+        });
+
+        it('replaces all connections with a particular connection', () => {
+            expect(addScopedConnection([ALL], PRIMARY)).toEqual([PRIMARY]);
+        });
+
+        it('resolves a mixed scope when a particular connection is added', () => {
+            expect(addScopedConnection([ALL, PRIMARY], REPLICA)).toEqual([PRIMARY, REPLICA]);
+        });
+    });
+
+    describe('connectionScopeProblem', () => {
+        it('accepts an empty scope, all connections alone, or distinct connections', () => {
+            expect(connectionScopeProblem([])).toBeNull();
+            expect(connectionScopeProblem([ALL])).toBeNull();
+            expect(connectionScopeProblem([PRIMARY, REPLICA])).toBeNull();
+        });
+
+        it('reports a mixed scope', () => {
+            expect(connectionScopeProblem([PRIMARY, ALL])).toMatch(
+                /combines "All the owner's connections" with entries for particular connections/,
+            );
+        });
+
+        it('reports a connection named twice', () => {
+            expect(connectionScopeProblem([PRIMARY, { ...PRIMARY }])).toMatch(
+                /names "Primary DB" more than once/,
+            );
+        });
+    });
+});
 import type { McpPrivilege } from '../tokenTypes';
 
 describe('tokenTypes', () => {

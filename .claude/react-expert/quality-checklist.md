@@ -588,8 +588,9 @@ re-implementing the rules per dialog:
 - Drive the submit button's `disabled` state and the early-return
   guard in the submit handler with `validateName(name) !== null`;
   this also covers the empty/required case. For the token dialog,
-  combine it with the existing owner check: `owner &&
-  validateName(annotation) === null`.
+  combine it with the existing owner check and the connection scope
+  check: `owner && validateName(annotation) === null &&
+  connectionScopeProblem(scopedConnections) === null`.
 - Do not surface the "Name is required" message while the field is
   empty; suppress the inline error for an empty trimmed value
   (`value.trim() === '' ? null : validateName(value)`) so the
@@ -616,6 +617,21 @@ overrides it. Do not pass an `errorFallback` to the create/edit
 group mutations, or the server's "A group with this name already
 exists" message will be masked. Token names are intentionally not
 unique, so no duplicate handling belongs in the token dialog.
+
+## Token Connection Scope Rules
+
+The server refuses (HTTP 400) a token connection scope that names a
+connection twice or mixes "all connections" (connection 0) with
+particular connections. Both token dialogs edit the connection scope
+through `tokens/ConnectionScopeEditor.tsx`, which adds entries only
+through `addScopedConnection` (in `tokens/tokenTypes.ts`): choosing
+"All the owner's connections" replaces every entry, and a particular
+connection replaces the all-connections entry. A stored scope that
+already breaks the rules is loaded as it is; the editor shows
+`connectionScopeProblem` inline and the dialogs disable their submit
+button until it is resolved. Creating a token is a POST followed by a
+scope PUT, so `AdminTokenScopes.tsx` deletes the new token when the
+PUT is refused, rather than leave it holding its owner's whole access.
 
 ## Messaging Channel Field Descriptors
 

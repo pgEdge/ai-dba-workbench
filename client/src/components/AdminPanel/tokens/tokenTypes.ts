@@ -146,6 +146,21 @@ export const MCP_WILDCARD_ID = 0;
 export const isMcpWildcardId = (id: number): boolean =>
     id === MCP_WILDCARD_ID || id === ALL_MCP_OPTION.id;
 
+/**
+ * The connection id the server stores, and returns in a token's scope,
+ * for the "all connections" entry.
+ */
+export const ALL_CONNECTIONS_ID = 0;
+
+/** The label for the "all connections" connection scope entry. */
+export const ALL_CONNECTIONS_LABEL = "All the owner's connections";
+
+/** Option for scoping a token to every connection its owner can reach. */
+export const ALL_CONNECTIONS_OPTION: Connection = {
+    id: ALL_CONNECTIONS_ID,
+    name: ALL_CONNECTIONS_LABEL,
+};
+
 /** Sentinel option for selecting all admin permissions. */
 export const ALL_ADMIN_OPTION: AdminPermissionOption = {
     id: '*',
@@ -198,4 +213,58 @@ export const filterAdminPermissions = (
         return ADMIN_PERMISSIONS;
     }
     return ADMIN_PERMISSIONS.filter((p) => allowedPermissionIds.includes(p.id));
+};
+
+// ---------------------------------------------------------------------
+// Connection scope rules
+// ---------------------------------------------------------------------
+
+// The server refuses a connection scope that names a connection twice,
+// or that mixes the "all connections" entry with entries for particular
+// connections (ErrInvalidConnectionScope in
+// server/src/internal/auth/token_scope.go). The editor keeps to the
+// same rules, so that it never builds a scope the server would refuse.
+
+/**
+ * Adds an entry to a connection scope without breaking the server's
+ * rules: an entry already present is not added again, the "all
+ * connections" entry replaces every other entry, and an entry for a
+ * particular connection replaces the "all connections" entry.
+ */
+export const addScopedConnection = (
+    scoped: ScopedConnection[],
+    entry: ScopedConnection,
+): ScopedConnection[] => {
+    if (scoped.some((c) => c.id === entry.id)) {
+        return scoped;
+    }
+    if (entry.id === ALL_CONNECTIONS_ID) {
+        return [entry];
+    }
+    return [...scoped.filter((c) => c.id !== ALL_CONNECTIONS_ID), entry];
+};
+
+/**
+ * Explains why a connection scope cannot be saved as it stands, or
+ * returns null when the server would accept it. A scope stored before
+ * the server enforced these rules may still break them.
+ */
+export const connectionScopeProblem = (
+    scoped: ScopedConnection[],
+): string | null => {
+    const seen = new Set<number>();
+    for (const c of scoped) {
+        if (seen.has(c.id)) {
+            return `The connection scope names "${c.name}" more than ` +
+                'once. Remove the extra entries before saving.';
+        }
+        seen.add(c.id);
+    }
+    if (seen.has(ALL_CONNECTIONS_ID) && scoped.length > 1) {
+        return `The connection scope combines "${ALL_CONNECTIONS_LABEL}" ` +
+            'with entries for particular connections, which cannot be ' +
+            `saved. Remove either "${ALL_CONNECTIONS_LABEL}" or the ` +
+            'particular connections before saving.';
+    }
+    return null;
 };

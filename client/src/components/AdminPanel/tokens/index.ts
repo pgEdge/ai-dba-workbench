@@ -32,6 +32,11 @@ export {
     ALL_ADMIN_OPTION,
     MCP_WILDCARD_ID,
     isMcpWildcardId,
+    ALL_CONNECTIONS_ID,
+    ALL_CONNECTIONS_LABEL,
+    ALL_CONNECTIONS_OPTION,
+    addScopedConnection,
+    connectionScopeProblem,
     filterMcpPrivileges,
     filterAdminPermissions,
 } from './tokenTypes';
@@ -42,6 +47,9 @@ export type { ScopeMultiSelectProps } from './ScopeMultiSelect';
 
 export { default as ConnectionScopeTable } from './ConnectionScopeTable';
 export type { ConnectionScopeTableProps } from './ConnectionScopeTable';
+
+export { default as ConnectionScopeEditor } from './ConnectionScopeEditor';
+export type { ConnectionScopeEditorProps } from './ConnectionScopeEditor';
 
 export { default as CreateTokenDialog } from './CreateTokenDialog';
 export type { CreateTokenDialogProps } from './CreateTokenDialog';

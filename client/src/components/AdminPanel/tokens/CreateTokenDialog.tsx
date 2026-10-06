@@ -32,14 +32,14 @@ import {
 import { SELECT_FIELD_SX } from '../../shared/formStyles';
 import { validateName, NAME_MAX_LENGTH } from '../../../utils/validateName';
 import ScopeMultiSelect from './ScopeMultiSelect';
-import ConnectionScopeTable from './ConnectionScopeTable';
+import ConnectionScopeEditor from './ConnectionScopeEditor';
 import {
     EXPIRY_OPTIONS,
     ALL_MCP_OPTION,
     ALL_ADMIN_OPTION,
-    NO_CONNECTION_RESTRICTION_TEXT,
     NO_MCP_RESTRICTION_TEXT,
     NO_ADMIN_RESTRICTION_TEXT,
+    connectionScopeProblem,
 } from './tokenTypes';
 import type {
     User,
@@ -137,31 +137,12 @@ const CreateTokenDialog: React.FC<CreateTokenDialogProps> = ({
     const theme = useTheme();
     const containedButtonSx = getContainedButtonSx(theme);
 
-    // Handle adding a connection to the scope
-    const handleAddConnection = (connection: Connection | null) => {
-        if (connection) {
-            const maxLevel = ownerConnectionLevels[connection.id] || 'read_write';
-            onScopedConnectionsChange([
-                ...scopedConnections,
-                {
-                    id: connection.id,
-                    name: connection.name,
-                    access_level: maxLevel,
-                },
-            ]);
-        }
-    };
-
-    // Filter out already-selected connections
-    const availableConnectionOptions = availableConnections.filter(
-        (c) => !scopedConnections.some((sc) => sc.id === c.id)
-    );
-
     // The "Name" label maps to the backend `annotation`. It shares the
     // same validation contract as group names; duplicate token names are
     // allowed by design, so no duplicate handling lives here.
     const nameValidation = validateName(annotation);
-    const canSubmit = owner && nameValidation === null;
+    const canSubmit = owner && nameValidation === null &&
+        connectionScopeProblem(scopedConnections) === null;
     // Suppress the inline error for an empty field so the dialog does not
     // greet the user with a "Name is required" message before they type;
     // the disabled Create button already communicates the requirement.
@@ -243,46 +224,10 @@ const CreateTokenDialog: React.FC<CreateTokenDialogProps> = ({
                     Scope (Optional)
                 </Typography>
 
-                <Autocomplete<Connection>
-                    options={availableConnectionOptions}
-                    getOptionLabel={(option) => option.name || ''}
-                    value={null}
-                    onChange={(_e, value) => { handleAddConnection(value); }}
-                    renderInput={(params) => (
-                        <TextField
-                            {...params}
-                            label="Add Connection"
-                            margin="dense"
-                            placeholder="Select a connection to add..."
-                            helperText={
-                                scopedConnections.length === 0
-                                    ? NO_CONNECTION_RESTRICTION_TEXT
-                                    : undefined
-                            }
-                            InputLabelProps={{
-                                ...params.InputLabelProps,
-                                shrink: true,
-                            }}
-                            sx={SELECT_FIELD_SX}
-                        />
-                    )}
-                    disabled={loading}
-                />
-
-                <ConnectionScopeTable
-                    connections={scopedConnections}
-                    onAccessLevelChange={(id, level) => {
-                        onScopedConnectionsChange(
-                            scopedConnections.map((c) =>
-                                c.id === id ? { ...c, access_level: level } : c
-                            )
-                        );
-                    }}
-                    onRemove={(id) => {
-                        onScopedConnectionsChange(
-                            scopedConnections.filter((c) => c.id !== id)
-                        );
-                    }}
+                <ConnectionScopeEditor
+                    availableConnections={availableConnections}
+                    scopedConnections={scopedConnections}
+                    onScopedConnectionsChange={onScopedConnectionsChange}
                     ownerConnectionLevels={ownerConnectionLevels}
                     ownerIsSuperuser={ownerIsSuperuser}
                     disabled={loading}

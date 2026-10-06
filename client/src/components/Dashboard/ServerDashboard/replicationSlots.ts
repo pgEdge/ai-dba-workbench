@@ -41,7 +41,7 @@ export interface ReplicationSlotsResponse {
 /** Health of a slot's WAL reservation, as drawn on its chip. */
 export type SlotHealth = 'good' | 'warning' | 'critical' | 'unknown';
 
-/** Display label and health for a pg_replication_slots.wal_status. */
+/** Display label, health and explanation for a status chip. */
 export interface WalStatusDisplay {
     label: string;
     health: SlotHealth;
@@ -173,6 +173,36 @@ export const summariseSlots = (slots: ReplicationSlotRow[]): SlotSummary => {
     return { total: slots.length, active, inactive, atRisk };
 };
 
+/** Display for a slot that has a connected consumer. */
+const ACTIVE_DISPLAY: WalStatusDisplay = {
+    label: 'Active',
+    health: 'good',
+    description: 'A consumer is connected to this slot',
+};
+
+/** Display for a slot with no consumer; it still holds back WAL. */
+const INACTIVE_DISPLAY: WalStatusDisplay = {
+    label: 'Inactive',
+    health: 'warning',
+    description: 'No consumer is connected; the slot still retains WAL',
+};
+
+/** Display for a slot whose activity was not reported. */
+const UNKNOWN_ACTIVITY_DISPLAY: WalStatusDisplay = {
+    label: 'Unknown',
+    health: 'unknown',
+    description: 'Activity was not reported',
+};
+
+/**
+ * Describe whether a slot has a connected consumer. An inactive slot
+ * still prevents WAL removal, which is why it is drawn as a warning.
+ */
+export const describeActivity = (active: boolean | null): WalStatusDisplay => {
+    if (active === null) { return UNKNOWN_ACTIVITY_DISPLAY; }
+    return active ? ACTIVE_DISPLAY : INACTIVE_DISPLAY;
+};
+
 /** One edge of the server's replication context. */
 export interface ReplicationPeer {
     serverId: number;
@@ -197,56 +227,83 @@ const getDownstreamLabel = (relationshipType: string): string =>
  */
 const DOWNSTREAM_TYPES = new Set(['streams_from', 'subscribes_to']);
 
+/** One classified relationship: which list it joins, and the peer. */
+interface ClassifiedPeer {
+    direction: 'up' | 'down';
+    peer: ReplicationPeer;
+}
+
+type Relationship = NonNullable<ClusterServer['relationships']>[number];
+
+/** Flatten every server, including nested standbys, in the topology. */
+const flattenServers = (
+    clusterData: ClusterGroup[] | null | undefined,
+): ClusterServer[] =>
+    (clusterData ?? []).flatMap((group) =>
+        (group.clusters ?? []).flatMap((cluster) =>
+            collectServers(cluster.servers ?? [])));
+
+/**
+ * Place one relationship of `server` relative to `serverId`: upstream
+ * when it is the server's own edge, downstream when another server
+ * consumes this one's changes, and nowhere otherwise.
+ */
+const classifyRelationship = (
+    server: ClusterServer,
+    rel: Relationship,
+    serverId: number,
+): ClassifiedPeer | null => {
+    if (server.id === serverId) {
+        return {
+            direction: 'up',
+            peer: {
+                serverId: rel.target_server_id,
+                serverName: rel.target_server_name,
+                label: getRelationshipLabel(rel.relationship_type),
+            },
+        };
+    }
+    if (rel.target_server_id === serverId
+        && DOWNSTREAM_TYPES.has(rel.relationship_type)) {
+        return {
+            direction: 'down',
+            peer: {
+                serverId: server.id,
+                serverName: server.name,
+                label: getDownstreamLabel(rel.relationship_type),
+            },
+        };
+    }
+    return null;
+};
+
 /**
  * Resolve a server's replication context from the cluster topology,
  * whose relationships are detected by the collector (or set by an
  * administrator). Upstream lists the servers this one replicates from;
  * downstream lists the standbys and subscribers that replicate from
- * it, which are the usual consumers of its slots.
+ * it, which are the usual consumers of its slots. Repeated edges are
+ * listed once.
  */
 export const getReplicationContext = (
     clusterData: ClusterGroup[] | null | undefined,
     serverId: number,
 ): ReplicationContext => {
-    const servers: ClusterServer[] = [];
-    for (const group of clusterData ?? []) {
-        for (const cluster of group.clusters ?? []) {
-            servers.push(...collectServers(cluster.servers ?? []));
-        }
-    }
-
-    const upstream: ReplicationPeer[] = [];
-    const downstream: ReplicationPeer[] = [];
+    const context: ReplicationContext = { upstream: [], downstream: [] };
     const seen = new Set<string>();
-    const add = (
-        list: ReplicationPeer[],
-        direction: string,
-        peer: ReplicationPeer,
-    ): void => {
-        const key = `${direction}:${peer.serverId}:${peer.label}`;
-        if (seen.has(key)) { return; }
-        seen.add(key);
-        list.push(peer);
-    };
 
-    for (const server of servers) {
+    for (const server of flattenServers(clusterData)) {
         for (const rel of server.relationships ?? []) {
-            if (server.id === serverId) {
-                add(upstream, 'up', {
-                    serverId: rel.target_server_id,
-                    serverName: rel.target_server_name,
-                    label: getRelationshipLabel(rel.relationship_type),
-                });
-            } else if (rel.target_server_id === serverId
-                && DOWNSTREAM_TYPES.has(rel.relationship_type)) {
-                add(downstream, 'down', {
-                    serverId: server.id,
-                    serverName: server.name,
-                    label: getDownstreamLabel(rel.relationship_type),
-                });
-            }
+            const entry = classifyRelationship(server, rel, serverId);
+            if (!entry) { continue; }
+            const { direction, peer } = entry;
+            const key = `${direction}:${peer.serverId}:${peer.label}`;
+            if (seen.has(key)) { continue; }
+            seen.add(key);
+            (direction === 'up' ? context.upstream : context.downstream)
+                .push(peer);
         }
     }
 
-    return { upstream, downstream };
+    return context;
 };

@@ -14,6 +14,7 @@ import type {
     ClusterServer,
 } from '../../../../contexts/ClusterDataContext';
 import {
+    describeActivity,
     describeWalStatus,
     getReplicationContext,
     normaliseSlotRows,
@@ -87,6 +88,19 @@ describe('describeWalStatus', () => {
         expect(result.label).toBe('mystery');
         expect(result.health).toBe('unknown');
         expect(result.description).toContain("'mystery'");
+    });
+});
+
+describe('describeActivity', () => {
+    it.each([
+        [true, 'Active', 'good'],
+        [false, 'Inactive', 'warning'],
+        [null, 'Unknown', 'unknown'],
+    ] as const)('maps %s to %s (%s)', (active, label, health) => {
+        const result = describeActivity(active);
+        expect(result.label).toBe(label);
+        expect(result.health).toBe(health);
+        expect(result.description).not.toBe('');
     });
 });
 

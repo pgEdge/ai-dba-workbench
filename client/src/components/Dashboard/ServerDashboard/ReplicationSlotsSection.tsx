@@ -23,12 +23,14 @@ import { METRIC_LABEL_SX, MONO_CAPTION_SX } from '../../../theme/tokens';
 import CollapsibleSection from '../CollapsibleSection';
 import type { ServerSectionProps } from './types';
 import {
+    describeActivity,
     describeWalStatus,
     getReplicationContext,
     summariseSlots,
     type ReplicationPeer,
     type ReplicationSlotRow,
     type SlotHealth,
+    type WalStatusDisplay,
 } from './replicationSlots';
 
 /** Grid template shared by the header row and the data rows. */
@@ -117,11 +119,7 @@ const HEALTH_CHIP_COLOR: Record<
 };
 
 /** A status chip, outlined when it carries no health meaning. */
-const StatusChip: React.FC<{
-    label: string;
-    health: SlotHealth;
-    description: string;
-}> = ({ label, health, description }) => (
+const StatusChip: React.FC<WalStatusDisplay> = ({ label, health, description }) => (
     <Box>
         <Tooltip title={description}>
             <Chip
@@ -134,35 +132,6 @@ const StatusChip: React.FC<{
         </Tooltip>
     </Box>
 );
-
-/**
- * Describe whether a slot has a connected consumer. An inactive slot
- * still holds back WAL removal, which is why it is flagged.
- */
-const describeActivity = (
-    active: boolean | null,
-): { label: string; health: SlotHealth; description: string } => {
-    if (active === true) {
-        return {
-            label: 'Active',
-            health: 'good',
-            description: 'A consumer is connected to this slot',
-        };
-    }
-    if (active === false) {
-        return {
-            label: 'Inactive',
-            health: 'warning',
-            description:
-                'No consumer is connected; the slot still retains WAL',
-        };
-    }
-    return {
-        label: 'Unknown',
-        health: 'unknown',
-        description: 'Activity was not reported',
-    };
-};
 
 /**
  * Format a slot's safe WAL size. PostgreSQL reports it as null when

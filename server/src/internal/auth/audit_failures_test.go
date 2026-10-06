@@ -623,3 +623,40 @@ func TestFlushAuditFailuresWritesOnce(t *testing.T) {
 		t.Errorf("expected two flushes to write one summary, got %d", got)
 	}
 }
+
+// TestCoalesceFailureRestoresAtCap checks that when the store fails
+// every write, a window evicted to make room at the cap is restored
+// into the slot the unwritten failure gave back, so its count is kept
+// and the map stays capped.
+func TestCoalesceFailureRestoresAtCap(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAudit(t)
+	defer cleanup()
+
+	start := time.Now()
+	oldest := failureKeyFor("target-0")
+	store.failures.admit(oldest, start)
+	store.failures.admit(oldest, start.Add(time.Millisecond))
+	for i := 1; i < maxFailureKeys; i++ {
+		store.failures.admit(failureKeyFor(fmt.Sprintf("target-%d", i)),
+			start.Add(time.Duration(i)*time.Microsecond))
+	}
+	if err := store.db.Close(); err != nil {
+		t.Fatalf("closing the database failed: %v", err)
+	}
+
+	store.mu.Lock()
+	store.coalesceFailure(failureKeyFor("newest"), start.Add(time.Second))
+	store.mu.Unlock()
+
+	if len(store.failures.entries) != maxFailureKeys {
+		t.Errorf("expected %d entries, got %d", maxFailureKeys,
+			len(store.failures.entries))
+	}
+	if state, ok := store.failures.entries[oldest]; !ok || state.suppressed != 1 {
+		t.Errorf("expected the evicted window restored with 1 repeat, got %+v",
+			state)
+	}
+	if _, ok := store.failures.entries[failureKeyFor("newest")]; ok {
+		t.Error("the unwritten failure kept its window")
+	}
+}

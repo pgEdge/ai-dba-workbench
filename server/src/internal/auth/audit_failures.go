@@ -427,29 +427,32 @@ func (s *AuthStore) sweepAuditFailures(now time.Time, all bool) {
 
 // coalesceFailure runs one failure through the coalescer at now,
 // writing a summary row for every evicted entry that held suppressed
-// repeats and then, if admitted, the failure itself. Summaries that
-// cannot be written are put back, as the sweep does. If the failure
+// repeats and then, if admitted, the failure itself. If the failure
 // itself cannot be written its window is dropped again, so that the
 // identical failures after it are recorded rather than suppressed
-// behind a row that never reached the log. The caller must hold s.mu,
-// as recordFailure requires, which keeps another failure for the same
-// key from slipping in between the write and the drop.
+// behind a row that never reached the log. Summaries that cannot be
+// written are put back, as the sweep does, but only after that drop,
+// so that when the store is failing every write the slot the failure
+// took is free again for the evicted window it displaced at the cap.
+// The caller must hold s.mu, as recordFailure requires, which keeps
+// another failure for the same key from slipping in between the
+// writes and the map updates.
 func (s *AuthStore) coalesceFailure(key failureKey, now time.Time) {
 	record, repeats, expired := s.failures.admit(key, now)
 
-	if !s.writeFailureSummaries(expired) {
+	summariesWritten := s.writeFailureSummaries(expired)
+
+	if record {
+		var details any
+		if repeats > 0 {
+			details = map[string]any{"repeat_count": repeats}
+		}
+		if !s.writeFailure(key.event(details)) {
+			s.failures.forget(key)
+		}
+	}
+
+	if !summariesWritten {
 		s.failures.restore(expired)
-	}
-
-	if !record {
-		return
-	}
-
-	var details any
-	if repeats > 0 {
-		details = map[string]any{"repeat_count": repeats}
-	}
-	if !s.writeFailure(key.event(details)) {
-		s.failures.forget(key)
 	}
 }

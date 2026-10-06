@@ -1033,6 +1033,51 @@ func (s *AuthStore) IsConnectionAssignedToAnyGroup(connectionID int) (bool, erro
 	return count > 0, nil
 }
 
+// RevokeLiftsConnectionRestriction reports whether removing a group's
+// grants would leave connectionID assigned to no group when it is
+// assigned to one now, and so open it, if shared, to every user (see
+// IsConnectionAssignedToAnyGroup). With wholeGroup false only the
+// group's grant on connectionID is removed, as a revoke does; with
+// wholeGroup true every grant the group holds is, as deleting the group
+// does. ConnectionIDAll asks whether the last "all connections" grant
+// would go, which lifts the restriction from every connection that has
+// no grant of its own.
+func (s *AuthStore) RevokeLiftsConnectionRestriction(groupID int64,
+	connectionID int, wholeGroup bool) (bool, error) {
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	// The rows that survive the removal are every other group's grants,
+	// plus, for a single revoke, the group's grants on other connections.
+	// Both queries are constant so that no SQL is assembled at run time.
+	const revokeOne = `
+        SELECT COUNT(*),
+               COALESCE(SUM(CASE WHEN group_id <> ? OR connection_id <> ?
+                   THEN 1 ELSE 0 END), 0)
+        FROM connection_privileges
+        WHERE connection_id = ? OR connection_id = 0`
+	const revokeGroup = `
+        SELECT COUNT(*),
+               COALESCE(SUM(CASE WHEN group_id <> ? THEN 1 ELSE 0 END), 0)
+        FROM connection_privileges
+        WHERE connection_id = ? OR connection_id = 0`
+
+	var before, after int
+	var err error
+	if wholeGroup {
+		err = s.db.QueryRow(revokeGroup, groupID, connectionID).Scan(&before, &after)
+	} else {
+		err = s.db.QueryRow(revokeOne, groupID, connectionID, connectionID).
+			Scan(&before, &after)
+	}
+	if err != nil {
+		return false, fmt.Errorf("failed to check connection restriction: %w", err)
+	}
+
+	return before > 0 && after == 0, nil
+}
+
 // =============================================================================
 // Admin Permission Grants
 // =============================================================================

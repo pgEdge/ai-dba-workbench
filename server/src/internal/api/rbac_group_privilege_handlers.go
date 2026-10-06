@@ -59,12 +59,14 @@ func (h *RBACHandler) handleGroupMCPPrivileges(w http.ResponseWriter, r *http.Re
 				return
 			}
 
-			// A token bounded by MCP scope may grant only the items its
-			// own scope covers, and never the wildcard, or it could hand
-			// a group, and so itself through membership, a tool such as
-			// query_datastore that it may not call (issue #471).
+			// A token may grant only the MCP items it may call itself,
+			// and the wildcard only when it reaches every item, or it
+			// could hand a group, and so itself through membership, a
+			// tool such as query_datastore that it may not call (issue
+			// #471). Revoking an item narrows access and needs nothing.
 			if !h.requireGrantInTokenScope(w, r,
-				h.rbacChecker.CanGrantMCPInTokenScope(r.Context(), req.Privilege)) {
+				h.rbacChecker.CanGrantMCPItem(r.Context(), req.Privilege),
+				refuseMCPGrant) {
 				return
 			}
 
@@ -125,11 +127,13 @@ func (h *RBACHandler) handleGroupConnectionPrivileges(w http.ResponseWriter, r *
 			return
 		}
 
-		// A token may grant only what its own connection scope covers
-		// (issue #471).
+		// A token may grant a level on a connection only when it holds
+		// that level or higher on the connection itself, and the "all
+		// connections" grant only when it holds every connection at
+		// that level (issue #471).
 		if !h.requireGrantInTokenScope(w, r,
-			h.rbacChecker.CanGrantConnectionInTokenScope(r.Context(),
-				req.ConnectionID, req.AccessLevel)) {
+			h.rbacChecker.CanGrantConnection(r.Context(),
+				req.ConnectionID, req.AccessLevel), refuseConnectionGrant) {
 			return
 		}
 
@@ -156,11 +160,15 @@ func (h *RBACHandler) handleGroupConnectionPrivileges(w http.ResponseWriter, r *
 			return
 		}
 
-		// Revoking the last group grant on a connection lifts its group
-		// restriction, which opens a shared connection to every user, so
-		// a revoke needs the connection in scope too (issue #471).
+		// A token needs read on the connection to revoke a grant on
+		// it, and is refused in the same words whether or not the
+		// connection exists. Revoking the last group grant on a
+		// connection lifts its group restriction, which opens a shared
+		// connection to every user, so that revoke needs read_write
+		// (issue #471).
 		if !h.requireGrantInTokenScope(w, r,
-			h.rbacChecker.ConnectionInTokenScope(r.Context(), connID)) {
+			h.rbacChecker.CanRevokeConnection(r.Context(), groupID, connID),
+			refuseConnectionRevoke) {
 			return
 		}
 
@@ -242,14 +250,17 @@ func (h *RBACHandler) grantGroupPermission(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// An admin permission acts across the whole estate, and several of
-	// them let a holder acquire every MCP item and admin permission, so
-	// only a token unrestricted in all three scope kinds may grant one.
-	// Gating on the connection scope alone let an MCP-bounded token
-	// plant manage_permissions on a group it could then take over
-	// (issue #471).
+	// A token may grant only an admin permission it holds itself, and,
+	// since an admin permission acts across the whole estate, only when
+	// it holds every connection at read_write. Several permissions let a
+	// holder acquire every MCP item and admin permission, so granting
+	// one of those needs a token that reaches them all: gating on less
+	// let an MCP-bounded token plant manage_permissions on a group it
+	// could then take over (issue #471). Revoking a permission narrows
+	// access and needs nothing.
 	if !h.requireGrantInTokenScope(w, r,
-		h.rbacChecker.TokenScopeUnrestricted(r.Context())) {
+		h.rbacChecker.CanGrantAdminPermission(r.Context(), req.Permission),
+		refuseAdminGrant) {
 		return
 	}
 

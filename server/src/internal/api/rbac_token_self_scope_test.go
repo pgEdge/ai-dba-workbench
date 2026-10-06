@@ -20,23 +20,23 @@ import (
 )
 
 // =============================================================================
-// A token may not rewrite the scope that bounds it
+// A token may narrow, but not widen, the scope that bounds it
 //
 // manage_token_scopes is a real permission a token may legitimately
-// hold, but a token holding it could call the scope endpoint on its own
-// id and widen or clear its own scope, which would undo every other
-// scope gate. The guard refuses only that self-reference; managing
-// another token's scope is unaffected.
+// hold. A scope change it makes, to its own scope or another token's,
+// may grant only what lies within its own access (issue #471, ruling of
+// 6 October 2026), so a token cannot widen or clear its own scope, but
+// may narrow it.
 // =============================================================================
 
-// scopeRequest issues a scope change against the given token id, as the
-// given acting token.
+// scopeRequest issues a scope change with the given body against the
+// given token id, as the given acting token.
 func scopeRequest(h *RBACHandler, method string, targetID,
-	actingID int64) *httptest.ResponseRecorder {
+	actingID int64, body string) *httptest.ResponseRecorder {
 
-	body := strings.NewReader(`{"admin_permissions":["*"]}`)
 	req := httptest.NewRequest(method,
-		"/api/v1/rbac/tokens/"+strconv.FormatInt(targetID, 10)+"/scope", body)
+		"/api/v1/rbac/tokens/"+strconv.FormatInt(targetID, 10)+"/scope",
+		strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req = withSuperuserToken(req, actingID)
 	rec := httptest.NewRecorder()
@@ -44,66 +44,92 @@ func scopeRequest(h *RBACHandler, method string, targetID,
 	return rec
 }
 
-// TestSetTokenScopeRefusesSelfTarget checks that a token scoped to
-// manage_token_scopes cannot widen its own scope, whilst the same
-// token may still set another token's scope.
-func TestSetTokenScopeRefusesSelfTarget(t *testing.T) {
-	handler, store, cleanup := createTestRBACHandler(t)
-	defer cleanup()
+// mustSuperuserScopedToken is mustCreateScopedToken for a superuser
+// owner, as the superuser token context the requests carry implies.
+func mustSuperuserScopedToken(t *testing.T, store *auth.AuthStore,
+	username string, scope []string) int64 {
 
-	acting := mustCreateScopedToken(t, store, "svc-scope-manager",
-		[]string{auth.PermManageTokenScopes})
-	other := mustCreateScopedToken(t, store, "svc-other",
-		[]string{auth.PermManageUsers})
-
-	rec := scopeRequest(handler, http.MethodPut, acting, acting)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("Expected 403 for a self-targeted scope change, got %d: %s",
-			rec.Code, rec.Body.String())
+	t.Helper()
+	id := mustCreateScopedToken(t, store, username, scope)
+	if err := store.SetUserSuperuser(username, true); err != nil {
+		t.Fatalf("SetUserSuperuser failed: %v", err)
 	}
-	if !strings.Contains(rec.Body.String(), "its own scope") {
-		t.Errorf("Expected the refusal to say why, got %s", rec.Body.String())
-	}
+	return id
+}
 
-	// The scope must be unchanged, so the token still cannot pass a
-	// blanket superuser gate.
-	scope, err := store.GetTokenScope(acting)
+// adminScopeOf returns a token's stored admin scope.
+func adminScopeOf(t *testing.T, store *auth.AuthStore, id int64) []string {
+	t.Helper()
+	scope, err := store.GetTokenScope(id)
 	if err != nil {
 		t.Fatalf("GetTokenScope failed: %v", err)
 	}
-	if scope == nil || len(scope.AdminPermissions) != 1 ||
-		scope.AdminPermissions[0] != auth.PermManageTokenScopes {
-		t.Errorf("Expected the acting token's scope to be untouched, got %+v",
-			scope)
+	if scope == nil {
+		return nil
+	}
+	return scope.AdminPermissions
+}
+
+// TestSetTokenScopeSelfTarget checks that a token scoped to
+// manage_token_scopes cannot widen its own scope but may narrow it.
+func TestSetTokenScopeSelfTarget(t *testing.T) {
+	handler, store, cleanup := createTestRBACHandler(t)
+	defer cleanup()
+
+	acting := mustSuperuserScopedToken(t, store, "svc-scope-manager",
+		[]string{auth.PermManageTokenScopes, auth.PermManageUsers})
+
+	rec := scopeRequest(handler, http.MethodPut, acting, acting,
+		`{"admin_permissions":["*"]}`)
+	assertRefusedWith(t, rec, refuseTokenScope)
+	rec = scopeRequest(handler, http.MethodPut, acting, acting,
+		`{"admin_permissions":["manage_token_scopes","manage_probes"]}`)
+	assertRefusedWith(t, rec, refuseTokenScope)
+	if got := adminScopeOf(t, store, acting); len(got) != 2 {
+		t.Fatalf("Expected the acting token's scope to be untouched, got %v", got)
 	}
 
-	if rec := scopeRequest(handler, http.MethodPut, other, acting); rec.Code != http.StatusNoContent {
-		t.Errorf("Expected another token's scope to remain manageable, got %d: %s",
-			rec.Code, rec.Body.String())
+	rec = scopeRequest(handler, http.MethodPut, acting, acting,
+		`{"admin_permissions":["manage_token_scopes"]}`)
+	assertStatus(t, rec, http.StatusNoContent)
+	if got := adminScopeOf(t, store, acting); len(got) != 1 ||
+		got[0] != auth.PermManageTokenScopes {
+		t.Errorf("Expected the scope to be narrowed, got %v", got)
 	}
 }
 
-// TestClearTokenScopeRefusesSelfTarget covers the DELETE route, which
-// would otherwise remove the scope altogether.
-func TestClearTokenScopeRefusesSelfTarget(t *testing.T) {
+// TestSetTokenScopeOtherTarget checks that the same rule governs
+// another token's scope: what the acting token holds may be granted,
+// what it does not may not.
+func TestSetTokenScopeOtherTarget(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
-	acting := mustCreateScopedToken(t, store, "svc-scope-clearer",
+	acting := mustSuperuserScopedToken(t, store, "svc-scope-manager",
+		[]string{auth.PermManageTokenScopes})
+	other := mustSuperuserScopedToken(t, store, "svc-other",
+		[]string{auth.PermManageUsers})
+
+	assertRefusedWith(t, scopeRequest(handler, http.MethodPut, other, acting,
+		`{"admin_permissions":["*"]}`), refuseTokenScope)
+	assertStatus(t, scopeRequest(handler, http.MethodPut, other, acting,
+		`{"admin_permissions":["manage_users","manage_token_scopes"]}`),
+		http.StatusNoContent)
+}
+
+// TestClearTokenScopeSelfTarget covers the DELETE route, which would
+// hand the token its superuser owner's whole access.
+func TestClearTokenScopeSelfTarget(t *testing.T) {
+	handler, store, cleanup := createTestRBACHandler(t)
+	defer cleanup()
+
+	acting := mustSuperuserScopedToken(t, store, "svc-scope-clearer",
 		[]string{auth.PermManageTokenScopes})
 
-	rec := scopeRequest(handler, http.MethodDelete, acting, acting)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("Expected 403 for a self-targeted clear, got %d: %s", rec.Code,
-			rec.Body.String())
-	}
-
-	scope, err := store.GetTokenScope(acting)
-	if err != nil {
-		t.Fatalf("GetTokenScope failed: %v", err)
-	}
-	if scope == nil || len(scope.AdminPermissions) != 1 {
-		t.Errorf("Expected the scope to survive the refusal, got %+v", scope)
+	assertRefusedWith(t, scopeRequest(handler, http.MethodDelete, acting,
+		acting, ""), refuseTokenScope)
+	if got := adminScopeOf(t, store, acting); len(got) != 1 {
+		t.Errorf("Expected the scope to survive the refusal, got %v", got)
 	}
 
 	// The refusal is audited like every other RBAC denial.

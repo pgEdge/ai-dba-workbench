@@ -9,38 +9,41 @@
  */
 package auth
 
-import "context"
+import (
+	"context"
+	"errors"
+)
 
 // The checks in this file bound what an API token may hand out. An
 // admin permission such as manage_permissions or manage_users says
 // nothing about which connections, MCP items or admin permissions a
-// token was issued for, so without them a token scoped to one
-// connection could grant a group access to every connection, create a
-// user who reaches every shared connection, or hand a group an MCP tool
-// the token itself may not call (issue #471).
+// token may reach, so without them a token scoped to one connection
+// could grant a group access to every connection, create a user who
+// reaches every shared connection, or hand a group an MCP tool the
+// token itself may not call (issue #471).
 //
-// What a token grants is bounded by the token's own scope, in all three
-// kinds: connections, MCP items and admin permissions. Each check
-// passes for a session caller, which has no token, and for a token that
-// is unrestricted in the kinds the access being granted touches;
-// otherwise that access must fall inside the acting token's scope.
-// Like the other scope checks they fail closed: a checker with no auth
-// store, a token context missing its id, and a lookup that fails are
-// all out of scope.
+// The admin permission is the first gate, checked by the handler. The
+// checks here are the second: what a token grants must lie within its
+// ceiling, the access the token itself has, which is its owner's
+// privileges narrowed by its scope (see tokenCeiling). That is judged
+// per connection and per level, so a token with read on a connection
+// may grant read on it and no more, and one with read_write may grant
+// either. Taking access away needs only read on the connection
+// concerned, and is refused in the same words whether or not the
+// connection exists, so that a refusal never reveals one the token
+// cannot see. A token with read on a connection and manage_permissions
+// may therefore revoke another group's read_write on it; that is the
+// accepted cost of letting a token narrow what it can see.
+//
+// Session callers are bounded by their admin permissions alone and
+// pass every check. Like the other scope checks these fail closed: a
+// checker with no auth store, a token context missing its id, and a
+// lookup that fails all refuse.
 
 // mcpScopeWildcard is the name GetTokenMCPScope and
 // GetGroupEffectiveMCPPrivileges report for the "all MCP items" grant,
 // and the name an HTTP request uses to ask for it.
 const mcpScopeWildcard = "*"
-
-// GrantedTokenScope is a token's scope as it will stand after a change,
-// given by kind. A kind with no entries is unrestricted, so the token
-// reaches whatever its owner holds in that kind.
-type GrantedTokenScope struct {
-	Connections      []ScopedConnection
-	MCPPrivileges    []string
-	AdminPermissions []string
-}
 
 // actingToken reports how a grant check should treat the caller: as a
 // session (no token, so nothing to bound), as a token to check, or as
@@ -125,82 +128,6 @@ func (rc *RBACChecker) actorAdminScope(ctx context.Context) (
 	}
 	set, restricted = namedScope(perms, AdminPermissionWildcard)
 	return set, restricted, true
-}
-
-// CanGrantConnectionInTokenScope reports whether the acting API token's
-// connection scope admits connectionID at the given access level, so
-// that the token may grant that level on that connection to someone
-// else. ConnectionIDAll asks about every connection, which only a token
-// with no connection scope, or the wildcard at that level, covers.
-func (rc *RBACChecker) CanGrantConnectionInTokenScope(ctx context.Context,
-	connectionID int, level string) bool {
-
-	if _, ok := rc.actingToken(ctx); !ok {
-		return false
-	}
-	if !knownAccessLevel(level) || level == AccessLevelNone {
-		return false
-	}
-	inScope, granted := rc.applyConnectionTokenScope(ctx, connectionID, level)
-	return inScope && granted == level
-}
-
-// ConnectionReadableInTokenScope reports whether the acting API token's
-// connection scope names connectionID at any access level, read
-// included. Writes that change only Workbench metadata about a
-// connection, such as its blackouts, need no more than read access to
-// the monitored server, so they use this in place of
-// ConnectionInTokenScope. ConnectionIDAll asks about every connection,
-// which only a token with no connection scope, or the wildcard at
-// either level, covers.
-func (rc *RBACChecker) ConnectionReadableInTokenScope(ctx context.Context,
-	connectionID int) bool {
-
-	return rc.CanGrantConnectionInTokenScope(ctx, connectionID, AccessLevelRead)
-}
-
-// CanGrantMCPInTokenScope reports whether the acting API token's MCP
-// scope covers the named MCP item, so that the token may grant it to a
-// group. The wildcard "*" asks about every item, which only a token
-// with no MCP scope, or the wildcard, covers.
-func (rc *RBACChecker) CanGrantMCPInTokenScope(ctx context.Context,
-	identifier string) bool {
-
-	set, restricted, ok := rc.actorMCPScope(ctx)
-	if !ok {
-		return false
-	}
-	if !restricted {
-		return true
-	}
-	return identifier != mcpScopeWildcard && set[identifier]
-}
-
-// TokenScopeUnrestricted reports whether the acting API token is
-// unrestricted in all three scope kinds: every connection at
-// read_write, and no MCP or admin scope, or the wildcard in each. That
-// is what creating or promoting a superuser needs, since a superuser
-// reaches everything. A session caller always passes.
-func (rc *RBACChecker) TokenScopeUnrestricted(ctx context.Context) bool {
-	if !rc.AllConnectionsInTokenScope(ctx) {
-		return false
-	}
-	_, mcpRestricted, mcpOK := rc.actorMCPScope(ctx)
-	_, adminRestricted, adminOK := rc.actorAdminScope(ctx)
-	return mcpOK && adminOK && !mcpRestricted && !adminRestricted
-}
-
-// connectionGrantsInTokenScope reports whether every connection
-// privilege in privs could be granted by the acting token.
-func (rc *RBACChecker) connectionGrantsInTokenScope(ctx context.Context,
-	privs map[int]string) bool {
-
-	for connectionID, level := range privs {
-		if !rc.CanGrantConnectionInTokenScope(ctx, connectionID, level) {
-			return false
-		}
-	}
-	return true
 }
 
 // principalReach is what a user, or membership of a group, reaches.
@@ -310,32 +237,6 @@ func (rc *RBACChecker) loadGroupReach(groupID int64) (*principalReach, bool) {
 	return reach, true
 }
 
-// reachConnectionsInScope reports whether the connections p reaches all
-// fall inside the acting token's connection scope.
-//
-// A superuser reaches every connection, and an admin permission acts
-// across the whole estate, so either is only within a token that covers
-// every connection. Otherwise each group connection grant must be
-// grantable by the token, and, for a user, so must every unrestricted
-// connection the user may open (see unrestrictedReachInTokenScope).
-func (rc *RBACChecker) reachConnectionsInScope(ctx context.Context,
-	p *principalReach, lister ConnectionVisibilityLister) bool {
-
-	if rc.AllConnectionsInTokenScope(ctx) {
-		return true
-	}
-	if p.superuser || len(p.admin) > 0 {
-		return false
-	}
-	if !rc.connectionGrantsInTokenScope(ctx, p.conns) {
-		return false
-	}
-	if !p.asUser {
-		return true
-	}
-	return rc.unrestrictedReachInTokenScope(ctx, p.username, lister)
-}
-
 // OwnedClusterGroupLister enumerates the member connections of the
 // cluster groups a user owns. The cluster group update and delete
 // handlers admit a group's owner as they admit a holder of
@@ -349,160 +250,192 @@ type OwnedClusterGroupLister interface {
 		username string) ([]int, error)
 }
 
-// ownedClusterGroupsInTokenScope reports whether every member connection
-// of every cluster group username owns lies inside the acting token's
-// connection scope at read_write. A lister that cannot enumerate the
-// groups, or fails to, is out of scope.
-func (rc *RBACChecker) ownedClusterGroupsInTokenScope(ctx context.Context,
-	username string, lister ConnectionVisibilityLister) bool {
+// ErrTokenScopeUnreadable reports that the scope or owner of the token
+// whose scope is being changed could not be read, so the change could
+// not be judged at all. The handler answers it as a server error rather
+// than a refusal.
+var ErrTokenScopeUnreadable = errors.New("token scope could not be read")
 
-	if username == "" {
-		return true
+// TokenScopeChange is a change to a token's scope, by kind. A nil kind
+// is left as it is; a kind with entries replaces what is stored.
+type TokenScopeChange struct {
+	Connections      []ScopedConnection
+	MCPPrivileges    []string
+	AdminPermissions []string
+}
+
+// ConnectionReadableInTokenScope reports whether the acting API token's
+// connection scope names connectionID at any access level, read
+// included. Writes that change only Workbench metadata about a
+// connection, such as its blackouts, need no more than read access to
+// the monitored server, so they use this in place of
+// ConnectionInTokenScope. ConnectionIDAll asks about every connection,
+// which only a token with no connection scope, or the wildcard at
+// either level, covers. Unlike the grant checks it reads the scope
+// alone, since those handlers decide the owner's side themselves.
+func (rc *RBACChecker) ConnectionReadableInTokenScope(ctx context.Context,
+	connectionID int) bool {
+
+	if _, ok := rc.actingToken(ctx); !ok {
+		return false
 	}
-	groups, ok := lister.(OwnedClusterGroupLister)
+	inScope, level := rc.applyConnectionTokenScope(ctx, connectionID,
+		AccessLevelRead)
+	return inScope && level == AccessLevelRead
+}
+
+// CanGrantConnection reports whether the acting caller may grant level
+// on connectionID: a token needs that level or higher on the connection
+// itself. ConnectionIDAll asks about the "all connections" grant, which
+// needs the token to hold every connection at that level.
+func (rc *RBACChecker) CanGrantConnection(ctx context.Context,
+	connectionID int, level string) bool {
+
+	c, ok := rc.actorCeiling(ctx)
+	return ok && c.coversConnection(connectionID, level)
+}
+
+// CanRevokeConnection reports whether the acting caller may remove the
+// group's grant on connectionID. A token needs read on the connection,
+// so that it cannot learn whether a connection it may not see exists;
+// and when the grant is the connection's last, removing it lifts the
+// group restriction and opens a shared connection to every user, so the
+// token then needs read_write, as granting that would.
+func (rc *RBACChecker) CanRevokeConnection(ctx context.Context,
+	groupID int64, connectionID int) bool {
+
+	c, ok := rc.actorCeiling(ctx)
 	if !ok {
 		return false
 	}
-	members, err := groups.GetOwnedClusterGroupConnectionIDs(ctx, username)
+	if c.session {
+		return true
+	}
+	if !c.coversConnection(connectionID, AccessLevelRead) {
+		return false
+	}
+	return c.liftCovered(groupID, connectionID, false)
+}
+
+// liftCovered reports whether the ceiling covers read_write on
+// connectionID if removing the group's grants, one or all, would lift
+// the connection's group restriction. A lookup that fails is not
+// covered.
+func (c *tokenCeiling) liftCovered(groupID int64, connectionID int,
+	wholeGroup bool) bool {
+
+	lifts, err := c.rc.authStore.RevokeLiftsConnectionRestriction(groupID,
+		connectionID, wholeGroup)
 	if err != nil {
 		return false
 	}
-	for _, id := range members {
-		if !rc.CanGrantConnectionInTokenScope(ctx, id, AccessLevelReadWrite) {
+	return !lifts || c.coversConnection(connectionID, AccessLevelReadWrite)
+}
+
+// connectionsReadable reports whether the ceiling holds read on every
+// connection membership of the group confers, through its own grants
+// and those of every group it belongs to.
+func (c *tokenCeiling) connectionsReadable(groupID int64) bool {
+	privs, err := c.rc.authStore.GetGroupEffectiveConnectionPrivileges(groupID)
+	if err != nil {
+		return false
+	}
+	for _, cp := range privs {
+		if !c.coversConnection(cp.ConnectionID, AccessLevelRead) {
 			return false
 		}
 	}
 	return true
 }
 
-// unrestrictedReachInTokenScope reports whether every connection that
-// username may open or change without a group grant lies inside the
-// acting token's connection scope at read_write.
-//
-// CanAccessConnection admits any user to a connection no group holds a
-// grant on, at read_write, when it is shared, and its owner when it is
-// not; with no sharing lookup wired it admits any user to every such
-// connection. The connection update and delete handlers go further and
-// admit the owner whatever groups restrict the connection, so every
-// connection a user owns is part of their reach, restricted or not, and
-// is checked before the restriction is looked at. Ownership is matched
-// by username, as those handlers match it, so a name that already owns
-// a connection reaches it as soon as an account of that name exists.
-// The cluster groups the user owns count in the same way (see
-// OwnedClusterGroupLister). With no lister the connections cannot be
-// enumerated, so the check fails closed.
-func (rc *RBACChecker) unrestrictedReachInTokenScope(ctx context.Context,
-	username string, lister ConnectionVisibilityLister) bool {
+// CanRemoveGroupMember reports whether the acting caller may remove a
+// user or a group from the group. Removal takes away the connections
+// membership confers, so, as for a revoke, a token needs read on each
+// of them. The MCP items and admin permissions removal takes away need
+// nothing, as revoking them directly needs nothing.
+func (rc *RBACChecker) CanRemoveGroupMember(ctx context.Context,
+	groupID int64) bool {
 
-	if lister == nil {
-		return false
-	}
-	if !rc.ownedClusterGroupsInTokenScope(ctx, username, lister) {
-		return false
-	}
-	conns, err := lister.GetAllConnections(ctx)
-	if err != nil {
-		return false
-	}
-	sharingKnown := rc.connSharingLookupFn != nil
-	for i := range conns {
-		info := &conns[i]
-		if username != "" && info.OwnerUsername == username {
-			if !rc.CanGrantConnectionInTokenScope(ctx, info.ID, AccessLevelReadWrite) {
-				return false
-			}
-			continue
-		}
-		if sharingKnown && !info.IsShared {
-			continue
-		}
-		restricted, err := rc.authStore.IsConnectionAssignedToAnyGroup(info.ID)
-		if err != nil {
-			return false
-		}
-		if restricted {
-			continue
-		}
-		if !rc.CanGrantConnectionInTokenScope(ctx, info.ID, AccessLevelReadWrite) {
-			return false
-		}
-	}
-	return true
-}
-
-// reachMCPInScope reports whether the MCP items p reaches all fall
-// inside the acting token's MCP scope. A holder of the wildcard reaches
-// every item, as does anyone p.reachesEverything covers; a user also
-// reaches every public item.
-func (rc *RBACChecker) reachMCPInScope(ctx context.Context,
-	p *principalReach) bool {
-
-	scope, restricted, ok := rc.actorMCPScope(ctx)
+	c, ok := rc.actorCeiling(ctx)
 	if !ok {
 		return false
 	}
-	if !restricted {
-		return true
-	}
-	if p.reachesEverything() || p.mcp[mcpScopeWildcard] {
-		return false
-	}
-	for name := range p.mcp {
-		if !scope[name] {
-			return false
-		}
-	}
-	if !p.asUser {
-		return true
-	}
-	privileges, err := rc.authStore.ListMCPPrivileges()
-	if err != nil {
-		return false
-	}
-	for _, priv := range privileges {
-		if priv.IsPublic && !scope[priv.Identifier] {
-			return false
-		}
-	}
-	return true
+	return c.session || c.connectionsReadable(groupID)
 }
 
-// reachAdminInScope reports whether the admin permissions p holds all
-// fall inside the acting token's admin scope. A superuser holds every
-// permission, and a holder of one that can acquire the rest reaches
-// them (see reachesEverything).
-func (rc *RBACChecker) reachAdminInScope(ctx context.Context,
-	p *principalReach) bool {
-
-	scope, restricted, ok := rc.actorAdminScope(ctx)
+// CanDeleteGroup reports whether the acting caller may delete the
+// group. Deleting it takes away what membership conferred, so a token
+// needs read on each of those connections; and it drops the group's own
+// grants, so each grant that is a connection's last needs read_write,
+// as revoking it alone would (see CanRevokeConnection).
+func (rc *RBACChecker) CanDeleteGroup(ctx context.Context, groupID int64) bool {
+	c, ok := rc.actorCeiling(ctx)
 	if !ok {
 		return false
 	}
-	if !restricted {
+	if c.session {
 		return true
 	}
-	if p.reachesEverything() {
+	if !c.connectionsReadable(groupID) {
 		return false
 	}
-	for perm := range p.admin {
-		if !scope[perm] {
+	own, err := rc.authStore.ListGroupConnectionPrivileges(groupID)
+	if err != nil {
+		return false
+	}
+	for _, cp := range own {
+		if !c.liftCovered(groupID, cp.ConnectionID, true) {
 			return false
 		}
 	}
 	return true
 }
 
-// reachInTokenScope checks all three kinds of p's reach.
-func (rc *RBACChecker) reachInTokenScope(ctx context.Context,
-	p *principalReach, lister ConnectionVisibilityLister) bool {
+// CanGrantMCPItem reports whether the acting caller may grant the named
+// MCP item to a group: a token must be able to call it itself. The
+// wildcard "*" needs a token that reaches every item.
+func (rc *RBACChecker) CanGrantMCPItem(ctx context.Context,
+	identifier string) bool {
 
-	return rc.reachConnectionsInScope(ctx, p, lister) &&
-		rc.reachMCPInScope(ctx, p) &&
-		rc.reachAdminInScope(ctx, p)
+	c, ok := rc.actorCeiling(ctx)
+	return ok && c.coversMCP(identifier)
+}
+
+// CanGrantAdminPermission reports whether the acting caller may grant
+// the named admin permission to a group, judged as what membership of a
+// group holding only that permission would reach. A token must hold the
+// permission, and, since an admin permission acts across the whole
+// estate, every connection at read_write. manage_users, manage_groups,
+// manage_permissions, manage_token_scopes and the wildcard each let a
+// holder acquire every MCP item and admin permission (see
+// reachEverythingAdminPermissions), so granting one needs a token that
+// reaches every item and permission as well; otherwise a token bounded
+// only in its MCP scope could plant manage_permissions on a group and,
+// through a member's session, grant the items it was refused.
+func (rc *RBACChecker) CanGrantAdminPermission(ctx context.Context,
+	permission string) bool {
+
+	c, ok := rc.actorCeiling(ctx)
+	if !ok {
+		return false
+	}
+	return c.coversReach(&principalReach{
+		admin: map[string]bool{permission: true},
+	}, nil)
+}
+
+// TokenHoldsEverything reports whether the acting caller reaches
+// everything a superuser does, so that it may create or promote a
+// superuser: a session, or a superuser's token that is unrestricted in
+// all three scope kinds. A token owned by any other user holds only
+// what its owner does, however wide its scope.
+func (rc *RBACChecker) TokenHoldsEverything(ctx context.Context) bool {
+	c, ok := rc.actorCeiling(ctx)
+	return ok && c.holdsSuperuser()
 }
 
 // UserWithinTokenScope reports whether everything the given user can
-// reach falls inside the acting API token's scope, in all three kinds.
+// reach lies within the acting API token's ceiling, in all three kinds.
 // It decides whether the token may change what is effectively the
 // user's access, such as setting the user's password, re-enabling or
 // deleting the account, or minting a token that acts as the user.
@@ -510,154 +443,256 @@ func (rc *RBACChecker) reachInTokenScope(ctx context.Context,
 // The user's reach is their group grants, plus the unrestricted
 // connections they may open and the public MCP items; lister
 // enumerates the connections for the former, and a nil lister fails a
-// token bounded by connection.
+// token that does not hold every connection.
 func (rc *RBACChecker) UserWithinTokenScope(ctx context.Context,
 	userID int64, lister ConnectionVisibilityLister) bool {
 
-	tokenID, ok := rc.actingToken(ctx)
+	c, ok := rc.actorCeiling(ctx)
 	if !ok {
 		return false
 	}
-	if tokenID <= 0 {
+	if c.session {
 		return true
 	}
 	reach, ok := rc.loadUserReach(userID)
-	if !ok {
-		return false
-	}
-	return rc.reachInTokenScope(ctx, reach, lister)
+	return ok && c.coversReach(reach, lister)
 }
 
 // NewUserWithinTokenScope reports whether a new user called username,
-// who belongs to no group, would reach only what the acting API token's
-// scope covers. Such a user still reaches the unrestricted connections
-// open to every user, any unshared connection already owned by that
-// name, and the public MCP items, so a token bounded in either kind may
-// create a user only when those fall inside it.
+// who belongs to no group, would reach only what lies within the acting
+// API token's ceiling. Such a user still reaches the unrestricted
+// connections open to every user, any connection already owned by that
+// name, and the public MCP items.
 func (rc *RBACChecker) NewUserWithinTokenScope(ctx context.Context,
 	username string, lister ConnectionVisibilityLister) bool {
 
-	tokenID, ok := rc.actingToken(ctx)
+	c, ok := rc.actorCeiling(ctx)
 	if !ok {
 		return false
 	}
-	if tokenID <= 0 {
-		return true
-	}
-	return rc.reachInTokenScope(ctx, &principalReach{
-		asUser:   true,
-		username: username,
-	}, lister)
+	return c.coversReach(&principalReach{asUser: true, username: username},
+		lister)
 }
 
 // GroupWithinTokenScope reports whether everything membership of the
 // given group confers, through its own grants and those of every group
-// it belongs to, falls inside the acting API token's scope in all three
-// kinds. It decides whether the token may add a user or a group to the
-// group.
+// it belongs to, lies within the acting API token's ceiling in all
+// three kinds. Adding a member grants that whole set, so it decides
+// whether the token may add a user or a group to the group.
 func (rc *RBACChecker) GroupWithinTokenScope(ctx context.Context,
 	groupID int64) bool {
 
-	tokenID, ok := rc.actingToken(ctx)
+	c, ok := rc.actorCeiling(ctx)
 	if !ok {
 		return false
 	}
-	if tokenID <= 0 {
+	if c.session {
 		return true
 	}
 	reach, ok := rc.loadGroupReach(groupID)
-	if !ok {
-		return false
-	}
-	return rc.reachInTokenScope(ctx, reach, nil)
+	return ok && c.coversReach(reach, nil)
 }
 
-// ScopedConnectionsInTokenScope reports whether every entry of a
-// connection scope being written to another token could be granted by
-// the acting token, so that the token being changed ends up no wider
-// than the one changing it.
-func (rc *RBACChecker) ScopedConnectionsInTokenScope(ctx context.Context,
-	connections []ScopedConnection) bool {
+// storedTokenScope is a token's scope as stored, kind by kind, with
+// whether each kind is restricted.
+type storedTokenScope struct {
+	ownerID         int64
+	conns           map[int]string
+	connsRestricted bool
+	mcp             map[string]bool
+	mcpRestricted   bool
+	admin           map[string]bool
+	adminRestricted bool
+}
 
-	if _, ok := rc.actingToken(ctx); !ok {
-		return false
+// loadStoredTokenScope reads the scope stored for tokenID. found is
+// false for a token that does not exist; err is ErrTokenScopeUnreadable
+// when a lookup fails.
+func (rc *RBACChecker) loadStoredTokenScope(tokenID int64) (
+	scope *storedTokenScope, found bool, err error) {
+
+	token, err := rc.authStore.GetTokenByID(tokenID)
+	if err != nil {
+		return nil, false, ErrTokenScopeUnreadable
 	}
-	for _, sc := range connections {
-		if !rc.CanGrantConnectionInTokenScope(ctx, sc.ConnectionID, sc.AccessLevel) {
+	if token == nil {
+		return nil, false, nil
+	}
+	scope = &storedTokenScope{ownerID: token.OwnerID, conns: map[int]string{}}
+
+	conns, err := rc.authStore.GetTokenScope(tokenID)
+	if err != nil {
+		return nil, false, ErrTokenScopeUnreadable
+	}
+	if conns != nil {
+		for _, sc := range conns.Connections {
+			scope.conns[sc.ConnectionID] = sc.AccessLevel
+		}
+	}
+	scope.connsRestricted = len(scope.conns) > 0
+
+	names, err := rc.authStore.GetTokenMCPScope(tokenID)
+	if err != nil {
+		return nil, false, ErrTokenScopeUnreadable
+	}
+	scope.mcp, scope.mcpRestricted = namedScope(names, mcpScopeWildcard)
+	if !scope.mcpRestricted && len(names) == 0 {
+		// See actorMCPScope: rows naming only deleted identifiers still
+		// restrict the token, to nothing.
+		hasRows, err := rc.authStore.HasTokenMCPScope(tokenID)
+		if err != nil {
+			return nil, false, ErrTokenScopeUnreadable
+		}
+		if hasRows {
+			scope.mcp, scope.mcpRestricted = map[string]bool{}, true
+		}
+	}
+
+	perms, err := rc.authStore.GetTokenAdminScope(tokenID)
+	if err != nil {
+		return nil, false, ErrTokenScopeUnreadable
+	}
+	scope.admin, scope.adminRestricted = namedScope(perms,
+		AdminPermissionWildcard)
+	return scope, true, nil
+}
+
+// connectionLevel is the level the stored scope allows on connectionID,
+// as IsConnectionInTokenScope reads it: an entry for the connection
+// itself, else the "all connections" entry, and read_write when the
+// kind is unrestricted, since the owner's level then decides.
+func (s *storedTokenScope) connectionLevel(connectionID int) string {
+	if !s.connsRestricted {
+		return AccessLevelReadWrite
+	}
+	if level, ok := s.conns[connectionID]; ok {
+		return level
+	}
+	return s.conns[ConnectionIDAll]
+}
+
+// connectionsChangeCovered judges a new connection scope for a token.
+// Each entry is either granted, and so must be within the ceiling, or
+// keeps or narrows what the token already allows, which needs only
+// read on the connection, as a revoke does. Each entry the change drops
+// is a narrowing too, and needs read in the same way.
+func (c *tokenCeiling) connectionsChangeCovered(stored *storedTokenScope,
+	entries []ScopedConnection) bool {
+
+	kept := make(map[int]bool, len(entries))
+	for _, sc := range entries {
+		kept[sc.ConnectionID] = true
+		if c.coversConnection(sc.ConnectionID, sc.AccessLevel) {
+			continue
+		}
+		if !c.coversConnection(sc.ConnectionID, AccessLevelRead) ||
+			accessLevelRank(sc.AccessLevel) >
+				accessLevelRank(stored.connectionLevel(sc.ConnectionID)) {
+			return false
+		}
+	}
+	for connectionID := range stored.conns {
+		if !kept[connectionID] &&
+			!c.coversConnection(connectionID, AccessLevelRead) {
 			return false
 		}
 	}
 	return true
 }
 
-// namesWithinScope judges one named kind of a token's resulting scope
-// against the acting token's scope for that kind. Explicit entries must
-// each be in the acting token's set; no entries, or the wildcard, leave
-// the token unrestricted in that kind, so ownerInScope, the owner's
-// whole reach in it, decides.
-func namesWithinScope(entries []string, wildcard string,
-	scope map[string]bool, ownerInScope func() bool) bool {
+// namesChangeCovered judges a new named scope kind for a token. Narrowing
+// an unrestricted kind takes nothing from the ceiling; otherwise each
+// entry the token does not already hold must be covered.
+func namesChangeCovered(entries []string, wildcard string,
+	current map[string]bool, restricted bool, covers func(string) bool) bool {
 
-	set, restricted := namedScope(entries, wildcard)
 	if !restricted {
-		return ownerInScope()
-	}
-	for entry := range set {
-		if !scope[entry] {
-			return false
-		}
-	}
-	return true
-}
-
-// TokenScopeWithinTokenScope reports whether a token owned by ownerID,
-// once its scope is the given one, reaches no further than the acting
-// token, kind by kind. A token's reach is its owner's narrowed by its
-// scope, so a kind with entries must itself fall inside the acting
-// token's scope, and a kind left unrestricted needs the owner's whole
-// reach in that kind to. Creating a token, which starts with no scope,
-// and clearing one are the case where every kind is unrestricted.
-func (rc *RBACChecker) TokenScopeWithinTokenScope(ctx context.Context,
-	ownerID int64, scope GrantedTokenScope,
-	lister ConnectionVisibilityLister) bool {
-
-	tokenID, ok := rc.actingToken(ctx)
-	if !ok {
-		return false
-	}
-	if tokenID <= 0 {
 		return true
 	}
-	owner, ok := rc.loadUserReach(ownerID)
-	if !ok {
-		return false
-	}
-
-	if len(scope.Connections) > 0 {
-		if !rc.ScopedConnectionsInTokenScope(ctx, scope.Connections) {
+	for _, entry := range entries {
+		if entry != wildcard && current[entry] {
+			continue
+		}
+		if !covers(entry) {
 			return false
 		}
-	} else if !rc.reachConnectionsInScope(ctx, owner, lister) {
-		return false
-	}
-
-	mcpScope, mcpRestricted, ok := rc.actorMCPScope(ctx)
-	if !ok {
-		return false
-	}
-	if mcpRestricted && !namesWithinScope(scope.MCPPrivileges, mcpScopeWildcard,
-		mcpScope, func() bool { return rc.reachMCPInScope(ctx, owner) }) {
-		return false
-	}
-
-	adminScope, adminRestricted, ok := rc.actorAdminScope(ctx)
-	if !ok {
-		return false
-	}
-	if adminRestricted && !namesWithinScope(scope.AdminPermissions,
-		AdminPermissionWildcard, adminScope,
-		func() bool { return rc.reachAdminInScope(ctx, owner) }) {
-		return false
 	}
 	return true
+}
+
+// TokenScopeChangeWithinCeiling reports whether the acting caller may
+// change the scope of token tokenID as given, the acting token's own
+// scope included. Only the kinds the change supplies are judged: what
+// it grants beyond the token's current scope must lie within the acting
+// token's ceiling, and what it narrows needs read on each connection
+// concerned (see connectionsChangeCovered). A token that does not exist
+// is refused; err is ErrTokenScopeUnreadable when the stored scope
+// cannot be read.
+func (rc *RBACChecker) TokenScopeChangeWithinCeiling(ctx context.Context,
+	tokenID int64, change TokenScopeChange) (bool, error) {
+
+	c, ok := rc.actorCeiling(ctx)
+	if !ok {
+		return false, nil
+	}
+	if c.session {
+		return true, nil
+	}
+	stored, found, err := rc.loadStoredTokenScope(tokenID)
+	if err != nil || !found {
+		return false, err
+	}
+	if change.Connections != nil &&
+		!c.connectionsChangeCovered(stored, change.Connections) {
+		return false, nil
+	}
+	if change.MCPPrivileges != nil &&
+		!namesChangeCovered(change.MCPPrivileges, mcpScopeWildcard,
+			stored.mcp, stored.mcpRestricted, c.coversMCP) {
+		return false, nil
+	}
+	if change.AdminPermissions != nil &&
+		!namesChangeCovered(change.AdminPermissions, AdminPermissionWildcard,
+			stored.admin, stored.adminRestricted, c.coversAdmin) {
+		return false, nil
+	}
+	return true, nil
+}
+
+// TokenScopeClearWithinCeiling reports whether the acting caller may
+// clear the scope of token tokenID, which leaves it with its owner's
+// whole access. Each kind the token is restricted in today must then
+// have the owner's whole reach in that kind within the acting token's
+// ceiling, and each connection entry dropped needs read, as any
+// narrowing does. Errors are as for TokenScopeChangeWithinCeiling.
+func (rc *RBACChecker) TokenScopeClearWithinCeiling(ctx context.Context,
+	tokenID int64, lister ConnectionVisibilityLister) (bool, error) {
+
+	c, ok := rc.actorCeiling(ctx)
+	if !ok {
+		return false, nil
+	}
+	if c.session {
+		return true, nil
+	}
+	stored, found, err := rc.loadStoredTokenScope(tokenID)
+	if err != nil || !found {
+		return false, err
+	}
+	owner, ok := rc.loadUserReach(stored.ownerID)
+	if !ok {
+		return false, ErrTokenScopeUnreadable
+	}
+	if stored.connsRestricted &&
+		(!c.connectionsChangeCovered(stored, nil) ||
+			!c.coversReachConnections(owner, lister)) {
+		return false, nil
+	}
+	if stored.mcpRestricted && !c.coversReachMCP(owner) {
+		return false, nil
+	}
+	if stored.adminRestricted && !c.coversReachAdmin(owner) {
+		return false, nil
+	}
+	return true, nil
 }

@@ -71,7 +71,7 @@ func (h *RBACHandler) createGroup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !h.requireGrantInTokenScope(w, r,
-		h.federatedNameInTokenScope(r.Context(), name)) {
+		h.federatedNameInTokenScope(r.Context(), name), refuseFederated) {
 		return
 	}
 
@@ -316,8 +316,12 @@ func (h *RBACHandler) deleteGroup(w http.ResponseWriter, r *http.Request, groupI
 	if !h.requirePermission(w, r, auth.PermManageGroups) {
 		return
 	}
+	// Deleting the group takes away what membership conferred and drops
+	// the group's own grants, so a token needs read on each of those
+	// connections, and read_write on any whose last grant the group
+	// holds, since dropping it lifts the restriction (issue #471).
 	if !h.requireGrantInTokenScope(w, r,
-		h.groupPrivilegesInTokenScope(r.Context(), groupID)) {
+		h.rbacChecker.CanDeleteGroup(r.Context(), groupID), refuseGroupRemoval) {
 		return
 	}
 	if !h.requireGroupDeleteInTokenScope(w, r, groupID) {
@@ -394,10 +398,12 @@ func (h *RBACHandler) addGroupMember(w http.ResponseWriter, r *http.Request, gro
 	}
 
 	// Joining a group confers everything the group and its ancestors
-	// hold, so a token may add a member only to a group whose access
-	// falls inside its own connection scope (issue #471).
+	// hold, so a token may add a member only to a group whose every
+	// connection grant, MCP item and admin permission lies within its
+	// own access (issue #471).
 	if !h.requireGrantInTokenScope(w, r,
-		h.rbacChecker.GroupWithinTokenScope(r.Context(), groupID)) {
+		h.rbacChecker.GroupWithinTokenScope(r.Context(), groupID),
+		refuseGroupAccess) {
 		return
 	}
 
@@ -425,15 +431,14 @@ func (h *RBACHandler) removeGroupMember(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	// Removing a member hides reach without removing it: a user dropped
-	// from the group that restricts a connection they own keeps that
-	// connection through ownership, but no longer appears to reach it
-	// through the group. The reach checks count owned connections for
-	// that reason; this gate also keeps a bounded token from editing the
-	// membership of any group whose grants its own scope does not cover
-	// (issue #471).
+	// Removing a member takes away the connections membership confers,
+	// so, as for a revoke, a token needs read on each of them (issue
+	// #471). A user dropped from the group that restricts a connection
+	// they own keeps it through ownership, which the reach checks count
+	// for that reason.
 	if !h.requireGrantInTokenScope(w, r,
-		h.rbacChecker.GroupWithinTokenScope(r.Context(), groupID)) {
+		h.rbacChecker.CanRemoveGroupMember(r.Context(), groupID),
+		refuseGroupRemoval) {
 		return
 	}
 

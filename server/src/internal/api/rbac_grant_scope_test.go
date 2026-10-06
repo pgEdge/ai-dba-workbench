@@ -11,6 +11,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -155,14 +156,38 @@ func (f *grantFixture) user(t *testing.T, name string, groupID int64) int64 {
 	return id
 }
 
-// assertGrantRefused fails unless the response is the grant refusal.
+// tokenAccessRefusal is the phrase every token-ceiling refusal carries,
+// naming what the request exceeded.
+const tokenAccessRefusal = "this token's access"
+
+// assertGrantRefused fails unless the response is a token-ceiling
+// refusal.
 func assertGrantRefused(t *testing.T, rec *httptest.ResponseRecorder) {
 	t.Helper()
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("Expected 403, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), grantOutOfTokenScope) {
-		t.Errorf("Expected the grant scope refusal, got %s", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), tokenAccessRefusal) {
+		t.Errorf("Expected a token ceiling refusal, got %s", rec.Body.String())
+	}
+}
+
+// assertRefusedWith fails unless the response is the given refusal.
+func assertRefusedWith(t *testing.T, rec *httptest.ResponseRecorder,
+	reason string) {
+
+	t.Helper()
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("Expected 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("Failed to decode the refusal: %v (%s)", err, rec.Body.String())
+	}
+	if body.Error != reason {
+		t.Errorf("Expected %q, got %q", reason, body.Error)
 	}
 }
 
@@ -425,20 +450,25 @@ func TestTokenScopeChangesRespectTokenScope(t *testing.T) {
 	}{
 		{target.ID, `{"connections":[{"connection_id":6,"access_level":"read"}]}`},
 		{target.ID, `{"connections":[{"connection_id":0,"access_level":"read"}]}`},
-		// Leaving the connections alone keeps target unrestricted, so
-		// its owner's reach decides.
-		{target.ID, `{"admin_permissions":["manage_blackouts"]}`},
 	}
 	for _, tc := range refused {
-		assertGrantRefused(t, f.do(f.narrowed, http.MethodPut, scopePath(tc.id), tc.body))
+		assertRefusedWith(t, f.do(f.narrowed, http.MethodPut, scopePath(tc.id),
+			tc.body), refuseTokenScope)
 	}
 	if scope, err := f.store.GetTokenScope(target.ID); err != nil || scope != nil {
 		t.Fatalf("Expected target to stay unscoped, got %+v (%v)", scope, err)
 	}
-	assertGrantRefused(t, f.do(f.narrowed, http.MethodDelete, scopePath(bounded.ID), ""))
-	assertGrantRefused(t, f.do(f.readOnly, http.MethodPut, scopePath(target.ID),
-		`{"connections":[{"connection_id":5,"access_level":"read_write"}]}`))
+	assertRefusedWith(t, f.do(f.narrowed, http.MethodDelete, scopePath(bounded.ID), ""),
+		refuseTokenScope)
+	// bounded holds 5 read-only; read_write would widen it beyond what
+	// readOnly holds.
+	assertRefusedWith(t, f.do(f.readOnly, http.MethodPut, scopePath(bounded.ID),
+		`{"connections":[{"connection_id":5,"access_level":"read_write"}]}`),
+		refuseTokenScope)
 
+	// Narrowing a kind that was unrestricted grants nothing.
+	assertStatus(t, f.do(f.narrowed, http.MethodPut, scopePath(target.ID),
+		`{"admin_permissions":["manage_blackouts"]}`), http.StatusNoContent)
 	assertStatus(t, f.do(f.narrowed, http.MethodPut, scopePath(bounded.ID),
 		`{"admin_permissions":["manage_blackouts"]}`), http.StatusNoContent)
 	assertStatus(t, f.do(f.narrowed, http.MethodPut, scopePath(target.ID),

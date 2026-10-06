@@ -162,11 +162,12 @@ func (h *RBACHandler) createToken(w http.ResponseWriter, r *http.Request) {
 		expiry = &exp
 	}
 
-	// A new token acts with its owner's access, so a token bounded to
-	// some connections may mint one only for an owner whose access
-	// falls inside that scope (issues #471 and #522).
+	// A new token acts with its owner's access, so a token may mint one
+	// only for an owner whose access lies within its own (issues #471
+	// and #522).
 	if !h.requireGrantInTokenScope(w, r,
-		h.ownerWithinTokenScope(r.Context(), req.OwnerUsername)) {
+		h.ownerWithinTokenScope(r.Context(), req.OwnerUsername),
+		refuseTokenOwner) {
 		return
 	}
 
@@ -322,39 +323,6 @@ func (h *RBACHandler) getTokenScope(w http.ResponseWriter, r *http.Request, toke
 	})
 }
 
-// refuseSelfScopeMutation refuses a scope change whose target is the
-// caller's own acting token, reporting true when the request has been
-// answered and must go no further.
-//
-// Without this, a token scoped to exactly manage_token_scopes could
-// widen or clear its own scope and so escape every other scope gate:
-// the permission it legitimately holds would let it rewrite the very
-// record that bounds it. A session caller has no token id, so it is
-// unaffected, and a token may still manage other tokens' scopes.
-//
-// A token may still change a *different* token's scope, and create a
-// token for another owner, but only within its own scope:
-// tokenWithinActorScope and ownerWithinTokenScope refuse a result that
-// would reach further than the acting token in connections, MCP items
-// or admin permissions (issue #471). What stays open is tracked in
-// issue #522: a token unrestricted in all three kinds may still create
-// an unscoped token for any owner, including a superuser, even when its
-// own owner is not one, and permission strings written into a scope
-// are not validated against a known set.
-func (h *RBACHandler) refuseSelfScopeMutation(w http.ResponseWriter,
-	r *http.Request, tokenID int64) bool {
-
-	actingTokenID := auth.GetTokenIDFromContext(r.Context())
-	if actingTokenID <= 0 || actingTokenID != tokenID {
-		return false
-	}
-
-	const reason = "Permission denied: a token may not change its own scope"
-	h.recordDenial(r, reason)
-	RespondError(w, http.StatusForbidden, reason)
-	return true
-}
-
 // emptyScopeKind names the first scope kind a scope PUT supplied as an
 // empty array, or returns "" when there is none. Each kind is stored as
 // rows in its own table and a kind with no rows is unrestricted, so
@@ -375,10 +343,6 @@ func emptyScopeKind(connections, mcpPrivileges, adminPermissions bool) string {
 }
 
 func (h *RBACHandler) setTokenScope(w http.ResponseWriter, r *http.Request, tokenID int64) {
-	if h.refuseSelfScopeMutation(w, r, tokenID) {
-		return
-	}
-
 	var req struct {
 		Connections      []auth.ScopedConnection `json:"connections"`
 		MCPPrivileges    []string                `json:"mcp_privileges"`
@@ -407,34 +371,18 @@ func (h *RBACHandler) setTokenScope(w http.ResponseWriter, r *http.Request, toke
 		return
 	}
 
-	// The token being changed must end up no wider than the acting
-	// token, judged kind by kind on the scope it will hold afterwards:
-	// what the request supplies, and what is stored for any kind the
-	// request leaves alone (issue #471).
-	if !h.rbacChecker.TokenScopeUnrestricted(r.Context()) {
-		result, ok := h.storedTokenScope(tokenID)
-		if !ok {
-			log.Printf("[ERROR] Failed to read scope for token %d", tokenID)
-			// The change is refused, so it is recorded as a denial like
-			// the 403s around it.
-			const reason = "Failed to get token scope"
-			h.recordDenial(r, reason)
-			RespondError(w, http.StatusInternalServerError, reason)
-			return
-		}
-		if req.Connections != nil {
-			result.Connections = req.Connections
-		}
-		if req.MCPPrivileges != nil {
-			result.MCPPrivileges = req.MCPPrivileges
-		}
-		if req.AdminPermissions != nil {
-			result.AdminPermissions = req.AdminPermissions
-		}
-		if !h.requireGrantInTokenScope(w, r,
-			h.tokenWithinActorScope(r.Context(), tokenID, result)) {
-			return
-		}
+	// What the change grants beyond the token's current scope must lie
+	// within the acting token's own access, and what it narrows needs
+	// read on each connection concerned, kind by kind for the kinds the
+	// request supplies (issue #471). This holds for a token changing its
+	// own scope as well: it may narrow itself, but its access is already
+	// its ceiling, so it can never widen itself.
+	if !h.requireTokenScopeChange(w, r, tokenID, auth.TokenScopeChange{
+		Connections:      req.Connections,
+		MCPPrivileges:    req.MCPPrivileges,
+		AdminPermissions: req.AdminPermissions,
+	}, false) {
+		return
 	}
 
 	if req.MCPPrivileges != nil {
@@ -469,13 +417,11 @@ func (h *RBACHandler) setTokenScope(w http.ResponseWriter, r *http.Request, toke
 }
 
 func (h *RBACHandler) clearTokenScope(w http.ResponseWriter, r *http.Request, tokenID int64) {
-	if h.refuseSelfScopeMutation(w, r, tokenID) {
-		return
-	}
-
-	// Clearing the scope leaves the token with its owner's whole access.
-	if !h.requireGrantInTokenScope(w, r,
-		h.tokenWithinActorScope(r.Context(), tokenID, auth.GrantedTokenScope{})) {
+	// Clearing the scope leaves the token with its owner's whole access,
+	// which must then lie within the acting token's own in every kind
+	// the scope restricts today.
+	if !h.requireTokenScopeChange(w, r, tokenID, auth.TokenScopeChange{},
+		true) {
 		return
 	}
 

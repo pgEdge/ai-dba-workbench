@@ -153,18 +153,20 @@ func (h *RBACHandler) createUser(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// A token bounded in any scope kind may create only a user who
-	// reaches no further than the token (issue #471). A superuser
-	// reaches everything, so only an unrestricted token may create one;
-	// any other new user still reaches the unrestricted connections open
-	// to every user, any unshared connection its name already owns, and
-	// the public MCP items, and those must fall inside the token's scope.
-	newUserInScope := h.rbacChecker.NewUserWithinTokenScope(r.Context(),
-		req.Username, h.connLister)
+	// A token may create only a user who reaches no further than the
+	// token itself (issue #471). A superuser reaches everything, so only
+	// a superuser's token with unrestricted scope may create one; any
+	// other new user still reaches the unrestricted connections open to
+	// every user, any connection its name already owns, and the public
+	// MCP items, and those must lie within the token's access.
 	if req.IsSuperuser != nil && *req.IsSuperuser {
-		newUserInScope = h.rbacChecker.TokenScopeUnrestricted(r.Context())
-	}
-	if !h.requireGrantInTokenScope(w, r, newUserInScope) {
+		if !h.requireGrantInTokenScope(w, r,
+			h.rbacChecker.TokenHoldsEverything(r.Context()), refuseSuperuser) {
+			return
+		}
+	} else if !h.requireGrantInTokenScope(w, r,
+		h.rbacChecker.NewUserWithinTokenScope(r.Context(), req.Username,
+			h.connLister), refuseNewUserAccess) {
 		return
 	}
 
@@ -252,19 +254,19 @@ func (h *RBACHandler) updateUser(w http.ResponseWriter, r *http.Request, userID 
 		}
 	}
 
-	// A token bounded in any scope kind may not make a superuser, and
-	// may not set the password of, or re-enable, an account that reaches
-	// further than the token does, since either would hand the token's
-	// holder that account's access (issue #471).
+	// Only a superuser's token with unrestricted scope may make a
+	// superuser, and a token may not set the password of, or re-enable,
+	// an account that reaches further than the token does, since either
+	// would hand the token's holder that account's access (issue #471).
 	if req.IsSuperuser != nil && *req.IsSuperuser &&
 		!h.requireGrantInTokenScope(w, r,
-			h.rbacChecker.TokenScopeUnrestricted(r.Context())) {
+			h.rbacChecker.TokenHoldsEverything(r.Context()), refuseSuperuser) {
 		return
 	}
 	takesOver := (req.Password != nil && *req.Password != "") ||
 		(req.Enabled != nil && *req.Enabled)
 	if takesOver && !h.requireGrantInTokenScope(w, r,
-		h.userWithinTokenScope(r.Context(), userID)) {
+		h.userWithinTokenScope(r.Context(), userID), refuseUserAccess) {
 		return
 	}
 
@@ -317,7 +319,7 @@ func (h *RBACHandler) deleteUser(w http.ResponseWriter, r *http.Request, userID 
 	// reaches no further than the token, or delete-and-recreate would
 	// hand it that account's connections (issue #471).
 	if !h.requireGrantInTokenScope(w, r,
-		h.userWithinTokenScope(r.Context(), userID)) {
+		h.userWithinTokenScope(r.Context(), userID), refuseUserAccess) {
 		return
 	}
 

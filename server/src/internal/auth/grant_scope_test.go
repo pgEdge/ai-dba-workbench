@@ -99,7 +99,7 @@ func (f *grantScopeFixture) grant(t *testing.T, connectionID int, level string) 
 	}
 }
 
-func TestCanGrantConnectionInTokenScope(t *testing.T) {
+func TestCanGrantConnection(t *testing.T) {
 	f, cleanup := newGrantScopeFixture(t)
 	defer cleanup()
 
@@ -126,14 +126,14 @@ func TestCanGrantConnectionInTokenScope(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := f.checker.CanGrantConnectionInTokenScope(tt.ctx, tt.conn,
+			if got := f.checker.CanGrantConnection(tt.ctx, tt.conn,
 				tt.level); got != tt.want {
 				t.Errorf("got %v, want %v", got, tt.want)
 			}
 		})
 	}
 
-	if NewRBACChecker(nil).CanGrantConnectionInTokenScope(f.tokenCtx(), 5,
+	if NewRBACChecker(nil).CanGrantConnection(f.tokenCtx(), 5,
 		AccessLevelRead) {
 		t.Error("A checker with no store should refuse every grant")
 	}
@@ -225,25 +225,6 @@ func TestGrantScopeChecksFailClosed(t *testing.T) {
 	}
 }
 
-func TestScopedConnectionsInTokenScope(t *testing.T) {
-	f, cleanup := newGrantScopeFixture(t)
-	defer cleanup()
-	ctx := f.tokenCtx()
-
-	if !f.checker.ScopedConnectionsInTokenScope(ctx, []ScopedConnection{
-		{ConnectionID: 5, AccessLevel: AccessLevelReadWrite},
-		{ConnectionID: 7, AccessLevel: AccessLevelRead},
-	}) {
-		t.Error("A scope within the acting token's should pass")
-	}
-	if f.checker.ScopedConnectionsInTokenScope(ctx, []ScopedConnection{
-		{ConnectionID: 5, AccessLevel: AccessLevelReadWrite},
-		{ConnectionID: 6, AccessLevel: AccessLevelRead},
-	}) {
-		t.Error("A scope naming a connection outside the acting token's should fail")
-	}
-}
-
 func TestConnectionReadableInTokenScope(t *testing.T) {
 	f, cleanup := newGrantScopeFixture(t)
 	defer cleanup()
@@ -318,19 +299,24 @@ func TestGrantScopeChecksRefuseWithoutStore(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			checks := map[string]bool{
-				"CanGrantConnection": rc.CanGrantConnectionInTokenScope(ctx, 1,
+				"CanGrantConnection": rc.CanGrantConnection(ctx, 1,
 					AccessLevelRead),
 				"ConnectionReadable":  rc.ConnectionReadableInTokenScope(ctx, 1),
-				"CanGrantMCP":         rc.CanGrantMCPInTokenScope(ctx, "x"),
-				"Unrestricted":        rc.TokenScopeUnrestricted(ctx),
+				"CanGrantMCP":         rc.CanGrantMCPItem(ctx, "x"),
+				"HoldsEverything":     rc.TokenHoldsEverything(ctx),
+				"CanGrantAdmin":       rc.CanGrantAdminPermission(ctx, PermManageBlackouts),
+				"CanRevoke":           rc.CanRevokeConnection(ctx, 1, 1),
+				"CanRemoveMember":     rc.CanRemoveGroupMember(ctx, 1),
+				"CanDeleteGroup":      rc.CanDeleteGroup(ctx, 1),
 				"UserWithin":          rc.UserWithinTokenScope(ctx, 1, lister),
 				"NewUserWithin":       rc.NewUserWithinTokenScope(ctx, "x", lister),
 				"GroupWithin":         rc.GroupWithinTokenScope(ctx, 1),
-				"ScopedConnections":   rc.ScopedConnectionsInTokenScope(ctx, nil),
-				"TokenScopeWithin":    rc.TokenScopeWithinTokenScope(ctx, 1, GrantedTokenScope{}, lister),
 				"ConnectionInScope":   rc.ConnectionInTokenScope(ctx, 1),
 				"AllConnectionsScope": rc.AllConnectionsInTokenScope(ctx),
 			}
+			checks["ScopeChange"], _ = rc.TokenScopeChangeWithinCeiling(ctx, 1,
+				TokenScopeChange{})
+			checks["ScopeClear"], _ = rc.TokenScopeClearWithinCeiling(ctx, 1, lister)
 			for check, got := range checks {
 				if got {
 					t.Errorf("%s admitted the caller without a store", check)
@@ -347,15 +333,24 @@ func TestGrantScopeChecksRefuseIncompleteToken(t *testing.T) {
 	defer cleanup()
 	ctx := incompleteTokenCtx()
 
-	if f.checker.CanGrantMCPInTokenScope(ctx, "x") ||
-		f.checker.TokenScopeUnrestricted(ctx) ||
+	if f.checker.CanGrantMCPItem(ctx, "x") ||
+		f.checker.TokenHoldsEverything(ctx) ||
 		f.checker.UserWithinTokenScope(ctx, f.userID, f.lister) ||
 		f.checker.NewUserWithinTokenScope(ctx, "new", f.lister) ||
 		f.checker.GroupWithinTokenScope(ctx, f.groupID) ||
-		f.checker.ScopedConnectionsInTokenScope(ctx, nil) ||
-		f.checker.TokenScopeWithinTokenScope(ctx, f.userID,
-			GrantedTokenScope{}, f.lister) {
+		f.checker.CanGrantAdminPermission(ctx, PermManageBlackouts) ||
+		f.checker.CanRevokeConnection(ctx, f.groupID, 5) ||
+		f.checker.CanRemoveGroupMember(ctx, f.groupID) ||
+		f.checker.CanDeleteGroup(ctx, f.groupID) {
 		t.Error("A token context without an id should be out of scope")
+	}
+	if ok, err := f.checker.TokenScopeChangeWithinCeiling(ctx, f.tokenID,
+		TokenScopeChange{}); ok || err != nil {
+		t.Errorf("A scope change should be refused, got %v (%v)", ok, err)
+	}
+	if ok, err := f.checker.TokenScopeClearWithinCeiling(ctx, f.tokenID,
+		f.lister); ok || err != nil {
+		t.Errorf("A scope clear should be refused, got %v (%v)", ok, err)
 	}
 }
 
@@ -494,40 +489,40 @@ func TestUnrestrictedReachFollowsOwnership(t *testing.T) {
 	}
 }
 
-// TestCanGrantMCPInTokenScope covers the MCP grant bound.
-func TestCanGrantMCPInTokenScope(t *testing.T) {
+// TestCanGrantMCPItem covers the MCP grant bound.
+func TestCanGrantMCPItem(t *testing.T) {
 	f, cleanup := newGrantScopeFixture(t)
 	defer cleanup()
 	ctx := f.tokenCtx()
 	f.registerMCP(t, "list_things", false)
 	f.registerMCP(t, "run_things", false)
 
-	if !f.checker.CanGrantMCPInTokenScope(ctx, "run_things") ||
-		!f.checker.CanGrantMCPInTokenScope(ctx, mcpScopeWildcard) {
+	if !f.checker.CanGrantMCPItem(ctx, "run_things") ||
+		!f.checker.CanGrantMCPItem(ctx, mcpScopeWildcard) {
 		t.Error("A token with no MCP scope should grant any item")
 	}
 
 	f.setMCPScope(t, "list_things")
-	if !f.checker.CanGrantMCPInTokenScope(ctx, "list_things") {
+	if !f.checker.CanGrantMCPItem(ctx, "list_things") {
 		t.Error("An item in the MCP scope should be grantable")
 	}
-	if f.checker.CanGrantMCPInTokenScope(ctx, "run_things") {
+	if f.checker.CanGrantMCPItem(ctx, "run_things") {
 		t.Error("An item outside the MCP scope should be refused")
 	}
-	if f.checker.CanGrantMCPInTokenScope(ctx, mcpScopeWildcard) {
+	if f.checker.CanGrantMCPItem(ctx, mcpScopeWildcard) {
 		t.Error("The wildcard should be refused to an MCP-bounded token")
 	}
-	if !f.checker.CanGrantMCPInTokenScope(sessionCtx(), "run_things") {
+	if !f.checker.CanGrantMCPItem(sessionCtx(), "run_things") {
 		t.Error("A session should be unbounded")
 	}
 
 	f.setMCPScope(t, mcpScopeWildcard)
-	if !f.checker.CanGrantMCPInTokenScope(ctx, "run_things") {
+	if !f.checker.CanGrantMCPItem(ctx, "run_things") {
 		t.Error("The MCP wildcard should grant any item")
 	}
 
 	f.store.Close()
-	if f.checker.CanGrantMCPInTokenScope(ctx, "list_things") {
+	if f.checker.CanGrantMCPItem(ctx, "list_things") {
 		t.Error("An unreadable MCP scope should fail closed")
 	}
 }
@@ -553,13 +548,13 @@ func TestActorMCPScopeFailsClosedOnOrphanedRows(t *testing.T) {
 		t.Fatalf("Expected the runtime check to refuse every item, got %v, %v", inScope, err)
 	}
 
-	if f.checker.CanGrantMCPInTokenScope(ctx, "run_things") {
+	if f.checker.CanGrantMCPItem(ctx, "run_things") {
 		t.Error("An orphaned MCP scope should not let the token grant an item")
 	}
-	if f.checker.CanGrantMCPInTokenScope(ctx, mcpScopeWildcard) {
+	if f.checker.CanGrantMCPItem(ctx, mcpScopeWildcard) {
 		t.Error("An orphaned MCP scope should not let the token grant the wildcard")
 	}
-	if f.checker.TokenScopeUnrestricted(ctx) {
+	if f.checker.TokenHoldsEverything(ctx) {
 		t.Error("A token with an orphaned MCP scope is not unrestricted")
 	}
 }
@@ -585,41 +580,41 @@ func TestHasTokenMCPScope(t *testing.T) {
 	}
 }
 
-// TestTokenScopeUnrestricted checks that only a token unrestricted in
+// TestTokenHoldsEverything checks that only a token unrestricted in
 // all three kinds passes.
-func TestTokenScopeUnrestricted(t *testing.T) {
+func TestTokenHoldsEverything(t *testing.T) {
 	f, cleanup := newGrantScopeFixture(t)
 	defer cleanup()
 	ctx := f.tokenCtx()
 	f.registerMCP(t, "list_things", false)
 
-	if f.checker.TokenScopeUnrestricted(ctx) {
+	if f.checker.TokenHoldsEverything(ctx) {
 		t.Error("A connection-bounded token should be restricted")
 	}
-	if !f.checker.TokenScopeUnrestricted(sessionCtx()) {
+	if !f.checker.TokenHoldsEverything(sessionCtx()) {
 		t.Error("A session should be unrestricted")
 	}
 
 	if err := f.store.ClearTokenScope(f.tokenID); err != nil {
 		t.Fatalf("ClearTokenScope failed: %v", err)
 	}
-	if !f.checker.TokenScopeUnrestricted(ctx) {
+	if !f.checker.TokenHoldsEverything(ctx) {
 		t.Error("An unscoped token should be unrestricted")
 	}
 	f.setMCPScope(t, "list_things")
-	if f.checker.TokenScopeUnrestricted(ctx) {
+	if f.checker.TokenHoldsEverything(ctx) {
 		t.Error("An MCP-bounded token should be restricted")
 	}
 	if err := f.store.ClearTokenScope(f.tokenID); err != nil {
 		t.Fatalf("ClearTokenScope failed: %v", err)
 	}
 	f.setAdminScope(t, PermManageUsers)
-	if f.checker.TokenScopeUnrestricted(ctx) {
+	if f.checker.TokenHoldsEverything(ctx) {
 		t.Error("An admin-bounded token should be restricted")
 	}
 	f.setAdminScope(t, AdminPermissionWildcard)
 	f.setMCPScope(t, mcpScopeWildcard)
-	if !f.checker.TokenScopeUnrestricted(ctx) {
+	if !f.checker.TokenHoldsEverything(ctx) {
 		t.Error("Wildcards in every kind should be unrestricted")
 	}
 }
@@ -730,90 +725,12 @@ func TestReachAdminInTokenScope(t *testing.T) {
 	}
 }
 
-// TestTokenScopeWithinTokenScope covers the bound on a token's scope
-// once it is changed, kind by kind.
-func TestTokenScopeWithinTokenScope(t *testing.T) {
-	f, cleanup := newGrantScopeFixture(t)
-	defer cleanup()
-	ctx := f.tokenCtx()
-	f.registerMCP(t, "list_things", false)
-	f.registerMCP(t, "run_things", false)
-	f.setMCPScope(t, "list_things")
-	f.setAdminScope(t, PermManageBlackouts)
-
-	inScope := []ScopedConnection{{ConnectionID: 5, AccessLevel: AccessLevelRead}}
-	outScope := []ScopedConnection{{ConnectionID: 6, AccessLevel: AccessLevelRead}}
-
-	tests := []struct {
-		name  string
-		scope GrantedTokenScope
-		want  bool
-	}{
-		{"owner reach within every kind", GrantedTokenScope{}, true},
-		{"explicit kinds within", GrantedTokenScope{Connections: inScope,
-			MCPPrivileges:    []string{"list_things"},
-			AdminPermissions: []string{PermManageBlackouts}}, true},
-		{"connection outside", GrantedTokenScope{Connections: outScope}, false},
-		{"MCP outside", GrantedTokenScope{MCPPrivileges: []string{"run_things"}}, false},
-		{"MCP wildcard falls back to owner", GrantedTokenScope{
-			MCPPrivileges: []string{mcpScopeWildcard}}, true},
-		{"admin outside", GrantedTokenScope{
-			AdminPermissions: []string{PermManageUsers}}, false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := f.checker.TokenScopeWithinTokenScope(ctx, f.userID,
-				tt.scope, f.lister); got != tt.want {
-				t.Errorf("got %v, want %v", got, tt.want)
-			}
-		})
-	}
-
-	// The owner's own reach decides a kind the scope leaves open.
-	if err := f.store.GrantMCPPrivilegeByName(f.groupID, "run_things"); err != nil {
-		t.Fatalf("GrantMCPPrivilegeByName failed: %v", err)
-	}
-	if f.checker.TokenScopeWithinTokenScope(ctx, f.userID,
-		GrantedTokenScope{}, f.lister) {
-		t.Error("An owner reaching an MCP item outside the scope should be refused")
-	}
-	if !f.checker.TokenScopeWithinTokenScope(ctx, f.userID, GrantedTokenScope{
-		MCPPrivileges: []string{"list_things"}}, f.lister) {
-		t.Error("An explicit MCP scope should bound the owner's reach")
-	}
-	f.grant(t, 6, AccessLevelRead)
-	if f.checker.TokenScopeWithinTokenScope(ctx, f.userID, GrantedTokenScope{
-		MCPPrivileges: []string{"list_things"}}, f.lister) {
-		t.Error("An owner reaching a connection outside the scope should be refused")
-	}
-	if err := f.store.GrantAdminPermission(f.groupID, PermManageUsers); err != nil {
-		t.Fatalf("GrantAdminPermission failed: %v", err)
-	}
-	if f.checker.TokenScopeWithinTokenScope(ctx, f.userID, GrantedTokenScope{
-		Connections: inScope, MCPPrivileges: []string{"list_things"}}, f.lister) {
-		t.Error("An owner holding an admin permission outside the scope should be refused")
-	}
-
-	if !f.checker.TokenScopeWithinTokenScope(sessionCtx(), f.userID,
-		GrantedTokenScope{}, f.lister) {
-		t.Error("A session should be unbounded")
-	}
-	if f.checker.TokenScopeWithinTokenScope(ctx, 99999, GrantedTokenScope{},
-		f.lister) {
-		t.Error("An unknown owner should be out of scope")
-	}
-}
-
-// TestTokenScopeWithinTokenScopeFailsClosed checks the lookup failures.
-func TestTokenScopeWithinTokenScopeFailsClosed(t *testing.T) {
+// TestNewUserWithinTokenScopeFailsClosed checks the lookup failures.
+func TestNewUserWithinTokenScopeFailsClosed(t *testing.T) {
 	f, cleanup := newGrantScopeFixture(t)
 	defer cleanup()
 	ctx := f.tokenCtx()
 	f.store.Close()
-	if f.checker.TokenScopeWithinTokenScope(ctx, f.userID,
-		GrantedTokenScope{}, f.lister) {
-		t.Error("A failing lookup should fail closed")
-	}
 	if f.checker.NewUserWithinTokenScope(ctx, "eve", f.lister) {
 		t.Error("A failing lookup should fail closed")
 	}
@@ -836,6 +753,22 @@ func TestReachLookupsFailClosed(t *testing.T) {
 			f.registerMCP(t, "list_things", false)
 			f.setMCPScope(t, "list_things")
 			f.setAdminScope(t, PermManageBlackouts)
+			if table == "token_admin_scope" {
+				// The admin scope decides only when the target holds an
+				// admin permission and the token reaches every
+				// connection, so set both up; the check passes until
+				// the table goes.
+				if err := f.store.SetTokenConnectionScope(f.tokenID, nil); err != nil {
+					t.Fatalf("SetTokenConnectionScope failed: %v", err)
+				}
+				if err := f.store.GrantAdminPermission(f.groupID,
+					PermManageBlackouts); err != nil {
+					t.Fatalf("GrantAdminPermission failed: %v", err)
+				}
+				if !f.checker.GroupWithinTokenScope(ctx, f.groupID) {
+					t.Fatal("The group should be within scope before the drop")
+				}
+			}
 
 			dropAuthTable(t, f.store.db, table)
 			if f.checker.UserWithinTokenScope(ctx, f.userID, f.lister) {
@@ -911,7 +844,8 @@ func TestUnrestrictedReachCountsOwnedClusterGroups(t *testing.T) {
 		})
 	}
 
-	if !f.checker.ownedClusterGroupsInTokenScope(ctx, "", plainVisibilityLister{}) {
+	c, _ := f.checker.actorCeiling(ctx)
+	if !c.ownedClusterGroupsCovered("", plainVisibilityLister{}) {
 		t.Error("An empty username owns no groups")
 	}
 }
@@ -995,10 +929,6 @@ func TestTokenScopeChecksNilChecker(t *testing.T) {
 		"superuser": context.WithValue(context.Background(),
 			IsSuperuserContextKey, true),
 	}
-	scope := GrantedTokenScope{
-		Connections: []ScopedConnection{{ConnectionID: 1,
-			AccessLevel: AccessLevelRead}},
-	}
 
 	for name, ctx := range contexts {
 		t.Run(name, func(t *testing.T) {
@@ -1006,22 +936,27 @@ func TestTokenScopeChecksNilChecker(t *testing.T) {
 				"ConnectionInTokenScope": checker.ConnectionInTokenScope(ctx, 1),
 				"AllConnectionsInTokenScope": checker.AllConnectionsInTokenScope(
 					ctx),
-				"CanGrantConnectionInTokenScope": checker.CanGrantConnectionInTokenScope(
+				"CanGrantConnection": checker.CanGrantConnection(
 					ctx, 1, AccessLevelRead),
+				"CanGrantAdminPermission": checker.CanGrantAdminPermission(ctx,
+					PermManageBlackouts),
+				"CanRevokeConnection":  checker.CanRevokeConnection(ctx, 1, 1),
+				"CanRemoveGroupMember": checker.CanRemoveGroupMember(ctx, 1),
+				"CanDeleteGroup":       checker.CanDeleteGroup(ctx, 1),
 				"ConnectionReadableInTokenScope": checker.ConnectionReadableInTokenScope(
 					ctx, 1),
-				"CanGrantMCPInTokenScope": checker.CanGrantMCPInTokenScope(ctx,
+				"CanGrantMCPItem": checker.CanGrantMCPItem(ctx,
 					"any_tool"),
-				"TokenScopeUnrestricted": checker.TokenScopeUnrestricted(ctx),
-				"UserWithinTokenScope":   checker.UserWithinTokenScope(ctx, 1, nil),
+				"TokenHoldsEverything": checker.TokenHoldsEverything(ctx),
+				"UserWithinTokenScope": checker.UserWithinTokenScope(ctx, 1, nil),
 				"NewUserWithinTokenScope": checker.NewUserWithinTokenScope(ctx,
 					"alice", nil),
 				"GroupWithinTokenScope": checker.GroupWithinTokenScope(ctx, 1),
-				"ScopedConnectionsInTokenScope": checker.ScopedConnectionsInTokenScope(
-					ctx, scope.Connections),
-				"TokenScopeWithinTokenScope": checker.TokenScopeWithinTokenScope(
-					ctx, 1, scope, nil),
 			}
+			checks["TokenScopeChangeWithinCeiling"], _ = checker.TokenScopeChangeWithinCeiling(
+				ctx, 1, TokenScopeChange{})
+			checks["TokenScopeClearWithinCeiling"], _ = checker.TokenScopeClearWithinCeiling(
+				ctx, 1, nil)
 			for check, allowed := range checks {
 				if allowed {
 					t.Errorf("%s: expected a nil checker to deny", check)

@@ -69,41 +69,54 @@ Alert acknowledgement and analysis need only `read` access for a user too;
 blackout changes also need the `manage_blackouts` admin permission, for a user
 and a token alike.
 
-Administrative grants and account changes are bounded by the whole token
-scope, so that a token can never give a user, a group or another token access
-beyond its own connection, MCP or admin scope, and can never take over an
-account that reaches further than the token does. A token restricted in any of
-the three scope types is refused with `403 Forbidden` when it tries to:
+Administrative grants and account changes made with a token are bounded by
+the token's own access, which is its owner's privileges narrowed by its scope,
+judged for each connection and access level, MCP item and admin permission. A
+token can never give a user, a group or another token more than it holds
+itself, and can never take over an account that reaches further than it does.
+A token with no scope is bounded by its owner's privileges. A token is refused
+with `403 Forbidden`, and the error message names what exceeded the token's
+access, when it tries to:
 
-- grant a group access to a connection outside its scope, to every
-  connection, or at `read_write` where its own entry is `read`;
-- grant a group an MCP privilege outside its MCP scope, or the `*` wildcard
-  when its MCP scope names specific items;
-- revoke a group's access to a connection outside its scope, or delete a group
-  that holds a grant on one, because a connection left with no group grant
-  becomes open to every user;
-- grant a group any admin permission, since admin permissions act across the
-  whole estate;
-- add a user or a group to, or remove one from, a group whose connections,
-  MCP privileges or admin permissions, including anything inherited from its
-  parent groups, reach beyond the token's scope;
-- rename a group whose grants reach beyond the token's scope, or rename any
-  group from or to a Workbench group name that the OIDC `group_map` uses,
-  because federated sign-in matches groups by name and a rename would move
-  federated users into a different group;
-- create a user who would reach beyond the token's scope, which includes
-  creating any superuser and, for a token whose connection scope is
-  restricted, any user at all whilst a shared connection that no group
-  restricts lies outside that scope, since every user can reach such a
+- grant a group access to a connection the token cannot reach, or at
+  `read_write` where the token holds only `read`; a grant on every connection
+  needs the token to hold every connection at that level;
+- revoke a group's access to a connection the token cannot read, which is
+  refused in the same way as a connection that does not exist, or revoke the
+  last group grant on a connection without holding it at `read_write`, because
+  a connection left with no group grant becomes open to every user;
+- delete a group, or remove a member from one, when the token cannot read
+  every connection the group grants, and delete a group whose removal would
+  leave a connection with no group grant unless the token holds that
+  connection at `read_write`;
+- grant a group an MCP privilege the token cannot call, or the `*` wildcard
+  unless the token reaches every MCP item;
+- grant a group an admin permission the token does not hold; because admin
+  permissions act across the whole estate, the token must also hold every
+  connection at `read_write`, and to grant `manage_users`, `manage_groups`,
+  `manage_permissions`, `manage_token_scopes` or `*` it must also reach every
+  MCP item and every admin permission;
+- add a user or a group to a group whose connections, MCP privileges or admin
+  permissions, including anything inherited from its parent groups, reach
+  beyond the token's access;
+- rename a group whose grants reach beyond the token's access, or create,
+  rename or delete a group whose name the OIDC `group_map` uses, because
+  federated sign-in matches groups by name;
+- create a user who would reach beyond the token's access, which includes any
+  user at all whilst a shared connection that no group restricts lies outside
+  the token's `read_write` access, since every user can reach such a
   connection;
-- make an existing user a superuser;
+- create a superuser, make an existing user a superuser, or create a token for
+  a superuser, unless the token belongs to a superuser and has no restriction
+  in any of the three scope types;
 - set the password of, re-enable or delete a user whose access reaches beyond
-  the token's scope; the first two hand the token's holder that account, and
-  deleting one frees the username, and with it the connections it owns, for
-  whoever recreates it;
-- create a token for an owner whose access reaches beyond the token's scope;
-- set or clear another token's scope so that the other token ends up reaching
-  beyond the acting token's scope in any of the three scope types.
+  the token's; the first two hand the token's holder that account, and deleting
+  one frees the username, and with it the connections it owns, for whoever
+  recreates it;
+- create a token for an owner whose access reaches beyond the token's;
+- set or clear any token's scope, its own included, so that the token ends up
+  reaching beyond the acting token's access; narrowing a scope is always
+  allowed.
 
 A user's access, for these checks, counts the user's group grants, every
 public MCP item, every shared connection that no group restricts, every
@@ -114,15 +127,15 @@ can always edit or delete what they own. A user or group holding the
 `manage_users`, `manage_groups`, `manage_permissions` or
 `manage_token_scopes` admin permission counts as reaching every MCP item and
 every admin permission, because each of those lets its holder acquire the
-rest, so only a token with no MCP or admin restriction can add a member to
-such a group or take over such a user. A token whose MCP scope lists only
-items that have since been deleted is treated as restricted to no MCP items
-at all.
-Sessions, and tokens with no restriction in any of the three scope types, are
-not affected by these bounds.
+rest. A token whose MCP scope lists only items that have since been deleted is
+treated as restricted to no MCP items at all. Sessions are not affected by
+these bounds.
 
 These bounds stop a token widening anyone's access, but they do not stop a
-bounded token removing access or changing accounts in other ways. Whatever its
+token removing access or changing accounts in other ways. A token holding the
+`manage_permissions` admin permission and only `read` access to a connection
+can revoke another group's `read_write` grant on it, provided another group
+grant remains; this is accepted behaviour. Whatever its
 connection or MCP scope, a token holding the relevant admin permissions can
 still revoke any group's MCP privileges or admin permissions, edit or disable
 any user (a superuser too, when the token's admin scope is unrestricted), and

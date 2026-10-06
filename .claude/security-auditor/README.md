@@ -105,37 +105,43 @@ moved.
   The cluster-group create, update and delete routes accept session
   tokens only (`getUserInfoCompat` answers 401 to an API token), and
   carry the same all-connections gate in case that ever changes.
-- Grants are bounded by the acting token's whole scope, connection, MCP
-  and admin kinds alike (`internal/auth/grant_scope.go`,
-  `internal/api/rbac_grant_scope.go`): group connection grants and
-  revokes, MCP grants, admin permission grants (which need
-  `TokenScopeUnrestricted`, all three kinds unrestricted, since several
-  admin permissions let a holder acquire the rest), group membership,
-  rename and deletion, user creation, `is_superuser`, password set,
-  re-enable and user deletion, token creation for an owner, and another
-  token's scope change or clear. A principal's reach counts owned
-  connections and owned cluster groups, and a holder of `manage_users`,
-  `manage_groups`, `manage_permissions` or `manage_token_scopes` reaches
-  every MCP item and admin permission. Known gaps, which do not widen
-  anyone's reach and are documented in `tokens.md`: a bounded token can
-  still revoke any group's MCP privileges or admin permissions, edit or
-  disable any user (a superuser too when its admin scope is
-  unrestricted), and delete any token; these are not scope-gated.
-  Separately from the grant bounds, `query_datastore` reads beyond a
-  token's connection scope (read-only SQL over the whole datastore,
-  `connections` credentials included), which #566 tracks. A `read`
-  connection entry allows acknowledging, unacknowledging and saving an
-  analysis of an alert, and managing blackouts and blackout schedules on
-  that server; the user ruled this intended, so do not report it as a
-  finding.
+- Grants made with an API token are bounded by the token's effective
+  access, its owner's privileges narrowed by its scope, per connection
+  and level, MCP item and admin permission (ruling of 06-10-2026;
+  `tokenCeiling` in `internal/auth/token_ceiling.go`, checks in
+  `internal/auth/grant_scope.go`, handler helpers in
+  `internal/api/rbac_grant_scope.go`). An unscoped token owned by a
+  non-superuser is bounded by its owner. read can grant only read; a
+  revoke needs read (hidden and missing connections refused
+  identically) and read_write when it removes a connection's last
+  group grant; group delete and member removal need read on every
+  connection the group confers; an admin grant needs the permission
+  and every connection at read_write, and a permission in
+  `reachEverythingAdminPermissions` needs every MCP item and admin
+  permission too; making a superuser, minting a token for one and
+  changing a group the OIDC `group_map` names need a superuser's token
+  unrestricted in every kind; membership add, password set, re-enable,
+  user delete and token creation need the principal's whole reach
+  within the ceiling; scope set and clear (self included) may grant
+  only within it. Accepted trade-off, by ruling, so do not report it:
+  a read-level token with `manage_permissions` can revoke another
+  group's read_write. Known gaps, which do not widen anyone's reach:
+  revoking a group's MCP privileges or admin permissions, editing or
+  disabling a user, and deleting a token are not ceiling-gated.
+  Separately, `query_datastore` reads beyond a token's connection
+  scope (read-only SQL over the whole datastore, `connections`
+  credentials included), which #566 tracks. A `read` connection entry
+  allows acknowledging, unacknowledging and saving an analysis of an
+  alert, and managing blackouts and blackout schedules on that server;
+  the user ruled this intended, so do not report it as a finding.
 - Connection ownership bypasses group restriction in `updateConnection`
   and `deleteConnection`, so every reach computation must count owned
   connections, restricted or not.
 - The cluster-group update and delete handlers admit a group's owner
   as the connection handlers admit a connection's owner, so a user's
   reach also counts every member connection of each cluster group
-  their username owns (`ownedClusterGroupsInTokenScope` in
-  `internal/auth/grant_scope.go`), failing closed when the groups
+  their username owns (`ownedClusterGroupsCovered` in
+  `internal/auth/token_ceiling.go`), failing closed when the groups
   cannot be listed.
 - The denial-audit coalescing key (`denialKey` in
   `internal/api/rbac_handlers.go`) must never contain a value the

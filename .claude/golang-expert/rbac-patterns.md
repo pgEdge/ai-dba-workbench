@@ -436,13 +436,10 @@ filter, which already admits sessions, unscoped tokens and wildcard
 scopes (a nil auth store denies, as above), and `rbacExemptTools` is
 still applied.
 
-A token also may not rewrite the scope that bounds it:
-`refuseSelfScopeMutation` in `internal/api/rbac_token_handlers.go`
-refuses a PUT or DELETE on the acting token's own scope, since
-`manage_token_scopes` would otherwise be enough to widen the token's
-own record and undo every gate above. Managing another token's scope is
-bounded by the grant checks described below, and the remaining policy
-gaps are noted at the guard.
+A token may change its own scope, under the same ceiling rule as any
+other scope change (below): narrowing is allowed, widening or clearing
+beyond its own access is refused. `refuseSelfScopeMutation` was
+retired in favour of that rule (Dave's ruling of 06-10-2026).
 
 A handler that authorises a connection by ownership or an admin
 permission rather than `CanAccessConnection` (the Variant 2 gate on
@@ -497,94 +494,91 @@ to `read_write`. A new handler of this kind must call one of these
 helpers, and `token_scope_targets_test.go` and
 `token_scope_blackout_test.go` hold the table-driven cases to extend.
 
-Administrative grants and account changes are bounded by the acting
-token's whole scope (connection, MCP and admin): a token may never give
-a user, a group or another token reach beyond its own scope, nor take
-over a principal that reaches further. The checks live in
-`internal/auth/grant_scope.go` and the handler helpers in
-`internal/api/rbac_grant_scope.go`; each refusal goes through
-`requireGrantInTokenScope`, which records the denial and answers 403
-with `grantOutOfTokenScope`.
+Administrative grants and account changes made with an API token are
+bounded by the token's effective access, its owner's privileges
+narrowed by its scope, judged per connection and level, MCP item and
+admin permission (Dave's ruling of 06-10-2026; sessions are bounded by
+their admin permissions alone). Gate 1 is the route's existing admin
+permission check; gate 2 is the ceiling. The one comparison lives in
+`tokenCeiling` (`internal/auth/token_ceiling.go`, built by
+`RBACChecker.actorCeiling`; unrelated to `applyTokenCeiling` in
+`access.go`, which only clamps one connection level to the scope): `connectionLevel` uses
+`CanAccessConnection`, so an unscoped token owned by a non-superuser is
+bounded by its owner; `allConnectionsLevel` is the owner's
+all-connections grant (read_write for a superuser) narrowed by the
+token's all-connections entry; `coversReach` compares a whole
+`principalReach`. The exported checks in `internal/auth/grant_scope.go`
+are the only entry points; handlers call them through
+`internal/api/rbac_grant_scope.go`, and each refusal goes through
+`requireGrantInTokenScope` with a fixed `refuse*` reason saying what
+exceeded "this token's access" (fixed so the denial audit coalesces).
 
-- Grant checks: `CanGrantConnectionInTokenScope` (level within the
-  entry), `CanGrantMCPInTokenScope` (the `*` wildcard needs an
-  MCP-unrestricted actor), and `TokenScopeUnrestricted` (all three
-  kinds unrestricted) for any admin permission grant or superuser
-  status, and as the shortcut that skips everything else. An admin
-  permission grant gated on connection scope alone let an MCP-bounded
-  token plant `manage_permissions` on a group it then took over.
-- Reach checks build a `principalReach` and compare it with the actor's
-  scope in every kind: `UserWithinTokenScope(ctx, userID, lister)`,
-  `NewUserWithinTokenScope(ctx, username, lister)` for a user not yet
-  created, `GroupWithinTokenScope` (ancestors included) and
-  `TokenScopeWithinTokenScope` for a token's resulting scope, where an
-  explicit entry is judged alone and an unrestricted kind falls back to
-  the owner's reach in that kind.
-- A user's reach counts group grants, public MCP items, and (through
-  `unrestrictedReachInTokenScope`) every unrestricted connection the
-  user can see (shared ones, plus unshared ones their username owns
-  when the checker has a sharing lookup) and every connection their
-  username owns, restricted or not, at `read_write`. The owner check
-  runs before the restricted skip because `updateConnection` and
-  `deleteConnection` admit the owner whatever the group restriction.
-  It also counts every member connection of a cluster group the
-  username owns, at `read_write`, because the cluster-group update and
-  delete handlers admit the group's owner as the connection handlers
-  do (`ownedClusterGroupsInTokenScope`, through the optional
-  `auth.OwnedClusterGroupLister` interface, which the datastore's
-  visibility lister implements with
-  `Datastore.GetOwnedClusterGroupConnectionIDs`). That needs the
-  datastore, so `RBACHandler.SetConnectionLister` must be wired (it
-  is, in `cmd/mcp-server/handlers.go`); a nil lister, a lister error,
-  or a lister without the owned-group method (such as
-  `NewSliceVisibilityLister`) fails closed for a connection-bounded
-  actor.
-- `manage_users`, `manage_groups`, `manage_permissions` and
-  `manage_token_scopes` (and the admin wildcard) each let a holder
-  acquire any MCP item or admin permission (password takeover, joining
-  any group, self-granting, widening a token), so
-  `principalReach.reachesEverything` makes `reachMCPInScope` and
-  `reachAdminInScope` treat a holder like a superuser: only a token
-  unrestricted in that kind covers them, even one whose admin scope
-  names the permission. Comparing names alone let an MCP- or
-  admin-bounded token escalate through an account it took over.
+- Connection grant (`CanGrantConnection`): the token must hold the
+  connection at that level; read can grant only read. The
+  all-connections entry needs every connection at that level.
+- Connection revoke (`CanRevokeConnection`): read on the connection,
+  refused identically whether hidden or missing (#574), plus read_write
+  when `AuthStore.RevokeLiftsConnectionRestriction` says the grant is
+  the connection's last (a group-less connection opens to every user).
+  Accepted trade-off, not gated: a read-level token with
+  `manage_permissions` may revoke another group's read_write.
+- Group delete (`CanDeleteGroup`): read on every connection membership
+  confers, plus the lift rule for each of the group's own grants.
+  Member removal (`CanRemoveGroupMember`): read on every connection
+  membership confers. MCP and admin revokes stay ungated.
+- MCP grant (`CanGrantMCPItem`): the token must be able to call it;
+  `*` needs an owner holding `*` and an unrestricted MCP scope.
+- Admin grant (`CanGrantAdminPermission`): `coversReach` of a principal
+  holding only that permission, so the token needs the permission,
+  every connection at read_write, and, for `manage_users`,
+  `manage_groups`, `manage_permissions`, `manage_token_scopes` or `*`
+  (`reachEverythingAdminPermissions`), every MCP item and admin
+  permission. `TestAdminPermissionGrantNeedsUnrestrictedToken` keeps
+  Ant's 05-10-2026 chain refused.
+- Membership add (`GroupWithinTokenScope`, ancestors included), user
+  takeover (`UserWithinTokenScope`: password set, re-enable, delete,
+  `createToken` for that owner), new users
+  (`NewUserWithinTokenScope`): the principal's whole reach must fit.
+- Superuser create or promote, a token for a superuser owner, and
+  create, rename or delete of a group named in the OIDC `group_map`:
+  `TokenHoldsEverything`, a superuser's token unrestricted in every
+  kind (this also closed #522).
+- Token scope set (`TokenScopeChangeWithinCeiling`, self included):
+  only kinds present are judged; an entry the target does not already
+  allow must be covered; narrowing an unrestricted kind is free; a
+  connection entry kept, narrowed or dropped needs read on it.
+  Clear (`TokenScopeClearWithinCeiling`): for each kind the target is
+  restricted in, the owner's reach in that kind must fit. Both return
+  `ErrTokenScopeUnreadable` (500 in the handler) when the stored scope
+  or the owner's reach cannot be read.
+- A user's reach counts group grants, public MCP items, every
+  unrestricted connection the user can see, every connection their
+  username owns (restricted or not, because `updateConnection` and
+  `deleteConnection` admit the owner), and every member connection of
+  a cluster group the username owns (`ownedClusterGroupsCovered`,
+  through `auth.OwnedClusterGroupLister`), all at read_write.
+  `RBACHandler.SetConnectionLister` must be wired; a nil lister, a
+  lister error or one without the owned-group method fails closed.
+- `manage_users`, `manage_groups`, `manage_permissions`,
+  `manage_token_scopes` and `*` each let a holder acquire every MCP
+  item and admin permission, so `principalReach.reachesEverything`
+  makes a holder count as reaching everything in those kinds.
 - An empty MCP name list is not proof of an unrestricted MCP scope:
-  `GetTokenMCPScope` joins away rows whose identifier no longer exists,
-  so `actorMCPScope` asks `AuthStore.HasTokenMCPScope` for the raw row
-  count and treats orphaned rows as a scope that names nothing.
-- Gated routes: group connection grant and revoke, group MCP grant,
-  group admin permission grant (`TokenScopeUnrestricted`), deleting a
-  group holding an out-of-scope grant, adding or removing a group member
-  (either member type, `GroupWithinTokenScope`), renaming a group
-  (`requireRenameInTokenScope`: the group must be within scope, and
-  neither the old nor the new name may appear in the OIDC `group_map`
-  that `RBACHandler.SetFederatedGroupMap` supplies, since federation
-  matches groups by name), creating or deleting a group whose name the
-  OIDC `group_map` uses (`federatedNameInTokenScope`,
-  `requireGroupDeleteInTokenScope`), `createUser` (superuser needs
-  `TokenScopeUnrestricted`), `updateUser` (`is_superuser`, and a
-  password set or re-enable on a user beyond scope), `deleteUser`
-  (ownership is matched by username, so delete-and-recreate would
-  otherwise inherit unshared connections), `createToken` for an owner
-  beyond scope, and `setTokenScope` / `clearTokenScope`, which overlay
-  the request on the stored scope (`storedTokenScope`) and judge all
-  three kinds of the result.
-- Every grant and reach check returns false on a nil auth store, as
-  `ConnectionInTokenScope` and `AllConnectionsInTokenScope` do.
+  `GetTokenMCPScope` joins away orphaned rows, so `actorMCPScope` and
+  `loadStoredTokenScope` ask `AuthStore.HasTokenMCPScope`.
+- Every check fails closed on a nil checker, a nil store or a token
+  context without an id.
 
-Revokes and group deletes are gated because a connection left with no
-group grant becomes unrestricted, opening a shared connection to every
-user. Known gaps, deliberately left: a token unrestricted in all three
-kinds is treated as unbounded whatever its owner holds (#522),
-`query_datastore` reaches beyond any connection scope (#566), and
-actions that widen nobody's reach are not scope-gated: revoking a
-group's MCP privileges or admin permissions, editing or disabling a
-user (a superuser too when the token's admin scope is unrestricted),
-and deleting a token. The
-regression tests are in `internal/api/rbac_grant_scope_test.go` and
-`internal/api/rbac_grant_reach_test.go` (integration, real auth store),
-with unit cases in `internal/auth/grant_scope_test.go`; each gate fails
-its test when reverted.
+Known gaps, deliberately left: `query_datastore` reaches beyond any
+connection scope (#566), and editing or disabling a user and deleting a
+token are not ceiling-gated. Tests: `internal/auth/token_ceiling_test.go`
+and `internal/auth/grant_scope_test.go` (unit, table-driven),
+`internal/api/rbac_token_ceiling_test.go`,
+`internal/api/rbac_grant_scope_test.go`,
+`internal/api/rbac_grant_reach_test.go` and
+`internal/api/rbac_token_self_scope_test.go` (integration, real auth
+store); each gate fails its test when reverted. Assert refusals with
+`assertRefusedWith(t, rec, refuseX)`.
 
 The scope PUT refuses an empty array for any kind with 400
 (`emptyScopeKind` in `rbac_token_handlers.go`), because an empty kind

@@ -343,10 +343,11 @@ func TestAccountTakeoverPermissionsReachEverything(t *testing.T) {
 // review's chain: a token bounded only in its MCP scope created a user,
 // set her password, added her to an empty group and then granted that
 // group manage_permissions, through which her session could grant the
-// MCP item the token itself was refused. Granting any admin permission
-// now needs a token restricted in none of the three kinds, so the chain
-// stops at the grant; an admin-bounded token is stopped there too, by
-// the superuser gate in front of it.
+// MCP item the token itself was refused. A permission that lets its
+// holder acquire every MCP item and admin permission now needs a token
+// that reaches all of them, so the chain stops at that grant, whilst an
+// ordinary permission within the token's own access is still granted;
+// an admin-bounded token is stopped by the superuser gate in front.
 func TestAdminPermissionGrantNeedsUnrestrictedToken(t *testing.T) {
 	f, cleanup := newReachFixture(t)
 	defer cleanup()
@@ -369,22 +370,27 @@ func TestAdminPermissionGrantNeedsUnrestrictedToken(t *testing.T) {
 			fmt.Sprintf(`{"user_id":%d}`, userID)), http.StatusNoContent)
 
 		permissions := fmt.Sprintf("/api/v1/rbac/groups/%d/permissions", groupID)
-		for _, perm := range []string{
-			auth.PermManagePermissions, auth.PermManageBlackouts,
-		} {
-			rec := f.do(caller, http.MethodPost, permissions,
+		grant := func(perm string) *httptest.ResponseRecorder {
+			return f.do(caller, http.MethodPost, permissions,
 				fmt.Sprintf(`{"permission":%q}`, perm))
-			if caller.name == f.mcpNarrowed.name {
-				assertGrantRefused(t, rec)
-			} else {
-				// A narrowed admin scope already fails the blanket
-				// superuser gate in front of the grant.
-				assertStatus(t, rec, http.StatusForbidden)
-			}
 		}
-		if perms, err := f.store.ListGroupAdminPermissions(groupID); err != nil ||
-			len(perms) != 0 {
-			t.Fatalf("Expected no permission to be written, got %v (%v)", perms, err)
+		if caller.name == f.mcpNarrowed.name {
+			assertRefusedWith(t, grant(auth.PermManagePermissions), refuseAdminGrant)
+			assertStatus(t, grant(auth.PermManageBlackouts), http.StatusNoContent)
+		} else {
+			// A narrowed admin scope already fails the blanket
+			// superuser gate in front of the grant.
+			assertStatus(t, grant(auth.PermManagePermissions), http.StatusForbidden)
+			assertStatus(t, grant(auth.PermManageBlackouts), http.StatusForbidden)
+		}
+		perms, err := f.store.ListGroupAdminPermissions(groupID)
+		if err != nil {
+			t.Fatalf("ListGroupAdminPermissions failed: %v", err)
+		}
+		for _, perm := range perms {
+			if perm == auth.PermManagePermissions {
+				t.Fatalf("Expected manage_permissions not to be written, got %v", perms)
+			}
 		}
 		for _, open := range f.open() {
 			assertStatus(t, f.do(open, http.MethodPost, permissions,
@@ -411,7 +417,9 @@ func TestCreateTokenRespectsMCPScope(t *testing.T) {
 
 // TestSetTokenScopeComparesEveryKind covers the review's last route:
 // a scope write is judged on its MCP and admin kinds as well as its
-// connections.
+// connections. The target starts restricted in both named kinds, so
+// that widening either is a grant; narrowing an unrestricted kind takes
+// nothing from the acting token and is covered elsewhere.
 func TestSetTokenScopeComparesEveryKind(t *testing.T) {
 	f, cleanup := newReachFixture(t)
 	defer cleanup()
@@ -419,6 +427,14 @@ func TestSetTokenScopeComparesEveryKind(t *testing.T) {
 	_, target, err := f.store.CreateToken("bob", "target", nil)
 	if err != nil {
 		t.Fatalf("CreateToken failed: %v", err)
+	}
+	if err := f.store.SetTokenMCPScopeByNames(target.ID,
+		[]string{reachToolInScope}); err != nil {
+		t.Fatalf("SetTokenMCPScopeByNames failed: %v", err)
+	}
+	if err := f.store.SetTokenAdminScope(target.ID,
+		[]string{auth.PermManageUsers}); err != nil {
+		t.Fatalf("SetTokenAdminScope failed: %v", err)
 	}
 	path := fmt.Sprintf("/api/v1/rbac/tokens/%d/scope", target.ID)
 
@@ -428,24 +444,31 @@ func TestSetTokenScopeComparesEveryKind(t *testing.T) {
 	}{
 		{f.mcpNarrowed, fmt.Sprintf(`{"mcp_privileges":[%q]}`, reachToolOutScope)},
 		{f.mcpNarrowed, `{"mcp_privileges":["*"]}`},
-		// Leaving the MCP kind alone keeps the owner's query_datastore.
-		{f.mcpNarrowed, `{"connections":[{"connection_id":5,"access_level":"read"}]}`},
 		{f.adminNarrowed, `{"admin_permissions":["manage_probes"]}`},
+		{f.adminNarrowed, `{"admin_permissions":["*"]}`},
 	}
 	for _, tc := range refused {
-		assertGrantRefused(t, f.do(tc.caller, http.MethodPut, path, tc.body))
+		assertRefusedWith(t, f.do(tc.caller, http.MethodPut, path, tc.body),
+			refuseTokenScope)
 	}
-	if scope, err := f.store.GetTokenScope(target.ID); err != nil || scope != nil {
-		t.Fatalf("Expected target to stay unscoped, got %+v (%v)", scope, err)
+	names, err := f.store.GetTokenMCPScope(target.ID)
+	if err != nil || len(names) != 1 || names[0] != reachToolInScope {
+		t.Fatalf("Expected the MCP scope to be unchanged, got %v (%v)", names, err)
 	}
 
 	assertStatus(t, f.do(f.mcpNarrowed, http.MethodPut, path,
 		fmt.Sprintf(`{"mcp_privileges":[%q]}`, reachToolInScope)), http.StatusNoContent)
 	assertStatus(t, f.do(f.adminNarrowed, http.MethodPut, path,
-		`{"admin_permissions":["manage_users"]}`), http.StatusNoContent)
+		`{"admin_permissions":["manage_users","manage_groups"]}`), http.StatusNoContent)
+	// Leaving the MCP kind alone leaves it restricted, so a connection
+	// write within the token's access is allowed.
+	assertStatus(t, f.do(f.mcpNarrowed, http.MethodPut, path,
+		`{"connections":[{"connection_id":5,"access_level":"read"}]}`),
+		http.StatusNoContent)
 
 	// Clearing would hand the token its owner's query_datastore again.
-	assertGrantRefused(t, f.do(f.mcpNarrowed, http.MethodDelete, path, ""))
+	assertRefusedWith(t, f.do(f.mcpNarrowed, http.MethodDelete, path, ""),
+		refuseTokenScope)
 	assertStatus(t, f.do(f.session, http.MethodDelete, path, ""), http.StatusNoContent)
 }
 
@@ -743,7 +766,9 @@ func TestOwnedClusterGroupCountsTowardsReach(t *testing.T) {
 	reset := `{"password":"Another-Password-9"}`
 	mint := `{"owner_username":"alice"}`
 	// A scope that leaves the connection kind alone keeps the owner's
-	// whole connection reach.
+	// whole connection reach. Narrowing the MCP kind grants nothing, so
+	// it stays allowed when her reach grows; clearing the scope does
+	// not, since it hands the token her whole access again.
 	narrow := fmt.Sprintf(`{"mcp_privileges":[%q]}`, reachToolInScope)
 
 	// Every member inside the scope: each route is allowed.
@@ -760,13 +785,18 @@ func TestOwnedClusterGroupCountsTowardsReach(t *testing.T) {
 	f.lister.owned["alice"] = []int{5, 9}
 	assertGrantRefused(t, f.do(f.narrowed, http.MethodPut, userPath, reset))
 	assertGrantRefused(t, f.do(f.narrowed, http.MethodPost, "/api/v1/rbac/tokens", mint))
-	assertGrantRefused(t, f.do(f.narrowed, http.MethodPut, scopePath, narrow))
 	assertGrantRefused(t, f.do(f.narrowed, http.MethodDelete, userPath, ""))
 	if u, _ := f.store.GetUser("alice"); u == nil {
 		t.Fatal("Expected alice to survive the refusal")
 	}
-	assertStatus(t, f.do(f.session, http.MethodPut, scopePath, narrow), http.StatusNoContent)
-	assertGrantRefused(t, f.do(f.narrowed, http.MethodDelete, scopePath, ""))
+	assertStatus(t, f.do(f.narrowed, http.MethodPut, scopePath, narrow), http.StatusNoContent)
+	// Clearing judges only the kinds the token is restricted in, so
+	// restrict its connections too: clearing would then hand it 9.
+	assertStatus(t, f.do(f.session, http.MethodPut, scopePath,
+		`{"connections":[{"connection_id":5,"access_level":"read"}]}`),
+		http.StatusNoContent)
+	assertRefusedWith(t, f.do(f.narrowed, http.MethodDelete, scopePath, ""),
+		refuseTokenScope)
 
 	// Ownership is matched by name, so a recreated alice owns the group.
 	assertStatus(t, f.do(f.session, http.MethodDelete, userPath, ""), http.StatusNoContent)
@@ -813,7 +843,7 @@ func TestFederatedGroupCreateAndDeleteRespectTokenScope(t *testing.T) {
 
 	assertGrantRefused(t, f.do(f.narrowed, http.MethodPost, "/api/v1/rbac/groups",
 		create("wb-admins")))
-	assertDenialRecorded(t, f.store, "group.create", grantOutOfTokenScope)
+	assertDenialRecorded(t, f.store, "group.create", refuseFederated)
 	if groups, err := f.store.ListGroups(); err != nil || len(groups) != 0 {
 		t.Fatalf("Expected no group to be created, got %v (%v)", groups, err)
 	}
@@ -826,7 +856,7 @@ func TestFederatedGroupCreateAndDeleteRespectTokenScope(t *testing.T) {
 		t.Fatalf("GetGroupByName failed: %v", err)
 	}
 	assertGrantRefused(t, f.do(f.narrowed, http.MethodDelete, path(federated), ""))
-	assertDenialRecorded(t, f.store, "group.delete", grantOutOfTokenScope)
+	assertDenialRecorded(t, f.store, "group.delete", refuseFederated)
 	if g, err := f.store.GetGroup(federated); err != nil || g == nil {
 		t.Fatalf("Expected wb-admins to survive, got %+v (%v)", g, err)
 	}

@@ -929,7 +929,7 @@ func TestUnlinkFederatedIdentityRevocationIsScopedAndComplete(t *testing.T) {
 			[]ScopedConnection{{ConnectionID: 1, AccessLevel: "read"}}); err != nil {
 			t.Fatalf("SetTokenConnectionScope: %v", err)
 		}
-		if err := store.SetTokenAdminScope(token.ID, []string{"users"}); err != nil {
+		if err := store.SetTokenAdminScope(token.ID, []string{PermManageUsers}); err != nil {
 			t.Fatalf("SetTokenAdminScope: %v", err)
 		}
 	}

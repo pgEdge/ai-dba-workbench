@@ -73,6 +73,14 @@ func (c *tokenCeiling) connectionLevel(connectionID int) string {
 // which a superuser holds at read_write, narrowed by the token's own
 // "all connections" scope entry. An owner with no such grant, or a
 // token whose scope names only particular connections, holds none.
+//
+// ValidateScopedConnections refuses a scope that mixes the "all
+// connections" entry with entries for particular connections, but a
+// scope stored before that rule may still hold one. An entry for a
+// particular connection overrides the "all connections" entry there
+// (see IsConnectionInTokenScope), so the level is also lowered to every
+// such entry: {all: read_write, 5: read} holds every connection at read
+// only, since connection 5 is held at no more.
 func (c *tokenCeiling) allConnectionsLevel() string {
 	ownerLevel := AccessLevelNone
 	if IsSuperuserFromContext(c.ctx) {
@@ -90,6 +98,33 @@ func (c *tokenCeiling) allConnectionsLevel() string {
 	inScope, level := c.rc.applyConnectionTokenScope(c.ctx, ConnectionIDAll,
 		ownerLevel)
 	if !inScope {
+		return AccessLevelNone
+	}
+	return c.lowestScopedLevel(level)
+}
+
+// lowestScopedLevel lowers level to the lowest level any entry of the
+// acting token's connection scope records, reporting none when the
+// scope cannot be read. A session, or a token with no connection scope,
+// leaves level as it is.
+func (c *tokenCeiling) lowestScopedLevel(level string) string {
+	tokenID := GetTokenIDFromContext(c.ctx)
+	if tokenID <= 0 {
+		return level
+	}
+	scope, err := c.rc.authStore.GetTokenScope(tokenID)
+	if err != nil {
+		return AccessLevelNone
+	}
+	if scope == nil {
+		return level
+	}
+	for _, sc := range scope.Connections {
+		if accessLevelRank(sc.AccessLevel) < accessLevelRank(level) {
+			level = sc.AccessLevel
+		}
+	}
+	if accessLevelRank(level) == 0 {
 		return AccessLevelNone
 	}
 	return level

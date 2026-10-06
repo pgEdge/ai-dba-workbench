@@ -10,6 +10,7 @@
 package api
 
 import (
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
@@ -165,14 +166,22 @@ func (h *RBACHandler) handleGroupConnectionPrivileges(w http.ResponseWriter, r *
 		// connection exists. Revoking the last group grant on a
 		// connection lifts its group restriction, which opens a shared
 		// connection to every user, so that revoke needs read_write
-		// (issue #471).
+		// (issue #471); the store decides that in the revoke's own
+		// transaction, so that a concurrent revoke cannot slip past it.
 		if !h.requireGrantInTokenScope(w, r,
 			h.rbacChecker.CanRevokeConnection(r.Context(), groupID, connID),
 			refuseConnectionRevoke) {
 			return
 		}
 
-		if err := h.actorStore(r).RevokeConnectionPrivilege(groupID, connID); err != nil {
+		guard := h.rbacChecker.ConnectionLiftGuard(r.Context(), connID)
+		err = h.actorStore(r).RevokeConnectionPrivilegeGuarded(groupID, connID,
+			guard)
+		if errors.Is(err, auth.ErrRevokeLiftsRestriction) {
+			h.requireGrantInTokenScope(w, r, false, refuseConnectionRevoke)
+			return
+		}
+		if err != nil {
 			log.Printf("[ERROR] Failed to revoke connection privilege for conn %d from group %d: %v", connID, groupID, err)
 			RespondError(w, http.StatusInternalServerError, "Failed to revoke connection privilege")
 			return

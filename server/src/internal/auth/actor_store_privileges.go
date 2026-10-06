@@ -46,7 +46,18 @@ func (a *ActorStore) GrantConnectionPrivilege(groupID int64, connectionID int, a
 // RevokeConnectionPrivilege revokes access to a database connection
 // from a group.
 func (a *ActorStore) RevokeConnectionPrivilege(groupID int64, connectionID int) error {
-	return a.s.revokeConnectionPrivilege(a.actor, groupID, connectionID)
+	return a.s.revokeConnectionPrivilege(a.actor, groupID, connectionID, nil)
+}
+
+// RevokeConnectionPrivilegeGuarded revokes access to a database
+// connection from a group, refusing with ErrRevokeLiftsRestriction when
+// the revoke would remove the connection's last group grant and the
+// guard does not allow that. The check and the delete share one
+// transaction.
+func (a *ActorStore) RevokeConnectionPrivilegeGuarded(groupID int64,
+	connectionID int, guard *LiftGuard) error {
+
+	return a.s.revokeConnectionPrivilege(a.actor, groupID, connectionID, guard)
 }
 
 // GrantAdminPermission grants an admin permission to a group.

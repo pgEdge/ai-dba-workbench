@@ -560,10 +560,18 @@ func (rc *RBACChecker) applySuperuserTokenScope(
 
 // applyScopedConnections narrows the reported connection privileges to
 // the token's connection scope. A token that scopes no connection, or
-// scopes them with a wildcard, leaves the map empty, which is the
-// unchanged "superuser, no limits" answer.
+// scopes them with the wildcard alone, leaves the map empty, which is
+// the unchanged "superuser, no limits" answer.
+//
+// A scope stored before ValidateScopedConnections refused mixed scopes
+// may hold the wildcard alongside entries for particular connections.
+// Each such entry overrides the wildcard for its connection, as
+// IsConnectionInTokenScope reads it, so the wildcard and every entry
+// are reported rather than nothing, which would claim no limits on a
+// connection the token holds at read only.
 func applyScopedConnections(scope *TokenScope, result *EffectivePrivileges) {
-	if len(scope.Connections) == 0 || scopeHasConnectionWildcard(scope) {
+	if len(scope.Connections) == 0 ||
+		(scopeHasConnectionWildcard(scope) && len(scope.Connections) == 1) {
 		return
 	}
 
@@ -689,14 +697,8 @@ func (rc *RBACChecker) GetEffectivePrivileges(ctx context.Context) *EffectivePri
 				}
 
 				if hasWildcard {
-					// Wildcard: keep all user connections but apply the
-					// wildcard access level as a ceiling
-					if wildcardLevel == AccessLevelRead {
-						for connID := range result.ConnectionPrivileges {
-							result.ConnectionPrivileges[connID] = AccessLevelRead
-						}
-					}
-					// read_write wildcard: no further filtering needed
+					applyWildcardConnectionScope(scope, wildcardLevel,
+						result)
 				} else {
 					// Non-wildcard token scope: intersect the token's
 					// explicit connection IDs against the user's group
@@ -762,6 +764,36 @@ func (rc *RBACChecker) GetEffectivePrivileges(ctx context.Context) *EffectivePri
 	}
 
 	return result
+}
+
+// applyWildcardConnectionScope narrows a non-superuser's reported
+// connection privileges to a connection scope holding the wildcard:
+// every connection the user holds is kept, lowered to the wildcard's
+// level. A scope stored before ValidateScopedConnections refused mixed
+// scopes may also name particular connections, and each such entry
+// overrides the wildcard for its connection, as IsConnectionInTokenScope
+// reads it, so the user's own level on that connection is lowered to
+// the entry's instead.
+func applyWildcardConnectionScope(scope *TokenScope, wildcardLevel string,
+	result *EffectivePrivileges) {
+
+	owned := make(map[int]string, len(result.ConnectionPrivileges))
+	for connID, level := range result.ConnectionPrivileges {
+		owned[connID] = level
+		result.ConnectionPrivileges[connID] = applyTokenCeiling(wildcardLevel,
+			level)
+	}
+	for _, sc := range scope.Connections {
+		if sc.ConnectionID == ConnectionIDAll {
+			continue
+		}
+		userLevel, ok := resolveConnectionAccess(owned, sc.ConnectionID)
+		if !ok {
+			continue
+		}
+		result.ConnectionPrivileges[sc.ConnectionID] = applyTokenCeiling(
+			sc.AccessLevel, userLevel)
+	}
 }
 
 // ConnectionVisibilityLister returns the list of all connections with

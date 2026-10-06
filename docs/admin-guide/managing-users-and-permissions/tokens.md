@@ -378,7 +378,8 @@ else:
 - `manage_groups` lets a holder join any group.
 - `manage_permissions` lets a holder grant any MCP item or admin permission to
   a group the holder belongs to.
-- `manage_token_scopes` lets a holder widen the scope of any token.
+- `manage_token_scopes` lets a holder widen the scope of any token that a
+  superuser does not own.
 
 A member of the group who signs in with a browser session is not bounded by
 any token. Without the stricter rule, a token restricted in its MCP privilege
@@ -482,10 +483,13 @@ connection or MCP scope, a token holding the relevant admin permission can:
   connections.
 - change any user's display name, email address or annotation, or disable
   any user, including a superuser when the token belongs to a superuser and
-  its admin permission scope is unrestricted.
+  its admin permission scope is unrestricted; the server never disables the
+  last enabled superuser.
 - clear a user's superuser status, when the token belongs to a superuser and
-  its admin permission scope is unrestricted.
-- delete any token.
+  its admin permission scope is unrestricted, unless the user is the last
+  enabled superuser.
+- delete any token that a superuser does not own; deleting a token that a
+  superuser owns needs a superuser, unless the token deletes itself.
 
 Issue a token with those admin permissions only to a holder you would trust
 with such changes across the whole estate.

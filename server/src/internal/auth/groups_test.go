@@ -548,6 +548,7 @@ func TestGetGroupMembers(t *testing.T) {
 func TestSetUserSuperuser(t *testing.T) {
 	store, cleanup := createTestAuthStoreForGroups(t)
 	defer cleanup()
+	addSpareSuperuser(t, store)
 
 	// Create a user
 	err := store.CreateUser("testuser", "Password1234", "Test user", "", "")

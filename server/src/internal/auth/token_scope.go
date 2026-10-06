@@ -30,10 +30,29 @@ var ErrUnknownMCPPrivilege = errors.New("unknown MCP privilege identifier")
 // an access level other than read or read_write.
 var ErrInvalidAccessLevel = errors.New("invalid access level")
 
-// ValidateScopedConnections checks that every entry's access level is
-// read or read_write, so that a caller writing several scope kinds can
-// refuse a bad connection scope before writing any of them.
+// ErrInvalidConnectionScope is returned when a connection scope is not a
+// plain list of distinct connections: it names a connection twice,
+// names a negative connection ID, or mixes the "all connections" entry
+// with entries for particular connections.
+//
+// A mixed scope is refused because its two kinds of entry answer the
+// same question differently: IsConnectionInTokenScope lets an entry for
+// a connection override the "all connections" entry, so {all:
+// read_write, 5: read} holds connection 5 at read only, yet a check that
+// reads the "all connections" entry alone would take the token to hold
+// every connection at read_write, and let it hand out read_write on
+// connection 5. One kind of entry or the other says everything a scope
+// needs to.
+var ErrInvalidConnectionScope = errors.New("invalid connection scope")
+
+// ValidateScopedConnections checks that a connection scope is well
+// formed, so that a caller writing several scope kinds can refuse a bad
+// connection scope before writing any of them: every entry's access
+// level is read or read_write, no connection is named twice or with a
+// negative ID, and the "all connections" entry, if present, is the only
+// entry (see ErrInvalidConnectionScope).
 func ValidateScopedConnections(connections []ScopedConnection) error {
+	seen := make(map[int]bool, len(connections))
 	for _, conn := range connections {
 		if conn.AccessLevel != AccessLevelRead &&
 			conn.AccessLevel != AccessLevelReadWrite {
@@ -41,6 +60,20 @@ func ValidateScopedConnections(connections []ScopedConnection) error {
 				ErrInvalidAccessLevel, conn.AccessLevel, conn.ConnectionID,
 				AccessLevelRead, AccessLevelReadWrite)
 		}
+		if conn.ConnectionID < 0 {
+			return fmt.Errorf("%w: connection ID %d is negative",
+				ErrInvalidConnectionScope, conn.ConnectionID)
+		}
+		if seen[conn.ConnectionID] {
+			return fmt.Errorf("%w: connection %d is listed more than once",
+				ErrInvalidConnectionScope, conn.ConnectionID)
+		}
+		seen[conn.ConnectionID] = true
+	}
+	if seen[ConnectionIDAll] && len(connections) > 1 {
+		return fmt.Errorf("%w: the all-connections entry (connection 0) "+
+			"cannot be combined with entries for particular connections",
+			ErrInvalidConnectionScope)
 	}
 	return nil
 }
@@ -668,6 +701,43 @@ func (s *AuthStore) HasTokenScope(tokenID int64) (bool, error) {
 // token_admin_scope to represent a wildcard ("all admin permissions") grant.
 const AdminPermissionWildcard = "*"
 
+// ErrUnknownAdminPermission is returned when an admin scope names a
+// permission that does not exist. Such an entry would match nothing,
+// so a scope of typos would read as a restriction whilst its holder
+// could never tell why every admin call was refused, and a name added
+// later would silently start to match.
+var ErrUnknownAdminPermission = errors.New("unknown admin permission")
+
+// knownAdminPermissions is every admin permission a scope may name, and
+// the wildcard. It matches the CHECK constraint on
+// group_admin_permissions.permission.
+var knownAdminPermissions = map[string]bool{
+	PermManageConnections:          true,
+	PermManageGroups:               true,
+	PermManagePermissions:          true,
+	PermManageUsers:                true,
+	PermManageTokenScopes:          true,
+	PermManageBlackouts:            true,
+	PermManageProbes:               true,
+	PermManageAlertRules:           true,
+	PermManageNotificationChannels: true,
+	PermStoreSystemMemory:          true,
+	AdminPermissionWildcard:        true,
+}
+
+// ValidateAdminPermissions checks that every entry of an admin scope is
+// a known admin permission or the wildcard, so that a caller writing
+// several scope kinds can refuse a bad admin scope before writing any
+// of them.
+func ValidateAdminPermissions(permissions []string) error {
+	for _, permission := range permissions {
+		if !knownAdminPermissions[permission] {
+			return fmt.Errorf("%w: %q", ErrUnknownAdminPermission, permission)
+		}
+	}
+	return nil
+}
+
 // SetTokenAdminScope sets the admin permission scope for a token.
 // This restricts which admin permissions the token can use.
 // If permissions contains "*", a single wildcard entry is stored instead of
@@ -679,6 +749,10 @@ func (s *AuthStore) SetTokenAdminScope(tokenID int64, permissions []string) erro
 
 func (s *AuthStore) setTokenAdminScope(actor Actor, tokenID int64,
 	permissions []string) (err error) {
+
+	if err := ValidateAdminPermissions(permissions); err != nil {
+		return err
+	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()

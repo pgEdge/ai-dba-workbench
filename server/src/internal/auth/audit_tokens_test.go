@@ -286,7 +286,7 @@ func TestAuditTokensDeleteUserToken(t *testing.T) {
 	if err := store.SetTokenMCPScopeByNames(token.ID, []string{"tool_a"}); err != nil {
 		t.Fatalf("SetTokenMCPScopeByNames failed: %v", err)
 	}
-	if err := store.SetTokenAdminScope(token.ID, []string{"users.read"}); err != nil {
+	if err := store.SetTokenAdminScope(token.ID, []string{"manage_users"}); err != nil {
 		t.Fatalf("SetTokenAdminScope failed: %v", err)
 	}
 
@@ -321,8 +321,8 @@ func TestAuditTokensDeleteUserToken(t *testing.T) {
 		t.Errorf("Expected before.tools [tool_a], got %v", before["tools"])
 	}
 	if admin := stringsOf(t, before["admin"]); len(admin) != 1 ||
-		admin[0] != "users.read" {
-		t.Errorf("Expected before.admin [users.read], got %v", before["admin"])
+		admin[0] != "manage_users" {
+		t.Errorf("Expected before.admin [manage_users], got %v", before["admin"])
 	}
 }
 
@@ -620,10 +620,10 @@ func TestAuditTokensSetAdminScope(t *testing.T) {
 	_, token := mustCreateToken(t, store, "bob", "scoped")
 
 	as := store.AsActor(testActor())
-	if err := as.SetTokenAdminScope(token.ID, []string{"users.read"}); err != nil {
+	if err := as.SetTokenAdminScope(token.ID, []string{"manage_users"}); err != nil {
 		t.Fatalf("SetTokenAdminScope failed: %v", err)
 	}
-	if err := as.SetTokenAdminScope(token.ID, []string{"*", "users.read"}); err != nil {
+	if err := as.SetTokenAdminScope(token.ID, []string{"*", "manage_users"}); err != nil {
 		t.Fatalf("SetTokenAdminScope failed: %v", err)
 	}
 
@@ -632,8 +632,8 @@ func TestAuditTokensSetAdminScope(t *testing.T) {
 
 	details := auditDetails(t, ev)
 	if before := stringsOf(t, details["before"]); len(before) != 1 ||
-		before[0] != "users.read" {
-		t.Errorf("Expected before [users.read], got %v", before)
+		before[0] != "manage_users" {
+		t.Errorf("Expected before [manage_users], got %v", before)
 	}
 	if after := stringsOf(t, details["after"]); len(after) != 1 || after[0] != "*" {
 		t.Errorf("Expected after [*], got %v", after)
@@ -659,7 +659,7 @@ func TestAuditTokensClearScope(t *testing.T) {
 	if err := store.SetTokenMCPScopeByNames(token.ID, []string{"tool_a"}); err != nil {
 		t.Fatalf("SetTokenMCPScopeByNames failed: %v", err)
 	}
-	if err := store.SetTokenAdminScope(token.ID, []string{"users.read"}); err != nil {
+	if err := store.SetTokenAdminScope(token.ID, []string{"manage_users"}); err != nil {
 		t.Fatalf("SetTokenAdminScope failed: %v", err)
 	}
 
@@ -679,8 +679,8 @@ func TestAuditTokensClearScope(t *testing.T) {
 		t.Errorf("Expected before.tools [tool_a], got %v", tools)
 	}
 	if admin := stringsOf(t, before["admin"]); len(admin) != 1 ||
-		admin[0] != "users.read" {
-		t.Errorf("Expected before.admin [users.read], got %v", admin)
+		admin[0] != "manage_users" {
+		t.Errorf("Expected before.admin [manage_users], got %v", admin)
 	}
 
 	scope, err := store.GetTokenScope(token.ID)
@@ -749,7 +749,7 @@ func TestAuditTokensChainStaysIntact(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("SetTokenConnectionScope failed: %v", err)
 	}
-	if err := as.SetTokenAdminScope(token.ID, []string{"users.read"}); err != nil {
+	if err := as.SetTokenAdminScope(token.ID, []string{"manage_users"}); err != nil {
 		t.Fatalf("SetTokenAdminScope failed: %v", err)
 	}
 	if err := as.ClearTokenScope(token.ID); err != nil {
@@ -1286,10 +1286,9 @@ func TestAuditTokensScopeMutationFailures(t *testing.T) {
 				return as.SetTokenConnectionScope(id, nil)
 			},
 			"failed to clear token connection scope"},
-		{"ConnectionsInsert", nil, "",
+		{"ConnectionsInsert", nil, blockInsert("token_connection_scope"),
 			func(as *ActorStore, id int64) error {
 				return as.SetTokenConnectionScope(id, []ScopedConnection{
-					{ConnectionID: 1, AccessLevel: AccessLevelRead},
 					{ConnectionID: 1, AccessLevel: AccessLevelRead},
 				})
 			},
@@ -1324,11 +1323,11 @@ func TestAuditTokensScopeMutationFailures(t *testing.T) {
 				return as.SetTokenAdminScope(id, nil)
 			},
 			"failed to clear admin scope"},
-		{"AdminInsert", nil, "",
+		{"AdminInsert", nil, blockInsert("token_admin_scope"),
 			func(as *ActorStore, id int64) error {
-				return as.SetTokenAdminScope(id, []string{"users.read", "users.read"})
+				return as.SetTokenAdminScope(id, []string{PermManageUsers})
 			},
-			"failed to add admin permission users.read to token scope"},
+			"failed to add admin permission manage_users to token scope"},
 		{"AdminWildcardInsert", nil, blockInsert("token_admin_scope"),
 			func(as *ActorStore, id int64) error {
 				return as.SetTokenAdminScope(id, []string{"*"})
@@ -1413,7 +1412,7 @@ func seedMCPScope(t *testing.T, s *AuthStore, tokenID int64) {
 func seedAdminScope(t *testing.T, s *AuthStore, tokenID int64) {
 	t.Helper()
 
-	if err := s.SetTokenAdminScope(tokenID, []string{"users.read"}); err != nil {
+	if err := s.SetTokenAdminScope(tokenID, []string{"manage_users"}); err != nil {
 		t.Fatalf("SetTokenAdminScope failed: %v", err)
 	}
 }

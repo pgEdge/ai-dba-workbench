@@ -277,7 +277,15 @@ func (a *ActorStore) UpdateGroup(id int64, name, description string) error {
 // DeleteGroup deletes a group and all of its dependent rows,
 // attributing the change to this store's actor.
 func (a *ActorStore) DeleteGroup(id int64) error {
-	return a.s.deleteGroup(a.actor, id)
+	return a.s.deleteGroup(a.actor, id, nil)
+}
+
+// DeleteGroupGuarded deletes a group as DeleteGroup does, refusing with
+// ErrRevokeLiftsRestriction when dropping one of its grants would remove
+// a connection's last group grant and the guard does not allow that. The
+// check and the delete share one transaction.
+func (a *ActorStore) DeleteGroupGuarded(id int64, guard *LiftGuard) error {
+	return a.s.deleteGroup(a.actor, id, guard)
 }
 
 // AddUserToGroup adds a user as a member of a group, attributing the

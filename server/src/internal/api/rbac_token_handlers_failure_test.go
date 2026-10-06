@@ -154,8 +154,11 @@ func TestDeleteTokenReportsStoreFailure(t *testing.T) {
 	handler, store, dir, cleanup := createTestRBACHandlerWithDir(t)
 	defer cleanup()
 
+	// The delete reads the token's scope before removing it, so losing a
+	// scope table fails the delete whilst the token itself can still be
+	// looked up.
 	tokenID := mustCreateScopedToken(t, store, "svc-doomed", nil)
-	dropAuthTable(t, dir, "tokens")
+	dropAuthTable(t, dir, "token_admin_scope")
 
 	rec := tokenRequest(handler, http.MethodDelete,
 		"/api/v1/rbac/tokens/"+strconv.FormatInt(tokenID, 10), "")

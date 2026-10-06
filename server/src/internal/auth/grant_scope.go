@@ -297,10 +297,12 @@ func (rc *RBACChecker) CanGrantConnection(ctx context.Context,
 
 // CanRevokeConnection reports whether the acting caller may remove the
 // group's grant on connectionID. A token needs read on the connection,
-// so that it cannot learn whether a connection it may not see exists;
-// and when the grant is the connection's last, removing it lifts the
-// group restriction and opens a shared connection to every user, so the
-// token then needs read_write, as granting that would.
+// so that it cannot learn whether a connection it may not see exists.
+// When the grant is the connection's last, removing it lifts the group
+// restriction and opens a shared connection to every user, so the token
+// then needs read_write, as granting that would; whether the grant is
+// the last can change under a concurrent revoke, so the store decides
+// that in the revoke's own transaction, from ConnectionLiftGuard.
 func (rc *RBACChecker) CanRevokeConnection(ctx context.Context,
 	groupID int64, connectionID int) bool {
 
@@ -308,28 +310,30 @@ func (rc *RBACChecker) CanRevokeConnection(ctx context.Context,
 	if !ok {
 		return false
 	}
-	if c.session {
-		return true
-	}
-	if !c.coversConnection(connectionID, AccessLevelRead) {
-		return false
-	}
-	return c.liftCovered(groupID, connectionID, false)
+	return c.session || c.coversConnection(connectionID, AccessLevelRead)
 }
 
-// liftCovered reports whether the ceiling covers read_write on
-// connectionID if removing the group's grants, one or all, would lift
-// the connection's group restriction. A lookup that fails is not
-// covered.
-func (c *tokenCeiling) liftCovered(groupID int64, connectionID int,
-	wholeGroup bool) bool {
+// ConnectionLiftGuard returns the guard a revoke or group delete passes
+// to the store: a session may lift the restriction on any connection,
+// and a token only on those of connectionIDs it holds at read_write.
+// A caller whose ceiling cannot be read may lift none.
+func (rc *RBACChecker) ConnectionLiftGuard(ctx context.Context,
+	connectionIDs ...int) *LiftGuard {
 
-	lifts, err := c.rc.authStore.RevokeLiftsConnectionRestriction(groupID,
-		connectionID, wholeGroup)
-	if err != nil {
-		return false
+	c, ok := rc.actorCeiling(ctx)
+	if !ok {
+		return AllowLifts()
 	}
-	return !lifts || c.coversConnection(connectionID, AccessLevelReadWrite)
+	if c.session {
+		return AllowAllLifts()
+	}
+	var allowed []int
+	for _, id := range connectionIDs {
+		if c.coversConnection(id, AccessLevelReadWrite) {
+			allowed = append(allowed, id)
+		}
+	}
+	return AllowLifts(allowed...)
 }
 
 // connectionsReadable reports whether the ceiling holds read on every
@@ -365,30 +369,34 @@ func (rc *RBACChecker) CanRemoveGroupMember(ctx context.Context,
 
 // CanDeleteGroup reports whether the acting caller may delete the
 // group. Deleting it takes away what membership conferred, so a token
-// needs read on each of those connections; and it drops the group's own
-// grants, so each grant that is a connection's last needs read_write,
-// as revoking it alone would (see CanRevokeConnection).
+// needs read on each of those connections. It also drops the group's
+// own grants, and each that is a connection's last needs read_write, as
+// revoking it alone would; the store decides that in the delete's own
+// transaction, from GroupDeleteLiftGuard.
 func (rc *RBACChecker) CanDeleteGroup(ctx context.Context, groupID int64) bool {
 	c, ok := rc.actorCeiling(ctx)
 	if !ok {
 		return false
 	}
-	if c.session {
-		return true
-	}
-	if !c.connectionsReadable(groupID) {
-		return false
-	}
+	return c.session || c.connectionsReadable(groupID)
+}
+
+// GroupDeleteLiftGuard returns the guard a group delete passes to the
+// store, covering the connections of the group's own grants. A grant
+// added after this lookup is not in the guard, so the store refuses the
+// delete if dropping it would lift a restriction, which fails closed.
+func (rc *RBACChecker) GroupDeleteLiftGuard(ctx context.Context,
+	groupID int64) *LiftGuard {
+
 	own, err := rc.authStore.ListGroupConnectionPrivileges(groupID)
 	if err != nil {
-		return false
+		return AllowLifts()
 	}
+	ids := make([]int, 0, len(own))
 	for _, cp := range own {
-		if !c.liftCovered(groupID, cp.ConnectionID, true) {
-			return false
-		}
+		ids = append(ids, cp.ConnectionID)
 	}
-	return true
+	return rc.ConnectionLiftGuard(ctx, ids...)
 }
 
 // CanGrantMCPItem reports whether the acting caller may grant the named
@@ -497,6 +505,7 @@ func (rc *RBACChecker) GroupWithinTokenScope(ctx context.Context,
 // whether each kind is restricted.
 type storedTokenScope struct {
 	ownerID         int64
+	ownerSuperuser  bool
 	conns           map[int]string
 	connsRestricted bool
 	mcp             map[string]bool
@@ -518,7 +527,12 @@ func (rc *RBACChecker) loadStoredTokenScope(tokenID int64) (
 	if token == nil {
 		return nil, false, nil
 	}
-	scope = &storedTokenScope{ownerID: token.OwnerID, conns: map[int]string{}}
+	owner, err := rc.authStore.GetUserByID(token.OwnerID)
+	if err != nil || owner == nil {
+		return nil, false, ErrTokenScopeUnreadable
+	}
+	scope = &storedTokenScope{ownerID: token.OwnerID,
+		ownerSuperuser: owner.IsSuperuser, conns: map[int]string{}}
 
 	conns, err := rc.authStore.GetTokenScope(tokenID)
 	if err != nil {
@@ -600,6 +614,40 @@ func (c *tokenCeiling) connectionsChangeCovered(stored *storedTokenScope,
 	return true
 }
 
+// widens reports whether change gives the token anything its stored
+// scope does not: a connection entry above the level the stored scope
+// allows on that connection, or, in a restricted named kind, an entry
+// the token does not already hold. Narrowing an unrestricted kind never
+// widens it.
+func (s *storedTokenScope) widens(change TokenScopeChange) bool {
+	for _, sc := range change.Connections {
+		if accessLevelRank(sc.AccessLevel) >
+			accessLevelRank(s.connectionLevel(sc.ConnectionID)) {
+			return true
+		}
+	}
+	return namesWiden(change.MCPPrivileges, s.mcp, s.mcpRestricted) ||
+		namesWiden(change.AdminPermissions, s.admin, s.adminRestricted)
+}
+
+// namesWiden reports whether entries name anything a restricted named
+// scope kind does not already hold. The wildcard is never in current,
+// since namedScope reports a kind holding it as unrestricted, so adding
+// it to a restricted kind widens it.
+func namesWiden(entries []string, current map[string]bool,
+	restricted bool) bool {
+
+	if !restricted {
+		return false
+	}
+	for _, entry := range entries {
+		if !current[entry] {
+			return true
+		}
+	}
+	return false
+}
+
 // namesChangeCovered judges a new named scope kind for a token. Narrowing
 // an unrestricted kind takes nothing from the ceiling; otherwise each
 // entry the token does not already hold must be covered.
@@ -642,6 +690,12 @@ func (rc *RBACChecker) TokenScopeChangeWithinCeiling(ctx context.Context,
 	if err != nil || !found {
 		return false, err
 	}
+	// A superuser's token is bounded by its scope alone, so widening it
+	// hands out superuser access, which only a token that may make
+	// someone a superuser holds to give (see holdsSuperuser).
+	if stored.ownerSuperuser && !c.holdsSuperuser() && stored.widens(change) {
+		return false, nil
+	}
 	if change.Connections != nil &&
 		!c.connectionsChangeCovered(stored, change.Connections) {
 		return false, nil
@@ -682,6 +736,13 @@ func (rc *RBACChecker) TokenScopeClearWithinCeiling(ctx context.Context,
 	owner, ok := rc.loadUserReach(stored.ownerID)
 	if !ok {
 		return false, ErrTokenScopeUnreadable
+	}
+	// Clearing any restriction of a superuser's token widens it towards
+	// superuser access, as in TokenScopeChangeWithinCeiling.
+	if owner.superuser && !c.holdsSuperuser() &&
+		(stored.connsRestricted || stored.mcpRestricted ||
+			stored.adminRestricted) {
+		return false, nil
 	}
 	if stored.connsRestricted &&
 		(!c.connectionsChangeCovered(stored, nil) ||

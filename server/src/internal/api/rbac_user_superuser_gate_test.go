@@ -187,6 +187,8 @@ func TestRBACHandler_UpdateUser_SuperuserFlagRequiresSuperuser(t *testing.T) {
 func TestRBACHandler_UpdateUser_SuperuserCanChangeSuperuser(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
+	// A second superuser keeps the target from being the last one.
+	mustCreateSuperuser(t, store, "spare-admin")
 
 	if err := store.CreateUser("target", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("CreateUser: %v", err)
@@ -357,6 +359,7 @@ func TestRBACHandler_DeleteUser_SuperuserTarget(t *testing.T) {
 			handler, store, adminID, cleanup := adminRBACHandler(t)
 			defer cleanup()
 			targetID := superuserTarget(t, store)
+			mustCreateSuperuser(t, store, "spare-admin")
 
 			req := httptest.NewRequest(http.MethodDelete,
 				"/api/v1/rbac/users/"+strconv.FormatInt(targetID, 10), nil)

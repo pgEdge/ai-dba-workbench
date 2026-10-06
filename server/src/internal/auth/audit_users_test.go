@@ -520,6 +520,7 @@ func TestAuditUsersEnableDisableNotFound(t *testing.T) {
 func TestAuditUsersSetUserSuperuser(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAudit(t)
 	defer cleanup()
+	addSpareSuperuser(t, store)
 
 	as := store.AsActor(testActor())
 	if err := as.CreateUser("bob", "Str0ngPassphrase!", "", "", ""); err != nil {
@@ -677,6 +678,7 @@ func TestAuditUsersSystemActor(t *testing.T) {
 func TestAuditUsersChainStaysIntact(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAudit(t)
 	defer cleanup()
+	addSpareSuperuser(t, store)
 
 	as := store.AsActor(testActor())
 	if err := as.CreateUser("bob", "Str0ngPassphrase!", "", "", ""); err != nil {

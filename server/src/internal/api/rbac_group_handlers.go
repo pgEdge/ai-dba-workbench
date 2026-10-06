@@ -319,7 +319,8 @@ func (h *RBACHandler) deleteGroup(w http.ResponseWriter, r *http.Request, groupI
 	// Deleting the group takes away what membership conferred and drops
 	// the group's own grants, so a token needs read on each of those
 	// connections, and read_write on any whose last grant the group
-	// holds, since dropping it lifts the restriction (issue #471).
+	// holds, since dropping it lifts the restriction (issue #471). The
+	// store decides the latter in the delete's own transaction.
 	if !h.requireGrantInTokenScope(w, r,
 		h.rbacChecker.CanDeleteGroup(r.Context(), groupID), refuseGroupRemoval) {
 		return
@@ -328,7 +329,13 @@ func (h *RBACHandler) deleteGroup(w http.ResponseWriter, r *http.Request, groupI
 		return
 	}
 
-	if err := h.actorStore(r).DeleteGroup(groupID); err != nil {
+	guard := h.rbacChecker.GroupDeleteLiftGuard(r.Context(), groupID)
+	err := h.actorStore(r).DeleteGroupGuarded(groupID, guard)
+	if errors.Is(err, auth.ErrRevokeLiftsRestriction) {
+		h.requireGrantInTokenScope(w, r, false, refuseGroupRemoval)
+		return
+	}
+	if err != nil {
 		log.Printf("[ERROR] Failed to delete group %d: %v", groupID, err)
 		RespondError(w, http.StatusInternalServerError, "Failed to delete group")
 		return

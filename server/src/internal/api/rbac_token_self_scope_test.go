@@ -100,14 +100,16 @@ func TestSetTokenScopeSelfTarget(t *testing.T) {
 
 // TestSetTokenScopeOtherTarget checks that the same rule governs
 // another token's scope: what the acting token holds may be granted,
-// what it does not may not.
+// what it does not may not. The other token's owner is not a superuser;
+// a superuser's token is for a superuser alone to change (see
+// TestSuperuserOwnedTokenNeedsSuperuser).
 func TestSetTokenScopeOtherTarget(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	acting := mustSuperuserScopedToken(t, store, "svc-scope-manager",
 		[]string{auth.PermManageTokenScopes})
-	other := mustSuperuserScopedToken(t, store, "svc-other",
+	other := mustCreateScopedToken(t, store, "svc-other",
 		[]string{auth.PermManageUsers})
 
 	assertRefusedWith(t, scopeRequest(handler, http.MethodPut, other, acting,

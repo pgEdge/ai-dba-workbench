@@ -636,13 +636,14 @@ func (s *AuthStore) grantConnectionPrivilege(actor Actor, groupID int64,
 // RevokeConnectionPrivilege revokes access to a database connection
 // from a group, recording the change as the system actor.
 func (s *AuthStore) RevokeConnectionPrivilege(groupID int64, connectionID int) error {
-	return s.revokeConnectionPrivilege(systemActor, groupID, connectionID)
+	return s.revokeConnectionPrivilege(systemActor, groupID, connectionID, nil)
 }
 
 // revokeConnectionPrivilege revokes connection access from a group and
-// records the audit event in the same transaction.
+// records the audit event in the same transaction. The guard is applied
+// in that transaction too (see LiftGuard).
 func (s *AuthStore) revokeConnectionPrivilege(actor Actor, groupID int64,
-	connectionID int) (err error) {
+	connectionID int, guard *LiftGuard) (err error) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -668,6 +669,12 @@ func (s *AuthStore) revokeConnectionPrivilege(actor Actor, groupID int64,
 	// Read the grant before it is deleted, so that the audit event
 	// records the access level that was withdrawn.
 	before := connectionAccessLevelTx(tx, groupID, connectionID)
+
+	if liftErr := guardLiftTx(tx, guard, groupID, connectionID,
+		false); liftErr != nil {
+		err = liftErr
+		return err
+	}
 
 	result, err := tx.Exec(
 		"DELETE FROM connection_privileges WHERE group_id = ? AND connection_id = ?",
@@ -1033,20 +1040,58 @@ func (s *AuthStore) IsConnectionAssignedToAnyGroup(connectionID int) (bool, erro
 	return count > 0, nil
 }
 
-// RevokeLiftsConnectionRestriction reports whether removing a group's
-// grants would leave connectionID assigned to no group when it is
-// assigned to one now, and so open it, if shared, to every user (see
+// ErrRevokeLiftsRestriction reports a revoke or group delete refused
+// because it would remove a connection's last group grant, so lifting
+// its group restriction and opening it, if shared, to every user, when
+// the caller's LiftGuard does not allow that for the connection.
+var ErrRevokeLiftsRestriction = errors.New(
+	"removal would lift a connection's group restriction")
+
+// LiftGuard says for which connections a revoke or group delete may
+// remove the last group grant. The caller computes it before calling the
+// store, since the store holds its write lock whilst it applies the
+// guard and so cannot consult the RBAC checker, and the store then
+// decides inside the same transaction as the delete, so that no
+// concurrent revoke can make a grant the last one in between. A nil
+// guard allows every lift, for the system and the CLI.
+type LiftGuard struct {
+	all     bool
+	allowed map[int]bool
+}
+
+// AllowAllLifts returns a guard that allows every lift, for a caller
+// that may open any connection, such as a session.
+func AllowAllLifts() *LiftGuard {
+	return &LiftGuard{all: true}
+}
+
+// AllowLifts returns a guard that allows a lift only on the given
+// connections. ConnectionIDAll stands for the "all connections" grant.
+func AllowLifts(connectionIDs ...int) *LiftGuard {
+	g := &LiftGuard{allowed: make(map[int]bool, len(connectionIDs))}
+	for _, id := range connectionIDs {
+		g.allowed[id] = true
+	}
+	return g
+}
+
+// allows reports whether the guard lets a removal lift the restriction
+// on connectionID.
+func (g *LiftGuard) allows(connectionID int) bool {
+	return g == nil || g.all || g.allowed[connectionID]
+}
+
+// liftsConnectionRestriction reports whether removing a group's grants
+// would leave connectionID assigned to no group when it is assigned to
+// one now, and so open it, if shared, to every user (see
 // IsConnectionAssignedToAnyGroup). With wholeGroup false only the
 // group's grant on connectionID is removed, as a revoke does; with
 // wholeGroup true every grant the group holds is, as deleting the group
 // does. ConnectionIDAll asks whether the last "all connections" grant
 // would go, which lifts the restriction from every connection that has
 // no grant of its own.
-func (s *AuthStore) RevokeLiftsConnectionRestriction(groupID int64,
+func liftsConnectionRestriction(q rowQuerier, groupID int64,
 	connectionID int, wholeGroup bool) (bool, error) {
-
-	s.mu.RLock()
-	defer s.mu.RUnlock()
 
 	// The rows that survive the removal are every other group's grants,
 	// plus, for a single revoke, the group's grants on other connections.
@@ -1066,9 +1111,9 @@ func (s *AuthStore) RevokeLiftsConnectionRestriction(groupID int64,
 	var before, after int
 	var err error
 	if wholeGroup {
-		err = s.db.QueryRow(revokeGroup, groupID, connectionID).Scan(&before, &after)
+		err = q.QueryRow(revokeGroup, groupID, connectionID).Scan(&before, &after)
 	} else {
-		err = s.db.QueryRow(revokeOne, groupID, connectionID, connectionID).
+		err = q.QueryRow(revokeOne, groupID, connectionID, connectionID).
 			Scan(&before, &after)
 	}
 	if err != nil {
@@ -1076,6 +1121,25 @@ func (s *AuthStore) RevokeLiftsConnectionRestriction(groupID int64,
 	}
 
 	return before > 0 && after == 0, nil
+}
+
+// guardLiftTx refuses with ErrRevokeLiftsRestriction when the guard
+// does not allow a lift on connectionID and the removal would lift it.
+func guardLiftTx(tx *sql.Tx, guard *LiftGuard, groupID int64,
+	connectionID int, wholeGroup bool) error {
+
+	if guard.allows(connectionID) {
+		return nil
+	}
+	lifts, err := liftsConnectionRestriction(tx, groupID, connectionID,
+		wholeGroup)
+	if err != nil {
+		return err
+	}
+	if lifts {
+		return ErrRevokeLiftsRestriction
+	}
+	return nil
 }
 
 // =============================================================================

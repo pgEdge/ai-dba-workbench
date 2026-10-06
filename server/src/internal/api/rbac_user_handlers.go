@@ -499,13 +499,21 @@ func describeAuthSource(user *auth.StoredUser) (source, issuer string) {
 
 // respondUserStoreError answers a failed auth store call made on behalf of
 // the request. A refusal the store marks as invalid input is the caller's
-// to fix, so it is returned as a 400 carrying the store's own message; any
-// other error is logged and returned as a 500 with the fixed failure
+// to fix, so it is returned as a 400 carrying the store's own message; a
+// refusal to remove the last enabled superuser is a 409; any other error
+// is logged and returned as a 500 with the fixed failure
 // message, so that database detail never reaches the client.
 func respondUserStoreError(w http.ResponseWriter, err error, failure, username string) {
 	var invalid *auth.InvalidInputError
 	if errors.As(err, &invalid) {
 		RespondError(w, http.StatusBadRequest, capitalizeFirst(invalid.Error()))
+		return
+	}
+	// Refusing to remove the last enabled superuser is a conflict with
+	// the server's state, not a fault: it clears once another enabled
+	// superuser exists.
+	if errors.Is(err, auth.ErrLastSuperuser) {
+		RespondError(w, http.StatusConflict, capitalizeFirst(err.Error()))
 		return
 	}
 	log.Printf("[ERROR] %s (user %s): %v", failure, username, err)

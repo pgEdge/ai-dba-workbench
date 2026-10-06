@@ -114,7 +114,9 @@ moved.
   non-superuser is bounded by its owner. read can grant only read; a
   revoke needs read (hidden and missing connections refused
   identically) and read_write when it removes a connection's last
-  group grant; group delete and member removal need read on every
+  group grant, decided inside the revoke's (or group delete's) own
+  store transaction from a precomputed `LiftGuard`, so a concurrent
+  revoke cannot race past it (`ErrRevokeLiftsRestriction`); group delete and member removal need read on every
   connection the group confers; an admin grant needs the permission
   and every connection at read_write, and a permission in
   `reachEverythingAdminPermissions` needs every MCP item and admin
@@ -128,6 +130,26 @@ moved.
   group's read_write. Known gaps, which do not widen anyone's reach:
   revoking a group's MCP privileges or admin permissions, editing or
   disabling a user, and deleting a token are not ceiling-gated.
+- A token owned by a superuser is bounded by its scope alone, so
+  minting one, and setting, clearing or deleting one's scope, needs a
+  superuser (session, or a superuser's token unrestricted in every
+  kind), as `updateUser` does for a superuser target
+  (`requireSuperuserForOwnedToken` in `api/rbac_token_handlers.go`); a
+  token acting on itself is exempt. In the ceiling, a non-superuser
+  caller holding everything may narrow such a token but never widen or
+  clear it.
+- A connection scope may not combine connection 0 (all connections)
+  with any other entry, nor name a connection twice
+  (`ValidateScopedConnections`, store, HTTP and CLI alike); legacy rows
+  that mix them are read with the specific entry taking precedence
+  everywhere, and the ceiling takes the lowest level of any entry.
+  Admin scope names must be known permissions or `*`.
+- The store refuses to demote, disable or delete the last enabled
+  superuser (`ErrLastSuperuser`, 409 over HTTP, counted inside the
+  change's transaction), for sessions, tokens and the CLI alike. The
+  lockout disable and the federated login's `is_superuser` sync are
+  outside the guard; that was raised with the user on PR #528 and has
+  no ruling yet.
   Separately, `query_datastore` reads beyond a token's connection
   scope (read-only SQL over the whole datastore, `connections`
   credentials included), which #566 tracks. A `read` connection entry

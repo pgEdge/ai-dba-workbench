@@ -8351,7 +8351,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_groups permission; an API token also needs read access to every connection membership of the group confers, and read_write on each connection whose last group grant the group holds, since deleting it lifts the restriction; or the group's name is one the OIDC group map uses and the token is not a superuser's token unrestricted in every scope kind",
+            "description": "Requires manage_groups permission; an API token also needs read access to every connection membership of the group confers, and read_write on each connection whose last group grant the group holds, since deleting it lifts the restriction, decided in the delete's own transaction; or the group's name is one the OIDC group map uses and the token is not a superuser's token unrestricted in every scope kind",
             "content": {
               "application/json": {
                 "schema": {
@@ -8927,7 +8927,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_permissions permission; an API token also needs read access to the connection, and read_write when the grant is the connection's last, since revoking it lifts the restriction. A connection the token cannot see is refused exactly as one that does not exist. A read-level token may revoke another group's read_write, since a revoke only narrows",
+            "description": "Requires manage_permissions permission; an API token also needs read access to the connection, and read_write when the grant is the connection's last, since revoking it lifts the restriction; whether it is the last is decided in the revoke's own transaction, so a concurrent revoke cannot slip past it. A connection the token cannot see is refused exactly as one that does not exist. A read-level token may revoke another group's read_write, since a revoke only narrows",
             "content": {
               "application/json": {
                 "schema": {
@@ -9234,7 +9234,17 @@
             }
           },
           "403": {
-            "description": "Requires manage_token_scopes permission, or the new token owner's access exceeds the API token's access (its owner's privileges narrowed by its scope); a token for a superuser needs a superuser's token unrestricted in every scope kind",
+            "description": "Requires manage_token_scopes permission, or the new token owner's access exceeds the API token's access (its owner's privileges narrowed by its scope); a token for a superuser needs a superuser's token unrestricted in every scope kind, or a superuser's session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to create token, including when the owner could not be read",
             "content": {
               "application/json": {
                 "schema": {
@@ -9285,7 +9295,17 @@
             }
           },
           "403": {
-            "description": "Requires manage_token_scopes permission",
+            "description": "Requires manage_token_scopes permission; a token owned by a superuser may be deleted only by a superuser, or by that token itself",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to get token: the token or its owner could not be read",
             "content": {
               "application/json": {
                 "schema": {
@@ -9393,7 +9413,7 @@
             "description": "Scope updated"
           },
           "400": {
-            "description": "Invalid request, including an empty array for any scope kind",
+            "description": "Invalid request, including an empty array for any scope kind; a connection scope that names a connection twice, has a negative connection ID or an unknown access level, or combines connection_id 0 (all connections) with any other entry; or an admin permission that is not a known permission name or \"*\"",
             "content": {
               "application/json": {
                 "schema": {
@@ -9413,7 +9433,17 @@
             }
           },
           "403": {
-            "description": "Requires manage_token_scopes permission, or the change grants access that exceeds the API token's access (its owner's privileges narrowed by its scope). Only the kinds present are judged: an entry the target token does not already allow must be within the caller's access, narrowing a kind that was unrestricted grants nothing, and keeping, narrowing or dropping a connection entry needs read access to that connection. The same rule applies to a token's own scope",
+            "description": "Requires manage_token_scopes permission, or the change grants access that exceeds the API token's access (its owner's privileges narrowed by its scope). Only the kinds present are judged: an entry the target token does not already allow must be within the caller's access, narrowing a kind that was unrestricted grants nothing, and keeping, narrowing or dropping a connection entry needs read access to that connection. The same rule applies to a token's own scope. A token owned by a superuser may be changed only by a superuser, other than by that token itself, and an API token may widen such a token only when it is a superuser's token unrestricted in every scope kind",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The target token or its owner could not be read",
             "content": {
               "application/json": {
                 "schema": {
@@ -9462,7 +9492,17 @@
             }
           },
           "403": {
-            "description": "Requires manage_token_scopes permission, or, for each kind the target token is restricted in, its owner's access in that kind exceeds the API token's access (its owner's privileges narrowed by its scope), or a connection entry the clear drops is one the caller cannot read. The same rule applies to a token's own scope",
+            "description": "Requires manage_token_scopes permission, or, for each kind the target token is restricted in, its owner's access in that kind exceeds the API token's access (its owner's privileges narrowed by its scope), or a connection entry the clear drops is one the caller cannot read. The same rule applies to a token's own scope. A token owned by a superuser may be cleared only by a superuser, other than by that token itself, and by an API token only when it is a superuser's token unrestricted in every scope kind",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The target token or its owner could not be read",
             "content": {
               "application/json": {
                 "schema": {
@@ -9608,7 +9648,7 @@
     "/rbac/users/{id}": {
       "put": {
         "summary": "Update user",
-        "description": "Updates a user's details. Requires manage_users permission; setting or clearing is_superuser also requires the caller to be a superuser, as does updating any user who is already a superuser.",
+        "description": "Updates a user's details. Requires manage_users permission; setting or clearing is_superuser also requires the caller to be a superuser, as does updating any user who is already a superuser. Demoting or disabling the last enabled superuser is refused with 409.",
         "operationId": "updateUser",
         "tags": [
           "RBAC Users"
@@ -9690,6 +9730,16 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "Cannot demote, disable or delete the last enabled superuser",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -9700,7 +9750,7 @@
       },
       "delete": {
         "summary": "Delete user",
-        "description": "Deletes a user. Requires manage_users permission, and superuser privileges when the user being deleted is a superuser.",
+        "description": "Deletes a user. Requires manage_users permission, and superuser privileges when the user being deleted is a superuser. Deleting the last enabled superuser is refused with 409.",
         "operationId": "deleteUser",
         "tags": [
           "RBAC Users"
@@ -9742,6 +9792,16 @@
           },
           "404": {
             "description": "User not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Cannot demote, disable or delete the last enabled superuser",
             "content": {
               "application/json": {
                 "schema": {

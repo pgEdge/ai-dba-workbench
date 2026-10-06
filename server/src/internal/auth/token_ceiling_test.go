@@ -206,9 +206,9 @@ func TestCeilingAllConnectionsFailsClosed(t *testing.T) {
 	}
 }
 
-// TestRevokeLiftsConnectionRestriction covers the store query behind
-// the revoke rule.
-func TestRevokeLiftsConnectionRestriction(t *testing.T) {
+// TestLiftsConnectionRestriction covers the store query behind the
+// revoke rule.
+func TestLiftsConnectionRestriction(t *testing.T) {
 	tests := []struct {
 		name       string
 		own        []ScopedConnection // the target group's grants
@@ -248,10 +248,10 @@ func TestRevokeLiftsConnectionRestriction(t *testing.T) {
 			if tt.other != nil {
 				f.newOwner(t, tt.other, nil)
 			}
-			got, err := f.store.RevokeLiftsConnectionRestriction(f.groupID,
+			got, err := liftsConnectionRestriction(f.store.db, f.groupID,
 				tt.conn, tt.wholeGroup)
 			if err != nil {
-				t.Fatalf("RevokeLiftsConnectionRestriction failed: %v", err)
+				t.Fatalf("liftsConnectionRestriction failed: %v", err)
 			}
 			if got != tt.want {
 				t.Errorf("got %v, want %v", got, tt.want)
@@ -260,22 +260,60 @@ func TestRevokeLiftsConnectionRestriction(t *testing.T) {
 	}
 }
 
-// TestRevokeLiftsConnectionRestrictionFailsClosed checks the error path.
-func TestRevokeLiftsConnectionRestrictionFailsClosed(t *testing.T) {
+// TestLiftsConnectionRestrictionFailsClosed checks that a failing lift
+// check refuses a guarded revoke and a guarded group delete.
+func TestLiftsConnectionRestrictionFailsClosed(t *testing.T) {
 	f, cleanup := newGrantScopeFixture(t)
 	defer cleanup()
-	dropAuthTable(t, f.store.db, "connection_privileges")
-	if _, err := f.store.RevokeLiftsConnectionRestriction(f.groupID, 5,
-		false); err == nil {
-		t.Error("Expected an error from a missing table")
+	f.grant(t, 7, AccessLevelRead)
+	mustExec(t, f.store, "ALTER TABLE connection_privileges RENAME TO cp_gone")
+	for _, whole := range []bool{false, true} {
+		if _, err := liftsConnectionRestriction(f.store.db, f.groupID, 7,
+			whole); err == nil {
+			t.Error("Expected an error from a missing table")
+		}
 	}
-	if _, err := f.store.RevokeLiftsConnectionRestriction(f.groupID, 5,
-		true); err == nil {
-		t.Error("Expected an error from a missing table")
+	actor := f.store.AsActor(systemActor)
+	if err := actor.RevokeConnectionPrivilegeGuarded(f.groupID, 7,
+		AllowLifts()); err == nil {
+		t.Error("A failing lift check should refuse the revoke")
 	}
-	if f.checker.CanRevokeConnection(f.tokenCtx(), f.groupID, 5) {
-		t.Error("A failing lookup should refuse the revoke")
+	if err := actor.DeleteGroupGuarded(f.groupID, AllowLifts()); err == nil {
+		t.Error("A failing lift check should refuse the delete")
 	}
+}
+
+// tokenRevokes reports whether the fixture's token may revoke the
+// group's grant on conn, as the handler decides it: the checker's read
+// rule, then the store's guarded revoke.
+func (f *grantScopeFixture) tokenRevokes(t *testing.T, conn int) bool {
+	t.Helper()
+	ctx := f.tokenCtx()
+	if !f.checker.CanRevokeConnection(ctx, f.groupID, conn) {
+		return false
+	}
+	err := f.store.AsActor(systemActor).RevokeConnectionPrivilegeGuarded(
+		f.groupID, conn, f.checker.ConnectionLiftGuard(ctx, conn))
+	if err != nil && !errors.Is(err, ErrRevokeLiftsRestriction) {
+		t.Fatalf("RevokeConnectionPrivilegeGuarded failed: %v", err)
+	}
+	return err == nil
+}
+
+// tokenDeletesGroup reports whether the fixture's token may delete the
+// group, as the handler decides it.
+func (f *grantScopeFixture) tokenDeletesGroup(t *testing.T) bool {
+	t.Helper()
+	ctx := f.tokenCtx()
+	if !f.checker.CanDeleteGroup(ctx, f.groupID) {
+		return false
+	}
+	err := f.store.AsActor(systemActor).DeleteGroupGuarded(f.groupID,
+		f.checker.GroupDeleteLiftGuard(ctx, f.groupID))
+	if err != nil && !errors.Is(err, ErrRevokeLiftsRestriction) {
+		t.Fatalf("DeleteGroupGuarded failed: %v", err)
+	}
+	return err == nil
 }
 
 // TestCanRevokeConnection covers the revoke rule: read on the
@@ -313,12 +351,12 @@ func TestCanRevokeConnection(t *testing.T) {
 				f.newOwner(t, []ScopedConnection{{ConnectionID: tt.conn,
 					AccessLevel: AccessLevelRead}}, nil)
 			}
-			if got := f.checker.CanRevokeConnection(f.tokenCtx(), f.groupID,
-				tt.conn); got != tt.want {
-				t.Errorf("CanRevokeConnection = %v, want %v", got, tt.want)
-			}
-			if !f.checker.CanRevokeConnection(sessionCtx(), f.groupID, tt.conn) {
+			if !f.checker.CanRevokeConnection(sessionCtx(), f.groupID, tt.conn) ||
+				!f.checker.ConnectionLiftGuard(sessionCtx()).allows(tt.conn) {
 				t.Error("A session should always pass")
+			}
+			if got := f.tokenRevokes(t, tt.conn); got != tt.want {
+				t.Errorf("revoke allowed = %v, want %v", got, tt.want)
 			}
 		})
 	}
@@ -349,16 +387,17 @@ func TestCanRemoveMemberAndDeleteGroup(t *testing.T) {
 			for _, g := range tt.grants {
 				f.grant(t, g.ConnectionID, g.AccessLevel)
 			}
+			if !f.checker.CanRemoveGroupMember(sessionCtx(), f.groupID) ||
+				!f.checker.CanDeleteGroup(sessionCtx(), f.groupID) ||
+				!f.checker.GroupDeleteLiftGuard(sessionCtx(), f.groupID).all {
+				t.Error("A session should always pass")
+			}
 			ctx := f.tokenCtx()
 			if got := f.checker.CanRemoveGroupMember(ctx, f.groupID); got != tt.wantRemove {
 				t.Errorf("CanRemoveGroupMember = %v, want %v", got, tt.wantRemove)
 			}
-			if got := f.checker.CanDeleteGroup(ctx, f.groupID); got != tt.wantDelete {
-				t.Errorf("CanDeleteGroup = %v, want %v", got, tt.wantDelete)
-			}
-			if !f.checker.CanRemoveGroupMember(sessionCtx(), f.groupID) ||
-				!f.checker.CanDeleteGroup(sessionCtx(), f.groupID) {
-				t.Error("A session should always pass")
+			if got := f.tokenDeletesGroup(t); got != tt.wantDelete {
+				t.Errorf("delete allowed = %v, want %v", got, tt.wantDelete)
 			}
 		})
 	}
@@ -392,6 +431,10 @@ func TestCanDeleteGroupFailsClosed(t *testing.T) {
 	dropAuthTable(t, f.store.db, "connection_privileges")
 	if f.checker.CanDeleteGroup(f.tokenCtx(), f.groupID) {
 		t.Error("A failing lookup should refuse the delete")
+	}
+	if g := f.checker.GroupDeleteLiftGuard(f.tokenCtx(), f.groupID); g.all ||
+		len(g.allowed) != 0 {
+		t.Error("A failing lookup should allow no lift")
 	}
 	if f.checker.CanRemoveGroupMember(f.tokenCtx(), f.groupID) {
 		t.Error("A failing lookup should refuse the removal")

@@ -505,8 +505,10 @@ permission check; gate 2 is the ceiling. The one comparison lives in
 `access.go`, which only clamps one connection level to the scope): `connectionLevel` uses
 `CanAccessConnection`, so an unscoped token owned by a non-superuser is
 bounded by its owner; `allConnectionsLevel` is the owner's
-all-connections grant (read_write for a superuser) narrowed by the
-token's all-connections entry; `coversReach` compares a whole
+all-connections grant (read_write for a superuser) narrowed to the
+lowest level of any entry in the token's connection scope
+(`lowestScopedLevel`), since a specific entry overrides the wildcard
+for its connection; `coversReach` compares a whole
 `principalReach`. The exported checks in `internal/auth/grant_scope.go`
 are the only entry points; handlers call them through
 `internal/api/rbac_grant_scope.go`, and each refusal goes through
@@ -517,13 +519,24 @@ exceeded "this token's access" (fixed so the denial audit coalesces).
   connection at that level; read can grant only read. The
   all-connections entry needs every connection at that level.
 - Connection revoke (`CanRevokeConnection`): read on the connection,
-  refused identically whether hidden or missing (#574), plus read_write
-  when `AuthStore.RevokeLiftsConnectionRestriction` says the grant is
-  the connection's last (a group-less connection opens to every user).
+  refused identically whether hidden or missing (#574). The lift rule,
+  read_write when the grant is the connection's last (a group-less
+  connection opens to every user), is decided by the store inside the
+  revoke's own transaction: the handler passes
+  `RBACChecker.ConnectionLiftGuard` to
+  `ActorStore.RevokeConnectionPrivilegeGuarded`, which returns
+  `auth.ErrRevokeLiftsRestriction` (mapped to the same 403) so that two
+  concurrent revokes cannot both pass a read-then-delete check. The
+  guard is computed before the call because the store holds its write
+  lock whilst applying it and must not call back into the checker.
   Accepted trade-off, not gated: a read-level token with
   `manage_permissions` may revoke another group's read_write.
 - Group delete (`CanDeleteGroup`): read on every connection membership
-  confers, plus the lift rule for each of the group's own grants.
+  confers; the lift rule for each of the group's own grants runs in the
+  delete's transaction through `GroupDeleteLiftGuard` and
+  `ActorStore.DeleteGroupGuarded`. A grant added after the guard was
+  computed is not in it, so the delete fails closed. Pinned by
+  `internal/auth/revoke_lift_guard_test.go` (sequential and concurrent).
   Member removal (`CanRemoveGroupMember`): read on every connection
   membership confers. MCP and admin revokes stay ungated.
 - MCP grant (`CanGrantMCPItem`): the token must be able to call it;
@@ -548,9 +561,29 @@ exceeded "this token's access" (fixed so the denial audit coalesces).
   allow must be covered; narrowing an unrestricted kind is free; a
   connection entry kept, narrowed or dropped needs read on it.
   Clear (`TokenScopeClearWithinCeiling`): for each kind the target is
-  restricted in, the owner's reach in that kind must fit. Both return
-  `ErrTokenScopeUnreadable` (500 in the handler) when the stored scope
-  or the owner's reach cannot be read.
+  restricted in, the owner's reach in that kind must fit. When the
+  target's owner is a superuser, the target is bounded by its scope
+  alone, so any widening (or any clear of a restricted target) also
+  needs `holdsSuperuser()`: a session, or a superuser's token
+  unrestricted in every kind. Both return `ErrTokenScopeUnreadable`
+  (500 in the handler) when the stored scope, the target's owner or the
+  owner's reach cannot be read.
+- Superuser-owned tokens: `createToken` for a superuser owner, and
+  `setTokenScope`, `clearTokenScope` and `deleteToken` on a token whose
+  owner is a superuser, call `requireSuperuser`
+  (`requireSuperuserForOwnedToken` in `rbac_token_handlers.go`), for
+  sessions and tokens alike, mirroring `updateUser` on a superuser
+  target. A token acting on itself is exempt, so it can still narrow
+  its own scope or delete itself. Pinned by
+  `internal/api/rbac_token_superuser_owner_test.go`.
+- Connection scope shape: `auth.ValidateScopedConnections` (store, HTTP
+  and CLI alike) refuses a duplicate connection ID, a negative ID, an
+  unknown level, and connection 0 (all connections) combined with any
+  other entry, with `ErrInvalidConnectionScope` (400). Legacy rows that
+  already mix them are still read with the specific entry taking
+  precedence, in `IsConnectionInTokenScope`, `applyScopedConnections`
+  and the ceiling alike. Admin scope names must be known permissions or
+  `*` (`ValidateAdminPermissions`, `ErrUnknownAdminPermission`, 400).
 - A user's reach counts group grants, public MCP items, every
   unrestricted connection the user can see, every connection their
   username owns (restricted or not, because `updateConnection` and
@@ -571,7 +604,7 @@ exceeded "this token's access" (fixed so the denial audit coalesces).
 
 Known gaps, deliberately left: `query_datastore` reaches beyond any
 connection scope (#566), and editing or disabling a user and deleting a
-token are not ceiling-gated. Tests: `internal/auth/token_ceiling_test.go`
+token not owned by a superuser are not ceiling-gated. Tests: `internal/auth/token_ceiling_test.go`
 and `internal/auth/grant_scope_test.go` (unit, table-driven),
 `internal/api/rbac_token_ceiling_test.go`,
 `internal/api/rbac_grant_scope_test.go`,
@@ -713,6 +746,18 @@ target account is a superuser, since resetting its password or
 disabling it is as good as holding the role. Pinned by
 `rbac_user_superuser_gate_test.go`. Any new endpoint that can change
 superuser status, or write to a superuser account, needs the same gate.
+
+The store also refuses, with `auth.ErrLastSuperuser`, any demotion,
+disable or delete that would leave no enabled superuser
+(`guardLastSuperuserTx` in `actor_store_users.go`, counting the other
+enabled superusers, service accounts included, inside the change's own
+transaction). It applies to `updateUserAtomic`, `setUserEnabled`,
+`setUserSuperuser` and `deleteUser`, so sessions, tokens and the CLI
+alike; `respondUserStoreError` maps it to 409. Not covered, by design:
+the lockout disable in `disableForLockout`, and the federated login's
+`is_superuser` sync in `federation.go`. Pinned by
+`internal/auth/last_superuser_test.go` (including a concurrent mutual
+demotion) and `internal/api/rbac_last_superuser_test.go`.
 
 ## Store Refusals Map to 400
 

@@ -322,6 +322,41 @@ func (s *AuthStore) recordUserUpdate(tx *sql.Tx, actor Actor,
 		}))
 }
 
+// ErrLastSuperuser reports a change refused because it would leave no
+// enabled superuser, so that nobody could administer the server through
+// the API or the web client.
+var ErrLastSuperuser = errors.New(
+	"cannot demote, disable or delete the last enabled superuser")
+
+// guardLastSuperuserTx refuses with ErrLastSuperuser when the change
+// from before to after, or deleting the user when deleting is set, takes
+// away the last enabled superuser. It runs inside the change's own
+// transaction, after or before the write alike, since it counts only the
+// other users, so that two concurrent demotions cannot both pass.
+// Service accounts count, since their tokens still administer the
+// server.
+func guardLastSuperuserTx(tx *sql.Tx, before, after userSnapshot,
+	deleting bool) error {
+
+	if !before.IsSuperuser || !before.Enabled {
+		return nil
+	}
+	if !deleting && after.IsSuperuser && after.Enabled {
+		return nil
+	}
+	var others int
+	if err := tx.QueryRow(
+		"SELECT COUNT(*) FROM users WHERE is_superuser AND enabled AND id <> ?",
+		before.ID,
+	).Scan(&others); err != nil {
+		return fmt.Errorf("failed to count superusers: %w", err)
+	}
+	if others == 0 {
+		return ErrLastSuperuser
+	}
+	return nil
+}
+
 // UpdateUserAtomic updates multiple user fields in a single atomic
 // transaction, attributing the change to the system actor. Either all
 // changes are applied or none are, so a partial update can never leave
@@ -369,6 +404,11 @@ func (s *AuthStore) updateUserAtomic(actor Actor, username string,
 	if applyErr := s.applyUserUpdatesTx(tx, username, update,
 		&after); applyErr != nil {
 		err = applyErr
+		return err
+	}
+
+	if guardErr := guardLastSuperuserTx(tx, before, after, false); guardErr != nil {
+		err = guardErr
 		return err
 	}
 
@@ -657,6 +697,11 @@ func (s *AuthStore) setUserEnabled(actor Actor, username string,
 	after := before
 	after.Enabled = enabled
 
+	if guardErr := guardLastSuperuserTx(tx, before, after, false); guardErr != nil {
+		err = guardErr
+		return err
+	}
+
 	details := map[string]any{"before": before, "after": after}
 	if enabled {
 		details["failed_attempts_reset"] = true
@@ -821,6 +866,11 @@ func (s *AuthStore) setUserSuperuser(actor Actor, username string,
 	after := before
 	after.IsSuperuser = isSuperuser
 
+	if guardErr := guardLastSuperuserTx(tx, before, after, false); guardErr != nil {
+		err = guardErr
+		return err
+	}
+
 	if auditErr := s.recordAudit(tx, newEvent(actor, action, "user", &before.ID,
 		username, map[string]any{"before": before, "after": after})); auditErr != nil {
 		err = auditErr
@@ -891,6 +941,11 @@ func (s *AuthStore) deleteUser(actor Actor, username string) (err error) {
 	}
 	userID := before.ID
 	target.targetID = &userID
+
+	if guardErr := guardLastSuperuserTx(tx, before, before, true); guardErr != nil {
+		err = guardErr
+		return err
+	}
 
 	tokensDeleted, depErr := deleteUserDependentsTx(tx, userID)
 	if depErr != nil {

@@ -1973,17 +1973,18 @@ func TestAuditChainCannotFork(t *testing.T) {
 // TestAuditChainGenesisAfterFullPurge checks that emptying the log
 // leaves the next event free to become the genesis row again, which the
 // unique index must permit now that the earlier empty prev_hash is
-// gone.
+// gone, but that the log then fails verification: a new chain starting
+// above event 1, with nothing recording where the log begins, is what
+// deleting every event and letting the server write one more leaves.
+// An interactive re-anchor, which records the new head, recovers it.
 //
 // The retention purge no longer produces this shape: it deletes a
 // prefix of ids and stops at the oldest row inside the window, so with
 // every row outside the window it removes nothing. An emptied table is
 // still reachable, by an operator clearing the log by hand or by a
-// database restored from one, and the index has to admit a fresh
-// genesis row when it happens, so the table is emptied here directly.
+// database restored from one, so the table is emptied here directly.
 func TestAuditChainGenesisAfterFullPurge(t *testing.T) {
-	store, cleanup := createTestAuthStoreForAudit(t)
-	defer cleanup()
+	store, dir := newReopenableStore(t)
 
 	old := time.Now().UTC().Add(-48 * time.Hour)
 	for i := 0; i < 3; i++ {
@@ -2021,16 +2022,60 @@ func TestAuditChainGenesisAfterFullPurge(t *testing.T) {
 			prevHash)
 	}
 
-	if _, firstBad, err := store.VerifyAuditChain(); err != nil || firstBad != 0 {
-		t.Errorf("Chain should verify after a full purge: firstBad=%d err=%v",
-			firstBad, err)
+	_, firstBad, err := store.VerifyAuditChain()
+	if !errors.Is(err, ErrAuditChainBroken) || firstBad != 4 ||
+		!strings.Contains(err.Error(), "starts a new chain") {
+		t.Fatalf("Expected the emptied log to fail at event 4, got "+
+			"firstBad=%d err=%v", firstBad, err)
+	}
+	store.Close()
+
+	reanchor(t, dir, AuditKeyForTesting())
+	reopened := openWithKey(t, dir, AuditKeyForTesting())
+	if _, firstBad, err := reopened.VerifyAuditChain(); err != nil {
+		t.Errorf("Expected the re-anchored log to verify: firstBad=%d "+
+			"err=%v", firstBad, err)
 	}
 }
 
 // TestPurgeAuditEventsDeleteFailure covers the branch where the purge
 // itself fails, which must leave the transaction rolled back and the
-// error reported rather than a count of zero.
+// error reported rather than a count of zero. The purge reads the table
+// before it deletes from it, so the delete is made to fail by a trigger
+// rather than by removing the table, which the boundary lookup would
+// report first.
 func TestPurgeAuditEventsDeleteFailure(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAudit(t)
+	defer cleanup()
+
+	old := newEvent(systemActor, "user.create", "user", int64Ptr(1),
+		"alice", nil)
+	old.OccurredAt = time.Now().UTC().Add(-48 * time.Hour)
+	mustRecord(t, store, old)
+	mustRecord(t, store, newEvent(systemActor, "user.create", "user",
+		int64Ptr(2), "bob", nil))
+	if _, err := store.db.Exec(`CREATE TRIGGER audit_events_no_delete
+        BEFORE DELETE ON audit_events
+        BEGIN SELECT RAISE(ABORT, 'no deletes'); END`); err != nil {
+		t.Fatalf("Failed to create the refusing trigger: %v", err)
+	}
+
+	removed, err := store.PurgeAuditEvents(time.Now().UTC().Add(-time.Hour))
+	if err == nil {
+		t.Fatal("Expected an error when the delete cannot run")
+	}
+	if !strings.Contains(err.Error(), "failed to purge audit events") {
+		t.Errorf("Expected a purge error, got %v", err)
+	}
+	if removed != 0 {
+		t.Errorf("Expected 0 rows removed, got %d", removed)
+	}
+}
+
+// TestPurgeAuditEventsBoundaryLookupFailure covers the retention
+// boundary query failing, which must be reported rather than read as a
+// window with nothing in it.
+func TestPurgeAuditEventsBoundaryLookupFailure(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAudit(t)
 	defer cleanup()
 
@@ -2041,11 +2086,9 @@ func TestPurgeAuditEventsDeleteFailure(t *testing.T) {
 	}
 
 	removed, err := store.PurgeAuditEvents(time.Now().UTC())
-	if err == nil {
-		t.Fatal("Expected an error when the delete cannot run")
-	}
-	if !strings.Contains(err.Error(), "failed to purge audit events") {
-		t.Errorf("Expected a purge error, got %v", err)
+	if err == nil ||
+		!strings.Contains(err.Error(), "failed to find the audit retention") {
+		t.Errorf("Expected the boundary lookup failure, got %v", err)
 	}
 	if removed != 0 {
 		t.Errorf("Expected 0 rows removed, got %d", removed)

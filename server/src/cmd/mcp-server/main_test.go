@@ -10,6 +10,7 @@
 package main
 
 import (
+	"io"
 	"os"
 	"testing"
 
@@ -29,6 +30,9 @@ func TestMain(m *testing.M) {
 	cliAuditKey = func() ([]byte, error) {
 		return auth.AuditKeyForTesting(), nil
 	}
+	// The tests answer the re-anchor's question from a string, not a
+	// terminal; TestAuditInputIsTerminal checks the real test.
+	auditInputIsTerminal = func(io.Reader) bool { return true }
 
 	os.Exit(m.Run())
 }

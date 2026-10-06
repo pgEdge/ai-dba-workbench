@@ -122,16 +122,20 @@ type Flags struct {
 	// RechainAuditCmd asks for. It is a second flag rather than part of
 	// the first so that the command cannot be run to completion by
 	// copying one word out of an error message.
-	ConfirmRechain  bool
-	AuditActor      string
-	AuditAction     string
-	AuditTargetType string
-	AuditTargetID   int64
-	AuditOutcome    string
-	AuditSince      string
-	AuditUntil      string
-	AuditLimit      int
-	JSONOutput      bool
+	ConfirmRechain bool
+	// PreviousSecretFile names the server secret a keyed log's older
+	// events were written under. A re-anchor checks them under it, and
+	// ConfirmRechain re-anchors only once that check has passed.
+	PreviousSecretFile string
+	AuditActor         string
+	AuditAction        string
+	AuditTargetType    string
+	AuditTargetID      int64
+	AuditOutcome       string
+	AuditSince         string
+	AuditUntil         string
+	AuditLimit         int
+	JSONOutput         bool
 }
 
 // ParseFlags parses command-line flags and returns a Flags struct
@@ -236,9 +240,11 @@ func ParseFlags(defaultConfigPath string) *Flags {
 	flag.BoolVar(&f.ListAuditCmd, "list-audit", false, "List RBAC audit log events")
 	flag.BoolVar(&f.VerifyAuditCmd, "verify-audit-log", false, "Verify the audit log hash chain")
 	flag.BoolVar(&f.RechainAuditCmd, "rechain-audit-log", false,
-		"Re-hash an existing audit log under the server secret, once, after upgrading an existing installation")
+		"Re-hash an inherited audit log under the server secret, or re-anchor a keyed log that no longer verifies")
 	flag.BoolVar(&f.ConfirmRechain, "confirm-rechain", false,
 		"Confirm -rechain-audit-log without an interactive prompt")
+	flag.StringVar(&f.PreviousSecretFile, "previous-secret-file", "",
+		"Server secret file the audit log's older events were written under, which -confirm-rechain needs to re-anchor them")
 	flag.StringVar(&f.AuditActor, "audit-actor", "", "Filter audit events by actor name")
 	flag.StringVar(&f.AuditAction, "audit-action", "", "Filter audit events by action (e.g. group.create)")
 	flag.StringVar(&f.AuditTargetType, "audit-target-type", "", "Filter audit events by target type (user, group, token)")

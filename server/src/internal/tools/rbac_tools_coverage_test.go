@@ -214,8 +214,12 @@ func TestGetAlertHistoryTool_Coverage(t *testing.T) {
 			wantErr: true, want: "Failed to resolve accessible connections"},
 	})
 	runToolCases(t, GetAlertHistoryTool(pool, privateChecker(t), sharedLister()), []toolCase{
-		{name: "no visible connections", args: map[string]any{"__context": restricted},
-			want: "You do not have access to any connections"},
+		// A signed-in user who sees no connection may still see system
+		// alerts (GitHub issue #582), so the query runs rather than
+		// short-circuiting; this pool has no alerts table.
+		{name: "no visible connections still queries system alerts",
+			args:    map[string]any{"__context": restricted},
+			wantErr: true, want: "Failed to query alerts"},
 		{name: "private connection denied", args: map[string]any{
 			"__context": restricted, "connection_id": float64(connID)},
 			wantErr: true, want: "connection not found or not accessible."},

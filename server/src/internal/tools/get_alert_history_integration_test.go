@@ -26,9 +26,9 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/database"
 )
 
-// alertHistorySchema adds the alert tables the tool reads, limited to
-// the columns it references.
-const alertHistorySchema = `
+// systemAlertHistorySchema adds the alert tables the tool reads, limited
+// to the columns it references, in their migration v18 shape.
+const systemAlertHistorySchema = `
 DROP TABLE IF EXISTS alert_acknowledgments CASCADE;
 DROP TABLE IF EXISTS alerts CASCADE;
 
@@ -62,7 +62,7 @@ CREATE TABLE alert_acknowledgments (
 );
 `
 
-const alertHistoryTeardown = `
+const systemAlertHistoryTeardown = `
 DROP TABLE IF EXISTS alert_acknowledgments CASCADE;
 DROP TABLE IF EXISTS alerts CASCADE;
 `
@@ -85,12 +85,12 @@ func newAlertHistoryFixture(t *testing.T) *alertHistoryFixture {
 	t.Cleanup(cleanup)
 
 	ctx := context.Background()
-	if _, err := pool.Exec(ctx, alertHistorySchema); err != nil {
+	if _, err := pool.Exec(ctx, systemAlertHistorySchema); err != nil {
 		t.Fatalf("create alert history schema: %v", err)
 	}
 	// Registered after the pool cleanup, so it runs first.
 	t.Cleanup(func() {
-		if _, err := pool.Exec(context.Background(), alertHistoryTeardown); err != nil {
+		if _, err := pool.Exec(context.Background(), systemAlertHistoryTeardown); err != nil {
 			t.Logf("alert history teardown failed: %v", err)
 		}
 	})
@@ -131,12 +131,41 @@ func bobContext(t *testing.T, store *auth.AuthStore) context.Context {
 	return nonSuperuserContextInt(userID, "bob")
 }
 
-// TestGetAlertHistorySystemAlertsNoRBACIntegration covers the nil
-// checker: every connection's alerts and the system alert appear, the
-// system alert with an empty connection_id and the alerter's label.
-func TestGetAlertHistorySystemAlertsNoRBACIntegration(t *testing.T) {
+// superuserTool returns the tool behind a real RBAC checker, run as a
+// superuser unless a call carries its own "__context". A nil checker
+// denies everything (GitHub issue #561), so tests that need to get past
+// the access checks use this rather than passing nil.
+func (f *alertHistoryFixture) superuserTool(t *testing.T) Tool {
+	t.Helper()
+	store, authCleanup := newRBACTestStore(t)
+	t.Cleanup(authCleanup)
+	return asSuperuser(GetAlertHistoryTool(f.pool,
+		auth.NewRBACCheckerForDatastore(store, f.ds), database.NewVisibilityLister(f.ds)))
+}
+
+// TestGetAlertHistorySystemAlertsNilCheckerIntegration proves a nil
+// checker sees neither connection nor system alerts, since every
+// RBACChecker method, CanSeeSystemAlerts included, denies on a nil
+// receiver.
+func TestGetAlertHistorySystemAlertsNilCheckerIntegration(t *testing.T) {
 	f := newAlertHistoryFixture(t)
 	tool := GetAlertHistoryTool(f.pool, nil, nil)
+
+	body := mustSuccess(t, tool, map[string]any{"__context": superuserContext(), "status": "active"})
+	if !strings.Contains(body, "You do not have access to any connections") {
+		t.Errorf("expected the no-access answer:\n%s", body)
+	}
+	if strings.Contains(body, "Tier 2 embedding") {
+		t.Errorf("system alert listed to a nil checker:\n%s", body)
+	}
+}
+
+// TestGetAlertHistorySystemAlertsSuperuserIntegration proves a superuser
+// sees every connection's alerts and the system alert, the system alert
+// with an empty connection_id and the alerter's label.
+func TestGetAlertHistorySystemAlertsSuperuserIntegration(t *testing.T) {
+	f := newAlertHistoryFixture(t)
+	tool := f.superuserTool(t)
 
 	body := mustSuccess(t, tool, map[string]any{"status": "active"})
 	for _, want := range []string{
@@ -224,7 +253,7 @@ func TestGetAlertHistorySystemAlertsDeniedIntegration(t *testing.T) {
 // connection_id filter never returns system alerts.
 func TestGetAlertHistorySingleConnectionOmitsSystemIntegration(t *testing.T) {
 	f := newAlertHistoryFixture(t)
-	tool := GetAlertHistoryTool(f.pool, nil, nil)
+	tool := f.superuserTool(t)
 
 	body := mustSuccess(t, tool, map[string]any{"connection_id": f.sharedConn})
 	if !strings.Contains(body, "Shared connection alert") || !strings.Contains(body, "(1 rows)") {
@@ -239,7 +268,7 @@ func TestGetAlertHistorySingleConnectionOmitsSystemIntegration(t *testing.T) {
 // of both modes.
 func TestGetAlertHistoryEmptyResultsIntegration(t *testing.T) {
 	f := newAlertHistoryFixture(t)
-	tool := GetAlertHistoryTool(f.pool, nil, nil)
+	tool := f.superuserTool(t)
 
 	tests := []struct {
 		name string
@@ -268,7 +297,7 @@ func TestGetAlertHistoryEmptyResultsIntegration(t *testing.T) {
 // in front of both queries.
 func TestGetAlertHistoryArgumentsIntegration(t *testing.T) {
 	f := newAlertHistoryFixture(t)
-	tool := GetAlertHistoryTool(f.pool, nil, nil)
+	tool := f.superuserTool(t)
 
 	errorCases := []struct {
 		name string

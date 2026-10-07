@@ -1031,3 +1031,48 @@ func TestHealthTrackingReasoningUnparseableVerdictDoesNotClear(t *testing.T) {
 		t.Errorf("alert status = %q after a parseable verdict, want cleared", alert.Status)
 	}
 }
+
+// TestHealthTrackingReasoningFailureIndependentOfKeywordDecision pins
+// that a JSON response without a valid decision is recorded as a
+// failure even when its reasoning holds a keyword the caller then acts
+// on, and that the caller's keyword decision differs from the tier's
+// default, so the two outcomes are visibly separate.
+func TestHealthTrackingReasoningFailureIndependentOfKeywordDecision(t *testing.T) {
+	tests := []struct {
+		name     string
+		tier     providerTier
+		cfg      llmDecisionConfig
+		response string
+		decision string
+	}{
+		{"tier 3", providerTierClassification, anomalyDecisionConfig,
+			`{"decision":"maybe","reasoning":"not a real issue"}`, "suppress"},
+		{"re-evaluation", providerTierReevaluation, reevaluationDecisionConfig,
+			`{"decision":"maybe","reasoning":"safe to clear"}`, "clear"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.decision == tt.cfg.DefaultDecision {
+				t.Fatalf("decision %q equals the tier default", tt.decision)
+			}
+			h := newTrackerHarness(1)
+			rsn := &healthTrackingReasoning{inner: &fakeReasoner{response: tt.response},
+				provider: "anthropic", tracker: h.tracker}
+			ctx := context.Background()
+			if tt.tier == providerTierReevaluation {
+				ctx = withProviderTier(ctx, tt.tier)
+			}
+
+			got, err := rsn.Classify(ctx, "prompt")
+			if err != nil {
+				t.Fatalf("Classify() error = %v", err)
+			}
+			if h.store.openFor(providerHealthKey(tt.tier, "anthropic")) == nil {
+				t.Errorf("no provider health alert for a response without a valid decision")
+			}
+			if decision, _ := parseLLMDecision(got, tt.cfg); decision != tt.decision {
+				t.Errorf("caller decision = %q, want the keyword decision %q", decision, tt.decision)
+			}
+		})
+	}
+}

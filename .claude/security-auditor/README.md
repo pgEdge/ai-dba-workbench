@@ -133,14 +133,19 @@ moved.
   group's read_write. Known gaps, which do not widen anyone's reach:
   revoking a group's MCP privileges or admin permissions, editing or
   disabling a user, and deleting a token are not ceiling-gated.
-- A token owned by a superuser is bounded by its scope alone, so minting
-  one, and setting, clearing or deleting one's scope, needs a superuser
-  (session, or a superuser's token with an unrestricted admin scope, as
-  `requireSuperuser` checks only that kind), as `updateUser` does for a
-  superuser target (`requireSuperuserForOwnedToken` in
-  `api/rbac_token_handlers.go`); a token acting on itself is exempt. In
-  the ceiling, a non-superuser caller holding everything may narrow such
-  a token but never widen or clear it.
+- A token owned by a superuser is bounded by its scope alone, so
+  minting one, setting or clearing its scope, and deleting it, needs a
+  superuser (session, or a superuser's token with an unrestricted admin
+  scope, as `requireSuperuser` checks only that kind), as `updateUser`
+  does for a superuser target. The owner is read inside the store's
+  write transaction, not by the handler (#607):
+  `guardSuperuserOwnedTokenTx` in `auth/token_superuser_owner.go` (and
+  the owner lookup in `createToken`) refuses with
+  `ErrSuperuserTargetForbidden`, and the handlers pass the caller's
+  authority as `superuserOwnerAllowed` (`api/rbac_token_handlers.go`),
+  which also exempts a token acting on itself. In the ceiling, a
+  non-superuser caller holding everything may narrow such a token but
+  never widen or clear it.
 - A token with no rows in a scope kind is unrestricted in it, so every
   token scope read in the store returns `auth.ErrTokenNotFound` for a
   token that no longer exists (`requireTokenLocked` in

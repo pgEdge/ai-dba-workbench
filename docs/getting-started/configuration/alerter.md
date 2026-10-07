@@ -299,11 +299,13 @@ candidate that reaches the tier without LLM classification,
 and the re-evaluation worker leaves acknowledged anomaly
 alerts unchanged.
 
-The following table describes the provider health option:
+The following table describes the provider health options:
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `failure_threshold` | integer | `3` | Consecutive failed calls that raise the alert; must be at least 1 |
+| `failure_rate` | number | `0.3` | Share of the last `failure_rate_window` calls that raises the alert when they fail; must be greater than 0 and at most 1 |
+| `failure_rate_window` | integer | `20` | Number of recent calls the failure rate covers; must be between 1 and 1000 |
 
 The alerter counts consecutive failures separately for tier
 2 embeddings, tier 3 classification and re-evaluation, and
@@ -311,7 +313,8 @@ for each provider. When one count reaches the threshold, the
 alerter raises a single warning alert for that tier and
 provider, and updates the alert's failure count as further
 calls fail. The next successful call to that provider resets
-the count and clears the alert; tier 3 classification and
+the count and clears the alert, unless the failure rate
+described below keeps the alert open; tier 3 classification and
 re-evaluation share the reasoning provider, so a successful
 call from either clears the alerts of both. After clearing
 an alert, the alerter does not raise it again for five
@@ -332,13 +335,36 @@ See
 [System Alerts](../../user-guide/alerts/index.md#system-alerts)
 for how the alert appears.
 
+The failure rate catches a provider that fails a steady
+share of its calls without failing consecutively, such as a
+provider that rejects every other request. The alerter keeps
+the outcomes of the last `failure_rate_window` calls for each
+tier and provider, and sets a limit of `failure_rate` times
+the window, rounded up; the defaults give a limit of 6 failed
+calls out of 20. The alerter raises the alert when the
+failed calls among those outcomes reach the limit, even
+before the window is full, and the five-minute wait still
+applies. A raised alert stays open whilst the failed calls
+remain at or above the limit, and clears on the first
+successful call that leaves fewer failed calls than the
+limit. A run of consecutive failures that reached the
+threshold counts as a single failed call once the provider
+recovers, provided that single failed call leaves the provider
+below the limit; an outage therefore clears on the first successful
+call, as the consecutive count alone would. Setting
+`failure_rate` to `1` leaves the consecutive count as
+effectively the only rule that raises the alert.
+
 In the following example, the alerter raises the alert after
-five consecutive failures:
+five consecutive failures, or once 10 of the last 40 calls
+have failed:
 
 ```yaml
 anomaly:
   provider_health:
     failure_threshold: 5
+    failure_rate: 0.25
+    failure_rate_window: 40
 ```
 
 ### Baseline Calculation (`baselines`)

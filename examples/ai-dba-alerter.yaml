@@ -276,14 +276,29 @@ anomaly:
   # The alerter raises a system alert when the Tier 2 embedding, Tier 3
   # classification or re-evaluation calls to an LLM provider keep
   # failing, because anomaly detection then degrades without any other
-  # sign. The alert clears on the next successful call. A failed health
-  # check at startup (for example, a retired model) raises it at once.
+  # sign. The alert clears on the next successful call, unless the
+  # provider is failing at the failure rate below. A failed health check
+  # at startup (for example, a retired model) raises it at once.
 
   provider_health:
     # Consecutive failed calls from one tier to one provider before the
     # system alert is raised. Must be at least 1.
     # Default: 3
     failure_threshold: 3
+
+    # Share of the last failure_rate_window calls from one tier to one
+    # provider that, once failed, raises the alert even when the
+    # failures are not consecutive (for example, alternating errors and
+    # successes). The alert then stays open until fewer than that share
+    # are failing. Must be greater than 0 and at most 1; 1 leaves only
+    # the consecutive count.
+    # Default: 0.3
+    failure_rate: 0.3
+
+    # Number of most recent calls the failure rate is measured over.
+    # Must be between 1 and 1000.
+    # Default: 20
+    failure_rate_window: 20
 
 #=========================================================================
 # BASELINE CALCULATION SETTINGS

@@ -79,5 +79,7 @@ anomaly:
     enabled: false
   provider_health:
     failure_threshold: 3
+    failure_rate: 0.3
+    failure_rate_window: 20
 
 secret_file: /etc/pgedge/ai-dba.secret

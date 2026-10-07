@@ -89,6 +89,21 @@ type AnomalyConfig struct {
 // raises a system alert about it.
 const DefaultProviderFailureThreshold = 3
 
+// DefaultProviderFailureRate is the default share of an LLM provider's
+// recent calls, from one tier, that must fail for the alerter to raise
+// the system alert about it whatever the consecutive count. See GitHub
+// issue #593.
+const DefaultProviderFailureRate = 0.3
+
+// DefaultProviderFailureRateWindow is the default number of recent calls
+// over which the failure rate is measured.
+const DefaultProviderFailureRateWindow = 20
+
+// MaxProviderFailureRateWindow bounds failure_rate_window, since the
+// alerter keeps the outcome of that many calls for each tier and
+// provider.
+const MaxProviderFailureRateWindow = 1000
+
 // ProviderHealthConfig holds the settings for the system alert the
 // alerter raises when the Tier 2 embedding, Tier 3 classification or
 // re-evaluation calls to an LLM provider keep failing. See GitHub issue
@@ -96,9 +111,22 @@ const DefaultProviderFailureThreshold = 3
 type ProviderHealthConfig struct {
 	// FailureThreshold is the number of consecutive failed calls from
 	// one tier to one provider that opens the alert. The first
-	// successful call clears it. A failed startup health check opens
+	// successful call clears it unless FailureRate keeps it open. A
+	// failed startup health check opens
 	// the alert at once, whatever the threshold. Must be at least 1.
 	FailureThreshold int `yaml:"failure_threshold"`
+
+	// FailureRate is the share of the last FailureRateWindow calls
+	// from one tier to one provider that, once failed, opens the alert
+	// even when the failures are not consecutive. The alert then stays
+	// open until fewer than that share are failing. Must be greater
+	// than 0 and at most 1.
+	FailureRate float64 `yaml:"failure_rate"`
+
+	// FailureRateWindow is the number of most recent calls the failure
+	// rate is measured over. Must be between 1 and
+	// MaxProviderFailureRateWindow.
+	FailureRateWindow int `yaml:"failure_rate_window"`
 }
 
 // Tier1Config holds Tier 1 statistical detection settings
@@ -421,7 +449,9 @@ func NewConfig() *Config {
 				MaxPerCycle:     10,
 			},
 			ProviderHealth: ProviderHealthConfig{
-				FailureThreshold: DefaultProviderFailureThreshold,
+				FailureThreshold:  DefaultProviderFailureThreshold,
+				FailureRate:       DefaultProviderFailureRate,
+				FailureRateWindow: DefaultProviderFailureRateWindow,
 			},
 		},
 		Baselines: BaselineConfig{
@@ -595,6 +625,14 @@ func (c *Config) Validate() error {
 	}
 	if c.Anomaly.ProviderHealth.FailureThreshold < 1 {
 		return fmt.Errorf("anomaly.provider_health.failure_threshold must be at least 1")
+	}
+	if rate := c.Anomaly.ProviderHealth.FailureRate; math.IsNaN(rate) || rate <= 0 || rate > 1 {
+		return fmt.Errorf("anomaly.provider_health.failure_rate must be greater than 0 and at most 1")
+	}
+	if window := c.Anomaly.ProviderHealth.FailureRateWindow; window < 1 ||
+		window > MaxProviderFailureRateWindow {
+		return fmt.Errorf("anomaly.provider_health.failure_rate_window must be between 1 and %d",
+			MaxProviderFailureRateWindow)
 	}
 	return nil
 }

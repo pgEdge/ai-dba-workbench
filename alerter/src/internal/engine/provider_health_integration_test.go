@@ -15,6 +15,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/pgedge/ai-workbench/alerter/internal/config"
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
 )
 
@@ -50,8 +51,10 @@ func TestProviderHealth_EndToEnd(t *testing.T) {
 	}
 	capture := installStalenessNotificationCapture(t, engine)
 
+	settings := config.NewConfig().Anomaly.ProviderHealth
+	settings.FailureThreshold = 2
 	tracker := newProviderHealthTracker(ds, engine.queueNotification,
-		func() int { return 2 }, func() []string { return nil }, engine.log)
+		func() config.ProviderHealthConfig { return settings }, func() []string { return nil }, engine.log)
 	emb := &healthTrackingEmbedding{inner: &fakeEmbedder{err: errors.New("model retired")},
 		provider: "openai", tracker: tracker}
 	key := providerHealthKey(providerTierEmbedding, "openai")

@@ -10,6 +10,7 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/url"
@@ -1502,6 +1503,40 @@ func TestMarshalDoesNotLeakResolvedPassword(t *testing.T) {
 	// The password key must be present but empty for the file-sourced case.
 	if !strings.Contains(out, "password: \"\"") {
 		t.Errorf("expected an empty password field in marshaled output, got:\n%s", out)
+	}
+}
+
+// TestJSONMarshalOmitsDatabasePassword pins the json:"-" tag on
+// DatabaseConfig.Password: a password held in the exported field, whether
+// inline or applied from -db-password / -db-password-file, must never
+// appear in JSON-serialized configuration, directly or via Config.
+func TestJSONMarshalOmitsDatabasePassword(t *testing.T) {
+	const secret = "json-must-not-see-this"
+	db := &DatabaseConfig{
+		User:     "postgres",
+		Host:     "localhost",
+		Database: "testdb",
+		Password: secret,
+	}
+
+	for name, v := range map[string]any{
+		"DatabaseConfig": db,
+		"Config":         &Config{Database: db},
+	} {
+		data, err := json.Marshal(v)
+		if err != nil {
+			t.Fatalf("%s: json.Marshal: %v", name, err)
+		}
+		if strings.Contains(string(data), secret) {
+			t.Errorf("%s: JSON output leaked the password: %s", name, data)
+		}
+		if strings.Contains(string(data), `"Password"`) {
+			t.Errorf("%s: JSON output has a Password key: %s", name, data)
+		}
+		// Sanity: the marshal really did serialize the struct.
+		if !strings.Contains(string(data), "testdb") {
+			t.Errorf("%s: JSON output missing other fields: %s", name, data)
+		}
 	}
 }
 

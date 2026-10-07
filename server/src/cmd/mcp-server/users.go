@@ -11,7 +11,9 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"syscall"
@@ -269,8 +271,8 @@ func deleteUserCommand(dataDir, username string) error {
 	}
 	defer store.Close()
 
-	// One reader serves both prompts: a second bufio.Reader on os.Stdin
-	// would miss the confirmation the first had already buffered.
+	// One reader serves both prompts: a second reader would start after
+	// whatever the first had already buffered, losing a piped answer.
 	reader := bufio.NewReader(os.Stdin)
 
 	// Prompt for username if not provided
@@ -284,12 +286,14 @@ func deleteUserCommand(dataDir, username string) error {
 		}
 	}
 
-	// Confirm deletion. Anything but an explicit yes cancels, including a
-	// confirmation that cannot be read, such as stdin at end of file.
+	// Confirm deletion. Only an explicit yes deletes: an empty answer,
+	// end of input or anything else declines.
 	fmt.Printf("Are you sure you want to delete user '%s'? (y/N): ", username)
-	input, err := reader.ReadString('\n')
-	response := strings.TrimSpace(strings.ToLower(input))
-	if err != nil || (response != "y" && response != "yes") {
+	confirmed, err := readConfirmation(reader)
+	if err != nil {
+		return fmt.Errorf("failed to read confirmation: %w", err)
+	}
+	if !confirmed {
 		fmt.Println("Deletion canceled")
 		return nil
 	}
@@ -302,6 +306,20 @@ func deleteUserCommand(dataDir, username string) error {
 
 	fmt.Printf("User '%s' deleted successfully\n", username)
 	return nil
+}
+
+// readConfirmation reads one answer to a (y/N) prompt and reports
+// whether it was an explicit yes. End of input is not an error: the
+// partial line read before it is still the answer, so "y" with no
+// trailing newline confirms whilst "n" or nothing at all declines. Any
+// other read error is returned, and the caller must treat it as a no.
+func readConfirmation(reader *bufio.Reader) (bool, error) {
+	input, err := reader.ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return false, err
+	}
+	response := strings.ToLower(strings.TrimSpace(input))
+	return response == "y" || response == "yes", nil
 }
 
 // listUsersCommand handles the list-users command

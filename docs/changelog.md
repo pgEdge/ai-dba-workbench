@@ -2105,6 +2105,16 @@ project adheres to
 
 ### Security
 
+- Delete a user with `ai-dba-server -delete-user` only when the
+  confirmation is an explicit `y` or `yes`. The answer was checked
+  only when a whole line could be read, so input that ended without
+  a newline skipped the check and deleted the user: `printf n |`
+  deleted on an explicit "n", as did running the command with stdin
+  redirected from `/dev/null`. The answer is now read even when the
+  input ends without a newline, so `printf y |` still confirms whilst
+  anything else declines, and a read error other than end of input
+  stops the command with an error rather than deleting. (#608)
+
 - Escape alert text for the chat service's markup in Slack and
   Mattermost notifications. The alerter previously escaped template
   values only for JSON, so an alert title, description, server name or

@@ -1285,7 +1285,11 @@ and returns when `!cfg.Anomaly.Enabled ||
 disables Tier 2 and Tier 3 would otherwise send the rest of the batch
 to `determineFinalDecision` with no tier result, which defaults to
 `alert` (#581). `TestProcessTier2And3StopsWhenReloadDisablesTiers`
-fires the reload from inside the first Tier 3 call.
+fires the reload from inside the first Tier 3 call. The
+`SupportsBaselines` suppression runs before this check, so a stale
+candidate for an excluded metric is suppressed even after a reload.
+Tests that need a candidate to reach Tier 3 must use a baselined
+metric such as `pg_sys_load_avg_info.load_avg_fifteen_minutes`.
 
 ## Time-Window Resolution (server)
 

@@ -14,6 +14,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -34,8 +35,12 @@ func TestProcessTier2And3SuppressesUnsupportedMetricCandidates(t *testing.T) {
 		t.Skipf("pgvector is not available: %v", err)
 	}
 
+	// Tier 3 is off so that the supported candidate's decision comes
+	// from Tier 2 alone, rather than from the suppressing Tier 3 stub
+	// that newDetectAnomaliesEnv installs.
 	cfg := engine.getConfig()
 	cfg.Anomaly.Tier2.Enabled = true
+	cfg.Anomaly.Tier3.Enabled = false
 	provider := &countingEmbeddingProvider{}
 	engine.embeddingProvider = provider
 
@@ -51,6 +56,7 @@ func TestProcessTier2And3SuppressesUnsupportedMetricCandidates(t *testing.T) {
 			MetricName:   metric,
 			MetricValue:  999,
 			ZScore:       10,
+			DetectedAt:   time.Now(),
 			Context:      "{}",
 			Tier1Pass:    true,
 		}

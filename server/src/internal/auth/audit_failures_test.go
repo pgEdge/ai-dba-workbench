@@ -11,8 +11,11 @@
 package auth
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"log"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -585,8 +588,17 @@ func TestFailureCoalescerRestoreStopsAtCap(t *testing.T) {
 		c.admit(failureKeyFor(fmt.Sprintf("target-%d", i)), start)
 	}
 
+	var logged bytes.Buffer
+	log.SetOutput(&logged)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
 	c.restore([]failureSummary{{key: failureKeyFor("evicted"),
-		suppressed: 1}})
+		suppressed: 7}})
+	if line := logged.String(); !strings.Contains(line, `"evicted"`) ||
+		!strings.Contains(line, ": 7 failure(s)") {
+		t.Errorf("expected the dropped summary's key and count logged, got %q",
+			line)
+	}
 	if len(c.entries) != maxFailureKeys {
 		t.Errorf("restore took the map to %d entries, cap %d",
 			len(c.entries), maxFailureKeys)
@@ -658,5 +670,49 @@ func TestCoalesceFailureRestoresAtCap(t *testing.T) {
 	}
 	if _, ok := store.failures.entries[failureKeyFor("newest")]; ok {
 		t.Error("the unwritten failure kept its window")
+	}
+}
+
+// TestFailureCoalescerReopen checks that a failure whose row carried
+// repeats, but could not be written, puts the window it closed back
+// holding those repeats plus itself, so the next identical failure is
+// recorded at once and reports them all; and that one carrying nothing
+// drops its entry.
+func TestFailureCoalescerReopen(t *testing.T) {
+	var c failureCoalescer
+	key := failureKeyFor("bob")
+	start := time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)
+	c.admit(key, start)
+	c.admit(key, start.Add(time.Second))
+	c.admit(key, start.Add(2*time.Second))
+
+	closing := start.Add(failureCoalesceWindow)
+	record, repeats, _ := c.admit(key, closing)
+	if !record || repeats != 3 {
+		t.Fatalf("expected the closing failure recorded for 3, got %v, %d",
+			record, repeats)
+	}
+	c.reopen(key, repeats)
+
+	state := c.entries[key]
+	if !state.firstSeen.Equal(start) || !state.lastSeen.Equal(closing) ||
+		state.suppressed != 3 {
+		t.Fatalf("expected the closed window back with 3 repeats, got %+v",
+			state)
+	}
+
+	record, repeats, _ = c.admit(key, closing.Add(time.Second))
+	if !record || repeats != 4 {
+		t.Errorf("expected the next failure recorded for 4, got %v, %d",
+			record, repeats)
+	}
+
+	c.reopen(key, 0)
+	if _, ok := c.entries[key]; ok {
+		t.Error("reopen with no repeats kept the entry")
+	}
+	c.reopen(key, 2)
+	if _, ok := c.entries[key]; ok {
+		t.Error("reopen of a missing key created an entry")
 	}
 }

@@ -11,6 +11,7 @@
 package auth
 
 import (
+	"fmt"
 	"log"
 	"sort"
 	"sync"
@@ -22,7 +23,7 @@ import (
 // failureCoalesceWindow is how long one recorded failure stands for the
 // identical failures that follow it. A caller holding a mutation
 // permission can repeat a request that fails deterministically, such as
-// creating a user that already exists, and every attempt used to append
+// creating a group that already exists, and every attempt used to append
 // a row, so a loop could grow the audit log without bound and bury the
 // events that matter. Within the window the repeats are counted rather
 // than written, and the next failure after it reports how many it
@@ -128,11 +129,14 @@ func (k failureKey) event(details any) *AuditEvent {
 // failureState tracks one key's current window: when it opened, which
 // is when the failure that was recorded happened, when the latest
 // identical failure arrived, and how many have been suppressed since
-// the window opened.
+// the window opened. closedFirstSeen keeps the start of the window that
+// the latest admitted failure closed, so that reopen can put that window
+// back if the failure's row cannot be written.
 type failureState struct {
-	firstSeen  time.Time
-	lastSeen   time.Time
-	suppressed int
+	firstSeen       time.Time
+	lastSeen        time.Time
+	suppressed      int
+	closedFirstSeen time.Time
 }
 
 // failureSummary carries the repeats an evicted entry never got to
@@ -145,6 +149,18 @@ type failureSummary struct {
 	suppressed int
 	firstSeen  time.Time
 	lastSeen   time.Time
+}
+
+// String describes the summary for the server log, quoting every value
+// that a caller could have shaped, so that a count which cannot reach the
+// audit log is at least attributed there.
+func (f failureSummary) String() string {
+	return fmt.Sprintf("actor %s %q (id %d) from %q, action %q, target "+
+		"%s %q, error %q: %d failure(s) between %s and %s",
+		f.key.actorType, f.key.actorName, f.key.actorID, f.key.actorIP,
+		f.key.action, f.key.targetType, f.key.targetName, f.key.errText,
+		f.suppressed, f.firstSeen.UTC().Format(auditTimeLayout),
+		f.lastSeen.UTC().Format(auditTimeLayout))
 }
 
 // event builds the summary row for the entry, attributed exactly as the
@@ -201,6 +217,7 @@ func (c *failureCoalescer) admit(key failureKey, now time.Time) (bool, int,
 		if state.suppressed > 0 {
 			repeats = state.suppressed + 1
 		}
+		state.closedFirstSeen = state.firstSeen
 		state.firstSeen = now
 		state.lastSeen = now
 		state.suppressed = 0
@@ -270,8 +287,9 @@ func (c *failureCoalescer) drain(now time.Time, all bool) []failureSummary {
 // the counts being lost with a failed transaction. An entry that has
 // been re-created since the drain is left as it is, and nothing is put
 // back once the map is at its cap, so that a store that keeps failing
-// its writes cannot grow the map without bound; the counts so dropped
-// have already been logged with the failed write.
+// its writes cannot grow the map without bound; each count so dropped
+// is written to the server log instead, with its key, since it cannot
+// reach the audit log.
 func (c *failureCoalescer) restore(summaries []failureSummary) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -281,10 +299,12 @@ func (c *failureCoalescer) restore(summaries []failureSummary) {
 	}
 	for i := range summaries {
 		summary := &summaries[i]
-		if len(c.entries) >= maxFailureKeys {
-			return
-		}
 		if _, ok := c.entries[summary.key]; ok {
+			continue
+		}
+		if len(c.entries) >= maxFailureKeys {
+			log.Printf("[ERROR] Dropped an unrecorded audit failure "+
+				"summary at the coalescing cap: %s", summary)
 			continue
 		}
 		c.entries[summary.key] = &failureState{
@@ -325,13 +345,27 @@ func sortSummaries(summaries []failureSummary) []failureSummary {
 	return summaries
 }
 
-// forget drops the entry for key, so that the next identical failure
-// opens a fresh window and is recorded.
-func (c *failureCoalescer) forget(key failureKey) {
+// reopen undoes the window that admit opened for key when the failure's
+// own row could not be written, so that the next identical failure is
+// recorded rather than suppressed behind a row that never reached the
+// log. When that row carried repeats from the window it closed, the
+// closed window is put back holding them plus the unwritten failure, so
+// the next identical failure, or a sweep, reports them all; otherwise
+// the entry is dropped, which also frees its slot at the cap.
+func (c *failureCoalescer) reopen(key failureKey, repeats int) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	delete(c.entries, key)
+	state, ok := c.entries[key]
+	if !ok {
+		return
+	}
+	if repeats == 0 {
+		delete(c.entries, key)
+		return
+	}
+	state.firstSeen = state.closedFirstSeen
+	state.suppressed = repeats
 }
 
 // writeFailure records one failure event in its own transaction,
@@ -428,7 +462,7 @@ func (s *AuthStore) sweepAuditFailures(now time.Time, all bool) {
 // coalesceFailure runs one failure through the coalescer at now,
 // writing a summary row for every evicted entry that held suppressed
 // repeats and then, if admitted, the failure itself. If the failure
-// itself cannot be written its window is dropped again, so that the
+// itself cannot be written its window is undone by reopen, so that the
 // identical failures after it are recorded rather than suppressed
 // behind a row that never reached the log. Summaries that cannot be
 // written are put back, as the sweep does, but only after that drop,
@@ -448,7 +482,7 @@ func (s *AuthStore) coalesceFailure(key failureKey, now time.Time) {
 			details = map[string]any{"repeat_count": repeats}
 		}
 		if !s.writeFailure(key.event(details)) {
-			s.failures.forget(key)
+			s.failures.reopen(key, repeats)
 		}
 	}
 

@@ -553,14 +553,30 @@ old secret left it, naming the last event written under that secret.
 The events the server goes on writing under the new secret are covered
 by a second tail record in the same table, which the server starts at
 the first of them and moves on by the same rule; its keyed hash also
-covers the first record, so neither can be swapped for an earlier copy
-on its own. Verification accepts the first record only in a log with
-the shape a changed secret leaves, described above under status `3`,
-and only when it names the last event that fails under the current
-secret, and then requires the second record to name the newest event
-and to verify under the current secret; anything else is reported with
-status `2`, so deleting the newest events is caught after a change of
-secret as it is before one. The record written under the old secret
+covers the first record, so a second record cannot be paired with a
+different first record. That does not stop an earlier copy of the
+second record being put back: the first record does not change whilst
+one secret is in use, so someone who saved the second record can
+delete the events written after the one it names, set the record of
+the highest identifier to match, and put the saved copy back, and the
+log reports status `3`, as described under
+[What Verification Does and Does Not Show](#what-verification-does-and-does-not-show).
+
+In a log with the shape a changed secret leaves, described above under
+status `3`, verification accepts the first record when it names the
+last event that fails under the current secret, and then requires the
+second record to name the newest event and to verify under the current
+secret. It also accepts a first record that names the newest event and
+verifies under the current secret, which is what the server writes
+when it adds the record to a log that a release before the tail record
+went on writing after the secret changed, and, in the window before
+the first event under a second new secret described below, a second
+record that names the newest event without verifying. A first record
+moved there from the second, as described below, never counts as
+verifying under the current secret, because the server moves it only
+once it fails under that secret. Anything else is reported with status
+`2`, so deleting the newest events is caught after a change of secret
+as it is before one. The record written under the old secret
 cannot be checked without that secret, so an unattended re-anchor
 requires it to verify under `-previous-secret-file` as well, as
 described under
@@ -836,7 +852,9 @@ all of the following hold:
   secret left behind verifies under it and names the last of those
   events, so that none written under it has been deleted from the end.
   A forged event or tail record verifies under no secret you hold, so
-  the proof fails and the run stops.
+  the proof fails and the run stops. An earlier copy of the second tail
+  record, which the server wrote under the current secret, is not
+  forged, and the proof does not catch it.
 - At least one event after the history verifies under the current
   secret, which shows that the current secret is the one the server
   runs with; a re-anchor signed under the wrong secret would stop every
@@ -956,7 +974,9 @@ neither those events nor the tail record written alongside them, so
 someone able to write `auth.db` can cut the log back to any earlier
 event written under that secret, not just to the moment it changed, and
 still see status `3`. Only a re-anchor given the previous secret with
-`-previous-secret-file` checks those events and that record; an
+`-previous-secret-file` checks those events and that record, although
+not the second tail record, so it accepts an earlier copy of that
+record put back as described above; an
 interactive re-anchor without it warns, just before it asks, that
 nothing has proven them. A log
 emptied entirely, with the tail record and the record of the highest

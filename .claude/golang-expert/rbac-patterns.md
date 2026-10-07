@@ -1146,10 +1146,14 @@ event of a never-used log; advance slot 2 by the same rule; start slot
 promote slot 2 unchanged into slot 1, keeping the overwritten slot-1
 fields in slot 1's `bound_*` columns, and start slot 2 afresh, when
 slot 2 names the newest row and both fail (a second rotation). Starting
-and promoting slot 2 each `log.Printf` a `[WARN]` line. Read slot 1
-through `primaryTailVerifiesUnder`, which checks a promoted slot 1 with
-`auditTailCurrentMAC` over its binding; any other write to slot 1
-passes an empty `auditTailBinding`.
+and promoting slot 2 each `log.Printf` a `[WARN]` line. Check slot 1
+under the key in use with `auditTailVerifies`, which refuses any slot 1
+with a binding, because a genuine promoted value was written under an
+earlier key and a writer can copy a server-signed slot 2 and its
+binding into slot 1. `primaryTailVerifiesUnder`, which checks a
+promoted slot 1 with `auditTailCurrentMAC` over its binding, is for the
+previous key only; any other write to slot 1 passes an empty
+`auditTailBinding`.
 Anything else is left alone on purpose, so the evidence persists.
 `verifyAuditTailAnchor` is reached only once every row verifies and
 ignores slot 2; a rotation-shaped log goes to

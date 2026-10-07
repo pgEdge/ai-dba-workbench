@@ -110,7 +110,13 @@ import (
 // slot keeps those three overwritten values in its bound_* columns, and
 // a promoted primary anchor is checked under the previous secret with
 // the current-key rendering over them (primaryTailVerifiesUnder). The
-// columns are set only by promotion, and only on the primary slot.
+// server sets the columns only by promotion, and only on the primary
+// slot, but anyone able to write auth.db can set them too, for example
+// by copying a current-key anchor the server signed into the primary
+// slot together with the primary anchor it was signed beside. A primary
+// anchor with the columns set therefore never counts as verifying under
+// the key in use (auditTailVerifies): a genuine promoted anchor was
+// written under an earlier secret, and only that secret can check it.
 //
 // A value planted in the current-key anchor between a change of secret
 // and the first event written under the new one is accepted by
@@ -385,9 +391,17 @@ func currentTailVerifiesUnder(key []byte, st auditTailState) bool {
 }
 
 // auditTailVerifies reports whether the primary anchor's HMAC
-// recomputes under the store's key.
+// recomputes under the store's key. A promoted primary anchor never
+// does: promotion happens only when the current-key anchor fails under
+// the key in use, so the value promoted was written under an earlier
+// secret, and only that secret can check it (proveAuditReanchorTail).
+// Counting one as verified would let a writer copy a current-key anchor
+// the server signed into the primary slot, with the bound_* columns set
+// to the primary anchor it was signed beside, and have it pass as a
+// primary anchor the key in use vouches for.
 func (s *AuthStore) auditTailVerifies(st auditTailState) bool {
-	return primaryTailVerifiesUnder(s.auditKey, st)
+	return !st.bound.valid && auditTailMACVerifies(s.auditKey, st.anchorID,
+		st.anchorHash, st.anchorMAC)
 }
 
 // currentTailVerifies reports whether the current-key anchor's HMAC
@@ -645,9 +659,16 @@ func expectedTableSQL(ddl string) string {
 // audit_tail, normalised for comparison.
 func (s *AuthStore) readAuditTailDefinition() (string, error) {
 	var definition string
-	if err := s.db.QueryRow(`SELECT sql FROM sqlite_master
-         WHERE type = 'table' AND name = 'audit_tail'`).
-		Scan(&definition); err != nil {
+	err := s.db.QueryRow(`SELECT sql FROM sqlite_master
+         WHERE type = 'table' AND name = 'audit_tail'`).Scan(&definition)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		// ensureAuditSchema has just run CREATE TABLE IF NOT EXISTS, which
+		// does nothing when a view or other object already holds the name.
+		return "", fmt.Errorf("%w: audit chain unprotected: audit_tail is "+
+			"not a table, so the tail anchors it shows are not what the "+
+			"server wrote", ErrAuditChainBroken)
+	case err != nil:
 		return "", fmt.Errorf("failed to read the audit_tail definition: %w",
 			err)
 	}

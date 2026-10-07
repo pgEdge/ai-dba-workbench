@@ -184,6 +184,26 @@ func TestExplainCommand(t *testing.T) {
 			wantReason: "runs the statement",
 		},
 		{
+			name:       "quoted option name is taken as an execution",
+			stmt:       `EXPLAIN (U&"\0061nalyze") SELECT 1`,
+			wantReason: "runs the statement",
+		},
+		{
+			name:       "unbalanced option list fails closed",
+			stmt:       "EXPLAIN (COSTS off SELECT 1",
+			wantReason: "runs the statement",
+		},
+		{
+			name:    "non-executing options are planned",
+			stmt:    "EXPLAIN (COSTS off, VERBOSE) SELECT 1",
+			wantSQL: "EXPLAIN (COSTS off, VERBOSE) SELECT 1",
+		},
+		{
+			name:    "the word analyze inside a literal is not an option",
+			stmt:    "EXPLAIN SELECT 'analyze'",
+			wantSQL: "EXPLAIN SELECT 'analyze'",
+		},
+		{
 			name:       "caller supplied EXPLAIN with a placeholder",
 			stmt:       "EXPLAIN SELECT * FROM t WHERE a = $1",
 			wantReason: "EXPLAIN carrying parameter",

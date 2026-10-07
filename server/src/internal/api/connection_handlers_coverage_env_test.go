@@ -96,8 +96,10 @@ CREATE TRIGGER conn_handler_cov_block_delete
 `
 
 // connHandlerCoverageSchemaName is the schema the fixture above is built
-// in; it is dropped before and after each test.
-const connHandlerCoverageSchemaName = "api_conn_handler_cov"
+// in; it is dropped before and after each test. The process ID suffix
+// stops two test processes sharing a database from dropping each
+// other's schema.
+var connHandlerCoverageSchemaName = "api_conn_handler_cov_" + strconv.Itoa(os.Getpid())
 
 // Fixture connection IDs. ownedConnID is unshared and owned by the
 // unprivileged owner; foreignConnID is unshared and owned by someone
@@ -147,20 +149,20 @@ func newConnHandlerEnv(t *testing.T) *connHandlerEnv {
 	ctx := context.Background()
 	dropSchema := "DROP SCHEMA IF EXISTS " + connHandlerCoverageSchemaName + " CASCADE"
 	admin := covPoolForSchema(t, connStr, "public")
-	if _, err := admin.Exec(ctx, dropSchema); err != nil {
-		admin.Close()
-		t.Fatalf("Failed to drop stale connection handler schema: %v", err)
-	}
-	if _, err := admin.Exec(ctx, "CREATE SCHEMA "+connHandlerCoverageSchemaName); err != nil {
-		admin.Close()
-		t.Fatalf("Failed to create connection handler schema: %v", err)
-	}
-	pool := covPoolForSchema(t, connStr, connHandlerCoverageSchemaName)
+	// Registered first so that it runs last, after the pool below is
+	// closed, and still runs if building that pool skips the test.
 	t.Cleanup(func() {
-		pool.Close()
 		_, _ = admin.Exec(context.Background(), dropSchema)
 		admin.Close()
 	})
+	if _, err := admin.Exec(ctx, dropSchema); err != nil {
+		t.Fatalf("Failed to drop stale connection handler schema: %v", err)
+	}
+	if _, err := admin.Exec(ctx, "CREATE SCHEMA "+connHandlerCoverageSchemaName); err != nil {
+		t.Fatalf("Failed to create connection handler schema: %v", err)
+	}
+	pool := covPoolForSchema(t, connStr, connHandlerCoverageSchemaName)
+	t.Cleanup(pool.Close)
 	if _, err := pool.Exec(ctx, connHandlerCoverageSchema); err != nil {
 		t.Fatalf("Failed to create connection handler tables: %v", err)
 	}

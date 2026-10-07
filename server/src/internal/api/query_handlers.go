@@ -721,16 +721,35 @@ var explainNonExecutingOptions = map[string]bool{
 // classification. The legacy form needs no such care, because its
 // option words are keywords that cannot be quoted or escaped.
 func isReadOnlyExplain(body string, depth int, reading stringReading) bool {
-	rest := strings.TrimSpace(stripLeadingComments(body[len("EXPLAIN"):]))
+	executes, rest, ok := parseExplainHead(body, reading)
+	if !ok {
+		// Malformed option list: fail closed rather than guess at it.
+		return false
+	}
+	if !executes {
+		return true
+	}
+	if rest == "" || depth >= maxExplainDepth {
+		return false
+	}
+	return isReadOnlyStatementAtDepth(rest, depth+1, reading)
+}
 
-	executes := false
+// parseExplainHead reads the options of an EXPLAIN statement, under one
+// reading of a plain '...' literal, and reports whether they make the
+// inner statement run, along with the inner statement's text. body must
+// already start with the EXPLAIN keyword. ok is false when the option
+// list's parentheses do not balance. See isReadOnlyExplain for why the
+// two option forms are read as they are.
+func parseExplainHead(body string, reading stringReading) (executes bool, rest string, ok bool) {
+	rest = strings.TrimSpace(stripLeadingComments(body[len("EXPLAIN"):]))
+
 	if strings.HasPrefix(rest, "(") {
 		// Parenthesised form: EXPLAIN ( option [, ...] ) statement.
-		options, remainder, ok := splitExplainOptions(rest, reading)
-		if !ok {
-			// Unbalanced parentheses: the statement is malformed, so
-			// fail closed rather than guess at the option list.
-			return false
+		options, remainder, balanced := splitExplainOptions(rest, reading)
+		if !balanced {
+			// Unbalanced parentheses: the statement is malformed.
+			return false, "", false
 		}
 		executes = explainOptionsExecute(options, reading)
 		rest = strings.TrimSpace(stripLeadingComments(remainder))
@@ -756,13 +775,22 @@ func isReadOnlyExplain(body string, depth int, reading stringReading) bool {
 		}
 	}
 
-	if !executes {
-		return true
+	return executes, rest, true
+}
+
+// explainExecutes reports whether an EXPLAIN statement would run the
+// statement it explains, under either reading of a plain '...' literal.
+// body must already start with the EXPLAIN keyword and have had its
+// leading comments stripped. A malformed option list counts as an
+// execution, so a caller that refuses executing EXPLAINs fails closed.
+func explainExecutes(body string) bool {
+	for _, reading := range stringReadings {
+		executes, _, ok := parseExplainHead(body, reading)
+		if executes || !ok {
+			return true
+		}
 	}
-	if rest == "" || depth >= maxExplainDepth {
-		return false
-	}
-	return isReadOnlyStatementAtDepth(rest, depth+1, reading)
+	return false
 }
 
 // explainOptionsExecute reports whether a parenthesised EXPLAIN option
@@ -2144,8 +2172,7 @@ func explainCommand(stmt string, genericPlan bool) (string, string) {
 	// An EXPLAIN the caller wrote is planned as it stands, except that
 	// EXPLAIN ANALYZE would run the statement it explains.
 	if strings.HasPrefix(upper, "EXPLAIN") {
-		if containsSQLKeyword(upper, "ANALYZE") ||
-			containsSQLKeyword(upper, "ANALYSE") { //nolint:misspell // ANALYSE is a PostgreSQL keyword
+		if explainExecutes(body) {
 			return "", "EXPLAIN ANALYZE runs the statement it explains, " +
 				"so it was not validated"
 		}

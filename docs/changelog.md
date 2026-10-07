@@ -835,7 +835,9 @@ project adheres to
   configuration file's password, or none; the file's password
   now overrides the configuration file at start-up and on a
   `SIGHUP` reload, as `-db-password` does, and `-db-password`
-  still takes precedence when both are given. (#591)
+  still takes precedence when both are given. The datastore
+  password is also now excluded when the server's configuration is
+  serialised to JSON, as the OIDC client secret already was. (#591)
 
 - Keep the server's command-line overrides across a `SIGHUP`
   configuration reload. A reload applied none of the flags given at

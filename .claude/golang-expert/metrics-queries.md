@@ -1102,7 +1102,11 @@ that follow from that, most learned the hard way in #406 and #407:
   each sample was taken: that entry's historical `max_conns` CTE builds
   `[valid_from, valid_to)` ranges over the `pg_settings` snapshots with
   `LAG`/`LEAD`, the first range open below so samples written before
-  the settings probe's first snapshot are kept.
+  the settings probe's first snapshot are kept. Its `latestSQL` applies
+  the same rule to the newest sample through a `JOIN LATERAL` (newest
+  `pg_settings` row at or before the sample, else the earliest), rather
+  than the newest row outright, which disagreed with the baseline when a
+  settings snapshot landed after the newest activity sample (#596).
   `metric_registry_activity_integration_test.go` loads one snapshot of
   client and background rows per metric and asserts both queries agree
   on it; add a case there when an activity entry gains a historical
@@ -1927,4 +1931,5 @@ run.
 - #567: The `pg_stat_activity` historical queries gained the latest
   queries' `backend_type = 'client backend'` filter, and
   `connection_utilization_percent`'s historical denominator became the
-  `max_connections` in force at each sample.
+  `max_connections` in force at each sample; #596 gave the latest query
+  the same denominator.

@@ -971,6 +971,13 @@ project adheres to
   hourly bucket that no longer has enough samples, so rows built from
   the old values do not survive the upgrade. (#567)
 
+- Fix the alerter's live `connection_utilization_percent` value
+  dividing the newest activity sample by the newest `max_connections`
+  setting even when that setting was recorded after the sample, for
+  example just after a restart that changed `max_connections`. The live
+  value now uses the setting in force when the sample was collected, as
+  the baseline does, so the two agree for the same snapshot. (#596)
+
 - Fix deleting a connection that has been collecting for a while. The
   delete removes the connection's whole metrics history through a
   cascade across every `metrics.*` table, but it ran under the same

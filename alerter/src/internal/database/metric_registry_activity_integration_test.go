@@ -204,10 +204,10 @@ func TestConnectionUtilizationPercent_BackgroundOnlySnapshot(t *testing.T) {
 }
 
 // TestConnectionUtilizationPercent_HistoricalUsesSettingInForce pins the
-// denominator. The latest query divides the newest sample by the newest
-// max_connections, which is the setting in force when that sample was
-// taken; the historical query must do the same for every sample rather
-// than rescale the whole history by today's setting. A sample collected
+// denominator. The latest query divides the newest sample by the
+// max_connections in force when that sample was taken; the historical
+// query must do the same for every sample rather than rescale the whole
+// history by today's setting. A sample collected
 // before the first pg_settings snapshot takes the earliest setting, so
 // samples written just ahead of the settings probe at onboarding are not
 // dropped from the baseline.
@@ -258,6 +258,73 @@ func TestConnectionUtilizationPercent_HistoricalUsesSettingInForce(t *testing.T)
 		assertClose(t, "historical "+c.label, got, c.want)
 	}
 	assertClose(t, "newest historical minus latest", historical[underSecond]-latest, 0)
+}
+
+// TestConnectionUtilizationPercent_LatestIgnoresNewerSetting is the
+// regression test for GitHub issue #596. A pg_settings sample written
+// after the newest activity sample, as just after a restart that changed
+// max_connections, must not become the latest query's denominator, or the
+// live value disagrees with the baseline for the same snapshot.
+func TestConnectionUtilizationPercent_LatestIgnoresNewerSetting(t *testing.T) {
+	ds, pool, cleanup := newHistoricalMetricsTestDatastore(t)
+	defer cleanup()
+
+	connID := insertConnection(t, pool, "conn-util-596")
+	insertMaxConnections(t, pool, connID, "100", sampleInstant(2*time.Hour))
+
+	at := sampleInstant(3 * time.Minute)
+	insertActivitySnapshot(t, pool, connID, at, []activityRow{
+		{backendType: clientBackend},
+		{backendType: clientBackend},
+		{backendType: clientBackend},
+		{backendType: clientBackend},
+		{backendType: checkpointer},
+	})
+	insertMaxConnections(t, pool, connID, "400", sampleInstant(1*time.Minute))
+
+	const want = 4.0 // four client backends of the max_connections = 100 in force
+
+	latest := latestValueFor(t, ds, "connection_utilization_percent", connID)
+	assertClose(t, "latest", latest, want)
+
+	historical := historicalValuesFor(t, ds, "connection_utilization_percent", connID)
+	got, ok := historical[at]
+	if !ok {
+		t.Fatalf("historical: no row for the snapshot at %v, got %+v", at, historical)
+	}
+	assertClose(t, "historical", got, want)
+	assertClose(t, "historical minus latest", got-latest, 0)
+}
+
+// TestConnectionUtilizationPercent_LatestBeforeFirstSetting pins the
+// onboarding case for the latest query: an activity sample that predates
+// every pg_settings write takes the earliest setting, as the historical
+// query does, rather than a later one.
+func TestConnectionUtilizationPercent_LatestBeforeFirstSetting(t *testing.T) {
+	ds, pool, cleanup := newHistoricalMetricsTestDatastore(t)
+	defer cleanup()
+
+	connID := insertConnection(t, pool, "conn-util-596-onboard")
+
+	at := sampleInstant(3 * time.Minute)
+	insertActivitySnapshot(t, pool, connID, at, []activityRow{
+		{backendType: clientBackend},
+		{backendType: clientBackend},
+	})
+	insertMaxConnections(t, pool, connID, "50", sampleInstant(2*time.Minute))
+	insertMaxConnections(t, pool, connID, "200", sampleInstant(1*time.Minute))
+
+	const want = 4.0 // two client backends of the earliest max_connections = 50
+
+	latest := latestValueFor(t, ds, "connection_utilization_percent", connID)
+	assertClose(t, "latest", latest, want)
+
+	historical := historicalValuesFor(t, ds, "connection_utilization_percent", connID)
+	got, ok := historical[at]
+	if !ok {
+		t.Fatalf("historical: no row for the snapshot at %v, got %+v", at, historical)
+	}
+	assertClose(t, "historical", got, want)
 }
 
 // TestPgStatActivityMetrics_HistoricalMatchesLatest extends the #567

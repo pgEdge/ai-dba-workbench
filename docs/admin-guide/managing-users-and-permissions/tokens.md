@@ -375,8 +375,8 @@ to each connection on which the group holds the last grant.
 
 The same rules apply to a group's `All Connections` grant, judged against
 every connection. Revoking that grant needs the token to hold every
-connection at `read`, or at `read_write` when no other group holds an
-`All Connections` grant.
+connection at `read`, and never needs `read_write`, because an
+`All Connections` grant restricts no connection.
 
 ### Granting MCP Privileges and Admin Permissions
 

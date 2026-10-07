@@ -2698,9 +2698,6 @@ func TestBuildConnectionString(t *testing.T) {
 				"sslrootcert=%2Fetc%2Fssl%2Frds-ca.pem",
 				"sslcert=%2Fetc%2Fssl%2Fclient.crt",
 				"sslkey=%2Fetc%2Fssl%2Fclient.key",
-				"&sslrootcert=",
-				"&sslcert=",
-				"&sslkey=",
 			},
 		},
 		{

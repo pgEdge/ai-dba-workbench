@@ -23,6 +23,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/pkg/rollback"
+	"github.com/pgedge/ai-workbench/server/internal/database"
 	"github.com/pgedge/ai-workbench/server/internal/tsv"
 )
 
@@ -65,36 +66,43 @@ const maxRowLimit = 1000
 const queryTimeout = 30 * time.Second
 
 // scanDollarTag checks whether sql[i] starts a dollar-quote tag. If a
-// valid tag is found (either $$ or $identifier$), it returns the full
-// tag string. Otherwise it returns an empty string.
+// valid tag is found (either $$ or $tag$), it returns the full tag
+// string. Otherwise it returns an empty string. The tag follows
+// PostgreSQL's lexer: it starts with a letter, an underscore or any byte
+// from 0x80 up, and continues with those or a digit, so $é$ is a tag
+// just as $q$ is. Missing one would leave a quote or comment marker
+// inside it to hide the code that follows from the classifier.
+//
+// A dollar sign that continues an identifier, as in foo$bar$ or é$bar$
+// (PostgreSQL allows $ after the first character of an unquoted
+// identifier), is part of that identifier rather than the start of a
+// dollar quote, so it yields no tag. Reading one there would let a later
+// $bar$ hide the code in between from the classifier.
 func scanDollarTag(sql string, i int) string {
 	if i >= len(sql) || sql[i] != '$' {
+		return ""
+	}
+	if continuesIdentifier(sql, i) {
 		return ""
 	}
 	// Check for $$ (empty tag)
 	if i+1 < len(sql) && sql[i+1] == '$' {
 		return "$$"
 	}
-	// Check for $identifier$ where identifier is [A-Za-z_][A-Za-z0-9_]*
+	// Check for $tag$, where the tag is an identifier that does not
+	// start with a digit.
 	j := i + 1
-	if j >= len(sql) {
+	if j >= len(sql) || !isIdentChar(sql[j]) ||
+		(sql[j] >= '0' && sql[j] <= '9') {
 		return ""
 	}
-	ch := sql[j]
-	if (ch < 'A' || ch > 'Z') && (ch < 'a' || ch > 'z') && ch != '_' {
-		return ""
-	}
-	j++
-	for j < len(sql) {
-		ch = sql[j]
-		if ch == '$' {
+	for j++; j < len(sql); j++ {
+		if sql[j] == '$' {
 			return sql[i : j+1]
 		}
-		if (ch < 'A' || ch > 'Z') && (ch < 'a' || ch > 'z') &&
-			(ch < '0' || ch > '9') && ch != '_' {
+		if !isIdentChar(sql[j]) {
 			return ""
 		}
-		j++
 	}
 	return ""
 }
@@ -105,12 +113,12 @@ func hasOnlyComments(s string) bool {
 	i := 0
 	for i < len(s) {
 		ch := s[i]
-		if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' {
+		if isSQLSpace(ch) {
 			i++
 			continue
 		}
 		if ch == '-' && i+1 < len(s) && s[i+1] == '-' {
-			for i < len(s) && s[i] != '\n' {
+			for i < len(s) && !isSQLNewline(s[i]) {
 				i++
 			}
 			continue
@@ -137,11 +145,19 @@ func hasOnlyComments(s string) bool {
 }
 
 // splitStatements splits a SQL string into individual statements by
-// scanning for semicolons that are outside of single-quoted strings,
-// dollar-quoted strings, line comments, and block comments (with
-// nesting). It trims whitespace and filters out empty or
-// comment-only statements.
+// scanning for semicolons that are outside of quoted strings, quoted
+// identifiers, dollar-quoted strings, line comments, and block comments
+// (with nesting). It trims whitespace and filters out empty or
+// comment-only statements. It reads a plain '...' literal as a standard
+// string, which is how the statements are split for execution; the
+// classifier splits under both readings (see isReadOnlyStatement).
 func splitStatements(sql string) []string {
+	return splitStatementsAs(sql, standardStrings)
+}
+
+// splitStatementsAs is splitStatements with the given reading of a plain
+// '...' literal.
+func splitStatementsAs(sql string, reading stringReading) []string {
 	var statements []string
 	start := 0
 	i := 0
@@ -149,21 +165,10 @@ func splitStatements(sql string) []string {
 	for i < len(sql) {
 		ch := sql[i]
 
-		// Single-quoted string
-		if ch == '\'' {
-			i++
-			for i < len(sql) {
-				if sql[i] == '\'' {
-					if i+1 < len(sql) && sql[i+1] == '\'' {
-						i += 2 // escaped quote ''
-					} else {
-						i++ // closing quote
-						break
-					}
-				} else {
-					i++
-				}
-			}
+		// Quoted string or quoted identifier, including the prefixed
+		// forms E'...', U&'...' and U&"...".
+		if isQuoteStart(sql, i) {
+			i = skipQuoted(sql, i, reading)
 			continue
 		}
 
@@ -186,7 +191,7 @@ func splitStatements(sql string) []string {
 
 		// Line comment
 		if ch == '-' && i+1 < len(sql) && sql[i+1] == '-' {
-			for i < len(sql) && sql[i] != '\n' {
+			for i < len(sql) && !isSQLNewline(sql[i]) {
 				i++
 			}
 			continue
@@ -264,6 +269,16 @@ func (h *ConnectionHandler) executeQuery(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
+	// Validate the optional database override before it reaches the
+	// connection string, and before any datastore work.
+	if req.DatabaseName != "" {
+		if err := database.ValidateDatabaseName(req.DatabaseName); err != nil {
+			RespondError(w, http.StatusBadRequest,
+				"Invalid database name: "+err.Error())
+			return
+		}
+	}
+
 	// Split into individual statements early so we can classify them
 	// before opening a database connection.
 	statements := splitStatements(query)
@@ -338,6 +353,11 @@ func (h *ConnectionHandler) executeQuery(w http.ResponseWriter, r *http.Request,
 		poolConfig.ConnConfig.RuntimeParams = make(map[string]string)
 	}
 	poolConfig.ConnConfig.RuntimeParams["application_name"] = "pgEdge AI DBA Workbench - Query"
+	// The classifier reads the statement text as UTF-8. A startup
+	// parameter overrides any client_encoding default set on the role or
+	// the database, and requireUTF8 stops a batch if one of its
+	// statements changes the setting (see requireUTF8).
+	poolConfig.ConnConfig.RuntimeParams["client_encoding"] = "UTF8"
 
 	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
@@ -348,10 +368,21 @@ func (h *ConnectionHandler) executeQuery(w http.ResponseWriter, r *http.Request,
 	}
 	defer pool.Close()
 
+	limit := defaultRowLimit
+
 	// For EXPLAIN queries with $N parameter placeholders, bypass the
 	// standard query path and use pgconn's simple protocol directly.
 	// pgx.Conn.Query always parses $N as bind parameters even in
 	// simple protocol mode, but pgconn.Exec sends SQL text as-is.
+	//
+	// The confirmation prompt and the write-access gate above have
+	// already run for these statements, and runSimpleStatements applies
+	// the same read-only transaction the pgx path uses, so this branch
+	// is no shortcut past either check (issue #530). The classification
+	// above is what decides whether a statement is treated as a write;
+	// the read-only transaction narrows what a misclassified statement
+	// can do, but it does not catch every case (see
+	// runSimpleStatements).
 	if needsSimpleProtocol(statements) {
 		poolConn, err := pool.Acquire(ctx)
 		if err != nil {
@@ -362,14 +393,13 @@ func (h *ConnectionHandler) executeQuery(w http.ResponseWriter, r *http.Request,
 		}
 		defer poolConn.Release()
 
-		results := make([]statementResult, 0, len(statements))
-		for _, stmt := range statements {
-			result := runSimpleStatement(ctx, poolConn.Conn().PgConn(), stmt, connectionID)
-			results = append(results, result)
-			if result.Error != "" {
-				break
-			}
+		pgConn := poolConn.Conn().PgConn()
+		results := runSimpleStatements(ctx, pgConn, statements, limit,
+			connectionID, allReadOnly)
+		if !allReadOnly {
+			results = endOpenTransaction(ctx, pgConn, results, connectionID)
 		}
+
 		RespondJSON(w, http.StatusOK, multiQueryResponse{
 			Results:         results,
 			TotalStatements: len(statements),
@@ -377,7 +407,6 @@ func (h *ConnectionHandler) executeQuery(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	limit := defaultRowLimit
 	results := make([]statementResult, 0, len(statements))
 
 	if allReadOnly {
@@ -408,6 +437,7 @@ func (h *ConnectionHandler) executeQuery(w http.ResponseWriter, r *http.Request,
 
 		for _, stmt := range statements {
 			result := runStatement(ctx, tx, stmt, limit, connectionID)
+			result = requireUTF8(tx.Conn().PgConn(), result, connectionID)
 			results = append(results, result)
 
 			// Stop on first error
@@ -437,33 +467,45 @@ func (h *ConnectionHandler) executeQuery(w http.ResponseWriter, r *http.Request,
 		}
 	} else {
 		// Write path: execute each statement individually outside a
-		// transaction so that statements like ALTER SYSTEM work.
+		// transaction so that statements like ALTER SYSTEM work. Every
+		// statement runs on the one acquired connection so that
+		// requireUTF8 can read the client_encoding it left behind.
+		poolConn, err := pool.Acquire(ctx)
+		if err != nil {
+			log.Printf("[ERROR] Failed to acquire connection for query: %v", err)
+			RespondError(w, http.StatusInternalServerError,
+				"Failed to connect to database")
+			return
+		}
+		defer poolConn.Release()
+		pgConn := poolConn.Conn().PgConn()
+
 		for _, stmt := range statements {
+			var result statementResult
 			if isReadOnlyStatement(stmt) {
-				result := runStatement(ctx, pool, stmt, limit, connectionID)
-				results = append(results, result)
-				if result.Error != "" {
-					break
+				result = runStatement(ctx, poolConn, stmt, limit, connectionID)
+			} else if _, err := poolConn.Exec(ctx, stmt); err != nil {
+				log.Printf("[ERROR] Write statement failed (connection=%d): %v",
+					connectionID, err)
+				result = statementResult{
+					Query: stmt,
+					Error: safeQueryError("Execution error", err),
 				}
 			} else {
-				_, err := pool.Exec(ctx, stmt)
-				if err != nil {
-					log.Printf("[ERROR] Write statement failed (connection=%d): %v",
-						connectionID, err)
-					results = append(results, statementResult{
-						Query: stmt,
-						Error: safeQueryError("Execution error", err),
-					})
-					break
-				}
-				results = append(results, statementResult{
+				result = statementResult{
 					Query:    stmt,
 					Columns:  []string{"result"},
 					Rows:     [][]string{{"Statement executed successfully"}},
 					RowCount: 1,
-				})
+				}
+			}
+			result = requireUTF8(pgConn, result, connectionID)
+			results = append(results, result)
+			if result.Error != "" {
+				break
 			}
 		}
+		results = endOpenTransaction(ctx, pgConn, results, connectionID)
 	}
 
 	resp := multiQueryResponse{
@@ -485,14 +527,14 @@ func stripLeadingComments(sql string) string {
 		ch := sql[i]
 
 		// Skip whitespace
-		if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' {
+		if isSQLSpace(ch) {
 			i++
 			continue
 		}
 
 		// Line comment: skip to end of line
 		if ch == '-' && i+1 < len(sql) && sql[i+1] == '-' {
-			for i < len(sql) && sql[i] != '\n' {
+			for i < len(sql) && !isSQLNewline(sql[i]) {
 				i++
 			}
 			continue
@@ -522,30 +564,596 @@ func stripLeadingComments(sql string) string {
 	return ""
 }
 
+// maxExplainDepth bounds the recursion isReadOnlyStatement performs
+// through nested EXPLAIN statements. PostgreSQL rejects EXPLAIN EXPLAIN
+// ..., so anything approaching this depth is malformed or hostile and
+// the classifier fails closed by calling it a write.
+const maxExplainDepth = 8
+
 // isReadOnlyStatement returns true if the SQL statement (after stripping
 // leading comments) begins with a read-only keyword: SELECT, WITH, SHOW,
-// EXPLAIN, or TABLE. Writable CTEs (WITH ... INSERT/UPDATE/DELETE) are
-// classified as non-read-only.
+// EXPLAIN, or TABLE. Writable CTEs (WITH ... INSERT/UPDATE/DELETE/MERGE)
+// are classified as non-read-only, as are a query with a writing clause
+// (see hasWritingSelectClause) and an EXPLAIN that may execute a writing
+// inner statement (issue #530).
+//
+// PostgreSQL lexes a plain '...' literal as a standard string when
+// standard_conforming_strings is on and as an escape string, in which a
+// backslash escapes the next character, when it is off. The setting can
+// be off for the database or the role, and an earlier statement in the
+// same request can turn it off, as set_config does from inside a
+// SELECT, so the reading in force when sql runs cannot be known here.
+// A literal can end in a different place under each reading, and the
+// one the classifier does not use can then hide the code that follows:
+//
+//	WITH x AS (SELECT '\'' AS c), d AS (DELETE FROM t RETURNING *)
+//	SELECT * FROM d --'
+//
+// is one literal running to the final quote under a standard reading,
+// which hides the DELETE, whereas under an escape reading the literal
+// ends after the escaped quote and the DELETE is code. sql is therefore
+// classified under both readings, and split into statements under each
+// so that a semicolon only one reading treats as code is respected too;
+// it is read-only only when every statement is read-only under both.
 func isReadOnlyStatement(sql string) bool {
-	body := strings.ToUpper(strings.TrimSpace(stripLeadingComments(sql)))
-
-	if strings.HasPrefix(body, "WITH") {
-		// Writable CTEs can perform data modification, e.g.
-		// WITH deleted AS (DELETE FROM t RETURNING *) SELECT * FROM deleted.
-		// Check for DML keywords as standalone words in the body.
-		dmlKeywords := []string{"INSERT", "UPDATE", "DELETE"}
-		for _, kw := range dmlKeywords {
-			if containsSQLKeyword(body, kw) {
+	for _, reading := range stringReadings {
+		pieces := splitStatementsAs(sql, reading)
+		if len(pieces) == 0 {
+			pieces = []string{sql}
+		}
+		for _, piece := range pieces {
+			if !isReadOnlyStatementAtDepth(piece, 0, reading) {
 				return false
 			}
 		}
-		return true
+	}
+	return true
+}
+
+// isReadOnlyStatementAtDepth is isReadOnlyStatement for a single
+// statement, under one reading of a plain '...' literal, with the
+// EXPLAIN nesting depth reached so far.
+func isReadOnlyStatementAtDepth(sql string, depth int, reading stringReading) bool {
+	body := strings.TrimSpace(stripLeadingComments(sql))
+
+	// The EXPLAIN test runs against the original text rather than an
+	// uppercased copy, because strings.ToUpper is not length-preserving
+	// for every input (U+0131 gets shorter), so an offset measured on
+	// the copy cannot safely slice the original.
+	if hasKeywordPrefix(body, "EXPLAIN") {
+		return isReadOnlyExplain(body, depth, reading)
 	}
 
-	return strings.HasPrefix(body, "SELECT") ||
-		strings.HasPrefix(body, "SHOW") ||
-		strings.HasPrefix(body, "EXPLAIN") ||
-		strings.HasPrefix(body, "TABLE ")
+	// Mask the quoted literals, quoted identifiers and comments before
+	// uppercasing, so the keyword scans below read code only and a
+	// statement such as SELECT * FROM audit WHERE msg LIKE '%signed
+	// into%' is not classified as a write. The masking is for
+	// classification alone; the text that is executed is untouched.
+	upper := strings.ToUpper(maskNonCode(body, reading))
+
+	if strings.HasPrefix(upper, "WITH") {
+		// Writable CTEs can perform data modification, e.g.
+		// WITH deleted AS (DELETE FROM t RETURNING *) SELECT * FROM deleted.
+		// Check for DML keywords as standalone words in the body.
+		dmlKeywords := []string{"INSERT", "UPDATE", "DELETE", "MERGE"}
+		for _, kw := range dmlKeywords {
+			if containsSQLKeyword(upper, kw) {
+				return false
+			}
+		}
+		return !hasWritingSelectClause(upper)
+	}
+
+	if strings.HasPrefix(upper, "SELECT") || strings.HasPrefix(upper, "TABLE ") {
+		return !hasWritingSelectClause(upper)
+	}
+
+	return strings.HasPrefix(upper, "SHOW")
+}
+
+// hasWritingSelectClause reports whether an otherwise reading query
+// carries a clause that writes: SELECT ... INTO, which creates a table,
+// or a row-locking clause (FOR UPDATE, FOR NO KEY UPDATE, FOR SHARE,
+// FOR KEY SHARE), which stamps the lock onto every row it returns.
+// PostgreSQL refuses both inside a read-only transaction, so classifying
+// them as writes makes this gate agree with the database rather than
+// leaving the transaction to reject them later. upperSQL must already
+// have had its non-code regions masked (see maskNonCode) and been
+// uppercased. Like the writable-CTE scan, this reads a keyword wherever
+// it appears in the remaining code, so it can only over-report, which is
+// the safe direction.
+func hasWritingSelectClause(upperSQL string) bool {
+	return containsSQLKeyword(upperSQL, "INTO") ||
+		containsLockingClause(upperSQL)
+}
+
+// containsLockingClause reports whether upperSQL contains a row-locking
+// clause: the word FOR followed by UPDATE or SHARE, with the optional NO
+// and KEY qualifiers in between.
+func containsLockingClause(upperSQL string) bool {
+	words := sqlWords(upperSQL)
+	for i, word := range words {
+		if word != "FOR" {
+			continue
+		}
+		for j := i + 1; j < len(words); j++ {
+			switch words[j] {
+			case "NO", "KEY":
+				continue
+			case "UPDATE", "SHARE":
+				return true
+			}
+			break
+		}
+	}
+	return false
+}
+
+// sqlWords splits s into its runs of identifier characters, discarding
+// everything else.
+func sqlWords(s string) []string {
+	var words []string
+	i := 0
+	for i < len(s) {
+		if !isIdentChar(s[i]) {
+			i++
+			continue
+		}
+		start := i
+		for i < len(s) && isIdentChar(s[i]) {
+			i++
+		}
+		words = append(words, s[start:i])
+	}
+	return words
+}
+
+// explainNonExecutingOptions are the EXPLAIN option names that only
+// change how the plan is reported. Every other name, ANALYZE included,
+// means the inner statement may really run.
+var explainNonExecutingOptions = map[string]bool{
+	"VERBOSE":      true,
+	"COSTS":        true,
+	"SETTINGS":     true,
+	"GENERIC_PLAN": true,
+	"BUFFERS":      true,
+	"WAL":          true,
+	"TIMING":       true,
+	"SUMMARY":      true,
+	"MEMORY":       true,
+	"SERIALIZE":    true,
+	"FORMAT":       true,
+}
+
+// isReadOnlyExplain classifies an EXPLAIN statement by what it explains.
+// body must already start with the EXPLAIN keyword and have had its
+// leading comments stripped. Without ANALYZE, EXPLAIN only plans the
+// inner statement and executes nothing, so it is read-only; with ANALYZE
+// the inner statement really runs and decides the answer.
+//
+// In the parenthesised option list, ANALYZE is detected by an
+// allow-list that fails closed rather than by searching for the word,
+// because an option name there is a ColId: PostgreSQL accepts it as a
+// quoted identifier and decodes its Unicode escapes before comparing,
+// so EXPLAIN (U&"\0061nalyze") DELETE ... turns ANALYZE on without the
+// text ever appearing. Only a bare, unquoted, recognized option name
+// counts as non-executing; anything quoted, escaped or unrecognized is
+// taken as an execution, and the inner statement then decides the
+// classification. The legacy form needs no such care, because its
+// option words are keywords that cannot be quoted or escaped.
+func isReadOnlyExplain(body string, depth int, reading stringReading) bool {
+	rest := strings.TrimSpace(stripLeadingComments(body[len("EXPLAIN"):]))
+
+	executes := false
+	if strings.HasPrefix(rest, "(") {
+		// Parenthesised form: EXPLAIN ( option [, ...] ) statement.
+		options, remainder, ok := splitExplainOptions(rest, reading)
+		if !ok {
+			// Unbalanced parentheses: the statement is malformed, so
+			// fail closed rather than guess at the option list.
+			return false
+		}
+		executes = explainOptionsExecute(options, reading)
+		rest = strings.TrimSpace(stripLeadingComments(remainder))
+	} else {
+		// Legacy form: EXPLAIN [ANALYZE] [VERBOSE] statement, in either
+		// order. This grammar is closed: ANALYZE, its British
+		// spelling and VERBOSE are keywords rather than a ColId, so a
+		// quoted or escaped spelling of one is a syntax error rather
+		// than an option, and the first word that is none of them
+		// really is the start of the inner statement. A plain EXPLAIN
+		// only plans it.
+	keywords:
+		for {
+			word, remainder := nextSQLWord(rest)
+			switch strings.ToUpper(word) {
+			case "ANALYZE", "ANALYSE": //nolint:misspell // British spelling accepted by PostgreSQL
+				executes = true
+			case "VERBOSE":
+			default:
+				break keywords
+			}
+			rest = strings.TrimSpace(stripLeadingComments(remainder))
+		}
+	}
+
+	if !executes {
+		return true
+	}
+	if rest == "" || depth >= maxExplainDepth {
+		return false
+	}
+	return isReadOnlyStatementAtDepth(rest, depth+1, reading)
+}
+
+// explainOptionsExecute reports whether a parenthesised EXPLAIN option
+// list may cause the inner statement to run. It inspects option names
+// only, never their values, and treats a name it cannot read as a bare
+// recognized identifier as an execution.
+func explainOptionsExecute(options string, reading stringReading) bool {
+	entries := splitExplainOptionEntries(options, reading)
+	if len(entries) == 0 {
+		// EXPLAIN () is not valid SQL, so fail closed.
+		return true
+	}
+	for _, entry := range entries {
+		name, _ := nextSQLWord(strings.TrimSpace(stripLeadingComments(entry)))
+		if !explainNonExecutingOptions[strings.ToUpper(name)] {
+			return true
+		}
+	}
+	return false
+}
+
+// splitExplainOptionEntries splits an EXPLAIN option list on the commas
+// that separate its entries. Quoted strings, quoted identifiers,
+// comments and nested parentheses are skipped so that a comma inside one
+// does not start an entry. The result is nil for an empty list.
+func splitExplainOptionEntries(options string, reading stringReading) []string {
+	var entries []string
+	depth := 0
+	start := 0
+	i := 0
+
+	for i < len(options) {
+		if j := skipNonCode(options, i, reading); j != i {
+			i = j
+			continue
+		}
+
+		ch := options[i]
+		switch {
+		case ch == '(':
+			depth++
+		case ch == ')':
+			depth--
+		case ch == ',' && depth == 0:
+			entries = append(entries, options[start:i])
+			start = i + 1
+		}
+		i++
+	}
+	entries = append(entries, options[start:])
+
+	if len(entries) == 1 &&
+		strings.TrimSpace(stripLeadingComments(entries[0])) == "" {
+		return nil
+	}
+	return entries
+}
+
+// splitExplainOptions splits an EXPLAIN option list from the statement
+// that follows it. s must start with the opening parenthesis. It
+// returns the option text, the remainder after the matching closing
+// parenthesis, and whether a matching parenthesis was found. Quoted
+// strings, quoted identifiers and comments are skipped so that a
+// parenthesis inside one does not end the list early.
+func splitExplainOptions(s string, reading stringReading) (options, remainder string, ok bool) {
+	depth := 0
+	i := 0
+	for i < len(s) {
+		if j := skipNonCode(s, i, reading); j != i {
+			i = j
+			continue
+		}
+
+		switch s[i] {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				return s[1:i], s[i+1:], true
+			}
+		}
+		i++
+	}
+	return "", "", false
+}
+
+// stringReading is how PostgreSQL's lexer reads a plain '...' literal,
+// which depends on standard_conforming_strings when the statement is
+// lexed (xqstart in scan.l).
+type stringReading int
+
+const (
+	// standardStrings is standard_conforming_strings on, the default: a
+	// backslash in '...' is an ordinary character.
+	standardStrings stringReading = iota
+	// escapeStrings is standard_conforming_strings off: '...' is read as
+	// an E'...' escape string, so \' is an escaped quote.
+	escapeStrings
+)
+
+// stringReadings lists every reading the classifier must agree with.
+var stringReadings = []stringReading{standardStrings, escapeStrings}
+
+// literalKind is the kind of quoted text a quote or literal prefix
+// opens, which decides how the lexer finds its end.
+type literalKind int
+
+const (
+	// plainLiteral is '...' and N'...': PostgreSQL returns the N of the
+	// latter as a keyword and lexes the rest as a plain literal, so its
+	// escapes depend on the stringReading.
+	plainLiteral literalKind = iota
+	// escapeLiteral is E'...', where a backslash always escapes the
+	// next character.
+	escapeLiteral
+	// unicodeLiteral is U&'...': a doubled quote is a quote and a
+	// backslash starts a Unicode escape that cannot contain one.
+	// PostgreSQL rejects it outright when standard_conforming_strings is
+	// off, so its reading there does not matter.
+	unicodeLiteral
+	// bitLiteral is B'...' or X'...', which has no escapes at all:
+	// the next quote ends it, even when another quote follows.
+	bitLiteral
+	// quotedIdentifier is "..." or U&"...": a doubled double quote is
+	// part of the name, and it never continues onto another line.
+	quotedIdentifier
+)
+
+// literalPrefix reports the length and kind of the string-literal
+// prefix at s[i]. PostgreSQL accepts E'...' (backslash escapes), U&'...'
+// and U&"..." (Unicode escapes), and the B'...', X'...' and N'...'
+// forms, each of which introduces a literal that a bare quote scan would
+// start one or two bytes late. The length is zero when no prefix starts
+// here.
+func literalPrefix(s string, i int) (length int, kind literalKind) {
+	if i+1 >= len(s) {
+		return 0, plainLiteral
+	}
+	switch s[i] {
+	case 'E', 'e':
+		if s[i+1] == '\'' {
+			return 1, escapeLiteral
+		}
+	case 'B', 'b', 'X', 'x':
+		if s[i+1] == '\'' {
+			return 1, bitLiteral
+		}
+	case 'N', 'n':
+		if s[i+1] == '\'' {
+			return 1, plainLiteral
+		}
+	case 'U', 'u':
+		if s[i+1] == '&' && i+2 < len(s) {
+			switch s[i+2] {
+			case '\'':
+				return 2, unicodeLiteral
+			case '"':
+				return 2, quotedIdentifier
+			}
+		}
+	}
+	return 0, plainLiteral
+}
+
+// isQuoteStart reports whether a quoted string or quoted identifier
+// starts at s[i], either with the quote itself or with one of the
+// literal prefixes literalPrefix recognizes. A prefix letter only counts
+// when it does not continue an identifier, so the trailing e of a column
+// name is not mistaken for an E'...' literal.
+func isQuoteStart(s string, i int) bool {
+	if s[i] == '\'' || s[i] == '"' {
+		return true
+	}
+	if continuesIdentifier(s, i) {
+		return false
+	}
+	length, _ := literalPrefix(s, i)
+	return length > 0
+}
+
+// skipQuoted returns the index just past the quoted string or quoted
+// identifier starting at s[i], which must be a single or double quote or
+// the first character of a literal prefix (see literalPrefix), following
+// the string states of PostgreSQL's lexer. A doubled quote is an escaped
+// quote rather than a terminator, except in a bit string. A backslash
+// escapes the character that follows it in an E'...' literal, and in a
+// plain '...' or N'...' literal under escapeStrings. A string literal
+// that is followed by whitespace containing a newline and another quote
+// continues after that quote in the same state (quotecontinue in
+// scan.l), so this is a single escape string whose second part ends at
+// its last quote, not at the one after the backslash:
+//
+//	E'a'
+//	'\''
+//
+// An unterminated literal runs to the end of the string.
+func skipQuoted(s string, i int, reading stringReading) int {
+	kind := plainLiteral
+	switch s[i] {
+	case '\'':
+	case '"':
+		kind = quotedIdentifier
+	default:
+		length, prefixKind := literalPrefix(s, i)
+		if length == 0 {
+			return i + 1
+		}
+		kind = prefixKind
+		i += length
+	}
+
+	escapes := kind == escapeLiteral ||
+		(kind == plainLiteral && reading == escapeStrings)
+	doubles := kind != bitLiteral
+	continues := kind != quotedIdentifier
+
+	quote := s[i]
+	i++
+	for i < len(s) {
+		switch {
+		case escapes && s[i] == '\\':
+			i += 2
+		case s[i] == quote:
+			if doubles && i+1 < len(s) && s[i+1] == quote {
+				i += 2
+				continue
+			}
+			if continues {
+				if j := quoteContinuation(s, i+1); j > 0 {
+					i = j
+					continue
+				}
+			}
+			return i + 1
+		default:
+			i++
+		}
+	}
+	return len(s)
+}
+
+// quoteContinuation reports where a string literal resumes when the
+// text from s[i], just after its closing quote, continues it: whitespace
+// and line comments containing at least one newline, then a quote
+// (quotecontinue in scan.l). It returns the index just past that quote,
+// or -1 when the literal really ended. A line comment must itself end in
+// a newline, and a block comment ends the whitespace, as in scan.l.
+func quoteContinuation(s string, i int) int {
+	sawNewline := false
+	for i < len(s) {
+		switch {
+		case isSQLNewline(s[i]):
+			sawNewline = true
+			i++
+		case isSQLSpace(s[i]):
+			i++
+		case s[i] == '-' && i+1 < len(s) && s[i+1] == '-':
+			for i < len(s) && !isSQLNewline(s[i]) {
+				i++
+			}
+		case s[i] == '\'' && sawNewline:
+			return i + 1
+		default:
+			return -1
+		}
+	}
+	return -1
+}
+
+// skipBlockComment returns the index just past the (possibly nested)
+// block comment starting at s[i], which must be the opening slash.
+func skipBlockComment(s string, i int) int {
+	depth := 1
+	i += 2
+	for i < len(s) && depth > 0 {
+		if s[i] == '/' && i+1 < len(s) && s[i+1] == '*' {
+			depth++
+			i += 2
+		} else if s[i] == '*' && i+1 < len(s) && s[i+1] == '/' {
+			depth--
+			i += 2
+		} else {
+			i++
+		}
+	}
+	return i
+}
+
+// skipNonCode returns the index just past the quoted literal or comment
+// starting at s[i], or i itself when s[i] does not begin one. It is the
+// step every scan over statement text shares: a quoted string, a quoted
+// identifier (including the prefixed E'...', U&'...' and U&"..." forms),
+// a dollar-quoted string, a line comment or a block comment holds text
+// rather than SQL, so a comma, parenthesis, keyword or $N inside one
+// must not be read as code, and a quote or comment marker inside a
+// dollar-quoted string must not open a region that swallows the code
+// after it. An unterminated literal or comment runs to the end of the
+// string, which ends the caller's scan rather than resuming inside the
+// quoted text. A $N placeholder is not a dollar quote (see
+// scanDollarTag), so it is left for the caller to see. reading says how
+// a plain '...' literal is read (see stringReading).
+func skipNonCode(s string, i int, reading stringReading) int {
+	if isQuoteStart(s, i) {
+		return skipQuoted(s, i, reading)
+	}
+	if tag := scanDollarTag(s, i); tag != "" {
+		end := strings.Index(s[i+len(tag):], tag)
+		if end < 0 {
+			return len(s)
+		}
+		return i + len(tag) + end + len(tag)
+	}
+	if s[i] == '-' && i+1 < len(s) && s[i+1] == '-' {
+		j := i
+		for j < len(s) && !isSQLNewline(s[j]) {
+			j++
+		}
+		return j
+	}
+	if s[i] == '/' && i+1 < len(s) && s[i+1] == '*' {
+		return skipBlockComment(s, i)
+	}
+	return i
+}
+
+// maskNonCode replaces every quoted literal, quoted identifier and
+// comment in s with spaces, so a keyword scan reads code only. Each
+// masked byte becomes one space, leaving the result the same length as
+// s, which keeps any offset measured on the mask valid against the
+// original. Callers must mask before uppercasing, because
+// strings.ToUpper is not length-preserving for every input.
+func maskNonCode(s string, reading stringReading) string {
+	masked := []byte(s)
+	for i := 0; i < len(masked); {
+		j := skipNonCode(s, i, reading)
+		if j == i {
+			i++
+			continue
+		}
+		for k := i; k < j; k++ {
+			masked[k] = ' '
+		}
+		i = j
+	}
+	return string(masked)
+}
+
+// nextSQLWord splits the leading identifier-character run off s,
+// returning that word and the rest of the string. The word is empty
+// when s does not start with an identifier character.
+func nextSQLWord(s string) (word, rest string) {
+	i := 0
+	for i < len(s) && isIdentChar(s[i]) {
+		i++
+	}
+	return s[:i], s[i:]
+}
+
+// hasKeywordPrefix reports whether sql starts with keyword, ignoring
+// case, followed by a non-identifier character, so that EXPLAINABLE does
+// not match EXPLAIN. The comparison is made on the caller's own string
+// rather than an uppercased copy, so that the keyword's length is a
+// valid offset into it.
+func hasKeywordPrefix(sql, keyword string) bool {
+	if len(sql) < len(keyword) ||
+		!strings.EqualFold(sql[:len(keyword)], keyword) {
+		return false
+	}
+	return len(sql) == len(keyword) || !isIdentChar(sql[len(keyword)])
 }
 
 // containsSQLKeyword checks whether a SQL keyword appears as a standalone
@@ -578,32 +1186,108 @@ func containsSQLKeyword(upperSQL, keyword string) bool {
 // placeholders as bind parameters.
 func needsSimpleProtocol(statements []string) bool {
 	for _, stmt := range statements {
-		body := strings.ToUpper(strings.TrimSpace(stripLeadingComments(stmt)))
-		if strings.HasPrefix(body, "EXPLAIN") && containsDollarParam(stmt) {
+		body := strings.TrimSpace(stripLeadingComments(stmt))
+		if hasKeywordPrefix(body, "EXPLAIN") && containsDollarParam(stmt) {
 			return true
 		}
 	}
 	return false
 }
 
-// containsDollarParam checks whether the string contains a $N
-// parameter placeholder (e.g. $1, $2).
+// containsDollarParam checks whether the string contains a $N parameter
+// placeholder (e.g. $1, $2) as real SQL. A $N inside a single-quoted
+// literal (including the prefixed E'...' and U&'...' forms), a
+// dollar-quoted literal, a double-quoted identifier, a line comment or a
+// block comment is text rather than a placeholder and does not count
+// (issue #530). An unterminated literal or comment swallows
+// the rest of the string, so the scan ends and reports no placeholder
+// rather than reading the quoted text as SQL. A placeholder found under
+// either reading of a plain '...' literal counts, since this only routes
+// the statement onto the simple-protocol path, which applies the same
+// read-only transaction and row limit as the pgx path.
 func containsDollarParam(s string) bool {
-	for i := 0; i < len(s)-1; i++ {
-		if s[i] == '$' && s[i+1] >= '1' && s[i+1] <= '9' {
+	for _, reading := range stringReadings {
+		if containsDollarParamAs(s, reading) {
 			return true
 		}
 	}
 	return false
 }
 
-// isIdentChar returns true if the byte is a valid SQL identifier character
-// (letter, digit, or underscore).
+// containsDollarParamAs is containsDollarParam under one reading of a
+// plain '...' literal.
+func containsDollarParamAs(s string, reading stringReading) bool {
+	i := 0
+	for i < len(s) {
+		if j := skipNonCode(s, i, reading); j != i {
+			i = j
+			continue
+		}
+
+		// skipNonCode has already stepped over any dollar-quoted
+		// string, so a dollar sign here is a placeholder or a bare one.
+		if s[i] != '$' {
+			i++
+			continue
+		}
+		if i+1 < len(s) && s[i+1] >= '1' && s[i+1] <= '9' {
+			return true
+		}
+		i++
+	}
+	return false
+}
+
+// isIdentChar returns true if the byte is a valid SQL identifier
+// character: an ASCII letter, digit or underscore, or any byte from 0x80
+// up, which PostgreSQL's lexer treats as a letter (ident_start and
+// ident_cont in scan.l). Outside a quoted literal or comment such a byte
+// can only be part of an identifier, so a keyword, literal prefix or
+// dollar sign that touches one continues that identifier. ident_cont
+// also includes $, which cannot start an identifier and so is left out
+// here; continuesIdentifier covers it where a character that follows
+// one matters.
 func isIdentChar(b byte) bool {
 	return (b >= 'A' && b <= 'Z') ||
 		(b >= 'a' && b <= 'z') ||
 		(b >= '0' && b <= '9') ||
-		b == '_'
+		b == '_' ||
+		b >= 0x80
+}
+
+// continuesIdentifier reports whether s[i] would continue an unquoted
+// identifier, because the byte before it is an identifier character or
+// a $ (PostgreSQL's ident_cont includes $, as in a$b). A dollar sign
+// or literal prefix there is part of the identifier rather than the
+// start of a dollar quote or a prefixed literal, so in a$E'\' the
+// literal is a standard string rather than an escape string. A $ that
+// is not itself part of an identifier makes the statement a syntax
+// error, so treating every preceding $ this way cannot hide code that
+// runs.
+func continuesIdentifier(s string, i int) bool {
+	if i == 0 {
+		return false
+	}
+	prev := s[i-1]
+	return isIdentChar(prev) || prev == '$'
+}
+
+// isSQLSpace reports whether b is whitespace to PostgreSQL's lexer
+// (space in scan.l): space, tab, newline, carriage return, form feed or
+// vertical tab.
+func isSQLSpace(b byte) bool {
+	switch b {
+	case ' ', '\t', '\n', '\r', '\f', '\v':
+		return true
+	}
+	return false
+}
+
+// isSQLNewline reports whether b ends a -- line comment. PostgreSQL's
+// lexer ends one at a carriage return as well as a newline
+// (non_newline in scan.l), so code after a lone \r is code.
+func isSQLNewline(b byte) bool {
+	return b == '\n' || b == '\r'
 }
 
 // safeQueryError extracts a user-facing error message from a query error.
@@ -769,72 +1453,305 @@ func runStatement(ctx context.Context, q queryable, stmt string, limit int, conn
 	}
 }
 
-// runSimpleStatement executes a statement using the pgconn simple
-// protocol which sends SQL text directly to PostgreSQL without
-// interpreting $N as bind parameters.  This is used for EXPLAIN
-// queries that contain parameter placeholders from pg_stat_statements.
-func runSimpleStatement(ctx context.Context, pgConn *pgconn.PgConn, stmt string, connectionID int) statementResult {
-	mrr := pgConn.Exec(ctx, stmt)
+// clientEncodingChangedError is the error reported for a statement that
+// left the connection on a client_encoding other than UTF8.
+const clientEncodingChangedError = "Query error: client_encoding must " +
+	"remain UTF8; the statements after this one were not run"
 
-	var columns []string
-	var resultRows [][]string
+// requireUTF8 turns result into a failure when the statement that
+// produced it left pgConn on a client_encoding other than UTF8, so the
+// caller stops before the next statement runs. PostgreSQL converts each
+// statement from the client encoding before lexing it, and in SJIS,
+// BIG5, GBK, GB18030 and JOHAB the second byte of a multibyte character
+// can be one that is a backslash, @, [ or a letter on its own, so the
+// server's reading of the text no longer matches the UTF-8 reading the
+// classifier gave it. After set_config('client_encoding', 'SJIS',
+// false), an E' followed by the bytes 0x95 0x5C and a quote is a
+// complete literal to the server, which reads 0x95 0x5C as one
+// character, but to the classifier 0x5C is a backslash escaping the
+// quote, which hides the code after it. No second reading can cover
+// every such encoding, so the setting is held at UTF8 instead. The write
+// path applies the same check: its confirmation prompt lists only the
+// statements classified as writes, so a write hidden in a statement
+// lexed under the new encoding would otherwise run without being listed.
+func requireUTF8(pgConn *pgconn.PgConn, result statementResult, connectionID int) statementResult {
+	if result.Error != "" || pgConn.ParameterStatus("client_encoding") == "UTF8" {
+		return result
+	}
+	log.Printf("[WARN] Query stopped: client_encoding changed to %q (connection=%d)",
+		pgConn.ParameterStatus("client_encoding"), connectionID)
+	return statementResult{
+		Query: result.Query,
+		Error: clientEncodingChangedError,
+	}
+}
 
-	for mrr.NextResult() {
-		rr := mrr.ResultReader()
+// openTransactionError is the error reported for a confirmed batch that
+// left a transaction open.
+const openTransactionError = "Transaction error: the statements left " +
+	"a transaction open, so it was rolled back and nothing done inside it " +
+	"was kept; end the transaction with COMMIT or ROLLBACK in the same request"
 
-		// Extract column names from field descriptions
-		fds := rr.FieldDescriptions()
-		if columns == nil {
-			columns = make([]string, len(fds))
-			for i, fd := range fds {
-				columns[i] = string(fd.Name)
-			}
+// endOpenTransaction rolls back a transaction that a confirmed batch
+// opened and did not close, and adds a result saying so. The write path
+// runs every statement on one connection, so a BEGIN in the batch
+// carries over to the statements after it, and the connection goes back
+// to a pool that destroys a connection released mid-transaction, which
+// discards that work. Without this result the batch would report each
+// statement as having succeeded although none of its work in the
+// transaction was kept.
+func endOpenTransaction(
+	ctx context.Context,
+	pgConn *pgconn.PgConn,
+	results []statementResult,
+	connectionID int,
+) []statementResult {
+	if pgConn.TxStatus() == 'I' {
+		return results
+	}
+	log.Printf("[WARN] Query left a transaction open; rolling it back (connection=%d)",
+		connectionID)
+	rollbackSimple(ctx, func(execCtx context.Context, sql string) error {
+		return pgConn.Exec(execCtx, sql).Close()
+	}, connectionID)
+	return append(results, statementResult{
+		Query: "ROLLBACK",
+		Error: openTransactionError,
+	})
+}
+
+// runSimpleStatements executes statements over the simple query
+// protocol. When readOnly is true they run inside a read-only
+// transaction, matching the discipline the pgx path applies (issue
+// #530). A statement error rolls the transaction back and a clean run
+// commits. A failure of the transaction control itself is reported as a
+// result of its own and no statement runs, so a batch classified as
+// read-only never runs outside the transaction it asked for.
+//
+// SET TRANSACTION READ ONLY prevents writes to database objects within
+// the transaction, so a misclassified INSERT, UPDATE, DELETE, TRUNCATE,
+// CREATE TABLE AS, SELECT ... INTO, SELECT ... FOR UPDATE, sequence
+// advance or EXPLAIN ANALYZE of any of those is refused. It is not an
+// authorisation boundary and it does not reach side effects a function
+// performs outside the transaction's own writes: pg_terminate_backend,
+// pg_reload_conf, pg_switch_wal, pg_create_restore_point, pg_read_file,
+// the advisory-lock functions and dblink_exec all remain permitted
+// inside it. Classification, not this transaction, is what keeps such
+// statements behind the write gate.
+func runSimpleStatements(
+	ctx context.Context,
+	pgConn *pgconn.PgConn,
+	statements []string,
+	limit int,
+	connectionID int,
+	readOnly bool,
+) []statementResult {
+	exec := func(execCtx context.Context, sql string) error {
+		return pgConn.Exec(execCtx, sql).Close()
+	}
+	run := func(runCtx context.Context, stmt string) statementResult {
+		result := runSimpleStatement(runCtx, pgConn, stmt, limit, connectionID)
+		return requireUTF8(pgConn, result, connectionID)
+	}
+	return runSimpleStatementsWith(ctx, exec, run, statements, connectionID,
+		readOnly)
+}
+
+// runSimpleStatementsWith is runSimpleStatements over an injected
+// statement executor and runner, so that the transaction discipline can
+// be tested without a live connection. exec issues the transaction
+// control statements and run executes one of the caller's statements.
+func runSimpleStatementsWith(
+	ctx context.Context,
+	exec func(ctx context.Context, sql string) error,
+	run func(ctx context.Context, stmt string) statementResult,
+	statements []string,
+	connectionID int,
+	readOnly bool,
+) []statementResult {
+	if readOnly {
+		if err := exec(ctx, "BEGIN"); err != nil {
+			// No rollback here: a BEGIN that failed part-way leaves the
+			// connection in a transaction that nothing else will use,
+			// because the pool is built per request and pgxpool destroys
+			// a connection released with a non-idle transaction status.
+			return []statementResult{controlFailure("BEGIN", err, connectionID)}
 		}
-
-		for rr.NextRow() {
-			row := rr.Values()
-			values := make([]string, len(row))
-			for i, col := range row {
-				if col == nil {
-					values[i] = "NULL"
-				} else {
-					values[i] = string(col)
-				}
-			}
-			resultRows = append(resultRows, values)
-		}
-
-		_, err := rr.Close()
-		if err != nil {
-			log.Printf("[ERROR] Simple query close failed (connection=%d): %v",
-				connectionID, err)
-			return statementResult{
-				Query: stmt,
-				Error: safeQueryError("Query error", err),
+		if err := exec(ctx, "SET TRANSACTION READ ONLY"); err != nil {
+			rollbackSimple(ctx, exec, connectionID)
+			return []statementResult{
+				controlFailure("SET TRANSACTION READ ONLY", err, connectionID),
 			}
 		}
 	}
 
-	err := mrr.Close()
-	if err != nil {
-		log.Printf("[ERROR] Simple query multi-result close failed (connection=%d): %v",
+	results := make([]statementResult, 0, len(statements))
+	failed := false
+	for _, stmt := range statements {
+		result := run(ctx, stmt)
+		results = append(results, result)
+		if result.Error != "" {
+			failed = true
+			break
+		}
+	}
+
+	if readOnly {
+		if failed {
+			rollbackSimple(ctx, exec, connectionID)
+		} else if err := exec(ctx, "COMMIT"); err != nil {
+			rollbackSimple(ctx, exec, connectionID)
+			results = append(results,
+				controlFailure("COMMIT", err, connectionID))
+		}
+	}
+
+	return results
+}
+
+// controlFailure logs a failed transaction-control statement and turns
+// it into a result the caller can report alongside the statements'
+// own results.
+func controlFailure(sql string, err error, connectionID int) statementResult {
+	log.Printf("[ERROR] Simple protocol %s failed (connection=%d): %v",
+		sql, connectionID, err)
+	return statementResult{
+		Query: sql,
+		Error: safeQueryError("Transaction error", err),
+	}
+}
+
+// rollbackSimple unwinds a simple-protocol transaction through
+// pkg/rollback, so the unwind runs on the bounded, non-cancelable
+// context the project requires. A failed rollback is logged: the
+// connection is released back to a pool that is closed at the end of
+// the request, so there is nothing further to do about it.
+func rollbackSimple(
+	ctx context.Context,
+	exec func(ctx context.Context, sql string) error,
+	connectionID int,
+) {
+	if err := rollback.Simple(ctx, exec); err != nil {
+		log.Printf("[ERROR] Simple protocol rollback failed (connection=%d): %v",
 			connectionID, err)
+	}
+}
+
+// runSimpleStatement executes a statement using the pgconn simple
+// protocol which sends SQL text directly to PostgreSQL without
+// interpreting $N as bind parameters.  This is used for EXPLAIN
+// queries that contain parameter placeholders from pg_stat_statements.
+//
+// No LIMIT can be injected here, because the statement text is sent
+// unaltered, so the result set is bounded on this side instead: rows
+// past limit are counted but not retained, and Truncated reports that
+// the caller is seeing a shortened result, as it does on the pgx path.
+// The reader is drained rather than abandoned, so the result reader
+// closes cleanly and the connection stays usable for the rest of the
+// batch and for the transaction control around it.
+func runSimpleStatement(ctx context.Context, pgConn *pgconn.PgConn, stmt string, limit int, connectionID int) statementResult {
+	set := &simpleResultSet{limit: limit}
+	if err := set.read(pgConn.Exec(ctx, stmt), connectionID); err != nil {
 		return statementResult{
 			Query: stmt,
 			Error: safeQueryError("Query error", err),
 		}
 	}
 
-	if resultRows == nil {
-		resultRows = [][]string{}
+	if set.rows == nil {
+		set.rows = [][]string{}
 	}
 
 	return statementResult{
-		Columns:  columns,
-		Rows:     resultRows,
-		RowCount: len(resultRows),
-		Query:    stmt,
+		Columns:   set.columns,
+		Rows:      set.rows,
+		RowCount:  len(set.rows),
+		Truncated: set.truncated,
+		Query:     stmt,
 	}
+}
+
+// simpleResultSet accumulates the columns and rows of a simple-protocol
+// result, bounded by limit.
+type simpleResultSet struct {
+	limit     int
+	columns   []string
+	rows      [][]string
+	truncated bool
+}
+
+// read drains every result of mrr into the set, closing both the
+// individual result readers and mrr itself, and returns the first error
+// either close reported. Reading stops at the first failing result,
+// whose error is the one the caller reports.
+func (rs *simpleResultSet) read(
+	mrr *pgconn.MultiResultReader,
+	connectionID int,
+) error {
+	var failure error
+
+	for mrr.NextResult() {
+		rr := mrr.ResultReader()
+		rs.readResult(rr)
+
+		if _, err := rr.Close(); err != nil {
+			log.Printf("[ERROR] Simple query close failed (connection=%d): %v",
+				connectionID, err)
+			failure = err
+			break
+		}
+	}
+
+	// The multi-result reader is always closed, including after a
+	// failing result: leaving it open keeps the connection busy, and the
+	// caller's ROLLBACK would then fail to reach the server.
+	if err := mrr.Close(); err != nil && failure == nil {
+		log.Printf("[ERROR] Simple query multi-result close failed (connection=%d): %v",
+			connectionID, err)
+		failure = err
+	}
+
+	return failure
+}
+
+// readResult appends one result's rows to the set, taking the column
+// names from the first result that carries any. Every row is read so
+// that the reader closes cleanly, but rows past the limit are counted
+// rather than retained.
+func (rs *simpleResultSet) readResult(rr *pgconn.ResultReader) {
+	// Extract column names from field descriptions
+	if rs.columns == nil {
+		fds := rr.FieldDescriptions()
+		rs.columns = make([]string, len(fds))
+		for i, fd := range fds {
+			rs.columns[i] = string(fd.Name)
+		}
+	}
+
+	for rr.NextRow() {
+		if len(rs.rows) >= rs.limit {
+			// Keep reading so the reader closes cleanly, but stop
+			// buffering: an unbounded EXPLAIN or SELECT would
+			// otherwise hold the whole result set in memory.
+			rs.truncated = true
+			continue
+		}
+		rs.rows = append(rs.rows, simpleRowValues(rr.Values()))
+	}
+}
+
+// simpleRowValues renders one simple-protocol row as strings, with a
+// NULL column reported as the text NULL, matching the pgx path.
+func simpleRowValues(row [][]byte) []string {
+	values := make([]string, len(row))
+	for i, col := range row {
+		if col == nil {
+			values[i] = "NULL"
+		} else {
+			values[i] = string(col)
+		}
+	}
+	return values
 }
 
 // formatValueForJSON converts a database value to a string for JSON

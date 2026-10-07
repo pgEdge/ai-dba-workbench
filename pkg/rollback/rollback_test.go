@@ -161,3 +161,34 @@ func TestToSavepointRejectsInvalidName(t *testing.T) {
 		}
 	}
 }
+
+func TestSimple(t *testing.T) {
+	want := errors.New("simple rollback failed")
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{name: "success", err: nil},
+		{name: "error is returned", err: want},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var seen snapshot
+			var sql string
+			start := time.Now()
+			err := Simple(canceledParent(),
+				func(ctx context.Context, statement string) error {
+					seen = snap(ctx)
+					sql = statement
+					return tc.err
+				})
+			if !errors.Is(err, tc.err) {
+				t.Errorf("Simple error = %v, want %v", err, tc.err)
+			}
+			if sql != "ROLLBACK" {
+				t.Errorf("statement = %q, want %q", sql, "ROLLBACK")
+			}
+			assertBounded(t, seen, start)
+		})
+	}
+}

@@ -124,6 +124,24 @@ func (r *ConnectionResolver) resolveExplicit(
 	ctx context.Context,
 	ca connectionArgs,
 ) (*ResolvedConnection, *mcp.ToolResponse) {
+	// Validate the optional database override before any other work.
+	// This checks the argument itself rather than anything about the
+	// connection, so answering it ahead of the RBAC check tells the
+	// caller nothing they did not already supply. See
+	// database.ValidateDatabaseName.
+	if ca.DatabaseName != "" {
+		if err := database.ValidateDatabaseName(ca.DatabaseName); err != nil {
+			resp := mcp.ToolResponse{
+				Content: []mcp.ContentItem{{
+					Type: "text",
+					Text: fmt.Sprintf("invalid database_name: %v", err),
+				}},
+				IsError: true,
+			}
+			return nil, &resp
+		}
+	}
+
 	// RBAC: verify access before touching credentials. Using a generic
 	// "not found or not accessible" message for both missing and denied
 	// cases prevents the caller from using the resolver as a probe to

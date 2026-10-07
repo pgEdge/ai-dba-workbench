@@ -41,6 +41,11 @@ moved.
 - The exception to the injection rule is deliberate: MCP tools that
   run operator-supplied SQL execute it as written, under the
   monitored connection's own privileges.
+- `BuildConnectionString` builds the URL with `net/url`, and a name
+  with a leading `/` goes in the `dbname` query parameter; since
+  `%00` still decodes to NUL, `ValidateDatabaseName` must run on every
+  override path, because its NUL check is the only guard against
+  startup-packet injection.
 - Monitored-database credentials are encrypted at rest with a
   server-side secret and only decrypted in the collector when a pool
   is opened.

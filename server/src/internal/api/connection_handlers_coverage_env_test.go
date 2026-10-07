@@ -96,10 +96,10 @@ CREATE TRIGGER conn_handler_cov_block_delete
 `
 
 // connHandlerCoverageSchemaName is the schema the fixture above is built
-// in; it is dropped before and after each test. The process ID suffix
-// stops two test processes sharing a database from dropping each
-// other's schema.
-var connHandlerCoverageSchemaName = "api_conn_handler_cov_" + strconv.Itoa(os.Getpid())
+// in; it is dropped before and after each test. Concurrent test runs
+// each use a database of their own, as the other schema fixtures in
+// this package assume.
+const connHandlerCoverageSchemaName = "api_conn_handler_cov"
 
 // Fixture connection IDs. ownedConnID is unshared and owned by the
 // unprivileged owner; foreignConnID is unshared and owned by someone

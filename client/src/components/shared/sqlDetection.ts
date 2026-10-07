@@ -138,6 +138,52 @@ const readBlockComment = (code: string, start: number): number => {
 };
 
 /**
+ * Return the index one past a comment starting at `start`, or -1 when no
+ * comment starts there.
+ */
+const readComment = (code: string, start: number): number => {
+    if (code.startsWith('--', start)) {
+        const end = code.indexOf('\n', start);
+        return end === -1 ? code.length : end;
+    }
+    if (code.startsWith('/*', start)) {
+        return readBlockComment(code, start);
+    }
+    return -1;
+};
+
+/**
+ * Report whether the `$` at `index` continues an identifier, as in
+ * `col$a$`, rather than starting a token of its own.
+ */
+const continuesIdentifier = (code: string, index: number): boolean =>
+    index > 0 && IDENTIFIER_CHAR_RE.test(code[index - 1]);
+
+/**
+ * Return the index one past a string literal, quoted identifier or
+ * dollar-quoted string starting at `start`, or -1 when none starts there.
+ */
+const readLiteral = (code: string, start: number): number => {
+    const ch = code[start];
+    if (ch === "'" || ch === '"') {
+        // An E or e prefix that starts a word makes this an escape
+        // string constant, in which a backslash escapes the quote.
+        const prefix = code[start - 1];
+        const escapeString =
+            ch === "'" &&
+            (prefix === 'E' || prefix === 'e') &&
+            !continuesIdentifier(code, start - 1);
+        return readQuoted(code, start, ch, escapeString);
+    }
+    // A `$` that continues an identifier cannot open a dollar-quoted
+    // string.
+    if (ch === '$' && !continuesIdentifier(code, start)) {
+        return readDollarQuoted(code, start);
+    }
+    return -1;
+};
+
+/**
  * Split SQL text into lexical tokens.
  *
  * Only enough of PostgreSQL's lexical structure is modelled to tell
@@ -149,72 +195,40 @@ export const tokenizeSql = (code: string): SqlToken[] => {
     let plain = '';
     let i = 0;
 
-    const flushPlain = (): void => {
+    const push = (kind: SqlTokenKind, stop: number): void => {
         if (plain) {
             tokens.push({ kind: 'plain', text: plain });
             plain = '';
         }
+        if (stop > i) {
+            tokens.push({ kind, text: code.slice(i, stop) });
+        }
+        i = stop;
     };
 
     while (i < code.length) {
-        const ch = code[i];
-        const next = code[i + 1];
-
-        if (ch === '-' && next === '-') {
-            const end = code.indexOf('\n', i);
-            const stop = end === -1 ? code.length : end;
-            flushPlain();
-            tokens.push({ kind: 'comment', text: code.slice(i, stop) });
-            i = stop;
+        const commentStop = readComment(code, i);
+        if (commentStop !== -1) {
+            push('comment', commentStop);
             continue;
         }
 
-        if (ch === '/' && next === '*') {
-            const stop = readBlockComment(code, i);
-            flushPlain();
-            tokens.push({ kind: 'comment', text: code.slice(i, stop) });
-            i = stop;
+        const literalStop = readLiteral(code, i);
+        if (literalStop !== -1) {
+            push('literal', literalStop);
             continue;
         }
 
-        if (ch === "'" || ch === '"') {
-            // An E or e prefix that starts a word makes this an escape
-            // string constant, in which a backslash escapes the quote.
-            const escapeString =
-                ch === "'" &&
-                (code[i - 1] === 'E' || code[i - 1] === 'e') &&
-                (i < 2 || !IDENTIFIER_CHAR_RE.test(code[i - 2]));
-            const stop = readQuoted(code, i, ch, escapeString);
-            flushPlain();
-            tokens.push({ kind: 'literal', text: code.slice(i, stop) });
-            i = stop;
+        if (code[i] === ';') {
+            push('separator', i + 1);
             continue;
         }
 
-        // A `$` that continues an identifier, as in `col$a$`, cannot
-        // open a dollar-quoted string.
-        if (ch === '$' && (i === 0 || !IDENTIFIER_CHAR_RE.test(code[i - 1]))) {
-            const stop = readDollarQuoted(code, i);
-            if (stop !== -1) {
-                flushPlain();
-                tokens.push({ kind: 'literal', text: code.slice(i, stop) });
-                i = stop;
-                continue;
-            }
-        }
-
-        if (ch === ';') {
-            flushPlain();
-            tokens.push({ kind: 'separator', text: ';' });
-            i++;
-            continue;
-        }
-
-        plain += ch;
+        plain += code[i];
         i++;
     }
 
-    flushPlain();
+    push('plain', i);
     return tokens;
 };
 

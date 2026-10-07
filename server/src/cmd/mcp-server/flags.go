@@ -43,6 +43,11 @@ type Flags struct {
 	DBPasswordFile string
 	DBSSLMode      string
 
+	// dbPasswordFromFile records that ResolvePasswords read DBPassword
+	// from -db-password-file, so that ToCLIFlags applies it over the
+	// configuration file just as it would a -db-password value.
+	dbPasswordFromFile bool
+
 	// Token management commands
 	AddTokenCmd    bool
 	RemoveTokenCmd string
@@ -307,6 +312,16 @@ func (f *Flags) ToCLIFlags() config.CLIFlags {
 		}
 	})
 
+	// A password read from -db-password-file is marked set as well, or
+	// the configuration would drop it and fall back to the file's
+	// password, or none (issue #591). This keys on what ResolvePasswords
+	// read rather than on the flag having been given, so that a call made
+	// before the file was read cannot mark an empty password as set.
+	if f.dbPasswordFromFile {
+		cliFlags.DBPassSet = true
+		cliFlags.DBPassword = f.DBPassword
+	}
+
 	return cliFlags
 }
 
@@ -411,6 +426,7 @@ func (f *Flags) ResolvePasswords() error {
 	if dbResult.Source != PasswordSourceNone {
 		f.DBPassword = dbResult.Value
 	}
+	f.dbPasswordFromFile = dbResult.Source == PasswordSourceFile
 
 	userResult, err := ResolvePassword(
 		f.UserPassword, isFlagSet("password"),

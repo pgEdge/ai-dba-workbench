@@ -831,6 +831,16 @@ project adheres to
 
 ### Fixed
 
+- Apply the datastore password read from the server's
+  `-db-password-file` flag. The file was read but its contents
+  were then dropped, so the server connected with the
+  configuration file's password, or none; the file's password
+  now overrides the configuration file at start-up and on a
+  `SIGHUP` reload, as `-db-password` does, and `-db-password`
+  still takes precedence when both are given. The datastore
+  password is also now excluded when the server's configuration is
+  serialised to JSON, as the OIDC client secret already was. (#591)
+
 - Keep the server's command-line overrides across a `SIGHUP`
   configuration reload. A reload applied none of the flags given at
   start-up, so the `-db-*` flags were replaced by the configuration

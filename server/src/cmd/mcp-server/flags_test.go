@@ -463,6 +463,86 @@ func TestResolvePasswords(t *testing.T) {
 	}
 }
 
+// TestDBPasswordFileReachesConfig covers issue #591: a datastore
+// password read from -db-password-file must be applied over the
+// configuration file at start-up and kept by a SIGHUP reload, exactly as
+// a -db-password value is, whilst -db-password still wins when both are
+// given.
+func TestDBPasswordFileReachesConfig(t *testing.T) {
+	dbFile := writeSecret(t, "not-a-real-file-password\n")
+
+	cases := map[string]struct {
+		configPassword string
+		args           []string
+		want           string
+	}{
+		"file with no password in the configuration": {
+			args: []string{"-db-password-file", dbFile},
+			want: "not-a-real-file-password",
+		},
+		"file overrides the configuration's password": {
+			configPassword: "not-a-real-config-password",
+			args:           []string{"-db-password-file", dbFile},
+			want:           "not-a-real-file-password",
+		},
+		"command-line password wins over the file": {
+			args: []string{"-db-password", "not-a-real-flag-password", "-db-password-file", dbFile},
+			want: "not-a-real-flag-password",
+		},
+		"no password flag keeps the configuration's password": {
+			configPassword: "not-a-real-config-password",
+			want:           "not-a-real-config-password",
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			yaml := "database:\n  host: db.example.com\n  user: workbench\n"
+			if tc.configPassword != "" {
+				yaml += "  password: " + tc.configPassword + "\n"
+			}
+			path := filepath.Join(t.TempDir(), "ai-dba-server.yaml")
+			if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
+				t.Fatalf("writing the config file: %v", err)
+			}
+
+			f := parseTestFlags(t, append([]string{"-config", path}, tc.args...)...)
+			var err error
+			captureStderr(t, func() { err = f.ResolvePasswords() })
+			if err != nil {
+				t.Fatalf("ResolvePasswords() = %v", err)
+			}
+
+			initial, err := config.LoadConfig(path, f.ToCLIFlags())
+			if err != nil {
+				t.Fatalf("LoadConfig at start-up: %v", err)
+			}
+			if initial.Database == nil || initial.Database.Password != tc.want {
+				t.Fatalf("start-up database = %+v, want password %q", initial.Database, tc.want)
+			}
+
+			rc := config.NewReloadableConfig(initial, path, f.ToReloadCLIFlags())
+			if err := rc.Reload(); err != nil {
+				t.Fatalf("Reload() = %v", err)
+			}
+			if got := rc.Get().Database.Password; got != tc.want {
+				t.Errorf("reloaded password = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestDBPasswordFileUnresolved checks that -db-password-file alone does
+// not mark the password set before ResolvePasswords has read the file,
+// so an early ToCLIFlags call cannot replace the configuration's
+// password with an empty one.
+func TestDBPasswordFileUnresolved(t *testing.T) {
+	f := parseTestFlags(t, "-db-password-file", writeSecret(t, "not-a-real-password\n"))
+	if got := f.ToCLIFlags(); got.DBPassSet || got.DBPassword != "" {
+		t.Errorf("ToCLIFlags() before ResolvePasswords = %+v, want no password set", got)
+	}
+}
+
 // TestGetDefaultPaths checks the default paths are derived from the
 // running executable.
 func TestGetDefaultPaths(t *testing.T) {

@@ -272,8 +272,8 @@ type OIDCConfig struct {
 	// without it, json.Marshal of this struct (or of the embedding
 	// AuthConfig) would emit an inline secret in plaintext to any
 	// consumer, such as a future handler that reports auth state to the
-	// login page. DatabaseConfig.Password has the same latent hole; that
-	// is pre-existing and out of scope here.
+	// login page. DatabaseConfig.Password is tagged json:"-" for the
+	// same reason.
 	ClientSecret     string `yaml:"client_secret" json:"-"`
 	ClientSecretFile string `yaml:"client_secret_file" json:"-"`
 
@@ -407,11 +407,16 @@ const DefaultPoolMaxConns = 20
 
 // DatabaseConfig holds database connection settings
 type DatabaseConfig struct {
-	Host         string `yaml:"host"`          // Database host (default: localhost)
-	Port         int    `yaml:"port"`          // Database port (default: 5432)
-	Database     string `yaml:"database"`      // Database name (default: postgres)
-	User         string `yaml:"user"`          // Database user (required)
-	Password     string `yaml:"password"`      // Database password (optional; falls back to password_file then pgx .pgpass when unset)
+	Host     string `yaml:"host"`     // Database host (default: localhost)
+	Port     int    `yaml:"port"`     // Database port (default: 5432)
+	Database string `yaml:"database"` // Database name (default: postgres)
+	User     string `yaml:"user"`     // Database user (required)
+	// Password is the database password (optional; falls back to
+	// password_file then pgx .pgpass when unset). It may hold an inline
+	// YAML value or one applied from -db-password or -db-password-file,
+	// so it is tagged json:"-" to keep it out of any JSON-serialized
+	// configuration. The yaml tag is unchanged.
+	Password     string `yaml:"password" json:"-"`
 	PasswordFile string `yaml:"password_file"` // Path to a file containing the database password (used only if Password is empty)
 	SSLMode      string `yaml:"sslmode"`       // SSL mode: disable, require, verify-ca, verify-full (default: prefer)
 

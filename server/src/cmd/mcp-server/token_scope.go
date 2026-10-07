@@ -44,8 +44,9 @@ func scopeTokenConnectionsCommand(dataDir string, tokenID int64, connectionIDs s
 		}
 	}
 
-	// Set token connection scope
-	if err := cliStore(store).SetTokenConnectionScope(tokenID, conns); err != nil {
+	// Set token connection scope. The CLI acts with direct access to the
+	// auth database, so it holds a superuser's authority over any token.
+	if err := cliStore(store).SetTokenConnectionScope(tokenID, conns, true); err != nil {
 		return fmt.Errorf("failed to set token connection scope: %w", err)
 	}
 
@@ -82,8 +83,8 @@ func scopeTokenToolsCommand(dataDir string, tokenID int64, tools string) error {
 		}
 	}
 
-	// Set token MCP scope by names
-	if err := cliStore(store).SetTokenMCPScopeByNames(tokenID, toolNames); err != nil {
+	// Set token MCP scope by names, with the CLI's superuser authority
+	if err := cliStore(store).SetTokenMCPScopeByNames(tokenID, toolNames, true); err != nil {
 		return fmt.Errorf("failed to set token MCP scope: %w", err)
 	}
 
@@ -109,8 +110,8 @@ func clearTokenScopeCommand(dataDir string, tokenID int64) error {
 	}
 	defer store.Close()
 
-	// Clear token scope
-	if err := cliStore(store).ClearTokenScope(tokenID); err != nil {
+	// Clear token scope, with the CLI's superuser authority
+	if err := cliStore(store).ClearTokenScope(tokenID, true); err != nil {
 		return fmt.Errorf("failed to clear token scope: %w", err)
 	}
 

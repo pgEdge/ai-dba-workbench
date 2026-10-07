@@ -70,8 +70,11 @@ func addTokenCommand(dataDir, username, annotation string, expiresIn time.Durati
 		}
 	}
 
-	// Create token owned by the specified user
-	rawToken, storedToken, err := cliStore(store).CreateToken(username, annotation, expiresAt)
+	// Create token owned by the specified user. The CLI acts with direct
+	// access to the auth database, so it holds a superuser's authority
+	// and may mint a token for any account.
+	rawToken, storedToken, err := cliStore(store).CreateToken(username,
+		annotation, expiresAt, true)
 	if err != nil {
 		return fmt.Errorf("failed to create token: %w", err)
 	}
@@ -109,8 +112,8 @@ func removeTokenCommand(dataDir, identifier string) error {
 	}
 	defer store.Close()
 
-	// Remove token
-	if err := cliStore(store).DeleteToken(identifier); err != nil {
+	// Remove token, with the CLI's superuser authority
+	if err := cliStore(store).DeleteToken(identifier, true); err != nil {
 		return fmt.Errorf("failed to remove token: %w", err)
 	}
 

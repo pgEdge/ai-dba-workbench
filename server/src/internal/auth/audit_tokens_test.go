@@ -137,7 +137,7 @@ func TestAuditTokensCreate(t *testing.T) {
 
 	expiry := time.Now().Add(24 * time.Hour).UTC().Truncate(time.Second)
 	as := store.AsActor(testActor())
-	raw, token, err := as.CreateToken("bob", "deploy key", &expiry)
+	raw, token, err := as.CreateToken("bob", "deploy key", &expiry, true)
 	if err != nil {
 		t.Fatalf("CreateToken failed: %v", err)
 	}
@@ -178,7 +178,7 @@ func TestAuditTokensCreateNeverLeaksTheToken(t *testing.T) {
 	mustCreateTokenOwner(t, store, "bob")
 
 	as := store.AsActor(testActor())
-	raw, token, err := as.CreateToken("bob", "deploy key", nil)
+	raw, token, err := as.CreateToken("bob", "deploy key", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken failed: %v", err)
 	}
@@ -221,7 +221,7 @@ func TestAuditTokensCreateWithoutExpiry(t *testing.T) {
 	mustCreateTokenOwner(t, store, "bob")
 
 	as := store.AsActor(testActor())
-	if _, _, err := as.CreateToken("bob", "", nil); err != nil {
+	if _, _, err := as.CreateToken("bob", "", nil, true); err != nil {
 		t.Fatalf("CreateToken failed: %v", err)
 	}
 
@@ -239,7 +239,7 @@ func TestAuditTokensCreateUnknownOwnerRecordsFailure(t *testing.T) {
 	defer cleanup()
 
 	as := store.AsActor(testActor())
-	_, _, err := as.CreateToken("nobody", "deploy key", nil)
+	_, _, err := as.CreateToken("nobody", "deploy key", nil, true)
 	if err == nil {
 		t.Fatal("Expected CreateToken for an unknown owner to fail")
 	}
@@ -373,7 +373,7 @@ func TestAuditTokensDeleteTokenByID(t *testing.T) {
 	_, token := mustCreateToken(t, store, "bob", "by id")
 
 	as := store.AsActor(testActor())
-	if err := as.DeleteToken(strconv.FormatInt(token.ID, 10)); err != nil {
+	if err := as.DeleteToken(strconv.FormatInt(token.ID, 10), true); err != nil {
 		t.Fatalf("DeleteToken failed: %v", err)
 	}
 
@@ -389,7 +389,7 @@ func TestAuditTokensDeleteTokenByHashPrefix(t *testing.T) {
 	_, token := mustCreateToken(t, store, "bob", "by prefix")
 
 	as := store.AsActor(testActor())
-	if err := as.DeleteToken(token.TokenHash[:12]); err != nil {
+	if err := as.DeleteToken(token.TokenHash[:12], true); err != nil {
 		t.Fatalf("DeleteToken failed: %v", err)
 	}
 
@@ -409,7 +409,7 @@ func TestAuditTokensDeleteTokenNotFound(t *testing.T) {
 	countBefore := auditEventCount(t, store)
 
 	as := store.AsActor(testActor())
-	err := as.DeleteToken("deadbeefdeadbeef")
+	err := as.DeleteToken("deadbeefdeadbeef", true)
 	if err == nil {
 		t.Fatal("Expected DeleteToken on a missing token to fail")
 	}
@@ -434,7 +434,7 @@ func TestAuditTokensDeleteTokenByIDNotFound(t *testing.T) {
 	mustCreateTokenOwner(t, store, "bob")
 
 	as := store.AsActor(testActor())
-	err := as.DeleteToken("9999")
+	err := as.DeleteToken("9999", true)
 	if err == nil {
 		t.Fatal("Expected DeleteToken on a missing token to fail")
 	}
@@ -479,12 +479,12 @@ func TestAuditTokensSetConnectionScope(t *testing.T) {
 	as := store.AsActor(testActor())
 	if err := as.SetTokenConnectionScope(token.ID, []ScopedConnection{
 		{ConnectionID: 1, AccessLevel: AccessLevelRead},
-	}); err != nil {
+	}, true); err != nil {
 		t.Fatalf("SetTokenConnectionScope failed: %v", err)
 	}
 	if err := as.SetTokenConnectionScope(token.ID, []ScopedConnection{
 		{ConnectionID: 2, AccessLevel: AccessLevelReadWrite},
-	}); err != nil {
+	}, true); err != nil {
 		t.Fatalf("SetTokenConnectionScope failed: %v", err)
 	}
 
@@ -519,7 +519,7 @@ func TestAuditTokensSetConnectionScopeEmptyClears(t *testing.T) {
 	_, token := mustCreateToken(t, store, "bob", "scoped")
 
 	as := store.AsActor(testActor())
-	if err := as.SetTokenConnectionScope(token.ID, nil); err != nil {
+	if err := as.SetTokenConnectionScope(token.ID, nil, true); err != nil {
 		t.Fatalf("SetTokenConnectionScope failed: %v", err)
 	}
 
@@ -546,7 +546,7 @@ func TestAuditTokensSetMCPScopeByIDs(t *testing.T) {
 	}
 
 	as := store.AsActor(testActor())
-	if err := as.SetTokenMCPScope(token.ID, []int64{privID}); err != nil {
+	if err := as.SetTokenMCPScope(token.ID, []int64{privID}, true); err != nil {
 		t.Fatalf("SetTokenMCPScope failed: %v", err)
 	}
 
@@ -577,7 +577,7 @@ func TestAuditTokensSetMCPScopeByNames(t *testing.T) {
 	}
 
 	as := store.AsActor(testActor())
-	if err := as.SetTokenMCPScopeByNames(token.ID, []string{"tool_a"}); err != nil {
+	if err := as.SetTokenMCPScopeByNames(token.ID, []string{"tool_a"}, true); err != nil {
 		t.Fatalf("SetTokenMCPScopeByNames failed: %v", err)
 	}
 
@@ -602,7 +602,7 @@ func TestAuditTokensSetMCPScopeByNamesWildcard(t *testing.T) {
 	_, token := mustCreateToken(t, store, "bob", "scoped")
 
 	as := store.AsActor(testActor())
-	if err := as.SetTokenMCPScopeByNames(token.ID, []string{"*", "tool_a"}); err != nil {
+	if err := as.SetTokenMCPScopeByNames(token.ID, []string{"*", "tool_a"}, true); err != nil {
 		t.Fatalf("SetTokenMCPScopeByNames failed: %v", err)
 	}
 
@@ -620,10 +620,10 @@ func TestAuditTokensSetAdminScope(t *testing.T) {
 	_, token := mustCreateToken(t, store, "bob", "scoped")
 
 	as := store.AsActor(testActor())
-	if err := as.SetTokenAdminScope(token.ID, []string{"manage_users"}); err != nil {
+	if err := as.SetTokenAdminScope(token.ID, []string{"manage_users"}, true); err != nil {
 		t.Fatalf("SetTokenAdminScope failed: %v", err)
 	}
-	if err := as.SetTokenAdminScope(token.ID, []string{"*", "manage_users"}); err != nil {
+	if err := as.SetTokenAdminScope(token.ID, []string{"*", "manage_users"}, true); err != nil {
 		t.Fatalf("SetTokenAdminScope failed: %v", err)
 	}
 
@@ -664,7 +664,7 @@ func TestAuditTokensClearScope(t *testing.T) {
 	}
 
 	as := store.AsActor(testActor())
-	if err := as.ClearTokenScope(token.ID); err != nil {
+	if err := as.ClearTokenScope(token.ID, true); err != nil {
 		t.Fatalf("ClearTokenScope failed: %v", err)
 	}
 
@@ -700,7 +700,7 @@ func TestAuditTokensScopeOnMissingTokenStillRecords(t *testing.T) {
 	defer cleanup()
 
 	as := store.AsActor(testActor())
-	if err := as.ClearTokenScope(4242); err != nil {
+	if err := as.ClearTokenScope(4242, true); err != nil {
 		t.Fatalf("ClearTokenScope failed: %v", err)
 	}
 
@@ -740,19 +740,19 @@ func TestAuditTokensChainStaysIntact(t *testing.T) {
 	mustCreateTokenOwner(t, store, "bob")
 
 	as := store.AsActor(testActor())
-	_, token, err := as.CreateToken("bob", "chained", nil)
+	_, token, err := as.CreateToken("bob", "chained", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken failed: %v", err)
 	}
 	if err := as.SetTokenConnectionScope(token.ID, []ScopedConnection{
 		{ConnectionID: 1, AccessLevel: AccessLevelRead},
-	}); err != nil {
+	}, true); err != nil {
 		t.Fatalf("SetTokenConnectionScope failed: %v", err)
 	}
-	if err := as.SetTokenAdminScope(token.ID, []string{"manage_users"}); err != nil {
+	if err := as.SetTokenAdminScope(token.ID, []string{"manage_users"}, true); err != nil {
 		t.Fatalf("SetTokenAdminScope failed: %v", err)
 	}
-	if err := as.ClearTokenScope(token.ID); err != nil {
+	if err := as.ClearTokenScope(token.ID, true); err != nil {
 		t.Fatalf("ClearTokenScope failed: %v", err)
 	}
 	if err := as.DeleteUserToken("bob", token.ID); err != nil {
@@ -877,26 +877,26 @@ func TestAuditTokensClosedStoreFailsToBegin(t *testing.T) {
 		call func() error
 	}{
 		{"CreateToken", func() error {
-			_, _, err := as.CreateToken("bob", "x", nil)
+			_, _, err := as.CreateToken("bob", "x", nil, true)
 			return err
 		}},
 		{"DeleteUserToken", func() error {
 			return as.DeleteUserToken("bob", token.ID)
 		}},
-		{"DeleteToken", func() error { return as.DeleteToken("1") }},
+		{"DeleteToken", func() error { return as.DeleteToken("1", true) }},
 		{"SetTokenConnectionScope", func() error {
-			return as.SetTokenConnectionScope(token.ID, nil)
+			return as.SetTokenConnectionScope(token.ID, nil, true)
 		}},
 		{"SetTokenMCPScope", func() error {
-			return as.SetTokenMCPScope(token.ID, nil)
+			return as.SetTokenMCPScope(token.ID, nil, true)
 		}},
 		{"SetTokenMCPScopeByNames", func() error {
-			return as.SetTokenMCPScopeByNames(token.ID, nil)
+			return as.SetTokenMCPScopeByNames(token.ID, nil, true)
 		}},
 		{"SetTokenAdminScope", func() error {
-			return as.SetTokenAdminScope(token.ID, nil)
+			return as.SetTokenAdminScope(token.ID, nil, true)
 		}},
-		{"ClearTokenScope", func() error { return as.ClearTokenScope(token.ID) }},
+		{"ClearTokenScope", func() error { return as.ClearTokenScope(token.ID, true) }},
 	}
 
 	for _, tc := range cases {
@@ -920,23 +920,23 @@ func TestAuditTokensBrokenScopeTablesRecordFailure(t *testing.T) {
 	}{
 		{"connections", "token_connection_scope", "token.scope.set_connections",
 			func(as *ActorStore, id int64) error {
-				return as.SetTokenConnectionScope(id, nil)
+				return as.SetTokenConnectionScope(id, nil, true)
 			}},
 		{"tools", "token_mcp_scope", "token.scope.set_tools",
 			func(as *ActorStore, id int64) error {
-				return as.SetTokenMCPScope(id, nil)
+				return as.SetTokenMCPScope(id, nil, true)
 			}},
 		{"tools_by_name", "token_mcp_scope", "token.scope.set_tools",
 			func(as *ActorStore, id int64) error {
-				return as.SetTokenMCPScopeByNames(id, nil)
+				return as.SetTokenMCPScopeByNames(id, nil, true)
 			}},
 		{"admin", "token_admin_scope", "token.scope.set_admin",
 			func(as *ActorStore, id int64) error {
-				return as.SetTokenAdminScope(id, nil)
+				return as.SetTokenAdminScope(id, nil, true)
 			}},
 		{"clear", "token_connection_scope", "token.scope.clear",
 			func(as *ActorStore, id int64) error {
-				return as.ClearTokenScope(id)
+				return as.ClearTokenScope(id, true)
 			}},
 		{"delete", "token_admin_scope", "token.delete",
 			func(as *ActorStore, id int64) error {
@@ -985,7 +985,7 @@ func TestAuditTokensCreateInsertFailureRecordsFailure(t *testing.T) {
 	mustExec(t, store, "DROP TABLE tokens")
 
 	as := store.AsActor(testActor())
-	if _, _, err := as.CreateToken("bob", "doomed", nil); err == nil {
+	if _, _, err := as.CreateToken("bob", "doomed", nil, true); err == nil {
 		t.Fatal("Expected CreateToken to fail with the tokens table dropped")
 	}
 
@@ -1006,8 +1006,7 @@ func TestAuditTokensCreateUserLookupFailure(t *testing.T) {
 
 	mustExec(t, store, "DROP TABLE users")
 
-	if _, _, err := store.AsActor(testActor()).CreateToken("bob", "x",
-		nil); err == nil {
+	if _, _, err := store.AsActor(testActor()).CreateToken("bob", "x", nil, true); err == nil {
 		t.Fatal("Expected CreateToken to fail with the users table dropped")
 	} else if !strings.Contains(err.Error(), "failed to get user") {
 		t.Errorf("Expected a lookup failure, got %q", err)
@@ -1065,21 +1064,21 @@ func TestAuditTokensScopeScanFailures(t *testing.T) {
 			`INSERT INTO token_connection_scope (token_id, connection_id, access_level)
              VALUES (%d, 'not-a-number', 'read')`,
 			func(as *ActorStore, id int64) error {
-				return as.SetTokenConnectionScope(id, nil)
+				return as.SetTokenConnectionScope(id, nil, true)
 			},
 			"failed to scan connection scope"},
 		{"tools",
 			`INSERT INTO token_mcp_scope (token_id, privilege_identifier_id)
              VALUES (%d, 'not-a-number')`,
 			func(as *ActorStore, id int64) error {
-				return as.SetTokenMCPScope(id, nil)
+				return as.SetTokenMCPScope(id, nil, true)
 			},
 			"failed to scan privilege ID"},
 		{"admin",
 			`INSERT INTO token_admin_scope (token_id, permission)
              VALUES (%d, NULL)`,
 			func(as *ActorStore, id int64) error {
-				return as.SetTokenAdminScope(id, nil)
+				return as.SetTokenAdminScope(id, nil, true)
 			},
 			"failed to scan admin permission"},
 	}
@@ -1130,26 +1129,26 @@ func TestAuditTokensAuditTableMissing(t *testing.T) {
 		call func(as *ActorStore, tokenID int64) error
 	}{
 		{"CreateToken", func(as *ActorStore, _ int64) error {
-			_, _, err := as.CreateToken("bob", "second", nil)
+			_, _, err := as.CreateToken("bob", "second", nil, true)
 			return err
 		}},
 		{"DeleteUserToken", func(as *ActorStore, id int64) error {
 			return as.DeleteUserToken("bob", id)
 		}},
 		{"SetTokenConnectionScope", func(as *ActorStore, id int64) error {
-			return as.SetTokenConnectionScope(id, nil)
+			return as.SetTokenConnectionScope(id, nil, true)
 		}},
 		{"SetTokenMCPScope", func(as *ActorStore, id int64) error {
-			return as.SetTokenMCPScope(id, nil)
+			return as.SetTokenMCPScope(id, nil, true)
 		}},
 		{"SetTokenMCPScopeByNames", func(as *ActorStore, id int64) error {
-			return as.SetTokenMCPScopeByNames(id, nil)
+			return as.SetTokenMCPScopeByNames(id, nil, true)
 		}},
 		{"SetTokenAdminScope", func(as *ActorStore, id int64) error {
-			return as.SetTokenAdminScope(id, nil)
+			return as.SetTokenAdminScope(id, nil, true)
 		}},
 		{"ClearTokenScope", func(as *ActorStore, id int64) error {
-			return as.ClearTokenScope(id)
+			return as.ClearTokenScope(id, true)
 		}},
 	}
 
@@ -1283,65 +1282,66 @@ func TestAuditTokensScopeMutationFailures(t *testing.T) {
 		{"ConnectionsClear", seedConnectionScope,
 			blockDelete("token_connection_scope"),
 			func(as *ActorStore, id int64) error {
-				return as.SetTokenConnectionScope(id, nil)
+				return as.SetTokenConnectionScope(id, nil, true)
 			},
 			"failed to clear token connection scope"},
 		{"ConnectionsInsert", nil, blockInsert("token_connection_scope"),
 			func(as *ActorStore, id int64) error {
 				return as.SetTokenConnectionScope(id, []ScopedConnection{
 					{ConnectionID: 1, AccessLevel: AccessLevelRead},
-				})
+				}, true)
+
 			},
 			"failed to add connection to token scope"},
 		{"ToolsClear", seedMCPScope, blockDelete("token_mcp_scope"),
 			func(as *ActorStore, id int64) error {
-				return as.SetTokenMCPScope(id, nil)
+				return as.SetTokenMCPScope(id, nil, true)
 			},
 			"failed to clear token MCP scope"},
 		{"ToolsInsert", nil, "",
 			func(as *ActorStore, id int64) error {
-				return as.SetTokenMCPScope(id, []int64{5, 5})
+				return as.SetTokenMCPScope(id, []int64{5, 5}, true)
 			},
 			"failed to add privilege to token scope"},
 		{"ToolsByNameClear", seedMCPScope, blockDelete("token_mcp_scope"),
 			func(as *ActorStore, id int64) error {
-				return as.SetTokenMCPScopeByNames(id, nil)
+				return as.SetTokenMCPScopeByNames(id, nil, true)
 			},
 			"failed to clear token MCP scope"},
 		{"ToolsByNameInsert", nil, blockInsert("token_mcp_scope"),
 			func(as *ActorStore, id int64) error {
-				return as.SetTokenMCPScopeByNames(id, []string{"tool_a"})
+				return as.SetTokenMCPScopeByNames(id, []string{"tool_a"}, true)
 			},
 			"failed to add privilege to token scope"},
 		{"ToolsByNameWildcardInsert", nil, blockInsert("token_mcp_scope"),
 			func(as *ActorStore, id int64) error {
-				return as.SetTokenMCPScopeByNames(id, []string{"*"})
+				return as.SetTokenMCPScopeByNames(id, []string{"*"}, true)
 			},
 			"failed to add wildcard privilege to token scope"},
 		{"AdminClear", seedAdminScope, blockDelete("token_admin_scope"),
 			func(as *ActorStore, id int64) error {
-				return as.SetTokenAdminScope(id, nil)
+				return as.SetTokenAdminScope(id, nil, true)
 			},
 			"failed to clear admin scope"},
 		{"AdminInsert", nil, blockInsert("token_admin_scope"),
 			func(as *ActorStore, id int64) error {
-				return as.SetTokenAdminScope(id, []string{PermManageUsers})
+				return as.SetTokenAdminScope(id, []string{PermManageUsers}, true)
 			},
 			"failed to add admin permission manage_users to token scope"},
 		{"AdminWildcardInsert", nil, blockInsert("token_admin_scope"),
 			func(as *ActorStore, id int64) error {
-				return as.SetTokenAdminScope(id, []string{"*"})
+				return as.SetTokenAdminScope(id, []string{"*"}, true)
 			},
 			"failed to add wildcard admin permission to token scope"},
 		{"ClearConnections", seedConnectionScope,
 			blockDelete("token_connection_scope"),
-			func(as *ActorStore, id int64) error { return as.ClearTokenScope(id) },
+			func(as *ActorStore, id int64) error { return as.ClearTokenScope(id, true) },
 			"failed to clear token connection scope"},
 		{"ClearTools", seedMCPScope, blockDelete("token_mcp_scope"),
-			func(as *ActorStore, id int64) error { return as.ClearTokenScope(id) },
+			func(as *ActorStore, id int64) error { return as.ClearTokenScope(id, true) },
 			"failed to clear token MCP scope"},
 		{"ClearAdmin", seedAdminScope, blockDelete("token_admin_scope"),
-			func(as *ActorStore, id int64) error { return as.ClearTokenScope(id) },
+			func(as *ActorStore, id int64) error { return as.ClearTokenScope(id, true) },
 			"failed to clear token admin scope"},
 		{"DeleteScopeRows", seedConnectionScope,
 			blockDelete("token_connection_scope"),

@@ -88,7 +88,9 @@ func scopeAdminCallers(t *testing.T, store *auth.AuthStore) map[string]func(*htt
 // TestCreateTokenForSuperuserNeedsSuperuser checks that only a
 // superuser may mint a superuser's token: a session holding
 // manage_token_scopes is not bounded by a token ceiling, so it could
-// otherwise mint itself an unscoped superuser token.
+// otherwise mint itself an unscoped superuser token. A token caller is
+// refused by its ceiling, which a superuser owner always exceeds, before
+// the store's own superuser check is reached.
 func TestCreateTokenForSuperuserNeedsSuperuser(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
@@ -97,12 +99,16 @@ func TestCreateTokenForSuperuserNeedsSuperuser(t *testing.T) {
 		t.Fatalf("CreateUser failed: %v", err)
 	}
 	callers := scopeAdminCallers(t, store)
+	refusals := map[string]string{
+		"session": refuseNotSuperuser,
+		"token":   refuseTokenOwner,
+	}
 
 	for name, as := range callers {
 		t.Run(name, func(t *testing.T) {
 			rec := tokenRouteRequest(handler, http.MethodPost,
 				"/api/v1/rbac/tokens/", `{"owner_username":"root"}`, as)
-			assertRefusedWith(t, rec, refuseNotSuperuser)
+			assertRefusedWith(t, rec, refusals[name])
 		})
 	}
 	tokens, err := store.ListUserTokens("root")
@@ -136,7 +142,10 @@ func TestCreateTokenOwnerLookupFails(t *testing.T) {
 
 // TestSuperuserOwnedTokenNeedsSuperuser checks that only a superuser may
 // change the scope of, clear, or delete a superuser's token, whether the
-// caller is a session or a token, and that a superuser still may.
+// caller is a session or a token, and that a superuser still may. A
+// token caller widening or clearing the scope is refused by its own
+// ceiling first; every other refusal comes from the store's superuser
+// check.
 func TestSuperuserOwnedTokenNeedsSuperuser(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
@@ -147,20 +156,28 @@ func TestSuperuserOwnedTokenNeedsSuperuser(t *testing.T) {
 	requests := []struct {
 		name, method, path, body string
 		success                  int
+		tokenRefusal             string
 	}{
 		{"narrow scope", http.MethodPut, tokenPath + "/scope",
-			`{"admin_permissions":["manage_users"]}`, http.StatusNoContent},
+			`{"admin_permissions":["manage_users"]}`, http.StatusNoContent,
+			refuseNotSuperuser},
 		{"widen scope", http.MethodPut, tokenPath + "/scope",
-			`{"admin_permissions":["*"]}`, http.StatusNoContent},
+			`{"admin_permissions":["*"]}`, http.StatusNoContent,
+			refuseTokenScope},
 		{"clear scope", http.MethodDelete, tokenPath + "/scope", "",
-			http.StatusNoContent},
-		{"delete token", http.MethodDelete, tokenPath, "", http.StatusNoContent},
+			http.StatusNoContent, refuseTokenScope},
+		{"delete token", http.MethodDelete, tokenPath, "", http.StatusNoContent,
+			refuseNotSuperuser},
 	}
 	for name, as := range scopeAdminCallers(t, store) {
 		for _, rq := range requests {
 			t.Run(name+" "+rq.name, func(t *testing.T) {
 				rec := tokenRouteRequest(handler, rq.method, rq.path, rq.body, as)
-				assertRefusedWith(t, rec, refuseNotSuperuser)
+				want := refuseNotSuperuser
+				if name == "token" {
+					want = rq.tokenRefusal
+				}
+				assertRefusedWith(t, rec, want)
 			})
 		}
 	}
@@ -217,26 +234,58 @@ func TestSuperuserOwnedTokenSelfDelete(t *testing.T) {
 	assertStatus(t, rec, http.StatusNoContent)
 }
 
-// TestSuperuserOwnedTokenLookupFails checks that the gate fails closed
-// when the token or its owner cannot be read.
+// TestSuperuserOwnedTokenLookupFails checks that the store's superuser
+// check fails closed when a caller who is not a superuser changes a
+// token whose owner cannot be read, rather than taking the failure to
+// mean the owner is not a superuser.
 func TestSuperuserOwnedTokenLookupFails(t *testing.T) {
-	for _, broken := range []string{"tokens", "users"} {
-		t.Run(broken, func(t *testing.T) {
+	requests := []struct {
+		name, method, suffix, body, message string
+	}{
+		{"set scope", http.MethodPut, "/scope",
+			`{"admin_permissions":["manage_users"]}`, "Failed to set token scope"},
+		{"clear scope", http.MethodDelete, "/scope", "",
+			"Failed to clear token scope"},
+		{"delete token", http.MethodDelete, "", "", "Failed to delete token"},
+	}
+	for _, rq := range requests {
+		t.Run(rq.name, func(t *testing.T) {
 			handler, store, dir, cleanup := createTestRBACHandlerWithDir(t)
 			defer cleanup()
 			target := mustSuperuserScopedToken(t, store, "svc-root",
 				[]string{auth.PermManageUsers})
-			if broken == "users" {
-				renameUsersTable(t, dir)
-			} else {
-				dropAuthTable(t, dir, "tokens")
-			}
-			rec := tokenRouteRequest(handler, http.MethodDelete,
-				"/api/v1/rbac/tokens/"+strconv.FormatInt(target, 10)+"/scope",
-				"", withSuperuserSession)
-			assertError(t, rec, http.StatusInternalServerError,
-				"Failed to get token")
+			as := scopeAdminCallers(t, store)["session"]
+			renameUsersTable(t, dir)
+
+			rec := tokenRouteRequest(handler, rq.method,
+				"/api/v1/rbac/tokens/"+strconv.FormatInt(target, 10)+rq.suffix,
+				rq.body, as)
+			assertError(t, rec, http.StatusInternalServerError, rq.message)
 		})
+	}
+}
+
+// TestSuperuserOwnedTokenPromotedOwner checks, through the handlers,
+// that a token minted while its owner was an ordinary account is refused
+// to a caller who is not a superuser once the owner has been promoted,
+// now that no handler reads the owner before the store does (issue #607).
+func TestSuperuserOwnedTokenPromotedOwner(t *testing.T) {
+	handler, store, cleanup := createTestRBACHandler(t)
+	defer cleanup()
+	target := mustCreateScopedToken(t, store, "svc-promoted",
+		[]string{auth.PermManageUsers})
+	as := scopeAdminCallers(t, store)["session"]
+	if err := store.SetUserSuperuser("svc-promoted", true); err != nil {
+		t.Fatalf("SetUserSuperuser failed: %v", err)
+	}
+
+	rec := tokenRouteRequest(handler, http.MethodPut,
+		"/api/v1/rbac/tokens/"+strconv.FormatInt(target, 10)+"/scope",
+		`{"admin_permissions":["*"]}`, as)
+	assertRefusedWith(t, rec, refuseNotSuperuser)
+	if got := adminScopeOf(t, store, target); len(got) != 1 ||
+		got[0] != auth.PermManageUsers {
+		t.Errorf("Expected the scope to be untouched, got %v", got)
 	}
 }
 

@@ -225,11 +225,16 @@ func tokenScopesTx(tx *sql.Tx, tokenID int64) (tokenScopes, error) {
 // =============================================================================
 
 // CreateToken creates a new token owned by the specified user,
-// attributing the change to this store's actor.
+// attributing the change to this store's actor. When callerIsSuperuser
+// is false it refuses, with ErrSuperuserTargetForbidden, to mint a token
+// for an owner who is a superuser when the transaction reads the owner,
+// so every caller must say whether the principal it acts for is one.
 func (a *ActorStore) CreateToken(ownerUsername, annotation string,
-	requestedExpiry *time.Time) (string, *StoredToken, error) {
+	requestedExpiry *time.Time, callerIsSuperuser bool) (string,
+	*StoredToken, error) {
 
-	return a.s.createToken(a.actor, ownerUsername, annotation, requestedExpiry)
+	return a.s.createToken(a.actor, ownerUsername, annotation,
+		requestedExpiry, callerIsSuperuser)
 }
 
 // DeleteUserToken deletes a token owned by the named user, attributing
@@ -238,42 +243,70 @@ func (a *ActorStore) DeleteUserToken(username string, tokenID int64) error {
 	return a.s.deleteUserToken(a.actor, username, tokenID)
 }
 
+// The methods below change or delete an existing token. Each takes
+// superuserOwnerAllowed, and when it is false refuses, with
+// ErrSuperuserTargetForbidden, a token whose owner is a superuser when
+// the change's own transaction reads the owner (see
+// guardSuperuserOwnedTokenTx). A caller passes true when the principal
+// it acts for is a superuser, or is the token itself.
+
 // DeleteToken deletes a token by ID or hash prefix, attributing the
 // change to this store's actor.
-func (a *ActorStore) DeleteToken(identifier string) error {
-	return a.s.deleteToken(a.actor, identifier)
+func (a *ActorStore) DeleteToken(identifier string,
+	superuserOwnerAllowed bool) error {
+
+	return a.s.deleteToken(a.actor, identifier, superuserOwnerAllowed)
+}
+
+// SetTokenScope writes every scope kind the change supplies in one
+// transaction, attributing the change to this store's actor; see
+// AuthStore.setTokenScope.
+func (a *ActorStore) SetTokenScope(tokenID int64, change TokenScopeChange,
+	superuserOwnerAllowed bool) error {
+
+	return a.s.setTokenScope(a.actor, tokenID, change, superuserOwnerAllowed)
 }
 
 // SetTokenConnectionScope sets a token's connection scope, attributing
 // the change to this store's actor.
 func (a *ActorStore) SetTokenConnectionScope(tokenID int64,
-	connections []ScopedConnection) error {
+	connections []ScopedConnection, superuserOwnerAllowed bool) error {
 
-	return a.s.setTokenConnectionScope(a.actor, tokenID, connections)
+	return a.s.setTokenConnectionScope(a.actor, tokenID, connections,
+		superuserOwnerAllowed)
 }
 
 // SetTokenMCPScope sets a token's MCP privilege scope by privilege id,
 // attributing the change to this store's actor.
-func (a *ActorStore) SetTokenMCPScope(tokenID int64, privilegeIDs []int64) error {
-	return a.s.setTokenMCPScope(a.actor, tokenID, privilegeIDs)
+func (a *ActorStore) SetTokenMCPScope(tokenID int64, privilegeIDs []int64,
+	superuserOwnerAllowed bool) error {
+
+	return a.s.setTokenMCPScope(a.actor, tokenID, privilegeIDs,
+		superuserOwnerAllowed)
 }
 
 // SetTokenMCPScopeByNames sets a token's MCP privilege scope by
 // privilege identifier, attributing the change to this store's actor.
 func (a *ActorStore) SetTokenMCPScopeByNames(tokenID int64,
-	identifiers []string) error {
+	identifiers []string, superuserOwnerAllowed bool) error {
 
-	return a.s.setTokenMCPScopeByNames(a.actor, tokenID, identifiers)
+	return a.s.setTokenMCPScopeByNames(a.actor, tokenID, identifiers,
+		superuserOwnerAllowed)
 }
 
 // SetTokenAdminScope sets a token's admin permission scope, attributing
 // the change to this store's actor.
-func (a *ActorStore) SetTokenAdminScope(tokenID int64, permissions []string) error {
-	return a.s.setTokenAdminScope(a.actor, tokenID, permissions)
+func (a *ActorStore) SetTokenAdminScope(tokenID int64, permissions []string,
+	superuserOwnerAllowed bool) error {
+
+	return a.s.setTokenAdminScope(a.actor, tokenID, permissions,
+		superuserOwnerAllowed)
 }
 
 // ClearTokenScope removes all of a token's scope restrictions,
 // attributing the change to this store's actor.
-func (a *ActorStore) ClearTokenScope(tokenID int64) error {
-	return a.s.clearTokenScope(a.actor, tokenID)
+func (a *ActorStore) ClearTokenScope(tokenID int64,
+	superuserOwnerAllowed bool) error {
+
+	return a.s.clearTokenScope(a.actor, tokenID, superuserOwnerAllowed)
 }

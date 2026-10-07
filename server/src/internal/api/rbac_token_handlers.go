@@ -166,18 +166,10 @@ func (h *RBACHandler) createToken(w http.ResponseWriter, r *http.Request) {
 	// may mint one, as only a superuser may edit a superuser's account
 	// (see updateUser). Without this, a session holding
 	// manage_token_scopes, which ownerWithinTokenScope does not bound,
-	// could mint itself an unscoped superuser token.
-	owner, err := h.authStore.GetUser(req.OwnerUsername)
-	if err != nil {
-		log.Printf("[ERROR] Failed to look up token owner %s: %v",
-			req.OwnerUsername, err)
-		RespondError(w, http.StatusInternalServerError,
-			"Failed to create token")
-		return
-	}
-	if owner != nil && owner.IsSuperuser && !h.requireSuperuser(w, r) {
-		return
-	}
+	// could mint itself an unscoped superuser token. The store makes that
+	// check against the owner it reads inside the insert's own
+	// transaction, so that an owner promoted after any read made here is
+	// still refused (issue #607); see respondTokenWriteError.
 
 	// A new token acts with its owner's access, so a token may mint one
 	// only for an owner whose access lies within its own (issues #471
@@ -189,11 +181,11 @@ func (h *RBACHandler) createToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rawToken, storedToken, err := h.actorStore(r).CreateToken(
-		req.OwnerUsername, annotation, expiry)
+		req.OwnerUsername, annotation, expiry,
+		h.rbacChecker.IsSuperuser(r.Context()))
 	if err != nil {
-		log.Printf("[ERROR] Failed to create token for %s: %v",
-			req.OwnerUsername, err)
-		RespondError(w, http.StatusInternalServerError,
+		h.respondTokenWriteError(w, r, err, fmt.Sprintf(
+			"Failed to create token for %s", req.OwnerUsername),
 			"Failed to create token")
 		return
 	}
@@ -303,54 +295,47 @@ func (h *RBACHandler) handleTokenSubpath(w http.ResponseWriter, r *http.Request)
 	http.NotFound(w, r)
 }
 
-// requireSuperuserForOwnedToken refuses a change to, or the deletion
-// of, a token owned by a superuser unless the caller is a superuser
-// (see requireSuperuser). It is the same rule the store applies to a
-// superuser's own account inside the update and delete transactions
-// (ErrSuperuserTargetForbidden), but here it remains a handler
-// pre-check: such a token carries the superuser role, so widening its
-// scope hands that role out, and narrowing or deleting it can lock an
-// administrator out. A token acting on itself is exempt, since it may already narrow
-// or delete itself and TokenScopeChangeWithinCeiling stops it widening
-// itself. A token that does not exist is left to the operation to
-// report.
-func (h *RBACHandler) requireSuperuserForOwnedToken(w http.ResponseWriter,
-	r *http.Request, tokenID int64) bool {
+// superuserOwnerAllowed reports whether the caller may change or delete
+// a token owned by a superuser, which the store checks against the owner
+// it reads inside the change's own transaction (issue #607). Only a
+// superuser may (see requireSuperuser), as updateUser requires for a
+// superuser's account: such a token carries the superuser role, so
+// widening its scope hands that role out, and narrowing or deleting it
+// can lock an administrator out. A token acting on itself is allowed,
+// since it may already narrow or delete itself and
+// TokenScopeChangeWithinCeiling stops it widening itself.
+func (h *RBACHandler) superuserOwnerAllowed(r *http.Request,
+	tokenID int64) bool {
 
 	if acting := auth.GetTokenIDFromContext(r.Context()); acting > 0 &&
 		acting == tokenID {
 		return true
 	}
-	token, err := h.authStore.GetTokenByID(tokenID)
-	if err != nil {
-		log.Printf("[ERROR] Failed to look up token %d: %v", tokenID, err)
-		RespondError(w, http.StatusInternalServerError, "Failed to get token")
-		return false
+	return h.rbacChecker.IsSuperuser(r.Context())
+}
+
+// respondTokenWriteError answers a failed token write. The store's
+// refusal to let a caller who is not a superuser mint, change or delete
+// a superuser's token is answered exactly as requireSuperuser answers,
+// denial audit included; anything else is logged with logContext and
+// answered with a 500 carrying failure.
+func (h *RBACHandler) respondTokenWriteError(w http.ResponseWriter,
+	r *http.Request, err error, logContext, failure string) {
+
+	if errors.Is(err, auth.ErrSuperuserTargetForbidden) {
+		h.denyNotSuperuser(w, r)
+		return
 	}
-	if token == nil {
-		return true
-	}
-	owner, err := h.authStore.GetUserByID(token.OwnerID)
-	if err != nil {
-		log.Printf("[ERROR] Failed to look up the owner of token %d: %v",
-			tokenID, err)
-		RespondError(w, http.StatusInternalServerError, "Failed to get token")
-		return false
-	}
-	if owner == nil || !owner.IsSuperuser {
-		return true
-	}
-	return h.requireSuperuser(w, r)
+	log.Printf("[ERROR] %s: %v", logContext, err)
+	RespondError(w, http.StatusInternalServerError, failure)
 }
 
 // deleteToken deletes a token by its ID.
 func (h *RBACHandler) deleteToken(w http.ResponseWriter, r *http.Request, tokenID int64) {
-	if !h.requireSuperuserForOwnedToken(w, r, tokenID) {
-		return
-	}
-	if err := h.actorStore(r).DeleteToken(strconv.FormatInt(tokenID, 10)); err != nil {
-		log.Printf("[ERROR] Failed to delete token %d: %v", tokenID, err)
-		RespondError(w, http.StatusInternalServerError,
+	if err := h.actorStore(r).DeleteToken(strconv.FormatInt(tokenID, 10),
+		h.superuserOwnerAllowed(r, tokenID)); err != nil {
+		h.respondTokenWriteError(w, r, err,
+			fmt.Sprintf("Failed to delete token %d", tokenID),
 			"Failed to delete token")
 		return
 	}
@@ -418,8 +403,10 @@ func (h *RBACHandler) setTokenScope(w http.ResponseWriter, r *http.Request, toke
 
 	// A request refused for its content must leave every scope kind as
 	// it was, so empty arrays and the connection access levels are
-	// checked before any write, and the MCP scope, which can be refused
-	// for naming an unregistered identifier, is written first.
+	// checked before any write, and the store writes every kind in one
+	// transaction, so that an MCP scope naming an unregistered
+	// identifier, or a token whose owner is promoted to superuser before
+	// the write, leaves them all unchanged.
 	if kind := emptyScopeKind(req.Connections != nil && len(req.Connections) == 0,
 		req.MCPPrivileges != nil && len(req.MCPPrivileges) == 0,
 		req.AdminPermissions != nil && len(req.AdminPermissions) == 0); kind != "" {
@@ -438,60 +425,37 @@ func (h *RBACHandler) setTokenScope(w http.ResponseWriter, r *http.Request, toke
 		RespondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if !h.requireSuperuserForOwnedToken(w, r, tokenID) {
-		return
-	}
-
 	// What the change grants beyond the token's current scope must lie
 	// within the acting token's own access, and what it narrows needs
 	// read on each connection concerned, kind by kind for the kinds the
 	// request supplies (issue #471). This holds for a token changing its
 	// own scope as well: it may narrow itself, but its access is already
 	// its ceiling, so it can never widen itself.
-	if !h.requireTokenScopeChange(w, r, tokenID, auth.TokenScopeChange{
+	change := auth.TokenScopeChange{
 		Connections:      req.Connections,
 		MCPPrivileges:    req.MCPPrivileges,
 		AdminPermissions: req.AdminPermissions,
-	}, false) {
+	}
+	if !h.requireTokenScopeChange(w, r, tokenID, change, false) {
 		return
 	}
 
-	if req.MCPPrivileges != nil {
-		if err := h.actorStore(r).SetTokenMCPScopeByNames(tokenID, req.MCPPrivileges); err != nil {
-			if errors.Is(err, auth.ErrUnknownMCPPrivilege) {
-				RespondError(w, http.StatusBadRequest, err.Error())
-				return
-			}
-			log.Printf("[ERROR] Failed to set MCP scope for token %d: %v", tokenID, err)
-			RespondError(w, http.StatusInternalServerError, "Failed to set MCP scope")
+	if err := h.actorStore(r).SetTokenScope(tokenID, change,
+		h.superuserOwnerAllowed(r, tokenID)); err != nil {
+		if errors.Is(err, auth.ErrUnknownMCPPrivilege) {
+			RespondError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-	}
-
-	if req.Connections != nil {
-		if err := h.actorStore(r).SetTokenConnectionScope(tokenID, req.Connections); err != nil {
-			log.Printf("[ERROR] Failed to set connection scope for token %d: %v", tokenID, err)
-			RespondError(w, http.StatusInternalServerError, "Failed to set connection scope")
-			return
-		}
-	}
-
-	if req.AdminPermissions != nil {
-		if err := h.actorStore(r).SetTokenAdminScope(tokenID, req.AdminPermissions); err != nil {
-			log.Printf("[ERROR] Failed to set admin scope for token %d: %v", tokenID, err)
-			RespondError(w, http.StatusInternalServerError, "Failed to set admin scope")
-			return
-		}
+		h.respondTokenWriteError(w, r, err,
+			fmt.Sprintf("Failed to set scope for token %d", tokenID),
+			"Failed to set token scope")
+		return
 	}
 
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *RBACHandler) clearTokenScope(w http.ResponseWriter, r *http.Request, tokenID int64) {
-	if !h.requireSuperuserForOwnedToken(w, r, tokenID) {
-		return
-	}
-
 	// Clearing the scope leaves the token with its owner's whole access,
 	// which must then lie within the acting token's own in every kind
 	// the scope restricts today.
@@ -500,9 +464,11 @@ func (h *RBACHandler) clearTokenScope(w http.ResponseWriter, r *http.Request, to
 		return
 	}
 
-	if err := h.actorStore(r).ClearTokenScope(tokenID); err != nil {
-		log.Printf("[ERROR] Failed to clear token scope for token %d: %v", tokenID, err)
-		RespondError(w, http.StatusInternalServerError, "Failed to clear token scope")
+	if err := h.actorStore(r).ClearTokenScope(tokenID,
+		h.superuserOwnerAllowed(r, tokenID)); err != nil {
+		h.respondTokenWriteError(w, r, err,
+			fmt.Sprintf("Failed to clear token scope for token %d", tokenID),
+			"Failed to clear token scope")
 		return
 	}
 

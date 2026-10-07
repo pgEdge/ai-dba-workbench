@@ -2296,6 +2296,18 @@ project adheres to
   same write lock as the change and refuses it with a 403, recorded in
   the audit log as before. (#588)
 
+- Check whether a token's owner is a superuser inside the change's own
+  transaction. `POST /api/v1/rbac/tokens`, `PUT` and `DELETE` on
+  `/api/v1/rbac/tokens/{id}/scope`, and `DELETE /api/v1/rbac/tokens/{id}`
+  read the owner and checked its superuser status before making the
+  change separately, so a caller who was not a superuser could mint,
+  rescope or delete a token whose owner another request had promoted
+  to superuser in between. The auth store now reads the owner under the
+  same write lock as the change and refuses it with a 403, recorded in
+  the audit log as before. A scope update that sets several scope kinds
+  is now written in one transaction, so a failure leaves every kind
+  unchanged rather than only the kinds after it. (#607)
+
 - Make each OIDC login state good for one callback only, and rate limit
   `GET /api/v1/auth/oidc/start` per client address. The sealed state
   cookie is stateless and stayed valid for its ten minute lifetime, so

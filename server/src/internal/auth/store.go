@@ -1462,7 +1462,8 @@ func (s *AuthStore) StopSessionCleanup() {
 // are subject to the configured maxUserTokenDays limit. The change is
 // attributed to the system actor.
 func (s *AuthStore) CreateToken(ownerUsername, annotation string, requestedExpiry *time.Time) (string, *StoredToken, error) {
-	return s.createToken(systemActor, ownerUsername, annotation, requestedExpiry)
+	return s.createToken(systemActor, ownerUsername, annotation,
+		requestedExpiry, true)
 }
 
 // createToken creates a token and records the token.create event in the
@@ -1470,8 +1471,16 @@ func (s *AuthStore) CreateToken(ownerUsername, annotation string, requestedExpir
 // annotation; it never carries the raw token, its hash or any prefix of
 // either, because the audit log is readable by anyone who can read the
 // log and a token is a bearer credential.
+//
+// When callerIsSuperuser is false it refuses, with
+// ErrSuperuserTargetForbidden, to mint a token for an owner who is a
+// superuser when the transaction reads the owner. A superuser's unscoped
+// token carries the role, so reading the flag here rather than before
+// the call means an owner promoted in between is still refused (issue
+// #607), and the expiry cap below is decided on the same row.
 func (s *AuthStore) createToken(actor Actor, ownerUsername, annotation string,
-	requestedExpiry *time.Time) (raw string, stored *StoredToken, err error) {
+	requestedExpiry *time.Time, callerIsSuperuser bool) (raw string,
+	stored *StoredToken, err error) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1504,6 +1513,10 @@ func (s *AuthStore) createToken(actor Actor, ownerUsername, annotation string,
 	}
 	if lookupErr != nil {
 		err = fmt.Errorf("failed to get user: %w", lookupErr)
+		return "", nil, err
+	}
+	if isSuperuser && !callerIsSuperuser {
+		err = ErrSuperuserTargetForbidden
 		return "", nil, err
 	}
 
@@ -1629,6 +1642,7 @@ func (s *AuthStore) deleteUserToken(actor Actor, username string,
 			targetType: "token",
 			targetID:   &id,
 		},
+		true,
 	)
 }
 
@@ -1733,29 +1747,41 @@ func (s *AuthStore) ListAllTokens() ([]*StoredToken, error) {
 //
 // The change is attributed to the system actor.
 func (s *AuthStore) DeleteToken(identifier string) error {
-	return s.deleteToken(systemActor, identifier)
+	return s.deleteToken(systemActor, identifier, true)
 }
 
-func (s *AuthStore) deleteToken(actor Actor, identifier string) error {
+// deleteToken deletes the token the identifier names. When
+// superuserOwnerAllowed is false it refuses, with
+// ErrSuperuserTargetForbidden, to delete a token whose owner is a
+// superuser when the delete's transaction reads the owner (see
+// guardSuperuserOwnedTokenTx).
+func (s *AuthStore) deleteToken(actor Actor, identifier string,
+	superuserOwnerAllowed bool) error {
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	// Try by exact ID first. The callers pass strings, and the tokens
 	// table id column is INTEGER, so SQLite will coerce the string
 	// safely. A non-numeric identifier matches nothing here and falls
-	// through to the hash-prefix branch below.
-	if err := s.deleteTokensByFilter(actor, "id = ?", []any{identifier},
-		"", nil); err == nil {
-		return nil
+	// through to the hash-prefix branch below. A refusal is final: the
+	// token was found, so trying the identifier as a hash prefix as well
+	// could only delete something the caller did not name.
+	err := s.deleteTokensByFilter(actor, "id = ?", []any{identifier},
+		"", nil, superuserOwnerAllowed)
+	if err == nil || errors.Is(err, ErrSuperuserTargetForbidden) {
+		return err
 	}
 
 	// Try by hash prefix. Require at least 8 characters to avoid
 	// matching a huge swath of tokens on short inputs.
 	if len(identifier) >= 8 {
-		if err := s.deleteTokensByFilter(
+		err = s.deleteTokensByFilter(
 			actor, "token_hash LIKE ?", []any{identifier + "%"}, "", nil,
-		); err == nil {
-			return nil
+			superuserOwnerAllowed,
+		)
+		if err == nil || errors.Is(err, ErrSuperuserTargetForbidden) {
+			return err
 		}
 	}
 
@@ -1764,7 +1790,7 @@ func (s *AuthStore) deleteToken(actor Actor, identifier string) error {
 	// hash-prefix identifier names no id to attribute the failure to
 	// and so leaves no event, exactly as deleteUserToken's fallback
 	// target does for the id it was given.
-	err := fmt.Errorf("token not found")
+	err = fmt.Errorf("token not found")
 	if id, parseErr := strconv.ParseInt(identifier, 10, 64); parseErr == nil {
 		s.recordFailure(actor, "token.delete", "token", &id, "", err)
 	}
@@ -1785,9 +1811,12 @@ func (s *AuthStore) deleteToken(actor Actor, identifier string) error {
 // token matches, so that a caller who knows which token it asked for
 // leaves a failure event behind; DeleteToken passes nil, because it
 // chains two filters of which the first routinely matches nothing and
-// a failure event for each probe would be noise.
+// a failure event for each probe would be noise. When
+// superuserOwnerAllowed is false, a match owned by a superuser refuses
+// the whole delete with ErrSuperuserTargetForbidden.
 func (s *AuthStore) deleteTokensByFilter(actor Actor, whereClause string,
-	args []any, notFoundMsg string, fallback *auditTarget) (err error) {
+	args []any, notFoundMsg string, fallback *auditTarget,
+	superuserOwnerAllowed bool) (err error) {
 
 	tx, beginErr := s.db.Begin()
 	if beginErr != nil {
@@ -1817,6 +1846,14 @@ func (s *AuthStore) deleteTokensByFilter(actor Actor, whereClause string,
 
 	// Attribute any failure from here on to the first matched token.
 	target = firstMatchTarget(tx, matches[0].id)
+
+	for _, match := range matches {
+		if guardErr := guardSuperuserOwnedTokenTx(tx, match.id,
+			superuserOwnerAllowed); guardErr != nil {
+			err = guardErr
+			return err
+		}
+	}
 
 	// Capture the before state of every matched token, scopes included,
 	// while the rows are still there to read.

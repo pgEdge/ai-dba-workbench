@@ -207,36 +207,34 @@ func TestCeilingAllConnectionsFailsClosed(t *testing.T) {
 }
 
 // TestLiftsConnectionRestriction covers the store query behind the
-// revoke rule.
+// revoke rule. Only a grant naming the connection restricts it, so an
+// "all connections" grant, the group's own or another's, neither keeps a
+// connection restricted nor lifts anything when removed (issue #592).
 func TestLiftsConnectionRestriction(t *testing.T) {
 	tests := []struct {
-		name       string
-		own        []ScopedConnection // the target group's grants
-		other      []ScopedConnection // another group's grants
-		conn       int
-		wholeGroup bool
-		want       bool
+		name  string
+		own   []ScopedConnection // the target group's grants
+		other []ScopedConnection // another group's grants
+		conn  int
+		want  bool
 	}{
 		{"last grant", []ScopedConnection{{ConnectionID: 5,
-			AccessLevel: AccessLevelRead}}, nil, 5, false, true},
+			AccessLevel: AccessLevelRead}}, nil, 5, true},
 		{"another group grants it", []ScopedConnection{{ConnectionID: 5,
 			AccessLevel: AccessLevelRead}}, []ScopedConnection{{ConnectionID: 5,
-			AccessLevel: AccessLevelRead}}, 5, false, false},
-		{"another group grants all connections", []ScopedConnection{{
-			ConnectionID: 5, AccessLevel: AccessLevelRead}},
+			AccessLevel: AccessLevelRead}}, 5, false},
+		{"another group's all-connections grant does not restrict",
+			[]ScopedConnection{{ConnectionID: 5, AccessLevel: AccessLevelRead}},
 			[]ScopedConnection{{ConnectionID: ConnectionIDAll,
-				AccessLevel: AccessLevelRead}}, 5, false, false},
-		{"not restricted at all", nil, nil, 5, false, false},
-		{"own all-connections grant survives a single revoke",
+				AccessLevel: AccessLevelRead}}, 5, true},
+		{"not restricted at all", nil, nil, 5, false},
+		{"own all-connections grant does not restrict",
 			[]ScopedConnection{{ConnectionID: 5, AccessLevel: AccessLevelRead},
 				{ConnectionID: ConnectionIDAll, AccessLevel: AccessLevelRead}},
-			nil, 5, false, false},
-		{"whole group takes both", []ScopedConnection{{ConnectionID: 5,
-			AccessLevel: AccessLevelRead}, {ConnectionID: ConnectionIDAll,
-			AccessLevel: AccessLevelRead}}, nil, 5, true, true},
-		{"last all-connections grant", []ScopedConnection{{
+			nil, 5, true},
+		{"last all-connections grant lifts nothing", []ScopedConnection{{
 			ConnectionID: ConnectionIDAll, AccessLevel: AccessLevelRead}},
-			nil, ConnectionIDAll, false, true},
+			nil, ConnectionIDAll, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -249,7 +247,7 @@ func TestLiftsConnectionRestriction(t *testing.T) {
 				f.newOwner(t, tt.other, nil)
 			}
 			got, err := liftsConnectionRestriction(f.store.db, f.groupID,
-				tt.conn, tt.wholeGroup)
+				tt.conn)
 			if err != nil {
 				t.Fatalf("liftsConnectionRestriction failed: %v", err)
 			}
@@ -267,11 +265,9 @@ func TestLiftsConnectionRestrictionFailsClosed(t *testing.T) {
 	defer cleanup()
 	f.grant(t, 7, AccessLevelRead)
 	mustExec(t, f.store, "ALTER TABLE connection_privileges RENAME TO cp_gone")
-	for _, whole := range []bool{false, true} {
-		if _, err := liftsConnectionRestriction(f.store.db, f.groupID, 7,
-			whole); err == nil {
-			t.Error("Expected an error from a missing table")
-		}
+	if _, err := liftsConnectionRestriction(f.store.db, f.groupID,
+		7); err == nil {
+		t.Error("Expected an error from a missing table")
 	}
 	actor := f.store.AsActor(systemActor)
 	if err := actor.RevokeConnectionPrivilegeGuarded(f.groupID, 7,
@@ -280,6 +276,17 @@ func TestLiftsConnectionRestrictionFailsClosed(t *testing.T) {
 	}
 	if err := actor.DeleteGroupGuarded(f.groupID, AllowLifts()); err == nil {
 		t.Error("A failing lift check should refuse the delete")
+	}
+
+	// The guard itself must also refuse when the group's grants cannot
+	// be listed.
+	tx, err := f.store.db.Begin()
+	if err != nil {
+		t.Fatalf("Begin failed: %v", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // test cleanup
+	if err := guardGroupLiftsTx(tx, AllowLifts(), f.groupID); err == nil {
+		t.Error("A failing grant listing should refuse the delete")
 	}
 }
 

@@ -171,7 +171,9 @@ func buildSecuritySchemes() map[string]*OpenAPISecurityScheme {
 				"superuser's token unrestricted in every scope kind. " +
 				"Taking access away needs read on each connection " +
 				"concerned, and read_write where it removes a " +
-				"connection's last group grant. Setting a password, " +
+				"connection's last group grant (an all-connections " +
+				"grant restricts no connection, so removing one never " +
+				"needs it). Setting a password, " +
 				"re-enabling an account or minting a token for a user " +
 				"whose access exceeds the token's is refused with 403. " +
 				"A new user " +
@@ -4293,7 +4295,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 				Responses: map[string]OpenAPIResponse{
 					"204": {Description: "Group deleted"},
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_groups permission; an API token also needs read access to every connection membership of the group confers, and read_write on each connection whose last group grant the group holds, since deleting it lifts the restriction, decided in the delete's own transaction; or the group's name is one the OIDC group map uses and the token is not a superuser's token unrestricted in every scope kind"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_groups permission; an API token also needs read access to every connection membership of the group confers, and read_write on each connection whose last group grant the group holds, since deleting it lifts the restriction (an all-connections grant restricts no connection), decided in the delete's own transaction; or the group's name is one the OIDC group map uses and the token is not a superuser's token unrestricted in every scope kind"),
 				},
 			},
 		},
@@ -4447,7 +4449,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"204": {Description: "Privilege revoked"},
 					"400": jsonResponse("ErrorResponse", "Invalid connection ID"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_permissions permission; an API token also needs read access to the connection, and read_write when the grant is the connection's last, since revoking it lifts the restriction; whether it is the last is decided in the revoke's own transaction, so a concurrent revoke cannot slip past it. A connection the token cannot see is refused exactly as one that does not exist. A read-level token may revoke another group's read_write, since a revoke only narrows"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_permissions permission; an API token also needs read access to the connection, and read_write when the grant is the connection's last, since revoking it lifts the restriction (an all-connections grant restricts no connection, so revoking one needs only read); whether it is the last is decided in the revoke's own transaction, so a concurrent revoke cannot slip past it. A connection the token cannot see is refused exactly as one that does not exist. A read-level token may revoke another group's read_write, since a revoke only narrows"),
 				},
 			},
 		},

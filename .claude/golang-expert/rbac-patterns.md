@@ -520,8 +520,10 @@ exceeded "this token's access" (fixed so the denial audit coalesces).
   all-connections entry needs every connection at that level.
 - Connection revoke (`CanRevokeConnection`): read on the connection,
   refused identically whether hidden or missing (#574). The lift rule,
-  read_write when the grant is the connection's last (a group-less
-  connection opens to every user), is decided by the store inside the
+  read_write when the grant is the connection's last grant naming it (a
+  group-less connection opens to every user; an all-connections grant
+  restricts nothing, so `liftsConnectionRestriction` never reports a lift
+  for it, #592), is decided by the store inside the
   revoke's own transaction: the handler passes
   `RBACChecker.ConnectionLiftGuard` to
   `ActorStore.RevokeConnectionPrivilegeGuarded`, which returns
@@ -594,8 +596,8 @@ exceeded "this token's access" (fixed so the denial audit coalesces).
   (`ValidateAdminPermissions`, `ErrUnknownAdminPermission`, 400).
 - A user's reach counts group grants, public MCP items, every
   unrestricted connection the user can see, every connection their
-  username owns (restricted or not, because `updateConnection` and
-  `deleteConnection` admit the owner), and every member connection of
+  username owns (restricted or not, because `CanAccessConnection`,
+  `updateConnection` and `deleteConnection` admit the owner), and every member connection of
   a cluster group the username owns (`ownedClusterGroupsCovered`,
   through `auth.OwnedClusterGroupLister`), all at read_write.
   `RBACHandler.SetConnectionLister` must be wired; a nil lister, a
@@ -1097,3 +1099,20 @@ pure comparison is `checkAuditTail`. Every disagreement wraps
 other query error is returned unwrapped rather than swallowed, and
 exits 1. `sqlite_sequence` itself is unprotected, so a tail deleted and
 then matched by writing the sequence down passes without the secret.
+
+## Connection Access and Visibility Agree
+
+`CanAccessConnection` and `VisibleConnectionIDs` decide a non-superuser's
+base access with one function, `connectionAccessRule` in
+`internal/auth/access.go`, before the token scope is applied (#592). Do not
+add a visibility shortcut to either side. The rule, in order: the owner has
+read_write whatever the restriction; a shared connection that no group grant
+names is open at read_write; otherwise the group grant (specific or
+all-connections, higher wins) decides. "Restricted" means a grant names the
+connection itself (`IsConnectionAssignedToAnyGroup`, and
+`RestrictedConnectionIDs` for the list path); an all-connections grant
+restricts nothing. A checker without a sharing lookup treats every
+connection as shared and unowned, as before.
+`TestConnectionAccessAndVisibilityAgree` in
+`internal/auth/connection_access_agreement_test.go` runs every case through
+both functions and fails if they disagree.

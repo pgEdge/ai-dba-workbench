@@ -299,7 +299,8 @@ func (rc *RBACChecker) CanGrantConnection(ctx context.Context,
 // group's grant on connectionID. A token needs read on the connection,
 // so that it cannot learn whether a connection it may not see exists.
 // When the grant is the connection's last, removing it lifts the group
-// restriction and opens a shared connection to every user, so the token
+// restriction and opens a shared connection to every user (an "all
+// connections" grant restricts nothing, so it never is), so the token
 // then needs read_write, as granting that would; whether the grant is
 // the last can change under a concurrent revoke, so the store decides
 // that in the revoke's own transaction, from ConnectionLiftGuard.

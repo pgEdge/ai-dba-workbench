@@ -670,8 +670,8 @@ func (s *AuthStore) revokeConnectionPrivilege(actor Actor, groupID int64,
 	// records the access level that was withdrawn.
 	before := connectionAccessLevelTx(tx, groupID, connectionID)
 
-	if liftErr := guardLiftTx(tx, guard, groupID, connectionID,
-		false); liftErr != nil {
+	if liftErr := guardLiftTx(tx, guard, groupID,
+		connectionID); liftErr != nil {
 		err = liftErr
 		return err
 	}
@@ -1022,15 +1022,19 @@ func (s *AuthStore) GetUserConnectionPrivileges(userID int64) (map[int]string, e
 	return privileges, nil
 }
 
-// IsConnectionAssignedToAnyGroup checks if a connection has been assigned to any group
-// This determines if the connection is "restricted" or "public"
+// IsConnectionAssignedToAnyGroup reports whether any group holds a
+// grant naming this connection, which makes the connection "restricted"
+// (see connectionAccessRule). Only a grant on the connection itself
+// counts: an "all connections" grant gives its group every connection
+// without restricting any of them for users outside the group (issue
+// #592).
 func (s *AuthStore) IsConnectionAssignedToAnyGroup(connectionID int) (bool, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	var count int
 	err := s.db.QueryRow(
-		"SELECT COUNT(*) FROM connection_privileges WHERE connection_id = ? OR connection_id = 0",
+		"SELECT COUNT(*) FROM connection_privileges WHERE connection_id = ?",
 		connectionID,
 	).Scan(&count)
 	if err != nil {
@@ -1038,6 +1042,38 @@ func (s *AuthStore) IsConnectionAssignedToAnyGroup(connectionID int) (bool, erro
 	}
 
 	return count > 0, nil
+}
+
+// RestrictedConnectionIDs returns the set of connections that some group
+// holds a grant on, by the rule IsConnectionAssignedToAnyGroup applies
+// to one connection, so that VisibleConnectionIDs can apply it to every
+// connection with a single query.
+func (s *AuthStore) RestrictedConnectionIDs() (map[int]bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	rows, err := s.db.Query(
+		"SELECT DISTINCT connection_id FROM connection_privileges WHERE connection_id <> ?",
+		ConnectionIDAll,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list restricted connections: %w", err)
+	}
+	defer rows.Close()
+
+	restricted := make(map[int]bool)
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("failed to list restricted connections: %w", err)
+		}
+		restricted[id] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to list restricted connections: %w", err)
+	}
+
+	return restricted, nil
 }
 
 // ErrRevokeLiftsRestriction reports a revoke or group delete refused
@@ -1081,42 +1117,32 @@ func (g *LiftGuard) allows(connectionID int) bool {
 	return g == nil || g.all || g.allowed[connectionID]
 }
 
-// liftsConnectionRestriction reports whether removing a group's grants
-// would leave connectionID assigned to no group when it is assigned to
-// one now, and so open it, if shared, to every user (see
-// IsConnectionAssignedToAnyGroup). With wholeGroup false only the
-// group's grant on connectionID is removed, as a revoke does; with
-// wholeGroup true every grant the group holds is, as deleting the group
-// does. ConnectionIDAll asks whether the last "all connections" grant
-// would go, which lifts the restriction from every connection that has
-// no grant of its own.
+// liftsConnectionRestriction reports whether removing the group's grant
+// on connectionID would leave the connection assigned to no group when
+// it is assigned to one now, and so open it, if shared, to every user
+// (see IsConnectionAssignedToAnyGroup). A revoke and a group delete
+// remove the same row for a given connection, so one query serves both.
+// An "all connections" grant restricts no connection, so removing one
+// never lifts a restriction (issue #592).
 func liftsConnectionRestriction(q rowQuerier, groupID int64,
-	connectionID int, wholeGroup bool) (bool, error) {
+	connectionID int) (bool, error) {
 
-	// The rows that survive the removal are every other group's grants,
-	// plus, for a single revoke, the group's grants on other connections.
-	// Both queries are constant so that no SQL is assembled at run time.
-	const revokeOne = `
-        SELECT COUNT(*),
-               COALESCE(SUM(CASE WHEN group_id <> ? OR connection_id <> ?
-                   THEN 1 ELSE 0 END), 0)
-        FROM connection_privileges
-        WHERE connection_id = ? OR connection_id = 0`
-	const revokeGroup = `
+	if connectionID == ConnectionIDAll {
+		return false, nil
+	}
+
+	// The rows that survive the removal are every other group's grants on
+	// the connection. The query is constant so that no SQL is assembled
+	// at run time.
+	const query = `
         SELECT COUNT(*),
                COALESCE(SUM(CASE WHEN group_id <> ? THEN 1 ELSE 0 END), 0)
         FROM connection_privileges
-        WHERE connection_id = ? OR connection_id = 0`
+        WHERE connection_id = ?`
 
 	var before, after int
-	var err error
-	if wholeGroup {
-		err = q.QueryRow(revokeGroup, groupID, connectionID).Scan(&before, &after)
-	} else {
-		err = q.QueryRow(revokeOne, groupID, connectionID, connectionID).
-			Scan(&before, &after)
-	}
-	if err != nil {
+	if err := q.QueryRow(query, groupID, connectionID).
+		Scan(&before, &after); err != nil {
 		return false, fmt.Errorf("failed to check connection restriction: %w", err)
 	}
 
@@ -1126,13 +1152,12 @@ func liftsConnectionRestriction(q rowQuerier, groupID int64,
 // guardLiftTx refuses with ErrRevokeLiftsRestriction when the guard
 // does not allow a lift on connectionID and the removal would lift it.
 func guardLiftTx(tx *sql.Tx, guard *LiftGuard, groupID int64,
-	connectionID int, wholeGroup bool) error {
+	connectionID int) error {
 
 	if guard.allows(connectionID) {
 		return nil
 	}
-	lifts, err := liftsConnectionRestriction(tx, groupID, connectionID,
-		wholeGroup)
+	lifts, err := liftsConnectionRestriction(tx, groupID, connectionID)
 	if err != nil {
 		return err
 	}

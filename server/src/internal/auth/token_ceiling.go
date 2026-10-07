@@ -334,15 +334,16 @@ func (c *tokenCeiling) ownedClusterGroupsCovered(username string,
 // open or change without a group grant is within the ceiling at
 // read_write.
 //
-// CanAccessConnection admits any user to a connection no group holds a
-// grant on, at read_write, when it is shared, and its owner when it is
-// not; with no sharing lookup wired it admits any user to every such
-// connection. The connection update and delete handlers go further and
-// admit the owner whatever groups restrict the connection, so every
-// connection a user owns is part of their reach, restricted or not, and
-// is checked before the restriction is looked at. Ownership is matched
-// by username, as those handlers match it, so a name that already owns
-// a connection reaches it as soon as an account of that name exists.
+// CanAccessConnection admits any user, at read_write, to a shared
+// connection no group grant names (an "all connections" grant names
+// none, issue #592); with no sharing lookup wired it admits any user to
+// every such connection. It admits the owner at read_write whatever
+// groups restrict the connection, as the connection update and delete
+// handlers do, so every connection a user owns is part of their reach,
+// restricted or not, and is checked before the restriction is looked
+// at. Ownership is matched by username, as those handlers match it, so
+// a name that already owns a connection reaches it as soon as an
+// account of that name exists.
 // The cluster groups the user owns count in the same way (see
 // OwnedClusterGroupLister). With no lister the connections cannot be
 // enumerated, so the check fails closed.

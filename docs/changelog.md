@@ -410,6 +410,23 @@ project adheres to
   the `-db-*` command-line flags now leaves it unset too, where it
   previously set four.
 
+- Decide connection access and connection visibility with one rule, so
+  that every listed connection can be opened and every connection that an
+  account can open is listed (#592). An `All Connections` grant no longer
+  restricts every connection: before this change, a single such grant to
+  any group refused every user outside that group every connection,
+  shared connections and the user's own included, whilst the connection
+  lists still offered them. Only a grant that names a connection now
+  restricts it. The owner of a connection always holds `read_write`
+  access to it, whether or not a group restricts it. Holding a grant on
+  one connection no longer hides shared connections that no group
+  restricts, which the account could already open. Revoking an
+  `All Connections` grant never lifts a restriction, so an API token
+  needs only `read` to revoke one, whilst revoking a connection's last
+  specific grant needs `read_write` even when an `All Connections` grant
+  remains. See the
+  [permission model](admin-guide/managing-users-and-permissions/permission_model.md).
+
 - Follow the dashboard time range selector in the database summaries
   section of the server dashboard, the Transaction Rate tile of the
   estate dashboard and the comparative charts of the cluster

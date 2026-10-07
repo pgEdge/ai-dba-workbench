@@ -339,6 +339,49 @@ func (rc *RBACChecker) CanAccessMCPItem(ctx context.Context, identifier string) 
 	return true
 }
 
+// connectionAccessFacts holds what connectionAccessRule needs to know
+// about one connection and the caller, gathered by CanAccessConnection
+// for a single connection and by VisibleConnectionIDs for every
+// connection at once.
+type connectionAccessFacts struct {
+	// owned is true when the caller's username is the connection's owner.
+	owned bool
+	// shared is true when the connection is shared, and also when no
+	// sharing information is available, as CanAccessConnection has always
+	// treated a checker built without a sharing lookup.
+	shared bool
+	// restricted is true when some group holds a grant naming the
+	// connection itself (see IsConnectionAssignedToAnyGroup).
+	restricted bool
+}
+
+// connectionAccessRule is the single rule deciding a non-superuser's
+// access to one connection before the token scope is applied. Both
+// CanAccessConnection and VisibleConnectionIDs use it, so that a
+// connection is listed exactly when it can be opened (issue #592).
+//
+//   - The owner always has read_write on their own connection, whatever
+//     groups restrict it.
+//   - A group grant, on the connection or on "all connections", gives
+//     its level.
+//   - A shared connection no group restricts is open to every user at
+//     read_write, which is higher than any grant, so it wins over one.
+//
+// Anything else is denied. privs is the caller's group connection
+// privileges, or, for VisibleConnectionIDs, those privileges already
+// narrowed by the token scope.
+func connectionAccessRule(facts connectionAccessFacts, privs map[int]string,
+	connectionID int) (string, bool) {
+
+	if facts.owned {
+		return AccessLevelReadWrite, true
+	}
+	if facts.shared && !facts.restricted {
+		return AccessLevelReadWrite, true
+	}
+	return resolveConnectionAccess(privs, connectionID)
+}
+
 // CanAccessConnection checks if the current context can access a specific database connection
 // Returns (canAccess bool, accessLevel string) where accessLevel is "read" or "read_write"
 func (rc *RBACChecker) CanAccessConnection(ctx context.Context, connectionID int) (bool, string) {
@@ -364,59 +407,46 @@ func (rc *RBACChecker) CanAccessConnection(ctx context.Context, connectionID int
 		return rc.applyConnectionTokenScope(ctx, connectionID, AccessLevelReadWrite)
 	}
 
-	// Check if the connection is restricted (assigned to any group)
+	// Check if the connection is restricted (named by a group grant)
 	isRestricted, err := rc.authStore.IsConnectionAssignedToAnyGroup(connectionID)
 	if err != nil {
 		// On error, deny access for safety
 		return false, AccessLevelNone
 	}
 
-	// If not restricted by group assignment, check sharing status
-	if !isRestricted {
-		// If we have a sharing lookup function, check is_shared
-		if rc.connSharingLookupFn != nil {
-			isShared, ownerUsername, lookupErr := rc.connSharingLookupFn(ctx, connectionID)
-			if lookupErr != nil {
-				// On error, deny access for safety
-				return false, AccessLevelNone
-			}
-			if !isShared {
-				// Not shared: only the owner gets access
-				username := GetUsernameFromContext(ctx)
-				if ownerUsername == "" || username != ownerUsername {
-					return false, AccessLevelNone
-				}
-			}
+	// Without a sharing lookup the connection is treated as shared and
+	// unowned, as it always has been.
+	facts := connectionAccessFacts{shared: true, restricted: isRestricted}
+	if rc.connSharingLookupFn != nil {
+		isShared, ownerUsername, lookupErr := rc.connSharingLookupFn(ctx, connectionID)
+		if lookupErr != nil {
+			// On error, deny access for safety
+			return false, AccessLevelNone
 		}
-		// The connection is unrestricted by group membership, but a
-		// scoped token is still confined to its scope: ownership and
-		// sharing decide who may reach a connection, not which subset of
-		// them a given token was issued for.
-		return rc.applyConnectionTokenScope(ctx, connectionID, AccessLevelReadWrite)
+		username := GetUsernameFromContext(ctx)
+		facts.shared = isShared
+		facts.owned = username != "" && ownerUsername == username
 	}
 
-	// Get user ID from context
-	userID := GetUserIDFromContext(ctx)
-	if userID == 0 {
-		// Defensive check - all tokens now have owners
-		return false, AccessLevelNone
+	// Get user's connection privileges through group membership. A
+	// context with no user ID holds no group grants; all tokens now have
+	// owners, so this is defensive.
+	var privileges map[int]string
+	if userID := GetUserIDFromContext(ctx); userID != 0 {
+		privileges, err = rc.authStore.GetUserConnectionPrivileges(userID)
+		if err != nil {
+			return false, AccessLevelNone
+		}
 	}
 
-	// Get user's connection privileges through group membership
-	privileges, err := rc.authStore.GetUserConnectionPrivileges(userID)
-	if err != nil {
-		return false, AccessLevelNone
-	}
-
-	// Check if user has access to this connection (specific or via "all
-	// connections"), preferring the higher of the two levels when both
-	// are present.
-	accessLevel, hasAccess := resolveConnectionAccess(privileges, connectionID)
+	accessLevel, hasAccess := connectionAccessRule(facts, privileges, connectionID)
 	if !hasAccess {
 		return false, AccessLevelNone
 	}
 
-	// Check token scoping (if applicable)
+	// Ownership, sharing and group grants decide who may reach a
+	// connection; a scoped token is still confined to its scope, at the
+	// level the scope records.
 	return rc.applyConnectionTokenScope(ctx, connectionID, accessLevel)
 }
 
@@ -857,12 +887,12 @@ func (rc *RBACChecker) superuserVisibleConnectionIDs(
 // If allConnections is true, ids is nil and the caller has visibility to
 // every connection (superuser, or a token/user with the ConnectionIDAll
 // wildcard granting at least read access). Otherwise ids is an explicit
-// slice combining:
+// slice of the connections connectionAccessRule admits, the rule
+// CanAccessConnection applies, intersected with the token scope:
 //
 //   - connections owned by the caller;
-//   - connections with is_shared=true that are not excluded by group or
-//     token restrictions;
-//   - connections explicitly granted via group or token scope.
+//   - shared connections no group grant names;
+//   - connections granted via group, within the token scope.
 //
 // The caller provides a lister that enumerates connections with their
 // sharing metadata; this allows the function to apply visibility rules
@@ -914,34 +944,32 @@ func (rc *RBACChecker) VisibleConnectionIDs(ctx context.Context, lister Connecti
 		seen[connID] = true
 	}
 
-	// Determine ownership and shared-visibility additions. A nil lister
-	// means the caller is unable to enumerate connections; in that case
-	// we return only the group/token-granted IDs.
+	// Determine ownership and shared-visibility additions with the rule
+	// CanAccessConnection applies, so that a listed connection can be
+	// opened and an openable one is listed. A nil lister means the caller
+	// is unable to enumerate connections; in that case we return only the
+	// group/token-granted IDs.
 	if lister != nil {
 		username := GetUsernameFromContext(ctx)
 		all, listErr := lister.GetAllConnections(ctx)
 		if listErr != nil {
 			return nil, false, listErr
 		}
-
-		// If the caller has zero explicit grants, there are no
-		// group-based restrictions to honor; shared and owned
-		// connections are visible. If the caller DOES have explicit
-		// grants, those define an allow-list that further restricts
-		// shared connections to entries that appear in the allow-list.
-		hasExplicitGrants := len(privs.ConnectionPrivileges) > 0
+		restricted, restrictedErr := rc.authStore.RestrictedConnectionIDs()
+		if restrictedErr != nil {
+			return nil, false, restrictedErr
+		}
 
 		for i := range all {
 			info := &all[i]
-			// Owner always sees their own connection.
-			if username != "" && info.OwnerUsername == username {
-				seen[info.ID] = true
-				continue
+			facts := connectionAccessFacts{
+				owned:      username != "" && info.OwnerUsername == username,
+				shared:     info.IsShared,
+				restricted: restricted[info.ID],
 			}
-			if info.IsShared {
-				if !hasExplicitGrants || seen[info.ID] {
-					seen[info.ID] = true
-				}
+			if _, ok := connectionAccessRule(facts, privs.ConnectionPrivileges,
+				info.ID); ok {
+				seen[info.ID] = true
 			}
 		}
 	}

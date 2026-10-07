@@ -101,6 +101,26 @@ specified access level. The Workbench supports two connection access levels:
 - The `read_write` access level allows both read and write operations against
   the connection.
 
+A connection privilege that names a connection also restricts that
+connection, so that only the members of groups that hold a grant on the
+connection may reach it. An `All Connections` privilege gives the members of
+its group every connection, but restricts no connection for anyone outside
+the group. The Workbench applies the following rules, in order, to decide
+whether an account other than a superuser may reach a connection:
+
+1. The owner of a connection always holds `read_write` access to it, whether
+   or not a group restricts the connection.
+2. Any account holds `read_write` access to a shared connection that no
+   group restricts.
+3. An account that belongs to a group holding a grant on the connection, or
+   an `All Connections` grant, holds the access level of that grant; when
+   both apply, the higher level wins.
+
+The Workbench denies access in every other case. The connection lists that
+the web client and the MCP tools show apply the same rules, so every listed
+connection can be opened and every connection an account can open is
+listed. A token scope then narrows the result for an API token.
+
 An ADMIN privilege grants a group permission to perform administrative actions
 in the Workbench, such as managing users, groups, and connections. Admin
 privileges are broad by nature and should be granted only to trusted groups.

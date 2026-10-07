@@ -349,9 +349,10 @@ server refuses a revoke on a connection the token cannot read in the same
 words as a revoke on a connection that does not exist.
 
 Revoking the last group grant on a connection is stricter, and needs
-`read_write` access to that connection. The count of grants includes any
-`All Connections` grant held by a group. A connection with no group grant is
-no longer restricted to groups, so a shared connection becomes open to every
+`read_write` access to that connection. Only a grant that names the
+connection counts; an `All Connections` grant restricts no connection, so
+revoking one never needs more than `read`. A connection with no group grant
+is no longer restricted to groups, so a shared connection becomes open to every
 user; removing the last grant therefore needs the access that granting
 `read_write` to every user would need. The server applies this rule to the
 last grant on any connection, shared or not. The server decides whether a

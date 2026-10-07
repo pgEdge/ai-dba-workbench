@@ -164,7 +164,8 @@ func (h *RBACHandler) handleGroupConnectionPrivileges(w http.ResponseWriter, r *
 		// A token needs read on the connection to revoke a grant on
 		// it, and is refused in the same words whether or not the
 		// connection exists. Revoking the last group grant on a
-		// connection lifts its group restriction, which opens a shared
+		// connection (an "all connections" grant restricts none, issue
+		// #592) lifts its group restriction, which opens a shared
 		// connection to every user, so that revoke needs read_write
 		// (issue #471); the store decides that in the revoke's own
 		// transaction, so that a concurrent revoke cannot slip past it.

@@ -302,7 +302,7 @@ func guardGroupLiftsTx(tx *sql.Tx, guard *LiftGuard, id int64) error {
 		return fmt.Errorf("failed to check connection restriction: %w", err)
 	}
 	for _, connID := range ids {
-		if guardErr := guardLiftTx(tx, guard, id, connID, true); guardErr != nil {
+		if guardErr := guardLiftTx(tx, guard, id, connID); guardErr != nil {
 			return guardErr
 		}
 	}

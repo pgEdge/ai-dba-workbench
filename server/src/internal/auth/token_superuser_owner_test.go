@@ -12,7 +12,9 @@ package auth
 
 import (
 	"errors"
+	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -395,4 +397,68 @@ func TestSuperuserOwnedTokenHashPrefixDelete(t *testing.T) {
 		t.Fatalf("Expected ErrSuperuserTargetForbidden, got %v", err)
 	}
 	assertOwnedTokenUntouched(t, store, tokenID)
+}
+
+// TestDeleteTokenOwnerReadFailsOnce checks that a delete whose token
+// matched but whose owner could not be read stops there: it returns the
+// read failure rather than "token not found", and leaves exactly one
+// failure event, carrying that failure, rather than going on to the
+// hash-prefix probe and recording a second, false miss. A zero-padded
+// identifier matches the token by ID and is long enough to be tried as
+// a hash prefix too.
+func TestDeleteTokenOwnerReadFailsOnce(t *testing.T) {
+	for _, pad := range []string{"%d", "%08d"} {
+		t.Run(pad, func(t *testing.T) {
+			store, tokenID, cleanup := newOwnedTokenStore(t)
+			defer cleanup()
+			if _, err := store.db.Exec(
+				"ALTER TABLE users RENAME TO users_gone"); err != nil {
+				t.Fatalf("Failed to rename the users table: %v", err)
+			}
+
+			err := store.AsActor(testActor()).DeleteToken(
+				fmt.Sprintf(pad, tokenID), false)
+			if err == nil || errors.Is(err, errTokenFilterNoMatch) ||
+				err.Error() == "token not found" {
+				t.Fatalf("Expected the owner read failure, got %v", err)
+			}
+			if !strings.Contains(err.Error(), "failed to read the owner") {
+				t.Errorf("Expected the owner read failure, got %v", err)
+			}
+
+			events, _, listErr := store.ListAuditEvents(AuditFilter{
+				Action: "token.delete",
+			})
+			if listErr != nil {
+				t.Fatalf("ListAuditEvents failed: %v", listErr)
+			}
+			if len(events) != 1 {
+				t.Fatalf("Expected one token.delete event, got %d: %+v",
+					len(events), events)
+			}
+			if events[0].Outcome != OutcomeFailure ||
+				!strings.Contains(events[0].Error, "failed to read the owner") {
+				t.Errorf("Expected the failure to carry the read error, got %q %q",
+					events[0].Outcome, events[0].Error)
+			}
+		})
+	}
+}
+
+// TestTokenFilterNotFound checks that a filter miss keeps the caller's
+// message, or the generic one, and is recognisable as a miss.
+func TestTokenFilterNotFound(t *testing.T) {
+	for msg, want := range map[string]string{
+		"":              "token not found",
+		"not yours, no": "not yours, no",
+	} {
+		err := tokenFilterNotFound(msg)
+		if err.Error() != want || !errors.Is(err, errTokenFilterNoMatch) {
+			t.Errorf("tokenFilterNotFound(%q) = %v, want %q matching the sentinel",
+				msg, err, want)
+		}
+	}
+	if errors.Is(errors.New("token not found"), errTokenFilterNoMatch) {
+		t.Errorf("Expected an unrelated error not to match the sentinel")
+	}
 }

@@ -1764,12 +1764,14 @@ func (s *AuthStore) deleteToken(actor Actor, identifier string,
 	// Try by exact ID first. The callers pass strings, and the tokens
 	// table id column is INTEGER, so SQLite will coerce the string
 	// safely. A non-numeric identifier matches nothing here and falls
-	// through to the hash-prefix branch below. A refusal is final: the
-	// token was found, so trying the identifier as a hash prefix as well
-	// could only delete something the caller did not name.
+	// through to the hash-prefix branch below. Only a miss falls through.
+	// Any other outcome is final, a refusal or a failure after the token
+	// matched included: trying the identifier as a hash prefix as well
+	// could only delete something the caller did not name, and would end
+	// in a "token not found" that hides the real failure.
 	err := s.deleteTokensByFilter(actor, "id = ?", []any{identifier},
 		"", nil, superuserOwnerAllowed)
-	if err == nil || errors.Is(err, ErrSuperuserTargetForbidden) {
+	if !errors.Is(err, errTokenFilterNoMatch) {
 		return err
 	}
 
@@ -1780,7 +1782,7 @@ func (s *AuthStore) deleteToken(actor Actor, identifier string,
 			actor, "token_hash LIKE ?", []any{identifier + "%"}, "", nil,
 			superuserOwnerAllowed,
 		)
-		if err == nil || errors.Is(err, ErrSuperuserTargetForbidden) {
+		if !errors.Is(err, errTokenFilterNoMatch) {
 			return err
 		}
 	}
@@ -1927,15 +1929,35 @@ func matchedTokenRefsTx(tx *sql.Tx, whereClause string, args []any) ([]tokenRef,
 	return matches, nil
 }
 
+// errTokenFilterNoMatch marks a deleteTokensByFilter error as the
+// filter having matched no token, as distinct from a failure after a
+// token matched. Callers that chain filters move to the next filter only
+// on this error (see deleteToken).
+var errTokenFilterNoMatch = errors.New("token filter matched no token")
+
+// tokenFilterNoMatchError is the error a filter that matched no token
+// returns. It carries the caller's message unchanged and matches
+// errTokenFilterNoMatch under errors.Is.
+type tokenFilterNoMatchError struct {
+	msg string
+}
+
+func (e *tokenFilterNoMatchError) Error() string { return e.msg }
+
+// Is reports whether target is errTokenFilterNoMatch.
+func (e *tokenFilterNoMatchError) Is(target error) bool {
+	return target == errTokenFilterNoMatch
+}
+
 // tokenFilterNotFound builds the error returned when a filter matches
 // no rows: the caller's message when it supplied one, and a generic
-// "token not found" otherwise so callers can chain filters.
+// "token not found" otherwise so callers can chain filters. Either
+// matches errTokenFilterNoMatch.
 func tokenFilterNotFound(notFoundMsg string) error {
-	if notFoundMsg != "" {
-		return fmt.Errorf("%s", notFoundMsg)
+	if notFoundMsg == "" {
+		notFoundMsg = "token not found"
 	}
-
-	return fmt.Errorf("token not found")
+	return &tokenFilterNoMatchError{msg: notFoundMsg}
 }
 
 // firstMatchTarget builds the audit target a failure is attributed to

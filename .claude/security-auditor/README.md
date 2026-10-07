@@ -163,9 +163,17 @@ moved.
   allows acknowledging, unacknowledging and saving an analysis of an
   alert, and managing blackouts and blackout schedules on that server;
   the user ruled this intended, so do not report it as a finding.
-- Connection ownership bypasses group restriction in `updateConnection`
-  and `deleteConnection`, so every reach computation must count owned
-  connections, restricted or not.
+- `CanAccessConnection` admits a connection's owner at `read_write`
+  even when a group restricts the connection (`connectionAccessRule` in
+  `internal/auth/access.go`), and `updateConnection` and
+  `deleteConnection` admit the owner likewise, so every reach
+  computation must count owned connections, restricted or not.
+- Only a grant naming a connection restricts it; an all-connections
+  grant restricts nothing (#592). `RestrictedConnectionIDs` and
+  `IsConnectionAssignedToAnyGroup` (`internal/auth/privileges.go`) are
+  the single definition of a restricted connection, shared by access,
+  visibility and #528's token ceiling and reach code; never re-derive
+  it elsewhere.
 - The cluster-group update and delete handlers admit a group's owner
   as the connection handlers admit a connection's owner, so a user's
   reach also counts every member connection of each cluster group

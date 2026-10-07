@@ -417,10 +417,14 @@ project adheres to
   any group refused every user outside that group every connection,
   shared connections and the user's own included, whilst the connection
   lists still offered them. Only a grant that names a connection now
-  restricts it. The owner of a connection always holds `read_write`
-  access to it, whether or not a group restricts it. Holding a grant on
-  one connection no longer hides shared connections that no group
-  restricts, which the account could already open. Revoking an
+  restricts it. An `All Connections` grant at `read` therefore no longer
+  caps its members: a shared connection that no grant names stays open at
+  `read_write` to every account, so to keep a group read-only on a
+  connection, grant that connection to the group by name. The owner of a
+  connection always holds `read_write` access to it, whether or not a
+  group restricts it. Holding a grant on one connection no longer hides
+  shared connections that no group restricts, which the account could
+  already open. Revoking an
   `All Connections` grant never lifts a restriction, so an API token
   needs only `read` to revoke one, whilst revoking a connection's last
   specific grant needs `read_write` even when an `All Connections` grant

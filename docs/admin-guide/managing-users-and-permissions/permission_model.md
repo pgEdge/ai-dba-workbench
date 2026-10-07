@@ -121,6 +121,12 @@ the web client and the MCP tools show apply the same rules, so every listed
 connection can be opened and every connection an account can open is
 listed. A token scope then narrows the result for an API token.
 
+An `All Connections` grant at the `read` level does not lower a member's
+access to a shared connection that no grant names; such a connection stays
+open at `read_write` to every account, the members of that group included.
+To keep a group read-only on a connection, grant that connection to the group
+by name at the `read` level.
+
 An ADMIN privilege grants a group permission to perform administrative actions
 in the Workbench, such as managing users, groups, and connections. Admin
 privileges are broad by nature and should be granted only to trusted groups.

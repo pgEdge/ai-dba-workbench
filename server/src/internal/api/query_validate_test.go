@@ -47,6 +47,38 @@ func TestExplainCommand(t *testing.T) {
 			wantSQL: "EXPLAIN SELECT 1",
 		},
 		{
+			name:    "dollar-digit inside an identifier is not a placeholder",
+			stmt:    "SELECT col$1 FROM t",
+			wantSQL: "EXPLAIN SELECT col$1 FROM t",
+		},
+		{
+			name:    "caller's EXPLAIN with a dollar-digit identifier is planned",
+			stmt:    "EXPLAIN SELECT col$1 FROM t",
+			wantSQL: "EXPLAIN SELECT col$1 FROM t",
+		},
+		{
+			name:        "placeholder after an identifier and a space is detected",
+			stmt:        "SELECT col FROM t LIMIT $1",
+			genericPlan: true,
+			wantSQL:     "EXPLAIN (GENERIC_PLAN) SELECT col FROM t LIMIT $1",
+		},
+		{
+			name:    "dollar-digit inside a string literal is not a placeholder",
+			stmt:    "SELECT 'costs $5' AS price",
+			wantSQL: "EXPLAIN SELECT 'costs $5' AS price",
+		},
+		{
+			name:        "placeholder after an operator is detected",
+			stmt:        "SELECT * FROM t WHERE a=$1",
+			genericPlan: true,
+			wantSQL:     "EXPLAIN (GENERIC_PLAN) SELECT * FROM t WHERE a=$1",
+		},
+		{
+			name:    "dollar-digit after a non-ASCII identifier byte is not a placeholder",
+			stmt:    "SELECT caf\u00e9$1 FROM t",
+			wantSQL: "EXPLAIN SELECT caf\u00e9$1 FROM t",
+		},
+		{
 			name:    "common table expression",
 			stmt:    "WITH x AS (SELECT 1) SELECT * FROM x",
 			wantSQL: "EXPLAIN WITH x AS (SELECT 1) SELECT * FROM x",

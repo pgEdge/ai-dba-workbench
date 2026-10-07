@@ -1217,6 +1217,30 @@ func containsDollarParamAs(s string, reading stringReading) bool {
 	return false
 }
 
+// containsBindPlaceholder reports whether s contains a $N bind
+// parameter placeholder in its code, for the validate endpoint. It reads
+// s as containsDollarParam does, under both readings of a plain '...'
+// literal, except that a dollar-digit sequence continuing an identifier,
+// such as col$1, is not a placeholder: PostgreSQL allows $ in an
+// identifier after its first character, so it is part of the name.
+func containsBindPlaceholder(s string) bool {
+	for _, reading := range stringReadings {
+		i := 0
+		for i < len(s) {
+			if j := skipNonCode(s, i, reading); j != i {
+				i = j
+				continue
+			}
+			if s[i] == '$' && i+1 < len(s) && s[i+1] >= '1' && s[i+1] <= '9' &&
+				!continuesIdentifier(s, i) {
+				return true
+			}
+			i++
+		}
+	}
+	return false
+}
+
 // isIdentChar returns true if the byte is a valid SQL identifier
 // character: an ASCII letter, digit or underscore, or any byte from 0x80
 // up, which PostgreSQL's lexer treats as a letter (ident_start and
@@ -2125,7 +2149,7 @@ func explainCommand(stmt string, genericPlan bool) (string, string) {
 			return "", "EXPLAIN ANALYZE runs the statement it explains, " +
 				"so it was not validated"
 		}
-		if containsDollarParam(body) {
+		if containsBindPlaceholder(body) {
 			return "", "the statement is an EXPLAIN carrying parameter " +
 				"placeholders ($1, $2, ...), so it was not validated"
 		}
@@ -2138,7 +2162,7 @@ func explainCommand(stmt string, genericPlan bool) (string, string) {
 				"so it was not validated", firstSQLWord(upper))
 	}
 
-	if containsDollarParam(body) {
+	if containsBindPlaceholder(body) {
 		if !genericPlan {
 			return "", "the statement carries parameter placeholders " +
 				"($1, $2, ...) and this server predates EXPLAIN " +

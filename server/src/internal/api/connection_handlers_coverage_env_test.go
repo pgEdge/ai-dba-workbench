@@ -265,8 +265,8 @@ func (e *connHandlerEnv) serve(req *http.Request) *httptest.ResponseRecorder {
 	return rec
 }
 
-// expect fails the test when the response status is not want.
-func expectStatus(t *testing.T, rec *httptest.ResponseRecorder, want int) {
+// expectConnHandlerStatus fails the test when the response status is not want.
+func expectConnHandlerStatus(t *testing.T, rec *httptest.ResponseRecorder, want int) {
 	t.Helper()
 	if rec.Code != want {
 		t.Fatalf("expected status %d, got %d: %s", want, rec.Code, rec.Body.String())
@@ -277,14 +277,14 @@ func TestConnectionHandlerCoverage_GetConnection(t *testing.T) {
 	e := newConnHandlerEnv(t)
 
 	rec := e.serve(e.asOwner(http.MethodGet, "/api/v1/connections/31", nil))
-	expectStatus(t, rec, http.StatusOK)
+	expectConnHandlerStatus(t, rec, http.StatusOK)
 	if !strings.Contains(rec.Body.String(), "owned") {
 		t.Errorf("expected connection 31 in the body, got %s", rec.Body.String())
 	}
 
-	expectStatus(t, e.serve(e.asOwner(http.MethodGet, "/api/v1/connections/32", nil)),
+	expectConnHandlerStatus(t, e.serve(e.asOwner(http.MethodGet, "/api/v1/connections/32", nil)),
 		http.StatusForbidden)
-	expectStatus(t, e.serve(e.asSuperuser(http.MethodGet, "/api/v1/connections/999", nil)),
+	expectConnHandlerStatus(t, e.serve(e.asSuperuser(http.MethodGet, "/api/v1/connections/999", nil)),
 		http.StatusNotFound)
 }
 
@@ -318,7 +318,7 @@ func TestConnectionHandlerCoverage_UpdateConnection(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			expectStatus(t, e.serve(tt.req), tt.want)
+			expectConnHandlerStatus(t, e.serve(tt.req), tt.want)
 		})
 	}
 
@@ -336,15 +336,15 @@ func TestConnectionHandlerCoverage_DeleteConnection(t *testing.T) {
 	e := newConnHandlerEnv(t)
 
 	unauth := httptest.NewRequest(http.MethodDelete, "/api/v1/connections/31", nil)
-	expectStatus(t, e.serve(unauth), http.StatusUnauthorized)
+	expectConnHandlerStatus(t, e.serve(unauth), http.StatusUnauthorized)
 
-	expectStatus(t, e.serve(e.asOwner(http.MethodDelete, "/api/v1/connections/32", nil)),
+	expectConnHandlerStatus(t, e.serve(e.asOwner(http.MethodDelete, "/api/v1/connections/32", nil)),
 		http.StatusForbidden)
-	expectStatus(t, e.serve(e.asAdmin(http.MethodDelete, "/api/v1/connections/999", nil)),
+	expectConnHandlerStatus(t, e.serve(e.asAdmin(http.MethodDelete, "/api/v1/connections/999", nil)),
 		http.StatusNotFound)
-	expectStatus(t, e.serve(e.asOwner(http.MethodDelete, "/api/v1/connections/33", nil)),
+	expectConnHandlerStatus(t, e.serve(e.asOwner(http.MethodDelete, "/api/v1/connections/33", nil)),
 		http.StatusInternalServerError)
-	expectStatus(t, e.serve(e.asOwner(http.MethodDelete, "/api/v1/connections/31", nil)),
+	expectConnHandlerStatus(t, e.serve(e.asOwner(http.MethodDelete, "/api/v1/connections/31", nil)),
 		http.StatusNoContent)
 
 	var n int
@@ -384,7 +384,7 @@ func TestConnectionHandlerCoverage_ListDatabases(t *testing.T) {
 
 	rec := e.serve(e.asOwner(http.MethodGet,
 		"/api/v1/connections/"+strconv.Itoa(conn.ID)+"/databases", nil))
-	expectStatus(t, rec, http.StatusOK)
+	expectConnHandlerStatus(t, rec, http.StatusOK)
 	var dbs []database.DatabaseInfo
 	if err := json.NewDecoder(rec.Body).Decode(&dbs); err != nil {
 		t.Fatalf("Decode: %v", err)
@@ -393,9 +393,9 @@ func TestConnectionHandlerCoverage_ListDatabases(t *testing.T) {
 		t.Error("expected at least one database in the listing")
 	}
 
-	expectStatus(t, e.serve(e.asOwner(http.MethodGet, "/api/v1/connections/32/databases", nil)),
+	expectConnHandlerStatus(t, e.serve(e.asOwner(http.MethodGet, "/api/v1/connections/32/databases", nil)),
 		http.StatusForbidden)
-	expectStatus(t, e.serve(e.asOwner(http.MethodGet, "/api/v1/connections/34/databases", nil)),
+	expectConnHandlerStatus(t, e.serve(e.asOwner(http.MethodGet, "/api/v1/connections/34/databases", nil)),
 		http.StatusInternalServerError)
 }
 
@@ -403,15 +403,15 @@ func TestConnectionHandlerCoverage_ConnectionContext(t *testing.T) {
 	e := newConnHandlerEnv(t)
 
 	rec := e.serve(e.asOwner(http.MethodGet, "/api/v1/connections/31/context", nil))
-	expectStatus(t, rec, http.StatusOK)
+	expectConnHandlerStatus(t, rec, http.StatusOK)
 	if !strings.Contains(rec.Body.String(), "owned") {
 		t.Errorf("expected server name in context, got %s", rec.Body.String())
 	}
-	expectStatus(t, e.serve(e.asOwner(http.MethodGet, "/api/v1/connections/32/context", nil)),
+	expectConnHandlerStatus(t, e.serve(e.asOwner(http.MethodGet, "/api/v1/connections/32/context", nil)),
 		http.StatusForbidden)
-	expectStatus(t, e.serve(e.asSuperuser(http.MethodGet, "/api/v1/connections/999/context", nil)),
+	expectConnHandlerStatus(t, e.serve(e.asSuperuser(http.MethodGet, "/api/v1/connections/999/context", nil)),
 		http.StatusNotFound)
-	expectStatus(t, e.serve(e.asOwner(http.MethodPost, "/api/v1/connections/31/context", nil)),
+	expectConnHandlerStatus(t, e.serve(e.asOwner(http.MethodPost, "/api/v1/connections/31/context", nil)),
 		http.StatusMethodNotAllowed)
 }
 
@@ -420,14 +420,14 @@ func TestConnectionHandlerCoverage_CurrentConnection(t *testing.T) {
 	path := "/api/v1/connections/current"
 
 	// Nothing selected yet.
-	expectStatus(t, e.serve(e.asOwner(http.MethodGet, path, nil)), http.StatusNotFound)
+	expectConnHandlerStatus(t, e.serve(e.asOwner(http.MethodGet, path, nil)), http.StatusNotFound)
 
 	rec := e.serve(e.asOwner(http.MethodPost, path,
 		CurrentConnectionRequest{ConnectionID: ownedConnID, DatabaseName: strPtr("postgres")}))
-	expectStatus(t, rec, http.StatusOK)
+	expectConnHandlerStatus(t, rec, http.StatusOK)
 
 	rec = e.serve(e.asOwner(http.MethodGet, path, nil))
-	expectStatus(t, rec, http.StatusOK)
+	expectConnHandlerStatus(t, rec, http.StatusOK)
 	var got CurrentConnectionResponse
 	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
 		t.Fatalf("Decode: %v", err)
@@ -437,14 +437,14 @@ func TestConnectionHandlerCoverage_CurrentConnection(t *testing.T) {
 		t.Errorf("unexpected current connection %+v", got)
 	}
 
-	expectStatus(t, e.serve(e.asOwner(http.MethodPost, path, "{")), http.StatusBadRequest)
-	expectStatus(t, e.serve(e.asOwner(http.MethodPost, path,
+	expectConnHandlerStatus(t, e.serve(e.asOwner(http.MethodPost, path, "{")), http.StatusBadRequest)
+	expectConnHandlerStatus(t, e.serve(e.asOwner(http.MethodPost, path,
 		CurrentConnectionRequest{ConnectionID: foreignConnID})), http.StatusForbidden)
-	expectStatus(t, e.serve(e.asSuperuser(http.MethodPost, path,
+	expectConnHandlerStatus(t, e.serve(e.asSuperuser(http.MethodPost, path,
 		CurrentConnectionRequest{ConnectionID: missingConnID})), http.StatusBadRequest)
 
-	expectStatus(t, e.serve(e.asOwner(http.MethodDelete, path, nil)), http.StatusNoContent)
-	expectStatus(t, e.serve(e.asOwner(http.MethodGet, path, nil)), http.StatusNotFound)
+	expectConnHandlerStatus(t, e.serve(e.asOwner(http.MethodDelete, path, nil)), http.StatusNoContent)
+	expectConnHandlerStatus(t, e.serve(e.asOwner(http.MethodGet, path, nil)), http.StatusNotFound)
 
 	// A stored selection is re-checked on every read, so a session
 	// pinned to a connection the caller cannot see is refused.
@@ -452,14 +452,14 @@ func TestConnectionHandlerCoverage_CurrentConnection(t *testing.T) {
 	if err := e.store.SetConnectionSession(ownerHash, foreignConnID, nil); err != nil {
 		t.Fatalf("SetConnectionSession: %v", err)
 	}
-	expectStatus(t, e.serve(e.asOwner(http.MethodGet, path, nil)), http.StatusForbidden)
+	expectConnHandlerStatus(t, e.serve(e.asOwner(http.MethodGet, path, nil)), http.StatusForbidden)
 
 	// A selection whose connection has since disappeared is a 500.
 	adminHash := auth.GetTokenHashByRawToken(e.adminToken)
 	if err := e.store.SetConnectionSession(adminHash, missingConnID, nil); err != nil {
 		t.Fatalf("SetConnectionSession: %v", err)
 	}
-	expectStatus(t, e.serve(e.asSuperuser(http.MethodGet, path, nil)),
+	expectConnHandlerStatus(t, e.serve(e.asSuperuser(http.MethodGet, path, nil)),
 		http.StatusInternalServerError)
 }
 
@@ -469,7 +469,7 @@ func TestConnectionHandlerCoverage_GetCluster(t *testing.T) {
 
 	// Unassigned: no cluster info, an empty relationship list.
 	rec := e.serve(e.asOwner(http.MethodGet, "/api/v1/connections/31/cluster", nil))
-	expectStatus(t, rec, http.StatusOK)
+	expectConnHandlerStatus(t, rec, http.StatusOK)
 	var resp connectionClusterResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("Decode: %v", err)
@@ -498,7 +498,7 @@ func TestConnectionHandlerCoverage_GetCluster(t *testing.T) {
 		t.Fatalf("Seed relationships: %v", err)
 	}
 	rec = e.serve(e.asOwner(http.MethodGet, "/api/v1/connections/31/cluster", nil))
-	expectStatus(t, rec, http.StatusOK)
+	expectConnHandlerStatus(t, rec, http.StatusOK)
 	resp = connectionClusterResponse{}
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("Decode: %v", err)
@@ -507,11 +507,11 @@ func TestConnectionHandlerCoverage_GetCluster(t *testing.T) {
 		t.Errorf("expected only the 31 -> 32 relationship, got %+v", resp.Relationships)
 	}
 
-	expectStatus(t, e.serve(e.asOwner(http.MethodGet, "/api/v1/connections/32/cluster", nil)),
+	expectConnHandlerStatus(t, e.serve(e.asOwner(http.MethodGet, "/api/v1/connections/32/cluster", nil)),
 		http.StatusForbidden)
-	expectStatus(t, e.serve(e.asSuperuser(http.MethodGet, "/api/v1/connections/999/cluster", nil)),
+	expectConnHandlerStatus(t, e.serve(e.asSuperuser(http.MethodGet, "/api/v1/connections/999/cluster", nil)),
 		http.StatusNotFound)
-	expectStatus(t, e.serve(e.asOwner(http.MethodPatch, "/api/v1/connections/31/cluster", nil)),
+	expectConnHandlerStatus(t, e.serve(e.asOwner(http.MethodPatch, "/api/v1/connections/31/cluster", nil)),
 		http.StatusMethodNotAllowed)
 
 	// A failed relationship lookup is logged and degrades to an empty
@@ -520,7 +520,7 @@ func TestConnectionHandlerCoverage_GetCluster(t *testing.T) {
 		t.Fatalf("Drop relationships: %v", err)
 	}
 	rec = e.serve(e.asOwner(http.MethodGet, "/api/v1/connections/31/cluster", nil))
-	expectStatus(t, rec, http.StatusOK)
+	expectConnHandlerStatus(t, rec, http.StatusOK)
 	resp = connectionClusterResponse{}
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("Decode: %v", err)
@@ -535,7 +535,7 @@ func TestConnectionHandlerCoverage_GetCluster(t *testing.T) {
 	if _, err := e.pool.Exec(ctx, "ALTER TABLE clusters DROP COLUMN dismissed"); err != nil {
 		t.Fatalf("Drop dismissed: %v", err)
 	}
-	expectStatus(t, e.serve(e.asOwner(http.MethodGet, "/api/v1/connections/31/cluster", nil)),
+	expectConnHandlerStatus(t, e.serve(e.asOwner(http.MethodGet, "/api/v1/connections/31/cluster", nil)),
 		http.StatusInternalServerError)
 }
 
@@ -575,7 +575,7 @@ func TestConnectionHandlerCoverage_UpdateCluster(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			expectStatus(t, e.serve(tt.req), tt.want)
+			expectConnHandlerStatus(t, e.serve(tt.req), tt.want)
 		})
 	}
 
@@ -624,7 +624,7 @@ func TestConnectionHandlerCoverage_CreateConnection(t *testing.T) {
 			rec := httptest.NewRecorder()
 			e.handler.handleConnections(rec,
 				e.asAdmin(http.MethodPost, "/api/v1/connections", tt.body))
-			expectStatus(t, rec, tt.want)
+			expectConnHandlerStatus(t, rec, tt.want)
 		})
 	}
 
@@ -635,7 +635,7 @@ func TestConnectionHandlerCoverage_CreateConnection(t *testing.T) {
 	rec := httptest.NewRecorder()
 	noSecret.handleConnections(rec,
 		e.asAdmin(http.MethodPost, "/api/v1/connections", valid()))
-	expectStatus(t, rec, http.StatusInternalServerError)
+	expectConnHandlerStatus(t, rec, http.StatusInternalServerError)
 }
 
 func TestConnectionHandlerCoverage_RegisterRoutes(t *testing.T) {
@@ -647,13 +647,13 @@ func TestConnectionHandlerCoverage_RegisterRoutes(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, e.asOwner(http.MethodGet, "/api/v1/connections/31", nil))
-	expectStatus(t, rec, http.StatusOK)
+	expectConnHandlerStatus(t, rec, http.StatusOK)
 
 	rec = httptest.NewRecorder()
 	mux.ServeHTTP(rec, e.asOwner(http.MethodGet, "/api/v1/connections/current", nil))
-	expectStatus(t, rec, http.StatusNotFound)
+	expectConnHandlerStatus(t, rec, http.StatusNotFound)
 
 	rec = httptest.NewRecorder()
 	mux.ServeHTTP(rec, e.asOwner(http.MethodDelete, "/api/v1/connections", nil))
-	expectStatus(t, rec, http.StatusMethodNotAllowed)
+	expectConnHandlerStatus(t, rec, http.StatusMethodNotAllowed)
 }

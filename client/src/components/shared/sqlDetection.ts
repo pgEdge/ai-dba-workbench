@@ -77,13 +77,29 @@ const readDollarQuoted = (code: string, start: number): number => {
 };
 
 /**
+ * Regex matching a character that can continue a PostgreSQL identifier,
+ * which allows `$` after the first character.
+ */
+const IDENTIFIER_CHAR_RE = /[\p{L}\p{N}_$]/u;
+
+/**
  * Read a quoted run (single-quoted literal or double-quoted identifier)
  * starting at `start`, honouring the doubled-quote escape, and return the
- * index one past the closing quote.
+ * index one past the closing quote. In an escape string constant
+ * (`E'...'`) a backslash also escapes the character after it.
  */
-const readQuoted = (code: string, start: number, quote: string): number => {
+const readQuoted = (
+    code: string,
+    start: number,
+    quote: string,
+    backslashEscapes = false
+): number => {
     let i = start + 1;
     while (i < code.length) {
+        if (backslashEscapes && code[i] === '\\') {
+            i += 2;
+            continue;
+        }
         if (code[i] === quote) {
             if (code[i + 1] === quote) {
                 // Doubled quote: an escaped quote, not the terminator.
@@ -162,14 +178,22 @@ export const tokenizeSql = (code: string): SqlToken[] => {
         }
 
         if (ch === "'" || ch === '"') {
-            const stop = readQuoted(code, i, ch);
+            // An E or e prefix that starts a word makes this an escape
+            // string constant, in which a backslash escapes the quote.
+            const escapeString =
+                ch === "'" &&
+                (code[i - 1] === 'E' || code[i - 1] === 'e') &&
+                (i < 2 || !IDENTIFIER_CHAR_RE.test(code[i - 2]));
+            const stop = readQuoted(code, i, ch, escapeString);
             flushPlain();
             tokens.push({ kind: 'literal', text: code.slice(i, stop) });
             i = stop;
             continue;
         }
 
-        if (ch === '$') {
+        // A `$` that continues an identifier, as in `col$a$`, cannot
+        // open a dollar-quoted string.
+        if (ch === '$' && (i === 0 || !IDENTIFIER_CHAR_RE.test(code[i - 1]))) {
             const stop = readDollarQuoted(code, i);
             if (stop !== -1) {
                 flushPlain();
@@ -225,13 +249,17 @@ export const splitSqlStatements = (code: string): string[] => {
 };
 
 /**
- * Return the statement text with comments removed and literals blanked
- * out, so that keyword and placeholder checks only ever see real code.
+ * Return the statement text with comments and literals blanked out, so
+ * that keyword and placeholder checks only ever see real code. Each is
+ * replaced by a space rather than removed, since PostgreSQL treats a
+ * comment as whitespace, so `LIMIT`, an empty block comment and `$1`
+ * must not run together as `LIMIT$1`.
  */
 const sqlCodeOnly = (statement: string): string =>
     tokenizeSql(statement)
-        .filter((token) => token.kind !== 'comment')
-        .map((token) => (token.kind === 'literal' ? ' ' : token.text))
+        .map((token) =>
+            token.kind === 'literal' || token.kind === 'comment' ? ' ' : token.text
+        )
         .join('')
         .trim();
 

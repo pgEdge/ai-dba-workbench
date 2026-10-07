@@ -280,6 +280,28 @@ describe('hasSqlParameters', () => {
         expect(hasSqlParameters('SELECT f($1);')).toBe(true);
     });
 
+    it('detects a placeholder glued to a keyword by a block comment', () => {
+        expect(hasSqlParameters('SELECT * FROM t LIMIT/**/$1;')).toBe(true);
+        expect(hasSqlParameters('SELECT/**/$1;')).toBe(true);
+        expect(hasSqlParameters('SELECT NOT/**/$1::bool;')).toBe(true);
+        expect(hasSqlParameters('SELECT * FROM t OFFSET/**/$1;')).toBe(true);
+    });
+
+    it('detects a placeholder after a backslash-escaped quote', () => {
+        expect(hasSqlParameters("SELECT E'it\\'s' || $1;")).toBe(true);
+        expect(hasSqlParameters("SELECT e'\\'' || $1;")).toBe(true);
+    });
+
+    it('does not treat a backslash as an escape outside an E string', () => {
+        expect(hasSqlParameters("SELECT '\\', $1;")).toBe(true);
+        expect(hasSqlParameters("SELECT date'\\', $1;")).toBe(true);
+    });
+
+    it('does not read a dollar inside an identifier as a quote tag', () => {
+        expect(hasSqlParameters('SELECT col$a$ FROM t WHERE id = $1;')).toBe(true);
+        expect(hasSqlParameters('SELECT col$$ FROM t WHERE id = $1;')).toBe(true);
+    });
+
     it('ignores a placeholder inside a comment or literal', () => {
         expect(hasSqlParameters('SELECT 1; -- use $1 here')).toBe(false);
         expect(hasSqlParameters("SELECT 'costs $5' AS x;")).toBe(false);

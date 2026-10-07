@@ -44,7 +44,7 @@ func mustCreateToken(t *testing.T, s *AuthStore, owner,
 
 	t.Helper()
 
-	raw, token, err := s.CreateToken(owner, annotation, nil)
+	raw, token, err := s.AsActor(systemActor).CreateToken(owner, annotation, nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken failed: %v", err)
 	}
@@ -278,15 +278,15 @@ func TestAuditTokensDeleteUserToken(t *testing.T) {
 		"Tool A", false); err != nil {
 		t.Fatalf("RegisterMCPPrivilege failed: %v", err)
 	}
-	if err := store.SetTokenConnectionScope(token.ID, []ScopedConnection{
+	if err := store.AsActor(systemActor).SetTokenConnectionScope(token.ID, []ScopedConnection{
 		{ConnectionID: 7, AccessLevel: AccessLevelRead},
-	}); err != nil {
+	}, true); err != nil {
 		t.Fatalf("SetTokenConnectionScope failed: %v", err)
 	}
-	if err := store.SetTokenMCPScopeByNames(token.ID, []string{"tool_a"}); err != nil {
+	if err := store.AsActor(systemActor).SetTokenMCPScopeByNames(token.ID, []string{"tool_a"}, true); err != nil {
 		t.Fatalf("SetTokenMCPScopeByNames failed: %v", err)
 	}
-	if err := store.SetTokenAdminScope(token.ID, []string{"manage_users"}); err != nil {
+	if err := store.AsActor(systemActor).SetTokenAdminScope(token.ID, []string{"manage_users"}, true); err != nil {
 		t.Fatalf("SetTokenAdminScope failed: %v", err)
 	}
 
@@ -651,15 +651,15 @@ func TestAuditTokensClearScope(t *testing.T) {
 		"Tool A", false); err != nil {
 		t.Fatalf("RegisterMCPPrivilege failed: %v", err)
 	}
-	if err := store.SetTokenConnectionScope(token.ID, []ScopedConnection{
+	if err := store.AsActor(systemActor).SetTokenConnectionScope(token.ID, []ScopedConnection{
 		{ConnectionID: 3, AccessLevel: AccessLevelRead},
-	}); err != nil {
+	}, true); err != nil {
 		t.Fatalf("SetTokenConnectionScope failed: %v", err)
 	}
-	if err := store.SetTokenMCPScopeByNames(token.ID, []string{"tool_a"}); err != nil {
+	if err := store.AsActor(systemActor).SetTokenMCPScopeByNames(token.ID, []string{"tool_a"}, true); err != nil {
 		t.Fatalf("SetTokenMCPScopeByNames failed: %v", err)
 	}
-	if err := store.SetTokenAdminScope(token.ID, []string{"manage_users"}); err != nil {
+	if err := store.AsActor(systemActor).SetTokenAdminScope(token.ID, []string{"manage_users"}, true); err != nil {
 		t.Fatalf("SetTokenAdminScope failed: %v", err)
 	}
 
@@ -717,7 +717,7 @@ func TestAuditTokensSystemActor(t *testing.T) {
 	defer cleanup()
 
 	mustCreateTokenOwner(t, store, "bob")
-	if _, _, err := store.CreateToken("bob", "cli token", nil); err != nil {
+	if _, _, err := store.AsActor(systemActor).CreateToken("bob", "cli token", nil, true); err != nil {
 		t.Fatalf("CreateToken failed: %v", err)
 	}
 
@@ -1392,9 +1392,9 @@ func TestAuditTokensScopeMutationFailures(t *testing.T) {
 func seedConnectionScope(t *testing.T, s *AuthStore, tokenID int64) {
 	t.Helper()
 
-	if err := s.SetTokenConnectionScope(tokenID, []ScopedConnection{
+	if err := s.AsActor(systemActor).SetTokenConnectionScope(tokenID, []ScopedConnection{
 		{ConnectionID: 1, AccessLevel: AccessLevelRead},
-	}); err != nil {
+	}, true); err != nil {
 		t.Fatalf("SetTokenConnectionScope failed: %v", err)
 	}
 }
@@ -1403,7 +1403,7 @@ func seedConnectionScope(t *testing.T, s *AuthStore, tokenID int64) {
 func seedMCPScope(t *testing.T, s *AuthStore, tokenID int64) {
 	t.Helper()
 
-	if err := s.SetTokenMCPScopeByNames(tokenID, []string{"tool_a"}); err != nil {
+	if err := s.AsActor(systemActor).SetTokenMCPScopeByNames(tokenID, []string{"tool_a"}, true); err != nil {
 		t.Fatalf("SetTokenMCPScopeByNames failed: %v", err)
 	}
 }
@@ -1412,7 +1412,7 @@ func seedMCPScope(t *testing.T, s *AuthStore, tokenID int64) {
 func seedAdminScope(t *testing.T, s *AuthStore, tokenID int64) {
 	t.Helper()
 
-	if err := s.SetTokenAdminScope(tokenID, []string{"manage_users"}); err != nil {
+	if err := s.AsActor(systemActor).SetTokenAdminScope(tokenID, []string{"manage_users"}, true); err != nil {
 		t.Fatalf("SetTokenAdminScope failed: %v", err)
 	}
 }

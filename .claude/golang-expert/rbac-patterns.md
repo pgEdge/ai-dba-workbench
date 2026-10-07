@@ -584,9 +584,13 @@ exceeded "this token's access" (fixed so the denial audit coalesces).
   pass `RBACChecker.IsSuperuser`, or `superuserOwnerAllowed(r, id)`,
   which also exempts a token acting on itself so it can narrow or
   delete itself; the CLI passes true. Do not add a handler pre-read of
-  the owner back. The ceiling checks still run first in the handler, so
-  a token caller widening or clearing a superuser's token, or minting
-  for a superuser, gets the ceiling's 403. `setTokenScope` writes all
+  the owner back. `AuthStore` has no exported token writer, so every
+  caller names an actor and the flag; tests use
+  `store.AsActor(auth.SystemActor()).X(..., true)`, and
+  `TestAuthStoreHasNoTokenWriters` fails if one is re-exported. The
+  ceiling checks still run first in the handler, so a token caller
+  widening or clearing a superuser's token, or minting for a superuser,
+  gets the ceiling's 403. `setTokenScope` writes all
   its kinds through one `ActorStore.SetTokenScope` transaction (one
   audit event per kind; any failure leaves every kind unchanged).
   Pinned by `internal/api/rbac_token_superuser_owner_test.go` and

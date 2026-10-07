@@ -1456,17 +1456,12 @@ func (s *AuthStore) StopSessionCleanup() {
 // Token Management
 // =============================================================================
 
-// CreateToken creates a new token owned by the specified user.
-// Returns the raw token (only shown once) and the stored token info.
-// If requestedExpiry is nil, superusers get no expiry while non-superusers
-// are subject to the configured maxUserTokenDays limit. The change is
-// attributed to the system actor.
-func (s *AuthStore) CreateToken(ownerUsername, annotation string, requestedExpiry *time.Time) (string, *StoredToken, error) {
-	return s.createToken(systemActor, ownerUsername, annotation,
-		requestedExpiry, true)
-}
-
-// createToken creates a token and records the token.create event in the
+// createToken creates a token owned by the specified user, returning the
+// raw token (only shown once) and the stored token info. If
+// requestedExpiry is nil, superusers get no expiry while non-superusers
+// are subject to the configured maxUserTokenDays limit.
+//
+// It records the token.create event in the
 // same transaction. The event names the owner, the expiry and the
 // annotation; it never carries the raw token, its hash or any prefix of
 // either, because the audit log is readable by anyone who can read the
@@ -1735,22 +1730,17 @@ func (s *AuthStore) ListAllTokens() ([]*StoredToken, error) {
 	return s.scanTokens(rows)
 }
 
-// DeleteToken deletes a token by ID or hash prefix (admin use, no owner
-// check) and removes every row that references that token in a single
-// atomic transaction: its connection scope, MCP scope, admin scope, and
-// the connection_sessions row keyed on its token_hash.
+// deleteToken deletes a token by ID or hash prefix (no owner check) and
+// removes every row that references that token in a single atomic
+// transaction: its connection scope, MCP scope, admin scope, and the
+// connection_sessions row keyed on its token_hash.
 //
 // With PRAGMA foreign_keys = ON enabled in NewAuthStore, the scope rows
 // would cascade via ON DELETE CASCADE. These explicit deletes are
 // intentionally kept as defense in depth and also clean up
 // connection_sessions, which references token_hash without an FK.
 //
-// The change is attributed to the system actor.
-func (s *AuthStore) DeleteToken(identifier string) error {
-	return s.deleteToken(systemActor, identifier, true)
-}
-
-// deleteToken deletes the token the identifier names. When
+// When
 // superuserOwnerAllowed is false it refuses, with
 // ErrSuperuserTargetForbidden, to delete a token whose owner is a
 // superuser when the delete's transaction reads the owner (see

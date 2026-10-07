@@ -30,7 +30,7 @@ func TestScopeTokenConnectionsCommandRefusesMalformedScope(t *testing.T) {
 		store.Close()
 		t.Fatalf("CreateUser failed: %v", err)
 	}
-	_, token, err := store.CreateToken("cli-owner", "cli token", nil)
+	_, token, err := store.AsActor(auth.SystemActor()).CreateToken("cli-owner", "cli token", nil, true)
 	store.Close()
 	if err != nil {
 		t.Fatalf("CreateToken failed: %v", err)

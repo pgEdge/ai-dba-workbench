@@ -62,9 +62,9 @@ func TestListTokensRendersScope(t *testing.T) {
 
 	scoped := mustCreateScopedToken(t, store, "svc-scoped",
 		[]string{auth.PermManageUsers})
-	if err := store.SetTokenConnectionScope(scoped, []auth.ScopedConnection{
+	if err := store.AsActor(auth.SystemActor()).SetTokenConnectionScope(scoped, []auth.ScopedConnection{
 		{ConnectionID: 7, AccessLevel: auth.AccessLevelRead},
-	}); err != nil {
+	}, true); err != nil {
 		t.Fatalf("SetTokenConnectionScope failed: %v", err)
 	}
 	unscoped := mustCreateScopedToken(t, store, "svc-unscoped", nil)

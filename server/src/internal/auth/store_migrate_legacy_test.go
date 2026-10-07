@@ -49,12 +49,12 @@ func rewindToV1(t *testing.T, store *AuthStore) legacyV1Fixture {
 		"legacy.owner@example.com"); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
-	_, token, err := store.CreateToken("legacy-owner", "legacy token", nil)
+	_, token, err := store.AsActor(systemActor).CreateToken("legacy-owner", "legacy token", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken: %v", err)
 	}
 	fx.tokenID = token.ID
-	if err := store.SetTokenMCPScope(fx.tokenID, []int64{fx.privID}); err != nil {
+	if err := store.AsActor(systemActor).SetTokenMCPScope(fx.tokenID, []int64{fx.privID}, true); err != nil {
 		t.Fatalf("SetTokenMCPScope: %v", err)
 	}
 

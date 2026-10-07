@@ -589,7 +589,7 @@ func TestAuditUsersDeleteUser(t *testing.T) {
 	if err := store.AddUserToGroup(groupID, user.ID); err != nil {
 		t.Fatalf("AddUserToGroup failed: %v", err)
 	}
-	if _, _, err := store.CreateToken("bob", "token", nil); err != nil {
+	if _, _, err := store.AsActor(systemActor).CreateToken("bob", "token", nil, true); err != nil {
 		t.Fatalf("CreateToken failed: %v", err)
 	}
 
@@ -1035,7 +1035,7 @@ func mustCreateUserWithDependents(t *testing.T, s *AuthStore, username string) {
 	if err := s.AddUserToGroup(groupID, user.ID); err != nil {
 		t.Fatalf("AddUserToGroup failed: %v", err)
 	}
-	if _, _, err := s.CreateToken(username, "token", nil); err != nil {
+	if _, _, err := s.AsActor(systemActor).CreateToken(username, "token", nil, true); err != nil {
 		t.Fatalf("CreateToken failed: %v", err)
 	}
 }

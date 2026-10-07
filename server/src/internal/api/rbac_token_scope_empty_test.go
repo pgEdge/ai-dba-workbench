@@ -41,13 +41,12 @@ func seedEmptyArrayScopeTarget(t *testing.T, store *auth.AuthStore) int64 {
 	}
 	target := mustCreateScopedToken(t, store, "svc-empty-array",
 		[]string{auth.PermManageUsers})
-	if err := store.SetTokenMCPScopeByNames(target,
-		[]string{"known_tool"}); err != nil {
+	if err := store.AsActor(auth.SystemActor()).SetTokenMCPScopeByNames(target, []string{"known_tool"}, true); err != nil {
 		t.Fatalf("SetTokenMCPScopeByNames failed: %v", err)
 	}
-	if err := store.SetTokenConnectionScope(target, []auth.ScopedConnection{
+	if err := store.AsActor(auth.SystemActor()).SetTokenConnectionScope(target, []auth.ScopedConnection{
 		{ConnectionID: 5, AccessLevel: auth.AccessLevelRead},
-	}); err != nil {
+	}, true); err != nil {
 		t.Fatalf("SetTokenConnectionScope failed: %v", err)
 	}
 	return target

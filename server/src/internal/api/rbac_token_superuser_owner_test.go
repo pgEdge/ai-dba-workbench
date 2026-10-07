@@ -73,7 +73,7 @@ func scopeAdminCallers(t *testing.T, store *auth.AuthStore) map[string]func(*htt
 	t.Helper()
 	userID := setupUserWithPermission(t, store, "scope-admin",
 		auth.PermManageTokenScopes)
-	_, token, err := store.CreateToken("scope-admin", "scope admin", nil)
+	_, token, err := store.AsActor(auth.SystemActor()).CreateToken("scope-admin", "scope admin", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken failed: %v", err)
 	}

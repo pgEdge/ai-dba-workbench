@@ -67,13 +67,13 @@ func newScopeFixture(t *testing.T, scopeLevel string) *scopeFixture {
 	if err != nil {
 		t.Fatalf("failed to fetch user: %v", err)
 	}
-	_, stored, err := store.CreateToken("scopeuser", "scoped token", nil)
+	_, stored, err := store.AsActor(systemActor).CreateToken("scopeuser", "scoped token", nil, true)
 	if err != nil {
 		t.Fatalf("failed to create token: %v", err)
 	}
-	if err := store.SetTokenConnectionScope(stored.ID, []ScopedConnection{
+	if err := store.AsActor(systemActor).SetTokenConnectionScope(stored.ID, []ScopedConnection{
 		{ConnectionID: scopedConnA, AccessLevel: scopeLevel},
-	}); err != nil {
+	}, true); err != nil {
 		t.Fatalf("failed to set token connection scope: %v", err)
 	}
 
@@ -211,7 +211,7 @@ func TestTokenScopeReadWriteCeilingOnOwnedConnection(t *testing.T) {
 // ungrouped connections exactly as before.
 func TestUnscopedTokenKeepsOwnedConnection(t *testing.T) {
 	f := newScopeFixture(t, AccessLevelRead)
-	if err := f.store.SetTokenConnectionScope(f.tokenID, nil); err != nil {
+	if err := f.store.AsActor(systemActor).SetTokenConnectionScope(f.tokenID, nil, true); err != nil {
 		t.Fatalf("failed to clear token connection scope: %v", err)
 	}
 	f.checker.SetConnectionSharingLookup(ownedBy("scopeuser"))
@@ -282,7 +282,7 @@ func TestVisibleConnectionIDsIntersectsTokenScope(t *testing.T) {
 // over-correction guard for VisibleConnectionIDs.
 func TestVisibleConnectionIDsUnscopedTokenSeesOwned(t *testing.T) {
 	f := newScopeFixture(t, AccessLevelRead)
-	if err := f.store.SetTokenConnectionScope(f.tokenID, nil); err != nil {
+	if err := f.store.AsActor(systemActor).SetTokenConnectionScope(f.tokenID, nil, true); err != nil {
 		t.Fatalf("failed to clear token connection scope: %v", err)
 	}
 

@@ -761,7 +761,7 @@ func TestUnlinkFederatedIdentityRevokesTokens(t *testing.T) {
 		t.Fatalf("LinkFederatedIdentity: %v", err)
 	}
 	// No expiry, which is the token that would otherwise live for ever.
-	rawToken, _, err := store.CreateToken("wendy", "kept after federation", nil)
+	rawToken, _, err := store.AsActor(systemActor).CreateToken("wendy", "kept after federation", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken: %v", err)
 	}
@@ -800,7 +800,7 @@ func TestUnlinkFederatedIdentityKeepsTokensWithRestorePassword(t *testing.T) {
 	if _, err := store.LinkFederatedIdentity("xavier", linkTestIssuer, linkTestSubject, false); err != nil {
 		t.Fatalf("LinkFederatedIdentity: %v", err)
 	}
-	rawToken, _, err := store.CreateToken("xavier", "still wanted", nil)
+	rawToken, _, err := store.AsActor(systemActor).CreateToken("xavier", "still wanted", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken: %v", err)
 	}
@@ -858,7 +858,7 @@ func TestLinkFederatedIdentityIdempotentRelinkKeepsSessions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSessionForUser: %v", err)
 	}
-	rawToken, _, err := store.CreateToken("zach", "unaffected", nil)
+	rawToken, _, err := store.AsActor(systemActor).CreateToken("zach", "unaffected", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken: %v", err)
 	}
@@ -912,11 +912,11 @@ func TestUnlinkFederatedIdentityRevocationIsScopedAndComplete(t *testing.T) {
 		t.Fatalf("LinkFederatedIdentity: %v", err)
 	}
 
-	leaverToken, leaverStored, err := store.CreateToken("leaver", "to be revoked", nil)
+	leaverToken, leaverStored, err := store.AsActor(systemActor).CreateToken("leaver", "to be revoked", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken leaver: %v", err)
 	}
-	bystanderToken, bystanderStored, err := store.CreateToken("bystander", "not involved", nil)
+	bystanderToken, bystanderStored, err := store.AsActor(systemActor).CreateToken("bystander", "not involved", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken bystander: %v", err)
 	}
@@ -925,11 +925,10 @@ func TestUnlinkFederatedIdentityRevocationIsScopedAndComplete(t *testing.T) {
 	// doc comment's claim that they go with it is observed rather than
 	// merely asserted in prose.
 	for _, token := range []*StoredToken{leaverStored, bystanderStored} {
-		if err := store.SetTokenConnectionScope(token.ID,
-			[]ScopedConnection{{ConnectionID: 1, AccessLevel: "read"}}); err != nil {
+		if err := store.AsActor(systemActor).SetTokenConnectionScope(token.ID, []ScopedConnection{{ConnectionID: 1, AccessLevel: "read"}}, true); err != nil {
 			t.Fatalf("SetTokenConnectionScope: %v", err)
 		}
-		if err := store.SetTokenAdminScope(token.ID, []string{PermManageUsers}); err != nil {
+		if err := store.AsActor(systemActor).SetTokenAdminScope(token.ID, []string{PermManageUsers}, true); err != nil {
 			t.Fatalf("SetTokenAdminScope: %v", err)
 		}
 	}

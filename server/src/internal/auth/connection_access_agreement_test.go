@@ -263,11 +263,11 @@ func agreementContext(t *testing.T, store *AuthStore, grants []agreementGrant,
 		return ctx
 	}
 
-	_, stored, err := store.CreateToken("caller", "agreement token", nil)
+	_, stored, err := store.AsActor(systemActor).CreateToken("caller", "agreement token", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken: %v", err)
 	}
-	if err := store.SetTokenConnectionScope(stored.ID, scope); err != nil {
+	if err := store.AsActor(systemActor).SetTokenConnectionScope(stored.ID, scope, true); err != nil {
 		t.Fatalf("SetTokenConnectionScope: %v", err)
 	}
 	ctx = context.WithValue(ctx, IsAPITokenContextKey, true)

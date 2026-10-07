@@ -405,8 +405,8 @@ func TestRBACHandler_ListTokens_Admin(t *testing.T) {
 
 	// Create tokens for listing
 	store.CreateUser("user1", "Password1234", "User One", "", "")
-	store.CreateToken("admin", "Admin token", nil)
-	store.CreateToken("user1", "User1 token", nil)
+	store.AsActor(auth.SystemActor()).CreateToken("admin", "Admin token", nil, true)
+	store.AsActor(auth.SystemActor()).CreateToken("user1", "User1 token", nil, true)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/rbac/tokens", nil)
 	req = withUser(req, adminID)
@@ -472,7 +472,7 @@ func TestRBACHandler_ListTokens_Superuser(t *testing.T) {
 	defer cleanup()
 
 	store.CreateUser("user1", "Password1234", "User One", "", "")
-	store.CreateToken("user1", "Token 1", nil)
+	store.AsActor(auth.SystemActor()).CreateToken("user1", "Token 1", nil, true)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/rbac/tokens", nil)
 	req = withSuperuser(req)
@@ -496,7 +496,7 @@ func TestRBACHandler_ListTokens_IncludesUsername(t *testing.T) {
 	store.AddUserToGroup(gID, adminID)
 	store.GrantAdminPermission(gID, auth.PermManageTokenScopes)
 
-	store.CreateToken("admin", "Admin token", nil)
+	store.AsActor(auth.SystemActor()).CreateToken("admin", "Admin token", nil, true)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/rbac/tokens", nil)
 	req = withUser(req, adminID)
@@ -546,7 +546,7 @@ func TestRBACHandler_DeleteToken_Valid(t *testing.T) {
 	store.GrantAdminPermission(gID, auth.PermManageTokenScopes)
 
 	store.CreateUser("user1", "Password1234", "User One", "", "")
-	_, storedToken, _ := store.CreateToken("user1", "Deletable token", nil)
+	_, storedToken, _ := store.AsActor(auth.SystemActor()).CreateToken("user1", "Deletable token", nil, true)
 
 	req := httptest.NewRequest(http.MethodDelete,
 		"/api/v1/rbac/tokens/"+itoa(storedToken.ID), nil)
@@ -590,7 +590,7 @@ func TestRBACHandler_DeleteToken_PermissionDenied(t *testing.T) {
 
 	store.CreateUser("normie", "Password1234", "Normal user", "", "")
 	userID, _ := store.GetUserID("normie")
-	_, storedToken, _ := store.CreateToken("normie", "My token", nil)
+	_, storedToken, _ := store.AsActor(auth.SystemActor()).CreateToken("normie", "My token", nil, true)
 
 	req := httptest.NewRequest(http.MethodDelete,
 		"/api/v1/rbac/tokens/"+itoa(storedToken.ID), nil)
@@ -618,7 +618,7 @@ func TestRBACHandler_DeleteToken_AdminCanDeleteOtherUsersToken(t *testing.T) {
 
 	// Create another user's token
 	store.CreateUser("other", "Password1234", "Other user", "", "")
-	_, otherToken, _ := store.CreateToken("other", "Other's token", nil)
+	_, otherToken, _ := store.AsActor(auth.SystemActor()).CreateToken("other", "Other's token", nil, true)
 
 	req := httptest.NewRequest(http.MethodDelete,
 		"/api/v1/rbac/tokens/"+itoa(otherToken.ID), nil)
@@ -647,7 +647,7 @@ func TestRBACHandler_GetTokenScope_NoScope(t *testing.T) {
 	store.AddUserToGroup(gID, adminID)
 	store.GrantAdminPermission(gID, auth.PermManageTokenScopes)
 
-	_, storedToken, _ := store.CreateToken("admin", "Unscoped token", nil)
+	_, storedToken, _ := store.AsActor(auth.SystemActor()).CreateToken("admin", "Unscoped token", nil, true)
 
 	req := httptest.NewRequest(http.MethodGet,
 		"/api/v1/rbac/tokens/"+itoa(storedToken.ID)+"/scope", nil)
@@ -682,7 +682,7 @@ func TestRBACHandler_SetTokenScope_Connections(t *testing.T) {
 	store.AddUserToGroup(gID, adminID)
 	store.GrantAdminPermission(gID, auth.PermManageTokenScopes)
 
-	_, storedToken, _ := store.CreateToken("admin", "Scoped token", nil)
+	_, storedToken, _ := store.AsActor(auth.SystemActor()).CreateToken("admin", "Scoped token", nil, true)
 
 	body, _ := json.Marshal(map[string]any{
 		"connections": []map[string]any{
@@ -746,7 +746,7 @@ func TestRBACHandler_SetTokenScope_AdminPermissions(t *testing.T) {
 	store.AddUserToGroup(gID, adminID)
 	store.GrantAdminPermission(gID, auth.PermManageTokenScopes)
 
-	_, storedToken, _ := store.CreateToken("admin", "Admin scoped token", nil)
+	_, storedToken, _ := store.AsActor(auth.SystemActor()).CreateToken("admin", "Admin scoped token", nil, true)
 
 	body, _ := json.Marshal(map[string]any{
 		"admin_permissions": []string{
@@ -809,12 +809,12 @@ func TestRBACHandler_ClearTokenScope(t *testing.T) {
 	store.AddUserToGroup(gID, adminID)
 	store.GrantAdminPermission(gID, auth.PermManageTokenScopes)
 
-	_, storedToken, _ := store.CreateToken("admin", "Scoped token", nil)
+	_, storedToken, _ := store.AsActor(auth.SystemActor()).CreateToken("admin", "Scoped token", nil, true)
 
 	// Set a scope first
-	store.SetTokenConnectionScope(storedToken.ID, []auth.ScopedConnection{
+	store.AsActor(auth.SystemActor()).SetTokenConnectionScope(storedToken.ID, []auth.ScopedConnection{
 		{ConnectionID: 1, AccessLevel: "read"},
-	})
+	}, true)
 
 	// Clear the scope
 	req := httptest.NewRequest(http.MethodDelete,
@@ -858,7 +858,7 @@ func TestRBACHandler_GetTokenScope_PermissionDenied(t *testing.T) {
 
 	store.CreateUser("normie", "Password1234", "Normal user", "", "")
 	userID, _ := store.GetUserID("normie")
-	_, storedToken, _ := store.CreateToken("normie", "My token", nil)
+	_, storedToken, _ := store.AsActor(auth.SystemActor()).CreateToken("normie", "My token", nil, true)
 
 	req := httptest.NewRequest(http.MethodGet,
 		"/api/v1/rbac/tokens/"+itoa(storedToken.ID)+"/scope", nil)
@@ -879,7 +879,7 @@ func TestRBACHandler_SetTokenScope_PermissionDenied(t *testing.T) {
 
 	store.CreateUser("normie", "Password1234", "Normal user", "", "")
 	userID, _ := store.GetUserID("normie")
-	_, storedToken, _ := store.CreateToken("normie", "My token", nil)
+	_, storedToken, _ := store.AsActor(auth.SystemActor()).CreateToken("normie", "My token", nil, true)
 
 	body, _ := json.Marshal(map[string]any{
 		"connections": []map[string]any{
@@ -911,7 +911,7 @@ func TestRBACHandler_SetTokenScope_InvalidBody(t *testing.T) {
 	store.AddUserToGroup(gID, adminID)
 	store.GrantAdminPermission(gID, auth.PermManageTokenScopes)
 
-	_, storedToken, _ := store.CreateToken("admin", "Token", nil)
+	_, storedToken, _ := store.AsActor(auth.SystemActor()).CreateToken("admin", "Token", nil, true)
 
 	req := httptest.NewRequest(http.MethodPut,
 		"/api/v1/rbac/tokens/"+itoa(storedToken.ID)+"/scope",

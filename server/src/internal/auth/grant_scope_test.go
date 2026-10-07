@@ -47,14 +47,14 @@ func newGrantScopeFixture(t *testing.T) (*grantScopeFixture, func()) {
 	if err := store.CreateServiceAccount("svc-actor", "", "", ""); err != nil {
 		fail("CreateServiceAccount failed: %v", err)
 	}
-	_, token, err := store.CreateToken("svc-actor", "grant scope", nil)
+	_, token, err := store.AsActor(systemActor).CreateToken("svc-actor", "grant scope", nil, true)
 	if err != nil {
 		fail("CreateToken failed: %v", err)
 	}
-	if err := store.SetTokenConnectionScope(token.ID, []ScopedConnection{
+	if err := store.AsActor(systemActor).SetTokenConnectionScope(token.ID, []ScopedConnection{
 		{ConnectionID: 5, AccessLevel: AccessLevelReadWrite},
 		{ConnectionID: 7, AccessLevel: AccessLevelRead},
-	}); err != nil {
+	}, true); err != nil {
 		fail("SetTokenConnectionScope failed: %v", err)
 	}
 
@@ -241,9 +241,9 @@ func TestConnectionReadableInTokenScope(t *testing.T) {
 		t.Error("A scope without the wildcard should not cover every connection")
 	}
 
-	if err := f.store.SetTokenConnectionScope(f.tokenID, []ScopedConnection{
+	if err := f.store.AsActor(systemActor).SetTokenConnectionScope(f.tokenID, []ScopedConnection{
 		{ConnectionID: ConnectionIDAll, AccessLevel: AccessLevelRead},
-	}); err != nil {
+	}, true); err != nil {
 		t.Fatalf("SetTokenConnectionScope failed: %v", err)
 	}
 	if !f.checker.ConnectionReadableInTokenScope(ctx, ConnectionIDAll) {
@@ -266,14 +266,14 @@ func incompleteTokenCtx() context.Context {
 
 func (f *grantScopeFixture) setMCPScope(t *testing.T, names ...string) {
 	t.Helper()
-	if err := f.store.SetTokenMCPScopeByNames(f.tokenID, names); err != nil {
+	if err := f.store.AsActor(systemActor).SetTokenMCPScopeByNames(f.tokenID, names, true); err != nil {
 		t.Fatalf("SetTokenMCPScopeByNames failed: %v", err)
 	}
 }
 
 func (f *grantScopeFixture) setAdminScope(t *testing.T, perms ...string) {
 	t.Helper()
-	if err := f.store.SetTokenAdminScope(f.tokenID, perms); err != nil {
+	if err := f.store.AsActor(systemActor).SetTokenAdminScope(f.tokenID, perms, true); err != nil {
 		t.Fatalf("SetTokenAdminScope failed: %v", err)
 	}
 }
@@ -409,9 +409,9 @@ func TestUnrestrictedReachInTokenScope(t *testing.T) {
 	}
 
 	// A token covering every connection needs no enumeration.
-	if err := f.store.SetTokenConnectionScope(f.tokenID, []ScopedConnection{
+	if err := f.store.AsActor(systemActor).SetTokenConnectionScope(f.tokenID, []ScopedConnection{
 		{ConnectionID: ConnectionIDAll, AccessLevel: AccessLevelReadWrite},
-	}); err != nil {
+	}, true); err != nil {
 		t.Fatalf("SetTokenConnectionScope failed: %v", err)
 	}
 	if !f.checker.NewUserWithinTokenScope(ctx, "eve", nil) {
@@ -595,7 +595,7 @@ func TestTokenHoldsEverything(t *testing.T) {
 		t.Error("A session should be unrestricted")
 	}
 
-	if err := f.store.ClearTokenScope(f.tokenID); err != nil {
+	if err := f.store.AsActor(systemActor).ClearTokenScope(f.tokenID, true); err != nil {
 		t.Fatalf("ClearTokenScope failed: %v", err)
 	}
 	if !f.checker.TokenHoldsEverything(ctx) {
@@ -605,7 +605,7 @@ func TestTokenHoldsEverything(t *testing.T) {
 	if f.checker.TokenHoldsEverything(ctx) {
 		t.Error("An MCP-bounded token should be restricted")
 	}
-	if err := f.store.ClearTokenScope(f.tokenID); err != nil {
+	if err := f.store.AsActor(systemActor).ClearTokenScope(f.tokenID, true); err != nil {
 		t.Fatalf("ClearTokenScope failed: %v", err)
 	}
 	f.setAdminScope(t, PermManageUsers)
@@ -693,7 +693,7 @@ func TestReachAdminInTokenScope(t *testing.T) {
 	f, cleanup := newGrantScopeFixture(t)
 	defer cleanup()
 	ctx := f.tokenCtx()
-	if err := f.store.ClearTokenScope(f.tokenID); err != nil {
+	if err := f.store.AsActor(systemActor).ClearTokenScope(f.tokenID, true); err != nil {
 		t.Fatalf("ClearTokenScope failed: %v", err)
 	}
 	f.setAdminScope(t, PermManageBlackouts)
@@ -758,7 +758,7 @@ func TestReachLookupsFailClosed(t *testing.T) {
 				// admin permission and the token reaches every
 				// connection, so set both up; the check passes until
 				// the table goes.
-				if err := f.store.SetTokenConnectionScope(f.tokenID, nil); err != nil {
+				if err := f.store.AsActor(systemActor).SetTokenConnectionScope(f.tokenID, nil, true); err != nil {
 					t.Fatalf("SetTokenConnectionScope failed: %v", err)
 				}
 				if err := f.store.GrantAdminPermission(f.groupID,
@@ -861,7 +861,7 @@ func TestReachEverythingAdminPermissions(t *testing.T) {
 			defer cleanup()
 			ctx := f.tokenCtx()
 			f.registerMCP(t, "list_things", false)
-			if err := f.store.ClearTokenScope(f.tokenID); err != nil {
+			if err := f.store.AsActor(systemActor).ClearTokenScope(f.tokenID, true); err != nil {
 				t.Fatalf("ClearTokenScope failed: %v", err)
 			}
 			if err := f.store.GrantAdminPermission(f.groupID, perm); err != nil {
@@ -879,7 +879,7 @@ func TestReachEverythingAdminPermissions(t *testing.T) {
 				t.Error("The holder should be outside an MCP-bounded scope")
 			}
 
-			if err := f.store.ClearTokenScope(f.tokenID); err != nil {
+			if err := f.store.AsActor(systemActor).ClearTokenScope(f.tokenID, true); err != nil {
 				t.Fatalf("ClearTokenScope failed: %v", err)
 			}
 			named := perm
@@ -904,7 +904,7 @@ func TestReachOrdinaryAdminPermissionUnderMCPScope(t *testing.T) {
 	defer cleanup()
 	ctx := f.tokenCtx()
 	f.registerMCP(t, "list_things", false)
-	if err := f.store.ClearTokenScope(f.tokenID); err != nil {
+	if err := f.store.AsActor(systemActor).ClearTokenScope(f.tokenID, true); err != nil {
 		t.Fatalf("ClearTokenScope failed: %v", err)
 	}
 	f.setMCPScope(t, "list_things")

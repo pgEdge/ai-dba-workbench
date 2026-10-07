@@ -103,12 +103,9 @@ func ValidateScopedConnections(connections []ScopedConnection) error {
 	return nil
 }
 
-// SetTokenConnectionScope sets the connection scope for a token.
-// If connections is empty, clears all connection scoping (token has no connection restrictions).
-func (s *AuthStore) SetTokenConnectionScope(tokenID int64, connections []ScopedConnection) error {
-	return s.setTokenConnectionScope(systemActor, tokenID, connections, true)
-}
-
+// setTokenConnectionScope sets the connection scope for a token. If
+// connections is empty, it clears all connection scoping (the token has
+// no connection restrictions).
 func (s *AuthStore) setTokenConnectionScope(actor Actor, tokenID int64,
 	connections []ScopedConnection, superuserOwnerAllowed bool) (err error) {
 
@@ -234,13 +231,9 @@ func (s *AuthStore) commitTokenScopeChange(tx *sql.Tx, actor Actor,
 	return tx.Commit()
 }
 
-// SetTokenMCPScope sets the MCP privilege scope for a token
-// If privilegeIDs is empty, clears all MCP scoping (token has no MCP restrictions)
-// The change is attributed to the system actor.
-func (s *AuthStore) SetTokenMCPScope(tokenID int64, privilegeIDs []int64) error {
-	return s.setTokenMCPScope(systemActor, tokenID, privilegeIDs, true)
-}
-
+// setTokenMCPScope sets the MCP privilege scope for a token. If
+// privilegeIDs is empty, it clears all MCP scoping (the token has no MCP
+// restrictions).
 func (s *AuthStore) setTokenMCPScope(actor Actor, tokenID int64,
 	privilegeIDs []int64, superuserOwnerAllowed bool) (err error) {
 
@@ -295,14 +288,9 @@ func (s *AuthStore) setTokenMCPScope(actor Actor, tokenID int64,
 // token_mcp_scope to represent a wildcard ("all MCP privileges") grant.
 const MCPPrivilegeIDWildcard int64 = 0
 
-// SetTokenMCPScopeByNames sets the MCP privilege scope for a token using privilege identifiers.
-// If identifiers contains "*", a single wildcard entry is stored instead of
-// looking up individual privilege IDs. The change is attributed to the
-// system actor.
-func (s *AuthStore) SetTokenMCPScopeByNames(tokenID int64, identifiers []string) error {
-	return s.setTokenMCPScopeByNames(systemActor, tokenID, identifiers, true)
-}
-
+// setTokenMCPScopeByNames sets the MCP privilege scope for a token using
+// privilege identifiers. If identifiers contains "*", a single wildcard
+// entry is stored instead of looking up individual privilege IDs.
 func (s *AuthStore) setTokenMCPScopeByNames(actor Actor, tokenID int64,
 	identifiers []string, superuserOwnerAllowed bool) (err error) {
 
@@ -475,12 +463,7 @@ func (s *AuthStore) GetTokenScope(tokenID int64) (*TokenScope, error) {
 	return scope, nil
 }
 
-// ClearTokenScope removes all scope restrictions from a token,
-// attributing the change to the system actor.
-func (s *AuthStore) ClearTokenScope(tokenID int64) error {
-	return s.clearTokenScope(systemActor, tokenID, true)
-}
-
+// clearTokenScope removes all scope restrictions from a token.
 func (s *AuthStore) clearTokenScope(actor Actor, tokenID int64,
 	superuserOwnerAllowed bool) (err error) {
 
@@ -827,15 +810,10 @@ func ValidateAdminPermissions(permissions []string) error {
 	return nil
 }
 
-// SetTokenAdminScope sets the admin permission scope for a token.
-// This restricts which admin permissions the token can use.
-// If permissions contains "*", a single wildcard entry is stored instead of
-// individual permission strings. The change is attributed to the system
-// actor.
-func (s *AuthStore) SetTokenAdminScope(tokenID int64, permissions []string) error {
-	return s.setTokenAdminScope(systemActor, tokenID, permissions, true)
-}
-
+// setTokenAdminScope sets the admin permission scope for a token, which
+// restricts which admin permissions the token can use. If permissions
+// contains "*", a single wildcard entry is stored instead of individual
+// permission strings.
 func (s *AuthStore) setTokenAdminScope(actor Actor, tokenID int64,
 	permissions []string, superuserOwnerAllowed bool) (err error) {
 

@@ -61,7 +61,7 @@ func newSuperuserScopeFixture(t *testing.T) (*superuserScopeFixture, func()) {
 		cleanup()
 		t.Fatalf("Failed to register tool_b: %v", err)
 	}
-	_, token, err := store.CreateToken("root", "superuser token", nil)
+	_, token, err := store.AsActor(systemActor).CreateToken("root", "superuser token", nil, true)
 	if err != nil {
 		cleanup()
 		t.Fatalf("Failed to create token: %v", err)
@@ -111,7 +111,7 @@ func (f *superuserScopeFixture) dropScopeTable(t *testing.T, table string) {
 func (f *superuserScopeFixture) setAdminScope(t *testing.T, perms []string) {
 	t.Helper()
 
-	if err := f.store.SetTokenAdminScope(f.tokenID, perms); err != nil {
+	if err := f.store.AsActor(systemActor).SetTokenAdminScope(f.tokenID, perms, true); err != nil {
 		t.Fatalf("Failed to set admin scope: %v", err)
 	}
 }
@@ -122,7 +122,7 @@ func (f *superuserScopeFixture) setConnectionScope(t *testing.T,
 
 	t.Helper()
 
-	if err := f.store.SetTokenConnectionScope(f.tokenID, conns); err != nil {
+	if err := f.store.AsActor(systemActor).SetTokenConnectionScope(f.tokenID, conns, true); err != nil {
 		t.Fatalf("Failed to set connection scope: %v", err)
 	}
 }
@@ -131,7 +131,7 @@ func (f *superuserScopeFixture) setConnectionScope(t *testing.T,
 func (f *superuserScopeFixture) setMCPScope(t *testing.T, names []string) {
 	t.Helper()
 
-	if err := f.store.SetTokenMCPScopeByNames(f.tokenID, names); err != nil {
+	if err := f.store.AsActor(systemActor).SetTokenMCPScopeByNames(f.tokenID, names, true); err != nil {
 		t.Fatalf("Failed to set MCP scope: %v", err)
 	}
 }
@@ -854,8 +854,8 @@ func TestSetTokenMCPScopeByNamesRejectsUnknownIdentifier(t *testing.T) {
 	defer cleanup()
 
 	f.setMCPScope(t, []string{"tool_a"})
-	err := f.store.SetTokenMCPScopeByNames(f.tokenID,
-		[]string{"tool_b", "no_such_tool"})
+	err := f.store.AsActor(systemActor).SetTokenMCPScopeByNames(f.tokenID, []string{"tool_b", "no_such_tool"}, true)
+
 	if !errors.Is(err, ErrUnknownMCPPrivilege) {
 		t.Fatalf("Expected ErrUnknownMCPPrivilege, got %v", err)
 	}

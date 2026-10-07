@@ -13,6 +13,7 @@ package auth
 import (
 	"errors"
 	"fmt"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -67,13 +68,12 @@ func newOwnedTokenStore(t *testing.T) (*AuthStore, int64, func()) {
 		cleanup()
 		t.Fatalf("CreateUser failed: %v", err)
 	}
-	_, token, err := store.CreateToken("owner", "scoped", nil)
+	_, token, err := store.AsActor(systemActor).CreateToken("owner", "scoped", nil, true)
 	if err != nil {
 		cleanup()
 		t.Fatalf("CreateToken failed: %v", err)
 	}
-	if err := store.SetTokenAdminScope(token.ID,
-		[]string{PermManageUsers}); err != nil {
+	if err := store.AsActor(systemActor).SetTokenAdminScope(token.ID, []string{PermManageUsers}, true); err != nil {
 		cleanup()
 		t.Fatalf("SetTokenAdminScope failed: %v", err)
 	}
@@ -446,7 +446,7 @@ func TestDeleteTokenOwnerReadFailsOnce(t *testing.T) {
 }
 
 // TestTokenFilterNotFound checks that a filter miss keeps the caller's
-// message, or the generic one, and is recognisable as a miss.
+// message, or the generic one, and still matches the miss sentinel.
 func TestTokenFilterNotFound(t *testing.T) {
 	for msg, want := range map[string]string{
 		"":              "token not found",
@@ -460,5 +460,34 @@ func TestTokenFilterNotFound(t *testing.T) {
 	}
 	if errors.Is(errors.New("token not found"), errTokenFilterNoMatch) {
 		t.Errorf("Expected an unrelated error not to match the sentinel")
+	}
+}
+
+// TestAuthStoreHasNoTokenWriters fails if AuthStore exports a token
+// writer again. Such a method would have to pick an actor and a
+// superuser flag itself; with no caller context the only workable choice
+// is superuser authority, which any caller, a handler included, would
+// then inherit without naming it. Writers live on
+// ActorStore, which takes both from the caller.
+func TestAuthStoreHasNoTokenWriters(t *testing.T) {
+	storeType := reflect.TypeOf(&AuthStore{})
+	for _, name := range []string{
+		"CreateToken",
+		"DeleteToken",
+		"SetTokenScope",
+		"SetTokenConnectionScope",
+		"SetTokenMCPScope",
+		"SetTokenMCPScopeByNames",
+		"SetTokenAdminScope",
+		"ClearTokenScope",
+	} {
+		if _, ok := storeType.MethodByName(name); ok {
+			t.Errorf("AuthStore.%s is exported; token writers belong on "+
+				"ActorStore so the caller names its actor and authority",
+				name)
+		}
+		if _, ok := reflect.TypeOf(&ActorStore{}).MethodByName(name); !ok {
+			t.Errorf("ActorStore.%s is missing", name)
+		}
 	}
 }

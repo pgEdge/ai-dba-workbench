@@ -16,6 +16,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/pgedge/ai-workbench/server/internal/auth"
 )
 
 // TestLastSuperuserIsKept checks that a superuser session and an
@@ -54,7 +56,7 @@ func TestLastSuperuserIsKept(t *testing.T) {
 				}
 				wrap := withSuperuser
 				if caller == "token" {
-					_, token, err := store.CreateToken("root", "root token", nil)
+					_, token, err := store.AsActor(auth.SystemActor()).CreateToken("root", "root token", nil, true)
 					if err != nil {
 						t.Fatalf("CreateToken failed: %v", err)
 					}

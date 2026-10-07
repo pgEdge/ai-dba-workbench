@@ -44,8 +44,7 @@ func TestSetTokenScopeRejectsUnknownMCPPrivilege(t *testing.T) {
 	}
 	target := mustCreateScopedToken(t, store, "svc-mcp-typo",
 		[]string{auth.PermManageUsers})
-	if err := store.SetTokenMCPScopeByNames(target,
-		[]string{"known_tool"}); err != nil {
+	if err := store.AsActor(auth.SystemActor()).SetTokenMCPScopeByNames(target, []string{"known_tool"}, true); err != nil {
 		t.Fatalf("SetTokenMCPScopeByNames failed: %v", err)
 	}
 
@@ -97,8 +96,7 @@ func TestSetTokenScopeRejectsInvalidAccessLevelBeforeWriting(t *testing.T) {
 	}
 	target := mustCreateScopedToken(t, store, "svc-bad-level",
 		[]string{auth.PermManageUsers})
-	if err := store.SetTokenMCPScopeByNames(target,
-		[]string{"known_tool"}); err != nil {
+	if err := store.AsActor(auth.SystemActor()).SetTokenMCPScopeByNames(target, []string{"known_tool"}, true); err != nil {
 		t.Fatalf("SetTokenMCPScopeByNames failed: %v", err)
 	}
 
@@ -172,7 +170,7 @@ func TestConnectionMutationHonoursTokenConnectionScope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AuthenticateUser failed: %v", err)
 	}
-	_, token, err := store.CreateToken(owner, "connection scope test", nil)
+	_, token, err := store.AsActor(auth.SystemActor()).CreateToken(owner, "connection scope test", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken failed: %v", err)
 	}
@@ -180,9 +178,9 @@ func TestConnectionMutationHonoursTokenConnectionScope(t *testing.T) {
 	const inScope, outOfScope = 7471, 7472
 	seedIssue269Connection(t, pool, inScope, "someone-else", "in-scope")
 	seedIssue269Connection(t, pool, outOfScope, "someone-else", "out-of-scope")
-	if err := store.SetTokenConnectionScope(token.ID, []auth.ScopedConnection{
+	if err := store.AsActor(auth.SystemActor()).SetTokenConnectionScope(token.ID, []auth.ScopedConnection{
 		{ConnectionID: inScope, AccessLevel: auth.AccessLevelReadWrite},
-	}); err != nil {
+	}, true); err != nil {
 		t.Fatalf("SetTokenConnectionScope failed: %v", err)
 	}
 

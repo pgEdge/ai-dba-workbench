@@ -444,10 +444,16 @@ client address, before and after snapshots and a hash chain.
   the decoy, restore the primary). A second rotation promotes slot 2
   unchanged into slot 1 at the first event under the third key, so
   A-B-C reads as exit 3; slot 1 keeps the slot-1 fields promotion
-  overwrote in `bound_event_id`, `bound_event_hash` and `bound_mac`
-  (set only by promotion, only on id 1), because the promoted MAC is
-  the slot-2 rendering over them, and `primaryTailVerifiesUnder`
-  checks a promoted slot 1 with that rendering. Between a rotation and
+  overwrote in `bound_event_id`, `bound_event_hash` and `bound_mac`,
+  because the promoted MAC is the slot-2 rendering over them, and
+  `primaryTailVerifiesUnder` checks a promoted slot 1 with that
+  rendering under the previous key. The server sets those columns only
+  by promotion, only on id 1, but a writer can set them too: copying a
+  server-signed slot 2 into slot 1 with its binding made slot 1 verify
+  under the key in use, so a cut behind a decoy verified as exit 0.
+  `auditTailVerifies` therefore never counts a bound slot 1 as
+  verifying under the key in use, since a genuine promoted value was
+  always written under an earlier key. Between a rotation and
   the first write under the new key, case 4 of `checkRotatedAuditTail`
   can match slot 2 by id and hash only (security audit VULN-001), so
   cutting old-key rows, rewriting the sequence and planting slot 2
@@ -496,10 +502,13 @@ plainly rather than crediting the design with more than it does.
   (sequence rewritten) returns it to the moment of the rotation, which
   verifies as exit 3, which `-confirm-rechain` refuses until the server
   writes its next row (`LaterEventsVerify`) and accepts after; and wiping
-  the log, anchor and sequence row reads as empty. In a log never
-  rotated, failing row 1 and pointing the primary at it turns a tail
-  cut into exit 3 only via a decoy and a server write, and
-  `-confirm-rechain` refuses it. Exit 3 vouches for nothing written
+  the log, anchor and sequence row reads as empty. Slot 1 does not
+  change while one key is in use, so a saved slot 2 put back after
+  the rows following the one it names are cut (sequence rewritten)
+  verifies as exit 3, and `-confirm-rechain -previous-secret-file`
+  accepts it, since nothing under the previous key covers slot 2; the
+  binding stops slot 2 being paired with a different slot 1, not a
+  replay of the pair. Exit 3 vouches for nothing written
   under the previous key (VULN-002): verification checks neither those
   rows nor slot 1, so a cut back to any earlier old-key row reads as
   exit 3; only `-previous-secret-file` on the re-anchor checks them,

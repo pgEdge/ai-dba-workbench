@@ -16,6 +16,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 // auditRowHash reads the hash of audit event id.
@@ -99,6 +100,120 @@ func TestPlantedCurrentKeyAnchorIsRefusedByThePreviousSecret(t *testing.T) {
 	store.Close()
 	expectTailUnproven(t, planWithPreviousKey(t, planted, thirdAuditKey,
 		rotatedAuditKey), true)
+}
+
+// forgePromotion does by hand what a promotion does: it copies the
+// current-key anchor into the primary slot, with the binding columns
+// naming the primary anchor it was signed beside, and deletes the
+// current-key anchor.
+func forgePromotion(t *testing.T, s *AuthStore) {
+	t.Helper()
+
+	st := readTail(t, s)
+	if !st.hasCurrent {
+		t.Fatalf("Expected a current-key anchor to copy, got %+v", st)
+	}
+	tamperDB(t, s.db, `UPDATE audit_tail SET event_id = ?, event_hash = ?,
+        mac = ?, bound_event_id = ?, bound_event_hash = ?, bound_mac = ?
+        WHERE id = 1`, st.currentID, st.currentHash, st.currentMAC,
+		st.anchorID, st.anchorHash, st.anchorMAC)
+	tamperDB(t, s.db, "DELETE FROM audit_tail WHERE id = 2")
+}
+
+// TestForgedPromotionInANeverRotatedLogIsCaught is the first case from
+// the third review of #565. In a log written under one secret, the
+// newest five events are cut and a decoy put in their place, so that
+// the server starts a current-key anchor beside a primary anchor naming
+// the decoy. Once the decoy is deleted, that current-key anchor is
+// copied into the primary slot with the binding it was signed over. A
+// promoted primary anchor never verifies under the key in use, so the
+// log reads as tampering, and goes on doing so as events are written.
+func TestForgedPromotionInANeverRotatedLogIsCaught(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAudit(t)
+	defer cleanup()
+
+	recordN(t, store, 10)
+	keptHash := auditRowHash(t, store, 5)
+	deleteAuditRows(t, store, 6, 7, 8, 9, 10)
+	tamperDB(t, store.db, `INSERT INTO audit_events (id, occurred_at,
+            actor_type, actor_name, action, outcome, prev_hash, hash,
+            hash_version)
+        VALUES (6, ?, 'system', 'system', 'user.create', 'success',
+            'unused', ?, 3)`,
+		time.Now().UTC().Format(auditTimeLayout), keptHash)
+	tamperDB(t, store.db, `UPDATE sqlite_sequence SET seq = 6
+        WHERE name = 'audit_events'`)
+	tamperDB(t, store.db, `UPDATE audit_tail SET event_id = 6,
+        event_hash = ?, mac = 'x' WHERE id = 1`, keptHash)
+
+	recordN(t, store, 1)
+	deleteAuditRows(t, store, 6)
+	forgePromotion(t, store)
+	if st := readTail(t, store); !st.namesNewest() || !st.bound.valid ||
+		!primaryTailVerifiesUnder(store.auditKey, st) {
+		t.Fatalf("Expected a forged promotion the key in use signed, got "+
+			"%+v", st)
+	}
+	expectTailError(t, store, "tail anchor altered")
+	expectTampering(t, store)
+
+	recordN(t, store, 2)
+	expectTampering(t, store)
+}
+
+// TestForgedPromotionAfterARotationIsCaught is the second case from the
+// third review of #565. Ten events under one secret and four under the
+// next; the newest nine are cut, the primary anchor pointed at the new
+// newest row under a MAC no secret produced and the current-key anchor
+// deleted, so that the server's next event starts a current-key anchor
+// beside it, which is then copied into the primary slot. The log must
+// read as tampering rather than as a key mismatch, and the unattended
+// re-anchor must refuse it.
+func TestForgedPromotionAfterARotationIsCaught(t *testing.T) {
+	store, dir := writeUnderKeys(t, 10)
+	store.Close()
+	store = openWithKey(t, dir, rotatedAuditKey)
+	recordN(t, store, 4)
+
+	keptHash := auditRowHash(t, store, 5)
+	deleteAuditRows(t, store, 6, 7, 8, 9, 10, 11, 12, 13, 14)
+	tamperDB(t, store.db, `UPDATE sqlite_sequence SET seq = 5
+        WHERE name = 'audit_events'`)
+	tamperDB(t, store.db, `UPDATE audit_tail SET event_id = 5,
+        event_hash = ?, mac = 'x' WHERE id = 1`, keptHash)
+	tamperDB(t, store.db, "DELETE FROM audit_tail WHERE id = 2")
+
+	recordN(t, store, 1)
+	forgePromotion(t, store)
+	expectTampering(t, store)
+	store.Close()
+
+	plan := planWithPreviousKey(t, dir, rotatedAuditKey,
+		AuditKeyForTesting())
+	if unattendedReanchorAccepts(plan) {
+		t.Errorf("Expected the unattended re-anchor to refuse, got %+v",
+			plan)
+	}
+	if !errors.Is(plan.HistoryProofErr, errAuditTailUnproven) {
+		t.Errorf("Expected the tail proof to fail, got %v",
+			plan.HistoryProofErr)
+	}
+}
+
+// TestAuditTailViewIsRefused checks that a view put in place of the
+// audit_tail table is reported as tampering when the store is opened.
+func TestAuditTailViewIsRefused(t *testing.T) {
+	store, dir := newReopenableStore(t)
+	recordN(t, store, 2)
+	tamperDB(t, store.db, "DROP TABLE audit_tail")
+	tamperDB(t, store.db, `CREATE VIEW audit_tail AS SELECT 1 AS id,
+        2 AS event_id, 'h' AS event_hash, 'x' AS mac`)
+	store.Close()
+
+	if _, err := reopenStore(t, dir); !errors.Is(err, ErrAuditChainBroken) ||
+		!strings.Contains(err.Error(), "audit_tail is not a table") {
+		t.Errorf("Expected the open to refuse the view, got %v", err)
+	}
 }
 
 // TestPromotionKeepsTheBinding checks that a promoted primary anchor

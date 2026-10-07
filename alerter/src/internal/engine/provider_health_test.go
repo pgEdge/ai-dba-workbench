@@ -712,11 +712,18 @@ func (f *fakeEmbedder) GenerateEmbedding(context.Context, string) ([]float32, er
 
 func (f *fakeEmbedder) ModelName() string { return "emb-model" }
 
-type fakeReasoner struct{ err error }
+// fakeReasoner answers "OK" unless response is set.
+type fakeReasoner struct {
+	err      error
+	response string
+}
 
 func (f *fakeReasoner) Classify(context.Context, string) (string, error) {
 	if f.err != nil {
 		return "", f.err
+	}
+	if f.response != "" {
+		return f.response, nil
 	}
 	return "OK", nil
 }
@@ -947,5 +954,125 @@ func TestHealthTrackingReasoningDelegatesIdentity(t *testing.T) {
 	}
 	if got := rsn.SystemPrompt(); got != "reason system prompt" {
 		t.Errorf("SystemPrompt() = %q, want the wrapped provider's", got)
+	}
+}
+
+// TestHealthTrackingReasoningCountsUnparseableVerdict pins that a
+// reasoning call returning no verdict its tier can parse counts as a
+// provider failure, whilst the caller still gets the response and no
+// error (GitHub issue #594).
+func TestHealthTrackingReasoningCountsUnparseableVerdict(t *testing.T) {
+	tests := []struct {
+		name     string
+		tier     providerTier
+		response string
+		failure  bool
+	}{
+		{"tier 3 JSON verdict", providerTierClassification, `{"decision":"suppress"}`, false},
+		{"tier 3 fenced verdict", providerTierClassification, "```json\n{\"decision\":\"alert\"}\n```", false},
+		{"tier 3 prose verdict", providerTierClassification, "This is a genuine anomaly.", false},
+		{"tier 3 no verdict", providerTierClassification, "OK", true},
+		{"tier 3 empty response", providerTierClassification, " ", true},
+		{"tier 3 JSON without a valid decision", providerTierClassification,
+			`{"decision":"maybe","reasoning":"it should alert"}`, true},
+		{"tier 3 re-evaluation verdict", providerTierClassification, `{"decision":"clear"}`, true},
+		{"re-evaluation JSON verdict", providerTierReevaluation, `{"decision":"clear"}`, false},
+		{"re-evaluation prose verdict", providerTierReevaluation, "The alert should be kept.", false},
+		{"re-evaluation no verdict", providerTierReevaluation, "I am not sure.", true},
+		{"re-evaluation tier 3 verdict", providerTierReevaluation, `{"decision":"alert"}`, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newTrackerHarness(1)
+			rsn := &healthTrackingReasoning{inner: &fakeReasoner{response: tt.response},
+				provider: "anthropic", tracker: h.tracker}
+			ctx := context.Background()
+			if tt.tier == providerTierReevaluation {
+				ctx = withProviderTier(ctx, tt.tier)
+			}
+
+			got, err := rsn.Classify(ctx, "prompt")
+			if err != nil || got != tt.response {
+				t.Fatalf("Classify() = %q, %v; want the response and no error", got, err)
+			}
+			open := h.store.openFor(providerHealthKey(tt.tier, "anthropic"))
+			if (open != nil) != tt.failure {
+				t.Fatalf("alert open = %v, want %v", open != nil, tt.failure)
+			}
+			if tt.failure && !strings.Contains(open.Description, errUnparseableVerdict.Error()) {
+				t.Errorf("alert description does not report the unparseable verdict")
+			}
+		})
+	}
+}
+
+// TestHealthTrackingReasoningUnparseableVerdictDoesNotClear pins that a
+// response without a verdict leaves an open alert in place, and that the
+// next parseable verdict clears it.
+func TestHealthTrackingReasoningUnparseableVerdictDoesNotClear(t *testing.T) {
+	h := newTrackerHarness(3)
+	key := providerHealthKey(providerTierClassification, "anthropic")
+	alert := h.store.put(key)
+	rsn := &healthTrackingReasoning{inner: &fakeReasoner{response: "OK"},
+		provider: "anthropic", tracker: h.tracker}
+
+	if _, err := rsn.Classify(context.Background(), "prompt"); err != nil {
+		t.Fatalf("Classify() error = %v", err)
+	}
+	if alert.Status != "active" {
+		t.Fatalf("alert status = %q after an unparseable verdict, want active", alert.Status)
+	}
+
+	rsn.inner = &fakeReasoner{response: `{"decision":"alert"}`}
+	if _, err := rsn.Classify(context.Background(), "prompt"); err != nil {
+		t.Fatalf("Classify() error = %v", err)
+	}
+	if alert.Status != "cleared" {
+		t.Errorf("alert status = %q after a parseable verdict, want cleared", alert.Status)
+	}
+}
+
+// TestHealthTrackingReasoningFailureIndependentOfKeywordDecision pins
+// that a JSON response without a valid decision is recorded as a
+// failure even when its reasoning holds a keyword the caller then acts
+// on, and that the caller's keyword decision differs from the tier's
+// default, so the two outcomes are visibly separate.
+func TestHealthTrackingReasoningFailureIndependentOfKeywordDecision(t *testing.T) {
+	tests := []struct {
+		name     string
+		tier     providerTier
+		cfg      llmDecisionConfig
+		response string
+		decision string
+	}{
+		{"tier 3", providerTierClassification, anomalyDecisionConfig,
+			`{"decision":"maybe","reasoning":"not a real issue"}`, "suppress"},
+		{"re-evaluation", providerTierReevaluation, reevaluationDecisionConfig,
+			`{"decision":"maybe","reasoning":"safe to clear"}`, "clear"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.decision == tt.cfg.DefaultDecision {
+				t.Fatalf("decision %q equals the tier default", tt.decision)
+			}
+			h := newTrackerHarness(1)
+			rsn := &healthTrackingReasoning{inner: &fakeReasoner{response: tt.response},
+				provider: "anthropic", tracker: h.tracker}
+			ctx := context.Background()
+			if tt.tier == providerTierReevaluation {
+				ctx = withProviderTier(ctx, tt.tier)
+			}
+
+			got, err := rsn.Classify(ctx, "prompt")
+			if err != nil {
+				t.Fatalf("Classify() error = %v", err)
+			}
+			if h.store.openFor(providerHealthKey(tt.tier, "anthropic")) == nil {
+				t.Errorf("no provider health alert for a response without a valid decision")
+			}
+			if decision, _ := parseLLMDecision(got, tt.cfg); decision != tt.decision {
+				t.Errorf("caller decision = %q, want the keyword decision %q", decision, tt.decision)
+			}
+		})
 	}
 }

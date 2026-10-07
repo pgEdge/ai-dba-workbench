@@ -16,7 +16,9 @@ project adheres to
   a failing embedding or reasoning provider (#582). The
   alerter counts consecutive failures for each tier (tier 2
   embeddings, tier 3 classification and re-evaluation) and
-  provider, and raises one warning alert for the tier and
+  provider, treating a tier 3 or re-evaluation response that
+  holds no decision the alerter can parse as a failure
+  (#594), and raises one warning alert for the tier and
   provider when the count reaches the new
   `anomaly.provider_health.failure_threshold` option
   (default 3), or at once when the embedding or reasoning

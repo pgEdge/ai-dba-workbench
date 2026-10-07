@@ -61,13 +61,13 @@ func TestLastSuperuserGuard(t *testing.T) {
 			return s.DisableUser("root")
 		}},
 		{"delete", func(s *ActorStore) error {
-			return s.DeleteUser("root")
+			return s.DeleteUser("root", true)
 		}},
 		{"update demote", func(s *ActorStore) error {
-			return s.UpdateUserAtomic("root", UserUpdate{IsSuperuser: &no})
+			return s.UpdateUserAtomic("root", UserUpdate{IsSuperuser: &no}, true)
 		}},
 		{"update disable", func(s *ActorStore) error {
-			return s.UpdateUserAtomic("root", UserUpdate{Enabled: &no})
+			return s.UpdateUserAtomic("root", UserUpdate{Enabled: &no}, true)
 		}},
 	}
 	for _, tt := range tests {

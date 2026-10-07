@@ -754,11 +754,23 @@ call `requireSuperuser` right after decoding whenever the body carries
 `is_superuser` at all, true or false, before any store read (#497). The
 field's presence, not whether it would change the row, is the test, so
 the rule never depends on target state read outside the transaction.
-`updateUser` and `deleteUser` also call `requireSuperuser` when the
-target account is a superuser, since resetting its password or
-disabling it is as good as holding the role. Pinned by
-`rbac_user_superuser_gate_test.go`. Any new endpoint that can change
-superuser status, or write to a superuser account, needs the same gate.
+Writing to an account that is already a superuser (resetting its
+password, disabling it, deleting it) is as good as holding the role,
+so it needs a superuser too, but that rule depends on target state and
+so is checked in the store, not the handler (#588): `updateUser` and
+`deleteUser` pass `RBACChecker.IsSuperuser` to
+`ActorStore.UpdateUserAtomic` and `ActorStore.DeleteUser`, whose
+transactions read the row under the store's write lock and refuse
+with `auth.ErrSuperuserTargetForbidden` (`guardSuperuserTargetTx`,
+before the last-superuser guard). `respondUserWriteError` maps it to
+the same 403 and denial audit as `requireSuperuser`, through
+`denyNotSuperuser`. Do not add a handler pre-check back on a target
+read outside the transaction. Pinned by
+`rbac_user_superuser_gate_test.go` and
+`internal/auth/superuser_target_guard_test.go` (a target promoted
+after the read, and a concurrent promotion). Any new endpoint that can
+change superuser status, or write to a superuser account, needs the
+same gate.
 
 The store also refuses, with `auth.ErrLastSuperuser`, any demotion,
 disable or delete that would leave no enabled superuser

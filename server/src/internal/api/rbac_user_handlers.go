@@ -233,10 +233,10 @@ func (h *RBACHandler) updateUser(w http.ResponseWriter, r *http.Request, userID 
 	// Changing a superuser's password, profile or enabled state is as
 	// good as holding the role: a new password lets the caller sign in
 	// as that superuser, and disabling one can lock every administrator
-	// out. Only a superuser may therefore edit a superuser account.
-	if user.IsSuperuser && !h.requireSuperuser(w, r) {
-		return
-	}
+	// out. Only a superuser may therefore edit a superuser account. The
+	// store makes that check against the row it reads inside the update's
+	// own transaction, so that a target promoted after the read above is
+	// still refused (issue #588); see respondUserWriteError.
 
 	// Validate password against the length and dictionary policy when set
 	if req.Password != nil && *req.Password != "" {
@@ -287,8 +287,9 @@ func (h *RBACHandler) updateUser(w http.ResponseWriter, r *http.Request, userID 
 	// reason, which matters for more than the message: an administrator
 	// who fills in the password whilst unticking "enabled" on a federated
 	// user must not read a generic failure as the account being disabled.
-	if err := h.actorStore(r).UpdateUserAtomic(user.Username, update); err != nil {
-		respondUserStoreError(w, err, "Failed to update user", user.Username)
+	if err := h.actorStore(r).UpdateUserAtomic(user.Username, update,
+		h.rbacChecker.IsSuperuser(r.Context())); err != nil {
+		h.respondUserWriteError(w, r, err, "Failed to update user", user.Username)
 		return
 	}
 
@@ -308,10 +309,8 @@ func (h *RBACHandler) deleteUser(w http.ResponseWriter, r *http.Request, userID 
 		return
 	}
 
-	// See updateUser: only a superuser may delete a superuser account.
-	if user.IsSuperuser && !h.requireSuperuser(w, r) {
-		return
-	}
+	// See updateUser: only a superuser may delete a superuser account,
+	// which the store checks inside the delete's own transaction.
 
 	// Connection ownership is recorded by username, so a deleted
 	// account's unshared connections pass to whoever next takes the
@@ -323,8 +322,9 @@ func (h *RBACHandler) deleteUser(w http.ResponseWriter, r *http.Request, userID 
 		return
 	}
 
-	if err := h.actorStore(r).DeleteUser(user.Username); err != nil {
-		respondUserStoreError(w, err, "Failed to delete user", user.Username)
+	if err := h.actorStore(r).DeleteUser(user.Username,
+		h.rbacChecker.IsSuperuser(r.Context())); err != nil {
+		h.respondUserWriteError(w, r, err, "Failed to delete user", user.Username)
 		return
 	}
 
@@ -518,6 +518,21 @@ func respondUserStoreError(w http.ResponseWriter, err error, failure, username s
 	}
 	log.Printf("[ERROR] %s (user %s): %v", failure, username, err)
 	RespondError(w, http.StatusInternalServerError, failure)
+}
+
+// respondUserWriteError answers a failed update or delete of an existing
+// account. The store's refusal to let a caller who is not a superuser
+// write to a superuser account is answered exactly as requireSuperuser
+// answers, denial audit included; anything else goes to
+// respondUserStoreError.
+func (h *RBACHandler) respondUserWriteError(w http.ResponseWriter,
+	r *http.Request, err error, failure, username string) {
+
+	if errors.Is(err, auth.ErrSuperuserTargetForbidden) {
+		h.denyNotSuperuser(w, r)
+		return
+	}
+	respondUserStoreError(w, err, failure, username)
 }
 
 // capitalizeFirst returns the string with its first character uppercased.

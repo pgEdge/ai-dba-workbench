@@ -2066,6 +2066,16 @@ project adheres to
   holder who could reset a superuser's password could sign in as them.
   (#497)
 
+- Check whether the target of a user update or delete is a superuser
+  inside the change's own transaction. `PUT /api/v1/rbac/users/{id}`
+  and `DELETE /api/v1/rbac/users/{id}` read the account and checked its
+  superuser status before making the change separately, so a
+  `manage_users` holder who was not a superuser could have an edit or
+  delete applied to an account another request had promoted to
+  superuser in between. The auth store now reads the flag under the
+  same write lock as the change and refuses it with a 403, recorded in
+  the audit log as before. (#588)
+
 - Make each OIDC login state good for one callback only, and rate limit
   `GET /api/v1/auth/oidc/start` per client address. The sealed state
   cookie is stateless and stayed valid for its ten minute lifetime, so

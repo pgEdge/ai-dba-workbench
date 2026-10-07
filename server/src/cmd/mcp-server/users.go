@@ -284,8 +284,9 @@ func deleteUserCommand(dataDir, username string) error {
 		}
 	}
 
-	// Remove user
-	if err := cliStore(store).DeleteUser(username); err != nil {
+	// Remove user. The CLI acts with direct access to the auth database,
+	// so it holds a superuser's authority and may delete any account.
+	if err := cliStore(store).DeleteUser(username, true); err != nil {
 		return fmt.Errorf("failed to delete user: %w", err)
 	}
 

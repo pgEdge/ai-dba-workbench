@@ -302,7 +302,7 @@ func TestAuditUsersUpdateUserAtomic(t *testing.T) {
 		Annotation:  &annotation,
 		Enabled:     &enabled,
 		IsSuperuser: &superuser,
-	}); err != nil {
+	}, true); err != nil {
 		t.Fatalf("UpdateUserAtomic failed: %v", err)
 	}
 
@@ -333,7 +333,7 @@ func TestAuditUsersUpdateUserAtomicNotFound(t *testing.T) {
 
 	annotation := "new"
 	as := store.AsActor(testActor())
-	if err := as.UpdateUserAtomic("nobody", UserUpdate{Annotation: &annotation}); err == nil {
+	if err := as.UpdateUserAtomic("nobody", UserUpdate{Annotation: &annotation}, true); err == nil {
 		t.Fatal("Expected UpdateUserAtomic on a missing user to fail")
 	}
 
@@ -353,7 +353,7 @@ func TestAuditUsersUpdateUserAtomicRejectsWeakPassword(t *testing.T) {
 	}
 
 	weak := "short"
-	if err := as.UpdateUserAtomic("bob", UserUpdate{Password: &weak}); err == nil {
+	if err := as.UpdateUserAtomic("bob", UserUpdate{Password: &weak}, true); err == nil {
 		t.Fatal("Expected a weak password to be rejected")
 	}
 
@@ -593,7 +593,7 @@ func TestAuditUsersDeleteUser(t *testing.T) {
 		t.Fatalf("CreateToken failed: %v", err)
 	}
 
-	if err := as.DeleteUser("bob"); err != nil {
+	if err := as.DeleteUser("bob", true); err != nil {
 		t.Fatalf("DeleteUser failed: %v", err)
 	}
 
@@ -621,7 +621,7 @@ func TestAuditUsersDeleteUserNotFound(t *testing.T) {
 	defer cleanup()
 
 	as := store.AsActor(testActor())
-	err := as.DeleteUser("nobody")
+	err := as.DeleteUser("nobody", true)
 	if err == nil {
 		t.Fatal("Expected DeleteUser on a missing user to fail")
 	}
@@ -687,7 +687,7 @@ func TestAuditUsersChainStaysIntact(t *testing.T) {
 	if err := as.SetUserSuperuser("bob", true); err != nil {
 		t.Fatalf("SetUserSuperuser failed: %v", err)
 	}
-	if err := as.DeleteUser("bob"); err != nil {
+	if err := as.DeleteUser("bob", true); err != nil {
 		t.Fatalf("DeleteUser failed: %v", err)
 	}
 
@@ -797,7 +797,7 @@ func TestAuditUsersHashFailureRecordsFailure(t *testing.T) {
 			return as.UpdateUser("bob", "An0therPassphrase!", "", "", "")
 		}, "user.update"},
 		{"UpdateUserAtomic", func() error {
-			return as.UpdateUserAtomic("bob", UserUpdate{Password: &password})
+			return as.UpdateUserAtomic("bob", UserUpdate{Password: &password}, true)
 		}, "user.update"},
 	}
 
@@ -864,7 +864,7 @@ func TestAuditUsersClosedStoreFailsToBegin(t *testing.T) {
 			return as.UpdateUser("bob", "", "note", "", "")
 		}},
 		{"UpdateUserAtomic", func() error {
-			return as.UpdateUserAtomic("bob", UserUpdate{Password: &password})
+			return as.UpdateUserAtomic("bob", UserUpdate{Password: &password}, true)
 		}},
 		{"UpdateUserDisplayName", func() error {
 			return as.UpdateUserDisplayName("bob", "New")
@@ -875,7 +875,7 @@ func TestAuditUsersClosedStoreFailsToBegin(t *testing.T) {
 		{"EnableUser", func() error { return as.EnableUser("bob") }},
 		{"DisableUser", func() error { return as.DisableUser("bob") }},
 		{"SetUserSuperuser", func() error { return as.SetUserSuperuser("bob", true) }},
-		{"DeleteUser", func() error { return as.DeleteUser("bob") }},
+		{"DeleteUser", func() error { return as.DeleteUser("bob", true) }},
 	}
 
 	for _, tc := range cases {
@@ -956,7 +956,7 @@ func TestAuditUsersBlockedAtomicUpdatesRecordFailure(t *testing.T) {
 				tc.column+" ON users BEGIN SELECT RAISE(ABORT, 'blocked'); END")
 
 			as := store.AsActor(testActor())
-			if err := as.UpdateUserAtomic("bob", tc.update); err == nil {
+			if err := as.UpdateUserAtomic("bob", tc.update, true); err == nil {
 				t.Fatalf("Expected the blocked %s update to fail", tc.column)
 			}
 			if ev := lastAuditEvent(t, store); ev.Outcome != OutcomeFailure {
@@ -1000,7 +1000,7 @@ func TestAuditUsersBlockedDeletesRecordFailure(t *testing.T) {
 			tc.break_(t, store)
 
 			as := store.AsActor(testActor())
-			if err := as.DeleteUser("bob"); err == nil {
+			if err := as.DeleteUser("bob", true); err == nil {
 				t.Fatalf("Expected the blocked %s delete to fail", tc.name)
 			}
 			ev := lastAuditEvent(t, store)
@@ -1069,7 +1069,7 @@ func TestAuditUsersGroupLookupFailureIsWrapped(t *testing.T) {
 	mustExec(t, store, "DROP TABLE user_groups")
 
 	as := store.AsActor(testActor())
-	err := as.DeleteUser("bob")
+	err := as.DeleteUser("bob", true)
 	if err == nil {
 		t.Fatal("Expected DeleteUser to fail without a user_groups table")
 	}
@@ -1093,7 +1093,7 @@ func TestAuditUsersRecordAuditFailurePropagates(t *testing.T) {
 		}},
 		{"UpdateUserAtomic", func(s *AuthStore) error {
 			annotation := "note"
-			return as(s).UpdateUserAtomic("bob", UserUpdate{Annotation: &annotation})
+			return as(s).UpdateUserAtomic("bob", UserUpdate{Annotation: &annotation}, true)
 		}},
 		{"UpdateUserDisplayName", func(s *AuthStore) error {
 			return as(s).UpdateUserDisplayName("bob", "New")
@@ -1102,7 +1102,7 @@ func TestAuditUsersRecordAuditFailurePropagates(t *testing.T) {
 		{"SetUserSuperuser", func(s *AuthStore) error {
 			return as(s).SetUserSuperuser("bob", true)
 		}},
-		{"DeleteUser", func(s *AuthStore) error { return as(s).DeleteUser("bob") }},
+		{"DeleteUser", func(s *AuthStore) error { return as(s).DeleteUser("bob", true) }},
 	}
 
 	for _, tc := range cases {

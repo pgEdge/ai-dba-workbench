@@ -434,12 +434,19 @@ func (h *RBACHandler) requirePermission(w http.ResponseWriter, r *http.Request, 
 // Returns false and sends an error response if access is denied.
 func (h *RBACHandler) requireSuperuser(w http.ResponseWriter, r *http.Request) bool {
 	if !h.rbacChecker.IsSuperuser(r.Context()) {
-		const reason = "Permission denied: requires superuser privileges"
-		h.recordDenial(r, reason)
-		RespondError(w, http.StatusForbidden, reason)
+		h.denyNotSuperuser(w, r)
 		return false
 	}
 	return true
+}
+
+// denyNotSuperuser records and answers the refusal of a request that
+// needs a superuser, for requireSuperuser and for a store that made the
+// same check inside its own transaction.
+func (h *RBACHandler) denyNotSuperuser(w http.ResponseWriter, r *http.Request) {
+	const reason = "Permission denied: requires superuser privileges"
+	h.recordDenial(r, reason)
+	RespondError(w, http.StatusForbidden, reason)
 }
 
 // =============================================================================

@@ -357,22 +357,48 @@ func guardLastSuperuserTx(tx *sql.Tx, before, after userSnapshot,
 	return nil
 }
 
+// ErrSuperuserTargetForbidden reports an update or delete of a superuser
+// account refused because the caller is not a superuser. Changing a
+// superuser's password, profile or enabled state, or deleting it, is as
+// good as holding the role, so only a superuser may do so.
+var ErrSuperuserTargetForbidden = errors.New(
+	"only a superuser may change or delete a superuser account")
+
+// guardSuperuserTargetTx refuses with ErrSuperuserTargetForbidden when
+// the target, as read inside the change's own transaction, is a
+// superuser and the caller is not. Reading the flag there rather than
+// before the call means a target promoted between a handler's read and
+// the write is still refused (issue #588): the store's mutex, and the
+// write lock that BEGIN IMMEDIATE takes, hold off every other writer
+// until the change commits.
+func guardSuperuserTargetTx(before userSnapshot, callerIsSuperuser bool) error {
+	if before.IsSuperuser && !callerIsSuperuser {
+		return ErrSuperuserTargetForbidden
+	}
+	return nil
+}
+
 // UpdateUserAtomic updates multiple user fields in a single atomic
 // transaction, attributing the change to the system actor. Either all
 // changes are applied or none are, so a partial update can never leave
 // the user in an inconsistent state.
 func (s *AuthStore) UpdateUserAtomic(username string, update UserUpdate) error {
-	return s.updateUserAtomic(systemActor, username, update)
+	return s.updateUserAtomic(systemActor, username, update, true)
 }
 
 // UpdateUserAtomic updates multiple user fields in a single atomic
-// transaction, attributing the change to this store's actor.
-func (a *ActorStore) UpdateUserAtomic(username string, update UserUpdate) error {
-	return a.s.updateUserAtomic(a.actor, username, update)
+// transaction, attributing the change to this store's actor. When
+// callerIsSuperuser is false it refuses, with ErrSuperuserTargetForbidden,
+// an update to an account that is a superuser when the transaction reads
+// it, so every caller must say whether the principal it acts for is one.
+func (a *ActorStore) UpdateUserAtomic(username string, update UserUpdate,
+	callerIsSuperuser bool) error {
+
+	return a.s.updateUserAtomic(a.actor, username, update, callerIsSuperuser)
 }
 
 func (s *AuthStore) updateUserAtomic(actor Actor, username string,
-	update UserUpdate) (err error) {
+	update UserUpdate, callerIsSuperuser bool) (err error) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -398,6 +424,10 @@ func (s *AuthStore) updateUserAtomic(actor Actor, username string,
 		return err
 	}
 	target.targetID = &before.ID
+	if guardErr := guardSuperuserTargetTx(before, callerIsSuperuser); guardErr != nil {
+		err = guardErr
+		return err
+	}
 	after := before
 
 	passwordChanged := update.Password != nil && *update.Password != ""
@@ -903,16 +933,20 @@ func (s *AuthStore) setUserSuperuser(actor Actor, username string,
 // touched, survive accidental pragma regression, and clean up
 // connection_sessions rows which reference token_hash without an FK.
 func (s *AuthStore) DeleteUser(username string) error {
-	return s.deleteUser(systemActor, username)
+	return s.deleteUser(systemActor, username, true)
 }
 
 // DeleteUser removes a user and all of its dependent rows, attributing
-// the change to this store's actor.
-func (a *ActorStore) DeleteUser(username string) error {
-	return a.s.deleteUser(a.actor, username)
+// the change to this store's actor. When callerIsSuperuser is false it
+// refuses, with ErrSuperuserTargetForbidden, to delete an account that
+// is a superuser when the transaction reads it.
+func (a *ActorStore) DeleteUser(username string, callerIsSuperuser bool) error {
+	return a.s.deleteUser(a.actor, username, callerIsSuperuser)
 }
 
-func (s *AuthStore) deleteUser(actor Actor, username string) (err error) {
+func (s *AuthStore) deleteUser(actor Actor, username string,
+	callerIsSuperuser bool) (err error) {
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -941,6 +975,11 @@ func (s *AuthStore) deleteUser(actor Actor, username string) (err error) {
 	}
 	userID := before.ID
 	target.targetID = &userID
+
+	if guardErr := guardSuperuserTargetTx(before, callerIsSuperuser); guardErr != nil {
+		err = guardErr
+		return err
+	}
 
 	if guardErr := guardLastSuperuserTx(tx, before, before, true); guardErr != nil {
 		err = guardErr

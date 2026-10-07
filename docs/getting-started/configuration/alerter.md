@@ -353,7 +353,8 @@ recovers, provided that single failed call leaves the provider
 below the limit; an outage therefore clears on the first successful
 call, as the consecutive count alone would. Setting
 `failure_rate` to `1` leaves the consecutive count as
-effectively the only rule that raises the alert.
+effectively the only rule that raises the alert, provided
+`failure_rate_window` is at least `failure_threshold`.
 
 In the following example, the alerter raises the alert after
 five consecutive failures, or once 10 of the last 40 calls

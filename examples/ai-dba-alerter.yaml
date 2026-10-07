@@ -291,7 +291,7 @@ anomaly:
     # failures are not consecutive (for example, alternating errors and
     # successes). The alert then stays open until fewer than that share
     # are failing. Must be greater than 0 and at most 1; 1 leaves only
-    # the consecutive count.
+    # the consecutive count, when the window is at least the threshold.
     # Default: 0.3
     failure_rate: 0.3
 

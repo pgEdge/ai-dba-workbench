@@ -82,7 +82,8 @@ project adheres to
   of calls has failed, and keep it open until fewer have, so
   a flaky provider no longer raises and clears the alert in
   turn; a provider that fails consecutively and then recovers
-  still clears on its first successful call.
+  still clears on its first successful call, unless its other
+  recent failures keep it at the limit.
 
 - Add federated login through an OpenID Connect identity
   provider, configured in the new `http.auth.oidc` section

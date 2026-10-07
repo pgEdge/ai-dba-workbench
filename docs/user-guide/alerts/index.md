@@ -197,9 +197,9 @@ to that provider unless a steady share of the provider's
 recent calls are still failing; the alerter also raises the
 alert for a provider that fails such a share of its calls
 without failing consecutively. A successful tier 3 or
-re-evaluation call
-clears the alerts of both, since they share the reasoning
-provider. Once cleared, the alert is not raised again for
+re-evaluation call counts as a success for both, since they
+share the reasoning provider, and so can clear the alerts of
+both. Once cleared, the alert is not raised again for
 five minutes.
 
 System alerts behave differently from connection alerts in

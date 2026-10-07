@@ -163,7 +163,15 @@ func TestCallbackRefusesALoginWhenOIDCIsSwitchedOffDuringTheExchange(t *testing.
 	}))
 
 	// The first read is the callback's own enabled check; every read
-	// after it sees the reload that switched federated login off.
+	// after it sees the reload that switched federated login off. This
+	// relies on handleCallback reading the configuration exactly once
+	// before completeLogin, which reads it once more, so the whole
+	// callback makes wantReads reads. If a change adds a read on the way
+	// (in openPresentedState or exchange, say), the reload would land
+	// before the exchange rather than during it, and this test would no
+	// longer exercise completeLogin's own check: move the switch to the
+	// read just before completeLogin's and update wantReads to match.
+	const wantReads = 2
 	enabled := env.handler.cfg
 	disabled := env.handler.cfg
 	disabled.Enabled = boolPointer(false)
@@ -184,6 +192,10 @@ func TestCallbackRefusesALoginWhenOIDCIsSwitchedOffDuringTheExchange(t *testing.
 		})
 	})
 
+	if reads != wantReads {
+		t.Fatalf("the callback read the configuration %d times, want %d; "+
+			"see the comment above wantReads", reads, wantReads)
+	}
 	if got := rec.Header().Get("Location"); got != loginFailedTarget {
 		t.Fatalf("Location = %q, want %q", got, loginFailedTarget)
 	}

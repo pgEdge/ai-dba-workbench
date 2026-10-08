@@ -4585,6 +4585,8 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"200": jsonResponse("TokenScopeResponse", "Token scope details"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
 					"403": jsonResponse("ErrorResponse", "Requires manage_token_scopes permission"),
+					"404": jsonResponse("ErrorResponse", "Token not found"),
+					"500": jsonResponse("ErrorResponse", "Failed to get token scope"),
 				},
 			},
 			Put: &OpenAPIOperation{

@@ -721,6 +721,10 @@ project adheres to
   `-disable-user`, `-unset-superuser` and `-delete-user` commands,
   any change that would leave no enabled superuser; enabled
   service accounts that are superusers count towards the total.
+  A token that deletes itself part-way through a request now has
+  no access for the rest of that request, rather than reading as
+  unrestricted once its scope rows are gone, and requesting the
+  scope of a token that does not exist answers `404 Not Found`.
   (#471, #528)
 
 - Change the alerter's default Gemini reasoning model from

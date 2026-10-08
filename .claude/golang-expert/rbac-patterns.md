@@ -601,6 +601,14 @@ exceeded "this token's access" (fixed so the denial audit coalesces).
   `loadStoredTokenScope` ask `AuthStore.HasTokenMCPScope`.
 - Every check fails closed on a nil checker, a nil store or a token
   context without an id.
+- Every token scope read in `auth/token_scope.go` first calls
+  `requireTokenLocked` and returns `ErrTokenNotFound` for a token that no
+  longer exists, because the cascade leaves a deleted token with no
+  scope rows, which reads as unrestricted. A token deleting itself
+  between a handler's permission check and its ceiling check is then
+  denied. A new scope read must make the same call. Pinned by
+  `internal/api/rbac_acting_token_deleted_test.go` and
+  `internal/auth/token_scope_missing_token_test.go`.
 
 Known gaps, deliberately left: `query_datastore` reaches beyond any
 connection scope (#566), and editing or disabling a user and deleting a

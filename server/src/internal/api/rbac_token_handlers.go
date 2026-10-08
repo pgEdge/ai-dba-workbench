@@ -358,6 +358,10 @@ func (h *RBACHandler) deleteToken(w http.ResponseWriter, r *http.Request, tokenI
 
 func (h *RBACHandler) getTokenScope(w http.ResponseWriter, r *http.Request, tokenID int64) {
 	scope, err := h.authStore.GetTokenScope(tokenID)
+	if errors.Is(err, auth.ErrTokenNotFound) {
+		RespondError(w, http.StatusNotFound, "Token not found")
+		return
+	}
 	if err != nil {
 		log.Printf("[ERROR] Failed to get token scope for token %d: %v", tokenID, err)
 		RespondError(w, http.StatusInternalServerError, "Failed to get token scope")

@@ -45,6 +45,31 @@ var ErrInvalidAccessLevel = errors.New("invalid access level")
 // needs to.
 var ErrInvalidConnectionScope = errors.New("invalid connection scope")
 
+// ErrTokenNotFound is returned by the token scope reads for a token
+// that does not exist. A token with no rows in a scope kind is
+// unrestricted in that kind, so without this a token deleted part-way
+// through a request, which takes its scope rows with it by the cascade,
+// would read as unrestricted to every check made after the delete.
+// Every access check denies on a scope read error, so a missing token
+// reads as having no access at all.
+var ErrTokenNotFound = errors.New("token not found")
+
+// requireTokenLocked reports ErrTokenNotFound when tokenID names no
+// token. The caller holds s.mu, read or write, so the answer holds for
+// the rest of the caller's read: deleting a token takes the write lock.
+func (s *AuthStore) requireTokenLocked(tokenID int64) error {
+	var exists bool
+	if err := s.db.QueryRow(
+		"SELECT EXISTS(SELECT 1 FROM tokens WHERE id = ?)", tokenID,
+	).Scan(&exists); err != nil {
+		return fmt.Errorf("failed to check token exists: %w", err)
+	}
+	if !exists {
+		return ErrTokenNotFound
+	}
+	return nil
+}
+
 // ValidateScopedConnections checks that a connection scope is well
 // formed, so that a caller writing several scope kinds can refuse a bad
 // connection scope before writing any of them: every entry's access
@@ -333,6 +358,10 @@ func (s *AuthStore) GetTokenScope(tokenID int64) (*TokenScope, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	if err := s.requireTokenLocked(tokenID); err != nil {
+		return nil, err
+	}
+
 	scope := &TokenScope{TokenID: tokenID}
 
 	// Get connection scope
@@ -471,6 +500,10 @@ func (s *AuthStore) IsConnectionInTokenScope(tokenID int64, connectionID int) (b
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	if err := s.requireTokenLocked(tokenID); err != nil {
+		return false, "", err
+	}
+
 	// Check if token has any connection scope
 	var count int
 	err := s.db.QueryRow(
@@ -523,6 +556,10 @@ func (s *AuthStore) IsMCPItemInTokenScope(tokenID int64, identifier string) (boo
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	if err := s.requireTokenLocked(tokenID); err != nil {
+		return false, err
+	}
+
 	// Check if token has any MCP scope
 	var scopeCount int
 	err := s.db.QueryRow(
@@ -571,6 +608,10 @@ func (s *AuthStore) GetTokenConnectionScope(tokenID int64) ([]int, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	if err := s.requireTokenLocked(tokenID); err != nil {
+		return nil, err
+	}
+
 	rows, err := s.db.Query(
 		"SELECT connection_id FROM token_connection_scope WHERE token_id = ? ORDER BY connection_id",
 		tokenID,
@@ -605,6 +646,10 @@ func (s *AuthStore) HasTokenMCPScope(tokenID int64) (bool, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	if err := s.requireTokenLocked(tokenID); err != nil {
+		return false, err
+	}
+
 	var count int
 	if err := s.db.QueryRow(
 		"SELECT COUNT(*) FROM token_mcp_scope WHERE token_id = ?",
@@ -621,6 +666,10 @@ func (s *AuthStore) HasTokenMCPScope(tokenID int64) (bool, error) {
 func (s *AuthStore) GetTokenMCPScope(tokenID int64) ([]string, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+
+	if err := s.requireTokenLocked(tokenID); err != nil {
+		return nil, err
+	}
 
 	// Check for wildcard sentinel first
 	var wildcardCount int
@@ -667,6 +716,10 @@ func (s *AuthStore) GetTokenMCPScope(tokenID int64) ([]string, error) {
 func (s *AuthStore) HasTokenScope(tokenID int64) (bool, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+
+	if err := s.requireTokenLocked(tokenID); err != nil {
+		return false, err
+	}
 
 	var connCount, mcpCount, adminCount int
 
@@ -818,6 +871,10 @@ func (s *AuthStore) GetTokenAdminScope(tokenID int64) ([]string, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	if err := s.requireTokenLocked(tokenID); err != nil {
+		return nil, err
+	}
+
 	rows, err := s.db.Query(
 		"SELECT permission FROM token_admin_scope WHERE token_id = ?",
 		tokenID,
@@ -844,6 +901,10 @@ func (s *AuthStore) GetTokenAdminScope(tokenID int64) ([]string, error) {
 func (s *AuthStore) IsAdminPermissionInTokenScope(tokenID int64, permission string) (bool, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+
+	if err := s.requireTokenLocked(tokenID); err != nil {
+		return false, err
+	}
 
 	// Check if token has any admin scope at all
 	var count int

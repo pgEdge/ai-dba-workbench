@@ -138,6 +138,13 @@ moved.
   token acting on itself is exempt. In the ceiling, a non-superuser
   caller holding everything may narrow such a token but never widen or
   clear it.
+- A token with no rows in a scope kind is unrestricted in it, so every
+  token scope read in the store returns `auth.ErrTokenNotFound` for a
+  token that no longer exists (`requireTokenLocked` in
+  `auth/token_scope.go`), and every check denies on that error. A token
+  that deletes itself mid-request, after the handler's permission check,
+  is therefore refused by the later checks rather than read as
+  unrestricted (6 October review on PR #528).
 - A connection scope may not combine connection 0 (all connections)
   with any other entry, nor name a connection twice
   (`ValidateScopedConnections`, store, HTTP and CLI alike); legacy rows

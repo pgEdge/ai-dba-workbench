@@ -582,8 +582,13 @@ exceeded "this token's access" (fixed so the denial audit coalesces).
   other entry, with `ErrInvalidConnectionScope` (400). Legacy rows that
   already mix them are still read with the specific entry taking
   precedence, in `IsConnectionInTokenScope`, `applyScopedConnections`
-  and the ceiling alike. Admin scope names must be known permissions or
-  `*` (`ValidateAdminPermissions`, `ErrUnknownAdminPermission`, 400).
+  and the ceiling alike. A scope edit reads the target's stored "all
+  connections" entry at the lowest level any entry records
+  (`storedTokenScope.connectionLevel`), so `{0: read_write}` written
+  over a legacy `{0: read_write, 5: read}` raises connection 5 and needs
+  every connection at read_write (`TestScopeChangeOverLegacyMixedScope`).
+  Admin scope names must be known permissions or `*`
+  (`ValidateAdminPermissions`, `ErrUnknownAdminPermission`, 400).
 - A user's reach counts group grants, public MCP items, every
   unrestricted connection the user can see, every connection their
   username owns (restricted or not, because `updateConnection` and

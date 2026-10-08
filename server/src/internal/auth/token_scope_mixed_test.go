@@ -301,3 +301,80 @@ func TestValidateAdminPermissions(t *testing.T) {
 		t.Errorf("Expected no admin scope to be stored, got %v, %v", perms, err)
 	}
 }
+
+// TestScopeChangeOverLegacyMixedScope checks a connection scope edit,
+// by a token holding every connection at read, of a token whose legacy
+// scope is {all: read_write, 5: read}. That scope holds connection 5 at
+// read, so writing {all: read_write} over it raises connection 5 and
+// needs every connection at read_write, although the "all connections"
+// entry itself looks kept (6 October review of PR #528).
+func TestScopeChangeOverLegacyMixedScope(t *testing.T) {
+	rw := AccessLevelReadWrite
+	r := AccessLevelRead
+	sc := func(id int, level string) ScopedConnection {
+		return ScopedConnection{ConnectionID: id, AccessLevel: level}
+	}
+	mixed := []ScopedConnection{sc(ConnectionIDAll, rw), sc(5, r)}
+	tests := []struct {
+		name   string
+		stored []ScopedConnection
+		change []ScopedConnection
+		want   bool
+	}{
+		{"raise connection 5 through the all entry", mixed,
+			[]ScopedConnection{sc(ConnectionIDAll, rw)}, false},
+		{"narrow the all entry to read", mixed,
+			[]ScopedConnection{sc(ConnectionIDAll, r)}, true},
+		{"keep a plain all entry at read_write",
+			[]ScopedConnection{sc(ConnectionIDAll, rw)},
+			[]ScopedConnection{sc(ConnectionIDAll, rw)}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, cleanup := newGrantScopeFixture(t)
+			defer cleanup()
+			actor := f.newOwner(t, []ScopedConnection{sc(ConnectionIDAll, r)},
+				nil)
+			target := f.targetToken(t)
+			insertLegacyConnectionScope(t, f.store, target, tt.stored)
+
+			got, err := f.checker.TokenScopeChangeWithinCeiling(actor.ctx(),
+				target, TokenScopeChange{Connections: tt.change})
+			if err != nil {
+				t.Fatalf("TokenScopeChangeWithinCeiling failed: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("Expected %v, got %v", tt.want, got)
+			}
+		})
+	}
+}
+
+// TestStoredScopeAllConnectionsLevel checks the level a stored scope
+// holds every connection at: the lowest entry beside the "all
+// connections" entry, none without that entry, and read_write when the
+// kind is unrestricted.
+func TestStoredScopeAllConnectionsLevel(t *testing.T) {
+	tests := []struct {
+		name  string
+		scope storedTokenScope
+		want  string
+	}{
+		{"unrestricted", storedTokenScope{}, AccessLevelReadWrite},
+		{"plain all entry", storedTokenScope{connsRestricted: true,
+			conns: map[int]string{ConnectionIDAll: AccessLevelReadWrite}},
+			AccessLevelReadWrite},
+		{"legacy mixed scope", storedTokenScope{connsRestricted: true,
+			conns: map[int]string{ConnectionIDAll: AccessLevelReadWrite,
+				5: AccessLevelRead}}, AccessLevelRead},
+		{"no all entry", storedTokenScope{connsRestricted: true,
+			conns: map[int]string{5: AccessLevelReadWrite}}, AccessLevelNone},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.scope.connectionLevel(ConnectionIDAll); got != tt.want {
+				t.Errorf("Expected %q, got %q", tt.want, got)
+			}
+		})
+	}
+}

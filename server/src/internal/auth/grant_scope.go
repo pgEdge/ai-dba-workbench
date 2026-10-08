@@ -575,9 +575,27 @@ func (rc *RBACChecker) loadStoredTokenScope(tokenID int64) (
 // as IsConnectionInTokenScope reads it: an entry for the connection
 // itself, else the "all connections" entry, and read_write when the
 // kind is unrestricted, since the owner's level then decides.
+//
+// ConnectionIDAll asks about every connection at once, which a legacy
+// mixed scope holds only at the lowest level any of its entries records:
+// {all: read_write, 5: read} holds connection 5 at read, so it holds
+// every connection at read, as allConnectionsLevel reads the acting
+// token's own scope.
 func (s *storedTokenScope) connectionLevel(connectionID int) string {
 	if !s.connsRestricted {
 		return AccessLevelReadWrite
+	}
+	if connectionID == ConnectionIDAll {
+		level, ok := s.conns[ConnectionIDAll]
+		if !ok {
+			return AccessLevelNone
+		}
+		for _, entry := range s.conns {
+			if accessLevelRank(entry) < accessLevelRank(level) {
+				level = entry
+			}
+		}
+		return level
 	}
 	if level, ok := s.conns[connectionID]; ok {
 		return level
@@ -590,6 +608,11 @@ func (s *storedTokenScope) connectionLevel(connectionID int) string {
 // keeps or narrows what the token already allows, which needs only
 // read on the connection, as a revoke does. Each entry the change drops
 // is a narrowing too, and needs read in the same way.
+//
+// The "all connections" entry is judged against the level the stored
+// scope holds every connection at (see storedTokenScope.connectionLevel),
+// so writing {all: read_write} over a legacy {all: read_write, 5: read}
+// raises connection 5 and needs every connection at read_write.
 func (c *tokenCeiling) connectionsChangeCovered(stored *storedTokenScope,
 	entries []ScopedConnection) bool {
 

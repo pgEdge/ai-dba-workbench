@@ -59,7 +59,7 @@ func (f *grantFixture) doDeletingToken(t *testing.T, caller scopeCaller,
 	req := httptest.NewRequest(method, path, &deleteOnReadBody{
 		Reader: strings.NewReader(body),
 		onFirstRead: func() {
-			if err := f.store.DeleteToken(strconv.FormatInt(tokenID, 10)); err != nil {
+			if err := f.store.AsActor(auth.SystemActor()).DeleteToken(strconv.FormatInt(tokenID, 10), true); err != nil {
 				t.Errorf("DeleteToken failed: %v", err)
 			}
 		},
@@ -94,13 +94,13 @@ func TestDeletedActingTokenCannotCreateSuperuser(t *testing.T) {
 
 	tokenID := mustCreateScopedToken(t, f.store, "svc-self-deleting",
 		[]string{auth.PermManageUsers, auth.PermManageTokenScopes})
-	if err := f.store.SetTokenMCPScopeByNames(tokenID,
-		[]string{reachToolInScope}); err != nil {
+	if err := f.store.AsActor(auth.SystemActor()).SetTokenMCPScopeByNames(tokenID,
+		[]string{reachToolInScope}, true); err != nil {
 		t.Fatalf("SetTokenMCPScopeByNames failed: %v", err)
 	}
-	if err := f.store.SetTokenConnectionScope(tokenID, []auth.ScopedConnection{
+	if err := f.store.AsActor(auth.SystemActor()).SetTokenConnectionScope(tokenID, []auth.ScopedConnection{
 		{ConnectionID: 5, AccessLevel: auth.AccessLevelReadWrite},
-	}); err != nil {
+	}, true); err != nil {
 		t.Fatalf("SetTokenConnectionScope failed: %v", err)
 	}
 	caller := scopeCaller{name: "selfDeleting",
@@ -131,12 +131,12 @@ func TestDeletedActingTokenCannotGrantMCPItem(t *testing.T) {
 		t.Fatalf("AddUserToGroup failed: %v", err)
 	}
 	newToken := func() (int64, scopeCaller) {
-		_, token, err := f.store.CreateToken("grantor", "mid-request delete", nil)
+		_, token, err := f.store.AsActor(auth.SystemActor()).CreateToken("grantor", "mid-request delete", nil, true)
 		if err != nil {
 			t.Fatalf("CreateToken failed: %v", err)
 		}
-		if err := f.store.SetTokenMCPScopeByNames(token.ID,
-			[]string{reachToolInScope}); err != nil {
+		if err := f.store.AsActor(auth.SystemActor()).SetTokenMCPScopeByNames(token.ID,
+			[]string{reachToolInScope}, true); err != nil {
 			t.Fatalf("SetTokenMCPScopeByNames failed: %v", err)
 		}
 		return token.ID, scopeCaller{name: "grantor",

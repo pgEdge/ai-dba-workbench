@@ -121,14 +121,6 @@ func closeAuthStore(t *testing.T, h *BlackoutHandler) {
 	}
 }
 
-// expectStatus fails unless the recorder holds the wanted status.
-func expectStatus(t *testing.T, rec *httptest.ResponseRecorder, want int) {
-	t.Helper()
-	if rec.Code != want {
-		t.Fatalf("Expected %d, got %d: %s", want, rec.Code, rec.Body.String())
-	}
-}
-
 // TestBlackoutListVisibility covers listing blackouts and schedules for
 // callers with every connection and for a token narrowed to two.
 func TestBlackoutListVisibility(t *testing.T) {

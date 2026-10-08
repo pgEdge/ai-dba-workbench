@@ -67,8 +67,8 @@ func (f *grantFixture) doDeletingToken(t *testing.T, caller scopeCaller,
 	req.Header.Set("Content-Type", "application/json")
 	req = caller.wrap(req)
 	rec := httptest.NewRecorder()
-	switch {
-	case path == "/api/v1/rbac/users":
+	switch path {
+	case "/api/v1/rbac/users":
 		f.h.handleUsers(rec, req)
 	default:
 		f.h.handleGroupSubpath(rec, req)

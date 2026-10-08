@@ -788,7 +788,7 @@ func TestConnectionCoverage_UpdateConnectionCluster(t *testing.T) {
 			http.StatusInternalServerError, "Failed to reset membership source"},
 		{"assign on missing connection", &su, missingPath,
 			ConnectionClusterUpdateRequest{ClusterID: &cluster},
-			http.StatusInternalServerError, "Failed to assign connection to cluster"},
+			http.StatusNotFound, "Connection not found"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

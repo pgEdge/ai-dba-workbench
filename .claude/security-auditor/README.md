@@ -130,14 +130,14 @@ moved.
   group's read_write. Known gaps, which do not widen anyone's reach:
   revoking a group's MCP privileges or admin permissions, editing or
   disabling a user, and deleting a token are not ceiling-gated.
-- A token owned by a superuser is bounded by its scope alone, so
-  minting one, and setting, clearing or deleting one's scope, needs a
-  superuser (session, or a superuser's token unrestricted in every
-  kind), as `updateUser` does for a superuser target
-  (`requireSuperuserForOwnedToken` in `api/rbac_token_handlers.go`); a
-  token acting on itself is exempt. In the ceiling, a non-superuser
-  caller holding everything may narrow such a token but never widen or
-  clear it.
+- A token owned by a superuser is bounded by its scope alone, so minting
+  one, and setting, clearing or deleting one's scope, needs a superuser
+  (session, or a superuser's token with an unrestricted admin scope, as
+  `requireSuperuser` checks only that kind), as `updateUser` does for a
+  superuser target (`requireSuperuserForOwnedToken` in
+  `api/rbac_token_handlers.go`); a token acting on itself is exempt. In
+  the ceiling, a non-superuser caller holding everything may narrow such
+  a token but never widen or clear it.
 - A token with no rows in a scope kind is unrestricted in it, so every
   token scope read in the store returns `auth.ErrTokenNotFound` for a
   token that no longer exists (`requireTokenLocked` in
@@ -153,10 +153,10 @@ moved.
   Admin scope names must be known permissions or `*`.
 - The store refuses to demote, disable or delete the last enabled
   superuser (`ErrLastSuperuser`, 409 over HTTP, counted inside the
-  change's transaction), for sessions, tokens and the CLI alike. The
-  lockout disable and the federated login's `is_superuser` sync are
-  outside the guard; that was raised with the user on PR #528 and has
-  no ruling yet.
+  change's transaction), for sessions, tokens and the CLI alike.
+  Known exceptions, not yet ruled on: the lockout disable in
+  `disableForLockout` and the federated login's `is_superuser` sync in
+  `federation.go` both bypass the guard (raised on PR #528).
   Separately, `query_datastore` reads beyond a token's connection
   scope (read-only SQL over the whole datastore, `connections`
   credentials included), which #566 tracks. A `read` connection entry

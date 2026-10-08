@@ -231,19 +231,27 @@ whether an account is enabled or disabled:
 ./bin/ai-dba-server -enable-user -username charlie
 ```
 
-The server always keeps at least one enabled superuser, so that someone can
-still administer the server through the API and the Workbench console. The
-server refuses any change that would leave no enabled superuser, whether the
-change updates, disables, removes superuser status from or deletes the
-account. The API answers such a request with `409 Conflict`, and the
-`-disable-user`, `-unset-superuser` and `-delete-user` commands fail with the
-same error at the command line. A service
-account that is an enabled superuser counts towards the total, because the
-service account's tokens can still administer the server. Re-enabling a
-disabled superuser is always allowed; to demote or remove the last
-superuser, first promote or enable another account. An account lockout after
-repeated failed sign-ins is not refused in this way; use `-enable-user` to
-recover a locked superuser account.
+The server keeps at least one enabled superuser, apart from the two cases
+below, so that someone can still administer the server through the API and the
+Workbench console. The server refuses any change that would leave no enabled
+superuser, whether the change updates, disables, removes superuser status from
+or deletes the account. The API answers such a request with `409 Conflict`, and
+the `-disable-user`, `-unset-superuser` and `-delete-user` commands fail with
+the same error at the command line. A service account that is an enabled
+superuser counts towards the total, because the service account's tokens can
+still administer the server. Re-enabling a disabled superuser is always
+allowed; to demote or remove the last superuser, first promote or enable
+another account.
+
+The server does not apply this rule in two cases:
+
+- an account lockout after repeated failed sign-ins can disable the last
+  enabled superuser; use `-enable-user` to recover a locked superuser
+  account.
+- a federated sign-in removes superuser status from an account that the
+  identity provider no longer places in the `oidc.superuser_group` group,
+  even when the account is the last enabled superuser; see
+  [Single Sign-On](sso.md) for how the server synchronises that flag.
 
 ### Deleting an Account
 

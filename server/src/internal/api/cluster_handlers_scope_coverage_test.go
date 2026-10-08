@@ -241,7 +241,7 @@ func newClusterCovFixture(t *testing.T) *clusterCovFixture {
 		return withUsername(withUser(withBearer(r, plainToken), plainID),
 			"cov_cl_plain")
 	}}
-	f.incomplete = scopeCaller{name: "incomplete", wrap: withIncompleteToken}
+	f.incomplete = scopeCaller{name: "incomplete", wrap: withTokenMissingID}
 
 	f.session, f.unscoped, f.wildcard, f.narrowed, f.readOnly =
 		scopedCallers(t, store)

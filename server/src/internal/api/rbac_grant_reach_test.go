@@ -704,7 +704,7 @@ func TestConnectionScopeRefusalIsAudited(t *testing.T) {
 		{http.MethodDelete, "connection.delete", h.deleteConnection},
 	} {
 		req := withBearer(httptest.NewRequest(tc.method, "/api/v1/connections/9", nil), session)
-		req = withIncompleteToken(req)
+		req = withTokenMissingID(req)
 		rec := httptest.NewRecorder()
 		tc.serve(rec, req, 9)
 		assertError(t, rec, http.StatusForbidden, connectionOutOfTokenScope)

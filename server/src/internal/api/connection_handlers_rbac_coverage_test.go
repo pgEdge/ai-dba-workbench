@@ -295,10 +295,10 @@ func asSuperuserCaller(req *http.Request, c connCovCaller) *http.Request {
 	return withSuperuser(req)
 }
 
-// withIncompleteToken marks the request as API-token authenticated without a
+// withTokenMissingID marks the request as API-token authenticated without a
 // token ID. Every RBAC check fails closed on such a context, which gives
 // the tests a deterministic out-of-scope caller.
-func withIncompleteToken(req *http.Request) *http.Request {
+func withTokenMissingID(req *http.Request) *http.Request {
 	ctx := context.WithValue(req.Context(), auth.IsAPITokenContextKey, true)
 	return req.WithContext(ctx)
 }
@@ -672,7 +672,7 @@ func TestConnCov_UpdateConnection_Rejections(t *testing.T) {
 				req = asCaller(req, *tt.caller)
 			}
 			if tt.scopeFail {
-				req = withIncompleteToken(req)
+				req = withTokenMissingID(req)
 			}
 			assertError(t, f.serve(req), tt.wantStatus, tt.wantMsg)
 		})
@@ -783,7 +783,7 @@ func TestConnCov_DeleteConnection_Rejections(t *testing.T) {
 				req = asCaller(req, *tt.caller)
 			}
 			if tt.scopeFail {
-				req = withIncompleteToken(req)
+				req = withTokenMissingID(req)
 			}
 			assertError(t, f.serve(req), tt.wantStatus, tt.wantMsg)
 		})
@@ -1183,7 +1183,7 @@ func TestConnCov_UpdateConnectionCluster_Gates(t *testing.T) {
 	body := ConnectionClusterUpdateRequest{ClusterID: &clusterID, MembershipSource: "manual"}
 
 	t.Run("out of token scope", func(t *testing.T) {
-		req := withIncompleteToken(asCaller(connCovRequest(t, http.MethodPut, connCovPath(id, "cluster"), body), admin))
+		req := withTokenMissingID(asCaller(connCovRequest(t, http.MethodPut, connCovPath(id, "cluster"), body), admin))
 		assertError(t, f.serve(req), http.StatusForbidden, "Access denied")
 	})
 

@@ -91,12 +91,15 @@ import (
 // under the key in use, which, honestly, is the last row written under
 // an earlier secret: the purge refuses a log with that shape, so the
 // row is still there, before the event the anchor names, with the hash
-// the binding records, and it fails under the previous secret. If the
-// row is gone, verification reports tampering. If it is there and
-// verifies under the previous secret, it was altered so that it failed
-// and then put back; verification cannot tell that from the rows and
-// reads a key mismatch, but the re-anchor given the previous secret
-// refuses it.
+// the binding records, and it fails under the previous secret. While
+// the binding is left as the server wrote it and its row is gone,
+// verification reports tampering; but verification checks a binding
+// only when one is set and cannot check its MAC, so clearing the
+// bound_* columns, or repointing them at a row that is in the log,
+// reads as a key mismatch again (TestClearedBindingIsTheDocumentedLimit).
+// So does a row altered so that it failed and then put back, which
+// verifies under the previous secret. Only the re-anchor given the
+// previous secret refuses all of these.
 //
 // The current-key anchor's HMAC covers the primary anchor beside it as
 // well as the event it names (auditTailCurrentMAC). Without that, a

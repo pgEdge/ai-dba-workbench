@@ -82,8 +82,8 @@ type ThresholdConfig struct {
 
 	// TriggerCount is the number of consecutive metric samples that
 	// must breach a rule's threshold before an alert is raised. Samples
-	// are distinct collected_at values for one connection, database and
-	// object, not evaluation cycles, so re-reading a sample the probe
+	// are distinct collected_at values for one rule, connection and
+	// database, not evaluation cycles, so re-reading a sample the probe
 	// has not yet replaced does not advance the count. 1 raises on the
 	// first breaching sample. Must be at least 1. See GitHub issue #614.
 	TriggerCount int `yaml:"trigger_count"`

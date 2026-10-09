@@ -1195,7 +1195,7 @@ conventions from that change hold across both:
   `all`, and returns the first candidate that is warm; a cold candidate
   falls through rather than blocking a warmer, less specific one. Its
   second result is the most preferred cold row that was passed over,
-  whether or not something was chosen, and `detectAnomalyForValue`
+  whether or not something was chosen, and `scoreAnomalyValue`
   debug-logs it in both cases (suppression, or a fall-through to a
   less specific tier).
 
@@ -1240,9 +1240,10 @@ conventions from that change hold across both:
   rows.
   `engine/baselines_stale_integration_test.go` pins it.
 
-`detectAnomalies` loops rules on the outside so `GetLatestMetricValues`
-runs once per rule, resolves the blacked-out connection set once per
-run, and scores every latest value for a connection (one per database
+`detectAnomalies` loops metrics on the outside so `GetLatestMetricValues`
+runs once per metric (`anomalyMetrics` lists each baselineable rule
+metric once, then any metric only an active anomaly alert still covers),
+resolves the blacked-out connection set once per run, and scores every latest value for a connection (one per database
 for `scanWithDB` metrics) against the baselines for that value's
 `DatabaseName`, setting `candidate.DatabaseName` so the active-alert
 deduplication in `anomalyAlertSkipReason` is per database as well.
@@ -1259,9 +1260,10 @@ either (#568), after first suppressing any candidate whose metric fails
 `SupportsBaselines` (#576). It holds every check whose outcome does not
 depend on the tier results, in this order: blackout, open (`active` or
 `acknowledged`) anomaly alert for the same metric, connection and
-database (which sets `candidate.AlertID` to it), re-evaluation
-suppression, false-positive suppression. A lookup error counts as "does
-not apply". A skipped
+database (which sets `candidate.AlertID` to it), an anomaly alert on the
+same series cleared within `AlertCooldownPeriod`
+(`GetRecentlyClearedAnomalyAlert`, #611), re-evaluation suppression,
+false-positive suppression. A lookup error counts as "does not apply". A skipped
 candidate gets no tier fields and no embedding; `determineFinalDecision`
 records `alert` for it (Tier 1 only), the value a candidate discarded
 after the tiers is left with, because `final_decision` is constrained to
@@ -1273,8 +1275,9 @@ is only reachable when the open-alert lookup fails, because a
 false-positive alert is `acknowledged` and so already open;
 `TestProcessTier2And3SkipsPaidTiers` forces that failure to cover it.
 
-`detectAnomalyForValue` runs the same helper before
-`CreateAnomalyCandidate` and writes no row when it returns a reason
+`recordAnomalyCandidate` (called by `detectAnomalyForValue` and by the
+`detectAnomalies` loop after `scoreAnomalyValue`) runs the same helper
+before `CreateAnomalyCandidate` and writes no row when it returns a reason
 (#577), since such a row would only be marked processed with no tier
 run and later deleted. The check in `processTier2And3` stays, for
 candidates created before the condition began. With the alert tables
@@ -1294,6 +1297,43 @@ fires the reload from inside the first Tier 3 call. The
 candidate for an excluded metric is suppressed even after a reload.
 Tests that need a candidate to reach Tier 3 must use a baselined
 metric such as `pg_sys_load_avg_info.load_avg_fifteen_minutes`.
+
+### Anomaly alert recovery (#611)
+
+`cleanResolvedAlerts` only handles threshold alerts (`clearResolvedAlert`
+dereferences `Operator` and `ThresholdValue`, both nil on an anomaly
+alert), so anomaly alerts are cleared by the Tier 1 pass itself
+(`engine/anomaly_recovery.go`). Each `detectAnomalies` run loads
+`ListActiveAnomalyAlerts` (status `active` only) into an
+`anomalyRecoveryPass` keyed by metric, connection and NULL-aware
+database, and every scored value on a covered series goes through
+`recoverAnomalyAlerts` before `recordAnomalyCandidate`:
+
+- out of band: `RefreshAnomalyAlert` writes `metric_value`,
+  `anomaly_score`, `last_updated` and an escalate-only severity
+  (`escalatedSeverity` over `anomalySeverity`, the helper
+  `createAnomalyAlert` also uses), with no notification;
+- in band: the count from the previous pass plus one goes into
+  `pass.next`, and at `anomaly.tier1.clear_count` (default 3)
+  `ClearActiveAnomalyAlert` clears it and `queueNotification` sends
+  `AlertClear`.
+
+Both writes are gated on `status = 'active'` and report whether a row
+changed, so an alert acknowledged mid-pass is left alone and gets no
+notification. Acknowledged alerts are never refreshed because
+`reevaluationFingerprint` hashes their value, z-score and severity, and
+a refresh would buy a new Tier 3 call. The counts (`Engine.anomalyStreaks`)
+are in memory: `finishAnomalyRecovery` replaces them with `pass.next` at
+the end of a completed run, so any alert not scored in band that run
+(absent metric, cold baseline, zero divisor, connection or database
+blackout, failed blackout check) resets to zero and stays open. A failed
+alert list (`nil` pass) or an early return keeps the old counts; Tier 1
+being disabled resets them. Recovery runs even when
+`anomalyProcessingAvailable` is false, but no candidate is recorded then,
+nor for a metric only an alert covers. `ReloadConfig` and startup still
+set `Anomaly.Enabled = false` when no tier after Tier 1 is usable, which
+stops recovery too. `anomaly_recovery_integration_test.go` covers each
+case; `installStalenessNotificationCapture` observes the notification.
 
 ## Time-Window Resolution (server)
 

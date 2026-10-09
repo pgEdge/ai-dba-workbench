@@ -147,7 +147,18 @@ type Tier1Config struct {
 	// have not seen enough samples or wall-clock time to be
 	// trustworthy.
 	Warmup WarmupConfig `yaml:"warmup"`
+
+	// ClearCount is the number of consecutive Tier 1 evaluations
+	// in which an active anomaly alert's metric must score back
+	// inside the sensitivity band before the alert is cleared.
+	// Must be at least 1. See GitHub issue #611.
+	ClearCount int `yaml:"clear_count"`
 }
+
+// DefaultAnomalyClearCount is the default for anomaly.tier1.clear_count:
+// at the default 60-second Tier 1 interval an anomaly alert clears after
+// about three minutes back within the band.
+const DefaultAnomalyClearCount = 3
 
 // VarianceFloorConfig parameterises the hybrid variance floor.
 // effective_stddev = max(raw_stddev,
@@ -414,6 +425,7 @@ func NewConfig() *Config {
 				DefaultSensitivity:        3.0,
 				EvaluationIntervalSeconds: 60,
 				MaxZScore:                 100.0,
+				ClearCount:                DefaultAnomalyClearCount,
 				VarianceFloor: VarianceFloorConfig{
 					RelativePct:   0.05,
 					AbsoluteFloor: 0.001,
@@ -622,6 +634,9 @@ func (c *Config) Validate() error {
 		c.Anomaly.Tier1.Warmup.Daily.MinSamples < 0 ||
 		c.Anomaly.Tier1.Warmup.Daily.MinSpanHours < 0 {
 		return fmt.Errorf("anomaly.tier1.warmup thresholds must be >= 0")
+	}
+	if c.Anomaly.Tier1.ClearCount < 1 {
+		return fmt.Errorf("anomaly.tier1.clear_count must be at least 1")
 	}
 	if c.Anomaly.ProviderHealth.FailureThreshold < 1 {
 		return fmt.Errorf("anomaly.provider_health.failure_threshold must be at least 1")

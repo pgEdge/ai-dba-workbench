@@ -26,6 +26,13 @@ anomaly:
         # Default: 100.0
         max_z_score: 100.0
 
+        # Number of consecutive Tier 1 evaluations in which an active
+        # anomaly alert's metric must score back inside the sensitivity
+        # band before the alert is cleared automatically. The count is
+        # held in memory and restarts from zero when the alerter restarts.
+        # Default: 3
+        clear_count: 3
+
         # Hybrid variance floor: effective_stddev =
         #   max(raw_stddev, max(|mean|*relative_pct, absolute_floor))
         # Prevents the divisor in the z-score formula from collapsing

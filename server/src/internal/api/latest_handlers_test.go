@@ -14,6 +14,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestNewLatestSnapshotHandler(t *testing.T) {
@@ -197,6 +200,17 @@ func TestBuildDimensionColumns(t *testing.T) {
 	}
 }
 
+// numericFromString builds a valid pgtype.Numeric as pgx would scan it
+// from a NUMERIC column.
+func numericFromString(t *testing.T, s string) pgtype.Numeric {
+	t.Helper()
+	var n pgtype.Numeric
+	if err := n.Scan(s); err != nil {
+		t.Fatalf("failed to build numeric %q: %v", s, err)
+	}
+	return n
+}
+
 func TestNormalizeValue(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -213,6 +227,16 @@ func TestNormalizeValue(t *testing.T) {
 		{"bytes", []byte("hello"), "hello"},
 		{"bool true", true, true},
 		{"bool false", false, false},
+		{"time", time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
+			"2026-01-02T03:04:05Z"},
+		{"other type", uint8(7), "7"},
+		{"numeric integer", numericFromString(t, "123456789"), float64(123456789)},
+		{"numeric fraction", numericFromString(t, "2.5"), float64(2.5)},
+		{"numeric null", pgtype.Numeric{}, nil},
+		{"numeric NaN", pgtype.Numeric{NaN: true, Valid: true}, nil},
+		{"numeric infinity", pgtype.Numeric{
+			InfinityModifier: pgtype.Infinity, Valid: true,
+		}, nil},
 	}
 
 	for _, tt := range tests {

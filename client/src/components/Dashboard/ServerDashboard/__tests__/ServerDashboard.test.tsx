@@ -49,6 +49,14 @@ vi.mock('../WalReplicationSection', () => ({
     ),
 }));
 
+vi.mock('../ReplicationSlotsSection', () => ({
+    default: ({ connectionId }: { connectionId: number }) => (
+        <div data-testid="replication-slots-section" data-connection-id={connectionId}>
+            Replication Slots Content
+        </div>
+    ),
+}));
+
 vi.mock('../DatabaseSummariesSection', () => ({
     default: ({ connectionId }: { connectionId: number }) => (
         <div data-testid="database-summaries-section" data-connection-id={connectionId}>
@@ -143,6 +151,22 @@ describe('ServerDashboard', () => {
 
         expect(testIds.indexOf('connections-section')).toBe(
             testIds.indexOf('database-summaries-section') + 1,
+        );
+    });
+
+    it('renders Replication Slots after WAL and Replication', () => {
+        const { container } = renderServerDashboard(createSelection(42));
+
+        const testIds = Array.from(
+            container.querySelectorAll('[data-testid]'),
+        ).map(el => el.getAttribute('data-testid'));
+
+        expect(testIds.indexOf('replication-slots-section')).toBe(
+            testIds.indexOf('wal-replication-section') + 1,
+        );
+        expect(screen.getByTestId('replication-slots-section')).toHaveAttribute(
+            'data-connection-id',
+            '42',
         );
     });
 

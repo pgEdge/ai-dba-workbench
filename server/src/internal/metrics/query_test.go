@@ -1431,6 +1431,24 @@ func TestEntityKeyColumns(t *testing.T) {
 			},
 		},
 		{
+			// A replication slot's wal_status changes during the slot's
+			// life; keying on it would return a stale row for every
+			// status the slot held in the window (issue #347).
+			name: "text-typed wal_status status column is excluded",
+			outputCols: []string{
+				"slot_name", "slot_type", "active", "wal_status",
+				"retained_bytes",
+			},
+			colTypes: map[string]string{
+				"slot_name":      "text",
+				"slot_type":      "text",
+				"active":         "boolean",
+				"wal_status":     "text",
+				"retained_bytes": "numeric",
+			},
+			want: []string{"slot_name", "slot_type"},
+		},
+		{
 			name:       "internal bookkeeping columns are excluded",
 			outputCols: []string{"connection_id", "collected_at", "inserted_at", "datname"},
 			colTypes: map[string]string{

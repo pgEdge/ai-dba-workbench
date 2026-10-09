@@ -385,6 +385,16 @@ func IsMetricColumn(name, dataType string) bool {
 	return false
 }
 
+// textStatusColumns lists text-typed probe columns that hold a changing
+// status of an entity rather than part of its identity. A replication
+// slot's wal_status moves between reserved, extended, unreserved and
+// lost whilst the slot itself (keyed by slot_name) stays the same, so
+// keying on it would return a stale row for every status the slot held
+// in the window rather than only its current one.
+var textStatusColumns = map[string]bool{
+	"wal_status": true,
+}
+
 // IsEntityKeyColumn reports whether a probe output column is an
 // entity-key (identity/dimension) column that identifies a distinct
 // monitored entity, as opposed to a metric value or an internal
@@ -402,12 +412,13 @@ func IsMetricColumn(name, dataType string) bool {
 // rendered size and defeat any DISTINCT ON reduction. They are
 // therefore excluded here even though they are text. No genuine
 // identity column in the schema ends in "_pretty", so the exclusion
-// is a pure bug fix that changes nothing for existing probes.
+// is a pure bug fix that changes nothing for existing probes. The
+// columns named in textStatusColumns are excluded for the same reason.
 func IsEntityKeyColumn(name, dataType string) bool {
 	if latestRowInternalColumns[name] {
 		return false
 	}
-	if strings.HasSuffix(name, "_pretty") {
+	if strings.HasSuffix(name, "_pretty") || textStatusColumns[name] {
 		return false
 	}
 	switch dataType {

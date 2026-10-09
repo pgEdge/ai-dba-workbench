@@ -72,6 +72,18 @@ const (
 		$$;
 	`
 
+	// The statement-level triggers that feed retention_statement_log.
+	retentionLogCandidateDeletesSQL = `
+		CREATE TRIGGER retention_statement_log AFTER DELETE ON anomaly_candidates
+		REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT
+		EXECUTE FUNCTION retention_statement_log_rows()
+	`
+	retentionLogAlertDeletesSQL = `
+		CREATE TRIGGER retention_statement_log AFTER DELETE ON alerts
+		REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT
+		EXECUTE FUNCTION retention_statement_log_rows()
+	`
+
 	retentionStatementLogTeardownSQL = `
 		DROP FUNCTION IF EXISTS retention_statement_log_rows() CASCADE;
 		DROP TABLE IF EXISTS retention_statement_log;
@@ -86,13 +98,13 @@ const (
 	`
 )
 
-// logDeleteStatements installs a statement-level AFTER DELETE trigger on
-// table that records the number of rows each DELETE statement removes,
-// so a test can check how a sweep was split into statements. The
-// returned function drops the log table, the function and the trigger;
+// logDeleteStatements installs triggerSQL, one of the statement-level
+// AFTER DELETE triggers above, which records the number of rows each
+// DELETE statement removes, so a test can check how a sweep was split
+// into statements. The returned function drops the log table, the function and the trigger;
 // defer it after the datastore's cleanup so it runs before the pool
 // closes.
-func logDeleteStatements(t *testing.T, pool *pgxpool.Pool, table string) func() {
+func logDeleteStatements(t *testing.T, pool *pgxpool.Pool, triggerSQL string) func() {
 	t.Helper()
 	ctx := context.Background()
 	teardown := func() {
@@ -104,12 +116,9 @@ func logDeleteStatements(t *testing.T, pool *pgxpool.Pool, table string) func() 
 		teardown()
 		t.Fatalf("create statement log: %v", err)
 	}
-	trigger := `CREATE TRIGGER retention_statement_log AFTER DELETE ON ` + table +
-		` REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT` +
-		` EXECUTE FUNCTION retention_statement_log_rows()`
-	if _, err := pool.Exec(ctx, trigger); err != nil {
+	if _, err := pool.Exec(ctx, triggerSQL); err != nil {
 		teardown()
-		t.Fatalf("create statement log trigger on %s: %v", table, err)
+		t.Fatalf("create statement log trigger: %v", err)
 	}
 	return teardown
 }
@@ -257,7 +266,7 @@ func TestDeleteOldAnomalyCandidates_MoreThanOneBatch(t *testing.T) {
 		}
 	}
 
-	defer logDeleteStatements(t, pool, "anomaly_candidates")()
+	defer logDeleteStatements(t, pool, retentionLogCandidateDeletesSQL)()
 
 	deleted, err := ds.DeleteOldAnomalyCandidates(ctx, cutoff)
 	if err != nil {
@@ -301,7 +310,7 @@ func TestDeleteOldAlerts_MoreThanOneBatch(t *testing.T) {
 		t.Fatalf("seed active alert: %v", err)
 	}
 
-	defer logDeleteStatements(t, pool, "alerts")()
+	defer logDeleteStatements(t, pool, retentionLogAlertDeletesSQL)()
 
 	deleted, err := ds.DeleteOldAlerts(ctx, cutoff)
 	if err != nil {

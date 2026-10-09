@@ -268,4 +268,107 @@ describe('useReplicationSlots', () => {
         expect(result.current.error).toBeNull();
         expect(result.current.slots[0].slot_name).toBe('new');
     });
+
+    it('never renders the previous server slots under a new server',
+        async () => {
+            const fresh = makeDeferred<unknown>();
+            mockApiGet
+                .mockResolvedValueOnce({ rows: [slotRow('old')] })
+                .mockReturnValueOnce(fresh.promise);
+
+            const renders: {
+                id: number;
+                value: ReturnType<typeof useReplicationSlots>;
+            }[] = [];
+            const { result, rerender } = renderHook(
+                ({ id }) => {
+                    const value = useReplicationSlots(id);
+                    renders.push({ id, value });
+                    return value;
+                },
+                { initialProps: { id: 1 } },
+            );
+            await waitFor(() => {
+                expect(result.current.slots).toHaveLength(1);
+            });
+
+            rerender({ id: 2 });
+
+            const forTwo = renders.filter(r => r.id === 2);
+            expect(forTwo.length).toBeGreaterThan(0);
+            for (const { value } of forTwo) {
+                expect(value.slots).toEqual([]);
+                expect(value.totalCount).toBe(0);
+                expect(value.loading).toBe(true);
+            }
+
+            fresh.resolve({ rows: [slotRow('new')] });
+            await waitFor(() => {
+                expect(result.current.slots[0]?.slot_name).toBe('new');
+            });
+            expect(renders.filter(r => r.id === 2).every(
+                r => r.value.slots.every(slot => slot.slot_name !== 'old'),
+            )).toBe(true);
+        });
+
+    it('never shows the previous server error under a new server',
+        async () => {
+            const fresh = makeDeferred<unknown>();
+            mockApiGet
+                .mockRejectedValueOnce(new Error('server one is down'))
+                .mockReturnValueOnce(fresh.promise);
+
+            const renders: {
+                id: number;
+                value: ReturnType<typeof useReplicationSlots>;
+            }[] = [];
+            const { result, rerender } = renderHook(
+                ({ id }) => {
+                    const value = useReplicationSlots(id);
+                    renders.push({ id, value });
+                    return value;
+                },
+                { initialProps: { id: 1 } },
+            );
+            await waitFor(() => {
+                expect(result.current.error).toBe('server one is down');
+            });
+
+            rerender({ id: 2 });
+
+            expect(renders.filter(r => r.id === 2).every(
+                r => r.value.error === null && r.value.loading,
+            )).toBe(true);
+            fresh.resolve({ rows: [] });
+            await waitFor(() => {
+                expect(result.current.loading).toBe(false);
+            });
+            expect(result.current.error).toBeNull();
+        });
+
+    it('keeps an error on refresh until the retry succeeds', async () => {
+        const retry = makeDeferred<unknown>();
+        mockApiGet
+            .mockRejectedValueOnce(new Error('down'))
+            .mockReturnValueOnce(retry.promise);
+
+        const { result, rerender } = renderHook(
+            () => useReplicationSlots(1),
+        );
+        await waitFor(() => {
+            expect(result.current.error).toBe('down');
+        });
+
+        mockRefreshTrigger = 1;
+        rerender();
+        expect(mockApiGet).toHaveBeenCalledTimes(2);
+        expect(result.current.loading).toBe(false);
+        expect(result.current.error).toBe('down');
+
+        retry.resolve({ rows: [slotRow('a')] });
+        await waitFor(() => {
+            expect(result.current.slots).toHaveLength(1);
+        });
+        expect(result.current.error).toBeNull();
+    });
 });

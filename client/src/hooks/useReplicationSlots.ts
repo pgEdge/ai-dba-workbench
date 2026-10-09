@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useAuth } from '../contexts/useAuth';
 import { useDashboard } from '../contexts/useDashboard';
 import {
@@ -49,14 +49,33 @@ export const buildReplicationSlotsUrl = (connectionId: number): string => {
     return `/api/v1/metrics/latest?${params.toString()}`;
 };
 
+/** The settled outcome of the latest request, and the server it was for. */
+interface SlotFetchResult {
+    connectionId: number;
+    slots: ReplicationSlotRow[];
+    totalCount: number;
+    error: string | null;
+}
+
+/** Shared empty list, so a pending load does not change identity per render. */
+const NO_SLOTS: ReplicationSlotRow[] = [];
+
 /**
  * Fetch the replication slots of a server from the collector's most
  * recent pg_replication_slots snapshot. The latest-snapshot endpoint
  * only looks back an hour, so the list describes the server's slots
  * now rather than over the dashboard's selected period, and it
  * refetches when the connection or the dashboard refresh trigger
- * changes. The spinner shows only for the first load of a connection,
- * so periodic refreshes do not make the section flicker.
+ * changes.
+ *
+ * Each result records the connection it was fetched for, and the hook
+ * returns it only while that is still the selected connection. A
+ * different server therefore reads as loading, with no slots and no
+ * error, from its very first render rather than after an effect has
+ * reset the state; and because a refresh of the same server keeps the
+ * previous result until the new one arrives, the spinner shows only
+ * for the first load of a connection and periodic refreshes do not
+ * make the section flicker.
  */
 export const useReplicationSlots = (
     connectionId: number,
@@ -65,54 +84,36 @@ export const useReplicationSlots = (
     const { refreshTrigger } = useDashboard();
     const { beginRequest } = useRequestSequence();
 
-    const [slots, setSlots] = useState<ReplicationSlotRow[]>([]);
-    const [totalCount, setTotalCount] = useState<number>(0);
-    const [loading, setLoading] = useState<boolean>(false);
-    const [error, setError] = useState<string | null>(null);
-    const initialLoadDoneRef = useRef<boolean>(false);
+    const [result, setResult] = useState<SlotFetchResult | null>(null);
 
     const isLoggedIn = !!user;
 
     const fetchData = useCallback(async (): Promise<void> => {
         const isCurrent = beginRequest();
 
-        if (!initialLoadDoneRef.current) {
-            setLoading(true);
-        }
-        setError(null);
-
         try {
-            const result = await apiGet<ReplicationSlotsResponse>(
+            const response = await apiGet<ReplicationSlotsResponse>(
                 buildReplicationSlotsUrl(connectionId),
             );
             if (!isCurrent()) { return; }
-            const rows = normaliseSlotRows(result.rows);
-            setSlots(rows);
-            setTotalCount(Math.max(result.total_count ?? 0, rows.length));
-            initialLoadDoneRef.current = true;
+            const rows = normaliseSlotRows(response.rows);
+            setResult({
+                connectionId,
+                slots: rows,
+                totalCount: Math.max(response.total_count ?? 0, rows.length),
+                error: null,
+            });
         } catch (err) {
             logger.error('Error fetching replication slots:', err);
             if (!isCurrent()) { return; }
-            setError((err as Error).message || FETCH_ERROR_FALLBACK);
-            setSlots([]);
-            setTotalCount(0);
-        } finally {
-            if (isCurrent()) {
-                setLoading(false);
-            }
+            setResult({
+                connectionId,
+                slots: NO_SLOTS,
+                totalCount: 0,
+                error: (err as Error).message || FETCH_ERROR_FALLBACK,
+            });
         }
     }, [beginRequest, connectionId]);
-
-    /*
-     * A different server is a fresh load: drop the previous server's
-     * slots so they never render under the new one, and allow the
-     * spinner to show again.
-     */
-    useEffect(() => {
-        initialLoadDoneRef.current = false;
-        setSlots([]);
-        setTotalCount(0);
-    }, [connectionId]);
 
     useEffect(() => {
         if (isLoggedIn) {
@@ -120,7 +121,14 @@ export const useReplicationSlots = (
         }
     }, [isLoggedIn, fetchData, refreshTrigger]);
 
-    return { slots, totalCount, loading, error };
+    const current = result?.connectionId === connectionId ? result : null;
+
+    return {
+        slots: current?.slots ?? NO_SLOTS,
+        totalCount: current?.totalCount ?? 0,
+        loading: isLoggedIn && current === null,
+        error: current?.error ?? null,
+    };
 };
 
 export default useReplicationSlots;

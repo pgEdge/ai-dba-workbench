@@ -1990,8 +1990,12 @@ func normalizeSchemaSQL(text string) string {
 //     own: a copy of audit_tail saved earlier, restored together with
 //     the rows it names removed from the end, or an older copy of the
 //     whole file, passes, because nothing outside the file records how
-//     far the log had reached. Deleting every version 3 row with the
-//     anchor, and the sequence rewritten to match, leaves a log that
+//     far the log had reached. The re-anchor given the previous secret
+//     does not close that either: a saved copy of either anchor is one
+//     the server really signed, so it accepts one put back over such a
+//     cut (TestSavedPrimaryAnchorIsTheDocumentedLimit). Deleting every
+//     version 3 row with the anchor, and the sequence rewritten to
+//     match, leaves a log that
 //     looks as it did before this build first wrote to it, so an
 //     upgrade leaves exposed the events written before it. Likewise,
 //     deleting every row written since the last change of secret with

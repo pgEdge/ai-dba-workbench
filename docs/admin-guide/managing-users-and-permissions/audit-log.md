@@ -614,13 +614,19 @@ the log itself. That event must still be there, with the hash recorded,
 before the event the record names; the server starts the second record
 only when that event fails under the secret in use, which honestly
 means it is the last event written under an earlier secret, and the
-purge never removes it. When the event is missing, the log reports
-status `2`. Someone who also rewrites the event before it, and puts
-an event carrying the recorded hash back in its place linked into the
-chain, can make the log report status `3` again; as in the window
-described below, only a re-anchor given the previous secret with
-`-previous-secret-file` refuses such a log, because the rewritten
-event no longer verifies under that secret.
+purge never removes it. Whilst the record is left as the server wrote
+it and that event is missing, the log reports status `2`, but this is
+not a guarantee. Verification checks the event only when a record
+names one, and cannot check a moved record's keyed hash under the
+current secret, so someone able to write `auth.db` who removes the
+copy of the first record kept beside a moved record, or points it at
+an event still in the log, makes the log report status `3` again; so
+does rewriting the event before the missing one and putting an event
+carrying the recorded hash back in its place, linked into the chain.
+As in the window described below, only a re-anchor given the previous
+secret with `-previous-secret-file` refuses such a log, because the
+moved record, or the rewritten event, no longer verifies under that
+secret.
 
 Until the server writes its first event under a new secret, neither
 record verifies under the secret in use, so verification can check the
@@ -876,7 +882,8 @@ all of the following hold:
   accounts for the start of the log exactly as verification requires
   of a log written under one secret, and the tail record the previous
   secret left behind verifies under it and names the last of those
-  events, so that none written under it has been deleted from the end.
+  events, so that none written under it after that record was written
+  has been deleted from the end.
   Where that tail record was written beside another, the event it was
   written beside must still be in the log before the event the record
   names, and must fail under the previous secret, because the server
@@ -884,9 +891,10 @@ all of the following hold:
   secret in use. An event or tail record forged without the previous
   secret fails under it, so the proof fails and the run stops. The
   server can, however, be led to sign a tail record itself, and the
-  proof cannot tell an earlier copy of the second tail record, which
-  the server wrote under the current secret, from the current one, so
-  it does not catch that copy being put back.
+  proof cannot tell an earlier copy of either tail record, which the
+  server really wrote, from the current one, so it does not catch that
+  copy being put back once the events written after the one it names
+  have been deleted.
 - At least one event after the history verifies under the current
   secret, which shows that the current secret is the one the server
   runs with; a re-anchor signed under the wrong secret would stop every
@@ -1011,13 +1019,18 @@ the second record beside it, and then restored: every event is then
 present and correctly linked, so verification still reports status
 `3`. Only a re-anchor given the previous secret with
 `-previous-secret-file` checks those events, that record and the
-event the record was written beside, and so refuses both cases; it
-does not check the second tail record against an earlier copy of
-itself, so it accepts an earlier copy of that record put back as
-described above. An interactive re-anchor without it warns, just
-before it asks, that nothing has proven them. A log emptied entirely,
-with the tail record and the record of the highest identifier removed
-as well, reads as one that has never held an event.
+event the record was written beside, and so refuses both cases. It
+does not check either tail record against an earlier copy of itself,
+however, so it accepts an earlier copy of either record put back with
+the events written after the one it names deleted: a copy of the first
+record saved under the previous secret, put back once the events after
+it are cut and the second record removed, reads as status `3`, and the
+re-anchor accepts it once the server has written its next event. An
+interactive re-anchor without `-previous-secret-file` warns, just
+before it asks, that nothing has proven the events written under the
+previous secret. A log emptied entirely, with the tail record and the
+record of the highest identifier removed as well, reads as one that
+has never held an event.
 
 Deleting the oldest events is caught precisely only once a purge has
 recorded where the log begins. On a log whose purge events were all

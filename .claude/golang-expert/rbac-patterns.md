@@ -1171,7 +1171,9 @@ checks slot 1's `bound_*`, and case 4 slot 2's view of slot 1
 anchored id; `proveAuditReanchorTail` ends with
 `proveAuditTailBinding`, which also requires that row to fail under
 the previous key. `audit_tail_decoy_test.go` holds the attacks these
-close. New rows
+close, and pins two limits they do not (a cleared or repointed
+`bound_*` reads as exit 3 in verify; a saved slot 1 put back passes
+the re-anchor). New rows
 carry `auditHashVersion` 3 (`auditTailHashVersion`), which renders as
 version 2 does under the label `v3`; a v3 newest row with no anchor
 fails verification. `initSchema` ends with `seedAuditTail`, which

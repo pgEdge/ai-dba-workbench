@@ -469,16 +469,20 @@ client address, before and after snapshots and a hash chain.
   promotion then moves into `bound_*` (Ant, PR #565). So a binding,
   slot 2's view of slot 1 in case 4 or slot 1's `bound_*` in case 3,
   is checked against the rows: `checkAuditTailBinding` (verify) needs
-  the bound row present, below the anchored id, with the bound hash,
-  else exit 2; `proveAuditTailBinding` (re-anchor) additionally needs
-  it to fail under the previous key, since the server starts slot 2
-  only over a failing row and the purge never removes it. A row
-  altered to fail and then restored passes verify (exit 3) and only
-  the re-anchor refuses it; an existence-only check is not enough.
-  Nor is verify's exit 2 final: rewriting the bound row's hash and
-  putting the decoy back linked to it (`prev_hash` is unique, so the
-  rewrite is needed) reads exit 3, and only `proveAuditHistory` under
-  the previous key refuses it (`TestDecoyPutBackLinkedIntoTheChain`).
+  the bound row present, below the anchored id, with the bound hash;
+  `proveAuditTailBinding` (re-anchor) additionally needs it to fail
+  under the previous key, since the server starts slot 2 only over a
+  failing row and the purge never removes it. Verify's exit 2 for a
+  missing bound row is not a guarantee: it checks a binding only when
+  `bound_*` is set and cannot check the promoted MAC, so clearing
+  `bound_*` or repointing it at a row still in the log reads exit 3
+  (`TestClearedBindingIsTheDocumentedLimit`), as does rewriting the
+  bound row's hash and putting the decoy back linked to it
+  (`prev_hash` is unique, so the rewrite is needed;
+  `TestDecoyPutBackLinkedIntoTheChain`), and a row altered to fail and
+  then restored. Only the re-anchor with the previous key refuses
+  these, via `primaryTailVerifiesUnder`, `proveAuditHistory` or the
+  binding proof.
   Operators are told to re-anchor with
   the previous secret after each rotation, before the next. A genuine
   log spanning three keys never proves unattended: `proveAuditHistory`
@@ -525,7 +529,13 @@ plainly rather than crediting the design with more than it does.
   verifies as exit 3, and `-confirm-rechain -previous-secret-file`
   accepts it, since nothing under the previous key covers slot 2; the
   binding stops slot 2 being paired with a different slot 1, not a
-  replay of the pair. Exit 3 vouches for nothing written
+  replay of the pair. Likewise a saved slot 1 put back under the
+  previous key, after the rows following it are cut, slot 2 removed
+  and the sequence rewritten, reads exit 3 after one write under the
+  new key, and `-confirm-rechain -previous-secret-file` accepts it
+  (`TestSavedPrimaryAnchorIsTheDocumentedLimit`): the proof cannot
+  tell an earlier copy of either slot from the current one. Exit 3
+  vouches for nothing written
   under the previous key (VULN-002): verification checks neither those
   rows nor slot 1, so a cut back to any earlier old-key row reads as
   exit 3; only `-previous-secret-file` on the re-anchor checks them,

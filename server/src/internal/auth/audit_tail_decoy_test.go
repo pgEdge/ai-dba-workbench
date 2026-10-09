@@ -311,6 +311,80 @@ func TestDecoyPutBackLinkedIntoTheChain(t *testing.T) {
 		"event 5 does not verify under it", true)
 }
 
+// TestClearedBindingIsTheDocumentedLimit is the first finding of the
+// fifth review of #565. Verification checks a binding only when one is
+// set, and cannot tell a primary anchor with its binding cleared, or
+// repointed at an event that is in the log, from an honest one, so the
+// cut the decoy hid reads as a change of secret again, status 3. Only
+// the re-anchor given the previous secret refuses it, because the
+// promoted anchor's MAC was computed over the binding it no longer
+// carries.
+func TestClearedBindingIsTheDocumentedLimit(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		stmt string
+	}{
+		{name: "binding cleared", stmt: `UPDATE audit_tail
+            SET bound_event_id = NULL, bound_event_hash = NULL,
+                bound_mac = NULL WHERE id = 1`},
+		{name: "binding repointed at event 5", stmt: `UPDATE audit_tail
+            SET bound_event_id = 5, bound_event_hash = (SELECT hash
+                FROM audit_events WHERE id = 5), bound_mac = 'x'
+            WHERE id = 1`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			store, dir := promotedDecoyBinding(t)
+			tamperDB(t, store.db, tt.stmt)
+			expectKeyMismatch(t, store)
+			store.Close()
+
+			plan := planWithPreviousKey(t, dir, rotatedAuditKey,
+				AuditKeyForTesting())
+			if unattendedReanchorAccepts(plan) {
+				t.Errorf("Expected the unattended re-anchor to refuse, "+
+					"got %+v", plan)
+			}
+		})
+	}
+}
+
+// TestSavedPrimaryAnchorIsTheDocumentedLimit is the second finding of
+// the fifth review of #565: a saved copy of the primary anchor, put back
+// after the events written after the one it names are cut under the
+// previous secret, is a record that secret really wrote, naming the
+// last surviving event written under it. Nothing records how far the
+// log had reached beyond that, so verification reads a change of
+// secret and the re-anchor given the previous secret accepts the cut.
+func TestSavedPrimaryAnchorIsTheDocumentedLimit(t *testing.T) {
+	store, dir := writeUnderKeys(t, 5)
+	var id int64
+	var hash, mac string
+	if err := store.db.QueryRow("SELECT event_id, event_hash, mac "+
+		"FROM audit_tail WHERE id = 1").Scan(&id, &hash, &mac); err != nil {
+		t.Fatalf("Failed to save the tail anchor: %v", err)
+	}
+	recordN(t, store, 5)
+	store.Close()
+
+	store = openWithKey(t, dir, rotatedAuditKey)
+	deleteAuditRows(t, store, 6, 7, 8, 9, 10)
+	tamperDB(t, store.db, `UPDATE sqlite_sequence SET seq = 5
+        WHERE name = 'audit_events'`)
+	tamperDB(t, store.db, `UPDATE audit_tail SET event_id = ?,
+        event_hash = ?, mac = ? WHERE id = 1`, id, hash, mac)
+	tamperDB(t, store.db, `DELETE FROM audit_tail WHERE id = 2`)
+	recordN(t, store, 1)
+	expectKeyMismatch(t, store)
+	store.Close()
+
+	plan := planWithPreviousKey(t, dir, rotatedAuditKey,
+		AuditKeyForTesting())
+	if !unattendedReanchorAccepts(plan) {
+		t.Errorf("Expected the unattended re-anchor to accept the saved "+
+			"anchor, got %+v", plan)
+	}
+}
+
 // TestDecoyStartedAnchorAcrossTwoRotations checks the decoy followed by
 // two changes of secret. The second promotion replaces the anchor bound
 // to the decoy with one bound to event 7, which is in the log and fails

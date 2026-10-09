@@ -12,6 +12,17 @@ project adheres to
 
 ### Added
 
+- Add a Run button to SQL code blocks in Ellie's chat
+  replies (#623). The query runs on the connection named by
+  a leading `-- connection_id: N` comment, or on the single
+  server and database that the reply's tool calls used;
+  when the target is unclear the block shows a server
+  selector instead. Results appear inline and are not sent
+  back to Ellie. SQL with placeholders is labelled a
+  template with no Run button; besides `$1`, this now
+  covers `<name>`, `{{name}}` and `:name` placeholders in
+  every view.
+
 - Raise a system alert when anomaly detection is degraded by
   a failing embedding or reasoning provider (#582). The
   alerter counts consecutive failures for each tier (tier 2

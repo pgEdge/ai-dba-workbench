@@ -125,6 +125,40 @@ table describes the available tools:
 | `get_blackouts` | Queries blackout periods and recurring schedules. |
 | `get_timeline_events` | Queries the unified incident-investigation timeline of configuration changes, restarts, extension changes, alerts, and blackouts. |
 
+## Running SQL from Replies
+
+SQL code blocks in Ellie's replies display a play button
+to the right of the copy button. Clicking the play button
+runs the query and shows the results in a table below the
+block; the results stay in the chat panel and are not sent
+back to Ellie. The tooltip on the play button names the
+server and database that the query will run on.
+
+The chat chooses the target server and database from the
+reply itself:
+
+- When the block starts with a `-- connection_id: N`
+  comment, the query runs on that connection, using the
+  database that the reply's tool calls used on it or the
+  connection's default database.
+- Otherwise, when every SQL tool call in the reply ran on
+  the same server and database, the query runs there.
+- When the target is unclear, for example because the
+  reply covers several servers, the block displays a
+  server selector with nothing preselected, and the play
+  button appears once you choose a server.
+
+SQL that contains placeholders, such as `$1`,
+`<table_name>`, `{{schema}}` or `:name`, is labelled a
+template and offers no play button, because it needs
+values substituted in before it can run. Other queries
+are checked against the target server before the play
+button is enabled. Running a query from the chat applies
+the same checks as the AI alert analysis: your access to
+the connection, the read-only check, and the confirmation
+prompt for statements that modify data, as described in
+[AI Alert Analysis](../alerts/ai-analysis.md).
+
 ## Chat Memory
 
 Ellie can store and recall information across

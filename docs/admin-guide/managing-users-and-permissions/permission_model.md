@@ -18,8 +18,9 @@ pieces with the Administration console or the command line.
 
 !!! hint
 
-    Superusers bypass every permission check and hold full access to all
-    operations.
+    A superuser bypasses every permission check and holds full access to
+    all operations. An API token that a superuser owns is still limited
+    by the scope of that token.
 
 ## How the Pieces Interact
 
@@ -42,8 +43,12 @@ request:
 4. The Workbench grants the request only when the resulting permissions allow
    the requested operation.
 
-A superuser short-circuits this sequence; the Workbench grants every request
-from a superuser account regardless of group or scope.
+A superuser short-circuits the group lookup in this sequence; the Workbench
+grants a superuser every privilege without regard to group membership. Step
+three still applies, so a request that a superuser makes with a scoped API
+token succeeds only where the token scope allows the operation. A superuser
+working in a browser session holds every privilege unconditionally, because
+a session carries no token scope.
 
 ## Accounts and Roles
 
@@ -59,12 +64,14 @@ hold the privileges the account needs.
 
 A superuser holds a special role that bypasses all permission checks. This
 allows a superuser to reach every connection, invoke every MCP tool, and
-perform every administrative operation. A superuser may grant or revoke the
-superuser role when they create or edit an account; the `manage_users`
-permission alone does not allow either, and the Workbench refuses a request
-from any other account that sets or clears the role. Likewise, only a
-superuser may edit or delete an account that holds the superuser role. For
-details on creating and managing accounts, see
+perform every administrative operation. An API token that a superuser owns
+is bound by the scope of that token, so the token reaches only the
+connections, tools, and administrative permissions its scope names. A
+superuser may grant or revoke the superuser role when they create or edit an
+account; the `manage_users` permission alone does not allow either, and the
+Workbench refuses a request from any other account that sets or clears the
+role. Likewise, only a superuser may edit or delete an account that holds the
+superuser role. For details on creating and managing accounts, see
 [Account Management](accounts.md).
 
 ## Groups and Privileges
@@ -93,6 +100,35 @@ specified access level. The Workbench supports two connection access levels:
   the group inspects data and metadata without changing them.
 - The `read_write` access level allows both read and write operations against
   the connection.
+
+A connection privilege that names a connection also restricts that
+connection, so that only its owner, the members of groups that hold a grant
+on the connection, and the members of groups that hold an `All Connections`
+grant may reach it. An `All Connections` privilege gives the members of
+its group every connection, but restricts no connection for anyone outside
+the group. The Workbench applies the following rules, in order, to decide
+whether an account other than a superuser may reach a connection:
+
+1. The owner of a connection always holds `read_write` access to it, whether
+   or not a group restricts the connection.
+2. Any account holds `read_write` access to a shared connection that no
+   group restricts.
+3. An account that belongs to a group holding a grant on the connection, or
+   an `All Connections` grant, holds the access level of that grant; when
+   both apply, the higher level wins.
+
+The Workbench denies access in every other case. The connection lists that
+the web client and the MCP tools show apply the same rules, so every listed
+connection can be opened and every connection an account can open is
+listed. A token scope then narrows the result for an API token.
+
+An `All Connections` grant at the `read` level does not lower a member's
+access to a shared connection that no grant names; such a connection stays
+open at `read_write` to every account, the members of that group included.
+To keep a group read-only on a connection, grant that connection to the group
+by name at the `read` level, and lower or remove any `read_write` grant that
+also applies to its members on that connection, such as an `All Connections`
+grant at `read_write`; the higher access level wins.
 
 An ADMIN privilege grants a group permission to perform administrative actions
 in the Workbench, such as managing users, groups, and connections. Admin
@@ -141,13 +177,30 @@ the owner holds `read_write` access through a group.
 !!! hint
 
     The effective access for a scoped token equals the intersection of the
-    owner's group access and the token scope.
+    owner's access and the token scope. The same rule covers a superuser's
+    token; a superuser holds every privilege, so the intersection is the
+    token scope itself.
+
+A token's effective access also bounds what the token can hand out. The
+connection and MCP privilege scopes limit what a token can reach, and the
+admin permission scope limits which administrative actions the token can
+perform; a token acting as an administrator can, in addition, grant only what
+it holds itself. No token can grant a group, create or take over a user, mint
+a token for another owner, or set any token's scope, its own included, in a
+way that reaches beyond its own effective access, judged for each connection
+and access level, MCP item and admin permission. The server refuses each such
+request with `403 Forbidden` and records the refusal in the RBAC audit log.
+The [Bounding What a Token Can Grant](tokens.md#bounding-what-a-token-can-grant)
+section explains the design and lists every request the bound covers.
 
 Administrators [manage token scopes](tokens.md) with the `Administration`
 console or at the command line. The following flags control token scopes:
 
 - The `-scope-token-connections` flag sets the connection scope for a token;
   pass connection IDs with `-scope-connections` as a comma-separated list.
+  The command refuses a list that combines connection `0`, the
+  `All Connections` entry, with particular connections, or that names a
+  connection twice, and leaves the stored scope unchanged.
 - The `-scope-token-tools` flag sets the MCP tool scope for a token; pass
   tool names with `-scope-tools` as a comma-separated list.
 - The `-show-token-scope` flag displays the current scope for a token,
@@ -165,7 +218,11 @@ Administrative (or `ADMIN`) permissions control access to management
 operations in the Workbench's `Administration` console and the REST API.
 Privileged users assign these permissions through groups, alongside connection
 and MCP privileges. A superuser bypasses these checks and holds every
-administrative permission automatically.
+administrative permission automatically, although an API token that a
+superuser owns holds only the permissions its admin scope names, unless
+that scope is unset or holds the `*` wildcard. An endpoint reserved for
+superusers that names no permission, such as the RBAC audit log, refuses
+any token whose admin scope names specific permissions.
 
 The Workbench defines the following ten ADMIN permissions:
 

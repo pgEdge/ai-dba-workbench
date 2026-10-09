@@ -153,6 +153,23 @@ func (h *RBACHandler) createUser(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// A token may create only a user who reaches no further than the
+	// token itself (issue #471). A superuser reaches everything, so only
+	// a superuser's token with unrestricted scope may create one; any
+	// other new user still reaches the unrestricted connections open to
+	// every user, any connection its name already owns, and the public
+	// MCP items, and those must lie within the token's access.
+	if req.IsSuperuser != nil && *req.IsSuperuser {
+		if !h.requireGrantInTokenScope(w, r,
+			h.rbacChecker.TokenHoldsEverything(r.Context()), refuseSuperuser) {
+			return
+		}
+	} else if !h.requireGrantInTokenScope(w, r,
+		h.rbacChecker.NewUserWithinTokenScope(r.Context(), req.Username,
+			h.connLister), refuseNewUserAccess) {
+		return
+	}
+
 	if isServiceAccount {
 		if err := h.actorStore(r).CreateServiceAccount(req.Username, req.Annotation, req.DisplayName, req.Email); err != nil {
 			respondUserStoreError(w, err, "Failed to create service account", req.Username)
@@ -216,10 +233,10 @@ func (h *RBACHandler) updateUser(w http.ResponseWriter, r *http.Request, userID 
 	// Changing a superuser's password, profile or enabled state is as
 	// good as holding the role: a new password lets the caller sign in
 	// as that superuser, and disabling one can lock every administrator
-	// out. Only a superuser may therefore edit a superuser account.
-	if user.IsSuperuser && !h.requireSuperuser(w, r) {
-		return
-	}
+	// out. Only a superuser may therefore edit a superuser account. The
+	// store makes that check against the row it reads inside the update's
+	// own transaction, so that a target promoted after the read above is
+	// still refused (issue #588); see respondUserWriteError.
 
 	// Validate password against the length and dictionary policy when set
 	if req.Password != nil && *req.Password != "" {
@@ -235,6 +252,22 @@ func (h *RBACHandler) updateUser(w http.ResponseWriter, r *http.Request, userID 
 			RespondError(w, http.StatusBadRequest, "Please enter a valid email address")
 			return
 		}
+	}
+
+	// Only a superuser's token with unrestricted scope may make a
+	// superuser, and a token may not set the password of, or re-enable,
+	// an account that reaches further than the token does, since either
+	// would hand the token's holder that account's access (issue #471).
+	if req.IsSuperuser != nil && *req.IsSuperuser &&
+		!h.requireGrantInTokenScope(w, r,
+			h.rbacChecker.TokenHoldsEverything(r.Context()), refuseSuperuser) {
+		return
+	}
+	takesOver := (req.Password != nil && *req.Password != "") ||
+		(req.Enabled != nil && *req.Enabled)
+	if takesOver && !h.requireGrantInTokenScope(w, r,
+		h.userWithinTokenScope(r.Context(), userID), refuseUserAccess) {
+		return
 	}
 
 	// Use atomic update to ensure all changes succeed or fail together
@@ -254,8 +287,9 @@ func (h *RBACHandler) updateUser(w http.ResponseWriter, r *http.Request, userID 
 	// reason, which matters for more than the message: an administrator
 	// who fills in the password whilst unticking "enabled" on a federated
 	// user must not read a generic failure as the account being disabled.
-	if err := h.actorStore(r).UpdateUserAtomic(user.Username, update); err != nil {
-		respondUserStoreError(w, err, "Failed to update user", user.Username)
+	if err := h.actorStore(r).UpdateUserAtomic(user.Username, update,
+		h.rbacChecker.IsSuperuser(r.Context())); err != nil {
+		h.respondUserWriteError(w, r, err, "Failed to update user", user.Username)
 		return
 	}
 
@@ -275,13 +309,22 @@ func (h *RBACHandler) deleteUser(w http.ResponseWriter, r *http.Request, userID 
 		return
 	}
 
-	// See updateUser: only a superuser may delete a superuser account.
-	if user.IsSuperuser && !h.requireSuperuser(w, r) {
+	// See updateUser: only a superuser may delete a superuser account,
+	// which the store checks inside the delete's own transaction.
+
+	// Connection ownership is recorded by username, so a deleted
+	// account's unshared connections pass to whoever next takes the
+	// name. A bounded token may therefore delete only an account that
+	// reaches no further than the token, or delete-and-recreate would
+	// hand it that account's connections (issue #471).
+	if !h.requireGrantInTokenScope(w, r,
+		h.userWithinTokenScope(r.Context(), userID), refuseUserAccess) {
 		return
 	}
 
-	if err := h.actorStore(r).DeleteUser(user.Username); err != nil {
-		respondUserStoreError(w, err, "Failed to delete user", user.Username)
+	if err := h.actorStore(r).DeleteUser(user.Username,
+		h.rbacChecker.IsSuperuser(r.Context())); err != nil {
+		h.respondUserWriteError(w, r, err, "Failed to delete user", user.Username)
 		return
 	}
 
@@ -456,8 +499,9 @@ func describeAuthSource(user *auth.StoredUser) (source, issuer string) {
 
 // respondUserStoreError answers a failed auth store call made on behalf of
 // the request. A refusal the store marks as invalid input is the caller's
-// to fix, so it is returned as a 400 carrying the store's own message; any
-// other error is logged and returned as a 500 with the fixed failure
+// to fix, so it is returned as a 400 carrying the store's own message; a
+// refusal to remove the last enabled superuser is a 409; any other error
+// is logged and returned as a 500 with the fixed failure
 // message, so that database detail never reaches the client.
 func respondUserStoreError(w http.ResponseWriter, err error, failure, username string) {
 	var invalid *auth.InvalidInputError
@@ -465,8 +509,30 @@ func respondUserStoreError(w http.ResponseWriter, err error, failure, username s
 		RespondError(w, http.StatusBadRequest, capitalizeFirst(invalid.Error()))
 		return
 	}
+	// Refusing to remove the last enabled superuser is a conflict with
+	// the server's state, not a fault: it clears once another enabled
+	// superuser exists.
+	if errors.Is(err, auth.ErrLastSuperuser) {
+		RespondError(w, http.StatusConflict, capitalizeFirst(err.Error()))
+		return
+	}
 	log.Printf("[ERROR] %s (user %s): %v", failure, username, err)
 	RespondError(w, http.StatusInternalServerError, failure)
+}
+
+// respondUserWriteError answers a failed update or delete of an existing
+// account. The store's refusal to let a caller who is not a superuser
+// write to a superuser account is answered exactly as requireSuperuser
+// answers, denial audit included; anything else goes to
+// respondUserStoreError.
+func (h *RBACHandler) respondUserWriteError(w http.ResponseWriter,
+	r *http.Request, err error, failure, username string) {
+
+	if errors.Is(err, auth.ErrSuperuserTargetForbidden) {
+		h.denyNotSuperuser(w, r)
+		return
+	}
+	respondUserStoreError(w, err, failure, username)
 }
 
 // capitalizeFirst returns the string with its first character uppercased.

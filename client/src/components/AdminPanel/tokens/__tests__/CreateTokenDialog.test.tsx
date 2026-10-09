@@ -134,6 +134,19 @@ describe('CreateTokenDialog', () => {
         expect(screen.getByRole('button', { name: 'Create' })).not.toBeDisabled();
     });
 
+    it('disables Create while the connection scope mixes all and particular connections', () => {
+        renderComponent({
+            owner: USERS[0],
+            annotation: 'Test Token',
+            scopedConnections: [
+                { id: 0, name: "All the owner's connections", access_level: 'read' },
+                { id: 1, name: 'Primary DB', access_level: 'read' },
+            ],
+        });
+        expect(screen.getByRole('button', { name: 'Create' })).toBeDisabled();
+        expect(screen.getByRole('alert')).toHaveTextContent(/cannot be saved/);
+    });
+
     it('calls onAnnotationChange when name field changes', () => {
         const onAnnotationChange = vi.fn();
         renderComponent({ onAnnotationChange });

@@ -389,6 +389,283 @@ above. When you add a gate, add at minimum:
 The denial test plus the gate body (5 statements) covers the new
 lines; the admin-allowed test covers the not-taken branch.
 
+## A Superuser's Token Is Bounded By Its Scope
+
+Since GitHub issue `#471`, a superuser's API token no longer carries
+its owner's superuser status unconditionally: each check in
+`server/src/internal/auth/access.go` intersects the owner's superuser
+rights with the acting token's scope for the surface being reached.
+A superuser holds everything, so the intersection is simply the scope
+itself, and a token scoped to one permission, one connection or one
+tool may still use exactly that.
+
+Two shapes, and the difference matters:
+
+- A check that names the thing being reached
+  (`HasAdminPermission`, `CanAccessConnection`, `CanAccessMCPItem`,
+  `VisibleConnectionIDs`, `GetEffectivePrivileges`) reads the raw
+  context flag `auth.IsSuperuserFromContext` and consults the scope of
+  its own kind. The named thing is allowed when it is in scope, when
+  the token has no scope of that kind, or when the scope holds the
+  wildcard, and no group grant on the owning account is needed.
+  Crucially, a narrowed scope of one kind must never narrow another
+  kind: an admin-scoped token still reaches every connection and tool.
+- A blanket gate, which names nothing and would hand over everything
+  at once, goes through `RBACChecker.IsSuperuser`. That returns false
+  when the token's admin scope has been narrowed, meaning it names
+  specific permissions rather than being empty or holding `*`, because
+  there is nothing to intersect against. `requireSuperuser` in
+  `internal/api/rbac_handlers.go` is the blanket gate; the MCP listing
+  filters are not, since they name each item and go through
+  `CanAccessMCPItem` per item.
+
+The apparent inconsistency, `IsSuperuser` false whilst
+`HasAdminPermission` allows the scoped permission, is deliberate and
+is documented on `IsSuperuser`; do not "fix" it.
+
+A public MCP privilege is bounded the same way. `IsPrivilegePublic`
+removes the need for a group grant, not the token's scope, so
+`CanAccessMCPItem` intersects the public path with the MCP scope as
+well: a token scoped to one tool cannot call every public tool, which
+was issue `#482`. The listing paths follow from that. Neither
+`ListForContext` in `internal/tools/context_aware_provider.go` nor the
+one in `internal/resources/context_aware_registry.go` short-circuits on
+`IsSuperuser` any more, because that flag comes from the admin scope
+and says nothing about tools; every caller goes through the per-item
+filter, which already admits sessions, unscoped tokens and wildcard
+scopes (a nil auth store denies, as above), and `rbacExemptTools` is
+still applied.
+
+A token may change its own scope, under the same ceiling rule as any
+other scope change (below): narrowing is allowed, widening or clearing
+beyond its own access is refused. `refuseSelfScopeMutation` was
+retired in favour of that rule (Dave's ruling of 06-10-2026).
+
+A handler that authorises a connection by ownership or an admin
+permission rather than `CanAccessConnection` (the Variant 2 gate on
+`updateConnection` and `deleteConnection`) must also call
+`RBACChecker.ConnectionInTokenScope`, before the row is loaded, since
+neither ownership nor `manage_connections` says which connections a
+token was issued for; it admits only a `read_write` scope entry,
+because its callers mutate the connection. `SetTokenMCPScopeByNames`
+returns `auth.ErrUnknownMCPPrivilege` for an unregistered identifier,
+which the scope handler maps to 400, because silently dropping it
+could store an empty, and therefore unrestricted, MCP scope. The
+handler also runs `auth.ValidateScopedConnections` before writing any
+scope kind, so a bad access level cannot leave a partial update.
+Every `VisibleConnectionIDs` caller, `list_connections` included,
+must return on error rather than skip filtering, and
+`VisibleConnectionIDs` itself checks `TokenScopeError` before the
+group wildcard return, since a failed scope read leaves that
+wildcard in place.
+
+Handlers gated on an admin permission that change something attached
+to connections, namely blackouts, blackout schedules, alert, probe and
+channel overrides and cluster writes, apply the connection scope
+through the helpers in `internal/api/token_scope_targets.go`.
+`requireTargetInTokenScope` admits a `server` target with an id when
+that connection is in scope, and sends a cluster, group or estate
+target (or a server target with no id) to
+`RBACChecker.AllConnectionsInTokenScope`, which needs a scope covering
+every connection because such a target reaches connections the token
+does not name, including ones added later. Creating a cluster or a
+cluster group, and any cluster definition or relationship change, go
+through `requireAllConnectionsInTokenScope` (a new cluster, and any
+connection later moved into it, inherits its group's settings; setting
+or clearing a source's relationships deletes all of them first,
+whatever the target), and adding or removing a server goes through
+`requireConnectionsInTokenScope` for that connection. The cluster-group
+create, update and delete handlers resolve the caller through
+`getUserInfoCompat`, which accepts session tokens only, so an API
+token gets 401 there after the scope gate; the gate is kept in case
+API tokens are ever admitted. A write addressed by id (blackout or
+schedule update and delete) checks the stored record, and a schedule
+update checks the body as well, so a token cannot move a record into
+or out of its scope; `requireBlackoutInTokenScope` skips the database
+read when the token's scope covers everything. Blackouts and blackout
+schedules are the exception to `read_write`: they go through
+`requireBlackoutTargetInTokenScope` / `blackoutTargetInTokenScope`,
+which use `RBACChecker.ConnectionReadableInTokenScope`, so a `read`
+entry admits a server blackout and the wildcard at either level admits
+a wider one. The user ruled (28-09-2026) that `read` means read-only
+access to the monitored server, and blackouts, alert acknowledgement
+and alert analysis are Workbench metadata; do not tighten these back
+to `read_write`. A new handler of this kind must call one of these
+helpers, and `token_scope_targets_test.go` and
+`token_scope_blackout_test.go` hold the table-driven cases to extend.
+
+Administrative grants and account changes made with an API token are
+bounded by the token's effective access, its owner's privileges
+narrowed by its scope, judged per connection and level, MCP item and
+admin permission (Dave's ruling of 06-10-2026; sessions are bounded by
+their admin permissions alone). Gate 1 is the route's existing admin
+permission check; gate 2 is the ceiling. The one comparison lives in
+`tokenCeiling` (`internal/auth/token_ceiling.go`, built by
+`RBACChecker.actorCeiling`; unrelated to `applyTokenCeiling` in
+`access.go`, which only clamps one connection level to the scope): `connectionLevel` uses
+`CanAccessConnection`, so an unscoped token owned by a non-superuser is
+bounded by its owner; `allConnectionsLevel` is the owner's
+all-connections grant (read_write for a superuser) narrowed to the
+lowest level of any entry in the token's connection scope
+(`lowestScopedLevel`), since a specific entry overrides the wildcard
+for its connection; `coversReach` compares a whole
+`principalReach`. The exported checks in `internal/auth/grant_scope.go`
+are the only entry points; handlers call them through
+`internal/api/rbac_grant_scope.go`, and each refusal goes through
+`requireGrantInTokenScope` with a fixed `refuse*` reason saying what
+exceeded "this token's access" (fixed so the denial audit coalesces).
+
+- Connection grant (`CanGrantConnection`): the token must hold the
+  connection at that level; read can grant only read. The
+  all-connections entry needs every connection at that level.
+- Connection revoke (`CanRevokeConnection`): read on the connection,
+  refused identically whether hidden or missing (#574). The lift rule,
+  read_write when the grant is the connection's last grant naming it (a
+  group-less connection opens to every user; an all-connections grant
+  restricts nothing, so `liftsConnectionRestriction` never reports a lift
+  for it, #592), is decided by the store inside the
+  revoke's own transaction: the handler passes
+  `RBACChecker.ConnectionLiftGuard` to
+  `ActorStore.RevokeConnectionPrivilegeGuarded`, which returns
+  `auth.ErrRevokeLiftsRestriction` (mapped to the same 403) so that two
+  concurrent revokes cannot both pass a read-then-delete check. The
+  guard is computed before the call because the store holds its write
+  lock whilst applying it and must not call back into the checker.
+  Accepted trade-off, not gated: a read-level token with
+  `manage_permissions` may revoke another group's read_write.
+- Group delete (`CanDeleteGroup`): read on every connection membership
+  confers; the lift rule for each of the group's own grants runs in the
+  delete's transaction through `GroupDeleteLiftGuard` and
+  `ActorStore.DeleteGroupGuarded`. A grant added after the guard was
+  computed is not in it, so the delete fails closed. Pinned by
+  `internal/auth/revoke_lift_guard_test.go` (sequential and concurrent).
+  Member removal (`CanRemoveGroupMember`): read on every connection
+  membership confers. MCP and admin revokes stay ungated.
+- MCP grant (`CanGrantMCPItem`): the token must be able to call it;
+  `*` needs an owner holding `*` and an unrestricted MCP scope.
+- Admin grant (`CanGrantAdminPermission`): `coversReach` of a principal
+  holding only that permission, so the token needs the permission,
+  every connection at read_write, and, for `manage_users`,
+  `manage_groups`, `manage_permissions`, `manage_token_scopes` or `*`
+  (`reachEverythingAdminPermissions`), every MCP item and admin
+  permission. `TestAdminPermissionGrantNeedsUnrestrictedToken` keeps
+  Ant's 05-10-2026 chain refused.
+- Membership add (`GroupWithinTokenScope`, ancestors included), user
+  takeover (`UserWithinTokenScope`: password set, re-enable, delete,
+  `createToken` for that owner), new users
+  (`NewUserWithinTokenScope`): the principal's whole reach must fit.
+- Superuser create or promote, a token for a superuser owner, and
+  create, rename or delete of a group named in the OIDC `group_map`:
+  `TokenHoldsEverything`, a superuser's token unrestricted in every
+  kind (this also closed #522).
+- Token scope set (`TokenScopeChangeWithinCeiling`, self included):
+  only kinds present are judged; an entry the target does not already
+  allow must be covered; narrowing an unrestricted kind is free; a
+  connection entry kept, narrowed or dropped needs read on it.
+  Clear (`TokenScopeClearWithinCeiling`): for each kind the target is
+  restricted in, the owner's reach in that kind must fit. When the
+  target's owner is a superuser, the target is bounded by its scope
+  alone, so any widening (or any clear of a restricted target) also
+  needs `holdsSuperuser()`: a session, or a superuser's token
+  unrestricted in every kind. Both return `ErrTokenScopeUnreadable`
+  (500 in the handler) when the stored scope, the target's owner or the
+  owner's reach cannot be read.
+- Superuser-owned tokens: `createToken` for a superuser owner, and
+  `setTokenScope`, `clearTokenScope` and `deleteToken` on a token whose
+  owner is a superuser, call `requireSuperuser`
+  (`requireSuperuserForOwnedToken` in `rbac_token_handlers.go`), for
+  sessions and tokens alike. These token gates remain handler
+  pre-checks on the owner read before the store call; only
+  `updateUser` and `deleteUser` moved the equivalent check on a
+  superuser account into the store's transaction (#588). A token
+  acting on itself is exempt, so it can still narrow its own scope or
+  delete itself. Pinned by
+  `internal/api/rbac_token_superuser_owner_test.go`.
+- Connection scope shape: `auth.ValidateScopedConnections` (store, HTTP
+  and CLI alike) refuses a duplicate connection ID, a negative ID, an
+  unknown level, and connection 0 (all connections) combined with any
+  other entry, with `ErrInvalidConnectionScope` (400). Legacy rows that
+  already mix them are still read with the specific entry taking
+  precedence, in `IsConnectionInTokenScope`, `applyScopedConnections`
+  and the ceiling alike. A scope edit reads the target's stored "all
+  connections" entry at the lowest level any entry records
+  (`storedTokenScope.connectionLevel`), so `{0: read_write}` written
+  over a legacy `{0: read_write, 5: read}` raises connection 5 and needs
+  every connection at read_write (`TestScopeChangeOverLegacyMixedScope`).
+  Admin scope names must be known permissions or `*`
+  (`ValidateAdminPermissions`, `ErrUnknownAdminPermission`, 400).
+- A user's reach counts group grants, public MCP items, every
+  unrestricted connection the user can see, every connection their
+  username owns (restricted or not, because `CanAccessConnection`,
+  `updateConnection` and `deleteConnection` admit the owner), and every member connection of
+  a cluster group the username owns (`ownedClusterGroupsCovered`,
+  through `auth.OwnedClusterGroupLister`), all at read_write.
+  `RBACHandler.SetConnectionLister` must be wired; a nil lister, a
+  lister error or one without the owned-group method fails closed.
+- `manage_users`, `manage_groups`, `manage_permissions`,
+  `manage_token_scopes` and `*` each let a holder acquire every MCP
+  item and admin permission, so `principalReach.reachesEverything`
+  makes a holder count as reaching everything in those kinds.
+- An empty MCP name list is not proof of an unrestricted MCP scope:
+  `GetTokenMCPScope` joins away orphaned rows, so `actorMCPScope` and
+  `loadStoredTokenScope` ask `AuthStore.HasTokenMCPScope`.
+- Every check fails closed on a nil checker, a nil store or a token
+  context without an id.
+- Every token scope read in `auth/token_scope.go` first calls
+  `requireTokenLocked` and returns `ErrTokenNotFound` for a token that no
+  longer exists, because the cascade leaves a deleted token with no
+  scope rows, which reads as unrestricted. A token deleting itself
+  between a handler's permission check and its ceiling check is then
+  denied. A new scope read must make the same call. Pinned by
+  `internal/api/rbac_acting_token_deleted_test.go` and
+  `internal/auth/token_scope_missing_token_test.go`.
+
+Known gaps, deliberately left: `query_datastore` reaches beyond any
+connection scope (#566), and editing or disabling a user and deleting a
+token not owned by a superuser are not ceiling-gated. Tests: `internal/auth/token_ceiling_test.go`
+and `internal/auth/grant_scope_test.go` (unit, table-driven),
+`internal/api/rbac_token_ceiling_test.go`,
+`internal/api/rbac_grant_scope_test.go`,
+`internal/api/rbac_grant_reach_test.go` and
+`internal/api/rbac_token_self_scope_test.go` (integration, real auth
+store); each gate fails its test when reverted. Assert refusals with
+`assertRefusedWith(t, rec, refuseX)`.
+
+The scope PUT refuses an empty array for any kind with 400
+(`emptyScopeKind` in `rbac_token_handlers.go`), because an empty kind
+means unrestricted and the request almost always meant the opposite;
+an omitted or null kind is left unchanged, and DELETE clears the whole
+scope. The CLI still clears a kind given an empty list. The client's
+`AdminTokenScopes.tsx` follows the same rule through `buildScopeBody`.
+
+Everything fails closed: a scope lookup error denies (or, in
+`VisibleConnectionIDs`, is an error rather than "everything"), an
+API-token context carrying no token id (`tokenContextIncomplete`)
+denies in `GetEffectivePrivileges` as in its five siblings, an
+unreadable scope withdraws `IsSuperuser` from the report as well, and
+`applyTokenCeiling` treats an access level it does not recognise as
+read. Session callers carry no token id and are unaffected throughout.
+
+`GetEffectivePrivileges` reports what the checks will actually allow:
+`applySuperuserTokenScope` fills `TokenScope`, `TokenScopeError` and
+the connection, MCP and admin maps from the token's scope, instead of
+returning empty maps that every consumer reads as unrestricted. A kind
+the token does not scope, or scopes with a wildcard, leaves its map
+empty.
+
+The audit endpoint needs no gate of its own: `requireUnscopedTokenForAudit`
+was retired in the same change because `requireSuperuser` refuses
+exactly the tokens it refused. `auth.IsSuperuserFromContext` itself is
+unchanged and remains the raw context accessor, reported as such by
+`cmd/mcp-server/handlers.go`.
+
+The rules are pinned by
+`server/src/internal/auth/access_superuser_scope_test.go` at the
+checker level and by
+`server/src/internal/api/rbac_issue471_test.go` plus
+`server/src/internal/api/rbac_audit_gate_test.go` at the HTTP
+boundary.
+
 ## Denial Auditing in the RBAC Management Handlers
 
 The `/api/v1/rbac/*` handlers do not inline the gate. They call the
@@ -406,21 +683,56 @@ failure is logged with `[ERROR]` and never changes the response.
 Denials are coalesced before they reach the store. `recordDenial`
 consults `admitDenial`, which keeps an in-memory map on `RBACHandler`
 keyed by `denialKey` (actor type, actor id, actor name, client IP,
-action and reason) under `denialMu`, so that two tokens of one user,
-or one token used from two addresses, never suppress each other's
-denials. The first denial for a key is written at once, identical
-denials within `denialCoalesceWindow` (60s) are counted instead of
-written, and the first denial after the window closes is written
-through `auth.RecordDeniedWithDetails` carrying
-`details.repeat_count`. The map evicts expired entries on every call
-and is capped at `maxDenialKeys` (10 000); an evicted entry that still
-held suppressed repeats is returned from `evictDenials` as a
-`denialSummary` and written by `recordDenialSummaries` once `denialMu`
-is released, as a row carrying `repeat_count` and `window_closed`, so
-a burst that stops before its window closes is still counted. Any new
-denial path must go through `recordDenial` rather than calling
-`RecordDenied` directly, or it loses the bound on how many rows one
-client can append.
+action, capped at `maxDenialActionLen`, and reason) under `denialMu`,
+so that two tokens of one user, or one token used from two addresses,
+never suppress each other's denials. The key must never hold a value
+the caller chooses without limit: the path is deliberately not in it,
+and `deniedRoute` maps an unrecognised method to `rbac.other` (only
+the nine standard methods get `rbac.<lowercase method>`), since
+either would let a client mint a fresh key, and so a fresh row, per
+request. The target instead goes in the row: `deniedRoute` normalises
+it to `kind/<id>` (a positive integer id) or `kind`, and
+`unmatchedDenialTarget` for a route it does not recognise. The first
+denial for a key is written at once with `details.target`, identical
+denials within `denialCoalesceWindow` (60s) are counted in a
+`denialWindow`, which keeps up to `maxDenialTargets` (20) distinct
+targets and counts the rest in `targets_truncated`, and the first
+denial after the window closes is written through
+`auth.RecordDeniedWithDetails` carrying `repeat_count`, `targets` and
+`targets_truncated`. Entries sit on an intrusive list ordered by
+`firstSeen` (`denialOldest`/`denialNewest`, kept by `pushNewestDenial`
+and `unlinkDenial`; not `container/list`, whose element type
+assertions errcheck flags), so `evictDenials` walks from the oldest
+end and stops at the first open window, which keeps each call
+amortised O(1) however many keys are held. The map is capped at
+`maxDenialKeys` (10 000); an evicted entry that still held suppressed
+repeats is returned as a `denialSummary` and written by
+`recordDenialSummaries` once `denialMu` is released, as a row carrying
+`window_closed` plus the window's fields, so a burst that stops
+before its window closes is still counted. Any new denial path must
+go through `recordDenial` rather than calling `RecordDenied`
+directly, or it loses the bound on how many rows one client can
+append. A handler outside `RBACHandler` records through
+`RBACHandler.RecordDenial`, injected as a function:
+`ConnectionHandler` takes it via `SetDenialRecorder` and refuses
+through `refuseOutOfTokenScope` (its `manage_connections` refusal on
+`PUT /connections/{id}/cluster` records too), and `ClusterHandler`,
+`AlertRuleHandler` and `NotificationChannelHandler` embed
+`denialAuditor`, whose recorder they pass to
+`requireAllConnectionsInTokenScope` and
+`requireConnectionsInTokenScope`; `cmd/mcp-server/handlers.go` wires
+all four. `requireTargetInTokenScope` and
+`requireBlackoutTargetInTokenScope` do not record yet.
+`deniedConnectionAction` names the `connection.update`,
+`connection.delete` and `connection.cluster.update` actions, and
+`deniedAPIRoute` names `cluster.*`, `cluster_group.*`,
+`notification_channel.*` and `alert_rule.*` (a write to a
+sub-resource is recorded as an update of its parent).
+`updateConnection` and `deleteConnection` call the session-only
+`getUserInfoCompat` first, so a real token gets 401 there; only the
+cluster move reaches an audited connection token-scope refusal, and
+the other two gates are defensive, so do not document them as
+reachable.
 
 Mutations in these handlers go through `h.actorStore(r)` rather than
 `h.authStore`, so the audit row names the acting user or token:
@@ -430,7 +742,7 @@ the username, user or token id and client IP that
 request context. The token id is `auth.TokenIDContextKey`, the same
 key `RBACChecker` reads to enforce token scope; there is deliberately
 no attribution-only key, so a token is named in the log exactly when
-its scope is enforced, and `requireUnscopedTokenForAudit` refuses an
+its scope is enforced, and `RBACChecker.IsSuperuser` refuses an
 API-token context that carries no id rather than passing it. The
 composition is pinned by
 `server/src/internal/api/rbac_token_scope_regression_test.go`.
@@ -447,11 +759,37 @@ call `requireSuperuser` right after decoding whenever the body carries
 `is_superuser` at all, true or false, before any store read (#497). The
 field's presence, not whether it would change the row, is the test, so
 the rule never depends on target state read outside the transaction.
-`updateUser` and `deleteUser` also call `requireSuperuser` when the
-target account is a superuser, since resetting its password or
-disabling it is as good as holding the role. Pinned by
-`rbac_user_superuser_gate_test.go`. Any new endpoint that can change
-superuser status, or write to a superuser account, needs the same gate.
+Writing to an account that is already a superuser (resetting its
+password, disabling it, deleting it) is as good as holding the role,
+so it needs a superuser too, but that rule depends on target state and
+so is checked in the store, not the handler (#588): `updateUser` and
+`deleteUser` pass `RBACChecker.IsSuperuser` to
+`ActorStore.UpdateUserAtomic` and `ActorStore.DeleteUser`, whose
+transactions read the row under the store's write lock and refuse
+with `auth.ErrSuperuserTargetForbidden` (`guardSuperuserTargetTx`,
+before the last-superuser guard). `respondUserWriteError` maps it to
+the same 403 and denial audit as `requireSuperuser`, through
+`denyNotSuperuser`, and the store's deferred failure audit skips that
+error so a refusal leaves only the handler's coalesced denial row. Do
+not add a pre-check back to `updateUser` or `deleteUser` on a target
+read outside the transaction. Pinned by
+`rbac_user_superuser_gate_test.go` and
+`internal/auth/superuser_target_guard_test.go` (a target promoted
+after the read, and a concurrent promotion). Any new endpoint that can
+change superuser status, or write to a superuser account, needs the
+same gate.
+
+The store also refuses, with `auth.ErrLastSuperuser`, any demotion,
+disable or delete that would leave no enabled superuser
+(`guardLastSuperuserTx` in `actor_store_users.go`, counting the other
+enabled superusers, service accounts included, inside the change's own
+transaction). It applies to `updateUserAtomic`, `setUserEnabled`,
+`setUserSuperuser` and `deleteUser`, so sessions, tokens and the CLI
+alike; `respondUserStoreError` maps it to 409. Known exceptions, not
+yet ruled on: the lockout disable in `disableForLockout`, and the
+federated login's `is_superuser` sync in `federation.go`. Pinned by
+`internal/auth/last_superuser_test.go` (including a concurrent mutual
+demotion) and `internal/api/rbac_last_superuser_test.go`.
 
 ## Store Refusals Map to 400
 
@@ -761,3 +1099,21 @@ pure comparison is `checkAuditTail`. Every disagreement wraps
 other query error is returned unwrapped rather than swallowed, and
 exits 1. `sqlite_sequence` itself is unprotected, so a tail deleted and
 then matched by writing the sequence down passes without the secret.
+
+## Connection Access and Visibility Agree
+
+`CanAccessConnection` and `VisibleConnectionIDs` decide a non-superuser's
+base access with one function, `connectionAccessRule` in
+`internal/auth/access.go`, before the token scope is applied (#592). Do not
+add a visibility shortcut to either side. The rule, in order: the owner has
+read_write whatever the restriction; a shared connection that no group grant
+names is open at read_write; otherwise the group grant (specific or
+all-connections, higher wins) decides. "Restricted" means a grant names the
+connection itself (`IsConnectionAssignedToAnyGroup`, and
+`RestrictedConnectionIDs` for the list path); an all-connections grant
+restricts nothing. When `CanAccessConnection` has no sharing lookup, it
+treats every connection as shared and unowned, as before;
+`VisibleConnectionIDs` always takes the sharing facts from its lister.
+`TestConnectionAccessAndVisibilityAgree` in
+`internal/auth/connection_access_agreement_test.go` runs every case through
+both functions and fails if they disagree.

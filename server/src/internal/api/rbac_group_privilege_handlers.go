@@ -10,6 +10,7 @@
 package api
 
 import (
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
@@ -56,6 +57,17 @@ func (h *RBACHandler) handleGroupMCPPrivileges(w http.ResponseWriter, r *http.Re
 			}
 			if req.Privilege == "" {
 				RespondError(w, http.StatusBadRequest, "Privilege is required")
+				return
+			}
+
+			// A token may grant only the MCP items it may call itself,
+			// and the wildcard only when it reaches every item, or it
+			// could hand a group, and so itself through membership, a
+			// tool such as query_datastore that it may not call (issue
+			// #471). Revoking an item narrows access and needs nothing.
+			if !h.requireGrantInTokenScope(w, r,
+				h.rbacChecker.CanGrantMCPItem(r.Context(), req.Privilege),
+				refuseMCPGrant) {
 				return
 			}
 
@@ -116,6 +128,16 @@ func (h *RBACHandler) handleGroupConnectionPrivileges(w http.ResponseWriter, r *
 			return
 		}
 
+		// A token may grant a level on a connection only when it holds
+		// that level or higher on the connection itself, and the "all
+		// connections" grant only when it holds every connection at
+		// that level (issue #471).
+		if !h.requireGrantInTokenScope(w, r,
+			h.rbacChecker.CanGrantConnection(r.Context(),
+				req.ConnectionID, req.AccessLevel), refuseConnectionGrant) {
+			return
+		}
+
 		if err := h.actorStore(r).GrantConnectionPrivilege(groupID, req.ConnectionID, req.AccessLevel); err != nil {
 			log.Printf("[ERROR] Failed to grant connection privilege for conn %d to group %d: %v", req.ConnectionID, groupID, err)
 			RespondError(w, http.StatusInternalServerError, "Failed to grant connection privilege")
@@ -139,7 +161,28 @@ func (h *RBACHandler) handleGroupConnectionPrivileges(w http.ResponseWriter, r *
 			return
 		}
 
-		if err := h.actorStore(r).RevokeConnectionPrivilege(groupID, connID); err != nil {
+		// A token needs read on the connection to revoke a grant on
+		// it, and is refused in the same words whether or not the
+		// connection exists. Revoking the last group grant on a
+		// connection (an "all connections" grant restricts none, issue
+		// #592) lifts its group restriction, which opens a shared
+		// connection to every user, so that revoke needs read_write
+		// (issue #471); the store decides that in the revoke's own
+		// transaction, so that a concurrent revoke cannot slip past it.
+		if !h.requireGrantInTokenScope(w, r,
+			h.rbacChecker.CanRevokeConnection(r.Context(), groupID, connID),
+			refuseConnectionRevoke) {
+			return
+		}
+
+		guard := h.rbacChecker.ConnectionLiftGuard(r.Context(), connID)
+		err = h.actorStore(r).RevokeConnectionPrivilegeGuarded(groupID, connID,
+			guard)
+		if errors.Is(err, auth.ErrRevokeLiftsRestriction) {
+			h.requireGrantInTokenScope(w, r, false, refuseConnectionRevoke)
+			return
+		}
+		if err != nil {
 			log.Printf("[ERROR] Failed to revoke connection privilege for conn %d from group %d: %v", connID, groupID, err)
 			RespondError(w, http.StatusInternalServerError, "Failed to revoke connection privilege")
 			return
@@ -214,6 +257,20 @@ func (h *RBACHandler) grantGroupPermission(w http.ResponseWriter, r *http.Reques
 	}
 	if req.Permission == "" {
 		RespondError(w, http.StatusBadRequest, "Permission is required")
+		return
+	}
+
+	// A token may grant only an admin permission it holds itself, and,
+	// since an admin permission acts across the whole estate, only when
+	// it holds every connection at read_write. Several permissions let a
+	// holder acquire every MCP item and admin permission, so granting
+	// one of those needs a token that reaches them all: gating on less
+	// let an MCP-bounded token plant manage_permissions on a group it
+	// could then take over (issue #471). Revoking a permission narrows
+	// access and needs nothing.
+	if !h.requireGrantInTokenScope(w, r,
+		h.rbacChecker.CanGrantAdminPermission(r.Context(), req.Permission),
+		refuseAdminGrant) {
 		return
 	}
 

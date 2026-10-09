@@ -608,7 +608,7 @@ func TestConnectionHandler_ContextAndCluster_Live(t *testing.T) {
 			{"assign missing connection", missing,
 				ConnectionClusterUpdateRequest{ClusterID: &clusterID,
 					MembershipSource: "manual"},
-				http.StatusInternalServerError},
+				http.StatusNotFound},
 		}
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {

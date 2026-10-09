@@ -272,6 +272,18 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 		// RBAC management endpoints
 		if deps.AuthStore != nil {
 			rbacHandler := api.NewRBACHandler(deps.AuthStore, rbacChecker)
+			rbacHandler.SetConnectionLister(database.NewVisibilityLister(deps.Datastore))
+			// Federation matches groups by name, so the RBAC handler
+			// must know which names the OIDC group map uses before it
+			// lets a bounded token rename a group (issue #471).
+			rbacHandler.SetFederatedGroupMap(deps.Config.HTTP.Auth.OIDC.GroupMap)
+			// Token-scope refusals on the connection, cluster, alert
+			// rule and notification channel routes are audited through
+			// the RBAC handler's coalescing denial recorder.
+			connHandler.SetDenialRecorder(rbacHandler.RecordDenial)
+			clusterHandler.SetDenialRecorder(rbacHandler.RecordDenial)
+			alertRuleHandler.SetDenialRecorder(rbacHandler.RecordDenial)
+			notificationChannelHandler.SetDenialRecorder(rbacHandler.RecordDenial)
 			rbacHandler.RegisterRoutes(mux, authWrapper)
 			fmt.Fprintf(os.Stderr, "RBAC management: ENABLED\n")
 		}
@@ -364,11 +376,19 @@ func createUserInfoHandler(authStore *auth.AuthStore) http.HandlerFunc {
 			}
 		}
 
+		// The reported flag is the one a superuser-only gate would
+		// apply, not the raw context flag: a superuser's API token
+		// whose admin scope has been narrowed is refused by
+		// requireSuperuser, and a client that used the raw flag to
+		// decide whether to offer, say, the audit page would offer a
+		// page the server then refuses.
+		isSuperuser := auth.NewRBACChecker(authStore).IsSuperuser(ctx)
+
 		// Return user info as JSON
 		api.RespondJSON(w, http.StatusOK, map[string]any{
 			"authenticated":     true,
 			"username":          username,
-			"is_superuser":      auth.IsSuperuserFromContext(ctx),
+			"is_superuser":      isSuperuser,
 			"admin_permissions": adminPermissions,
 		})
 	}

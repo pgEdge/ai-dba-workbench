@@ -524,8 +524,9 @@ func TestIsConnectionInTokenScopeSpecificOverridesWildcard(t *testing.T) {
 
 	_, storedToken, _ := store.CreateToken("testuser", "Test token", nil)
 
-	// Set both specific and wildcard connection scope
-	store.SetTokenConnectionScope(storedToken.ID, []ScopedConnection{
+	// A mixed scope can no longer be written through the store, but rows
+	// written before that rule may remain, so insert them directly.
+	insertLegacyConnectionScope(t, store, storedToken.ID, []ScopedConnection{
 		{ConnectionID: ConnectionIDAll, AccessLevel: AccessLevelRead},
 		{ConnectionID: 1, AccessLevel: AccessLevelReadWrite},
 	})

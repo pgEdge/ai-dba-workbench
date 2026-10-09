@@ -225,10 +225,15 @@ func (s *AuthStore) updateGroup(actor Actor, id int64, name,
 // orphaned privilege rows behind to be attached to a future group
 // reusing the same id.
 func (s *AuthStore) DeleteGroup(id int64) error {
-	return s.deleteGroup(systemActor, id)
+	return s.deleteGroup(systemActor, id, nil)
 }
 
-func (s *AuthStore) deleteGroup(actor Actor, id int64) (err error) {
+// deleteGroup deletes the group as DeleteGroup describes, refusing with
+// ErrRevokeLiftsRestriction, inside the same transaction, when dropping
+// one of the group's own grants would lift a connection's restriction
+// that the guard does not allow (see LiftGuard).
+func (s *AuthStore) deleteGroup(actor Actor, id int64,
+	guard *LiftGuard) (err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -257,6 +262,11 @@ func (s *AuthStore) deleteGroup(actor Actor, id int64) (err error) {
 	}
 	target.targetName = before.Name
 
+	if liftErr := guardGroupLiftsTx(tx, guard, id); liftErr != nil {
+		err = liftErr
+		return err
+	}
+
 	if depErr := deleteGroupDependentsTx(tx, id); depErr != nil {
 		err = depErr
 		return err
@@ -279,6 +289,45 @@ func (s *AuthStore) deleteGroup(actor Actor, id int64) (err error) {
 	}
 
 	return nil
+}
+
+// guardGroupLiftsTx applies the guard to each of the group's own
+// connection grants as deleting the whole group would remove them.
+func guardGroupLiftsTx(tx *sql.Tx, guard *LiftGuard, id int64) error {
+	if guard == nil || guard.all {
+		return nil
+	}
+	ids, err := groupGrantConnectionIDsTx(tx, id)
+	if err != nil {
+		return fmt.Errorf("failed to check connection restriction: %w", err)
+	}
+	for _, connID := range ids {
+		if guardErr := guardLiftTx(tx, guard, id, connID); guardErr != nil {
+			return guardErr
+		}
+	}
+	return nil
+}
+
+// groupGrantConnectionIDsTx lists the connections the group's own grants
+// name. The rows are closed before it returns, so that the transaction's
+// connection is free for the queries that follow.
+func groupGrantConnectionIDsTx(tx *sql.Tx, id int64) ([]int, error) {
+	rows, err := tx.Query(
+		"SELECT connection_id FROM connection_privileges WHERE group_id = ?", id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int
+	for rows.Next() {
+		var connID int
+		if err := rows.Scan(&connID); err != nil {
+			return nil, err
+		}
+		ids = append(ids, connID)
+	}
+	return ids, rows.Err()
 }
 
 // groupDeleteBeforeTx captures the state a group delete is about to

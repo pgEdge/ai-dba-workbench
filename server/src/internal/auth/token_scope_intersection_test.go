@@ -390,3 +390,31 @@ func TestTokenScopeLookupErrorDeniesAccess(t *testing.T) {
 		t.Error("VisibleConnectionIDs returned no error despite a failed scope lookup")
 	}
 }
+
+// TestVisibleConnectionIDsUnreadableScopeBeatsGroupWildcard checks that
+// a token whose scope cannot be read enumerates nothing even when the
+// owner's group grants every connection. A failed read leaves the
+// group wildcard in the effective privileges, and the wildcard used to
+// be returned before the scope error was looked at.
+func TestVisibleConnectionIDsUnreadableScopeBeatsGroupWildcard(t *testing.T) {
+	f := newScopeFixture(t, AccessLevelRead)
+
+	groupID, err := f.store.CreateGroup("wildcard-group", "group")
+	if err != nil {
+		t.Fatalf("failed to create group: %v", err)
+	}
+	if err := f.store.AddUserToGroup(groupID, f.userID); err != nil {
+		t.Fatalf("failed to add user to group: %v", err)
+	}
+	if err := f.store.GrantConnectionPrivilege(groupID, ConnectionIDAll,
+		AccessLevelReadWrite); err != nil {
+		t.Fatalf("failed to grant the connection wildcard: %v", err)
+	}
+	dropAuthTable(t, f.store.db, "token_connection_scope")
+
+	ids, all, err := f.checker.VisibleConnectionIDs(f.tokenContext(), nil)
+	if err == nil || all || ids != nil {
+		t.Errorf("Expected an error and no connections, got (%v, %v, %v)",
+			ids, all, err)
+	}
+}

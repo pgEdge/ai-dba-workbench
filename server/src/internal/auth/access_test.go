@@ -575,7 +575,11 @@ func TestRBACCheckerAllConnectionsGrant(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAccess(t)
 	defer cleanup()
 
-	checker := NewRBACChecker(store)
+	// The connections are unshared and owned by nobody, so the group
+	// grants alone decide access: a wildcard grant restricts no
+	// connection, and a shared one no group names is open at read_write
+	// (issue #592).
+	checker := NewRBACCheckerWithSharing(store, unsharedUnowned)
 
 	// Create user with "all connections" privilege
 	store.CreateUser("testuser", "Password1234", "Test user", "", "")
@@ -603,7 +607,11 @@ func TestRBACCheckerAllConnectionsHigherLevel(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAccess(t)
 	defer cleanup()
 
-	checker := NewRBACChecker(store)
+	// The connections are unshared and owned by nobody, so the group
+	// grants alone decide access: a wildcard grant restricts no
+	// connection, and a shared one no group names is open at read_write
+	// (issue #592).
+	checker := NewRBACCheckerWithSharing(store, unsharedUnowned)
 
 	// Create user with mixed privileges
 	store.CreateUser("testuser", "Password1234", "Test user", "", "")
@@ -640,7 +648,11 @@ func TestRBACCheckerSpecificThenAllConnections(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAccess(t)
 	defer cleanup()
 
-	checker := NewRBACChecker(store)
+	// The connections are unshared and owned by nobody, so the group
+	// grants alone decide access: a wildcard grant restricts no
+	// connection, and a shared one no group names is open at read_write
+	// (issue #592).
+	checker := NewRBACCheckerWithSharing(store, unsharedUnowned)
 
 	store.CreateUser("testuser", "Password1234", "Test user", "", "")
 	userID, _ := store.GetUserID("testuser")
@@ -1063,6 +1075,12 @@ func TestGetUserMCPPrivilegesIncludesWildcard(t *testing.T) {
 	}
 }
 
+// unsharedUnowned reports every connection as unshared and owned by no
+// user, so that only group grants can admit a caller.
+func unsharedUnowned(_ context.Context, _ int) (bool, string, error) {
+	return false, "", nil
+}
+
 // mockSharingLookup returns a ConnectionSharingLookupFunc that serves
 // a fixed map of connection sharing info.
 func mockSharingLookup(info map[int]struct {
@@ -1200,6 +1218,21 @@ func TestCanAccessConnection_NoLookupFuncAllowsAccess(t *testing.T) {
 type stubVisibilityLister struct {
 	connections []ConnectionVisibilityInfo
 	err         error
+
+	// ownedGroups maps a username to the member connections of the
+	// cluster groups that user owns; ownedErr fails that lookup.
+	ownedGroups map[string][]int
+	ownedErr    error
+}
+
+// GetOwnedClusterGroupConnectionIDs implements OwnedClusterGroupLister.
+func (s *stubVisibilityLister) GetOwnedClusterGroupConnectionIDs(_ context.Context,
+	username string) ([]int, error) {
+
+	if s.ownedErr != nil {
+		return nil, s.ownedErr
+	}
+	return s.ownedGroups[username], nil
 }
 
 func (s *stubVisibilityLister) GetAllConnections(_ context.Context) ([]ConnectionVisibilityInfo, error) {
@@ -1388,9 +1421,10 @@ func TestVisibleConnectionIDs_SharedVisibleWithoutGrant(t *testing.T) {
 	}
 }
 
-func TestVisibleConnectionIDs_ExplicitGrantIntersectsSharedVisibility(t *testing.T) {
-	// When a user has explicit group/token grants, those grants act as an
-	// allow-list that further restricts shared-connection visibility.
+// TestVisibleConnectionIDs_ExplicitGrantKeepsSharedVisibility checks that
+// holding a grant on one connection does not hide a shared connection no
+// group restricts, which CanAccessConnection admits (issue #592).
+func TestVisibleConnectionIDs_ExplicitGrantKeepsSharedVisibility(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAccess(t)
 	defer cleanup()
 
@@ -1435,8 +1469,8 @@ func TestVisibleConnectionIDs_ExplicitGrantIntersectsSharedVisibility(t *testing
 	if !set[5] {
 		t.Error("Expected carol to see explicitly granted connection 5")
 	}
-	if set[1] {
-		t.Error("Explicit grants should restrict shared visibility: conn 1 should be hidden")
+	if !set[1] {
+		t.Error("A grant elsewhere must not hide shared connection 1, which no group restricts and CanAccessConnection admits (issue #592)")
 	}
 	if set[7] {
 		t.Error("Expected carol NOT to see unshared connection 7")

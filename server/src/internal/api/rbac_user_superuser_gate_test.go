@@ -187,6 +187,8 @@ func TestRBACHandler_UpdateUser_SuperuserFlagRequiresSuperuser(t *testing.T) {
 func TestRBACHandler_UpdateUser_SuperuserCanChangeSuperuser(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
+	// A second superuser keeps the target from being the last one.
+	mustCreateSuperuser(t, store, "spare-admin")
 
 	if err := store.CreateUser("target", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("CreateUser: %v", err)
@@ -357,6 +359,7 @@ func TestRBACHandler_DeleteUser_SuperuserTarget(t *testing.T) {
 			handler, store, adminID, cleanup := adminRBACHandler(t)
 			defer cleanup()
 			targetID := superuserTarget(t, store)
+			mustCreateSuperuser(t, store, "spare-admin")
 
 			req := httptest.NewRequest(http.MethodDelete,
 				"/api/v1/rbac/users/"+strconv.FormatInt(targetID, 10), nil)
@@ -378,6 +381,59 @@ func TestRBACHandler_DeleteUser_SuperuserTarget(t *testing.T) {
 			}
 			if !tt.superuser {
 				assertDeniedAudited(t, store, "user.delete")
+			}
+		})
+	}
+}
+
+// TestRBACHandler_SuperuserTargetRefusalsAuditOnce checks that repeated
+// refusals to write to a superuser account leave one coalesced denial row
+// and nothing else: the store must not add an uncoalesced failure row per
+// request on top of the handler's denial, or a manage_users holder could
+// grow the audit log one row per request.
+func TestRBACHandler_SuperuserTargetRefusalsAuditOnce(t *testing.T) {
+	const attempts = 10
+	tests := []struct {
+		action string
+		send   func(handler *RBACHandler, targetID, adminID int64) int
+	}{
+		{"user.update", func(handler *RBACHandler, targetID, adminID int64) int {
+			rec := putUser(t, handler, targetID, map[string]any{"annotation": "after"},
+				func(r *http.Request) *http.Request { return withUser(r, adminID) })
+			return rec.Code
+		}},
+		{"user.delete", func(handler *RBACHandler, targetID, adminID int64) int {
+			req := withUser(httptest.NewRequest(http.MethodDelete,
+				"/api/v1/rbac/users/"+strconv.FormatInt(targetID, 10), nil), adminID)
+			rec := httptest.NewRecorder()
+			handler.deleteUser(rec, req, targetID)
+			return rec.Code
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.action, func(t *testing.T) {
+			handler, store, adminID, cleanup := adminRBACHandler(t)
+			defer cleanup()
+			targetID := superuserTarget(t, store)
+
+			for i := 0; i < attempts; i++ {
+				if code := tt.send(handler, targetID, adminID); code != http.StatusForbidden {
+					t.Fatalf("attempt %d: status = %d, want %d", i, code,
+						http.StatusForbidden)
+				}
+			}
+
+			events, _, err := store.ListAuditEvents(auth.AuditFilter{Action: tt.action})
+			if err != nil {
+				t.Fatalf("ListAuditEvents: %v", err)
+			}
+			if len(events) != 1 || events[0].Outcome != auth.OutcomeDenied {
+				outcomes := make([]auth.AuditOutcome, 0, len(events))
+				for _, ev := range events {
+					outcomes = append(outcomes, ev.Outcome)
+				}
+				t.Errorf("%d refusals left %d %s rows %v, want one denied row",
+					attempts, len(events), tt.action, outcomes)
 			}
 		})
 	}

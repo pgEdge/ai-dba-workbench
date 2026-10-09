@@ -11,12 +11,97 @@ package auth
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 )
+
+// ErrUnknownMCPPrivilege is returned when an MCP scope names a privilege
+// identifier that is not registered. Writing the rest of the list would
+// silently drop the unknown name, and a list made up only of unknown
+// names would then store no scope at all, which reads as unrestricted,
+// so the whole change is refused instead.
+var ErrUnknownMCPPrivilege = errors.New("unknown MCP privilege identifier")
 
 // =============================================================================
 // Token Scope Management
 // =============================================================================
+
+// ErrInvalidAccessLevel is returned when a connection scope entry names
+// an access level other than read or read_write.
+var ErrInvalidAccessLevel = errors.New("invalid access level")
+
+// ErrInvalidConnectionScope is returned when a connection scope is not a
+// plain list of distinct connections: it names a connection twice,
+// names a negative connection ID, or mixes the "all connections" entry
+// with entries for particular connections.
+//
+// A mixed scope is refused because its two kinds of entry answer the
+// same question differently: IsConnectionInTokenScope lets an entry for
+// a connection override the "all connections" entry, so {all:
+// read_write, 5: read} holds connection 5 at read only, yet a check that
+// reads the "all connections" entry alone would take the token to hold
+// every connection at read_write, and let it hand out read_write on
+// connection 5. One kind of entry or the other says everything a scope
+// needs to.
+var ErrInvalidConnectionScope = errors.New("invalid connection scope")
+
+// ErrTokenNotFound is returned by the token scope reads for a token
+// that does not exist. A token with no rows in a scope kind is
+// unrestricted in that kind, so without this a token deleted part-way
+// through a request, which takes its scope rows with it by the cascade,
+// would read as unrestricted to every check made after the delete.
+// Every access check denies on a scope read error, so a missing token
+// reads as having no access at all.
+var ErrTokenNotFound = errors.New("token not found")
+
+// requireTokenLocked reports ErrTokenNotFound when tokenID names no
+// token. The caller holds s.mu, read or write, so the answer holds for
+// the rest of the caller's read: deleting a token takes the write lock.
+func (s *AuthStore) requireTokenLocked(tokenID int64) error {
+	var exists bool
+	if err := s.db.QueryRow(
+		"SELECT EXISTS(SELECT 1 FROM tokens WHERE id = ?)", tokenID,
+	).Scan(&exists); err != nil {
+		return fmt.Errorf("failed to check token exists: %w", err)
+	}
+	if !exists {
+		return ErrTokenNotFound
+	}
+	return nil
+}
+
+// ValidateScopedConnections checks that a connection scope is well
+// formed, so that a caller writing several scope kinds can refuse a bad
+// connection scope before writing any of them: every entry's access
+// level is read or read_write, no connection is named twice or with a
+// negative ID, and the "all connections" entry, if present, is the only
+// entry (see ErrInvalidConnectionScope).
+func ValidateScopedConnections(connections []ScopedConnection) error {
+	seen := make(map[int]bool, len(connections))
+	for _, conn := range connections {
+		if conn.AccessLevel != AccessLevelRead &&
+			conn.AccessLevel != AccessLevelReadWrite {
+			return fmt.Errorf("%w %q for connection %d: must be %q or %q",
+				ErrInvalidAccessLevel, conn.AccessLevel, conn.ConnectionID,
+				AccessLevelRead, AccessLevelReadWrite)
+		}
+		if conn.ConnectionID < 0 {
+			return fmt.Errorf("%w: connection ID %d is negative",
+				ErrInvalidConnectionScope, conn.ConnectionID)
+		}
+		if seen[conn.ConnectionID] {
+			return fmt.Errorf("%w: connection %d is listed more than once",
+				ErrInvalidConnectionScope, conn.ConnectionID)
+		}
+		seen[conn.ConnectionID] = true
+	}
+	if seen[ConnectionIDAll] && len(connections) > 1 {
+		return fmt.Errorf("%w: the all-connections entry (connection 0) "+
+			"cannot be combined with entries for particular connections",
+			ErrInvalidConnectionScope)
+	}
+	return nil
+}
 
 // SetTokenConnectionScope sets the connection scope for a token.
 // If connections is empty, clears all connection scoping (token has no connection restrictions).
@@ -27,6 +112,14 @@ func (s *AuthStore) SetTokenConnectionScope(tokenID int64, connections []ScopedC
 
 func (s *AuthStore) setTokenConnectionScope(actor Actor, tokenID int64,
 	connections []ScopedConnection) (err error) {
+
+	// The stored access level is checked here rather than left to the
+	// SQLite CHECK constraint, so that a bad level is reported as what
+	// it is instead of an opaque insert failure, and so that the rule
+	// is visible to a reader of this code.
+	if err := ValidateScopedConnections(connections); err != nil {
+		return err
+	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -230,12 +323,22 @@ func (s *AuthStore) setTokenMCPScopeByNames(actor Actor, tokenID int64,
 			break
 		}
 
-		if _, execErr := tx.Exec(
+		res, execErr := tx.Exec(
 			`INSERT INTO token_mcp_scope (token_id, privilege_identifier_id)
              SELECT ?, id FROM mcp_privilege_identifiers WHERE identifier = ?`,
 			tokenID, identifier,
-		); execErr != nil {
+		)
+		if execErr != nil {
 			err = fmt.Errorf("failed to add privilege to token scope: %w", execErr)
+			return err
+		}
+		inserted, rowsErr := res.RowsAffected()
+		if rowsErr != nil {
+			err = fmt.Errorf("failed to add privilege to token scope: %w", rowsErr)
+			return err
+		}
+		if inserted == 0 {
+			err = fmt.Errorf("%w: %q", ErrUnknownMCPPrivilege, identifier)
 			return err
 		}
 	}
@@ -254,6 +357,10 @@ func (s *AuthStore) setTokenMCPScopeByNames(actor Actor, tokenID int64,
 func (s *AuthStore) GetTokenScope(tokenID int64) (*TokenScope, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+
+	if err := s.requireTokenLocked(tokenID); err != nil {
+		return nil, err
+	}
 
 	scope := &TokenScope{TokenID: tokenID}
 
@@ -393,6 +500,10 @@ func (s *AuthStore) IsConnectionInTokenScope(tokenID int64, connectionID int) (b
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	if err := s.requireTokenLocked(tokenID); err != nil {
+		return false, "", err
+	}
+
 	// Check if token has any connection scope
 	var count int
 	err := s.db.QueryRow(
@@ -445,6 +556,10 @@ func (s *AuthStore) IsMCPItemInTokenScope(tokenID int64, identifier string) (boo
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	if err := s.requireTokenLocked(tokenID); err != nil {
+		return false, err
+	}
+
 	// Check if token has any MCP scope
 	var scopeCount int
 	err := s.db.QueryRow(
@@ -493,6 +608,10 @@ func (s *AuthStore) GetTokenConnectionScope(tokenID int64) ([]int, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	if err := s.requireTokenLocked(tokenID); err != nil {
+		return nil, err
+	}
+
 	rows, err := s.db.Query(
 		"SELECT connection_id FROM token_connection_scope WHERE token_id = ? ORDER BY connection_id",
 		tokenID,
@@ -518,12 +637,39 @@ func (s *AuthStore) GetTokenConnectionScope(tokenID int64) ([]int, error) {
 	return connections, nil
 }
 
+// HasTokenMCPScope reports whether a token has any MCP scope row at
+// all. It counts the raw rows, as IsMCPItemInTokenScope does, so a row
+// whose privilege identifier has since been deleted still marks the
+// token as MCP-restricted even though GetTokenMCPScope, which joins the
+// identifiers, no longer returns it.
+func (s *AuthStore) HasTokenMCPScope(tokenID int64) (bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if err := s.requireTokenLocked(tokenID); err != nil {
+		return false, err
+	}
+
+	var count int
+	if err := s.db.QueryRow(
+		"SELECT COUNT(*) FROM token_mcp_scope WHERE token_id = ?",
+		tokenID,
+	).Scan(&count); err != nil {
+		return false, fmt.Errorf("failed to check token MCP scope: %w", err)
+	}
+	return count > 0, nil
+}
+
 // GetTokenMCPScope returns the MCP privilege identifiers in scope for a token.
 // If the scope contains the wildcard sentinel (privilege_identifier_id = 0),
 // this returns ["*"].
 func (s *AuthStore) GetTokenMCPScope(tokenID int64) ([]string, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+
+	if err := s.requireTokenLocked(tokenID); err != nil {
+		return nil, err
+	}
 
 	// Check for wildcard sentinel first
 	var wildcardCount int
@@ -571,6 +717,10 @@ func (s *AuthStore) HasTokenScope(tokenID int64) (bool, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	if err := s.requireTokenLocked(tokenID); err != nil {
+		return false, err
+	}
+
 	var connCount, mcpCount, adminCount int
 
 	err := s.db.QueryRow(
@@ -604,6 +754,43 @@ func (s *AuthStore) HasTokenScope(tokenID int64) (bool, error) {
 // token_admin_scope to represent a wildcard ("all admin permissions") grant.
 const AdminPermissionWildcard = "*"
 
+// ErrUnknownAdminPermission is returned when an admin scope names a
+// permission that does not exist. Such an entry would match nothing,
+// so a scope of typos would read as a restriction whilst its holder
+// could never tell why every admin call was refused, and a name added
+// later would silently start to match.
+var ErrUnknownAdminPermission = errors.New("unknown admin permission")
+
+// knownAdminPermissions is every admin permission a scope may name, and
+// the wildcard. It matches the CHECK constraint on
+// group_admin_permissions.permission.
+var knownAdminPermissions = map[string]bool{
+	PermManageConnections:          true,
+	PermManageGroups:               true,
+	PermManagePermissions:          true,
+	PermManageUsers:                true,
+	PermManageTokenScopes:          true,
+	PermManageBlackouts:            true,
+	PermManageProbes:               true,
+	PermManageAlertRules:           true,
+	PermManageNotificationChannels: true,
+	PermStoreSystemMemory:          true,
+	AdminPermissionWildcard:        true,
+}
+
+// ValidateAdminPermissions checks that every entry of an admin scope is
+// a known admin permission or the wildcard, so that a caller writing
+// several scope kinds can refuse a bad admin scope before writing any
+// of them.
+func ValidateAdminPermissions(permissions []string) error {
+	for _, permission := range permissions {
+		if !knownAdminPermissions[permission] {
+			return fmt.Errorf("%w: %q", ErrUnknownAdminPermission, permission)
+		}
+	}
+	return nil
+}
+
 // SetTokenAdminScope sets the admin permission scope for a token.
 // This restricts which admin permissions the token can use.
 // If permissions contains "*", a single wildcard entry is stored instead of
@@ -615,6 +802,10 @@ func (s *AuthStore) SetTokenAdminScope(tokenID int64, permissions []string) erro
 
 func (s *AuthStore) setTokenAdminScope(actor Actor, tokenID int64,
 	permissions []string) (err error) {
+
+	if err := ValidateAdminPermissions(permissions); err != nil {
+		return err
+	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -680,6 +871,10 @@ func (s *AuthStore) GetTokenAdminScope(tokenID int64) ([]string, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	if err := s.requireTokenLocked(tokenID); err != nil {
+		return nil, err
+	}
+
 	rows, err := s.db.Query(
 		"SELECT permission FROM token_admin_scope WHERE token_id = ?",
 		tokenID,
@@ -706,6 +901,10 @@ func (s *AuthStore) GetTokenAdminScope(tokenID int64) ([]string, error) {
 func (s *AuthStore) IsAdminPermissionInTokenScope(tokenID int64, permission string) (bool, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+
+	if err := s.requireTokenLocked(tokenID); err != nil {
+		return false, err
+	}
 
 	// Check if token has any admin scope at all
 	var count int

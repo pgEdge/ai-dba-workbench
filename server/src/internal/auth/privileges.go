@@ -636,13 +636,14 @@ func (s *AuthStore) grantConnectionPrivilege(actor Actor, groupID int64,
 // RevokeConnectionPrivilege revokes access to a database connection
 // from a group, recording the change as the system actor.
 func (s *AuthStore) RevokeConnectionPrivilege(groupID int64, connectionID int) error {
-	return s.revokeConnectionPrivilege(systemActor, groupID, connectionID)
+	return s.revokeConnectionPrivilege(systemActor, groupID, connectionID, nil)
 }
 
 // revokeConnectionPrivilege revokes connection access from a group and
-// records the audit event in the same transaction.
+// records the audit event in the same transaction. The guard is applied
+// in that transaction too (see LiftGuard).
 func (s *AuthStore) revokeConnectionPrivilege(actor Actor, groupID int64,
-	connectionID int) (err error) {
+	connectionID int, guard *LiftGuard) (err error) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -668,6 +669,12 @@ func (s *AuthStore) revokeConnectionPrivilege(actor Actor, groupID int64,
 	// Read the grant before it is deleted, so that the audit event
 	// records the access level that was withdrawn.
 	before := connectionAccessLevelTx(tx, groupID, connectionID)
+
+	if liftErr := guardLiftTx(tx, guard, groupID,
+		connectionID); liftErr != nil {
+		err = liftErr
+		return err
+	}
 
 	result, err := tx.Exec(
 		"DELETE FROM connection_privileges WHERE group_id = ? AND connection_id = ?",
@@ -763,12 +770,16 @@ func (s *AuthStore) ListGroupMCPPrivileges(groupID int64) ([]*MCPPrivilege, erro
 	}
 
 	// Check for wildcard (All MCP Privileges) grant
+	// The error is returned rather than read as "no wildcard": callers
+	// use this list to bound grants by a token's scope (issue #471), and
+	// an unread wildcard would understate the group's reach.
 	var wildcardCount int
-	//nolint:errcheck // Best effort; zero on error is acceptable
-	s.db.QueryRow(
+	if err := s.db.QueryRow(
 		"SELECT COUNT(*) FROM group_mcp_privileges WHERE group_id = ? AND privilege_identifier_id = ?",
 		groupID, MCPPrivilegeIDWildcard,
-	).Scan(&wildcardCount)
+	).Scan(&wildcardCount); err != nil {
+		return nil, fmt.Errorf("failed to check group MCP wildcard privilege: %w", err)
+	}
 	if wildcardCount > 0 {
 		privileges = append([]*MCPPrivilege{{Identifier: "*"}}, privileges...)
 	}
@@ -938,13 +949,17 @@ func (s *AuthStore) GetUserMCPPrivileges(userID int64) (map[string]bool, error) 
 		}
 		rows.Close()
 
-		// Check for wildcard MCP privilege (privilege_identifier_id = 0)
+		// Check for wildcard MCP privilege (privilege_identifier_id = 0).
+		// A failed check is an error, not "no wildcard", so that a
+		// caller bounding grants by this map cannot understate reach.
 		var wildcardCount int
-		err = s.db.QueryRow(
+		if err := s.db.QueryRow(
 			"SELECT COUNT(*) FROM group_mcp_privileges WHERE group_id = ? AND privilege_identifier_id = ?",
 			groupID, MCPPrivilegeIDWildcard,
-		).Scan(&wildcardCount)
-		if err == nil && wildcardCount > 0 {
+		).Scan(&wildcardCount); err != nil {
+			return nil, fmt.Errorf("failed to check user MCP wildcard privilege: %w", err)
+		}
+		if wildcardCount > 0 {
 			privileges["*"] = true
 		}
 	}
@@ -1007,15 +1022,19 @@ func (s *AuthStore) GetUserConnectionPrivileges(userID int64) (map[int]string, e
 	return privileges, nil
 }
 
-// IsConnectionAssignedToAnyGroup checks if a connection has been assigned to any group
-// This determines if the connection is "restricted" or "public"
+// IsConnectionAssignedToAnyGroup reports whether any group holds a
+// grant naming this connection, which makes the connection "restricted"
+// (see connectionAccessRule). Only a grant on the connection itself
+// counts: an "all connections" grant gives its group every connection
+// without restricting any of them for users outside the group (issue
+// #592).
 func (s *AuthStore) IsConnectionAssignedToAnyGroup(connectionID int) (bool, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	var count int
 	err := s.db.QueryRow(
-		"SELECT COUNT(*) FROM connection_privileges WHERE connection_id = ? OR connection_id = 0",
+		"SELECT COUNT(*) FROM connection_privileges WHERE connection_id = ?",
 		connectionID,
 	).Scan(&count)
 	if err != nil {
@@ -1023,6 +1042,129 @@ func (s *AuthStore) IsConnectionAssignedToAnyGroup(connectionID int) (bool, erro
 	}
 
 	return count > 0, nil
+}
+
+// RestrictedConnectionIDs returns the set of connections that some group
+// holds a grant on, by the rule IsConnectionAssignedToAnyGroup applies
+// to one connection, so that VisibleConnectionIDs can apply it to every
+// connection with a single query.
+func (s *AuthStore) RestrictedConnectionIDs() (map[int]bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	rows, err := s.db.Query(
+		"SELECT DISTINCT connection_id FROM connection_privileges WHERE connection_id <> ?",
+		ConnectionIDAll,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list restricted connections: %w", err)
+	}
+	defer rows.Close()
+
+	restricted := make(map[int]bool)
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("failed to list restricted connections: %w", err)
+		}
+		restricted[id] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to list restricted connections: %w", err)
+	}
+
+	return restricted, nil
+}
+
+// ErrRevokeLiftsRestriction reports a revoke or group delete refused
+// because it would remove a connection's last group grant, so lifting
+// its group restriction and opening it, if shared, to every user, when
+// the caller's LiftGuard does not allow that for the connection.
+var ErrRevokeLiftsRestriction = errors.New(
+	"removal would lift a connection's group restriction")
+
+// LiftGuard says for which connections a revoke or group delete may
+// remove the last group grant. The caller computes it before calling the
+// store, since the store holds its write lock whilst it applies the
+// guard and so cannot consult the RBAC checker, and the store then
+// decides inside the same transaction as the delete, so that no
+// concurrent revoke can make a grant the last one in between. A nil
+// guard allows every lift, for the system and the CLI.
+type LiftGuard struct {
+	all     bool
+	allowed map[int]bool
+}
+
+// AllowAllLifts returns a guard that allows every lift, for a caller
+// that may open any connection, such as a session.
+func AllowAllLifts() *LiftGuard {
+	return &LiftGuard{all: true}
+}
+
+// AllowLifts returns a guard that allows a lift only on the given
+// connections. ConnectionIDAll stands for the "all connections" grant.
+func AllowLifts(connectionIDs ...int) *LiftGuard {
+	g := &LiftGuard{allowed: make(map[int]bool, len(connectionIDs))}
+	for _, id := range connectionIDs {
+		g.allowed[id] = true
+	}
+	return g
+}
+
+// allows reports whether the guard lets a removal lift the restriction
+// on connectionID.
+func (g *LiftGuard) allows(connectionID int) bool {
+	return g == nil || g.all || g.allowed[connectionID]
+}
+
+// liftsConnectionRestriction reports whether removing the group's grant
+// on connectionID would leave the connection assigned to no group when
+// it is assigned to one now, and so open it, if shared, to every user
+// (see IsConnectionAssignedToAnyGroup). A revoke and a group delete
+// remove the same row for a given connection, so one query serves both.
+// An "all connections" grant restricts no connection, so removing one
+// never lifts a restriction (issue #592).
+func liftsConnectionRestriction(q rowQuerier, groupID int64,
+	connectionID int) (bool, error) {
+
+	if connectionID == ConnectionIDAll {
+		return false, nil
+	}
+
+	// The rows that survive the removal are every other group's grants on
+	// the connection. The query is constant so that no SQL is assembled
+	// at run time.
+	const query = `
+        SELECT COUNT(*),
+               COALESCE(SUM(CASE WHEN group_id <> ? THEN 1 ELSE 0 END), 0)
+        FROM connection_privileges
+        WHERE connection_id = ?`
+
+	var before, after int
+	if err := q.QueryRow(query, groupID, connectionID).
+		Scan(&before, &after); err != nil {
+		return false, fmt.Errorf("failed to check connection restriction: %w", err)
+	}
+
+	return before > 0 && after == 0, nil
+}
+
+// guardLiftTx refuses with ErrRevokeLiftsRestriction when the guard
+// does not allow a lift on connectionID and the removal would lift it.
+func guardLiftTx(tx *sql.Tx, guard *LiftGuard, groupID int64,
+	connectionID int) error {
+
+	if guard.allows(connectionID) {
+		return nil
+	}
+	lifts, err := liftsConnectionRestriction(tx, groupID, connectionID)
+	if err != nil {
+		return err
+	}
+	if lifts {
+		return ErrRevokeLiftsRestriction
+	}
+	return nil
 }
 
 // =============================================================================
@@ -1335,8 +1477,12 @@ func (s *AuthStore) GetGroupEffectiveMCPPrivileges(groupID int64) ([]string, err
         JOIN ancestor_groups ag ON gmp.group_id = ag.group_id
         WHERE gmp.privilege_identifier_id = ?
     `
-	//nolint:errcheck // Best effort; zero on error is acceptable
-	s.db.QueryRow(wildcardQuery, groupID, MCPPrivilegeIDWildcard).Scan(&wildcardCount)
+	// The error is returned rather than read as "no wildcard", because
+	// GroupWithinTokenScope bounds grants by this list (issue #471) and
+	// an unread wildcard would understate the group's reach.
+	if err := s.db.QueryRow(wildcardQuery, groupID, MCPPrivilegeIDWildcard).Scan(&wildcardCount); err != nil {
+		return nil, fmt.Errorf("failed to check group effective MCP wildcard privilege: %w", err)
+	}
 	if wildcardCount > 0 {
 		privileges = append([]string{"*"}, privileges...)
 	}

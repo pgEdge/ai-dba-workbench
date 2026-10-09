@@ -15,10 +15,8 @@ import {
     DialogContent,
     DialogActions,
     Button,
-    TextField,
     Box,
     IconButton,
-    Autocomplete,
     Alert,
     Typography,
     CircularProgress,
@@ -31,10 +29,15 @@ import {
     subsectionLabelSx,
     getContainedButtonSx,
 } from '../styles';
-import { SELECT_FIELD_SX } from '../../shared/formStyles';
 import ScopeMultiSelect from './ScopeMultiSelect';
-import ConnectionScopeTable from './ConnectionScopeTable';
-import { ALL_MCP_OPTION, ALL_ADMIN_OPTION } from './tokenTypes';
+import ConnectionScopeEditor from './ConnectionScopeEditor';
+import {
+    ALL_MCP_OPTION,
+    ALL_ADMIN_OPTION,
+    NO_MCP_RESTRICTION_TEXT,
+    NO_ADMIN_RESTRICTION_TEXT,
+    connectionScopeProblem,
+} from './tokenTypes';
 import type {
     Token,
     Connection,
@@ -111,25 +114,10 @@ const EditTokenDialog: React.FC<EditTokenDialogProps> = ({
     const theme = useTheme();
     const containedButtonSx = getContainedButtonSx(theme);
 
-    // Handle adding a connection to the scope
-    const handleAddConnection = (connection: Connection | null) => {
-        if (connection) {
-            const maxLevel = ownerConnectionLevels[connection.id] || 'read_write';
-            onScopedConnectionsChange([
-                ...scopedConnections,
-                {
-                    id: connection.id,
-                    name: connection.name,
-                    access_level: maxLevel,
-                },
-            ]);
-        }
-    };
-
-    // Filter out already-selected connections
-    const availableConnectionOptions = availableConnections.filter(
-        (c) => !scopedConnections.some((sc) => sc.id === c.id)
-    );
+    // A stored scope may break the server's connection scope rules; the
+    // editor explains the problem inline, and saving waits until the
+    // user has resolved it.
+    const scopeInvalid = connectionScopeProblem(scopedConnections) !== null;
 
     const tokenName = token?.name || token?.token_prefix || 'Token';
 
@@ -167,41 +155,10 @@ const EditTokenDialog: React.FC<EditTokenDialogProps> = ({
                     Connections
                 </Typography>
 
-                <Autocomplete<Connection>
-                    options={availableConnectionOptions}
-                    getOptionLabel={(option) => option.name || ''}
-                    value={null}
-                    onChange={(_e, value) => { handleAddConnection(value); }}
-                    renderInput={(params) => (
-                        <TextField
-                            {...params}
-                            label="Add Connection"
-                            margin="dense"
-                            placeholder="Select a connection to add..."
-                            InputLabelProps={{
-                                ...params.InputLabelProps,
-                                shrink: true,
-                            }}
-                            sx={SELECT_FIELD_SX}
-                        />
-                    )}
-                    disabled={loading}
-                />
-
-                <ConnectionScopeTable
-                    connections={scopedConnections}
-                    onAccessLevelChange={(id, level) => {
-                        onScopedConnectionsChange(
-                            scopedConnections.map((c) =>
-                                c.id === id ? { ...c, access_level: level } : c
-                            )
-                        );
-                    }}
-                    onRemove={(id) => {
-                        onScopedConnectionsChange(
-                            scopedConnections.filter((c) => c.id !== id)
-                        );
-                    }}
+                <ConnectionScopeEditor
+                    availableConnections={availableConnections}
+                    scopedConnections={scopedConnections}
+                    onScopedConnectionsChange={onScopedConnectionsChange}
                     ownerConnectionLevels={ownerConnectionLevels}
                     ownerIsSuperuser={ownerIsSuperuser}
                     disabled={loading}
@@ -226,6 +183,7 @@ const EditTokenDialog: React.FC<EditTokenDialogProps> = ({
                     }
                     allOption={ALL_MCP_OPTION}
                     disabled={loading}
+                    emptyHelperText={NO_MCP_RESTRICTION_TEXT}
                 />
 
                 <Typography
@@ -247,6 +205,7 @@ const EditTokenDialog: React.FC<EditTokenDialogProps> = ({
                     }
                     allOption={ALL_ADMIN_OPTION}
                     disabled={loading}
+                    emptyHelperText={NO_ADMIN_RESTRICTION_TEXT}
                 />
             </DialogContent>
             <DialogActions sx={dialogActionsSx}>
@@ -256,7 +215,7 @@ const EditTokenDialog: React.FC<EditTokenDialogProps> = ({
                 <Button
                     onClick={onSubmit}
                     variant="contained"
-                    disabled={loading}
+                    disabled={loading || scopeInvalid}
                     sx={containedButtonSx}
                 >
                     {loading ? (

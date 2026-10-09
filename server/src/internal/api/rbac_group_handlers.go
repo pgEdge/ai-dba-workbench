@@ -70,6 +70,11 @@ func (h *RBACHandler) createGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.requireGrantInTokenScope(w, r,
+		h.federatedNameInTokenScope(r.Context(), name), refuseFederated) {
+		return
+	}
+
 	groupID, err := h.actorStore(r).CreateGroup(name, req.Description)
 	if err != nil {
 		if errors.Is(err, auth.ErrGroupNameExists) {
@@ -278,6 +283,9 @@ func (h *RBACHandler) updateGroup(w http.ResponseWriter, r *http.Request, groupI
 			RespondError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		if !h.requireRenameInTokenScope(w, r, groupID, name) {
+			return
+		}
 	}
 
 	if err := h.actorStore(r).UpdateGroup(groupID, name, req.Description); err != nil {
@@ -308,8 +316,26 @@ func (h *RBACHandler) deleteGroup(w http.ResponseWriter, r *http.Request, groupI
 	if !h.requirePermission(w, r, auth.PermManageGroups) {
 		return
 	}
+	// Deleting the group takes away what membership conferred and drops
+	// the group's own grants, so a token needs read on each of those
+	// connections, and read_write on any whose last grant the group
+	// holds, since dropping it lifts the restriction (issue #471). The
+	// store decides the latter in the delete's own transaction.
+	if !h.requireGrantInTokenScope(w, r,
+		h.rbacChecker.CanDeleteGroup(r.Context(), groupID), refuseGroupRemoval) {
+		return
+	}
+	if !h.requireGroupDeleteInTokenScope(w, r, groupID) {
+		return
+	}
 
-	if err := h.actorStore(r).DeleteGroup(groupID); err != nil {
+	guard := h.rbacChecker.GroupDeleteLiftGuard(r.Context(), groupID)
+	err := h.actorStore(r).DeleteGroupGuarded(groupID, guard)
+	if errors.Is(err, auth.ErrRevokeLiftsRestriction) {
+		h.requireGrantInTokenScope(w, r, false, refuseGroupRemoval)
+		return
+	}
+	if err != nil {
 		log.Printf("[ERROR] Failed to delete group %d: %v", groupID, err)
 		RespondError(w, http.StatusInternalServerError, "Failed to delete group")
 		return
@@ -378,6 +404,16 @@ func (h *RBACHandler) addGroupMember(w http.ResponseWriter, r *http.Request, gro
 		return
 	}
 
+	// Joining a group confers everything the group and its ancestors
+	// hold, so a token may add a member only to a group whose every
+	// connection grant, MCP item and admin permission lies within its
+	// own access (issue #471).
+	if !h.requireGrantInTokenScope(w, r,
+		h.rbacChecker.GroupWithinTokenScope(r.Context(), groupID),
+		refuseGroupAccess) {
+		return
+	}
+
 	if req.UserID != nil {
 		if err := h.actorStore(r).AddUserToGroup(groupID, *req.UserID); err != nil {
 			log.Printf("[ERROR] Failed to add user %d to group %d: %v", *req.UserID, groupID, err)
@@ -396,6 +432,23 @@ func (h *RBACHandler) addGroupMember(w http.ResponseWriter, r *http.Request, gro
 }
 
 func (h *RBACHandler) removeGroupMember(w http.ResponseWriter, r *http.Request, groupID int64, memberType string, memberID int64) {
+	if memberType != "user" && memberType != "group" {
+		RespondError(w, http.StatusBadRequest,
+			"Invalid member type: must be 'user' or 'group'")
+		return
+	}
+
+	// Removing a member takes away the connections membership confers,
+	// so, as for a revoke, a token needs read on each of them (issue
+	// #471). A user dropped from the group that restricts a connection
+	// they own keeps it through ownership, which the reach checks count
+	// for that reason.
+	if !h.requireGrantInTokenScope(w, r,
+		h.rbacChecker.CanRemoveGroupMember(r.Context(), groupID),
+		refuseGroupRemoval) {
+		return
+	}
+
 	switch memberType {
 	case "user":
 		if err := h.actorStore(r).RemoveUserFromGroup(groupID, memberID); err != nil {
@@ -409,10 +462,6 @@ func (h *RBACHandler) removeGroupMember(w http.ResponseWriter, r *http.Request, 
 			RespondError(w, http.StatusInternalServerError, "Failed to remove group from group")
 			return
 		}
-	default:
-		RespondError(w, http.StatusBadRequest,
-			"Invalid member type: must be 'user' or 'group'")
-		return
 	}
 
 	w.WriteHeader(http.StatusNoContent)

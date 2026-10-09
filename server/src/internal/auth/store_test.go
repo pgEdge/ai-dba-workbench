@@ -1844,6 +1844,7 @@ func TestUpdateUserAtomic_OnlyEnabledStatus(t *testing.T) {
 func TestUpdateUserAtomic_OnlySuperuserStatus(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
+	addSpareSuperuser(t, store)
 
 	err := store.CreateUser("testuser", "Password1234", "", "", "")
 	if err != nil {

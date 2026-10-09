@@ -336,11 +336,14 @@ project adheres to
   deleted from the newest end of the log. Repeated denials are
   coalesced into one event per minute carrying a
   `details.repeat_count`, so a client retrying a refused request
-  cannot flood the log. Retention is controlled by the new
-  `http.auth.audit_retention_days` setting, which defaults to 90
-  days, and each purge records an `audit.purge` event naming the
-  cutoff it applied and the number of events it removed. Each
-  event's hash length-prefixes every field it covers, so a value
+  cannot flood the log; each denial names the object it was
+  aimed at in `details.target`, such as `users/12`, and a token
+  refused moving a connection between clusters is recorded too. Retention is
+  controlled by the new `http.auth.audit_retention_days`
+  setting, which defaults to 90 days, and each purge records an
+  `audit.purge` event naming the cutoff it applied and the
+  number of events it removed. Each event's hash
+  length-prefixes every field it covers, so a value
   containing a separator character cannot be made to stand for a
   different pair of columns, and records the version of that encoding
   in a `hash_version` field, which verification reads so that an event
@@ -406,6 +409,28 @@ project adheres to
   connection library's default; a database configured only through
   the `-db-*` command-line flags now leaves it unset too, where it
   previously set four.
+
+- Decide connection access and connection visibility with one rule, so
+  that every listed connection can be opened and every connection that an
+  account can open is listed (#592). An `All Connections` grant no longer
+  restricts every connection: before this change, a single such grant to
+  any group refused every user outside that group every connection,
+  shared connections and the user's own included, whilst the connection
+  lists still offered them. Only a grant that names a connection now
+  restricts it. An `All Connections` grant at `read` therefore no longer
+  caps its members: a shared connection that no grant names stays open at
+  `read_write` to every account, subject only to an API token's own
+  scope, so to keep a group read-only on a connection, grant that
+  connection to the group by name. The owner of a
+  connection always holds `read_write` access to it, whether or not a
+  group restricts it. Holding a grant on one connection no longer hides
+  shared connections that no group restricts, which the account could
+  already open. Revoking an
+  `All Connections` grant never lifts a restriction, so an API token
+  needs only `read` to revoke one, whilst revoking a connection's last
+  specific grant needs `read_write` even when an `All Connections` grant
+  remains. See the
+  [permission model](admin-guide/managing-users-and-permissions/permission_model.md).
 
 - Follow the dashboard time range selector in the database summaries
   section of the server dashboard, the Transaction Rate tile of the
@@ -548,6 +573,182 @@ project adheres to
   an event hashed under the old unkeyed encoding, exits with
   status 2. Any other failure keeps status 1.
 
+- Bind an API token owned by a superuser to the token's own
+  scope. The authorisation check previously short-circuited on
+  the owner's superuser flag before it looked at the scope, so a
+  token minted for one narrow job reached every connection,
+  every MCP tool and every administrative permission in the
+  installation, whatever scope it carried. Each check now
+  intersects the owner's rights with the token's scope for the
+  surface being reached, and because a superuser holds
+  everything, the intersection is the scope itself: a token
+  whose admin scope names one permission is limited to that
+  permission, one whose connection scope names one connection is
+  limited to that connection, and one whose MCP scope names one
+  tool is limited to that tool (and to `test_query`, which every
+  token may call), with no group grant needed on the owning
+  account. A scope kind left unset, or holding the relevant
+  wildcard, stays unrestricted as before, so a token narrowed in
+  one kind is not narrowed in another, and a session login is
+  unaffected throughout, because a session carries no token. The
+  connection scope now also bounds the endpoints that change
+  blackouts, blackout schedules, alert, probe and channel
+  overrides, alert rules, probe configurations, notification
+  channels and clusters, which are gated on an admin
+  permission: a change on one server needs that connection in
+  scope at `read_write` (or at `read`, for a blackout or
+  blackout schedule), as does adding a server to a cluster,
+  removing one or moving a connection between clusters, whilst
+  a change to a cluster, a group or the whole estate, to an
+  alert rule, a global probe configuration or a notification
+  channel, or to a cluster's definition or relationships, needs
+  a scope covering every connection. A write to a blackout or
+  blackout schedule that the token cannot see answers `404 Not
+  Found`, as reading it does, and so does moving a connection
+  into a cluster, or updating a cluster group, whose members the
+  caller cannot see; moving a connection between clusters also
+  refuses a role the server does not recognise with `400 Bad
+  Request`. `PUT /api/v1/rbac/tokens/{id}/scope` refuses an empty list for any
+  scope kind with `400 Bad Request`, because an empty kind means
+  unrestricted; clear the scope with `DELETE` or use the
+  wildcard instead, and the console does the same. The two
+  endpoints reserved for superusers that name no permission, the
+  RBAC audit log at `GET /api/v1/rbac/audit` and a group's admin
+  permissions at `/api/v1/rbac/groups/{id}/permissions`, refuse
+  a token whose admin scope has been narrowed, because a gate
+  that names no permission has nothing to intersect against. A
+  public MCP tool is now bound by the token's MCP scope as well,
+  for a token of any owner, so a token whose MCP scope names
+  specific tools can no longer call `store_memory`,
+  `recall_memories` or `delete_memory` unless the scope names
+  them too (#482). Setting a token's MCP scope to an identifier
+  that is not registered is refused with `400 Bad Request`,
+  where the name used to be dropped silently and a list of
+  unknown names left the token unrestricted. Everything fails
+  closed: a scope that cannot be read, and an API-token request
+  that carries no token identifier, are denied, and the
+  `list_connections` tool returns an error rather than every
+  connection when the caller's visible connections cannot be
+  resolved. Creating a cluster also needs a connection scope
+  that covers every connection, since a connection later moved
+  into it inherits its group's settings, and a cluster group can
+  be created only from a browser session; moving a connection
+  into a cluster that does not exist answers `404 Not Found`, as a hidden cluster
+  does, rather than `500`; and adding a server to a cluster
+  refuses a role the server does not recognise with `400 Bad
+  Request`. Administrative grants and account changes made
+  with a token are bounded by a ceiling: the token's own access,
+  which is its owner's privileges narrowed by its scope, judged
+  one connection and access level, MCP item and admin permission
+  at a time. The connection and MCP scopes limit what a token can
+  reach and the admin scope limits which administrative actions
+  it can perform, but without the ceiling a token holding
+  `manage_permissions` could grant its owner's group, or a
+  confederate's, a server it was deliberately blocked from; with
+  it, no chain of grants can exceed what the token already holds.
+  A token with no access to a connection can grant nothing on it,
+  one with `read` can grant `read`, and one with `read_write` can
+  grant either; revoking needs `read`, so that a token cannot
+  probe for servers it cannot see, and revoking a connection's
+  last group grant, which lifts its group restriction, needs
+  `read_write`. Granting the `All Connections` entry needs every
+  connection at that level, and an MCP privilege needs the token
+  to be able to call it. Granting an admin permission, which
+  only a superuser's token with an unrestricted admin scope may
+  do, needs every connection at `read_write`; granting
+  `manage_users`, `manage_groups`, `manage_permissions`,
+  `manage_token_scopes` or `*` also needs an unrestricted MCP
+  scope, because a member's browser session is not bounded by
+  any token. Adding a member to a group needs the
+  group's whole access, inherited grants included, within the
+  ceiling, as does renaming the group; removing a member, or
+  deleting the group, needs `read` on each connection the group
+  confers, and deleting it needs `read_write` on any connection
+  where it holds the last grant. A token also cannot create a
+  user, set a user's password, re-enable or delete a user, or
+  create a token for an owner, where that user reaches beyond the
+  token, which counts the public MCP items, every shared
+  connection no group restricts, every connection the user owns,
+  restricted or not, and every member of a cluster group the
+  user owns; cannot create or promote a superuser unless it is a
+  superuser's token whose connection scope is unset or holds
+  `All Connections` at `read_write` and whose MCP and admin
+  scopes are unset or hold their wildcards, the
+  same bar that applies to creating, renaming from or to, or
+  deleting a group the OIDC `group_map` names; and cannot change
+  any token's scope, its own included, so that it gains access
+  beyond the acting token's, although it may narrow a scope
+  given `read` on each connection entry it names or drops. A
+  user or group holding any admin permission counts as reaching
+  every connection at `read_write`, and one holding
+  `manage_users`, `manage_groups`, `manage_permissions` or
+  `manage_token_scopes` counts as reaching every MCP item and
+  admin permission, since each lets its holder acquire the
+  rest. As an accepted trade-off, a token
+  with `read` on a connection and `manage_permissions` can revoke
+  another group's `read_write` on it; revoking MCP privileges and
+  admin permissions, changing a user's profile, disabling a user,
+  clearing superuser status and deleting tokens are not bounded
+  by the ceiling. Refused requests are
+  written to the RBAC audit log, including those refused by the
+  cluster, alert rule and notification channel handlers;
+  repeated refusals from one caller are folded into a single
+  row per minute that lists up to 20 of the targets, so that a
+  client cannot flood the log by varying the path or the HTTP
+  method. One MCP tool still
+  reaches beyond a connection scope: `query_datastore` runs read-only SQL over
+  the whole datastore, including every connection's host,
+  username and encrypted credentials, and #566 tracks limiting
+  it to the connections the caller can read. A `read` entry
+  means read-only access to the monitored server, so it still
+  allows a token to acknowledge, unacknowledge and save an
+  analysis of an alert on that connection, and to manage
+  blackouts and blackout schedules on that server, which is
+  intended; a blackout covering a cluster, a group or the
+  estate needs the all-connections entry. This is a
+  breaking change for existing integrations, because a token
+  that carries an explicit scope, most often one owned by a
+  superuser, will start receiving `403 Forbidden`
+  where it previously succeeded, and there is no configuration
+  option that restores the old behaviour. Review every scoped
+  token before upgrading, starting with those owned by a
+  superuser and any whose MCP scope names specific tools; where
+  one is refused afterwards, either clear the token's scope, add
+  the relevant wildcard to the scope, or narrow what the token
+  is asked to do so that it matches the scope the token holds.
+  (#471)
+
+- Close further gaps in API token scopes and superuser
+  administration. A token connection scope that combines the
+  `All Connections` entry (connection 0) with particular
+  connections, names a connection twice or names a negative
+  connection ID is now refused with `400 Bad Request` by the API
+  and with an error by the `-scope-token-connections` command,
+  leaving the stored scope unchanged, because the access check and
+  the grant ceiling read a mixed scope differently. An admin
+  permission scope that names an unknown admin permission is
+  also refused with `400 Bad Request`. Creating a
+  token for a superuser, and setting or clearing the scope of, or
+  deleting, a token that a superuser owns now needs a superuser's
+  session or a superuser's token with an unrestricted admin
+  permission scope, although a token may still narrow or delete
+  itself; the token grant ceiling also refuses any change that
+  widens a superuser's token unless the acting token holds
+  everything a superuser does. Whether revoking a connection grant
+  or deleting a group removes a connection's last group grant is
+  now decided inside the same transaction as the change, so a
+  concurrent change cannot let a token lift that restriction
+  without `read_write` access. The server also refuses, with
+  `409 Conflict` from the API and an error from the
+  `-disable-user`, `-unset-superuser` and `-delete-user` commands,
+  any change that would leave no enabled superuser; enabled
+  service accounts that are superusers count towards the total.
+  A token that deletes itself part-way through a request now has
+  no access for the rest of that request, rather than reading as
+  unrestricted once its scope rows are gone, and requesting the
+  scope of a token that does not exist answers `404 Not Found`.
+  (#471, #528)
+
 - Change the alerter's default Gemini reasoning model from
   `gemini-2.5-flash` to `gemini-3.6-flash`. Google no longer offers
   `gemini-2.5-flash` to new API keys, answering every request with a
@@ -618,14 +819,11 @@ project adheres to
   an ungrouped connection outside its scope, or reaching one
   at `read_write` whilst scoped to `read`, will now be
   refused or capped. Review the scope of every token that
-  touches a connection with no group before upgrading. The
-  change does not reach a token owned by a superuser: the
-  superuser check returns before the scope is consulted, so
-  such a token still reaches every connection at `read_write`
-  whatever its scope says, which is the pre-existing bypass
-  tracked in #482. A narrow automation credential should
-  therefore be minted from a service account or an ordinary
-  user, not from an administrator. (#261)
+  touches a connection with no group before upgrading. A token
+  owned by a superuser was left out at the time, because the
+  superuser check returned before the scope was consulted;
+  that bypass is closed separately, so such a token is now
+  held to its connection scope as well. (#261)
 
 - Serve `GET /api/v1/capabilities` without authentication. The
   endpoint previously required a session or API token, although
@@ -1786,6 +1984,16 @@ project adheres to
   before its staleness alert has fired therefore still raises no
   alert, which is tracked in issue #512. (#465)
 
+- Make `ai-dba-server -delete-user` ask for confirmation in every case.
+  When the username was typed at the prompt rather than given with
+  `-username`, the command read the confirmation through a second input
+  buffer that never saw it, and deleted the account without asking;
+  it did the same whenever the confirmation could not be read at all.
+  The prompts now share one input buffer, and any answer other than
+  `y` or `yes`, including none, cancels the deletion. The
+  `-update-user` prompts had the same split buffer and now share one
+  too. (#588)
+
 ### Removed
 
 - Remove the hard-coded allow-list of embedding model names, which
@@ -1902,6 +2110,16 @@ project adheres to
   already a superuser now needs a superuser too, since a `manage_users`
   holder who could reset a superuser's password could sign in as them.
   (#497)
+
+- Check whether the target of a user update or delete is a superuser
+  inside the change's own transaction. `PUT /api/v1/rbac/users/{id}`
+  and `DELETE /api/v1/rbac/users/{id}` read the account and checked its
+  superuser status before making the change separately, so a
+  `manage_users` holder who was not a superuser could have an edit or
+  delete applied to an account another request had promoted to
+  superuser in between. The auth store now reads the flag under the
+  same write lock as the change and refuses it with a 403, recorded in
+  the audit log as before. (#588)
 
 - Make each OIDC login state good for one callback only, and rate limit
   `GET /api/v1/auth/oidc/start` per client address. The sealed state

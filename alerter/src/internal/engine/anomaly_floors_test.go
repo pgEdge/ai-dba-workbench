@@ -10,6 +10,7 @@
 package engine
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -129,5 +130,44 @@ func TestBuildClassificationPromptIncludesDivisor(t *testing.T) {
 	prompt = e.buildClassificationPrompt(candidate, nil, nil, nil, nil)
 	if strings.Contains(prompt, "Z-score divisor") {
 		t.Errorf("prompt has a divisor line for a context without one:\n%s", prompt)
+	}
+}
+
+func TestUnknownMetricFloorNames(t *testing.T) {
+	cfg := config.NewConfig()
+	cfg.Anomaly.Enabled = false
+	if got := unknownMetricFloorNames(cfg); len(got) != 0 {
+		t.Errorf("unknownMetricFloorNames(defaults) = %v, want none", got)
+	}
+
+	setMetricFloor(cfg, tierSkipMetric, 1, 1)
+	setMetricFloor(cfg, "pg_stat_activty.count", 1, 1)
+	setMetricFloor(cfg, "probe_staleness_ratio", 1, 1)
+	want := []string{"pg_stat_activty.count", "probe_staleness_ratio"}
+	if got := unknownMetricFloorNames(cfg); !reflect.DeepEqual(got, want) {
+		t.Errorf("unknownMetricFloorNames() = %v, want %v", got, want)
+	}
+
+	// captureStderr holds its lock until the test ends, so each capture
+	// runs in its own subtest.
+	e := NewEngine(config.NewConfig(), nil, false)
+	cases := []struct {
+		name string
+		run  func()
+		want bool
+	}{
+		{"startup", func() { NewEngine(cfg, nil, false) }, true},
+		{"reload", func() { e.ReloadConfig(cfg) }, true},
+		{"reload with valid floors", func() { e.ReloadConfig(config.NewConfig()) }, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out := captureStderr(t, tc.run)
+			got := strings.Contains(out, "metric_floors names metrics that anomaly detection does not score") &&
+				strings.Contains(out, "pg_stat_activty.count, probe_staleness_ratio")
+			if got != tc.want {
+				t.Errorf("log %q: warning present = %v, want %v", out, got, tc.want)
+			}
+		})
 	}
 }

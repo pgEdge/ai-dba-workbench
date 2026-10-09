@@ -1192,8 +1192,11 @@ project adheres to
   z-score uses in the metric's units; both can be overridden
   per metric under the new `anomaly.tier1.metric_floors`
   option. A value under `min_value` counts as in band when an
-  anomaly alert is cleared, and an alert whose z-score relied on
-  a floored divisor is raised as a warning at most. (#617)
+  anomaly alert is cleared, and an alert scored against a
+  baseline with no spread of its own is raised as a warning at
+  most. The alerter logs a warning at startup and on reload for
+  any `metric_floors` entry naming a metric that anomaly
+  detection does not score. (#617)
 
 - Apply the datastore password read from the server's
   `-db-password-file` flag. The file was read but its contents

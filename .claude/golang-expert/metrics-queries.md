@@ -1415,13 +1415,18 @@ so an explicit 0 disables a floor). `scoreAnomalyValue` returns an
   for recovery even on a cold baseline; `anomalyScore.inBand` is the one
   in-band test, and detection and recovery both use it.
 - the divisor is `max(effectiveStdDev(global floor), MinStdDev)`, and
-  `stddevFloored` is set when it exceeds the baseline's raw stddev.
-- `cappedAnomalySeverity` turns `critical` into `warning` when the
-  divisor was floored. `recordAnomalyCandidate` writes
+  `stddevFloored` is set only for a flat baseline (`StdDev <=
+  variance_floor.absolute_floor`), never because the relative floor or
+  `MinStdDev` won, since that capped real-spread baselines (#619 review).
+- `cappedAnomalySeverity` turns `critical` into `warning` when
+  `stddevFloored` is set. `recordAnomalyCandidate` writes
   `effective_stddev` and `stddev_floored` into the candidate `Context`,
   and `createAnomalyAlert` reads the flag back with
   `candidateStdDevFloored` (false for older contexts), so raising and
   refreshing an alert apply the same cap.
+- `unknownMetricFloorNames` (engine, since `config` cannot import the
+  registry) lists `metric_floors` keys failing `SupportsBaselines`;
+  `NewEngine` and `ReloadConfig` log them as a warning, not an error.
 
 Engine tests that exercise the global variance floor on the load-average
 test metric must call `disableMetricFloors`, since its default floors

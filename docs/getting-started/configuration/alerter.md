@@ -321,10 +321,12 @@ A value under `min_value` raises no anomaly candidate, and it
 counts as in band when the alerter decides whether to clear an
 open anomaly alert. The `min_stddev` option raises the divisor
 of the z-score to at least the given value, so a small change
-on a baseline that has never moved scores a small z-score. When
-a floor rather than the baseline supplies the divisor, the
-alert severity is capped at `warning`; threshold rules remain
-the way to raise a critical alert on an absolute value.
+on a baseline that has never moved scores a small z-score; it
+only takes effect whilst it exceeds 5% of the baseline mean,
+the default relative variance floor. When the baseline has no
+spread of its own, the alert severity is capped at `warning`;
+threshold rules remain the way to raise a critical alert on an
+absolute value.
 
 The alerter has built-in floors for its standard metrics, for
 example `min_value: 50` and `min_stddev: 5` for CPU usage
@@ -334,7 +336,10 @@ session count; the
 lists them all. An entry overrides a built-in floor field by
 field, so an entry that sets only `min_value` keeps the
 built-in `min_stddev`. The alerter refuses a negative or
-non-finite value, or an empty metric name.
+non-finite value, or an empty metric name, and logs a warning
+at startup and on each reload for an entry naming a metric
+that anomaly detection does not score, such as a mistyped
+name.
 
 In the following example, the `metric_floors` map raises the
 CPU value floor and disables both floors for the session

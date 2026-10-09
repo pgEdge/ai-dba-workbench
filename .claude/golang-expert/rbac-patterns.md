@@ -580,7 +580,9 @@ exceeded "this token's access" (fixed so the denial audit coalesces).
   `superuserOwnerAllowed` and run `guardSuperuserOwnedTokenTx`
   (`token_superuser_owner.go`; a failed owner read refuses). Both
   return `auth.ErrSuperuserTargetForbidden`, which
-  `respondTokenWriteError` maps to `denyNotSuperuser`. The handlers
+  `respondTokenWriteError` maps to `denyNotSuperuser`; the store's
+  deferred failure audit skips that error, so a refusal leaves only the
+  coalesced denial row (`TestSuperuserOwnedTokenRefusalsAuditOnce`). The handlers
   pass `RBACChecker.IsSuperuser`, or `superuserOwnerAllowed(r, id)`,
   which also exempts a token acting on itself so it can narrow or
   delete itself; the CLI passes true. Do not add a handler pre-read of

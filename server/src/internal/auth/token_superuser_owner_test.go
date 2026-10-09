@@ -144,9 +144,9 @@ func TestSuperuserOwnedTokenGuard(t *testing.T) {
 				t.Fatalf("Expected ErrSuperuserTargetForbidden, got %v", err)
 			}
 			assertOwnedTokenUntouched(t, store, tokenID)
-			if ev := lastAuditEvent(t, store); ev.Outcome != OutcomeFailure {
-				t.Errorf("Expected a failed audit event, got %q", ev.Outcome)
-			}
+			// The handler records the refusal as a coalesced denial, so
+			// the store's rolled-back write records no failure of its own.
+			assertNoFailureRow(t, store, "")
 		})
 		t.Run(w.name+" superuser owner allowed", func(t *testing.T) {
 			store, tokenID, cleanup := newOwnedTokenStore(t)

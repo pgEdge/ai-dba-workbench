@@ -317,8 +317,10 @@ func (h *RBACHandler) superuserOwnerAllowed(r *http.Request,
 // respondTokenWriteError answers a failed token write. The store's
 // refusal to let a caller who is not a superuser mint, change or delete
 // a superuser's token is answered exactly as requireSuperuser answers,
-// denial audit included; anything else is logged with logContext and
-// answered with a 500 carrying failure.
+// and its coalesced denial row is the only audit row the refusal leaves,
+// since the store records no failure for ErrSuperuserTargetForbidden;
+// anything else is logged with logContext and answered with a 500
+// carrying failure.
 func (h *RBACHandler) respondTokenWriteError(w http.ResponseWriter,
 	r *http.Request, err error, logContext, failure string) {
 

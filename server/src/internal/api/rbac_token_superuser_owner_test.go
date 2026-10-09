@@ -350,3 +350,53 @@ func TestSetTokenScopeRejectsUnknownAdminPermission(t *testing.T) {
 		t.Errorf("Expected the scope to be untouched, got %+v", scope)
 	}
 }
+
+// TestSuperuserOwnedTokenRefusalsAuditOnce checks that repeated store
+// refusals of a session caller who is not a superuser, minting, setting
+// or clearing the scope of, or deleting a superuser's token, each leave
+// exactly one audit row: the handler's coalesced denial, with no failure
+// row from the store's rolled-back write beside it.
+func TestSuperuserOwnedTokenRefusalsAuditOnce(t *testing.T) {
+	const attempts = 10
+	handler, store, cleanup := createTestRBACHandler(t)
+	defer cleanup()
+	target := mustSuperuserScopedToken(t, store, "svc-root",
+		[]string{auth.PermManageUsers})
+	tokenPath := "/api/v1/rbac/tokens/" + strconv.FormatInt(target, 10)
+	session := scopeAdminCallers(t, store)["session"]
+
+	requests := []struct {
+		name, method, path, body, action string
+	}{
+		{"create", http.MethodPost, "/api/v1/rbac/tokens/",
+			`{"owner_username":"svc-root"}`, "token.create"},
+		{"set scope", http.MethodPut, tokenPath + "/scope",
+			`{"admin_permissions":["manage_users"]}`, "token.scope.set"},
+		{"clear scope", http.MethodDelete, tokenPath + "/scope", "",
+			"token.scope.clear"},
+		{"delete", http.MethodDelete, tokenPath, "", "token.delete"},
+	}
+	for _, rq := range requests {
+		t.Run(rq.name, func(t *testing.T) {
+			_, before, err := store.ListAuditEvents(auth.AuditFilter{Limit: 1})
+			if err != nil {
+				t.Fatalf("ListAuditEvents failed: %v", err)
+			}
+			for i := 0; i < attempts; i++ {
+				assertRefusedWith(t, tokenRouteRequest(handler, rq.method,
+					rq.path, rq.body, session), refuseNotSuperuser)
+			}
+			events, after, err := store.ListAuditEvents(auth.AuditFilter{
+				Limit: attempts * 2})
+			if err != nil {
+				t.Fatalf("ListAuditEvents failed: %v", err)
+			}
+			if after-before != 1 || events[0].Outcome != auth.OutcomeDenied ||
+				events[0].Action != rq.action {
+				t.Errorf("%d refusals added %d rows, newest %s %q; want one denied %s row",
+					attempts, after-before, events[0].Action, events[0].Outcome,
+					rq.action)
+			}
+		})
+	}
+}

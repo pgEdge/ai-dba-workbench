@@ -566,14 +566,14 @@ func TestConnectionHandlerCoverage_UpdateCluster(t *testing.T) {
 			ConnectionClusterUpdateRequest{}), http.StatusOK},
 		{"unknown cluster", e.asSuperuser(http.MethodPut, path,
 			ConnectionClusterUpdateRequest{ClusterID: &missingCluster}),
-			http.StatusInternalServerError},
+			http.StatusNotFound},
 		{"reset missing connection", e.asSuperuser(http.MethodPut,
 			"/api/v1/connections/999/cluster", ConnectionClusterUpdateRequest{}),
 			http.StatusInternalServerError},
 		{"assign missing connection", e.asSuperuser(http.MethodPut,
 			"/api/v1/connections/999/cluster",
 			ConnectionClusterUpdateRequest{ClusterID: &clusterID}),
-			http.StatusInternalServerError},
+			http.StatusNotFound},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

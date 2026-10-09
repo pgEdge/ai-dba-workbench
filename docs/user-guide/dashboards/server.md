@@ -151,8 +151,12 @@ table shows the following columns for each slot:
   be written before the slot is at risk of losing WAL.
   It shows Unlimited when `max_slot_wal_keep_size` is
   `-1`, which means the slot can retain WAL until the
-  disk fills. Servers older than PostgreSQL 13 do not
-  report a safe WAL size, so the column shows `--`.
+  disk fills. It shows Exceeded when the slot already
+  retains more WAL than `max_slot_wal_keep_size`
+  allows, which is usually the case for an Unreserved
+  slot. A Lost slot has no safe WAL size, and servers
+  older than PostgreSQL 13 do not report one, so the
+  column shows `--` for both.
 
 The section lists up to 100 slots by name, and notes the
 total when a server has more. The collector records a

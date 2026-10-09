@@ -20,6 +20,7 @@ import type {
     ClusterServer,
 } from '../../../contexts/ClusterDataContext';
 import { collectServers } from '../../../utils/clusterHelpers';
+import { formatBytes } from '../../../utils/formatters';
 import { getRelationshipLabel } from '../../topology/topologyHelpers';
 
 /** One replication slot from the latest collected snapshot. */
@@ -101,6 +102,27 @@ export const describeWalStatus = (
         health: 'unknown',
         description: `Unrecognised WAL status '${walStatus}'`,
     };
+};
+
+/**
+ * Format a slot's safe WAL size for display. PostgreSQL reports a
+ * negative size once a slot has retained more WAL than
+ * max_slot_wal_keep_size allows (wal_status 'unreserved'), so that
+ * reads as Exceeded. A null size means max_slot_wal_keep_size is -1,
+ * and the slot may retain WAL without limit, except for a lost slot,
+ * whose WAL is already gone, and a server before PostgreSQL 13, which
+ * reports neither value; both show '--'.
+ */
+export const formatSafeWalSize = (slot: ReplicationSlotRow): string => {
+    if (slot.wal_status === 'lost') {
+        return '--';
+    }
+    if (slot.safe_wal_size !== null) {
+        return slot.safe_wal_size < 0
+            ? 'Exceeded'
+            : formatBytes(slot.safe_wal_size);
+    }
+    return slot.wal_status ? 'Unlimited' : '--';
 };
 
 /**

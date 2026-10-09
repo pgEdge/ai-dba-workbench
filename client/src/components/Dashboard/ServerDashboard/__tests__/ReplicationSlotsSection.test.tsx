@@ -192,6 +192,35 @@ describe('ReplicationSlotsSection', () => {
         expect(chipOf(old[3]).className).toContain('MuiChip-outlined');
     });
 
+    it('shows -- for a lost slot and Exceeded for an overdrawn one', () => {
+        setSlots([
+            makeSlot({
+                slot_name: 'gone',
+                active: false,
+                wal_status: 'lost',
+                safe_wal_size: null,
+            }),
+            makeSlot({
+                slot_name: 'over',
+                active: false,
+                wal_status: 'unreserved',
+                safe_wal_size: -38_482_739,
+            }),
+        ]);
+
+        renderSection();
+
+        const gone = cellsOf('gone');
+        expect(gone[3]).toHaveTextContent('Lost');
+        expect(gone[5]).toHaveTextContent('--');
+        expect(gone[5]).not.toHaveTextContent('Unlimited');
+
+        const over = cellsOf('over');
+        expect(over[3]).toHaveTextContent('Unreserved');
+        expect(over[5]).toHaveTextContent('Exceeded');
+        expect(over[5]).not.toHaveTextContent('-');
+    });
+
     it('describes each status in a tooltip', () => {
         setSlots([makeSlot({ wal_status: 'unreserved' })]);
 

@@ -25,6 +25,7 @@ import type { ServerSectionProps } from './types';
 import {
     describeActivity,
     describeWalStatus,
+    formatSafeWalSize,
     getReplicationContext,
     summariseSlots,
     type ReplicationPeer,
@@ -132,18 +133,6 @@ const StatusChip: React.FC<WalStatusDisplay> = ({ label, health, description }) 
         </Tooltip>
     </Box>
 );
-
-/**
- * Format a slot's safe WAL size. PostgreSQL reports it as null when
- * max_slot_wal_keep_size is -1, so a null alongside a reported WAL
- * status means the slot may retain WAL without limit.
- */
-const formatSafeWalSize = (slot: ReplicationSlotRow): string => {
-    if (slot.safe_wal_size !== null) {
-        return formatBytes(slot.safe_wal_size);
-    }
-    return slot.wal_status ? 'Unlimited' : '--';
-};
 
 /** Format a slot type for display. */
 const formatSlotType = (slotType: string | null): string => {

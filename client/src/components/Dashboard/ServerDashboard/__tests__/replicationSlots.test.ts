@@ -16,6 +16,7 @@ import type {
 import {
     describeActivity,
     describeWalStatus,
+    formatSafeWalSize,
     getReplicationContext,
     normaliseSlotRows,
     summariseSlots,
@@ -88,6 +89,45 @@ describe('describeWalStatus', () => {
         expect(result.label).toBe('mystery');
         expect(result.health).toBe('unknown');
         expect(result.description).toContain("'mystery'");
+    });
+});
+
+describe('formatSafeWalSize', () => {
+    it('formats a positive size in bytes', () => {
+        expect(formatSafeWalSize(makeSlot({ safe_wal_size: 1024 })))
+            .toBe('1.0 KB');
+    });
+
+    it('shows a negative size on an unreserved slot as Exceeded', () => {
+        expect(formatSafeWalSize(makeSlot({
+            wal_status: 'unreserved',
+            safe_wal_size: -16777640,
+        }))).toBe('Exceeded');
+    });
+
+    it('shows a null size as Unlimited when the status is reported', () => {
+        expect(formatSafeWalSize(makeSlot({
+            wal_status: 'extended',
+            safe_wal_size: null,
+        }))).toBe('Unlimited');
+    });
+
+    it('shows -- for a lost slot rather than Unlimited', () => {
+        expect(formatSafeWalSize(makeSlot({
+            wal_status: 'lost',
+            safe_wal_size: null,
+        }))).toBe('--');
+        expect(formatSafeWalSize(makeSlot({
+            wal_status: 'lost',
+            safe_wal_size: -1024,
+        }))).toBe('--');
+    });
+
+    it('shows -- when the server reports neither value', () => {
+        expect(formatSafeWalSize(makeSlot({
+            wal_status: null,
+            safe_wal_size: null,
+        }))).toBe('--');
     });
 });
 

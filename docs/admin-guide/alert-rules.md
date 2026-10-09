@@ -413,13 +413,51 @@ alerts. Any condition that still holds raises a fresh
 alert on the next evaluation cycle, subject to the usual
 re-raise cooldown.
 
+## Anomaly Alert Clearing
+
+The alerter also clears anomaly alerts automatically.
+An anomaly alert has no rule threshold, so the anomaly
+detector re-scores the metric behind each active anomaly
+alert on every tier 1 evaluation, using the same baseline
+and sensitivity that raised the alert. The alerter clears
+the alert and sends the usual clear notification once the
+value has stayed inside the sensitivity band for
+`anomaly.tier1.clear_count` consecutive evaluations; the
+default of 3 clears an alert about three minutes after
+the metric recovers at the default 60 second interval.
+
+Whilst the value stays outside the band, the alerter
+updates the alert's metric value, anomaly score and last
+updated time, and raises the severity when the deviation
+grows; the severity never falls, and the description
+keeps the values at which the alert fired. A cached AI
+analysis is discarded when the metric value changes.
+
+The alerter holds an anomaly alert open, and restarts its
+count, on any evaluation in which the metric or connection
+does not report, the baseline is not usable, or a blackout
+covers the connection or database. The count is held in
+memory, so the count also restarts when the alerter
+restarts or when tier 1 is disabled. The alerter does not
+clear acknowledged anomaly alerts this way, and leaves
+them to the re-evaluation worker. Recovery stops whenever
+anomaly detection is disabled, including when the alerter
+disables it because no enabled tier has a usable LLM
+provider; recovery itself makes no embedding or LLM call.
+
+After an anomaly alert clears, the alerter raises no new
+anomaly alert for the same metric, connection and
+database for five minutes, so a value at the edge of the
+band does not raise and clear an alert repeatedly.
+
 ## Blackout Interaction
 
 During an active blackout period, the alerter
 suppresses new alerts for the affected connection or
 database. Existing active alerts are not cleared during
 a blackout; the blackout only prevents new alerts from
-being created.
+being created, and holds an anomaly alert open until the
+blackout ends.
 
 ## Example Rule Configuration
 

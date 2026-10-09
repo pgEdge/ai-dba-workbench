@@ -63,6 +63,21 @@ When a metric value no longer violates the threshold, the
 system marks the alert as cleared and records the
 timestamp.
 
+An anomaly alert has no threshold, so the alerter clears
+an active anomaly alert once the metric returns to its
+normal range instead. The anomaly detector checks the
+metric on each evaluation, every minute by default, and
+clears the alert after the value has stayed within the
+normal range for three evaluations in a row; the
+`anomaly.tier1.clear_count` option in the alerter
+configuration changes that number. Until then, the alert
+shows the latest value and anomaly score, and its
+severity can rise but does not fall. The alerter sends
+the usual clear notification and raises no new anomaly
+alert for the same metric on that server for five
+minutes afterwards. An acknowledged anomaly alert is not
+cleared this way.
+
 A gap in the collected data does not clear an alert. When
 a metric that normally reports a value for every monitored
 connection stops returning one, the alerter treats the gap

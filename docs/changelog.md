@@ -1090,6 +1090,28 @@ project adheres to
   execution failed for extension '<name>'" rather than as a missing
   extension. (#612)
 
+- Clear an active anomaly alert once its metric recovers. The
+  alerter cleared only threshold alerts automatically, so an
+  anomaly alert stayed open after its metric returned to normal
+  until an operator dealt with it. Each tier 1 evaluation now
+  re-scores the metric behind every active anomaly alert against
+  the same baseline tier 1 uses, and clears the alert, sending
+  the usual clear notification, once the value has been back
+  inside the sensitivity band for the new
+  `anomaly.tier1.clear_count` consecutive evaluations (default 3,
+  minimum 1, about three minutes at the default interval). Whilst
+  the value stays out of band, the alert's metric value, anomaly
+  score and last-updated time are refreshed and its severity can
+  rise but never fall; the description keeps the original values.
+  An evaluation in which the metric does not report, the baseline
+  is not usable or a blackout applies holds the alert open and
+  restarts the count, which is kept in memory and also restarts
+  when the alerter does. Acknowledged anomaly alerts are left to
+  re-evaluation, and no new anomaly alert is raised on the same
+  metric, connection and database within five minutes of one
+  clearing. Recovery uses tier 1 only and makes no embedding or
+  LLM call. (#611)
+
 - Apply the datastore password read from the server's
   `-db-password-file` flag. The file was read but its contents
   were then dropped, so the server connected with the

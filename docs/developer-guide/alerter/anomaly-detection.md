@@ -54,6 +54,8 @@ skipped when any of the following conditions applies:
 - an active blackout covers the connection.
 - an active or acknowledged anomaly alert is already open for the
   same metric, connection and database.
+- an anomaly alert on the same metric, connection and database
+  cleared within the last five minutes.
 - re-evaluation cleared a matching alert within the last 24 hours.
 - a user acknowledged a matching alert as a false positive within
   the last 24 hours.
@@ -100,6 +102,7 @@ Tier 1 settings are configured in the `anomaly.tier1` section:
 | `enabled` | `true` | Enable Tier 1 detection |
 | `default_sensitivity` | `3.0` | Z-score threshold |
 | `evaluation_interval_seconds` | `60` | Evaluation interval |
+| `clear_count` | `3` | In-band evaluations before an anomaly alert clears |
 
 ### Supported Metrics
 
@@ -507,6 +510,78 @@ tier's default 336 hour warmup span be reached. A longer lookback
 period provides more stable baselines but may not reflect recent
 changes in workload; a shorter one must be paired with shorter
 warmup spans, as described under Baseline Selection.
+
+## Anomaly Alert Recovery
+
+Tier 1 also clears anomaly alerts whose metric has recovered. The
+threshold alert cleaner re-evaluates a rule's condition, but an
+anomaly alert has no rule or threshold to re-evaluate, so the
+recovery check runs inside each Tier 1 pass instead. The code lives
+in `alerter/src/internal/engine/anomaly_recovery.go`.
+
+At the start of each pass, Tier 1 reads every anomaly alert whose
+status is `active` and re-scores the metric, connection and database
+behind each one against the same baseline Tier 1 selects for new
+candidates. A metric that no enabled rule still covers is scored for
+recovery only and never produces a new candidate. Each scored value
+has one of the following effects on the alerts for its series:
+
+- a value outside the sensitivity band refreshes the alert's
+  `metric_value`, `anomaly_score` and `last_updated` columns, and
+  raises the severity when the new z-score warrants a higher one.
+- a value inside the band adds one to the alert's consecutive
+  in-band count.
+- a count that reaches `anomaly.tier1.clear_count` clears the alert
+  and queues the usual `alert_clear` notification.
+
+The refresh never lowers the severity, so a smaller deviation does
+not quietly downgrade an alert raised as critical. The refresh
+discards a cached AI analysis when the metric value changes, as the
+threshold path does, but leaves the title and description alone, so
+the description still reports the values at which the alert fired.
+A refresh sends no notification.
+
+The alerter holds an alert open, and drops its count back to zero,
+on a completed pass that does not score its series inside the band.
+The following conditions hold an alert open:
+
+- the metric or the connection did not report a value.
+- no warm baseline exists, or the floored standard deviation is zero.
+- a blackout covers the connection or the database.
+- the value lies outside the band.
+
+The alerter therefore never clears an anomaly alert on the absence
+of evidence. A failed blackout check is treated as an active
+blackout, because holding an alert open for one more pass is cheaper
+than clearing it during a maintenance window. A pass that fails
+before it completes, for example because the active alerts, the
+connections or the rules cannot be read, keeps the previous counts,
+as does a clear that fails to write, so the next in-band pass
+retries the clear.
+
+Acknowledged anomaly alerts take no part in recovery. The
+re-evaluation worker owns those alerts, and its fingerprint covers
+the alert's value, z-score and severity, so refreshing them would
+invalidate a stored "keep" verdict and buy a fresh Tier 3 call. Every
+recovery write is conditional on the alert still being `active`, so
+an alert that a user acknowledges during a pass is left as the user
+left it.
+
+The consecutive counts live in memory. The counts restart from zero
+when the alerter restarts or when a pass runs with anomaly detection
+or Tier 1 disabled, so an alert then needs a further `clear_count`
+in-band passes before it clears. Recovery uses Tier 1 alone and
+makes no embedding or LLM call. When the alerter auto-disables
+anomaly detection at startup or on a reload, as described in the
+next section, recovery stops with it.
+
+After an anomaly alert clears, the pre-tier checks skip new
+candidates on the same metric, connection and database for the
+five-minute alert cooldown that also applies to threshold alerts.
+The cooldown applies however the alert was cleared, and stops a
+value hovering at the edge of the band from raising, clearing and
+raising again, with a paid Tier 2 and Tier 3
+classification each time.
 
 ## Enabling and Disabling
 

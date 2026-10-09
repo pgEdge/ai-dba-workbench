@@ -144,4 +144,107 @@ describe('ConnectionSelectorCodeBlock', () => {
         const runnable = screen.getByTestId('runnable-code-block');
         expect(runnable.dataset.databaseName).toBe('');
     });
+
+    describe('with explicit options', () => {
+        const options = [
+            { connectionId: 1, serverName: 'alpha', databaseName: 'app' },
+            { connectionId: 1, serverName: 'alpha', databaseName: 'hr' },
+            { connectionId: 2, serverName: 'beta' },
+        ];
+
+        it('labels each option with its server, database and ID', async () => {
+            const user = userEvent.setup();
+            renderWithTheme(
+                <ConnectionSelectorCodeBlock {...baseProps} options={options} />,
+            );
+            await user.click(screen.getByRole('combobox'));
+            expect(screen.getByRole('option', { name: 'alpha/app (ID: 1)' })).toBeInTheDocument();
+            expect(screen.getByRole('option', { name: 'alpha/hr (ID: 1)' })).toBeInTheDocument();
+            expect(screen.getByRole('option', { name: 'beta (ID: 2)' })).toBeInTheDocument();
+        });
+
+        it('prefers options over the connection map and forwards the database', async () => {
+            const user = userEvent.setup();
+            renderWithTheme(
+                <ConnectionSelectorCodeBlock
+                    {...baseProps}
+                    options={options}
+                    connectionMap={new Map([[9, 'ignored']])}
+                    databaseName="fallback"
+                />,
+            );
+            let runnable = screen.getByTestId('runnable-code-block');
+            expect(runnable.dataset.connectionId).toBe('1');
+            expect(runnable.dataset.databaseName).toBe('app');
+
+            await user.click(screen.getByRole('combobox'));
+            await user.click(screen.getByRole('option', { name: 'beta (ID: 2)' }));
+            runnable = screen.getByTestId('runnable-code-block');
+            expect(runnable.dataset.connectionId).toBe('2');
+            expect(runnable.dataset.databaseName).toBe('fallback');
+        });
+
+        it('selects nothing and hides Run until the user chooses when required', async () => {
+            const user = userEvent.setup();
+            renderWithTheme(
+                <ConnectionSelectorCodeBlock
+                    {...baseProps}
+                    options={options}
+                    requireSelection
+                />,
+            );
+            const select = screen.getByRole('combobox', {
+                name: 'Server to run this query on',
+            });
+            expect(select).toHaveTextContent('Choose a server to run on');
+            let runnable = screen.getByTestId('runnable-code-block');
+            expect(runnable.dataset.isSql).toBe('false');
+            expect(runnable.dataset.connectionId).toBe('0');
+
+            await user.click(select);
+            await user.click(screen.getByRole('option', { name: 'alpha/hr (ID: 1)' }));
+            runnable = screen.getByTestId('runnable-code-block');
+            expect(runnable.dataset.isSql).toBe('true');
+            expect(runnable.dataset.databaseName).toBe('hr');
+            expect(select).toHaveTextContent('alpha/hr (ID: 1)');
+        });
+
+        it('keeps the chosen target when the options are reordered', async () => {
+            const user = userEvent.setup();
+            const { rerender } = renderWithTheme(
+                <ConnectionSelectorCodeBlock {...baseProps} options={options} />,
+            );
+            await user.click(screen.getByRole('combobox'));
+            await user.click(screen.getByRole('option', { name: 'beta (ID: 2)' }));
+
+            rerender(
+                <ConnectionSelectorCodeBlock
+                    {...baseProps}
+                    options={[...options].reverse()}
+                />,
+            );
+            const runnable = screen.getByTestId('runnable-code-block');
+            expect(runnable.dataset.connectionId).toBe('2');
+            expect(runnable.dataset.serverName).toBe('beta');
+        });
+
+        it('clears the selection when the chosen target disappears', async () => {
+            const user = userEvent.setup();
+            const { rerender } = renderWithTheme(
+                <ConnectionSelectorCodeBlock {...baseProps} options={options} />,
+            );
+            await user.click(screen.getByRole('combobox'));
+            await user.click(screen.getByRole('option', { name: 'beta (ID: 2)' }));
+
+            rerender(
+                <ConnectionSelectorCodeBlock
+                    {...baseProps}
+                    options={options.slice(0, 2)}
+                />,
+            );
+            const runnable = screen.getByTestId('runnable-code-block');
+            expect(runnable.dataset.isSql).toBe('false');
+            expect(runnable.dataset.connectionId).toBe('0');
+        });
+    });
 });

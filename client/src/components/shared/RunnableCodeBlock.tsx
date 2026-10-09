@@ -84,10 +84,14 @@ export interface QueryState {
 // Component
 // ---------------------------------------------------------------------------
 
-/** Label shown for a block that carries `$N` parameter placeholders. */
+/**
+ * Label shown for a block that carries placeholders (`$1`, `<name>`,
+ * `{{name}}` or `:name`); see `hasSqlParameters`.
+ */
 export const SQL_TEMPLATE_MESSAGE =
-    'This is a query template: it uses $1-style parameter placeholders, '
-    + 'so it needs parameter values substituted in before it can be run.';
+    'This is a query template: it uses placeholders such as $1, <name>, '
+    + '{{name}} or :name, so it needs values substituted in before it can '
+    + 'be run.';
 
 /** Hint shown when PostgreSQL cannot plan the statement for validation. */
 export const SQL_UNVALIDATED_MESSAGE =
@@ -140,7 +144,7 @@ const RunnableCodeBlock: React.FC<RunnableCodeBlockProps> = ({
         [codeContent],
     );
 
-    // A block with `$N` placeholders is a template rather than a query:
+    // A block with placeholders is a template rather than a query:
     // it cannot be run without parameter values, so it gets no Run
     // button and is never sent for validation.
     const isTemplate = isSql && hasSqlParameters(codeContent);

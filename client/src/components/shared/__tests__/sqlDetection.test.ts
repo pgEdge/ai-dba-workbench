@@ -29,6 +29,7 @@ import {
     extractExecutableSQL,
     isSqlCodeBlock,
     extractLanguage,
+    parseConnectionIdComment,
 } from '../sqlDetection';
 
 describe('SQL_KEYWORDS_RE', () => {
@@ -394,5 +395,66 @@ describe('line comments ended by a carriage return', () => {
         expect(splitSqlStatements('SELECT 1 -- a; b\rSELECT 2')).toEqual([
             'SELECT 1 -- a; b\rSELECT 2',
         ]);
+    });
+});
+
+describe('parseConnectionIdComment', () => {
+    it('extracts the ID and strips the comment line', () => {
+        expect(parseConnectionIdComment('-- connection_id: 7\nSELECT 1;')).toEqual({
+            connectionId: 7,
+            code: 'SELECT 1;',
+        });
+    });
+
+    it('accepts a comment that is the whole block', () => {
+        expect(parseConnectionIdComment('--connection_id:12')).toEqual({
+            connectionId: 12,
+            code: '',
+        });
+    });
+
+    it('returns the code unchanged when there is no leading comment', () => {
+        const code = 'SELECT 1;\n-- connection_id: 7';
+        expect(parseConnectionIdComment(code)).toEqual({
+            connectionId: null,
+            code,
+        });
+    });
+
+    it('treats zero and unsafe IDs as absent', () => {
+        expect(parseConnectionIdComment('-- connection_id: 0\nSELECT 1').connectionId)
+            .toBeNull();
+        expect(
+            parseConnectionIdComment('-- connection_id: 99999999999999999999\nSELECT 1')
+                .connectionId,
+        ).toBeNull();
+    });
+});
+
+describe('hasSqlParameters with other placeholder styles', () => {
+    it.each([
+        ['positional parameters', 'SELECT * FROM t WHERE id = $1'],
+        ['angle-bracket stand-ins', 'SELECT * FROM <table_name>'],
+        ['qualified angle-bracket stand-ins', 'VACUUM <schema.table>'],
+        ['template braces', 'SELECT * FROM {{ schema }}.t'],
+        ['psql variables', 'SELECT * FROM t WHERE id = :id'],
+        ['quoted psql variables', "SELECT * FROM t WHERE name = :'name'"],
+    ])('detects %s', (_label, sql) => {
+        expect(hasSqlParameters(sql)).toBe(true);
+    });
+
+    it.each([
+        ['plain SQL', 'SELECT relname, n_dead_tup FROM pg_stat_user_tables;'],
+        ['casts', 'SELECT now()::date, x :: text FROM t'],
+        ['comparison operators', 'SELECT 1 WHERE a <> b AND c < d AND e > f'],
+        ['placeholders in string literals', "SELECT '$1 <x> :y' AS s"],
+        ['placeholders in quoted identifiers', 'SELECT "<col>" FROM t'],
+        ['placeholders in comments', '-- replace $1\nSELECT 1 /* <t> */'],
+        ['dollar-quoted bodies', 'DO $$ BEGIN PERFORM $1; END $$;'],
+        ['tagged dollar-quoted bodies', 'DO $fn$ BEGIN x := :y; END $fn$;'],
+        ['array slices', 'SELECT arr[lo:hi] FROM t'],
+        ['times in literals', "SELECT '10:30'::time"],
+    ])('ignores %s', (_label, sql) => {
+        expect(hasSqlParameters(sql)).toBe(false);
     });
 });

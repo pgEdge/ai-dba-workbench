@@ -135,7 +135,9 @@ Example queries:
 
 RESPONSE GUIDELINES:
 - Be concise and direct
-- Format SQL in \`\`\`sql code blocks
+- Format SQL in \`\`\`sql code blocks; the user can run these directly from the chat
+- Put each query the user might run in its own \`\`\`sql block. When it is meant for a specific monitored server, make its first line \`-- connection_id: N\` with that server's connection ID, and use the same connection_id (and database_name, if not the default) in your tool calls for it. Do not add this comment to datastore queries
+- Never put placeholders such as $1 or <table_name> in \`\`\`sql blocks; show query templates in \`\`\`text blocks instead
 - Use markdown for structured responses
 - Base responses ONLY on actual tool results - never fabricate data
 - When showing query results, format them clearly

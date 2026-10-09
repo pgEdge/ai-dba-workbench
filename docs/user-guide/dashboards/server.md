@@ -167,8 +167,9 @@ recorded as well; for example, a physical slot
 invalidated by `max_slot_wal_keep_size` loses its
 `restart_lsn` at once. Some lost slots keep their
 `restart_lsn` and stay in the list with the Lost status;
-a logical slot on a standby that was invalidated because
-the rows it needed were removed is one such case.
+on PostgreSQL 18, a physical slot invalidated because it
+stayed idle for longer than
+`idle_replication_slot_timeout` is one such case.
 
 Each row is the slot's latest snapshot from the last
 hour, so a row can outlive its slot by up to an hour. A

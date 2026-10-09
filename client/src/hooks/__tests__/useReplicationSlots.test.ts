@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import {
     buildReplicationSlotsUrl,
     REPLICATION_SLOT_LIMIT,
@@ -77,6 +77,17 @@ const makeDeferred = <T,>(): Deferred<T> => {
         resolve: value => { resolveFn(value); },
         reject: reason => { rejectFn(reason); },
     };
+};
+
+/**
+ * Settle a deferred request and let every continuation of it run,
+ * including the hook's state update, before the test asserts.
+ */
+const settle = async (trigger: () => void): Promise<void> => {
+    await act(async () => {
+        trigger();
+        await new Promise(resolve => { setTimeout(resolve, 0); });
+    });
 };
 
 // ---------------------------------------------------------------------------
@@ -242,8 +253,7 @@ describe('useReplicationSlots', () => {
                 expect(result.current.slots[0]?.slot_name).toBe('new');
             });
 
-            stale.resolve({ rows: [slotRow('stale')] });
-            await Promise.resolve();
+            await settle(() => stale.resolve({ rows: [slotRow('stale')] }));
             expect(result.current.slots[0].slot_name).toBe('new');
         });
 
@@ -262,9 +272,7 @@ describe('useReplicationSlots', () => {
         await waitFor(() => {
             expect(result.current.slots).toHaveLength(1);
         });
-        stale.reject(new Error('late'));
-        await Promise.resolve();
-        await Promise.resolve();
+        await settle(() => stale.reject(new Error('late')));
         expect(result.current.error).toBeNull();
         expect(result.current.slots[0].slot_name).toBe('new');
     });

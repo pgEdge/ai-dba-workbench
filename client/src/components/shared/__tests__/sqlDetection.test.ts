@@ -21,6 +21,11 @@ import { describe, it, expect } from 'vitest';
 import {
     SQL_KEYWORDS_RE,
     SQL_STATEMENT_KEYWORDS,
+    CONNECTION_ID_COMMENT_RE,
+    splitSqlStatements,
+    tokenizeSql,
+    hasSqlParameters,
+    stripConnectionIdComment,
     extractExecutableSQL,
     isSqlCodeBlock,
     extractLanguage,
@@ -149,5 +154,245 @@ describe('extractLanguage', () => {
         expect(extractLanguage('hljs')).toBe('');
         expect(extractLanguage(undefined)).toBe('');
         expect(extractLanguage('')).toBe('');
+    });
+});
+
+// ---------------------------------------------------------------------------
+// SQL-aware splitting and parameter detection (issue #532)
+// ---------------------------------------------------------------------------
+
+describe('splitSqlStatements', () => {
+    it('splits on top-level semicolons', () => {
+        expect(splitSqlStatements('SELECT 1; SELECT 2;')).toEqual([
+            'SELECT 1',
+            'SELECT 2',
+        ]);
+    });
+
+    it('ignores a semicolon inside a single-quoted literal', () => {
+        expect(splitSqlStatements(
+            "SELECT 'a;b' AS x; SELECT 2;",
+        )).toEqual(["SELECT 'a;b' AS x", 'SELECT 2']);
+    });
+
+    it('honours the doubled-quote escape inside a literal', () => {
+        expect(splitSqlStatements(
+            "SELECT 'it''s; fine' AS x;",
+        )).toEqual(["SELECT 'it''s; fine' AS x"]);
+    });
+
+    it('ignores a semicolon inside a quoted identifier', () => {
+        expect(splitSqlStatements(
+            'SELECT 1 AS "odd;name";',
+        )).toEqual(['SELECT 1 AS "odd;name"']);
+    });
+
+    it('ignores semicolons inside a dollar-quoted body', () => {
+        const body = 'CREATE FUNCTION f() RETURNS int AS $$'
+            + '\nBEGIN; RETURN 1; END;\n$$ LANGUAGE plpgsql;';
+        expect(splitSqlStatements(body)).toHaveLength(1);
+    });
+
+    it('ignores semicolons inside a tagged dollar-quoted body', () => {
+        const body = 'CREATE FUNCTION f() RETURNS int AS $body$'
+            + '\nSELECT 1; SELECT 2;\n$body$ LANGUAGE sql;';
+        expect(splitSqlStatements(body)).toHaveLength(1);
+    });
+
+    it('ignores a semicolon inside a line comment', () => {
+        expect(splitSqlStatements(
+            'SELECT 1 -- trailing; note\n;SELECT 2;',
+        )).toEqual(['SELECT 1 -- trailing; note', 'SELECT 2']);
+    });
+
+    it('ignores semicolons inside a nested block comment', () => {
+        expect(splitSqlStatements(
+            'SELECT 1 /* a; /* b; */ c; */ ;SELECT 2;',
+        )).toEqual([
+            'SELECT 1 /* a; /* b; */ c; */',
+            'SELECT 2',
+        ]);
+    });
+
+    it('tolerates an unterminated literal or comment', () => {
+        expect(splitSqlStatements("SELECT 'unterminated")).toEqual([
+            "SELECT 'unterminated",
+        ]);
+        expect(splitSqlStatements('SELECT 1 /* open')).toEqual([
+            'SELECT 1 /* open',
+        ]);
+        expect(splitSqlStatements('SELECT $$open')).toEqual([
+            'SELECT $$open',
+        ]);
+    });
+
+    it('drops empty statements', () => {
+        expect(splitSqlStatements(';;  ;')).toEqual([]);
+        expect(splitSqlStatements('')).toEqual([]);
+    });
+});
+
+describe('extractExecutableSQL with literals', () => {
+    it('keeps a statement whose literal contains a semicolon intact', () => {
+        expect(extractExecutableSQL(
+            "SELECT * FROM t WHERE c = 'a;b';",
+        )).toBe("SELECT * FROM t WHERE c = 'a;b';");
+    });
+
+    it('still discards non-SQL chunks', () => {
+        expect(extractExecutableSQL(
+            'shared_buffers = 8GB;\nSELECT 1;',
+        )).toBe('SELECT 1;');
+    });
+
+    it('keeps a leading comment attached to its statement', () => {
+        expect(extractExecutableSQL('-- why\nSELECT 1;')).toBe(
+            '-- why\nSELECT 1;',
+        );
+    });
+});
+
+describe('hasSqlParameters', () => {
+    it('detects numbered bind parameters', () => {
+        expect(hasSqlParameters('SELECT * FROM t WHERE id = $1;')).toBe(true);
+        expect(hasSqlParameters('SELECT $1, $2;')).toBe(true);
+    });
+
+    it('returns false for SQL without parameters', () => {
+        expect(hasSqlParameters('SELECT * FROM t WHERE id = 1;')).toBe(false);
+        expect(hasSqlParameters('')).toBe(false);
+    });
+
+    it('ignores a dollar-quoted body and its contents', () => {
+        expect(hasSqlParameters(
+            'CREATE FUNCTION f() RETURNS int AS $$SELECT $1$$ LANGUAGE sql;',
+        )).toBe(false);
+    });
+
+    it('ignores a dollar-digit sequence inside an identifier', () => {
+        expect(hasSqlParameters('SELECT col$1 FROM foo$2;')).toBe(false);
+        expect(hasSqlParameters('SELECT x$1$ FROM t;')).toBe(false);
+        expect(hasSqlParameters('SELECT é$1 FROM t;')).toBe(false);
+    });
+
+    it('still detects a placeholder after an operator or parenthesis', () => {
+        expect(hasSqlParameters('SELECT * FROM t WHERE id=$1;')).toBe(true);
+        expect(hasSqlParameters('SELECT f($1);')).toBe(true);
+    });
+
+    it('detects a placeholder glued to a keyword by a block comment', () => {
+        expect(hasSqlParameters('SELECT * FROM t LIMIT/**/$1;')).toBe(true);
+        expect(hasSqlParameters('SELECT/**/$1;')).toBe(true);
+        expect(hasSqlParameters('SELECT NOT/**/$1::bool;')).toBe(true);
+        expect(hasSqlParameters('SELECT * FROM t OFFSET/**/$1;')).toBe(true);
+    });
+
+    it('detects a placeholder after a backslash-escaped quote', () => {
+        expect(hasSqlParameters("SELECT E'it\\'s' || $1;")).toBe(true);
+        expect(hasSqlParameters("SELECT e'\\'' || $1;")).toBe(true);
+    });
+
+    it('does not treat a backslash as an escape outside an E string', () => {
+        expect(hasSqlParameters("SELECT '\\', $1;")).toBe(true);
+        expect(hasSqlParameters("SELECT date'\\', $1;")).toBe(true);
+    });
+
+    it('does not read a dollar inside an identifier as a quote tag', () => {
+        expect(hasSqlParameters('SELECT col$a$ FROM t WHERE id = $1;')).toBe(true);
+        expect(hasSqlParameters('SELECT col$$ FROM t WHERE id = $1;')).toBe(true);
+    });
+
+    it('ignores a placeholder inside a comment or literal', () => {
+        expect(hasSqlParameters('SELECT 1; -- use $1 here')).toBe(false);
+        expect(hasSqlParameters("SELECT 'costs $5' AS x;")).toBe(false);
+    });
+});
+
+describe('stripConnectionIdComment', () => {
+    it('removes the routing comment', () => {
+        expect(stripConnectionIdComment(
+            '-- connection_id: 12\nSELECT 1;',
+        )).toBe('SELECT 1;');
+    });
+
+    it('leaves a block without the comment unchanged', () => {
+        expect(stripConnectionIdComment('SELECT 1;')).toBe('SELECT 1;');
+    });
+
+    it('captures the connection id', () => {
+        const match = CONNECTION_ID_COMMENT_RE.exec(
+            '-- connection_id: 7\nSELECT 1;',
+        );
+        expect(match?.[1]).toBe('7');
+    });
+});
+
+describe('tokenizeSql', () => {
+    it('labels each lexical run', () => {
+        const kinds = tokenizeSql("SELECT 'x'; -- c").map(t => t.kind);
+        expect(kinds).toEqual(['plain', 'literal', 'separator', 'plain', 'comment']);
+    });
+});
+
+describe('line comments ended by a carriage return', () => {
+    const lineEnds = [
+        ['\\r', '\r'],
+        ['\\r\\n', '\r\n'],
+        ['\\n', '\n'],
+    ];
+
+    for (const [label, eol] of lineEnds) {
+        it(`sees a placeholder after a comment ended by ${label}`, () => {
+            expect(hasSqlParameters(
+                `SELECT * FROM victim -- x${eol}LIMIT $1`,
+            )).toBe(true);
+        });
+
+        it(`splits on a semicolon after a comment ended by ${label}`, () => {
+            expect(splitSqlStatements(
+                `SELECT 1 -- note${eol}; DELETE FROM t`,
+            )).toEqual(['SELECT 1 -- note', 'DELETE FROM t']);
+        });
+
+        it(`keeps both statements after a comment ended by ${label}`, () => {
+            expect(extractExecutableSQL(
+                `SELECT 1 -- note${eol}; DELETE FROM t`,
+            )).toBe('SELECT 1 -- note;\n\nDELETE FROM t;');
+        });
+
+        it(`strips a routing comment ended by ${label}`, () => {
+            const code = `-- connection_id: 9${eol}SELECT 1;`;
+            expect(CONNECTION_ID_COMMENT_RE.exec(code)?.[1]).toBe('9');
+            expect(stripConnectionIdComment(code)).toBe('SELECT 1;');
+        });
+    }
+
+    it('ends the comment before the carriage return', () => {
+        expect(tokenizeSql('SELECT 1 -- c\rSELECT 2')).toEqual([
+            { kind: 'plain', text: 'SELECT 1 ' },
+            { kind: 'comment', text: '-- c' },
+            { kind: 'plain', text: '\rSELECT 2' },
+        ]);
+    });
+
+    it('handles a bare carriage return at the end of the string', () => {
+        expect(tokenizeSql('SELECT 1 -- c\r')).toEqual([
+            { kind: 'plain', text: 'SELECT 1 ' },
+            { kind: 'comment', text: '-- c' },
+            { kind: 'plain', text: '\r' },
+        ]);
+        expect(splitSqlStatements('SELECT 1 -- note\r')).toEqual([
+            'SELECT 1 -- note',
+        ]);
+        expect(hasSqlParameters('SELECT 1 -- use $1\r')).toBe(false);
+        expect(extractExecutableSQL('SELECT 1 -- note\r')).toBe(
+            'SELECT 1 -- note;',
+        );
+    });
+
+    it('keeps a semicolon before the carriage return inside the comment', () => {
+        expect(splitSqlStatements('SELECT 1 -- a; b\rSELECT 2')).toEqual([
+            'SELECT 1 -- a; b\rSELECT 2',
+        ]);
     });
 });

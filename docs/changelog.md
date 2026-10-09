@@ -841,11 +841,10 @@ project adheres to
   extension explicitly, so a probe whose extension is installed is
   recorded as available even when the probe collects no rows, and a
   probe whose extension is absent is still recorded as not
-  installed. When every execution of an extension probe fails before
-  the collector can check for the extension, the probe is now
-  recorded as unavailable with the reason "probe execution failed
-  before extension '<name>' could be checked" rather than as a
-  missing extension. (#612)
+  installed. When every execution of an extension probe fails, the
+  probe is now recorded as unavailable with the reason "probe
+  execution failed for extension '<name>'" rather than as a missing
+  extension. (#612)
 
 - Apply the datastore password read from the server's
   `-db-password-file` flag. The file was read but its contents

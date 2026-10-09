@@ -72,7 +72,7 @@ the `probe_availability` row: stored rows, a non-extension probe, or
 `extensionPresent` record available; `extensionAbsent` records
 `extension '<name>' not installed`; and `extensionUnknown`, which now
 only means every execution failed (each logged at `Errorf`), records
-`probe execution failed before extension '<name>' could be checked`.
+`probe execution failed for extension '<name>'`.
 Unit tests for the verdict and the mixed-database cases live in
 `scheduler/probe_availability_verdict_test.go`.
 

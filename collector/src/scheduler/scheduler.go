@@ -768,7 +768,7 @@ func availabilityVerdict(metricsStored int, extName *string, extStatus extension
 		reason := fmt.Sprintf("extension '%s' not installed", *extName)
 		return false, &reason
 	default:
-		reason := fmt.Sprintf("probe execution failed before extension '%s' could be checked", *extName)
+		reason := fmt.Sprintf("probe execution failed for extension '%s'", *extName)
 		return false, &reason
 	}
 }

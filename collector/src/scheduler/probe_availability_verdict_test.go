@@ -89,7 +89,7 @@ func TestAvailabilityVerdict(t *testing.T) {
 			extensionAbsent.merge(extensionUnknown), false,
 			"extension 'spock' not installed"},
 		{"every execution failed", 0, &spock, extensionUnknown, false,
-			"probe execution failed before extension 'spock' could be checked"},
+			"probe execution failed for extension 'spock'"},
 		{"rows stored despite unknown status", 1, &spock, extensionUnknown, true, ""},
 		{"non-extension probe without rows", 0, nil, extensionUnknown, true, ""},
 	}
@@ -210,35 +210,34 @@ func TestExecuteProbeForConnection_SpockQuietCluster(t *testing.T) {
 
 	// Only the columns the probes select are needed; registering the
 	// extension in pg_extension is what CheckExtensionExists looks for.
-	for _, stmt := range []string{
-		`CREATE SCHEMA spock`,
-		`CREATE TABLE spock.exception_log (
+	// A single literal script, run over the simple protocol since it
+	// takes no arguments.
+	if _, err := spockPool.Exec(ctx, `
+		CREATE SCHEMA spock;
+		CREATE TABLE spock.exception_log (
 			remote_origin OID, remote_commit_ts TIMESTAMPTZ,
 			command_counter INTEGER, retry_errored_at TIMESTAMPTZ,
 			remote_xid BIGINT, local_origin OID,
 			local_commit_ts TIMESTAMPTZ, table_schema TEXT,
 			table_name TEXT, operation TEXT, local_tup JSONB,
 			remote_old_tup JSONB, remote_new_tup JSONB,
-			ddl_statement TEXT, ddl_user TEXT, error_message TEXT)`,
-		`CREATE TABLE spock.resolutions (
+			ddl_statement TEXT, ddl_user TEXT, error_message TEXT);
+		CREATE TABLE spock.resolutions (
 			id BIGINT, node_name TEXT, log_time TIMESTAMPTZ,
 			relname TEXT, idxname TEXT, conflict_type TEXT,
 			conflict_resolution TEXT, local_origin INTEGER,
 			local_tuple TEXT, local_xid XID,
 			local_timestamp TIMESTAMPTZ, remote_origin INTEGER,
 			remote_tuple TEXT, remote_xid XID,
-			remote_timestamp TIMESTAMPTZ, remote_lsn PG_LSN)`,
-		`INSERT INTO pg_extension (oid, extname, extowner,
+			remote_timestamp TIMESTAMPTZ, remote_lsn PG_LSN);
+		INSERT INTO pg_extension (oid, extname, extowner,
 			extnamespace, extrelocatable, extversion,
 			extconfig, extcondition)
 			SELECT (SELECT MAX(oid::oid::int) FROM pg_extension) + 1,
 				'spock', 10,
 				(SELECT oid FROM pg_namespace WHERE nspname = 'spock'),
-				TRUE, '5.0', NULL, NULL`,
-	} {
-		if _, err := spockPool.Exec(ctx, stmt); err != nil {
-			t.Fatalf("set up stub spock: %v\n%s", err, stmt)
-		}
+				TRUE, '5.0', NULL, NULL`); err != nil {
+		t.Fatalf("set up stub spock: %v", err)
 	}
 
 	for _, probe := range []probes.MetricsProbe{
@@ -321,7 +320,7 @@ func TestExecuteProbeForConnection_ExtensionProbeFails(t *testing.T) {
 			if available {
 				t.Error("is_available = true, want false when every execution failed")
 			}
-			want := "probe execution failed before extension 'spock' could be checked"
+			want := "probe execution failed for extension 'spock'"
 			if reason == nil || *reason != want {
 				t.Errorf("unavailable_reason = %v, want %q", reason, want)
 			}

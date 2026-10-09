@@ -155,7 +155,7 @@ func truncateField(value string, width int) string {
 // first.
 //
 // Every field the table prints that a caller could have influenced, the
-// actor name, the target and the error text, goes through
+// actor name, the action, the target and the error text, goes through
 // logging.SanitizeForLog first. An audit event can be written by an
 // unauthenticated principal (a denial names whatever the client claimed
 // to be), so without escaping a crafted name could carry terminal
@@ -180,7 +180,7 @@ func printAuditTable(events []auth.AuditEvent, total int) {
 			ev.ID,
 			ev.OccurredAt.UTC().Format("2006-01-02 15:04:05"),
 			truncateField(actor, 20),
-			truncateField(ev.Action, 24),
+			truncateField(logging.SanitizeForLog(ev.Action), 24),
 			truncateField(logging.SanitizeForLog(auditTarget(ev)), 24),
 			ev.Outcome,
 			truncateField(logging.SanitizeForLog(ev.Error), 24),

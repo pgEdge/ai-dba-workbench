@@ -127,6 +127,9 @@ type AuthStore struct {
 	// the re-chain writes only after its confirmation callback agrees.
 	// Set once at construction.
 	allowUnkeyedAuditRows bool
+	// failures coalesces repeated failure events; see
+	// audit_failures.go. It guards itself.
+	failures failureCoalescer
 }
 
 // SessionInfo holds session information (in-memory only)
@@ -909,10 +912,13 @@ func (s *AuthStore) initSchema() error {
 	return s.ensureNoUnkeyedAuditRows()
 }
 
-// Close stops the session cleanup goroutine (if running) and closes
-// the database connection.
+// Close stops the session cleanup goroutine (if running), writes a
+// summary row for every coalesced failure that still holds suppressed
+// repeats, so that a clean shutdown does not discard their counts, and
+// closes the database connection.
 func (s *AuthStore) Close() error {
 	s.StopSessionCleanup()
+	s.FlushAuditFailures()
 	return s.db.Close()
 }
 

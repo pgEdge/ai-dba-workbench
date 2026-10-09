@@ -803,6 +803,10 @@ func TestAuditUsersHashFailureRecordsFailure(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			// UpdateUser and UpdateUserAtomic fail identically against
+			// bob, which would otherwise coalesce into one row.
+			store.failures = failureCoalescer{}
+
 			before := auditEventCount(t, store)
 			if err := tc.call(); err == nil {
 				t.Fatalf("Expected %s to fail with an invalid bcrypt cost",

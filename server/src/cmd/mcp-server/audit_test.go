@@ -632,6 +632,31 @@ func TestPrintAuditTableSanitisesControlCharacters(t *testing.T) {
 	}
 }
 
+// TestPrintAuditTableSanitisesAction checks that the action column is
+// escaped like the other caller-influenced fields. A denial that matches
+// no known route records the client's HTTP method in the action.
+func TestPrintAuditTableSanitisesAction(t *testing.T) {
+	events := []auth.AuditEvent{{
+		ID:         1,
+		OccurredAt: time.Date(2026, 9, 15, 10, 0, 0, 0, time.UTC),
+		ActorType:  auth.ActorUser,
+		ActorName:  "eve",
+		Action:     "rbac.\x1b[31m\r\nx",
+		Outcome:    auth.OutcomeDenied,
+	}}
+
+	out := captureStdout(t, func() { printAuditTable(events, 1) })
+
+	for _, forbidden := range []string{"\x1b", "\r"} {
+		if strings.Contains(out, forbidden) {
+			t.Errorf("table output still carries %q: %q", forbidden, out)
+		}
+	}
+	if got := strings.Count(out, "\n"); got != 9 {
+		t.Errorf("expected 9 newlines in the table, got %d:\n%q", got, out)
+	}
+}
+
 // TestListAuditCommandJSONEmptyPrintsNothing checks that -json with no
 // matching events writes an empty stream rather than a human sentence a
 // consumer would have to filter out.

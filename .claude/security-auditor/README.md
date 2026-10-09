@@ -475,6 +475,10 @@ client address, before and after snapshots and a hash chain.
   only over a failing row and the purge never removes it. A row
   altered to fail and then restored passes verify (exit 3) and only
   the re-anchor refuses it; an existence-only check is not enough.
+  Nor is verify's exit 2 final: rewriting the bound row's hash and
+  putting the decoy back linked to it (`prev_hash` is unique, so the
+  rewrite is needed) reads exit 3, and only `proveAuditHistory` under
+  the previous key refuses it (`TestDecoyPutBackLinkedIntoTheChain`).
   Operators are told to re-anchor with
   the previous secret after each rotation, before the next. A genuine
   log spanning three keys never proves unattended: `proveAuditHistory`

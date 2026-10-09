@@ -726,7 +726,8 @@ func openAuthDB(t *testing.T, dir string) *sql.DB {
 // a current-key anchor beside it, the decoy is deleted, and the server
 // then writes under a new secret, promoting that anchor. Verification
 // reports tampering, and the unattended re-anchor under the old secret
-// refuses rather than adopting the cut.
+// refuses rather than adopting the cut, giving the binding as the
+// reason the old secret does not prove the history.
 func TestReanchorCommandRefusesADecoyStartedAnchor(t *testing.T) {
 	dir := rotatedSecretAuditStore(t)
 	store, err := auth.NewAuthStore(dir, 0, 0,
@@ -796,5 +797,16 @@ func TestReanchorCommandRefusesADecoyStartedAnchor(t *testing.T) {
 		t.Fatalf("expected the re-anchor to refuse the decoy, got:\n%s",
 			out.String())
 	}
+	// The command refuses first because verification reads tampering,
+	// but the plan it prints must still give the binding as the reason
+	// the previous secret does not prove the history.
+	if !strings.Contains(err.Error(),
+		"for a reason other than a changed server secret") {
+		t.Errorf("expected the re-anchor to refuse the tampering, got %v",
+			err)
+	}
+	assertOutputContains(t, out.String(), fmt.Sprintf("is bound to a "+
+		"tail anchor naming event %d, which is no longer in the log",
+		decoy))
 	assertAuditVerifyExit(t, dir, auditExitTampered)
 }

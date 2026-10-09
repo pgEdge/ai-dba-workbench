@@ -3708,7 +3708,10 @@ func (sm *SchemaManager) registerMigrations() {
 	// UNIQUE(candidate_id), anomaly_embeddings_candidate_id_key, and was
 	// pure write and vacuum overhead on a table that can run to tens of
 	// gigabytes. The table exists only where pgvector is installed,
-	// hence IF EXISTS.
+	// hence IF EXISTS. The drop comes last because it takes an ACCESS
+	// EXCLUSIVE lock on anomaly_embeddings that is held until the
+	// migration commits, so running it first would block every reader
+	// of that table whilst the indexes above build.
 	//
 	// Plain CREATE INDEX is used, as in migration #4, because CREATE
 	// INDEX CONCURRENTLY cannot run inside the migration transaction; it
@@ -3720,8 +3723,6 @@ func (sm *SchemaManager) registerMigrations() {
 			ctx := context.Background()
 
 			_, err := tx.Exec(ctx, `
-				DROP INDEX IF EXISTS public.idx_anomaly_embeddings_candidate;
-
 				CREATE INDEX IF NOT EXISTS idx_anomaly_candidates_processed
 					ON anomaly_candidates (processed_at)
 					WHERE processed_at IS NOT NULL;
@@ -3738,6 +3739,8 @@ func (sm *SchemaManager) registerMigrations() {
 					'Serves the ON DELETE SET NULL lookup of fk_anomaly_candidates_embedding when anomaly_embeddings rows are deleted';
 				COMMENT ON INDEX idx_anomaly_candidates_alert IS
 					'Serves the ON DELETE SET NULL lookup of the alert_id foreign key when alerts are deleted';
+
+				DROP INDEX IF EXISTS public.idx_anomaly_embeddings_candidate;
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to index anomaly_candidates for retention: %w", err)

@@ -26,14 +26,16 @@ export const buildKnownServers = (
     const servers = new Map<number, KnownServer>();
     for (const group of clusterData ?? []) {
         for (const cluster of group.clusters ?? []) {
-            for (const server of collectServers(cluster.servers ?? [])) {
+            for (const server of collectServers(cluster.servers)) {
                 if (servers.has(server.id)) {
                     continue;
                 }
-                servers.set(server.id, {
-                    name: server.name,
-                    databaseName: server.database_name || undefined,
-                });
+                // An empty database name means no default, as does a
+                // missing one.
+                const databaseName = server.database_name === ''
+                    ? undefined
+                    : server.database_name;
+                servers.set(server.id, { name: server.name, databaseName });
             }
         }
     }

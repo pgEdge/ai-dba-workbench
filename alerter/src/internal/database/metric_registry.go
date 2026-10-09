@@ -150,8 +150,14 @@ var metricRegistry = map[string]metricQueryConfig{
 	// receives one snapshot at onboarding and nothing afterwards. Any
 	// max-age predicate on collected_at therefore kills the metric within
 	// the hour; the latest query takes the newest row per connection with
-	// no time filter, matching what the historical variant already did.
-	// See GitHub issue #406.
+	// no time filter. See GitHub issue #406.
+	//
+	// The entry deliberately has no historical query, so SupportsBaselines
+	// is false and the metric is excluded from baselines and anomaly
+	// detection. max_connections is a configuration value that serves the
+	// high_max_connections threshold rule; it has no workload behavior to
+	// baseline, and the change-tracked probe would supply almost no
+	// samples anyway. See GitHub issue #576.
 	"pg_settings.max_connections": {
 		probeName: "pg_settings",
 		latestSQL: `
@@ -161,18 +167,7 @@ var metricRegistry = map[string]metricQueryConfig{
 			WHERE name = 'max_connections'
 			ORDER BY connection_id, collected_at DESC
 		`,
-		historicalSQL: `
-			SELECT DISTINCT ON (ps.connection_id)
-			       ps.connection_id, NULL::text as database_name,
-			       ps.setting::float as value, ps.collected_at
-			FROM metrics.pg_settings ps
-			JOIN connections c ON c.id = ps.connection_id
-			WHERE ps.name = 'max_connections'
-			  AND ps.collected_at > NOW() - INTERVAL '1 day' * $1
-			ORDER BY ps.connection_id, ps.collected_at DESC
-		`,
-		scan:           scanBasic,
-		historicalScan: historicalScanBasic,
+		scan: scanBasic,
 	},
 
 	// The max_conns CTE reads the newest pg_settings row per connection
@@ -435,6 +430,14 @@ var metricRegistry = map[string]metricQueryConfig{
 	// firing on days-old data until retention purged the partition. A
 	// connection whose slots have all been dropped stores no rows, so the
 	// entry is clearWhenAbsent. See GitHub issue #407.
+	//
+	// The entry deliberately has no historical query, so SupportsBaselines
+	// is false and the metric is excluded from baselines and anomaly
+	// detection. It is a presence count that is almost always zero, like
+	// pg_replication_slots.inactive, and the condition it counts is already
+	// alerted on by the replication_slot_inactive rule on that metric. No
+	// seeded rule reads inactive_count itself; the latest query stays for
+	// user-defined rules. See GitHub issue #576.
 	"pg_replication_slots.inactive_count": {
 		probeName: "pg_replication_slots",
 		latestSQL: `
@@ -454,19 +457,7 @@ var metricRegistry = map[string]metricQueryConfig{
 			 WHERE s.collected_at > NOW() - INTERVAL '15 minutes'
 			 GROUP BY s.connection_id, l.collected_at
 		`,
-		historicalSQL: `
-			SELECT s.connection_id,
-			       NULL::text AS database_name,
-			       COUNT(*) FILTER (WHERE NOT s.active)::float AS value,
-			       s.collected_at
-			  FROM metrics.pg_replication_slots s
-			  JOIN connections c ON c.id = s.connection_id
-			 WHERE s.collected_at > NOW() - INTERVAL '1 day' * $1
-			 GROUP BY s.connection_id, s.collected_at
-			 ORDER BY s.connection_id, s.collected_at
-		`,
 		scan:            scanBasic,
-		historicalScan:  historicalScanBasic,
 		clearWhenAbsent: true,
 		absenceWindow:   15 * time.Minute,
 	},

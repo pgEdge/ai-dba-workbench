@@ -55,7 +55,7 @@ func TestDetectAnomaliesSkipsCandidatesThatCannotAlert(t *testing.T) {
 			t.Fatalf("failed to prepare alert tables: %v", err)
 		}
 		if _, err := pool.Exec(ctx, `DELETE FROM blackouts; DELETE FROM anomaly_candidates;
-            DELETE FROM metric_baselines; DELETE FROM metrics.pg_settings;
+            DELETE FROM metric_baselines; DELETE FROM metrics.pg_sys_load_avg_info;
             DELETE FROM connections`); err != nil {
 			t.Fatalf("failed to reset state: %v", err)
 		}
@@ -64,8 +64,8 @@ func TestDetectAnomaliesSkipsCandidatesThatCannotAlert(t *testing.T) {
 		if err := pool.QueryRow(ctx, insertAnomalyConnectionSQL, name).Scan(&connID); err != nil {
 			t.Fatalf("failed to insert connection: %v", err)
 		}
-		if _, err := pool.Exec(ctx, insertAnomalyPgSettingsSQL, connID, "999"); err != nil {
-			t.Fatalf("failed to insert pg_settings sample: %v", err)
+		if _, err := pool.Exec(ctx, insertAnomalyLoadAvgSQL, connID, "999"); err != nil {
+			t.Fatalf("failed to insert load average sample: %v", err)
 		}
 		if err := ds.UpsertMetricBaseline(ctx, &database.MetricBaseline{
 			ConnectionID:     connID,

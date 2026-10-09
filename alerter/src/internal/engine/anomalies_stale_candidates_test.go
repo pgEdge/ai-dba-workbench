@@ -131,7 +131,7 @@ func TestProcessTier2And3ExpiresStaleCandidates(t *testing.T) {
 		t.Helper()
 		c := &database.AnomalyCandidate{
 			ConnectionID: connID,
-			MetricName:   "pg_settings.max_connections",
+			MetricName:   "pg_sys_load_avg_info.load_avg_fifteen_minutes",
 			MetricValue:  999,
 			ZScore:       10,
 			DetectedAt:   detectedAt,
@@ -213,7 +213,7 @@ func TestProcessTier2And3StopsWhenReloadDisablesTiers(t *testing.T) {
 	for i := 0; i < total; i++ {
 		c := &database.AnomalyCandidate{
 			ConnectionID: connID,
-			MetricName:   "pg_settings.max_connections",
+			MetricName:   "pg_sys_load_avg_info.load_avg_fifteen_minutes",
 			MetricValue:  float64(900 + i),
 			ZScore:       10,
 			DetectedAt:   time.Now().Add(time.Duration(i-total) * time.Second),

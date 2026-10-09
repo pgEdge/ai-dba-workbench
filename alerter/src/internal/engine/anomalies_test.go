@@ -246,8 +246,9 @@ func TestEffectiveStdDev(t *testing.T) {
 // detectAnomaliesIntegrationSchema is the minimum schema needed to
 // exercise the Tier 1 detection loop end-to-end: connections (for
 // GetActiveConnections), alert_rules (for GetEnabledAlertRules),
-// metrics.pg_settings (the latest-value source for the
-// pg_settings.max_connections metric), blackouts (consulted by
+// metrics.pg_sys_load_avg_info (the latest-value source for the
+// pg_sys_load_avg_info.load_avg_fifteen_minutes metric), blackouts
+// (consulted by
 // IsBlackoutActive), metric_baselines, and anomaly_candidates (the
 // emit target). Tables that participate in the blackout join must
 // exist as the IsBlackoutActive query references clusters and
@@ -361,10 +362,9 @@ CREATE TABLE anomaly_candidates (
 
 CREATE SCHEMA metrics;
 
-CREATE TABLE metrics.pg_settings (
+CREATE TABLE metrics.pg_sys_load_avg_info (
     connection_id INTEGER NOT NULL,
-    name TEXT NOT NULL,
-    setting TEXT,
+    load_avg_fifteen_minutes DOUBLE PRECISION,
     collected_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 `
@@ -403,10 +403,10 @@ const (
         RETURNING id
     `
 
-	insertAnomalyPgSettingsSQL = `
-        INSERT INTO metrics.pg_settings
-            (connection_id, name, setting, collected_at)
-        VALUES ($1, 'max_connections', $2, NOW())
+	insertAnomalyLoadAvgSQL = `
+        INSERT INTO metrics.pg_sys_load_avg_info
+            (connection_id, load_avg_fifteen_minutes, collected_at)
+        VALUES ($1, $2::text::float, NOW())
     `
 
 	insertAnomalyBlackoutSQL = `
@@ -530,13 +530,13 @@ func TestDetectAppliesGatesAndCap(t *testing.T) {
 			cfg.Anomaly.Tier1.MaxZScore)
 	}
 
-	// Seed a single alert rule against pg_settings.max_connections.
-	// The metric is the simplest scanBasic registry entry and its
-	// latest SQL needs only a single recent row in
-	// metrics.pg_settings.
+	// Seed a single alert rule against
+	// pg_sys_load_avg_info.load_avg_fifteen_minutes. The metric is a
+	// simple baselined scanBasic registry entry and its latest SQL needs
+	// only a single recent row in metrics.pg_sys_load_avg_info.
 	if _, err := pool.Exec(ctx, insertAnomalyAlertRuleSQL,
 		"anomaly_detect_test",
-		"pg_settings.max_connections"); err != nil {
+		"pg_sys_load_avg_info.load_avg_fifteen_minutes"); err != nil {
 		t.Fatalf("failed to insert alert rule: %v", err)
 	}
 
@@ -663,8 +663,8 @@ func TestDetectAppliesGatesAndCap(t *testing.T) {
 				t.Fatalf("delete metric_baselines failed: %v", err)
 			}
 			if _, err := pool.Exec(ctx,
-				`DELETE FROM metrics.pg_settings`); err != nil {
-				t.Fatalf("delete metrics.pg_settings failed: %v", err)
+				`DELETE FROM metrics.pg_sys_load_avg_info`); err != nil {
+				t.Fatalf("delete metrics.pg_sys_load_avg_info failed: %v", err)
 			}
 			if _, err := pool.Exec(ctx,
 				`DELETE FROM connections`); err != nil {
@@ -678,14 +678,12 @@ func TestDetectAppliesGatesAndCap(t *testing.T) {
 				t.Fatalf("failed to insert connection: %v", err)
 			}
 
-			// Seed the latest metric value. The pg_settings.max_connections
-			// query reads setting::float from metrics.pg_settings; the
-			// setting column is TEXT so pass the value as a formatted
-			// string.
-			if _, err := pool.Exec(ctx, insertAnomalyPgSettingsSQL,
+			// Seed the latest metric value. The insert casts its text
+			// parameter to float, so pass the value as a formatted string.
+			if _, err := pool.Exec(ctx, insertAnomalyLoadAvgSQL,
 				connID,
 				strconv.FormatFloat(tc.current, 'g', -1, 64)); err != nil {
-				t.Fatalf("failed to insert pg_settings sample: %v", err)
+				t.Fatalf("failed to insert load average sample: %v", err)
 			}
 
 			// Seed the baseline directly via UpsertMetricBaseline so the
@@ -693,7 +691,7 @@ func TestDetectAppliesGatesAndCap(t *testing.T) {
 			// the baseline-build code path.
 			b := &database.MetricBaseline{
 				ConnectionID:     connID,
-				MetricName:       "pg_settings.max_connections",
+				MetricName:       "pg_sys_load_avg_info.load_avg_fifteen_minutes",
 				PeriodType:       tc.periodType,
 				Mean:             tc.mean,
 				StdDev:           tc.stddev,
@@ -718,7 +716,7 @@ func TestDetectAppliesGatesAndCap(t *testing.T) {
 			var observedZ float64
 			err := pool.QueryRow(ctx, selectAnomalyCountAndLatestZSQL,
 				connID,
-				"pg_settings.max_connections").Scan(&count, &observedZ)
+				"pg_sys_load_avg_info.load_avg_fifteen_minutes").Scan(&count, &observedZ)
 			if err != nil {
 				t.Fatalf("failed to count anomaly_candidates: %v", err)
 			}
@@ -755,7 +753,7 @@ func TestDetectAnomaliesBranchCoverage(t *testing.T) {
 
 	if _, err := pool.Exec(ctx, insertAnomalyAlertRuleSQL,
 		"branch_coverage_rule",
-		"pg_settings.max_connections"); err != nil {
+		"pg_sys_load_avg_info.load_avg_fifteen_minutes"); err != nil {
 		t.Fatalf("failed to insert alert rule: %v", err)
 	}
 
@@ -775,8 +773,8 @@ func TestDetectAnomaliesBranchCoverage(t *testing.T) {
 			t.Fatalf("delete metric_baselines failed: %v", err)
 		}
 		if _, err := pool.Exec(ctx,
-			`DELETE FROM metrics.pg_settings`); err != nil {
-			t.Fatalf("delete metrics.pg_settings failed: %v", err)
+			`DELETE FROM metrics.pg_sys_load_avg_info`); err != nil {
+			t.Fatalf("delete metrics.pg_sys_load_avg_info failed: %v", err)
 		}
 		if _, err := pool.Exec(ctx,
 			`DELETE FROM blackouts`); err != nil {
@@ -800,10 +798,10 @@ func TestDetectAnomaliesBranchCoverage(t *testing.T) {
 
 	insertSetting := func(t *testing.T, connID int, value float64) {
 		t.Helper()
-		if _, err := pool.Exec(ctx, insertAnomalyPgSettingsSQL,
+		if _, err := pool.Exec(ctx, insertAnomalyLoadAvgSQL,
 			connID,
 			strconv.FormatFloat(value, 'g', -1, 64)); err != nil {
-			t.Fatalf("failed to insert pg_settings sample: %v", err)
+			t.Fatalf("failed to insert load average sample: %v", err)
 		}
 	}
 
@@ -812,7 +810,7 @@ func TestDetectAnomaliesBranchCoverage(t *testing.T) {
 		t.Helper()
 		b := &database.MetricBaseline{
 			ConnectionID:     connID,
-			MetricName:       "pg_settings.max_connections",
+			MetricName:       "pg_sys_load_avg_info.load_avg_fifteen_minutes",
 			PeriodType:       "all",
 			Mean:             mean,
 			StdDev:           stddev,
@@ -1079,7 +1077,7 @@ func TestDetectionDatastoreErrorBranches(t *testing.T) {
 
 	ctx := context.Background()
 	now := time.Now().UTC()
-	const metric = "pg_settings.max_connections"
+	const metric = "pg_sys_load_avg_info.load_avg_fifteen_minutes"
 
 	if _, err := pool.Exec(ctx, insertAnomalyAlertRuleSQL,
 		"datastore_error_rule", metric); err != nil {
@@ -1090,8 +1088,8 @@ func TestDetectionDatastoreErrorBranches(t *testing.T) {
 		"datastore-errors").Scan(&connID); err != nil {
 		t.Fatalf("failed to insert connection: %v", err)
 	}
-	if _, err := pool.Exec(ctx, insertAnomalyPgSettingsSQL, connID, "500"); err != nil {
-		t.Fatalf("failed to insert pg_settings sample: %v", err)
+	if _, err := pool.Exec(ctx, insertAnomalyLoadAvgSQL, connID, "500"); err != nil {
+		t.Fatalf("failed to insert load average sample: %v", err)
 	}
 	if err := ds.UpsertMetricBaseline(ctx, &database.MetricBaseline{
 		ConnectionID:     connID,

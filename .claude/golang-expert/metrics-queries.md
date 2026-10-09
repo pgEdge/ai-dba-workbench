@@ -1163,9 +1163,20 @@ conventions from that change hold across both:
   runs once per `calculateBaselines` cycle, binding
   `BaselineSupportedMetrics()` as a `text[]` and deleting
   `metric_name <> ALL($1)`, so rows the old fallback wrote disappear.
-  `TestAuditC7HistoricalSQLCoverage` pins by name the thirteen registry
-  entries that still have no historical query; giving them one is a
-  follow-up, and any entry gaining one must be removed from that list.
+  `TestAuditC7HistoricalSQLCoverage` pins by name the fifteen registry
+  entries that have no historical query, and any entry gaining one must
+  be removed from that list. Two are excluded on purpose and must not
+  gain one: `pg_settings.max_connections` (a configuration value that
+  exists for the `high_max_connections` threshold rule) and
+  `pg_replication_slots.inactive_count` (a presence count that is almost
+  always zero); `baseline_exclusions_integration_test.go` pins both
+  (#576). Removing a historical query needs no migration, because the
+  sweep deletes the metric's old baseline rows on the next cycle, and
+  `processTier2And3` suppresses, without running Tier 2 or 3, any
+  pending candidate whose metric fails `SupportsBaselines`. The
+  engine's detection tests use
+  `pg_sys_load_avg_info.load_avg_fifteen_minutes` as their baselined
+  metric.
 
 - `GetMetricBaselines(ctx, connID, metric, dbName *string)` is scoped to
   one database with the same NULL-aware predicate as
@@ -1240,11 +1251,13 @@ helper.
 
 Tier 2 (an embedding call) and Tier 3 (an LLM call) are billed per
 candidate, so `processTier2And3` runs `anomalyAlertSkipReason` before
-either (#568). It holds every check whose outcome does not depend on the
-tier results, in this order: blackout, open (`active` or `acknowledged`)
-anomaly alert for the same metric, connection and database (which sets
-`candidate.AlertID` to it), re-evaluation suppression, false-positive
-suppression. A lookup error counts as "does not apply". A skipped
+either (#568), after first suppressing any candidate whose metric fails
+`SupportsBaselines` (#576). It holds every check whose outcome does not
+depend on the tier results, in this order: blackout, open (`active` or
+`acknowledged`) anomaly alert for the same metric, connection and
+database (which sets `candidate.AlertID` to it), re-evaluation
+suppression, false-positive suppression. A lookup error counts as "does
+not apply". A skipped
 candidate gets no tier fields and no embedding; `determineFinalDecision`
 records `alert` for it (Tier 1 only), the value a candidate discarded
 after the tiers is left with, because `final_decision` is constrained to
@@ -1272,7 +1285,11 @@ and returns when `!cfg.Anomaly.Enabled ||
 disables Tier 2 and Tier 3 would otherwise send the rest of the batch
 to `determineFinalDecision` with no tier result, which defaults to
 `alert` (#581). `TestProcessTier2And3StopsWhenReloadDisablesTiers`
-fires the reload from inside the first Tier 3 call.
+fires the reload from inside the first Tier 3 call. The
+`SupportsBaselines` suppression runs before this check, so a stale
+candidate for an excluded metric is suppressed even after a reload.
+Tests that need a candidate to reach Tier 3 must use a baselined
+metric such as `pg_sys_load_avg_info.load_avg_fifteen_minutes`.
 
 ## Time-Window Resolution (server)
 

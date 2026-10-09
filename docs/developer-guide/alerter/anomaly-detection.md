@@ -109,14 +109,21 @@ carries a historical query, because the baseline calculator has
 nothing else to build a baseline from. The `SupportsBaselines`
 helper in the `database` package makes that check, and both the
 baseline calculator and the detector skip any rule whose metric
-fails the check. Of the 31 registry metrics, 18 carry a historical
-query and 13 do not. The following metrics have no historical
+fails the check. Of the 31 registry metrics, 16 carry a historical
+query and 15 do not. The following metrics have no historical
 query and are therefore never baselined or scored:
 
 - `age_percent`
 - `pg_node_role.subscription_worker_down`
 - `pg_replication_slots.inactive`
+- `pg_replication_slots.inactive_count`, deliberately: it is a
+  presence count that is almost always zero, and the
+  `replication_slot_inactive` threshold rule on
+  `pg_replication_slots.inactive` already alerts on the condition it
+  counts.
 - `pg_replication_slots.retained_bytes`
+- `pg_settings.max_connections`, deliberately: it is a configuration
+  value that exists for the `high_max_connections` threshold rule.
 - `pg_stat_activity.max_lock_wait_seconds`
 - `pg_stat_all_tables.dead_tuple_percent`
 - `pg_stat_archiver.failed_count_delta`

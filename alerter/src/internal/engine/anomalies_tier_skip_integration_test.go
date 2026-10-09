@@ -104,7 +104,7 @@ DROP TABLE IF EXISTS alert_acknowledgments CASCADE;
 DROP TABLE IF EXISTS alerts CASCADE;
 `
 
-const tierSkipMetric = "pg_settings.max_connections"
+const tierSkipMetric = "pg_sys_load_avg_info.load_avg_fifteen_minutes"
 
 // Seed statements for the prior state each case needs.
 const (

@@ -23,11 +23,14 @@ A high connection utilization indicates the database may
 run out of available connections. Consider increasing
 `max_connections` or implementing connection pooling.
 
-The rule divides the most recent session count by the
-newest recorded `max_connections` value. The settings
-probe only stores a snapshot when the configuration
-changes, so the newest snapshot may be days or weeks old
-on a stable server.
+The rule divides the most recent client session count by
+the `max_connections` value in force when that count was
+collected, which is the newest settings snapshot at or
+before it. When the count predates every settings
+snapshot, as just after a connection is added, the rule
+uses the earliest snapshot instead. The settings probe
+only stores a snapshot when the configuration changes, so
+that snapshot may be days or weeks old on a stable server.
 
 ### High Max Connections
 

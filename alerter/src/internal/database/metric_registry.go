@@ -170,26 +170,30 @@ var metricRegistry = map[string]metricQueryConfig{
 		scan: scanBasic,
 	},
 
-	// The max_conns CTE reads the newest pg_settings row per connection
-	// rather than requiring one written within the last hour, for the same
-	// reason as pg_settings.max_connections above. Freshness of the metric
-	// still comes from metrics.pg_stat_activity, which the 5 minute window
-	// on active_counts bounds. See GitHub issue #406.
+	// Neither query requires a pg_settings row written within the last
+	// hour, for the same reason as pg_settings.max_connections above.
+	// Freshness of the metric still comes from metrics.pg_stat_activity,
+	// which the 5 minute window on active_counts bounds. See GitHub issue
+	// #406.
 	//
 	// Both queries count client backends only. The historical query once
 	// counted every row, background processes included, so baselines sat
 	// above anything a live sample could reach and every evaluation scored
-	// a negative anomaly (GitHub issue #567). The historical max_conns CTE
-	// divides each sample by the max_connections in force when it was
-	// collected, which is what the latest query does for the newest
-	// sample; the earliest snapshot's range is open below, so samples
-	// collected before the first pg_settings write at onboarding are kept.
-	// pg_settings takes no time predicate, for the reason given above.
+	// a negative anomaly (GitHub issue #567).
+	//
+	// Both queries divide each sample by the max_connections in force when
+	// it was collected: the newest pg_settings row at or before the
+	// sample, or the earliest row when the sample predates every
+	// pg_settings write, as happens at onboarding. The latest query once
+	// took the newest pg_settings row outright, so a settings sample
+	// written after the newest activity sample (just after a restart that
+	// changed max_connections) made it disagree with the baseline for the
+	// same snapshot (GitHub issue #596).
 	"connection_utilization_percent": {
 		probeName: "pg_stat_activity",
 		latestSQL: `
 			WITH active_counts AS (
-				SELECT connection_id, COUNT(*) as active
+				SELECT connection_id, collected_at, COUNT(*) as active
 				FROM metrics.pg_stat_activity
 				WHERE backend_type = 'client backend'
 				  AND (connection_id, collected_at) IN (
@@ -198,20 +202,25 @@ var metricRegistry = map[string]metricQueryConfig{
 				      WHERE collected_at > NOW() - INTERVAL '5 minutes'
 				      GROUP BY connection_id
 				  )
-				GROUP BY connection_id
-			),
-			max_conns AS (
-				SELECT DISTINCT ON (connection_id)
-				       connection_id, setting::float as max_connections
-				FROM metrics.pg_settings
-				WHERE name = 'max_connections'
-				ORDER BY connection_id, collected_at DESC
+				GROUP BY connection_id, collected_at
 			)
 			SELECT a.connection_id,
 			       (a.active / NULLIF(m.max_connections, 0)) * 100 as value,
 			       NOW() as collected_at
 			FROM active_counts a
-			JOIN max_conns m ON a.connection_id = m.connection_id
+			JOIN LATERAL (
+				-- Rows at or before the sample sort first, newest first;
+				-- failing those, the earliest row.
+				SELECT ps.setting::float as max_connections
+				FROM metrics.pg_settings ps
+				WHERE ps.connection_id = a.connection_id
+				  AND ps.name = 'max_connections'
+				ORDER BY ps.collected_at > a.collected_at,
+				         CASE WHEN ps.collected_at <= a.collected_at
+				              THEN ps.collected_at END DESC,
+				         ps.collected_at
+				LIMIT 1
+			) m ON true
 		`,
 		historicalSQL: `
 			WITH activity_counts AS (

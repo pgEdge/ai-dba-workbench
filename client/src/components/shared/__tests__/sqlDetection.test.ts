@@ -439,6 +439,8 @@ describe('hasSqlParameters with other placeholder styles', () => {
         ['template braces', 'SELECT * FROM {{ schema }}.t'],
         ['psql variables', 'SELECT * FROM t WHERE id = :id'],
         ['quoted psql variables', "SELECT * FROM t WHERE name = :'name'"],
+        ['psql variables after escape strings', "SELECT E'it\\'s' WHERE id = :id"],
+        ['psql variables after literals ending in e', "SELECT 'a e', :id, 'z'"],
     ])('detects %s', (_label, sql) => {
         expect(hasSqlParameters(sql)).toBe(true);
     });
@@ -454,6 +456,9 @@ describe('hasSqlParameters with other placeholder styles', () => {
         ['tagged dollar-quoted bodies', 'DO $fn$ BEGIN x := :y; END $fn$;'],
         ['array slices', 'SELECT arr[lo:hi] FROM t'],
         ['times in literals', "SELECT '10:30'::time"],
+        ['escape strings with escaped quotes', "SELECT E'it\\'s :x' AS s"],
+        ['lower-case escape strings', "SELECT e'a\\\\' AS s, 'b :c' AS t"],
+        ['quotes inside quoted identifiers', `SELECT "it's" FROM t WHERE x = ':y'`],
     ])('ignores %s', (_label, sql) => {
         expect(hasSqlParameters(sql)).toBe(false);
     });

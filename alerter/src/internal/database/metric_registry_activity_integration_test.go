@@ -282,6 +282,12 @@ func TestConnectionUtilizationPercent_LatestIgnoresNewerSetting(t *testing.T) {
 	})
 	insertMaxConnections(t, pool, connID, "400", sampleInstant(1*time.Minute))
 
+	// Another connection's setting, newer than connID's in-force row but
+	// still before the sample, must not be read: it pins the lateral's
+	// per-connection predicate, which would otherwise pick it and report 40.
+	otherID := insertConnection(t, pool, "conn-util-596-other")
+	insertMaxConnections(t, pool, otherID, "10", sampleInstant(time.Hour))
+
 	const want = 4.0 // four client backends of the max_connections = 100 in force
 
 	latest := latestValueFor(t, ds, "connection_utilization_percent", connID)

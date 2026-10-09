@@ -133,8 +133,23 @@ const (
 type OIDCHandler struct {
 	authStore federationStore
 	provider  *oidc.Provider
-	cfg       config.OIDCConfig
 	stateKey  []byte
+
+	// cfg is the configuration the handler was constructed with, and
+	// configSource, when set, supplies the live configuration in its
+	// place; currentConfig chooses between them. Every request reads the
+	// configuration once, through currentConfig, so that a SIGHUP reload
+	// narrowing allowed_email_domains or remapping a Workbench group in
+	// group_map applies to the next login rather than at the next
+	// restart. (Removing a group from group_map instead leaves its
+	// members in place, since only mapped groups are reconciled.)
+	//
+	// Only the policy settings can change this way. The issuer, client
+	// credentials, redirect URL, scopes and claim names were baked into
+	// provider when it was built at start-up, so changing them still
+	// needs a restart, and config.ReloadableConfig says so.
+	cfg          config.OIDCConfig
+	configSource func() config.OIDCConfig
 
 	// rateLimiter is owned by this handler and stopped by Close; it is
 	// not the shared failed-login limiter, because a federated callback
@@ -222,6 +237,27 @@ func newOIDCHandler(authStore federationStore, provider *oidc.Provider,
 	}
 }
 
+// SetConfigSource makes the handler read its configuration from source
+// on every request instead of from the copy it was constructed with,
+// which is what lets a SIGHUP reload change the login policy of a
+// running server. It must be called before RegisterRoutes, since the
+// field is not guarded against concurrent requests; a nil source
+// restores the construction-time copy.
+func (h *OIDCHandler) SetConfigSource(source func() config.OIDCConfig) {
+	h.configSource = source
+}
+
+// currentConfig returns the configuration the current request should
+// apply. Callers read it once per request and pass the result along, so
+// that a reload landing part-way through a login cannot have one check
+// apply the old policy and the next the new.
+func (h *OIDCHandler) currentConfig() config.OIDCConfig {
+	if h.configSource != nil {
+		return h.configSource()
+	}
+	return h.cfg
+}
+
 // RegisterRoutes registers the two federated login endpoints. They are
 // deliberately registered without the authentication wrapper: a user
 // starting a login has no session yet, and the callback is how they get
@@ -268,9 +304,16 @@ func (h *OIDCHandler) Close() {
 
 // enabled reports whether federated login is actually available. Both
 // conditions matter: an operator can switch OIDC off in the
-// configuration, and a handler can be constructed without a provider.
+// configuration, which a reload applies at once, and a handler can be
+// constructed without a provider, which no reload can supply.
 func (h *OIDCHandler) enabled() bool {
-	return h.cfg.IsEnabled() && h.provider != nil && h.authStore != nil
+	return h.enabledUnder(h.currentConfig())
+}
+
+// enabledUnder is enabled against a configuration the caller has already
+// read, for the checks that must agree with the rest of one request.
+func (h *OIDCHandler) enabledUnder(cfg config.OIDCConfig) bool {
+	return cfg.IsEnabled() && h.provider != nil && h.authStore != nil
 }
 
 // handleStart handles GET /api/v1/auth/oidc/start, the endpoint the
@@ -527,7 +570,19 @@ func (h *OIDCHandler) completeLogin(w http.ResponseWriter, r *http.Request,
 
 	logIdentityDiagnostics(identity)
 
-	if !h.emailDomainAllowed(identity) {
+	// One read of the configuration serves every policy decision below.
+	// It is checked for enabled again because a reload switching
+	// federated login off may have landed whilst the code exchange was
+	// in flight, and a login that started before the switch must not be
+	// the one that gets through after it.
+	cfg := h.currentConfig()
+	if !h.enabledUnder(cfg) {
+		log.Printf("[OIDC] Refusing federated login: federated login was switched off during the login")
+		redirectTo(w, loginFailedTarget)
+		return
+	}
+
+	if !emailDomainAllowed(cfg, identity) {
 		//nolint:gosec // G706: subject passed through logging.SanitizeForLog
 		log.Printf("[OIDC] Refusing subject %s: its email address is not in an allowed domain",
 			logging.SanitizeForLog(identity.Subject))
@@ -536,7 +591,7 @@ func (h *OIDCHandler) completeLogin(w http.ResponseWriter, r *http.Request,
 	}
 
 	federated := federatedIdentity(identity)
-	opts := h.federationOptions()
+	opts := federationOptions(cfg)
 
 	user, err := h.authStore.ResolveFederatedUser(federated, opts)
 	if err != nil {
@@ -649,8 +704,8 @@ func logIdentityDiagnostics(identity *oidc.Identity) {
 // be a way past the check. An unverified address is refused for the
 // same reason in a different costume: it is the user's assertion about
 // themselves, not the provider's.
-func (h *OIDCHandler) emailDomainAllowed(identity *oidc.Identity) bool {
-	if len(h.cfg.AllowedEmailDomains) == 0 {
+func emailDomainAllowed(cfg config.OIDCConfig, identity *oidc.Identity) bool {
+	if len(cfg.AllowedEmailDomains) == 0 {
 		return true
 	}
 	if identity.Email == "" || identity.EmailRejected || !identity.EmailVerified {
@@ -663,7 +718,7 @@ func (h *OIDCHandler) emailDomainAllowed(identity *oidc.Identity) bool {
 	}
 	domain := identity.Email[at+1:]
 
-	for _, allowed := range h.cfg.AllowedEmailDomains {
+	for _, allowed := range cfg.AllowedEmailDomains {
 		// A leading "@" is trimmed so that an operator who wrote
 		// "@example.com" gets what they plainly meant rather than a
 		// silent lockout. Comparison is case-insensitive because a
@@ -679,11 +734,11 @@ func (h *OIDCHandler) emailDomainAllowed(identity *oidc.Identity) bool {
 // federationOptions translates the operator's OIDC configuration into
 // the federation policy auth.AuthStore applies. It is the only place the
 // two vocabularies meet.
-func (h *OIDCHandler) federationOptions() auth.FederationOptions {
+func federationOptions(cfg config.OIDCConfig) auth.FederationOptions {
 	return auth.FederationOptions{
-		ProvisionUsers: h.cfg.ProvisionUsersEnabled(),
-		GroupMap:       h.cfg.GroupMap,
-		SuperuserGroup: h.cfg.SuperuserGroup,
+		ProvisionUsers: cfg.ProvisionUsersEnabled(),
+		GroupMap:       cfg.GroupMap,
+		SuperuserGroup: cfg.SuperuserGroup,
 	}
 }
 

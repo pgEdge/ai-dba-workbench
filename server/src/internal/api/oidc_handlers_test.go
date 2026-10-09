@@ -1368,8 +1368,8 @@ func TestEmailDomainAllowed(t *testing.T) {
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			handler := &OIDCHandler{cfg: config.OIDCConfig{AllowedEmailDomains: tc.domains}}
-			if got := handler.emailDomainAllowed(&tc.identity); got != tc.want {
+			cfg := config.OIDCConfig{AllowedEmailDomains: tc.domains}
+			if got := emailDomainAllowed(cfg, &tc.identity); got != tc.want {
 				t.Errorf("emailDomainAllowed = %v, want %v", got, tc.want)
 			}
 		})
@@ -1407,13 +1407,11 @@ func TestFederatedIdentityCarriesOnlyTheDecisionInputs(t *testing.T) {
 }
 
 func TestFederationOptionsMirrorTheConfiguration(t *testing.T) {
-	handler := &OIDCHandler{cfg: config.OIDCConfig{
+	opts := federationOptions(config.OIDCConfig{
 		ProvisionUsers: boolPointer(true),
 		GroupMap:       map[string]string{"idp-eng": "engineers"},
 		SuperuserGroup: "idp-admins",
-	}}
-
-	opts := handler.federationOptions()
+	})
 	if !opts.ProvisionUsers || opts.SuperuserGroup != "idp-admins" ||
 		opts.GroupMap["idp-eng"] != "engineers" {
 		t.Errorf("federationOptions = %+v", opts)

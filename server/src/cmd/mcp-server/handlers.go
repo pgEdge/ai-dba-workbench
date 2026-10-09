@@ -66,6 +66,13 @@ type HandlerDependencies struct {
 	OIDCProvider *oidc.Provider
 	OIDCStateKey []byte
 
+	// LiveConfig returns the configuration as of the latest SIGHUP
+	// reload, for the handlers that apply a reload without a restart
+	// (the federated login policy and the login page state). When it is
+	// nil, as in tests that only exercise route registration, those
+	// handlers read Config instead.
+	LiveConfig func() *config.Config
+
 	// RegisterCloser records a cleanup function to be run when the
 	// server shuts down. Handlers that own background goroutines use
 	// it to hand that ownership back to the server. It may be nil in
@@ -92,9 +99,15 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 		// The login page state is derived once here and shared with the
 		// login handler, so that what the capabilities endpoint reports
 		// and what the login endpoint enforces cannot drift apart.
+		//
+		// Local login is the half of that state fixed at start-up, since
+		// the login handler is built with it; the OIDC half follows a
+		// reload, as the federated login handler does.
 		authInfo := authCapabilities(deps)
 		mux.HandleFunc("/api/v1/capabilities",
-			handleCapabilities(deps.AIEnabled, maxIterations, authInfo))
+			handleCapabilities(deps.AIEnabled, maxIterations, func() authCapabilitiesInfo {
+				return liveAuthCapabilities(deps, authInfo.LocalEnabled)
+			}))
 
 		// Authentication endpoint (does NOT require auth - it IS the login endpoint)
 		// IPExtractor provides secure IP extraction that only trusts X-Forwarded-For
@@ -128,6 +141,9 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 		if deps.OIDCProvider != nil && deps.Config != nil {
 			oidcHandler := api.NewOIDCHandler(deps.AuthStore, deps.OIDCProvider,
 				deps.Config.HTTP.Auth.OIDC, deps.OIDCStateKey, tlsEnabled, deps.IPExtractor)
+			oidcHandler.SetConfigSource(func() config.OIDCConfig {
+				return deps.liveConfig().HTTP.Auth.OIDC
+			})
 			// NewOIDCHandler owns a rate limiter whose cleanup goroutine
 			// only Close stops; hand that back to the server.
 			if deps.RegisterCloser != nil {
@@ -430,15 +446,34 @@ const defaultOIDCButtonLabel = "Sign in with SSO"
 // start-up as well as switched on in the configuration, since a button
 // pointing at an endpoint that answers 404 is worse than no button.
 func authCapabilities(deps *HandlerDependencies) authCapabilitiesInfo {
+	if deps == nil {
+		return authCapabilitiesInfo{LocalEnabled: true}
+	}
+	return authCapabilitiesFrom(deps.Config, deps.OIDCProvider)
+}
+
+// liveAuthCapabilities is authCapabilities against the configuration as
+// of the latest reload, with local login pinned to localEnabled: the
+// login handler is built once with that value, and the capabilities
+// endpoint must report what the login endpoint enforces.
+func liveAuthCapabilities(deps *HandlerDependencies, localEnabled bool) authCapabilitiesInfo {
+	info := authCapabilitiesFrom(deps.liveConfig(), deps.OIDCProvider)
+	info.LocalEnabled = localEnabled
+	return info
+}
+
+// authCapabilitiesFrom derives the login page state from one
+// configuration and the provider discovered at start-up.
+func authCapabilitiesFrom(cfg *config.Config, provider *oidc.Provider) authCapabilitiesInfo {
 	info := authCapabilitiesInfo{LocalEnabled: true}
-	if deps == nil || deps.Config == nil {
+	if cfg == nil {
 		return info
 	}
 
-	info.LocalEnabled = deps.Config.HTTP.Auth.LocalEnabled()
-	info.OIDCEnabled = deps.Config.HTTP.Auth.OIDC.IsEnabled() && deps.OIDCProvider != nil
+	info.LocalEnabled = cfg.HTTP.Auth.LocalEnabled()
+	info.OIDCEnabled = cfg.HTTP.Auth.OIDC.IsEnabled() && provider != nil
 	if info.OIDCEnabled {
-		info.OIDCLabel = deps.Config.HTTP.Auth.OIDC.ButtonLabel
+		info.OIDCLabel = cfg.HTTP.Auth.OIDC.ButtonLabel
 		if info.OIDCLabel == "" {
 			info.OIDCLabel = defaultOIDCButtonLabel
 		}
@@ -446,9 +481,22 @@ func authCapabilities(deps *HandlerDependencies) authCapabilitiesInfo {
 	return info
 }
 
-// handleCapabilities returns server capability flags for the client
+// liveConfig returns the configuration as of the latest reload, or the
+// start-up configuration when no live source was wired in.
+func (deps *HandlerDependencies) liveConfig() *config.Config {
+	if deps.LiveConfig != nil {
+		if cfg := deps.LiveConfig(); cfg != nil {
+			return cfg
+		}
+	}
+	return deps.Config
+}
+
+// handleCapabilities returns server capability flags for the client.
+// authInfo is called on every request, so that the login page state it
+// reports follows a configuration reload.
 func handleCapabilities(aiEnabled bool, maxIterations int,
-	authInfo authCapabilitiesInfo) http.HandlerFunc {
+	authInfo func() authCapabilitiesInfo) http.HandlerFunc {
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -458,7 +506,7 @@ func handleCapabilities(aiEnabled bool, maxIterations int,
 		api.RespondJSON(w, http.StatusOK, map[string]any{
 			"ai_enabled":     aiEnabled,
 			"max_iterations": maxIterations,
-			"auth":           authInfo,
+			"auth":           authInfo(),
 		})
 	}
 }

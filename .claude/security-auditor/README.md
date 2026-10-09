@@ -232,12 +232,27 @@ moved.
   naming the reason, and because that endpoint applies the password,
   enabled and superuser changes in one transaction, the refusal rolls
   back the others too (#485).
-- Every setting in the `http.auth` section is read once at start-up and
-  held for the life of the process. A reload changes none of them:
-  handlers keep by-value copies and `ReloadableConfig.Reload` only swaps
-  the pointer, so `logRestartRequiredSettings` reports each one as
-  requiring a restart. Advice that assumes an authentication setting can
-  be tightened by SIGHUP is wrong.
+- Most `http.auth` settings are read once at start-up and need a
+  restart: `local.enabled`, `max_failed_attempts_before_lockout` and the
+  OIDC settings baked into the provider (issuer, client credentials,
+  redirect URL, scopes, claim names, and switching `enabled` on when the
+  server started with it off). The OIDC login policy is the exception
+  (#484): `OIDCHandler` and the capabilities endpoint read
+  `provision_users`, `allowed_email_domains`, `superuser_group`,
+  `group_map`, `button_label` and `enabled: false` through
+  `HandlerDependencies.LiveConfig` (wired to `ReloadableConfig.Get`) on
+  every request, so SIGHUP applies them. `logOIDCChanges` in
+  `config/reload.go` says which is which, comparing the provider
+  settings with `rc.startup`, and `oidcAccessWarnings` warns on each
+  widening change (provisioning on, a domain added or the list emptied,
+  `superuser_group` set or retargeted, a new `group_map` mapping);
+  `logOIDCChanges` itself warns when `enabled` is switched back on.
+  Removing a group from `group_map` revokes nothing because only mapped
+  Workbench groups are reconciled; clearing `superuser_group` revokes
+  nothing because `ReconcileFederatedGroups` leaves `is_superuser`
+  alone when no superuser group is configured. Separately,
+  `checkALoginMethodSurvives` refuses a reload that switches OIDC off
+  when local login was off at start-up.
 - A federated account is matched on the pair `(issuer, subject)` and
   NEVER on username. `ExternalSubjectKey` in `auth/federation.go`
   builds the key and `ResolveFederatedUser` looks the account up by it

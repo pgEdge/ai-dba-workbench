@@ -1893,22 +1893,20 @@ func TestReloadWarnsOnOIDCChanges(t *testing.T) {
 	newCfg.HTTP.Auth.OIDC.AllowedEmailDomains = []string{"example.com"}
 	newCfg.HTTP.Auth.OIDC.SuperuserGroup = "admins"
 	newCfg.HTTP.Auth.OIDC.GroupMap = map[string]string{"idp-admins": "admins"}
+	newCfg.HTTP.Auth.OIDC.ButtonLabel = "Sign in with Acme"
 	localDisabled := false
 	newCfg.HTTP.Auth.Local.Enabled = &localDisabled
 
-	rc := &ReloadableConfig{config: oldCfg}
+	rc := NewReloadableConfig(oldCfg, "", CLIFlags{})
 
 	out := captureStderr(t, func() {
 		rc.logRestartRequiredSettings(newCfg)
 	})
 
-	// Every http.auth setting requires a restart, including the claim and
-	// authorization mapping that a reload once reported as applied. The
-	// handler keeps the copy of the OIDC configuration it was built with
-	// and the capabilities payload is built once at startup, so a NOTE
-	// saying the value "changed" would tell an operator containing an
-	// incident that a narrowed allowed_email_domains or a pruned
-	// group_map had taken effect when it had not.
+	// The provider is built at start-up from these, so only a restart
+	// applies them; switching OIDC on is among them here because the
+	// server started with it off and so discovered no provider. Local
+	// login is fixed when the login handler is built.
 	wantWarnings := []string{
 		"WARNING: http.auth.oidc.enabled changed - requires restart",
 		"WARNING: http.auth.oidc.issuer changed - requires restart",
@@ -1919,20 +1917,28 @@ func TestReloadWarnsOnOIDCChanges(t *testing.T) {
 		"WARNING: http.auth.oidc.display_name_claim changed - requires restart",
 		"WARNING: http.auth.oidc.groups_claim changed - requires restart",
 		"WARNING: http.auth.oidc.scopes changed - requires restart",
-		"WARNING: http.auth.oidc.provision_users changed - requires restart",
-		"WARNING: http.auth.oidc.allowed_email_domains changed - requires restart",
-		"WARNING: http.auth.oidc.superuser_group changed - requires restart",
-		"WARNING: http.auth.oidc.group_map changed - requires restart",
 		"WARNING: http.auth.local.enabled changed - requires restart",
 	}
-	for _, want := range wantWarnings {
+	// The login policy is read through the live configuration on every
+	// request (issue #484), so a reload applies it and must say so.
+	wantNotes := []string{
+		"NOTE: http.auth.oidc.provision_users changed - applied",
+		"NOTE: http.auth.oidc.allowed_email_domains changed - applied",
+		"NOTE: http.auth.oidc.superuser_group changed - applied",
+		"NOTE: http.auth.oidc.group_map changed - applied",
+		"NOTE: http.auth.oidc.button_label changed - applied",
+	}
+	for _, want := range append(wantWarnings, wantNotes...) {
 		if !strings.Contains(out, want) {
 			t.Errorf("expected stderr to contain %q, got:\n%s", want, out)
 		}
 	}
-	if strings.Contains(out, "NOTE: http.auth") {
-		t.Errorf("no http.auth setting takes effect on reload, so none may be "+
-			"reported as merely changed, got:\n%s", out)
+	for _, setting := range []string{"provision_users", "allowed_email_domains",
+		"superuser_group", "group_map", "button_label"} {
+		if strings.Contains(out, "http.auth.oidc."+setting+" changed - requires restart") {
+			t.Errorf("%s applies on reload but was reported as requiring a restart:\n%s",
+				setting, out)
+		}
 	}
 }
 

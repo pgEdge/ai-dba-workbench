@@ -374,6 +374,26 @@ also belongs in `logRestartRequiredSettings` in
 values, so a SIGHUP reports a change it cannot apply instead of
 reporting success.
 
+The server's live-reload path is the exception: `HandlerDependencies.
+LiveConfig` (wired to `ReloadableConfig.Get` by
+`Server.handlerDependencies` in `server.go`) is read
+per request by the OIDC handler, through `OIDCHandler.SetConfigSource`,
+and by the capabilities endpoint, so the `http.auth.oidc` policy
+settings apply on reload and `logOIDCChanges` reports them as
+`applied`. A setting baked into the `oidc.Provider` at start-up
+(issuer, client credentials, redirect URL, scopes, claim names) stays
+a restart warning. Read the configuration once per request and pass
+the copy along, as `completeLogin` does, so a reload mid-request cannot
+mix old and new policy; do not use an `OnReload` callback that calls
+`Get`, since callbacks run under the reload's write lock. A reload
+that would leave no login method is refused before the swap, in
+`checkALoginMethodSurvives`, because `ReloadableConfig` keeps the
+start-up config in `startup` and local login cannot change live. Tests swap
+the source (`reloadTo` in `oidc_handlers_reload_test.go`,
+`liveOIDCServer` in `oidc_reload_wiring_test.go`), and
+`TestHandlerDependenciesFollowAReload` pins the production wiring by
+reloading a rewritten file.
+
 Config-file loading has a second trap that shows up as dead test
 coverage. `(*Config).LoadFromFile` wraps the `os.ReadFile` error with
 `%w`, so `os.IsNotExist` never matches it; the missing-file branches

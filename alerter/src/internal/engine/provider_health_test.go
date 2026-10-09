@@ -162,10 +162,13 @@ type notification struct {
 // trackerHarness wires a tracker to a fake store and records what it
 // notifies and logs.
 type trackerHarness struct {
-	store     *fakeSystemAlertStore
-	tracker   *providerHealthTracker
-	threshold int
-	secrets   []string
+	store   *fakeSystemAlertStore
+	tracker *providerHealthTracker
+	secrets []string
+
+	// settings starts as the default configuration with the
+	// harness's failure threshold.
+	settings config.ProviderHealthConfig
 
 	mu     sync.Mutex
 	notes  []notification
@@ -173,14 +176,16 @@ type trackerHarness struct {
 }
 
 func newTrackerHarness(threshold int) *trackerHarness {
-	h := &trackerHarness{store: newFakeSystemAlertStore(), threshold: threshold}
+	h := &trackerHarness{store: newFakeSystemAlertStore(),
+		settings: config.NewConfig().Anomaly.ProviderHealth}
+	h.settings.FailureThreshold = threshold
 	h.tracker = newProviderHealthTracker(h.store,
 		func(a *database.Alert, typ database.NotificationType) {
 			h.mu.Lock()
 			defer h.mu.Unlock()
 			h.notes = append(h.notes, notification{a.ID, typ})
 		},
-		func() int { return h.threshold },
+		func() config.ProviderHealthConfig { return h.settings },
 		func() []string { return h.secrets },
 		func(format string, args ...any) {
 			h.mu.Lock()
@@ -301,6 +306,10 @@ func TestProviderHealth_RaisesAtThresholdAndClearsOnSuccess(t *testing.T) {
 
 func TestProviderHealth_CooldownBoundsAFlakyProvider(t *testing.T) {
 	h := newTrackerHarness(3)
+	// A failure rate of 1 leaves only the consecutive count, which this
+	// test is about; TestProviderHealth_FailureRateHoldsAFlakyProviderOpen
+	// covers the same provider with the default rate.
+	h.settings.FailureRate = 1
 	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
 	h.tracker.now = func() time.Time { return now }
 
@@ -928,8 +937,8 @@ func TestInitProviderHealth(t *testing.T) {
 		if rsn, ok := e.reasoningProvider.(*healthTrackingReasoning); !ok || rsn.provider != "anthropic" {
 			t.Fatalf("reasoning provider = %#v", e.reasoningProvider)
 		}
-		if got := e.providerHealth.threshold(); got != config.DefaultProviderFailureThreshold {
-			t.Errorf("threshold = %d", got)
+		if got := e.providerHealth.settings(); got != cfg.Anomaly.ProviderHealth {
+			t.Errorf("settings = %+v, want %+v", got, cfg.Anomaly.ProviderHealth)
 		}
 		if got := e.providerHealth.secrets(); len(got) != 4 {
 			t.Errorf("secrets = %d", len(got))

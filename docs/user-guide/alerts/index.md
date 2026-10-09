@@ -184,7 +184,8 @@ The alert title names the affected tier and provider, as
 in `Anomaly detection degraded: Tier 2 embedding provider
 ollama failing`. The description gives the model, the
 number of consecutive failures so far
-(or notes a failed startup check), what anomaly detection
+(or notes a failed startup check, or gives how many of the
+provider's recent calls failed), what anomaly detection
 does whilst the provider fails, and the last error the
 provider returned, with any credentials removed. A network
 failure appears only as its category, such as `connection
@@ -192,9 +193,13 @@ refused`, without the endpoint's address; the alerter log
 records the endpoint for the administrator. The alerter
 raises one alert for each tier and provider, at warning
 severity, and clears the alert on the next successful call
-to that provider; a successful tier 3 or re-evaluation call
-clears the alerts of both, since they share the reasoning
-provider. Once cleared, the alert is not raised again for
+to that provider unless a steady share of the provider's
+recent calls are still failing; the alerter also raises the
+alert for a provider that fails such a share of its calls
+without failing consecutively. A successful tier 3 or
+re-evaluation call counts as a success for both, since they
+share the reasoning provider, and so can clear the alerts of
+both. Once cleared, the alert is not raised again for
 five minutes.
 
 System alerts behave differently from connection alerts in

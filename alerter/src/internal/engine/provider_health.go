@@ -36,6 +36,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/url"
 	"regexp"
@@ -169,6 +170,11 @@ type providerHealthState struct {
 	// failures counts consecutive failed calls since the last success.
 	failures int
 
+	// outcomes records whether each recent call failed, oldest first,
+	// for the failure rate; it holds at most the failure rate window.
+	// endRun may fold a run of consecutive failures into one entry.
+	outcomes []bool
+
 	// loaded is set once the datastore has been asked whether an alert
 	// is already open for the key, which may have been raised before the
 	// alerter restarted.
@@ -180,23 +186,101 @@ type providerHealthState struct {
 	// lastError is the redacted error the open alert last reported.
 	lastError string
 
-	// reportedFailures is the failure count the open alert last
-	// reported.
-	reportedFailures int
+	// reportedDescription is the description the open alert last
+	// reported, so that an unchanged one is not rewritten.
+	reportedDescription string
 
 	// clearedAt is when this process last cleared the alert, which
 	// starts the re-raise cooldown.
 	clearedAt time.Time
 }
 
-// providerHealthTracker counts consecutive provider failures per tier
-// and provider, and opens and clears the matching system alert.
+// push records the outcome of one call, dropping the oldest outcomes
+// beyond window. The caller holds st.mu.
+func (st *providerHealthState) push(failed bool, window int) {
+	st.outcomes = append(st.outcomes, failed)
+	if extra := len(st.outcomes) - window; extra > 0 {
+		st.outcomes = append(st.outcomes[:0], st.outcomes[extra:]...)
+	}
+}
+
+// recentFailures counts the failed calls among the recent outcomes. The
+// caller holds st.mu.
+func (st *providerHealthState) recentFailures() int {
+	return countFailures(st.outcomes)
+}
+
+// countFailures counts the failed calls in outcomes.
+func countFailures(outcomes []bool) int {
+	n := 0
+	for _, failed := range outcomes {
+		if failed {
+			n++
+		}
+	}
+	return n
+}
+
+// endRun is called when a success ends a run of run consecutive
+// failures. A run long enough to reach the failure threshold is an
+// outage that the consecutive count reports by itself; when the
+// provider's other recent calls would stay below the failure limit with
+// the run counted once, the run is folded into a single failure. A
+// provider that recovers from an outage therefore clears its alert on
+// the first success, as it would without the failure rate, and a later
+// failure does not raise the alert again on the strength of the outage.
+// A provider already failing at the rate keeps the whole run. The caller
+// holds st.mu.
+func (st *providerHealthState) endRun(run, threshold, limit int) {
+	if run < 2 || run < threshold {
+		return
+	}
+	before := st.outcomes[:len(st.outcomes)-min(run, len(st.outcomes))]
+	if countFailures(before)+1 >= limit {
+		return
+	}
+	st.outcomes = append(before, true)
+}
+
+// providerHealthLimits is the provider health configuration in force,
+// with the default in place of any value out of range.
+type providerHealthLimits struct {
+	// threshold is the consecutive failure count that opens the alert.
+	threshold int
+
+	// window is the number of recent calls the failure rate covers.
+	window int
+
+	// limit is the number of failures among the recent calls that
+	// opens the alert and keeps it open: the failure rate applied to
+	// the window, rounded up and at least one.
+	limit int
+}
+
+// failureLimit is the number of failures among window calls that reaches
+// rate, rounded up so that the share is at least rate, and at least one.
+func failureLimit(rate float64, window int) int {
+	// Stepping the product down by one unit in the last place stops a
+	// product such as 0.28 * 25, which floating point puts one step above
+	// 7, from rounding up to 8. A fixed tolerance would be too coarse for
+	// a rate given to more decimal places, such as 0.30000000001 * 20,
+	// whose limit is 7 rather than 6.
+	limit := int(math.Ceil(math.Nextafter(rate*float64(window), math.Inf(-1))))
+	if limit < 1 {
+		return 1
+	}
+	return limit
+}
+
+// providerHealthTracker counts provider failures per tier and provider,
+// both consecutive failures and failures among the recent calls, and
+// opens and clears the matching system alert.
 type providerHealthTracker struct {
-	store     systemAlertStore
-	notify    func(*database.Alert, database.NotificationType)
-	threshold func() int
-	secrets   func() []string
-	log       func(string, ...any)
+	store    systemAlertStore
+	notify   func(*database.Alert, database.NotificationType)
+	settings func() config.ProviderHealthConfig
+	secrets  func() []string
+	log      func(string, ...any)
 
 	// now and cooldown time the re-raise cooldown; tests replace them.
 	now      func() time.Time
@@ -206,25 +290,25 @@ type providerHealthTracker struct {
 	states map[string]*providerHealthState
 }
 
-// newProviderHealthTracker builds a tracker. threshold is read on every
-// failure so a reloaded configuration takes effect, and secrets returns
-// the configured API keys, which are removed from any error text.
+// newProviderHealthTracker builds a tracker. settings is read on every
+// call so a reloaded configuration takes effect, and secrets returns the
+// configured API keys, which are removed from any error text.
 func newProviderHealthTracker(
 	store systemAlertStore,
 	notify func(*database.Alert, database.NotificationType),
-	threshold func() int,
+	settings func() config.ProviderHealthConfig,
 	secrets func() []string,
 	log func(string, ...any),
 ) *providerHealthTracker {
 	return &providerHealthTracker{
-		store:     store,
-		notify:    notify,
-		threshold: threshold,
-		secrets:   secrets,
-		log:       log,
-		now:       time.Now,
-		cooldown:  AlertCooldownPeriod,
-		states:    make(map[string]*providerHealthState),
+		store:    store,
+		notify:   notify,
+		settings: settings,
+		secrets:  secrets,
+		log:      log,
+		now:      time.Now,
+		cooldown: AlertCooldownPeriod,
+		states:   make(map[string]*providerHealthState),
 	}
 }
 
@@ -244,12 +328,19 @@ func (t *providerHealthTracker) state(key string) *providerHealthState {
 // alert on this failure whatever the threshold and cooldown, for the
 // startup check.
 //
-// A success resets the count and clears the alert of every tier that
-// shares the provider, so a re-evaluation alert does not outlive the
+// A failure opens the alert when the consecutive failures reach the
+// threshold, or when the failures among the recent calls reach the
+// failure limit, which catches a provider that fails a steady share of
+// its calls without failing many in a row (GitHub issue #593).
+//
+// A success resets the consecutive count and is recorded against every
+// tier that shares the provider, clearing its alert unless the failure
+// limit is still reached, so a re-evaluation alert does not outlive the
 // fault just because no acknowledged alert is due for re-evaluation.
-// Once cleared, an alert is not raised again within the cooldown, the
-// same flapping guard the threshold alerts use, so a provider that fails
-// intermittently cannot fire and clear it on every short run of errors.
+// Holding the alert open until the failure rate falls, and not raising
+// it again within the cooldown once cleared (the same flapping guard
+// the threshold alerts use), keeps a provider that fails intermittently
+// from firing and clearing it on every short run of errors.
 //
 // A call abandoned because its context was canceled says nothing about
 // the provider, so it is neither a failure nor a success. A deadline is
@@ -266,9 +357,10 @@ func (t *providerHealthTracker) record(ctx context.Context, tier providerTier,
 	dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), providerHealthDBTimeout)
 	defer cancel()
 
+	lim := t.limits()
 	if callErr == nil {
 		for _, shared := range tier.sharedTiers() {
-			t.recordSuccess(dbCtx, providerHealthKey(shared, provider))
+			t.recordSuccess(dbCtx, providerHealthKey(shared, provider), lim)
 		}
 		return
 	}
@@ -279,27 +371,38 @@ func (t *providerHealthTracker) record(ctx context.Context, tier providerTier,
 	defer st.mu.Unlock()
 
 	st.failures++
-	if !immediate && (st.failures < t.effectiveThreshold() || t.coolingDown(st)) {
+	st.push(true, lim.window)
+	tripped := st.failures >= lim.threshold || st.recentFailures() >= lim.limit
+	if !immediate && (!tripped || t.coolingDown(st)) {
 		return
 	}
 	if !t.load(dbCtx, key, st) {
 		return
 	}
-	t.raise(dbCtx, key, st, tier, provider, model, callErr, immediate)
+	t.raise(dbCtx, key, st, tier, provider, model, callErr, immediate, lim)
 }
 
-// recordSuccess resets the failure count for key and clears its alert
-// if one is open.
-func (t *providerHealthTracker) recordSuccess(dbCtx context.Context, key string) {
+// recordSuccess resets the consecutive failure count for key, records
+// the success among the recent calls, and clears the alert if one is
+// open and the failure limit is no longer reached.
+func (t *providerHealthTracker) recordSuccess(dbCtx context.Context, key string, lim providerHealthLimits) {
 	st := t.state(key)
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
+	st.endRun(st.failures, lim.threshold, lim.limit)
 	st.failures = 0
+	st.push(false, lim.window)
 	if !t.load(dbCtx, key, st) || st.alertID == 0 {
 		return
 	}
-	t.clear(dbCtx, key, st, "the next call succeeded")
+	recent := st.recentFailures()
+	if recent >= lim.limit {
+		// The text is brought up to date by the next failure.
+		return
+	}
+	t.clear(dbCtx, key, st, fmt.Sprintf("a call succeeded, and %d of the last %d calls failed",
+		recent, len(st.outcomes)))
 }
 
 // coolingDown reports whether this process cleared the alert for st too
@@ -308,27 +411,44 @@ func (t *providerHealthTracker) coolingDown(st *providerHealthState) bool {
 	return !st.clearedAt.IsZero() && t.now().Sub(st.clearedAt) < t.cooldown
 }
 
-// effectiveThreshold is the configured failure threshold, or the default
-// when the configuration holds a value below one.
-func (t *providerHealthTracker) effectiveThreshold() int {
-	if threshold := t.threshold(); threshold >= 1 {
-		return threshold
+// limits is the provider health configuration in force. Each value out
+// of range, which validation normally rejects, falls back to its
+// default.
+func (t *providerHealthTracker) limits() providerHealthLimits {
+	cfg := t.settings()
+	threshold := cfg.FailureThreshold
+	if threshold < 1 {
+		threshold = config.DefaultProviderFailureThreshold
 	}
-	return config.DefaultProviderFailureThreshold
+	window := cfg.FailureRateWindow
+	if window < 1 || window > config.MaxProviderFailureRateWindow {
+		window = config.DefaultProviderFailureRateWindow
+	}
+	rate := cfg.FailureRate
+	if math.IsNaN(rate) || rate <= 0 || rate > 1 {
+		rate = config.DefaultProviderFailureRate
+	}
+	return providerHealthLimits{threshold: threshold, window: window, limit: failureLimit(rate, window)}
 }
 
 // raise opens the provider health alert for key, or refreshes the open
-// one when the provider's error or the failure count has changed. The
+// one when the provider's error or the failure counts have changed. The
 // caller holds st.mu and has loaded st.
 func (t *providerHealthTracker) raise(dbCtx context.Context, key string, st *providerHealthState,
-	tier providerTier, provider, model string, callErr error, immediate bool) {
+	tier providerTier, provider, model string, callErr error, immediate bool, lim providerHealthLimits) {
 	secrets := t.secrets()
 	lastError := redactProviderError(providerErrorText(callErr, provider), secrets)
-	description := providerHealthDescription(tier, provider, model, st.failures, immediate, lastError)
-	details := providerHealthDetails(tier, provider, model, st.failures, immediate, lastError)
+	counts := providerHealthCounts{
+		consecutive: st.failures,
+		recent:      st.recentFailures(),
+		calls:       len(st.outcomes),
+		limits:      lim,
+	}
+	description := providerHealthDescription(tier, provider, model, counts, immediate, lastError)
+	details := providerHealthDetails(tier, provider, model, counts, immediate, lastError)
 
 	errorChanged := st.alertID == 0 || lastError != st.lastError
-	if !errorChanged && st.failures == st.reportedFailures {
+	if !errorChanged && description == st.reportedDescription {
 		return
 	}
 	if errorChanged {
@@ -362,14 +482,15 @@ func (t *providerHealthTracker) raise(dbCtx context.Context, key string, st *pro
 		return
 	}
 	st.lastError = lastError
-	st.reportedFailures = st.failures
+	st.reportedDescription = description
 	t.log("Provider health alert raised: %s (%s)", alert.Title, lastError)
 	t.notify(opened, database.NotificationTypeAlertFire)
 }
 
 // refresh rewrites an open provider health alert's text, recording
-// lastError and the failure count only once the write has succeeded so that a failed write is
-// retried on the next failure. It reports false, and forgets the alert,
+// lastError and the description only once the write has succeeded so
+// that a failed write is retried on the next failure. It reports false,
+// and forgets the alert,
 // when the alert is no longer open, as happens when another alerter
 // process cleared it; any other outcome reports true.
 func (t *providerHealthTracker) refresh(dbCtx context.Context, key string, st *providerHealthState,
@@ -379,13 +500,13 @@ func (t *providerHealthTracker) refresh(dbCtx context.Context, key string, st *p
 	case errors.Is(err, database.ErrSystemAlertNotOpen):
 		st.alertID = 0
 		st.lastError = ""
-		st.reportedFailures = 0
+		st.reportedDescription = ""
 		return false
 	case err != nil:
 		t.log("ERROR: Failed to update provider health alert %s: %v", key, err)
 	default:
 		st.lastError = lastError
-		st.reportedFailures = st.failures
+		st.reportedDescription = description
 	}
 	return true
 }
@@ -427,7 +548,7 @@ func (t *providerHealthTracker) clear(ctx context.Context, key string, st *provi
 	}
 	st.alertID = 0
 	st.lastError = ""
-	st.reportedFailures = 0
+	st.reportedDescription = ""
 	st.clearedAt = t.now()
 	t.log("Provider health alert cleared: %s (%s)", key, why)
 
@@ -465,25 +586,56 @@ func (t *providerHealthTracker) clearStale(ctx context.Context, active map[strin
 	}
 }
 
+// providerHealthCounts is what an alert reports about the failures.
+type providerHealthCounts struct {
+	// consecutive is the number of consecutive failed calls.
+	consecutive int
+
+	// recent is the number of failed calls among the calls recorded.
+	recent int
+
+	// calls is the number of recent calls recorded.
+	calls int
+
+	limits providerHealthLimits
+}
+
+// byRate reports whether the alert is open on the failure rate rather
+// than on a run of consecutive failures.
+func (c providerHealthCounts) byRate() bool {
+	return c.consecutive < c.limits.threshold
+}
+
 // providerHealthDescription is the alert's description.
 func providerHealthDescription(tier providerTier, provider, model string,
-	failures int, startup bool, lastError string) string {
+	counts providerHealthCounts, startup bool, lastError string) string {
 	var what string
-	if startup {
+	switch {
+	case startup:
 		what = fmt.Sprintf("The startup health check of the %s provider %s (model %s) failed.",
 			strings.ToLower(tier.label()), provider, model)
-	} else {
+	case counts.byRate():
+		what = fmt.Sprintf("%d of the last %d %s calls to provider %s (model %s) have failed.",
+			counts.recent, counts.calls, strings.ToLower(tier.label()), provider, model)
+	default:
 		what = fmt.Sprintf("%d consecutive %s calls to provider %s (model %s) have failed.",
-			failures, strings.ToLower(tier.label()), provider, model)
+			counts.consecutive, strings.ToLower(tier.label()), provider, model)
 	}
-	return fmt.Sprintf("%s %s The alert clears on the next successful call to the provider. Last error: %s",
-		what, tier.consequence(), lastError)
+	var clears string
+	if counts.byRate() && !startup {
+		clears = fmt.Sprintf("The alert clears once fewer than %d of the last %d calls to the provider have failed.",
+			counts.limits.limit, counts.limits.window)
+	} else {
+		clears = fmt.Sprintf("The alert clears on the next successful call to the provider, unless "+
+			"%d or more of its last %d calls are failing.", counts.limits.limit, counts.limits.window)
+	}
+	return fmt.Sprintf("%s %s %s Last error: %s", what, tier.consequence(), clears, lastError)
 }
 
 // providerHealthDetails is the alert's anomaly_details JSON, which gives
 // a client the parts of the description separately.
 func providerHealthDetails(tier providerTier, provider, model string,
-	failures int, startup bool, lastError string) *string {
+	counts providerHealthCounts, startup bool, lastError string) *string {
 	source := "runtime"
 	if startup {
 		source = "startup_check"
@@ -493,7 +645,9 @@ func providerHealthDetails(tier providerTier, provider, model string,
 		"tier_label":           tier.label(),
 		"provider":             provider,
 		"model":                model,
-		"consecutive_failures": failures,
+		"consecutive_failures": counts.consecutive,
+		"recent_failures":      counts.recent,
+		"recent_calls":         counts.calls,
 		"source":               source,
 		"last_error":           lastError,
 	})
@@ -794,7 +948,7 @@ func (e *Engine) initProviderHealth() {
 	e.providerHealth = newProviderHealthTracker(
 		e.datastore,
 		e.queueNotification,
-		func() int { return e.getConfig().Anomaly.ProviderHealth.FailureThreshold },
+		func() config.ProviderHealthConfig { return e.getConfig().Anomaly.ProviderHealth },
 		func() []string { return configuredSecrets(e.getConfig()) },
 		e.log,
 	)

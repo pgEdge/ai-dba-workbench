@@ -111,6 +111,10 @@ func TestNewConfigAnomalyDefaults(t *testing.T) {
 		// Provider health system alert (issue #582).
 		{"provider_health.failure_threshold",
 			cfg.Anomaly.ProviderHealth.FailureThreshold, 3},
+		{"provider_health.failure_rate",
+			cfg.Anomaly.ProviderHealth.FailureRate, 0.3},
+		{"provider_health.failure_rate_window",
+			cfg.Anomaly.ProviderHealth.FailureRateWindow, 20},
 	}
 
 	for _, tt := range tests {
@@ -311,6 +315,41 @@ func TestValidateRejectsBadAnomalyConfig(t *testing.T) {
 				c.Anomaly.ProviderHealth.FailureThreshold = -2
 			},
 			errorMsg: "anomaly.provider_health.failure_threshold must be at least 1",
+		},
+		{
+			name: "zero provider failure_rate rejected",
+			modifyFunc: func(c *Config) {
+				c.Anomaly.ProviderHealth.FailureRate = 0
+			},
+			errorMsg: "anomaly.provider_health.failure_rate must be greater than 0 and at most 1",
+		},
+		{
+			name: "provider failure_rate above 1 rejected",
+			modifyFunc: func(c *Config) {
+				c.Anomaly.ProviderHealth.FailureRate = 1.01
+			},
+			errorMsg: "anomaly.provider_health.failure_rate must be greater than 0 and at most 1",
+		},
+		{
+			name: "NaN provider failure_rate rejected",
+			modifyFunc: func(c *Config) {
+				c.Anomaly.ProviderHealth.FailureRate = math.NaN()
+			},
+			errorMsg: "anomaly.provider_health.failure_rate must be greater than 0 and at most 1",
+		},
+		{
+			name: "zero provider failure_rate_window rejected",
+			modifyFunc: func(c *Config) {
+				c.Anomaly.ProviderHealth.FailureRateWindow = 0
+			},
+			errorMsg: "anomaly.provider_health.failure_rate_window must be between 1 and 1000",
+		},
+		{
+			name: "provider failure_rate_window above the maximum rejected",
+			modifyFunc: func(c *Config) {
+				c.Anomaly.ProviderHealth.FailureRateWindow = MaxProviderFailureRateWindow + 1
+			},
+			errorMsg: "anomaly.provider_health.failure_rate_window must be between 1 and 1000",
 		},
 	}
 
@@ -753,6 +792,8 @@ func TestExampleConfigsParse(t *testing.T) {
 		"anomaly.tier1.warmup.daily.min_samples",
 		"anomaly.tier1.warmup.daily.min_span_hours",
 		"anomaly.provider_health.failure_threshold",
+		"anomaly.provider_health.failure_rate",
+		"anomaly.provider_health.failure_rate_window",
 	}
 
 	for _, p := range paths {
@@ -787,6 +828,14 @@ func TestExampleConfigsParse(t *testing.T) {
 			if got := cfg.Anomaly.ProviderHealth.FailureThreshold; got != DefaultProviderFailureThreshold {
 				t.Errorf("%s: ProviderHealth.FailureThreshold = %d, want %d",
 					p, got, DefaultProviderFailureThreshold)
+			}
+			if got := cfg.Anomaly.ProviderHealth.FailureRate; got != DefaultProviderFailureRate {
+				t.Errorf("%s: ProviderHealth.FailureRate = %v, want %v",
+					p, got, DefaultProviderFailureRate)
+			}
+			if got := cfg.Anomaly.ProviderHealth.FailureRateWindow; got != DefaultProviderFailureRateWindow {
+				t.Errorf("%s: ProviderHealth.FailureRateWindow = %d, want %d",
+					p, got, DefaultProviderFailureRateWindow)
 			}
 			if cfg.Anomaly.Tier1.MaxZScore != 100.0 {
 				t.Errorf("%s: MaxZScore = %v, want 100.0",

@@ -1949,6 +1949,16 @@ project adheres to
   before its staleness alert has fired therefore still raises no
   alert, which is tracked in issue #512. (#465)
 
+- Make `ai-dba-server -delete-user` ask for confirmation in every case.
+  When the username was typed at the prompt rather than given with
+  `-username`, the command read the confirmation through a second input
+  buffer that never saw it, and deleted the account without asking;
+  it did the same whenever the confirmation could not be read at all.
+  The prompts now share one input buffer, and any answer other than
+  `y` or `yes`, including none, cancels the deletion. The
+  `-update-user` prompts had the same split buffer and now share one
+  too. (#588)
+
 ### Removed
 
 - Remove the hard-coded allow-list of embedding model names, which

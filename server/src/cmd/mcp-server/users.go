@@ -23,6 +23,12 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 )
 
+// readPassword reads a password from the terminal without echoing it. It
+// is a variable so that tests can supply passwords without a terminal.
+var readPassword = func() ([]byte, error) {
+	return term.ReadPassword(int(syscall.Stdin))
+}
+
 // addUserCommand handles the add-user command
 func addUserCommand(dataDir, username, password, annotation, fullName, email string) error {
 	// Open auth store
@@ -48,7 +54,7 @@ func addUserCommand(dataDir, username, password, annotation, fullName, email str
 	// Prompt for password if not provided (securely without echo)
 	if password == "" {
 		fmt.Print("Enter password: ")
-		passwordBytes, err := term.ReadPassword(int(syscall.Stdin))
+		passwordBytes, err := readPassword()
 		fmt.Println() // New line after password input
 		if err != nil {
 			return fmt.Errorf("failed to read password: %w", err)
@@ -61,7 +67,7 @@ func addUserCommand(dataDir, username, password, annotation, fullName, email str
 
 		// Confirm password
 		fmt.Print("Confirm password: ")
-		confirmBytes, err := term.ReadPassword(int(syscall.Stdin))
+		confirmBytes, err := readPassword()
 		fmt.Println() // New line after password input
 		if err != nil {
 			return fmt.Errorf("failed to read password confirmation: %w", err)
@@ -130,10 +136,13 @@ func updateUserCommand(dataDir, username, newPassword, newAnnotation, newFullNam
 	}
 	defer store.Close()
 
+	// One reader serves every prompt: a second bufio.Reader on os.Stdin
+	// would miss whatever the first had already buffered.
+	reader := bufio.NewReader(os.Stdin)
+
 	// Prompt for username if not provided
 	if username == "" {
 		fmt.Print("Enter username: ")
-		reader := bufio.NewReader(os.Stdin)
 		if input, err := reader.ReadString('\n'); err == nil {
 			username = strings.TrimSpace(input)
 		}
@@ -171,14 +180,13 @@ func updateUserCommand(dataDir, username, newPassword, newAnnotation, newFullNam
 
 	// If no flags were provided, prompt for what to update
 	if !hasUpdates {
-		reader := bufio.NewReader(os.Stdin)
 		fmt.Println("What would you like to update?")
 		fmt.Print("Update password? (y/N): ")
 		if input, err := reader.ReadString('\n'); err == nil {
 			response := strings.TrimSpace(strings.ToLower(input))
 			if response == "y" || response == "yes" {
 				fmt.Print("Enter new password: ")
-				passwordBytes, err := term.ReadPassword(int(syscall.Stdin))
+				passwordBytes, err := readPassword()
 				fmt.Println() // New line after password input
 				if err != nil {
 					return fmt.Errorf("failed to read password: %w", err)
@@ -188,7 +196,7 @@ func updateUserCommand(dataDir, username, newPassword, newAnnotation, newFullNam
 				if newPassword != "" {
 					// Confirm password
 					fmt.Print("Confirm new password: ")
-					confirmBytes, err := term.ReadPassword(int(syscall.Stdin))
+					confirmBytes, err := readPassword()
 					fmt.Println() // New line after password input
 					if err != nil {
 						return fmt.Errorf("failed to read password confirmation: %w", err)
@@ -261,10 +269,13 @@ func deleteUserCommand(dataDir, username string) error {
 	}
 	defer store.Close()
 
+	// One reader serves both prompts: a second bufio.Reader on os.Stdin
+	// would miss the confirmation the first had already buffered.
+	reader := bufio.NewReader(os.Stdin)
+
 	// Prompt for username if not provided
 	if username == "" {
 		fmt.Print("Enter username to delete: ")
-		reader := bufio.NewReader(os.Stdin)
 		if input, err := reader.ReadString('\n'); err == nil {
 			username = strings.TrimSpace(input)
 		}
@@ -273,15 +284,14 @@ func deleteUserCommand(dataDir, username string) error {
 		}
 	}
 
-	// Confirm deletion
+	// Confirm deletion. Anything but an explicit yes cancels, including a
+	// confirmation that cannot be read, such as stdin at end of file.
 	fmt.Printf("Are you sure you want to delete user '%s'? (y/N): ", username)
-	reader := bufio.NewReader(os.Stdin)
-	if input, err := reader.ReadString('\n'); err == nil {
-		response := strings.TrimSpace(strings.ToLower(input))
-		if response != "y" && response != "yes" {
-			fmt.Println("Deletion canceled")
-			return nil
-		}
+	input, err := reader.ReadString('\n')
+	response := strings.TrimSpace(strings.ToLower(input))
+	if err != nil || (response != "y" && response != "yes") {
+		fmt.Println("Deletion canceled")
+		return nil
 	}
 
 	// Remove user. The CLI acts with direct access to the auth database,

@@ -60,6 +60,24 @@ func assertTargetUntouched(t *testing.T, store *AuthStore) {
 	}
 }
 
+// assertNoFailureRow checks that the store recorded no failure event for
+// action. The handler records a refusal with ErrSuperuserTargetForbidden
+// as a coalesced denial, so a failure row as well would let a caller grow
+// the audit log by one row per refused request.
+func assertNoFailureRow(t *testing.T, store *AuthStore, action string) {
+	t.Helper()
+	events, _, err := store.ListAuditEvents(AuditFilter{
+		Action:  action,
+		Outcome: string(OutcomeFailure),
+	})
+	if err != nil {
+		t.Fatalf("ListAuditEvents failed: %v", err)
+	}
+	if len(events) != 0 {
+		t.Errorf("Expected no failure event for %s, got %d", action, len(events))
+	}
+}
+
 // TestSuperuserTargetGuard checks that a caller who is not a superuser
 // may update or delete an ordinary account but not a superuser one, and
 // that a superuser may do either.
@@ -85,9 +103,7 @@ func TestSuperuserTargetGuard(t *testing.T) {
 				t.Fatalf("Expected ErrSuperuserTargetForbidden, got %v", err)
 			}
 			assertTargetUntouched(t, store)
-			if ev := lastAuditEvent(t, store); ev.Outcome != OutcomeFailure {
-				t.Errorf("Expected a failed audit event, got %q", ev.Outcome)
-			}
+			assertNoFailureRow(t, store, "user."+w.name)
 		})
 		t.Run(w.name+" superuser account by a superuser", func(t *testing.T) {
 			store, cleanup := newTargetStore(t)

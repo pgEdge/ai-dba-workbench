@@ -305,10 +305,12 @@ func (h *RBACHandler) handleTokenSubpath(w http.ResponseWriter, r *http.Request)
 
 // requireSuperuserForOwnedToken refuses a change to, or the deletion
 // of, a token owned by a superuser unless the caller is a superuser
-// (see requireSuperuser), as updateUser does for a superuser's account:
-// such a token carries the superuser role, so widening its scope hands
-// that role out, and narrowing or deleting it can lock an administrator
-// out. A token acting on itself is exempt, since it may already narrow
+// (see requireSuperuser). It is the same rule the store applies to a
+// superuser's own account inside the update and delete transactions
+// (ErrSuperuserTargetForbidden), but here it remains a handler
+// pre-check: such a token carries the superuser role, so widening its
+// scope hands that role out, and narrowing or deleting it can lock an
+// administrator out. A token acting on itself is exempt, since it may already narrow
 // or delete itself and TokenScopeChangeWithinCeiling stops it widening
 // itself. A token that does not exist is left to the operation to
 // report.

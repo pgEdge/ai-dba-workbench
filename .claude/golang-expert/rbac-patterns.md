@@ -572,9 +572,12 @@ exceeded "this token's access" (fixed so the denial audit coalesces).
   `setTokenScope`, `clearTokenScope` and `deleteToken` on a token whose
   owner is a superuser, call `requireSuperuser`
   (`requireSuperuserForOwnedToken` in `rbac_token_handlers.go`), for
-  sessions and tokens alike, mirroring `updateUser` on a superuser
-  target. A token acting on itself is exempt, so it can still narrow
-  its own scope or delete itself. Pinned by
+  sessions and tokens alike. These token gates remain handler
+  pre-checks on the owner read before the store call; only
+  `updateUser` and `deleteUser` moved the equivalent check on a
+  superuser account into the store's transaction (#588). A token
+  acting on itself is exempt, so it can still narrow its own scope or
+  delete itself. Pinned by
   `internal/api/rbac_token_superuser_owner_test.go`.
 - Connection scope shape: `auth.ValidateScopedConnections` (store, HTTP
   and CLI alike) refuses a duplicate connection ID, a negative ID, an
@@ -764,7 +767,9 @@ transactions read the row under the store's write lock and refuse
 with `auth.ErrSuperuserTargetForbidden` (`guardSuperuserTargetTx`,
 before the last-superuser guard). `respondUserWriteError` maps it to
 the same 403 and denial audit as `requireSuperuser`, through
-`denyNotSuperuser`. Do not add a handler pre-check back on a target
+`denyNotSuperuser`, and the store's deferred failure audit skips that
+error so a refusal leaves only the handler's coalesced denial row. Do
+not add a pre-check back to `updateUser` or `deleteUser` on a target
 read outside the transaction. Pinned by
 `rbac_user_superuser_gate_test.go` and
 `internal/auth/superuser_target_guard_test.go` (a target promoted

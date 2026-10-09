@@ -76,7 +76,7 @@ func TestEngine_TriggerThresholdAlert_ReactivatesOnSeverityChange(t *testing.T) 
 		MetricName: "spock_exception_log.recent_count",
 	}
 
-	engine.triggerThresholdAlert(ctx, rule, value, threshold, operator, "critical", connID, nil, nil)
+	engine.triggerThresholdAlert(ctx, rule, value, threshold, operator, "critical", connID, nil, nil, true)
 
 	if status := getAlertStatus(t, pool, alert.ID); status != "active" {
 		t.Errorf("alert status = %q, want active", status)
@@ -137,7 +137,7 @@ func TestEngine_TriggerThresholdAlert_DoesNotReactivateWhenSeverityUnchanged(t *
 
 	// Fire the same severity that the alert already has; the alert must
 	// stay acknowledged and the acknowledgment row must remain.
-	engine.triggerThresholdAlert(ctx, rule, value, threshold, operator, "warning", connID, nil, nil)
+	engine.triggerThresholdAlert(ctx, rule, value, threshold, operator, "warning", connID, nil, nil, true)
 
 	if status := getAlertStatus(t, pool, alert.ID); status != "acknowledged" {
 		t.Errorf("alert status = %q, want acknowledged", status)
@@ -191,7 +191,7 @@ func TestEngine_TriggerThresholdAlert_NilMetricValueDoesNotPanic(t *testing.T) {
 			t.Fatalf("triggerThresholdAlert panicked on nil MetricValue: %v", r)
 		}
 	}()
-	engine.triggerThresholdAlert(ctx, rule, 1.0, 1.0, ">=", "critical", connID, nil, nil)
+	engine.triggerThresholdAlert(ctx, rule, 1.0, 1.0, ">=", "critical", connID, nil, nil, true)
 
 	// The reactivation logic must still run despite the missing metric value.
 	if status := getAlertStatus(t, pool, alertID); status != "active" {
@@ -245,7 +245,7 @@ func TestEngine_TriggerThresholdAlert_ActiveAlertNotReactivated(t *testing.T) {
 	// Severity changes from warning to critical, but the alert is active —
 	// no reactivation is needed; UpdateAlertValues alone writes the new
 	// severity.
-	engine.triggerThresholdAlert(ctx, rule, value, threshold, operator, "critical", connID, nil, nil)
+	engine.triggerThresholdAlert(ctx, rule, value, threshold, operator, "critical", connID, nil, nil, true)
 
 	if status := getAlertStatus(t, pool, alert.ID); status != "active" {
 		t.Errorf("alert status = %q, want active", status)
@@ -316,7 +316,7 @@ func TestEngine_TriggerThresholdAlert_ClosedPool(t *testing.T) {
 	// UpdateAlertValues, ReactivateAlert) will error against the closed
 	// pool. The function must still return; we are testing that it
 	// reaches and logs every error branch without crashing.
-	engine.triggerThresholdAlert(ctx, rule, value, threshold, operator, "critical", connID, nil, nil)
+	engine.triggerThresholdAlert(ctx, rule, value, threshold, operator, "critical", connID, nil, nil, true)
 }
 
 // TestEngine_AcknowledgedAlert_AutoReactivatesAfterOverrideAddsSeverity is
@@ -428,7 +428,7 @@ func TestEngine_TriggerThresholdAlert_SkipsReactivationWhenUpdateFails(t *testin
 	// but it violates the severity CHECK constraint so UpdateAlertValues
 	// returns an error. The fix must therefore skip ReactivateAlert.
 	engine.triggerThresholdAlert(ctx, rule, value, threshold, operator,
-		"bogus_severity", connID, nil, nil)
+		"bogus_severity", connID, nil, nil, true)
 
 	if status := getAlertStatus(t, pool, alert.ID); status != "acknowledged" {
 		t.Errorf("alert status = %q, want acknowledged (ReactivateAlert ran despite failed UpdateAlertValues)", status)

@@ -135,6 +135,20 @@ threshold:
   # Default: 60
   evaluation_interval_seconds: 60
 
+  # Consecutive metric samples that must breach a rule's threshold
+  # before an alert is raised. A sample is one collection by the
+  # collector, not one evaluation, so re-reading the same sample does
+  # not count twice. Set to 1 to raise on the first breaching sample.
+  # Must be at least 1.
+  # Default: 2
+  trigger_count: 2
+
+  # Consecutive metric samples that must be back within the threshold
+  # before an active alert is cleared. Set to 1 to clear on the first
+  # sample that no longer breaches. Must be at least 1.
+  # Default: 3
+  clear_count: 3
+
 #=========================================================================
 # ANOMALY DETECTION SETTINGS
 #=========================================================================

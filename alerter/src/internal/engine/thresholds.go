@@ -11,6 +11,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -30,12 +31,25 @@ func (e *Engine) evaluateThresholds(ctx context.Context) {
 
 	e.debugLog("Found %d enabled rules", len(rules))
 
+	// Every key the pass judges is observed in the trigger counts; any it
+	// does not judge has broken its run and is swept at the end. A rule
+	// whose values could not be read at all keeps its counts, because a
+	// failed query says nothing about the condition. See hysteresis.go.
+	e.triggerStreaks.startPass()
+	unread := make(map[int64]bool)
+
 	for _, rule := range rules {
 		if ctx.Err() != nil {
 			return
 		}
-		e.evaluateRuleForAllConnections(ctx, rule)
+		if !e.evaluateRuleForAllConnections(ctx, rule) {
+			unread[rule.ID] = true
+		}
 	}
+
+	e.triggerStreaks.sweep(func(key thresholdSampleKey) bool {
+		return unread[key.ruleID]
+	})
 
 	// Then the two probe-scoped passes, which read the same view.
 	e.evaluateProbeScopedRules(ctx)
@@ -89,13 +103,17 @@ const (
 	probeAvailableValue   = 1.0
 )
 
-// evaluateRuleForAllConnections evaluates a rule across all connections with data
-func (e *Engine) evaluateRuleForAllConnections(ctx context.Context, rule *database.AlertRule) {
+// evaluateRuleForAllConnections evaluates a rule across all connections
+// with data. It reports false when the rule's values could not be read
+// for a reason other than there being none, so that the caller keeps the
+// rule's trigger counts rather than sweeping them; it reports true
+// otherwise, including when the evaluation was cut short by ctx.
+func (e *Engine) evaluateRuleForAllConnections(ctx context.Context, rule *database.AlertRule) bool {
 	// Get all metric values for this rule's metric
 	values, err := e.datastore.GetLatestMetricValues(ctx, rule.MetricName)
 	if err != nil {
 		e.debugLog("No data for metric %s: %v", rule.MetricName, err)
-		return
+		return errors.Is(err, database.ErrNoMetricData)
 	}
 
 	// Rules with a required_extension only apply to connections whose
@@ -103,9 +121,11 @@ func (e *Engine) evaluateRuleForAllConnections(ctx context.Context, rule *databa
 	// rather than once per value; a nil set means "no gate".
 	withExtension := e.connectionsWithRequiredExtension(ctx, rule)
 
+	triggerCount := e.thresholdTriggerCount()
+
 	for _, mv := range values {
 		if ctx.Err() != nil {
-			return
+			return true
 		}
 
 		connID := mv.ConnectionID
@@ -133,14 +153,19 @@ func (e *Engine) evaluateRuleForAllConnections(ctx context.Context, rule *databa
 			continue
 		}
 
-		// Check if threshold is violated
+		// Check if threshold is violated, and count the distinct samples
+		// it has been violated on in a row.
 		violated := e.checkThreshold(mv.Value, operator, threshold)
+		breaches := e.triggerStreaks.observe(newThresholdSampleKey(rule.ID, mv),
+			mv.CollectedAt, violated)
 
 		if violated {
 			e.triggerThresholdAlert(ctx, rule, mv.Value, threshold, operator,
-				severity, mv.ConnectionID, mv.DatabaseName, mv.ObjectName)
+				severity, mv.ConnectionID, mv.DatabaseName, mv.ObjectName,
+				breaches >= triggerCount)
 		}
 	}
+	return true
 }
 
 // connectionsWithRequiredExtension returns the connections on which rule
@@ -198,8 +223,12 @@ func (e *Engine) checkThreshold(value float64, operator string, threshold float6
 	}
 }
 
-// triggerThresholdAlert creates or updates an alert for a threshold violation
-func (e *Engine) triggerThresholdAlert(ctx context.Context, rule *database.AlertRule, value, threshold float64, operator, severity string, connectionID int, dbName *string, objectName *string) {
+// triggerThresholdAlert creates or updates an alert for a threshold
+// violation. An alert that is already open is always updated, but a new
+// one is raised only when sustained is true, meaning the condition has
+// held for threshold.trigger_count consecutive samples; see
+// hysteresis.go.
+func (e *Engine) triggerThresholdAlert(ctx context.Context, rule *database.AlertRule, value, threshold float64, operator, severity string, connectionID int, dbName *string, objectName *string, sustained bool) {
 	e.log("Threshold violated: %s (%.2f %s %.2f) on connection %d", rule.Name, value, operator, threshold, connectionID)
 
 	// Check if there's already an active or acknowledged alert for this rule/connection
@@ -259,6 +288,14 @@ func (e *Engine) triggerThresholdAlert(ctx context.Context, rule *database.Alert
 				e.queueNotification(existing, database.NotificationTypeAlertFire)
 			}
 		}
+		return
+	}
+
+	// No alert is open, so raise one only once the condition has held for
+	// threshold.trigger_count consecutive samples.
+	if !sustained {
+		e.debugLog("Not raising %s on connection %d yet: fewer than %d consecutive breaching samples",
+			rule.Name, connectionID, e.thresholdTriggerCount())
 		return
 	}
 

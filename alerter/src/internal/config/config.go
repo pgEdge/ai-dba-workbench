@@ -66,9 +66,33 @@ type PoolConfig struct {
 	MaxIdleSeconds int `yaml:"max_idle_seconds"`
 }
 
+// DefaultThresholdTriggerCount is the default number of consecutive
+// breaching metric samples a threshold rule needs before it raises an
+// alert (threshold.trigger_count).
+const DefaultThresholdTriggerCount = 2
+
+// DefaultThresholdClearCount is the default number of consecutive
+// non-breaching metric samples an active threshold alert needs before
+// it clears (threshold.clear_count).
+const DefaultThresholdClearCount = 3
+
 // ThresholdConfig holds threshold engine settings
 type ThresholdConfig struct {
 	EvaluationIntervalSeconds int `yaml:"evaluation_interval_seconds"`
+
+	// TriggerCount is the number of consecutive metric samples that
+	// must breach a rule's threshold before an alert is raised. Samples
+	// are distinct collected_at values for one connection, database and
+	// object, not evaluation cycles, so re-reading a sample the probe
+	// has not yet replaced does not advance the count. 1 raises on the
+	// first breaching sample. Must be at least 1. See GitHub issue #614.
+	TriggerCount int `yaml:"trigger_count"`
+
+	// ClearCount is the number of consecutive metric samples that must
+	// be within a rule's threshold before an active alert clears,
+	// counted in the same way as TriggerCount. 1 clears on the first
+	// such sample. Must be at least 1.
+	ClearCount int `yaml:"clear_count"`
 }
 
 // AnomalyConfig holds anomaly detection settings
@@ -419,6 +443,8 @@ func NewConfig() *Config {
 		},
 		Threshold: ThresholdConfig{
 			EvaluationIntervalSeconds: 60,
+			TriggerCount:              DefaultThresholdTriggerCount,
+			ClearCount:                DefaultThresholdClearCount,
 		},
 		Anomaly: AnomalyConfig{
 			Enabled: true,
@@ -610,6 +636,12 @@ func (c *Config) Validate() error {
 	}
 	if c.Pool.MaxConnections <= 0 {
 		return fmt.Errorf("pool.max_connections must be greater than 0")
+	}
+	if c.Threshold.TriggerCount < 1 {
+		return fmt.Errorf("threshold.trigger_count must be at least 1")
+	}
+	if c.Threshold.ClearCount < 1 {
+		return fmt.Errorf("threshold.clear_count must be at least 1")
 	}
 	if c.Anomaly.Tier1.MaxZScore < 0 ||
 		math.IsNaN(c.Anomaly.Tier1.MaxZScore) ||

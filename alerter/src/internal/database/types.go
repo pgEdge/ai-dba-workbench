@@ -233,11 +233,12 @@ type ProbeStaleness struct {
 	SinceCollected time.Duration
 
 	// LastCollected is when the probe last stored a row, as the collector
-	// recorded it. Anomaly recovery uses it to tell one collection of an
-	// absence-driven metric from the next: an empty result carries no
-	// collected_at of its own, so the probe's timestamp is what keeps
-	// repeated passes over one collection from counting as several
-	// recovered samples. See GitHub issue #611.
+	// recorded it. Anomaly recovery and the alert cleaner use it to tell
+	// one collection of an absence-driven metric from the next: an empty
+	// result carries no collected_at of its own, so the probe's timestamp
+	// is what keeps repeated passes over one collection from counting as
+	// several recovered samples towards clear_count. See GitHub issues
+	// #611 and #614.
 	LastCollected time.Time
 
 	// IsAvailable is the probe's availability flag, carried here rather

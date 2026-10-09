@@ -436,6 +436,23 @@ project adheres to
   federated login on when the server started with it off, because the
   identity provider connection is built from them at start-up.
 
+- Add hysteresis to threshold alerts (#614). The alerter now
+  raises a threshold alert only after the threshold has been
+  breached on `threshold.trigger_count` consecutive metric
+  samples (default 2), and clears it only after the metric has
+  been back within the threshold on `threshold.clear_count`
+  consecutive samples (default 3), so a metric hovering near
+  its threshold no longer raises and clears an alert every few
+  minutes. A sample is one collection by the collector, so the
+  evaluator and cleaner reading the same sample again count it
+  once. Setting both options to 1 restores the previous
+  behaviour. The counts are held in memory and start again
+  when the alerter restarts, and they do not apply to the
+  `metric_staleness` and `probe_unavailable` rules or to
+  connection error alerts. The `connection_utilization_percent`
+  metric now reports the time of its sample rather than the
+  time of the query, so that its samples can be counted.
+
 - Raise the default size of the server's datastore connection pool,
   `database.pool_max_conns`, from 4 to 20 (#478). Every API request
   that reads the datastore shares that pool, and a single dashboard

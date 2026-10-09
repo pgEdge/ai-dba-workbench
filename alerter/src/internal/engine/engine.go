@@ -94,6 +94,14 @@ type Engine struct {
 	// failing; nil without a datastore. See provider_health.go.
 	providerHealth *providerHealthTracker
 
+	// triggerStreaks counts consecutive breaching samples per rule and
+	// metric key for threshold.trigger_count, and clearStreaks counts
+	// consecutive non-breaching samples per active alert for
+	// threshold.clear_count. Both are held in memory only; see
+	// hysteresis.go.
+	triggerStreaks sampleStreaks[thresholdSampleKey]
+	clearStreaks   sampleStreaks[int64]
+
 	// Notification worker pool using generic WorkerPool abstraction
 	notificationPool *worker.WorkerPool[notificationJob]
 

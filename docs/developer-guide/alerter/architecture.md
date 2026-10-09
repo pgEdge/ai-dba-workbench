@@ -166,6 +166,18 @@ evaluator performs these steps:
 5. Compare metric values against thresholds.
 6. Create or update alerts for threshold violations.
 
+The evaluator creates a new alert only once the threshold has
+been violated on `threshold.trigger_count` consecutive metric
+samples, where a sample is a distinct `collected_at` value for
+one rule, connection, database and object. The counts live in
+memory in `internal/engine/hysteresis.go`; a key that a cycle
+does not judge, because of a blackout, a disabled override or a
+missing row, starts again from zero. An existing alert is
+updated on every cycle regardless of the count. Each metric
+registry query must therefore report the sample's own
+`collected_at` rather than `NOW()`, or every cycle would look
+like a new sample.
+
 ### Baseline Calculator
 
 The baseline calculator refreshes metric baselines at a
@@ -218,7 +230,10 @@ duration.
 The alert cleaner runs every 30 seconds to check for resolved
 conditions. The cleaner retrieves active threshold alerts and
 re-evaluates the triggering conditions. When a condition no longer
-violates the threshold, the cleaner marks the alert as cleared.
+violates the threshold on `threshold.clear_count` consecutive
+samples, the cleaner marks the alert as cleared. A violating sample
+resets the count, whilst missing data neither advances nor resets
+it, and the count is dropped once the alert is no longer active.
 
 A metric that returns no value for an alert is a separate case from
 a metric that returns a value below the threshold. The metric

@@ -331,14 +331,24 @@ dead tuples.
 |----------|-------|
 | Metric | `pg_stat_all_tables.dead_tuple_percent` |
 | Operator | `>` |
-| Default Threshold | 10 |
+| Default Threshold | 50 |
 | Default Severity | warning |
 
 Dead tuples indicate vacuum is not keeping up with
 updates. Check vacuum settings and consider running
-manual vacuum. The alerter excludes tables with fewer
-than 1,000 total tuples from evaluation to reduce noise
-from small catalog and system tables.
+manual vacuum.
+
+The alerter only evaluates tables with at least 10,000
+dead tuples and at least 1,000 tuples in total, judged on
+each table's most recent sample. A high percentage on a
+smaller table costs little, and autovacuum normally
+reaches the table on its next pass. The default threshold
+of 50 percent sits well above autovacuum's own default
+trigger of 20 percent, so the rule fires when vacuum has
+fallen behind rather than when it is about to run.
+
+When autovacuum cleans the table, the table drops below
+the 10,000 dead tuple floor and the alert clears.
 
 ### High Table Bloat (Retired)
 
@@ -370,11 +380,27 @@ recently.
 |----------|-------|
 | Metric | `table_last_autovacuum_hours` |
 | Operator | `>` |
-| Default Threshold | 168 (7 days) |
+| Default Threshold | 1 |
 | Default Severity | warning |
 
-Tables that have not been vacuumed may have accumulated
-dead tuples or outdated statistics.
+The value is the number of hours since autovacuum last
+processed a table that is past its autovacuum trigger,
+which is `autovacuum_vacuum_threshold` plus
+`autovacuum_vacuum_scale_factor` times the live tuple
+count, using the server's current settings.
+
+A table only counts once it has been past its trigger in
+every sample collected over at least the last 30 minutes.
+The alerter reads an hour of table statistics, requires
+the most recent sample at or before the 30 minute mark to
+be past the trigger, and requires every later sample to
+be past it as well. A table that crosses its trigger
+shortly before autovacuum's next pass therefore does not
+raise an alert; a table that stays past its trigger for
+half an hour without being vacuumed suggests autovacuum
+is blocked or cannot keep up.
+
+The alert clears when autovacuum processes the table.
 
 ### High Transaction ID Age
 
@@ -417,23 +443,30 @@ below the threshold.
 |----------|-------|
 | Metric | `pg_stat_database.cache_hit_ratio` |
 | Operator | `<` |
-| Default Threshold | 90 |
-| Default Severity | warning |
+| Default Threshold | 50 |
+| Default Severity | info |
 
 A low cache hit ratio indicates the database needs more
 memory for `shared_buffers`; the working set may also be
 too large. The alerter calculates the ratio from the
 change in block reads between collection intervals. This
 delta-based approach reflects recent performance rather
-than cumulative counters. The alerter excludes databases
-with fewer than 10,000 total block operations in an
-interval to avoid noise from idle databases.
+than cumulative counters.
+
+An interval only counts when the database accessed at
+least 10,000 blocks and read at least 100 blocks per
+second from outside shared buffers. At the default 8 KiB
+block size, 100 blocks per second is about 800 KiB per
+second; some of those reads are served by the operating
+system's page cache, so even in the worst case the load
+is about 100 I/O operations per second. Below that rate a
+poor ratio has no material cost, so idle and lightly used
+databases do not raise alerts.
 
 Both the threshold evaluator and the alert cleaner read
-the most recent interval that meets the 10,000 block
-minimum, so the two always compare the same value. A
-database that goes idle leaves an existing alert active
-until a busier interval measures the ratio again.
+the most recent interval that passes both checks, so the
+two always compare the same value. When no interval in
+the last 15 minutes passes them, the alert clears.
 
 ### Deadlocks Detected
 
@@ -587,6 +620,18 @@ The value counts the requested checkpoints recorded in
 the last hour, so the default threshold corresponds to an
 average of one requested checkpoint every five minutes.
 Timed checkpoints are not counted.
+
+The rule only evaluates servers that are not in recovery.
+A standby's requested restartpoints follow the write
+volume of its primary, so the alert belongs on the
+primary. The alerter uses the most recent recovery state
+the collector recorded in the last hour; a server with no
+recorded state is evaluated. This applies to every
+supported PostgreSQL version, because the collector reads
+`pg_stat_bgwriter` on PostgreSQL 16 and earlier and
+`pg_stat_checkpointer` on PostgreSQL 17 and later, and
+stores both in the same metric. When a primary becomes a
+standby, any open alert for it clears.
 
 Frequent requested checkpoints indicate
 `checkpoint_segments` or `max_wal_size` may be too low

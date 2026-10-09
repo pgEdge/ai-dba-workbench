@@ -337,8 +337,9 @@ func allMetricCases() []metricCase {
 			},
 		},
 		{
-			// cache_hit_ratio requires two rows per connection for LAG()
-			// plus a delta of at least 10000 blocks to clear the filter.
+			// cache_hit_ratio requires two rows per connection for LAG(),
+			// a delta of at least 10000 blocks and at least 100 block
+			// reads per second (6000 over the minute) to clear the filter.
 			metricName: "pg_stat_database.cache_hit_ratio",
 			insert: func(ctx context.Context, pool *pgxpool.Pool, connID int, base time.Time) error {
 				_, err := pool.Exec(ctx, `
@@ -346,7 +347,7 @@ func allMetricCases() []metricCase {
 					    (connection_id, database_name, datname, blks_hit, blks_read, collected_at)
 					VALUES
 					    ($1, 'appdb', 'appdb', 1000,  100,  $2::timestamptz - INTERVAL '1 minute'),
-					    ($1, 'appdb', 'appdb', 20000, 200,  $2)
+					    ($1, 'appdb', 'appdb', 20000, 10200, $2)
 				`, connID, base)
 				return err
 			},

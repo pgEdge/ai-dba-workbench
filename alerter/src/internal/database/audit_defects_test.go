@@ -606,8 +606,9 @@ func TestAuditC8CacheHitRatioReducesToLatestDelta(t *testing.T) {
 	ctx := context.Background()
 	const seededThreshold = 80.0
 
-	// Every interval moves at least 10000 blocks so it clears the
-	// query's minimum-activity filter.
+	// Every interval moves at least 10000 blocks and reads at least 100
+	// blocks per second (24000 over four minutes, 18000 over three), so
+	// it clears both of the query's minimum-activity filters.
 	//
 	// connName is a literal rather than a value derived from name for
 	// the reason given on the C5 table above: concatenating it would
@@ -627,16 +628,16 @@ func TestAuditC8CacheHitRatioReducesToLatestDelta(t *testing.T) {
 		{
 			name:         "violation in oldest interval reads healthy",
 			connName:     "audit-c8-oldest",
-			hits:         []int64{0, 10_000, 40_000, 70_000},
-			reads:        []int64{0, 10_000, 10_000, 10_000},
+			hits:         []int64{0, 10_000, 310_000, 610_000},
+			reads:        []int64{0, 30_000, 60_000, 90_000},
 			wantViolates: false,
-			wantValue:    100,
+			wantValue:    300_000.0 / 330_000.0 * 100,
 		},
 		{
 			name:         "violation in newest interval reads violating",
 			connName:     "audit-c8-newest",
-			hits:         []int64{0, 30_000, 60_000, 60_000},
-			reads:        []int64{0, 0, 0, 30_000},
+			hits:         []int64{0, 300_000, 600_000, 600_000},
+			reads:        []int64{0, 30_000, 60_000, 90_000},
 			wantViolates: true,
 			wantValue:    0,
 		},
@@ -975,10 +976,14 @@ func TestMetricClearsWhenAbsent(t *testing.T) {
 		"pg_stat_activity.blocked_count":           true,
 		"pg_stat_replication.standby_disconnected": true,
 		"spock_exception_log.recent_count":         true,
+		// Gated to busy databases, large dead-tuple counts or primaries,
+		// so absence means the gate no longer holds. See GitHub issue #616.
+		"pg_stat_all_tables.dead_tuple_percent":      true,
+		"pg_stat_checkpointer.checkpoints_req_delta": true,
+		"pg_stat_database.cache_hit_ratio":           true,
 		// Emit a row for every healthy connection.
 		"pg_sys_cpu_usage_info.processor_time_percent": false,
-		"pg_stat_checkpointer.checkpoints_req_delta":   false,
-		"pg_stat_database.cache_hit_ratio":             false,
+		"pg_stat_database.deadlocks_delta":             false,
 		"pg_stat_statements.slow_query_count":          false,
 		// Not in the registry at all.
 		"probe_staleness_ratio": false,
@@ -996,13 +1001,15 @@ func TestMetricClearsWhenAbsent(t *testing.T) {
 func TestMetricAbsenceWindow(t *testing.T) {
 	ds := &Datastore{}
 	cases := map[string]time.Duration{
-		"pg_replication_slots.inactive":         15 * time.Minute,
-		"pg_node_role.subscription_worker_down": 15 * time.Minute,
-		"table_last_autovacuum_hours":           15 * time.Minute,
-		"pg_stat_activity.blocked_count":        5 * time.Minute,
-		"spock_exception_log.recent_count":      5 * time.Minute,
+		"pg_replication_slots.inactive":              15 * time.Minute,
+		"pg_node_role.subscription_worker_down":      15 * time.Minute,
+		"table_last_autovacuum_hours":                15 * time.Minute,
+		"pg_stat_activity.blocked_count":             5 * time.Minute,
+		"spock_exception_log.recent_count":           5 * time.Minute,
+		"pg_stat_database.cache_hit_ratio":           15 * time.Minute,
+		"pg_stat_checkpointer.checkpoints_req_delta": time.Hour,
 		// Not clearWhenAbsent, so it declares no window.
-		"pg_stat_database.cache_hit_ratio": 0,
+		"pg_stat_database.deadlocks_delta": 0,
 		// Not in the registry at all.
 		"probe_staleness_ratio": 0,
 	}
@@ -1078,6 +1085,8 @@ var seededProbeIntervals = map[string]int{
 	"pg_replication_slots": 300,
 	"pg_stat_activity":     60,
 	"pg_stat_all_tables":   300,
+	"pg_stat_checkpointer": 600,
+	"pg_stat_database":     300,
 	"pg_stat_replication":  30,
 	"spock_exception_log":  60,
 	"spock_resolutions":    60,

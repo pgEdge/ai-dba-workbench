@@ -769,9 +769,14 @@ query emits a row only while the condition holds
 (`pg_stat_replication.standby_disconnected`,
 `pg_node_role.subscription_worker_down`, the five `pg_stat_activity.*`
 metrics other than `count`, `table_last_autovacuum_hours`, the two Spock
-`recent_count` metrics, `pg_replication_slots.inactive`) or the subject
+`recent_count` metrics, `pg_replication_slots.inactive`), the subject
 can be dropped (the other three `pg_replication_slots.*` metrics and the
-two `pg_stat_replication` lag metrics). Everything else emits a row for
+two `pg_stat_replication` lag metrics), or the query gates which
+subjects it judges, so a subject that stops passing the gate has stopped
+being a problem (`pg_stat_database.cache_hit_ratio`,
+`pg_stat_all_tables.dead_tuple_percent` and
+`pg_stat_checkpointer.checkpoints_req_delta`, #616; see the gating
+bullet below). Everything else emits a row for
 every healthy connection, so a vanished row means the collector or probe
 has stopped, and the flag stays false; each true entry carries a comment
 saying why, and `TestMetricClearsWhenAbsent` pins representative cases.
@@ -1127,6 +1132,14 @@ that follow from that, most learned the hard way in #406 and #407:
   on it; add a case there when an activity entry gains a historical
   query.
 
+- A gate that decides which subjects a rule judges goes in the SQL, and
+  a gated entry must be `clearWhenAbsent`, or an alert raised before the
+  subject stopped qualifying latches for ever (#616). The comments on
+  each gated entry in `metric_registry.go` explain its gate. The gate
+  tests live in `default_rule_gates_integration_test.go` on the
+  `deadRuleSchema` fixture; a new `clearWhenAbsent` entry's probe must
+  also be in `seededProbeIntervals` in `audit_defects_test.go`.
+
 - `system_stats` columns are platform-specific. `processor_time_percent`,
   `user_time_percent`, `privileged_time_percent` and
   `interrupt_time_percent` are Windows-only and NULL on Linux; the Linux
@@ -1162,8 +1175,15 @@ follows the same shape for `deadlocks_detected` and `temp_files_created`
 rule: the row is kept with `default_enabled = FALSE` and a description
 starting `Retired:`, and its `active` and `acknowledged` alerts are set to
 `status = 'cleared', cleared_at = NOW()`, matching the alerter's
-`ClearAlert`. Each such migration has a `migration_vN_test.go` covering
-registration, the fresh-install seed values and the upgrade path.
+`ClearAlert`. Migration 21 (#616) changes a severity as well as
+thresholds, and guards each column separately (`SET default_threshold =
+50 ... AND default_threshold = 80` in one statement, `SET
+default_severity = 'info' ... AND default_severity = 'warning'` in
+another), so a tuned threshold does not stop the severity moving; it
+never touches `alert_thresholds`, whose rows are operator overrides.
+Each such migration has a `migration_vN_test.go` covering registration,
+the fresh-install seed values and the upgrade path, and migration 21's
+also checks that tuned values and an `alert_thresholds` row survive.
 
 ## Alerter Baselines and Anomaly Detection (alerter)
 
@@ -1975,6 +1995,9 @@ run.
   probe-scoped alert lookups.
 - #406: Five built-in alert rules that could never fire; fixed in the
   alerter metric registry plus collector migration 8.
+- #616: Default rules too strict to be useful; read-rate, dead-tuple,
+  sustained-trigger and recovery gates in the registry, the three gated
+  entries made `clearWhenAbsent`, collector migration 21.
 - #402: Column kind registry (`column_kinds.go`) gating `_per_sec` and
   `_delta` by kind; `_pct` (`DerivedTimeShare`) and `_sessions`
   (`DerivedSessionAverage`) added; `DerivedMetric.Unit` reported on each

@@ -32,8 +32,9 @@ import (
 //     subject can legitimately disappear, so a missing row is the
 //     recovery signal and the alert clears on both paths.
 //
-// pg_stat_database.cache_hit_ratio stands in for the first class and
-// pg_replication_slots.inactive for the second.
+// pg_stat_database.deadlocks_delta stands in for the first class, and
+// pg_replication_slots.inactive and pg_stat_database.cache_hit_ratio for
+// the second.
 
 const (
 	insertSlotInactiveRuleSQL = `
@@ -148,20 +149,77 @@ func newCacheHitEnv(t *testing.T) (*Engine, *database.Datastore, *pgxpool.Pool, 
 	return engine, ds, pool, ruleID, cleanup
 }
 
+// insertDeadlockRuleSQL seeds a rule on pg_stat_database.deadlocks_delta,
+// which emits a row for every database with a sample in the hour and so
+// is not clearWhenAbsent.
+const insertDeadlockRuleSQL = `
+        INSERT INTO alert_rules
+            (name, description, category, metric_name, default_operator,
+             default_threshold, default_severity, default_enabled, is_built_in)
+        VALUES ('deadlocks_detected', 'Deadlocks detected',
+                'performance', 'pg_stat_database.deadlocks_delta', '>', 0,
+                'warning', TRUE, TRUE)
+        RETURNING id
+    `
+
+// insertDeadlockSampleSQL writes one deadlock counter sample.
+const insertDeadlockSampleSQL = `
+        INSERT INTO metrics.pg_stat_database
+            (connection_id, database_name, datname, deadlocks, collected_at)
+        VALUES ($1, $2::text, $2::text, $3, NOW() - $4::interval)
+    `
+
+// seedDeadlocks writes two samples for one database whose deadlock
+// counter moves from first to second, 18 minutes apart.
+func seedDeadlocks(t *testing.T, pool *pgxpool.Pool, connID int, dbName string,
+	first, second int64) {
+	t.Helper()
+	for _, s := range []struct {
+		offset string
+		value  int64
+	}{{"20 minutes", first}, {"2 minutes", second}} {
+		if _, err := pool.Exec(context.Background(), insertDeadlockSampleSQL,
+			connID, dbName, s.value, s.offset); err != nil {
+			t.Fatalf("failed to seed deadlocks for %s: %v", dbName, err)
+		}
+	}
+}
+
+// newDeadlockEnv builds the Spock engine environment plus the
+// pg_stat_database fixture and a deadlocks_delta rule.
+func newDeadlockEnv(t *testing.T) (*Engine, *database.Datastore, *pgxpool.Pool, int64, func()) {
+	t.Helper()
+	engine, ds, pool, cleanup := newEngineSpockTestEnv(t)
+
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, createStatDatabaseTableSQL); err != nil {
+		cleanup()
+		t.Fatalf("failed to create metrics.pg_stat_database: %v", err)
+	}
+	var ruleID int64
+	if err := pool.QueryRow(ctx, insertDeadlockRuleSQL).Scan(&ruleID); err != nil {
+		cleanup()
+		t.Fatalf("failed to insert deadlocks rule: %v", err)
+	}
+	return engine, ds, pool, ruleID, cleanup
+}
+
 // TestCleaner_NoDataLeavesUnflaggedAlertActive drives the ErrNoMetricData
 // path for a metric that is not clearWhenAbsent: after the alert fires,
-// every pg_stat_database row is deleted (as if the collector had stopped),
+// every pg_stat_database row is deleted (as if the rows had aged out),
 // the cleaner runs, and the alert must remain active with no clear
-// notification. Before #407 the cleaner treated the empty result as a
-// resolution and the evaluator re-raised the alert on the next sample.
+// notification, even though the probe still reports as current. Before
+// #407 the cleaner treated the empty result as a resolution and the
+// evaluator re-raised the alert on the next sample.
 func TestCleaner_NoDataLeavesUnflaggedAlertActive(t *testing.T) {
-	engine, ds, pool, ruleID, cleanup := newCacheHitEnv(t)
+	engine, ds, pool, ruleID, cleanup := newDeadlockEnv(t)
 	defer cleanup()
 
 	ctx := context.Background()
 	capture := installNotificationCapture(t, engine)
 	connID := insertTestConnection(t, pool, "missing-data-nodata")
-	seedColdCache(t, pool, connID, "appdb")
+	seedFreshProbe(t, pool, connID, "pg_stat_database")
+	seedDeadlocks(t, pool, connID, "appdb", 0, 5)
 
 	engine.evaluateThresholds(ctx)
 	alert, err := ds.GetActiveThresholdAlert(ctx, ruleID, connID, strPtr("appdb"))
@@ -169,13 +227,13 @@ func TestCleaner_NoDataLeavesUnflaggedAlertActive(t *testing.T) {
 		t.Fatalf("GetActiveThresholdAlert failed: %v", err)
 	}
 	if alert == nil {
-		t.Fatal("expected the cold cache to raise an alert")
+		t.Fatal("expected the deadlocks to raise an alert")
 	}
 
 	if _, err := pool.Exec(ctx, `DELETE FROM metrics.pg_stat_database`); err != nil {
 		t.Fatalf("failed to delete pg_stat_database rows: %v", err)
 	}
-	if _, err := ds.GetLatestMetricValues(ctx, "pg_stat_database.cache_hit_ratio"); err == nil {
+	if _, err := ds.GetLatestMetricValues(ctx, "pg_stat_database.deadlocks_delta"); err == nil {
 		t.Fatal("test setup expects the metric to report no data")
 	}
 
@@ -193,17 +251,19 @@ func TestCleaner_NoDataLeavesUnflaggedAlertActive(t *testing.T) {
 // TestCleaner_MissingRowLeavesUnflaggedAlertActive drives the "no row for
 // this connection and database" path for a metric that is not
 // clearWhenAbsent. Two databases on one connection both fire; the rows
-// for one are then deleted while the other receives a healthy newer
-// interval. The cleaner must clear the database that measurably
-// recovered and leave the one that merely stopped reporting active.
+// for one are then deleted while the other is replaced by samples that
+// show no new deadlocks. The cleaner must clear the database that
+// measurably recovered and leave the one that merely stopped reporting
+// active.
 func TestCleaner_MissingRowLeavesUnflaggedAlertActive(t *testing.T) {
-	engine, ds, pool, ruleID, cleanup := newCacheHitEnv(t)
+	engine, ds, pool, ruleID, cleanup := newDeadlockEnv(t)
 	defer cleanup()
 
 	ctx := context.Background()
 	connID := insertTestConnection(t, pool, "missing-data-row")
-	seedColdCache(t, pool, connID, "appdb")
-	seedColdCache(t, pool, connID, "otherdb")
+	seedFreshProbe(t, pool, connID, "pg_stat_database")
+	seedDeadlocks(t, pool, connID, "appdb", 0, 5)
+	seedDeadlocks(t, pool, connID, "otherdb", 0, 5)
 
 	engine.evaluateThresholds(ctx)
 
@@ -219,14 +279,13 @@ func TestCleaner_MissingRowLeavesUnflaggedAlertActive(t *testing.T) {
 		alerts[dbName] = alert
 	}
 
-	// appdb stops reporting; otherdb recovers with a healthy interval.
-	if _, err := pool.Exec(ctx, deleteStatDatabaseRowsSQL, connID, "appdb"); err != nil {
-		t.Fatalf("failed to delete appdb rows: %v", err)
+	// appdb stops reporting; otherdb reports a flat counter.
+	for _, dbName := range []string{"appdb", "otherdb"} {
+		if _, err := pool.Exec(ctx, deleteStatDatabaseRowsSQL, connID, dbName); err != nil {
+			t.Fatalf("failed to delete %s rows: %v", dbName, err)
+		}
 	}
-	if _, err := pool.Exec(ctx, insertStatDatabaseSampleSQL,
-		connID, "otherdb", int64(90_000), int64(30_000), "10 seconds"); err != nil {
-		t.Fatalf("failed to seed the otherdb recovery sample: %v", err)
-	}
+	seedDeadlocks(t, pool, connID, "otherdb", 5, 5)
 
 	engine.cleanResolvedAlerts(ctx)
 
@@ -234,7 +293,73 @@ func TestCleaner_MissingRowLeavesUnflaggedAlertActive(t *testing.T) {
 		t.Errorf("appdb alert status = %q, want \"active\" (no row is not a recovery)", status)
 	}
 	if status := alertStatus(t, pool, alerts["otherdb"].ID); status != "cleared" {
-		t.Errorf("otherdb alert status = %q, want \"cleared\" (healthy newest interval)", status)
+		t.Errorf("otherdb alert status = %q, want \"cleared\" (no new deadlocks)", status)
+	}
+}
+
+// TestCleaner_CacheHitRatioClearsWhenReadRateDrops covers the
+// clearWhenAbsent half of GitHub issue #616. cache_hit_ratio only
+// reports an interval that read at least 100 blocks per second, so a
+// database whose reads fall away emits no row; that absence must clear
+// its alert while the probe is current, and must not clear an alert on
+// a connection whose probe has stopped collecting.
+func TestCleaner_CacheHitRatioClearsWhenReadRateDrops(t *testing.T) {
+	engine, ds, pool, ruleID, cleanup := newCacheHitEnv(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	quietConn := insertTestConnection(t, pool, "cache-hit-goes-quiet")
+	staleConn := insertTestConnection(t, pool, "cache-hit-probe-stale")
+	seedFreshProbe(t, pool, quietConn, "pg_stat_database")
+	seedProbeReporting(t, pool, staleConn, "pg_stat_database", "2 hours")
+	seedColdCache(t, pool, quietConn, "appdb")
+	seedColdCache(t, pool, quietConn, "otherdb")
+	seedColdCache(t, pool, staleConn, "appdb")
+
+	engine.evaluateThresholds(ctx)
+
+	type key struct {
+		conn int
+		db   string
+	}
+	alerts := map[key]*database.Alert{}
+	for _, k := range []key{{quietConn, "appdb"}, {quietConn, "otherdb"}, {staleConn, "appdb"}} {
+		alert, err := ds.GetActiveThresholdAlert(ctx, ruleID, k.conn, strPtr(k.db))
+		if err != nil {
+			t.Fatalf("GetActiveThresholdAlert(%d, %s) failed: %v", k.conn, k.db, err)
+		}
+		if alert == nil {
+			t.Fatalf("expected an alert for connection %d database %s", k.conn, k.db)
+		}
+		alerts[k] = alert
+	}
+
+	// appdb on the quiet connection keeps a poor ratio but reads only
+	// about four blocks per second; the stale connection's rows vanish.
+	if _, err := pool.Exec(ctx, deleteStatDatabaseRowsSQL, quietConn, "appdb"); err != nil {
+		t.Fatalf("failed to delete appdb rows: %v", err)
+	}
+	if _, err := pool.Exec(ctx, deleteStatDatabaseRowsSQL, staleConn, "appdb"); err != nil {
+		t.Fatalf("failed to delete stale connection rows: %v", err)
+	}
+	for i, offset := range []string{"12 minutes", "8 minutes", "4 minutes", "1 minute"} {
+		if _, err := pool.Exec(ctx, insertStatDatabaseSampleSQL, quietConn, "appdb",
+			int64(i*30_000), int64(i*1_000), offset); err != nil {
+			t.Fatalf("failed to seed the quiet appdb samples: %v", err)
+		}
+	}
+
+	engine.cleanResolvedAlerts(ctx)
+
+	for k, want := range map[key]string{
+		{quietConn, "appdb"}:   "cleared",
+		{quietConn, "otherdb"}: "active",
+		{staleConn, "appdb"}:   "active",
+	} {
+		if status := alertStatus(t, pool, alerts[k].ID); status != want {
+			t.Errorf("connection %d database %s alert status = %q, want %q",
+				k.conn, k.db, status, want)
+		}
 	}
 }
 

@@ -309,9 +309,11 @@ func TestAuditC8CacheHitRatioFiresAndClearsOnSameData(t *testing.T) {
 		}
 	}
 
-	// A newer, healthy interval (30000 hits, no reads) resolves it.
+	// A newer, healthy interval resolves it: 90000 hits and 6000 reads
+	// over 50 seconds is 120 reads per second, enough to pass the read
+	// rate gate, at a 93.75% ratio.
 	if _, err := pool.Exec(ctx, insertStatDatabaseSampleSQL,
-		connID, "appdb", int64(90_000), int64(30_000), "10 seconds"); err != nil {
+		connID, "appdb", int64(150_000), int64(36_000), "10 seconds"); err != nil {
 		t.Fatalf("failed to seed the recovery sample: %v", err)
 	}
 	engine.cleanResolvedAlerts(ctx)

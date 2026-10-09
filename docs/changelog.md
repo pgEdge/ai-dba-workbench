@@ -453,6 +453,25 @@ project adheres to
   metric now reports the time of its sample rather than the
   time of the query, so that its samples can be counted.
 
+- Retune four built-in alert rules that fired on conditions nobody
+  could act on (#616). `cache_hit_ratio_low` now only judges an
+  interval that read at least 100 blocks per second from outside
+  shared buffers as well as accessing 10,000 blocks, and its defaults
+  drop from a warning below 80 percent to information below 50.
+  `dead_tuple_ratio` only judges tables with at least 10,000 dead
+  tuples, and its default threshold rises from 20 percent, which is
+  autovacuum's own default trigger, to 50. `autovacuum_not_running`
+  only counts a table that has been past its autovacuum trigger in
+  every sample for at least 30 minutes. `checkpoint_warning` skips
+  servers whose most recent recovery state shows them in recovery,
+  on every supported PostgreSQL version. Collector schema migration
+  21 changes each default only while it still holds the old shipped
+  value, so a threshold or severity changed through the API is kept,
+  and leaves per-server, per-cluster and per-group overrides alone.
+  An alert on any of the three gated metrics now clears when the
+  metric stops reporting a row for it, for example when the read rate
+  falls, the table is vacuumed or a primary becomes a standby.
+
 - Raise the default size of the server's datastore connection pool,
   `database.pool_max_conns`, from 4 to 20 (#478). Every API request
   that reads the datastore shares that pool, and a single dashboard

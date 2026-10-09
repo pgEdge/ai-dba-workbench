@@ -9562,7 +9562,7 @@
             }
           },
           "500": {
-            "description": "The target token or its owner could not be read",
+            "description": "Failed to set token scope, including when the target token or its owner could not be read inside the write; for an API token caller, also \"Failed to get token scope\" when the target token's current scope could not be read to judge the change",
             "content": {
               "application/json": {
                 "schema": {
@@ -9621,7 +9621,7 @@
             }
           },
           "500": {
-            "description": "The target token or its owner could not be read",
+            "description": "Failed to clear token scope, including when the target token or its owner could not be read inside the write; for an API token caller, also \"Failed to get token scope\" when the target token's current scope could not be read to judge the clear",
             "content": {
               "application/json": {
                 "schema": {

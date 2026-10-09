@@ -413,6 +413,54 @@ func TestTokenScopeCommands(t *testing.T) {
 	}
 }
 
+// TestTokenCommandsOnSuperuserToken checks that the CLI acts with
+// superuser authority on a token a superuser owns, for each command that
+// writes a token: the store refuses such a write unless the caller says
+// it is allowed, so a command passing false would fail here.
+func TestTokenCommandsOnSuperuserToken(t *testing.T) {
+	dataDir, _ := newTokenCommandStore(t)
+
+	var token *auth.StoredToken
+	withTokenStore(t, dataDir, func(store *auth.AuthStore) {
+		var err error
+		_, token, err = store.AsActor(auth.SystemActor()).CreateToken("root",
+			"root seed", nil, true)
+		if err != nil {
+			t.Fatalf("CreateToken failed: %v", err)
+		}
+	})
+
+	steps := []struct {
+		name string
+		call func() error
+		want string
+	}{
+		{"scope connections", func() error {
+			return scopeTokenConnectionsCommand(dataDir, token.ID, "3")
+		}, "Set connection scope for token"},
+		{"scope tools", func() error {
+			return scopeTokenToolsCommand(dataDir, token.ID, "tool_a")
+		}, "Set MCP scope for token"},
+		{"clear scope", func() error {
+			return clearTokenScopeCommand(dataDir, token.ID)
+		}, "Cleared all scope restrictions"},
+		{"remove", func() error {
+			return removeTokenCommand(dataDir,
+				strconv.FormatInt(token.ID, 10))
+		}, "Token removed successfully"},
+	}
+	for _, step := range steps {
+		var err error
+		out := captureStdout(t, func() { err = step.call() })
+		if err != nil || !strings.Contains(out, step.want) {
+			t.Fatalf("%s on root's token: got %q, %v", step.name, out, err)
+		}
+	}
+	if tokens := tokensOwnedBy(t, dataDir, "root"); len(tokens) != 0 {
+		t.Errorf("Expected root's token to be gone, got %+v", tokens)
+	}
+}
+
 func TestTokenScopeCommandFailures(t *testing.T) {
 	dataDir, token := newTokenCommandStore(t)
 	bad := unopenableDataDir(t)

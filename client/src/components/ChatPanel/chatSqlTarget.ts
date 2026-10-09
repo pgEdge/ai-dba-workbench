@@ -196,6 +196,32 @@ const toDistinctOptions = (
 };
 
 /**
+ * Plan a block whose `-- connection_id: N` comment names its server. It
+ * runs there, on the database the reply used on that server or the
+ * server's default, unless the reply used several databases on it, in
+ * which case the user chooses between them.
+ */
+const planAnnotatedBlock = (
+    id: number,
+    runCode: string,
+    reply: ReplyTargets,
+    servers: Map<number, KnownServer>,
+): SqlBlockPlan => {
+    const options = toDistinctOptions(
+        reply.targets.filter((t) => t.connectionId === id),
+        servers,
+    );
+    if (options.length > 1) {
+        return { kind: 'select', code: runCode, options };
+    }
+    return {
+        kind: 'run',
+        code: runCode,
+        target: options[0] ?? toOption({ connectionId: id }, servers),
+    };
+};
+
+/**
  * Decide how to render a SQL code block from an Ellie reply.
  *
  * A Run button is bound to a single target only when that target is
@@ -225,19 +251,12 @@ export const planSqlBlock = (
     }
 
     if (annotation.connectionId !== null) {
-        const id = annotation.connectionId;
-        const options = toDistinctOptions(
-            reply.targets.filter((t) => t.connectionId === id),
+        return planAnnotatedBlock(
+            annotation.connectionId,
+            runCode,
+            reply,
             servers,
         );
-        if (options.length > 1) {
-            return { kind: 'select', code: runCode, options };
-        }
-        return {
-            kind: 'run',
-            code: runCode,
-            target: options[0] ?? toOption({ connectionId: id }, servers),
-        };
     }
 
     const replyOptions = toDistinctOptions(reply.targets, servers);

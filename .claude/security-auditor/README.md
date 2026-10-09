@@ -462,7 +462,20 @@ client address, before and after snapshots and a hash chain.
   slot 2 under the previous key while it fails under the current one
   (before promotion), else slot 1 binding-aware, and
   `proveAuditReanchorPlan` runs it even when the history proof failed,
-  so the reason names the tail. Operators are told to re-anchor with
+  so the reason names the tail, and re-scans the log in the proof's
+  own transaction, refusing if it differs from what the plan showed.
+  A slot-2 MAC proves only that the server signed the pair, and the
+  server can be led to sign one beside a primary naming a decoy, which
+  promotion then moves into `bound_*` (Ant, PR #565). So a binding,
+  slot 2's view of slot 1 in case 4 or slot 1's `bound_*` in case 3,
+  is checked against the rows: `checkAuditTailBinding` (verify) needs
+  the bound row present, below the anchored id, with the bound hash,
+  else exit 2; `proveAuditTailBinding` (re-anchor) additionally needs
+  it to fail under the previous key, since the server starts slot 2
+  only over a failing row and the purge never removes it. A row
+  altered to fail and then restored passes verify (exit 3) and only
+  the re-anchor refuses it; an existence-only check is not enough.
+  Operators are told to re-anchor with
   the previous secret after each rotation, before the next. A genuine
   log spanning three keys never proves unattended: `proveAuditHistory`
   needs every history row under one previous key. In a rotation-shaped

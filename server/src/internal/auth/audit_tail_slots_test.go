@@ -655,7 +655,7 @@ func TestRotatedLogWithoutAnAnchorIsAccepted(t *testing.T) {
 	store, _ := newReopenableStore(t)
 	st := auditTailState{hasNewest: true, newestID: 4,
 		newestVersion: auditTailHashVersion - 1}
-	if err := store.checkRotatedAuditTail(st,
+	if err := store.checkRotatedAuditTail(store.db, st,
 		AuditEvent{ID: 2}); err != nil {
 		t.Errorf("Expected a log with no anchor to be accepted, got %v",
 			err)

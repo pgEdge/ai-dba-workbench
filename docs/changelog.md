@@ -1157,7 +1157,11 @@ project adheres to
   unique index on `anomaly_embeddings.candidate_id`. The new
   indexes are built without `CONCURRENTLY`, so the collector
   blocks writes to `anomaly_candidates` whilst they build when
-  it first starts after the upgrade. (#615)
+  it first starts after the upgrade. Stop the alerter before
+  upgrading the collector: dropping the duplicate index waits
+  for any retention sweep the old alerter is still running, and
+  blocks every reader of `anomaly_embeddings` until it can
+  proceed. (#615)
 
 - Apply the datastore password read from the server's
   `-db-password-file` flag. The file was read but its contents

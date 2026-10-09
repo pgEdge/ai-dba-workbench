@@ -15,6 +15,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // The retention deletes run in bounded batches, each its own short
@@ -54,7 +56,80 @@ const (
 	retentionCountCandidatesSQL = `SELECT COUNT(*) FROM anomaly_candidates`
 	retentionCountAlertsSQL     = `SELECT COUNT(*) FROM alerts`
 	retentionCountEmbeddingsSQL = `SELECT COUNT(*) FROM anomaly_embeddings`
+
+	// retentionStatementLogSetupSQL creates the table and trigger
+	// function that record how many rows each DELETE statement removes.
+	retentionStatementLogSetupSQL = `
+		CREATE TABLE IF NOT EXISTS retention_statement_log (rows bigint NOT NULL);
+		TRUNCATE retention_statement_log;
+		CREATE OR REPLACE FUNCTION retention_statement_log_rows()
+		RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			INSERT INTO retention_statement_log
+				SELECT count(*) FROM old_rows;
+			RETURN NULL;
+		END;
+		$$;
+	`
+
+	retentionStatementLogTeardownSQL = `
+		DROP FUNCTION IF EXISTS retention_statement_log_rows() CASCADE;
+		DROP TABLE IF EXISTS retention_statement_log;
+	`
+
+	// retentionStatementLogStatsSQL counts the DELETE statements that
+	// removed rows, and the most rows any one of them removed.
+	retentionStatementLogStatsSQL = `
+		SELECT count(*), coalesce(max(rows), 0)
+		FROM retention_statement_log
+		WHERE rows > 0
+	`
 )
+
+// logDeleteStatements installs a statement-level AFTER DELETE trigger on
+// table that records the number of rows each DELETE statement removes,
+// so a test can check how a sweep was split into statements. The
+// returned function drops the log table, the function and the trigger;
+// defer it after the datastore's cleanup so it runs before the pool
+// closes.
+func logDeleteStatements(t *testing.T, pool *pgxpool.Pool, table string) func() {
+	t.Helper()
+	ctx := context.Background()
+	teardown := func() {
+		if _, err := pool.Exec(context.Background(), retentionStatementLogTeardownSQL); err != nil {
+			t.Logf("drop statement log: %v", err)
+		}
+	}
+	if _, err := pool.Exec(ctx, retentionStatementLogSetupSQL); err != nil {
+		teardown()
+		t.Fatalf("create statement log: %v", err)
+	}
+	trigger := `CREATE TRIGGER retention_statement_log AFTER DELETE ON ` + table +
+		` REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT` +
+		` EXECUTE FUNCTION retention_statement_log_rows()`
+	if _, err := pool.Exec(ctx, trigger); err != nil {
+		teardown()
+		t.Fatalf("create statement log trigger on %s: %v", table, err)
+	}
+	return teardown
+}
+
+// assertBatchedStatements checks that the logged DELETE statements
+// split total rows into batches of at most retentionDeleteBatchSize,
+// which needs at least ceil(total / retentionDeleteBatchSize) of them.
+func assertBatchedStatements(t *testing.T, pool *pgxpool.Pool, total int) {
+	t.Helper()
+	var statements, largest int64
+	if err := pool.QueryRow(context.Background(), retentionStatementLogStatsSQL).
+		Scan(&statements, &largest); err != nil {
+		t.Fatalf("read statement log: %v", err)
+	}
+	want := int64((total + retentionDeleteBatchSize - 1) / retentionDeleteBatchSize)
+	if statements < want || largest > retentionDeleteBatchSize {
+		t.Errorf("statements = %d, largest = %d rows; want at least %d statements of at most %d rows",
+			statements, largest, want, retentionDeleteBatchSize)
+	}
+}
 
 // retentionCount runs a COUNT(*) query and returns the result.
 func retentionCount(t *testing.T, ds *Datastore, sql string) int64 {
@@ -182,6 +257,8 @@ func TestDeleteOldAnomalyCandidates_MoreThanOneBatch(t *testing.T) {
 		}
 	}
 
+	defer logDeleteStatements(t, pool, "anomaly_candidates")()
+
 	deleted, err := ds.DeleteOldAnomalyCandidates(ctx, cutoff)
 	if err != nil {
 		t.Fatalf("DeleteOldAnomalyCandidates: %v", err)
@@ -189,6 +266,7 @@ func TestDeleteOldAnomalyCandidates_MoreThanOneBatch(t *testing.T) {
 	if deleted != int64(aged) {
 		t.Errorf("deleted = %d, want %d", deleted, aged)
 	}
+	assertBatchedStatements(t, pool, aged)
 	if got := retentionCount(t, ds, retentionCountCandidatesSQL); got != 1 {
 		t.Errorf("candidates remaining = %d, want 1", got)
 	}
@@ -198,6 +276,43 @@ func TestDeleteOldAnomalyCandidates_MoreThanOneBatch(t *testing.T) {
 		}
 	} else {
 		t.Log("pgvector unavailable; cascade into anomaly_embeddings not checked")
+	}
+}
+
+// TestDeleteOldAlerts_MoreThanOneBatch goes through the exported method
+// with more aged alerts than one batch holds, and checks that they are
+// removed in several statements of at most retentionDeleteBatchSize rows.
+func TestDeleteOldAlerts_MoreThanOneBatch(t *testing.T) {
+	ds, pool, cleanup := newFullTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	connID := insertTestConnection(t, pool, "retention-many-alerts")
+	old := time.Now().Add(-48 * time.Hour)
+	cutoff := time.Now().Add(-24 * time.Hour)
+	aged := retentionDeleteBatchSize*2 + 5
+
+	if _, err := pool.Exec(ctx, retentionSeedAlertsSQL,
+		connID, "cleared", old, old, aged); err != nil {
+		t.Fatalf("seed old alerts: %v", err)
+	}
+	if _, err := pool.Exec(ctx, retentionSeedAlertsSQL,
+		connID, "active", old, nil, 1); err != nil {
+		t.Fatalf("seed active alert: %v", err)
+	}
+
+	defer logDeleteStatements(t, pool, "alerts")()
+
+	deleted, err := ds.DeleteOldAlerts(ctx, cutoff)
+	if err != nil {
+		t.Fatalf("DeleteOldAlerts: %v", err)
+	}
+	if deleted != int64(aged) {
+		t.Errorf("deleted = %d, want %d", deleted, aged)
+	}
+	assertBatchedStatements(t, pool, aged)
+	if got := retentionCount(t, ds, retentionCountAlertsSQL); got != 1 {
+		t.Errorf("alerts remaining = %d, want 1 (the active alert)", got)
 	}
 }
 

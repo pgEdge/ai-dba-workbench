@@ -126,12 +126,15 @@ func TestSampleStreaks_Retain(t *testing.T) {
 	}
 }
 
-// TestNewThresholdSampleKey checks that the key distinguishes every part
-// of a metric value's identity, including a nil name from an empty one.
+// TestNewThresholdSampleKey checks that the key distinguishes the rule,
+// connection and database, including a nil database name from an empty
+// one, and ignores the object name, since the alert it counts towards is
+// the same whichever object is reported.
 func TestNewThresholdSampleKey(t *testing.T) {
 	empty := ""
 	db := "appdb"
 	obj := "public.orders"
+	other := "public.lineitems"
 
 	base := newThresholdSampleKey(7, database.MetricValue{ConnectionID: 3})
 	if base != (thresholdSampleKey{ruleID: 7, connectionID: 3}) {
@@ -144,17 +147,21 @@ func TestNewThresholdSampleKey(t *testing.T) {
 	want := thresholdSampleKey{
 		ruleID: 7, connectionID: 3,
 		databaseName: db, hasDatabase: true,
-		objectName: obj, hasObject: true,
 	}
 	if full != want {
 		t.Errorf("key with names = %+v, want %+v", full, want)
 	}
+	if newThresholdSampleKey(7, database.MetricValue{
+		ConnectionID: 3, DatabaseName: &db, ObjectName: &other,
+	}) != full {
+		t.Error("a different object in the same database must share the key")
+	}
 
 	emptyNames := newThresholdSampleKey(7, database.MetricValue{
-		ConnectionID: 3, DatabaseName: &empty, ObjectName: &empty,
+		ConnectionID: 3, DatabaseName: &empty,
 	})
 	if emptyNames == base {
-		t.Error("empty names must not collide with nil names")
+		t.Error("an empty database name must not collide with a nil one")
 	}
 	if newThresholdSampleKey(8, database.MetricValue{ConnectionID: 3}) == base {
 		t.Error("different rules must not share a key")

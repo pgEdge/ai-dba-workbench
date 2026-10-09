@@ -169,7 +169,11 @@ evaluator performs these steps:
 The evaluator creates a new alert only once the threshold has
 been violated on `threshold.trigger_count` consecutive metric
 samples, where a sample is a distinct `collected_at` value for
-one rule, connection, database and object. The counts live in
+one rule, connection and database. The object name is not part
+of the key, because an alert is keyed on the rule, connection and
+database, and metrics such as `dead_tuple_percent` report the
+worst table in each database, which may change from one sample
+to the next. The counts live in
 memory in `internal/engine/hysteresis.go`; a key that a cycle
 does not judge, because of a blackout, a disabled override or a
 missing row, starts again from zero. An existing alert is
@@ -232,8 +236,14 @@ conditions. The cleaner retrieves active threshold alerts and
 re-evaluates the triggering conditions. When a condition no longer
 violates the threshold on `threshold.clear_count` consecutive
 samples, the cleaner marks the alert as cleared. A violating sample
-resets the count, whilst missing data neither advances nor resets
-it, and the count is dropped once the alert is no longer active.
+resets the count, and the count is dropped once the alert is no
+longer active. Missing data for a metric that reports a value for
+every connection neither advances nor resets the count. For a
+metric that reports only whilst its condition holds, each probe
+collection that returns no row counts as one resolved sample, so
+an inactive replication slot alert clears on the third
+`pg_replication_slots` collection after recovery at the default
+`clear_count`.
 
 A metric that returns no value for an alert is a separate case from
 a metric that returns a value below the threshold. The metric

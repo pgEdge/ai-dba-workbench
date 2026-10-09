@@ -401,3 +401,77 @@ func TestHysteresis_CancelledEvaluationKeepsCounts(t *testing.T) {
 		t.Errorf("count after an evaluation with an ended context = %d, want 1", c)
 	}
 }
+
+// TestHysteresis_WorstObjectChangeKeepsTriggerCount covers a metric that
+// reports the worst object in each database. The alert is keyed on the
+// rule, connection and database, so two tables taking turns as the worst
+// must still build one count towards it rather than restarting it every
+// time the worst table changes.
+func TestHysteresis_WorstObjectChangeKeepsTriggerCount(t *testing.T) {
+	engine, ds, pool, cleanup := newEngineSpockTestEnv(t)
+	defer cleanup()
+	setThresholdCounts(engine, 2, 3)
+	ctx := context.Background()
+
+	if _, err := pool.Exec(ctx, `
+		CREATE TABLE metrics.pg_stat_all_tables (
+		    connection_id INTEGER NOT NULL,
+		    database_name TEXT NOT NULL,
+		    schemaname TEXT NOT NULL,
+		    relname TEXT NOT NULL,
+		    n_live_tup BIGINT,
+		    n_dead_tup BIGINT,
+		    collected_at TIMESTAMPTZ NOT NULL
+		)`); err != nil {
+		t.Fatalf("failed to create pg_stat_all_tables: %v", err)
+	}
+	var ruleID int64
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO alert_rules
+		    (name, description, category, metric_name, default_operator,
+		     default_threshold, default_severity, default_enabled, is_built_in)
+		VALUES ('dead_tuple_ratio', 'Dead tuples above threshold', 'vacuum',
+		        'pg_stat_all_tables.dead_tuple_percent', '>', 20, 'warning',
+		        TRUE, TRUE)
+		RETURNING id`).Scan(&ruleID); err != nil {
+		t.Fatalf("failed to insert dead_tuple_ratio rule: %v", err)
+	}
+
+	connID := insertTestConnection(t, pool, "hysteresis-worst-object")
+	dbName := "appdb"
+
+	// Each sample has both tables above the threshold, at 44% and 50%
+	// dead, with the worst of the two alternating.
+	steps := []struct {
+		ago                  time.Duration
+		ordersDead, lineDead int64
+		wantAlert            bool
+	}{
+		{4 * time.Minute, 500, 440, false},
+		{3 * time.Minute, 440, 500, true},
+	}
+	for i, step := range steps {
+		at := time.Now().UTC().Add(-step.ago)
+		for _, tbl := range []struct {
+			name string
+			dead int64
+		}{{"orders", step.ordersDead}, {"lineitems", step.lineDead}} {
+			if _, err := pool.Exec(ctx, `
+				INSERT INTO metrics.pg_stat_all_tables
+				    (connection_id, database_name, schemaname, relname,
+				     n_live_tup, n_dead_tup, collected_at)
+				VALUES ($1, $2, 'public', $3, $4, $5, $6)`,
+				connID, dbName, tbl.name, 1000-tbl.dead, tbl.dead, at); err != nil {
+				t.Fatalf("step %d: failed to insert %s sample: %v", i, tbl.name, err)
+			}
+		}
+		engine.evaluateThresholds(ctx)
+		alert, err := ds.GetActiveThresholdAlert(ctx, ruleID, connID, &dbName)
+		if err != nil {
+			t.Fatalf("step %d: GetActiveThresholdAlert failed: %v", i, err)
+		}
+		if (alert != nil) != step.wantAlert {
+			t.Fatalf("step %d: alert raised = %v, want %v", i, alert != nil, step.wantAlert)
+		}
+	}
+}

@@ -170,16 +170,17 @@ func (s *sampleStreaks[K]) size() int {
 }
 
 // thresholdSampleKey identifies one stream of samples a threshold rule is
-// judged against: one rule on one connection, database and object, which
-// is the grain at which the metric queries report values. A nil database
-// or object name is kept distinct from an empty one.
+// judged against: one rule on one connection and database, which is the
+// grain at which an alert is raised, found and cleared. The object name is
+// deliberately left out: metrics such as dead_tuple_percent report the
+// worst object in each database, and a change of worst object must not
+// restart a count for an alert that would be the same alert either way.
+// A nil database name is kept distinct from an empty one.
 type thresholdSampleKey struct {
 	ruleID       int64
 	connectionID int
 	databaseName string
 	hasDatabase  bool
-	objectName   string
-	hasObject    bool
 }
 
 // newThresholdSampleKey builds the key for one metric value of a rule.
@@ -188,10 +189,6 @@ func newThresholdSampleKey(ruleID int64, mv database.MetricValue) thresholdSampl
 	if mv.DatabaseName != nil {
 		key.databaseName = *mv.DatabaseName
 		key.hasDatabase = true
-	}
-	if mv.ObjectName != nil {
-		key.objectName = *mv.ObjectName
-		key.hasObject = true
 	}
 	return key
 }

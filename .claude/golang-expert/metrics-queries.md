@@ -1089,8 +1089,10 @@ that follow from that, most learned the hard way in #406 and #407:
 - A `latestSQL` must report the sample's own `collected_at`, never
   `NOW()`. Threshold hysteresis (`threshold.trigger_count` and
   `clear_count`, #614, `alerter/src/internal/engine/hysteresis.go`)
-  counts distinct `collected_at` values per rule, connection, database
-  and object, so a query reporting `NOW()` makes every evaluator and
+  counts distinct `collected_at` values per rule, connection and
+  database (not object: the alert is keyed without it, and worst-object
+  metrics such as `dead_tuple_percent` change object between samples),
+  so a query reporting `NOW()` makes every evaluator and
   cleaner pass look like a new sample and defeats the counts.
   `connection_utilization_percent` did exactly that until #614; its
   `active_counts` CTE now groups by `collected_at` and

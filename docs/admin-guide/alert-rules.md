@@ -355,7 +355,12 @@ alert active and the `metric_staleness` rule reports the
 probe that stopped. Where a metric reports only whilst the
 condition holds, such as an inactive replication slot or a
 blocked session, the absence of a value is the recovery
-signal and the alerter clears the alert.
+signal; each probe collection that returns no value counts
+as one sample towards `threshold.clear_count`, and the
+alerter clears the alert once enough have passed. With the
+default of three and the `pg_replication_slots` probe's
+default interval, an inactive replication slot alert
+clears ten to fifteen minutes after the slot recovers.
 
 The `metric_staleness` rule is cleared on the same basis.
 A probe that has become unavailable, whether because the

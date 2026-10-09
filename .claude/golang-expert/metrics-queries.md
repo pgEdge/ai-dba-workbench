@@ -1134,31 +1134,11 @@ that follow from that, most learned the hard way in #406 and #407:
 
 - A gate that decides which subjects a rule judges goes in the SQL, and
   a gated entry must be `clearWhenAbsent`, or an alert raised before the
-  subject stopped qualifying latches for ever (#616). The gates are:
-  `cache_hit_ratio` keeps an interval only if
-  `blks_read - prev_blks_read >= 100 * EXTRACT(EPOCH FROM (collected_at
-  - prev_collected_at))` as well as moving 10000 blocks, still picking
-  the newest qualifying interval with `DISTINCT ON`, and its
-  `historicalSQL` applies the same gate; `dead_tuple_percent` requires
-  `n_dead_tup >= 10000` (and 1000 tuples in all) on each table's newest
-  sample, after the `ROW_NUMBER`, so a vacuumed table drops out at once
-  rather than reporting an older sample from the window;
-  `table_last_autovacuum_hours` reads an hour of samples and keeps a
-  table only when every sample after `NOW() - 30 minutes` is past the
-  autovacuum trigger (`bool_and ... FILTER`) and so is the newest sample
-  at or before that mark (`(array_agg(... ORDER BY collected_at DESC)
-  FILTER (...))[1]`), which rejects a table whose history starts inside
-  the 30 minutes; `checkpoints_req_delta` drops connections whose newest
-  `metrics.pg_node_role` row in the hour has `is_in_recovery`, keeping
-  connections with no role row, and because the collector fills
-  `metrics.pg_stat_checkpointer` from `pg_stat_bgwriter` before
-  PostgreSQL 17 (aliasing `checkpoints_req` to `num_requested`) the
-  per-connection exclusion covers both sources. The gate tests live in
-  `default_rule_gates_integration_test.go` on the `deadRuleSchema`
-  fixture, which carries `metrics.pg_node_role` and
-  `metrics.pg_stat_database` for them; a new `clearWhenAbsent` entry's
-  probe must also be in `seededProbeIntervals` in
-  `audit_defects_test.go`.
+  subject stopped qualifying latches for ever (#616). The comments on
+  each gated entry in `metric_registry.go` explain its gate. The gate
+  tests live in `default_rule_gates_integration_test.go` on the
+  `deadRuleSchema` fixture; a new `clearWhenAbsent` entry's probe must
+  also be in `seededProbeIntervals` in `audit_defects_test.go`.
 
 - `system_stats` columns are platform-specific. `processor_time_percent`,
   `user_time_percent`, `privileged_time_percent` and

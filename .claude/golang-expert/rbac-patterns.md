@@ -1111,8 +1111,9 @@ names is open at read_write; otherwise the group grant (specific or
 all-connections, higher wins) decides. "Restricted" means a grant names the
 connection itself (`IsConnectionAssignedToAnyGroup`, and
 `RestrictedConnectionIDs` for the list path); an all-connections grant
-restricts nothing. A checker without a sharing lookup treats every
-connection as shared and unowned, as before.
+restricts nothing. When `CanAccessConnection` has no sharing lookup, it
+treats every connection as shared and unowned, as before;
+`VisibleConnectionIDs` always takes the sharing facts from its lister.
 `TestConnectionAccessAndVisibilityAgree` in
 `internal/auth/connection_access_agreement_test.go` runs every case through
 both functions and fails if they disagree.

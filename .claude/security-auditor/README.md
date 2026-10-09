@@ -122,7 +122,8 @@ moved.
   `config/reload.go` says which is which, comparing the provider
   settings with `rc.startup`, and `oidcAccessWarnings` warns on each
   widening change (provisioning on, a domain added or the list emptied,
-  `superuser_group` set or retargeted, a new `group_map` mapping).
+  `superuser_group` set or retargeted, a new `group_map` mapping);
+  `logOIDCChanges` itself warns when `enabled` is switched back on.
   Removing a group from `group_map` revokes nothing because only mapped
   Workbench groups are reconciled; clearing `superuser_group` revokes
   nothing because `ReconcileFederatedGroups` leaves `is_superuser`

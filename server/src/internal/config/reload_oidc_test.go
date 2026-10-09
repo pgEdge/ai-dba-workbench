@@ -28,11 +28,14 @@ func oidcEnabledConfig(enabled bool) *Config {
 // reload behavior depends on how the server started: switching
 // federated login off always applies, since the handler checks it on
 // every request, but switching it on applies only when a provider was
-// discovered at start-up.
+// discovered at start-up, and is then warned about since it widens who
+// may sign in. The restart warning is judged against start-up, so it
+// repeats on every reload until a restart.
 func TestReloadReportsTheOIDCEnabledSwitch(t *testing.T) {
 	const (
-		applied = "NOTE: http.auth.oidc.enabled changed - applied"
-		restart = "WARNING: http.auth.oidc.enabled changed - requires restart"
+		applied    = "NOTE: http.auth.oidc.enabled changed - applied"
+		restart    = "WARNING: http.auth.oidc.enabled changed - requires restart"
+		switchedOn = "WARNING: http.auth.oidc.enabled switched on"
 	)
 
 	cases := map[string]struct {
@@ -55,6 +58,27 @@ func TestReloadReportsTheOIDCEnabledSwitch(t *testing.T) {
 			reload:  oidcEnabledConfig(true),
 			want:    applied,
 			notWant: restart,
+		},
+		"switched back on warns": {
+			startup: oidcEnabledConfig(true),
+			old:     oidcEnabledConfig(false),
+			reload:  oidcEnabledConfig(true),
+			want:    switchedOn,
+			notWant: restart,
+		},
+		"switched off does not warn": {
+			startup: oidcEnabledConfig(true),
+			old:     oidcEnabledConfig(true),
+			reload:  oidcEnabledConfig(false),
+			want:    applied,
+			notWant: switchedOn,
+		},
+		"still on after starting off": {
+			startup: oidcEnabledConfig(false),
+			old:     oidcEnabledConfig(true),
+			reload:  oidcEnabledConfig(true),
+			want:    restart,
+			notWant: switchedOn,
 		},
 		"switched on after starting off": {
 			startup: oidcEnabledConfig(false),
@@ -241,6 +265,7 @@ func TestUnmanagedWorkbenchGroups(t *testing.T) {
 		"nothing dropped":         {old: map[string]string{"a": "x"}, cur: map[string]string{"b": "x"}},
 		"group dropped":           {old: map[string]string{"a": "x", "b": "y"}, cur: map[string]string{"a": "x"}, want: []string{"y"}},
 		"sorted and deduplicated": {old: map[string]string{"a": "z", "b": "y", "c": "z"}, want: []string{"y", "z"}},
+		"empty target ignored":    {old: map[string]string{"a": "", "b": "x"}, cur: map[string]string{"b": "x"}},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -337,8 +362,9 @@ func TestAddedGroupMappings(t *testing.T) {
 		old, cur map[string]string
 		want     []string
 	}{
-		"unchanged": {old: map[string]string{"a": "x"}, cur: map[string]string{"a": "x"}},
-		"removed":   {old: map[string]string{"a": "x"}},
+		"unchanged":            {old: map[string]string{"a": "x"}, cur: map[string]string{"a": "x"}},
+		"removed":              {old: map[string]string{"a": "x"}},
+		"empty target ignored": {cur: map[string]string{"a": ""}},
 		"added and retargeted, sorted": {
 			old: map[string]string{"b": "x"},
 			cur: map[string]string{"b": "y", "a": "x"},

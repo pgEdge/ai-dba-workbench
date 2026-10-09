@@ -123,11 +123,11 @@ no way to sign in.
 
 The server logs a warning, as well as the note that the change applied,
 when a reload widens access or looks like a revocation without being
-one: switching `provision_users` on, emptying `allowed_email_domains`
-or adding a domain to it, setting, changing or clearing
-`superuser_group`, mapping a provider group in `group_map` to a
-Workbench group it was not mapped to before, or removing a Workbench
-group from `group_map`.
+one: setting `enabled` back to `true`, switching `provision_users` on,
+emptying `allowed_email_domains` or adding a domain to it, setting,
+changing or clearing `superuser_group`, mapping a provider group in
+`group_map` to a Workbench group it was not mapped to before, or
+removing a Workbench group from `group_map`.
 
 The identity provider connection is built once, at start-up, from
 `issuer`, `client_id`, `client_secret`, `client_secret_file`,
@@ -138,10 +138,10 @@ otherwise no provider was discovered and the server must be restarted.
 `local.enabled` and `max_failed_attempts_before_lockout` also require a
 restart.
 
-The server compares the identity provider settings with the
-configuration it started with, so a change to one of them is reported
-as needing a restart on every reload until the server restarts or the
-setting is restored.
+The server compares the identity provider settings, and whether
+federated login was switched on, with the configuration it started
+with, so a change to one of them is reported as needing a restart on
+every reload until the server restarts or the setting is restored.
 
 ### Local Login Settings
 

@@ -216,13 +216,19 @@ func (rc *ReloadableConfig) logOIDCChanges(newConfig *Config) {
 	// Switching federated login off always applies, since the handler
 	// checks enabled on every request. Switching it on applies only when
 	// the server started with it on, because otherwise no provider was
-	// discovered and no handler was built.
+	// discovered and no handler was built; that is compared against the
+	// start-up configuration, so the warning persists across reloads
+	// until a restart. Switching it back on is applied, and warned about,
+	// since every federated identity may then sign in again.
 	startedWithOIDC := rc.startup != nil && rc.startup.HTTP.Auth.OIDC.IsEnabled()
-	if old.IsEnabled() != cur.IsEnabled() {
-		if cur.IsEnabled() && !startedWithOIDC {
-			restartRequiredOIDCSetting("enabled")
-		} else {
-			appliedOIDCSetting("enabled")
+	switch {
+	case cur.IsEnabled() && !startedWithOIDC:
+		restartRequiredOIDCSetting("enabled")
+	case old.IsEnabled() != cur.IsEnabled():
+		appliedOIDCSetting("enabled")
+		if cur.IsEnabled() {
+			fmt.Fprintf(os.Stderr, "  WARNING: http.auth.oidc.enabled switched on: "+
+				"federated identities may sign in again\n")
 		}
 	}
 
@@ -386,6 +392,11 @@ func addedEmailDomains(oldList, newList []string) []string {
 func addedGroupMappings(oldMap, newMap map[string]string) []string {
 	providerGroups := make([]string, 0, len(newMap))
 	for providerGroup, group := range newMap {
+		// ReconcileFederatedGroups skips an empty target, so mapping a
+		// provider group to "" grants nothing.
+		if group == "" {
+			continue
+		}
 		if oldGroup, ok := oldMap[providerGroup]; !ok || oldGroup != group {
 			providerGroups = append(providerGroups, providerGroup)
 		}
@@ -410,7 +421,8 @@ func unmanagedWorkbenchGroups(oldMap, newMap map[string]string) []string {
 	seen := make(map[string]bool)
 	var dropped []string
 	for _, group := range oldMap {
-		if !stillManaged[group] && !seen[group] {
+		// An empty target was never managed, so dropping it changes nothing.
+		if group != "" && !stillManaged[group] && !seen[group] {
 			seen[group] = true
 			dropped = append(dropped, group)
 		}

@@ -11,7 +11,6 @@ package engine
 
 import (
 	"context"
-	"fmt"
 	"testing"
 	"time"
 
@@ -171,12 +170,23 @@ func TestHysteresis_UnreadRuleKeepsTriggerCounts(t *testing.T) {
 	}
 }
 
+// insertStatDatabaseSampleSecsAgoSQL seeds one metrics.pg_stat_database
+// row the given number of seconds before NOW(), taking the age as a
+// number rather than as interval text.
+const insertStatDatabaseSampleSecsAgoSQL = `
+        INSERT INTO metrics.pg_stat_database
+            (connection_id, database_name, datname, blks_hit, blks_read,
+             collected_at)
+        VALUES ($1, $2::text, $2::text, $3, $4,
+                NOW() - make_interval(secs => $5))
+    `
+
 // statDatabaseSample writes one cumulative pg_stat_database sample for
 // appdb the given number of seconds in the past.
 func statDatabaseSample(t *testing.T, pool *pgxpool.Pool, connID int, hits, reads int64, ago int) {
 	t.Helper()
-	if _, err := pool.Exec(context.Background(), insertStatDatabaseSampleSQL,
-		connID, "appdb", hits, reads, fmt.Sprintf("%d seconds", ago)); err != nil {
+	if _, err := pool.Exec(context.Background(), insertStatDatabaseSampleSecsAgoSQL,
+		connID, "appdb", hits, reads, ago); err != nil {
 		t.Fatalf("failed to seed pg_stat_database: %v", err)
 	}
 }

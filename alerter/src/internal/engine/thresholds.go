@@ -160,8 +160,12 @@ func (e *Engine) evaluateRuleForAllConnections(ctx context.Context, rule *databa
 			mv.CollectedAt, violated)
 
 		if violated {
-			e.triggerThresholdAlert(ctx, rule, mv.Value, threshold, operator,
-				severity, mv.ConnectionID, mv.DatabaseName, mv.ObjectName,
+			e.triggerThresholdAlert(ctx, rule, thresholdViolation{
+				value:     mv.Value,
+				threshold: threshold,
+				operator:  operator,
+				severity:  severity,
+			}, mv.ConnectionID, mv.DatabaseName, mv.ObjectName,
 				breaches >= triggerCount)
 		}
 	}
@@ -223,12 +227,23 @@ func (e *Engine) checkThreshold(value float64, operator string, threshold float6
 	}
 }
 
+// thresholdViolation describes a metric sample that violated its
+// effective threshold: the observed value, and the threshold, operator
+// and severity it was compared against.
+type thresholdViolation struct {
+	value     float64
+	threshold float64
+	operator  string
+	severity  string
+}
+
 // triggerThresholdAlert creates or updates an alert for a threshold
 // violation. An alert that is already open is always updated, but a new
 // one is raised only when sustained is true, meaning the condition has
 // held for threshold.trigger_count consecutive samples; see
 // hysteresis.go.
-func (e *Engine) triggerThresholdAlert(ctx context.Context, rule *database.AlertRule, value, threshold float64, operator, severity string, connectionID int, dbName *string, objectName *string, sustained bool) {
+func (e *Engine) triggerThresholdAlert(ctx context.Context, rule *database.AlertRule, v thresholdViolation, connectionID int, dbName *string, objectName *string, sustained bool) {
+	value, threshold, operator, severity := v.value, v.threshold, v.operator, v.severity
 	e.log("Threshold violated: %s (%.2f %s %.2f) on connection %d", rule.Name, value, operator, threshold, connectionID)
 
 	// Check if there's already an active or acknowledged alert for this rule/connection

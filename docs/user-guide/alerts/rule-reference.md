@@ -26,9 +26,11 @@ run out of available connections. Consider increasing
 The rule divides the most recent client session count by
 the `max_connections` value in force when that count was
 collected, which is the newest settings snapshot at or
-before it. The settings probe only stores a snapshot when
-the configuration changes, so that snapshot may be days
-or weeks old on a stable server.
+before it. When the count predates every settings
+snapshot, as just after a connection is added, the rule
+uses the earliest snapshot instead. The settings probe
+only stores a snapshot when the configuration changes, so
+that snapshot may be days or weeks old on a stable server.
 
 ### High Max Connections
 

@@ -63,8 +63,9 @@ func (p *PgSysDiskInfoProbe) Execute(ctx context.Context, connectionName string,
 		return nil, fmt.Errorf("failed to check for system_stats extension: %w", err)
 	}
 	if !exists {
-		// Extension not installed, return empty result set without error
-		return nil, nil
+		// Report the absence explicitly, so the scheduler can tell it
+		// apart from an installed extension with no rows to return.
+		return nil, ErrExtensionNotInstalled
 	}
 
 	query := WrapQuery(ProbeNamePgSysDiskInfo, p.GetQuery())

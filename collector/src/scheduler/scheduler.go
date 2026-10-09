@@ -732,21 +732,44 @@ func (ps *ProbeScheduler) executeProbeForConnection(ctx context.Context, probe p
 			extName = &name
 		}
 
-		switch {
-		case metricsStored > 0:
-			ps.recordAvailability(conn.ID, config.Name, extName, true, nil)
-		case extName != nil && extStatus == extensionPresent:
-			// The extension is installed but had nothing to report this
-			// cycle, which is not the same as it being missing: an empty
-			// pg_stat_statements must not read as an absent extension.
-			ps.recordAvailability(conn.ID, config.Name, extName, true, nil)
-		case extName != nil && allMetrics == nil:
-			reason := fmt.Sprintf("extension '%s' not installed", *extName)
-			ps.recordAvailability(conn.ID, config.Name, extName, false, &reason)
-		default:
-			// Non-extension probe with no metrics is normal (e.g., no replication)
-			ps.recordAvailability(conn.ID, config.Name, extName, true, nil)
-		}
+		available, reason := availabilityVerdict(metricsStored, extName, extStatus)
+		ps.recordAvailability(conn.ID, config.Name, extName, available, reason)
+	}
+}
+
+// availabilityVerdict decides how a probe run that did not hit a
+// connection error is recorded in probe_availability, from the number of
+// metrics stored, the extension the probe depends on (nil when it depends
+// on none) and what the run learned about that extension across every
+// database it visited. It returns whether the probe is available and, when
+// it is not, the reason to record.
+//
+// Every ExtensionProbe reports an absent extension with
+// probes.ErrExtensionNotInstalled and a present one with a non-nil slice,
+// so only extensionAbsent means "not installed". extensionUnknown means no
+// execution got far enough to tell, because each one failed (and was
+// logged as an error); recording that as a missing extension would send
+// an operator looking for a problem that is not there.
+func availabilityVerdict(metricsStored int, extName *string, extStatus extensionStatus) (bool, *string) {
+	switch {
+	case metricsStored > 0:
+		return true, nil
+	case extName == nil:
+		// Non-extension probe with no metrics is normal (e.g., no
+		// replication).
+		return true, nil
+	case extStatus == extensionPresent:
+		// The extension is installed but had nothing to report this
+		// cycle, which is not the same as it being missing: a quiet
+		// Spock cluster or an empty pg_stat_statements must not read
+		// as an absent extension.
+		return true, nil
+	case extStatus == extensionAbsent:
+		reason := fmt.Sprintf("extension '%s' not installed", *extName)
+		return false, &reason
+	default:
+		reason := fmt.Sprintf("probe execution failed before extension '%s' could be checked", *extName)
+		return false, &reason
 	}
 }
 

@@ -11,6 +11,7 @@ package probes
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -239,7 +240,9 @@ func TestPgSysProbes_StoreEmpty(t *testing.T) {
 
 // TestPgSysProbes_ExecuteWithoutExtension covers the gate branch in
 // every pg_sys_* probe by running Execute against a connection that
-// claims the extension is absent. We achieve this by passing a unique
+// claims the extension is absent, which must report
+// ErrExtensionNotInstalled so the scheduler can tell an absent
+// extension from an installed one with nothing to return (#612). We achieve this by passing a unique
 // connectionName to bypass the feature cache after temporarily removing
 // the dummy system_stats row; the row is restored afterwards so other
 // tests still see the extension as installed.
@@ -279,12 +282,13 @@ func TestPgSysProbes_ExecuteWithoutExtension(t *testing.T) {
 			metrics, err := c.probe.Execute(ctx,
 				fmt.Sprintf("sys-noext-%s", c.name), conn,
 				pgVersion)
-			if err != nil {
-				t.Fatalf("Execute: %v", err)
+			if !errors.Is(err, ErrExtensionNotInstalled) {
+				t.Fatalf("Execute without extension = %v, "+
+					"want ErrExtensionNotInstalled", err)
 			}
-			if len(metrics) != 0 {
-				t.Errorf("expected no rows without extension, "+
-					"got %d", len(metrics))
+			if metrics != nil {
+				t.Errorf("expected nil metrics without extension, "+
+					"got %d rows", len(metrics))
 			}
 		})
 	}

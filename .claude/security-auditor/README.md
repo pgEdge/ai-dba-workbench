@@ -61,7 +61,10 @@ moved.
   so a stopped collector, a stalled probe or a disabled one leaves the
   alert active (issue #407).
 - Visibility is per user: connections are scoped to their owner or to
-  groups the user belongs to. Connection endpoints mostly do not hide
+  groups the user belongs to, except that a shared connection no
+  connection-specific grant restricts is visible, and open at
+  `read_write`, to every user, subject to token scope (#592).
+  Connection endpoints mostly do not hide
   existence: a caller without access to a connection gets 403, and
   several of them echo the requested connection ID in the message (see
   `handleTopQueries` and its neighbours in

@@ -1425,8 +1425,6 @@ func TestVisibleConnectionIDs_SharedVisibleWithoutGrant(t *testing.T) {
 // holding a grant on one connection does not hide a shared connection no
 // group restricts, which CanAccessConnection admits (issue #592).
 func TestVisibleConnectionIDs_ExplicitGrantKeepsSharedVisibility(t *testing.T) {
-	// When a user has explicit group/token grants, those grants act as an
-	// allow-list that further restricts shared-connection visibility.
 	store, cleanup := createTestAuthStoreForAccess(t)
 	defer cleanup()
 

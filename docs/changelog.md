@@ -419,8 +419,9 @@ project adheres to
   lists still offered them. Only a grant that names a connection now
   restricts it. An `All Connections` grant at `read` therefore no longer
   caps its members: a shared connection that no grant names stays open at
-  `read_write` to every account, so to keep a group read-only on a
-  connection, grant that connection to the group by name. The owner of a
+  `read_write` to every account, subject only to an API token's own
+  scope, so to keep a group read-only on a connection, grant that
+  connection to the group by name. The owner of a
   connection always holds `read_write` access to it, whether or not a
   group restricts it. Holding a grant on one connection no longer hides
   shared connections that no group restricts, which the account could

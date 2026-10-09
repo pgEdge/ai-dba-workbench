@@ -102,8 +102,9 @@ specified access level. The Workbench supports two connection access levels:
   the connection.
 
 A connection privilege that names a connection also restricts that
-connection, so that only the members of groups that hold a grant on the
-connection may reach it. An `All Connections` privilege gives the members of
+connection, so that only its owner, the members of groups that hold a grant
+on the connection, and the members of groups that hold an `All Connections`
+grant may reach it. An `All Connections` privilege gives the members of
 its group every connection, but restricts no connection for anyone outside
 the group. The Workbench applies the following rules, in order, to decide
 whether an account other than a superuser may reach a connection:
@@ -125,7 +126,9 @@ An `All Connections` grant at the `read` level does not lower a member's
 access to a shared connection that no grant names; such a connection stays
 open at `read_write` to every account, the members of that group included.
 To keep a group read-only on a connection, grant that connection to the group
-by name at the `read` level.
+by name at the `read` level, and lower or remove any `read_write` grant that
+also applies to its members on that connection, such as an `All Connections`
+grant at `read_write`; the higher access level wins.
 
 An ADMIN privilege grants a group permission to perform administrative actions
 in the Workbench, such as managing users, groups, and connections. Admin

@@ -13,6 +13,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 
@@ -169,5 +171,63 @@ func TestLiveConfigFallsBackToTheStartupConfiguration(t *testing.T) {
 				t.Errorf("liveConfig = %p, want the start-up configuration %p", got, startup)
 			}
 		})
+	}
+}
+
+// buttonLabelYAML is a federated login configuration whose button label
+// is label, standing in for the file a SIGHUP re-reads.
+func buttonLabelYAML(label string) string {
+	return `
+http:
+  tls:
+    enabled: true
+    cert_file: /nonexistent/cert.pem
+    key_file: /nonexistent/key.pem
+  auth:
+    oidc:
+      enabled: true
+      issuer: https://idp.example.com
+      client_id: workbench
+      client_secret: s3cret
+      redirect_url: https://workbench.example.com/api/v1/auth/oidc/callback
+      button_label: ` + label + `
+`
+}
+
+// TestHandlerDependenciesFollowAReload pins the production wiring in
+// Run: the dependencies it hands SetupHandlers must read the live
+// configuration through the reloadable configuration, so a reload from a
+// rewritten file reaches the handlers. Without it every SIGHUP would log
+// the policy changes as applied and apply none of them.
+func TestHandlerDependenciesFollowAReload(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ai-dba-server.yaml")
+	if err := os.WriteFile(path, []byte(buttonLabelYAML("Before")), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	flags := config.CLIFlags{ConfigFileSet: true, ConfigFile: path}
+	startup, err := config.LoadConfig(path, flags)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	reloadable := config.NewReloadableConfig(startup, path, flags)
+
+	s := &Server{cfg: startup}
+	deps := s.handlerDependencies(nil, reloadable)
+	if got := deps.liveConfig().HTTP.Auth.OIDC.ButtonLabel; got != "Before" {
+		t.Fatalf("live button label before the reload = %q, want %q", got, "Before")
+	}
+
+	if err := os.WriteFile(path, []byte(buttonLabelYAML("After")), 0o600); err != nil {
+		t.Fatalf("rewrite config: %v", err)
+	}
+	if err := reloadable.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+
+	if got := deps.liveConfig().HTTP.Auth.OIDC.ButtonLabel; got != "After" {
+		t.Errorf("live button label after the reload = %q, want %q", got, "After")
+	}
+	if deps.Config != startup {
+		t.Error("deps.Config is not the start-up configuration")
 	}
 }

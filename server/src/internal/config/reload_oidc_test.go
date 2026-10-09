@@ -250,3 +250,133 @@ func TestUnmanagedWorkbenchGroups(t *testing.T) {
 		})
 	}
 }
+
+// TestReloadWarnsWhenAPolicyChangeWidensAnExistingSetting covers the
+// widening changes that leave the setting non-empty: retargeting
+// superuser_group, adding an email domain to a list that already
+// restricts sign-in, and mapping a provider group to a Workbench group
+// it was not mapped to.
+func TestReloadWarnsWhenAPolicyChangeWidensAnExistingSetting(t *testing.T) {
+	old := oidcEnabledConfig(true)
+	old.HTTP.Auth.OIDC.SuperuserGroup = "idp-admins"
+	old.HTTP.Auth.OIDC.AllowedEmailDomains = []string{"example.com"}
+	old.HTTP.Auth.OIDC.GroupMap = map[string]string{"idp-eng": "engineers"}
+
+	cur := oidcEnabledConfig(true)
+	cur.HTTP.Auth.OIDC.SuperuserGroup = "idp-contractors"
+	cur.HTTP.Auth.OIDC.AllowedEmailDomains = []string{"Example.com", "@other.example"}
+	cur.HTTP.Auth.OIDC.GroupMap = map[string]string{
+		"idp-eng": "operators", "idp-ops": "operators",
+	}
+
+	rc := &ReloadableConfig{config: old, startup: old}
+	out := captureStderr(t, func() { rc.logRestartRequiredSettings(cur) })
+	for _, want := range []string{
+		"WARNING: http.auth.oidc.superuser_group set: members of idp-contractors",
+		"WARNING: http.auth.oidc.allowed_email_domains widened: identities from other.example may now sign in",
+		"WARNING: http.auth.oidc.group_map maps provider group idp-eng to Workbench group operators",
+		"WARNING: http.auth.oidc.group_map maps provider group idp-ops to Workbench group operators",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected stderr to contain %q, got:\n%s", want, out)
+		}
+	}
+}
+
+// TestSuperuserGroupWarning covers each superuser_group transition.
+func TestSuperuserGroupWarning(t *testing.T) {
+	cases := map[string]struct {
+		old, cur string
+		want     string
+	}{
+		"unchanged":  {old: "a", cur: "a"},
+		"both empty": {},
+		"set":        {cur: "b", want: "superuser_group set: members of b"},
+		"retargeted": {old: "a", cur: "b", want: "superuser_group set: members of b"},
+		"cleared":    {old: "a", want: "superuser_group cleared"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			got := superuserGroupWarning(tc.old, tc.cur)
+			if tc.want == "" && got != "" {
+				t.Errorf("superuserGroupWarning(%q, %q) = %q, want none", tc.old, tc.cur, got)
+			}
+			if !strings.HasPrefix(got, tc.want) {
+				t.Errorf("superuserGroupWarning(%q, %q) = %q, want prefix %q", tc.old, tc.cur, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestAddedEmailDomains covers the comparison behind the
+// allowed_email_domains widening warning.
+func TestAddedEmailDomains(t *testing.T) {
+	cases := map[string]struct {
+		old, cur []string
+		want     []string
+	}{
+		"no restriction before":  {cur: []string{"example.com"}},
+		"emptied":                {old: []string{"example.com"}},
+		"narrowed":               {old: []string{"a.example", "b.example"}, cur: []string{"a.example"}},
+		"same domain respelled":  {old: []string{"example.com"}, cur: []string{" @EXAMPLE.com"}},
+		"added, sorted, deduped": {old: []string{"a.example"}, cur: []string{"c.example", "a.example", "B.example", "b.example", "@"}, want: []string{"b.example", "c.example"}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := addedEmailDomains(tc.old, tc.cur); !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("addedEmailDomains() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestAddedGroupMappings covers the comparison behind the group_map
+// widening warning.
+func TestAddedGroupMappings(t *testing.T) {
+	cases := map[string]struct {
+		old, cur map[string]string
+		want     []string
+	}{
+		"unchanged": {old: map[string]string{"a": "x"}, cur: map[string]string{"a": "x"}},
+		"removed":   {old: map[string]string{"a": "x"}},
+		"added and retargeted, sorted": {
+			old: map[string]string{"b": "x"},
+			cur: map[string]string{"b": "y", "a": "x"},
+			want: []string{
+				"maps provider group a to Workbench group x: its members join that group at their next login",
+				"maps provider group b to Workbench group y: its members join that group at their next login",
+			},
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := addedGroupMappings(tc.old, tc.cur); !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("addedGroupMappings() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestReloadComparesProviderSettingsWithStartup checks that a provider
+// setting changed by one reload is still reported as needing a restart
+// by the next, since the provider is still built from the start-up
+// value, and that restoring the start-up value stops the warning.
+func TestReloadComparesProviderSettingsWithStartup(t *testing.T) {
+	startup := oidcEnabledConfig(true)
+	startup.HTTP.Auth.OIDC.Issuer = "https://idp.example.com"
+	moved := oidcEnabledConfig(true)
+	moved.HTTP.Auth.OIDC.Issuer = "https://other-idp.example.com"
+
+	rc := &ReloadableConfig{config: moved, startup: startup}
+	out := captureStderr(t, func() { rc.logRestartRequiredSettings(moved) })
+	if !strings.Contains(out, "WARNING: http.auth.oidc.issuer changed - requires restart") {
+		t.Errorf("a second reload with the moved issuer did not warn, got:\n%s", out)
+	}
+
+	restored := oidcEnabledConfig(true)
+	restored.HTTP.Auth.OIDC.Issuer = startup.HTTP.Auth.OIDC.Issuer
+	out = captureStderr(t, func() { rc.logRestartRequiredSettings(restored) })
+	if strings.Contains(out, "issuer") {
+		t.Errorf("restoring the start-up issuer still warned, got:\n%s", out)
+	}
+}

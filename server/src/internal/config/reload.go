@@ -14,6 +14,7 @@ import (
 	"os"
 	"reflect"
 	"sort"
+	"strings"
 	"sync"
 )
 
@@ -200,7 +201,9 @@ func (rc *ReloadableConfig) checkALoginMethodSurvives(newConfig *Config) error {
 // logOIDCChanges reports the changes to http.auth.oidc that a reload
 // detects. The provider is built once at start-up from the issuer,
 // client credentials, redirect URL, scopes and claim names, so each of
-// those gets a warning that only a restart applies it. The policy
+// those gets a warning that only a restart applies it; they are compared
+// against the start-up configuration, which the provider was built from,
+// so the warning persists across reloads until a restart. The policy
 // settings (provision_users, allowed_email_domains, superuser_group,
 // group_map, button_label and switching federated login off) are read
 // on every request by the federated login handler and the capabilities
@@ -223,7 +226,11 @@ func (rc *ReloadableConfig) logOIDCChanges(newConfig *Config) {
 		}
 	}
 
-	for _, name := range changedOIDCSettings(oidcProviderSettings(old, cur)) {
+	built := old
+	if rc.startup != nil {
+		built = rc.startup.HTTP.Auth.OIDC
+	}
+	for _, name := range changedOIDCSettings(oidcProviderSettings(built, cur)) {
 		restartRequiredOIDCSetting(name)
 	}
 	for _, name := range changedOIDCSettings(oidcPolicySettings(old, cur)) {
@@ -304,16 +311,15 @@ func oidcAccessWarnings(old, cur OIDCConfig) []string {
 		warnings = append(warnings, "allowed_email_domains emptied: identities "+
 			"from any email domain may now sign in")
 	}
-	if old.SuperuserGroup != "" && cur.SuperuserGroup == "" {
-		// ReconcileFederatedGroups leaves is_superuser alone when no
-		// superuser group is configured, so clearing it freezes every
-		// federated superuser rather than demoting anyone.
-		warnings = append(warnings, "superuser_group cleared: federated users "+
-			"keep their current superuser status, which no login will now change")
+	if warning := superuserGroupWarning(old.SuperuserGroup, cur.SuperuserGroup); warning != "" {
+		warnings = append(warnings, warning)
 	}
-	if old.SuperuserGroup == "" && cur.SuperuserGroup != "" {
-		warnings = append(warnings, "superuser_group set: members of "+
-			cur.SuperuserGroup+" become superusers at their next login")
+	if domains := addedEmailDomains(old.AllowedEmailDomains, cur.AllowedEmailDomains); len(domains) > 0 {
+		warnings = append(warnings, "allowed_email_domains widened: identities "+
+			"from "+strings.Join(domains, ", ")+" may now sign in")
+	}
+	for _, mapping := range addedGroupMappings(old.GroupMap, cur.GroupMap) {
+		warnings = append(warnings, "group_map "+mapping)
 	}
 	// Only the Workbench groups group_map names are reconciled, so a group
 	// that drops out of it keeps the members it has; see the SSO guide.
@@ -323,6 +329,75 @@ func oidcAccessWarnings(old, cur OIDCConfig) []string {
 			"group instead to revoke membership")
 	}
 	return warnings
+}
+
+// superuserGroupWarning describes a superuser_group change that hands
+// superuser to a provider group's members, or that looks like a
+// revocation but revokes nothing, or returns "" for any other change.
+func superuserGroupWarning(oldGroup, newGroup string) string {
+	switch {
+	case oldGroup == newGroup:
+		return ""
+	case newGroup == "":
+		// ReconcileFederatedGroups leaves is_superuser alone when no
+		// superuser group is configured, so clearing it freezes every
+		// federated superuser rather than demoting anyone.
+		return "superuser_group cleared: federated users keep their current " +
+			"superuser status, which no login will now change"
+	default:
+		// Retargeting one group to another hands superuser to the new
+		// group's members just as setting it from empty does.
+		return "superuser_group set: members of " + newGroup +
+			" become superusers at their next login"
+	}
+}
+
+// addedEmailDomains returns, sorted, the domains that newList allows and
+// a non-empty oldList did not, compared as the login handler compares
+// them: trimmed, without a leading "@" and ignoring case. An empty
+// oldList already allows every domain, so nothing is added to it, and
+// an empty newList is reported as emptied rather than here.
+func addedEmailDomains(oldList, newList []string) []string {
+	if len(oldList) == 0 || len(newList) == 0 {
+		return nil
+	}
+	normalise := func(domain string) string {
+		return strings.ToLower(strings.TrimPrefix(strings.TrimSpace(domain), "@"))
+	}
+	allowed := make(map[string]bool, len(oldList))
+	for _, domain := range oldList {
+		allowed[normalise(domain)] = true
+	}
+	var added []string
+	for _, domain := range newList {
+		if d := normalise(domain); d != "" && !allowed[d] {
+			allowed[d] = true
+			added = append(added, d)
+		}
+	}
+	sort.Strings(added)
+	return added
+}
+
+// addedGroupMappings describes, sorted by provider group, each provider
+// group that newMap maps to a Workbench group oldMap did not map it to,
+// since the provider group's members join that Workbench group at their
+// next login.
+func addedGroupMappings(oldMap, newMap map[string]string) []string {
+	providerGroups := make([]string, 0, len(newMap))
+	for providerGroup, group := range newMap {
+		if oldGroup, ok := oldMap[providerGroup]; !ok || oldGroup != group {
+			providerGroups = append(providerGroups, providerGroup)
+		}
+	}
+	sort.Strings(providerGroups)
+	var added []string
+	for _, providerGroup := range providerGroups {
+		added = append(added, "maps provider group "+providerGroup+
+			" to Workbench group "+newMap[providerGroup]+
+			": its members join that group at their next login")
+	}
+	return added
 }
 
 // unmanagedWorkbenchGroups returns, sorted, the Workbench groups that

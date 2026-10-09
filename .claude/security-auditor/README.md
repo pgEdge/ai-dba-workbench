@@ -119,9 +119,14 @@ moved.
   `group_map`, `button_label` and `enabled: false` through
   `HandlerDependencies.LiveConfig` (wired to `ReloadableConfig.Get`) on
   every request, so SIGHUP applies them. `logOIDCChanges` in
-  `config/reload.go` says which is which and warns on widening changes.
-  Removing a group from `group_map` or clearing `superuser_group`
-  revokes nothing, because only mapped groups are reconciled, and
+  `config/reload.go` says which is which, comparing the provider
+  settings with `rc.startup`, and `oidcAccessWarnings` warns on each
+  widening change (provisioning on, a domain added or the list emptied,
+  `superuser_group` set or retargeted, a new `group_map` mapping).
+  Removing a group from `group_map` revokes nothing because only mapped
+  Workbench groups are reconciled; clearing `superuser_group` revokes
+  nothing because `ReconcileFederatedGroups` leaves `is_superuser`
+  alone when no superuser group is configured. Separately,
   `checkALoginMethodSurvives` refuses a reload that switches OIDC off
   when local login was off at start-up.
 - A federated account is matched on the pair `(issuer, subject)` and

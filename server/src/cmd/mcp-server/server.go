@@ -710,7 +710,27 @@ func (s *Server) Run(flags *Flags, configPath string) error {
 	reloadableCfg := config.NewReloadableConfig(s.cfg, configPath, flags.ToReloadCLIFlags())
 
 	// Setup HTTP handlers
-	deps := &HandlerDependencies{
+	httpConfig.SetupHandlers = SetupHandlers(s.handlerDependencies(ipExtractor, reloadableCfg))
+
+	// Log startup information
+	s.logStartupInfo()
+
+	// Setup SIGHUP handler for configuration reload; Close stops it.
+	s.registerHandlerCloser(s.setupSIGHUP(reloadableCfg))
+
+	// Setup SIGTERM/SIGINT handler for graceful shutdown and Go
+	// coverage-counter flush.
+	s.setupShutdownHandler()
+
+	// Run the server
+	return s.mcpServer.RunHTTP(httpConfig)
+}
+
+// handlerDependencies builds the HTTP handlers' dependencies. The
+// handlers that apply a reload without a restart read the configuration
+// through reloadableCfg, so that a SIGHUP reaches them (issue #484).
+func (s *Server) handlerDependencies(ipExtractor *auth.IPExtractor, reloadableCfg *config.ReloadableConfig) *HandlerDependencies {
+	return &HandlerDependencies{
 		AuthStore:    s.authStore,
 		RateLimiter:  s.rateLimiter,
 		IPExtractor:  ipExtractor,
@@ -728,20 +748,6 @@ func (s *Server) Run(flags *Flags, configPath string) error {
 
 		RegisterCloser: s.registerHandlerCloser,
 	}
-	httpConfig.SetupHandlers = SetupHandlers(deps)
-
-	// Log startup information
-	s.logStartupInfo()
-
-	// Setup SIGHUP handler for configuration reload; Close stops it.
-	s.registerHandlerCloser(s.setupSIGHUP(reloadableCfg))
-
-	// Setup SIGTERM/SIGINT handler for graceful shutdown and Go
-	// coverage-counter flush.
-	s.setupShutdownHandler()
-
-	// Run the server
-	return s.mcpServer.RunHTTP(httpConfig)
 }
 
 // logStartupInfo logs server startup information

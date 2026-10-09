@@ -122,9 +122,12 @@ back on without a restart and the server would otherwise be left with
 no way to sign in.
 
 The server logs a warning, as well as the note that the change applied,
-when a reload widens access: switching `provision_users` on, emptying
-`allowed_email_domains`, setting or clearing `superuser_group`, or
-removing a Workbench group from `group_map`.
+when a reload widens access or looks like a revocation without being
+one: switching `provision_users` on, emptying `allowed_email_domains`
+or adding a domain to it, setting, changing or clearing
+`superuser_group`, mapping a provider group in `group_map` to a
+Workbench group it was not mapped to before, or removing a Workbench
+group from `group_map`.
 
 The identity provider connection is built once, at start-up, from
 `issuer`, `client_id`, `client_secret`, `client_secret_file`,
@@ -134,6 +137,11 @@ reload only when the server started with federated login switched on;
 otherwise no provider was discovered and the server must be restarted.
 `local.enabled` and `max_failed_attempts_before_lockout` also require a
 restart.
+
+The server compares the identity provider settings with the
+configuration it started with, so a change to one of them is reported
+as needing a restart on every reload until the server restarts or the
+setting is restored.
 
 ### Local Login Settings
 

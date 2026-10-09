@@ -216,13 +216,50 @@ func TestAlteredRowStartedAnchorCannotProveARotatedCut(t *testing.T) {
 	}
 }
 
-// TestDecoyPutBackAfterThePromotion checks the variant that satisfies
-// the binding by putting the decoy back, at the id and hash the
-// promoted anchor is bound to, after the write under the new secret.
-// The binding then names a row that exists, but the decoy does not
-// verify under the previous secret either, so the unattended re-anchor
-// still refuses the history, whatever verification makes of the log.
-func TestDecoyPutBackAfterThePromotion(t *testing.T) {
+// expectHistoryRefused checks that the unattended re-anchor of the log
+// at dir under key, given previousKey, refuses it because the history
+// fails the proof for the reason want, and that the tail anchor, and so
+// its binding, is proven or not as tailProven says.
+func expectHistoryRefused(t *testing.T, dir string, key,
+	previousKey []byte, want string, tailProven bool) {
+	t.Helper()
+
+	plan := planWithPreviousKey(t, dir, key, previousKey)
+	if unattendedReanchorAccepts(plan) {
+		t.Fatalf("Expected the unattended re-anchor to refuse, got %+v",
+			plan)
+	}
+	if !errors.Is(plan.HistoryProofErr, errAuditHistoryUnproven) ||
+		!strings.Contains(plan.HistoryProofErr.Error(), want) {
+		t.Errorf("Expected the history proof to fail with %q, got %v",
+			want, plan.HistoryProofErr)
+	}
+	if errors.Is(plan.HistoryProofErr, errAuditTailUnproven) == tailProven {
+		t.Errorf("Expected the tail proof to hold: %v, got %v", tailProven,
+			plan.HistoryProofErr)
+	}
+}
+
+// putDecoyBack puts a decoy back at id 6 in the log in s, with hash,
+// which the promoted anchor's binding names, and prevHash.
+func putDecoyBack(t *testing.T, s *AuthStore, prevHash, hash string) {
+	t.Helper()
+
+	tamperDB(t, s.db, `INSERT INTO audit_events (id, occurred_at,
+            actor_type, actor_name, action, outcome, prev_hash, hash,
+            hash_version)
+        VALUES (6, ?, 'system', 'system', 'user.create', 'success',
+            ?, ?, 3)`,
+		time.Now().UTC().Format(auditTimeLayout), prevHash, hash)
+}
+
+// promotedDecoyBinding runs the decoy sequence through the promotion
+// under the new secret, leaving events 1 to 5, 7 and 8 and a primary
+// anchor bound to the deleted decoy at id 6, and returns the store
+// open under the new secret.
+func promotedDecoyBinding(t *testing.T) (*AuthStore, string) {
+	t.Helper()
+
 	store, dir := writeUnderKeys(t, 10)
 	startAnchorOverDecoy(t, store, 6)
 	deleteAuditRows(t, store, 6)
@@ -230,28 +267,58 @@ func TestDecoyPutBackAfterThePromotion(t *testing.T) {
 
 	store = openWithKey(t, dir, rotatedAuditKey)
 	recordN(t, store, 1)
-	keptHash := auditRowHash(t, store, 5)
-	tamperDB(t, store.db, `INSERT INTO audit_events (id, occurred_at,
-            actor_type, actor_name, action, outcome, prev_hash, hash,
-            hash_version)
-        VALUES (6, ?, 'system', 'system', 'user.create', 'success',
-            'unused', ?, 3)`,
-		time.Now().UTC().Format(auditTimeLayout), keptHash)
-	if _, _, err := store.VerifyAuditChain(); err == nil {
-		t.Error("Expected verification to refuse the restored decoy")
-	}
+	expectBindingRefused(t, store, 7)
+
+	return store, dir
+}
+
+// TestDecoyPutBackAfterThePromotion checks the variant that satisfies
+// the binding by putting the decoy back, at the id and hash the
+// promoted anchor is bound to, after the write under the new secret.
+// The binding then names a row that exists and fails under the previous
+// secret, so the tail proof holds, but the decoy does not link to event
+// 5, so verification reads tampering and the history proof refuses it.
+func TestDecoyPutBackAfterThePromotion(t *testing.T) {
+	store, dir := promotedDecoyBinding(t)
+	putDecoyBack(t, store, "unused", auditRowHash(t, store, 5))
+	expectTampering(t, store)
 	store.Close()
 
-	plan := planWithPreviousKey(t, dir, rotatedAuditKey,
-		AuditKeyForTesting())
-	if unattendedReanchorAccepts(plan) {
-		t.Errorf("Expected the re-anchor to refuse the decoy, got %+v", plan)
-	}
+	expectHistoryRefused(t, dir, rotatedAuditKey, AuditKeyForTesting(),
+		"event 6 does not link to event 5 before it", true)
+}
+
+// TestDecoyPutBackLinkedIntoTheChain checks the put-back that defeats
+// the binding check in verification: event 5 is given another hash, as
+// though rewritten, and the decoy is put back linked to it with the
+// hash of event 5 that event 7 links to and the binding names. Every
+// row then links and fails under the new secret, and the binding names
+// a row that is there, so verification reads the cut as a change of
+// secret, status 3, rather than tampering. Only the previous secret
+// refuses it, because event 5 no longer verifies under it.
+func TestDecoyPutBackLinkedIntoTheChain(t *testing.T) {
+	store, dir := promotedDecoyBinding(t)
+	keptHash := auditRowHash(t, store, 5)
+	withAppendOnlyLifted(t, store, func() (sql.Result, error) {
+		return store.db.Exec("UPDATE audit_events SET hash = 'X' " +
+			"WHERE id = 5")
+	})
+	putDecoyBack(t, store, "X", keptHash)
+	expectKeyMismatch(t, store)
+	store.Close()
+
+	expectHistoryRefused(t, dir, rotatedAuditKey, AuditKeyForTesting(),
+		"event 5 does not verify under it", true)
 }
 
 // TestDecoyStartedAnchorAcrossTwoRotations checks the decoy followed by
-// two changes of secret: neither earlier secret proves the log, since
-// the history spans both, and the tail proof refuses under each.
+// two changes of secret. The second promotion replaces the anchor bound
+// to the decoy with one bound to event 7, which is in the log and fails
+// under the secret before, so no binding names the decoy any more and
+// the binding check cannot refuse the log. The history, which spans
+// both earlier secrets, fails under each instead: the oldest secret
+// does not verify event 8, nor the anchor naming it, and the secret
+// after it does not verify event 1.
 func TestDecoyStartedAnchorAcrossTwoRotations(t *testing.T) {
 	store, dir := writeUnderKeys(t, 10)
 	startAnchorOverDecoy(t, store, 6)
@@ -262,15 +329,22 @@ func TestDecoyStartedAnchorAcrossTwoRotations(t *testing.T) {
 		recordN(t, store, 1)
 		store.Close()
 	}
-
-	for _, previous := range [][]byte{AuditKeyForTesting(),
-		rotatedAuditKey} {
-		plan := planWithPreviousKey(t, dir, thirdAuditKey, previous)
-		if unattendedReanchorAccepts(plan) {
-			t.Errorf("Expected the unattended re-anchor to refuse, got %+v",
-				plan)
-		}
+	store = openWithKey(t, dir, thirdAuditKey)
+	if st := readTail(t, store); !st.bound.valid || st.bound.id != 7 {
+		t.Fatalf("Expected the anchor to be bound to event 7, got %+v", st)
 	}
+	store.Close()
+
+	expectHistoryRefused(t, dir, thirdAuditKey, AuditKeyForTesting(),
+		"event 8 does not verify under it", false)
+	plan := planWithPreviousKey(t, dir, thirdAuditKey, AuditKeyForTesting())
+	if !strings.Contains(plan.HistoryProofErr.Error(),
+		"the tail anchor names event 8, but verifies under neither secret") {
+		t.Errorf("Expected the tail proof to refuse the anchor, got %v",
+			plan.HistoryProofErr)
+	}
+	expectHistoryRefused(t, dir, thirdAuditKey, rotatedAuditKey,
+		"event 1 does not verify under it", true)
 }
 
 // TestHonestRotationsStillProveTheirBinding checks that the binding

@@ -615,7 +615,12 @@ before the event the record names; the server starts the second record
 only when that event fails under the secret in use, which honestly
 means it is the last event written under an earlier secret, and the
 purge never removes it. When the event is missing, the log reports
-status `2`.
+status `2`. Someone who also rewrites the event before it, and puts
+an event carrying the recorded hash back in its place linked into the
+chain, can make the log report status `3` again; as in the window
+described below, only a re-anchor given the previous secret with
+`-previous-secret-file` refuses such a log, because the rewritten
+event no longer verifies under that secret.
 
 Until the server writes its first event under a new secret, neither
 record verifies under the secret in use, so verification can check the

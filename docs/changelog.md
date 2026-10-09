@@ -1042,6 +1042,21 @@ project adheres to
 
 ### Fixed
 
+- Fix the `probe_unavailable` alert firing on healthy Spock clusters
+  with no recent apply exceptions or conflict resolutions. The
+  collector could not tell an installed extension with nothing to
+  report from a missing one, so it recorded the `spock_exception_log`
+  and `spock_resolutions` probes on a quiet cluster as unavailable
+  with the reason "extension 'spock' not installed". The Spock
+  probes and the ten `pg_sys_*` probes now report a missing
+  extension explicitly, so a probe whose extension is installed is
+  recorded as available even when the probe collects no rows, and a
+  probe whose extension is absent is still recorded as not
+  installed. When every execution of an extension probe fails, the
+  probe is now recorded as unavailable with the reason "probe
+  execution failed for extension '<name>'" rather than as a missing
+  extension. (#612)
+
 - Apply the datastore password read from the server's
   `-db-password-file` flag. The file was read but its contents
   were then dropped, so the server connected with the

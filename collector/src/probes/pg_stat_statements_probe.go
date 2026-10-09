@@ -314,12 +314,11 @@ func (p *PgStatStatementsProbe) Execute(ctx context.Context, connectionName stri
 	}
 	defer rows.Close()
 
-	// Appending onto an empty slice guarantees a non-nil result: an
+	// ScanRowsToMaps returns a non-nil slice even with no rows: an
 	// installed extension with no rows to report is a different thing
 	// from an absent one, which returns ErrExtensionNotInstalled, and
 	// the scheduler records the two differently.
-	metrics, err := utils.ScanRowsToMaps(rows)
-	return append([]map[string]any{}, metrics...), err
+	return utils.ScanRowsToMaps(rows)
 }
 
 // Store stores the collected metrics in the datastore

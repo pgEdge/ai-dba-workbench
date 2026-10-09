@@ -111,8 +111,11 @@ func TestScanRowsToMaps_EmptyResultSet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	if got == nil {
+		t.Fatal("expected an empty, non-nil slice for zero rows, got nil")
+	}
 	if len(got) != 0 {
-		t.Errorf("expected empty/nil result, got %v", got)
+		t.Errorf("expected empty result, got %v", got)
 	}
 }
 

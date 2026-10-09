@@ -600,8 +600,12 @@ This probe captures rows added to `spock.exception_log`
 within a rolling 15-minute source-side window. The
 probe targets Spock v5 or later; the probe checks for
 the `spock` extension through `CheckExtensionExists`
-against `pg_extension` and returns a successful no-op
-on databases without Spock installed.
+against `pg_extension` and returns
+`ErrExtensionNotInstalled` on databases without Spock
+installed. On a database with Spock installed but no
+rows inside the window, the probe returns an empty
+result, and the collector records the probe as
+available.
 
 - Source View: `spock.exception_log`
 - Default Interval: 60 seconds
@@ -665,8 +669,12 @@ This probe captures rows added to `spock.resolutions`
 within a rolling 15-minute source-side window. The
 probe targets Spock v5 or later; the probe checks for
 the `spock` extension through `CheckExtensionExists`
-against `pg_extension` and returns a successful no-op
-on databases without Spock installed.
+against `pg_extension` and returns
+`ErrExtensionNotInstalled` on databases without Spock
+installed. On a database with Spock installed but no
+rows inside the window, the probe returns an empty
+result, and the collector records the probe as
+available.
 
 - Source View: `spock.resolutions`
 - Default Interval: 60 seconds
@@ -727,7 +735,10 @@ remote_timestamp, remote_lsn
 
 These probes collect operating system metrics through
 the `system_stats` PostgreSQL extension. The probes
-require the extension on the monitored server.
+require the extension on the monitored server, and
+return `ErrExtensionNotInstalled` when the extension is
+absent so that the collector records the probe as
+unavailable with an extension-not-installed reason.
 
 ### pg_sys_os_info
 

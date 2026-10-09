@@ -55,22 +55,26 @@ The scheduler classifies each `Execute` outcome with
 `classifyProbeResult` and merges the observations across databases
 with `extensionStatus.merge`, where presence beats absence and absence
 beats no observation at all. An extension is taken as present when a
-call returns no error and a non-nil slice, empty or not, which is why
-`PgStatStatementsProbe.Execute` appends onto an empty slice rather
-than returning `ScanRowsToMaps` directly. `executeProbeForConnection`
-then records an installed-but-empty extension as available, and only a
-genuinely absent one as `extension '<name>' not installed` in the
-unqualified `probe_availability` table.
+call returns no error and a non-nil slice, empty or not.
+`utils.ScanRowsToMaps` returns an empty, non-nil slice for zero rows
+(nil only alongside an error), so a probe can return its result
+directly; do not change that back, or every installed-but-quiet
+extension reads as unknown (issue #612).
 
-Probes that still return `(nil, nil)` when their extension is missing,
-the nine `system_stats` probes and the two Spock probes, produce no
-observation (`extensionUnknown`) and fall through to the same "not
-installed" reason as before, because the switch still tests
-`allMetrics == nil` for that case. The cost is that a probe whose
-`Execute` fails outright is also recorded as "not installed"; keying
-the case on `extensionAbsent` alone would instead record those
-`(nil, nil)` probes as available, so the fix is to have them return
-`ErrExtensionNotInstalled` first and tighten the switch afterwards.
+Every `ExtensionProbe` (`pg_stat_statements`, the ten `system_stats`
+`pg_sys_*` probes and the two Spock probes) must return
+`ErrExtensionNotInstalled` when its extension is absent and must never
+return `(nil, nil)`. A new extension probe has to follow the same
+contract.
+
+`availabilityVerdict` in `scheduler.go` turns the merged status into
+the `probe_availability` row: stored rows, a non-extension probe, or
+`extensionPresent` record available; `extensionAbsent` records
+`extension '<name>' not installed`; and `extensionUnknown`, which now
+only means every execution failed (each logged at `Errorf`), records
+`probe execution failed for extension '<name>'`.
+Unit tests for the verdict and the mixed-database cases live in
+`scheduler/probe_availability_verdict_test.go`.
 
 ## Database Enumeration
 

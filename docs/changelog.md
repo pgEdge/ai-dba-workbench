@@ -1182,6 +1182,19 @@ project adheres to
   blocks every reader of `anomaly_embeddings` until it can
   proceed. (#615)
 
+- Stop tier 1 anomaly detection raising alerts for values that
+  are unusual for a quiet baseline but trivial in absolute
+  terms, such as 12 temporary files raised as critical against a
+  baseline that had never moved, CPU usage of 17 to 37%, or a
+  single session on an idle server. Each standard metric now has
+  a built-in `min_value`, below which the metric is never
+  anomalous, and a `min_stddev`, the smallest divisor the
+  z-score uses in the metric's units; both can be overridden
+  per metric under the new `anomaly.tier1.metric_floors`
+  option. A value under `min_value` counts as in band when an
+  anomaly alert is cleared, and an alert whose z-score relied on
+  a floored divisor is raised as a warning at most. (#617)
+
 - Apply the datastore password read from the server's
   `-db-password-file` flag. The file was read but its contents
   were then dropped, so the server connected with the

@@ -219,6 +219,17 @@ anomaly:
       # Default: 0.001
       absolute_floor: 0.001
 
+    # Per-metric floors, overriding the built-in defaults field by
+    # field. A value under min_value is never anomalous and counts as
+    # in band when an anomaly alert is cleared; min_stddev is the
+    # smallest z-score divisor in the metric's units. 0 disables a
+    # floor. An alert whose divisor came from a floor is raised as a
+    # warning at most.
+    # metric_floors:
+    #   pg_sys_cpu_usage_info.processor_time_percent:
+    #     min_value: 50
+    #     min_stddev: 5
+
     # Warmup gate: skip anomaly detection while a baseline has
     # not seen enough samples or enough wall-clock time to be
     # trustworthy. Indexed per period_type. Set min_samples and

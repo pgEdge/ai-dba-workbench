@@ -529,6 +529,9 @@ func TestDetectAppliesGatesAndCap(t *testing.T) {
 		t.Fatalf("test expects MaxZScore > 0 from NewConfig defaults, got %v",
 			cfg.Anomaly.Tier1.MaxZScore)
 	}
+	// The cases exercise the global variance floor and the cap, so the
+	// load-average metric's own floors (issue #617) are disabled.
+	disableMetricFloors(cfg, "pg_sys_load_avg_info.load_avg_fifteen_minutes")
 
 	// Seed a single alert rule against
 	// pg_sys_load_avg_info.load_avg_fifteen_minutes. The metric is a
@@ -756,6 +759,9 @@ func TestDetectAnomaliesBranchCoverage(t *testing.T) {
 		"pg_sys_load_avg_info.load_avg_fifteen_minutes"); err != nil {
 		t.Fatalf("failed to insert alert rule: %v", err)
 	}
+	// The zero-divisor case needs every floor at zero, including the
+	// metric's own (issue #617).
+	disableMetricFloors(engine.getConfig(), "pg_sys_load_avg_info.load_avg_fifteen_minutes")
 
 	now := time.Now().UTC()
 	matureEarliest := now.Add(-48 * time.Hour)

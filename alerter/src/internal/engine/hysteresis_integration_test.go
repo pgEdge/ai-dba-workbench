@@ -441,14 +441,16 @@ func TestHysteresis_WorstObjectChangeKeepsTriggerCount(t *testing.T) {
 	dbName := "appdb"
 
 	// Each sample has both tables above the threshold, at 44% and 50%
-	// dead, with the worst of the two alternating.
+	// dead, with the worst of the two alternating. Each table holds
+	// 100,000 rows so that its dead tuples clear the rule's floor of
+	// 10,000.
 	steps := []struct {
 		ago                  time.Duration
 		ordersDead, lineDead int64
 		wantAlert            bool
 	}{
-		{4 * time.Minute, 500, 440, false},
-		{3 * time.Minute, 440, 500, true},
+		{4 * time.Minute, 50000, 44000, false},
+		{3 * time.Minute, 44000, 50000, true},
 	}
 	for i, step := range steps {
 		at := time.Now().UTC().Add(-step.ago)
@@ -461,7 +463,7 @@ func TestHysteresis_WorstObjectChangeKeepsTriggerCount(t *testing.T) {
 				    (connection_id, database_name, schemaname, relname,
 				     n_live_tup, n_dead_tup, collected_at)
 				VALUES ($1, $2, 'public', $3, $4, $5, $6)`,
-				connID, dbName, tbl.name, 1000-tbl.dead, tbl.dead, at); err != nil {
+				connID, dbName, tbl.name, 100000-tbl.dead, tbl.dead, at); err != nil {
 				t.Fatalf("step %d: failed to insert %s sample: %v", i, tbl.name, err)
 			}
 		}

@@ -3685,6 +3685,70 @@ func (sm *SchemaManager) registerMigrations() {
 			return nil
 		},
 	})
+
+	// Migration #20: Index anomaly_candidates for the alerter's batched
+	// retention delete, and drop a duplicate anomaly_embeddings index.
+	// See GitHub issue #615.
+	//
+	// The alerter now deletes aged candidates a batch at a time, oldest
+	// first by processed_at; idx_anomaly_candidates_processed lets each
+	// batch start from the oldest row instead of scanning the table.
+	//
+	// Each candidate deleted cascades into anomaly_embeddings, and each
+	// embedding deleted fires the ON DELETE SET NULL action of
+	// fk_anomaly_candidates_embedding, which looks up anomaly_candidates
+	// by embedding_id. Likewise each alert the retention sweep deletes
+	// looks up anomaly_candidates by alert_id. Neither column was
+	// indexed, so every one of those lookups was a sequential scan of
+	// anomaly_candidates. Both indexes are partial on IS NOT NULL: the
+	// lookups compare with =, which implies it, and most candidates
+	// never have an alert.
+	//
+	// idx_anomaly_embeddings_candidate duplicated the index behind
+	// UNIQUE(candidate_id), anomaly_embeddings_candidate_id_key, and was
+	// pure write and vacuum overhead on a table that can run to tens of
+	// gigabytes. The table exists only where pgvector is installed,
+	// hence IF EXISTS. The drop comes last because it takes an ACCESS
+	// EXCLUSIVE lock on anomaly_embeddings that is held until the
+	// migration commits, so running it first would block every reader
+	// of that table whilst the indexes above build.
+	//
+	// Plain CREATE INDEX is used, as in migration #4, because CREATE
+	// INDEX CONCURRENTLY cannot run inside the migration transaction; it
+	// blocks writes to anomaly_candidates only whilst the indexes build.
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     20,
+		Description: "Index anomaly_candidates for batched retention and drop duplicate anomaly_embeddings index",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			_, err := tx.Exec(ctx, `
+				CREATE INDEX IF NOT EXISTS idx_anomaly_candidates_processed
+					ON anomaly_candidates (processed_at)
+					WHERE processed_at IS NOT NULL;
+				CREATE INDEX IF NOT EXISTS idx_anomaly_candidates_embedding
+					ON anomaly_candidates (embedding_id)
+					WHERE embedding_id IS NOT NULL;
+				CREATE INDEX IF NOT EXISTS idx_anomaly_candidates_alert
+					ON anomaly_candidates (alert_id)
+					WHERE alert_id IS NOT NULL;
+
+				COMMENT ON INDEX idx_anomaly_candidates_processed IS
+					'Serves the alerter retention sweep, which deletes processed candidates in batches, oldest processed_at first';
+				COMMENT ON INDEX idx_anomaly_candidates_embedding IS
+					'Serves the ON DELETE SET NULL lookup of fk_anomaly_candidates_embedding when anomaly_embeddings rows are deleted';
+				COMMENT ON INDEX idx_anomaly_candidates_alert IS
+					'Serves the ON DELETE SET NULL lookup of the alert_id foreign key when alerts are deleted';
+
+				DROP INDEX IF EXISTS public.idx_anomaly_embeddings_candidate;
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to index anomaly_candidates for retention: %w", err)
+			}
+
+			return nil
+		},
+	})
 }
 
 // Migrate applies all pending migrations
@@ -3889,11 +3953,14 @@ func runSavepointed(
 func runPgVectorSetup(ctx context.Context, tx pgx.Tx) error {
 	return runSavepointed(ctx, tx, "pgvector_setup", func() error {
 		// CREATE EXTENSION IF NOT EXISTS, CREATE TABLE IF NOT
-		// EXISTS, the comment, and both indexes are issued in a
+		// EXISTS, the comment, and the HNSW index are issued in a
 		// single Exec so failures roll back atomically inside the
 		// SAVEPOINT. The error from any one of them propagates
 		// unchanged; the SAVEPOINT wrapper records the failure and
-		// the caller logs at Info level.
+		// the caller logs at Info level. candidate_id needs no index
+		// of its own: UNIQUE(candidate_id) already creates one, and
+		// migration #20 drops the duplicate that older installs
+		// were given (GitHub issue #615).
 		if _, err := tx.Exec(ctx, `
 			CREATE EXTENSION IF NOT EXISTS vector;
 
@@ -3909,8 +3976,6 @@ func runPgVectorSetup(ctx context.Context, tx pgx.Tx) error {
 			COMMENT ON TABLE public.anomaly_embeddings IS
 				'Embeddings for anomaly candidates used in Tier 2 similarity matching';
 
-			CREATE INDEX IF NOT EXISTS idx_anomaly_embeddings_candidate
-				ON public.anomaly_embeddings(candidate_id);
 			CREATE INDEX IF NOT EXISTS idx_anomaly_embeddings_vector
 				ON public.anomaly_embeddings USING hnsw (embedding halfvec_cosine_ops);
 		`); err != nil {

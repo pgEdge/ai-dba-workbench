@@ -279,28 +279,107 @@ func (d *Datastore) IsBlackoutActive(ctx context.Context, connectionID *int, dbN
 // begun reporting a clear it never had. Falling back to triggered_at
 // retires it on the same retention period without overloading the
 // column. See GitHub issue #500.
+//
+// The delete runs in batches; see deleteInBatches.
 func (d *Datastore) DeleteOldAlerts(ctx context.Context, cutoff time.Time) (int64, error) {
-	result, err := d.pool.Exec(ctx, `
-		DELETE FROM alerts
-		WHERE status IN ('cleared', 'acknowledged')
-		  AND COALESCE(cleared_at, triggered_at) < $1
-	`, cutoff)
+	deleted, err := d.deleteInBatches(ctx, deleteOldAlertsBatchSQL, cutoff, retentionDeleteBatchSize)
 	if err != nil {
-		return 0, err
+		return deleted, fmt.Errorf("failed to delete old alerts: %w", err)
 	}
-	return result.RowsAffected(), nil
+	return deleted, nil
 }
 
-// DeleteOldAnomalyCandidates deletes processed candidates older than the cutoff
+// DeleteOldAnomalyCandidates deletes processed candidates older than the
+// cutoff, and with them, through ON DELETE CASCADE, their rows in
+// anomaly_embeddings. The delete runs in batches; see deleteInBatches.
 func (d *Datastore) DeleteOldAnomalyCandidates(ctx context.Context, cutoff time.Time) (int64, error) {
-	result, err := d.pool.Exec(ctx, `
-		DELETE FROM anomaly_candidates
-		WHERE processed_at IS NOT NULL AND processed_at < $1
-	`, cutoff)
+	deleted, err := d.deleteInBatches(ctx, deleteOldAnomalyCandidatesBatchSQL, cutoff, retentionDeleteBatchSize)
 	if err != nil {
-		return 0, err
+		return deleted, fmt.Errorf("failed to delete old anomaly candidates: %w", err)
 	}
-	return result.RowsAffected(), nil
+	return deleted, nil
+}
+
+// retentionDeleteBatchSize is the most rows one retention DELETE
+// removes. Each anomaly candidate cascades into an anomaly_embeddings
+// row holding a 4000-dimension vector under an HNSW index, so a batch of
+// this size keeps each transaction to seconds at most, rather than the
+// many minutes a whole retention period took as one statement.
+const retentionDeleteBatchSize = 1000
+
+// Both batch statements below share one shape, chosen for two reasons.
+//
+// The ids are gathered by an ARRAY() subquery, which PostgreSQL runs
+// once as an InitPlan, so the delete itself is always a primary key
+// lookup of at most $2 ids. With WHERE id IN (subquery) the planner
+// may instead hash-join the batch against a scan of the whole table,
+// and does so under a generic plan, which estimates LIMIT $2 at a
+// tenth of the rows.
+//
+// FOR UPDATE locks each row as the subquery selects it, and re-checks
+// the predicate against the latest version of a row that a concurrent
+// transaction changed, so an alert re-activated between the subquery
+// and the delete is skipped rather than deleted.
+
+// deleteOldAlertsBatchSQL deletes at most $2 retired alerts older than
+// $1.
+const deleteOldAlertsBatchSQL = `
+	DELETE FROM alerts
+	WHERE id = ANY(ARRAY(
+		SELECT id FROM alerts
+		WHERE status IN ('cleared', 'acknowledged')
+		  AND COALESCE(cleared_at, triggered_at) < $1
+		LIMIT $2
+		FOR UPDATE
+	))
+`
+
+// deleteOldAnomalyCandidatesBatchSQL deletes at most $2 processed
+// candidates older than $1, oldest first. Ordering by processed_at lets
+// idx_anomaly_candidates_processed serve each batch from the start of
+// the range, rather than a sequential scan re-reading the dead rows
+// that earlier batches left behind.
+const deleteOldAnomalyCandidatesBatchSQL = `
+	DELETE FROM anomaly_candidates
+	WHERE id = ANY(ARRAY(
+		SELECT id FROM anomaly_candidates
+		WHERE processed_at IS NOT NULL AND processed_at < $1
+		ORDER BY processed_at
+		LIMIT $2
+		FOR UPDATE
+	))
+`
+
+// deleteInBatches runs query, a single DELETE that removes at most
+// batchSize rows older than cutoff (bound as $1 and $2), until a run
+// deletes nothing, and returns the total deleted.
+//
+// Each run is its own short implicit transaction. Deleting a whole
+// retention period in one statement held a transaction open for as
+// long as the cascade into anomaly_embeddings took, over 23 minutes for
+// a million candidates, and that held back the xmin horizon so vacuum
+// could clean nothing anywhere in the datastore (GitHub issue #615).
+//
+// The context is checked before every batch so that shutdown stops the
+// sweep between batches. Rows already deleted stay deleted and are
+// counted in the total returned alongside the error, and the next
+// sweep carries on from there.
+func (d *Datastore) deleteInBatches(ctx context.Context, query string, cutoff time.Time, batchSize int) (int64, error) {
+	var total int64
+	for {
+		if err := ctx.Err(); err != nil {
+			return total, err
+		}
+		result, err := d.pool.Exec(ctx, query, cutoff, batchSize)
+		if err != nil {
+			return total, err
+		}
+		n := result.RowsAffected()
+		if n == 0 {
+			return total, nil
+		}
+		total += n
+	}
 }
 
 // GetEnabledBlackoutSchedules retrieves all enabled blackout schedules

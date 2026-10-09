@@ -78,7 +78,13 @@ severity can rise but does not fall. The alerter sends
 the usual clear notification and raises no new anomaly
 alert for the same metric on that server for five
 minutes afterwards. An acknowledged anomaly alert is not
-cleared this way.
+cleared this way. For a metric that reports only whilst its
+condition holds, such as a blocked session, each collection
+that no longer reports the condition counts as a normal
+sample. An anomaly alert that the alerter can no longer
+check, for example one raised by an earlier release without
+the database it concerns, is closed without a notification
+and its description explains why.
 
 A gap in the collected data does not clear an alert. When
 a metric that normally reports a value for every monitored

@@ -1243,8 +1243,9 @@ conventions from that change hold across both:
 `detectAnomalies` loops metrics on the outside so `GetLatestMetricValues`
 runs once per metric (`anomalyMetrics` lists each baselineable rule
 metric once, then any metric only an active anomaly alert still covers),
-resolves the blacked-out connection set once per run, and scores every latest value for a connection (one per database
-for `scanWithDB` metrics) against the baselines for that value's
+resolves the blacked-out connection set once per run, and scores every
+latest value for a connection (one per database for `scanWithDB`
+metrics) against the baselines for that value's
 `DatabaseName`, setting `candidate.DatabaseName` so the active-alert
 deduplication in `anomalyAlertSkipReason` is per database as well.
 `baselineableValues` drops object-scoped values, since `metric_baselines`
@@ -1263,9 +1264,9 @@ depend on the tier results, in this order: blackout, open (`active` or
 database (which sets `candidate.AlertID` to it), an anomaly alert on the
 same series cleared within `AlertCooldownPeriod`
 (`GetRecentlyClearedAnomalyAlert`, #611), re-evaluation suppression,
-false-positive suppression. A lookup error counts as "does not apply". A skipped
-candidate gets no tier fields and no embedding; `determineFinalDecision`
-records `alert` for it (Tier 1 only), the value a candidate discarded
+false-positive suppression. A lookup error counts as "does not apply".
+A skipped candidate gets no tier fields and no embedding;
+`determineFinalDecision` records `alert` for it (Tier 1 only), the value a candidate discarded
 after the tiers is left with, because `final_decision` is constrained to
 `alert`/`suppress`/`pending` and `FindSimilarAnomalies` is its only
 reader. `createAnomalyAlert` calls the same helper again, since state can
@@ -1343,6 +1344,26 @@ nor for a metric only an alert covers. `ReloadConfig` and startup still
 set `Anomaly.Enabled = false` when no tier after Tier 1 is usable, which
 stops recovery too. `anomaly_recovery_integration_test.go` covers each
 case; `installStalenessNotificationCapture` observes the notification.
+
+Absence-driven metrics (`clearWhenAbsent`) recover on a missing row:
+after each metric's connection loop `detectAnomalies` calls
+`recoverAbsentAnomalyAlerts`, which, for every alert key not in that
+metric's values on an `evaluable` connection (active and not blacked
+out), runs `classifyAbsentMetric` against `pass.staleness`
+(`probeStalenessSnapshot`, read once per pass) and counts an in-band
+sample via `countInBandSample`, keyed on the probe's
+`ProbeStaleness.LastCollected` (`probeLastCollected`). Anything but
+`absentMetricClear`, or a failed staleness read, holds and keeps the
+streak; a database blackout or failed blackout check resets it. Because
+of this, `detectAnomalies` must not skip a metric on `ErrNoMetricData`.
+
+`loadAnomalyRecovery` retires alerts that can never be re-scored
+(`unreachableAnomalyReason`: the metric fails `SupportsBaselines`, or
+`database.MetricIsPerDatabase` but the alert has a NULL database) via
+`retireUnreachableAnomalyAlert`: `ClearActiveAnomalyAlert`, no
+notification, and the description prefixed with
+`unreachableAnomalyDescriptionPrefix` (not re-prefixed on a retry).
+`anomaly_recovery_absent_integration_test.go` covers both.
 
 ## Time-Window Resolution (server)
 

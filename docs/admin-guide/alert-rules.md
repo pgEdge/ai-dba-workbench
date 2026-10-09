@@ -440,7 +440,13 @@ analysis is discarded when the metric value changes.
 
 The alerter holds an anomaly alert open on any evaluation
 in which the metric or connection does not report, keeping
-the count, since no sample was missed. The alerter also
+the count, since no sample was missed. Metrics that report
+only whilst their condition holds, such as blocked sessions
+or long-running transactions, are the exception: for these
+a missing value means the condition has passed, so each new
+collection by the metric's probe that reports no value
+counts as an in-band sample, provided the probe is still
+collecting for the connection. The alerter also
 holds the alert open, and restarts its count, on a sample
 outside the band, when the baseline is not usable, or
 whilst a blackout covers the connection or database. The
@@ -451,6 +457,15 @@ them to the re-evaluation worker. Recovery stops whenever
 anomaly detection is disabled, including when the alerter
 disables it because no enabled tier has a usable LLM
 provider; recovery itself makes no embedding or LLM call.
+
+On upgrade, the alerter closes any active anomaly alert it
+can no longer re-score, without a clear notification: an
+alert on a metric that anomaly detection no longer covers,
+and an alert with no database on a metric measured per
+database, as earlier releases raised for the cache hit
+ratio, deadlock and temporary file metrics. The alert's
+description then begins `Closed without re-evaluation:`
+and gives the reason.
 
 After an anomaly alert clears, the alerter raises no new
 anomaly alert for the same metric, connection and

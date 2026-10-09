@@ -12,6 +12,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -199,8 +200,10 @@ func (e *Engine) detectAnomalies(ctx context.Context) {
 	}
 
 	// Blackout status is per connection and does not change during a
-	// run, so resolve it once rather than once per rule.
+	// run, so resolve it once rather than once per rule. evaluable is the
+	// complement: the active connections the run scores.
 	blackedOut := make(map[int]bool, len(connections))
+	evaluable := make(map[int]bool, len(connections))
 	for _, connID := range connections {
 		active, err := e.datastore.IsBlackoutActive(ctx, &connID, nil)
 		if err != nil {
@@ -210,7 +213,9 @@ func (e *Engine) detectAnomalies(ctx context.Context) {
 			e.debugLog("Skipping anomaly detection for connection %d: blackout active", connID)
 			blackedOut[connID] = true
 			recovery.resetConnection(connID)
+			continue
 		}
+		evaluable[connID] = true
 	}
 
 	sensitivity := cfg.Anomaly.Tier1.DefaultSensitivity
@@ -223,8 +228,12 @@ func (e *Engine) detectAnomalies(ctx context.Context) {
 			return
 		}
 
+		// An absence-driven metric reports nothing at all while no
+		// connection has the condition, which is the very state its
+		// alerts recover into, so an empty result is carried on into
+		// recovery rather than skipped.
 		values, err := e.datastore.GetLatestMetricValues(ctx, metric.name)
-		if err != nil {
+		if err != nil && !errors.Is(err, database.ErrNoMetricData) {
 			continue
 		}
 
@@ -255,6 +264,8 @@ func (e *Engine) detectAnomalies(ctx context.Context) {
 				}
 			}
 		}
+
+		e.recoverAbsentAnomalyAlerts(ctx, recovery, metric.name, values, evaluable, cfg)
 	}
 
 	e.finishAnomalyRecovery(recovery)

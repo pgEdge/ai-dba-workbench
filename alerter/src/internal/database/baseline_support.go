@@ -24,6 +24,18 @@ func SupportsBaselines(metricName string) bool {
 	return ok && cfg.historicalSQL != ""
 }
 
+// MetricIsPerDatabase reports whether the metric's latest query reports
+// one value per database, so that every value it returns names a
+// database, rather than one value per connection with no database. It
+// is false for names outside the registry. Anomaly recovery uses it to
+// spot an alert whose database scope can never match a latest value
+// of its metric, such as one raised before detection was scoped by
+// database. See GitHub issue #611.
+func MetricIsPerDatabase(metricName string) bool {
+	cfg, ok := metricRegistry[metricName]
+	return ok && (cfg.scan == scanWithDB || cfg.scan == scanWithDBObject)
+}
+
 // BaselineSupportedMetrics returns the sorted names of every registry
 // metric that SupportsBaselines accepts. The order is fixed so callers
 // that pass the list as a query parameter produce a stable statement.

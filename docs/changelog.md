@@ -1108,7 +1108,17 @@ project adheres to
   the metric does not report holds the alert open and keeps the
   count; an out-of-band sample, an unusable baseline or a
   blackout holds it open and restarts the count, which is kept
-  in memory and also restarts when the alerter does.
+  in memory and also restarts when the alerter does. For
+  metrics that report only whilst their condition holds, such
+  as blocked sessions, each new collection that reports no
+  value counts as an in-band sample, provided the probe is
+  still collecting for the connection. On upgrade, active
+  anomaly alerts that can no longer be re-scored (those on a
+  metric anomaly detection no longer covers, and those with no
+  database on a per-database metric, as earlier releases raised
+  for the cache hit ratio, deadlock and temporary file metrics)
+  are closed without a clear notification, and their
+  description records why.
   Acknowledged anomaly alerts are left to re-evaluation, and no
   new anomaly alert is raised on the same metric, connection and
   database within five minutes of one clearing. Recovery uses

@@ -953,6 +953,12 @@ func TestGetProbeStalenessByConnection(t *testing.T) {
 		results[0].SinceCollected > 150*time.Second {
 		t.Errorf("SinceCollected = %s, want about 120s", results[0].SinceCollected)
 	}
+	// Anomaly recovery keys an absent-metric sample on the probe's own
+	// last collection, so the query must report it. See GitHub issue
+	// #611.
+	if age := time.Since(results[0].LastCollected); age < 115*time.Second || age > 150*time.Second {
+		t.Errorf("LastCollected is %s ago, want about 120s", age)
+	}
 }
 
 // TestGetProbeStalenessByConnectionReportsUnavailableProbes covers the

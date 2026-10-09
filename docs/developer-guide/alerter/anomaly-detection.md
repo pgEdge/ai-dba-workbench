@@ -565,15 +565,37 @@ condition lifts:
 - no warm baseline exists, or the floored standard deviation is zero.
 - a blackout covers the connection or the database.
 
-The alerter therefore never clears an anomaly alert on the absence
-of evidence. A failed blackout check is treated as an active
-blackout, because holding an alert open a little longer is cheaper
-than clearing it during a maintenance window. A pass that fails
-before it completes, for example because the active alerts, the
-connections or the rules cannot be read, keeps the previous counts.
-A clear that fails to write keeps the count too, and the next pass
-that scores the series in band retries the clear without waiting
-for a newer sample.
+Some metrics report a row only whilst their condition holds; the
+metric registry marks these `clearWhenAbsent`, and they include
+blocked sessions, long-running transactions and inactive replication
+slots. For these metrics a missing row is the recovery signal, so a
+pass in which an alert's series reports no row counts as an in-band
+sample, provided `classifyAbsentMetric` (the check the threshold
+cleaner uses for the same metrics) confirms that the metric's probe
+collected for the connection within the window the metric's query
+reads. The sample is keyed on the probe's `last_collected` time, so
+several passes over one collection count it once. When the probe is
+not demonstrably current, or the staleness view cannot be read, the
+pass holds the alert and keeps its count, and a blackout resets the
+count as it does for a scored value. For every other metric the
+alerter never clears an anomaly alert on the absence of evidence. A
+failed blackout check is treated as an active blackout, because
+holding an alert open a little longer is cheaper than clearing it
+during a maintenance window. A pass that fails before it completes,
+for example because the active alerts, the connections or the rules
+cannot be read, keeps the previous counts. A clear that fails to
+write keeps the count too, and the next pass that scores the series
+in band retries the clear without waiting for a newer sample.
+
+Some active alerts can never be re-scored: an alert on a metric
+that `SupportsBaselines` now rejects, which `anomalyMetrics` never
+fetches, and an alert with no database on a metric reported per
+database, as alerts raised before anomaly detection was scoped by
+database have. `loadAnomalyRecovery` closes each such alert on the
+first pass that sees it, without a clear notification, and prefixes
+its description with `Closed without re-evaluation:` and the
+reason, followed by the original description. Upgrading therefore
+closes any such alerts left over from earlier releases.
 
 Acknowledged anomaly alerts take no part in recovery. The
 re-evaluation worker owns those alerts, and its fingerprint covers

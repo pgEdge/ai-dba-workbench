@@ -295,9 +295,7 @@ range. Two server behaviours matter when adding one:
 - `NUMERIC` columns arrive as JSON numbers (`normalizeNumeric` in
   `server/src/internal/api/latest_handlers.go`), or `null` when not
   finite. Still parse defensively, as `normaliseSlotRows` in
-  `ServerDashboard/replicationSlots.ts` does, and keep the shaping in
-  a pure helper module beside the section, with the fetch in a hook
-  (`hooks/useReplicationSlots.ts`).
+  `ServerDashboard/replicationSlots.ts` does.
 
 ### Ratios and gaps
 

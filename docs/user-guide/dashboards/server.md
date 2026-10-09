@@ -110,11 +110,12 @@ The replication slots section lists the replication
 slots on the server, from the most recent snapshot the
 collector took in the last hour. The section does not
 follow the dashboard time range selector; it always
-shows the slots as they are now.
+shows the latest snapshot of each slot.
 
-When the collector has detected replication between this
-server and others in its cluster, the section first
-names them:
+When the cluster topology records replication between
+this server and others, whether the collector detected
+it or an administrator set it, the section first names
+them:
 
 - The Upstream line lists the servers this server
   streams from, subscribes to, or replicates with.
@@ -130,11 +131,11 @@ table shows the following columns for each slot:
 - The Type column shows whether the slot is physical
   or logical.
 - The Status column shows Active when a consumer is
-  connected to the slot and Inactive when none is. An
-  inactive slot can stop PostgreSQL from removing WAL
-  until its consumer returns, so it is shown as a
-  warning; the WAL Status column shows whether the WAL
-  is still kept.
+  connected to the slot and Inactive when none is, or
+  Unknown when the snapshot does not say. An inactive
+  slot can stop PostgreSQL from removing WAL until its
+  consumer returns, so it is shown as a warning; the WAL
+  Status column shows whether the WAL is still kept.
 - The WAL Status column shows how safe the slot's WAL
   is. Reserved (green) means the WAL is within
   `max_wal_size`; Extended (amber) means it exceeds
@@ -150,13 +151,29 @@ table shows the following columns for each slot:
   be written before the slot is at risk of losing WAL.
   It shows Unlimited when `max_slot_wal_keep_size` is
   `-1`, which means the slot can retain WAL until the
-  disk fills.
+  disk fills. Servers older than PostgreSQL 13 do not
+  report a safe WAL size, so the column shows `--`.
 
 The section lists up to 100 slots by name, and notes the
-total when a server has more. The collector records
-only slots that have reserved WAL, so a slot that has
-never been used, or whose WAL has already been lost,
-does not appear in the list.
+total when a server has more. The collector records a
+slot only while PostgreSQL reports a `restart_lsn` for
+it, so a slot that has never reserved WAL does not
+appear. A slot that loses its WAL usually stops being
+recorded as well; for example, a physical slot
+invalidated by `max_slot_wal_keep_size` loses its
+`restart_lsn` at once. Some lost slots keep their
+`restart_lsn` and stay in the list with the Lost status;
+a logical slot on a standby that was invalidated because
+the rows it needed were removed is one such case.
+
+Each row is the slot's latest snapshot from the last
+hour, so a row can outlive its slot by up to an hour. A
+slot that has been dropped, or that has stopped being
+recorded because it lost its WAL, keeps showing its last
+recorded state during that time, with nothing to mark
+the row as out of date. A slot that became lost after
+its last snapshot can therefore still read Extended or
+Unreserved for a while.
 
 ## Database Summaries
 

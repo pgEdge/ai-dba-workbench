@@ -395,9 +395,11 @@ project adheres to
   the active, inactive and at-risk slots. Above the table it
   names the servers this one replicates from and the
   standbys and subscribers that replicate from it, as the
-  collector detected them in the cluster topology. The
-  collector does not record slots that have never reserved
-  WAL or that have lost it, so those do not appear.
+  cluster topology records them. The collector does not
+  record slots that have never reserved WAL, and usually
+  stops recording a slot once it loses its WAL; a dropped or
+  lost slot can still be listed with its last recorded state
+  for up to an hour.
 
 ### Changed
 

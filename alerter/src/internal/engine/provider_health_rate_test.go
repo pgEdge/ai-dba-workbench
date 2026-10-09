@@ -315,6 +315,10 @@ func TestFailureLimit(t *testing.T) {
 		{0.3, 1, 1},
 		{1.0 / 3, 3, 1},
 		{0.7, 10, 7},
+		// Products that floating point puts a hair above a whole
+		// number, which round up one too far without the tolerance.
+		{0.28, 25, 7},
+		{0.56, 25, 14},
 		// A share so small that the tolerance takes the product
 		// below zero still needs one failure.
 		{1e-12, 1, 1},

@@ -305,7 +305,7 @@ The following table describes the provider health options:
 |--------|------|---------|-------------|
 | `failure_threshold` | integer | `3` | Consecutive failed calls that raise the alert; must be at least 1 |
 | `failure_rate` | number | `0.3` | Share of the last `failure_rate_window` calls that raises the alert when they fail; must be greater than 0 and at most 1 |
-| `failure_rate_window` | integer | `20` | Number of recent calls the failure rate covers; must be between 1 and 1000 |
+| `failure_rate_window` | integer | `20` | Number of recent calls the failure rate covers; must be between 1 and 1000. A small window can set a limit of one failed call, as `failure_rate: 0.3` with a window of `3` does, so the first failure raises the alert before `failure_threshold` is reached |
 
 The alerter counts consecutive failures separately for tier
 2 embeddings, tier 3 classification and re-evaluation, and

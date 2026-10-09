@@ -705,21 +705,18 @@ func assertAuditVerifyExit(t *testing.T, dir string, want int) {
 	}
 }
 
-// execAuthDB runs statements directly against auth.db, outside the
-// store, as someone with write access to the file would.
-func execAuthDB(t *testing.T, dir string, stmts ...string) {
+// openAuthDB opens auth.db directly, outside the store, as someone
+// with write access to the file would.
+func openAuthDB(t *testing.T, dir string) *sql.DB {
 	t.Helper()
 
 	db, err := sql.Open("sqlite", filepath.Join(dir, "auth.db"))
 	if err != nil {
 		t.Fatalf("failed to open auth.db directly: %v", err)
 	}
-	defer db.Close()
-	for _, stmt := range stmts {
-		if _, err := db.Exec(stmt); err != nil {
-			t.Fatalf("failed to run %q: %v", stmt, err)
-		}
-	}
+	t.Cleanup(func() { db.Close() })
+
+	return db
 }
 
 // TestReanchorCommandRefusesADecoyStartedAnchor checks the sequence
@@ -747,29 +744,30 @@ func TestReanchorCommandRefusesADecoyStartedAnchor(t *testing.T) {
 		t.Fatalf("failed to close the store: %v", err)
 	}
 
-	var newest int64
-	db, err := sql.Open("sqlite", filepath.Join(dir, "auth.db"))
-	if err != nil {
-		t.Fatalf("failed to open auth.db directly: %v", err)
+	db := openAuthDB(t, dir)
+	mustExec := func(_ sql.Result, err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatalf("failed to change auth.db: %v", err)
+		}
 	}
+	var newest int64
 	if err := db.QueryRow("SELECT max(id) FROM audit_events").
 		Scan(&newest); err != nil {
 		t.Fatalf("failed to read the newest event: %v", err)
 	}
-	db.Close()
 	kept, decoy := newest-2, newest-1
-	execAuthDB(t, dir,
-		fmt.Sprintf("DELETE FROM audit_events WHERE id > %d", kept),
-		fmt.Sprintf(`INSERT INTO audit_events (id, occurred_at,
+	mustExec(db.Exec("DELETE FROM audit_events WHERE id > ?", kept))
+	mustExec(db.Exec(`INSERT INTO audit_events (id, occurred_at,
             actor_type, actor_name, action, outcome, prev_hash, hash,
             hash_version)
-        SELECT %d, occurred_at, 'system', 'decoy', 'user.create',
+        SELECT ?, occurred_at, 'system', 'decoy', 'user.create',
             'success', 'unused', hash, hash_version
-        FROM audit_events WHERE id = %d`, decoy, kept),
-		fmt.Sprintf(`UPDATE sqlite_sequence SET seq = %d
-        WHERE name = 'audit_events'`, decoy),
-		fmt.Sprintf(`UPDATE audit_tail SET event_id = %d,
-        event_hash = (SELECT hash FROM audit_events WHERE id = %d),
+        FROM audit_events WHERE id = ?`, decoy, kept))
+	mustExec(db.Exec(`UPDATE sqlite_sequence SET seq = ?
+        WHERE name = 'audit_events'`, decoy))
+	mustExec(db.Exec(`UPDATE audit_tail SET event_id = ?,
+        event_hash = (SELECT hash FROM audit_events WHERE id = ?),
         mac = 'x' WHERE id = 1`, decoy, kept))
 
 	store, err = auth.NewAuthStore(dir, 0, 0,
@@ -784,8 +782,7 @@ func TestReanchorCommandRefusesADecoyStartedAnchor(t *testing.T) {
 	if err := store.Close(); err != nil {
 		t.Fatalf("failed to close the store: %v", err)
 	}
-	execAuthDB(t, dir,
-		fmt.Sprintf("DELETE FROM audit_events WHERE id = %d", decoy))
+	mustExec(db.Exec("DELETE FROM audit_events WHERE id = ?", decoy))
 	assertAuditVerifyExit(t, dir, auditExitTampered)
 
 	addCurrentKeyEvents(t, dir, "grace")

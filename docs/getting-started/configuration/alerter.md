@@ -174,6 +174,20 @@ statistical detection.
 | `enabled` | boolean | `true` | Enable tier 1 |
 | `default_sensitivity` | float | `3.0` | Z-score threshold |
 | `evaluation_interval_seconds` | integer | `60` | Evaluation interval |
+| `clear_count` | integer | `3` | Consecutive in-band samples before an anomaly alert clears |
+
+The `anomaly.tier1.clear_count` option sets how many
+consecutive samples of the metric behind an active anomaly
+alert must score back inside the sensitivity band before the
+alerter clears the alert. Only a newly collected sample
+counts; tier 1 usually evaluates more often than the probe
+collects, and an evaluation that re-scores a sample already
+counted does not add to the count. The value must be at least
+1; the alerter refuses to start, or to apply a reload, with a
+smaller value. For a probe that collects every 300 seconds,
+the default of 3 clears an alert about ten minutes after the
+first in-band sample. A `SIGHUP` reload applies a new value
+from the next evaluation.
 
 #### Tier 1: Variance Floor, Warmup, and Z-Score Cap
 

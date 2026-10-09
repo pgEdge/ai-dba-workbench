@@ -12,6 +12,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -163,15 +164,25 @@ func (e *Engine) detectAnomalies(ctx context.Context) {
 	cfg := e.getConfig()
 
 	if !cfg.Anomaly.Enabled || !cfg.Anomaly.Tier1.Enabled {
+		e.resetAnomalyStreaks()
 		return
 	}
+
+	// Active anomaly alerts are re-scored on every pass so they clear
+	// once enough new samples of their metric have recovered (issue #611). Recovery is Tier 1 only,
+	// so it runs even when no later tier could process a new candidate.
+	recovery := e.loadAnomalyRecovery(ctx)
 
 	// A candidate that no later tier can process would never raise an
 	// alert or be cleaned up, so write none; startup applies the same
 	// rule by disabling anomaly detection (issue #581).
-	if !e.anomalyProcessingAvailable(cfg) {
+	detect := e.anomalyProcessingAvailable(cfg)
+	if !detect {
 		e.debugLog("Skipping anomaly detection: no LLM provider available for the enabled tiers")
-		return
+		if recovery.empty() {
+			e.finishAnomalyRecovery(recovery)
+			return
+		}
 	}
 
 	// Get all active connections
@@ -189,8 +200,10 @@ func (e *Engine) detectAnomalies(ctx context.Context) {
 	}
 
 	// Blackout status is per connection and does not change during a
-	// run, so resolve it once rather than once per rule.
+	// run, so resolve it once rather than once per rule. evaluable is the
+	// complement: the active connections the run scores.
 	blackedOut := make(map[int]bool, len(connections))
+	evaluable := make(map[int]bool, len(connections))
 	for _, connID := range connections {
 		active, err := e.datastore.IsBlackoutActive(ctx, &connID, nil)
 		if err != nil {
@@ -199,28 +212,28 @@ func (e *Engine) detectAnomalies(ctx context.Context) {
 		if active {
 			e.debugLog("Skipping anomaly detection for connection %d: blackout active", connID)
 			blackedOut[connID] = true
+			recovery.resetConnection(connID)
+			continue
 		}
+		evaluable[connID] = true
 	}
 
 	sensitivity := cfg.Anomaly.Tier1.DefaultSensitivity
 	now := time.Now()
 
-	// Rules are the outer loop so each metric's latest values are
+	// Metrics are the outer loop so each metric's latest values are
 	// fetched once per run instead of once per connection.
-	for _, rule := range rules {
+	for _, metric := range anomalyMetrics(rules, recovery) {
 		if ctx.Err() != nil {
 			return
 		}
 
-		// Metrics without a historical query have no baselines to
-		// score against (see calculateBaselines), so skip them
-		// rather than querying for rows that cannot exist.
-		if !database.SupportsBaselines(rule.MetricName) {
-			continue
-		}
-
-		values, err := e.datastore.GetLatestMetricValues(ctx, rule.MetricName)
-		if err != nil {
+		// An absence-driven metric reports nothing at all while no
+		// connection has the condition, which is the very state its
+		// alerts recover into, so an empty result is carried on into
+		// recovery rather than skipped.
+		values, err := e.datastore.GetLatestMetricValues(ctx, metric.name)
+		if err != nil && !errors.Is(err, database.ErrNoMetricData) {
 			continue
 		}
 
@@ -236,12 +249,67 @@ func (e *Engine) detectAnomalies(ctx context.Context) {
 			// database on the connection; each is scored against the
 			// baseline written for that same database.
 			for _, value := range baselineableValues(values, connID) {
-				e.detectAnomalyForValue(ctx, rule.MetricName, value, cfg, sensitivity, now)
+				recordCandidate := detect && metric.fromRule
+				key := newAnomalyAlertKey(metric.name, value.ConnectionID, value.DatabaseName)
+				if !recordCandidate && !recovery.covers(key) {
+					continue
+				}
+
+				zScore, baseline, scored := e.scoreAnomalyValue(ctx, metric.name, value, cfg, now)
+				if !recovery.empty() {
+					e.recoverAnomalyAlerts(ctx, recovery, metric.name, value, zScore, scored, cfg, sensitivity)
+				}
+				if recordCandidate && scored {
+					e.recordAnomalyCandidate(ctx, metric.name, value, zScore, baseline, sensitivity)
+				}
 			}
 		}
+
+		e.recoverAbsentAnomalyAlerts(ctx, recovery, metric.name, values, evaluable, cfg)
 	}
 
-	e.processTier2And3(ctx)
+	e.finishAnomalyRecovery(recovery)
+
+	if detect {
+		e.processTier2And3(ctx)
+	}
+}
+
+// anomalyMetric is a metric to score in a Tier 1 pass. fromRule is false
+// for a metric scored only because an active anomaly alert was raised on
+// it and no enabled rule still covers it; such a metric is re-scored for
+// recovery but never produces a new candidate.
+type anomalyMetric struct {
+	name     string
+	fromRule bool
+}
+
+// anomalyMetrics returns each baselineable metric once: those of the
+// enabled rules first, in rule order, then those of active anomaly alerts
+// that no rule covers. Several rules on one metric used to score it, and
+// record a candidate for it, once per rule.
+func anomalyMetrics(rules []*database.AlertRule, recovery *anomalyRecoveryPass) []anomalyMetric {
+	seen := make(map[string]bool)
+	var metrics []anomalyMetric
+	add := func(name string, fromRule bool) {
+		// Metrics without a historical query have no baselines to
+		// score against (see calculateBaselines), so skip them
+		// rather than querying for rows that cannot exist.
+		if seen[name] || !database.SupportsBaselines(name) {
+			return
+		}
+		seen[name] = true
+		metrics = append(metrics, anomalyMetric{name: name, fromRule: fromRule})
+	}
+	for _, rule := range rules {
+		add(rule.MetricName, true)
+	}
+	if recovery != nil {
+		for _, name := range recovery.metrics {
+			add(name, false)
+		}
+	}
+	return metrics
 }
 
 // baselineableValues returns the latest values that belong to the
@@ -273,11 +341,29 @@ func (e *Engine) detectAnomalyForValue(
 	sensitivity float64,
 	now time.Time,
 ) {
+	zScore, baseline, scored := e.scoreAnomalyValue(ctx, metricName, value, cfg, now)
+	if !scored {
+		return
+	}
+	e.recordAnomalyCandidate(ctx, metricName, value, zScore, baseline, sensitivity)
+}
+
+// scoreAnomalyValue returns the z-score of one latest metric value against
+// the warm baseline Tier 1 selects for its connection and database, and
+// that baseline. scored is false when no usable baseline exists: none was
+// written, none is warm, or the floored divisor is zero.
+func (e *Engine) scoreAnomalyValue(
+	ctx context.Context,
+	metricName string,
+	value *database.MetricValue,
+	cfg *config.Config,
+	now time.Time,
+) (zScore float64, baseline *database.MetricBaseline, scored bool) {
 	connID := value.ConnectionID
 
 	baselines, err := e.datastore.GetMetricBaselines(ctx, connID, metricName, value.DatabaseName)
 	if err != nil || len(baselines) == 0 {
-		return
+		return 0, nil, false
 	}
 
 	// Warmup gate: prefer the time-aware baselines, and skip
@@ -293,7 +379,7 @@ func (e *Engine) detectAnomalyForValue(
 				cold.SampleCount, cold.EarliestSampleAt,
 			)
 		}
-		return
+		return 0, nil, false
 	}
 	if cold != nil {
 		e.debugLog(
@@ -311,11 +397,11 @@ func (e *Engine) detectAnomalyForValue(
 	// retain the degenerate-case skip.
 	stddev := effectiveStdDev(*baseline, cfg.Anomaly.Tier1.VarianceFloor)
 	if stddev == 0 {
-		return
+		return 0, nil, false
 	}
 
 	// Calculate z-score using the floored divisor.
-	zScore := (value.Value - baseline.Mean) / stddev
+	zScore = (value.Value - baseline.Mean) / stddev
 
 	// Symmetric z-score cap: clamp |zScore| to MaxZScore
 	// when the cap is positive. A zero cap disables the
@@ -327,6 +413,20 @@ func (e *Engine) detectAnomalyForValue(
 			zScore = -zCap
 		}
 	}
+	return zScore, baseline, true
+}
+
+// recordAnomalyCandidate records a tier-1 candidate for a scored value
+// whose z-score lies outside the sensitivity band.
+func (e *Engine) recordAnomalyCandidate(
+	ctx context.Context,
+	metricName string,
+	value *database.MetricValue,
+	zScore float64,
+	baseline *database.MetricBaseline,
+	sensitivity float64,
+) {
+	connID := value.ConnectionID
 
 	// Check if z-score exceeds threshold
 	if zScore <= sensitivity && zScore >= -sensitivity {
@@ -768,6 +868,18 @@ func (e *Engine) anomalyAlertSkipReason(ctx context.Context, candidate *database
 		return fmt.Sprintf("open anomaly alert %d", existing.ID)
 	}
 
+	// Tier 1 recovery just cleared an alert on this series; give the
+	// metric the same cooldown a cleared threshold alert gets, so a
+	// value hovering at the edge of the band does not fire, clear and
+	// re-fire (with a paid Tier 2/3 classification each time).
+	recent, err := e.datastore.GetRecentlyClearedAnomalyAlert(ctx, candidate.MetricName, candidate.ConnectionID, candidate.DatabaseName, AlertCooldownPeriod)
+	if err != nil {
+		e.debugLog("Error checking recently cleared anomaly alert for %s on connection %d: %v", candidate.MetricName, candidate.ConnectionID, err)
+	} else if recent {
+		e.debugLog("Skipping anomaly alert %s on connection %d: recently cleared (cooldown)", candidate.MetricName, candidate.ConnectionID)
+		return "recently cleared anomaly alert (cooldown)"
+	}
+
 	// Re-evaluation previously cleared this alert based on user
 	// feedback; use the longer suppression window to respect the
 	// user's assessment.
@@ -802,20 +914,7 @@ func (e *Engine) createAnomalyAlert(ctx context.Context, candidate *database.Ano
 		return
 	}
 
-	// Determine severity based on z-score magnitude relative to
-	// the detection sensitivity.  Using multiples of the sensitivity
-	// prevents all alerts from clustering at "critical" when baselines
-	// have small standard deviations.
-	absZScore := candidate.ZScore
-	if absZScore < 0 {
-		absZScore = -absZScore
-	}
-	severity := "info"
-	if absZScore >= 4*sensitivity {
-		severity = "critical"
-	} else if absZScore >= 2*sensitivity {
-		severity = "warning"
-	}
+	severity := anomalySeverity(candidate.ZScore, sensitivity)
 
 	// Build anomaly details from tier results
 	anomalyDetails := fmt.Sprintf(

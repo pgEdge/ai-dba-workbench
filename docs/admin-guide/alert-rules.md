@@ -413,13 +413,73 @@ alerts. Any condition that still holds raises a fresh
 alert on the next evaluation cycle, subject to the usual
 re-raise cooldown.
 
+## Anomaly Alert Clearing
+
+The alerter also clears anomaly alerts automatically.
+An anomaly alert has no rule threshold, so the anomaly
+detector re-scores the metric behind each active anomaly
+alert on every tier 1 evaluation, using the same baseline
+and sensitivity that raised the alert. The alerter clears
+the alert and sends the usual clear notification once
+`anomaly.tier1.clear_count` consecutive samples of the
+metric have scored inside the sensitivity band. Only a
+newly collected sample counts: tier 1 evaluates every 60
+seconds by default whilst most probes collect every 300
+to 600 seconds, and an evaluation that re-scores a sample
+already counted neither advances nor restarts the count.
+The default of 3 therefore clears an alert on the third
+in-band sample, about ten minutes after the first for a
+probe that collects every 300 seconds.
+
+Whilst the value stays outside the band, the alerter
+updates the alert's metric value, anomaly score and last
+updated time, and raises the severity when the deviation
+grows; the severity never falls, and the description
+keeps the values at which the alert fired. A cached AI
+analysis is discarded when the metric value changes.
+
+The alerter holds an anomaly alert open on any evaluation
+in which the metric or connection does not report, keeping
+the count, since no sample was missed. Metrics that report
+only whilst their condition holds, such as blocked sessions
+or long-running transactions, are the exception: for these
+a missing value means the condition has passed, so each new
+collection by the metric's probe that reports no value
+counts as an in-band sample, provided the probe is still
+collecting for the connection. The alerter also
+holds the alert open, and restarts its count, on a sample
+outside the band, when the baseline is not usable, or
+whilst a blackout covers the connection or database. The
+count is held in memory, so the count also restarts when the alerter
+restarts or when tier 1 is disabled. The alerter does not
+clear acknowledged anomaly alerts this way, and leaves
+them to the re-evaluation worker. Recovery stops whenever
+anomaly detection is disabled, including when the alerter
+disables it because no enabled tier has a usable LLM
+provider; recovery itself makes no embedding or LLM call.
+
+On upgrade, the alerter closes any active anomaly alert it
+can no longer re-score, without a clear notification: an
+alert on a metric that anomaly detection no longer covers,
+and an alert with no database on a metric measured per
+database, as earlier releases raised for the cache hit
+ratio, deadlock and temporary file metrics. The alert's
+description then begins `Closed without re-evaluation:`
+and gives the reason.
+
+After an anomaly alert clears, the alerter raises no new
+anomaly alert for the same metric, connection and
+database for five minutes, so a value at the edge of the
+band does not raise and clear an alert repeatedly.
+
 ## Blackout Interaction
 
 During an active blackout period, the alerter
 suppresses new alerts for the affected connection or
 database. Existing active alerts are not cleared during
 a blackout; the blackout only prevents new alerts from
-being created.
+being created, and holds an anomaly alert open until the
+blackout ends.
 
 ## Example Rule Configuration
 

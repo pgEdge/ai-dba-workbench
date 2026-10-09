@@ -906,6 +906,63 @@ func TestMetricRegistryLatestSQLFreshnessCutoff(t *testing.T) {
 	}
 }
 
+// TestMetricRegistryLatestSQLReportsSampleTime asserts that no latest
+// query reports NOW() as its collected_at. Anomaly recovery counts
+// distinct samples by their collected_at, so a query stamping each
+// evaluation with the current time would make every Tier 1 pass look like
+// a new sample and clear an alert on a single reading (GitHub issue #611).
+func TestMetricRegistryLatestSQLReportsSampleTime(t *testing.T) {
+	stamped := regexp.MustCompile(`(?i)now\(\)\s+(as\s+)?collected_at`)
+	for _, name := range registryNames() {
+		if stamped.MatchString(metricRegistry[name].latestSQL) {
+			t.Errorf("%s latestSQL reports NOW() as collected_at; report the sample's own collected_at",
+				name)
+		}
+	}
+}
+
+// TestMetricIsPerDatabase pins which metrics report one latest value
+// per database. Anomaly recovery retires an alert whose database scope
+// cannot match its metric's latest values, so a wrong answer here would
+// either strand alerts or retire live ones (GitHub issue #611).
+func TestMetricIsPerDatabase(t *testing.T) {
+	perDatabase := []string{
+		"pg_stat_database.cache_hit_ratio",
+		"pg_stat_database.deadlocks_delta",
+		"pg_stat_database.temp_files_delta",
+		"pg_stat_statements.slow_query_count",
+		"pg_stat_all_tables.dead_tuple_percent",
+		"table_last_autovacuum_hours",
+	}
+	for _, name := range perDatabase {
+		if !MetricIsPerDatabase(name) {
+			t.Errorf("MetricIsPerDatabase(%s) = false, want true", name)
+		}
+	}
+	for _, name := range []string{
+		"pg_sys_cpu_usage_info.processor_time_percent",
+		"pg_stat_activity.blocked_count",
+		"connection_utilization_percent",
+		"metric_staleness",
+		"",
+	} {
+		if MetricIsPerDatabase(name) {
+			t.Errorf("MetricIsPerDatabase(%q) = true, want false", name)
+		}
+	}
+	// Every baselineable metric whose historical rows carry a database
+	// must also report its latest values per database, or recovery would
+	// look up the alert under the wrong key.
+	for _, name := range BaselineSupportedMetrics() {
+		cfg := metricRegistry[name]
+		historicalPerDB := cfg.historicalScan != historicalScanBasic
+		if historicalPerDB != MetricIsPerDatabase(name) {
+			t.Errorf("%s: historical rows per database = %v, latest values per database = %v",
+				name, historicalPerDB, MetricIsPerDatabase(name))
+		}
+	}
+}
+
 // TestMetricClearsWhenAbsent pins the clear-when-absent classification
 // for representative registry entries and for an unknown metric.
 func TestMetricClearsWhenAbsent(t *testing.T) {

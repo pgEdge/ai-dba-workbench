@@ -108,6 +108,10 @@ func TestNewConfigAnomalyDefaults(t *testing.T) {
 		{"tier1 warmup.daily.min_span_hours",
 			cfg.Anomaly.Tier1.Warmup.Daily.MinSpanHours, 336},
 
+		// Anomaly alert recovery (issue #611).
+		{"tier1 clear_count",
+			cfg.Anomaly.Tier1.ClearCount, 3},
+
 		// Provider health system alert (issue #582).
 		{"provider_health.failure_threshold",
 			cfg.Anomaly.ProviderHealth.FailureThreshold, 3},
@@ -301,6 +305,20 @@ func TestValidateRejectsBadAnomalyConfig(t *testing.T) {
 				c.Anomaly.Tier1.Warmup.All.MinSamples = -1
 			},
 			errorMsg: "anomaly.tier1.warmup thresholds must be >= 0",
+		},
+		{
+			name: "zero tier1 clear_count rejected",
+			modifyFunc: func(c *Config) {
+				c.Anomaly.Tier1.ClearCount = 0
+			},
+			errorMsg: "anomaly.tier1.clear_count must be at least 1",
+		},
+		{
+			name: "negative tier1 clear_count rejected",
+			modifyFunc: func(c *Config) {
+				c.Anomaly.Tier1.ClearCount = -1
+			},
+			errorMsg: "anomaly.tier1.clear_count must be at least 1",
 		},
 		{
 			name: "zero provider failure_threshold rejected",
@@ -791,6 +809,7 @@ func TestExampleConfigsParse(t *testing.T) {
 		"anomaly.tier1.warmup.hourly.min_span_hours",
 		"anomaly.tier1.warmup.daily.min_samples",
 		"anomaly.tier1.warmup.daily.min_span_hours",
+		"anomaly.tier1.clear_count",
 		"anomaly.provider_health.failure_threshold",
 		"anomaly.provider_health.failure_rate",
 		"anomaly.provider_health.failure_rate_window",
@@ -836,6 +855,10 @@ func TestExampleConfigsParse(t *testing.T) {
 			if got := cfg.Anomaly.ProviderHealth.FailureRateWindow; got != DefaultProviderFailureRateWindow {
 				t.Errorf("%s: ProviderHealth.FailureRateWindow = %d, want %d",
 					p, got, DefaultProviderFailureRateWindow)
+			}
+			if got := cfg.Anomaly.Tier1.ClearCount; got != DefaultAnomalyClearCount {
+				t.Errorf("%s: Tier1.ClearCount = %d, want %d",
+					p, got, DefaultAnomalyClearCount)
 			}
 			if cfg.Anomaly.Tier1.MaxZScore != 100.0 {
 				t.Errorf("%s: MaxZScore = %v, want 100.0",

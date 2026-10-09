@@ -117,7 +117,11 @@ Alerts progress through several states during their lifecycle:
 - Cleared alerts indicate the condition has resolved.
 
 The alerter automatically clears threshold alerts when the
-triggering condition returns to normal.
+triggering condition returns to normal. The anomaly detector clears
+an active anomaly alert once Tier 1 scores
+`anomaly.tier1.clear_count` consecutive samples of its metric back
+inside the sensitivity band; the Anomaly Detection document
+describes the recovery check.
 
 ## High-Level Architecture
 
@@ -269,13 +273,14 @@ Tier 1 creates anomaly candidates for values exceeding the
 z-score threshold, unless one of the checks below already applies,
 in which case it stores none. The alerter then checks each stored
 candidate for an active blackout, an open anomaly alert on the same
-metric, connection and database, and re-evaluation or
-false-positive suppression; a candidate that matches any check is
-marked as processed without running Tier 2 or Tier 3. The second
-pass covers a candidate stored before the condition began. Other
-candidates are processed by Tier 2, which generates embeddings and
-searches for similar past anomalies. Tier 3 uses LLM classification
-to make the final decision.
+metric, connection and database, an anomaly alert on the same
+series that cleared within the five-minute cooldown, and
+re-evaluation or false-positive suppression; a candidate that
+matches any check is marked as processed without running Tier 2 or
+Tier 3. The second pass covers a candidate stored before the
+condition began. Other candidates are processed by Tier 2, which
+generates embeddings and searches for similar past anomalies. Tier 3
+uses LLM classification to make the final decision.
 
 ## Database Schema
 

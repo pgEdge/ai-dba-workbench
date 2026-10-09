@@ -63,6 +63,29 @@ When a metric value no longer violates the threshold, the
 system marks the alert as cleared and records the
 timestamp.
 
+An anomaly alert has no threshold, so the alerter clears
+an active anomaly alert once the metric returns to its
+normal range instead. The anomaly detector checks the
+metric on each evaluation, every minute by default, and
+clears the alert once three newly collected samples in a
+row have fallen within the normal range; the
+`anomaly.tier1.clear_count` option in the alerter
+configuration changes that number. Most probes collect
+every five or ten minutes, so an alert usually clears
+ten to twenty minutes after the first normal sample. Until then, the alert
+shows the latest value and anomaly score, and its
+severity can rise but does not fall. The alerter sends
+the usual clear notification and raises no new anomaly
+alert for the same metric on that server for five
+minutes afterwards. An acknowledged anomaly alert is not
+cleared this way. For a metric that reports only whilst its
+condition holds, such as a blocked session, each collection
+that no longer reports the condition counts as a normal
+sample. An anomaly alert that the alerter can no longer
+check, for example one raised by an earlier release without
+the database it concerns, is closed without a notification
+and its description explains why.
+
 A gap in the collected data does not clear an alert. When
 a metric that normally reports a value for every monitored
 connection stops returning one, the alerter treats the gap

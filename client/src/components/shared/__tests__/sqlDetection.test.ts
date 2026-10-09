@@ -333,3 +333,66 @@ describe('tokenizeSql', () => {
         expect(kinds).toEqual(['plain', 'literal', 'separator', 'plain', 'comment']);
     });
 });
+
+describe('line comments ended by a carriage return', () => {
+    const lineEnds = [
+        ['\\r', '\r'],
+        ['\\r\\n', '\r\n'],
+        ['\\n', '\n'],
+    ];
+
+    for (const [label, eol] of lineEnds) {
+        it(`sees a placeholder after a comment ended by ${label}`, () => {
+            expect(hasSqlParameters(
+                `SELECT * FROM victim -- x${eol}LIMIT $1`,
+            )).toBe(true);
+        });
+
+        it(`splits on a semicolon after a comment ended by ${label}`, () => {
+            expect(splitSqlStatements(
+                `SELECT 1 -- note${eol}; DELETE FROM t`,
+            )).toEqual(['SELECT 1 -- note', 'DELETE FROM t']);
+        });
+
+        it(`keeps both statements after a comment ended by ${label}`, () => {
+            expect(extractExecutableSQL(
+                `SELECT 1 -- note${eol}; DELETE FROM t`,
+            )).toBe('SELECT 1 -- note;\n\nDELETE FROM t;');
+        });
+
+        it(`strips a routing comment ended by ${label}`, () => {
+            const code = `-- connection_id: 9${eol}SELECT 1;`;
+            expect(CONNECTION_ID_COMMENT_RE.exec(code)?.[1]).toBe('9');
+            expect(stripConnectionIdComment(code)).toBe('SELECT 1;');
+        });
+    }
+
+    it('ends the comment before the carriage return', () => {
+        expect(tokenizeSql('SELECT 1 -- c\rSELECT 2')).toEqual([
+            { kind: 'plain', text: 'SELECT 1 ' },
+            { kind: 'comment', text: '-- c' },
+            { kind: 'plain', text: '\rSELECT 2' },
+        ]);
+    });
+
+    it('handles a bare carriage return at the end of the string', () => {
+        expect(tokenizeSql('SELECT 1 -- c\r')).toEqual([
+            { kind: 'plain', text: 'SELECT 1 ' },
+            { kind: 'comment', text: '-- c' },
+            { kind: 'plain', text: '\r' },
+        ]);
+        expect(splitSqlStatements('SELECT 1 -- note\r')).toEqual([
+            'SELECT 1 -- note',
+        ]);
+        expect(hasSqlParameters('SELECT 1 -- use $1\r')).toBe(false);
+        expect(extractExecutableSQL('SELECT 1 -- note\r')).toBe(
+            'SELECT 1 -- note;',
+        );
+    });
+
+    it('keeps a semicolon before the carriage return inside the comment', () => {
+        expect(splitSqlStatements('SELECT 1 -- a; b\rSELECT 2')).toEqual([
+            'SELECT 1 -- a; b\rSELECT 2',
+        ]);
+    });
+});

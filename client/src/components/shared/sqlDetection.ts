@@ -23,9 +23,10 @@ export const SQL_STATEMENT_KEYWORDS = /^\s*(SELECT|WITH|INSERT|UPDATE|DELETE|ALT
 /**
  * Regex matching the routing comment that cluster analysis prepends to a
  * SQL block to say which connection the statement should run against.
- * The first capture group holds the connection ID.
+ * The first capture group holds the connection ID. Like any `--`
+ * comment, it ends at a carriage return or a newline.
  */
-export const CONNECTION_ID_COMMENT_RE = /^--\s*connection_id:\s*(\d+)\s*\n/;
+export const CONNECTION_ID_COMMENT_RE = /^--\s*connection_id:\s*(\d+)\s*[\r\n]/;
 
 /**
  * Regex matching a `$N` bind-parameter placeholder.
@@ -139,12 +140,17 @@ const readBlockComment = (code: string, start: number): number => {
 
 /**
  * Return the index one past a comment starting at `start`, or -1 when no
- * comment starts there.
+ * comment starts there. As in PostgreSQL's lexer and the server's
+ * splitter, a `--` comment ends at the first `\r` or `\n`, which is left
+ * outside the comment.
  */
 const readComment = (code: string, start: number): number => {
     if (code.startsWith('--', start)) {
-        const end = code.indexOf('\n', start);
-        return end === -1 ? code.length : end;
+        let end = start + 2;
+        while (end < code.length && code[end] !== '\r' && code[end] !== '\n') {
+            end++;
+        }
+        return end;
     }
     if (code.startsWith('/*', start)) {
         return readBlockComment(code, start);

@@ -2170,11 +2170,14 @@ func explainCommand(stmt string, genericPlan bool) (string, string) {
 	upper := strings.ToUpper(body)
 
 	// An EXPLAIN the caller wrote is planned as it stands, except that
-	// EXPLAIN ANALYZE would run the statement it explains.
+	// EXPLAIN ANALYZE would run the statement it explains. explainExecutes
+	// also fails closed on an option list it cannot read, so the reason
+	// names both causes rather than blaming an ANALYZE that may be absent.
 	if strings.HasPrefix(upper, "EXPLAIN") {
 		if explainExecutes(body) {
-			return "", "EXPLAIN ANALYZE runs the statement it explains, " +
-				"so it was not validated"
+			return "", "the EXPLAIN names ANALYZE, or an option the " +
+				"check cannot read, so it may run the statement it " +
+				"explains and was not validated"
 		}
 		if containsBindPlaceholder(body) {
 			return "", "the statement is an EXPLAIN carrying parameter " +

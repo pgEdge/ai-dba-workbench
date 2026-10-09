@@ -584,6 +584,24 @@ describe('RunnableCodeBlock validation gating', () => {
         expect(screen.queryByLabelText('Run query')).toBeNull();
     });
 
+    it.each([
+        ['\\r', '\r'],
+        ['\\r\\n', '\r\n'],
+    ])('treats a placeholder after a comment ended by %s as a template', (_label, eol) => {
+        renderWithTheme(
+            <RunnableCodeBlock
+                {...baseProps}
+                isSql={true}
+                codeContent={`SELECT * FROM victim -- x${eol}LIMIT $1`}
+            />,
+        );
+
+        expect(
+            screen.getByTestId('sql-template-notice'),
+        ).toHaveTextContent('query template');
+        expect(screen.queryByLabelText('Run query')).toBeNull();
+    });
+
     it('keeps the copy button on a parameter template', () => {
         renderWithTheme(
             <RunnableCodeBlock

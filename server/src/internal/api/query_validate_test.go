@@ -176,22 +176,27 @@ func TestExplainCommand(t *testing.T) {
 		{
 			name:       "EXPLAIN ANALYZE would execute",
 			stmt:       "EXPLAIN ANALYZE SELECT 1",
-			wantReason: "runs the statement",
+			wantReason: "may run the statement",
 		},
 		{
 			name:       "EXPLAIN ANALYSE would execute",       //nolint:misspell // ANALYSE is a PostgreSQL keyword
 			stmt:       "EXPLAIN (ANALYSE, BUFFERS) SELECT 1", //nolint:misspell // ANALYSE is a PostgreSQL keyword
-			wantReason: "runs the statement",
+			wantReason: "may run the statement",
 		},
 		{
 			name:       "quoted option name is taken as an execution",
 			stmt:       `EXPLAIN (U&"\0061nalyze") SELECT 1`,
-			wantReason: "runs the statement",
+			wantReason: "may run the statement",
 		},
 		{
 			name:       "unbalanced option list fails closed",
 			stmt:       "EXPLAIN (COSTS off SELECT 1",
-			wantReason: "runs the statement",
+			wantReason: "may run the statement",
+		},
+		{
+			name:       "unreadable option name names both causes",
+			stmt:       `EXPLAIN ("verbose") SELECT 1`,
+			wantReason: "an option the check cannot read",
 		},
 		{
 			name:    "non-executing options are planned",

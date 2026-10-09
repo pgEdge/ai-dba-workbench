@@ -822,7 +822,10 @@ Never split SQL on a raw `;`. `splitSqlStatements` in
 `sqlDetection.ts` tokenises single-quoted literals, quoted
 identifiers, dollar-quoted bodies and line and nested block comments
 first; `extractExecutableSQL` and `hasSqlParameters` are both built
-on it. The cluster routing comment has one home too:
+on it. A `--` comment ends at the first `\r` or `\n`, as in
+PostgreSQL's lexer; any other client code that skips line comments
+(such as `stripLeadingNoise` in `useQueryPlan.ts`) must do the same.
+The cluster routing comment has one home too:
 `CONNECTION_ID_COMMENT_RE` and `stripConnectionIdComment`, used by
 `MarkdownContent` and by `createRoutedSqlValidator`.
 

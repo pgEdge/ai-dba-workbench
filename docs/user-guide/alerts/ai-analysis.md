@@ -125,8 +125,9 @@ states:
   parameter values substituted in before it can run.
 
 The check plans `SELECT`, `WITH`, `INSERT`, `UPDATE`,
-`DELETE`, `MERGE`, `VALUES` and `TABLE` statements. It
-reports every other statement as not validated, including
+`DELETE`, `MERGE`, `VALUES` and `TABLE` statements, and
+`EXPLAIN` without `ANALYZE`. It reports every other
+statement as not validated, including `EXPLAIN ANALYZE`,
 the DDL statements and `ALTER SYSTEM`, `VACUUM`, `SET`,
 `SHOW`, `GRANT`, `REINDEX`, `CLUSTER` and `ANALYZE`;
 review these statements yourself before running them.

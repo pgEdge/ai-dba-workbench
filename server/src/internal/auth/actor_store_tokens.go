@@ -237,12 +237,6 @@ func (a *ActorStore) CreateToken(ownerUsername, annotation string,
 		requestedExpiry, callerIsSuperuser)
 }
 
-// DeleteUserToken deletes a token owned by the named user, attributing
-// the change to this store's actor.
-func (a *ActorStore) DeleteUserToken(username string, tokenID int64) error {
-	return a.s.deleteUserToken(a.actor, username, tokenID)
-}
-
 // The methods below change or delete an existing token. Each takes
 // superuserOwnerAllowed, and when it is false refuses, with
 // ErrSuperuserTargetForbidden, a token whose owner is a superuser when

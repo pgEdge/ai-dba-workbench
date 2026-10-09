@@ -4614,7 +4614,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"204": {Description: "Token deleted"},
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
 					"403": jsonResponse("ErrorResponse", "Requires manage_token_scopes permission; a token owned by a superuser may be deleted only by a superuser's session, or a superuser's token with an unrestricted admin scope, or by that token itself"),
-					"500": jsonResponse("ErrorResponse", "Failed to get token: the token or its owner could not be read"),
+					"500": jsonResponse("ErrorResponse", "Failed to delete token"),
 				},
 			},
 		},

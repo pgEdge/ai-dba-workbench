@@ -1601,46 +1601,6 @@ func (s *AuthStore) ListUserTokens(username string) ([]*StoredToken, error) {
 	return s.scanTokens(rows)
 }
 
-// DeleteUserToken deletes a token (only if owned by the specified user)
-// and removes every row that references that token in a single atomic
-// transaction: its connection scope, MCP scope, admin scope, and the
-// connection_sessions row keyed on its token_hash.
-//
-// With PRAGMA foreign_keys = ON enabled in NewAuthStore, the scope rows
-// would cascade via ON DELETE CASCADE. These explicit deletes are
-// intentionally kept as defense in depth and also clean up
-// connection_sessions, which references token_hash without an FK.
-//
-// The change is attributed to the system actor.
-func (s *AuthStore) DeleteUserToken(username string, tokenID int64) error {
-	return s.deleteUserToken(systemActor, username, tokenID)
-}
-
-func (s *AuthStore) deleteUserToken(actor Actor, username string,
-	tokenID int64) error {
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	// The caller named a token, so a failure is recorded against that
-	// id even when no row matches it.
-	id := tokenID
-
-	return s.deleteTokensByFilter(
-		actor,
-		// Filter to token IDs owned by the named user.
-		"id = ? AND owner_id = (SELECT id FROM users WHERE username = ?)",
-		[]any{tokenID, username},
-		"token not found or not owned by user",
-		&auditTarget{
-			action:     "token.delete",
-			targetType: "token",
-			targetID:   &id,
-		},
-		true,
-	)
-}
-
 // =============================================================================
 // Token Validation (all token types)
 // =============================================================================
@@ -1760,7 +1720,7 @@ func (s *AuthStore) deleteToken(actor Actor, identifier string,
 	// could only delete something the caller did not name, and would end
 	// in a "token not found" that hides the real failure.
 	err := s.deleteTokensByFilter(actor, "id = ?", []any{identifier},
-		"", nil, superuserOwnerAllowed)
+		superuserOwnerAllowed)
 	if !errors.Is(err, errTokenFilterNoMatch) {
 		return err
 	}
@@ -1769,7 +1729,7 @@ func (s *AuthStore) deleteToken(actor Actor, identifier string,
 	// matching a huge swath of tokens on short inputs.
 	if len(identifier) >= 8 {
 		err = s.deleteTokensByFilter(
-			actor, "token_hash LIKE ?", []any{identifier + "%"}, "", nil,
+			actor, "token_hash LIKE ?", []any{identifier + "%"},
 			superuserOwnerAllowed,
 		)
 		if !errors.Is(err, errTokenFilterNoMatch) {
@@ -1780,8 +1740,7 @@ func (s *AuthStore) deleteToken(actor Actor, identifier string,
 	// Both probes missed. A numeric identifier names a token id the
 	// caller believed in, so the miss is recorded against that id; a
 	// hash-prefix identifier names no id to attribute the failure to
-	// and so leaves no event, exactly as deleteUserToken's fallback
-	// target does for the id it was given.
+	// and so leaves no event.
 	err = fmt.Errorf("token not found")
 	if id, parseErr := strconv.ParseInt(identifier, 10, 64); parseErr == nil {
 		s.recordFailure(actor, "token.delete", "token", &id, "", err)
@@ -1795,30 +1754,24 @@ func (s *AuthStore) deleteToken(actor Actor, identifier string,
 // atomically, recording one token.delete event per matched token in the
 // same transaction. The whereClause is embedded in "SELECT id FROM
 // tokens WHERE <clause>", so it must not contain user-supplied text;
-// all dynamic values belong in the args slice. notFoundMsg, when
-// non-empty, is returned (wrapped in an error) if the filter matches no
-// rows. When empty, a zero-rows-affected outcome returns a generic
-// "token not found" error so callers can chain filters. fallback, when
-// non-nil, is the target a failure is recorded against before any
-// token matches, so that a caller who knows which token it asked for
-// leaves a failure event behind; DeleteToken passes nil, because it
-// chains two filters of which the first routinely matches nothing and
-// a failure event for each probe would be noise. When
+// all dynamic values belong in the args slice. A filter that matches no
+// rows returns errTokenFilterNoMatch, so callers can chain filters, and
+// records no failure event, because DeleteToken chains two filters of
+// which the first routinely matches nothing and a failure event for
+// each probe would be noise. When
 // superuserOwnerAllowed is false, a match owned by a superuser refuses
 // the whole delete with ErrSuperuserTargetForbidden.
 func (s *AuthStore) deleteTokensByFilter(actor Actor, whereClause string,
-	args []any, notFoundMsg string, fallback *auditTarget,
-	superuserOwnerAllowed bool) (err error) {
+	args []any, superuserOwnerAllowed bool) (err error) {
 
 	tx, beginErr := s.db.Begin()
 	if beginErr != nil {
 		return fmt.Errorf("failed to begin transaction: %w", beginErr)
 	}
 
-	// Until a token matches, failures are attributed to the caller's
-	// fallback target, which is nil for a filter probe that is expected
-	// to match nothing.
-	target := fallback
+	// Until a token matches, a failure has no target to be recorded
+	// against.
+	var target *auditTarget
 	defer func() {
 		if err != nil {
 			s.failAudit(tx, actor, target, err)
@@ -1832,7 +1785,7 @@ func (s *AuthStore) deleteTokensByFilter(actor Actor, whereClause string,
 	}
 
 	if len(matches) == 0 {
-		err = tokenFilterNotFound(notFoundMsg)
+		err = errTokenFilterNoMatch
 		return err
 	}
 
@@ -1919,36 +1872,10 @@ func matchedTokenRefsTx(tx *sql.Tx, whereClause string, args []any) ([]tokenRef,
 	return matches, nil
 }
 
-// errTokenFilterNoMatch marks a deleteTokensByFilter error as the
-// filter having matched no token, as distinct from a failure after a
-// token matched. Callers that chain filters move to the next filter only
-// on this error (see deleteToken).
-var errTokenFilterNoMatch = errors.New("token filter matched no token")
-
-// tokenFilterNoMatchError is the error a filter that matched no token
-// returns. It carries the caller's message unchanged and matches
-// errTokenFilterNoMatch under errors.Is.
-type tokenFilterNoMatchError struct {
-	msg string
-}
-
-func (e *tokenFilterNoMatchError) Error() string { return e.msg }
-
-// Is reports whether target is errTokenFilterNoMatch.
-func (e *tokenFilterNoMatchError) Is(target error) bool {
-	return target == errTokenFilterNoMatch
-}
-
-// tokenFilterNotFound builds the error returned when a filter matches
-// no rows: the caller's message when it supplied one, and a generic
-// "token not found" otherwise so callers can chain filters. Either
-// matches errTokenFilterNoMatch.
-func tokenFilterNotFound(notFoundMsg string) error {
-	if notFoundMsg == "" {
-		notFoundMsg = "token not found"
-	}
-	return &tokenFilterNoMatchError{msg: notFoundMsg}
-}
+// errTokenFilterNoMatch is the error deleteTokensByFilter returns when
+// its filter matches no token. Callers test for it with errors.Is, so an
+// unrelated error with the same text does not count as a miss.
+var errTokenFilterNoMatch = errors.New("token not found")
 
 // firstMatchTarget builds the audit target a failure is attributed to
 // once at least one token has matched the filter.

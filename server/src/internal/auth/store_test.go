@@ -1249,51 +1249,6 @@ func TestListUserTokens(t *testing.T) {
 	}
 }
 
-func TestDeleteUserToken(t *testing.T) {
-	store, cleanup := createTestAuthStoreForStore(t)
-	defer cleanup()
-
-	if err := store.CreateUser("testuser", "Password1234", "", "", ""); err != nil {
-		t.Fatalf("Failed to create user: %v", err)
-	}
-	_, storedToken, err := store.AsActor(systemActor).CreateToken("testuser", "Token", nil, true)
-	if err != nil {
-		t.Fatalf("Failed to create token: %v", err)
-	}
-
-	err = store.DeleteUserToken("testuser", storedToken.ID)
-	if err != nil {
-		t.Fatalf("Failed to delete token: %v", err)
-	}
-
-	tokens, _ := store.ListUserTokens("testuser")
-	if len(tokens) != 0 {
-		t.Errorf("Expected 0 tokens after deletion, got %d", len(tokens))
-	}
-}
-
-func TestDeleteUserTokenNotOwned(t *testing.T) {
-	store, cleanup := createTestAuthStoreForStore(t)
-	defer cleanup()
-
-	if err := store.CreateUser("user1", "Password1234", "", "", ""); err != nil {
-		t.Fatalf("Failed to create user1: %v", err)
-	}
-	if err := store.CreateUser("user2", "Password1234", "", "", ""); err != nil {
-		t.Fatalf("Failed to create user2: %v", err)
-	}
-	_, storedToken, err := store.AsActor(systemActor).CreateToken("user1", "Token", nil, true)
-	if err != nil {
-		t.Fatalf("Failed to create token: %v", err)
-	}
-
-	// Try to delete user1's token as user2
-	err = store.DeleteUserToken("user2", storedToken.ID)
-	if err == nil {
-		t.Error("Expected error when deleting token not owned by user")
-	}
-}
-
 // =============================================================================
 // Token Management Tests
 // =============================================================================
@@ -2260,79 +2215,6 @@ func TestDeleteTokenCleansUpDependentRows(t *testing.T) {
 		"SELECT COUNT(*) FROM token_admin_scope WHERE token_id = ?", 1, survivor.ID)
 	assertRowCount("connection_sessions (survivor)",
 		"SELECT COUNT(*) FROM connection_sessions WHERE token_hash = ?", 1, survivor.TokenHash)
-}
-
-// TestDeleteUserTokenCleansUpDependentRows verifies that the owner-
-// scoped DeleteUserToken path removes the same dependent rows as
-// DeleteToken. The only difference between the two paths is the
-// "owned by user" guard, so we still assert the dependents here
-// because the two functions have independent SQL.
-func TestDeleteUserTokenCleansUpDependentRows(t *testing.T) {
-	store, cleanup := createTestAuthStoreForStore(t)
-	defer cleanup()
-
-	if err := store.CreateUser("alice", "Password1234", "", "", ""); err != nil {
-		t.Fatalf("Failed to create user: %v", err)
-	}
-	_, target, err := store.AsActor(systemActor).CreateToken("alice", "target", nil, true)
-	if err != nil {
-		t.Fatalf("Failed to create token: %v", err)
-	}
-
-	privID, err := store.RegisterMCPPrivilege(
-		"tool.test", MCPPrivilegeTypeTool, "Test tool", false,
-	)
-	if err != nil {
-		t.Fatalf("Failed to register MCP privilege: %v", err)
-	}
-
-	if err := store.AsActor(systemActor).SetTokenConnectionScope(target.ID, []ScopedConnection{
-		{ConnectionID: 7, AccessLevel: "read_write"},
-	}, true); err != nil {
-		t.Fatalf("Failed to set connection scope: %v", err)
-	}
-	if err := store.AsActor(systemActor).SetTokenMCPScope(target.ID, []int64{privID}, true); err != nil {
-		t.Fatalf("Failed to set MCP scope: %v", err)
-	}
-	if err := store.AsActor(systemActor).SetTokenAdminScope(target.ID, []string{"manage_users"}, true); err != nil {
-		t.Fatalf("Failed to set admin scope: %v", err)
-	}
-	if err := store.SetConnectionSession(target.TokenHash, 7, nil); err != nil {
-		t.Fatalf("Failed to set connection session: %v", err)
-	}
-
-	if err := store.DeleteUserToken("alice", target.ID); err != nil {
-		t.Fatalf("Failed to delete user token: %v", err)
-	}
-
-	assertNoRows := func(label, query string, args ...any) {
-		t.Helper()
-		var count int
-		if err := store.db.QueryRow(query, args...).Scan(&count); err != nil {
-			t.Fatalf("Failed to query %s: %v", label, err)
-		}
-		if count != 0 {
-			t.Errorf("Expected 0 orphan rows in %s, got %d", label, count)
-		}
-	}
-
-	assertNoRows("tokens", "SELECT COUNT(*) FROM tokens WHERE id = ?", target.ID)
-	assertNoRows(
-		"token_connection_scope",
-		"SELECT COUNT(*) FROM token_connection_scope WHERE token_id = ?", target.ID,
-	)
-	assertNoRows(
-		"token_mcp_scope",
-		"SELECT COUNT(*) FROM token_mcp_scope WHERE token_id = ?", target.ID,
-	)
-	assertNoRows(
-		"token_admin_scope",
-		"SELECT COUNT(*) FROM token_admin_scope WHERE token_id = ?", target.ID,
-	)
-	assertNoRows(
-		"connection_sessions",
-		"SELECT COUNT(*) FROM connection_sessions WHERE token_hash = ?", target.TokenHash,
-	)
 }
 
 // =============================================================================

@@ -587,7 +587,9 @@ exceeded "this token's access" (fixed so the denial audit coalesces).
   the owner back. `AuthStore` has no exported token writer, so every
   caller names an actor and the flag; tests use
   `store.AsActor(auth.SystemActor()).X(..., true)`, and
-  `TestAuthStoreHasNoTokenWriters` fails if one is re-exported. The
+  `TestAuthStoreHasNoTokenWriters` fails if one is re-exported, or if
+  the unguarded owner-scoped `DeleteUserToken` returns on either store
+  (deleted in #607; delete through `DeleteToken`). The
   ceiling checks still run first in the handler, so a token caller
   widening or clearing a superuser's token, or minting for a superuser,
   gets the ceiling's 403. `setTokenScope` writes all

@@ -237,27 +237,68 @@ func TestSuperuserOwnedTokenConcurrentPromotion(t *testing.T) {
 }
 
 // TestSuperuserOwnedTokenSetScopeIsAtomic checks that SetTokenScope
-// writes every kind or none: an unknown MCP privilege, or an admin
-// scope refused by the superuser guard, leaves the connection and admin
-// scopes as they were.
+// writes every kind or none. A failure in the first kind written (an
+// unknown MCP privilege), or in the second once the first has been
+// written (a connection-scope insert the database refuses), leaves
+// every kind as it was and records only the failure.
 func TestSuperuserOwnedTokenSetScopeIsAtomic(t *testing.T) {
-	store, tokenID, cleanup := newOwnedTokenStore(t)
-	defer cleanup()
-	actor := store.AsActor(testActor())
-
-	err := actor.SetTokenScope(tokenID, TokenScopeChange{
-		MCPPrivileges:    []string{"no_such_tool"},
-		Connections:      []ScopedConnection{{ConnectionID: 1, AccessLevel: AccessLevelRead}},
-		AdminPermissions: []string{"*"},
-	}, false)
-	if !errors.Is(err, ErrUnknownMCPPrivilege) {
-		t.Fatalf("Expected ErrUnknownMCPPrivilege, got %v", err)
+	cases := []struct {
+		name       string
+		tools      []string
+		setup      string
+		wantAction string
+		wantErr    func(error) bool
+	}{
+		{"first kind", []string{"no_such_tool"}, "", actionSetMCPScope,
+			func(err error) bool { return errors.Is(err, ErrUnknownMCPPrivilege) }},
+		{"second kind", []string{"tool_a"},
+			`CREATE TRIGGER block_connection_scope
+             BEFORE INSERT ON token_connection_scope
+             BEGIN SELECT RAISE(ABORT, 'blocked'); END`,
+			actionSetConnectionScope,
+			func(err error) bool { return err != nil && strings.Contains(err.Error(), "blocked") }},
 	}
-	assertOwnedTokenUntouched(t, store, tokenID)
-	ev := lastAuditEvent(t, store)
-	if ev.Outcome != OutcomeFailure || ev.Action != actionSetMCPScope {
-		t.Errorf("Expected a failed %s event, got %s %q", actionSetMCPScope,
-			ev.Action, ev.Outcome)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store, tokenID, cleanup := newOwnedTokenStore(t)
+			defer cleanup()
+			if _, err := store.RegisterMCPPrivilege("tool_a",
+				MCPPrivilegeTypeTool, "a", false); err != nil {
+				t.Fatalf("RegisterMCPPrivilege failed: %v", err)
+			}
+			if tc.setup != "" {
+				mustExec(t, store, tc.setup)
+			}
+			before := lastAuditEvent(t, store).ID
+
+			err := store.AsActor(testActor()).SetTokenScope(tokenID,
+				TokenScopeChange{
+					MCPPrivileges: tc.tools,
+					Connections: []ScopedConnection{
+						{ConnectionID: 1, AccessLevel: AccessLevelRead}},
+					AdminPermissions: []string{"*"},
+				}, false)
+			if !tc.wantErr(err) {
+				t.Fatalf("Unexpected error %v", err)
+			}
+			assertOwnedTokenUntouched(t, store, tokenID)
+
+			events, _, listErr := store.ListAuditEvents(AuditFilter{Limit: 10})
+			if listErr != nil {
+				t.Fatalf("ListAuditEvents failed: %v", listErr)
+			}
+			var added []AuditEvent
+			for _, ev := range events {
+				if ev.ID > before {
+					added = append(added, ev)
+				}
+			}
+			if len(added) != 1 || added[0].Outcome != OutcomeFailure ||
+				added[0].Action != tc.wantAction {
+				t.Errorf("Expected one failed %s event, got %+v",
+					tc.wantAction, added)
+			}
+		})
 	}
 }
 
@@ -445,24 +486,6 @@ func TestDeleteTokenOwnerReadFailsOnce(t *testing.T) {
 	}
 }
 
-// TestTokenFilterNotFound checks that a filter miss keeps the caller's
-// message, or the generic one, and still matches the miss sentinel.
-func TestTokenFilterNotFound(t *testing.T) {
-	for msg, want := range map[string]string{
-		"":              "token not found",
-		"not yours, no": "not yours, no",
-	} {
-		err := tokenFilterNotFound(msg)
-		if err.Error() != want || !errors.Is(err, errTokenFilterNoMatch) {
-			t.Errorf("tokenFilterNotFound(%q) = %v, want %q matching the sentinel",
-				msg, err, want)
-		}
-	}
-	if errors.Is(errors.New("token not found"), errTokenFilterNoMatch) {
-		t.Errorf("Expected an unrelated error not to match the sentinel")
-	}
-}
-
 // TestAuthStoreHasNoTokenWriters fails if AuthStore exports a token
 // writer again. Such a method would have to pick an actor and a
 // superuser flag itself; with no caller context the only workable choice
@@ -488,6 +511,15 @@ func TestAuthStoreHasNoTokenWriters(t *testing.T) {
 		}
 		if _, ok := reflect.TypeOf(&ActorStore{}).MethodByName(name); !ok {
 			t.Errorf("ActorStore.%s is missing", name)
+		}
+	}
+	// DeleteUserToken deleted a token by owner without the superuser
+	// guard, and nothing called it outside tests; it must not return on
+	// either store.
+	for _, typ := range []reflect.Type{storeType, reflect.TypeOf(&ActorStore{})} {
+		if _, ok := typ.MethodByName("DeleteUserToken"); ok {
+			t.Errorf("%s.DeleteUserToken is back; delete through DeleteToken, "+
+				"which applies the superuser guard", typ.Elem().Name())
 		}
 	}
 }

@@ -267,7 +267,9 @@ func TestAuditTokensCreateUnknownOwnerRecordsFailure(t *testing.T) {
 // Deletion
 // =============================================================================
 
-func TestAuditTokensDeleteUserToken(t *testing.T) {
+// TestAuditTokensDeleteTokenBeforeImage checks that a deleted token's
+// audit row records its owner, annotation, expiry and every scope kind.
+func TestAuditTokensDeleteTokenBeforeImage(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAudit(t)
 	defer cleanup()
 
@@ -291,8 +293,8 @@ func TestAuditTokensDeleteUserToken(t *testing.T) {
 	}
 
 	as := store.AsActor(testActor())
-	if err := as.DeleteUserToken("bob", token.ID); err != nil {
-		t.Fatalf("DeleteUserToken failed: %v", err)
+	if err := as.DeleteToken(strconv.FormatInt(token.ID, 10), true); err != nil {
+		t.Fatalf("DeleteToken failed: %v", err)
 	}
 
 	ev := lastAuditEvent(t, store)
@@ -323,45 +325,6 @@ func TestAuditTokensDeleteUserToken(t *testing.T) {
 	if admin := stringsOf(t, before["admin"]); len(admin) != 1 ||
 		admin[0] != "manage_users" {
 		t.Errorf("Expected before.admin [manage_users], got %v", before["admin"])
-	}
-}
-
-func TestAuditTokensDeleteUserTokenNotFound(t *testing.T) {
-	store, cleanup := createTestAuthStoreForAudit(t)
-	defer cleanup()
-
-	mustCreateTokenOwner(t, store, "bob")
-
-	as := store.AsActor(testActor())
-	err := as.DeleteUserToken("bob", 9999)
-	if err == nil {
-		t.Fatal("Expected DeleteUserToken on a missing token to fail")
-	}
-	if err.Error() != "token not found or not owned by user" {
-		t.Errorf("Expected the existing not-found message, got %q", err)
-	}
-
-	// The caller named a token, so the failed attempt is recorded
-	// against that id even though no row matched it.
-	ev := lastAuditEvent(t, store)
-	assertUserActor(t, ev)
-	if ev.Action != "token.delete" {
-		t.Errorf("Expected action token.delete, got %q", ev.Action)
-	}
-	if ev.Outcome != OutcomeFailure {
-		t.Errorf("Expected outcome failure, got %q", ev.Outcome)
-	}
-	if ev.TargetType != "token" {
-		t.Errorf("Expected target type token, got %q", ev.TargetType)
-	}
-	if ev.TargetID == nil || *ev.TargetID != 9999 {
-		t.Errorf("Expected target id 9999, got %v", ev.TargetID)
-	}
-	if ev.TargetName != "" {
-		t.Errorf("Expected an empty target name, got %q", ev.TargetName)
-	}
-	if ev.Error != err.Error() {
-		t.Errorf("Expected error text %q, got %q", err.Error(), ev.Error)
 	}
 }
 
@@ -755,8 +718,8 @@ func TestAuditTokensChainStaysIntact(t *testing.T) {
 	if err := as.ClearTokenScope(token.ID, true); err != nil {
 		t.Fatalf("ClearTokenScope failed: %v", err)
 	}
-	if err := as.DeleteUserToken("bob", token.ID); err != nil {
-		t.Fatalf("DeleteUserToken failed: %v", err)
+	if err := as.DeleteToken(strconv.FormatInt(token.ID, 10), true); err != nil {
+		t.Fatalf("DeleteToken failed: %v", err)
 	}
 
 	count, firstBad, err := store.VerifyAuditChain()
@@ -880,9 +843,6 @@ func TestAuditTokensClosedStoreFailsToBegin(t *testing.T) {
 			_, _, err := as.CreateToken("bob", "x", nil, true)
 			return err
 		}},
-		{"DeleteUserToken", func() error {
-			return as.DeleteUserToken("bob", token.ID)
-		}},
 		{"DeleteToken", func() error { return as.DeleteToken("1", true) }},
 		{"SetTokenConnectionScope", func() error {
 			return as.SetTokenConnectionScope(token.ID, nil, true)
@@ -940,7 +900,7 @@ func TestAuditTokensBrokenScopeTablesRecordFailure(t *testing.T) {
 			}},
 		{"delete", "token_admin_scope", "token.delete",
 			func(as *ActorStore, id int64) error {
-				return as.DeleteUserToken("bob", id)
+				return as.DeleteToken(strconv.FormatInt(id, 10), true)
 			}},
 	}
 
@@ -1040,9 +1000,10 @@ func TestAuditTokensDeleteFailurePaths(t *testing.T) {
 			_, token := mustCreateToken(t, store, "bob", "doomed")
 			mustExec(t, store, tc.break_)
 
-			err := store.AsActor(testActor()).DeleteUserToken("bob", token.ID)
+			err := store.AsActor(testActor()).DeleteToken(
+				strconv.FormatInt(token.ID, 10), true)
 			if err == nil {
-				t.Fatalf("Expected DeleteUserToken to fail after %q", tc.break_)
+				t.Fatalf("Expected DeleteToken to fail after %q", tc.break_)
 			}
 			if !strings.Contains(err.Error(), tc.wantErr) {
 				t.Errorf("Expected an error containing %q, got %q", tc.wantErr, err)
@@ -1132,8 +1093,8 @@ func TestAuditTokensAuditTableMissing(t *testing.T) {
 			_, _, err := as.CreateToken("bob", "second", nil, true)
 			return err
 		}},
-		{"DeleteUserToken", func(as *ActorStore, id int64) error {
-			return as.DeleteUserToken("bob", id)
+		{"DeleteToken", func(as *ActorStore, id int64) error {
+			return as.DeleteToken(strconv.FormatInt(id, 10), true)
 		}},
 		{"SetTokenConnectionScope", func(as *ActorStore, id int64) error {
 			return as.SetTokenConnectionScope(id, nil, true)
@@ -1346,7 +1307,7 @@ func TestAuditTokensScopeMutationFailures(t *testing.T) {
 		{"DeleteScopeRows", seedConnectionScope,
 			blockDelete("token_connection_scope"),
 			func(as *ActorStore, id int64) error {
-				return as.DeleteUserToken("bob", id)
+				return as.DeleteToken(strconv.FormatInt(id, 10), true)
 			},
 			"failed to delete token_connection_scope rows"},
 	}

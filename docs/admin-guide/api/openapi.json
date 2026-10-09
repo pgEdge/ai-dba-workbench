@@ -9404,7 +9404,7 @@
             }
           },
           "500": {
-            "description": "Failed to get token: the token or its owner could not be read",
+            "description": "Failed to delete token",
             "content": {
               "application/json": {
                 "schema": {

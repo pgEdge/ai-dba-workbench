@@ -4567,7 +4567,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 				Responses: map[string]OpenAPIResponse{
 					"204": {Description: "Token deleted"},
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_token_scopes permission; a token owned by a superuser may be deleted only by a superuser, or by that token itself"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_token_scopes permission; a token owned by a superuser may be deleted only by a superuser's session, or a superuser's token with an unrestricted admin scope, or by that token itself"),
 					"500": jsonResponse("ErrorResponse", "Failed to get token: the token or its owner could not be read"),
 				},
 			},
@@ -4601,7 +4601,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"204": {Description: "Scope updated"},
 					"400": jsonResponse("ErrorResponse", "Invalid request, including an empty array for any scope kind; a connection scope that names a connection twice, has a negative connection ID or an unknown access level, or combines connection_id 0 (all connections) with any other entry; or an admin permission that is not a known permission name or \"*\""),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_token_scopes permission, or the change grants access that exceeds the API token's access (its owner's privileges narrowed by its scope). Only the kinds present are judged: an entry the target token does not already allow must be within the caller's access, narrowing a kind that was unrestricted grants nothing, and keeping, narrowing or dropping a connection entry needs read access to that connection. The same rule applies to a token's own scope. A token owned by a superuser may be changed only by a superuser, other than by that token itself, and an API token may widen such a token only when it is a superuser's token unrestricted in every scope kind"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_token_scopes permission, or the change grants access that exceeds the API token's access (its owner's privileges narrowed by its scope). Only the kinds present are judged: an entry the target token does not already allow must be within the caller's access, narrowing a kind that was unrestricted grants nothing, and keeping, narrowing or dropping a connection entry needs read access to that connection. The same rule applies to a token's own scope. A token owned by a superuser may be changed only by a superuser's session, or a superuser's token with an unrestricted admin scope, other than by that token itself, and an API token may widen such a token only when it is a superuser's token unrestricted in every scope kind"),
 					"500": jsonResponse("ErrorResponse", "The target token or its owner could not be read"),
 				},
 			},
@@ -4615,7 +4615,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 				Responses: map[string]OpenAPIResponse{
 					"204": {Description: "Scope cleared"},
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_token_scopes permission, or, for each kind the target token is restricted in, its owner's access in that kind exceeds the API token's access (its owner's privileges narrowed by its scope), or a connection entry the clear drops is one the caller cannot read. The same rule applies to a token's own scope. A token owned by a superuser may be cleared only by a superuser, other than by that token itself, and by an API token only when it is a superuser's token unrestricted in every scope kind"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_token_scopes permission, or, for each kind the target token is restricted in, its owner's access in that kind exceeds the API token's access (its owner's privileges narrowed by its scope), or a connection entry the clear drops is one the caller cannot read. The same rule applies to a token's own scope. A token owned by a superuser may be cleared only by a superuser's session, or a superuser's token with an unrestricted admin scope, other than by that token itself, and by an API token only when it is a superuser's token unrestricted in every scope kind"),
 					"500": jsonResponse("ErrorResponse", "The target token or its owner could not be read"),
 				},
 			},

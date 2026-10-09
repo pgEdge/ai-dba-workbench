@@ -25,6 +25,14 @@ export interface ToolActivity {
     name: string;
     status: 'running' | 'completed' | 'error';
     startedAt?: string;
+    /**
+     * The `connection_id` argument the tool was called with, when it was
+     * a valid ID. Recorded so SQL in the reply can be run on the server
+     * the tool calls used (see chatSqlTarget.ts).
+     */
+    connectionId?: number;
+    /** The `database_name` argument the tool was called with, if any. */
+    databaseName?: string;
 }
 
 // ---------------------------------------------------------------------------

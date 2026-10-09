@@ -19,9 +19,16 @@ import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/pris
 import type { ThemeMode } from '../../types/theme';
 import type { ToolActivity } from './ToolStatus';
 import { getToolDisplayName } from '../../utils/toolDisplayNames';
-import { createCleanTheme, extractLanguage } from '../shared/MarkdownExports';
+import {
+    createCleanTheme,
+    extractLanguage,
+    isSqlCodeBlock,
+} from '../shared/MarkdownExports';
 import CopyCodeButton from '../shared/CopyCodeButton';
 import { getCodeBlockButtonGroupSx } from '../shared/markdownStyles';
+import ChatSqlCodeBlock from './ChatSqlCodeBlock';
+import { collectReplyTargets } from './chatSqlTarget';
+import ReplyTargetsContext from './replyTargetsContext';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -328,6 +335,13 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, mode }) => {
 
     const textContent = getContentText(message.content);
 
+    // Where this reply's tool calls ran, used to decide which server and
+    // database its SQL blocks may be run on.
+    const replyTargets = useMemo(
+        () => collectReplyTargets(message.activity),
+        [message.activity],
+    );
+
     // Memoize markdown components following AlertAnalysisDialog pattern
     const markdownComponents = useMemo(
         () => ({
@@ -398,6 +412,20 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, mode }) => {
                 const cleanTheme = isDark
                     ? createCleanTheme(oneDark, theme.palette.background.paper)
                     : createCleanTheme(oneLight, theme.palette.grey[50]);
+
+                if (isSqlCodeBlock(className, codeString)) {
+                    return (
+                        <ChatSqlCodeBlock
+                            code={codeString}
+                            language={language}
+                            isDark={isDark}
+                            syntaxTheme={cleanTheme}
+                            customBackground={customBackground}
+                            theme={theme}
+                            props={props}
+                        />
+                    );
+                }
 
                 return (
                     <Box sx={{
@@ -573,12 +601,14 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, mode }) => {
     return (
         <Box sx={getMessageContainerSx('assistant')}>
             <Box sx={getAssistantBubbleSx(theme)}>
-                <ReactMarkdown
-                    remarkPlugins={[remarkGfm]}
-                    components={markdownComponents as Record<string, React.ComponentType>}
-                >
-                    {textContent}
-                </ReactMarkdown>
+                <ReplyTargetsContext.Provider value={replyTargets}>
+                    <ReactMarkdown
+                        remarkPlugins={[remarkGfm]}
+                        components={markdownComponents as Record<string, React.ComponentType>}
+                    >
+                        {textContent}
+                    </ReactMarkdown>
+                </ReplyTargetsContext.Provider>
                 {renderToolActivity()}
             </Box>
             {message.timestamp && (

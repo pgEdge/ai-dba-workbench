@@ -41,7 +41,27 @@ vi.mock('../../shared/MarkdownExports', () => ({
     createCleanTheme: () => ({}),
     extractLanguage: (className?: string) =>
         className?.replace('language-', '') || '',
+    isSqlCodeBlock: (className?: string) => className === 'language-sql',
 }));
+
+// Stub the SQL block so these tests stay independent of the query
+// runner; it exposes the reply targets it receives through context.
+vi.mock('../ChatSqlCodeBlock', async () => {
+    const { useContext } = await import('react');
+    const ctx = (await import('../replyTargetsContext')).default;
+    const MockChatSqlCodeBlock = ({ code }: { code: string }) => {
+        const reply = useContext(ctx);
+        return (
+            <div
+                data-testid="chat-sql-block"
+                data-targets={JSON.stringify(reply)}
+            >
+                {code}
+            </div>
+        );
+    };
+    return { default: MockChatSqlCodeBlock };
+});
 
 // Mock CopyCodeButton
 vi.mock('../../shared/CopyCodeButton', () => ({
@@ -119,6 +139,41 @@ describe('ChatMessage', () => {
             expect(
                 screen.getByText(/SELECT/i)
             ).toBeInTheDocument();
+        });
+
+        it('renders SQL blocks through ChatSqlCodeBlock with the reply targets', () => {
+            const message: ChatMessageData = {
+                role: 'assistant',
+                content: '```sql\nSELECT 1;\n```',
+                activity: [
+                    {
+                        name: 'query_database',
+                        status: 'completed',
+                        connectionId: 4,
+                        databaseName: 'app',
+                    },
+                ],
+            };
+            renderWithTheme(<ChatMessage message={message} mode="light" />);
+
+            const block = screen.getByTestId('chat-sql-block');
+            expect(block).toHaveTextContent('SELECT 1;');
+            expect(JSON.parse(block.dataset.targets ?? '{}')).toEqual({
+                targets: [{ connectionId: 4, databaseName: 'app' }],
+                unattributed: false,
+                usedDatastore: false,
+            });
+        });
+
+        it('keeps non-SQL code blocks on the plain renderer', () => {
+            const message: ChatMessageData = {
+                role: 'assistant',
+                content: '```bash\necho hello\nexit 0\n```',
+            };
+            renderWithTheme(<ChatMessage message={message} mode="dark" />);
+
+            expect(screen.queryByTestId('chat-sql-block')).not.toBeInTheDocument();
+            expect(screen.getByTestId('copy-button')).toBeInTheDocument();
         });
 
         it('renders timestamp for assistant messages', () => {

@@ -56,7 +56,7 @@ const (
               AND metric_name = $1
               AND connection_id = $2
               AND status = 'cleared'
-              AND cleared_at > NOW() - $3::interval
+              AND cleared_at > NOW() - INTERVAL '1 second' * $3
               AND (database_name = $4 OR ($4 IS NULL AND database_name IS NULL))
         )
     `
@@ -121,7 +121,7 @@ func (d *Datastore) GetRecentlyClearedAnomalyAlert(ctx context.Context, metricNa
 	connectionID int, dbName *string, cooldown time.Duration) (bool, error) {
 	var exists bool
 	err := d.pool.QueryRow(ctx, recentlyClearedAnomalyAlertSQL, metricName, connectionID,
-		fmt.Sprintf("%d seconds", int(cooldown.Seconds())), dbName).Scan(&exists)
+		int(cooldown.Seconds()), dbName).Scan(&exists)
 	if err != nil {
 		return false, fmt.Errorf("failed to check recently cleared anomaly alert: %w", err)
 	}

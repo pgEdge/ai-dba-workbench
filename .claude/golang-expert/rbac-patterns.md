@@ -1162,7 +1162,16 @@ failing row and slot 2 at the newest row (`verifyAuditTailCurrent`),
 and `proveAuditReanchorTail` checks, under the previous key, slot 2
 while it fails under the current key (before promotion) and otherwise
 slot 1, as part of `HistoryProven`; `proveAuditReanchorPlan` runs it
-even when the history proof has already failed. New rows
+even when the history proof has already failed, inside one read
+transaction whose re-scan must equal `plan.reanchor`. A MAC on a
+binding is not trusted alone: case 3 of `checkRotatedAuditTail`
+checks slot 1's `bound_*`, and case 4 slot 2's view of slot 1
+(`primaryBinding`), with `checkAuditTailBinding`, which requires
+`auditTailBoundRow` to find the bound row by id and hash below the
+anchored id; `proveAuditReanchorTail` ends with
+`proveAuditTailBinding`, which also requires that row to fail under
+the previous key. `audit_tail_decoy_test.go` holds the attacks these
+close. New rows
 carry `auditHashVersion` 3 (`auditTailHashVersion`), which renders as
 version 2 does under the label `v3`; a v3 newest row with no anchor
 fails verification. `initSchema` ends with `seedAuditTail`, which

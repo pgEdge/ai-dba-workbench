@@ -233,7 +233,31 @@ func (s *AuthStore) proveAuditReanchorPlan(plan *AuditRechainPlan,
 		return nil
 	}
 
-	proof, err := s.proveAuditHistory(s.db, previousKey,
+	// The proof reads the log in one read transaction, and first checks
+	// that it is still the log the plan scanned: proving anything else
+	// would vouch for a log the re-anchor does not accept, since the
+	// transaction that writes it holds the log to the scan, not to what
+	// the proof read.
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin the re-anchor proof: %w", err)
+	}
+	defer func() {
+		//nolint:errcheck // The transaction only reads; nothing is lost
+		// if its rollback fails.
+		tx.Rollback()
+	}()
+	scan, err := s.scanAuditForReanchor(tx)
+	if err != nil {
+		return err
+	}
+	if scan != plan.reanchor {
+		plan.HistoryProofErr = fmt.Errorf("%w: the log has changed since "+
+			"the plan scanned it", errAuditHistoryUnproven)
+		return nil
+	}
+
+	proof, err := s.proveAuditHistory(tx, previousKey,
 		plan.reanchor.through)
 	if err != nil {
 		return err
@@ -245,7 +269,7 @@ func (s *AuthStore) proveAuditReanchorPlan(plan *AuditRechainPlan,
 	// more than two secrets, so that the plan says whether events have
 	// also been deleted from the end of those written under the
 	// previous one.
-	tailProof, err := s.proveAuditReanchorTail(s.db, previousKey,
+	tailProof, err := s.proveAuditReanchorTail(tx, previousKey,
 		plan.reanchor.through, plan.reanchor.throughHash)
 	if err != nil {
 		return err

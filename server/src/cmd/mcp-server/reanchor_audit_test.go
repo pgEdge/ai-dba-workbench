@@ -693,3 +693,111 @@ func TestRunAuditCommands(t *testing.T) {
 		})
 	}
 }
+
+// assertAuditVerifyExit checks the exit status verification reports.
+func assertAuditVerifyExit(t *testing.T, dir string, want int) {
+	t.Helper()
+
+	err := verifyAuditLogCommand(dir)
+	if got := auditVerifyExitCode(err); got != want {
+		t.Errorf("expected verification to exit with status %d, got %d: %v",
+			want, got, err)
+	}
+}
+
+// execAuthDB runs statements directly against auth.db, outside the
+// store, as someone with write access to the file would.
+func execAuthDB(t *testing.T, dir string, stmts ...string) {
+	t.Helper()
+
+	db, err := sql.Open("sqlite", filepath.Join(dir, "auth.db"))
+	if err != nil {
+		t.Fatalf("failed to open auth.db directly: %v", err)
+	}
+	defer db.Close()
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("failed to run %q: %v", stmt, err)
+		}
+	}
+}
+
+// TestReanchorCommandRefusesADecoyStartedAnchor checks the sequence
+// that once led the server to sign an anchor bound to a decoy: the
+// newest events are cut, a decoy carrying the hash of the event left
+// newest is planted, the server writes under the old secret and starts
+// a current-key anchor beside it, the decoy is deleted, and the server
+// then writes under a new secret, promoting that anchor. Verification
+// reports tampering, and the unattended re-anchor under the old secret
+// refuses rather than adopting the cut.
+func TestReanchorCommandRefusesADecoyStartedAnchor(t *testing.T) {
+	dir := rotatedSecretAuditStore(t)
+	store, err := auth.NewAuthStore(dir, 0, 0,
+		auth.DeriveAuditKey(olderServerSecret))
+	if err != nil {
+		t.Fatalf("failed to open the auth store: %v", err)
+	}
+	for _, name := range []string{"bob", "carol", "dave", "erin"} {
+		if err := store.CreateUser(name, "correct horse battery staple",
+			"", "Test User", name+"@example.com"); err != nil {
+			t.Fatalf("failed to create a user: %v", err)
+		}
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("failed to close the store: %v", err)
+	}
+
+	var newest int64
+	db, err := sql.Open("sqlite", filepath.Join(dir, "auth.db"))
+	if err != nil {
+		t.Fatalf("failed to open auth.db directly: %v", err)
+	}
+	if err := db.QueryRow("SELECT max(id) FROM audit_events").
+		Scan(&newest); err != nil {
+		t.Fatalf("failed to read the newest event: %v", err)
+	}
+	db.Close()
+	kept, decoy := newest-2, newest-1
+	execAuthDB(t, dir,
+		fmt.Sprintf("DELETE FROM audit_events WHERE id > %d", kept),
+		fmt.Sprintf(`INSERT INTO audit_events (id, occurred_at,
+            actor_type, actor_name, action, outcome, prev_hash, hash,
+            hash_version)
+        SELECT %d, occurred_at, 'system', 'decoy', 'user.create',
+            'success', 'unused', hash, hash_version
+        FROM audit_events WHERE id = %d`, decoy, kept),
+		fmt.Sprintf(`UPDATE sqlite_sequence SET seq = %d
+        WHERE name = 'audit_events'`, decoy),
+		fmt.Sprintf(`UPDATE audit_tail SET event_id = %d,
+        event_hash = (SELECT hash FROM audit_events WHERE id = %d),
+        mac = 'x' WHERE id = 1`, decoy, kept))
+
+	store, err = auth.NewAuthStore(dir, 0, 0,
+		auth.DeriveAuditKey(olderServerSecret))
+	if err != nil {
+		t.Fatalf("failed to open the auth store: %v", err)
+	}
+	if err := store.CreateUser("frank", "correct horse battery staple",
+		"", "Test User", "frank@example.com"); err != nil {
+		t.Fatalf("failed to create a user: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("failed to close the store: %v", err)
+	}
+	execAuthDB(t, dir,
+		fmt.Sprintf("DELETE FROM audit_events WHERE id = %d", decoy))
+	assertAuditVerifyExit(t, dir, auditExitTampered)
+
+	addCurrentKeyEvents(t, dir, "grace")
+	assertAuditVerifyExit(t, dir, auditExitTampered)
+
+	var out bytes.Buffer
+	err = rechainAuditLogCommand(dir, auditRechainOptions{assumeYes: true,
+		previousSecretFile: writeSecretFile(t, olderServerSecret)},
+		strings.NewReader(""), &out)
+	if err == nil {
+		t.Fatalf("expected the re-anchor to refuse the decoy, got:\n%s",
+			out.String())
+	}
+	assertAuditVerifyExit(t, dir, auditExitTampered)
+}

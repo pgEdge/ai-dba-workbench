@@ -2490,7 +2490,11 @@ project adheres to
   with status 2 as well. A second change of secret before the log is
   re-anchored moves the second record into the first's place, so such
   a log still reports status 3, and the server logs a warning whenever
-  it starts or moves the second record. Status 3 vouches for nothing
+  it starts or moves the second record. Because the server can be led
+  to sign the second record beside a planted first record, the event
+  the second record was written beside must also still be in the log,
+  and `-previous-secret-file` must find that it fails under the
+  previous secret. Status 3 vouches for nothing
   written under the previous secret, so re-anchor with
   `-previous-secret-file` after each change of secret; an interactive
   re-anchor without that proof now warns that the history is not

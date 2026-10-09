@@ -78,9 +78,25 @@ import (
 // anchor at the newest row, verifying under the key in use, so a cut
 // from the events written since the rotation is caught exactly as one
 // from a log never rotated. A log in which every row verifies is checked
-// against the primary anchor alone. Starting the current-key anchor from
-// a decoy, as above, gains nothing there, because the primary anchor
-// still names the decoy once it has been deleted.
+// against the primary anchor alone.
+//
+// Starting the current-key anchor from a decoy, as above, does not by
+// itself hide the cut, because the primary anchor still names the
+// decoy once it has been deleted. A change of secret would change that:
+// promotion moves the decoy's primary anchor into the bound_* columns,
+// where the server's own HMAC vouches for it. A bound anchor is
+// therefore checked against the log as well as by its HMAC
+// (checkAuditTailBinding, proveAuditTailBinding). The server starts a
+// current-key anchor only when the row the primary anchor names fails
+// under the key in use, which, honestly, is the last row written under
+// an earlier secret: the purge refuses a log with that shape, so the
+// row is still there, before the event the anchor names, with the hash
+// the binding records, and it fails under the previous secret. If the
+// row is gone, verification reports tampering. If it is there and
+// verifies under the previous secret, it was altered so that it failed
+// and then put back; verification cannot tell that from the rows and
+// reads a key mismatch, but the re-anchor given the previous secret
+// refuses it.
 //
 // The current-key anchor's HMAC covers the primary anchor beside it as
 // well as the event it names (auditTailCurrentMAC). Without that, a
@@ -342,7 +358,10 @@ func auditTailMAC(key []byte, id int64, hash string) (string, error) {
 // lives. Binding the two keeps a writer without the secret from
 // splicing them: a current-key anchor the server was led to start, or
 // promote, over a decoy names the decoy's primary anchor too, so putting
-// back a saved primary anchor afterwards leaves it failing.
+// back a saved primary anchor afterwards leaves it failing. The binding
+// proves only that the server signed the pair, not that the primary
+// anchor it names was genuine, so the row it names is checked against
+// the log as well (checkAuditTailBinding).
 func auditTailCurrentMAC(key []byte, id int64, hash string,
 	primaryID int64, primaryHash, primaryMAC string) (string, error) {
 
@@ -940,14 +959,14 @@ func (s *AuthStore) verifyAuditTailAfterKeyChange(q auditRowQuerier,
 		return err
 	}
 
-	return s.checkRotatedAuditTail(st, lastFailing)
+	return s.checkRotatedAuditTail(q, st, lastFailing)
 }
 
 // checkRotatedAuditTail applies the rules verifyAuditTailAfterKeyChange
 // describes to st, the anchors of a log whose rows through lastFailing
 // fail under the key in use.
-func (s *AuthStore) checkRotatedAuditTail(st auditTailState,
-	lastFailing AuditEvent) error {
+func (s *AuthStore) checkRotatedAuditTail(q auditRowQuerier,
+	st auditTailState, lastFailing AuditEvent) error {
 
 	switch {
 	case !st.hasAnchor:
@@ -956,15 +975,21 @@ func (s *AuthStore) checkRotatedAuditTail(st auditTailState,
 		return nil
 	case st.anchorID == lastFailing.ID && st.anchorHash == lastFailing.Hash &&
 		!s.auditTailVerifies(st):
-		return s.verifyAuditTailCurrent(st, lastFailing)
+		if err := s.verifyAuditTailCurrent(st, lastFailing); err != nil {
+			return err
+		}
+		return checkAuditTailBinding(q, "tail anchor", st.anchorID,
+			st.bound)
 	case st.newestID == lastFailing.ID && st.currentNamesNewest() &&
 		!s.currentTailVerifies(st) && !s.auditTailVerifies(st):
 		// The secret has changed twice and nothing has been written
 		// under the newest: the current-key anchor still names the last
 		// row written under the secret before, and the next event will
 		// promote it. Nothing here verifies under the key in use, so
-		// there is nothing more for it to check.
-		return nil
+		// only the binding can be checked: the primary anchor beside it
+		// must name an event that is still in the log.
+		return checkAuditTailBinding(q, "tail anchor for the newest events",
+			st.currentID, st.primaryBinding())
 	}
 
 	return fmt.Errorf("%w: audit chain tail missing: the tail anchor "+
@@ -1019,6 +1044,69 @@ func (s *AuthStore) verifyAuditTailCurrent(st auditTailState,
 	return nil
 }
 
+// primaryBinding is the primary anchor as the current-key anchor beside
+// it is bound to it.
+func (t auditTailState) primaryBinding() auditTailBinding {
+	return auditTailBinding{valid: t.hasAnchor, id: t.anchorID,
+		hash: t.anchorHash, mac: t.anchorMAC}
+}
+
+// auditTailBoundRow returns the event that b, the primary anchor an
+// anchor naming event id is bound to, names, or nil when no event before
+// id has that id and hash.
+//
+// The server binds a current-key anchor only to a primary anchor that
+// names the newest row when the anchor is started, which is always an
+// earlier row than the one the anchor names; and until the log is
+// re-anchored nothing can remove that row, since the purge refuses a
+// log with the shape a change of secret leaves. A binding whose event is
+// gone is therefore one the server was led to write beside a decoy that
+// was deleted afterwards, as the fourth review of #565 found: point the
+// primary anchor at a decoy that copies the hash of the row before it,
+// let the server start a current-key anchor beside it, delete the
+// decoy, and let a change of secret promote that anchor, which the
+// earlier secret really signed.
+func auditTailBoundRow(q auditRowQuerier, b auditTailBinding,
+	id int64) (*AuditEvent, error) {
+
+	if b.id >= id {
+		return nil, nil
+	}
+	ev, err := scanAuditEvent(q.QueryRow(auditSelectByID, b.id).Scan)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return nil, nil
+	case err != nil:
+		return nil, fmt.Errorf("failed to read audit event %d: %w", b.id,
+			err)
+	case ev.Hash != b.hash:
+		return nil, nil
+	}
+
+	return &ev, nil
+}
+
+// checkAuditTailBinding refuses an anchor, the slot named, naming event
+// id and bound to b, when the event b names is not in the log before it;
+// see auditTailBoundRow. An anchor with no binding passes.
+func checkAuditTailBinding(q auditRowQuerier, slot string, id int64,
+	b auditTailBinding) error {
+
+	if !b.valid {
+		return nil
+	}
+	row, err := auditTailBoundRow(q, b, id)
+	if err != nil || row != nil {
+		return err
+	}
+
+	return fmt.Errorf("%w: audit chain tail missing: the %s names event "+
+		"%d and is bound to a tail anchor naming event %d, which is no "+
+		"longer in the log before it; events have been deleted from the "+
+		"end of the log under an earlier secret, and the anchor started "+
+		"over a decoy", ErrAuditChainBroken, slot, id, b.id)
+}
+
 // errAuditTailUnproven wraps each reason proveAuditReanchorTail gives.
 var errAuditTailUnproven = errors.New("the tail anchor is not what the " +
 	"previous secret wrote")
@@ -1040,6 +1128,18 @@ var errAuditTailUnproven = errors.New("the tail anchor is not what the " +
 //     the current-key slot and then promoted is refused like one
 //     planted in the primary slot directly.
 //
+// A MAC alone does not make a bound anchor the previous secret's own
+// account of its tail, since the server can be led to sign one beside
+// a primary anchor naming a decoy (auditTailBoundRow). The previous
+// secret started it only because the row the binding names failed
+// under that secret, so the row must still be in the log, and must
+// still fail under previousKey. A row that verifies under it is one
+// that was altered for the server's write and put back. In a genuine
+// log the bound row is the last one written under the secret before,
+// so the history, which proveAuditHistory requires to verify under
+// previousKey throughout, is never proven with a bound anchor either;
+// checking the binding here makes the plan say why.
+//
 // A primary anchor that is missing or verifies under the key in use,
 // with no failing current-key anchor beside it, needs no proof. The
 // returned error is the reason the proof fails, or nil when it holds; a
@@ -1054,10 +1154,12 @@ func (s *AuthStore) proveAuditReanchorTail(q auditRowQuerier,
 	}
 
 	slot, id, hash := "tail anchor", st.anchorID, st.anchorHash
+	binding := st.bound
 	switch {
 	case st.hasCurrent && !s.currentTailVerifies(st):
 		slot, id, hash = "tail anchor for the newest events", st.currentID,
 			st.currentHash
+		binding = st.primaryBinding()
 		if !currentTailVerifiesUnder(previousKey, st) {
 			return fmt.Errorf("%w: the %s names event %d, but verifies "+
 				"under neither secret", errAuditTailUnproven, slot, id), nil
@@ -1074,6 +1176,39 @@ func (s *AuthStore) proveAuditReanchorTail(q auditRowQuerier,
 			"written under that secret is now %d; events written under it "+
 			"have been deleted from the end of the log",
 			errAuditTailUnproven, slot, id, through), nil
+	}
+
+	return proveAuditTailBinding(q, previousKey, slot, id, binding)
+}
+
+// proveAuditTailBinding checks, under previousKey, the binding of the
+// anchor proveAuditReanchorTail has proven, as that function describes.
+func proveAuditTailBinding(q auditRowQuerier, previousKey []byte,
+	slot string, id int64, b auditTailBinding) (proof error, err error) {
+
+	if !b.valid {
+		return nil, nil
+	}
+	row, err := auditTailBoundRow(q, b, id)
+	switch {
+	case err != nil:
+		return nil, err
+	case row == nil:
+		return fmt.Errorf("%w: the %s names event %d, but is bound to a "+
+			"tail anchor naming event %d, which is no longer in the log "+
+			"before it; it was started over a decoy, and events written "+
+			"under the previous secret have been deleted from the end of "+
+			"the log", errAuditTailUnproven, slot, id, b.id), nil
+	}
+	if want, hashErr := auditHash(row, previousKey); hashErr == nil &&
+		want == row.Hash {
+
+		return fmt.Errorf("%w: the %s names event %d, but is bound to a "+
+			"tail anchor naming event %d, which verifies under the previous "+
+			"secret; that secret started the anchor only because the event "+
+			"did not verify, so it was altered and put back, and events "+
+			"written under the previous secret may have been deleted from "+
+			"the end of the log", errAuditTailUnproven, slot, id, b.id), nil
 	}
 
 	return nil, nil

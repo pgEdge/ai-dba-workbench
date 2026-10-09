@@ -448,13 +448,22 @@ func AgeAuditFailuresForTesting(s *AuthStore, d time.Duration) {
 // sweepAuditFailures drains the coalescer at now, every entry when all
 // is true or only those whose window has closed otherwise, and writes
 // the summaries. If the write fails the drained entries are put back,
-// so that the next sweep or Close tries again.
+// so that the next sweep or Close tries again. A flush of every entry
+// happens only at shutdown, when there may be no later attempt, so a
+// failed flush also writes each summary to the server log, as restore
+// does at the cap, leaving the counts attributed there at least.
 func (s *AuthStore) sweepAuditFailures(now time.Time, all bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	summaries := s.failures.drain(now, all)
 	if !s.writeFailureSummaries(summaries) {
+		if all {
+			for i := range summaries {
+				log.Printf("[ERROR] Unrecorded audit failure summary at "+
+					"shutdown: %s", &summaries[i])
+			}
+		}
 		s.failures.restore(summaries)
 	}
 }

@@ -154,10 +154,13 @@ The server writes the summary for a burst that has stopped at its
 next periodic cleanup, which runs every five minutes, or sooner if a
 later failure arrives first; a clean shutdown, including one
 requested with `SIGTERM` or `SIGINT`, writes a summary for every
-window that is still open, so only a crash loses the counts of the
-open windows. The server keeps the coalescing state in memory, so
-a restart starts every window afresh, and servers sharing one
-`auth.db` coalesce independently.
+window that is still open. The counts of the open windows are lost
+from the audit log if the server crashes, or if the summary write at
+shutdown fails; in the latter case the server log records each
+unwritten summary, with its actor, action, target, error text and
+count. The server keeps the coalescing state in memory, so a restart
+starts every window afresh, and servers sharing one `auth.db`
+coalesce independently.
 
 ## Actor Types
 

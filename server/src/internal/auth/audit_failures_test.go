@@ -578,6 +578,81 @@ func TestCoalesceFailureRestoresOnWriteError(t *testing.T) {
 	}
 }
 
+// TestCoalesceFailureCarriesCountPastFailedWrite checks, through the
+// store, that when the row closing a window with suppressed repeats
+// cannot be written, its count is carried rather than dropped: the next
+// identical failure after the write path recovers reports the repeats
+// the lost row stood for, plus the lost row itself.
+func TestCoalesceFailureCarriesCountPastFailedWrite(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAudit(t)
+	defer cleanup()
+
+	// One row for the first failure and three repeats suppressed.
+	repeatFailure(store, "bob", 4)
+	ageEntry(store, failureKeyFor("bob"), failureCoalesceWindow)
+
+	// The failure that closes the window carries all four, but its row
+	// cannot be written.
+	mustExec(t, store, "CREATE TRIGGER block_audit_insert BEFORE INSERT "+
+		"ON audit_events BEGIN SELECT RAISE(ABORT, 'blocked'); END")
+	before := auditEventCount(t, store)
+	repeatFailure(store, "bob", 1)
+	if got := auditEventCount(t, store) - before; got != 0 {
+		t.Fatalf("expected the blocked write to add no rows, got %d", got)
+	}
+	mustExec(t, store, "DROP TRIGGER block_audit_insert")
+
+	repeatFailure(store, "bob", 1)
+	if got := auditEventCount(t, store) - before; got != 1 {
+		t.Fatalf("expected the next failure to be written, got %d rows", got)
+	}
+	ev := lastAuditEvent(t, store)
+	if ev.TargetName != "bob" || ev.Outcome != OutcomeFailure {
+		t.Fatalf("unexpected row %+v", ev)
+	}
+	if got := auditDetails(t, ev)["repeat_count"]; got != float64(5) {
+		t.Errorf("expected repeat_count 5 (four carried plus the lost row), "+
+			"got %v", got)
+	}
+}
+
+// TestFlushAuditFailuresLogsUnwrittenSummaries checks that a flush whose
+// write fails, which at shutdown may have no later attempt, writes each
+// summary to the server log with its key and count; and that a periodic
+// sweep, which will be retried, does not.
+func TestFlushAuditFailuresLogsUnwrittenSummaries(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAudit(t)
+	defer cleanup()
+
+	repeatFailure(store, "bob", 4)
+	if err := store.db.Close(); err != nil {
+		t.Fatalf("closing the database failed: %v", err)
+	}
+
+	var logged bytes.Buffer
+	log.SetOutput(&logged)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	AgeAuditFailuresForTesting(store, failureCoalesceWindow)
+	store.SweepAuditFailures()
+	if strings.Contains(logged.String(), "Unrecorded audit failure summary") {
+		t.Errorf("a periodic sweep logged its summaries: %q", logged.String())
+	}
+
+	logged.Reset()
+	store.FlushAuditFailures()
+	line := logged.String()
+	if !strings.Contains(line, "Unrecorded audit failure summary at shutdown") ||
+		!strings.Contains(line, `"bob"`) || !strings.Contains(line, ": 3 failure(s)") {
+		t.Errorf("expected the unwritten summary's key and count logged, got %q",
+			line)
+	}
+	if state, ok := store.failures.entries[failureKeyFor("bob")]; !ok ||
+		state.suppressed != 3 {
+		t.Errorf("expected bob kept with 3 repeats, got %+v", state)
+	}
+}
+
 // TestFailureCoalescerRestoreStopsAtCap checks that restore never takes
 // the map past its cap, so a store whose writes keep failing cannot
 // grow it without bound.

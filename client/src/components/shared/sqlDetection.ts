@@ -24,9 +24,10 @@ export const SQL_STATEMENT_KEYWORDS = /^\s*(SELECT|WITH|INSERT|UPDATE|DELETE|ALT
  * Regex matching the routing comment that cluster analysis prepends to a
  * SQL block to say which connection the statement should run against.
  * The first capture group holds the connection ID. Like any `--`
- * comment, it ends at a carriage return or a newline.
+ * comment, it ends at a carriage return or a newline, or at the end of
+ * the block when the comment is all there is.
  */
-export const CONNECTION_ID_COMMENT_RE = /^--\s*connection_id:\s*(\d+)\s*[\r\n]/;
+export const CONNECTION_ID_COMMENT_RE = /^--\s*connection_id:\s*(\d+)\s*(?:[\r\n]|$)/;
 
 /**
  * Regex matching a `$N` bind-parameter placeholder.
@@ -275,23 +276,66 @@ export const splitSqlStatements = (code: string): string[] => {
  * comment as whitespace, so `LIMIT`, an empty block comment and `$1`
  * must not run together as `LIMIT$1`.
  */
-const sqlCodeOnly = (statement: string): string =>
-    tokenizeSql(statement)
+const blankNonCode = (tokens: SqlToken[]): string =>
+    tokens
         .map((token) =>
             token.kind === 'literal' || token.kind === 'comment' ? ' ' : token.text
         )
         .join('')
         .trim();
 
+const sqlCodeOnly = (statement: string): string =>
+    blankNonCode(tokenizeSql(statement));
+
 /**
- * Determine whether a SQL block contains `$N` bind-parameter
- * placeholders, which make it a template rather than a runnable query.
+ * Placeholders other than `$N` that mark SQL as a template, checked once
+ * comments and literals are blanked out: angle-bracket stand-ins
+ * (`<table_name>`), template braces (`{{schema}}`) and bare psql
+ * variables (`:name`, but not a `::` cast or an `a[lo:hi]` slice).
+ */
+const OTHER_PLACEHOLDER_RES: RegExp[] = [
+    /<[A-Za-z_][\w.]*>/,
+    /\{\{[^}]*\}\}/,
+    /(?<![:\w]):(?!:)[A-Za-z_]/,
+];
+
+/** A plain run ending in the `:` that opens a quoted psql variable. */
+const PSQL_VARIABLE_PREFIX_RE = /(?<![:\w]):$/;
+
+/** A quoted run that is just a name, as in `:'name'` or `:"name"`. */
+const QUOTED_VARIABLE_NAME_RE = /^(['"])[A-Za-z_]\w*\1$/;
+
+/**
+ * Report whether the tokens hold a quoted psql variable (`:'name'` or
+ * `:"name"`). The quotes make the name a literal token, so this looks at
+ * the token pair rather than at the blanked-out code.
+ */
+const hasQuotedPsqlVariable = (tokens: SqlToken[]): boolean =>
+    tokens.some((token, i) =>
+        i > 0
+        && token.kind === 'literal'
+        && QUOTED_VARIABLE_NAME_RE.test(token.text)
+        && tokens[i - 1].kind === 'plain'
+        && PSQL_VARIABLE_PREFIX_RE.test(tokens[i - 1].text));
+
+/**
+ * Determine whether a SQL block contains placeholders that make it a
+ * template rather than a runnable query: `$N` bind parameters,
+ * angle-bracket stand-ins (`<table_name>`), template braces
+ * (`{{schema}}`) or psql variables (`:name`, `:'name'`).
  *
  * Placeholders inside comments, string literals and dollar-quoted bodies
  * are ignored, since those are ordinary text rather than parameters.
  */
-export const hasSqlParameters = (code: string): boolean =>
-    SQL_PARAMETER_RE.test(sqlCodeOnly(code));
+export const hasSqlParameters = (code: string): boolean => {
+    const tokens = tokenizeSql(code);
+    if (hasQuotedPsqlVariable(tokens)) {
+        return true;
+    }
+    const codeOnly = blankNonCode(tokens);
+    return SQL_PARAMETER_RE.test(codeOnly)
+        || OTHER_PLACEHOLDER_RES.some((re) => re.test(codeOnly));
+};
 
 /**
  * Extract only executable SQL from a code block.
@@ -337,4 +381,32 @@ export const isSqlCodeBlock = (className: string | undefined, content: string): 
 export const extractLanguage = (className: string | undefined): string => {
     const match = /language-(\w+)/.exec(className ?? '');
     return match ? match[1] : '';
+};
+
+/**
+ * Result of parsing a leading `-- connection_id: N` comment.
+ */
+export interface ConnectionIdComment {
+    /** The connection ID named by the comment, or null when absent. */
+    connectionId: number | null;
+    /** The code with the comment line removed (unchanged when absent). */
+    code: string;
+}
+
+/**
+ * Parse and strip a leading `-- connection_id: N` comment from a code
+ * block, using `CONNECTION_ID_COMMENT_RE`. The LLM emits this annotation
+ * to say which server a query is for; an ID that is not a positive safe
+ * integer is treated as absent, and the code is then returned unchanged.
+ */
+export const parseConnectionIdComment = (code: string): ConnectionIdComment => {
+    const match = CONNECTION_ID_COMMENT_RE.exec(code);
+    if (!match) {
+        return { connectionId: null, code };
+    }
+    const id = Number(match[1]);
+    if (!Number.isSafeInteger(id) || id <= 0) {
+        return { connectionId: null, code };
+    }
+    return { connectionId: id, code: stripConnectionIdComment(code) };
 };

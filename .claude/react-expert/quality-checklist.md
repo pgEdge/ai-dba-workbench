@@ -826,8 +826,10 @@ re-fires validation. Statement statuses collapse to a block state in
 that statement kind (DDL, `SET`, `VACUUM` and friends) and the block
 stays runnable with a hint.
 
-`RunnableCodeBlock` applies the gate. A block whose SQL contains `$N`
-placeholders (`hasSqlParameters` in `sqlDetection.ts`) is a template:
+`RunnableCodeBlock` applies the gate. A block whose SQL contains
+placeholders (`hasSqlParameters` in `sqlDetection.ts`: `$N`,
+`<name>`, `{{x}}`, `:var` or `:'var'`, outside comments and
+literals) is a template:
 no Run button, an explanatory notice, copy button kept, and no
 validation request. Everything else validates on mount, with Run
 disabled whilst pending or invalid, and an explicit "Run anyway"
@@ -845,7 +847,10 @@ PostgreSQL's lexer; any other client code that skips line comments
 (such as `stripLeadingNoise` in `useQueryPlan.ts`) must do the same.
 The cluster routing comment has one home too:
 `CONNECTION_ID_COMMENT_RE` and `stripConnectionIdComment`, used by
-`MarkdownContent` and by `createRoutedSqlValidator`.
+`MarkdownContent` and by `createRoutedSqlValidator`, with
+`parseConnectionIdComment` built on them for the chat (it also
+rejects a zero or unsafe ID). The pattern accepts a comment that ends
+the block as well as one ended by `\r` or `\n`.
 
 `runAgenticLoop` takes an optional `validateSqlBlocks`. After the
 final text, it validates the ```sql blocks and, on failure, makes
@@ -853,6 +858,28 @@ exactly one extra LLM round-trip asking for corrections. That round
 sits outside the `maxIterations` budget deliberately, and every
 failure path (no validator, null result, non-OK response, a tool call
 instead of text, empty text) returns the original text unchanged.
+
+## Runnable SQL Blocks in Chat
+
+- Never add a second placeholder check: `hasSqlParameters` is the
+  only one, and `RunnableCodeBlock` shows the template notice for
+  it. `planSqlBlock` returns a `template` plan for such blocks so
+  the chat renders the same notice.
+- Never guess a run target. In chat, `planSqlBlock` in
+  `ChatPanel/chatSqlTarget.ts` decides run, select, template or copy
+  from the block's `-- connection_id: N` comment and the reply's tool
+  calls;
+  `chatAgenticLoop` records each call's `connectionId` and
+  `databaseName` on its `ToolActivity` for this, mirroring the
+  server's `parseConnectionArgs`. Change both together.
+- Pass per-message data to code blocks through a context
+  (`ReplyTargetsContext`), not as a dependency of the memoised
+  react-markdown `components`: changing those remounts every block and
+  discards query results the user already ran.
+- `ConnectionSelectorCodeBlock` holds its selection by
+  `connectionId/databaseName` key, never by index, and keys the inner
+  `RunnableCodeBlock` on it so results never show under another
+  target's label. Pass `requireSelection` where no default is safe.
 
 ## Coverage Requirements
 

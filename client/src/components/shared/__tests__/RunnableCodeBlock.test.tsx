@@ -585,6 +585,26 @@ describe('RunnableCodeBlock validation gating', () => {
     });
 
     it.each([
+        'SELECT * FROM <table_name>;',
+        'SELECT * FROM {{ schema }}.t;',
+        'SELECT * FROM t WHERE id = :id;',
+        "SELECT * FROM t WHERE name = :'name';",
+    ])('treats %s as a template', (sql) => {
+        renderWithTheme(
+            <RunnableCodeBlock
+                {...baseProps}
+                isSql={true}
+                codeContent={sql}
+            />,
+        );
+
+        expect(
+            screen.getByTestId('sql-template-notice'),
+        ).toHaveTextContent('query template');
+        expect(screen.queryByLabelText('Run query')).toBeNull();
+    });
+
+    it.each([
         ['\\r', '\r'],
         ['\\r\\n', '\r\n'],
     ])('treats a placeholder after a comment ended by %s as a template', (_label, eol) => {

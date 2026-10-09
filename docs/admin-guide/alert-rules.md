@@ -154,7 +154,11 @@ less than 1 holds for as long as collection stays stopped.
 The rule fires only for a probe that has collected at least
 once. A probe whose extension was never installed has never
 collected, so the rule never fires for one and no permanent
-alert is pinned to it.
+alert is pinned to it. A probe whose extension is installed
+but has nothing to report, such as a Spock probe on a cluster
+with no recent apply exceptions or conflict resolutions,
+remains available, so the rule does not fire for a quiet
+cluster.
 
 The alerter clears a `probe_unavailable` alert when the
 probe collects again. The alerter also clears the alert when

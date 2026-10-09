@@ -118,7 +118,10 @@ CREATE EXTENSION IF NOT EXISTS system_stats;
 The probes that rely on these extensions check for the relevant objects
 before running, and return no data rather than raising an error when an
 extension is absent. You can therefore leave both extensions out
-without disturbing the rest of the collection.
+without disturbing the rest of the collection. The collector records
+such a probe as unavailable with the reason that the extension is not
+installed; a probe whose extension is installed but has nothing to
+report is recorded as available.
 
 ## Optional Server Settings
 
@@ -260,9 +263,9 @@ list and decide whether the affected data matters in your environment.
   and port, and degrades silently without access.
 - A database that the role cannot connect to is skipped, as described
   in [Per-Database CONNECT Requirement](#per-database-connect-requirement).
-- The `system_stats` and Spock probes return empty results when the
-  corresponding extension or schema is absent from the monitored
-  server.
+- The `system_stats` and Spock probes return no data, and the
+  collector records them as unavailable, when the corresponding
+  extension is absent from the monitored server.
 
 To close the authentication file gaps without granting superuser, grant
 both the view and the underlying function of the same name. The

@@ -215,9 +215,13 @@ func TestHysteresis_ClearNeedsClearCountSamples(t *testing.T) {
 		t.Fatal("expected the cold cache to raise an alert")
 	}
 
-	// seedColdCache leaves the counters at 60000 hits and 30000 reads.
-	// Each step adds 30000 blocks, as hits for a healthy interval or as
-	// reads for a cold one.
+	// seedColdCache leaves the counters at 60000 hits and 30000 reads,
+	// a minute ago. Each step is five seconds after the last. A healthy
+	// step adds 30000 hits and 1000 reads (200 reads per second at a
+	// 96.8% ratio); a cold one adds 30000 reads and no hits (a 0%
+	// ratio). Every interval reads at least 100 blocks per second and
+	// touches at least 10000 blocks, so cache_hit_ratio reports a row
+	// for each of them rather than leaving the metric absent.
 	steps := []struct {
 		label      string
 		hits       int64
@@ -226,12 +230,12 @@ func TestHysteresis_ClearNeedsClearCountSamples(t *testing.T) {
 		wantStatus string
 		wantCount  int
 	}{
-		{"first healthy sample", 90_000, 30_000, 55, "active", 1},
-		{"second healthy sample", 120_000, 30_000, 50, "active", 2},
-		{"cold sample resets the run", 120_000, 60_000, 45, "active", 0},
-		{"healthy sample after the reset", 150_000, 60_000, 40, "active", 1},
-		{"second healthy sample after the reset", 180_000, 60_000, 35, "active", 2},
-		{"third consecutive healthy sample", 210_000, 60_000, 30, "cleared", 3},
+		{"first healthy sample", 90_000, 31_000, 55, "active", 1},
+		{"second healthy sample", 120_000, 32_000, 50, "active", 2},
+		{"cold sample resets the run", 120_000, 62_000, 45, "active", 0},
+		{"healthy sample after the reset", 150_000, 63_000, 40, "active", 1},
+		{"second healthy sample after the reset", 180_000, 64_000, 35, "active", 2},
+		{"third consecutive healthy sample", 210_000, 65_000, 30, "cleared", 3},
 	}
 	for _, step := range steps {
 		statDatabaseSample(t, pool, connID, step.hits, step.reads, step.ago)
@@ -272,7 +276,8 @@ func TestHysteresis_AcknowledgedAlertDropsClearCount(t *testing.T) {
 		t.Fatalf("expected the cold cache to raise an alert (err %v)", err)
 	}
 
-	statDatabaseSample(t, pool, connID, 90_000, 30_000, 55)
+	// A healthy interval: 30000 hits and 1000 reads in five seconds.
+	statDatabaseSample(t, pool, connID, 90_000, 31_000, 55)
 	engine.cleanResolvedAlerts(ctx)
 	if c := engine.clearStreaks.count(alert.ID); c != 1 {
 		t.Fatalf("clear count = %d, want 1", c)

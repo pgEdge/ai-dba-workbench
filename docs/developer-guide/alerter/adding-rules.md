@@ -131,7 +131,8 @@ rolling 15-minute window on the monitored server:
 
 ### Database Metrics
 
-- `pg_stat_database.cache_hit_ratio` - Buffer cache hit ratio.
+- `pg_stat_database.cache_hit_ratio` - Buffer cache hit ratio in
+  the newest interval reading at least 100 blocks per second.
 - `pg_stat_database.deadlocks_delta` - Deadlocks in the last
   hour.
 - `pg_stat_database.temp_files_delta` - Temporary files created
@@ -140,8 +141,9 @@ rolling 15-minute window on the monitored server:
 ### Table Metrics
 
 - `pg_stat_all_tables.dead_tuple_percent` - Dead tuple
-  percentage.
-- `table_last_autovacuum_hours` - Hours since last autovacuum.
+  percentage of tables with at least 10,000 dead tuples.
+- `table_last_autovacuum_hours` - Hours since last autovacuum
+  of a table past its autovacuum trigger for 30 minutes.
 - `age_percent` - Transaction ID age percentage.
 
 ### System Metrics
@@ -157,7 +159,7 @@ rolling 15-minute window on the monitored server:
 
 - `pg_stat_archiver.failed_count_delta` - Failed archive attempts.
 - `pg_stat_checkpointer.checkpoints_req_delta` - Requested
-  checkpoints.
+  checkpoints in the last hour on servers not in recovery.
 - `pg_stat_statements.slow_query_count` - Slow queries per
   interval.
 

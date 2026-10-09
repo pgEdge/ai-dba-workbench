@@ -2735,16 +2735,16 @@ func (sm *SchemaManager) registerMigrations() {
 					('lock_wait_time', 'Lock wait time exceeds threshold', 'locks', 'pg_stat_activity.max_lock_wait_seconds', 'seconds', '>', 30, 'warning', TRUE, NULL, TRUE),
 
 					-- WAL and Checkpoint alerts
-					('checkpoint_warning', 'Requested checkpoints in the last hour exceed the threshold; frequent requested checkpoints usually mean max_wal_size is too small', 'wal', 'pg_stat_checkpointer.checkpoints_req_delta', 'checkpoints/hour', '>', 12, 'warning', TRUE, NULL, TRUE),
+					('checkpoint_warning', 'Requested checkpoints in the last hour exceed the threshold on a server that is not in recovery; frequent requested checkpoints usually mean max_wal_size is too small', 'wal', 'pg_stat_checkpointer.checkpoints_req_delta', 'checkpoints/hour', '>', 12, 'warning', TRUE, NULL, TRUE),
 					('wal_archive_failed', 'WAL archiving failures detected in the last hour', 'wal', 'pg_stat_archiver.failed_count_delta', 'failures/hour', '>', 0, 'critical', TRUE, NULL, TRUE),
 
 					-- Vacuum alerts
-					('autovacuum_not_running', 'Table has dead tuples exceeding the autovacuum threshold but has not been vacuumed; indicates autovacuum may be blocked or unable to keep up', 'maintenance', 'table_last_autovacuum_hours', 'hours', '>', 1, 'warning', TRUE, NULL, TRUE),
-					('dead_tuple_ratio', 'Dead tuple ratio too high', 'maintenance', 'pg_stat_all_tables.dead_tuple_percent', 'percent', '>', 20, 'warning', TRUE, NULL, TRUE),
+					('autovacuum_not_running', 'Table has had dead tuples over its autovacuum threshold in every sample for at least 30 minutes but has not been vacuumed; indicates autovacuum may be blocked or unable to keep up', 'maintenance', 'table_last_autovacuum_hours', 'hours', '>', 1, 'warning', TRUE, NULL, TRUE),
+					('dead_tuple_ratio', 'Dead tuple ratio too high on a table with at least 10000 dead tuples', 'maintenance', 'pg_stat_all_tables.dead_tuple_percent', 'percent', '>', 50, 'warning', TRUE, NULL, TRUE),
 
 					-- Statement alerts
 					('slow_query_count', 'High number of slow queries', 'queries', 'pg_stat_statements.slow_query_count', 'queries', '>', 10, 'warning', TRUE, 'pg_stat_statements', TRUE),
-					('cache_hit_ratio_low', 'Buffer cache hit ratio below threshold', 'queries', 'pg_stat_database.cache_hit_ratio', 'percent', '<', 80, 'warning', TRUE, NULL, TRUE),
+					('cache_hit_ratio_low', 'Buffer cache hit ratio below threshold in a database reading at least 100 blocks per second from outside shared buffers', 'queries', 'pg_stat_database.cache_hit_ratio', 'percent', '<', 50, 'info', TRUE, NULL, TRUE),
 
 					-- Error alerts
 					('temp_files_created', 'Temporary files being created', 'performance', 'pg_stat_database.temp_files_delta', 'files', '>', 100, 'warning', TRUE, NULL, TRUE),
@@ -3744,6 +3744,85 @@ func (sm *SchemaManager) registerMigrations() {
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to index anomaly_candidates for retention: %w", err)
+			}
+
+			return nil
+		},
+	})
+
+	// Migration #21 retunes four built-in alert rules that fired on
+	// conditions nobody could act on. See GitHub issue #616.
+	//
+	// The alerter's metric queries gained gates in the same change:
+	// cache_hit_ratio only reports intervals reading at least 100 blocks
+	// per second, dead_tuple_percent only tables with at least 10000 dead
+	// tuples, table_last_autovacuum_hours only tables past their trigger
+	// for 30 minutes, and checkpoints_req_delta skips servers in recovery.
+	// Two rules also get new defaults: cache_hit_ratio_low drops from a
+	// warning below 80 percent to information below 50, and
+	// dead_tuple_ratio rises from 20 percent, which is autovacuum's own
+	// default trigger, to 50.
+	//
+	// Each default is rewritten only while it still holds the old shipped
+	// value, column by column, so a threshold or severity an operator has
+	// tuned through the API survives, and a tuned threshold does not stop
+	// the severity from moving. alert_thresholds rows are per-scope
+	// operator overrides and are left alone. Descriptions are not
+	// editable through the API, so they are rewritten unconditionally to
+	// state the new gates. Fresh installs get the same values from the
+	// seed in migration #1, which makes this migration a no-op there.
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     21,
+		Description: "Retune cache hit, dead tuple, autovacuum and checkpoint alert rule defaults",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			_, err := tx.Exec(ctx, `
+				UPDATE alert_rules
+				SET default_threshold = 50
+				WHERE name = 'cache_hit_ratio_low'
+				  AND is_built_in
+				  AND default_threshold = 80;
+
+				UPDATE alert_rules
+				SET default_severity = 'info'
+				WHERE name = 'cache_hit_ratio_low'
+				  AND is_built_in
+				  AND default_severity = 'warning';
+
+				UPDATE alert_rules
+				SET default_threshold = 50
+				WHERE name = 'dead_tuple_ratio'
+				  AND is_built_in
+				  AND default_threshold = 20;
+
+				UPDATE alert_rules
+				SET description = 'Buffer cache hit ratio below threshold in a database reading at least 100 blocks per second from outside shared buffers'
+				WHERE name = 'cache_hit_ratio_low'
+				  AND is_built_in;
+
+				UPDATE alert_rules
+				SET description = 'Dead tuple ratio too high on a table with at least 10000 dead tuples'
+				WHERE name = 'dead_tuple_ratio'
+				  AND is_built_in;
+
+				UPDATE alert_rules
+				SET description = 'Table has had dead tuples over its autovacuum threshold in every sample for at least 30 minutes but has not been vacuumed; indicates autovacuum may be blocked or unable to keep up'
+				WHERE name = 'autovacuum_not_running'
+				  AND is_built_in;
+
+				UPDATE alert_rules
+				SET description = 'Requested checkpoints in the last hour exceed the threshold on a server that is not in recovery; frequent requested checkpoints usually mean max_wal_size is too small'
+				WHERE name = 'checkpoint_warning'
+				  AND is_built_in;
+
+				COMMENT ON COLUMN alert_rules.default_threshold IS
+					'Threshold the rule fires against wherever no alert_thresholds row overrides it; built-in defaults are only changed by migrations while they still hold the previous shipped value';
+				COMMENT ON COLUMN alert_rules.default_severity IS
+					'Severity (info, warning or critical) of alerts the rule raises wherever no alert_thresholds row overrides it';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to retune built-in alert rule defaults: %w", err)
 			}
 
 			return nil

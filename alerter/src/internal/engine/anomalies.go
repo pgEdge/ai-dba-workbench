@@ -370,8 +370,11 @@ type anomalyScore struct {
 	// floor, so it is normal whatever its baseline says.
 	belowFloor bool
 
-	// stddevFloored is set when a floor, rather than the baseline's own
-	// standard deviation, supplied the divisor.
+	// stddevFloored is set when the baseline has no spread of its own:
+	// its standard deviation is at or below variance_floor.absolute_floor,
+	// so a floor supplied the whole divisor. A baseline that merely varies
+	// by less than variance_floor.relative_pct of its mean, or by less
+	// than the metric's MinStdDev, has a real spread and is not flagged.
 	stddevFloored bool
 }
 
@@ -390,11 +393,11 @@ func (s anomalyScore) severity(sensitivity float64) string {
 }
 
 // cappedAnomalySeverity maps a z-score to a severity, but never to
-// "critical" when a floor supplied the divisor (GitHub issue #617).
+// "critical" when the baseline had no spread of its own (GitHub issue
+// #617; see anomalyScore.stddevFloored).
 //
-// A floored divisor means the baseline has barely varied, so the z-score
-// measures distance in units the floor chose rather than in the metric's
-// observed spread. It still says the value is unusual, which is enough
+// Against a flat baseline, the z-score measures distance in units a
+// floor chose rather than in the metric's observed spread. It still says the value is unusual, which is enough
 // for an info or warning alert, but it is not the statistical evidence a
 // critical alert implies. This is also what kept a flat baseline from
 // turning any small change into a z-score clamped at max_z_score and
@@ -493,7 +496,7 @@ func (e *Engine) scoreAnomalyValue(
 		baseline:        baseline,
 		effectiveStdDev: stddev,
 		scored:          true,
-		stddevFloored:   stddev > baseline.StdDev,
+		stddevFloored:   baseline.StdDev <= cfg.Anomaly.Tier1.VarianceFloor.AbsoluteFloor,
 	}
 }
 

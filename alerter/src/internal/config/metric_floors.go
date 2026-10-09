@@ -63,8 +63,9 @@ type MetricFloor struct {
 //     spare, so no movement there is actionable. A 5-point divisor means
 //     a rise from a flat baseline must exceed 15 points to pass the
 //     default sensitivity of 3.
-//   - Disk used percent (rules at 80 and 95): the same 50% floor, with a
-//     2-point divisor because disk usage moves slowly.
+//   - Disk used percent (rules at 80 and 95): the same 50% floor. It
+//     needs no divisor floor, since above 50% the global relative floor
+//     (5% of the mean) already gives a divisor of at least 2.5 points.
 //   - pg_stat_activity.count (rule at 200): fewer than 10 sessions is an
 //     idle server whatever its baseline; a divisor of 5 sessions.
 //   - pg_stat_database.temp_files_delta (rule at 100): fewer than 10
@@ -85,14 +86,17 @@ type MetricFloor struct {
 //     no MinValue, so the anomaly path hides no occurrence, but a
 //     divisor of 1: a count cannot change by less than 1, so a smaller
 //     spread only means the baseline has never varied.
-//   - Cache hit ratio, in percent, matters when it falls, so a MinValue
-//     does not apply; a 1-point divisor stops a fall from 99.9% to 99%
-//     on a flat baseline scoring as an extreme anomaly.
+//
+// A MinStdDev only takes effect while it exceeds the global relative
+// floor, so it is pointless for a metric whose mean is always well above
+// twenty times its value. That is why the cache hit ratio, in percent,
+// has no entry: at its usual mean of 95 to 100 the relative floor is
+// already near 5 points.
 var defaultMetricFloors = map[string]MetricFloor{
 	"pg_sys_cpu_usage_info.processor_time_percent":  {MinValue: 50, MinStdDev: 5},
 	"pg_sys_memory_info.used_percent":               {MinValue: 50, MinStdDev: 5},
 	"connection_utilization_percent":                {MinValue: 50, MinStdDev: 5},
-	"pg_sys_disk_info.used_percent":                 {MinValue: 50, MinStdDev: 2},
+	"pg_sys_disk_info.used_percent":                 {MinValue: 50},
 	"pg_stat_activity.count":                        {MinValue: 10, MinStdDev: 5},
 	"pg_stat_database.temp_files_delta":             {MinValue: 10, MinStdDev: 10},
 	"pg_stat_activity.blocked_count":                {MinValue: 2, MinStdDev: 1},
@@ -104,7 +108,6 @@ var defaultMetricFloors = map[string]MetricFloor{
 	"pg_stat_database.deadlocks_delta":              {MinStdDev: 1},
 	"spock_exception_log.recent_count":              {MinStdDev: 1},
 	"spock_resolutions.recent_count":                {MinStdDev: 1},
-	"pg_stat_database.cache_hit_ratio":              {MinStdDev: 1},
 }
 
 // DefaultMetricFloor returns the built-in floors for a metric, or zero

@@ -72,6 +72,16 @@ func (e *Engine) cleanResolvedAlerts(ctx context.Context) {
 			e.checkAlertResolved(ctx, alert, gates[*alert.RuleID], staleness)
 		}
 	}
+
+	// A clear count belongs to an active alert, so drop the counts of
+	// alerts that have been cleared, acknowledged or deleted since. An
+	// acknowledged alert that is reactivated therefore counts its
+	// threshold.clear_count samples afresh. See hysteresis.go.
+	active := make(map[int64]bool, len(alerts))
+	for _, alert := range alerts {
+		active[alert.ID] = true
+	}
+	e.clearStreaks.retain(func(id int64) bool { return active[id] })
 }
 
 // unmonitoredConnectionSnapshot holds one cleanup pass's view of which
@@ -374,6 +384,7 @@ func (e *Engine) checkAlertResolved(ctx context.Context, alert *database.Alert,
 	// Find the metric value matching this alert's connection and database
 	var found bool
 	var value float64
+	var sample time.Time
 	for _, mv := range values {
 		if mv.ConnectionID != alert.ConnectionID {
 			continue
@@ -386,6 +397,7 @@ func (e *Engine) checkAlertResolved(ctx context.Context, alert *database.Alert,
 		}
 		found = true
 		value = mv.Value
+		sample = mv.CollectedAt
 		break
 	}
 
@@ -395,11 +407,14 @@ func (e *Engine) checkAlertResolved(ctx context.Context, alert *database.Alert,
 		return
 	}
 
-	// Check if threshold is still violated
-	stillViolated := e.checkThreshold(value, *alert.Operator, *alert.ThresholdValue)
-	if !stillViolated {
-		e.clearResolvedAlert(ctx, alert, value)
+	// Check if threshold is still violated. The alert clears only once
+	// it has not been on threshold.clear_count consecutive samples; a
+	// violating sample starts that count again.
+	if e.checkThreshold(value, *alert.Operator, *alert.ThresholdValue) {
+		e.recordViolatingSample(alert, sample)
+		return
 	}
+	e.recordResolvedSample(ctx, alert, sample, value)
 }
 
 // checkStalenessAlertResolved checks whether a probe-scoped staleness alert
@@ -715,7 +730,12 @@ func (e *Engine) resolveAbsentMetric(ctx context.Context, alert *database.Alert,
 	switch classifyAbsentMetric(clears, probe, window, alert.ConnectionID, entries,
 		staleness.age()) {
 	case absentMetricClear:
-		e.clearResolvedAlert(ctx, alert, 0)
+		// The empty result is a non-breaching sample, and the probe's
+		// last collection is what identifies it, so a probe that has not
+		// collected again since the last pass does not advance the
+		// threshold.clear_count count.
+		e.recordResolvedSample(ctx, alert,
+			probeLastCollected(entries, alert.ConnectionID, probe), 0)
 	case absentMetricNotAbsenceDriven:
 		e.debugLog("Metric %s has no current value for alert %d (%s); leaving it active until data returns",
 			metric, alert.ID, reason)

@@ -42,6 +42,8 @@ func TestNewConfig(t *testing.T) {
 		{"pool max connections", cfg.Pool.MaxConnections, 10},
 		{"pool max idle seconds", cfg.Pool.MaxIdleSeconds, 300},
 		{"threshold evaluation interval", cfg.Threshold.EvaluationIntervalSeconds, 60},
+		{"threshold trigger count", cfg.Threshold.TriggerCount, DefaultThresholdTriggerCount},
+		{"threshold clear count", cfg.Threshold.ClearCount, DefaultThresholdClearCount},
 		{"anomaly enabled", cfg.Anomaly.Enabled, true},
 		{"anomaly tier1 enabled", cfg.Anomaly.Tier1.Enabled, true},
 		{"anomaly tier1 sensitivity", cfg.Anomaly.Tier1.DefaultSensitivity, 3.0},
@@ -221,6 +223,38 @@ func TestConfigValidate(t *testing.T) {
 			},
 			expectError: true,
 			errorMsg:    "pool.max_connections must be greater than 0",
+		},
+		{
+			name: "threshold trigger count zero",
+			modifyFunc: func(c *Config) {
+				c.Threshold.TriggerCount = 0
+			},
+			expectError: true,
+			errorMsg:    "threshold.trigger_count must be at least 1",
+		},
+		{
+			name: "threshold trigger count negative",
+			modifyFunc: func(c *Config) {
+				c.Threshold.TriggerCount = -1
+			},
+			expectError: true,
+			errorMsg:    "threshold.trigger_count must be at least 1",
+		},
+		{
+			name: "threshold clear count zero",
+			modifyFunc: func(c *Config) {
+				c.Threshold.ClearCount = 0
+			},
+			expectError: true,
+			errorMsg:    "threshold.clear_count must be at least 1",
+		},
+		{
+			name: "threshold counts of one act on a single sample",
+			modifyFunc: func(c *Config) {
+				c.Threshold.TriggerCount = 1
+				c.Threshold.ClearCount = 1
+			},
+			expectError: false,
 		},
 	}
 
@@ -667,6 +701,59 @@ threshold:
 		if cfg.Threshold.EvaluationIntervalSeconds != 120 {
 			t.Errorf("evaluation_interval = %d, expected %d",
 				cfg.Threshold.EvaluationIntervalSeconds, 120)
+		}
+	})
+
+	t.Run("threshold hysteresis counts round-trip", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		configFile := filepath.Join(tmpDir, "hysteresis.yaml")
+		yamlContent := `
+threshold:
+  trigger_count: 4
+  clear_count: 1
+`
+		if err := os.WriteFile(configFile, []byte(yamlContent), 0600); err != nil {
+			t.Fatalf("failed to create config file: %v", err)
+		}
+
+		cfg := NewConfig()
+		if err := cfg.LoadFromFile(configFile); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.Threshold.TriggerCount != 4 || cfg.Threshold.ClearCount != 1 {
+			t.Errorf("counts = %d/%d, expected 4/1",
+				cfg.Threshold.TriggerCount, cfg.Threshold.ClearCount)
+		}
+		// The interval was not set, so it keeps its default.
+		if cfg.Threshold.EvaluationIntervalSeconds != 60 {
+			t.Errorf("evaluation_interval = %d, expected the default 60",
+				cfg.Threshold.EvaluationIntervalSeconds)
+		}
+	})
+
+	t.Run("threshold hysteresis counts default when omitted", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		configFile := filepath.Join(tmpDir, "no-hysteresis.yaml")
+		yamlContent := `
+threshold:
+  evaluation_interval_seconds: 90
+`
+		if err := os.WriteFile(configFile, []byte(yamlContent), 0600); err != nil {
+			t.Fatalf("failed to create config file: %v", err)
+		}
+
+		cfg := NewConfig()
+		if err := cfg.LoadFromFile(configFile); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.Threshold.TriggerCount != DefaultThresholdTriggerCount ||
+			cfg.Threshold.ClearCount != DefaultThresholdClearCount {
+			t.Errorf("counts = %d/%d, expected the defaults %d/%d",
+				cfg.Threshold.TriggerCount, cfg.Threshold.ClearCount,
+				DefaultThresholdTriggerCount, DefaultThresholdClearCount)
+		}
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("unexpected validation error: %v", err)
 		}
 	})
 

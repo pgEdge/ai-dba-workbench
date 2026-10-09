@@ -314,9 +314,13 @@ guidelines:
 
 ## Alert Lifecycle
 
-When a threshold is violated, the alerter creates an
-alert with status `active`. The alert remains active
-until one of the following occurs:
+When a threshold has been violated on
+`threshold.trigger_count` consecutive metric samples
+(two by default), the alerter creates an alert with
+status `active`. A sample is one collection by the
+collector, so the evaluator reading the same sample again
+does not count. The alert remains active until one of the
+following occurs:
 
 - The condition resolves and the alerter clears the
   alert automatically.
@@ -334,8 +338,13 @@ The alerter automatically clears threshold alerts when
 the triggering condition returns to normal. The alert
 cleaner worker runs every 30 seconds and re-evaluates
 active alerts. When a metric value no longer violates
-the threshold, the alerter marks the alert as `cleared`
-and records the `cleared_at` timestamp.
+the threshold on `threshold.clear_count` consecutive
+metric samples (three by default), the alerter marks the
+alert as `cleared` and records the `cleared_at` timestamp.
+A sample that violates the threshold again starts the
+count afresh. The
+[alerter configuration](../getting-started/configuration/alerter.md)
+describes both options.
 
 Missing data is not treated as a resolved condition. Where
 a metric reports a value for every monitored connection,
@@ -346,7 +355,12 @@ alert active and the `metric_staleness` rule reports the
 probe that stopped. Where a metric reports only whilst the
 condition holds, such as an inactive replication slot or a
 blocked session, the absence of a value is the recovery
-signal and the alerter clears the alert.
+signal; each probe collection that returns no value counts
+as one sample towards `threshold.clear_count`, and the
+alerter clears the alert once enough have passed. With the
+default of three and the `pg_replication_slots` probe's
+default interval, an inactive replication slot alert
+clears ten to fifteen minutes after the slot recovers.
 
 The `metric_staleness` rule is cleared on the same basis.
 A probe that has become unavailable, whether because the

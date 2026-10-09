@@ -1086,6 +1086,21 @@ that follow from that, most learned the hard way in #406 and #407:
   plus descending-`ROW_NUMBER` form sorted it twice and measured about a
   third slower on 24,000 rows in the window.
 
+- A `latestSQL` must report the sample's own `collected_at`, never
+  `NOW()`. Threshold hysteresis (`threshold.trigger_count` and
+  `clear_count`, #614, `alerter/src/internal/engine/hysteresis.go`)
+  counts distinct `collected_at` values per rule, connection and
+  database (not object: the alert is keyed without it, and worst-object
+  metrics such as `dead_tuple_percent` change object between samples),
+  so a query reporting `NOW()` makes every evaluator and
+  cleaner pass look like a new sample and defeats the counts.
+  `connection_utilization_percent` did exactly that until #614; its
+  `active_counts` CTE now groups by `collected_at` and
+  `TestConnectionUtilizationPercent_ReportsSampleTime` pins it. A
+  `clearWhenAbsent` metric has no row to read the time from, so the
+  cleaner counts its absence by the probe's
+  `ProbeStaleness.LastCollected` instead.
+
 - A `historicalSQL` must apply every non-time row filter its
   `latestSQL` applies (it keeps its own lookback window rather than
   copying the `latestSQL` freshness cutoff), because Tier 1 scores the

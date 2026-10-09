@@ -11,6 +11,8 @@ pool:
 
 threshold:
     evaluation_interval_seconds: 60
+    trigger_count: 2
+    clear_count: 3
 
 anomaly:
     enabled: true

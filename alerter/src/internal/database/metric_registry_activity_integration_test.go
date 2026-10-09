@@ -432,3 +432,48 @@ func TestPgStatActivityMetrics_HistoricalMatchesLatest(t *testing.T) {
 		})
 	}
 }
+
+// TestConnectionUtilizationPercent_ReportsSampleTime pins that the latest
+// query reports the pg_stat_activity sample's own collected_at. The
+// threshold engine's trigger_count and clear_count count distinct
+// collected_at values, and the query used to report NOW(), which made
+// every evaluation of one unchanged sample look like a new one. See
+// GitHub issue #614.
+func TestConnectionUtilizationPercent_ReportsSampleTime(t *testing.T) {
+	ds, pool, cleanup := newHistoricalMetricsTestDatastore(t)
+	defer cleanup()
+
+	connID := insertConnection(t, pool, "conn-util-614")
+	insertMaxConnections(t, pool, connID, "100", sampleInstant(2*time.Hour))
+
+	older := sampleInstant(3 * time.Minute)
+	newer := sampleInstant(90 * time.Second)
+	for _, at := range []time.Time{older, newer} {
+		insertActivitySnapshot(t, pool, connID, at, []activityRow{
+			{backendType: clientBackend},
+		})
+	}
+
+	// Two reads of the same data must report the same instant.
+	for pass := 1; pass <= 2; pass++ {
+		values, err := ds.GetLatestMetricValues(context.Background(),
+			"connection_utilization_percent")
+		if err != nil {
+			t.Fatalf("pass %d: GetLatestMetricValues failed: %v", pass, err)
+		}
+		var found bool
+		for _, v := range values {
+			if v.ConnectionID != connID {
+				continue
+			}
+			found = true
+			if !v.CollectedAt.UTC().Equal(newer) {
+				t.Errorf("pass %d: collected_at = %v, want the newest sample's %v",
+					pass, v.CollectedAt.UTC(), newer)
+			}
+		}
+		if !found {
+			t.Fatalf("pass %d: no row for connection %d", pass, connID)
+		}
+	}
+}

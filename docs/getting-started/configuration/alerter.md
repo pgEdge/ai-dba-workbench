@@ -154,6 +154,30 @@ alert evaluation.
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `evaluation_interval_seconds` | integer | `60` | Evaluation interval |
+| `trigger_count` | integer | `2` | Consecutive breaching samples that raise an alert; must be at least 1 |
+| `clear_count` | integer | `3` | Consecutive samples within the threshold that clear an alert; must be at least 1 |
+
+The `trigger_count` and `clear_count` options stop an alert
+from being raised and cleared repeatedly when a metric hovers
+near its threshold. The alerter raises an alert only after
+the threshold has been breached on `trigger_count`
+consecutive metric samples, and clears an active alert only
+after the metric has been back within the threshold on
+`clear_count` consecutive samples. A sample is one collection
+by the collector rather than one evaluation cycle; the
+evaluator and the alert cleaner read the same sample several
+times between collections, but each sample counts once. A
+sample that breaches the threshold starts the clear count
+again, and one that does not breach it starts the trigger
+count again.
+
+Setting both options to `1` restores the earlier behaviour of
+raising and clearing on a single sample. The counts are held
+in memory, so restarting the alerter starts them again from
+zero; at worst a restart delays a raise or a clear by a few
+samples. The counts do not apply to the `metric_staleness` and
+`probe_unavailable` rules or to connection error alerts, which
+do not judge metric samples.
 
 ### Anomaly Detection (`anomaly`)
 

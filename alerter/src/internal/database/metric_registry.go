@@ -188,10 +188,13 @@ var metricRegistry = map[string]metricQueryConfig{
 	// took the newest pg_settings row outright, so a settings sample
 	// written after the newest activity sample (just after a restart that
 	// changed max_connections) made it disagree with the baseline for the
-	// same snapshot (GitHub issue #596). The latest query reports the
-	// activity sample's own collected_at rather than NOW(), so anomaly
-	// recovery can tell a new sample from one it has already counted
-	// (GitHub issue #611).
+	// same snapshot (GitHub issue #596).
+	//
+	// The latest query reports the pg_stat_activity sample's own
+	// collected_at rather than NOW(), so that anomaly recovery (GitHub
+	// issue #611) and the threshold engine's trigger_count and clear_count
+	// (GitHub issue #614) can tell a new sample from one they have already
+	// counted; NOW() would make every evaluation look like a new sample.
 	"connection_utilization_percent": {
 		probeName: "pg_stat_activity",
 		latestSQL: `

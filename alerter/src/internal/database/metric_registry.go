@@ -188,7 +188,10 @@ var metricRegistry = map[string]metricQueryConfig{
 	// took the newest pg_settings row outright, so a settings sample
 	// written after the newest activity sample (just after a restart that
 	// changed max_connections) made it disagree with the baseline for the
-	// same snapshot (GitHub issue #596).
+	// same snapshot (GitHub issue #596). The latest query reports the
+	// activity sample's own collected_at rather than NOW(), so anomaly
+	// recovery can tell a new sample from one it has already counted
+	// (GitHub issue #611).
 	"connection_utilization_percent": {
 		probeName: "pg_stat_activity",
 		latestSQL: `
@@ -206,7 +209,7 @@ var metricRegistry = map[string]metricQueryConfig{
 			)
 			SELECT a.connection_id,
 			       (a.active / NULLIF(m.max_connections, 0)) * 100 as value,
-			       NOW() as collected_at
+			       a.collected_at
 			FROM active_counts a
 			JOIN LATERAL (
 				-- Rows at or before the sample sort first, newest first;

@@ -156,6 +156,19 @@ func TestConnectionUtilizationPercent_LatestMatchesHistorical(t *testing.T) {
 	latest := latestValueFor(t, ds, "connection_utilization_percent", connID)
 	assertClose(t, "latest", latest, want)
 
+	// The latest row carries the sample's own collected_at, which anomaly
+	// recovery uses to tell a new sample from one already counted
+	// (GitHub issue #611).
+	values, err := ds.GetLatestMetricValues(context.Background(), "connection_utilization_percent")
+	if err != nil {
+		t.Fatalf("GetLatestMetricValues failed: %v", err)
+	}
+	for _, v := range values {
+		if v.ConnectionID == connID && !v.CollectedAt.Equal(at) {
+			t.Errorf("latest collected_at = %v, want the sample's %v", v.CollectedAt, at)
+		}
+	}
+
 	historical := historicalValuesFor(t, ds, "connection_utilization_percent", connID)
 	got, ok := historical[at]
 	if !ok {

@@ -11,6 +11,7 @@ package engine
 
 import (
 	"context"
+	"time"
 
 	"github.com/pgedge/ai-workbench/alerter/internal/config"
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
@@ -27,14 +28,26 @@ import (
 //   - while the value stays outside the sensitivity band, refreshes the
 //     alert's metric_value, anomaly_score and last_updated, escalating but
 //     never lowering its severity;
-//   - once the value has been inside the band for
-//     anomaly.tier1.clear_count consecutive passes, clears the alert and
-//     queues the usual AlertClear notification.
+//   - once anomaly.tier1.clear_count consecutive samples of the metric
+//     have scored inside the band, clears the alert and queues the usual
+//     AlertClear notification.
 //
-// Any pass in which an alert is not scored in band resets its count: the
-// metric or connection did not report, the baseline was cold or had a zero
-// divisor, a blackout covered it, or the value was out of band. The alert
-// is then held open rather than cleared on the absence of evidence.
+// The count is of distinct samples, not of passes. Tier 1 runs every
+// evaluation_interval_seconds (60 by default), whereas most probes
+// collect only every 300 to 600 seconds, so several passes in a row
+// usually re-score the same sample; counting passes would clear an alert
+// on a single reading. A streak therefore records the collected_at of the
+// last sample it counted and advances only on a newer one. Re-scoring the
+// same sample neither advances nor resets it.
+//
+// The alert is held open, never cleared, whenever it cannot be judged:
+//
+//   - a pass in which the metric or connection did not report keeps the
+//     count as it was, since no sample was missed, only none was new;
+//   - an out-of-band sample, a cold or unusable baseline (no sample can be
+//     judged against it) and a blackout, connection-wide or on the alert's
+//     database, reset the count, so that clearing needs clear_count fresh
+//     in-band samples taken after the condition lifts.
 //
 // Only 'active' alerts take part. An acknowledged alert belongs to the
 // user and to re-evaluation, whose fingerprint covers its value, z-score
@@ -43,7 +56,8 @@ import (
 // Tier 1 only and never calls an LLM provider.
 //
 // The consecutive counts live in memory, so they restart from zero when
-// the alerter restarts; an alert then needs a further clear_count in-band passes before it clears.
+// the alerter restarts; an alert then needs a further clear_count in-band
+// samples before it clears.
 
 // anomalyAlertKey identifies the metric series an anomaly alert was raised
 // on: the metric, connection and, for per-database metrics, the database.
@@ -65,14 +79,22 @@ func newAnomalyAlertKey(metric string, connID int, db *string) anomalyAlertKey {
 	return key
 }
 
+// anomalyStreak is an alert's run of consecutive in-band samples: how
+// many there have been, and the collected_at of the newest one counted.
+type anomalyStreak struct {
+	count      int
+	lastSample time.Time
+}
+
 // anomalyRecoveryPass is the recovery state for one detectAnomalies run.
-// The streak counts built here replace the engine's only when the run
-// completes, so that an alert not scored in band during the run (and
-// therefore absent from next) loses its count.
+// next starts as a copy of the engine's streaks for the alerts still
+// active, so an alert the run does not reach keeps its count; the run then
+// advances or resets entries, and the result replaces the engine's
+// streaks only when the run completes.
 type anomalyRecoveryPass struct {
 	alerts  map[anomalyAlertKey][]*database.Alert
 	metrics []string
-	next    map[int64]int
+	next    map[int64]anomalyStreak
 	visited map[int64]bool
 }
 
@@ -84,6 +106,42 @@ func (p *anomalyRecoveryPass) empty() bool {
 // covers reports whether an active anomaly alert exists on the series.
 func (p *anomalyRecoveryPass) covers(key anomalyAlertKey) bool {
 	return p != nil && len(p.alerts[key]) > 0
+}
+
+// resetSeries drops the counts of the alerts on one series to zero. The
+// newest sample already counted is remembered, so that re-scoring it
+// after the reset cannot count it a second time.
+func (p *anomalyRecoveryPass) resetSeries(key anomalyAlertKey) {
+	for _, alert := range p.alerts[key] {
+		p.resetAlert(alert.ID, time.Time{})
+	}
+}
+
+// resetAlert drops one alert's count to zero, remembering whichever is
+// newer of the sample it last counted and the given one.
+func (p *anomalyRecoveryPass) resetAlert(alertID int64, sample time.Time) {
+	last := p.next[alertID].lastSample
+	if sample.After(last) {
+		last = sample
+	}
+	if last.IsZero() {
+		delete(p.next, alertID)
+		return
+	}
+	p.next[alertID] = anomalyStreak{lastSample: last}
+}
+
+// resetConnection discards the streaks of every alert on a connection,
+// for a pass in which a connection-wide blackout skipped it.
+func (p *anomalyRecoveryPass) resetConnection(connID int) {
+	if p == nil {
+		return
+	}
+	for key := range p.alerts {
+		if key.connID == connID {
+			p.resetSeries(key)
+		}
+	}
 }
 
 // loadAnomalyRecovery reads the active anomaly alerts for this run. It
@@ -98,10 +156,12 @@ func (e *Engine) loadAnomalyRecovery(ctx context.Context) *anomalyRecoveryPass {
 
 	pass := &anomalyRecoveryPass{
 		alerts:  make(map[anomalyAlertKey][]*database.Alert),
-		next:    make(map[int64]int),
+		next:    make(map[int64]anomalyStreak),
 		visited: make(map[int64]bool),
 	}
 	seenMetric := make(map[string]bool)
+	e.anomalyStreakMu.Lock()
+	defer e.anomalyStreakMu.Unlock()
 	for _, alert := range alerts {
 		// The query excludes NULLs; the guard keeps a malformed row from
 		// panicking the loop if that ever changes.
@@ -110,6 +170,9 @@ func (e *Engine) loadAnomalyRecovery(ctx context.Context) *anomalyRecoveryPass {
 		}
 		key := newAnomalyAlertKey(*alert.MetricName, alert.ConnectionID, alert.DatabaseName)
 		pass.alerts[key] = append(pass.alerts[key], alert)
+		if streak, ok := e.anomalyStreaks[alert.ID]; ok {
+			pass.next[alert.ID] = streak
+		}
 		if !seenMetric[*alert.MetricName] {
 			seenMetric[*alert.MetricName] = true
 			pass.metrics = append(pass.metrics, *alert.MetricName)
@@ -137,18 +200,18 @@ func (e *Engine) resetAnomalyStreaks() {
 	e.anomalyStreakMu.Unlock()
 }
 
-// anomalyStreak returns the consecutive in-band count recorded for an
-// alert by the previous completed pass.
+// anomalyStreak returns the consecutive in-band sample count recorded
+// for an alert by the previous completed pass.
 func (e *Engine) anomalyStreak(alertID int64) int {
 	e.anomalyStreakMu.Lock()
 	defer e.anomalyStreakMu.Unlock()
-	return e.anomalyStreaks[alertID]
+	return e.anomalyStreaks[alertID].count
 }
 
-// recoverAnomalyAlerts applies one Tier 1 evaluation to the active anomaly
-// alerts on the value's series. scored is false when the value could not
-// be scored (no usable baseline), which holds the alerts open and resets
-// their counts by leaving them out of the pass.
+// recoverAnomalyAlerts applies one Tier 1 evaluation of the latest sample
+// to the active anomaly alerts on the value's series. scored is false when
+// the value could not be scored (no usable baseline), which holds the
+// alerts open and resets their counts.
 func (e *Engine) recoverAnomalyAlerts(
 	ctx context.Context,
 	pass *anomalyRecoveryPass,
@@ -160,24 +223,31 @@ func (e *Engine) recoverAnomalyAlerts(
 	sensitivity float64,
 ) {
 	key := newAnomalyAlertKey(metricName, value.ConnectionID, value.DatabaseName)
-	if !pass.covers(key) || !scored {
+	if !pass.covers(key) {
+		return
+	}
+	if !scored {
+		pass.resetSeries(key)
 		return
 	}
 
 	// A connection-wide blackout skips the connection before scoring; a
 	// database-scoped one only shows up with the database name, so it is
-	// checked here. Either way the alert is held open. A failed check is
-	// treated as a blackout: holding an alert open one pass longer is
-	// cheap, whereas clearing it during a maintenance window is not.
+	// checked here. Either way the alert is held open and its count
+	// reset. A failed check is treated as a blackout: holding an alert
+	// open a little longer is cheap, whereas clearing it during a
+	// maintenance window is not.
 	connID := value.ConnectionID
 	blackedOut, err := e.datastore.IsBlackoutActive(ctx, &connID, value.DatabaseName)
 	if err != nil {
 		e.debugLog("Error checking blackout for anomaly recovery on connection %d: %v", connID, err)
+		pass.resetSeries(key)
 		return
 	}
 	if blackedOut {
 		e.debugLog("Holding anomaly alerts for %s on connection %d open: blackout active",
 			metricName, connID)
+		pass.resetSeries(key)
 		return
 	}
 
@@ -189,15 +259,24 @@ func (e *Engine) recoverAnomalyAlerts(
 		pass.visited[alert.ID] = true
 
 		if !inBand {
+			pass.resetAlert(alert.ID, value.CollectedAt)
 			e.refreshAnomalyAlert(ctx, alert, value.Value, zScore, sensitivity)
 			continue
 		}
 
-		streak := e.anomalyStreak(alert.ID) + 1
-		if streak < cfg.Anomaly.Tier1.ClearCount {
+		// Only a sample newer than the last one counted advances the
+		// streak; re-scoring the same sample leaves it as it was.
+		streak := pass.next[alert.ID]
+		newSample := value.CollectedAt.After(streak.lastSample)
+		if newSample {
+			streak = anomalyStreak{count: streak.count + 1, lastSample: value.CollectedAt}
+		}
+		if streak.count < cfg.Anomaly.Tier1.ClearCount {
 			pass.next[alert.ID] = streak
-			e.debugLog("Anomaly alert %d back within band (%d/%d)",
-				alert.ID, streak, cfg.Anomaly.Tier1.ClearCount)
+			if newSample {
+				e.debugLog("Anomaly alert %d back within band (%d/%d samples)",
+					alert.ID, streak.count, cfg.Anomaly.Tier1.ClearCount)
+			}
 			continue
 		}
 		e.clearRecoveredAnomalyAlert(ctx, pass, alert, value.Value, zScore, streak)
@@ -233,15 +312,16 @@ func (e *Engine) refreshAnomalyAlert(
 	alert.Severity = severity
 }
 
-// clearRecoveredAnomalyAlert clears an alert whose metric has stayed in
-// band for clear_count passes. A failed clear keeps the count so the next
-// in-band pass retries it.
+// clearRecoveredAnomalyAlert clears an alert whose metric has scored in
+// band for clear_count consecutive samples. A failed clear keeps the
+// streak, so the next pass that scores the metric in band retries it
+// without waiting for a newer sample.
 func (e *Engine) clearRecoveredAnomalyAlert(
 	ctx context.Context,
 	pass *anomalyRecoveryPass,
 	alert *database.Alert,
 	metricValue, zScore float64,
-	streak int,
+	streak anomalyStreak,
 ) {
 	cleared, err := e.datastore.ClearActiveAnomalyAlert(ctx, alert.ID)
 	if err != nil {
@@ -249,14 +329,15 @@ func (e *Engine) clearRecoveredAnomalyAlert(
 		pass.next[alert.ID] = streak
 		return
 	}
+	delete(pass.next, alert.ID)
 	if !cleared {
 		// Acknowledged or cleared since the pass read it; nothing to
 		// notify about.
 		return
 	}
 
-	e.log("Anomaly alert %d cleared: %s on connection %d back within band for %d consecutive evaluations (value: %.4f, z-score: %.2f)",
-		alert.ID, alert.Title, alert.ConnectionID, streak, metricValue, zScore)
+	e.log("Anomaly alert %d cleared: %s on connection %d back within band for %d consecutive samples (value: %.4f, z-score: %.2f)",
+		alert.ID, alert.Title, alert.ConnectionID, streak.count, metricValue, zScore)
 	alert.Status = "cleared"
 	e.queueNotification(alert, database.NotificationTypeAlertClear)
 }

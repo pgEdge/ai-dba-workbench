@@ -13,6 +13,7 @@ package engine
 import (
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
 )
@@ -86,6 +87,62 @@ func TestAnomalyRecoveryPassNil(t *testing.T) {
 	if pass.covers(newAnomalyAlertKey("m", 1, nil)) {
 		t.Error("a nil pass must cover nothing")
 	}
+	pass.resetConnection(1) // must not panic
+}
+
+// TestAnomalyRecoveryPassResetConnection checks a connection-wide reset
+// discards the streaks of every series on that connection, and only
+// those.
+func TestAnomalyRecoveryPassResetConnection(t *testing.T) {
+	app := "app"
+	pass := &anomalyRecoveryPass{
+		alerts: map[anomalyAlertKey][]*database.Alert{
+			newAnomalyAlertKey("m", 1, nil):  {{ID: 10}},
+			newAnomalyAlertKey("m", 1, &app): {{ID: 11}, {ID: 12}},
+			newAnomalyAlertKey("m", 2, nil):  {{ID: 20}},
+		},
+		next: map[int64]anomalyStreak{
+			10: {count: 1}, 11: {count: 2}, 12: {count: 1}, 20: {count: 2},
+		},
+	}
+	pass.resetConnection(1)
+	want := map[int64]anomalyStreak{20: {count: 2}}
+	if !reflect.DeepEqual(pass.next, want) {
+		t.Errorf("streaks after reset = %v, want %v", pass.next, want)
+	}
+}
+
+// TestAnomalyRecoveryPassResetAlert checks a reset drops the count but
+// remembers the newest sample seen, so the same sample is never counted
+// twice.
+func TestAnomalyRecoveryPassResetAlert(t *testing.T) {
+	early := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	late := early.Add(5 * time.Minute)
+	tests := []struct {
+		name   string
+		before map[int64]anomalyStreak
+		sample time.Time
+		want   map[int64]anomalyStreak
+	}{
+		{"no streak, no sample", map[int64]anomalyStreak{}, time.Time{}, map[int64]anomalyStreak{}},
+		{"no streak, new sample", map[int64]anomalyStreak{}, late,
+			map[int64]anomalyStreak{1: {lastSample: late}}},
+		{"streak, no sample", map[int64]anomalyStreak{1: {count: 2, lastSample: early}}, time.Time{},
+			map[int64]anomalyStreak{1: {lastSample: early}}},
+		{"streak, newer sample", map[int64]anomalyStreak{1: {count: 2, lastSample: early}}, late,
+			map[int64]anomalyStreak{1: {lastSample: late}}},
+		{"streak, older sample", map[int64]anomalyStreak{1: {count: 2, lastSample: late}}, early,
+			map[int64]anomalyStreak{1: {lastSample: late}}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			pass := &anomalyRecoveryPass{next: tc.before}
+			pass.resetAlert(1, tc.sample)
+			if !reflect.DeepEqual(pass.next, tc.want) {
+				t.Errorf("streaks = %v, want %v", pass.next, tc.want)
+			}
+		})
+	}
 }
 
 func TestAnomalyMetrics(t *testing.T) {
@@ -123,7 +180,7 @@ func TestAnomalyMetrics(t *testing.T) {
 
 func TestFinishAnomalyRecoveryNilKeepsStreaks(t *testing.T) {
 	e := &Engine{}
-	e.finishAnomalyRecovery(&anomalyRecoveryPass{next: map[int64]int{7: 2}})
+	e.finishAnomalyRecovery(&anomalyRecoveryPass{next: map[int64]anomalyStreak{7: {count: 2}}})
 	e.finishAnomalyRecovery(nil)
 	if got := e.anomalyStreak(7); got != 2 {
 		t.Errorf("streak = %d, want 2 kept across a nil pass", got)

@@ -420,11 +420,16 @@ An anomaly alert has no rule threshold, so the anomaly
 detector re-scores the metric behind each active anomaly
 alert on every tier 1 evaluation, using the same baseline
 and sensitivity that raised the alert. The alerter clears
-the alert and sends the usual clear notification once the
-value has stayed inside the sensitivity band for
-`anomaly.tier1.clear_count` consecutive evaluations; the
-default of 3 clears an alert about three minutes after
-the metric recovers at the default 60 second interval.
+the alert and sends the usual clear notification once
+`anomaly.tier1.clear_count` consecutive samples of the
+metric have scored inside the sensitivity band. Only a
+newly collected sample counts: tier 1 evaluates every 60
+seconds by default whilst most probes collect every 300
+to 600 seconds, and an evaluation that re-scores a sample
+already counted neither advances nor restarts the count.
+The default of 3 therefore clears an alert on the third
+in-band sample, about ten minutes after the first for a
+probe that collects every 300 seconds.
 
 Whilst the value stays outside the band, the alerter
 updates the alert's metric value, anomaly score and last
@@ -433,11 +438,13 @@ grows; the severity never falls, and the description
 keeps the values at which the alert fired. A cached AI
 analysis is discarded when the metric value changes.
 
-The alerter holds an anomaly alert open, and restarts its
-count, on any evaluation in which the metric or connection
-does not report, the baseline is not usable, or a blackout
-covers the connection or database. The count is held in
-memory, so the count also restarts when the alerter
+The alerter holds an anomaly alert open on any evaluation
+in which the metric or connection does not report, keeping
+the count, since no sample was missed. The alerter also
+holds the alert open, and restarts its count, on a sample
+outside the band, when the baseline is not usable, or
+whilst a blackout covers the connection or database. The
+count is held in memory, so the count also restarts when the alerter
 restarts or when tier 1 is disabled. The alerter does not
 clear acknowledged anomaly alerts this way, and leaves
 them to the re-evaluation worker. Recovery stops whenever

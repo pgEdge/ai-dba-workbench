@@ -102,11 +102,12 @@ type Engine struct {
 	ctx context.Context
 
 	// anomalyStreaks counts, per active anomaly alert id, the
-	// consecutive Tier 1 passes in which its metric scored back inside
-	// the sensitivity band. It is held in memory only and is rebuilt by
-	// every completed pass. See anomaly_recovery.go (issue #611).
+	// consecutive distinct samples of its metric that scored back inside
+	// the sensitivity band, with the collected_at of the newest one
+	// counted. It is held in memory only and is replaced by every
+	// completed pass. See anomaly_recovery.go (issue #611).
 	anomalyStreakMu sync.Mutex
-	anomalyStreaks  map[int64]int
+	anomalyStreaks  map[int64]anomalyStreak
 
 	// Synchronization
 	mu sync.RWMutex

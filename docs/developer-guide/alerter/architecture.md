@@ -118,10 +118,10 @@ Alerts progress through several states during their lifecycle:
 
 The alerter automatically clears threshold alerts when the
 triggering condition returns to normal. The anomaly detector clears
-an active anomaly alert once Tier 1 scores its metric back inside
-the sensitivity band for `anomaly.tier1.clear_count` consecutive
-evaluations; the Anomaly Detection document describes the recovery
-check.
+an active anomaly alert once Tier 1 scores
+`anomaly.tier1.clear_count` consecutive samples of its metric back
+inside the sensitivity band; the Anomaly Detection document
+describes the recovery check.
 
 ## High-Level Architecture
 

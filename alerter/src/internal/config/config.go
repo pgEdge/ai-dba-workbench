@@ -148,16 +148,18 @@ type Tier1Config struct {
 	// trustworthy.
 	Warmup WarmupConfig `yaml:"warmup"`
 
-	// ClearCount is the number of consecutive Tier 1 evaluations
-	// in which an active anomaly alert's metric must score back
-	// inside the sensitivity band before the alert is cleared.
-	// Must be at least 1. See GitHub issue #611.
+	// ClearCount is the number of consecutive distinct samples of
+	// an active anomaly alert's metric that must score back inside
+	// the sensitivity band before the alert is cleared. Tier 1
+	// passes that re-score a sample already counted do not add to
+	// it. Must be at least 1. See GitHub issue #611.
 	ClearCount int `yaml:"clear_count"`
 }
 
 // DefaultAnomalyClearCount is the default for anomaly.tier1.clear_count:
-// at the default 60-second Tier 1 interval an anomaly alert clears after
-// about three minutes back within the band.
+// an anomaly alert clears on its third consecutive in-band sample, which
+// for a probe collecting every 300 seconds is about ten minutes after the
+// first.
 const DefaultAnomalyClearCount = 3
 
 // VarianceFloorConfig parameterises the hybrid variance floor.

@@ -237,7 +237,8 @@ func wantStatus(t *testing.T, got recoveryAlertState, want string) {
 
 // TestAnomalyRecoveryClearsAfterClearCount covers the core of issue #611:
 // an active anomaly alert clears after clear_count consecutive in-band
-// evaluations, with cleared_at set and an AlertClear notification queued.
+// samples, with cleared_at set and an AlertClear notification queued.
+// Each pass here writes a new sample.
 func TestAnomalyRecoveryClearsAfterClearCount(t *testing.T) {
 	env := newRecoveryEnv(t)
 	capture := installStalenessNotificationCapture(t, env.engine)
@@ -246,7 +247,7 @@ func TestAnomalyRecoveryClearsAfterClearCount(t *testing.T) {
 	env.passes(t, val(inBandValue), val(inBandValue))
 	wantStatus(t, env.alert(t, id), "active")
 	if got := env.engine.anomalyStreak(id); got != 2 {
-		t.Fatalf("streak after two in-band passes = %d, want 2", got)
+		t.Fatalf("streak after two in-band samples = %d, want 2", got)
 	}
 
 	env.passes(t, val(inBandValue))
@@ -263,12 +264,55 @@ func TestAnomalyRecoveryClearsAfterClearCount(t *testing.T) {
 		t.Errorf("streak after clearing = %d, want 0", got)
 	}
 	if n := env.candidates(t); n != 0 {
-		t.Errorf("in-band passes recorded %d candidates", n)
+		t.Errorf("in-band samples recorded %d candidates", n)
+	}
+}
+
+// TestAnomalyRecoveryCountsSamplesNotPasses checks repeated Tier 1 passes
+// over one unchanged sample count it once: however many passes re-score
+// it, the alert stays open until clear_count distinct in-band samples
+// have been seen.
+func TestAnomalyRecoveryCountsSamplesNotPasses(t *testing.T) {
+	env := newRecoveryEnv(t)
+	capture := installStalenessNotificationCapture(t, env.engine)
+	id := env.seedAlert(t, nil, "warning", "active")
+
+	rescore := func(passes int) {
+		for i := 0; i < passes; i++ {
+			env.engine.detectAnomalies(context.Background())
+		}
+	}
+
+	// One sample, scored on five passes, as a 300-second probe is under
+	// a 60-second Tier 1 interval.
+	env.passes(t, val(inBandValue))
+	rescore(4)
+	wantStatus(t, env.alert(t, id), "active")
+	if got := env.engine.anomalyStreak(id); got != 1 {
+		t.Fatalf("streak after five passes over one sample = %d, want 1", got)
+	}
+
+	// A second sample, likewise re-scored.
+	env.passes(t, val(inBandValue))
+	rescore(4)
+	wantStatus(t, env.alert(t, id), "active")
+	if got := env.engine.anomalyStreak(id); got != 2 {
+		t.Fatalf("streak after two samples = %d, want 2", got)
+	}
+	if counts := capture.drain(t); len(counts) != 0 {
+		t.Fatalf("notifications before clear_count samples = %v, want none", counts)
+	}
+
+	// The third distinct sample clears it.
+	env.passes(t, val(inBandValue))
+	wantStatus(t, env.alert(t, id), "cleared")
+	if counts := capture.drain(t); counts[database.NotificationTypeAlertClear] != 1 || len(counts) != 1 {
+		t.Errorf("notifications = %v, want one alert_clear", counts)
 	}
 }
 
 // TestAnomalyRecoveryHonoursClearCount checks a reloaded clear_count of 1
-// clears on the first in-band pass.
+// clears on the first in-band sample.
 func TestAnomalyRecoveryHonoursClearCount(t *testing.T) {
 	env := newRecoveryEnv(t)
 	env.engine.getConfig().Anomaly.Tier1.ClearCount = 1
@@ -279,7 +323,7 @@ func TestAnomalyRecoveryHonoursClearCount(t *testing.T) {
 }
 
 // TestAnomalyRecoveryOutOfBandResetsAndRefreshes checks an out-of-band
-// pass resets the count, refreshes value, score and last_updated, and only
+// sample resets the count, refreshes value, score and last_updated, and only
 // ever raises the severity.
 func TestAnomalyRecoveryOutOfBandResetsAndRefreshes(t *testing.T) {
 	env := newRecoveryEnv(t)
@@ -302,7 +346,7 @@ func TestAnomalyRecoveryOutOfBandResetsAndRefreshes(t *testing.T) {
 		t.Error("expected last_updated to be set")
 	}
 	if streak := env.engine.anomalyStreak(id); streak != 0 {
-		t.Errorf("streak after out-of-band pass = %d, want 0", streak)
+		t.Errorf("streak after out-of-band sample = %d, want 0", streak)
 	}
 
 	// A smaller deviation updates the value but keeps the severity.
@@ -315,7 +359,7 @@ func TestAnomalyRecoveryOutOfBandResetsAndRefreshes(t *testing.T) {
 		t.Errorf("metric_value = %v, want %v", got.metricValue, infoValue)
 	}
 
-	// Two in-band passes are not enough after the reset; a third is.
+	// Two in-band samples are not enough after the reset; a third is.
 	env.passes(t, val(inBandValue), val(inBandValue))
 	wantStatus(t, env.alert(t, id), "active")
 	env.passes(t, val(inBandValue))
@@ -357,13 +401,17 @@ func TestAnomalyRecoveryLeavesAcknowledgedAlone(t *testing.T) {
 }
 
 // TestAnomalyRecoveryHoldsOpen checks the conditions under which an alert
-// must stay open, and that each resets the consecutive count.
+// must stay open. A metric that stops reporting keeps the count, since no
+// sample was missed; a cold baseline or a blackout resets it, so clearing
+// needs clear_count fresh samples once the condition lifts.
 func TestAnomalyRecoveryHoldsOpen(t *testing.T) {
 	tests := []struct {
 		name string
 		// hold puts the environment into the holding condition and
 		// returns a function that lifts it.
 		hold func(t *testing.T, env *recoveryEnv) func()
+		// kept is the streak expected whilst held.
+		kept int
 	}{
 		{
 			name: "metric stops reporting",
@@ -371,6 +419,7 @@ func TestAnomalyRecoveryHoldsOpen(t *testing.T) {
 				env.clearValue(t)
 				return func() {}
 			},
+			kept: 2,
 		},
 		{
 			name: "baseline goes cold",
@@ -408,13 +457,16 @@ func TestAnomalyRecoveryHoldsOpen(t *testing.T) {
 				env.engine.detectAnomalies(context.Background())
 			}
 			wantStatus(t, env.alert(t, id), "active")
-			if streak := env.engine.anomalyStreak(id); streak != 0 {
-				t.Errorf("streak while held = %d, want 0", streak)
+			if streak := env.engine.anomalyStreak(id); streak != tc.kept {
+				t.Errorf("streak while held = %d, want %d", streak, tc.kept)
 			}
 			lift()
 
-			env.passes(t, val(inBandValue), val(inBandValue))
-			wantStatus(t, env.alert(t, id), "active")
+			// The samples still needed after the hold lifts.
+			for i := tc.kept; i < 2; i++ {
+				env.passes(t, val(inBandValue))
+				wantStatus(t, env.alert(t, id), "active")
+			}
 			env.passes(t, val(inBandValue))
 			wantStatus(t, env.alert(t, id), "cleared")
 		})
@@ -520,7 +572,8 @@ func TestRecoverAnomalyAlertsDirect(t *testing.T) {
 		if pass.empty() {
 			t.Fatal("expected the seeded alert in the pass")
 		}
-		value := &database.MetricValue{ConnectionID: env.connID, DatabaseName: &db, Value: inBandValue}
+		value := &database.MetricValue{ConnectionID: env.connID, DatabaseName: &db, Value: inBandValue,
+			CollectedAt: time.Now()}
 		return env, pass, id, value
 	}
 	apply := func(env *recoveryEnv, pass *anomalyRecoveryPass, value *database.MetricValue, z float64) {
@@ -537,9 +590,10 @@ func TestRecoverAnomalyAlertsDirect(t *testing.T) {
 			t.Fatalf("failed to insert blackout: %v", err)
 		}
 		env.engine.getConfig().Anomaly.Tier1.ClearCount = 1
+		pass.next[id] = anomalyStreak{count: 1, lastSample: value.CollectedAt.Add(-time.Minute)}
 		apply(env, pass, value, 0.5)
-		if _, ok := pass.next[id]; ok || pass.visited[id] {
-			t.Error("expected a blacked-out alert not to be counted")
+		if pass.next[id].count != 0 || pass.visited[id] {
+			t.Error("expected a blacked-out alert's count to be reset, not advanced")
 		}
 		wantStatus(t, env.alert(t, id), "active")
 	})
@@ -555,24 +609,90 @@ func TestRecoverAnomalyAlertsDirect(t *testing.T) {
 				t.Fatalf("failed to restore blackouts: %v", err)
 			}
 		}()
+		pass.next[id] = anomalyStreak{count: 1, lastSample: value.CollectedAt.Add(-time.Minute)}
 		apply(env, pass, value, 0.5)
 		wantStatus(t, env.alert(t, id), "active")
+		if pass.next[id].count != 0 {
+			t.Error("expected a failed blackout check to reset the count")
+		}
 	})
 
 	t.Run("unscored value holds the alert", func(t *testing.T) {
 		env, pass, id, value := setup(t, "warning")
 		env.engine.getConfig().Anomaly.Tier1.ClearCount = 1
 		cfg := env.engine.getConfig()
+		pass.next[id] = anomalyStreak{count: 1, lastSample: value.CollectedAt.Add(-time.Minute)}
 		env.engine.recoverAnomalyAlerts(ctx, pass, tierSkipMetric, value, 0, false, cfg, 3)
 		wantStatus(t, env.alert(t, id), "active")
+		if pass.next[id].count != 0 {
+			t.Error("expected an unscored value to reset the count")
+		}
 	})
 
 	t.Run("each alert is evaluated once per pass", func(t *testing.T) {
 		env, pass, id, value := setup(t, "warning")
 		apply(env, pass, value, 0.5)
 		apply(env, pass, value, 0.5)
-		if pass.next[id] != 1 {
-			t.Errorf("streak = %d, want 1", pass.next[id])
+		if pass.next[id].count != 1 {
+			t.Errorf("streak = %d, want 1", pass.next[id].count)
+		}
+	})
+
+	t.Run("only a newer sample advances the streak", func(t *testing.T) {
+		env, pass, id, value := setup(t, "warning")
+		apply(env, pass, value, 0.5)
+		counted := value.CollectedAt
+
+		// The same sample, and then an older one, on later passes.
+		for _, at := range []time.Time{counted, counted.Add(-time.Minute)} {
+			next := &anomalyRecoveryPass{alerts: pass.alerts, next: pass.next, visited: map[int64]bool{}}
+			value.CollectedAt = at
+			apply(env, next, value, 0.5)
+			if got := next.next[id]; got.count != 1 || !got.lastSample.Equal(counted) {
+				t.Errorf("sample at %v: streak = %+v, want 1 at %v", at, got, counted)
+			}
+		}
+
+		next := &anomalyRecoveryPass{alerts: pass.alerts, next: pass.next, visited: map[int64]bool{}}
+		value.CollectedAt = counted.Add(time.Minute)
+		apply(env, next, value, 0.5)
+		if got := next.next[id]; got.count != 2 || !got.lastSample.Equal(value.CollectedAt) {
+			t.Errorf("newer sample: streak = %+v, want 2 at %v", got, value.CollectedAt)
+		}
+		wantStatus(t, env.alert(t, id), "active")
+	})
+
+	t.Run("a sample counted before a reset is not counted again", func(t *testing.T) {
+		env, pass, id, value := setup(t, "warning")
+		apply(env, pass, value, 0.5)
+
+		// An out-of-band sample resets the count; the in-band sample
+		// before it, scored again, must not restart it.
+		next := &anomalyRecoveryPass{alerts: pass.alerts, next: pass.next, visited: map[int64]bool{}}
+		inBandAt := value.CollectedAt
+		value.CollectedAt = inBandAt.Add(time.Minute)
+		value.Value = criticalValue
+		apply(env, next, value, 13)
+
+		value.CollectedAt = inBandAt
+		value.Value = inBandValue
+		again := &anomalyRecoveryPass{alerts: pass.alerts, next: next.next, visited: map[int64]bool{}}
+		apply(env, again, value, 0.5)
+		if got := again.next[id].count; got != 0 {
+			t.Errorf("streak after re-scoring an old sample = %d, want 0", got)
+		}
+	})
+
+	t.Run("a lowered clear_count clears on a sample already counted", func(t *testing.T) {
+		env, pass, id, value := setup(t, "warning")
+		apply(env, pass, value, 0.5)
+		apply(env, pass, value, 0.5)
+		env.engine.getConfig().Anomaly.Tier1.ClearCount = 1
+		next := &anomalyRecoveryPass{alerts: pass.alerts, next: pass.next, visited: map[int64]bool{}}
+		apply(env, next, value, 0.5)
+		wantStatus(t, env.alert(t, id), "cleared")
+		if _, ok := next.next[id]; ok {
+			t.Error("expected the cleared alert's streak to be dropped")
 		}
 	})
 
@@ -591,7 +711,7 @@ func TestRecoverAnomalyAlertsDirect(t *testing.T) {
 
 		// A refresh is likewise refused, and the in-memory alert is
 		// left as it was read.
-		pass2 := &anomalyRecoveryPass{alerts: pass.alerts, next: map[int64]int{}, visited: map[int64]bool{}}
+		pass2 := &anomalyRecoveryPass{alerts: pass.alerts, next: map[int64]anomalyStreak{}, visited: map[int64]bool{}}
 		value.Value = criticalValue
 		apply(env, pass2, value, 13)
 		got := env.alert(t, id)
@@ -612,16 +732,33 @@ func TestRecoverAnomalyAlertsDirect(t *testing.T) {
 
 		apply(env, pass, value, 0.5)
 		wantStatus(t, env.alert(t, id), "active")
-		if pass.next[id] != 1 {
-			t.Errorf("streak after a failed clear = %d, want it kept at 1", pass.next[id])
+		if pass.next[id].count != 1 {
+			t.Errorf("streak after a failed clear = %d, want it kept at 1", pass.next[id].count)
 		}
 
-		pass2 := &anomalyRecoveryPass{alerts: pass.alerts, next: map[int64]int{}, visited: map[int64]bool{}}
+		pass2 := &anomalyRecoveryPass{alerts: pass.alerts, next: map[int64]anomalyStreak{}, visited: map[int64]bool{}}
 		value.Value = criticalValue
 		apply(env, pass2, value, 13)
 		if got := env.alert(t, id); got.metricValue != nil || got.severity != "warning" {
 			t.Errorf("alert changed despite the failed refresh: %+v", got)
 		}
+	})
+
+	t.Run("a failed clear is retried without a newer sample", func(t *testing.T) {
+		env, pass, id, value := setup(t, "warning")
+		env.engine.getConfig().Anomaly.Tier1.ClearCount = 1
+		if _, err := env.pool.Exec(ctx, failRecoveryUpdatesSQL); err != nil {
+			t.Fatalf("failed to install trigger: %v", err)
+		}
+		apply(env, pass, value, 0.5)
+		wantStatus(t, env.alert(t, id), "active")
+
+		if _, err := env.pool.Exec(ctx, dropFailRecoveryUpdatesSQL); err != nil {
+			t.Fatalf("failed to drop trigger: %v", err)
+		}
+		next := &anomalyRecoveryPass{alerts: pass.alerts, next: pass.next, visited: map[int64]bool{}}
+		apply(env, next, value, 0.5)
+		wantStatus(t, env.alert(t, id), "cleared")
 	})
 }
 

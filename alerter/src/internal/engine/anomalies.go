@@ -168,7 +168,7 @@ func (e *Engine) detectAnomalies(ctx context.Context) {
 	}
 
 	// Active anomaly alerts are re-scored on every pass so they clear
-	// once their metric recovers (issue #611). Recovery is Tier 1 only,
+	// once enough new samples of their metric have recovered (issue #611). Recovery is Tier 1 only,
 	// so it runs even when no later tier could process a new candidate.
 	recovery := e.loadAnomalyRecovery(ctx)
 
@@ -209,6 +209,7 @@ func (e *Engine) detectAnomalies(ctx context.Context) {
 		if active {
 			e.debugLog("Skipping anomaly detection for connection %d: blackout active", connID)
 			blackedOut[connID] = true
+			recovery.resetConnection(connID)
 		}
 	}
 

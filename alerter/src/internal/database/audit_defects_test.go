@@ -906,6 +906,21 @@ func TestMetricRegistryLatestSQLFreshnessCutoff(t *testing.T) {
 	}
 }
 
+// TestMetricRegistryLatestSQLReportsSampleTime asserts that no latest
+// query reports NOW() as its collected_at. Anomaly recovery counts
+// distinct samples by their collected_at, so a query stamping each
+// evaluation with the current time would make every Tier 1 pass look like
+// a new sample and clear an alert on a single reading (GitHub issue #611).
+func TestMetricRegistryLatestSQLReportsSampleTime(t *testing.T) {
+	stamped := regexp.MustCompile(`(?i)now\(\)\s+as\s+collected_at`)
+	for _, name := range registryNames() {
+		if stamped.MatchString(metricRegistry[name].latestSQL) {
+			t.Errorf("%s latestSQL reports NOW() as collected_at; report the sample's own collected_at",
+				name)
+		}
+	}
+}
+
 // TestMetricClearsWhenAbsent pins the clear-when-absent classification
 // for representative registry entries and for an unknown metric.
 func TestMetricClearsWhenAbsent(t *testing.T) {

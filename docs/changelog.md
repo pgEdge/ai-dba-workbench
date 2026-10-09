@@ -1096,21 +1096,23 @@ project adheres to
   until an operator dealt with it. Each tier 1 evaluation now
   re-scores the metric behind every active anomaly alert against
   the same baseline tier 1 uses, and clears the alert, sending
-  the usual clear notification, once the value has been back
-  inside the sensitivity band for the new
-  `anomaly.tier1.clear_count` consecutive evaluations (default 3,
-  minimum 1, about three minutes at the default interval). Whilst
-  the value stays out of band, the alert's metric value, anomaly
-  score and last-updated time are refreshed and its severity can
-  rise but never fall; the description keeps the original values.
-  An evaluation in which the metric does not report, the baseline
-  is not usable or a blackout applies holds the alert open and
-  restarts the count, which is kept in memory and also restarts
-  when the alerter does. Acknowledged anomaly alerts are left to
-  re-evaluation, and no new anomaly alert is raised on the same
-  metric, connection and database within five minutes of one
-  clearing. Recovery uses tier 1 only and makes no embedding or
-  LLM call. (#611)
+  the usual clear notification, once the number of consecutive
+  samples set by the new `anomaly.tier1.clear_count` option
+  (default 3, minimum 1) have scored back inside the sensitivity
+  band. Only a newly collected sample counts, so evaluations
+  that re-score a sample already counted neither advance nor
+  restart the count. Whilst the value stays out of band, the
+  alert's metric value, anomaly score and last-updated time are
+  refreshed and its severity can rise but never fall; the
+  description keeps the original values. An evaluation in which
+  the metric does not report holds the alert open and keeps the
+  count; an out-of-band sample, an unusable baseline or a
+  blackout holds it open and restarts the count, which is kept
+  in memory and also restarts when the alerter does.
+  Acknowledged anomaly alerts are left to re-evaluation, and no
+  new anomaly alert is raised on the same metric, connection and
+  database within five minutes of one clearing. Recovery uses
+  tier 1 only and makes no embedding or LLM call. (#611)
 
 - Apply the datastore password read from the server's
   `-db-password-file` flag. The file was read but its contents

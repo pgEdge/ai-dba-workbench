@@ -67,10 +67,12 @@ An anomaly alert has no threshold, so the alerter clears
 an active anomaly alert once the metric returns to its
 normal range instead. The anomaly detector checks the
 metric on each evaluation, every minute by default, and
-clears the alert after the value has stayed within the
-normal range for three evaluations in a row; the
+clears the alert once three newly collected samples in a
+row have fallen within the normal range; the
 `anomaly.tier1.clear_count` option in the alerter
-configuration changes that number. Until then, the alert
+configuration changes that number. Most probes collect
+every five or ten minutes, so an alert usually clears
+ten to twenty minutes after the first normal sample. Until then, the alert
 shows the latest value and anomaly score, and its
 severity can rise but does not fall. The alerter sends
 the usual clear notification and raises no new anomaly

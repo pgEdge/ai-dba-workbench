@@ -102,7 +102,7 @@ Tier 1 settings are configured in the `anomaly.tier1` section:
 | `enabled` | `true` | Enable Tier 1 detection |
 | `default_sensitivity` | `3.0` | Z-score threshold |
 | `evaluation_interval_seconds` | `60` | Evaluation interval |
-| `clear_count` | `3` | In-band evaluations before an anomaly alert clears |
+| `clear_count` | `3` | Consecutive in-band samples before an anomaly alert clears |
 
 ### Supported Metrics
 
@@ -530,9 +530,22 @@ has one of the following effects on the alerts for its series:
   `metric_value`, `anomaly_score` and `last_updated` columns, and
   raises the severity when the new z-score warrants a higher one.
 - a value inside the band adds one to the alert's consecutive
-  in-band count.
+  in-band count, provided the sample is newer than the last one the
+  count included.
 - a count that reaches `anomaly.tier1.clear_count` clears the alert
   and queues the usual `alert_clear` notification.
+
+The count is of distinct samples rather than of passes. Tier 1 runs
+every `evaluation_interval_seconds` (60 by default), but most probes
+collect only every 300 to 600 seconds, so several consecutive passes
+usually re-score the same sample; counting passes would clear an
+alert on a single reading. Each count therefore records the
+`collected_at` of the newest sample it included, and only a sample
+with a later `collected_at` advances it. A pass that re-scores a
+sample already counted neither advances nor resets the count. Every
+latest query in the metric registry reports its sample's own
+`collected_at`, never `NOW()`, and
+`TestMetricRegistryLatestSQLReportsSampleTime` enforces that.
 
 The refresh never lowers the severity, so a smaller deviation does
 not quietly downgrade an alert raised as critical. The refresh
@@ -541,23 +554,26 @@ threshold path does, but leaves the title and description alone, so
 the description still reports the values at which the alert fired.
 A refresh sends no notification.
 
-The alerter holds an alert open, and drops its count back to zero,
-on a completed pass that does not score its series inside the band.
-The following conditions hold an alert open:
+The alerter holds an alert open on a pass in which the metric or
+the connection did not report a value, and keeps its count, since
+no sample was missed and none was new. The following conditions
+hold an alert open and drop its count back to zero, so that
+clearing needs `clear_count` fresh in-band samples once the
+condition lifts:
 
-- the metric or the connection did not report a value.
+- the value lies outside the band.
 - no warm baseline exists, or the floored standard deviation is zero.
 - a blackout covers the connection or the database.
-- the value lies outside the band.
 
 The alerter therefore never clears an anomaly alert on the absence
 of evidence. A failed blackout check is treated as an active
-blackout, because holding an alert open for one more pass is cheaper
+blackout, because holding an alert open a little longer is cheaper
 than clearing it during a maintenance window. A pass that fails
 before it completes, for example because the active alerts, the
-connections or the rules cannot be read, keeps the previous counts,
-as does a clear that fails to write, so the next in-band pass
-retries the clear.
+connections or the rules cannot be read, keeps the previous counts.
+A clear that fails to write keeps the count too, and the next pass
+that scores the series in band retries the clear without waiting
+for a newer sample.
 
 Acknowledged anomaly alerts take no part in recovery. The
 re-evaluation worker owns those alerts, and its fingerprint covers
@@ -570,7 +586,7 @@ left it.
 The consecutive counts live in memory. The counts restart from zero
 when the alerter restarts or when a pass runs with anomaly detection
 or Tier 1 disabled, so an alert then needs a further `clear_count`
-in-band passes before it clears. Recovery uses Tier 1 alone and
+in-band samples before it clears. Recovery uses Tier 1 alone and
 makes no embedding or LLM call. When the alerter auto-disables
 anomaly detection at startup or on a reload, as described in the
 next section, recovery stops with it.

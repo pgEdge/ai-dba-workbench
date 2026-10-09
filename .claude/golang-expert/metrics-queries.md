@@ -1313,22 +1313,31 @@ database, and every scored value on a covered series goes through
   `anomaly_score`, `last_updated` and an escalate-only severity
   (`escalatedSeverity` over `anomalySeverity`, the helper
   `createAnomalyAlert` also uses), with no notification;
-- in band: the count from the previous pass plus one goes into
-  `pass.next`, and at `anomaly.tier1.clear_count` (default 3)
-  `ClearActiveAnomalyAlert` clears it and `queueNotification` sends
-  `AlertClear`.
+- in band: the streak (`anomalyStreak{count, lastSample}`) advances
+  only when the value's `MetricValue.CollectedAt` is after
+  `lastSample`, so passes that re-score one sample count it once; at
+  `anomaly.tier1.clear_count` (default 3) `ClearActiveAnomalyAlert`
+  clears it and `queueNotification` sends `AlertClear`. This relies on
+  every registry `latestSQL` returning the sample's own `collected_at`,
+  never `NOW()` (`TestMetricRegistryLatestSQLReportsSampleTime`).
 
 Both writes are gated on `status = 'active'` and report whether a row
 changed, so an alert acknowledged mid-pass is left alone and gets no
 notification. Acknowledged alerts are never refreshed because
 `reevaluationFingerprint` hashes their value, z-score and severity, and
-a refresh would buy a new Tier 3 call. The counts (`Engine.anomalyStreaks`)
-are in memory: `finishAnomalyRecovery` replaces them with `pass.next` at
-the end of a completed run, so any alert not scored in band that run
-(absent metric, cold baseline, zero divisor, connection or database
-blackout, failed blackout check) resets to zero and stays open. A failed
-alert list (`nil` pass) or an early return keeps the old counts; Tier 1
-being disabled resets them. Recovery runs even when
+a refresh would buy a new Tier 3 call. The streaks (`Engine.anomalyStreaks`)
+are in memory: `loadAnomalyRecovery` copies the current ones for still
+active alerts into `pass.next`, and `finishAnomalyRecovery` installs
+`pass.next` at the end of a completed run. An alert the run never
+reaches (absent metric, inactive connection) therefore keeps its streak;
+an out-of-band sample, cold baseline, zero divisor, database blackout or
+failed blackout check resets it via `resetSeries`/`resetAlert`, and a
+connection-wide blackout via `resetConnection` in `detectAnomalies`. A
+reset zeroes the count but keeps `lastSample`, so a sample already
+counted is never counted again. A failed clear keeps
+the streak, and the next in-band pass retries even on the same sample. A
+failed alert list (`nil` pass) or an early return keeps the old streaks;
+Tier 1 being disabled resets them. Recovery runs even when
 `anomalyProcessingAvailable` is false, but no candidate is recorded then,
 nor for a metric only an alert covers. `ReloadConfig` and startup still
 set `Anomaly.Enabled = false` when no tier after Tier 1 is usable, which

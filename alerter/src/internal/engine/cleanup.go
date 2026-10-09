@@ -881,12 +881,16 @@ func (e *Engine) cleanupOldData(ctx context.Context) {
 	retentionDays := settings.RetentionDays
 	cutoff := time.Now().AddDate(0, 0, -retentionDays)
 
-	// Delete old cleared/acknowledged alerts
+	// Delete old cleared/acknowledged alerts. Both deletes here run in
+	// batches and can stop part way, on an error or at shutdown, so the
+	// rows already deleted are reported either way; the error returned
+	// already names the operation that failed.
 	deleted, err := e.datastore.DeleteOldAlerts(ctx, cutoff)
-	if err != nil {
-		e.log("ERROR: Failed to delete old alerts: %v", err)
-	} else if deleted > 0 {
+	if deleted > 0 {
 		e.log("Deleted %d old alerts", deleted)
+	}
+	if err != nil {
+		e.log("ERROR: %v", err)
 	}
 
 	// Expire candidates that were never processed first, so the delete
@@ -896,9 +900,10 @@ func (e *Engine) cleanupOldData(ctx context.Context) {
 
 	// Delete old anomaly candidates
 	deleted, err = e.datastore.DeleteOldAnomalyCandidates(ctx, cutoff)
-	if err != nil {
-		e.log("ERROR: Failed to delete old anomaly candidates: %v", err)
-	} else if deleted > 0 {
+	if deleted > 0 {
 		e.log("Deleted %d old anomaly candidates", deleted)
+	}
+	if err != nil {
+		e.log("ERROR: %v", err)
 	}
 }

@@ -1141,6 +1141,24 @@ project adheres to
   database within five minutes of one clearing. Recovery uses
   tier 1 only and makes no embedding or LLM call. (#611)
 
+- Stop the alerter's retention sweep from blocking vacuum across
+  the datastore. The sweep deleted every aged anomaly candidate,
+  and with it each candidate's embedding, in a single
+  transaction; on a large installation that ran for over 23
+  minutes and held back the xmin horizon, so vacuum could clean
+  nothing else in the datastore whilst it ran. The alerter now
+  deletes aged anomaly candidates and aged alerts in batches of
+  1,000 rows, each in its own short transaction, and stops
+  between batches when it is shut down. Collector schema
+  migration 20 adds the indexes the batched delete and its
+  cascades need on `anomaly_candidates` (`processed_at`,
+  `embedding_id` and `alert_id`), and drops
+  `idx_anomaly_embeddings_candidate`, which duplicated the
+  unique index on `anomaly_embeddings.candidate_id`. The new
+  indexes are built without `CONCURRENTLY`, so the collector
+  blocks writes to `anomaly_candidates` whilst they build when
+  it first starts after the upgrade. (#615)
+
 - Apply the datastore password read from the server's
   `-db-password-file` flag. The file was read but its contents
   were then dropped, so the server connected with the

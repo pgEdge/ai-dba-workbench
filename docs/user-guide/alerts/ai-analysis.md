@@ -120,9 +120,10 @@ states:
   a "Not validated" notice giving that reason, and keep
   the play button, because such a statement can still be
   run.
-- Template blocks use `$1`-style parameter placeholders
-  and show no play button, because such a query needs
-  parameter values substituted in before it can run.
+- Template blocks use placeholders such as `$1`,
+  `<name>`, `{{name}}` or `:name`, and show no play
+  button, because such a query needs values substituted
+  in before it can run.
 
 The check plans `SELECT`, `WITH`, `INSERT`, `UPDATE`,
 `DELETE`, `MERGE`, `VALUES` and `TABLE` statements, and

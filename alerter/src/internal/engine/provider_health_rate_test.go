@@ -319,8 +319,11 @@ func TestFailureLimit(t *testing.T) {
 		// number, which round up one too far without the tolerance.
 		{0.28, 25, 7},
 		{0.56, 25, 14},
-		// A share so small that the tolerance takes the product
-		// below zero still needs one failure.
+		// A rate given to more places than a fixed tolerance resolves
+		// still needs its share: six of 20 is below 0.30000000001.
+		{0.30000000001, 20, 7},
+		// A share so small that the product rounds up to nothing
+		// still needs one failure.
 		{1e-12, 1, 1},
 	}
 	for _, tt := range tests {

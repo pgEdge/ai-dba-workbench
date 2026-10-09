@@ -248,9 +248,12 @@ type providerHealthLimits struct {
 // failureLimit is the number of failures among window calls that reaches
 // rate, rounded up so that the share is at least rate, and at least one.
 func failureLimit(rate float64, window int) int {
-	// The tolerance stops a product such as 0.28 * 25, which floating
-	// point puts a hair above 7, from rounding up to 8.
-	limit := int(math.Ceil(rate*float64(window) - 1e-9))
+	// Stepping the product down by one unit in the last place stops a
+	// product such as 0.28 * 25, which floating point puts one step above
+	// 7, from rounding up to 8. A fixed tolerance would be too coarse for
+	// a rate given to more decimal places, such as 0.30000000001 * 20,
+	// whose limit is 7 rather than 6.
+	limit := int(math.Ceil(math.Nextafter(rate*float64(window), math.Inf(-1))))
 	if limit < 1 {
 		return 1
 	}

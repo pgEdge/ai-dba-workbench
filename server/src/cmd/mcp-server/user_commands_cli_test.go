@@ -100,8 +100,10 @@ func TestAddUserCommand(t *testing.T) {
 		if err != nil {
 			t.Fatalf("addUserCommand failed: %v", err)
 		}
-		for _, want := range []string{"User created successfully!", "bob",
-			"Bob Example", "bob@example.com", "notes"} {
+		for _, want := range []string{"User created successfully!",
+			"Username:  bob", "Full Name: Bob Example",
+			"Email:    bob@example.com", "Notes:    notes",
+			"Status:   Enabled"} {
 			if !strings.Contains(out, want) {
 				t.Errorf("output lacks %q: %q", want, out)
 			}
@@ -117,10 +119,17 @@ func TestAddUserCommand(t *testing.T) {
 		store.Close()
 		fakePasswords(t, []byte(cliTestPassword), []byte(cliTestPassword))
 
-		_, err := runCLI(t, "carol\nCarol Example\ncarol@example.com\nsome notes\n",
+		out, err := runCLI(t, "carol\nCarol Example\ncarol@example.com\nsome notes\n",
 			func() error { return addUserCommand(dataDir, "", "", "", "", "") })
 		if err != nil {
 			t.Fatalf("addUserCommand failed: %v", err)
+		}
+		for _, prompt := range []string{"Enter username: ",
+			"Enter full name (optional): ", "Enter email address (optional): ",
+			"Enter notes for this user (optional): "} {
+			if !strings.Contains(out, prompt) {
+				t.Errorf("output lacks prompt %q: %q", prompt, out)
+			}
 		}
 		user := storedUser(t, dataDir, "carol")
 		if user == nil || user.DisplayName != "Carol Example" ||
@@ -134,6 +143,26 @@ func TestAddUserCommand(t *testing.T) {
 		defer reopened.Close()
 		if _, _, err := reopened.AuthenticateUser("carol", cliTestPassword); err != nil {
 			t.Errorf("the prompted password does not work: %v", err)
+		}
+	})
+
+	t.Run("optional prompts left empty", func(t *testing.T) {
+		dataDir, store := newCLITestStore(t)
+		store.Close()
+
+		out, err := runCLI(t, "\n\n\n", func() error {
+			return addUserCommand(dataDir, "bob", cliTestPassword, "", "", "")
+		})
+		if err != nil {
+			t.Fatalf("addUserCommand failed: %v", err)
+		}
+		for _, absent := range []string{"Full Name:", "Email:", "Notes:"} {
+			if strings.Contains(out, absent) {
+				t.Errorf("output should not contain %q: %q", absent, out)
+			}
+		}
+		if storedUser(t, dataDir, "bob") == nil {
+			t.Fatal("user was not created")
 		}
 	})
 
@@ -207,11 +236,14 @@ func TestUpdateUserCommandInteractive(t *testing.T) {
 		"y\nAlice New\n" + // full name
 		"yes\nalice.new@example.com\n" + // email
 		"y\nnew notes\n" // notes
-	_, err := runCLI(t, input, func() error {
+	out, err := runCLI(t, input, func() error {
 		return updateUserCommand(dataDir, "", "", "", "", "")
 	})
 	if err != nil {
 		t.Fatalf("updateUserCommand failed: %v", err)
+	}
+	if !strings.Contains(out, "What would you like to update?") {
+		t.Errorf("expected the interactive menu, got %q", out)
 	}
 	user := storedUser(t, dataDir, "alice")
 	if user.Annotation != "new notes" || user.DisplayName != "Alice New" ||
@@ -234,6 +266,8 @@ func TestUpdateUserCommandFailures(t *testing.T) {
 		{name: "no username", stdin: "\n", wantErr: "username is required"},
 		{name: "unknown user", username: "nobody", wantErr: "user 'nobody' not found"},
 		{name: "nothing chosen", username: "alice", stdin: "n\nn\nn\nn\n",
+			wantErr: "no updates specified"},
+		{name: "input ends before any answer", username: "alice",
 			wantErr: "no updates specified"},
 		{name: "empty new password", username: "alice", stdin: "y\nn\nn\nn\n",
 			passwords: [][]byte{{}}, wantErr: "no updates specified"},
@@ -278,8 +312,10 @@ func TestEnableDisableUserCommands(t *testing.T) {
 		wantEnabled bool
 		wantOutput  string
 	}{
-		{"disable", disableUserCommand, false, "disabled successfully"},
-		{"enable", enableUserCommand, true, "enabled successfully"},
+		{"disable", disableUserCommand, false,
+			"User 'alice' disabled successfully"},
+		{"enable", enableUserCommand, true,
+			"User 'alice' enabled successfully (failed attempts reset)"},
 	}
 	for _, c := range commands {
 		t.Run(c.name+" named", func(t *testing.T) {
@@ -297,10 +333,12 @@ func TestEnableDisableUserCommands(t *testing.T) {
 		})
 		t.Run(c.name+" prompted", func(t *testing.T) {
 			dataDir := newUserCommandStore(t)
-			if _, err := runCLI(t, "alice\n", func() error {
-				return c.run(dataDir, "")
-			}); err != nil {
+			out, err := runCLI(t, "alice\n", func() error { return c.run(dataDir, "") })
+			if err != nil {
 				t.Fatalf("%s failed: %v", c.name, err)
+			}
+			if prompt := "Enter username to " + c.name + ": "; !strings.Contains(out, prompt) {
+				t.Errorf("output lacks prompt %q: %q", prompt, out)
 			}
 			if user := storedUser(t, dataDir, "alice"); user.Enabled != c.wantEnabled {
 				t.Errorf("enabled = %v, want %v", user.Enabled, c.wantEnabled)
@@ -337,7 +375,9 @@ func TestAddServiceAccountCommand(t *testing.T) {
 			t.Fatalf("addServiceAccountCommand failed: %v", err)
 		}
 		for _, want := range []string{"Service account created successfully!",
-			"Service Example", "svc@example.com", "notes", "-add-token -user svc"} {
+			"Username:  svc", "Type:     Service Account (no password login)",
+			"Full Name: Service Example", "Email:    svc@example.com",
+			"Notes:    notes", "Use -add-token -user svc"} {
 			if !strings.Contains(out, want) {
 				t.Errorf("output lacks %q: %q", want, out)
 			}
@@ -351,15 +391,35 @@ func TestAddServiceAccountCommand(t *testing.T) {
 		dataDir, store := newCLITestStore(t)
 		store.Close()
 
-		_, err := runCLI(t, "svc\nService Example\nsvc@example.com\nsome notes\n",
+		out, err := runCLI(t, "svc\nService Example\nsvc@example.com\nsome notes\n",
 			func() error { return addServiceAccountCommand(dataDir, "", "", "", "") })
 		if err != nil {
 			t.Fatalf("addServiceAccountCommand failed: %v", err)
+		}
+		if !strings.Contains(out, "Enter service account username: ") {
+			t.Errorf("expected the username prompt, got %q", out)
 		}
 		user := storedUser(t, dataDir, "svc")
 		if user == nil || user.DisplayName != "Service Example" ||
 			user.Email != "svc@example.com" || user.Annotation != "some notes" {
 			t.Errorf("stored user = %+v", user)
+		}
+	})
+
+	t.Run("optional prompts left empty", func(t *testing.T) {
+		dataDir, store := newCLITestStore(t)
+		store.Close()
+
+		out, err := runCLI(t, "", func() error {
+			return addServiceAccountCommand(dataDir, "svc", "", "", "")
+		})
+		if err != nil {
+			t.Fatalf("addServiceAccountCommand failed: %v", err)
+		}
+		for _, absent := range []string{"Full Name:", "Email:", "Notes:"} {
+			if strings.Contains(out, absent) {
+				t.Errorf("output should not contain %q: %q", absent, out)
+			}
 		}
 	})
 

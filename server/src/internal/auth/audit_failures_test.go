@@ -243,7 +243,7 @@ func TestRecordFailureCoalescesRepeats(t *testing.T) {
 	}
 	ageEntries(store, failureCoalesceWindow)
 	before = auditEventCount(t, store)
-	if err := as.DeleteUser("nobody"); err == nil {
+	if err := as.DeleteUser("nobody", true); err == nil {
 		t.Fatal("expected deleting a missing user to fail")
 	}
 	if got := auditEventCount(t, store) - before; got != 2 {

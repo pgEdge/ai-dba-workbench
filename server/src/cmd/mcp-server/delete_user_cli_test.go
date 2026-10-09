@@ -11,6 +11,9 @@
 package main
 
 import (
+	"bufio"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -91,8 +94,24 @@ func TestDeleteUserCommand(t *testing.T) {
 			wantOutput: "Deletion canceled"},
 		{name: "declined after the username prompt", stdin: "root\nn\n",
 			wantOutput: "Deletion canceled"},
-		{name: "confirmation unreadable", username: "root", stdin: "",
+		{name: "empty input declines", username: "root", stdin: "",
 			wantOutput: "Deletion canceled"},
+		// Issue #608: an answer cut short by end of input is still the
+		// answer, so "n" with no newline must not delete.
+		{name: "n without newline declines", username: "root", stdin: "n",
+			wantOutput: "Deletion canceled"},
+		{name: "blank line declines", username: "root", stdin: "\n",
+			wantOutput: "Deletion canceled"},
+		{name: "no declines", username: "root", stdin: "no\n",
+			wantOutput: "Deletion canceled"},
+		{name: "other answer declines", username: "root", stdin: "yesterday\n",
+			wantOutput: "Deletion canceled"},
+		{name: "prompted username then end of input declines", stdin: "root\n",
+			wantOutput: "Deletion canceled"},
+		{name: "y without newline confirms", username: "root", stdin: "y",
+			wantOutput: "deleted successfully", wantDeleted: true},
+		{name: "padded upper-case Y confirms", username: "root", stdin: "  Y \n",
+			wantOutput: "deleted successfully", wantDeleted: true},
 		{name: "no username given", stdin: "\n",
 			wantErr: "username is required"},
 		{name: "unknown user", username: "nobody", stdin: "yes\n",
@@ -137,4 +156,68 @@ func TestDeleteUserCommandStoreOpenFails(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "failed to open auth store") {
 		t.Errorf("expected an open failure, got %v", err)
 	}
+}
+
+// TestDeleteUserCommandConfirmationReadError checks that a read failure
+// other than end of input is reported, and deletes nothing.
+func TestDeleteUserCommandConfirmationReadError(t *testing.T) {
+	dataDir := newDeleteUserStore(t)
+
+	// Reading a closed file fails with os.ErrClosed, not io.EOF.
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create pipe: %v", err)
+	}
+	w.Close()
+	r.Close()
+	oldStdin := os.Stdin
+	os.Stdin = r
+	defer func() { os.Stdin = oldStdin }()
+
+	var cmdErr error
+	captureStdout(t, func() {
+		cmdErr = deleteUserCommand(dataDir, "root")
+	})
+	if cmdErr == nil || !strings.Contains(cmdErr.Error(), "failed to read confirmation") {
+		t.Fatalf("expected a confirmation read error, got %v", cmdErr)
+	}
+	if !userExists(t, dataDir, "root") {
+		t.Fatal("user was deleted despite the read error")
+	}
+}
+
+// TestReadConfirmation checks that only an explicit yes confirms, that
+// end of input keeps the partial answer, and that other read errors are
+// returned.
+func TestReadConfirmation(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  bool
+	}{
+		{"y", "y\n", true},
+		{"yes", "yes\n", true},
+		{"YES at end of input", "YES", true},
+		{"n at end of input", "n", false},
+		{"empty", "", false},
+		{"yesterday", "yesterday\n", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := readConfirmation(bufio.NewReader(strings.NewReader(tt.input)))
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+
+	t.Run("read error", func(t *testing.T) {
+		got, err := readConfirmation(bufio.NewReader(failingReader{}))
+		if got || err == nil || errors.Is(err, io.EOF) {
+			t.Fatalf("got (%v, %v), want false and a read error", got, err)
+		}
+	})
 }

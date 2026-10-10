@@ -578,7 +578,7 @@ func TestRecoverAnomalyAlertsDirect(t *testing.T) {
 	}
 	apply := func(env *recoveryEnv, pass *anomalyRecoveryPass, value *database.MetricValue, z float64) {
 		cfg := env.engine.getConfig()
-		env.engine.recoverAnomalyAlerts(ctx, pass, tierSkipMetric, value, z, true, cfg,
+		env.engine.recoverAnomalyAlerts(ctx, pass, tierSkipMetric, value, anomalyScore{zScore: z, scored: true}, cfg,
 			cfg.Anomaly.Tier1.DefaultSensitivity)
 	}
 
@@ -622,7 +622,7 @@ func TestRecoverAnomalyAlertsDirect(t *testing.T) {
 		env.engine.getConfig().Anomaly.Tier1.ClearCount = 1
 		cfg := env.engine.getConfig()
 		pass.next[id] = anomalyStreak{count: 1, lastSample: value.CollectedAt.Add(-time.Minute)}
-		env.engine.recoverAnomalyAlerts(ctx, pass, tierSkipMetric, value, 0, false, cfg, 3)
+		env.engine.recoverAnomalyAlerts(ctx, pass, tierSkipMetric, value, anomalyScore{}, cfg, 3)
 		wantStatus(t, env.alert(t, id), "active")
 		if pass.next[id].count != 0 {
 			t.Error("expected an unscored value to reset the count")

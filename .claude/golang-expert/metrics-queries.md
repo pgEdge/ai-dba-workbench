@@ -1347,8 +1347,9 @@ database, and every scored value on a covered series goes through
 
 - out of band: `RefreshAnomalyAlert` writes `metric_value`,
   `anomaly_score`, `last_updated` and an escalate-only severity
-  (`escalatedSeverity` over `anomalySeverity`, the helper
-  `createAnomalyAlert` also uses), with no notification;
+  (`escalatedSeverity` over `anomalyScore.severity`, the
+  `cappedAnomalySeverity` helper `createAnomalyAlert` also uses), with
+  no notification;
 - in band: the streak (`anomalyStreak{count, lastSample}`) advances
   only when the value's `MetricValue.CollectedAt` is after
   `lastSample`, so passes that re-score one sample count it once; at
@@ -1399,6 +1400,37 @@ of this, `detectAnomalies` must not skip a metric on `ErrNoMetricData`.
 notification, and the description prefixed with
 `unreachableAnomalyDescriptionPrefix` (not re-prefixed on a retry).
 `anomaly_recovery_absent_integration_test.go` covers both.
+
+### Per-metric floors and the severity cap (#617)
+
+`config/metric_floors.go` holds `defaultMetricFloors`, one
+`MetricFloor{MinValue, MinStdDev}` per baselineable metric, and
+`Tier1Config.MetricFloor(name)` overlays the optional
+`anomaly.tier1.metric_floors` override field by field (pointer fields,
+so an explicit 0 disables a floor). `scoreAnomalyValue` returns an
+`anomalyScore`, not a bare z-score:
+
+- `value < MinValue` returns `{scored: true, belowFloor: true}` before
+  any baseline lookup, so it raises no candidate and counts as in band
+  for recovery even on a cold baseline; `anomalyScore.inBand` is the one
+  in-band test, and detection and recovery both use it.
+- the divisor is `max(effectiveStdDev(global floor), MinStdDev)`, and
+  `stddevFloored` is set only for a flat baseline (`StdDev <=
+  variance_floor.absolute_floor`), never because the relative floor or
+  `MinStdDev` won, since that capped real-spread baselines (#619 review).
+- `cappedAnomalySeverity` turns `critical` into `warning` when
+  `stddevFloored` is set. `recordAnomalyCandidate` writes
+  `effective_stddev` and `stddev_floored` into the candidate `Context`,
+  and `createAnomalyAlert` reads the flag back with
+  `candidateStdDevFloored` (false for older contexts), so raising and
+  refreshing an alert apply the same cap.
+- `unknownMetricFloorNames` (engine, since `config` cannot import the
+  registry) lists `metric_floors` keys failing `SupportsBaselines`;
+  `NewEngine` and `ReloadConfig` log them as a warning, not an error.
+
+Engine tests that exercise the global variance floor on the load-average
+test metric must call `disableMetricFloors`, since its default floors
+(`MinValue` 1, `MinStdDev` 0.5) otherwise mask the case under test.
 
 ## Time-Window Resolution (server)
 

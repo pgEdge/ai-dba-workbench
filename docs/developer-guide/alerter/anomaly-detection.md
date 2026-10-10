@@ -274,6 +274,68 @@ collapsing the floor to zero. When both knobs are zero, the
 floor collapses and the existing `stddev == 0` guard handles
 the degenerate case.
 
+#### Per-Metric Floors
+
+The global floor cannot size the divisor to a metric's units.
+An `absolute_floor` of `0.001` stops a division by zero, but
+on a baseline whose mean and standard deviation are both zero
+a change of one session or one temporary file still scores a
+z-score of 1,000, which the cap then clamps to 100. Raising
+the global floor does not help, because the metrics range
+from load averages below 1 to byte counts in the billions.
+
+Tier 1 therefore applies two floors per metric; the built-in
+defaults live in `alerter/src/internal/config/metric_floors.go`
+and the `anomaly.tier1.metric_floors` option overrides them.
+
+- `min_stddev` joins the global floor, so the divisor is
+  `max(effective_stddev, min_stddev)`. The value is the
+  smallest change that matters in the metric's units; a small
+  value on a flat baseline then scores low, whilst a large
+  jump still scores high and raises a candidate. A
+  `min_stddev` only takes effect whilst it exceeds the global
+  relative floor, which is 5% of the mean by default.
+- `min_value` is the value below which the metric is never
+  anomalous. Tier 1 checks the value floor before it reads a
+  baseline, so a value under the floor raises no candidate and
+  counts as in band for alert recovery even when the baseline
+  is cold. The floor suits metrics where only a high value is
+  a concern; a metric that matters when the metric falls, such
+  as the cache hit ratio, has no value floor.
+
+The following table lists the built-in defaults; each
+`min_value` sits well below the default threshold rule on
+the same metric, so the threshold path still reports a value
+that matters:
+
+| Metric | `min_value` | `min_stddev` |
+|--------|-------------|--------------|
+| `pg_sys_cpu_usage_info.processor_time_percent` | 50 | 5 |
+| `pg_sys_memory_info.used_percent` | 50 | 5 |
+| `connection_utilization_percent` | 50 | 5 |
+| `pg_sys_disk_info.used_percent` | 50 | none |
+| `pg_stat_activity.count` | 10 | 5 |
+| `pg_stat_database.temp_files_delta` | 10 | 10 |
+| `pg_stat_activity.blocked_count` | 2 | 1 |
+| `pg_stat_activity.max_query_duration_seconds` | 60 | 10 |
+| `pg_stat_activity.max_xact_duration_seconds` | 60 | 10 |
+| `pg_stat_activity.idle_in_transaction_seconds` | 60 | 10 |
+| `pg_sys_load_avg_info.load_avg_fifteen_minutes` | 1 | 0.5 |
+| `pg_replication_slots.max_retained_bytes` | 256 MiB | 64 MiB |
+| `pg_stat_database.deadlocks_delta` | none | 1 |
+| `spock_exception_log.recent_count` | none | 1 |
+| `spock_resolutions.recent_count` | none | 1 |
+
+The reasoning behind each default is recorded beside
+`defaultMetricFloors`. The integer counts whose threshold
+rules fire on any occurrence have no value floor, so the
+anomaly path hides no occurrence, but a `min_stddev` of 1,
+because a count cannot change by less than one. Disk usage
+and the cache hit ratio have no `min_stddev`: above the disk
+value floor of 50%, and at a cache hit ratio's usual mean of
+95% or more, the global relative floor already gives a larger
+divisor than any useful `min_stddev` would.
+
 #### Warmup Gate Semantics
 
 The `isBaselineWarm` helper gates detection on two conditions
@@ -313,6 +375,31 @@ cap of zero disables the clamp. The cap applies symmetrically
 to both extreme positive and extreme negative scores, so a
 runaway divisor cannot drive either tail beyond the configured
 bound.
+
+#### Severity
+
+An anomaly alert's severity comes from the absolute z-score
+in multiples of the sensitivity: four times or more is
+`critical`, twice or more is `warning`, and anything else is
+`info`. When the baseline has no spread of its own, meaning
+its standard deviation is at or below
+`variance_floor.absolute_floor`, the severity is capped at
+`warning`. Against such a flat baseline a floor supplies the
+whole divisor, so the z-score measures distance in units the
+floor chose rather than in the metric's observed spread; the
+score still marks the value as unusual, but it is not the
+evidence a critical alert implies. A baseline that does vary,
+however little, keeps the full severity range even when the
+relative floor or a `min_stddev` supplies the divisor.
+Threshold rules remain the path to a critical alert on an
+absolute value.
+
+Tier 1 records the divisor in the candidate's context as
+`effective_stddev`, with `stddev_floored` set when the
+baseline was flat, and the Tier 3 prompt includes both. The cap
+applies when the alert is raised and when recovery refreshes
+an open alert; a candidate written before the key existed
+keeps the uncapped severity.
 
 ## Tier 2: Embedding Similarity
 
@@ -546,6 +633,11 @@ sample already counted neither advances nor resets the count. Every
 latest query in the metric registry reports its sample's own
 `collected_at`, never `NOW()`, and
 `TestMetricRegistryLatestSQLReportsSampleTime` enforces that.
+
+A value under the metric's `min_value` floor counts as inside
+the band, matching detection, which never raises a candidate for
+such a value; the value floor needs no baseline, so the value
+counts even when the baseline is cold.
 
 The refresh never lowers the severity, so a smaller deviation does
 not quietly downgrade an alert raised as critical. The refresh

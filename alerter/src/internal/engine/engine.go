@@ -17,6 +17,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -141,6 +143,7 @@ func NewEngine(cfg *config.Config, datastore *database.Datastore, debug bool) *E
 
 	// Initialize LLM providers for Tier 2/3 anomaly detection
 	if cfg != nil {
+		e.warnUnknownMetricFloors(cfg)
 		e.initLLMProviders()
 		e.initProviderHealth()
 	}
@@ -333,8 +336,38 @@ func (e *Engine) ReloadConfig(cfg *config.Config) {
 		e.log("Anomaly detection auto-disabled: no LLM provider available for the enabled tiers")
 	}
 
+	if cfg != nil {
+		e.warnUnknownMetricFloors(cfg)
+	}
+
 	e.config = cfg
 	e.log("Configuration reloaded")
+}
+
+// unknownMetricFloorNames returns, sorted, the anomaly.tier1.metric_floors
+// keys that name no metric Tier 1 scores. The configuration package
+// cannot check them itself, since the metric registry lives in the
+// database package, which imports it.
+func unknownMetricFloorNames(cfg *config.Config) []string {
+	var unknown []string
+	for name := range cfg.Anomaly.Tier1.MetricFloors {
+		if !database.SupportsBaselines(name) {
+			unknown = append(unknown, name)
+		}
+	}
+	sort.Strings(unknown)
+	return unknown
+}
+
+// warnUnknownMetricFloors logs any metric_floors entry that can never
+// apply, most likely a mistyped metric name, at startup and on each
+// reload. It warns rather than refusing the configuration, so that a
+// reload is never rejected over an entry that would merely do nothing.
+func (e *Engine) warnUnknownMetricFloors(cfg *config.Config) {
+	if unknown := unknownMetricFloorNames(cfg); len(unknown) > 0 {
+		e.log("WARNING: anomaly.tier1.metric_floors names metrics that anomaly detection does not score, so their floors have no effect: %s",
+			strings.Join(unknown, ", "))
+	}
 }
 
 // getConfig returns the current configuration with proper read locking.

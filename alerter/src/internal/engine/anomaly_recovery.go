@@ -306,24 +306,26 @@ func (e *Engine) anomalyStreak(alertID int64) int {
 }
 
 // recoverAnomalyAlerts applies one Tier 1 evaluation of the latest sample
-// to the active anomaly alerts on the value's series. scored is false when
-// the value could not be scored (no usable baseline), which holds the
-// alerts open and resets their counts.
+// to the active anomaly alerts on the value's series. score.scored is
+// false when the value could not be scored (no usable baseline), which
+// holds the alerts open and resets their counts. A value under the
+// metric's value floor is in band (issue #617), so it counts towards
+// clearing exactly as detection treats it as normal.
 func (e *Engine) recoverAnomalyAlerts(
 	ctx context.Context,
 	pass *anomalyRecoveryPass,
 	metricName string,
 	value *database.MetricValue,
-	zScore float64,
-	scored bool,
+	score anomalyScore,
 	cfg *config.Config,
 	sensitivity float64,
 ) {
+	zScore := score.zScore
 	key := newAnomalyAlertKey(metricName, value.ConnectionID, value.DatabaseName)
 	if !pass.covers(key) {
 		return
 	}
-	if !scored {
+	if !score.scored {
 		pass.resetSeries(key)
 		return
 	}
@@ -348,7 +350,7 @@ func (e *Engine) recoverAnomalyAlerts(
 		return
 	}
 
-	inBand := zScore <= sensitivity && zScore >= -sensitivity
+	inBand := score.inBand(sensitivity)
 	for _, alert := range pass.alerts[key] {
 		if pass.visited[alert.ID] {
 			continue
@@ -357,7 +359,7 @@ func (e *Engine) recoverAnomalyAlerts(
 
 		if !inBand {
 			pass.resetAlert(alert.ID, value.CollectedAt)
-			e.refreshAnomalyAlert(ctx, alert, value.Value, zScore, sensitivity)
+			e.refreshAnomalyAlert(ctx, alert, value.Value, zScore, score.severity(sensitivity))
 			continue
 		}
 
@@ -488,12 +490,14 @@ func (e *Engine) countInBandSample(
 // original severity and a temporarily smaller deviation should not quietly
 // downgrade it. No notification is sent, matching the threshold path,
 // which updates an open alert's value and severity without notifying.
+// scoredSeverity is the severity the new evaluation alone would give.
 func (e *Engine) refreshAnomalyAlert(
 	ctx context.Context,
 	alert *database.Alert,
-	metricValue, zScore, sensitivity float64,
+	metricValue, zScore float64,
+	scoredSeverity string,
 ) {
-	severity := escalatedSeverity(alert.Severity, anomalySeverity(zScore, sensitivity))
+	severity := escalatedSeverity(alert.Severity, scoredSeverity)
 	updated, err := e.datastore.RefreshAnomalyAlert(ctx, alert.ID, metricValue, zScore, severity)
 	if err != nil {
 		e.log("ERROR: Failed to refresh anomaly alert %d: %v", alert.ID, err)

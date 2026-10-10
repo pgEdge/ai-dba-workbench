@@ -255,12 +255,12 @@ func (e *Engine) detectAnomalies(ctx context.Context) {
 					continue
 				}
 
-				zScore, baseline, scored := e.scoreAnomalyValue(ctx, metric.name, value, cfg, now)
+				score := e.scoreAnomalyValue(ctx, metric.name, value, cfg, now)
 				if !recovery.empty() {
-					e.recoverAnomalyAlerts(ctx, recovery, metric.name, value, zScore, scored, cfg, sensitivity)
+					e.recoverAnomalyAlerts(ctx, recovery, metric.name, value, score, cfg, sensitivity)
 				}
-				if recordCandidate && scored {
-					e.recordAnomalyCandidate(ctx, metric.name, value, zScore, baseline, sensitivity)
+				if recordCandidate && score.scored {
+					e.recordAnomalyCandidate(ctx, metric.name, value, score, sensitivity)
 				}
 			}
 		}
@@ -341,29 +341,101 @@ func (e *Engine) detectAnomalyForValue(
 	sensitivity float64,
 	now time.Time,
 ) {
-	zScore, baseline, scored := e.scoreAnomalyValue(ctx, metricName, value, cfg, now)
-	if !scored {
+	score := e.scoreAnomalyValue(ctx, metricName, value, cfg, now)
+	if !score.scored {
 		return
 	}
-	e.recordAnomalyCandidate(ctx, metricName, value, zScore, baseline, sensitivity)
+	e.recordAnomalyCandidate(ctx, metricName, value, score, sensitivity)
 }
 
-// scoreAnomalyValue returns the z-score of one latest metric value against
-// the warm baseline Tier 1 selects for its connection and database, and
-// that baseline. scored is false when no usable baseline exists: none was
-// written, none is warm, or the floored divisor is zero.
+// anomalyScore is the Tier 1 evaluation of one latest metric value.
+type anomalyScore struct {
+	// zScore is the value's distance from the baseline mean in units of
+	// the floored divisor, clamped to max_z_score. It is 0 when
+	// belowFloor is set, since no baseline was consulted.
+	zScore float64
+
+	// baseline is the warm baseline the value was scored against; it is
+	// nil when belowFloor is set.
+	baseline *database.MetricBaseline
+
+	// effectiveStdDev is the divisor zScore was computed with.
+	effectiveStdDev float64
+
+	// scored is false when the value could not be evaluated: no usable
+	// baseline exists, none is warm, or the floored divisor is zero.
+	scored bool
+
+	// belowFloor is set when the value is under the metric's MinValue
+	// floor, so it is normal whatever its baseline says.
+	belowFloor bool
+
+	// stddevFloored is set when the baseline has no spread of its own:
+	// its standard deviation is at or below variance_floor.absolute_floor,
+	// so a floor supplied the whole divisor. A baseline that merely varies
+	// by less than variance_floor.relative_pct of its mean, or by less
+	// than the metric's MinStdDev, has a real spread and is not flagged.
+	stddevFloored bool
+}
+
+// inBand reports whether the score is normal: under the metric's value
+// floor, or with |z| within the sensitivity. Detection raises no
+// candidate for an in-band value, and recovery counts it towards
+// clearing an open alert, so the two paths cannot disagree.
+func (s anomalyScore) inBand(sensitivity float64) bool {
+	return s.belowFloor || (s.zScore <= sensitivity && s.zScore >= -sensitivity)
+}
+
+// severity is the alert severity for the score; see anomalySeverity and
+// cappedAnomalySeverity.
+func (s anomalyScore) severity(sensitivity float64) string {
+	return cappedAnomalySeverity(s.zScore, sensitivity, s.stddevFloored)
+}
+
+// cappedAnomalySeverity maps a z-score to a severity, but never to
+// "critical" when the baseline had no spread of its own (GitHub issue
+// #617; see anomalyScore.stddevFloored).
+//
+// Against a flat baseline, the z-score measures distance in units a
+// floor chose rather than in the metric's observed spread. It still
+// says the value is unusual, which is enough for an info or warning
+// alert, but it is not the statistical evidence a critical alert
+// implies. This is also what kept a flat baseline from turning any
+// small change into a z-score clamped at max_z_score and therefore a
+// critical alert. Threshold rules remain the path for a critical alert
+// on an absolute value.
+func cappedAnomalySeverity(zScore, sensitivity float64, stddevFloored bool) string {
+	severity := anomalySeverity(zScore, sensitivity)
+	if stddevFloored && severity == "critical" {
+		return "warning"
+	}
+	return severity
+}
+
+// scoreAnomalyValue evaluates one latest metric value. A value under the
+// metric's MinValue floor is normal without consulting a baseline;
+// otherwise the value is scored against the warm baseline Tier 1 selects
+// for its connection and database, using the floored divisor.
 func (e *Engine) scoreAnomalyValue(
 	ctx context.Context,
 	metricName string,
 	value *database.MetricValue,
 	cfg *config.Config,
 	now time.Time,
-) (zScore float64, baseline *database.MetricBaseline, scored bool) {
+) anomalyScore {
 	connID := value.ConnectionID
+
+	// The value floor is checked first: it needs no baseline, so a
+	// value under it also counts as normal for recovery when the
+	// baseline is cold or missing.
+	floor := cfg.Anomaly.Tier1.MetricFloor(metricName)
+	if floor.MinValue > 0 && value.Value < floor.MinValue {
+		return anomalyScore{scored: true, belowFloor: true}
+	}
 
 	baselines, err := e.datastore.GetMetricBaselines(ctx, connID, metricName, value.DatabaseName)
 	if err != nil || len(baselines) == 0 {
-		return 0, nil, false
+		return anomalyScore{}
 	}
 
 	// Warmup gate: prefer the time-aware baselines, and skip
@@ -379,7 +451,7 @@ func (e *Engine) scoreAnomalyValue(
 				cold.SampleCount, cold.EarliestSampleAt,
 			)
 		}
-		return 0, nil, false
+		return anomalyScore{}
 	}
 	if cold != nil {
 		e.debugLog(
@@ -390,18 +462,25 @@ func (e *Engine) scoreAnomalyValue(
 		)
 	}
 
-	// Variance floor: never divide by a divisor smaller
-	// than the configured hybrid floor. This replaces
-	// the previous "stddev == 0" guard; if both floor
-	// knobs are zero the divisor can still be zero, so
-	// retain the degenerate-case skip.
-	stddev := effectiveStdDev(*baseline, cfg.Anomaly.Tier1.VarianceFloor)
+	// Variance floor: never divide by a divisor smaller than the
+	// global hybrid floor or the metric's own MinStdDev (issue #617).
+	// The global absolute_floor only guards against division by zero,
+	// so on a flat baseline it turned a change of one unit into a
+	// z-score in the thousands; MinStdDev sizes the divisor to the
+	// smallest change that matters in the metric's units, so a small
+	// value scores low while a genuinely large jump still scores high.
+	// If every floor is zero the divisor can still be zero, so the
+	// degenerate-case skip is retained.
+	stddev := math.Max(
+		effectiveStdDev(*baseline, cfg.Anomaly.Tier1.VarianceFloor),
+		floor.MinStdDev,
+	)
 	if stddev == 0 {
-		return 0, nil, false
+		return anomalyScore{}
 	}
 
 	// Calculate z-score using the floored divisor.
-	zScore = (value.Value - baseline.Mean) / stddev
+	zScore := (value.Value - baseline.Mean) / stddev
 
 	// Symmetric z-score cap: clamp |zScore| to MaxZScore
 	// when the cap is positive. A zero cap disables the
@@ -413,25 +492,34 @@ func (e *Engine) scoreAnomalyValue(
 			zScore = -zCap
 		}
 	}
-	return zScore, baseline, true
+	return anomalyScore{
+		zScore:          zScore,
+		baseline:        baseline,
+		effectiveStdDev: stddev,
+		scored:          true,
+		stddevFloored:   baseline.StdDev <= cfg.Anomaly.Tier1.VarianceFloor.AbsoluteFloor,
+	}
 }
 
 // recordAnomalyCandidate records a tier-1 candidate for a scored value
-// whose z-score lies outside the sensitivity band.
+// that lies outside the sensitivity band and above the metric's value
+// floor.
 func (e *Engine) recordAnomalyCandidate(
 	ctx context.Context,
 	metricName string,
 	value *database.MetricValue,
-	zScore float64,
-	baseline *database.MetricBaseline,
+	score anomalyScore,
 	sensitivity float64,
 ) {
 	connID := value.ConnectionID
 
-	// Check if z-score exceeds threshold
-	if zScore <= sensitivity && zScore >= -sensitivity {
+	// Check if z-score exceeds threshold. An in-band score includes
+	// one under the value floor, which has no baseline.
+	if !score.scored || score.inBand(sensitivity) {
 		return
 	}
+	zScore := score.zScore
+	baseline := score.baseline
 
 	e.debugLog("Tier 1 anomaly detected: %s on connection %d (z-score: %.2f)",
 		metricName, connID, zScore)
@@ -444,8 +532,10 @@ func (e *Engine) recordAnomalyCandidate(
 		MetricValue:  value.Value,
 		ZScore:       zScore,
 		DetectedAt:   time.Now(),
-		Context:      fmt.Sprintf(`{"baseline_mean": %.2f, "baseline_stddev": %.2f, "period_type": "%s"}`, baseline.Mean, baseline.StdDev, baseline.PeriodType),
-		Tier1Pass:    true,
+		Context: fmt.Sprintf(
+			`{"baseline_mean": %.2f, "baseline_stddev": %.2f, "effective_stddev": %.4f, "stddev_floored": %t, "period_type": "%s"}`,
+			baseline.Mean, baseline.StdDev, score.effectiveStdDev, score.stddevFloored, baseline.PeriodType),
+		Tier1Pass: true,
 	}
 
 	// A candidate that could never raise an alert would only be
@@ -914,7 +1004,8 @@ func (e *Engine) createAnomalyAlert(ctx context.Context, candidate *database.Ano
 		return
 	}
 
-	severity := anomalySeverity(candidate.ZScore, sensitivity)
+	severity := cappedAnomalySeverity(candidate.ZScore, sensitivity,
+		candidateStdDevFloored(candidate.Context))
 
 	// Build anomaly details from tier results
 	anomalyDetails := fmt.Sprintf(
@@ -956,6 +1047,21 @@ func (e *Engine) createAnomalyAlert(ctx context.Context, candidate *database.Ano
 
 	// Queue alert notification for async processing
 	e.queueNotification(alert, database.NotificationTypeAlertFire)
+}
+
+// candidateStdDevFloored reports whether a candidate's z-score was
+// computed with a floored divisor, from the stddev_floored key that
+// recordAnomalyCandidate writes into its context. A candidate written
+// before that key existed, or with an unreadable context, reports false,
+// which keeps the severity it would have had before issue #617.
+func candidateStdDevFloored(contextJSON string) bool {
+	var ctxData struct {
+		StdDevFloored bool `json:"stddev_floored"`
+	}
+	if err := json.Unmarshal([]byte(contextJSON), &ctxData); err != nil {
+		return false
+	}
+	return ctxData.StdDevFloored
 }
 
 // formatOptionalFloat formats a *float64 as a JSON value string.
@@ -1030,6 +1136,10 @@ func (e *Engine) buildClassificationPrompt(
 		}
 		if stddev, ok := contextData["baseline_stddev"].(float64); ok {
 			fmt.Fprintf(&sb, "- Baseline stddev: %.4f\n", stddev)
+		}
+		if effective, ok := contextData["effective_stddev"].(float64); ok {
+			floored := contextData["stddev_floored"] == true
+			fmt.Fprintf(&sb, "- Z-score divisor: %.4f (raised to a minimum floor: %t)\n", effective, floored)
 		}
 		if periodType, ok := contextData["period_type"].(string); ok {
 			fmt.Fprintf(&sb, "- Baseline period: %s\n", periodType)

@@ -44,18 +44,18 @@ func TestTokenScopeReadsRefuseMissingToken(t *testing.T) {
 	if err := s.CreateUser("owner", "Password1234!x", "", "", ""); err != nil {
 		t.Fatalf("CreateUser failed: %v", err)
 	}
-	_, live, err := s.CreateToken("owner", "live", nil)
+	_, live, err := s.AsActor(systemActor).CreateToken("owner", "live", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken failed: %v", err)
 	}
-	_, gone, err := s.CreateToken("owner", "gone", nil)
+	_, gone, err := s.AsActor(systemActor).CreateToken("owner", "gone", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken failed: %v", err)
 	}
-	if err := s.SetTokenAdminScope(gone.ID, []string{PermManageUsers}); err != nil {
+	if err := s.AsActor(systemActor).SetTokenAdminScope(gone.ID, []string{PermManageUsers}, true); err != nil {
 		t.Fatalf("SetTokenAdminScope failed: %v", err)
 	}
-	if err := s.DeleteToken(strconv.FormatInt(gone.ID, 10)); err != nil {
+	if err := s.AsActor(systemActor).DeleteToken(strconv.FormatInt(gone.ID, 10), true); err != nil {
 		t.Fatalf("DeleteToken failed: %v", err)
 	}
 
@@ -110,7 +110,7 @@ func TestCheckerDeniesDeletedActingToken(t *testing.T) {
 		MCPPrivilegeTypeTool, "", false); err != nil {
 		t.Fatalf("RegisterMCPPrivilege failed: %v", err)
 	}
-	_, token, err := s.CreateToken("root", "self-deleting", nil)
+	_, token, err := s.AsActor(systemActor).CreateToken("root", "self-deleting", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken failed: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestCheckerDeniesDeletedActingToken(t *testing.T) {
 	if !rc.IsSuperuser(ctx) || !rc.TokenHoldsEverything(ctx) {
 		t.Fatal("Expected the unscoped superuser token to hold everything")
 	}
-	if err := s.DeleteToken(strconv.FormatInt(token.ID, 10)); err != nil {
+	if err := s.AsActor(systemActor).DeleteToken(strconv.FormatInt(token.ID, 10), true); err != nil {
 		t.Fatalf("DeleteToken failed: %v", err)
 	}
 

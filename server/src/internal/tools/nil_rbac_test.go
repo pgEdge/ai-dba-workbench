@@ -163,7 +163,7 @@ func TestContextAwareProvider_NilRBAC_DeniesTool(t *testing.T) {
 	if err := authStore.CreateUser("admin", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
-	_, token, err := authStore.CreateToken("admin", "admin-token", nil)
+	_, token, err := authStore.AsActor(auth.SystemActor()).CreateToken("admin", "admin-token", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken: %v", err)
 	}

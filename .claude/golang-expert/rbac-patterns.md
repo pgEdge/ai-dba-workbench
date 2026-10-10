@@ -570,17 +570,36 @@ exceeded "this token's access" (fixed so the denial audit coalesces).
   unrestricted in every kind. Both return `ErrTokenScopeUnreadable`
   (500 in the handler) when the stored scope, the target's owner or the
   owner's reach cannot be read.
-- Superuser-owned tokens: `createToken` for a superuser owner, and
-  `setTokenScope`, `clearTokenScope` and `deleteToken` on a token whose
-  owner is a superuser, call `requireSuperuser`
-  (`requireSuperuserForOwnedToken` in `rbac_token_handlers.go`), for
-  sessions and tokens alike. These token gates remain handler
-  pre-checks on the owner read before the store call; only
-  `updateUser` and `deleteUser` moved the equivalent check on a
-  superuser account into the store's transaction (#588). A token
-  acting on itself is exempt, so it can still narrow its own scope or
-  delete itself. Pinned by
-  `internal/api/rbac_token_superuser_owner_test.go`.
+- Superuser-owned tokens: minting a token for a superuser owner, and
+  setting, clearing or deleting a token whose owner is a superuser,
+  need a superuser, for sessions and tokens alike. The owner is read in
+  the store, inside the write's transaction (#607), not by the handler:
+  `ActorStore.CreateToken` takes `callerIsSuperuser` and refuses on the
+  `is_superuser` its own owner lookup reads; `DeleteToken`,
+  `SetTokenScope`, `ClearTokenScope` and the single-kind setters take
+  `superuserOwnerAllowed` and run `guardSuperuserOwnedTokenTx`
+  (`token_superuser_owner.go`; a failed owner read refuses). Both
+  return `auth.ErrSuperuserTargetForbidden`, which
+  `respondTokenWriteError` maps to `denyNotSuperuser`; the store's
+  deferred failure audit skips that error, so a refusal leaves only the
+  coalesced denial row (`TestSuperuserOwnedTokenRefusalsAuditOnce`). The handlers
+  pass `RBACChecker.IsSuperuser`, or `superuserOwnerAllowed(r, id)`,
+  which also exempts a token acting on itself so it can narrow or
+  delete itself; the CLI passes true. Do not add a handler pre-read of
+  the owner back. `AuthStore` has no exported token writer, so every
+  caller names an actor and the flag; tests use
+  `store.AsActor(auth.SystemActor()).X(..., true)`, and
+  `TestAuthStoreHasNoTokenWriters` fails if one is re-exported, or if
+  the unguarded owner-scoped `DeleteUserToken` returns on either store
+  (deleted in #607; delete through `DeleteToken`). The
+  ceiling checks still run first in the handler, so a token caller
+  widening or clearing a superuser's token, or minting for a superuser,
+  gets the ceiling's 403. `setTokenScope` writes all
+  its kinds through one `ActorStore.SetTokenScope` transaction (one
+  audit event per kind; any failure leaves every kind unchanged).
+  Pinned by `internal/api/rbac_token_superuser_owner_test.go` and
+  `internal/auth/token_superuser_owner_test.go` (owner promoted after
+  the read, a concurrent promotion, atomicity).
 - Connection scope shape: `auth.ValidateScopedConnections` (store, HTTP
   and CLI alike) refuses a duplicate connection ID, a negative ID, an
   unknown level, and connection 0 (all connections) combined with any
@@ -771,13 +790,15 @@ before the last-superuser guard). `respondUserWriteError` maps it to
 the same 403 and denial audit as `requireSuperuser`, through
 `denyNotSuperuser`, and the store's deferred failure audit skips that
 error so a refusal leaves only the handler's coalesced denial row. Do
-not add a pre-check back to `updateUser` or `deleteUser` on a target
-read outside the transaction. Pinned by
+not add a handler pre-check back on a target read outside the
+transaction. Pinned by
 `rbac_user_superuser_gate_test.go` and
 `internal/auth/superuser_target_guard_test.go` (a target promoted
-after the read, and a concurrent promotion). Any new endpoint that can
-change superuser status, or write to a superuser account, needs the
-same gate.
+after the read, and a concurrent promotion). A superuser's tokens get
+the same in-transaction gate (#607; see the superuser-owned tokens
+entry under token scopes). Any new endpoint that can change superuser
+status, or write to a superuser account or its tokens, needs the same
+gate.
 
 The store also refuses, with `auth.ErrLastSuperuser`, any demotion,
 disable or delete that would leave no enabled superuser

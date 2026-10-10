@@ -357,12 +357,14 @@ func guardLastSuperuserTx(tx *sql.Tx, before, after userSnapshot,
 	return nil
 }
 
-// ErrSuperuserTargetForbidden reports an update or delete of a superuser
-// account refused because the caller is not a superuser. Changing a
-// superuser's password, profile or enabled state, or deleting it, is as
-// good as holding the role, so only a superuser may do so.
+// ErrSuperuserTargetForbidden reports a write to a superuser account, or
+// to a token a superuser owns, refused because the caller is not a
+// superuser. Changing a superuser's password, profile or enabled state,
+// or deleting it, is as good as holding the role, and so is minting,
+// rescoping or deleting a superuser's token (see
+// guardSuperuserOwnedTokenTx), so only a superuser may do so.
 var ErrSuperuserTargetForbidden = errors.New(
-	"only a superuser may change or delete a superuser account")
+	"only a superuser may write to a superuser account or its tokens")
 
 // guardSuperuserTargetTx refuses with ErrSuperuserTargetForbidden when
 // the target, as read inside the change's own transaction, is a

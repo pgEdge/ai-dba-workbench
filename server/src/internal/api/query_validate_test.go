@@ -378,9 +378,9 @@ func TestValidateQuery_ReadCheckDenied(t *testing.T) {
 
 	userID := newIssue207UnprivilegedUser(t, store, "issue532_validate_denied")
 	tokenID, _ := createTokenForUser(t, store, userID, "issue532_validate")
-	if err := store.SetTokenConnectionScope(tokenID, []auth.ScopedConnection{
+	if err := store.AsActor(auth.SystemActor()).SetTokenConnectionScope(tokenID, []auth.ScopedConnection{
 		{ConnectionID: 1, AccessLevel: auth.AccessLevelRead},
-	}); err != nil {
+	}, true); err != nil {
 		t.Fatalf("Failed to scope the test token: %v", err)
 	}
 

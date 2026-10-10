@@ -663,13 +663,13 @@ func TestListConnectionsScopedTokenReturnsScopedConnection(t *testing.T) {
 	}
 
 	// Create a scoped token for bob naming connection 11 only.
-	_, token, err := store.CreateToken("bob", "Scoped token", nil)
+	_, token, err := store.AsActor(auth.SystemActor()).CreateToken("bob", "Scoped token", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken: %v", err)
 	}
-	if err := store.SetTokenConnectionScope(token.ID, []auth.ScopedConnection{
+	if err := store.AsActor(auth.SystemActor()).SetTokenConnectionScope(token.ID, []auth.ScopedConnection{
 		{ConnectionID: scopedConnID, AccessLevel: auth.AccessLevelRead},
-	}); err != nil {
+	}, true); err != nil {
 		t.Fatalf("SetTokenConnectionScope: %v", err)
 	}
 

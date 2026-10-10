@@ -90,20 +90,21 @@ func TestSetTokenConnectionScopeRefusesMixedScope(t *testing.T) {
 	store, cleanup := createTestAuthStoreForTokenScope(t)
 	defer cleanup()
 
-	_, token, err := store.CreateToken("testuser", "Test token", nil)
+	_, token, err := store.AsActor(systemActor).CreateToken("testuser", "Test token", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken failed: %v", err)
 	}
-	if err := store.SetTokenConnectionScope(token.ID, []ScopedConnection{
+	if err := store.AsActor(systemActor).SetTokenConnectionScope(token.ID, []ScopedConnection{
 		{ConnectionID: 5, AccessLevel: AccessLevelRead},
-	}); err != nil {
+	}, true); err != nil {
 		t.Fatalf("SetTokenConnectionScope failed: %v", err)
 	}
 
-	err = store.SetTokenConnectionScope(token.ID, []ScopedConnection{
+	err = store.AsActor(systemActor).SetTokenConnectionScope(token.ID, []ScopedConnection{
 		{ConnectionID: ConnectionIDAll, AccessLevel: AccessLevelReadWrite},
 		{ConnectionID: 5, AccessLevel: AccessLevelRead},
-	})
+	}, true)
+
 	if !errors.Is(err, ErrInvalidConnectionScope) {
 		t.Fatalf("Expected ErrInvalidConnectionScope, got %v", err)
 	}
@@ -187,7 +188,7 @@ func TestCeilingLegacyMixedScope(t *testing.T) {
 		if got := session.lowestScopedLevel(AccessLevelReadWrite); got != AccessLevelReadWrite {
 			t.Errorf("A session should keep its level, got %q", got)
 		}
-		_, token, err := f.store.CreateToken("target", "unscoped", nil)
+		_, token, err := f.store.AsActor(systemActor).CreateToken("target", "unscoped", nil, true)
 		if err != nil {
 			t.Fatalf("CreateToken failed: %v", err)
 		}
@@ -287,12 +288,11 @@ func TestValidateAdminPermissions(t *testing.T) {
 
 	store, cleanup := createTestAuthStoreForTokenScope(t)
 	defer cleanup()
-	_, token, err := store.CreateToken("testuser", "Test token", nil)
+	_, token, err := store.AsActor(systemActor).CreateToken("testuser", "Test token", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken failed: %v", err)
 	}
-	if err := store.SetTokenAdminScope(token.ID,
-		[]string{PermManageUsers, "manage_everything"}); !errors.Is(err,
+	if err := store.AsActor(systemActor).SetTokenAdminScope(token.ID, []string{PermManageUsers, "manage_everything"}, true); !errors.Is(err,
 		ErrUnknownAdminPermission) {
 		t.Fatalf("Expected ErrUnknownAdminPermission, got %v", err)
 	}

@@ -1456,22 +1456,26 @@ func (s *AuthStore) StopSessionCleanup() {
 // Token Management
 // =============================================================================
 
-// CreateToken creates a new token owned by the specified user.
-// Returns the raw token (only shown once) and the stored token info.
-// If requestedExpiry is nil, superusers get no expiry while non-superusers
-// are subject to the configured maxUserTokenDays limit. The change is
-// attributed to the system actor.
-func (s *AuthStore) CreateToken(ownerUsername, annotation string, requestedExpiry *time.Time) (string, *StoredToken, error) {
-	return s.createToken(systemActor, ownerUsername, annotation, requestedExpiry)
-}
-
-// createToken creates a token and records the token.create event in the
+// createToken creates a token owned by the specified user, returning the
+// raw token (only shown once) and the stored token info. If
+// requestedExpiry is nil, superusers get no expiry while non-superusers
+// are subject to the configured maxUserTokenDays limit.
+//
+// It records the token.create event in the
 // same transaction. The event names the owner, the expiry and the
 // annotation; it never carries the raw token, its hash or any prefix of
 // either, because the audit log is readable by anyone who can read the
 // log and a token is a bearer credential.
+//
+// When callerIsSuperuser is false it refuses, with
+// ErrSuperuserTargetForbidden, to mint a token for an owner who is a
+// superuser when the transaction reads the owner. A superuser's unscoped
+// token carries the role, so reading the flag here rather than before
+// the call means an owner promoted in between is still refused (issue
+// #607), and the expiry cap below is decided on the same row.
 func (s *AuthStore) createToken(actor Actor, ownerUsername, annotation string,
-	requestedExpiry *time.Time) (raw string, stored *StoredToken, err error) {
+	requestedExpiry *time.Time, callerIsSuperuser bool) (raw string,
+	stored *StoredToken, err error) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1504,6 +1508,10 @@ func (s *AuthStore) createToken(actor Actor, ownerUsername, annotation string,
 	}
 	if lookupErr != nil {
 		err = fmt.Errorf("failed to get user: %w", lookupErr)
+		return "", nil, err
+	}
+	if isSuperuser && !callerIsSuperuser {
+		err = ErrSuperuserTargetForbidden
 		return "", nil, err
 	}
 
@@ -1591,45 +1599,6 @@ func (s *AuthStore) ListUserTokens(username string) ([]*StoredToken, error) {
 	defer rows.Close()
 
 	return s.scanTokens(rows)
-}
-
-// DeleteUserToken deletes a token (only if owned by the specified user)
-// and removes every row that references that token in a single atomic
-// transaction: its connection scope, MCP scope, admin scope, and the
-// connection_sessions row keyed on its token_hash.
-//
-// With PRAGMA foreign_keys = ON enabled in NewAuthStore, the scope rows
-// would cascade via ON DELETE CASCADE. These explicit deletes are
-// intentionally kept as defense in depth and also clean up
-// connection_sessions, which references token_hash without an FK.
-//
-// The change is attributed to the system actor.
-func (s *AuthStore) DeleteUserToken(username string, tokenID int64) error {
-	return s.deleteUserToken(systemActor, username, tokenID)
-}
-
-func (s *AuthStore) deleteUserToken(actor Actor, username string,
-	tokenID int64) error {
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	// The caller named a token, so a failure is recorded against that
-	// id even when no row matches it.
-	id := tokenID
-
-	return s.deleteTokensByFilter(
-		actor,
-		// Filter to token IDs owned by the named user.
-		"id = ? AND owner_id = (SELECT id FROM users WHERE username = ?)",
-		[]any{tokenID, username},
-		"token not found or not owned by user",
-		&auditTarget{
-			action:     "token.delete",
-			targetType: "token",
-			targetID:   &id,
-		},
-	)
 }
 
 // =============================================================================
@@ -1721,50 +1690,58 @@ func (s *AuthStore) ListAllTokens() ([]*StoredToken, error) {
 	return s.scanTokens(rows)
 }
 
-// DeleteToken deletes a token by ID or hash prefix (admin use, no owner
-// check) and removes every row that references that token in a single
-// atomic transaction: its connection scope, MCP scope, admin scope, and
-// the connection_sessions row keyed on its token_hash.
+// deleteToken deletes a token by ID or hash prefix (no owner check) and
+// removes every row that references that token in a single atomic
+// transaction: its connection scope, MCP scope, admin scope, and the
+// connection_sessions row keyed on its token_hash.
 //
 // With PRAGMA foreign_keys = ON enabled in NewAuthStore, the scope rows
 // would cascade via ON DELETE CASCADE. These explicit deletes are
 // intentionally kept as defense in depth and also clean up
 // connection_sessions, which references token_hash without an FK.
 //
-// The change is attributed to the system actor.
-func (s *AuthStore) DeleteToken(identifier string) error {
-	return s.deleteToken(systemActor, identifier)
-}
+// When
+// superuserOwnerAllowed is false it refuses, with
+// ErrSuperuserTargetForbidden, to delete a token whose owner is a
+// superuser when the delete's transaction reads the owner (see
+// guardSuperuserOwnedTokenTx).
+func (s *AuthStore) deleteToken(actor Actor, identifier string,
+	superuserOwnerAllowed bool) error {
 
-func (s *AuthStore) deleteToken(actor Actor, identifier string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	// Try by exact ID first. The callers pass strings, and the tokens
 	// table id column is INTEGER, so SQLite will coerce the string
 	// safely. A non-numeric identifier matches nothing here and falls
-	// through to the hash-prefix branch below.
-	if err := s.deleteTokensByFilter(actor, "id = ?", []any{identifier},
-		"", nil); err == nil {
-		return nil
+	// through to the hash-prefix branch below. Only a miss falls through.
+	// Any other outcome is final, a refusal or a failure after the token
+	// matched included: trying the identifier as a hash prefix as well
+	// could only delete something the caller did not name, and would end
+	// in a "token not found" that hides the real failure.
+	err := s.deleteTokensByFilter(actor, "id = ?", []any{identifier},
+		superuserOwnerAllowed)
+	if !errors.Is(err, errTokenFilterNoMatch) {
+		return err
 	}
 
 	// Try by hash prefix. Require at least 8 characters to avoid
 	// matching a huge swath of tokens on short inputs.
 	if len(identifier) >= 8 {
-		if err := s.deleteTokensByFilter(
-			actor, "token_hash LIKE ?", []any{identifier + "%"}, "", nil,
-		); err == nil {
-			return nil
+		err = s.deleteTokensByFilter(
+			actor, "token_hash LIKE ?", []any{identifier + "%"},
+			superuserOwnerAllowed,
+		)
+		if !errors.Is(err, errTokenFilterNoMatch) {
+			return err
 		}
 	}
 
 	// Both probes missed. A numeric identifier names a token id the
 	// caller believed in, so the miss is recorded against that id; a
 	// hash-prefix identifier names no id to attribute the failure to
-	// and so leaves no event, exactly as deleteUserToken's fallback
-	// target does for the id it was given.
-	err := fmt.Errorf("token not found")
+	// and so leaves no event.
+	err = fmt.Errorf("token not found")
 	if id, parseErr := strconv.ParseInt(identifier, 10, 64); parseErr == nil {
 		s.recordFailure(actor, "token.delete", "token", &id, "", err)
 	}
@@ -1777,27 +1754,24 @@ func (s *AuthStore) deleteToken(actor Actor, identifier string) error {
 // atomically, recording one token.delete event per matched token in the
 // same transaction. The whereClause is embedded in "SELECT id FROM
 // tokens WHERE <clause>", so it must not contain user-supplied text;
-// all dynamic values belong in the args slice. notFoundMsg, when
-// non-empty, is returned (wrapped in an error) if the filter matches no
-// rows. When empty, a zero-rows-affected outcome returns a generic
-// "token not found" error so callers can chain filters. fallback, when
-// non-nil, is the target a failure is recorded against before any
-// token matches, so that a caller who knows which token it asked for
-// leaves a failure event behind; DeleteToken passes nil, because it
-// chains two filters of which the first routinely matches nothing and
-// a failure event for each probe would be noise.
+// all dynamic values belong in the args slice. A filter that matches no
+// rows returns errTokenFilterNoMatch, so callers can chain filters, and
+// records no failure event, because DeleteToken chains two filters of
+// which the first routinely matches nothing and a failure event for
+// each probe would be noise. When
+// superuserOwnerAllowed is false, a match owned by a superuser refuses
+// the whole delete with ErrSuperuserTargetForbidden.
 func (s *AuthStore) deleteTokensByFilter(actor Actor, whereClause string,
-	args []any, notFoundMsg string, fallback *auditTarget) (err error) {
+	args []any, superuserOwnerAllowed bool) (err error) {
 
 	tx, beginErr := s.db.Begin()
 	if beginErr != nil {
 		return fmt.Errorf("failed to begin transaction: %w", beginErr)
 	}
 
-	// Until a token matches, failures are attributed to the caller's
-	// fallback target, which is nil for a filter probe that is expected
-	// to match nothing.
-	target := fallback
+	// Until a token matches, a failure has no target to be recorded
+	// against.
+	var target *auditTarget
 	defer func() {
 		if err != nil {
 			s.failAudit(tx, actor, target, err)
@@ -1811,12 +1785,20 @@ func (s *AuthStore) deleteTokensByFilter(actor Actor, whereClause string,
 	}
 
 	if len(matches) == 0 {
-		err = tokenFilterNotFound(notFoundMsg)
+		err = errTokenFilterNoMatch
 		return err
 	}
 
 	// Attribute any failure from here on to the first matched token.
 	target = firstMatchTarget(tx, matches[0].id)
+
+	for _, match := range matches {
+		if guardErr := guardSuperuserOwnedTokenTx(tx, match.id,
+			superuserOwnerAllowed); guardErr != nil {
+			err = guardErr
+			return err
+		}
+	}
 
 	// Capture the before state of every matched token, scopes included,
 	// while the rows are still there to read.
@@ -1890,16 +1872,10 @@ func matchedTokenRefsTx(tx *sql.Tx, whereClause string, args []any) ([]tokenRef,
 	return matches, nil
 }
 
-// tokenFilterNotFound builds the error returned when a filter matches
-// no rows: the caller's message when it supplied one, and a generic
-// "token not found" otherwise so callers can chain filters.
-func tokenFilterNotFound(notFoundMsg string) error {
-	if notFoundMsg != "" {
-		return fmt.Errorf("%s", notFoundMsg)
-	}
-
-	return fmt.Errorf("token not found")
-}
+// errTokenFilterNoMatch is the error deleteTokensByFilter returns when
+// its filter matches no token. Callers test for it with errors.Is, so an
+// unrelated error with the same text does not count as a miss.
+var errTokenFilterNoMatch = errors.New("token not found")
 
 // firstMatchTarget builds the audit target a failure is attributed to
 // once at least one token has matched the filter.

@@ -138,7 +138,7 @@ func TestAuthenticateRequest_ValidAPIToken(t *testing.T) {
 	if err := store.CreateUser("svc", "Testpass1234", "", "", ""); err != nil {
 		t.Fatalf("failed to create user: %v", err)
 	}
-	rawToken, _, err := store.CreateToken("svc", "test token", nil)
+	rawToken, _, err := store.AsActor(systemActor).CreateToken("svc", "test token", nil, true)
 	if err != nil {
 		t.Fatalf("failed to create token: %v", err)
 	}
@@ -165,7 +165,7 @@ func TestAuthenticateRequest_APITokenSetsTokenContext(t *testing.T) {
 	if err := store.CreateUser("tokenuser", "Testpass1234", "", "", ""); err != nil {
 		t.Fatalf("failed to create user: %v", err)
 	}
-	rawToken, stored, err := store.CreateToken("tokenuser", "test token", nil)
+	rawToken, stored, err := store.AsActor(systemActor).CreateToken("tokenuser", "test token", nil, true)
 	if err != nil {
 		t.Fatalf("failed to create token: %v", err)
 	}
@@ -245,7 +245,7 @@ func TestAuthenticateRequest_UnresolvableOwnerRejected(t *testing.T) {
 	if err := store.CreateUser("ghost", "Testpass1234", "", "", ""); err != nil {
 		t.Fatalf("failed to create user: %v", err)
 	}
-	rawToken, _, err := store.CreateToken("ghost", "test token", nil)
+	rawToken, _, err := store.AsActor(systemActor).CreateToken("ghost", "test token", nil, true)
 	if err != nil {
 		t.Fatalf("failed to create token: %v", err)
 	}
@@ -376,7 +376,7 @@ func TestAuthenticateRequest_StoreFailureIsDistinguishedFromABadToken(t *testing
 	if err != nil {
 		t.Fatalf("failed to authenticate: %v", err)
 	}
-	rawToken, _, err := store.CreateToken("present", "test token", nil)
+	rawToken, _, err := store.AsActor(systemActor).CreateToken("present", "test token", nil, true)
 	if err != nil {
 		t.Fatalf("failed to create token: %v", err)
 	}

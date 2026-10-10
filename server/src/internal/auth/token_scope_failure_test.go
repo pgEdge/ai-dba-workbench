@@ -23,7 +23,7 @@ func newTokenScopeFailureStore(t *testing.T) (*AuthStore, int64) {
 	store, cleanup := createTestAuthStoreForTokenScope(t)
 	t.Cleanup(cleanup)
 
-	_, token, err := store.CreateToken("testuser", "Failure token", nil)
+	_, token, err := store.AsActor(systemActor).CreateToken("testuser", "Failure token", nil, true)
 	if err != nil {
 		t.Fatalf("Failed to create token: %v", err)
 	}

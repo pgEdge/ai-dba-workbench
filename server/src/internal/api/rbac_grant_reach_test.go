@@ -60,8 +60,7 @@ func newReachFixture(t *testing.T) (*reachFixture, func()) {
 	}
 
 	mcpID := mustCreateScopedToken(t, gf.store, "svc-mcp-narrowed", nil)
-	if err := gf.store.SetTokenMCPScopeByNames(mcpID,
-		[]string{reachToolInScope}); err != nil {
+	if err := gf.store.AsActor(auth.SystemActor()).SetTokenMCPScopeByNames(mcpID, []string{reachToolInScope}, true); err != nil {
 		cleanup()
 		t.Fatalf("SetTokenMCPScopeByNames failed: %v", err)
 	}
@@ -424,16 +423,14 @@ func TestSetTokenScopeComparesEveryKind(t *testing.T) {
 	f, cleanup := newReachFixture(t)
 	defer cleanup()
 	f.user(t, "bob", f.mcpGroup(t, "datastore", reachToolOutScope))
-	_, target, err := f.store.CreateToken("bob", "target", nil)
+	_, target, err := f.store.AsActor(auth.SystemActor()).CreateToken("bob", "target", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken failed: %v", err)
 	}
-	if err := f.store.SetTokenMCPScopeByNames(target.ID,
-		[]string{reachToolInScope}); err != nil {
+	if err := f.store.AsActor(auth.SystemActor()).SetTokenMCPScopeByNames(target.ID, []string{reachToolInScope}, true); err != nil {
 		t.Fatalf("SetTokenMCPScopeByNames failed: %v", err)
 	}
-	if err := f.store.SetTokenAdminScope(target.ID,
-		[]string{auth.PermManageUsers}); err != nil {
+	if err := f.store.AsActor(auth.SystemActor()).SetTokenAdminScope(target.ID, []string{auth.PermManageUsers}, true); err != nil {
 		t.Fatalf("SetTokenAdminScope failed: %v", err)
 	}
 	path := fmt.Sprintf("/api/v1/rbac/tokens/%d/scope", target.ID)
@@ -722,13 +719,13 @@ func TestConnectionClusterMoveScopeRefusalIsAudited(t *testing.T) {
 	if err := store.CreateServiceAccount("svc-mover", "", "", ""); err != nil {
 		t.Fatalf("CreateServiceAccount failed: %v", err)
 	}
-	_, token, err := store.CreateToken("svc-mover", "cluster move", nil)
+	_, token, err := store.AsActor(auth.SystemActor()).CreateToken("svc-mover", "cluster move", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken failed: %v", err)
 	}
-	if err := store.SetTokenConnectionScope(token.ID, []auth.ScopedConnection{
+	if err := store.AsActor(auth.SystemActor()).SetTokenConnectionScope(token.ID, []auth.ScopedConnection{
 		{ConnectionID: 7, AccessLevel: auth.AccessLevelRead},
-	}); err != nil {
+	}, true); err != nil {
 		t.Fatalf("SetTokenConnectionScope failed: %v", err)
 	}
 	h := &ConnectionHandler{authStore: store, rbacChecker: auth.NewRBACChecker(store)}
@@ -757,7 +754,7 @@ func TestOwnedClusterGroupCountsTowardsReach(t *testing.T) {
 	f, cleanup := newReachFixture(t)
 	defer cleanup()
 	alice := f.user(t, "alice", 0)
-	_, aliceToken, err := f.store.CreateToken("alice", "alice's token", nil)
+	_, aliceToken, err := f.store.AsActor(auth.SystemActor()).CreateToken("alice", "alice's token", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken failed: %v", err)
 	}

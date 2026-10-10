@@ -130,7 +130,7 @@ func TestCreateUserInfoHandler_SuperuserAPIToken(t *testing.T) {
 	if err := store.SetUserSuperuser("root", true); err != nil {
 		t.Fatalf("failed to set superuser: %v", err)
 	}
-	rawToken, _, err := store.CreateToken("root", "test token", nil)
+	rawToken, _, err := store.AsActor(auth.SystemActor()).CreateToken("root", "test token", nil, true)
 	if err != nil {
 		t.Fatalf("failed to create token: %v", err)
 	}
@@ -204,12 +204,11 @@ func TestCreateUserInfoHandler_ScopedSuperuserAPIToken(t *testing.T) {
 	if err := store.SetUserSuperuser("root-scoped", true); err != nil {
 		t.Fatalf("failed to set superuser: %v", err)
 	}
-	rawToken, token, err := store.CreateToken("root-scoped", "scoped token", nil)
+	rawToken, token, err := store.AsActor(auth.SystemActor()).CreateToken("root-scoped", "scoped token", nil, true)
 	if err != nil {
 		t.Fatalf("failed to create token: %v", err)
 	}
-	if err := store.SetTokenAdminScope(token.ID,
-		[]string{auth.PermManageUsers}); err != nil {
+	if err := store.AsActor(auth.SystemActor()).SetTokenAdminScope(token.ID, []string{auth.PermManageUsers}, true); err != nil {
 		t.Fatalf("failed to set admin scope: %v", err)
 	}
 

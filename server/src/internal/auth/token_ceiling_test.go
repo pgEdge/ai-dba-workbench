@@ -52,12 +52,12 @@ func (f *grantScopeFixture) newOwner(t *testing.T, grants []ScopedConnection,
 			t.Fatalf("GrantConnectionPrivilege failed: %v", err)
 		}
 	}
-	_, token, err := f.store.CreateToken("owner", "owner token", nil)
+	_, token, err := f.store.AsActor(systemActor).CreateToken("owner", "owner token", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken failed: %v", err)
 	}
 	if scope != nil {
-		if err := f.store.SetTokenConnectionScope(token.ID, scope); err != nil {
+		if err := f.store.AsActor(systemActor).SetTokenConnectionScope(token.ID, scope, true); err != nil {
 			t.Fatalf("SetTokenConnectionScope failed: %v", err)
 		}
 	}
@@ -481,7 +481,7 @@ func TestCanGrantAdminPermission(t *testing.T) {
 			defer cleanup()
 			f.registerMCP(t, "list_things", false)
 			if !tt.conns {
-				if err := f.store.SetTokenConnectionScope(f.tokenID, nil); err != nil {
+				if err := f.store.AsActor(systemActor).SetTokenConnectionScope(f.tokenID, nil, true); err != nil {
 					t.Fatalf("SetTokenConnectionScope failed: %v", err)
 				}
 			}
@@ -550,7 +550,7 @@ func TestCanGrantMCPItemNonSuperuserOwner(t *testing.T) {
 // scope-edit tests have one to change.
 func (f *grantScopeFixture) targetToken(t *testing.T) int64 {
 	t.Helper()
-	_, token, err := f.store.CreateToken("target", "target token", nil)
+	_, token, err := f.store.AsActor(systemActor).CreateToken("target", "target token", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken failed: %v", err)
 	}
@@ -598,7 +598,7 @@ func TestTokenScopeChangeConnections(t *testing.T) {
 			defer cleanup()
 			target := f.targetToken(t)
 			if tt.stored != nil {
-				if err := f.store.SetTokenConnectionScope(target, tt.stored); err != nil {
+				if err := f.store.AsActor(systemActor).SetTokenConnectionScope(target, tt.stored, true); err != nil {
 					t.Fatalf("SetTokenConnectionScope failed: %v", err)
 				}
 			}
@@ -656,14 +656,12 @@ func TestTokenScopeChangeNamedKinds(t *testing.T) {
 			f.setAdminScope(t, PermManageBlackouts)
 			target := f.targetToken(t)
 			if tt.storedMCP != nil {
-				if err := f.store.SetTokenMCPScopeByNames(target,
-					tt.storedMCP); err != nil {
+				if err := f.store.AsActor(systemActor).SetTokenMCPScopeByNames(target, tt.storedMCP, true); err != nil {
 					t.Fatalf("SetTokenMCPScopeByNames failed: %v", err)
 				}
 			}
 			if tt.storedAdmin != nil {
-				if err := f.store.SetTokenAdminScope(target,
-					tt.storedAdmin); err != nil {
+				if err := f.store.AsActor(systemActor).SetTokenAdminScope(target, tt.storedAdmin, true); err != nil {
 					t.Fatalf("SetTokenAdminScope failed: %v", err)
 				}
 			}
@@ -722,7 +720,7 @@ func TestTokenScopeChangeOrphanedMCPRows(t *testing.T) {
 	f.registerMCP(t, "gone", false)
 	f.setMCPScope(t, "list_things")
 	target := f.targetToken(t)
-	if err := f.store.SetTokenMCPScopeByNames(target, []string{"gone"}); err != nil {
+	if err := f.store.AsActor(systemActor).SetTokenMCPScopeByNames(target, []string{"gone"}, true); err != nil {
 		t.Fatalf("SetTokenMCPScopeByNames failed: %v", err)
 	}
 	mustExec(t, f.store,
@@ -841,20 +839,17 @@ func TestTokenScopeClearWithinCeiling(t *testing.T) {
 			}
 			target := f.targetToken(t)
 			if tt.scopeConns != nil {
-				if err := f.store.SetTokenConnectionScope(target,
-					tt.scopeConns); err != nil {
+				if err := f.store.AsActor(systemActor).SetTokenConnectionScope(target, tt.scopeConns, true); err != nil {
 					t.Fatalf("SetTokenConnectionScope failed: %v", err)
 				}
 			}
 			if tt.scopeMCP != nil {
-				if err := f.store.SetTokenMCPScopeByNames(target,
-					tt.scopeMCP); err != nil {
+				if err := f.store.AsActor(systemActor).SetTokenMCPScopeByNames(target, tt.scopeMCP, true); err != nil {
 					t.Fatalf("SetTokenMCPScopeByNames failed: %v", err)
 				}
 			}
 			if tt.scopeAdmin != nil {
-				if err := f.store.SetTokenAdminScope(target,
-					tt.scopeAdmin); err != nil {
+				if err := f.store.AsActor(systemActor).SetTokenAdminScope(target, tt.scopeAdmin, true); err != nil {
 					t.Fatalf("SetTokenAdminScope failed: %v", err)
 				}
 			}

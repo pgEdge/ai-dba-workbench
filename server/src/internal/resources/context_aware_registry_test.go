@@ -343,7 +343,7 @@ func TestGetClient_TokenScopeEnforcement(t *testing.T) {
 	}
 
 	// Create a token for the user
-	_, token, err := authStore.CreateToken("testuser", "test-token", nil)
+	_, token, err := authStore.AsActor(auth.SystemActor()).CreateToken("testuser", "test-token", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken: %v", err)
 	}
@@ -440,7 +440,7 @@ func TestGetClient_SessionClearedOnRBACDenial(t *testing.T) {
 	if err := authStore.CreateUser("alice", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
-	_, token, err := authStore.CreateToken("alice", "alice-token", nil)
+	_, token, err := authStore.AsActor(auth.SystemActor()).CreateToken("alice", "alice-token", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken: %v", err)
 	}
@@ -502,7 +502,7 @@ func TestGetClient_RBACDenialClearsSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetUserID: %v", err)
 	}
-	_, token, err := authStore.CreateToken("alice", "alice-token", nil)
+	_, token, err := authStore.AsActor(auth.SystemActor()).CreateToken("alice", "alice-token", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken: %v", err)
 	}
@@ -583,7 +583,7 @@ func TestGetClient_RBACAllowsAccessProceedsToDatastore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetUserID: %v", err)
 	}
-	_, token, err := authStore.CreateToken("bob", "bob-token", nil)
+	_, token, err := authStore.AsActor(auth.SystemActor()).CreateToken("bob", "bob-token", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken: %v", err)
 	}
@@ -672,7 +672,7 @@ func TestGetClient_SuperuserBypassesRBAC(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetUserID: %v", err)
 	}
-	_, token, err := authStore.CreateToken("admin", "admin-token", nil)
+	_, token, err := authStore.AsActor(auth.SystemActor()).CreateToken("admin", "admin-token", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken: %v", err)
 	}

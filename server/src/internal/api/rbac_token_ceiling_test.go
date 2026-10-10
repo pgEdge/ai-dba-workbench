@@ -34,10 +34,10 @@ import (
 func ceilingCaller(t *testing.T, store *auth.AuthStore) scopeCaller {
 	t.Helper()
 	id := mustCreateScopedToken(t, store, "svc-ceiling", nil)
-	if err := store.SetTokenConnectionScope(id, []auth.ScopedConnection{
+	if err := store.AsActor(auth.SystemActor()).SetTokenConnectionScope(id, []auth.ScopedConnection{
 		{ConnectionID: 5, AccessLevel: auth.AccessLevelReadWrite},
 		{ConnectionID: 7, AccessLevel: auth.AccessLevelRead},
-	}); err != nil {
+	}, true); err != nil {
 		t.Fatalf("SetTokenConnectionScope failed: %v", err)
 	}
 	return scopeCaller{name: "ceiling", wrap: func(r *http.Request) *http.Request {
@@ -51,7 +51,7 @@ func ownerTokenCaller(t *testing.T, store *auth.AuthStore, username string,
 	userID int64) scopeCaller {
 
 	t.Helper()
-	_, token, err := store.CreateToken(username, "owner token", nil)
+	_, token, err := store.AsActor(auth.SystemActor()).CreateToken(username, "owner token", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken failed: %v", err)
 	}

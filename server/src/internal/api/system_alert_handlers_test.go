@@ -297,12 +297,12 @@ func TestAlertHandler_Mutation_SystemAlert(t *testing.T) {
 	holderID := setupUserWithPermission(t, f.store, "rules_admin", auth.PermManageAlertRules)
 	newToken := func(owner string, adminScope []string) int64 {
 		t.Helper()
-		_, token, err := f.store.CreateToken(owner, owner+" token", nil)
+		_, token, err := f.store.AsActor(auth.SystemActor()).CreateToken(owner, owner+" token", nil, true)
 		if err != nil {
 			t.Fatalf("CreateToken: %v", err)
 		}
 		if adminScope != nil {
-			if err := f.store.SetTokenAdminScope(token.ID, adminScope); err != nil {
+			if err := f.store.AsActor(auth.SystemActor()).SetTokenAdminScope(token.ID, adminScope, true); err != nil {
 				t.Fatalf("SetTokenAdminScope: %v", err)
 			}
 		}

@@ -49,21 +49,19 @@ func (f *grantScopeFixture) superuserToken(t *testing.T) int64 {
 	if err := f.store.SetUserSuperuser("root", true); err != nil {
 		t.Fatalf("SetUserSuperuser failed: %v", err)
 	}
-	_, token, err := f.store.CreateToken("root", "root token", nil)
+	_, token, err := f.store.AsActor(systemActor).CreateToken("root", "root token", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken failed: %v", err)
 	}
 	f.registerMCP(t, "list_things", false)
-	if err := f.store.SetTokenAdminScope(token.ID,
-		[]string{PermManageUsers}); err != nil {
+	if err := f.store.AsActor(systemActor).SetTokenAdminScope(token.ID, []string{PermManageUsers}, true); err != nil {
 		t.Fatalf("SetTokenAdminScope failed: %v", err)
 	}
-	if err := f.store.SetTokenConnectionScope(token.ID, []ScopedConnection{
-		{ConnectionID: 5, AccessLevel: AccessLevelRead}}); err != nil {
+	if err := f.store.AsActor(systemActor).SetTokenConnectionScope(token.ID, []ScopedConnection{
+		{ConnectionID: 5, AccessLevel: AccessLevelRead}}, true); err != nil {
 		t.Fatalf("SetTokenConnectionScope failed: %v", err)
 	}
-	if err := f.store.SetTokenMCPScopeByNames(token.ID,
-		[]string{"list_things"}); err != nil {
+	if err := f.store.AsActor(systemActor).SetTokenMCPScopeByNames(token.ID, []string{"list_things"}, true); err != nil {
 		t.Fatalf("SetTokenMCPScopeByNames failed: %v", err)
 	}
 	return token.ID
@@ -126,8 +124,7 @@ func TestTokenScopeChangeNonSuperuserTargetStillWidens(t *testing.T) {
 	defer cleanup()
 	o := f.everythingOwner(t)
 	target := f.targetToken(t)
-	if err := f.store.SetTokenAdminScope(target,
-		[]string{PermManageUsers}); err != nil {
+	if err := f.store.AsActor(systemActor).SetTokenAdminScope(target, []string{PermManageUsers}, true); err != nil {
 		t.Fatalf("SetTokenAdminScope failed: %v", err)
 	}
 
@@ -160,7 +157,7 @@ func TestTokenScopeClearSuperuserOwnedTarget(t *testing.T) {
 			"superuser token's scope")
 	}
 
-	if err := f.store.ClearTokenScope(f.tokenID); err != nil {
+	if err := f.store.AsActor(systemActor).ClearTokenScope(f.tokenID, true); err != nil {
 		t.Fatalf("ClearTokenScope failed: %v", err)
 	}
 	got, err = f.checker.TokenScopeClearWithinCeiling(f.tokenCtx(), target, nil)

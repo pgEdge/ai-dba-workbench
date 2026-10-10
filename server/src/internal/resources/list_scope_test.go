@@ -44,7 +44,7 @@ func TestListForContextHonoursMCPScope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetUserID: %v", err)
 	}
-	_, token, err := authStore.CreateToken("root", "scoped token", nil)
+	_, token, err := authStore.AsActor(auth.SystemActor()).CreateToken("root", "scoped token", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken: %v", err)
 	}
@@ -64,8 +64,7 @@ func TestListForContextHonoursMCPScope(t *testing.T) {
 		auth.MCPPrivilegeTypeResource, "scoped resource", false); err != nil {
 		t.Fatalf("RegisterMCPPrivilege: %v", err)
 	}
-	if err := authStore.SetTokenMCPScopeByNames(token.ID,
-		[]string{wanted}); err != nil {
+	if err := authStore.AsActor(auth.SystemActor()).SetTokenMCPScopeByNames(token.ID, []string{wanted}, true); err != nil {
 		t.Fatalf("SetTokenMCPScopeByNames: %v", err)
 	}
 

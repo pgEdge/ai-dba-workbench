@@ -71,13 +71,13 @@ func scopedTokenFixture(t *testing.T) (*auth.AuthStore, *auth.RBACChecker, strin
 		t.Fatalf("failed to grant connection privilege: %v", err)
 	}
 
-	rawToken, stored, err := store.CreateToken("scoped", "scoped token", nil)
+	rawToken, stored, err := store.AsActor(auth.SystemActor()).CreateToken("scoped", "scoped token", nil, true)
 	if err != nil {
 		t.Fatalf("failed to create token: %v", err)
 	}
-	if err := store.SetTokenConnectionScope(stored.ID, []auth.ScopedConnection{
+	if err := store.AsActor(auth.SystemActor()).SetTokenConnectionScope(stored.ID, []auth.ScopedConnection{
 		{ConnectionID: 2, AccessLevel: "read"},
-	}); err != nil {
+	}, true); err != nil {
 		t.Fatalf("failed to scope token: %v", err)
 	}
 

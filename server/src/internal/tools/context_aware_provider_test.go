@@ -315,7 +315,7 @@ func TestGetClient_TokenScopeEnforcement(t *testing.T) {
 	}
 
 	// Create a token for the user
-	_, token, err := authStore.CreateToken("testuser", "test-token", nil)
+	_, token, err := authStore.AsActor(auth.SystemActor()).CreateToken("testuser", "test-token", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken: %v", err)
 	}
@@ -415,7 +415,7 @@ func TestGetClient_SessionClearedOnRBACDenial(t *testing.T) {
 	if err := authStore.CreateUser("alice", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
-	_, token, err := authStore.CreateToken("alice", "alice-token", nil)
+	_, token, err := authStore.AsActor(auth.SystemActor()).CreateToken("alice", "alice-token", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken: %v", err)
 	}
@@ -478,7 +478,7 @@ func TestGetClient_NilRBACCheckerInSession(t *testing.T) {
 	if err := authStore.CreateUser("bob", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
-	_, token, err := authStore.CreateToken("bob", "bob-token", nil)
+	_, token, err := authStore.AsActor(auth.SystemActor()).CreateToken("bob", "bob-token", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken: %v", err)
 	}
@@ -551,7 +551,7 @@ func TestExecute_GetClient_RBACDenialClearsSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetUserID: %v", err)
 	}
-	_, token, err := authStore.CreateToken("alice", "alice-token", nil)
+	_, token, err := authStore.AsActor(auth.SystemActor()).CreateToken("alice", "alice-token", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken: %v", err)
 	}
@@ -653,7 +653,7 @@ func TestExecute_GetClient_RBACAllowsAccessProceedsToDatastore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetUserID: %v", err)
 	}
-	_, token, err := authStore.CreateToken("bob", "bob-token", nil)
+	_, token, err := authStore.AsActor(auth.SystemActor()).CreateToken("bob", "bob-token", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken: %v", err)
 	}
@@ -761,7 +761,7 @@ func TestExecute_GetClient_NoSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetUserID: %v", err)
 	}
-	_, token, err := authStore.CreateToken("carol", "carol-token", nil)
+	_, token, err := authStore.AsActor(auth.SystemActor()).CreateToken("carol", "carol-token", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken: %v", err)
 	}
@@ -827,7 +827,7 @@ func TestExecute_GetClient_SessionWithDatabaseOverride(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetUserID: %v", err)
 	}
-	_, token, err := authStore.CreateToken("dave", "dave-token", nil)
+	_, token, err := authStore.AsActor(auth.SystemActor()).CreateToken("dave", "dave-token", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken: %v", err)
 	}
@@ -941,7 +941,7 @@ func TestExecute_GetClient_SuperuserBypassesRBAC(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetUserID: %v", err)
 	}
-	_, token, err := authStore.CreateToken("admin", "admin-token", nil)
+	_, token, err := authStore.AsActor(auth.SystemActor()).CreateToken("admin", "admin-token", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken: %v", err)
 	}
@@ -1048,7 +1048,7 @@ func TestExecute_QueryMetrics_RBACChecksConnectionIDInjection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetUserID: %v", err)
 	}
-	_, token, err := authStore.CreateToken("alice", "alice-token", nil)
+	_, token, err := authStore.AsActor(auth.SystemActor()).CreateToken("alice", "alice-token", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken: %v", err)
 	}
@@ -1138,7 +1138,7 @@ func TestExecute_QueryMetrics_RBACAllowsConnectionIDInjection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetUserID: %v", err)
 	}
-	_, token, err := authStore.CreateToken("bob", "bob-token", nil)
+	_, token, err := authStore.AsActor(auth.SystemActor()).CreateToken("bob", "bob-token", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken: %v", err)
 	}
@@ -1213,7 +1213,7 @@ func TestExecute_QueryMetrics_SuperuserAlwaysInjectsConnectionID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetUserID: %v", err)
 	}
-	_, token, err := authStore.CreateToken("admin", "admin-token", nil)
+	_, token, err := authStore.AsActor(auth.SystemActor()).CreateToken("admin", "admin-token", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken: %v", err)
 	}

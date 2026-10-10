@@ -62,9 +62,9 @@ func TestListTokensRendersScope(t *testing.T) {
 
 	scoped := mustCreateScopedToken(t, store, "svc-scoped",
 		[]string{auth.PermManageUsers})
-	if err := store.SetTokenConnectionScope(scoped, []auth.ScopedConnection{
+	if err := store.AsActor(auth.SystemActor()).SetTokenConnectionScope(scoped, []auth.ScopedConnection{
 		{ConnectionID: 7, AccessLevel: auth.AccessLevelRead},
-	}); err != nil {
+	}, true); err != nil {
 		t.Fatalf("SetTokenConnectionScope failed: %v", err)
 	}
 	unscoped := mustCreateScopedToken(t, store, "svc-unscoped", nil)
@@ -236,9 +236,9 @@ func TestGetTokenScopeReportsStoreFailure(t *testing.T) {
 	}
 }
 
-// TestSetTokenScopeReportsStoreFailures verifies that each of the three
-// scope writes reports its own failure, so that an administrator can
-// tell which part of the scope did not take.
+// TestSetTokenScopeReportsStoreFailures verifies that a failure in any of
+// the three scope writes is reported. The three are written in one
+// transaction, so the handler reports the change as a whole (issue #607).
 func TestSetTokenScopeReportsStoreFailures(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -250,19 +250,19 @@ func TestSetTokenScopeReportsStoreFailures(t *testing.T) {
 			name:    "connection scope",
 			table:   "token_connection_scope",
 			body:    `{"connections":[{"connection_id":1,"access_level":"read"}]}`,
-			message: "Failed to set connection scope",
+			message: "Failed to set token scope",
 		},
 		{
 			name:    "mcp scope",
 			table:   "token_mcp_scope",
 			body:    `{"mcp_privileges":["*"]}`,
-			message: "Failed to set MCP scope",
+			message: "Failed to set token scope",
 		},
 		{
 			name:    "admin scope",
 			table:   "token_admin_scope",
 			body:    `{"admin_permissions":["manage_users"]}`,
-			message: "Failed to set admin scope",
+			message: "Failed to set token scope",
 		},
 	}
 

@@ -427,17 +427,17 @@ func TestTokenScopeChangesRespectTokenScope(t *testing.T) {
 	// bounded already carries a connection scope inside it.
 	f.user(t, "beyond-owner",
 		f.group(t, "beyond", map[int]string{6: auth.AccessLevelRead}))
-	_, target, err := f.store.CreateToken("beyond-owner", "target", nil)
+	_, target, err := f.store.AsActor(auth.SystemActor()).CreateToken("beyond-owner", "target", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken failed: %v", err)
 	}
-	_, bounded, err := f.store.CreateToken("beyond-owner", "bounded", nil)
+	_, bounded, err := f.store.AsActor(auth.SystemActor()).CreateToken("beyond-owner", "bounded", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken failed: %v", err)
 	}
-	if err := f.store.SetTokenConnectionScope(bounded.ID, []auth.ScopedConnection{
+	if err := f.store.AsActor(auth.SystemActor()).SetTokenConnectionScope(bounded.ID, []auth.ScopedConnection{
 		{ConnectionID: 5, AccessLevel: auth.AccessLevelRead},
-	}); err != nil {
+	}, true); err != nil {
 		t.Fatalf("SetTokenConnectionScope failed: %v", err)
 	}
 	scopePath := func(id int64) string {

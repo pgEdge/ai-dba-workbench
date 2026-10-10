@@ -40,7 +40,7 @@ func TestCanSeeSystemAlerts(t *testing.T) {
 	if err := store.CreateUser("sysalertuser", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
-	_, token, err := store.CreateToken("sysalertuser", "system alert token", nil)
+	_, token, err := store.AsActor(systemActor).CreateToken("sysalertuser", "system alert token", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken: %v", err)
 	}
@@ -118,12 +118,12 @@ func TestCanManageSystemAlerts(t *testing.T) {
 
 	newToken := func(owner string, adminScope []string) int64 {
 		t.Helper()
-		_, token, tokErr := store.CreateToken(owner, owner+" token", nil)
+		_, token, tokErr := store.AsActor(systemActor).CreateToken(owner, owner+" token", nil, true)
 		if tokErr != nil {
 			t.Fatalf("CreateToken: %v", tokErr)
 		}
 		if adminScope != nil {
-			if scopeErr := store.SetTokenAdminScope(token.ID, adminScope); scopeErr != nil {
+			if scopeErr := store.AsActor(systemActor).SetTokenAdminScope(token.ID, adminScope, true); scopeErr != nil {
 				t.Fatalf("SetTokenAdminScope: %v", scopeErr)
 			}
 		}

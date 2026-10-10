@@ -56,7 +56,7 @@ func newPublicScopeFixture(t *testing.T) (*publicScopeFixture, func()) {
 			t.Fatalf("Failed to register %s: %v", name, err)
 		}
 	}
-	_, token, err := store.CreateToken("plain", "public scope token", nil)
+	_, token, err := store.AsActor(systemActor).CreateToken("plain", "public scope token", nil, true)
 	if err != nil {
 		cleanup()
 		t.Fatalf("Failed to create token: %v", err)
@@ -89,8 +89,7 @@ func TestCanAccessPublicMCPItemHonoursTokenScope(t *testing.T) {
 	f, cleanup := newPublicScopeFixture(t)
 	defer cleanup()
 
-	if err := f.store.SetTokenMCPScopeByNames(f.tokenID,
-		[]string{"public_a"}); err != nil {
+	if err := f.store.AsActor(systemActor).SetTokenMCPScopeByNames(f.tokenID, []string{"public_a"}, true); err != nil {
 		t.Fatalf("Failed to set MCP scope: %v", err)
 	}
 
@@ -121,8 +120,7 @@ func TestCanAccessPublicMCPItemUnscopedAndSession(t *testing.T) {
 		f, cleanup := newPublicScopeFixture(t)
 		defer cleanup()
 
-		if err := f.store.SetTokenMCPScopeByNames(f.tokenID,
-			[]string{mcpWildcardIdentifier}); err != nil {
+		if err := f.store.AsActor(systemActor).SetTokenMCPScopeByNames(f.tokenID, []string{mcpWildcardIdentifier}, true); err != nil {
 			t.Fatalf("Failed to set MCP scope: %v", err)
 		}
 
@@ -215,10 +213,11 @@ func TestSetTokenConnectionScopeRejectsUnknownLevel(t *testing.T) {
 	f, cleanup := newPublicScopeFixture(t)
 	defer cleanup()
 
-	err := f.store.SetTokenConnectionScope(f.tokenID, []ScopedConnection{
+	err := f.store.AsActor(systemActor).SetTokenConnectionScope(f.tokenID, []ScopedConnection{
 		{ConnectionID: 1, AccessLevel: AccessLevelRead},
 		{ConnectionID: 2, AccessLevel: "admin"},
-	})
+	}, true)
+
 	if err == nil {
 		t.Fatal("Expected an invalid access level to be refused")
 	}

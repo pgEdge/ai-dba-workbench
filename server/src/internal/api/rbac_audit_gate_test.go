@@ -145,12 +145,12 @@ func mustCreateScopedToken(t *testing.T, store *auth.AuthStore,
 	if err := store.CreateServiceAccount(username, "", "", ""); err != nil {
 		t.Fatalf("Failed to create service account %s: %v", username, err)
 	}
-	_, token, err := store.CreateToken(username, "audit gate test", nil)
+	_, token, err := store.AsActor(auth.SystemActor()).CreateToken(username, "audit gate test", nil, true)
 	if err != nil {
 		t.Fatalf("Failed to create token for %s: %v", username, err)
 	}
 	if len(scope) > 0 {
-		if err := store.SetTokenAdminScope(token.ID, scope); err != nil {
+		if err := store.AsActor(auth.SystemActor()).SetTokenAdminScope(token.ID, scope, true); err != nil {
 			t.Fatalf("Failed to set admin scope: %v", err)
 		}
 	}

@@ -1051,7 +1051,7 @@ func (s *AuthStore) explainUnlinkRefusalLocked(username string) error {
 }
 
 // revokeAccountTokensLocked deletes every API token the named account owns,
-// through the same transactional path DeleteUserToken uses, so the per-token
+// through the same transactional path DeleteToken uses, so the per-token
 // scope rows and the connection_sessions row keyed on the token hash go with
 // them. It returns how many tokens were deleted. s.mu must be held, which is
 // why it calls deleteTokensByFilter rather than an exported method that would
@@ -1074,7 +1074,7 @@ func (s *AuthStore) revokeAccountTokensLocked(username string) (int, error) {
 	// for at the command line, so its token.delete events are attributed
 	// to the system actor rather than to a request principal.
 	if err := s.deleteTokensByFilter(systemActor, ownedByUser, []any{username},
-		"", nil); err != nil {
+		true); err != nil {
 		return 0, err
 	}
 	return count, nil

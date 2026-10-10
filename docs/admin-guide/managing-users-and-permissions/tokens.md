@@ -470,16 +470,20 @@ type must lie within the acting token's access, and each connection entry the
 clear drops needs at least `read` access.
 
 A token that a superuser owns is bounded by its scope alone, so widening its
-scope hands out superuser access. Before the ceiling applies, the server
+scope hands out superuser access. The ceiling refuses any change that widens
+a superuser's token, whether the change raises a connection entry above the
+level the token allows today or adds an MCP item or admin permission to a
+restricted scope type, unless the acting token holds everything a superuser
+does. Clearing the scope of a superuser's token that is restricted in any
+scope type widens the token in the same way, and needs the same.
+
+Setting or clearing the scope of a superuser's token, or deleting one, also
 requires a superuser's session or a superuser's token with an unrestricted
-admin permission scope to set or clear the scope of such a token, or to
-delete it; a token acting on itself is exempt from that requirement. The
-ceiling then refuses any change that widens a superuser's token, whether the
-change raises a connection entry above the level the token allows today or
-adds an MCP item or admin permission to a restricted scope type, unless the
-acting token holds everything a superuser does. Clearing the scope of a
-superuser's token that is restricted in any scope type widens the token in
-the same way, and needs the same.
+admin permission scope; a token acting on itself is exempt from that
+requirement. The server makes this check after the ceiling, when it writes
+the change, and reads the token's owner in the same transaction as the
+write, so a token whose owner becomes a superuser whilst the request is in
+progress is still protected.
 
 ### Counting a User's Access
 

@@ -48,7 +48,7 @@ func scopedCallers(t *testing.T, store *auth.AuthStore) (session, unscoped,
 	tokenWith := func(name string, conns []auth.ScopedConnection) scopeCaller {
 		id := mustCreateScopedToken(t, store, name, nil)
 		if conns != nil {
-			if err := store.SetTokenConnectionScope(id, conns); err != nil {
+			if err := store.AsActor(auth.SystemActor()).SetTokenConnectionScope(id, conns, true); err != nil {
 				t.Fatalf("SetTokenConnectionScope failed: %v", err)
 			}
 		}
@@ -77,9 +77,9 @@ func scopedCallers(t *testing.T, store *auth.AuthStore) (session, unscoped,
 func wildcardReadCaller(t *testing.T, store *auth.AuthStore) scopeCaller {
 	t.Helper()
 	id := mustCreateScopedToken(t, store, "svc-wildcard-read", nil)
-	if err := store.SetTokenConnectionScope(id, []auth.ScopedConnection{
+	if err := store.AsActor(auth.SystemActor()).SetTokenConnectionScope(id, []auth.ScopedConnection{
 		{ConnectionID: auth.ConnectionIDAll, AccessLevel: auth.AccessLevelRead},
-	}); err != nil {
+	}, true); err != nil {
 		t.Fatalf("SetTokenConnectionScope failed: %v", err)
 	}
 	return scopeCaller{name: "wildcardRead", wrap: func(r *http.Request) *http.Request {

@@ -201,7 +201,7 @@ func TestAuthMiddleware_ValidToken(t *testing.T) {
 
 	// Create a user and token
 	store.CreateUser("tokenuser", "Password1234", "", "", "")
-	rawToken, _, err := store.CreateToken("tokenuser", "Test token", nil)
+	rawToken, _, err := store.AsActor(systemActor).CreateToken("tokenuser", "Test token", nil, true)
 	if err != nil {
 		t.Fatalf("Failed to create token: %v", err)
 	}
@@ -255,7 +255,7 @@ func TestAuthMiddleware_ExpiredToken(t *testing.T) {
 	// Create a user and a token that expires immediately
 	store.CreateUser("tokenuser", "Password1234", "", "", "")
 	expiryTime := time.Now().Add(1 * time.Millisecond)
-	rawToken, _, err := store.CreateToken("tokenuser", "Test expired token", &expiryTime)
+	rawToken, _, err := store.AsActor(systemActor).CreateToken("tokenuser", "Test expired token", &expiryTime, true)
 	if err != nil {
 		t.Fatalf("Failed to create token: %v", err)
 	}
@@ -902,7 +902,7 @@ func TestAuthMiddleware_APITokenWithOwner(t *testing.T) {
 
 	// Create a user and a token
 	store.CreateUser("testuser", "Testpass1234", "Test user", "", "")
-	rawToken, _, err := store.CreateToken("testuser", "User API token", nil)
+	rawToken, _, err := store.AsActor(systemActor).CreateToken("testuser", "User API token", nil, true)
 	if err != nil {
 		t.Fatalf("Failed to create token: %v", err)
 	}
@@ -952,7 +952,7 @@ func TestAuthMiddleware_SuperuserToken(t *testing.T) {
 	// Create a superuser and a token for them
 	store.CreateUser("superuser-svc", "Testpass1234", "Superuser service", "", "")
 	store.SetUserSuperuser("superuser-svc", true)
-	rawToken, _, err := store.CreateToken("superuser-svc", "Superuser token", nil)
+	rawToken, _, err := store.AsActor(systemActor).CreateToken("superuser-svc", "Superuser token", nil, true)
 	if err != nil {
 		t.Fatalf("Failed to create token: %v", err)
 	}
@@ -1117,7 +1117,7 @@ func TestAuthMiddlewareMatchesAuthenticateRequestContext(t *testing.T) {
 	if err := store.CreateUser("convuser", "Testpass1234", "", "", ""); err != nil {
 		t.Fatalf("failed to create user: %v", err)
 	}
-	apiToken, _, err := store.CreateToken("convuser", "conv token", nil)
+	apiToken, _, err := store.AsActor(systemActor).CreateToken("convuser", "conv token", nil, true)
 	if err != nil {
 		t.Fatalf("failed to create token: %v", err)
 	}
@@ -1178,7 +1178,7 @@ func TestAuthMiddlewareSetsUsernameForAPITokens(t *testing.T) {
 	if err := store.CreateUser("ownername", "Testpass1234", "", "", ""); err != nil {
 		t.Fatalf("failed to create user: %v", err)
 	}
-	apiToken, stored, err := store.CreateToken("ownername", "token", nil)
+	apiToken, stored, err := store.AsActor(systemActor).CreateToken("ownername", "token", nil, true)
 	if err != nil {
 		t.Fatalf("failed to create token: %v", err)
 	}

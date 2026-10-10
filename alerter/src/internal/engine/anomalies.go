@@ -397,12 +397,13 @@ func (s anomalyScore) severity(sensitivity float64) string {
 // #617; see anomalyScore.stddevFloored).
 //
 // Against a flat baseline, the z-score measures distance in units a
-// floor chose rather than in the metric's observed spread. It still says the value is unusual, which is enough
-// for an info or warning alert, but it is not the statistical evidence a
-// critical alert implies. This is also what kept a flat baseline from
-// turning any small change into a z-score clamped at max_z_score and
-// therefore a critical alert. Threshold rules remain the path for a
-// critical alert on an absolute value.
+// floor chose rather than in the metric's observed spread. It still
+// says the value is unusual, which is enough for an info or warning
+// alert, but it is not the statistical evidence a critical alert
+// implies. This is also what kept a flat baseline from turning any
+// small change into a z-score clamped at max_z_score and therefore a
+// critical alert. Threshold rules remain the path for a critical alert
+// on an absolute value.
 func cappedAnomalySeverity(zScore, sensitivity float64, stddevFloored bool) string {
 	severity := anomalySeverity(zScore, sensitivity)
 	if stddevFloored && severity == "critical" {

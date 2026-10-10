@@ -223,8 +223,9 @@ anomaly:
     # field. A value under min_value is never anomalous and counts as
     # in band when an anomaly alert is cleared; min_stddev is the
     # smallest z-score divisor in the metric's units. 0 disables a
-    # floor. An alert whose divisor came from a floor is raised as a
-    # warning at most.
+    # floor. An alert scored against a baseline with no spread of its
+    # own (a standard deviation at or below absolute_floor) is raised
+    # as a warning at most.
     # metric_floors:
     #   pg_sys_cpu_usage_info.processor_time_percent:
     #     min_value: 50

@@ -419,14 +419,16 @@ func (s *AuthStore) auditRowVerifies(ev *AuditEvent) bool {
 var errStopAuditWalk = errors.New("stop the audit walk")
 
 // looksLikeKeyChange reports whether the log, read from its start, has
-// the shape a changed server secret leaves: one or more rows that do not verify
-// under the key in use, each linked to the one before it, followed
-// either by the end of the log or by rows that all verify and each link
-// to the one before, with no rows lost from the tail. The server keeps
-// writing after its secret changes, and each new row chains onto the
-// last one written under the old secret, so that is exactly what a
-// rotation looks like; a row forged or altered by someone without the
-// key usually breaks a link on one side of it.
+// the shape a changed server secret leaves: one or more rows that do
+// not verify under the key in use, each linked to the one before it,
+// followed either by the end of the log or by rows that all verify and
+// each link to the one before, with no rows lost from the tail: the
+// primary tail anchor where the old secret left it, and the current-key
+// anchor at the newest row (verifyAuditTailAfterKeyChange). The server keeps writing after its
+// secret changes, and each new row chains onto the last one written
+// under the old secret, so that is exactly what a rotation looks like;
+// a row forged or altered by someone without the key usually breaks a
+// link on one side of it.
 //
 // Every row after the leading run is checked, not just the first,
 // because the re-anchor this verdict can let run unattended accepts as
@@ -441,10 +443,10 @@ var errStopAuditWalk = errors.New("stop the audit walk")
 // which rows it would accept. Its callers do not ask it at all when a
 // purge or re-chain event that verifies records where the log begins:
 // see classifyUnverifiedRow.
-func (s *AuthStore) looksLikeKeyChange(q auditQuerier) (bool, error) {
+func (s *AuthStore) looksLikeKeyChange(q auditRowQuerier) (bool, error) {
 
 	run := int64(0)
-	var last AuditEvent
+	var last, lastFailing AuditEvent
 	verifying := false
 	err := forEachAuditEvent(q, func(ev AuditEvent) error {
 		if (run > 0 || verifying) && ev.PrevHash != last.Hash {
@@ -466,6 +468,7 @@ func (s *AuthStore) looksLikeKeyChange(q auditQuerier) (bool, error) {
 			return errStopAuditWalk
 		}
 		run++
+		lastFailing = ev
 		return nil
 	})
 	if errors.Is(err, errStopAuditWalk) {
@@ -480,7 +483,7 @@ func (s *AuthStore) looksLikeKeyChange(q auditQuerier) (bool, error) {
 
 	// A rotation loses nothing from the tail, so a log that has also
 	// lost rows there is not explained by one.
-	if err := s.verifyAuditTail(); err != nil {
+	if err := s.verifyAuditTailAfterKeyChange(q, lastFailing); err != nil {
 		if errors.Is(err, ErrAuditChainBroken) {
 			return false, nil
 		}
@@ -548,7 +551,7 @@ func (s *AuthStore) verifyAuditPurgePrefix(tx *sql.Tx, cut int64) (
 // stop believing it. Where a purge or re-chain event that verifies
 // records where the log begins (anchorFound), a rotation cannot explain
 // the failure, so it is tampering, as classifyUnverifiedRow reports it.
-func (s *AuthStore) auditPurgeUnverified(q auditQuerier, cause error,
+func (s *AuthStore) auditPurgeUnverified(q auditRowQuerier, cause error,
 	anchorFound bool) error {
 	keyChange := false
 	if !anchorFound {

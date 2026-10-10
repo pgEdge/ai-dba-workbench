@@ -142,7 +142,8 @@ func TestReanchorCommandDeclinedChangesNothing(t *testing.T) {
 	assertOutputContains(t, out.String(), "Verification fails:",
 		"do not proceed", "Oldest event accepted:", "Its hash:",
 		"Previously recorded:   (none)", "Accepted as history:",
-		"no longer shown to have been written", "to proceed",
+		"no longer shown to have been written", "WARNING: NOT PROVEN",
+		"no previous secret was given", "to proceed",
 		"Aborted. Nothing has been changed.")
 
 	err := verifyAuditLogCommand(dir)
@@ -616,6 +617,48 @@ func TestPrintAuditReanchorEvidence(t *testing.T) {
 	}
 }
 
+// TestPrintAuditReanchorWarning checks the warning repeated before the
+// question: only when there is history nothing has proven, with the
+// reason, cleaned of control characters, when a previous secret was
+// given.
+func TestPrintAuditReanchorWarning(t *testing.T) {
+	tests := []struct {
+		name  string
+		plan  auth.AuditRechainPlan
+		wants []string
+	}{
+		{name: "no history", plan: auth.AuditRechainPlan{}},
+		{name: "proven", plan: auth.AuditRechainPlan{HistoryEvents: 3,
+			PreviousKeyGiven: true, HistoryProven: true}},
+		{name: "no previous secret", plan: auth.AuditRechainPlan{
+			HistoryEvents: 3},
+			wants: []string{"NOT PROVEN", "the 3 event(s)",
+				"no previous secret was given"}},
+		{name: "unproven", plan: auth.AuditRechainPlan{HistoryEvents: 2,
+			PreviousKeyGiven: true,
+			HistoryProofErr:  errors.New("tail \x1b[2Jrefused")},
+			wants: []string{"NOT PROVEN", "tail", "refused"}},
+		{name: "unproven without a reason", plan: auth.AuditRechainPlan{
+			HistoryEvents: 2, PreviousKeyGiven: true},
+			wants: []string{"NOT PROVEN", "(no reason given)"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var out bytes.Buffer
+			printAuditReanchorWarning(&out, tt.plan)
+			if len(tt.wants) == 0 && out.Len() != 0 {
+				t.Errorf("expected nothing, got:\n%s", out.String())
+			}
+			assertOutputContains(t, out.String(), tt.wants...)
+			if strings.Contains(out.String(), "\x1b") {
+				t.Errorf("expected control characters to be removed, got "+
+					"%q", out.String())
+			}
+		})
+	}
+}
+
 // TestRunAuditCommands checks that each audit command the flags select
 // runs, and that none runs when none is selected. Only commands that
 // succeed are run: a failing one ends the process.
@@ -649,4 +692,121 @@ func TestRunAuditCommands(t *testing.T) {
 			assertOutputContains(t, printed, tt.want)
 		})
 	}
+}
+
+// assertAuditVerifyExit checks the exit status verification reports.
+func assertAuditVerifyExit(t *testing.T, dir string, want int) {
+	t.Helper()
+
+	err := verifyAuditLogCommand(dir)
+	if got := auditVerifyExitCode(err); got != want {
+		t.Errorf("expected verification to exit with status %d, got %d: %v",
+			want, got, err)
+	}
+}
+
+// openAuthDB opens auth.db directly, outside the store, as someone
+// with write access to the file would.
+func openAuthDB(t *testing.T, dir string) *sql.DB {
+	t.Helper()
+
+	db, err := sql.Open("sqlite", filepath.Join(dir, "auth.db"))
+	if err != nil {
+		t.Fatalf("failed to open auth.db directly: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+
+	return db
+}
+
+// TestReanchorCommandRefusesADecoyStartedAnchor checks the sequence
+// that once led the server to sign an anchor bound to a decoy: the
+// newest events are cut, a decoy carrying the hash of the event left
+// newest is planted, the server writes under the old secret and starts
+// a current-key anchor beside it, the decoy is deleted, and the server
+// then writes under a new secret, promoting that anchor. Verification
+// reports tampering, and the unattended re-anchor under the old secret
+// refuses rather than adopting the cut, giving the binding as the
+// reason the old secret does not prove the history.
+func TestReanchorCommandRefusesADecoyStartedAnchor(t *testing.T) {
+	dir := rotatedSecretAuditStore(t)
+	store, err := auth.NewAuthStore(dir, 0, 0,
+		auth.DeriveAuditKey(olderServerSecret))
+	if err != nil {
+		t.Fatalf("failed to open the auth store: %v", err)
+	}
+	for _, name := range []string{"bob", "carol", "dave", "erin"} {
+		if err := store.CreateUser(name, "correct horse battery staple",
+			"", "Test User", name+"@example.com"); err != nil {
+			t.Fatalf("failed to create a user: %v", err)
+		}
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("failed to close the store: %v", err)
+	}
+
+	db := openAuthDB(t, dir)
+	mustExec := func(_ sql.Result, err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatalf("failed to change auth.db: %v", err)
+		}
+	}
+	var newest int64
+	if err := db.QueryRow("SELECT max(id) FROM audit_events").
+		Scan(&newest); err != nil {
+		t.Fatalf("failed to read the newest event: %v", err)
+	}
+	kept, decoy := newest-2, newest-1
+	mustExec(db.Exec("DELETE FROM audit_events WHERE id > ?", kept))
+	mustExec(db.Exec(`INSERT INTO audit_events (id, occurred_at,
+            actor_type, actor_name, action, outcome, prev_hash, hash,
+            hash_version)
+        SELECT ?, occurred_at, 'system', 'decoy', 'user.create',
+            'success', 'unused', hash, hash_version
+        FROM audit_events WHERE id = ?`, decoy, kept))
+	mustExec(db.Exec(`UPDATE sqlite_sequence SET seq = ?
+        WHERE name = 'audit_events'`, decoy))
+	mustExec(db.Exec(`UPDATE audit_tail SET event_id = ?,
+        event_hash = (SELECT hash FROM audit_events WHERE id = ?),
+        mac = 'x' WHERE id = 1`, decoy, kept))
+
+	store, err = auth.NewAuthStore(dir, 0, 0,
+		auth.DeriveAuditKey(olderServerSecret))
+	if err != nil {
+		t.Fatalf("failed to open the auth store: %v", err)
+	}
+	if err := store.CreateUser("frank", "correct horse battery staple",
+		"", "Test User", "frank@example.com"); err != nil {
+		t.Fatalf("failed to create a user: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("failed to close the store: %v", err)
+	}
+	mustExec(db.Exec("DELETE FROM audit_events WHERE id = ?", decoy))
+	assertAuditVerifyExit(t, dir, auditExitTampered)
+
+	addCurrentKeyEvents(t, dir, "grace")
+	assertAuditVerifyExit(t, dir, auditExitTampered)
+
+	var out bytes.Buffer
+	err = rechainAuditLogCommand(dir, auditRechainOptions{assumeYes: true,
+		previousSecretFile: writeSecretFile(t, olderServerSecret)},
+		strings.NewReader(""), &out)
+	if err == nil {
+		t.Fatalf("expected the re-anchor to refuse the decoy, got:\n%s",
+			out.String())
+	}
+	// The command refuses first because verification reads tampering,
+	// but the plan it prints must still give the binding as the reason
+	// the previous secret does not prove the history.
+	if !strings.Contains(err.Error(),
+		"for a reason other than a changed server secret") {
+		t.Errorf("expected the re-anchor to refuse the tampering, got %v",
+			err)
+	}
+	assertOutputContains(t, out.String(), fmt.Sprintf("is bound to a "+
+		"tail anchor naming event %d, which is no longer in the log",
+		decoy))
+	assertAuditVerifyExit(t, dir, auditExitTampered)
 }

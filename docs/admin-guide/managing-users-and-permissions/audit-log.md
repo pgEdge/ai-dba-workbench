@@ -397,7 +397,7 @@ here so that it fits the page:
     "76bed6cc892595f6035701e0b68b3c112088d4a14b2e2db9173043735f9f85e7",
   "hash":
     "5438335f26c3c01a4f42976957dca65f25b48cf44c637ff38ac8bd042736a092",
-  "hash_version": 2
+  "hash_version": 3
 }
 ```
 
@@ -420,7 +420,10 @@ free, as version 2 shows: introducing the keyed hash left every
 version 1 event unverifiable, and an upgraded database has to be
 re-chained, as described below. Verification also refuses an event
 claiming a lower version than one before it, because the encodings only
-ever move forwards.
+ever move forwards. Version 3 computes the same keyed hash as version 2
+under its own label; it marks an event written by a release that keeps
+the tail record described below, so that an event can show which kind
+of release wrote it without that claim being open to change.
 
 The encoding records the length of each field alongside its value, so
 moving text
@@ -525,6 +528,141 @@ that sits below it, is reported, because none of the three is a state
 the database produces by itself; so is a store with no such record at
 all, because every table the server creates keeps one and removing it
 takes deliberate effort.
+
+That record is an ordinary SQLite table with no protection of its own,
+so someone who deletes the newest events can set it to the new highest
+identifier as well. The server therefore also keeps a tail record in
+the `audit_tail` table, naming the newest event by identifier and hash
+under a keyed hash (HMAC-SHA256) derived from the server secret, and
+moves it on in the same transaction that writes each event.
+Verification requires the tail record to name the newest event and to
+verify under the key, and reports status `2` when it names an event
+that is no longer the newest, when it does not verify, when it names an
+event but the log is empty, or when it is missing and the newest event
+is version 3. Anyone able to write `auth.db` can point the record at
+another event, but without the server secret the record then fails to
+verify. The server moves the record on only when it names the newest
+event and verifies under the secret in use; once it names an event
+that has gone, or does not verify, the server leaves it as it is, so
+the deletion is still reported however many events are written after
+it under the same secret, and only the re-chain, described below,
+gives the log a new tail record over one that does not qualify. A
+change of secret ends that guarantee for the events written before it:
+the record left by the old secret can no longer be checked, so a log
+cut back to an earlier event written under that secret reports status
+`3` rather than `2`, as described under
+[What Verification Does and Does Not Show](#what-verification-does-and-does-not-show).
+
+A changed server secret is no exception: the record stays where the
+old secret left it, naming the last event written under that secret.
+The events the server goes on writing under the new secret are covered
+by a second tail record in the same table, which the server starts at
+the first of them and moves on by the same rule; its keyed hash also
+covers the first record, so a second record cannot be paired with a
+different first record. That does not stop an earlier copy of the
+second record being put back: the first record does not change whilst
+one secret is in use, so someone who saved the second record can
+delete the events written after the one it names, set the record of
+the highest identifier to match, and put the saved copy back, and the
+log reports status `3`, as described under
+[What Verification Does and Does Not Show](#what-verification-does-and-does-not-show).
+
+In a log with the shape a changed secret leaves, described above under
+status `3`, verification accepts the first record when it names the
+last event that fails under the current secret, and then requires the
+second record to name the newest event and to verify under the current
+secret. It also accepts a first record that names the newest event and
+verifies under the current secret, which is what the server writes
+when it adds the record to a log that a release before the tail record
+went on writing after the secret changed, and, in the window before
+the first event under a second new secret described below, a second
+record that names the newest event without verifying. A first record
+moved there from the second, as described below, never counts as
+verifying under the current secret, because the server moves it only
+once it fails under that secret. Anything else is reported with status
+`2`, so deleting the newest events is caught after a change of secret
+as it is before one. The record written under the old secret
+cannot be checked without that secret, so an unattended re-anchor
+requires it to verify under `-previous-secret-file` as well, as
+described under
+[Recovering a Log That No Longer Verifies](#recovering-a-log-that-no-longer-verifies).
+A re-anchor or re-chain leaves a single record naming its own event.
+
+If the secret changes a second time before the log is re-anchored, the
+server moves the second record into the place of the first when it
+writes its first event under the newest secret, keeping beside it the
+first record it replaces, over which its keyed hash was computed, and
+starts the second record again at that event. The records then name the
+last event written under the secret before and the newest event, which
+is what verification asks of them, so the log reports status `3` rather
+than `2`. Events written under the oldest secret are no longer at the
+end of the log, and the chain itself catches their deletion, because
+the first event written after them links to the last of them. The
+server writes a warning to its own log each time it starts the second
+record and each time it moves it into the place of the first.
+
+The keyed hash of a moved record shows only that the server wrote the
+pair, not that the first record it was written beside was genuine.
+Someone able to write `auth.db` can delete the newest events, put in
+an event carrying the hash of the new newest event, and point the
+first record at it; the server then starts the second record beside
+it, and once the planted event is deleted and the secret changes, the
+moved record carries the planted first record with the server's own
+keyed hash. Verification and the re-anchor therefore also check the
+event a second record, or a moved record, was written beside against
+the log itself. That event must still be there, with the hash recorded,
+before the event the record names; the server starts the second record
+only when that event fails under the secret in use, which honestly
+means it is the last event written under an earlier secret, and the
+purge never removes it. Whilst the record is left as the server wrote
+it and that event is missing, the log reports status `2`, but this is
+not a guarantee. Verification checks the event only when a record
+names one, and cannot check a moved record's keyed hash under the
+current secret, so someone able to write `auth.db` who removes the
+copy of the first record kept beside a moved record, or points it at
+an event still in the log, makes the log report status `3` again; so
+does rewriting the event before the missing one and putting an event
+carrying the recorded hash back in its place, linked into the chain.
+As in the window described below, only a re-anchor given the previous
+secret with `-previous-secret-file` refuses such a log, because the
+moved record, or the rewritten event, no longer verifies under that
+secret.
+
+Until the server writes its first event under a new secret, neither
+record verifies under the secret in use, so verification can check the
+second record only by the event it names. Someone able to write
+`auth.db` in that window can delete the newest events written under the
+previous secret, set the record of the highest identifier to match, and
+point the second record at the new newest event; verification reports
+status `3`, both then and after the server moves that record into the
+place of the first. A re-anchor given the previous secret with
+`-previous-secret-file` checks the record against it and refuses the
+log, so re-anchor with `-previous-secret-file` after each change of
+secret, and before the next; doing so also keeps the log from spanning
+more than two secrets, which no unattended re-anchor can prove.
+
+The server checks the definition of the `audit_tail` table each time it
+opens the store, and verification checks it again. A table that differs
+from the one the server creates, or any trigger that acts on it, could
+stop the tail records from moving on or keep them where an earlier
+state left them, so the server refuses to open such a store, and
+`-verify-audit-log` reports status `2`, until `auth.db` is restored
+from a known-good copy.
+
+A database written by a release that predates the tail record has no
+such record and version 2 events. The server writes the record when it
+opens the store, naming the newest event, but only if the highest
+identifier SQLite has issued agrees with it, because a record written
+over a log that has already lost its newest events would vouch for the
+deletion; a log where the two disagree is left without one, and
+verification continues to report it. Nor is the record written while
+the newest event fails to verify under the secret in use, as when the
+store is first opened with the wrong secret file, since a record signed
+under that secret would read as altered under the right one; the next
+open with the right secret writes it. The change is one way: an earlier
+release run against the same `auth.db` afterwards writes version 2
+events after version 3 ones and leaves the tail record behind them, and
+verification reports both.
 
 Verification checks the start of the log in the same spirit. Every
 purge records the event it left as the oldest, as described above, and
@@ -729,17 +867,34 @@ one the next event links to, and the result looks exactly like a
 changed secret. An unattended re-anchor therefore proceeds only when
 all of the following hold:
 
-- The failure has the shape a changed secret leaves, with nothing lost
-  from the tail. The whole log is checked, because the re-anchor
-  accepts everything through the last failing event as history, so a
-  rotated secret cannot carry a later deletion or edit through.
+- The failure has the shape a changed secret leaves, and both tail
+  records are where verification requires them. The whole log is
+  checked, because the re-anchor accepts everything through the last
+  failing event as history, so a rotated secret cannot carry a later
+  deletion or edit through. This shows that nothing has been deleted
+  from the end of the log since the server last wrote to it, within
+  the limits described under
+  [What Verification Does and Does Not Show](#what-verification-does-and-does-not-show).
 - `-previous-secret-file` names the secret file the older events were
   written under (it is refused for a log that would be re-hashed),
   and every event the re-anchor would accept as history
   verifies under that secret, links to the event before it, and
   accounts for the start of the log exactly as verification requires
-  of a log written under one secret. A forged event verifies under no
-  secret you hold, so the proof fails and the run stops.
+  of a log written under one secret, and the tail record the previous
+  secret left behind verifies under it and names the last of those
+  events, so that none written under it after that record was written
+  has been deleted from the end.
+  Where that tail record was written beside another, the event it was
+  written beside must still be in the log before the event the record
+  names, and must fail under the previous secret, because the server
+  writes such a record only beside an event that fails under the
+  secret in use. An event or tail record forged without the previous
+  secret fails under it, so the proof fails and the run stops. The
+  server can, however, be led to sign a tail record itself, and the
+  proof cannot tell an earlier copy of either tail record, which the
+  server really wrote, from the current one, so it does not catch that
+  copy being put back once the events written after the one it names
+  have been deleted.
 - At least one event after the history verifies under the current
   secret, which shows that the current secret is the one the server
   runs with; a re-anchor signed under the wrong secret would stop every
@@ -838,14 +993,44 @@ after making a change. Keep the secret file and the data directory
 apart, as far as the operating system allows, so that an account able
 to read one cannot reach the other.
 
-Deleting the newest events needs write access to `auth.db` alone, and
-no secret. The events left behind still verify, and the record of the
-highest identifier issued, which verification compares the newest
-event against, is an ordinary SQLite table with no protection of its
-own; an attacker who deletes the newest events and then sets that
-record to the new highest identifier leaves a log that verifies
-cleanly. The comparison catches a deletion that leaves the record
-alone, and nothing more.
+Deleting the newest events is caught by the tail record, but only
+against the file as it now stands. Nothing outside `auth.db` records
+how far the log had reached, so an earlier copy of the `audit_tail`
+table, put back together with the events after the one it names
+deleted, and an earlier copy of the whole file, both verify. Deleting
+every version 3 event together with the tail record, and setting the
+record of the highest identifier to match, leaves a log that looks as
+it did before the first release that keeps the tail record wrote to it,
+so the events written before that upgrade remain exposed to deletion
+from the end. In the same way, deleting every event written since the
+server secret last changed, together with the second tail record, and
+setting the record of the highest identifier to match, leaves a log
+that looks as it did at the moment of the change; verification still
+reports status `3`. An unattended re-anchor refuses that log, because
+no event verifies under the current secret, but accepts it once the
+server has written its next event. More generally, status `3` vouches
+for nothing written under the previous secret: verification checks
+neither those events nor the tail record written alongside them, so
+someone able to write `auth.db` can cut the log back to any earlier
+event written under that secret, not just to the moment it changed, and
+still see status `3`. The same holds for a first record whose event
+was altered so that it failed, long enough for the server to start
+the second record beside it, and then restored: every event is then
+present and correctly linked, so verification still reports status
+`3`. Only a re-anchor given the previous secret with
+`-previous-secret-file` checks those events, that record and the
+event the record was written beside, and so refuses both cases. It
+does not check either tail record against an earlier copy of itself,
+however, so it accepts an earlier copy of either record put back with
+the events written after the one it names deleted: a copy of the first
+record saved under the previous secret, put back once the events after
+it are cut and the second record removed, reads as status `3`, and the
+re-anchor accepts it once the server has written its next event. An
+interactive re-anchor without `-previous-secret-file` warns, just
+before it asks, that nothing has proven the events written under the
+previous secret. A log emptied entirely, with the tail record and the
+record of the highest identifier removed as well, reads as one that
+has never held an event.
 
 Deleting the oldest events is caught precisely only once a purge has
 recorded where the log begins. On a log whose purge events were all
@@ -863,21 +1048,21 @@ everything else, and leaves only the cases below. Events deleted and
 later put back exactly as they were, from a copy, leave nothing to
 find. Where no purge record survives, deleting every event except
 event 1, or deleting them all and putting back a copy of event 1, is
-the same as deleting the newest events: every event the server writes
-afterwards links to event 1, and nothing in the file tells that log
-from one that never grew. An event's identifier is not part of its
-hash either, so someone who can write the database can empty the log,
-whether or not a purge had recorded where it began, wait for the
-server to write one more event, move that event to identifier 1 and
-lower the `audit_events` entry in `sqlite_sequence` to 1 to match
-(without that, the tail check reports the sequence running ahead of
-the newest event), and the log verifies for the same reason. A purge
-event written before
-purges recorded where the log began works the same way: someone who
-kept a copy of one can empty the log, put that event back under any
-identifier, and wait for the server to write one more event, and the
-log verifies, because the purge that recorded the head was deleted
-with everything else and the old event carries no record to check.
+the same as deleting the newest events: the tail record catches it,
+within the limits just described, but nothing else in the file tells
+that log from one that never grew. An event's identifier is not part of
+its hash either, so someone who can write the database could empty the
+log, whether or not a purge had recorded where it began, wait for the
+server to write one more event and move that event to identifier 1;
+the chain alone would accept that log, and it is the tail record, which
+names the newest event by identifier, that refuses it. A purge event
+written before purges recorded where the log began works the same way:
+someone who kept a copy of one can empty the log, put that event back
+under any identifier, and wait for the server to write one more event,
+and the chain alone accepts it, because the purge that recorded the
+head was deleted with everything else and the old event carries no
+record to check; the tail record refuses that log too, unless it was
+deleted along with the events and the sequence, as described above.
 
 The re-chain blesses whatever the database contained at the moment it
 ran, as described above, so on an upgraded installation the keyed chain

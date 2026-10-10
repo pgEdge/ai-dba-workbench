@@ -669,8 +669,9 @@ func TestVerifyAuditTailSequenceBelowNewestRow(t *testing.T) {
 // TestVerifyAuditChainDetectsResequencedTruncation covers the attack
 // that survives the two-delete fix: truncate the log, then rewrite
 // sqlite_sequence rather than delete it. Setting it to the exact
-// surviving maximum is undetectable by arithmetic alone and the
-// function comment says so; anything else is caught.
+// surviving maximum is undetectable by arithmetic alone and is caught
+// by the tail anchor instead (TestVerifyDetectsTruncationWithSequence-
+// Rewritten); anything else is caught by the comparison too.
 func TestVerifyAuditChainDetectsResequencedTruncation(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAudit(t)
 	defer cleanup()
@@ -1983,6 +1984,8 @@ func TestAuditChainCannotFork(t *testing.T) {
 // every row outside the window it removes nothing. An emptied table is
 // still reachable, by an operator clearing the log by hand or by a
 // database restored from one, so the table is emptied here directly.
+// The tail anchor still names the deleted event 3 as well, and the
+// re-anchor moves it on.
 func TestAuditChainGenesisAfterFullPurge(t *testing.T) {
 	store, dir := newReopenableStore(t)
 
@@ -2027,6 +2030,9 @@ func TestAuditChainGenesisAfterFullPurge(t *testing.T) {
 		!strings.Contains(err.Error(), "starts a new chain") {
 		t.Fatalf("Expected the emptied log to fail at event 4, got "+
 			"firstBad=%d err=%v", firstBad, err)
+	}
+	if st := readTail(t, store); st.anchorID != 3 {
+		t.Errorf("Expected the tail anchor to stay on event 3, got %+v", st)
 	}
 	store.Close()
 
@@ -2116,8 +2122,8 @@ func TestAuditHashCarriesFormatVersion(t *testing.T) {
 	}
 	before := auditHashV1(ev)
 
-	if auditHashVersion != 2 {
-		t.Fatalf("Expected the shipped version to be 2, got %d",
+	if auditHashVersion != 3 {
+		t.Fatalf("Expected the shipped version to be 3, got %d",
 			auditHashVersion)
 	}
 
@@ -2160,9 +2166,9 @@ func TestAuditHashCarriesFormatVersion(t *testing.T) {
 
 	// A version this build has no rendering for is an error, not a
 	// digest, so a verifier can tell it apart from a broken hash.
-	ev.HashVersion = 3
+	ev.HashVersion = 4
 	if _, err := auditHash(ev, AuditKeyForTesting()); !errors.Is(err, errUnknownAuditHashVersion) {
-		t.Errorf("Expected errUnknownAuditHashVersion for version 3, got %v", err)
+		t.Errorf("Expected errUnknownAuditHashVersion for version 4, got %v", err)
 	}
 	ev.HashVersion = 0
 	if _, err := auditHash(ev, AuditKeyForTesting()); !errors.Is(err, errUnknownAuditHashVersion) {

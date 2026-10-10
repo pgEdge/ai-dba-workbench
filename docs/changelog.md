@@ -551,8 +551,8 @@ project adheres to
   undetected now needs read access to the secret file as well
   as write access to `auth.db`. Deleting the newest events and
   then resetting the SQLite record of the highest identifier
-  issued still needs write access alone, as the admin guide
-  describes. The version each event was
+  issued needed write access alone until the tail record
+  described below (#544). The version each event was
   hashed under is covered by the hash itself and may never
   fall as the chain advances, so an event cannot be relabelled
   into an encoding the verifier will not check. Every server
@@ -2467,6 +2467,42 @@ project adheres to
   wrong or rotated secret, with status 3, rather than as tampering, and
   both it and the purge's repeating error name `-rechain-audit-log`.
   (#502)
+
+- Report events deleted from the end of the RBAC audit log in
+  `-verify-audit-log` even when the record of the highest identifier
+  SQLite has issued is rewritten to match, which previously passed. The
+  server now keeps a tail record in a new `audit_tail` table, naming the
+  newest event under a keyed hash derived from the server secret and
+  moved on with each event, and verification exits with status 2 when
+  it names any other event, does not verify, or is missing behind a
+  version 3 event, the hash version new events now carry. An existing
+  log is given a tail record when the store opens, provided nothing is
+  missing from its end and its newest event verifies under the secret
+  in use. The server moves the record on only when it names the newest
+  event and verifies under the secret in use, so a record left naming a
+  deleted event, or pointed at a planted event without the secret,
+  stays as it is until an operator runs `-rechain-audit-log`. After a
+  change of server secret the record stays with the last event written
+  under the old one, where verification accepts it only in a log with
+  the shape of a changed secret and `-confirm-rechain` requires it to
+  verify under `-previous-secret-file`, and a second record covers the
+  events written under the new secret, so deleting them is reported
+  with status 2 as well. A second change of secret before the log is
+  re-anchored moves the second record into the first's place, so such
+  a log still reports status 3, and the server logs a warning whenever
+  it starts or moves the second record. Because the server can be led
+  to sign the second record beside a planted first record, the event
+  the second record was written beside must also still be in the log,
+  and `-previous-secret-file` must find that it fails under the
+  previous secret. Status 3 vouches for nothing
+  written under the previous secret, so re-anchor with
+  `-previous-secret-file` after each change of secret; an interactive
+  re-anchor without that proof now warns that the history is not
+  proven before it asks. The server refuses to open, and verification
+  exits with status 2, when the `audit_tail` table differs from the one
+  the server creates or a trigger acts on it. Running an earlier
+  release against the same `auth.db` afterwards is reported as a
+  version downgrade. (#544)
 
 - Check the definitions of the audit log's schema objects in
   `-verify-audit-log`, not only their names. The index on the link to

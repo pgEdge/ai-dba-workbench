@@ -896,7 +896,10 @@ the version is a column
 in the file and relabelling a row must not move it out of the
 verifier's reach.
 
-`auditHashVersion` is 2: an HMAC-SHA256 over the canonical rendering,
+`auditHashVersion` is 3, rendered exactly as version 2 but under the
+label `v3` (`auditHashKeyed`), and marks rows written by a build that
+keeps the tail anchor described below. Both are an HMAC-SHA256 over
+the canonical rendering,
 keyed by `AuthStore.auditKey`, so rewriting a row needs the server
 secret as well as write access to `auth.db`. Version 1, the unkeyed
 SHA-256, is no longer admissible anywhere: `auditHash` refuses to
@@ -1119,7 +1122,70 @@ pure comparison is `checkAuditTail`. Every disagreement wraps
 `ErrAuditChainBroken`, so the CLI exits with the tampering status; any
 other query error is returned unwrapped rather than swallowed, and
 exits 1. `sqlite_sequence` itself is unprotected, so a tail deleted and
-then matched by writing the sequence down passes without the secret.
+then matched by writing the sequence down passes that comparison, and
+`verifyAuditTail` then calls `verifyAuditTailAnchor` (#544).
+
+The tail anchor lives in `audit_tail.go`: an `audit_tail` table
+(`auditTailDDL`, created by `ensureAuditSchema`, which then refuses
+any trigger acting on it (`verifyAuditTailNoTrigger`), rebuilds either
+pre-release definition in `auditTailLegacyDDLs`
+(`migrateAuditTailSchema`) and requires the normalised definition to
+equal `auditTailDDL` (`verifyAuditTailSchema`, also called from
+`verifyAuditSchema`); failures wrap `ErrAuditChainBroken`) with two
+slots. Slot 1, the primary, holds the newest event's
+id and hash under `auditTailMAC`, an HMAC with its own label. Slot 2,
+the current-key anchor, exists only after a change of secret and holds
+the newest row under `auditTailCurrentMAC`, which also covers the whole
+of slot 1. `recordAudit` reads the newest row and both slots in one
+statement (`readAuditTailState`), asks `planAuditTailMove` before its
+INSERT, because the insert moves `sqlite_sequence`, and calls
+`applyAuditTailMove` afterwards. The moves: advance slot 1 when it
+names the newest row and verifies under `s.auditKey`, or for the first
+event of a never-used log; advance slot 2 by the same rule; start slot
+2 when slot 1 names the newest row, both fail and slot 2 is absent;
+promote slot 2 unchanged into slot 1, keeping the overwritten slot-1
+fields in slot 1's `bound_*` columns, and start slot 2 afresh, when
+slot 2 names the newest row and both fail (a second rotation). Starting
+and promoting slot 2 each `log.Printf` a `[WARN]` line. Check slot 1
+under the key in use with `auditTailVerifies`, which refuses any slot 1
+with a binding, because a genuine promoted value was written under an
+earlier key and a writer can copy a server-signed slot 2 and its
+binding into slot 1. `primaryTailVerifiesUnder`, which checks a
+promoted slot 1 with `auditTailCurrentMAC` over its binding, is for the
+previous key only; any other write to slot 1 passes an empty
+`auditTailBinding`.
+Anything else is left alone on purpose, so the evidence persists.
+`verifyAuditTailAnchor` is reached only once every row verifies and
+ignores slot 2; a rotation-shaped log goes to
+`verifyAuditTailAfterKeyChange`, which requires slot 1 at the last
+failing row and slot 2 at the newest row (`verifyAuditTailCurrent`),
+and `proveAuditReanchorTail` checks, under the previous key, slot 2
+while it fails under the current key (before promotion) and otherwise
+slot 1, as part of `HistoryProven`; `proveAuditReanchorPlan` runs it
+even when the history proof has already failed, inside one read
+transaction whose re-scan must equal `plan.reanchor`. A MAC on a
+binding is not trusted alone: case 3 of `checkRotatedAuditTail`
+checks slot 1's `bound_*`, and case 4 slot 2's view of slot 1
+(`primaryBinding`), with `checkAuditTailBinding`, which requires
+`auditTailBoundRow` to find the bound row by id and hash below the
+anchored id; `proveAuditReanchorTail` ends with
+`proveAuditTailBinding`, which also requires that row to fail under
+the previous key. `audit_tail_decoy_test.go` holds the attacks these
+close, and pins two limits they do not (a cleared or repointed
+`bound_*` reads as exit 3 in verify; a saved slot 1 put back passes
+the re-anchor). New rows
+carry `auditHashVersion` 3 (`auditTailHashVersion`), which renders as
+version 2 does under the label `v3`; a v3 newest row with no anchor
+fails verification. `initSchema` ends with `seedAuditTail`, which
+anchors a v2 log only when `checkAuditTail` agrees and the newest row
+verifies under `s.auditKey` (an anchor signed under a wrong secret
+would read as altered under the right one and never advance). The
+re-chain and re-anchor call `resetAuditTail` after `recordAudit`
+unconditionally, which rewrites slot 1 and deletes slot 2.
+Test fixtures that insert `audit_events` rows by hand at version 3
+must also leave the anchor naming the newest row, or verification
+fails; `audit_tail_test.go` has `insertVersion2Log` for a
+pre-anchor log.
 
 ## Connection Access and Visibility Agree
 

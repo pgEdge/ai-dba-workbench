@@ -23,11 +23,16 @@ export const SQL_STATEMENT_KEYWORDS = /^\s*(SELECT|WITH|INSERT|UPDATE|DELETE|ALT
 /**
  * Regex matching the routing comment that cluster analysis prepends to a
  * SQL block to say which connection the statement should run against.
- * The first capture group holds the connection ID. Like any `--`
- * comment, it ends at a carriage return or a newline, or at the end of
- * the block when the comment is all there is.
+ * The first capture group holds the connection ID. The comment may be
+ * indented with spaces or tabs, and only spaces or tabs may separate its
+ * parts, so a match never crosses a line break to read an ID from outside
+ * the comment. Like any `--` comment, it ends at a carriage return or a
+ * newline, or at the end of the block when the comment is all there is;
+ * any blank lines straight after it are matched too, so stripping the
+ * comment leaves the query starting on its first line.
  */
-export const CONNECTION_ID_COMMENT_RE = /^--\s*connection_id:\s*(\d+)\s*(?:[\r\n]|$)/;
+export const CONNECTION_ID_COMMENT_RE =
+    /^[ \t]*--[ \t]*connection_id:[ \t]*(\d+)[ \t]*(?:[\r\n]|$)(?:[ \t]*[\r\n])*/;
 
 /**
  * Regex matching a `$N` bind-parameter placeholder.
@@ -290,12 +295,14 @@ const sqlCodeOnly = (statement: string): string =>
 /**
  * Placeholders other than `$N` that mark SQL as a template, checked once
  * comments and literals are blanked out: angle-bracket stand-ins
- * (`<table_name>`), template braces (`{{schema}}`) and bare psql
- * variables (`:name`, but not a `::` cast or an `a[lo:hi]` slice).
+ * (`<table_name>`), template braces (`{{schema}}`), shell-style
+ * substitutions (`${table_name}`) and bare psql variables (`:name`, but
+ * not a `::` cast or an `a[lo:hi]` slice).
  */
 const OTHER_PLACEHOLDER_RES: RegExp[] = [
     /<[A-Za-z_][\w.]*>/,
     /\{\{[^}]*\}\}/,
+    /\$\{[^}]*\}/,
     /(?<![:\w]):(?!:)[A-Za-z_]/,
 ];
 
@@ -322,7 +329,8 @@ const hasQuotedPsqlVariable = (tokens: SqlToken[]): boolean =>
  * Determine whether a SQL block contains placeholders that make it a
  * template rather than a runnable query: `$N` bind parameters,
  * angle-bracket stand-ins (`<table_name>`), template braces
- * (`{{schema}}`) or psql variables (`:name`, `:'name'`).
+ * (`{{schema}}`), shell-style substitutions (`${table_name}`) or psql
+ * variables (`:name`, `:'name'`).
  *
  * Placeholders inside comments, string literals and dollar-quoted bodies
  * are ignored, since those are ordinary text rather than parameters.

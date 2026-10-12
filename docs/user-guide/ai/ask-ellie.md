@@ -158,7 +158,8 @@ reply itself:
   button appears once you choose a server.
 
 SQL that contains placeholders, such as `$1`,
-`<table_name>`, `{{schema}}` or `:name`, is labelled a
+`<table_name>`, `{{schema}}`, `${table_name}` or `:name`, is
+labelled a
 template and offers no play button, because it needs
 values substituted in before it can run. Other queries
 are checked against the target server before the play

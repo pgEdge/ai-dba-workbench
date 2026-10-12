@@ -753,3 +753,19 @@ func TestDenialCoalescerReopenBehindOlderEntry(t *testing.T) {
 	}
 	checkDenialList(t, &c)
 }
+
+// TestDenialKeyBoundsAddress checks that the client address a denial key
+// carries is capped, so that a long address cannot inflate the key.
+func TestDenialKeyBoundsAddress(t *testing.T) {
+	long := strings.Repeat("a", 4096)
+	key := denialKeyOf(Actor{IP: long}, "user.delete", "reason")
+	if len(key.actorIP) != maxDenialIPLen {
+		t.Errorf("Expected the address capped at %d bytes, got %d",
+			maxDenialIPLen, len(key.actorIP))
+	}
+
+	const v6 = "2001:db8:85a3:8d3:1319:8a2e:370:7348"
+	if key := denialKeyOf(Actor{IP: v6}, "user.delete", "reason"); key.actorIP != v6 {
+		t.Errorf("Expected a real address to be kept, got %q", key.actorIP)
+	}
+}

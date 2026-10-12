@@ -294,12 +294,21 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 			// lets a bounded token rename a group (issue #471).
 			rbacHandler.SetFederatedGroupMap(deps.Config.HTTP.Auth.OIDC.GroupMap)
 			// Token-scope refusals on the connection, cluster, alert
-			// rule and notification channel routes are audited through
-			// the RBAC handler's coalescing denial recorder.
-			connHandler.SetDenialRecorder(rbacHandler.RecordDenial)
-			clusterHandler.SetDenialRecorder(rbacHandler.RecordDenial)
-			alertRuleHandler.SetDenialRecorder(rbacHandler.RecordDenial)
-			notificationChannelHandler.SetDenialRecorder(rbacHandler.RecordDenial)
+			// rule, notification channel, blackout, probe config and
+			// alert, probe and channel override routes, and the
+			// ownership and permission refusals on the cluster-group
+			// routes, are audited through the RBAC handler's coalescing
+			// denial recorder.
+			for _, h := range []interface {
+				SetDenialRecorder(func(*http.Request, string))
+			}{
+				connHandler, clusterHandler, alertRuleHandler,
+				notificationChannelHandler, blackoutHandler,
+				probeConfigHandler, alertOverrideHandler,
+				probeOverrideHandler, channelOverrideHandler,
+			} {
+				h.SetDenialRecorder(rbacHandler.RecordDenial)
+			}
 			rbacHandler.RegisterRoutes(mux, authWrapper)
 			fmt.Fprintf(os.Stderr, "RBAC management: ENABLED\n")
 		}

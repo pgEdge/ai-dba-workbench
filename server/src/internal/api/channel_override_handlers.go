@@ -25,6 +25,8 @@ type ChannelOverrideHandler struct {
 	authStore       *auth.AuthStore
 	rbacChecker     *auth.RBACChecker
 	checkPermission func(http.ResponseWriter, *http.Request) bool
+	// denialAuditor audits this handler's token-scope refusals.
+	denialAuditor
 }
 
 // NewChannelOverrideHandler creates a new channel override handler
@@ -141,7 +143,7 @@ func (h *ChannelOverrideHandler) upsertOverride(w http.ResponseWriter, r *http.R
 	if !h.checkPermission(w, r) {
 		return
 	}
-	if !requireTargetInTokenScope(w, r, h.rbacChecker, scope, &scopeID) {
+	if !requireTargetInTokenScope(w, r, h.rbacChecker, h.denialRecorder, scope, &scopeID) {
 		return
 	}
 
@@ -165,7 +167,7 @@ func (h *ChannelOverrideHandler) deleteOverride(w http.ResponseWriter, r *http.R
 	if !h.checkPermission(w, r) {
 		return
 	}
-	if !requireTargetInTokenScope(w, r, h.rbacChecker, scope, &scopeID) {
+	if !requireTargetInTokenScope(w, r, h.rbacChecker, h.denialRecorder, scope, &scopeID) {
 		return
 	}
 

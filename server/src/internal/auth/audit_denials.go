@@ -45,6 +45,14 @@ const maxDenialTargets = 20
 // bounded whatever the caller passes.
 const maxDenialActionLen = 64
 
+// maxDenialIPLen caps the client address a denial key carries. The
+// address extractor only returns text that parses as an IP address,
+// the longest of which is 45 bytes, but the cap keeps the key bounded
+// whatever the address source, so that a client cannot open a fresh
+// group, and with it a fresh audit row, with every request by varying
+// a long address (issue #589).
+const maxDenialIPLen = 64
+
 // denialKey identifies a repeated denial. Two refusals coalesce only
 // when the same principal, identified by actor id as well as by name
 // so that two tokens of one user stay apart, is refused the same action
@@ -71,12 +79,16 @@ func denialKeyOf(actor Actor, action, reason string) denialKey {
 	if len(action) > maxDenialActionLen {
 		action = action[:maxDenialActionLen]
 	}
+	ip := actor.IP
+	if len(ip) > maxDenialIPLen {
+		ip = ip[:maxDenialIPLen]
+	}
 
 	return denialKey{
 		actorType: actor.Type,
 		actorID:   actorID,
 		actorName: actor.Name,
-		actorIP:   actor.IP,
+		actorIP:   ip,
 		action:    action,
 		reason:    reason,
 	}

@@ -703,10 +703,11 @@ Denials are coalesced in the auth store, beside the failure
 coalescer, in `server/src/internal/auth/audit_denials.go`.
 `recordDenial` calls `AuthStore.RecordCoalescedDenial(actor, action,
 target, reason)`, whose `denialCoalescer` keeps an in-memory map keyed
-by `denialKey` (actor type, actor id, actor name, client IP, action,
-capped at `maxDenialActionLen`, and reason; built by `denialKeyOf`),
-so that two tokens of one user, or one token used from two addresses,
-never suppress each other's denials. The key must never hold a value
+by `denialKey` (actor type, actor id, actor name, client IP, capped
+at `maxDenialIPLen`, action, capped at `maxDenialActionLen`, and
+reason; built by `denialKeyOf`), so that two tokens of one user, or
+one token used from two addresses, never suppress each other's
+denials. The key must never hold a value
 the caller chooses without limit: the path is deliberately not in it,
 and `deniedRoute` maps an unrecognised method to `rbac.other` (only
 the nine standard methods get `rbac.<lowercase method>`), since
@@ -746,17 +747,29 @@ client can append. A handler outside `RBACHandler` records through
 `ConnectionHandler` takes it via `SetDenialRecorder` and refuses
 through `refuseOutOfTokenScope` (its `manage_connections` refusal on
 `PUT /connections/{id}/cluster` records too), and `ClusterHandler`,
-`AlertRuleHandler` and `NotificationChannelHandler` embed
+`AlertRuleHandler`, `NotificationChannelHandler`, `BlackoutHandler`,
+`ProbeConfigHandler` and the three override handlers embed
 `denialAuditor`, whose recorder they pass to
-`requireAllConnectionsInTokenScope` and
-`requireConnectionsInTokenScope`; `cmd/mcp-server/handlers.go` wires
-all four. `requireTargetInTokenScope` and
-`requireBlackoutTargetInTokenScope` do not record yet.
+`requireAllConnectionsInTokenScope`,
+`requireConnectionsInTokenScope`, `requireTargetInTokenScope` and
+`requireBlackoutTargetInTokenScope` (each refuses even with a nil
+recorder); `cmd/mcp-server/handlers.go` wires them in one loop.
+`ClusterHandler`'s cluster-group ownership and `manage_connections`
+403s record through `h.denialRecorder.refuse`, and
+`BlackoutHandler.refuseOutOfScope` records its 403 but not its 404
+for a record the token cannot see (issue #589).
 `deniedConnectionAction` names the `connection.update`,
 `connection.delete` and `connection.cluster.update` actions, and
 `deniedAPIRoute` names `cluster.*`, `cluster_group.*`,
-`notification_channel.*` and `alert_rule.*` (a write to a
-sub-resource is recorded as an update of its parent).
+`notification_channel.*`, `alert_rule.*`, `blackout.*`,
+`blackout_schedule.*` and `probe_config.*` (a write to a
+sub-resource is recorded as an update of its parent). Override
+writes (`PUT`/`DELETE /<kind>-overrides/{scope}/{id}/{item}`) go
+through `deniedScopedRoute`, which records `<kind>/<scope>/<id>` only
+for a known scope and a positive id, and never the free-text item.
+`IPExtractor.ExtractIP` returns only a parseable address (forwarded
+entries go through `parseForwardedIP`, which strips a port), falling
+back to the direct peer address.
 `updateConnection` and `deleteConnection` call the session-only
 `getUserInfoCompat` first, so a real token gets 401 there; only the
 cluster move reaches an audited connection token-scope refusal, and

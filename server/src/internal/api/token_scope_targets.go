@@ -43,15 +43,17 @@ func targetInTokenScope(ctx context.Context, rc *auth.RBACChecker,
 	return rc.AllConnectionsInTokenScope(ctx)
 }
 
-// requireTargetInTokenScope applies targetInTokenScope, answering 403
-// and returning false when the target is out of scope.
+// requireTargetInTokenScope applies targetInTokenScope, answering 403,
+// auditing the refusal through record, and returning false when the
+// target is out of scope.
 func requireTargetInTokenScope(w http.ResponseWriter, r *http.Request,
-	rc *auth.RBACChecker, scope string, connectionID *int) bool {
+	rc *auth.RBACChecker, record denialRecorder, scope string,
+	connectionID *int) bool {
 
 	if targetInTokenScope(r.Context(), rc, scope, connectionID) {
 		return true
 	}
-	RespondError(w, http.StatusForbidden, targetOutOfTokenScope)
+	record.refuse(w, r, targetOutOfTokenScope)
 	return false
 }
 
@@ -71,14 +73,16 @@ func blackoutTargetInTokenScope(ctx context.Context, rc *auth.RBACChecker,
 }
 
 // requireBlackoutTargetInTokenScope applies blackoutTargetInTokenScope,
-// answering 403 and returning false when the target is out of scope.
+// answering 403, auditing the refusal through record, and returning
+// false when the target is out of scope.
 func requireBlackoutTargetInTokenScope(w http.ResponseWriter, r *http.Request,
-	rc *auth.RBACChecker, scope string, connectionID *int) bool {
+	rc *auth.RBACChecker, record denialRecorder, scope string,
+	connectionID *int) bool {
 
 	if blackoutTargetInTokenScope(r.Context(), rc, scope, connectionID) {
 		return true
 	}
-	RespondError(w, http.StatusForbidden, targetOutOfTokenScope)
+	record.refuse(w, r, targetOutOfTokenScope)
 	return false
 }
 

@@ -29,6 +29,8 @@ type BlackoutHandler struct {
 	authStore       *auth.AuthStore
 	rbacChecker     *auth.RBACChecker
 	checkPermission func(http.ResponseWriter, *http.Request) bool
+	// denialAuditor audits this handler's token-scope refusals.
+	denialAuditor
 }
 
 // NewBlackoutHandler creates a new blackout handler
@@ -417,7 +419,7 @@ func (h *BlackoutHandler) createBlackout(w http.ResponseWriter, r *http.Request)
 		RespondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if !requireBlackoutTargetInTokenScope(w, r, h.rbacChecker, req.Scope, req.ConnectionID) {
+	if !requireBlackoutTargetInTokenScope(w, r, h.rbacChecker, h.denialRecorder, req.Scope, req.ConnectionID) {
 		return
 	}
 
@@ -707,7 +709,7 @@ func (h *BlackoutHandler) createBlackoutSchedule(w http.ResponseWriter, r *http.
 		RespondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if !requireBlackoutTargetInTokenScope(w, r, h.rbacChecker, req.Scope, req.ConnectionID) {
+	if !requireBlackoutTargetInTokenScope(w, r, h.rbacChecker, h.denialRecorder, req.Scope, req.ConnectionID) {
 		return
 	}
 
@@ -780,7 +782,7 @@ func (h *BlackoutHandler) updateBlackoutSchedule(w http.ResponseWriter, r *http.
 		RespondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if !requireBlackoutTargetInTokenScope(w, r, h.rbacChecker, req.Scope, req.ConnectionID) {
+	if !requireBlackoutTargetInTokenScope(w, r, h.rbacChecker, h.denialRecorder, req.Scope, req.ConnectionID) {
 		return
 	}
 
@@ -918,7 +920,9 @@ func (h *BlackoutHandler) requireBlackoutScheduleInTokenScope(
 // refuseOutOfScope answers a write to a stored blackout or schedule
 // whose target the acting token's connection scope does not cover: 404
 // with notFoundMsg when visibleFn says the caller could not see the
-// record, matching the GET for the same id, and 403 when it could.
+// record, matching the GET for the same id, and 403 when it could. The
+// 403 is audited; the 404 is not, as for a connection the token cannot
+// see, since it answers as though the record did not exist.
 func (h *BlackoutHandler) refuseOutOfScope(w http.ResponseWriter,
 	r *http.Request, notFoundMsg string,
 	visibleFn func(context.Context, map[int]bool) (bool, error)) {
@@ -942,5 +946,5 @@ func (h *BlackoutHandler) refuseOutOfScope(w http.ResponseWriter,
 			return
 		}
 	}
-	RespondError(w, http.StatusForbidden, targetOutOfTokenScope)
+	h.denialRecorder.refuse(w, r, targetOutOfTokenScope)
 }

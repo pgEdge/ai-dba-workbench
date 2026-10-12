@@ -289,6 +289,29 @@ var deniedAPIResources = map[string]string{
 	"cluster-groups":        "cluster_group",
 	"notification-channels": "notification_channel",
 	"alert-rules":           "alert_rule",
+	"blackouts":             "blackout",
+	"blackout-schedules":    "blackout_schedule",
+	"probe-configs":         "probe_config",
+	"alert-overrides":       "alert_override",
+	"probe-overrides":       "probe_override",
+	"channel-overrides":     "channel_override",
+}
+
+// deniedScopedResources lists the deniedAPIResources whose routes name
+// the object an override is attached to rather than an object of their
+// own: {scope}/{scopeId}/{item}. See deniedScopedRoute.
+var deniedScopedResources = map[string]bool{
+	"alert-overrides":   true,
+	"probe-overrides":   true,
+	"channel-overrides": true,
+}
+
+// deniedOverrideScopes is the fixed vocabulary of scopes an override
+// route may name in a denial target.
+var deniedOverrideScopes = map[string]bool{
+	"server":  true,
+	"cluster": true,
+	"group":   true,
 }
 
 // deniedAPIRoute maps a write on one of deniedAPIResources to
@@ -306,6 +329,9 @@ func deniedAPIRoute(method, path string) (action, target string) {
 	if !ok {
 		return "", ""
 	}
+	if deniedScopedResources[parts[0]] {
+		return deniedScopedRoute(method, resource, parts)
+	}
 
 	var verb string
 	switch {
@@ -322,6 +348,41 @@ func deniedAPIRoute(method, path string) (action, target string) {
 
 	return resource + "." + verb,
 		denialResourceTarget(parts[0], strings.Join(parts[1:], "/"))
+}
+
+// deniedScopedRoute maps a write on an override route,
+// PUT or DELETE /{kind}/{scope}/{scopeId}/{item}, to
+// "<resource>.update" or "<resource>.delete". The target names the
+// object the override is attached to, such as
+// "alert-overrides/server/5", since that is what the token-scope check
+// refuses; the item is left out because a probe name is free text. A
+// scope outside deniedOverrideScopes, or an id that does not parse,
+// leaves the kind alone as the target. It returns an empty action for
+// any other request.
+func deniedScopedRoute(method, resource string,
+	parts []string) (action, target string) {
+
+	if len(parts) != 4 {
+		return "", ""
+	}
+
+	var verb string
+	switch method {
+	case http.MethodPut:
+		verb = "update"
+	case http.MethodDelete:
+		verb = "delete"
+	default:
+		return "", ""
+	}
+
+	target = parts[0]
+	id, err := strconv.ParseInt(parts[2], 10, 64)
+	if deniedOverrideScopes[parts[1]] && err == nil && id > 0 {
+		target = parts[0] + "/" + parts[1] + "/" + strconv.FormatInt(id, 10)
+	}
+
+	return resource + "." + verb, target
 }
 
 // connectionPathPrefix is the prefix of the per-connection REST routes.

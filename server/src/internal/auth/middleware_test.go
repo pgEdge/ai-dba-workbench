@@ -540,6 +540,44 @@ func TestIPExtractor_ExtractIP(t *testing.T) {
 		}
 	})
 
+	// Test case: every parseable entry is trusted and the leftmost is
+	// not an address, so the direct address is used rather than the
+	// arbitrary header text (issue #589)
+	t.Run("all trusted with unparseable leftmost returns direct IP", func(t *testing.T) {
+		extractor := NewIPExtractor([]string{"10.0.0.0/8"})
+		req := httptest.NewRequest("GET", "/", nil)
+		req.RemoteAddr = "10.0.0.1:12345"
+		req.Header.Set("X-Forwarded-For", strings.Repeat("x", 4096)+", 10.0.0.5")
+
+		ip := extractor.ExtractIP(req)
+		if ip != "10.0.0.1" {
+			t.Errorf("Expected the direct address '10.0.0.1', got %.40q", ip)
+		}
+	})
+
+	// Test case: proxies that append the client's port to the address
+	// still yield the client address rather than the proxy's
+	t.Run("forwarded entries with a port", func(t *testing.T) {
+		extractor := NewIPExtractor([]string{"10.0.0.0/8"})
+		for _, tc := range []struct{ header, value, want string }{
+			{"X-Forwarded-For", "203.0.113.7:51234", "203.0.113.7"},
+			{"X-Forwarded-For", "[2001:db8::1]:443, 10.0.0.2", "2001:db8::1"},
+			{"X-Forwarded-For", "[2001:db8::2]", "2001:db8::2"},
+			{"X-Forwarded-For", "10.0.0.5:80, 10.0.0.2:81", "10.0.0.5"},
+			{"X-Real-IP", "198.51.100.4:8080", "198.51.100.4"},
+			{"X-Real-IP", "proxy.example.com:8080", "10.0.0.1"},
+		} {
+			req := httptest.NewRequest("GET", "/", nil)
+			req.RemoteAddr = "10.0.0.1:12345"
+			req.Header.Set(tc.header, tc.value)
+
+			if ip := extractor.ExtractIP(req); ip != tc.want {
+				t.Errorf("%s %q: expected %q, got %q", tc.header, tc.value,
+					tc.want, ip)
+			}
+		}
+	})
+
 	// Test case: malformed X-Forwarded-For entries
 	t.Run("malformed XFF entries skipped", func(t *testing.T) {
 		extractor := NewIPExtractor([]string{"10.0.0.0/8"})

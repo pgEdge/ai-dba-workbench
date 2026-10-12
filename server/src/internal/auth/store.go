@@ -130,6 +130,9 @@ type AuthStore struct {
 	// failures coalesces repeated failure events; see
 	// audit_failures.go. It guards itself.
 	failures failureCoalescer
+	// denials coalesces repeated denial events; see audit_denials.go.
+	// It guards itself.
+	denials denialCoalescer
 }
 
 // SessionInfo holds session information (in-memory only)
@@ -913,12 +916,12 @@ func (s *AuthStore) initSchema() error {
 }
 
 // Close stops the session cleanup goroutine (if running), writes a
-// summary row for every coalesced failure that still holds suppressed
-// repeats, so that a clean shutdown does not discard their counts, and
-// closes the database connection.
+// summary row for every coalesced failure and denial that still holds
+// suppressed repeats, so that a clean shutdown does not discard their
+// counts, and closes the database connection.
 func (s *AuthStore) Close() error {
 	s.StopSessionCleanup()
-	s.FlushAuditFailures()
+	s.FlushCoalescedAudit()
 	return s.db.Close()
 }
 

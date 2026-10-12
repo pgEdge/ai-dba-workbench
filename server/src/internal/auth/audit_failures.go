@@ -15,7 +15,6 @@ import (
 	"log"
 	"sort"
 	"sync"
-	"testing"
 	"time"
 	"unicode/utf8"
 )
@@ -381,91 +380,19 @@ func (s *AuthStore) writeFailure(ev *AuditEvent) bool {
 }
 
 // writeFailureSummaries records a summary row for each entry in one
-// transaction, so that a large batch of closed windows holds s.mu for
-// one commit rather than one per row. Errors are logged, as in
-// writeFailure, and reported by returning false. The caller must hold
-// s.mu.
+// transaction, through writeAuditSummaries. The caller must hold s.mu.
 func (s *AuthStore) writeFailureSummaries(summaries []failureSummary) bool {
-	if len(summaries) == 0 {
-		return true
-	}
+	return s.writeAuditSummaries("failure", failureSummaryEvents(summaries))
+}
 
+// failureSummaryEvents builds the summary row for each entry.
+func failureSummaryEvents(summaries []failureSummary) []*AuditEvent {
 	events := make([]*AuditEvent, len(summaries))
 	for i := range summaries {
 		events[i] = summaries[i].event()
 	}
 
-	if err := s.recordAuditInOwnTx(events...); err != nil {
-		log.Printf("[ERROR] Failed to record %d audit failure summary event(s): %v",
-			len(events), err)
-		return false
-	}
-
-	return true
-}
-
-// SweepAuditFailures writes a summary row for every coalesced failure
-// whose window has closed and that still holds suppressed repeats, so
-// that the count of a burst which simply stops reaches the log without
-// waiting for a later failure to evict it. The server calls it on its
-// periodic cleanup tick, and FlushAuditFailures writes the windows
-// still open.
-func (s *AuthStore) SweepAuditFailures() {
-	s.sweepAuditFailures(time.Now(), false)
-}
-
-// FlushAuditFailures writes a summary row for every coalesced failure
-// that still holds suppressed repeats, whether or not its window has
-// closed, so that a clean shutdown does not discard their counts. Close
-// calls it, and so does the server's SIGTERM and SIGINT handler, which
-// exits the process without reaching Close. Calling it again, or
-// after Close, finds nothing left to write.
-func (s *AuthStore) FlushAuditFailures() {
-	s.sweepAuditFailures(time.Now(), true)
-}
-
-// AgeAuditFailuresForTesting moves the start of every open coalescing
-// window back by d, so that a test can close windows without waiting
-// out failureCoalesceWindow. It is exported for the reason
-// AuditKeyForTesting is, since its callers include the cmd/mcp-server
-// test binary, and the same testing.Testing guard keeps it unreachable
-// from the server.
-func AgeAuditFailuresForTesting(s *AuthStore, d time.Duration) {
-	if !testing.Testing() {
-		panic("auth.AgeAuditFailuresForTesting was called outside a " +
-			"test binary")
-	}
-
-	s.failures.mu.Lock()
-	defer s.failures.mu.Unlock()
-
-	for _, state := range s.failures.entries {
-		state.firstSeen = state.firstSeen.Add(-d)
-		state.lastSeen = state.lastSeen.Add(-d)
-	}
-}
-
-// sweepAuditFailures drains the coalescer at now, every entry when all
-// is true or only those whose window has closed otherwise, and writes
-// the summaries. If the write fails the drained entries are put back,
-// so that the next sweep or Close tries again. A flush of every entry
-// happens only at shutdown, when there may be no later attempt, so a
-// failed flush also writes each summary to the server log, as restore
-// does at the cap, leaving the counts attributed there at least.
-func (s *AuthStore) sweepAuditFailures(now time.Time, all bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	summaries := s.failures.drain(now, all)
-	if !s.writeFailureSummaries(summaries) {
-		if all {
-			for i := range summaries {
-				log.Printf("[ERROR] Unrecorded audit failure summary at "+
-					"shutdown: %s", &summaries[i])
-			}
-		}
-		s.failures.restore(summaries)
-	}
+	return events
 }
 
 // coalesceFailure runs one failure through the coalescer at now,

@@ -461,12 +461,16 @@ func TestRunCleanupTickRemovesExpiredTokens(t *testing.T) {
 	// the tick's sweep, which is its only production path for a burst
 	// that simply stops.
 	repeatGroupCreateFailure(t, store, "duplicate-group", 3)
-	auth.AgeAuditFailuresForTesting(store, time.Hour)
+	repeatAuditDenial(t, store, 4)
+	auth.AgeCoalescedAuditForTesting(store, time.Hour)
 
 	s.runCleanupTick()
 
 	if got := groupCreateRepeatCounts(t, store); len(got) != 2 || got[1] != 2 {
 		t.Errorf("group.create failure repeat counts = %v, want [0 2]", got)
+	}
+	if got := auditDenialRepeatCounts(t, store); len(got) != 2 || got[1] != 3 {
+		t.Errorf("audit.read denial repeat counts = %v, want [0 3]", got)
 	}
 
 	var remaining int

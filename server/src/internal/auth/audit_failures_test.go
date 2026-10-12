@@ -423,7 +423,7 @@ func TestSweepAuditFailuresWritesClosedWindows(t *testing.T) {
 	ageEntry(store, failureKeyFor("carol"), failureCoalesceWindow)
 
 	before := auditEventCount(t, store)
-	store.SweepAuditFailures()
+	store.SweepCoalescedAudit()
 	if got := auditEventCount(t, store) - before; got != 2 {
 		t.Fatalf("expected summaries for bob and carol, got %d rows", got)
 	}
@@ -526,7 +526,7 @@ func TestSweepAuditFailuresRestoresOnWriteError(t *testing.T) {
 		t.Fatalf("closing the database failed: %v", err)
 	}
 
-	store.sweepAuditFailures(time.Now(), false)
+	store.sweepCoalescedAudit(time.Now(), false)
 
 	state, ok := store.failures.entries[failureKeyFor("bob")]
 	if !ok || state.suppressed != 2 {
@@ -633,14 +633,14 @@ func TestFlushAuditFailuresLogsUnwrittenSummaries(t *testing.T) {
 	log.SetOutput(&logged)
 	t.Cleanup(func() { log.SetOutput(os.Stderr) })
 
-	AgeAuditFailuresForTesting(store, failureCoalesceWindow)
-	store.SweepAuditFailures()
+	AgeCoalescedAuditForTesting(store, failureCoalesceWindow)
+	store.SweepCoalescedAudit()
 	if strings.Contains(logged.String(), "Unrecorded audit failure summary") {
 		t.Errorf("a periodic sweep logged its summaries: %q", logged.String())
 	}
 
 	logged.Reset()
-	store.FlushAuditFailures()
+	store.FlushCoalescedAudit()
 	line := logged.String()
 	if !strings.Contains(line, "Unrecorded audit failure summary at shutdown") ||
 		!strings.Contains(line, `"bob"`) || !strings.Contains(line, ": 3 failure(s)") {
@@ -684,7 +684,7 @@ func TestFailureCoalescerRestoreStopsAtCap(t *testing.T) {
 }
 
 // TestFlushAuditFailuresWritesOnce checks that the exported sweep
-// writes a window aged shut by AgeAuditFailuresForTesting, that a flush
+// writes a window aged shut by AgeCoalescedAuditForTesting, that a flush
 // writes a window still open, and that a second flush finds nothing
 // left to write.
 func TestFlushAuditFailuresWritesOnce(t *testing.T) {
@@ -692,9 +692,9 @@ func TestFlushAuditFailuresWritesOnce(t *testing.T) {
 	defer cleanup()
 
 	repeatFailure(store, "bob", 3)
-	AgeAuditFailuresForTesting(store, failureCoalesceWindow)
+	AgeCoalescedAuditForTesting(store, failureCoalesceWindow)
 	before := auditEventCount(t, store)
-	store.SweepAuditFailures()
+	store.SweepCoalescedAudit()
 	if got := auditEventCount(t, store) - before; got != 1 {
 		t.Fatalf("expected the sweep to write one summary, got %d", got)
 	}
@@ -704,8 +704,8 @@ func TestFlushAuditFailuresWritesOnce(t *testing.T) {
 
 	repeatFailure(store, "carol", 2)
 	before = auditEventCount(t, store)
-	store.FlushAuditFailures()
-	store.FlushAuditFailures()
+	store.FlushCoalescedAudit()
+	store.FlushCoalescedAudit()
 	if got := auditEventCount(t, store) - before; got != 1 {
 		t.Errorf("expected two flushes to write one summary, got %d", got)
 	}

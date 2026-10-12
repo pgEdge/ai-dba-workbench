@@ -575,14 +575,14 @@ func (s *Server) startTokenCleanup() {
 // runCleanupTick does one round of the periodic cleanup: it removes
 // expired tokens and the connections they owned, purges audit events
 // past their retention, and writes the counts of coalesced audit
-// failures whose window has closed.
+// failures and denials whose window has closed.
 func (s *Server) runCleanupTick() {
 	if removed, hashes := s.authStore.CleanupExpiredTokens(); removed > 0 {
 		fmt.Fprintf(os.Stderr, "Removed %d expired token(s)\n", removed)
 		s.cleanupExpiredConnections(hashes)
 	}
 	s.purgeAuditEvents()
-	s.authStore.SweepAuditFailures()
+	s.authStore.SweepCoalescedAudit()
 }
 
 // purgeAuditEvents deletes RBAC audit events older than the
@@ -810,9 +810,10 @@ func (s *Server) logStartupInfo() {
 // a goroutine-driven Close has caused double-close panics in past
 // graceful-shutdown implementations. The handler exits the process
 // without reaching that defer, though, so its closer writes the
-// suppressed counts of coalesced audit failures, which would otherwise
-// be lost; that is safe beside the deferred Close, since both take the
-// auth store's lock and whichever runs second finds nothing to write.
+// suppressed counts of coalesced audit failures and denials, which
+// would otherwise be lost; that is safe beside the deferred Close,
+// since both take the auth store's lock and whichever runs second
+// finds nothing to write.
 func (s *Server) setupShutdownHandler() {
 	installShutdownHandler(s.shutdownDeps())
 }
@@ -823,17 +824,17 @@ func (s *Server) setupShutdownHandler() {
 func (s *Server) shutdownDeps() shutdownDeps {
 	return shutdownDeps{
 		server:      s.mcpServer,
-		closer:      s.flushAuditFailures,
+		closer:      s.flushCoalescedAudit,
 		gocoverdir:  os.Getenv("GOCOVERDIR"),
 		writeCounts: realCoverageWriter,
 	}
 }
 
-// flushAuditFailures writes a summary row for every coalesced audit
-// failure that still holds suppressed repeats.
-func (s *Server) flushAuditFailures() {
+// flushCoalescedAudit writes a summary row for every coalesced audit
+// failure and denial that still holds suppressed repeats.
+func (s *Server) flushCoalescedAudit() {
 	if s.authStore != nil {
-		s.authStore.FlushAuditFailures()
+		s.authStore.FlushCoalescedAudit()
 	}
 }
 

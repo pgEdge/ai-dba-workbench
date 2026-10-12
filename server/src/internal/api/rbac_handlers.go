@@ -15,150 +15,15 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
-	"time"
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/logging"
 )
 
-// denialCoalesceWindow is how long one recorded denial stands for the
-// identical denials that follow it. An unauthenticated or under-
-// privileged client can retry a refused request as fast as it likes,
-// and every attempt used to append a row, so a single loop could grow
-// the audit log without bound and bury the events that matter. Within
-// the window the repeats are counted rather than written, and the next
-// denial after it reports how many it stands for.
-const denialCoalesceWindow = 60 * time.Second
-
-// maxDenialKeys caps the coalescing map, so that a client varying the
-// actor name or the action cannot turn the memory saved on audit rows
-// into unbounded memory here instead. When the cap is reached the
-// oldest entry is dropped, and any repeats it held are written as a
-// summary row.
-const maxDenialKeys = 10000
-
-// maxDenialTargets caps how many distinct targets one window lists in
-// its audit row. Further targets are only counted, in
-// targets_truncated, so that a flood across many objects still costs
-// one bounded row.
-const maxDenialTargets = 20
-
-// maxDenialActionLen caps the action name a denial key carries. The
-// action is drawn from a fixed vocabulary, but the cap keeps the key
-// bounded whatever deniedAction returns.
-const maxDenialActionLen = 64
-
 // unmatchedDenialTarget is the target recorded for a refusal on a route
 // the action mapper does not recognize, so that nothing taken verbatim
 // from the request path reaches the key or the row.
 const unmatchedDenialTarget = "unmatched"
-
-// denialKey identifies a repeated denial. Two refusals coalesce only
-// when the same principal, identified by actor id as well as by name
-// so that two tokens of one user stay apart, is refused the same action
-// for the same reason from the same client address. The target is
-// deliberately not part of the key: a client may vary the object id
-// without limit, so keying on it would let one loop write a row per id.
-// The targets a window covers are listed in its row instead.
-type denialKey struct {
-	actorType string
-	actorID   int64
-	actorName string
-	actorIP   string
-	action    string
-	reason    string
-}
-
-// denialKeyOf builds the coalescing key for one refusal. An actor with
-// no id, such as an unauthenticated caller, keys on zero.
-func denialKeyOf(actor auth.Actor, action, reason string) denialKey {
-	var actorID int64
-	if actor.ID != nil {
-		actorID = *actor.ID
-	}
-	if len(action) > maxDenialActionLen {
-		action = action[:maxDenialActionLen]
-	}
-
-	return denialKey{
-		actorType: string(actor.Type),
-		actorID:   actorID,
-		actorName: actor.Name,
-		actorIP:   actor.IP,
-		action:    action,
-		reason:    reason,
-	}
-}
-
-// summaryActor rebuilds the acting principal from the key, which
-// carries every field a summary row needs to attribute the repeats it
-// reports.
-func (k denialKey) summaryActor() auth.Actor {
-	actor := auth.Actor{
-		Type: auth.ActorType(k.actorType),
-		Name: k.actorName,
-		IP:   k.actorIP,
-	}
-	if k.actorID != 0 {
-		id := k.actorID
-		actor.ID = &id
-	}
-
-	return actor
-}
-
-// denialWindow counts the denials a row stands for, and lists the
-// distinct targets they were aimed at, up to maxDenialTargets. truncated
-// counts the denials whose target was new once the list was full.
-type denialWindow struct {
-	count     int
-	targets   []string
-	truncated int
-}
-
-// note counts one more denial against target.
-func (w *denialWindow) note(target string) {
-	w.count++
-	for _, t := range w.targets {
-		if t == target {
-			return
-		}
-	}
-	if len(w.targets) < maxDenialTargets {
-		w.targets = append(w.targets, target)
-		return
-	}
-	w.truncated++
-}
-
-// addTo writes the window's count and targets into an audit row's
-// details.
-func (w *denialWindow) addTo(details map[string]any) {
-	details["repeat_count"] = w.count
-	details["targets"] = w.targets
-	details["targets_truncated"] = w.truncated
-}
-
-// denialState tracks one key's current window: when the window opened,
-// which is when the denial that was recorded happened, and the
-// identical denials suppressed since. Every state is also on a list
-// ordered by firstSeen, oldest first, so that eviction looks only at
-// the entries it drops rather than scanning the map.
-type denialState struct {
-	key        denialKey
-	firstSeen  time.Time
-	suppressed denialWindow
-	prev, next *denialState
-}
-
-// denialSummary carries the repeats an evicted entry never got to
-// report, so that they are written as one summary row rather than
-// discarded with the entry.
-type denialSummary struct {
-	key    denialKey
-	window denialWindow
-}
 
 // RBACHandler handles REST API requests for RBAC management
 type RBACHandler struct {
@@ -177,14 +42,6 @@ type RBACHandler struct {
 	// moves federated users between groups; a bounded token may do
 	// neither. The map is read at startup and changes only on restart.
 	federatedGroups map[string]bool
-
-	// denialMu guards denials and the list running from denialOldest to
-	// denialNewest, which are read and written from every request
-	// goroutine that is refused.
-	denialMu     sync.Mutex
-	denials      map[denialKey]*denialState
-	denialOldest *denialState
-	denialNewest *denialState
 }
 
 // NewRBACHandler creates a new RBAC handler
@@ -192,7 +49,6 @@ func NewRBACHandler(authStore *auth.AuthStore, rbacChecker *auth.RBACChecker) *R
 	return &RBACHandler{
 		authStore:   authStore,
 		rbacChecker: rbacChecker,
-		denials:     make(map[denialKey]*denialState),
 	}
 }
 
@@ -255,7 +111,10 @@ func (h *RBACHandler) actorStore(r *http.Request) *auth.ActorStore {
 	return h.authStore.AsActor(auth.ActorFromContext(r.Context()))
 }
 
-// recordDenial writes a denied audit event for the request. A recording
+// recordDenial writes a denied audit event for the request through
+// the auth store's denial coalescer, which counts identical refusals
+// rather than writing a row for each and writes the counts when a
+// window closes, on the periodic sweep, or at shutdown. A recording
 // failure is logged and otherwise ignored: the caller is about to
 // respond 403 either way, and an audit error must not change what the
 // client sees. A nil store is tolerated for the same reason as in
@@ -265,156 +124,12 @@ func (h *RBACHandler) recordDenial(r *http.Request, reason string) {
 		return
 	}
 
-	actor := auth.ActorFromContext(r.Context())
 	action, target := deniedRoute(r)
-	key := denialKeyOf(actor, action, reason)
-
-	record, closed, expired := h.admitDenial(key, target, time.Now())
-
-	// Entries evicted by the call above may have carried suppressed
-	// repeats; they are written here, outside the lock the eviction
-	// ran under.
-	h.recordDenialSummaries(r, expired)
-
-	if !record {
-		return
-	}
-
-	details := map[string]any{"target": target}
-	if closed.count > 0 {
-		closed.addTo(details)
-	}
-
-	if err := h.authStore.RecordDeniedWithDetails(actor, key.action, reason,
-		details); err != nil {
+	if err := h.authStore.RecordCoalescedDenial(
+		auth.ActorFromContext(r.Context()), action, target,
+		reason); err != nil {
 		log.Printf("[ERROR] Failed to record RBAC denial for %s %s: %v", logging.SanitizeForLog(r.Method), logging.SanitizeForLog(r.URL.Path), err) //nolint:gosec // G706: r.Method and r.URL.Path passed through logging.SanitizeForLog
 	}
-}
-
-// admitDenial decides whether a denial is written or merely counted. It
-// returns true when the caller should record a row, together with the
-// window that row closes, whose count is the number of denials the row
-// stands for and is zero unless repeats were suppressed during the
-// window that has just closed.
-//
-// The first denial for a key opens a window and is recorded at once, so
-// that a refusal is never invisible; identical denials inside the
-// window are counted, with their targets, instead of written; and the
-// first denial after the window closes is recorded, reporting the
-// suppressed ones and its own target, and opens a fresh window.
-func (h *RBACHandler) admitDenial(key denialKey, target string,
-	now time.Time) (bool, denialWindow, []denialSummary) {
-
-	h.denialMu.Lock()
-	defer h.denialMu.Unlock()
-
-	if h.denials == nil {
-		h.denials = make(map[denialKey]*denialState)
-	}
-
-	record := true
-	var closed denialWindow
-
-	switch state, ok := h.denials[key]; {
-	case !ok:
-		state = &denialState{key: key, firstSeen: now}
-		h.denials[key] = state
-		h.pushNewestDenial(state)
-	case now.Sub(state.firstSeen) < denialCoalesceWindow:
-		state.suppressed.note(target)
-		record = false
-	default:
-		if state.suppressed.count > 0 {
-			closed = state.suppressed
-			closed.note(target)
-		}
-		state.firstSeen = now
-		state.suppressed = denialWindow{}
-		h.unlinkDenial(state)
-		h.pushNewestDenial(state)
-	}
-
-	return record, closed, h.evictDenials(key, now)
-}
-
-// pushNewestDenial appends state to the newest end of the eviction
-// list. The caller must hold h.denialMu.
-func (h *RBACHandler) pushNewestDenial(state *denialState) {
-	state.prev = h.denialNewest
-	state.next = nil
-	if h.denialNewest != nil {
-		h.denialNewest.next = state
-	} else {
-		h.denialOldest = state
-	}
-	h.denialNewest = state
-}
-
-// unlinkDenial removes state from the eviction list. The caller must
-// hold h.denialMu.
-func (h *RBACHandler) unlinkDenial(state *denialState) {
-	if state.prev != nil {
-		state.prev.next = state.next
-	} else {
-		h.denialOldest = state.next
-	}
-	if state.next != nil {
-		state.next.prev = state.prev
-	} else {
-		h.denialNewest = state.prev
-	}
-	state.prev, state.next = nil, nil
-}
-
-// recordDenialSummaries writes one summary row per evicted entry that
-// had suppressed repeats, so that a burst which stops before the window
-// closes still leaves its count in the log. Failures are logged and
-// otherwise ignored, as elsewhere on the denial path.
-func (h *RBACHandler) recordDenialSummaries(r *http.Request,
-	expired []denialSummary) {
-
-	for i := range expired {
-		summary := &expired[i]
-		details := map[string]any{"window_closed": true}
-		summary.window.addTo(details)
-		if err := h.authStore.RecordDeniedWithDetails(summary.key.summaryActor(),
-			summary.key.action, summary.key.reason, details); err != nil {
-			log.Printf("[ERROR] Failed to record RBAC denial summary for %s %s: %v", logging.SanitizeForLog(r.Method), logging.SanitizeForLog(r.URL.Path), err) //nolint:gosec // G706: r.Method and r.URL.Path passed through logging.SanitizeForLog
-		}
-	}
-}
-
-// evictDenials drops entries from the oldest end of the eviction list
-// while their window has closed or the map is over its cap. The list is
-// ordered by firstSeen, so it stops at the first entry that is neither,
-// and the work done is proportional to the entries dropped. The key
-// just handled is kept, because its window has only now been opened.
-// Every dropped entry that still held suppressed repeats is returned as
-// a summary for the caller to record once the lock is released. The
-// caller must hold h.denialMu.
-func (h *RBACHandler) evictDenials(keep denialKey, now time.Time) []denialSummary {
-	var expired []denialSummary
-
-	for state := h.denialOldest; state != nil; {
-		next := state.next
-		closed := now.Sub(state.firstSeen) >= denialCoalesceWindow
-		if !closed && len(h.denials) <= maxDenialKeys {
-			break
-		}
-		if state.key != keep {
-			if state.suppressed.count > 0 {
-				expired = append(expired, denialSummary{
-					key:    state.key,
-					window: state.suppressed,
-				})
-			}
-			h.unlinkDenial(state)
-			delete(h.denials, state.key)
-		}
-		state = next
-	}
-
-	return expired
 }
 
 // requirePermission checks that the caller has the specified admin permission.

@@ -90,8 +90,58 @@ func TestLibReasoningClassify(t *testing.T) {
 	if r.ProviderName() != "anthropic" {
 		t.Fatalf("ProviderName = %q", r.ProviderName())
 	}
-	if r.SystemPrompt() != fc.gotReq.SystemPrompt {
-		t.Fatalf("SystemPrompt does not match the prompt Classify sent")
+}
+
+// TestLibReasoningReevaluate pins that a re-evaluation call sends its own
+// system prompt, which asks for clear or keep, and never the Tier 3
+// prompt, which asks for alert or suppress (GitHub issue #627).
+func TestLibReasoningReevaluate(t *testing.T) {
+	fc := &fakeChatClient{
+		resp: &pgllm.ChatResponse{Content: []pgllm.ContentBlock{
+			{Type: pgllm.BlockText, Text: `{"decision":"keep","confidence":0.8}`},
+		}},
+	}
+	r := &libReasoning{client: fc, maxTokens: 2048}
+	out, err := r.Reevaluate(context.Background(), "re-evaluate this alert")
+	if err != nil {
+		t.Fatalf("Reevaluate: %v", err)
+	}
+	if out != `{"decision":"keep","confidence":0.8}` {
+		t.Fatalf("text = %q", out)
+	}
+	sys := fc.gotReq.SystemPrompt
+	if sys != reevaluationSystemPrompt {
+		t.Fatalf("system prompt not set to reevaluationSystemPrompt")
+	}
+	if r.ReevaluationSystemPrompt() != sys {
+		t.Fatalf("ReevaluationSystemPrompt does not match the prompt Reevaluate sent")
+	}
+	for _, want := range []string{`"clear"`, `"keep"`} {
+		if !strings.Contains(sys, want) {
+			t.Errorf("re-evaluation system prompt does not ask for %s", want)
+		}
+	}
+	for _, unwanted := range []string{`"alert"`, `"suppress"`} {
+		if strings.Contains(sys, unwanted) {
+			t.Errorf("re-evaluation system prompt asks for %s", unwanted)
+		}
+	}
+	if len(fc.gotReq.Messages) != 1 ||
+		len(fc.gotReq.Messages[0].Content) != 1 ||
+		fc.gotReq.Messages[0].Content[0].Text != "re-evaluate this alert" {
+		t.Fatalf("user message = %+v", fc.gotReq.Messages)
+	}
+	if fc.gotReq.MaxTokens == nil || *fc.gotReq.MaxTokens != 2048 {
+		t.Fatalf("MaxTokens = %v, want 2048", fc.gotReq.MaxTokens)
+	}
+
+	fc.resp = &pgllm.ChatResponse{}
+	if _, err := r.Reevaluate(context.Background(), "x"); !errors.Is(err, ErrNoTextContent) {
+		t.Fatalf("Reevaluate on an empty response: err = %v, want ErrNoTextContent", err)
+	}
+	fc.err = errors.New("boom")
+	if _, err := r.Reevaluate(context.Background(), "x"); err == nil {
+		t.Fatal("expected error")
 	}
 }
 

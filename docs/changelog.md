@@ -1124,6 +1124,19 @@ project adheres to
   none has ever been seeded; operators can create a custom rule on
   the metric instead.
 
+- Send alert re-evaluation requests to the LLM with a system
+  prompt that asks whether to clear or keep the alert. The
+  re-evaluation worker sent the tier 3 anomaly system prompt,
+  which asks for an alert or suppress decision, so a model that
+  followed it gave an answer the alerter could not parse; the
+  alerter then kept the alert unless the reasoning happened to
+  contain a phrase such as "should be cleared", and asked the
+  LLM the same question again on the next cycle. The reasoning
+  provider health alert also counted each such answer as a
+  failure. Because the system prompt is part of the
+  re-evaluation fingerprint, each acknowledged anomaly alert is
+  re-evaluated once more after upgrading. (#627)
+
 - Fix the `probe_unavailable` alert firing on healthy Spock clusters
   with no recent apply exceptions or conflict resolutions. The
   collector could not tell an installed extension with nothing to

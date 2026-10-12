@@ -24,23 +24,39 @@ import (
 // These tests cover the re-evaluation worker's reuse of a "keep" answer
 // while the prompt inputs are unchanged (GitHub issue #575).
 
-// scriptedReasoningProvider returns a fixed response or error and counts
-// the calls it receives.
+// scriptedReasoningProvider answers re-evaluation calls with a fixed
+// response or error and counts the calls it receives. A Tier 3 Classify
+// call is counted separately and fails, since re-evaluation must never
+// send the alert or suppress instructions (GitHub issue #627).
 type scriptedReasoningProvider struct {
-	mu       sync.Mutex
-	response string
-	err      error
-	model    string
-	provider string
-	system   string
-	calls    int
+	mu            sync.Mutex
+	response      string
+	err           error
+	model         string
+	provider      string
+	system        string
+	calls         int
+	classifyCalls int
+}
+
+func (p *scriptedReasoningProvider) Reevaluate(_ context.Context, _ string) (string, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.calls++
+	return p.response, p.err
 }
 
 func (p *scriptedReasoningProvider) Classify(_ context.Context, _ string) (string, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.calls++
-	return p.response, p.err
+	p.classifyCalls++
+	return "", errors.New("re-evaluation made a Tier 3 classification call")
+}
+
+func (p *scriptedReasoningProvider) classifyCallCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.classifyCalls
 }
 
 func (p *scriptedReasoningProvider) ModelName() string {
@@ -55,7 +71,7 @@ func (p *scriptedReasoningProvider) ProviderName() string {
 	return p.provider
 }
 
-func (p *scriptedReasoningProvider) SystemPrompt() string {
+func (p *scriptedReasoningProvider) ReevaluationSystemPrompt() string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.system
@@ -199,6 +215,9 @@ func TestReevaluationSkipsUnchangedKeep(t *testing.T) {
 	if env.provider.callCount() != 1 || count != 1 || fp == nil || status != "acknowledged" {
 		t.Fatalf("first cycle: calls=%d count=%d fingerprint=%v status=%s, want 1, 1, set, acknowledged",
 			env.provider.callCount(), count, fp, status)
+	}
+	if n := env.provider.classifyCallCount(); n != 0 {
+		t.Fatalf("re-evaluation made %d Tier 3 classification calls, want 0", n)
 	}
 	first := *fp
 

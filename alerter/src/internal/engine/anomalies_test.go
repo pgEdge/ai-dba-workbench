@@ -448,9 +448,13 @@ func (suppressingReasoningProvider) Classify(context.Context, string) (string, e
 	return `{"decision": "suppress", "confidence": 0.9, "reasoning": "test"}`, nil
 }
 
+func (suppressingReasoningProvider) Reevaluate(context.Context, string) (string, error) {
+	return `{"decision": "keep", "confidence": 0.9, "reasoning": "test"}`, nil
+}
+
 func (suppressingReasoningProvider) ModelName() string    { return "suppressing-reasoner" }
 func (suppressingReasoningProvider) ProviderName() string { return "suppressing" }
-func (suppressingReasoningProvider) SystemPrompt() string {
+func (suppressingReasoningProvider) ReevaluationSystemPrompt() string {
 	return "suppressing system prompt"
 }
 

@@ -73,8 +73,21 @@ type libReasoning struct {
 // an error stops the engine from parsing an empty verdict and recording a
 // blank tier-3 result.
 func (r *libReasoning) Classify(ctx context.Context, prompt string) (string, error) {
+	return r.chat(ctx, classificationSystemPrompt, prompt)
+}
+
+// Reevaluate sends the re-evaluation system prompt and the supplied prompt
+// to the underlying LLM, and returns the response text as Classify does.
+func (r *libReasoning) Reevaluate(ctx context.Context, prompt string) (string, error) {
+	return r.chat(ctx, reevaluationSystemPrompt, prompt)
+}
+
+// chat sends systemPrompt and prompt to the underlying LLM and returns the
+// concatenated text of the response's text blocks, or ErrNoTextContent
+// when there is none.
+func (r *libReasoning) chat(ctx context.Context, systemPrompt, prompt string) (string, error) {
 	resp, err := r.client.Chat(ctx, pgllm.ChatRequest{
-		SystemPrompt: classificationSystemPrompt,
+		SystemPrompt: systemPrompt,
 		Messages:     []pgllm.Message{pgllm.UserText(prompt)},
 		MaxTokens:    pgllm.Int(r.maxTokens),
 		Temperature:  pgllm.Float(reasoningTemperature),
@@ -108,10 +121,10 @@ func (r *libReasoning) ProviderName() string {
 	return r.client.Provider()
 }
 
-// SystemPrompt returns the classification system prompt that Classify
-// sends with every request.
-func (r *libReasoning) SystemPrompt() string {
-	return classificationSystemPrompt
+// ReevaluationSystemPrompt returns the system prompt that Reevaluate sends
+// with every request.
+func (r *libReasoning) ReevaluationSystemPrompt() string {
+	return reevaluationSystemPrompt
 }
 
 // newLibReasoning builds a libReasoning for the named provider. When model

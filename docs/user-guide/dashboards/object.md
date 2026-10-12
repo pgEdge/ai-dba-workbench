@@ -240,7 +240,8 @@ shows the error and replaces Run with a Run anyway
 button, a statement that PostgreSQL cannot plan in
 advance stays runnable under a "Not validated" notice,
 and a block that uses placeholders such as `$1`,
-`<name>`, `{{name}}` or `:name` is labelled a template and
+`<name>`, `{{name}}`, `${name}` or `:name` is labelled a
+template and
 offers no Run button, because it needs values before it
 can run. The
 [AI Alert Analysis](../alerts/ai-analysis.md) document

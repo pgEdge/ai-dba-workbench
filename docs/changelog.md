@@ -61,7 +61,8 @@ project adheres to
   selector instead. Results appear inline and are not sent
   back to Ellie. SQL with placeholders is labelled a
   template with no Run button; besides `$1`, this now
-  covers `<name>`, `{{name}}` and `:name` placeholders in
+  covers `<name>`, `{{name}}`, `${name}` and `:name`
+  placeholders in
   every view.
 
 - Raise a system alert when anomaly detection is degraded by

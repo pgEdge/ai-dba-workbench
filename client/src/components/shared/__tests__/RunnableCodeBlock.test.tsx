@@ -587,6 +587,7 @@ describe('RunnableCodeBlock validation gating', () => {
     it.each([
         'SELECT * FROM <table_name>;',
         'SELECT * FROM {{ schema }}.t;',
+        'SELECT * FROM ${table_name};',
         'SELECT * FROM t WHERE id = :id;',
         "SELECT * FROM t WHERE name = :'name';",
     ])('treats %s as a template', (sql) => {

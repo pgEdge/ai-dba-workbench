@@ -326,6 +326,29 @@ describe('stripConnectionIdComment', () => {
         );
         expect(match?.[1]).toBe('7');
     });
+
+    it.each([
+        ['spaces', '  -- connection_id: 4\nSELECT 1;'],
+        ['a tab', '\t--\tconnection_id:\t4\t\nSELECT 1;'],
+    ])('matches a comment indented with %s', (_label, code) => {
+        expect(CONNECTION_ID_COMMENT_RE.exec(code)?.[1]).toBe('4');
+        expect(stripConnectionIdComment(code)).toBe('SELECT 1;');
+    });
+
+    it.each([
+        ['before the label', '--\nconnection_id: 5\nSELECT 1;'],
+        ['before the ID', '-- connection_id:\n5\nSELECT 1;'],
+        ['before the comment', '\n-- connection_id: 5\nSELECT 1;'],
+    ])('does not match across a line break %s', (_label, code) => {
+        expect(CONNECTION_ID_COMMENT_RE.exec(code)).toBeNull();
+        expect(stripConnectionIdComment(code)).toBe(code);
+    });
+
+    it('removes blank lines after the comment but keeps indentation', () => {
+        expect(stripConnectionIdComment(
+            '-- connection_id: 3\r\n \r\n\n  SELECT 1;',
+        )).toBe('  SELECT 1;');
+    });
 });
 
 describe('tokenizeSql', () => {
@@ -406,6 +429,21 @@ describe('parseConnectionIdComment', () => {
         });
     });
 
+    it('reads an indented comment', () => {
+        expect(parseConnectionIdComment('  -- connection_id: 7\nSELECT 1;')).toEqual({
+            connectionId: 7,
+            code: 'SELECT 1;',
+        });
+    });
+
+    it('does not read an ID from the line after the comment', () => {
+        const code = '-- connection_id:\n7\nSELECT 1;';
+        expect(parseConnectionIdComment(code)).toEqual({
+            connectionId: null,
+            code,
+        });
+    });
+
     it('accepts a comment that is the whole block', () => {
         expect(parseConnectionIdComment('--connection_id:12')).toEqual({
             connectionId: 12,
@@ -437,6 +475,7 @@ describe('hasSqlParameters with other placeholder styles', () => {
         ['angle-bracket stand-ins', 'SELECT * FROM <table_name>'],
         ['qualified angle-bracket stand-ins', 'VACUUM <schema.table>'],
         ['template braces', 'SELECT * FROM {{ schema }}.t'],
+        ['shell-style substitutions', 'SELECT * FROM ${table_name}'],
         ['psql variables', 'SELECT * FROM t WHERE id = :id'],
         ['quoted psql variables', "SELECT * FROM t WHERE name = :'name'"],
         ['psql variables after escape strings', "SELECT E'it\\'s' WHERE id = :id"],

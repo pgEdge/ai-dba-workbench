@@ -121,7 +121,8 @@ states:
   the play button, because such a statement can still be
   run.
 - Template blocks use placeholders such as `$1`,
-  `<name>`, `{{name}}` or `:name`, and show no play
+  `<name>`, `{{name}}`, `${name}` or `:name`, and show no
+  play
   button, because such a query needs values substituted
   in before it can run.
 

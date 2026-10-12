@@ -844,7 +844,7 @@ stays runnable with a hint.
 
 `RunnableCodeBlock` applies the gate. A block whose SQL contains
 placeholders (`hasSqlParameters` in `sqlDetection.ts`: `$N`,
-`<name>`, `{{x}}`, `:var` or `:'var'`, outside comments and
+`<name>`, `{{x}}`, `${x}`, `:var` or `:'var'`, outside comments and
 literals) is a template:
 no Run button, an explanatory notice, copy button kept, and no
 validation request. Everything else validates on mount, with Run
@@ -865,8 +865,11 @@ The cluster routing comment has one home too:
 `CONNECTION_ID_COMMENT_RE` and `stripConnectionIdComment`, used by
 `MarkdownContent` and by `createRoutedSqlValidator`, with
 `parseConnectionIdComment` built on them for the chat (it also
-rejects a zero or unsafe ID). The pattern accepts a comment that ends
-the block as well as one ended by `\r` or `\n`.
+rejects a zero or unsafe ID). The pattern accepts a comment indented
+with spaces or tabs, and one that ends the block as well as one ended
+by `\r`, `\n` or `\r\n`, and it swallows blank lines that follow;
+inside the comment only spaces and tabs count as whitespace, so the ID
+is never read from another line.
 
 `runAgenticLoop` takes an optional `validateSqlBlocks`. After the
 final text, it validates the ```sql blocks and, on failure, makes

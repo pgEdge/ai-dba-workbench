@@ -1193,6 +1193,16 @@ project adheres to
   hides the identical denials after it, or drops the repeats it
   would have reported. (#590)
 
+- Show the start of a long Ask Ellie reply rather than its end
+  (#629). The chat panel scrolled to the bottom whenever a
+  message arrived, so a reply taller than the panel had to be
+  scrolled back up before it could be read. A reply that does
+  not fit now scrolls so that its top sits at the top of the
+  message list; a message the user sends, or a reply that
+  fits, still scrolls to the bottom, and a reply arriving
+  whilst the user has scrolled up to read earlier messages
+  leaves the view where it is.
+
 - Fix the `probe_unavailable` alert firing on healthy Spock clusters
   with no recent apply exceptions or conflict resolutions. The
   collector could not tell an installed extension with nothing to

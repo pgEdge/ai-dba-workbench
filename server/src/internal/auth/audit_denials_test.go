@@ -679,3 +679,77 @@ func TestCoalesceDenialReopensOnWriteError(t *testing.T) {
 			ev.Details)
 	}
 }
+
+// TestDenialWindowNoteCapsTargets checks that a window lists each
+// target once, up to maxDenialTargets, and counts the denials whose
+// target did not fit rather than growing the list.
+func TestDenialWindowNoteCapsTargets(t *testing.T) {
+	var w denialWindow
+	for i := 0; i < maxDenialTargets+5; i++ {
+		w.note(fmt.Sprintf("users/%d", i))
+	}
+	w.note("users/0")
+
+	if w.count != maxDenialTargets+6 || len(w.targets) != maxDenialTargets ||
+		w.truncated != 5 {
+		t.Errorf("expected %d denials, %d targets and 5 truncated, got %d, "+
+			"%d and %d", maxDenialTargets+6, maxDenialTargets, w.count,
+			len(w.targets), w.truncated)
+	}
+}
+
+// TestDenialCoalescerRestoreBetweenEntries checks that a summary put
+// back between two live entries is linked into the middle of the
+// eviction list, in firstSeen order, rather than at either end.
+func TestDenialCoalescerRestoreBetweenEntries(t *testing.T) {
+	var c denialCoalescer
+	start := time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)
+	first := denialKeyFor("alice", "audit.read", "denied")
+	middle := denialKeyFor("mallory", "audit.read", "denied")
+	last := denialKeyFor("trudy", "audit.read", "denied")
+	c.admit(first, "audit/1", start)
+	c.admit(last, "audit/1", start.Add(2*time.Second))
+
+	c.restore([]denialSummary{{key: middle,
+		window:    denialWindow{count: 1, targets: []string{"audit/1"}},
+		firstSeen: start.Add(time.Second),
+		lastSeen:  start.Add(time.Second)}})
+
+	if c.oldest == nil || c.oldest.next == nil ||
+		c.oldest.next.key != middle || c.newest.key != last {
+		t.Fatal("expected the restored entry between the other two")
+	}
+	checkDenialList(t, &c)
+}
+
+// TestDenialCoalescerReopenBehindOlderEntry checks that a reopened
+// window goes back after an entry whose window opened earlier, keeping
+// the eviction list in firstSeen order.
+func TestDenialCoalescerReopenBehindOlderEntry(t *testing.T) {
+	var c denialCoalescer
+	older := denialKeyFor("alice", "audit.read", "denied")
+	key := denialKeyFor("mallory", "audit.read", "denied")
+	start := time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)
+	c.admit(key, "audit/1", start)
+	c.admit(key, "audit/2", start.Add(time.Second))
+
+	closing := start.Add(denialCoalesceWindow)
+	record, closed, _ := c.admit(key, "audit/3", closing)
+	if !record || closed.count != 2 {
+		t.Fatalf("expected the closing denial recorded for 2, got %v, %d",
+			record, closed.count)
+	}
+
+	// An entry from before the window being reopened, as a sweep that
+	// failed to write it would put back.
+	c.restore([]denialSummary{{key: older,
+		window:    denialWindow{count: 1, targets: []string{"audit/1"}},
+		firstSeen: start.Add(-time.Second),
+		lastSeen:  start.Add(-time.Second)}})
+	c.reopen(key, closed)
+
+	if c.oldest.key != older || c.newest.key != key {
+		t.Fatal("expected the reopened window after the older entry")
+	}
+	checkDenialList(t, &c)
+}

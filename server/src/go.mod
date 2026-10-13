@@ -6,6 +6,7 @@ require (
 	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/pgEdge/pgedge-go-llm-lib v0.5.0
+	github.com/pgedge/ai-workbench/collector v0.0.0
 	github.com/pgedge/ai-workbench/pkg v0.0.0
 	golang.org/x/crypto v0.47.0
 	golang.org/x/oauth2 v0.37.0
@@ -18,6 +19,10 @@ require (
 
 replace github.com/pgedge/ai-workbench/pkg => ../../pkg
 
+// The collector module is required only by tests, which build the real
+// datastore schema with its SchemaManager (issue #645).
+replace github.com/pgedge/ai-workbench/collector => ../../collector
+
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
@@ -25,11 +30,9 @@ require (
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
-	github.com/kr/text v0.2.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/ncruces/go-strftime v0.1.9 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
-	github.com/rogpeppe/go-internal v1.14.1 // indirect
 	golang.org/x/exp v0.0.0-20250620022241-b7579e27df2b // indirect
 	golang.org/x/sys v0.40.0 // indirect
 	modernc.org/libc v1.66.10 // indirect

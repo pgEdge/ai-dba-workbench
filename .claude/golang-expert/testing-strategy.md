@@ -106,7 +106,14 @@ are editing.
   example `clusterGroupsTestSchema` in
   `server/src/internal/api/cluster_handlers_test.go`, rather than the
   full collector schema. `internal/metrics` tests build a fixture probe
-  table under the `metrics` schema and drop it on cleanup.
+  table under the `metrics` schema and drop it on cleanup. The one
+  exception is `internal/tools/datastore_catalog_schema_integration_test.go`
+  (#645), which imports the collector's `SchemaManager` (the server
+  `go.mod` requires the collector module through a `replace`, and
+  `server/Dockerfile` copies `collector/go.mod` for it) and migrates a
+  scratch database, `ai_workbench_catalog_schema_check`, created and
+  dropped with constant SQL. Because the name is fixed, two concurrent
+  runs of that test on one cluster collide.
 - Collector packages create a fresh database per run named
   `ai_workbench_test_<yyyymmdd_hhmmss>_<micros>` (see
   `collector/src/database/schema_test.go` and the probes package

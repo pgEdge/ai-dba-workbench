@@ -50,8 +50,9 @@ database. It holds two kinds of source:
   an RFC 3339 timestamp. Only for sources with a time column. Metric sources
   default to the last hour.
 - filters: [{"column": "datname", "op": "=", "value": "app"}]. Operators:
-  =, !=, <, <=, >, >=, in, not in (value is a list), like, is null,
-  is not null (no value).
+  =, !=, <, <=, >, >=, like (take value, a string such as "app" or "42"),
+  in, not in (take values, a list such as ["app", "postgres"]), is null,
+  is not null (take neither).
 - shape: "rows" (default), "latest" (most recent row per connection and
   entity; metric sources only) or "aggregate".
 - group_by, aggregation (avg, sum, min, max, count) and buckets (time
@@ -240,7 +241,13 @@ func queryDatastoreInputSchema() mcp.InputSchema {
 							"enum": []string{"=", "!=", "<", "<=", ">", ">=", "in", "not in", "like", "is null", "is not null"},
 						},
 						"value": map[string]any{
-							"description": "The value to compare with: a list for in and not in, omitted for is null and is not null.",
+							"type":        "string",
+							"description": "The value to compare with, written as a string (for example \"app\", \"42\" or \"true\"), for every operator except in, not in, is null and is not null.",
+						},
+						"values": map[string]any{
+							"type":        "array",
+							"items":       map[string]any{"type": "string"},
+							"description": "The values to match, for in and not in only.",
 						},
 					},
 					"required": []string{"column", "op"},

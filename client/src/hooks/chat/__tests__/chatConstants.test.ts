@@ -9,6 +9,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import type { ToolInputProperty } from '../../../types/llm';
 import {
     SYSTEM_PROMPT,
     CHAT_TOOLS,
@@ -192,6 +193,52 @@ describe('chatConstants', () => {
             expect(queryDatastore?.inputSchema.properties).not.toHaveProperty(
                 'query'
             );
+        });
+
+        it('declares a type on every property of every tool schema', () => {
+            const missing: string[] = [];
+            const walk = (node: ToolInputProperty, path: string) => {
+                if (!node.type) {
+                    missing.push(path);
+                }
+                if (node.items) {
+                    walk(node.items, `${path}[]`);
+                }
+                for (const [k, v] of Object.entries(node.properties ?? {})) {
+                    walk(v, `${path}.${k}`);
+                }
+            };
+            for (const tool of CHAT_TOOLS) {
+                for (const [k, v] of Object.entries(
+                    tool.inputSchema.properties
+                )) {
+                    walk(v, `${tool.name}.${k}`);
+                }
+            }
+            expect(missing).toEqual([]);
+        });
+
+        it('declares the query_datastore enums and bounds', () => {
+            const props = CHAT_TOOLS.find(t => t.name === 'query_datastore')
+                ?.inputSchema.properties as Record<string, ToolInputProperty>;
+            const filterProps = props.filters.items?.properties ?? {};
+            expect(filterProps.op.enum).toEqual([
+                '=', '!=', '<', '<=', '>', '>=', 'in', 'not in', 'like',
+                'is null', 'is not null',
+            ]);
+            expect(filterProps.value.type).toBe('string');
+            expect(filterProps.values.items?.type).toBe('string');
+            expect(props.shape.enum).toEqual(['rows', 'latest', 'aggregate']);
+            expect(props.aggregation.enum).toEqual([
+                'avg', 'sum', 'min', 'max', 'count',
+            ]);
+            expect(
+                props.order_by.items?.properties?.direction.enum
+            ).toEqual(['asc', 'desc']);
+            expect(props.buckets.maximum).toBe(500);
+            expect(props.page.default).toBe(1);
+            expect(props.page_size.maximum).toBe(1000);
+            expect(props.page_size.default).toBe(100);
         });
 
         it('contains the describe_datastore tool', () => {

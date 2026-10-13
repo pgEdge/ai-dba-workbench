@@ -313,6 +313,27 @@ var rbacExemptTools = map[string]bool{
 	"test_query": true, // Query validation never returns data; gating it would prevent tokens from validating their own queries
 }
 
+// rbacCompanionTools maps a tool to another tool whose grant also admits
+// it. describe_datastore only describes the sources query_datastore reads
+// and returns no rows, and it was added after groups and tokens were
+// already granted query_datastore by name; without this, those grants
+// would admit the query tool but not the one it tells callers to use
+// first. Its own privilege stays non-public, so it can still be granted
+// on its own.
+var rbacCompanionTools = map[string]string{
+	"describe_datastore": "query_datastore",
+}
+
+// canAccessTool reports whether the caller in ctx may list and run the
+// tool called name.
+func (p *ContextAwareProvider) canAccessTool(ctx context.Context, name string) bool {
+	if rbacExemptTools[name] || p.rbacChecker.CanAccessMCPItem(ctx, name) {
+		return true
+	}
+	companion, ok := rbacCompanionTools[name]
+	return ok && p.rbacChecker.CanAccessMCPItem(ctx, companion)
+}
+
 // ListForContext returns tool definitions filtered by the user's RBAC privileges
 // This is the RBAC-aware version of List() that should be used in authenticated contexts
 func (p *ContextAwareProvider) ListForContext(ctx context.Context) []mcp.Tool {
@@ -329,7 +350,7 @@ func (p *ContextAwareProvider) ListForContext(ctx context.Context) []mcp.Tool {
 	// Filter tools based on user's privileges
 	var filtered []mcp.Tool
 	for _, tool := range allTools {
-		if rbacExemptTools[tool.Name] || p.rbacChecker.CanAccessMCPItem(ctx, tool.Name) {
+		if p.canAccessTool(ctx, tool.Name) {
 			filtered = append(filtered, tool)
 		}
 	}
@@ -446,7 +467,7 @@ func (p *ContextAwareProvider) Execute(ctx context.Context, name string, args ma
 	// RBAC check: verify user has access to this tool
 	// This check applies even for tools that are enabled in config
 	// RBAC-exempt tools bypass this check (connection RBAC still applies inside the handler)
-	if !rbacExemptTools[name] && !p.rbacChecker.CanAccessMCPItem(ctx, name) {
+	if !p.canAccessTool(ctx, name) {
 		return logAndReturn(mcp.ToolResponse{
 			Content: []mcp.ContentItem{
 				{

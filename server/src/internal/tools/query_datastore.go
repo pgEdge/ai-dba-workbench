@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/logging"
@@ -32,7 +33,8 @@ database. It holds two kinds of source:
   keyed by connection_id and collected_at.
 - configuration sources: connections, alerts, blackouts, thresholds, probe
   settings, baselines, clusters and similar tables, each limited to the
-  columns that are safe to read. Stored credentials are never available.
+  columns that are safe to read. Stored connection passwords and
+  certificates are never available.
 </database_context>
 
 <workflow>
@@ -46,19 +48,25 @@ database. It holds two kinds of source:
 - columns: columns to return; defaults to every column of the source.
 - connection_ids: limit to these connections. Omit to cover every connection
   you can access. Naming a connection you cannot access is an error.
-- time_start / time_end: a relative duration ("1h", "24h", "7d"), "now", or
-  an RFC 3339 timestamp. Only for sources with a time column. Metric sources
-  default to the last hour.
+- time_start / time_end: a relative duration ("1h", "24h", "7d") counted
+  back from time_end, "now", or an RFC 3339 timestamp. Only for sources with
+  a time column. Metric sources default to the last hour, for every shape
+  including "latest". Change-tracked probes (pg_settings, pg_hba_file_rules,
+  pg_ident_file_mappings, pg_server_info, pg_extension) store a row only
+  when something changes, so give them a wide time_start such as "30d".
 - filters: [{"column": "datname", "op": "=", "value": "app"}]. Operators:
   =, !=, <, <=, >, >=, like (take value, a string such as "app" or "42"),
   in, not in (take values, a list such as ["app", "postgres"]), is null,
-  is not null (take neither).
+  is not null (take neither). A time column takes an RFC 3339 timestamp or
+  "now". At most 20 filters.
 - shape: "rows" (default), "latest" (most recent row per connection and
-  entity; metric sources only) or "aggregate".
+  entity within the time window; metric sources only) or "aggregate".
 - group_by, aggregation (avg, sum, min, max, count) and buckets (time
-  buckets): only with shape "aggregate".
-- order_by: [{"column": "collected_at", "direction": "desc"}].
-- page / page_size: page_size defaults to 100, at most 1000.
+  buckets): only with shape "aggregate". At most 20 group_by columns.
+- order_by: [{"column": "collected_at", "direction": "desc"}]. At most 20
+  terms. Ties are broken by the row's key columns, so pages are stable.
+- page / page_size: page_size defaults to 100, at most 1000; page *
+  page_size at most 100000.
 - explain: true returns the query plan instead of rows.
 </parameters>
 
@@ -136,17 +144,35 @@ func QueryDatastoreTool(pool *pgxpool.Pool, rbacChecker *auth.RBACChecker, visib
 				return mcp.NewToolError(err.Error())
 			}
 
+			// A caller who may read every connection is not checked
+			// against a visible set, so a connection it names that does
+			// not exist gets the same answer as a hidden one would.
+			if vis.All && len(req.ConnectionIDs) > 0 {
+				exist, err := datastoreConnectionsExist(ctx, pool, req.ConnectionIDs)
+				if err != nil {
+					logging.Error("query_datastore_connection_check_failed", "error", err)
+					return mcp.NewToolError("Failed to resolve accessible connections")
+				}
+				if !exist {
+					return connectionNotAccessibleResponse(ctx, pool, rbacChecker, visibilityLister), nil
+				}
+			}
+
 			if req.Explain {
 				return explainDatastoreQuery(ctx, pool, src, sql, queryArgs)
 			}
 
-			qr, errResp := executeReadOnlyQuery(ctx, pool, sql, req.PageSize, false, "", queryArgs...)
+			qr, errResp := executeQueryWith(ctx, pool, sql, req.PageSize, false, true,
+				datastoreQueryErrorFormatter(src.Name), queryArgs...)
 			if errResp != nil {
 				return *errResp, nil
 			}
 
 			var sb strings.Builder
 			fmt.Fprintf(&sb, "Datastore Query: %s\n\n", src.Name)
+			if len(qr.Rows) == 0 && req.Page == 1 && src.Kind == datastoreKindMetric && req.TimeStart == "" {
+				sb.WriteString(datastoreDefaultWindowHint + "\n\n")
+			}
 			writeDatastorePage(&sb, qr, req)
 
 			logging.Info("query_datastore_executed",
@@ -161,6 +187,53 @@ func QueryDatastoreTool(pool *pgxpool.Pool, rbacChecker *auth.RBACChecker, visib
 			return mcp.NewToolSuccess(sb.String())
 		},
 	}
+}
+
+// datastoreDefaultWindowHint follows an empty first page from a metric
+// source queried over the default window.
+const datastoreDefaultWindowHint = "No rows in the default window (the hour before time_end). Change-tracked probes " +
+	"(pg_settings, pg_hba_file_rules, pg_ident_file_mappings, pg_server_info, pg_extension) store a row " +
+	"only when something changes; set time_start to a wider range such as 30d."
+
+// sqlstateQueryCanceled is PostgreSQL's query_canceled SQLSTATE, which a
+// statement timeout raises.
+const sqlstateQueryCanceled = "57014"
+
+// Messages for a datastore statement that fails once it is running.
+const (
+	datastoreQueryFailedMsg  = "The query failed; check the filter values and column types."
+	datastoreQueryTimeoutMsg = "The query ran for too long; narrow the time range or add filters."
+)
+
+// datastoreQueryErrorFormatter reports a failure of a running datastore
+// statement in general terms and logs the detail. PostgreSQL's own
+// message can depend on the rows the statement read, so passing it on
+// could tell the caller something about data it may not see. Errors in
+// the request itself are caught in Go, before any SQL runs, and keep
+// their specific messages.
+func datastoreQueryErrorFormatter(source string) queryErrorFormatter {
+	return func(stage string, err error) string {
+		logging.Error("query_datastore_failed", "source", source, "stage", stage, "error", err)
+		var pgErr *pgconn.PgError
+		if (errors.As(err, &pgErr) && pgErr.Code == sqlstateQueryCanceled) || errors.Is(err, context.DeadlineExceeded) {
+			return datastoreQueryTimeoutMsg
+		}
+		return datastoreQueryFailedMsg
+	}
+}
+
+// datastoreConnectionsExist reports whether every connection in ids
+// exists.
+func datastoreConnectionsExist(ctx context.Context, pool *pgxpool.Pool, ids []int) (bool, error) {
+	var missing bool
+	err := pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM unnest($1::int[]) AS want(id)
+		                WHERE NOT EXISTS (SELECT 1 FROM public.connections c WHERE c.id = want.id))`,
+		ids).Scan(&missing)
+	if err != nil {
+		return false, err
+	}
+	return !missing, nil
 }
 
 // writeDatastorePage writes one page of results with its row range and,
@@ -184,7 +257,8 @@ func writeDatastorePage(sb *strings.Builder, qr *queryResult, req datastoreReque
 // planned but not executed) with the statement's own parameters and
 // returns the plan text.
 func explainDatastoreQuery(ctx context.Context, pool *pgxpool.Pool, src datastoreSource, sql string, queryArgs []any) (mcp.ToolResponse, error) {
-	qr, errResp := executeReadOnlyQuery(ctx, pool, "EXPLAIN "+sql, 0, true, "", queryArgs...)
+	qr, errResp := executeQueryWith(ctx, pool, "EXPLAIN "+sql, 0, true, true,
+		datastoreQueryErrorFormatter(src.Name), queryArgs...)
 	if errResp != nil {
 		return *errResp, nil
 	}
@@ -200,6 +274,10 @@ func explainDatastoreQuery(ctx context.Context, pool *pgxpool.Pool, src datastor
 }
 
 // queryDatastoreInputSchema describes query_datastore's parameters.
+//
+// The web client keeps its own copy of this schema, and of the tool's
+// description, in client/src/hooks/chat/chatConstants.ts; change both
+// together.
 func queryDatastoreInputSchema() mcp.InputSchema {
 	columnList := func(description string) map[string]any {
 		return map[string]any{
@@ -223,7 +301,7 @@ func queryDatastoreInputSchema() mcp.InputSchema {
 			},
 			"time_start": map[string]any{
 				"type":        "string",
-				"description": "Start of the time range: a relative duration such as 1h or 7d, now, or an RFC 3339 timestamp. Metric sources default to one hour before time_end.",
+				"description": "Start of the time range: a relative duration such as 1h or 7d counted back from time_end, now, or an RFC 3339 timestamp. Metric sources default to one hour before time_end, for every shape including latest; change-tracked probes (pg_settings, pg_hba_file_rules, pg_ident_file_mappings, pg_server_info, pg_extension) store a row only when something changes, so give them a wide time_start such as 30d.",
 			},
 			"time_end": map[string]any{
 				"type":        "string",
@@ -231,6 +309,7 @@ func queryDatastoreInputSchema() mcp.InputSchema {
 			},
 			"filters": map[string]any{
 				"type":        "array",
+				"maxItems":    datastoreMaxListItems,
 				"description": "Conditions every returned row must meet.",
 				"items": map[string]any{
 					"type": "object",
@@ -242,7 +321,7 @@ func queryDatastoreInputSchema() mcp.InputSchema {
 						},
 						"value": map[string]any{
 							"type":        "string",
-							"description": "The value to compare with, written as a string (for example \"app\", \"42\" or \"true\"), for every operator except in, not in, is null and is not null.",
+							"description": "The value to compare with, written as a string (for example \"app\", \"42\" or \"true\"), for every operator except in, not in, is null and is not null. A time column takes an RFC 3339 timestamp or now.",
 						},
 						"values": map[string]any{
 							"type":        "array",
@@ -256,9 +335,13 @@ func queryDatastoreInputSchema() mcp.InputSchema {
 			"shape": map[string]any{
 				"type":        "string",
 				"enum":        []string{datastoreShapeRows, datastoreShapeLatest, datastoreShapeAggregate},
-				"description": "rows (default), latest (most recent row per connection and entity; metric sources only) or aggregate.",
+				"description": "rows (default), latest (most recent row per connection and entity within the time window; metric sources only) or aggregate. The time window applies to every shape.",
 			},
-			"group_by": columnList("Columns to group by; shape aggregate only."),
+			"group_by": func() map[string]any {
+				m := columnList("Columns to group by; shape aggregate only.")
+				m["maxItems"] = datastoreMaxListItems
+				return m
+			}(),
 			"aggregation": map[string]any{
 				"type":        "string",
 				"enum":        []string{"avg", "sum", "min", "max", "count"},
@@ -271,7 +354,8 @@ func queryDatastoreInputSchema() mcp.InputSchema {
 				"description": "Divide the time range into this many buckets; shape aggregate on a source with a time column only.",
 			},
 			"order_by": map[string]any{
-				"type": "array",
+				"type":     "array",
+				"maxItems": datastoreMaxListItems,
 				"items": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -280,13 +364,14 @@ func queryDatastoreInputSchema() mcp.InputSchema {
 					},
 					"required": []string{"column"},
 				},
-				"description": "Ordering terms.",
+				"description": "Ordering terms. Ties are broken by the row's key columns.",
 			},
 			"page": map[string]any{
 				"type":        "integer",
 				"minimum":     1,
+				"maximum":     datastoreMaxPage,
 				"default":     1,
-				"description": "Page of results to return.",
+				"description": "Page of results to return; page * page_size may be at most 100000.",
 			},
 			"page_size": map[string]any{
 				"type":        "integer",

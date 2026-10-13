@@ -34,11 +34,17 @@ const (
 const (
 	datastoreDefaultPageSize = 100
 	datastoreMaxPageSize     = 1000
-	// datastoreMaxPage bounds page so (page-1)*page_size cannot
-	// overflow and an absurd offset is refused before it reaches SQL.
-	datastoreMaxPage     = 1000000
+	// datastoreMaxRows bounds page * page_size, so a caller cannot page
+	// deep into a large source and make the server sort and skip an
+	// unbounded number of rows. It also bounds page by itself.
+	datastoreMaxRows     = 100000
+	datastoreMaxPage     = datastoreMaxRows
 	datastoreMaxBuckets  = 500
 	datastoreMaxInValues = 1000
+	// datastoreMaxListItems bounds filters, order_by and group_by. With
+	// datastoreMaxInValues it keeps a statement's bind parameters well
+	// under PostgreSQL's limit of 65535.
+	datastoreMaxListItems = 20
 	// datastoreBucketAlias names the time-bucket column of an
 	// aggregate query.
 	datastoreBucketAlias = "bucket_time"
@@ -132,6 +138,14 @@ var datastoreRequestKeys = map[string]bool{
 	"order_by": true, "page": true, "page_size": true, "explain": true,
 }
 
+// datastoreParameterHints suggests the parameter a caller probably meant
+// when it passes one query_datastore does not accept.
+var datastoreParameterHints = map[string]string{
+	"connection_id": "did you mean connection_ids (an array)?",
+	"limit":         "use page_size and page",
+	"offset":        "use page_size and page",
+}
+
 // parseDatastoreRequest validates the shape of query_datastore's
 // arguments. Keys starting "__" are injected by the registry and are
 // ignored; any other unknown key is an error, so a caller cannot believe
@@ -154,6 +168,9 @@ func parseDatastoreRequest(args map[string]any) (datastoreRequest, error) {
 		}
 		if key == "query" || key == "sql" {
 			return req, errors.New("query_datastore no longer accepts SQL; describe the query with source, columns, filters and the other parameters, and call describe_datastore to list the sources")
+		}
+		if hint, ok := datastoreParameterHints[key]; ok {
+			return req, fmt.Errorf("unknown parameter %q; %s", key, hint)
 		}
 		return req, fmt.Errorf("unknown parameter %q", key)
 	}
@@ -178,6 +195,9 @@ func parseDatastoreRequest(args map[string]any) (datastoreRequest, error) {
 	if req.GroupBy, err = parseStringList(args, "group_by"); err != nil {
 		return req, err
 	}
+	if len(req.GroupBy) > datastoreMaxListItems {
+		return req, fmt.Errorf("group_by takes at most %d columns", datastoreMaxListItems)
+	}
 	if req.ConnectionIDs, err = parseConnectionIDs(args); err != nil {
 		return req, err
 	}
@@ -190,8 +210,14 @@ func parseDatastoreRequest(args map[string]any) (datastoreRequest, error) {
 	if req.Filters, err = parseDatastoreFilters(args); err != nil {
 		return req, err
 	}
+	if len(req.Filters) > datastoreMaxListItems {
+		return req, fmt.Errorf("filters takes at most %d conditions", datastoreMaxListItems)
+	}
 	if req.OrderBy, err = parseDatastoreOrder(args); err != nil {
 		return req, err
+	}
+	if len(req.OrderBy) > datastoreMaxListItems {
+		return req, fmt.Errorf("order_by takes at most %d terms", datastoreMaxListItems)
 	}
 
 	if v, ok := args["shape"]; ok {
@@ -231,6 +257,9 @@ func parseDatastoreRequest(args map[string]any) (datastoreRequest, error) {
 		}
 		req.PageSize = int(n)
 	}
+	if err := checkDatastorePaging(req.Page, req.PageSize); err != nil {
+		return req, err
+	}
 	if v, ok := args["explain"]; ok {
 		b, ok := v.(bool)
 		if !ok {
@@ -239,6 +268,15 @@ func parseDatastoreRequest(args map[string]any) (datastoreRequest, error) {
 		req.Explain = b
 	}
 	return req, nil
+}
+
+// checkDatastorePaging refuses a page that reaches beyond the first
+// datastoreMaxRows rows of a result.
+func checkDatastorePaging(page, pageSize int) error {
+	if int64(page)*int64(pageSize) > datastoreMaxRows {
+		return fmt.Errorf("page * page_size must be at most %d; narrow the query with filters or a shorter time range instead of paging further", datastoreMaxRows)
+	}
+	return nil
 }
 
 // integerValue converts a JSON number to an integer, refusing anything
@@ -465,6 +503,12 @@ func buildDatastoreQuery(src datastoreSource, req datastoreRequest, vis visibleS
 	if req.Page < 1 || req.Page > datastoreMaxPage {
 		return "", nil, fmt.Errorf("page must be an integer between 1 and %d", datastoreMaxPage)
 	}
+	if err := checkDatastorePaging(req.Page, req.PageSize); err != nil {
+		return "", nil, err
+	}
+	if len(req.Filters) > datastoreMaxListItems || len(req.OrderBy) > datastoreMaxListItems || len(req.GroupBy) > datastoreMaxListItems {
+		return "", nil, fmt.Errorf("filters, order_by and group_by take at most %d entries each", datastoreMaxListItems)
+	}
 	if err := checkShape(src, req); err != nil {
 		return "", nil, err
 	}
@@ -481,14 +525,16 @@ func buildDatastoreQuery(src datastoreSource, req datastoreRequest, vis visibleS
 	}
 
 	q := &datastoreQuery{}
-	var conditions []string
+	// inner holds the predicates the server builds (the caller's scope and
+	// the time window), and conditions the caller's own filters.
+	var inner, conditions []string
 
 	scope, err := scopeCondition(q, src, req, vis)
 	if err != nil {
 		return "", nil, err
 	}
 	if scope != "" {
-		conditions = append(conditions, scope)
+		inner = append(inner, scope)
 	}
 
 	window, err := resolveDatastoreWindow(src, req, now)
@@ -501,10 +547,10 @@ func buildDatastoreQuery(src datastoreSource, req datastoreRequest, vis visibleS
 	}
 	if window.start != nil {
 		window.startParam = q.bind(*window.start)
-		conditions = append(conditions, timeCol+" >= "+window.startParam)
+		inner = append(inner, timeCol+" >= "+window.startParam)
 	}
 	if window.end != nil {
-		conditions = append(conditions, timeCol+" <= "+q.bind(*window.end))
+		inner = append(inner, timeCol+" <= "+q.bind(*window.end))
 	}
 
 	for i, f := range req.Filters {
@@ -515,7 +561,7 @@ func buildDatastoreQuery(src datastoreSource, req datastoreRequest, vis visibleS
 		conditions = append(conditions, cond)
 	}
 
-	from, err := fromClause(src)
+	from, err := scopedFrom(src, inner)
 	if err != nil {
 		return "", nil, err
 	}
@@ -590,17 +636,45 @@ func checkColumnList(src datastoreSource, names []string, param string) error {
 	return nil
 }
 
-// fromClause names the source table: schema-qualified for a metric
-// source, and in the default schema for a configuration source.
+// fromClause names the source table, schema-qualified: metric sources
+// live in the metrics schema and configuration sources in public, where
+// the collector's migrations create them. Qualifying the name keeps a
+// table of the same name earlier on the search_path from being read.
 func fromClause(src datastoreSource) (string, error) {
 	switch src.Kind {
 	case datastoreKindMetric:
 		return "metrics." + metrics.QuoteIdentifier(src.Table) + " " + datastoreTableAlias, nil
 	case datastoreKindConfiguration:
-		return metrics.QuoteIdentifier(src.Table) + " " + datastoreTableAlias, nil
+		return "public." + metrics.QuoteIdentifier(src.Table) + " " + datastoreTableAlias, nil
 	default:
 		return "", fmt.Errorf("source %q has an unknown kind", src.Name)
 	}
+}
+
+// scopedFrom returns the FROM item every shape reads. When the server
+// has predicates of its own (the caller's scope and the time window) it
+// applies them in a subquery with OFFSET 0, which PostgreSQL neither
+// flattens into the outer query nor pushes outer predicates into. The
+// caller's filters therefore only ever see rows the caller may read: a
+// filter that would fail on some value (a malformed LIKE pattern, say)
+// cannot fail on a hidden row, and so cannot reveal that the row exists.
+// The time window sits inside too, because a predicate outside the
+// subquery could not prune metric partitions or use the
+// (connection_id, collected_at) index.
+//
+// The subquery selects the source's permitted columns under the same
+// alias, so the outer statement refers to them exactly as it would to
+// the table.
+func scopedFrom(src datastoreSource, inner []string) (string, error) {
+	from, err := fromClause(src)
+	if err != nil {
+		return "", err
+	}
+	if len(inner) == 0 {
+		return from, nil
+	}
+	return "(SELECT " + selectList(datastoreTableAlias, src.columnNames()) + " FROM " + from +
+		" WHERE " + strings.Join(inner, " AND ") + " OFFSET 0) " + datastoreTableAlias, nil
 }
 
 // scopeCondition returns the predicate that limits src to the rows vis
@@ -652,7 +726,7 @@ func scopeCondition(q *datastoreQuery, src datastoreSource, req datastoreRequest
 		if cond == "" {
 			return "", nil
 		}
-		return "EXISTS (SELECT 1 FROM alerts a WHERE a.id = " +
+		return "EXISTS (SELECT 1 FROM public.alerts a WHERE a.id = " +
 			qualified(datastoreTableAlias, "alert_id") + " AND " + cond + ")", nil
 
 	case scopeHierarchy:
@@ -665,14 +739,14 @@ func scopeCondition(q *datastoreQuery, src datastoreSource, req datastoreRequest
 		if !restricted {
 			return "", nil
 		}
-		return "EXISTS (SELECT 1 FROM connections c WHERE c.cluster_id = " +
+		return "EXISTS (SELECT 1 FROM public.connections c WHERE c.cluster_id = " +
 			qualified(datastoreTableAlias, "id") + " AND c.id = ANY(" + visible() + "))", nil
 
 	case scopeGroup:
 		if !restricted {
 			return "", nil
 		}
-		return "EXISTS (SELECT 1 FROM connections c JOIN clusters cl ON cl.id = c.cluster_id WHERE cl.group_id = " +
+		return "EXISTS (SELECT 1 FROM public.connections c JOIN public.clusters cl ON cl.id = c.cluster_id WHERE cl.group_id = " +
 			qualified(datastoreTableAlias, "id") + " AND c.id = ANY(" + visible() + "))", nil
 
 	default:
@@ -720,9 +794,9 @@ func hierarchyCondition(q *datastoreQuery, visible string) string {
 	return "((" + conn + " IS NULL AND " + cluster + " IS NULL AND " + group + " IS NULL AND " +
 		scope + " IN (" + estate + ", " + global + "))" +
 		" OR (" + conn + " IS NOT NULL AND " + conn + " = ANY(" + visible + "))" +
-		" OR (" + conn + " IS NULL AND " + cluster + " IS NOT NULL AND EXISTS (SELECT 1 FROM connections c WHERE c.cluster_id = " +
+		" OR (" + conn + " IS NULL AND " + cluster + " IS NOT NULL AND EXISTS (SELECT 1 FROM public.connections c WHERE c.cluster_id = " +
 		cluster + " AND c.id = ANY(" + visible + ")))" +
-		" OR (" + conn + " IS NULL AND " + cluster + " IS NULL AND " + group + " IS NOT NULL AND EXISTS (SELECT 1 FROM connections c JOIN clusters cl ON cl.id = c.cluster_id WHERE cl.group_id = " +
+		" OR (" + conn + " IS NULL AND " + cluster + " IS NULL AND " + group + " IS NOT NULL AND EXISTS (SELECT 1 FROM public.connections c JOIN public.clusters cl ON cl.id = c.cluster_id WHERE cl.group_id = " +
 		group + " AND c.id = ANY(" + visible + "))))"
 }
 
@@ -865,8 +939,12 @@ func filterCondition(q *datastoreQuery, src datastoreSource, f datastoreFilter, 
 		if !slices.Contains(datastoreTextTypes, c.DataType) {
 			return "", fmt.Errorf("%s: operator like needs a text column, and %q is %s", where, c.Name, c.DataType)
 		}
-		if _, ok := f.Value.(string); !ok {
+		pattern, ok := f.Value.(string)
+		if !ok {
 			return "", fmt.Errorf("%s: operator like needs a string value", where)
+		}
+		if endsWithEscape(pattern) {
+			return "", fmt.Errorf(`%s: a like pattern must not end with a single backslash; write \\ to match a literal backslash`, where)
 		}
 	}
 	v, err := coerceFilterValue(c, f.Value, where)
@@ -874,6 +952,15 @@ func filterCondition(q *datastoreQuery, src datastoreSource, f datastoreFilter, 
 		return "", err
 	}
 	return column + " " + op + " " + q.bind(v), nil
+}
+
+// endsWithEscape reports whether pattern ends in an odd-length run of
+// backslashes, which leaves LIKE's escape character with nothing to
+// escape. PostgreSQL rejects such a pattern only when it compares it with
+// a row, so the error would otherwise depend on the data.
+func endsWithEscape(pattern string) bool {
+	run := len(pattern) - len(strings.TrimRight(pattern, `\`))
+	return run%2 == 1
 }
 
 // coerceFilterValue converts a JSON scalar to a Go value of the column's
@@ -969,11 +1056,11 @@ func selectList(alias string, columns []string) string {
 }
 
 // orderTerms renders the caller's ordering; each column must pass check.
-func orderTerms(order []datastoreOrder, alias string, check func(string) error) (string, error) {
+func orderTerms(order []datastoreOrder, alias string, check func(string) error) ([]string, error) {
 	parts := make([]string, len(order))
 	for i, o := range order {
 		if err := check(o.Column); err != nil {
-			return "", err
+			return nil, err
 		}
 		name := metrics.QuoteIdentifier(o.Column)
 		if alias != "" {
@@ -981,7 +1068,45 @@ func orderTerms(order []datastoreOrder, alias string, check func(string) error) 
 		}
 		parts[i] = name + " " + strings.ToUpper(o.Direction)
 	}
-	return strings.Join(parts, ", "), nil
+	return parts, nil
+}
+
+// tieBreakTerms appends to terms an ascending term for each column in
+// keys that terms does not already order by, so a result has the same
+// order every time and paging neither repeats nor skips rows. terms holds
+// rendered "name DIRECTION" strings; name renders a column as they do.
+func tieBreakTerms(terms []string, keys []string, name func(string) string) []string {
+	for _, k := range keys {
+		rendered := name(k)
+		if slices.ContainsFunc(terms, func(t string) bool { return strings.HasPrefix(t, rendered+" ") }) {
+			continue
+		}
+		terms = append(terms, rendered+" ASC")
+	}
+	return terms
+}
+
+// datastoreRowKey lists the columns that identify a row of src: the
+// connection, time and entity key columns of a metric source, and id
+// (or, failing that, the first column) of a configuration source.
+func datastoreRowKey(src datastoreSource) []string {
+	if src.Kind == datastoreKindMetric {
+		return append([]string{src.ConnectionColumn, src.TimeColumn}, datastoreEntityKeys(src)...)
+	}
+	if _, ok := src.column("id"); ok {
+		return []string{"id"}
+	}
+	return []string{src.Columns[0].Name}
+}
+
+// datastoreEntityKeys returns src's entity key columns, as
+// metrics.EntityKeyColumns identifies them.
+func datastoreEntityKeys(src datastoreSource) []string {
+	types := make(map[string]string, len(src.Columns))
+	for _, c := range src.Columns {
+		types[c.Name] = c.DataType
+	}
+	return metrics.EntityKeyColumns(src.columnNames(), types)
 }
 
 func sourceColumnCheck(src datastoreSource) func(string) error {
@@ -991,9 +1116,10 @@ func sourceColumnCheck(src datastoreSource) func(string) error {
 	}
 }
 
-// rowsStatement selects filtered rows, newest first by default.
+// rowsStatement selects filtered rows, newest first by default, and
+// breaks ties by the source's row key.
 func rowsStatement(src datastoreSource, req datastoreRequest, columns []string, from, where string) (string, error) {
-	order := ""
+	var order []string
 	if len(req.OrderBy) > 0 {
 		terms, err := orderTerms(req.OrderBy, datastoreTableAlias, sourceColumnCheck(src))
 		if err != nil {
@@ -1001,45 +1127,35 @@ func rowsStatement(src datastoreSource, req datastoreRequest, columns []string, 
 		}
 		order = terms
 	} else if src.TimeColumn != "" {
-		order = qualified(datastoreTableAlias, src.TimeColumn) + " DESC"
-	} else {
-		order = qualified(datastoreTableAlias, src.Columns[0].Name) + " ASC"
+		order = []string{qualified(datastoreTableAlias, src.TimeColumn) + " DESC"}
 	}
-	return "SELECT " + selectList(datastoreTableAlias, columns) + " FROM " + from + where + " ORDER BY " + order, nil
+	name := func(c string) string { return qualified(datastoreTableAlias, c) }
+	order = tieBreakTerms(order, datastoreRowKey(src), name)
+	return "SELECT " + selectList(datastoreTableAlias, columns) + " FROM " + from + where +
+		" ORDER BY " + strings.Join(order, ", "), nil
 }
 
 // latestStatement selects the newest row per connection and entity key,
 // using the same DISTINCT ON approach and metrics.EntityKeyColumns as
 // the metrics package's latest-row queries. The window and filters apply
-// inside, before the newest row is picked.
+// inside, before the newest row is picked. The caller's ordering, if
+// any, is followed by the distinct keys, which identify a row of the
+// result.
 func latestStatement(src datastoreSource, req datastoreRequest, columns []string, from, where string) (string, error) {
 	all := src.columnNames()
-	types := make(map[string]string, len(src.Columns))
-	for _, c := range src.Columns {
-		types[c.Name] = c.DataType
-	}
-	distinct := append([]string{src.ConnectionColumn}, metrics.EntityKeyColumns(all, types)...)
+	distinct := append([]string{src.ConnectionColumn}, datastoreEntityKeys(src)...)
 
 	inner := "SELECT DISTINCT ON (" + selectList(datastoreTableAlias, distinct) + ") " +
 		selectList(datastoreTableAlias, all) + " FROM " + from + where +
 		" ORDER BY " + selectList(datastoreTableAlias, distinct) + ", " +
 		qualified(datastoreTableAlias, src.TimeColumn) + " DESC"
 
-	var order string
-	if len(req.OrderBy) > 0 {
-		terms, err := orderTerms(req.OrderBy, "", sourceColumnCheck(src))
-		if err != nil {
-			return "", err
-		}
-		order = terms
-	} else {
-		parts := make([]string, len(distinct))
-		for i, c := range distinct {
-			parts[i] = metrics.QuoteIdentifier(c) + " ASC"
-		}
-		order = strings.Join(parts, ", ")
+	order, err := orderTerms(req.OrderBy, "", sourceColumnCheck(src))
+	if err != nil {
+		return "", err
 	}
-	return "SELECT " + selectList("", columns) + " FROM (" + inner + ") latest ORDER BY " + order, nil
+	order = tieBreakTerms(order, distinct, metrics.QuoteIdentifier)
+	return "SELECT " + selectList("", columns) + " FROM (" + inner + ") latest ORDER BY " + strings.Join(order, ", "), nil
 }
 
 // aggregateStatement groups rows and applies req.Aggregation to the
@@ -1104,27 +1220,20 @@ func aggregateStatement(q *datastoreQuery, src datastoreSource, req datastoreReq
 		sql += " GROUP BY " + strings.Join(positions, ", ")
 	}
 
-	var order string
-	if len(req.OrderBy) > 0 {
-		terms, err := orderTerms(req.OrderBy, "", func(name string) error {
-			if !slices.Contains(outputs, name) {
-				return fmt.Errorf("order_by column %q is not an output of this aggregate; use one of %s", name, strings.Join(outputs, ", "))
-			}
-			return nil
-		})
-		if err != nil {
-			return "", err
+	// The caller's ordering is followed by the group columns, which
+	// identify a row of the result.
+	order, err := orderTerms(req.OrderBy, "", func(name string) error {
+		if !slices.Contains(outputs, name) {
+			return fmt.Errorf("order_by column %q is not an output of this aggregate; use one of %s", name, strings.Join(outputs, ", "))
 		}
-		order = terms
-	} else if groupCount > 0 {
-		parts := make([]string, groupCount)
-		for i := range parts {
-			parts[i] = metrics.QuoteIdentifier(outputs[i]) + " ASC"
-		}
-		order = strings.Join(parts, ", ")
+		return nil
+	})
+	if err != nil {
+		return "", err
 	}
-	if order != "" {
-		sql += " ORDER BY " + order
+	order = tieBreakTerms(order, outputs[:groupCount], metrics.QuoteIdentifier)
+	if len(order) > 0 {
+		sql += " ORDER BY " + strings.Join(order, ", ")
 	}
 	return sql, nil
 }

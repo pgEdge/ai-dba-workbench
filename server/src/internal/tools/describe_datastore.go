@@ -55,6 +55,8 @@ func DescribeDatastoreTool(pool *pgxpool.Pool) Tool {
 - For descriptions of individual probe columns, use describe_probe.
 </notes>`,
 			CompactDescription: `List the sources query_datastore can read (metric probes and configuration tables), or, with source, that source's columns. Call this before query_datastore.`,
+			// The web client keeps its own copy of this schema in
+			// client/src/hooks/chat/chatConstants.ts; change both together.
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]any{

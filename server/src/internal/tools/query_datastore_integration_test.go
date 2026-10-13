@@ -462,7 +462,7 @@ func TestQueryDatastoreShapesIntegration(t *testing.T) {
 	})
 
 	t.Run("explain", func(t *testing.T) {
-		text, isErr := call(t, tool, user, map[string]any{
+		text, isErr := call(t, tool, admin, map[string]any{
 			"source": "ds_probe", "explain": true,
 			"filters": []any{map[string]any{"column": "datname", "op": "=", "value": "app"}}})
 		if isErr || !strings.HasPrefix(text, "Datastore Query Plan: ds_probe") || !strings.Contains(text, "Scan") {
@@ -504,6 +504,8 @@ func TestQueryDatastoreFailuresIntegration(t *testing.T) {
 	runCase("lookup failure", f.tool(), done, map[string]any{"source": "ds_probe"}, "Failed to look up the source")
 	runCase("execution failure", f.tool(), done, map[string]any{"source": "alerts"}, "")
 	runCase("explain failure", f.tool(), done, map[string]any{"source": "alerts", "explain": true}, "")
+	runCase("explain restricted", f.tool(), user, map[string]any{"source": "alerts", "explain": true},
+		"explain is available only to callers who can access every connection")
 
 	// A nil checker sees nothing, so a connection-scoped source is empty
 	// rather than unscoped.

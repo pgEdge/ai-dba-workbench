@@ -658,7 +658,9 @@ caller predicate is evaluated against a row the caller may not see;
 the time window stays inside so partition pruning and the
 `(connection_id, collected_at)` index still apply. Errors from a
 running statement go through `datastoreQueryErrorFormatter` (general
-message, detail logged). `describe_datastore` is admitted by a
+message, detail logged). `explain` needs a visible set of All
+(`checkDatastoreExplain`), since plan row estimates span hidden rows.
+`describe_datastore` is admitted by a
 `query_datastore` grant (`rbacCompanionTools` and `canAccessTool` in
 `context_aware_provider.go`, one way only). Pinned by
 `datastore_query_builder_test.go`, `query_datastore_integration_test.go`,

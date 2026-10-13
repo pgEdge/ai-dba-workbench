@@ -145,6 +145,17 @@ func TestQueryDatastoreHiddenRowsIntegration(t *testing.T) {
 		}
 	})
 
+	t.Run("explain is refused, so plan estimates cannot count hidden rows", func(t *testing.T) {
+		text, isErr := call(t, f.tool(), user, map[string]any{
+			"source":  "ds_probe",
+			"explain": true,
+			"filters": []any{map[string]any{"column": "datname", "op": "like", "value": "hidden%"}},
+		})
+		if !isErr || text != errDatastoreExplainRestricted.Error() {
+			t.Errorf("got (error=%v) %q", isErr, text)
+		}
+	})
+
 	t.Run("a failing statement gets a general message", func(t *testing.T) {
 		text, isErr := call(t, f.tool(), user, map[string]any{
 			"source":  "ds_probe",
@@ -153,7 +164,7 @@ func TestQueryDatastoreHiddenRowsIntegration(t *testing.T) {
 		if !isErr || text != datastoreQueryFailedMsg {
 			t.Errorf("got (error=%v) %q, want %q", isErr, text, datastoreQueryFailedMsg)
 		}
-		text, isErr = call(t, f.tool(), user, map[string]any{
+		text, isErr = call(t, f.tool(), superuserContext(), map[string]any{
 			"source":  "ds_probe",
 			"explain": true,
 			"filters": []any{map[string]any{"column": "collected_at", "op": ">", "value": "not-a-time"}},
@@ -287,7 +298,7 @@ func TestDescribeDatastorePartitionedIntegration(t *testing.T) {
 	rows := mustQuery(t, f.tool(), f.userCtx(), map[string]any{"source": "ds_part"})
 	assertColumn(t, rows, "value", "2")
 
-	plan, isErr := call(t, f.tool(), f.userCtx(), map[string]any{"source": "ds_part", "explain": true})
+	plan, isErr := call(t, f.tool(), superuserContext(), map[string]any{"source": "ds_part", "explain": true})
 	if isErr || !strings.Contains(plan, "ds_part_current") || strings.Contains(plan, "ds_part_old") {
 		t.Errorf("a windowed query should plan only the current partition:\n%s", plan)
 	}

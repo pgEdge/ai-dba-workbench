@@ -67,7 +67,8 @@ database. It holds two kinds of source:
   terms. Ties are broken by the row's key columns, so pages are stable.
 - page / page_size: page_size defaults to 100, at most 1000; page *
   page_size at most 100000.
-- explain: true returns the query plan instead of rows.
+- explain: true returns the query plan instead of rows. Only for callers
+  who can access every connection.
 </parameters>
 
 <when_not_to_use>
@@ -135,6 +136,9 @@ func QueryDatastoreTool(pool *pgxpool.Pool, rbacChecker *auth.RBACChecker, visib
 				return mcp.NewToolError("Failed to resolve accessible connections")
 			}
 			vis := visibleSet{All: all, IDs: ids, SystemAlerts: rbacChecker.CanSeeSystemAlerts(ctx)}
+			if err := checkDatastoreExplain(req, vis); err != nil {
+				return mcp.NewToolError(err.Error())
+			}
 
 			sql, queryArgs, err := buildDatastoreQuery(src, req, vis, time.Now())
 			if err != nil {
@@ -382,7 +386,7 @@ func queryDatastoreInputSchema() mcp.InputSchema {
 			},
 			"explain": map[string]any{
 				"type":        "boolean",
-				"description": "Return the query plan (EXPLAIN, not ANALYZE) instead of rows.",
+				"description": "Return the query plan (EXPLAIN, not ANALYZE) instead of rows. Only for callers who can access every connection.",
 			},
 		},
 		Required: []string{"source"},

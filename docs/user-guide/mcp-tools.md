@@ -85,7 +85,8 @@ limits each one to the caller's connections:
 Metric sources return rows only for the connections the caller can access.
 For an API token, the accessible connections are further limited to the
 connections in the token's connection scope. Stored connection passwords and
-certificates are never available from any source.
+certificates are never available from any source, and metric columns whose
+names suggest a password, token or other secret are not offered.
 
 ### Describing the Sources
 

@@ -105,9 +105,9 @@ func historicalRowsByKey(t *testing.T, ds *Datastore, metric string, connID int)
 	return found
 }
 
-// insertReplicationSample writes one pg_stat_replication row per standby
+// insertStandbyLSNSample writes one pg_stat_replication row per standby
 // for a single probe run.
-func insertReplicationSample(t *testing.T, pool *pgxpool.Pool, connID int,
+func insertStandbyLSNSample(t *testing.T, pool *pgxpool.Pool, connID int,
 	at time.Time, standbys map[int][2]*string) {
 	t.Helper()
 
@@ -122,14 +122,17 @@ func insertReplicationSample(t *testing.T, pool *pgxpool.Pool, connID int,
 	}
 }
 
-// lsns pairs a sent and a replay LSN for insertReplicationSample.
+// lsns pairs a sent and a replay LSN for insertStandbyLSNSample.
 func lsns(sent, replay string) [2]*string {
 	return [2]*string{&sent, &replay}
 }
 
 // TestLagBytes_HistoricalMatchesLatest checks that both queries report
 // the largest lag across the standbys of each sample, ignore a standby
-// whose LSNs are NULL, and agree on every sample.
+// whose LSNs are NULL, and agree on every sample. The newest sample has
+// lost the standby that lagged furthest in the sample before it, so a
+// latest query that took each pid's newest row would still report that
+// standby's lag.
 func TestLagBytes_HistoricalMatchesLatest(t *testing.T) {
 	ds, pool, cleanup := newHistoricalMetricsTestDatastore(t)
 	defer cleanup()
@@ -141,21 +144,20 @@ func TestLagBytes_HistoricalMatchesLatest(t *testing.T) {
 	middle := sampleInstant(3 * time.Minute)
 	newest := sampleInstant(2 * time.Minute)
 	// The differences are 0x1000 = 4096 and 0x100000 = 1048576 bytes.
-	insertReplicationSample(t, pool, connID, older, map[int][2]*string{
+	insertStandbyLSNSample(t, pool, connID, older, map[int][2]*string{
 		100: lsns("0/2001000", "0/2000000"),
-		200: lsns("0/2100000", "0/2000000"),
+		200: lsns("0/2000000", "0/2000000"),
 	})
-	insertReplicationSample(t, pool, connID, middle, map[int][2]*string{
+	insertStandbyLSNSample(t, pool, connID, middle, map[int][2]*string{
 		100: lsns("0/3001000", "0/3000000"),
-		200: lsns("0/3000000", "0/3000000"),
+		200: lsns("0/3100000", "0/3000000"),
 		300: {nil, nil},
 	})
-	insertReplicationSample(t, pool, connID, newest, map[int][2]*string{
-		100: lsns("0/4000000", "0/4000000"),
-		200: lsns("0/4100000", "0/4000000"),
+	insertStandbyLSNSample(t, pool, connID, newest, map[int][2]*string{
+		100: lsns("0/4001000", "0/4000000"),
 	})
 
-	want := map[time.Time]float64{older: 1048576, middle: 4096, newest: 1048576}
+	want := map[time.Time]float64{older: 4096, middle: 1048576, newest: 4096}
 	historical := historicalRowsByKey(t, ds, metric, connID)
 	if len(historical) != len(want) {
 		t.Fatalf("historical rows = %+v, want one per sample", historical)
@@ -182,10 +184,9 @@ func TestLagBytes_HistoricalMatchesLatest(t *testing.T) {
 
 // TestMaxLockWaitSeconds_HistoricalMatchesLatest checks that the
 // historical query reports what the latest query reports for a sample
-// with lock waiters, counting client backends only, and reports 0 for
-// every sample with none, where the latest query reports no row. The
-// zero rows are what keep the baseline from describing contended samples
-// alone.
+// with lock waiters, counting client backends only, and, like the latest
+// query, reports no row for a sample with none, so the baseline holds
+// only values the latest query can produce.
 func TestMaxLockWaitSeconds_HistoricalMatchesLatest(t *testing.T) {
 	ds, pool, cleanup := newHistoricalMetricsTestDatastore(t)
 	defer cleanup()
@@ -232,26 +233,27 @@ func TestMaxLockWaitSeconds_HistoricalMatchesLatest(t *testing.T) {
 		insertActivitySnapshot(t, pool, connID, s.at, s.rows)
 	}
 
+	// Only the first sample has a waiter, so it is the only one that may
+	// reach the baseline.
 	historical := historicalRowsByKey(t, ds, metric, connID)
-	if len(historical) != len(samples) {
-		t.Fatalf("historical rows = %+v, want one per sample", historical)
+	if len(historical) != 1 {
+		t.Fatalf("historical rows = %+v, want one for the sample with a waiter",
+			historical)
 	}
 	for i := len(samples) - 1; i >= 0; i-- {
 		s := samples[i]
-		row, ok := historical[historicalKey{at: s.at}]
-		if !ok {
-			t.Fatalf("no historical row for the sample at %v", s.at)
-		}
-		assertClose(t, "historical", row.Value, s.want)
-
+		row, inHistory := historical[historicalKey{at: s.at}]
 		latest := latestRowsFor(t, ds, metric, connID)
-		got, ok := latest[""]
+		got, inLatest := latest[""]
 		switch {
-		case s.want == 0 && ok:
-			t.Errorf("latest reported %v for a sample with no waiter, want no row", got.Value)
-		case s.want != 0 && !ok:
-			t.Errorf("no latest row for the sample at %v", s.at)
-		case ok:
+		case s.want == 0 && (inHistory || inLatest):
+			t.Errorf("sample at %v has no waiter: historical %+v (%v), latest %+v (%v), want neither",
+				s.at, row, inHistory, got, inLatest)
+		case s.want != 0 && (!inHistory || !inLatest):
+			t.Errorf("sample at %v has a waiter: historical present %v, latest present %v, want both",
+				s.at, inHistory, inLatest)
+		case s.want != 0:
+			assertClose(t, "historical", row.Value, s.want)
 			assertClose(t, "latest", got.Value, row.Value)
 		}
 		deleteSample(t, pool, "pg_stat_activity", connID, s.at)
@@ -278,73 +280,170 @@ func insertCheckpointerSample(t *testing.T, pool *pgxpool.Pool, connID int,
 	}
 }
 
-// TestCheckpointsReqDelta_HistoricalMatchesLatest checks that the hourly
-// historical buckets add up to the latest query's one hour figure for
-// the same samples, wherever the UTC hour boundary falls inside the
-// hour, and that both leave a server in recovery out. The samples all
-// sit inside the last hour, so the first has no predecessor in either
-// query and the deltas the buckets split between them are exactly the
-// deltas the latest query sums.
+// testClockSchema defines test_clock.now(), which returns the instant
+// stored in test_clock.clock. A session whose search_path lists
+// test_clock before pg_catalog resolves an unqualified NOW() to it, so a
+// registry query runs unchanged as though it were that instant.
+const testClockSchema = `
+DROP SCHEMA IF EXISTS test_clock CASCADE;
+CREATE SCHEMA test_clock;
+CREATE TABLE test_clock.clock (instant TIMESTAMPTZ NOT NULL);
+INSERT INTO test_clock.clock VALUES (pg_catalog.now());
+CREATE FUNCTION test_clock.now() RETURNS TIMESTAMPTZ
+    LANGUAGE sql STABLE
+    AS 'SELECT instant FROM test_clock.clock';
+`
+
+// newClockedDatastore returns a Datastore over the same test database
+// whose queries read NOW() from a clock the test sets, so a latest query
+// can be run as it would have run at the end of a past hour. The tables
+// are the ones pool's datastore created; the returned function sets the
+// clock.
+func newClockedDatastore(t *testing.T, pool *pgxpool.Pool) (*Datastore, func(time.Time)) {
+	t.Helper()
+
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, testClockSchema); err != nil {
+		t.Fatalf("failed to create the test clock: %v", err)
+	}
+
+	cfg, err := pgxpool.ParseConfig(requireLocalTestDSN(t, "the test clock"))
+	if err != nil {
+		t.Fatalf("could not parse the test database DSN: %v", err)
+	}
+	cfg.ConnConfig.RuntimeParams["search_path"] = "test_clock, pg_catalog, public"
+	clocked, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatalf("could not connect the clocked pool: %v", err)
+	}
+	// Cleanups run last in, first out, and after the caller's deferred
+	// teardown has closed pool, so the clock is dropped through its own
+	// pool before that pool closes.
+	t.Cleanup(clocked.Close)
+	t.Cleanup(func() {
+		if _, err := clocked.Exec(context.Background(),
+			"DROP SCHEMA IF EXISTS test_clock CASCADE"); err != nil {
+			t.Logf("test clock teardown failed: %v", err)
+		}
+	})
+
+	set := func(at time.Time) {
+		t.Helper()
+		if _, err := clocked.Exec(context.Background(),
+			"UPDATE test_clock.clock SET instant = $1", at); err != nil {
+			t.Fatalf("failed to set the test clock: %v", err)
+		}
+	}
+	return &Datastore{pool: clocked}, set
+}
+
+// TestCheckpointsReqDelta_HistoricalMatchesLatest checks that every
+// hourly historical bucket equals what the latest query reported at the
+// end of that hour, for each of several connections whose samples
+// interleave. The samples span three hours at a 600 second interval, so
+// a bucket that took its first delta from the previous hour's last
+// sample would hold six deltas against the live value's five; a LAG that
+// ignored the connection would difference one server's counter against
+// another's; and a standby must be absent from both queries.
 func TestCheckpointsReqDelta_HistoricalMatchesLatest(t *testing.T) {
 	ds, pool, cleanup := newHistoricalMetricsTestDatastore(t)
 	defer cleanup()
+	clocked, setClock := newClockedDatastore(t, pool)
 
 	const metric = "pg_stat_checkpointer.checkpoints_req_delta"
+	const hours = 3
 	primaryRole, standbyRole := false, true
-	// Deltas +6, +4, -18 (a stats reset, counted as 0), +3, +2 = 15.
-	counters := []int64{1000, 1006, 1010, 2, 5, 7}
+	h0 := time.Now().UTC().Truncate(time.Hour).Add(-5 * time.Hour)
 
-	cases := []struct {
-		name string
-		role *bool
-		want *float64
+	servers := []struct {
+		name   string
+		minute int
+		role   *bool
+		// counter returns the cumulative num_requested at sample n.
+		counter func(n int) int64
+		// want is the per-bucket value, or nil for no row.
+		want []float64
 	}{
-		{"primary", &primaryRole, ptr(15.0)},
-		{"no recovery state", nil, ptr(15.0)},
-		{"standby", &standbyRole, nil},
+		{
+			// A steady primary requesting one checkpoint per sample.
+			name: "steady", minute: 5, role: &primaryRole,
+			counter: func(n int) int64 { return 1000 + int64(n) },
+			want:    []float64{5, 5, 5},
+		},
+		{
+			// No role samples, three per sample, and a statistics reset
+			// at the fourth sample of the second hour, counted as 0.
+			name: "reset", minute: 7,
+			counter: func(n int) int64 {
+				if n >= 9 {
+					return 2 + 3*int64(n-9)
+				}
+				return 50000 + 3*int64(n)
+			},
+			want: []float64{15, 12, 15},
+		},
+		{
+			// A standby: excluded from both queries.
+			name: "standby", minute: 9, role: &standbyRole,
+			counter: func(n int) int64 { return 7000 + 2*int64(n) },
+		},
 	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			resetMetricsTables(t, pool)
-			connID := insertConnection(t, pool, "checkpoints-490-"+c.name)
-			for i, requested := range counters {
-				at := sampleInstant(time.Duration(55-i*10) * time.Minute)
-				insertCheckpointerSample(t, pool, connID, at, requested, c.role)
-			}
 
-			latest := latestRowsFor(t, ds, metric, connID)
-			historical := historicalRowsFor(t, ds, metric, connID)
-			if c.want == nil {
-				if len(latest) != 0 || len(historical) != 0 {
-					t.Errorf("standby: latest = %+v, historical = %+v, want neither",
-						latest, historical)
-				}
-				return
-			}
+	connIDs := make([]int, len(servers))
+	for i, s := range servers {
+		connIDs[i] = insertConnection(t, pool, "checkpoints-490-"+s.name)
+	}
 
+	// The latest query assumes no sample is newer than NOW(), so each
+	// hour's samples are written just before the clock reaches the end
+	// of that hour.
+	for h := 0; h < hours; h++ {
+		for i, s := range servers {
+			for n := 6 * h; n < 6*(h+1); n++ {
+				at := h0.Add(time.Duration(s.minute+10*n) * time.Minute)
+				insertCheckpointerSample(t, pool, connIDs[i], at, s.counter(n), s.role)
+			}
+		}
+
+		setClock(h0.Add(time.Duration(h+1) * time.Hour))
+		for i, s := range servers {
+			latest := latestRowsFor(t, clocked, metric, connIDs[i])
 			got, ok := latest[""]
-			if !ok {
-				t.Fatalf("no latest row")
+			switch {
+			case s.want == nil && ok:
+				t.Errorf("%s: latest at the end of hour %d = %v, want no row", s.name, h, got.Value)
+			case s.want != nil && !ok:
+				t.Errorf("%s: no latest row at the end of hour %d", s.name, h)
+			case ok:
+				assertClose(t, s.name+" latest", got.Value, s.want[h])
 			}
-			assertClose(t, "latest", got.Value, *c.want)
+		}
+	}
 
-			var sum float64
-			var samples int64
-			for _, r := range historical {
-				if r.DatabaseName != nil {
-					t.Errorf("historical database = %v, want NULL", *r.DatabaseName)
-				}
-				if !r.CollectedAt.Equal(r.CollectedAt.Truncate(time.Hour)) {
-					t.Errorf("bucket %v does not start on the hour", r.CollectedAt.UTC())
-				}
-				sum += r.Value
-				samples += r.SampleCount
+	for i, s := range servers {
+		historical := historicalRowsFor(t, ds, metric, connIDs[i])
+		if s.want == nil {
+			if len(historical) != 0 {
+				t.Errorf("%s: historical = %+v, want none", s.name, historical)
 			}
-			assertClose(t, "sum of historical buckets", sum, got.Value)
-			if samples != int64(len(counters)) {
-				t.Errorf("historical sample count = %d, want %d", samples, len(counters))
+			continue
+		}
+		if len(historical) != hours {
+			t.Fatalf("%s: historical = %+v, want %d buckets", s.name, historical, hours)
+		}
+		for h, row := range historical {
+			bucket := h0.Add(time.Duration(h) * time.Hour)
+			if !row.CollectedAt.Equal(bucket) {
+				t.Errorf("%s: bucket[%d] = %v, want %v", s.name, h, row.CollectedAt.UTC(), bucket)
 			}
-		})
+			if row.DatabaseName != nil {
+				t.Errorf("%s: historical database = %v, want NULL", s.name, *row.DatabaseName)
+			}
+			if row.SampleCount != 6 {
+				t.Errorf("%s: bucket[%d] sample count = %d, want 6", s.name, h, row.SampleCount)
+			}
+			assertClose(t, s.name+" historical", row.Value, s.want[h])
+		}
 	}
 }
 
@@ -371,10 +470,11 @@ func TestCheckpointsReqDelta_HistoricalRecoveryPerBucket(t *testing.T) {
 	insertCheckpointerSample(t, pool, connID, at(0, 10), 100, &inRecovery)
 	insertCheckpointerSample(t, pool, connID, at(0, 40), 150, &inRecovery)
 	// Hour 1, promoted at minute 35: the newest role sample is primary,
-	// so the hour is kept, with +5 then +3.
+	// so the hour is kept. Its first sample has no predecessor inside the
+	// hour, so only the +3 counts.
 	insertCheckpointerSample(t, pool, connID, at(1, 5), 155, &inRecovery)
 	insertCheckpointerSample(t, pool, connID, at(1, 35), 158, &primary)
-	// Hour 2, no role sample: kept, with +4 and +1.
+	// Hour 2, no role sample: kept, with +1.
 	insertCheckpointerSample(t, pool, connID, at(2, 20), 162, nil)
 	insertCheckpointerSample(t, pool, connID, at(2, 50), 163, nil)
 
@@ -383,7 +483,7 @@ func TestCheckpointsReqDelta_HistoricalRecoveryPerBucket(t *testing.T) {
 		bucket  time.Time
 		value   float64
 		samples int64
-	}{{at(1, 0), 8, 2}, {at(2, 0), 5, 2}}
+	}{{at(1, 0), 3, 2}, {at(2, 0), 1, 2}}
 	if len(got) != len(want) {
 		t.Fatalf("historical buckets = %+v, want %d", got, len(want))
 	}
@@ -468,6 +568,28 @@ func TestSlowQueryCount_HistoricalMatchesLatest(t *testing.T) {
 		{"beta", 1, 10, 101, 4000},
 		{"beta", 1, 20, 4, 10000},
 	})
+
+	// A second server runs the same statement identity, fast and with a
+	// larger counter, a minute after each of the first server's samples.
+	// An identity window without the connection would pair the first
+	// server's queryid 3 with these rows, and its slow interval at s2
+	// would vanish.
+	otherID := insertConnection(t, pool, "slow-query-490-other")
+	for i, at := range []time.Time{s1, s2, s3} {
+		calls := int64(100 * (i + 1))
+		insertStatementSample(t, pool, otherID, at.Add(time.Minute),
+			[]statementRow{{"alpha", 3, 10, calls, float64(calls)}})
+	}
+	other := historicalRowsByKey(t, ds, metric, otherID)
+	if len(other) != 3 {
+		t.Fatalf("other server's historical rows = %+v, want one per sample", other)
+	}
+	for key, row := range other {
+		assertClose(t, "other server historical at "+key.at.String(), row.Value, 0)
+	}
+	if got, ok := latestRowsFor(t, ds, metric, otherID)["alpha"]; !ok || got.Value != 0 {
+		t.Errorf("other server's latest = %+v (present %v), want 0", got, ok)
+	}
 
 	want := map[historicalKey]float64{
 		{"alpha", s1}: 0, {"alpha", s2}: 1, {"alpha", s3}: 1,

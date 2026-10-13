@@ -426,9 +426,12 @@ project adheres to
   `pg_stat_activity.max_lock_wait_seconds`, which were previously
   never scored by tier 1. Each historical query computes the same
   statistic as the metric's latest query: the largest lag across
-  standbys, hourly requested checkpoint counts that leave out hours
-  spent in recovery, slow statements counted from per-interval mean
-  execution times, and a lock wait of 0 for samples with no waiter.
+  standbys, requested checkpoints counted within each hour and
+  leaving out hours spent in recovery, slow statements counted from
+  per-interval mean execution times, and the longest lock wait in
+  samples where a backend waits on a lock. The live `lag_bytes`
+  value now reads only each server's newest sample, so a standby
+  that has disconnected no longer holds it up for five minutes.
   The developer guide now gives the reason each of the 11 remaining
   metrics stays out of anomaly detection.
 

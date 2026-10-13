@@ -1234,23 +1234,34 @@ conventions from that change hold across both:
   one row per sample (or per hour bucket for counter sums), and each one
   added since #567 has an integration test comparing the two on the same
   samples (`metric_registry_equivalence_integration_test.go` for the
-  four #490 added; it reads the historical rows once, then deletes the
+  four #490 added; most read the historical rows once, then delete the
   newest sample after each latest-query check so the next becomes
-  newest). The #490 shapes: `lag_bytes` takes `MAX` across standby pids
-  per `(connection_id, collected_at)`; `max_lock_wait_seconds` groups
-  every `pg_stat_activity` sample and uses `COALESCE(MAX(...) FILTER
-  (...), 0)`, so samples with no waiter enter the baseline as 0 even
-  though the latest query emits no row for them; `checkpoints_req_delta`
-  judges recovery per UTC hour bucket by the newest `pg_node_role` row in
-  that hour (no role row keeps the bucket, as the latest query does);
-  and `slow_query_count` rebuilds each interval mean with `LAG` over the
-  same identity window, pools identities per queryid before the mean, as
-  the latest query does, and only pairs samples less than 15 minutes
-  apart, since the latest query's window can never see a longer interval. Removing a historical query needs no migration, because the
-  sweep deletes the metric's old baseline rows on the next cycle, and
-  `processTier2And3` suppresses, without running Tier 2 or 3, any
-  pending candidate whose metric fails `SupportsBaselines`. The
-  engine's detection tests use
+  newest). Each test includes a second connection whose values differ,
+  so dropping `connection_id` from a window partition fails it. The
+  #490 shapes: `lag_bytes` takes `MAX` across standby pids per
+  `(connection_id, collected_at)`, and its latest query reads only each
+  connection's newest sample (the #625 pattern), so a departed standby
+  drops out at once; `max_lock_wait_seconds` emits only samples with a
+  client backend waiting on a lock, as the latest query does (no
+  zero-fill, the `blocked_count` precedent); `checkpoints_req_delta`
+  partitions its `LAG` by connection and UTC hour bucket, so each
+  bucket has as many deltas as the live one-hour value (unlike
+  `deadlocks_delta` and `temp_files_delta`, whose lookback-wide `LAG`
+  gives each bucket one extra delta), and judges recovery per bucket by
+  the newest `pg_node_role` row in that hour (no role row keeps the
+  bucket, as the latest query does); and `slow_query_count` rebuilds
+  each interval mean with `LAG` over the same identity window, pools
+  identities per queryid before the mean, as the latest query does, and
+  only pairs samples less than 15 minutes apart, since the latest
+  query's window can never see a longer interval. To run a latest query
+  as of a past instant, `newClockedDatastore(t, pool)` in that file
+  returns a `Datastore` whose `search_path` resolves `NOW()` to
+  `test_clock.now()`; the latest query has no upper bound, so insert
+  samples up to the instant before evaluating it. Removing a historical
+  query needs no migration, because the sweep deletes the metric's old
+  baseline rows on the next cycle, and `processTier2And3` suppresses,
+  without running Tier 2 or 3, any pending candidate whose metric fails
+  `SupportsBaselines`. The engine's detection tests use
   `pg_sys_load_avg_info.load_avg_fifteen_minutes` as their baselined
   metric.
 

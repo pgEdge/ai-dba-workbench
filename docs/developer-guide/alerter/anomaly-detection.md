@@ -119,10 +119,13 @@ scored against a baseline of like values. GitHub issue #490 added
 historical queries for `pg_stat_replication.lag_bytes`,
 `pg_stat_checkpointer.checkpoints_req_delta`,
 `pg_stat_statements.slow_query_count` and
-`pg_stat_activity.max_lock_wait_seconds`. The historical query for
-`max_lock_wait_seconds` reports 0 for every sample with no backend
-waiting on a lock, so the baseline describes normal, uncontended
-operation rather than contended samples alone.
+`pg_stat_activity.max_lock_wait_seconds`. Like the latest query,
+the historical query for `max_lock_wait_seconds` only reports
+samples in which a client backend waits on a lock, so the baseline
+describes lock waits rather than uncontended operation. The
+historical query for `checkpoints_req_delta` sums each UTC hour's
+deltas within that hour, so every bucket carries as many deltas as
+the live one-hour value.
 
 The following metrics have no historical query, deliberately, and
 are therefore never baselined or scored:
@@ -155,8 +158,7 @@ are therefore never baselined or scored:
   through the threshold rule.
 - `pg_stat_replication.replay_lag_seconds`:
   `pg_stat_replication.lag_bytes` carries the same replication lag
-  signal, and GitHub issue #625 found this metric's latest query
-  broken.
+  signal.
 - `table_last_autovacuum_hours`: it is a time-since clock that only
   emits tables already past their autovacuum trigger, so every row
   is an alert condition; an object dimension would not change that.

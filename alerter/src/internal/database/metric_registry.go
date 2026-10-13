@@ -350,35 +350,38 @@ var metricRegistry = map[string]metricQueryConfig{
 	},
 
 	// The value is the largest lag in bytes across the connection's
-	// standbys. The latest query takes each standby pid's newest sample
-	// and reports the maximum; the historical query reports the same
-	// maximum for every sample, grouping on (connection_id, collected_at)
-	// because the probe stamps every standby's row from one run with the
-	// same collected_at. Both skip rows whose sent_lsn or replay_lsn is
-	// NULL. A primary with no standby has no row in either query, so the
-	// baseline describes lag only while a standby is attached, which is
-	// the only time the latest query has a value to score. See GitHub
+	// standbys. The latest query reads the connection's newest sample
+	// and reports the maximum across its rows; the historical query
+	// reports the same maximum for every sample, grouping on
+	// (connection_id, collected_at) because the probe stamps every
+	// standby's row from one run with the same collected_at. Both skip
+	// rows whose sent_lsn or replay_lsn is NULL. The latest query picks
+	// the newest sample before that filter, as replay_lag_seconds does
+	// (GitHub issue #625): taking each pid's newest non-NULL row instead
+	// kept a departed standby's lag in the live value for the whole
+	// window. A primary with no standby has no row in either query, so
+	// the baseline describes lag only while a standby is attached, which
+	// is the only time the latest query has a value to score. See GitHub
 	// issue #490.
 	"pg_stat_replication.lag_bytes": {
 		probeName: "pg_stat_replication",
 		latestSQL: `
-			WITH recent_replication AS (
-				SELECT connection_id,
-				       sent_lsn,
-				       replay_lsn,
-				       collected_at,
-				       ROW_NUMBER() OVER (PARTITION BY connection_id, pid ORDER BY collected_at DESC) as rn
+			WITH newest_sample AS (
+				SELECT connection_id, MAX(collected_at) AS collected_at
 				FROM metrics.pg_stat_replication
 				WHERE collected_at > NOW() - INTERVAL '5 minutes'
-				  AND sent_lsn IS NOT NULL
-				  AND replay_lsn IS NOT NULL
+				GROUP BY connection_id
 			)
-			SELECT connection_id,
-			       COALESCE(MAX((sent_lsn::pg_lsn - replay_lsn::pg_lsn)::float), 0) as value,
-			       MAX(collected_at) as collected_at
-			FROM recent_replication
-			WHERE rn = 1
-			GROUP BY connection_id
+			SELECT r.connection_id,
+			       MAX((r.sent_lsn::pg_lsn - r.replay_lsn::pg_lsn)::float) as value,
+			       r.collected_at
+			FROM metrics.pg_stat_replication r
+			JOIN newest_sample n
+			  ON n.connection_id = r.connection_id
+			 AND n.collected_at = r.collected_at
+			WHERE r.sent_lsn IS NOT NULL
+			  AND r.replay_lsn IS NOT NULL
+			GROUP BY r.connection_id, r.collected_at
 		`,
 		historicalSQL: `
 			SELECT r.connection_id, NULL::text as database_name,
@@ -816,14 +819,14 @@ var metricRegistry = map[string]metricQueryConfig{
 	},
 
 	// The latest query emits a row only while some client backend waits
-	// on a lock, so the historical query cannot simply copy its filters:
-	// a baseline built from those rows alone would describe contended
-	// samples only, and every ordinary wait would be scored against the
-	// typical length of a long one. It emits one row for every
-	// pg_stat_activity sample instead, with the latest query's filters
-	// moved into the aggregate, so a sample with no lock waiter reports 0
-	// and a sample with waiters reports exactly what the latest query
-	// reports for it. See GitHub issue #490.
+	// on a lock, and the historical query emits a row for exactly the
+	// same samples with the same value, so the baseline describes the
+	// lock waits this server typically sees, as the blocked_count and
+	// idle_in_transaction_seconds baselines describe the samples in
+	// which they are present. Filling the other samples with 0 would
+	// make a wait typical of the server score as an outlier against a
+	// baseline the latest query can never produce. See GitHub issue
+	// #490.
 	"pg_stat_activity.max_lock_wait_seconds": {
 		probeName: "pg_stat_activity",
 		latestSQL: `
@@ -844,15 +847,14 @@ var metricRegistry = map[string]metricQueryConfig{
 		`,
 		historicalSQL: `
 			SELECT psa.connection_id, NULL::text as database_name,
-			       COALESCE(MAX(EXTRACT(EPOCH FROM (psa.collected_at - psa.query_start)))
-			           FILTER (WHERE psa.wait_event_type = 'Lock'
-			                     AND psa.query_start IS NOT NULL
-			                     AND psa.backend_type = 'client backend'),
-			           0)::float as value,
+			       MAX(EXTRACT(EPOCH FROM (psa.collected_at - psa.query_start)))::float as value,
 			       psa.collected_at
 			FROM metrics.pg_stat_activity psa
 			JOIN connections c ON c.id = psa.connection_id
 			WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1
+			  AND psa.wait_event_type = 'Lock'
+			  AND psa.query_start IS NOT NULL
+			  AND psa.backend_type = 'client backend'
 			GROUP BY psa.connection_id, psa.collected_at
 			ORDER BY psa.connection_id, psa.collected_at
 		`,
@@ -1080,18 +1082,22 @@ var metricRegistry = map[string]metricQueryConfig{
 	// absence while the probe has collected inside the hour.
 	//
 	// The historical query feeds baselines with the same per-hour figure
-	// in UTC hour buckets, following the deadlocks_delta entry: the delta
-	// is taken over the whole lookback before bucketing, the filter sits
-	// inside the aggregate so a bucket whose only sample has no
-	// predecessor reports 0, and each row carries the number of raw
-	// samples it aggregates. It applies the recovery exclusion per
-	// bucket, judging each hour by the newest pg_node_role sample inside
-	// it, which is what the latest query would have judged at the end of
-	// that hour; an hour with no role sample is kept, as the latest query
-	// keeps a connection with none. Without the exclusion a standby's
-	// restartpoint activity would land in baselines that the latest query
-	// never scores against, the mismatch GitHub issue #567 describes. See
-	// GitHub issue #490.
+	// in UTC hour buckets. Its LAG is partitioned by connection and
+	// bucket, so each bucket's first sample has no predecessor, exactly
+	// as the latest query's LAG starts inside its one hour window: taking
+	// the delta over the whole lookback instead, as deadlocks_delta does,
+	// gave every bucket one more delta than the live value (six against
+	// five at a 600 second probe interval), and a perfectly steady server
+	// scored z = -3.33. The filter sits inside the aggregate so a bucket
+	// whose only sample has no predecessor reports 0, and each row
+	// carries the number of raw samples it aggregates. It applies the
+	// recovery exclusion per bucket, judging each hour by the newest
+	// pg_node_role sample inside it, which is what the latest query would
+	// have judged at the end of that hour; an hour with no role sample is
+	// kept, as the latest query keeps a connection with none. Without the
+	// exclusion a standby's restartpoint activity would land in baselines
+	// that the latest query never scores against, the mismatch GitHub
+	// issue #567 describes. See GitHub issue #490.
 	"pg_stat_checkpointer.checkpoints_req_delta": {
 		probeName: "pg_stat_checkpointer",
 		latestSQL: `
@@ -1133,7 +1139,8 @@ var metricRegistry = map[string]metricQueryConfig{
 				       m.collected_at,
 				       date_trunc('hour', m.collected_at AT TIME ZONE 'UTC') as bucket,
 				       LAG(m.num_requested) OVER (
-				           PARTITION BY m.connection_id
+				           PARTITION BY m.connection_id,
+				                        date_trunc('hour', m.collected_at AT TIME ZONE 'UTC')
 				           ORDER BY m.collected_at
 				       ) as prev_num_requested
 				FROM metrics.pg_stat_checkpointer m

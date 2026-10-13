@@ -264,22 +264,17 @@ func insertCheckpointerSample(t *testing.T, pool *pgxpool.Pool, connID int,
 	at time.Time, requested int64, role *bool) {
 	t.Helper()
 
-	ctx := context.Background()
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO metrics.pg_stat_checkpointer
-		    (connection_id, num_requested, collected_at)
-		VALUES ($1, $2, $3)
-	`, connID, requested, at); err != nil {
-		t.Fatalf("failed to insert pg_stat_checkpointer row: %v", err)
-	}
-	if role == nil {
-		return
-	}
-	if _, err := pool.Exec(ctx, `
+	if _, err := pool.Exec(context.Background(), `
+		WITH checkpointer AS (
+			INSERT INTO metrics.pg_stat_checkpointer
+			    (connection_id, num_requested, collected_at)
+			VALUES ($1, $2, $3)
+		)
 		INSERT INTO metrics.pg_node_role (connection_id, is_in_recovery, collected_at)
-		VALUES ($1, $2, $3)
-	`, connID, *role, at); err != nil {
-		t.Fatalf("failed to insert pg_node_role row: %v", err)
+		SELECT $1, $4::boolean, $3
+		WHERE $4::boolean IS NOT NULL
+	`, connID, requested, at, role); err != nil {
+		t.Fatalf("failed to insert the checkpointer sample: %v", err)
 	}
 }
 

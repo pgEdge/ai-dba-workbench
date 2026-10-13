@@ -77,15 +77,31 @@ When answering questions about database-specific metrics (size, cache hit ratio,
 4. When querying pg_stat_database or similar per-database views, be aware that each row represents a different database - make sure you're reporting the correct one.
 
 DATASTORE:
-The monitoring datastore holds collected metrics and the workbench's own
-configuration (connections, blackouts, alert rules, notification channels and so on).
-- Call describe_datastore with no arguments to list every source query_datastore accepts.
-- Call describe_datastore with a source to see its columns before querying it.
-- Then call query_datastore with a structured request: source, columns, filters
-  (column, op and value or values), time range, ordering and paging. It does not accept SQL.
-- IMPORTANT: When users ask about "scheduled blackouts" or "what blackouts are configured",
-  ALWAYS query BOTH the blackouts and blackout_schedules sources.
+The monitoring datastore also holds the workbench's own configuration: connections,
+clusters and groups, alerts and their acknowledgments, alert rules and thresholds,
+blackouts and blackout schedules, probe settings, metric baselines and similar.
+Use these to answer questions about the workbench's own setup and configuration.
+- Call describe_datastore with no arguments to list every source (metric probes and
+  configuration tables) and how each is limited to the connections you can access.
+- Call describe_datastore with a source to see the columns you may use.
+- Then call query_datastore with a structured request: source, columns, filters,
+  connection_ids, time_start/time_end, shape (rows, latest or aggregate), order_by and
+  paging. query_datastore does not accept SQL.
 - Use query_metrics, not query_datastore, for counter rates and deltas over time.
+- A 'system' alert concerns the Workbench itself (for example a failing LLM provider
+  degrading anomaly detection) and has no connection_id.
+
+Blackouts (maintenance windows that suppress alerts):
+- blackouts holds one-time blackout periods; blackout_schedules holds recurring
+  schedules with cron expressions.
+IMPORTANT: When users ask about "scheduled blackouts" or "what blackouts are configured",
+ALWAYS look at BOTH: query both the blackouts and blackout_schedules sources with
+query_datastore, or call get_blackouts with include_schedules. One-time blackouts are in
+'blackouts', recurring schedules are in 'blackout_schedules'. Both types suppress alerts
+during their active windows.
+- Current and future one-time blackouts: query_datastore with source "blackouts" and
+  filters [{"column": "end_time", "op": ">", "value": "now"}]. Time columns take an
+  RFC 3339 timestamp or "now".
 
 RESPONSE GUIDELINES:
 - Be concise and direct
@@ -367,6 +383,8 @@ export const CHAT_TOOLS: ToolDefinition[] = [
         },
     },
     {
+        // Source of truth: server/src/internal/tools/query_datastore.go
+        // (queryDatastoreInputSchema). Change both together.
         name: 'query_datastore',
         description:
             'Query one DATASTORE source (a metrics probe, or alerts, blackouts, connections and other configuration) with structured parameters; SQL is not accepted. Call describe_datastore first to list sources and columns. Use query_metrics for counter rates.',
@@ -393,7 +411,7 @@ export const CHAT_TOOLS: ToolDefinition[] = [
                 time_start: {
                     type: 'string',
                     description:
-                        'Start of the time range: a relative duration such as 1h or 7d, now, or an RFC 3339 timestamp. Metric sources default to one hour before time_end.',
+                        'Start of the time range: a relative duration such as 1h or 7d counted back from time_end, now, or an RFC 3339 timestamp. Metric sources default to one hour before time_end, for every shape including latest; change-tracked probes (pg_settings, pg_hba_file_rules, pg_ident_file_mappings, pg_server_info, pg_extension) store a row only when something changes, so give them a wide time_start such as 30d.',
                 },
                 time_end: {
                     type: 'string',
@@ -402,6 +420,7 @@ export const CHAT_TOOLS: ToolDefinition[] = [
                 },
                 filters: {
                     type: 'array',
+                    maxItems: 20,
                     description: 'Conditions every returned row must meet.',
                     items: {
                         type: 'object',
@@ -417,7 +436,7 @@ export const CHAT_TOOLS: ToolDefinition[] = [
                             value: {
                                 type: 'string',
                                 description:
-                                    'The value to compare with, written as a string (for example "app", "42" or "true"), for every operator except in, not in, is null and is not null.',
+                                    'The value to compare with, written as a string (for example "app", "42" or "true"), for every operator except in, not in, is null and is not null. A time column takes an RFC 3339 timestamp or now.',
                             },
                             values: {
                                 type: 'array',
@@ -433,11 +452,12 @@ export const CHAT_TOOLS: ToolDefinition[] = [
                     type: 'string',
                     enum: ['rows', 'latest', 'aggregate'],
                     description:
-                        'rows (default), latest (most recent row per connection and entity; metric sources only) or aggregate.',
+                        'rows (default), latest (most recent row per connection and entity within the time window; metric sources only) or aggregate. The time window applies to every shape.',
                 },
                 group_by: {
                     type: 'array',
                     items: { type: 'string' },
+                    maxItems: 20,
                     description: 'Columns to group by; shape aggregate only.',
                 },
                 aggregation: {
@@ -454,6 +474,7 @@ export const CHAT_TOOLS: ToolDefinition[] = [
                 },
                 order_by: {
                     type: 'array',
+                    maxItems: 20,
                     items: {
                         type: 'object',
                         properties: {
@@ -465,13 +486,15 @@ export const CHAT_TOOLS: ToolDefinition[] = [
                         },
                         required: ['column'],
                     },
-                    description: 'Ordering terms.',
+                    description: 'Ordering terms. Ties are broken by the row\'s key columns.',
                 },
                 page: {
                     type: 'integer',
                     minimum: 1,
+                    maximum: 100000,
                     default: 1,
-                    description: 'Page of results to return.',
+                    description:
+                        'Page of results to return; page * page_size may be at most 100000.',
                 },
                 page_size: {
                     type: 'integer',

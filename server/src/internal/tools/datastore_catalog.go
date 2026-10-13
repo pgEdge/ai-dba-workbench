@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/server/internal/metrics"
 )
@@ -693,25 +694,15 @@ func lookupDatastoreSource(ctx context.Context, pool *pgxpool.Pool, name string)
 // in the metrics schema, or errUnknownDatastoreSource when there is no
 // such table.
 func lookupMetricTable(ctx context.Context, pool *pgxpool.Pool, name string) (string, error) {
-	rows, err := pool.Query(ctx, datastoreMetricTableQuery, name)
+	// A relation name is unique within a schema, so there is at most one
+	// row.
+	var description string
+	err := pool.QueryRow(ctx, datastoreMetricTableQuery, name).Scan(&description)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", errUnknownDatastoreSource
+	}
 	if err != nil {
 		return "", fmt.Errorf("failed to look up source: %w", err)
-	}
-	var description string
-	found := false
-	for rows.Next() {
-		if err := rows.Scan(&description); err != nil {
-			rows.Close()
-			return "", fmt.Errorf("failed to look up source: %w", err)
-		}
-		found = true
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return "", fmt.Errorf("failed to look up source: %w", err)
-	}
-	if !found {
-		return "", errUnknownDatastoreSource
 	}
 	return description, nil
 }

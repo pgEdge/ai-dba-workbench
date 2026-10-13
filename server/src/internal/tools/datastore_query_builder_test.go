@@ -855,6 +855,24 @@ func TestCoerceFilterValue(t *testing.T) {
 	}
 }
 
+// TestCoerceFloatValueNativeNumbers covers the Go number types a float
+// column accepts as they are, without parsing.
+func TestCoerceFloatValueNativeNumbers(t *testing.T) {
+	floatCol := metricCol("f", typeReal)
+	for _, tc := range []struct {
+		in   any
+		want float64
+	}{
+		{2.5, 2.5},
+		{2, 2},
+	} {
+		got, err := coerceFloatValue(floatCol, tc.in, "f")
+		if err != nil || got != tc.want {
+			t.Errorf("coerceFloatValue(%#v) = %#v, %v; want %v", tc.in, got, err, tc.want)
+		}
+	}
+}
+
 func TestIntegerValue(t *testing.T) {
 	if n, ok := integerValue(float64(math.MinInt64)); !ok || n != math.MinInt64 {
 		t.Errorf("MinInt64: %d %v", n, ok)

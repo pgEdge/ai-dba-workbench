@@ -303,3 +303,41 @@ func TestDescribeDatastorePartitionedIntegration(t *testing.T) {
 		t.Errorf("a windowed query should plan only the current partition:\n%s", plan)
 	}
 }
+
+// TestDatastoreSourceLookupErrorsIntegration covers the catalog lookups'
+// failure paths: a database error is reported as such, and a metrics
+// table whose name is not a valid identifier is never listed.
+func TestDatastoreSourceLookupErrorsIntegration(t *testing.T) {
+	f := newDatastoreFixture(t)
+	ctx := context.Background()
+	if _, err := f.pool.Exec(ctx,
+		`CREATE TABLE metrics."ds-bad-name" (connection_id INTEGER, collected_at TIMESTAMPTZ)`); err != nil {
+		t.Fatalf("create badly named probe: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := f.pool.Exec(context.Background(), `DROP TABLE IF EXISTS metrics."ds-bad-name"`); err != nil {
+			t.Logf("drop badly named probe: %v", err)
+		}
+	})
+
+	summaries, err := listDatastoreSources(ctx, f.pool)
+	if err != nil {
+		t.Fatalf("listDatastoreSources: %v", err)
+	}
+	for _, s := range summaries {
+		if s.Name == "ds-bad-name" {
+			t.Errorf("a table whose name is not a valid identifier should not be listed")
+		}
+	}
+
+	doneCtx, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := lookupDatastoreSource(doneCtx, f.pool, "ds_probe"); err == nil ||
+		!strings.Contains(err.Error(), "failed to look up source") {
+		t.Errorf("lookup on a canceled context = %v, want a look-up failure", err)
+	}
+	if _, err := lookupMetricColumns(doneCtx, f.pool, "ds_probe"); err == nil ||
+		!strings.Contains(err.Error(), "failed to read source columns") {
+		t.Errorf("column lookup on a canceled context = %v, want a read failure", err)
+	}
+}

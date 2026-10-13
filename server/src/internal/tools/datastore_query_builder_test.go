@@ -135,6 +135,15 @@ func TestParseDatastoreRequestRejections(t *testing.T) {
 		{"source not string", map[string]any{"source": 3}, "source must be a string"},
 		{"raw sql", map[string]any{"source": "alerts", "query": "SELECT 1"}, "no longer accepts SQL"},
 		{"unknown key", map[string]any{"source": "alerts", "bogus": 1}, "unknown parameter"},
+		{"raw sql key", map[string]any{"source": "alerts", "sql": "SELECT 1"}, "no longer accepts SQL"},
+		{"connection_id hint", map[string]any{"source": "alerts", "connection_id": 3}, `unknown parameter "connection_id"; did you mean connection_ids (an array)?`},
+		{"limit hint", map[string]any{"source": "alerts", "limit": 10}, `unknown parameter "limit"; use page_size and page`},
+		{"offset hint", map[string]any{"source": "alerts", "offset": 10}, `unknown parameter "offset"; use page_size and page`},
+		{"too many filters", map[string]any{"source": "alerts", "filters": repeatAny(21, map[string]any{"column": "id", "op": "is null"})}, "filters takes at most 20"},
+		{"too many order_by", map[string]any{"source": "alerts", "order_by": repeatAny(21, map[string]any{"column": "id"})}, "order_by takes at most 20"},
+		{"too many group_by", map[string]any{"source": "alerts", "group_by": repeatAny(21, "id")}, "group_by takes at most 20"},
+		{"page beyond row cap", map[string]any{"source": "alerts", "page": 101, "page_size": 1000}, "page * page_size must be at most 100000"},
+		{"page cap alone", map[string]any{"source": "alerts", "page": 100001, "page_size": 1}, "page must be an integer between 1 and 100000"},
 		{"columns not array", map[string]any{"source": "alerts", "columns": "id"}, "columns must be an array"},
 		{"column not string", map[string]any{"source": "alerts", "columns": []any{1}}, "columns must be an array of strings"},
 		{"connection_ids not array", map[string]any{"source": "alerts", "connection_ids": 3}, "connection_ids must be an array"},
@@ -176,6 +185,50 @@ func TestParseDatastoreRequestRejections(t *testing.T) {
 			_, err := parseDatastoreRequest(tc.args)
 			wantErr(t, err, tc.want)
 		})
+	}
+}
+
+// repeatAny returns a list holding n copies of v.
+func repeatAny(n int, v any) []any {
+	out := make([]any, n)
+	for i := range out {
+		out[i] = v
+	}
+	return out
+}
+
+// TestParseDatastoreRequestListCaps checks the caps admit exactly their
+// limit.
+func TestParseDatastoreRequestListCaps(t *testing.T) {
+	_, err := parseDatastoreRequest(map[string]any{
+		"source":   "alerts",
+		"filters":  repeatAny(20, map[string]any{"column": "id", "op": "is null"}),
+		"order_by": repeatAny(20, map[string]any{"column": "id"}),
+		"group_by": repeatAny(20, "id"),
+	})
+	if err != nil {
+		t.Errorf("20 entries each should be accepted: %v", err)
+	}
+	if _, err := parseDatastoreRequest(map[string]any{"source": "alerts", "page": 100, "page_size": 1000}); err != nil {
+		t.Errorf("page 100 of 1000 rows should be accepted: %v", err)
+	}
+}
+
+// TestEndsWithEscape covers the like pattern check.
+func TestEndsWithEscape(t *testing.T) {
+	cases := map[string]bool{
+		``:      false,
+		`app%`:  false,
+		`app\`:  true,
+		`app\\`: false,
+		`a\\\`:  true,
+		`\`:     true,
+		`\%`:    false,
+	}
+	for pattern, want := range cases {
+		if got := endsWithEscape(pattern); got != want {
+			t.Errorf("endsWithEscape(%q) = %v, want %v", pattern, got, want)
+		}
 	}
 }
 
@@ -249,6 +302,7 @@ func TestBuildDatastoreQueryRejections(t *testing.T) {
 		{"object value", metric, map[string]any{"source": "pg_stat_database", "filters": []any{map[string]any{"column": "datname", "op": "=", "value": map[string]any{"a": 1}}}}, everyone, "scalar"},
 		{"like non-text column", metric, map[string]any{"source": "pg_stat_database", "filters": []any{map[string]any{"column": "xact_commit", "op": "like", "value": "1%"}}}, everyone, "text column"},
 		{"like non-string", metric, map[string]any{"source": "pg_stat_database", "filters": []any{map[string]any{"column": "datname", "op": "like", "value": 3}}}, everyone, "string"},
+		{"like trailing backslash", metric, map[string]any{"source": "pg_stat_database", "filters": []any{map[string]any{"column": "datname", "op": "like", "value": `app\`}}}, everyone, "must not end with a single backslash"},
 		{"integer column with text", metric, map[string]any{"source": "pg_stat_database", "filters": []any{map[string]any{"column": "connection_id", "op": "=", "value": "abc"}}}, everyone, "integer"},
 		{"integer column with fraction", metric, map[string]any{"source": "pg_stat_database", "filters": []any{map[string]any{"column": "connection_id", "op": "=", "value": 1.5}}}, everyone, "integer"},
 		{"integer column with bool", metric, map[string]any{"source": "pg_stat_database", "filters": []any{map[string]any{"column": "connection_id", "op": "=", "value": true}}}, everyone, "integer"},
@@ -283,6 +337,16 @@ func TestBuildDatastoreQueryPageSizeCap(t *testing.T) {
 	req.Page = 0
 	_, _, err := buildDatastoreQuery(testMetricSource(), req, everyone, testNow)
 	wantErr(t, err, "page")
+
+	req.PageSize = 1000
+	req.Page = 101
+	_, _, err = buildDatastoreQuery(testMetricSource(), req, everyone, testNow)
+	wantErr(t, err, "page * page_size")
+
+	req.Page = 1
+	req.Filters = make([]datastoreFilter, datastoreMaxListItems+1)
+	_, _, err = buildDatastoreQuery(testMetricSource(), req, everyone, testNow)
+	wantErr(t, err, "at most 20 entries")
 }
 
 // --- scoping ----------------------------------------------------------------
@@ -292,10 +356,10 @@ func TestBuildDatastoreQueryPageSizeCap(t *testing.T) {
 var scopeFragments = map[datastoreScope]string{
 	scopeConnection: "= ANY($",
 	scopeAlert:      `"connection_id" = ANY($`,
-	scopeViaAlert:   "EXISTS (SELECT 1 FROM alerts a WHERE a.id = t.\"alert_id\"",
-	scopeHierarchy:  "EXISTS (SELECT 1 FROM connections c WHERE c.cluster_id = t.\"cluster_id\"",
-	scopeCluster:    "EXISTS (SELECT 1 FROM connections c WHERE c.cluster_id = t.\"id\"",
-	scopeGroup:      "JOIN clusters cl ON cl.id = c.cluster_id WHERE cl.group_id = t.\"id\"",
+	scopeViaAlert:   "EXISTS (SELECT 1 FROM public.alerts a WHERE a.id = t.\"alert_id\"",
+	scopeHierarchy:  "EXISTS (SELECT 1 FROM public.connections c WHERE c.cluster_id = t.\"cluster_id\"",
+	scopeCluster:    "EXISTS (SELECT 1 FROM public.connections c WHERE c.cluster_id = t.\"id\"",
+	scopeGroup:      "JOIN public.clusters cl ON cl.id = c.cluster_id WHERE cl.group_id = t.\"id\"",
 }
 
 func TestBuildDatastoreQueryScopesEverySource(t *testing.T) {
@@ -452,7 +516,7 @@ func TestBuildDatastoreQueryAlertScoping(t *testing.T) {
 			name: "acks all without system alerts",
 			src:  acks, args: map[string]any{"source": "alert_acknowledgments"},
 			vis:  visibleSet{All: true},
-			want: []string{`EXISTS (SELECT 1 FROM alerts a WHERE a.id = t."alert_id" AND a."connection_id" IS NOT NULL)`},
+			want: []string{`EXISTS (SELECT 1 FROM public.alerts a WHERE a.id = t."alert_id" AND a."connection_id" IS NOT NULL)`},
 		},
 		{
 			name: "acks restricted with system alerts",
@@ -491,8 +555,8 @@ func TestBuildDatastoreQueryHierarchyPredicate(t *testing.T) {
 	for _, w := range []string{
 		`t."connection_id" IS NULL AND t."cluster_id" IS NULL AND t."group_id" IS NULL AND t."scope" IN ($2, $3)`,
 		`t."connection_id" IS NOT NULL AND t."connection_id" = ANY($1::int[])`,
-		`t."connection_id" IS NULL AND t."cluster_id" IS NOT NULL AND EXISTS (SELECT 1 FROM connections c WHERE c.cluster_id = t."cluster_id" AND c.id = ANY($1::int[]))`,
-		`t."connection_id" IS NULL AND t."cluster_id" IS NULL AND t."group_id" IS NOT NULL AND EXISTS (SELECT 1 FROM connections c JOIN clusters cl ON cl.id = c.cluster_id WHERE cl.group_id = t."group_id" AND c.id = ANY($1::int[]))`,
+		`t."connection_id" IS NULL AND t."cluster_id" IS NOT NULL AND EXISTS (SELECT 1 FROM public.connections c WHERE c.cluster_id = t."cluster_id" AND c.id = ANY($1::int[]))`,
+		`t."connection_id" IS NULL AND t."cluster_id" IS NULL AND t."group_id" IS NOT NULL AND EXISTS (SELECT 1 FROM public.connections c JOIN public.clusters cl ON cl.id = c.cluster_id WHERE cl.group_id = t."group_id" AND c.id = ANY($1::int[]))`,
 	} {
 		if !strings.Contains(sql, w) {
 			t.Errorf("SQL lacks %q:\n%s", w, sql)
@@ -512,7 +576,7 @@ func TestBuildDatastoreQueryConnectionIDs(t *testing.T) {
 	if !strings.Contains(sql, `t."id" = ANY($1::int[])`) || !containsIntSlice(qargs, []int{3}) {
 		t.Errorf("connections should scope on id: %s %v", sql, qargs)
 	}
-	if !strings.HasPrefix(sql, `SELECT t."id", t."name"`) || !strings.Contains(sql, "FROM \"connections\" t") {
+	if !strings.HasPrefix(sql, `SELECT t."id", t."name"`) || !strings.Contains(sql, "FROM public.\"connections\" t WHERE") {
 		t.Errorf("connections query shape: %s", sql)
 	}
 }
@@ -521,7 +585,7 @@ func TestBuildDatastoreQueryConnectionIDs(t *testing.T) {
 
 func TestBuildDatastoreQueryMetricDefaultWindow(t *testing.T) {
 	sql, qargs := mustBuild(t, testMetricSource(), map[string]any{"source": "pg_stat_database"}, everyone)
-	want := `SELECT t."connection_id", t."collected_at", t."datname", t."xact_commit", t."blks_hit", t."cache_ratio", t."stats_reset" FROM metrics."pg_stat_database" t WHERE t."collected_at" >= $1 AND t."collected_at" <= $2 ORDER BY t."collected_at" DESC LIMIT $3 OFFSET $4`
+	want := `SELECT t."connection_id", t."collected_at", t."datname", t."xact_commit", t."blks_hit", t."cache_ratio", t."stats_reset" FROM (SELECT t."connection_id", t."collected_at", t."datname", t."xact_commit", t."blks_hit", t."cache_ratio", t."stats_reset" FROM metrics."pg_stat_database" t WHERE t."collected_at" >= $1 AND t."collected_at" <= $2 OFFSET 0) t ORDER BY t."collected_at" DESC, t."connection_id" ASC, t."datname" ASC LIMIT $3 OFFSET $4`
 	if sql != want {
 		t.Errorf("SQL =\n%s\nwant\n%s", sql, want)
 	}
@@ -568,7 +632,7 @@ func TestBuildDatastoreQueryConfigTimeRange(t *testing.T) {
 	if strings.Contains(sql, `"start_time" >=`) {
 		t.Errorf("config source without range should be unbounded: %s", sql)
 	}
-	if !strings.Contains(sql, `ORDER BY t."start_time" DESC`) {
+	if !strings.Contains(sql, `FROM public."blackouts" t ORDER BY t."start_time" DESC, t."id" ASC LIMIT`) {
 		t.Errorf("config source should order by its time column: %s", sql)
 	}
 	sql, qargs := mustBuild(t, src, map[string]any{"source": "blackouts", "time_start": "7d"}, everyone)
@@ -586,8 +650,8 @@ func TestBuildDatastoreQueryConfigTimeRange(t *testing.T) {
 		t.Errorf("full range: %s", sql)
 	}
 	sql, _ = mustBuild(t, configSource(t, "alert_rules"), map[string]any{"source": "alert_rules"}, everyone)
-	if !strings.Contains(sql, `ORDER BY t."id" ASC`) {
-		t.Errorf("timeless source should order by its first column: %s", sql)
+	if !strings.Contains(sql, `ORDER BY t."id" ASC LIMIT`) {
+		t.Errorf("timeless source should order by id: %s", sql)
 	}
 }
 
@@ -654,7 +718,7 @@ func TestBuildDatastoreQueryColumnsAndOrder(t *testing.T) {
 		"page_size": 20,
 	}, everyone)
 	if !strings.HasPrefix(sql, `SELECT t."datname", t."xact_commit" FROM`) ||
-		!strings.Contains(sql, `ORDER BY t."xact_commit" DESC, t."datname" ASC LIMIT $3 OFFSET $4`) {
+		!strings.Contains(sql, `ORDER BY t."xact_commit" DESC, t."datname" ASC, t."connection_id" ASC, t."collected_at" ASC LIMIT $3 OFFSET $4`) {
 		t.Errorf("SQL = %s", sql)
 	}
 	if qargs[2] != int64(21) || qargs[3] != int64(40) {
@@ -669,7 +733,7 @@ func TestBuildDatastoreQueryLatest(t *testing.T) {
 		"columns": []any{"datname", "xact_commit"},
 		"filters": []any{map[string]any{"column": "datname", "op": "!=", "value": "template1"}},
 	}, restricted)
-	want := `SELECT "datname", "xact_commit" FROM (SELECT DISTINCT ON (t."connection_id", t."datname") t."connection_id", t."collected_at", t."datname", t."xact_commit", t."blks_hit", t."cache_ratio", t."stats_reset" FROM metrics."pg_stat_database" t WHERE t."connection_id" = ANY($1::int[]) AND t."collected_at" >= $2 AND t."collected_at" <= $3 AND t."datname" <> $4 ORDER BY t."connection_id", t."datname", t."collected_at" DESC) latest ORDER BY "connection_id" ASC, "datname" ASC LIMIT $5 OFFSET $6`
+	want := `SELECT "datname", "xact_commit" FROM (SELECT DISTINCT ON (t."connection_id", t."datname") t."connection_id", t."collected_at", t."datname", t."xact_commit", t."blks_hit", t."cache_ratio", t."stats_reset" FROM (SELECT t."connection_id", t."collected_at", t."datname", t."xact_commit", t."blks_hit", t."cache_ratio", t."stats_reset" FROM metrics."pg_stat_database" t WHERE t."connection_id" = ANY($1::int[]) AND t."collected_at" >= $2 AND t."collected_at" <= $3 OFFSET 0) t WHERE t."datname" <> $4 ORDER BY t."connection_id", t."datname", t."collected_at" DESC) latest ORDER BY "connection_id" ASC, "datname" ASC LIMIT $5 OFFSET $6`
 	if sql != want {
 		t.Errorf("SQL =\n%s\nwant\n%s", sql, want)
 	}
@@ -678,7 +742,7 @@ func TestBuildDatastoreQueryLatest(t *testing.T) {
 		"shape":    "latest",
 		"order_by": []any{map[string]any{"column": "xact_commit", "direction": "desc"}},
 	}, everyone)
-	if !strings.Contains(sql, `latest ORDER BY "xact_commit" DESC LIMIT`) {
+	if !strings.Contains(sql, `latest ORDER BY "xact_commit" DESC, "connection_id" ASC, "datname" ASC LIMIT`) {
 		t.Errorf("latest order_by: %s", sql)
 	}
 }
@@ -692,7 +756,7 @@ func TestBuildDatastoreQueryAggregate(t *testing.T) {
 		"group_by":    []any{"connection_id", "datname"},
 		"buckets":     6,
 	}, restricted)
-	want := `SELECT date_bin($4::interval, t."collected_at", $2::timestamptz) AS "bucket_time", t."connection_id", t."datname", avg(t."xact_commit") AS "avg_xact_commit", avg(t."cache_ratio") AS "avg_cache_ratio" FROM metrics."pg_stat_database" t WHERE t."connection_id" = ANY($1::int[]) AND t."collected_at" >= $2 AND t."collected_at" <= $3 GROUP BY 1, 2, 3 ORDER BY "bucket_time" ASC, "connection_id" ASC, "datname" ASC LIMIT $5 OFFSET $6`
+	want := `SELECT date_bin($4::interval, t."collected_at", $2::timestamptz) AS "bucket_time", t."connection_id", t."datname", avg(t."xact_commit") AS "avg_xact_commit", avg(t."cache_ratio") AS "avg_cache_ratio" FROM (SELECT t."connection_id", t."collected_at", t."datname", t."xact_commit", t."blks_hit", t."cache_ratio", t."stats_reset" FROM metrics."pg_stat_database" t WHERE t."connection_id" = ANY($1::int[]) AND t."collected_at" >= $2 AND t."collected_at" <= $3 OFFSET 0) t GROUP BY 1, 2, 3 ORDER BY "bucket_time" ASC, "connection_id" ASC, "datname" ASC LIMIT $5 OFFSET $6`
 	if sql != want {
 		t.Errorf("SQL =\n%s\nwant\n%s", sql, want)
 	}
@@ -717,8 +781,9 @@ func TestBuildDatastoreQueryAggregate(t *testing.T) {
 		"group_by":    []any{"severity"},
 		"order_by":    []any{map[string]any{"column": "max_triggered_at", "direction": "desc"}},
 	}, everyone)
-	if !strings.Contains(sql, `SELECT t."severity", max(t."triggered_at") AS "max_triggered_at" FROM "alerts" t`) ||
-		!strings.Contains(sql, `GROUP BY 1 ORDER BY "max_triggered_at" DESC`) {
+	if !strings.Contains(sql, `SELECT t."severity", max(t."triggered_at") AS "max_triggered_at" FROM (SELECT t."id", `) ||
+		!strings.Contains(sql, `FROM public."alerts" t WHERE t."connection_id" IS NOT NULL OFFSET 0) t GROUP BY 1`) ||
+		!strings.Contains(sql, `GROUP BY 1 ORDER BY "max_triggered_at" DESC, "severity" ASC LIMIT`) {
 		t.Errorf("max SQL = %s", sql)
 	}
 

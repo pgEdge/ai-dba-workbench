@@ -106,7 +106,7 @@ func TestListForContextHonoursMCPScope(t *testing.T) {
 		t.Errorf("Expected the scoped tool %q to be listed, got %v", wanted, seen)
 	}
 	for name := range seen {
-		if name != wanted && !rbacExemptTools[name] {
+		if name != wanted && !rbacExemptTools[name] && rbacCompanionTools[name] != wanted {
 			t.Errorf("Tool %q is neither in scope nor RBAC-exempt", name)
 		}
 	}

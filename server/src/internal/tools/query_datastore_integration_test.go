@@ -560,7 +560,7 @@ func TestDescribeDatastoreIntegration(t *testing.T) {
 	if isErr || !strings.Contains(text, "Time column: none") || !strings.Contains(text, "Scoping: connection") {
 		t.Fatalf("describe connections: %s", text)
 	}
-	if strings.Contains(text, "password") || strings.Contains(text, "sslkey") {
+	if cols := text[strings.Index(text, "Columns ("):]; strings.Contains(cols, "password") || strings.Contains(cols, "sslkey") {
 		t.Errorf("connections description offers a credential column:\n%s", text)
 	}
 	if strings.Contains(text, "Shape latest") {

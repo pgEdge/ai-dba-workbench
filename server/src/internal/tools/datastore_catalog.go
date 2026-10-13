@@ -202,7 +202,7 @@ func configurationSources() []datastoreSource {
 		{
 			Name:             "connections",
 			Table:            "connections",
-			Description:      "Registered monitored connections. Credentials and certificate paths are not available.",
+			Description:      "Registered monitored connections. Stored passwords and certificate paths are not available.",
 			ConnectionColumn: "id",
 			Kind:             datastoreKindConfiguration,
 			Scope:            scopeConnection,

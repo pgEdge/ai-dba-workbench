@@ -114,6 +114,9 @@ ALWAYS look at BOTH: query both the blackouts and blackout_schedules sources wit
 query_datastore, or call get_blackouts with include_schedules. One-time blackouts are in
 'blackouts', recurring schedules are in 'blackout_schedules'. Both types suppress alerts
 during their active windows.
+- Current and future one-time blackouts: query_datastore with source "blackouts" and
+  filters [{"column": "end_time", "op": ">", "value": "now"}]. Time columns take an
+  RFC 3339 timestamp or "now".
 
 3. MEMORY TOOLS - Use these tools to remember and recall information across conversations:
    - store_memory: Store a persistent memory with a category and content. Use scope "user" for personal memories or "system" for organization-wide knowledge. Set pinned=true for memories that should always be available.

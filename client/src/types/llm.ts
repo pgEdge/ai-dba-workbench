@@ -127,11 +127,21 @@ export function normaliseMessages(messages: Message[]): Message[] {
 }
 
 /**
+ * JSON Schema fragment describing one input parameter of an MCP tool.
+ * Array parameters carry an `items` schema.
+ */
+export interface ToolInputProperty {
+    type: string;
+    description?: string;
+    items?: Record<string, unknown>;
+}
+
+/**
  * JSON Schema fragment describing the input parameters of an MCP tool.
  */
 export interface ToolInputSchema {
     type: string;
-    properties: Record<string, { type: string; description: string }>;
+    properties: Record<string, ToolInputProperty>;
     required: string[];
 }
 

@@ -12,6 +12,12 @@ import { describe, it, expect } from 'vitest';
 import { getToolDisplayName } from '../toolDisplayNames';
 
 describe('getToolDisplayName', () => {
+    it('returns "Examining datastore sources" for describe_datastore', () => {
+        expect(getToolDisplayName('describe_datastore')).toBe(
+            'Examining datastore sources'
+        );
+    });
+
     it('returns "Validating query" for test_query', () => {
         expect(getToolDisplayName('test_query')).toBe('Validating query');
     });

@@ -145,7 +145,7 @@ func parseDatastoreRequest(args map[string]any) (datastoreRequest, error) {
 		if strings.HasPrefix(key, "__") || datastoreRequestKeys[key] {
 			continue
 		}
-		if key == "query" {
+		if key == "query" || key == "sql" {
 			return req, errors.New("query_datastore no longer accepts SQL; describe the query with source, columns, filters and the other parameters, and call describe_datastore to list the sources")
 		}
 		return req, fmt.Errorf("unknown parameter %q", key)
@@ -243,7 +243,9 @@ func integerValue(v any) (int64, bool) {
 	case int64:
 		return n, true
 	case float64:
-		if n != math.Trunc(n) || n < math.MinInt64 || n > math.MaxInt64 {
+		// float64(math.MaxInt64) rounds up to 2^63, which int64 cannot
+		// hold, so the upper bound is exclusive; -2^63 is exact.
+		if n != math.Trunc(n) || n < math.MinInt64 || n >= math.MaxInt64 {
 			return 0, false
 		}
 		return int64(n), true
@@ -407,6 +409,11 @@ func parseDatastoreOrder(args map[string]any) ([]datastoreOrder, error) {
 	}
 	return order, nil
 }
+
+// errConnectionNotAccessible reports a named connection the caller may
+// not read. The handler turns it into the same response every other tool
+// gives for a missing or hidden connection.
+var errConnectionNotAccessible = errors.New(connectionNotAccessibleMsg)
 
 // datastoreQuery accumulates bind parameters while a statement is built.
 type datastoreQuery struct {
@@ -606,7 +613,7 @@ func scopeCondition(q *datastoreQuery, src datastoreSource, req datastoreRequest
 	if len(req.ConnectionIDs) > 0 {
 		for _, id := range req.ConnectionIDs {
 			if !vis.All && !slices.Contains(vis.IDs, id) {
-				return "", errors.New(connectionNotAccessibleMsg)
+				return "", errConnectionNotAccessible
 			}
 		}
 		ids = slices.Clone(req.ConnectionIDs)
@@ -780,19 +787,11 @@ func resolveDatastoreWindow(src datastoreSource, req datastoreRequest, now time.
 		s := end.Add(-time.Hour)
 		start = &s
 	}
-	if !end.After(*start) {
-		return datastoreWindow{}, errors.New("invalid time range: time_end must be after time_start")
+	w, err := metrics.ResolveCustomWindowAt(*start, *end, now, "time_start", "time_end")
+	if err != nil {
+		return datastoreWindow{}, err
 	}
-	if !start.Before(now) {
-		return datastoreWindow{}, errors.New("invalid time_start: must not be in the future")
-	}
-	if end.After(now) {
-		end = &now
-	}
-	if end.Sub(*start) > metrics.MaxCustomTimeSpan {
-		return datastoreWindow{}, errors.New("invalid time range: span must not exceed 366 days")
-	}
-	return datastoreWindow{start: start, end: end}, nil
+	return datastoreWindow{start: &w.Start, end: &w.End}, nil
 }
 
 // Column type families, as information_schema.columns names them.

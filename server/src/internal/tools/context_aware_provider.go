@@ -108,6 +108,9 @@ func (p *ContextAwareProvider) registerDatastoreTools(registry *Registry) {
 		if p.cfg.Builtins.Tools.IsToolEnabled("describe_probe") {
 			registry.Register("describe_probe", DescribeProbeTool(datastorePool))
 		}
+		if p.cfg.Builtins.Tools.IsToolEnabled("describe_datastore") {
+			registry.Register("describe_datastore", DescribeDatastoreTool(datastorePool))
+		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("query_metrics") {
 			registry.Register("query_metrics", QueryMetricsTool(datastorePool, p.rbacChecker))
 		}
@@ -124,7 +127,7 @@ func (p *ContextAwareProvider) registerDatastoreTools(registry *Registry) {
 			registry.Register("get_metric_baselines", GetMetricBaselinesTool(datastorePool, p.rbacChecker, visibilityLister))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("query_datastore") {
-			registry.Register("query_datastore", QueryDatastoreTool(datastorePool))
+			registry.Register("query_datastore", QueryDatastoreTool(datastorePool, p.rbacChecker, visibilityLister))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("get_blackouts") {
 			registry.Register("get_blackouts", GetBlackoutsTool(datastorePool, p.rbacChecker, visibilityLister))
@@ -151,6 +154,9 @@ func (p *ContextAwareProvider) registerDatastoreTools(registry *Registry) {
 		if p.cfg.Builtins.Tools.IsToolEnabled("describe_probe") {
 			registry.Register("describe_probe", DescribeProbeTool(nil))
 		}
+		if p.cfg.Builtins.Tools.IsToolEnabled("describe_datastore") {
+			registry.Register("describe_datastore", DescribeDatastoreTool(nil))
+		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("query_metrics") {
 			registry.Register("query_metrics", QueryMetricsTool(nil, p.rbacChecker))
 		}
@@ -167,7 +173,7 @@ func (p *ContextAwareProvider) registerDatastoreTools(registry *Registry) {
 			registry.Register("get_metric_baselines", GetMetricBaselinesTool(nil, p.rbacChecker, nil))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("query_datastore") {
-			registry.Register("query_datastore", QueryDatastoreTool(nil))
+			registry.Register("query_datastore", QueryDatastoreTool(nil, p.rbacChecker, nil))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("get_blackouts") {
 			registry.Register("get_blackouts", GetBlackoutsTool(nil, p.rbacChecker, nil))
@@ -465,6 +471,7 @@ func (p *ContextAwareProvider) Execute(ctx context.Context, name string, args ma
 		"get_alert_rules":      true,                 // Datastore tool - uses shared datastore pool
 		"get_metric_baselines": true,                 // Datastore tool - uses shared datastore pool
 		"query_datastore":      true,                 // Datastore tool - uses shared datastore pool
+		"describe_datastore":   true,                 // Datastore tool - uses shared datastore pool
 		"get_blackouts":        true,                 // Datastore tool - uses shared datastore pool
 		"get_timeline_events":  true,                 // Datastore tool - uses full Datastore for typed queries
 		"store_memory":         p.memoryStore != nil, // Memory tool - requires memory store

@@ -11,6 +11,8 @@ package tools
 
 import (
 	"encoding/json"
+	"math"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -199,6 +201,14 @@ func TestBuildDatastoreQueryRejections(t *testing.T) {
 		{"credential column", conns, map[string]any{"source": "connections", "columns": []any{"password_encrypted"}}, everyone, "unknown column"},
 		{"credential filter", conns, map[string]any{"source": "connections", "filters": []any{map[string]any{"column": "sslkey", "op": "is not null"}}}, everyone, "unknown column"},
 		{"credential order", conns, map[string]any{"source": "connections", "order_by": []any{map[string]any{"column": "sslcert"}}}, everyone, "unknown column"},
+		{"mixed-case credential column", conns, map[string]any{"source": "connections", "columns": []any{"Password_Encrypted"}}, everyone, "unknown column"},
+		{"mixed-case credential filter", conns, map[string]any{"source": "connections", "filters": []any{map[string]any{"column": "Password_Encrypted", "op": "is not null"}}}, everyone, "unknown column"},
+		{"mixed-case credential group_by", conns, map[string]any{"source": "connections", "shape": "aggregate", "aggregation": "count", "group_by": []any{"Password_Encrypted"}}, everyone, "unknown column"},
+		{"mixed-case credential order", conns, map[string]any{"source": "connections", "order_by": []any{map[string]any{"column": "Password_Encrypted"}}}, everyone, "unknown column"},
+		{"quoted credential column", conns, map[string]any{"source": "connections", "columns": []any{"\"password_encrypted\""}}, everyone, "unknown column"},
+		{"quoted credential filter", conns, map[string]any{"source": "connections", "filters": []any{map[string]any{"column": "\"password_encrypted\"", "op": "is not null"}}}, everyone, "unknown column"},
+		{"quoted credential group_by", conns, map[string]any{"source": "connections", "shape": "aggregate", "aggregation": "count", "group_by": []any{"\"password_encrypted\""}}, everyone, "unknown column"},
+		{"quoted credential order", conns, map[string]any{"source": "connections", "order_by": []any{map[string]any{"column": "\"password_encrypted\""}}}, everyone, "unknown column"},
 		{"duplicate column", metric, map[string]any{"source": "pg_stat_database", "columns": []any{"datname", "datname"}}, everyone, "more than once"},
 		{"time range on timeless source", rules, map[string]any{"source": "alert_rules", "time_start": "1h"}, everyone, "has no time column"},
 		{"time end on timeless source", rules, map[string]any{"source": "alert_rules", "time_end": "now"}, everyone, "has no time column"},
@@ -322,9 +332,18 @@ func TestBuildDatastoreQueryScopesEverySource(t *testing.T) {
 			if !containsIntSlice(qargs, []int{3, 7}) {
 				t.Errorf("visible set not bound: %v", qargs)
 			}
+			if !bindPlaceholder.MatchString(sql) {
+				t.Errorf("SQL for %s lacks a $n::int[] placeholder:\n%s", src.Name, sql)
+			}
+			if strings.Contains(sql, "{") {
+				t.Errorf("SQL for %s carries an array literal:\n%s", src.Name, sql)
+			}
 		})
 	}
 }
+
+// bindPlaceholder matches the visible-set parameter the builder emits.
+var bindPlaceholder = regexp.MustCompile(`\$[0-9]+::int\[\]`)
 
 func containsArg(args []any, want any) bool {
 	for _, a := range args {
@@ -767,10 +786,14 @@ func TestCoerceFilterValue(t *testing.T) {
 }
 
 func TestIntegerValue(t *testing.T) {
+	if n, ok := integerValue(float64(math.MinInt64)); !ok || n != math.MinInt64 {
+		t.Errorf("MinInt64: %d %v", n, ok)
+	}
 	if n, ok := integerValue(json.Number("12")); !ok || n != 12 {
 		t.Errorf("json.Number: %d %v", n, ok)
 	}
-	for _, v := range []any{1e30, "1", json.Number("1.2"), nil} {
+	// float64(math.MaxInt64) is 2^63, one past the int64 range.
+	for _, v := range []any{1e30, float64(math.MaxInt64), -1e19, 1.5, "1", json.Number("1.2"), nil} {
 		if _, ok := integerValue(v); ok {
 			t.Errorf("integerValue(%#v) should fail", v)
 		}

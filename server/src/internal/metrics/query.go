@@ -275,15 +275,23 @@ func ResolveTimeWindow(timeRange, startISO, endISO string) (TimeWindow, error) {
 // startParam and endParam are the caller's query parameter names, so the
 // error message names the field the client actually sent.
 func ResolveCustomWindow(start, end time.Time, startParam, endParam string) (TimeWindow, error) {
+	return ResolveCustomWindowAt(start, end, time.Now(), startParam, endParam)
+}
+
+// ResolveCustomWindowAt applies the ResolveCustomWindow rules with now
+// standing in for the current time, so a caller that has already fixed
+// the current time (a pure query builder, a test) gets a deterministic
+// result.
+func ResolveCustomWindowAt(start, end, now time.Time, startParam, endParam string) (TimeWindow, error) {
 	start = start.UTC()
 	end = end.UTC()
+	now = now.UTC()
 
 	if !end.After(start) {
 		return TimeWindow{}, fmt.Errorf(
 			"invalid time range: %s must be after %s", endParam, startParam)
 	}
 
-	now := time.Now().UTC()
 	if !start.Before(now) {
 		return TimeWindow{}, fmt.Errorf(
 			"invalid %s: must not be in the future", startParam)

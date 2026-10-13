@@ -361,6 +361,7 @@ func registerMCPPrivileges(store *auth.AuthStore) {
 		// Metrics and Monitoring Tools
 		{"list_probes", "tool", "List available metric collection probes", false},
 		{"describe_probe", "tool", "Get detailed information about a specific probe", false},
+		{"describe_datastore", "tool", "List and describe the datastore sources query_datastore can read", false},
 		{"query_metrics", "tool", "Query historical metrics data from the datastore", false},
 
 		// Connection Management Tools
@@ -384,7 +385,7 @@ func registerMCPPrivileges(store *auth.AuthStore) {
 		{"delete_memory", "tool", "Delete stored memory", true},
 
 		// Datastore Query Tool
-		{"query_datastore", "tool", "Query the monitoring datastore", false},
+		{"query_datastore", "tool", "Run structured queries against the monitoring datastore, limited to accessible connections", false},
 
 		// Resources
 		{"pg://system_info", "resource", "PostgreSQL system information resource", false},

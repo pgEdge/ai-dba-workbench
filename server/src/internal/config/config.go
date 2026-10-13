@@ -90,7 +90,8 @@ type ToolsConfig struct {
 	GetAlertRules       *bool `yaml:"get_alert_rules"`      // Query alert rules and thresholds (default: true)
 	GetBlackouts        *bool `yaml:"get_blackouts"`        // Query alert blackout windows and schedules (default: true)
 	GetMetricBaselines  *bool `yaml:"get_metric_baselines"` // Query metric baselines for anomaly context (default: true)
-	QueryDatastore      *bool `yaml:"query_datastore"`      // Execute read-only SQL against the datastore (default: true)
+	QueryDatastore      *bool `yaml:"query_datastore"`      // Structured, connection-scoped datastore queries (default: true)
+	DescribeDatastore   *bool `yaml:"describe_datastore"`   // List and describe query_datastore sources (default: true)
 	GetTimelineEvents   *bool `yaml:"get_timeline_events"`  // Query the incident-investigation timeline (default: true)
 	StoreMemory         *bool `yaml:"store_memory"`         // Store chat memories for future recall (default: true)
 	RecallMemories      *bool `yaml:"recall_memories"`      // Recall stored chat memories by similarity (default: true)
@@ -150,6 +151,8 @@ func (c *ToolsConfig) IsToolEnabled(toolName string) bool {
 		return c.GetMetricBaselines == nil || *c.GetMetricBaselines
 	case "query_datastore":
 		return c.QueryDatastore == nil || *c.QueryDatastore
+	case "describe_datastore":
+		return c.DescribeDatastore == nil || *c.DescribeDatastore
 	case "get_timeline_events":
 		return c.GetTimelineEvents == nil || *c.GetTimelineEvents
 	case "store_memory":
@@ -1266,6 +1269,9 @@ func mergeConfig(dest, src *Config) {
 	}
 	if src.Builtins.Tools.QueryDatastore != nil {
 		dest.Builtins.Tools.QueryDatastore = src.Builtins.Tools.QueryDatastore
+	}
+	if src.Builtins.Tools.DescribeDatastore != nil {
+		dest.Builtins.Tools.DescribeDatastore = src.Builtins.Tools.DescribeDatastore
 	}
 	if src.Builtins.Tools.GetTimelineEvents != nil {
 		dest.Builtins.Tools.GetTimelineEvents = src.Builtins.Tools.GetTimelineEvents

@@ -98,7 +98,7 @@ type queryResult struct {
 // otherwise a regular read-write transaction is started. The
 // hadExistingLimit flag indicates whether the original query already
 // contained a LIMIT clause (in which case truncation detection is
-// skipped).
+// skipped). queryArgs are bound to the statement's placeholders.
 func executeQuery(
 	ctx context.Context,
 	pool *pgxpool.Pool,
@@ -107,6 +107,7 @@ func executeQuery(
 	hadExistingLimit bool,
 	errorPrefix string,
 	readOnly bool,
+	queryArgs ...any,
 ) (*queryResult, *mcp.ToolResponse) {
 	var mt *ManagedTx
 	var errResp *mcp.ToolResponse
@@ -122,7 +123,7 @@ func executeQuery(
 	}
 	defer cleanup()
 
-	rows, err := mt.Tx.Query(ctx, sqlQuery)
+	rows, err := mt.Tx.Query(ctx, sqlQuery, queryArgs...)
 	if err != nil {
 		resp, _ := mcp.NewToolError(safeToolQueryError(errorPrefix, err)) //nolint:errcheck // NewToolError always succeeds
 		return nil, &resp
@@ -184,8 +185,9 @@ func executeReadOnlyQuery(
 	limit int,
 	hadExistingLimit bool,
 	errorPrefix string,
+	queryArgs ...any,
 ) (*queryResult, *mcp.ToolResponse) {
-	return executeQuery(ctx, pool, sqlQuery, limit, hadExistingLimit, errorPrefix, true)
+	return executeQuery(ctx, pool, sqlQuery, limit, hadExistingLimit, errorPrefix, true, queryArgs...)
 }
 
 // formatPaginatedResults writes the results header with pagination

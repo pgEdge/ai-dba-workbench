@@ -11,7 +11,6 @@ package tools
 
 import (
 	"context"
-	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -30,12 +29,12 @@ func seedHiddenDatabase(t *testing.T, f *datastoreFixture) []int {
 		seedBaselineConnection(t, f.pool, "visible-conn-2", true, ""),
 		seedBaselineConnection(t, f.pool, "visible-conn-3", true, ""),
 	}
-	if _, err := f.pool.Exec(context.Background(), fmt.Sprintf(
+	if _, err := f.pool.Exec(context.Background(),
 		`INSERT INTO metrics.ds_probe (connection_id, collected_at, datname, numbackends, xact_commit) VALUES
-            (%d, now() - interval '5 minutes', 'other', 1, 1),
-            (%d, now() - interval '5 minutes', 'other', 1, 1),
-            (%d, now() - interval '5 minutes', 'hiddendb', 4, 4)`,
-		visible[1], visible[2], f.hidden)); err != nil {
+            ($1, now() - interval '5 minutes', 'other', 1, 1),
+            ($2, now() - interval '5 minutes', 'other', 1, 1),
+            ($3, now() - interval '5 minutes', 'hiddendb', 4, 4)`,
+		visible[1], visible[2], f.hidden); err != nil {
 		t.Fatalf("seed hidden database: %v", err)
 	}
 	return visible
@@ -265,25 +264,26 @@ func TestQueryDatastoreReviewBehaviourIntegration(t *testing.T) {
 func TestDescribeDatastorePartitionedIntegration(t *testing.T) {
 	f := newDatastoreFixture(t)
 	ctx := context.Background()
-	now := time.Now().UTC()
-	stmts := []string{
-		`CREATE TABLE metrics.ds_part (
+	// A partition bound may be any variable-free expression, evaluated
+	// once when the partition is created, so the current partition spans
+	// the two days either side of the server's clock.
+	stmts := []fixtureStatement{
+		{sql: `CREATE TABLE metrics.ds_part (
             connection_id INTEGER NOT NULL,
             collected_at TIMESTAMPTZ NOT NULL,
             value BIGINT
-        ) PARTITION BY RANGE (collected_at)`,
-		`CREATE TABLE metrics.ds_part_old PARTITION OF metrics.ds_part
-            FOR VALUES FROM ('2000-01-01 00:00:00+00') TO ('2000-02-01 00:00:00+00')`,
-		fmt.Sprintf(`CREATE TABLE metrics.ds_part_current PARTITION OF metrics.ds_part
-            FOR VALUES FROM ('%s') TO ('%s')`,
-			now.Add(-48*time.Hour).Format(time.RFC3339), now.Add(48*time.Hour).Format(time.RFC3339)),
-		`CREATE INDEX ON metrics.ds_part (connection_id, collected_at)`,
-		fmt.Sprintf(`INSERT INTO metrics.ds_part VALUES
-            (%[1]d, '2000-01-15 00:00:00+00', 1), (%[1]d, now() - interval '5 minutes', 2)`, f.visible),
+        ) PARTITION BY RANGE (collected_at)`},
+		{sql: `CREATE TABLE metrics.ds_part_old PARTITION OF metrics.ds_part
+            FOR VALUES FROM ('2000-01-01 00:00:00+00') TO ('2000-02-01 00:00:00+00')`},
+		{sql: `CREATE TABLE metrics.ds_part_current PARTITION OF metrics.ds_part
+            FOR VALUES FROM (now() - interval '48 hours') TO (now() + interval '48 hours')`},
+		{sql: `CREATE INDEX ON metrics.ds_part (connection_id, collected_at)`},
+		{sql: `INSERT INTO metrics.ds_part VALUES
+            ($1, '2000-01-15 00:00:00+00', 1), ($1, now() - interval '5 minutes', 2)`, args: []any{f.visible}},
 	}
 	for _, stmt := range stmts {
-		if _, err := f.pool.Exec(ctx, stmt); err != nil {
-			t.Fatalf("schema %q: %v", stmt, err)
+		if _, err := f.pool.Exec(ctx, stmt.sql, stmt.args...); err != nil {
+			t.Fatalf("schema %q: %v", stmt.sql, err)
 		}
 	}
 

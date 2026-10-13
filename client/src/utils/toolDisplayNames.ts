@@ -22,6 +22,7 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
     search_knowledgebase: 'Searching knowledgebase',
     list_connections: 'Listing connections',
     execute_explain: 'Running EXPLAIN',
+    describe_datastore: 'Examining datastore sources',
     query_datastore: 'Querying datastore',
     read_resource: 'Reading resource',
     generate_embedding: 'Generating embedding',

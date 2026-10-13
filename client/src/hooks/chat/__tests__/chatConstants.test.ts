@@ -91,7 +91,7 @@ describe('chatConstants', () => {
     describe('CHAT_TOOLS', () => {
         it('is an array with the expected number of tools', () => {
             expect(Array.isArray(CHAT_TOOLS)).toBe(true);
-            expect(CHAT_TOOLS.length).toBe(11);
+            expect(CHAT_TOOLS.length).toBe(12);
         });
 
         it('each tool has required properties', () => {
@@ -188,7 +188,21 @@ describe('chatConstants', () => {
                 t => t.name === 'query_datastore'
             );
             expect(queryDatastore).toBeDefined();
-            expect(queryDatastore?.inputSchema.required).toContain('query');
+            expect(queryDatastore?.inputSchema.required).toEqual(['source']);
+            expect(queryDatastore?.inputSchema.properties).not.toHaveProperty(
+                'query'
+            );
+        });
+
+        it('contains the describe_datastore tool', () => {
+            const describeDatastore = CHAT_TOOLS.find(
+                t => t.name === 'describe_datastore'
+            );
+            expect(describeDatastore).toBeDefined();
+            expect(describeDatastore?.inputSchema.required).toEqual([]);
+            expect(describeDatastore?.inputSchema.properties).toHaveProperty(
+                'source'
+            );
         });
 
         it('each tool inputSchema has type "object"', () => {

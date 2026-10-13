@@ -2432,10 +2432,13 @@ project adheres to
   datastore, so any caller holding the tool privilege, including an
   API token scoped to one connection, could read every connection's
   host, username and encrypted credentials and every connection's
-  metrics. Results now cover only the connections the caller can
-  see, further limited to an API token's connection scope; each
-  configuration source exposes an explicit list of columns, and
-  stored connection passwords and certificates are never available.
+  metrics. Connection-specific rows now cover only the connections
+  the caller can see, further limited to an API token's connection
+  scope, whilst estate-wide configuration rows, such as alert rules,
+  alerter settings and global thresholds, blackouts and probe
+  settings, remain readable; each configuration source exposes an
+  explicit list of columns, and stored connection passwords and
+  certificates are never available.
   Metric sources default to the last hour for every shape, including
   `latest`, so change-tracked probes need a wide `time_start`;
   `page_size` defaults to 100 and is capped at 1000, `page` times

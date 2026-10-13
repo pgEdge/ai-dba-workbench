@@ -98,10 +98,12 @@ work directly on the authentication database, so these checks do not apply
 to them.
 
 The datastore tools stay within the token's connection scope as well. The
-`query_datastore` tool accepts structured queries rather than SQL and returns
-rows only for connections the token can access; neither `query_datastore` nor
-`describe_datastore` makes stored connection passwords and certificates
-available.
+`query_datastore` tool accepts structured queries rather than SQL and limits
+connection-specific rows to the connections the token can access. Estate-wide
+rows, such as alert rules, alerter settings and global thresholds, blackouts
+and probe settings, remain readable whatever the token's connection scope.
+Neither `query_datastore` nor `describe_datastore` makes stored connection
+passwords and certificates available.
 
 A token whose MCP scope includes `query_datastore` can also call
 `describe_datastore`. The rule works one way only: `describe_datastore` keeps

@@ -172,7 +172,7 @@ every tool in the table:
 | Datastore | `describe_probe` | Retrieves column details for a specific metrics probe. |
 | Datastore | `query_metrics` | Queries historical metrics with time-based aggregation. |
 | Datastore | `list_connections` | Lists available monitored database connections. |
-| Datastore | `query_datastore` | Runs a structured query against one datastore source, limited to the connections the caller can access. |
+| Datastore | `query_datastore` | Runs a structured query against one datastore source; connection-specific rows are limited to the connections the caller can access. |
 | Datastore | `describe_datastore` | Lists the sources `query_datastore` can read, or describes one source's columns. |
 | Alert | `get_alert_history` | Queries alerts for monitored connections. |
 | Alert | `get_alert_rules` | Queries alert rules and their effective thresholds. |

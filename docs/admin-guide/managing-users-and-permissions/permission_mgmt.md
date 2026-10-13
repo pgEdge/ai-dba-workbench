@@ -186,6 +186,11 @@ every tool in the table:
 | Utility | `search_knowledgebase` | Searches the pgEdge documentation knowledge base. |
 | Utility | `read_resource` | Reads MCP resources via the tool interface for backward compatibility with older clients. |
 
+A group grant of `query_datastore` also gives the group access to
+`describe_datastore`. The rule works one way only: `describe_datastore` keeps
+its own non-public privilege, so granting only `describe_datastore` does not
+allow `query_datastore`.
+
 To grant an MCP permission, select the `+ Grant` icon across from the `MCP
 Permissions` heading. When the `Grant MCP permission` popup opens:
 

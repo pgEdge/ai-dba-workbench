@@ -49,8 +49,9 @@ project adheres to
   that `query_datastore` can read, with each source's kind, time
   column and scoping rule, and describes one source's columns
   (#566). The new `builtins.tools.describe_datastore` option
-  switches the tool off, the tool is a grantable MCP privilege, and
-  Ellie can call the tool.
+  switches the tool off, the tool is a grantable MCP privilege that
+  anyone holding `query_datastore` also has, and Ellie can call the
+  tool.
 
 - Raise a system alert when anomaly detection is degraded by
   a failing embedding or reasoning provider (#582). The
@@ -477,6 +478,11 @@ project adheres to
   sample still stands for up to five minutes.
   The developer guide now gives the reason each of the 11 remaining
   metrics stays out of anomaly detection.
+
+- Take `query_datastore` structured arguments instead of SQL (#566);
+  this is a breaking change described in full under Security. A
+  client that sent a `sql` or `query` argument must now name a
+  `source` and describe the query with structured parameters.
 
 - Apply the federated login policy under `http.auth.oidc` on a
   `SIGHUP` configuration reload instead of requiring a restart (#484).
@@ -2471,10 +2477,9 @@ project adheres to
 
 ### Security
 
-- Make the `query_datastore` MCP tool structured and limit the
-  tool to the connections the caller can read (#566). This is a
-  breaking change: the tool no longer accepts SQL and rejects a
-  `sql` or `query` argument, so a client must name a `source` and
+- Breaking: make the `query_datastore` MCP tool structured and limit
+  the tool to the connections the caller can read (#566). The tool no
+  longer accepts SQL and rejects a `sql` or `query` argument, so a client must name a `source` and
   describe the query with `columns`, `connection_ids`, a time range,
   `filters`, a `shape` (`rows`, `latest` or `aggregate`),
   `group_by`, `aggregation`, `buckets`, `order_by` and paging
@@ -2485,10 +2490,16 @@ project adheres to
   metrics. Results now cover only the connections the caller can
   see, further limited to an API token's connection scope; each
   configuration source exposes an explicit list of columns, and
-  stored credentials, certificate paths, connection strings and
-  columns named as secrets are never returned. Metric sources
-  default to the last hour, `page_size` defaults to 100 and is
-  capped at 1000, and counter rates and deltas remain the job of
+  stored connection passwords and certificates are never available.
+  Metric sources default to the last hour for every shape, including
+  `latest`, so change-tracked probes need a wide `time_start`;
+  `page_size` defaults to 100 and is capped at 1000, `page` times
+  `page_size` is capped at 100000, and `filters`, `group_by` and
+  `order_by` take at most 20 entries each. Ties in ordering are broken
+  by key columns so pages are stable, and a failure at run time
+  returns a general message. A group grant or token scope that
+  includes `query_datastore` also gives access to `describe_datastore`,
+  but not the reverse. Counter rates and deltas remain the job of
   `query_metrics`. Every query runs in a read-only transaction with
   a statement timeout, and `explain` returns the plan from `EXPLAIN`
   without executing the query.

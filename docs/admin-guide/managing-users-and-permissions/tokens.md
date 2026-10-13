@@ -100,7 +100,13 @@ to them.
 The datastore tools stay within the token's connection scope as well. The
 `query_datastore` tool accepts structured queries rather than SQL and returns
 rows only for connections the token can access; neither `query_datastore` nor
-`describe_datastore` returns stored credentials.
+`describe_datastore` makes stored connection passwords and certificates
+available.
+
+A token whose MCP scope includes `query_datastore` can also call
+`describe_datastore`. The rule works one way only: `describe_datastore` keeps
+its own non-public privilege, so a scope that names only `describe_datastore`
+does not allow `query_datastore`.
 
 The MCP privilege scope applies to public MCP tools as well, so a token whose
 MCP scope names specific tools can call only those tools, apart from

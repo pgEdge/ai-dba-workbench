@@ -1037,13 +1037,20 @@ that follow from that, most learned the hard way in #406 and #407:
   window, and it gives the rule an absolute per-hour count rather than a
   per-probe-interval figure. Rules whose value is a rate should say so in
   `metric_unit`, for example `checkpoints/hour`. Where such an entry also
-  has a `historicalSQL`, compute the per-sample delta over the whole
-  lookback first and then group by the hour bucket, so baselines see the
-  same per-hour figure the latest query reports and the first sample of
-  an hour is paired with the last of the previous one;
+  has a `historicalSQL`, partition the `LAG` by connection (and database,
+  where the metric has one) and the UTC hour bucket, then group by that
+  bucket, so each bucket's first sample has no predecessor, exactly as
+  the latest query's `LAG` starts inside its one-hour window. A `LAG`
+  over the whole lookback gives every bucket one more delta than the
+  live value (six against five at a 600 second interval), biasing the
+  baseline upward so a steady server scores low (#490 for
+  `checkpoints_req_delta`, #639 for `deadlocks_delta` and
+  `temp_files_delta`);
   `metric_registry_hourly_deltas_integration_test.go` pins the interval
   independence, reset, single-sample, bucket, session timezone and
-  sample count behaviour. Three details of the historical query are easy
+  sample count behaviour, and its `HistoricalMatchesLatest` test compares
+  each bucket with the latest query run as of the end of that hour, for
+  two connections with two databases each. Three details of the historical query are easy
   to get wrong. Filter inside the aggregate,
   `SUM(GREATEST(x - prev_x, 0)) FILTER (WHERE prev_x IS NOT NULL)`, as
   the latest query does: a `WHERE prev_x IS NOT NULL` ahead of the
@@ -1250,9 +1257,9 @@ conventions from that change hold across both:
   does (no zero-fill, the `blocked_count` precedent);
   `checkpoints_req_delta`
   partitions its `LAG` by connection and UTC hour bucket, so each
-  bucket has as many deltas as the live one-hour value (unlike
-  `deadlocks_delta` and `temp_files_delta`, whose lookback-wide `LAG`
-  gives each bucket one extra delta), and judges recovery per bucket by
+  bucket has as many deltas as the live one-hour value (as
+  `deadlocks_delta` and `temp_files_delta` also do since #639, adding
+  the database to the partition), and judges recovery per bucket by
   the newest `pg_node_role` row in that hour (no role row keeps the
   bucket, as the latest query does); and `slow_query_count` rebuilds
   each interval mean with `LAG` over the same identity window, pools
@@ -2111,3 +2118,7 @@ run.
   `connection_utilization_percent`'s historical denominator became the
   `max_connections` in force at each sample; #596 gave the latest query
   the same denominator.
+- #639: The `deadlocks_delta` and `temp_files_delta` historical `LAG`
+  partitioned by connection, database and UTC hour bucket, as #490 did
+  for `checkpoints_req_delta`, so baseline buckets no longer carry one
+  more delta than the live value.

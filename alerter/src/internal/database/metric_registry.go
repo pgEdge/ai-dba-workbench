@@ -1085,10 +1085,9 @@ var metricRegistry = map[string]metricQueryConfig{
 	// in UTC hour buckets. Its LAG is partitioned by connection and
 	// bucket, so each bucket's first sample has no predecessor, exactly
 	// as the latest query's LAG starts inside its one hour window: taking
-	// the delta over the whole lookback instead, as deadlocks_delta does,
-	// gave every bucket one more delta than the live value (six against
-	// five at a 600 second probe interval), and a perfectly steady server
-	// scored z = -3.33. The filter sits inside the aggregate so a bucket
+	// the delta over the whole lookback instead gave every bucket one more
+	// delta than the live value (six against five at a 600 second probe
+	// interval), and a perfectly steady server scored z = -3.33. The filter sits inside the aggregate so a bucket
 	// whose only sample has no predecessor reports 0, and each row
 	// carries the number of raw samples it aggregates. It applies the
 	// recovery exclusion per bucket, judging each hour by the newest
@@ -1334,11 +1333,17 @@ var metricRegistry = map[string]metricQueryConfig{
 	// deltas from a stats reset contribute zero, and a connection with a
 	// single sample reports 0 instead of vanishing from the result set.
 	// The historical query feeds baselines with the same per-hour figure,
-	// one row per connection, database and hour bucket. Both queries
-	// filter inside the aggregate rather than in a WHERE clause, so a
-	// bucket whose only sample has no predecessor reports 0 instead of
-	// disappearing, which matters for a newly onboarded connection. The
-	// buckets are cut with date_trunc on the UTC value of collected_at
+	// one row per connection, database and hour bucket. Its LAG is
+	// partitioned by connection, database and bucket, so each bucket's
+	// first sample has no predecessor, exactly as the latest query's LAG
+	// starts inside its one hour window; differencing across the whole
+	// lookback gave every bucket one more delta than the live value (six
+	// against five at a 600 second probe interval), biasing the baseline
+	// upward so a steady server scored low (GitHub issue #639, the shape
+	// #490 fixed for checkpoints_req_delta). Both queries filter inside
+	// the aggregate rather than in a WHERE clause, so a bucket whose only
+	// sample has no predecessor reports 0 instead of disappearing, which
+	// matters for a newly onboarded connection. The buckets are cut with date_trunc on the UTC value of collected_at
 	// because the collector stores UTC and the alerter's session TimeZone
 	// is whatever the server GUC says. Each row also carries the number of
 	// raw samples it aggregates, so baseline warmup still counts samples
@@ -1372,9 +1377,11 @@ var metricRegistry = map[string]metricQueryConfig{
 		`,
 		historicalSQL: `
 			WITH db_deadlocks AS (
-				SELECT m.connection_id, m.database_name, m.deadlocks, m.collected_at,
+				SELECT m.connection_id, m.database_name, m.deadlocks,
+				       date_trunc('hour', m.collected_at AT TIME ZONE 'UTC') as bucket,
 				       LAG(m.deadlocks) OVER (
-				           PARTITION BY m.connection_id, m.database_name
+				           PARTITION BY m.connection_id, m.database_name,
+				                        date_trunc('hour', m.collected_at AT TIME ZONE 'UTC')
 				           ORDER BY m.collected_at
 				       ) as prev_deadlocks
 				FROM metrics.pg_stat_database m
@@ -1389,12 +1396,10 @@ var metricRegistry = map[string]metricQueryConfig{
 			           SUM(GREATEST(deadlocks - prev_deadlocks, 0))
 			               FILTER (WHERE prev_deadlocks IS NOT NULL),
 			           0)::float as value,
-			       date_trunc('hour', collected_at AT TIME ZONE 'UTC')
-			           AT TIME ZONE 'UTC' as collected_at,
+			       bucket AT TIME ZONE 'UTC' as collected_at,
 			       COUNT(*) as sample_count
 			FROM db_deadlocks
-			GROUP BY connection_id, database_name,
-			         date_trunc('hour', collected_at AT TIME ZONE 'UTC')
+			GROUP BY connection_id, database_name, bucket
 			ORDER BY connection_id, database_name, collected_at
 		`,
 		scan:           scanWithDB,
@@ -1404,7 +1409,8 @@ var metricRegistry = map[string]metricQueryConfig{
 	// The value is the number of temporary files created in the last
 	// hour, per connection and database. Same shape and reasoning as the
 	// deadlocks entry above, including the hourly historical buckets, the
-	// UTC truncation and the per-bucket sample count: the per-sample MAX()
+	// LAG partitioned by bucket, the UTC truncation and the per-bucket
+	// sample count: the per-sample MAX()
 	// over 15 minutes depended on the probe interval and dropped
 	// single-sample connections. See GitHub issue #409.
 	"pg_stat_database.temp_files_delta": {
@@ -1436,9 +1442,11 @@ var metricRegistry = map[string]metricQueryConfig{
 		`,
 		historicalSQL: `
 			WITH db_temp_files AS (
-				SELECT m.connection_id, m.database_name, m.temp_files, m.collected_at,
+				SELECT m.connection_id, m.database_name, m.temp_files,
+				       date_trunc('hour', m.collected_at AT TIME ZONE 'UTC') as bucket,
 				       LAG(m.temp_files) OVER (
-				           PARTITION BY m.connection_id, m.database_name
+				           PARTITION BY m.connection_id, m.database_name,
+				                        date_trunc('hour', m.collected_at AT TIME ZONE 'UTC')
 				           ORDER BY m.collected_at
 				       ) as prev_temp_files
 				FROM metrics.pg_stat_database m
@@ -1453,12 +1461,10 @@ var metricRegistry = map[string]metricQueryConfig{
 			           SUM(GREATEST(temp_files - prev_temp_files, 0))
 			               FILTER (WHERE prev_temp_files IS NOT NULL),
 			           0)::float as value,
-			       date_trunc('hour', collected_at AT TIME ZONE 'UTC')
-			           AT TIME ZONE 'UTC' as collected_at,
+			       bucket AT TIME ZONE 'UTC' as collected_at,
 			       COUNT(*) as sample_count
 			FROM db_temp_files
-			GROUP BY connection_id, database_name,
-			         date_trunc('hour', collected_at AT TIME ZONE 'UTC')
+			GROUP BY connection_id, database_name, bucket
 			ORDER BY connection_id, database_name, collected_at
 		`,
 		scan:           scanWithDB,

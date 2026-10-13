@@ -123,9 +123,10 @@ historical queries for `pg_stat_replication.lag_bytes`,
 the historical query for `max_lock_wait_seconds` only reports
 samples in which a client backend waits on a lock, so the baseline
 describes lock waits rather than uncontended operation. The
-historical query for `checkpoints_req_delta` sums each UTC hour's
-deltas within that hour, so every bucket carries as many deltas as
-the live one-hour value.
+historical queries for `checkpoints_req_delta`, `deadlocks_delta`
+and `temp_files_delta` sum each UTC hour's deltas within that hour,
+so every bucket carries as many deltas as the live one-hour value
+(GitHub issue #639 brought the latter two into line).
 
 The following metrics have no historical query, deliberately, and
 are therefore never baselined or scored:

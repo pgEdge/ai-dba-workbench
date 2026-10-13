@@ -158,6 +158,11 @@ actually running slowly. A query that ran slowly once no
 longer keeps the count elevated after the query stops
 running.
 
+The count covers the whole server, so the rule raises at
+most one alert per server. Each statement is counted once,
+whichever database it ran in, including databases where
+the extension is not installed.
+
 ## Replication Rules
 
 ### Replication Lag in Seconds (Custom Rule)

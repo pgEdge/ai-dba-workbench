@@ -162,7 +162,7 @@ rolling 15-minute window on the monitored server:
 - `pg_stat_checkpointer.checkpoints_req_delta` - Requested
   checkpoints in the last hour on servers not in recovery.
 - `pg_stat_statements.slow_query_count` - Slow queries per
-  interval.
+  interval, counted once for the whole server.
 
 ## Adding Support for New Metrics
 

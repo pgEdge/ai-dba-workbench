@@ -178,9 +178,9 @@ report them.
 
 Baselines are stored per connection and, for metrics whose
 historical query returns a database name (for example
-`cache_hit_ratio`, `deadlocks_delta`, `temp_files_delta` and
-`slow_query_count`), per
-database. Tier 1 reads back the baselines for the same database as
+`cache_hit_ratio`, `deadlocks_delta` and `temp_files_delta`), per
+database. Metrics reported for the whole server, such as
+`slow_query_count`, have one baseline per connection. Tier 1 reads back the baselines for the same database as
 the value being scored, so a value from one database is never
 compared with another database's baseline. A metric whose latest
 value is scoped to a table or other object is skipped, because the

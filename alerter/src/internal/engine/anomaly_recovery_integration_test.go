@@ -559,15 +559,22 @@ func TestAnomalyRecoveryDisabledResetsStreaks(t *testing.T) {
 // TestRecoverAnomalyAlertsDirect drives recoverAnomalyAlerts directly for
 // the cases detectAnomalies cannot reach with a connection-wide metric:
 // database-scoped blackouts, failing writes and an alert that a user
-// acknowledged after the pass read it.
+// acknowledged after the pass read it. The alerts are on a per-database
+// metric, because loadAnomalyRecovery retires an alert that names a
+// database on a server-wide one (GitHub issue #640).
 func TestRecoverAnomalyAlertsDirect(t *testing.T) {
 	ctx := context.Background()
 	db := "app"
+	const metric = "pg_stat_database.cache_hit_ratio"
 
 	setup := func(t *testing.T, severity string) (*recoveryEnv, *anomalyRecoveryPass, int64, *database.MetricValue) {
 		t.Helper()
 		env := newRecoveryEnv(t)
-		id := env.seedAlert(t, &db, severity, "active")
+		var id int64
+		if err := env.pool.QueryRow(ctx, insertRecoveryEngineAlertSQL,
+			env.connID, &db, metric, severity, "active").Scan(&id); err != nil {
+			t.Fatalf("failed to seed alert: %v", err)
+		}
 		pass := env.engine.loadAnomalyRecovery(ctx)
 		if pass.empty() {
 			t.Fatal("expected the seeded alert in the pass")
@@ -578,7 +585,7 @@ func TestRecoverAnomalyAlertsDirect(t *testing.T) {
 	}
 	apply := func(env *recoveryEnv, pass *anomalyRecoveryPass, value *database.MetricValue, z float64) {
 		cfg := env.engine.getConfig()
-		env.engine.recoverAnomalyAlerts(ctx, pass, tierSkipMetric, value, z, true, cfg,
+		env.engine.recoverAnomalyAlerts(ctx, pass, metric, value, z, true, cfg,
 			cfg.Anomaly.Tier1.DefaultSensitivity)
 	}
 
@@ -622,7 +629,7 @@ func TestRecoverAnomalyAlertsDirect(t *testing.T) {
 		env.engine.getConfig().Anomaly.Tier1.ClearCount = 1
 		cfg := env.engine.getConfig()
 		pass.next[id] = anomalyStreak{count: 1, lastSample: value.CollectedAt.Add(-time.Minute)}
-		env.engine.recoverAnomalyAlerts(ctx, pass, tierSkipMetric, value, 0, false, cfg, 3)
+		env.engine.recoverAnomalyAlerts(ctx, pass, metric, value, 0, false, cfg, 3)
 		wantStatus(t, env.alert(t, id), "active")
 		if pass.next[id].count != 0 {
 			t.Error("expected an unscored value to reset the count")
@@ -718,7 +725,7 @@ func TestRecoverAnomalyAlertsDirect(t *testing.T) {
 		if got.metricValue != nil || got.severity != "warning" {
 			t.Errorf("acknowledged alert refreshed: %+v", got)
 		}
-		if a := pass2.alerts[newAnomalyAlertKey(tierSkipMetric, env.connID, &db)][0]; a.Severity != "warning" {
+		if a := pass2.alerts[newAnomalyAlertKey(metric, env.connID, &db)][0]; a.Severity != "warning" {
 			t.Errorf("in-memory severity = %s, want warning", a.Severity)
 		}
 	})

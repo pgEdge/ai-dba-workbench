@@ -510,38 +510,51 @@ func TestCheckpointsReqDelta_HistoricalRecoveryPerBucket(t *testing.T) {
 	}
 }
 
-// statementRow is one synthetic metrics.pg_stat_statements row.
+// statementRow is one synthetic pg_stat_statements counter: the
+// statement identity (queryid, userid and dbid, the database the
+// statement ran in) and its cumulative calls and execution time.
 type statementRow struct {
-	db      string
 	queryID int64
 	userID  int64
+	dbID    int64
 	calls   int64
 	totalMs float64
 }
 
+// Two databases the synthetic statements ran in, as pg_stat_statements
+// records them in dbid.
+const (
+	statementDB1 = 16384
+	statementDB2 = 16385
+)
+
 // insertStatementSample writes the rows of one pg_stat_statements probe
-// run.
+// run made through the given probing database. The view is cluster-wide,
+// so the collector stores the same counters once for every database it
+// probes with the extension installed; a test models that by writing the
+// same rows under several probing names at the same instant.
 func insertStatementSample(t *testing.T, pool *pgxpool.Pool, connID int,
-	at time.Time, rows []statementRow) {
+	probingDB string, at time.Time, rows []statementRow) {
 	t.Helper()
 
 	for _, r := range rows {
 		if _, err := pool.Exec(context.Background(), `
 			INSERT INTO metrics.pg_stat_statements
-			    (connection_id, database_name, queryid, userid, calls,
+			    (connection_id, database_name, queryid, userid, dbid, calls,
 			     total_exec_time, collected_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7)
-		`, connID, r.db, r.queryID, r.userID, r.calls, r.totalMs, at); err != nil {
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		`, connID, probingDB, r.queryID, r.userID, r.dbID, r.calls, r.totalMs, at); err != nil {
 			t.Fatalf("failed to insert pg_stat_statements row: %v", err)
 		}
 	}
 }
 
 // TestSlowQueryCount_HistoricalMatchesLatest checks that, for every
-// sample and database, the historical query counts the same slow
-// queryids the latest query counts when that sample is the newest:
-// interval means rebuilt from consecutive samples of each statement
-// identity, idle and reset statements skipped, and databases kept apart.
+// sample, the historical query counts the same slow queryids the latest
+// query counts when that sample is the newest: interval means rebuilt
+// from consecutive samples of each statement identity, idle and reset
+// statements skipped, and one count for the whole server however many
+// probing databases stored the counters. See GitHub issues #490 and #640.
 func TestSlowQueryCount_HistoricalMatchesLatest(t *testing.T) {
 	ds, pool, cleanup := newHistoricalMetricsTestDatastore(t)
 	defer cleanup()
@@ -552,34 +565,52 @@ func TestSlowQueryCount_HistoricalMatchesLatest(t *testing.T) {
 	s1 := sampleInstant(12 * time.Minute)
 	s2 := sampleInstant(7 * time.Minute)
 	s3 := sampleInstant(2 * time.Minute)
-	insertStatementSample(t, pool, connID, s1, []statementRow{
-		{"alpha", 1, 10, 5, 21000},
-		{"alpha", 2, 10, 1000, 50000},
-		{"alpha", 3, 10, 10, 1000},
-		{"beta", 1, 10, 100, 1000},
-		{"beta", 1, 20, 1000, 50000},
-	})
-	insertStatementSample(t, pool, connID, s2, []statementRow{
-		// queryid 1 idle; queryid 2 fast; queryid 3: 2 calls in 6 s.
-		{"alpha", 1, 10, 5, 21000},
-		{"alpha", 2, 10, 1100, 51000},
-		{"alpha", 3, 10, 12, 7000},
-		// beta: userid 10 runs 1 call in 3 s; userid 20 is reset.
-		{"beta", 1, 10, 101, 4000},
-		{"beta", 1, 20, 2, 6000},
-	})
-	insertStatementSample(t, pool, connID, s3, []statementRow{
-		// queryid 1: 10 calls in 1 s; queryid 2: 2 calls in 5 s;
-		// queryid 3 idle.
-		{"alpha", 1, 10, 15, 22000},
-		{"alpha", 2, 10, 1102, 56000},
-		{"alpha", 3, 10, 12, 7000},
-		// beta: userid 10 idle, userid 20 runs 2 calls in 4 s. Both
-		// queries pool the identities of a queryid before taking the
-		// mean, so a busy fast identity would hide the slow one.
-		{"beta", 1, 10, 101, 4000},
-		{"beta", 1, 20, 4, 10000},
-	})
+	samples := map[time.Time][]statementRow{
+		s1: {
+			{1, 10, statementDB1, 5, 21000},
+			{2, 10, statementDB1, 1000, 50000},
+			{3, 10, statementDB1, 10, 1000},
+			{4, 10, statementDB2, 100, 1000},
+			{4, 20, statementDB2, 1000, 50000},
+		},
+		s2: {
+			// queryid 1 idle; queryid 2 fast; queryid 3: 2 calls in 6 s.
+			{1, 10, statementDB1, 5, 21000},
+			{2, 10, statementDB1, 1100, 51000},
+			{3, 10, statementDB1, 12, 7000},
+			// queryid 4: userid 10 runs 1 call in 3 s; userid 20 is
+			// reset.
+			{4, 10, statementDB2, 101, 4000},
+			{4, 20, statementDB2, 2, 6000},
+		},
+		s3: {
+			// queryid 1: 10 calls in 1 s; queryid 2: 2 calls in 5 s;
+			// queryid 3 idle.
+			{1, 10, statementDB1, 15, 22000},
+			{2, 10, statementDB1, 1102, 56000},
+			{3, 10, statementDB1, 12, 7000},
+			// queryid 4: userid 10 idle, userid 20 runs 2 calls in 4 s.
+			// Both queries pool the identities of a queryid before
+			// taking the mean, so a busy fast identity would hide the
+			// slow one.
+			{4, 10, statementDB2, 101, 4000},
+			{4, 20, statementDB2, 4, 10000},
+		},
+	}
+	for at, rows := range samples {
+		insertStatementSample(t, pool, connID, "alpha", at, rows)
+		insertStatementSample(t, pool, connID, "beta", at, rows)
+	}
+	// gamma read the view a moment after the others at s2, by which time
+	// queryid 2 had run one more call, a slow one. Both queries take the
+	// copy stored under the lowest probing name, so gamma's reading never
+	// counts; a query that took a different copy at each step would pair
+	// gamma's s2 with alpha's s3 and miss queryid 2's slow interval.
+	gammaS2 := append([]statementRow(nil), samples[s2]...)
+	gammaS2[1] = statementRow{2, 10, statementDB1, 1101, 60000}
+	insertStatementSample(t, pool, connID, "gamma", s1, samples[s1])
+	insertStatementSample(t, pool, connID, "gamma", s2, gammaS2)
+	insertStatementSample(t, pool, connID, "gamma", s3, samples[s3])
 
 	// A second server runs the same statement identity, fast and with a
 	// larger counter, a minute after each of the first server's samples.
@@ -589,8 +620,8 @@ func TestSlowQueryCount_HistoricalMatchesLatest(t *testing.T) {
 	otherID := insertConnection(t, pool, "slow-query-490-other")
 	for i, at := range []time.Time{s1, s2, s3} {
 		calls := int64(100 * (i + 1))
-		insertStatementSample(t, pool, otherID, at.Add(time.Minute),
-			[]statementRow{{"alpha", 3, 10, calls, float64(calls)}})
+		insertStatementSample(t, pool, otherID, "alpha", at.Add(time.Minute),
+			[]statementRow{{3, 10, statementDB1, calls, float64(calls)}})
 	}
 	other := historicalRowsByKey(t, ds, metric, otherID)
 	if len(other) != 3 {
@@ -599,32 +630,28 @@ func TestSlowQueryCount_HistoricalMatchesLatest(t *testing.T) {
 	for key, row := range other {
 		assertClose(t, "other server historical at "+key.at.String(), row.Value, 0)
 	}
-	if got, ok := latestRowsFor(t, ds, metric, otherID)["alpha"]; !ok || got.Value != 0 {
+	if got, ok := latestRowsFor(t, ds, metric, otherID)[""]; !ok || got.Value != 0 {
 		t.Errorf("other server's latest = %+v (present %v), want 0", got, ok)
 	}
 
-	want := map[historicalKey]float64{
-		{"alpha", s1}: 0, {"alpha", s2}: 1, {"alpha", s3}: 1,
-		{"beta", s1}: 0, {"beta", s2}: 1, {"beta", s3}: 1,
-	}
+	want := map[time.Time]float64{s1: 0, s2: 2, s3: 2}
 	historical := historicalRowsByKey(t, ds, metric, connID)
 	if len(historical) != len(want) {
-		t.Fatalf("historical rows = %+v, want one per database and sample", historical)
+		t.Fatalf("historical rows = %+v, want one server-wide row per sample", historical)
 	}
 	for _, at := range []time.Time{s3, s2, s1} {
-		latest := latestRowsFor(t, ds, metric, connID)
-		for _, db := range []string{"alpha", "beta"} {
-			row, ok := historical[historicalKey{db, at}]
-			if !ok {
-				t.Fatalf("no historical row for %s at %v", db, at)
-			}
-			assertClose(t, db+" historical", row.Value, want[historicalKey{db, at}])
-			got, ok := latest[db]
-			if !ok {
-				t.Fatalf("no latest row for %s with the sample at %v newest", db, at)
-			}
-			assertClose(t, db+" latest", got.Value, row.Value)
+		row, ok := historical[historicalKey{"", at}]
+		if !ok {
+			t.Fatalf("no server-wide historical row at %v", at)
 		}
+		assertClose(t, "historical", row.Value, want[at])
+		latest := latestRowsFor(t, ds, metric, connID)
+		got, ok := latest[""]
+		if !ok || len(latest) != 1 {
+			t.Fatalf("latest rows with the sample at %v newest = %+v, want one server-wide row",
+				at, latest)
+		}
+		assertClose(t, "latest", got.Value, row.Value)
 		deleteSample(t, pool, "pg_stat_statements", connID, at)
 	}
 }
@@ -643,16 +670,76 @@ func TestSlowQueryCount_HistoricalSkipsCollectionGap(t *testing.T) {
 
 	before := sampleInstant(40 * time.Minute)
 	after := sampleInstant(2 * time.Minute)
-	insertStatementSample(t, pool, connID, before, []statementRow{{"alpha", 1, 10, 10, 1000}})
-	insertStatementSample(t, pool, connID, after, []statementRow{{"alpha", 1, 10, 12, 9000}})
+	insertStatementSample(t, pool, connID, "alpha", before,
+		[]statementRow{{1, 10, statementDB1, 10, 1000}})
+	insertStatementSample(t, pool, connID, "alpha", after,
+		[]statementRow{{1, 10, statementDB1, 12, 9000}})
 
 	latest := latestRowsFor(t, ds, metric, connID)
-	if got, ok := latest["alpha"]; !ok || got.Value != 0 {
-		t.Errorf("latest = %+v, want a single row of 0", latest)
+	if got, ok := latest[""]; !ok || got.Value != 0 {
+		t.Errorf("latest = %+v, want a single server-wide row of 0", latest)
 	}
-	row, ok := historicalRowsByKey(t, ds, metric, connID)[historicalKey{"alpha", after}]
+	row, ok := historicalRowsByKey(t, ds, metric, connID)[historicalKey{"", after}]
 	if !ok {
 		t.Fatalf("no historical row for the sample after the gap")
 	}
 	assertClose(t, "historical after the gap", row.Value, 0)
+}
+
+// TestSlowQueryCount_CountsEachStatementOnce is the regression test for
+// GitHub issue #640. The collector stores the cluster-wide counters once
+// for every database it probes with the extension, so a slow statement
+// used to be counted once per probing database and every one of them
+// reported the whole server's figure. Both queries now report a single
+// row for the connection that counts each slow queryid once, whichever
+// database it ran in.
+func TestSlowQueryCount_CountsEachStatementOnce(t *testing.T) {
+	ds, pool, cleanup := newHistoricalMetricsTestDatastore(t)
+	defer cleanup()
+
+	const metric = "pg_stat_statements.slow_query_count"
+	connID := insertConnection(t, pool, "slow-query-640")
+
+	s1 := sampleInstant(7 * time.Minute)
+	s2 := sampleInstant(2 * time.Minute)
+	// One slow statement in each of two databases, and a fast one.
+	before := []statementRow{
+		{1, 10, statementDB1, 10, 1000},
+		{2, 10, statementDB2, 10, 1000},
+		{3, 10, statementDB2, 10, 1000},
+	}
+	after := []statementRow{
+		{1, 10, statementDB1, 12, 9000},
+		{2, 10, statementDB2, 11, 4000},
+		{3, 10, statementDB2, 20, 1100},
+	}
+	for _, probing := range []string{"appdb", "postgres", "reporting"} {
+		insertStatementSample(t, pool, connID, probing, s1, before)
+		insertStatementSample(t, pool, connID, probing, s2, after)
+	}
+
+	latest := latestRowsFor(t, ds, metric, connID)
+	if len(latest) != 1 {
+		t.Fatalf("latest rows = %+v, want one server-wide row", latest)
+	}
+	if got := latest[""]; got.Value != 2 {
+		t.Errorf("latest = %v, want 2 (each slow statement once)", got.Value)
+	}
+
+	historical := historicalRowsFor(t, ds, metric, connID)
+	if len(historical) != 2 {
+		t.Fatalf("historical rows = %+v, want one server-wide row per sample", historical)
+	}
+	for _, r := range historical {
+		if r.DatabaseName != nil {
+			t.Errorf("historical row names database %q, want none", *r.DatabaseName)
+		}
+	}
+	row := historicalRowsByKey(t, ds, metric, connID)[historicalKey{"", s2}]
+	assertClose(t, "historical", row.Value, 2)
+
+	if MetricIsPerDatabase(metric) || !MetricIsServerWide(metric) {
+		t.Errorf("%s: per database = %v, server-wide = %v; want a server-wide metric",
+			metric, MetricIsPerDatabase(metric), MetricIsServerWide(metric))
+	}
 }

@@ -236,6 +236,11 @@ func unreachableAnomalyReason(alert *database.Alert) string {
 			"names no database, as alerts raised before detection was scoped by "+
 			"database do", metric)
 	}
+	if database.MetricIsServerWide(metric) && alert.DatabaseName != nil {
+		return fmt.Sprintf("the metric %s is reported for the whole server, but the "+
+			"alert names a database, as alerts raised before it stopped being "+
+			"reported per database do", metric)
+	}
 	return ""
 }
 

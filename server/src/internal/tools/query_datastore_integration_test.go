@@ -65,9 +65,22 @@ func newDatastoreFixture(t *testing.T) *datastoreFixture {
 	t.Cleanup(cleanup)
 	ctx := context.Background()
 
-	var tables []string
+	var tables, stale []string
 	for _, src := range configurationSources() {
 		tables = append(tables, src.Table)
+		// newToolsTestPool has just recreated these with serial ids.
+		if src.Table != "connections" && src.Table != "metric_baselines" {
+			stale = append(stale, src.Table)
+		}
+	}
+	// Another package's tests may have left the real schema behind in a
+	// shared database (CI uses one), with different column definitions
+	// such as identity ids; start from the catalog's own shape.
+	if _, err := pool.Exec(ctx,
+		"DROP TABLE IF EXISTS "+strings.Join(stale, ", ")+" CASCADE"); err != nil {
+		t.Fatalf("drop stale datastore tables: %v", err)
+	}
+	for _, src := range configurationSources() {
 		stmts := []string{fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s ()", src.Table)}
 		for _, c := range src.Columns {
 			stmts = append(stmts, fmt.Sprintf("ALTER TABLE %s ADD COLUMN IF NOT EXISTS %s %s", src.Table, c.Name, c.DataType))

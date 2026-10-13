@@ -85,12 +85,21 @@ Returns a TSV table with:
 			// relkind 'r' and 'p' are the ordinary and partitioned tables
 			// that information_schema.tables reports as BASE TABLE, and the
 			// privilege check keeps tables the datastore role cannot read
-			// out of the list, as information_schema.tables did.
+			// out of the list, as information_schema.tables did. A
+			// partitioned table holds no rows itself, so its row count is the
+			// sum over the leaf partitions at every level of its tree.
 			query := `
 				SELECT
 					c.relname::text AS table_name,
 					COALESCE(obj_description(c.oid, 'pg_class'), '') AS description,
-					COALESCE(s.n_live_tup, 0) AS row_count
+					CASE WHEN c.relkind = 'p' THEN (
+						SELECT COALESCE(SUM(ps.n_live_tup), 0)
+						FROM pg_partition_tree(c.oid) pt
+						JOIN pg_stat_user_tables ps ON ps.relid = pt.relid
+						WHERE pt.isleaf
+					)::bigint
+					ELSE COALESCE(s.n_live_tup, 0)
+					END AS row_count
 				FROM pg_class c
 				JOIN pg_namespace n ON n.oid = c.relnamespace
 				LEFT JOIN pg_stat_user_tables s ON s.relid = c.oid

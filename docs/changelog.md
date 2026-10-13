@@ -1162,7 +1162,9 @@ project adheres to
   partitions by name with a `LIKE` pattern in which `_` matched any
   character; it now leaves out partitions by checking the system
   catalogue, so it lists each probe table, including partitioned
-  parents, and no partitions.
+  parents, and no partitions. The row count for a partitioned probe
+  is now the total across all of its partitions, where it would
+  otherwise always have been zero.
 
 - Fix the `pg_stat_replication.replay_lag_seconds` alert metric,
   which never returned a value because its query read a

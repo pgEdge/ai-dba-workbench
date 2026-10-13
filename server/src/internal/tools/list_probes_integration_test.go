@@ -19,6 +19,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 )
 
 // listProbesNames returns the probe names from a list_probes TSV response,
@@ -57,7 +58,16 @@ func TestListProbes_ExcludesPartitionsNotProbes(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	_, err := pool.Exec(ctx, `
+	// Seed and analyze on one connection: ANALYZE discounts the inserts
+	// its own backend has not yet reported, whereas inserts left pending
+	// on another pooled backend would be added on top of its count when
+	// that backend later flushed them.
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("failed to acquire a connection: %v", err)
+	}
+	defer conn.Release()
+	_, err = conn.Exec(ctx, `
 		CREATE TABLE metrics.pg_stat_replication (
 		    connection_id INTEGER NOT NULL,
 		    collected_at TIMESTAMPTZ NOT NULL
@@ -75,21 +85,65 @@ func TestListProbes_ExcludesPartitionsNotProbes(t *testing.T) {
 		    FOR VALUES FROM ('2026-10-12 00:00:00+00')
 		    TO ('2026-10-19 00:00:00+00');
 
+		CREATE TABLE metrics.pg_stat_database_20261019
+		    PARTITION OF metrics.pg_stat_database
+		    FOR VALUES FROM ('2026-10-19 00:00:00+00')
+		    TO ('2026-10-26 00:00:00+00')
+		    PARTITION BY LIST (connection_id);
+
+		CREATE TABLE metrics.pg_stat_database_20261019_c1
+		    PARTITION OF metrics.pg_stat_database_20261019
+		    FOR VALUES IN (1);
+
 		CREATE VIEW metrics.pg_probe_view AS
 		    SELECT 1 AS x;
+
+		INSERT INTO metrics.pg_stat_database VALUES
+		    (1, '2026-10-13 00:00:00+00'),
+		    (2, '2026-10-14 00:00:00+00'),
+		    (3, '2026-10-15 00:00:00+00'),
+		    (1, '2026-10-20 00:00:00+00'),
+		    (1, '2026-10-21 00:00:00+00');
+		INSERT INTO metrics.pg_stat_replication VALUES
+		    (1, '2026-10-13 00:00:00+00'),
+		    (1, '2026-10-14 00:00:00+00');
 	`)
 	if err != nil {
 		t.Fatalf("failed to create probe tables: %v", err)
 	}
+	// ANALYZE sets n_live_tup for each leaf partition and plain table to
+	// its row count, which is exact for tables this small.
+	if _, err := conn.Exec(ctx, `ANALYZE metrics.pg_stat_database_20261012,
+		metrics.pg_stat_database_20261019_c1, metrics.pg_stat_replication`); err != nil {
+		t.Fatalf("failed to analyze probe tables: %v", err)
+	}
 
 	tool := ListProbesTool(pool)
-	text := mustSuccess(t, tool, map[string]any{"__context": ctx})
-	probes := listProbesNames(t, text)
+	var text string
+	var probes map[string][]string
+	// From PostgreSQL 15 ANALYZE writes its counts straight into shared
+	// statistics memory, so the first call sees them; on PostgreSQL 14
+	// they travel through the statistics collector asynchronously, so
+	// allow a few seconds for them to arrive.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		text = mustSuccess(t, tool, map[string]any{"__context": ctx})
+		probes = listProbesNames(t, text)
+		db, repl := probes["pg_stat_database"], probes["pg_stat_replication"]
+		statsArrived := len(db) == 3 && db[1] == "5" &&
+			len(repl) == 3 && repl[1] == "2"
+		if statsArrived || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
 
+	// The parent's count is the sum over both levels of its partition
+	// tree (three rows in one leaf, two in a nested leaf).
 	want := map[string][]string{
 		"pg_connectivity":     {"", "0", "server"},
-		"pg_stat_replication": {"Replication status", "0", "server"},
-		"pg_stat_database":    {"Database statistics", "0", "database"},
+		"pg_stat_replication": {"Replication status", "2", "server"},
+		"pg_stat_database":    {"Database statistics", "5", "database"},
 	}
 	for name, fields := range want {
 		got, ok := probes[name]
@@ -102,7 +156,12 @@ func TestListProbes_ExcludesPartitionsNotProbes(t *testing.T) {
 		}
 	}
 
-	for _, name := range []string{"pg_stat_database_20261012", "pg_probe_view"} {
+	for _, name := range []string{
+		"pg_stat_database_20261012",
+		"pg_stat_database_20261019",
+		"pg_stat_database_20261019_c1",
+		"pg_probe_view",
+	} {
 		if _, ok := probes[name]; ok {
 			t.Errorf("%q should not be listed as a probe:\n%s", name, text)
 		}

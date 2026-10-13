@@ -156,7 +156,25 @@ func parseDatastoreRequest(args map[string]any) (datastoreRequest, error) {
 		Page:     1,
 		PageSize: datastoreDefaultPageSize,
 	}
+	steps := []func(map[string]any) error{
+		checkDatastoreRequestKeys,
+		req.parseSource,
+		req.parseLists,
+		req.parseShapeOptions,
+		req.parsePaging,
+		req.parseExplain,
+	}
+	for _, step := range steps {
+		if err := step(args); err != nil {
+			return req, err
+		}
+	}
+	return req, nil
+}
 
+// checkDatastoreRequestKeys refuses any parameter query_datastore does
+// not accept, other than the registry's "__" keys.
+func checkDatastoreRequestKeys(args map[string]any) error {
 	keys := make([]string, 0, len(args))
 	for key := range args {
 		keys = append(keys, key)
@@ -167,64 +185,84 @@ func parseDatastoreRequest(args map[string]any) (datastoreRequest, error) {
 			continue
 		}
 		if key == "query" || key == "sql" {
-			return req, errors.New("query_datastore no longer accepts SQL; describe the query with source, columns, filters and the other parameters, and call describe_datastore to list the sources")
+			return errors.New("query_datastore no longer accepts SQL; describe the query with source, columns, filters and the other parameters, and call describe_datastore to list the sources")
 		}
 		if hint, ok := datastoreParameterHints[key]; ok {
-			return req, fmt.Errorf("unknown parameter %q; %s", key, hint)
+			return fmt.Errorf("unknown parameter %q; %s", key, hint)
 		}
-		return req, fmt.Errorf("unknown parameter %q", key)
+		return fmt.Errorf("unknown parameter %q", key)
 	}
+	return nil
+}
 
+// parseSource reads the required source parameter.
+func (req *datastoreRequest) parseSource(args map[string]any) error {
 	source, ok := args["source"]
 	if !ok {
-		return req, errors.New("source is required; call describe_datastore to list the sources")
+		return errors.New("source is required; call describe_datastore to list the sources")
 	}
 	name, ok := source.(string)
 	if !ok {
-		return req, errors.New("source must be a string")
+		return errors.New("source must be a string")
 	}
 	req.Source = strings.TrimSpace(name)
 	if req.Source == "" {
-		return req, errors.New("source is required; call describe_datastore to list the sources")
+		return errors.New("source is required; call describe_datastore to list the sources")
 	}
+	return nil
+}
 
+// parseLists reads the list and time range parameters, in the order
+// their errors are reported.
+func (req *datastoreRequest) parseLists(args map[string]any) error {
 	var err error
 	if req.Columns, err = parseStringList(args, "columns"); err != nil {
-		return req, err
+		return err
 	}
 	if req.GroupBy, err = parseStringList(args, "group_by"); err != nil {
-		return req, err
+		return err
 	}
 	if len(req.GroupBy) > datastoreMaxListItems {
-		return req, fmt.Errorf("group_by takes at most %d columns", datastoreMaxListItems)
+		return fmt.Errorf("group_by takes at most %d columns", datastoreMaxListItems)
 	}
 	if req.ConnectionIDs, err = parseConnectionIDs(args); err != nil {
-		return req, err
+		return err
 	}
 	if req.TimeStart, err = parseOptionalString(args, "time_start"); err != nil {
-		return req, err
+		return err
 	}
 	if req.TimeEnd, err = parseOptionalString(args, "time_end"); err != nil {
-		return req, err
+		return err
 	}
+	return req.parseClauses(args)
+}
+
+// parseClauses reads the filters and order_by parameters.
+func (req *datastoreRequest) parseClauses(args map[string]any) error {
+	var err error
 	if req.Filters, err = parseDatastoreFilters(args); err != nil {
-		return req, err
+		return err
 	}
 	if len(req.Filters) > datastoreMaxListItems {
-		return req, fmt.Errorf("filters takes at most %d conditions", datastoreMaxListItems)
+		return fmt.Errorf("filters takes at most %d conditions", datastoreMaxListItems)
 	}
 	if req.OrderBy, err = parseDatastoreOrder(args); err != nil {
-		return req, err
+		return err
 	}
 	if len(req.OrderBy) > datastoreMaxListItems {
-		return req, fmt.Errorf("order_by takes at most %d terms", datastoreMaxListItems)
+		return fmt.Errorf("order_by takes at most %d terms", datastoreMaxListItems)
 	}
+	return nil
+}
 
+// parseShapeOptions reads the shape, aggregation and buckets
+// parameters.
+func (req *datastoreRequest) parseShapeOptions(args map[string]any) error {
 	if v, ok := args["shape"]; ok {
 		shape := stringValue(v)
 		shape = strings.ToLower(strings.TrimSpace(shape))
 		if shape != datastoreShapeRows && shape != datastoreShapeLatest && shape != datastoreShapeAggregate {
-			return req, errors.New("shape must be one of rows, latest or aggregate")
+			return errors.New("shape must be one of rows, latest or aggregate")
 		}
 		req.Shape = shape
 	}
@@ -232,42 +270,53 @@ func parseDatastoreRequest(args map[string]any) (datastoreRequest, error) {
 		agg := stringValue(v)
 		agg = strings.ToLower(strings.TrimSpace(agg))
 		if !datastoreAggregations[agg] {
-			return req, errors.New("aggregation must be one of avg, sum, min, max or count")
+			return errors.New("aggregation must be one of avg, sum, min, max or count")
 		}
 		req.Aggregation = agg
 	}
-	if v, ok := args["buckets"]; ok {
-		n, ok := integerValue(v)
-		if !ok || n < 1 || n > datastoreMaxBuckets {
-			return req, fmt.Errorf("buckets must be an integer between 1 and %d", datastoreMaxBuckets)
-		}
-		req.Buckets = int(n)
+	return parseBoundedInteger(args, "buckets", datastoreMaxBuckets, &req.Buckets)
+}
+
+// parsePaging reads the page and page_size parameters and checks that
+// together they stay within datastoreMaxRows.
+func (req *datastoreRequest) parsePaging(args map[string]any) error {
+	if err := parseBoundedInteger(args, "page", datastoreMaxPage, &req.Page); err != nil {
+		return err
 	}
-	if v, ok := args["page"]; ok {
-		n, ok := integerValue(v)
-		if !ok || n < 1 || n > datastoreMaxPage {
-			return req, fmt.Errorf("page must be an integer between 1 and %d", datastoreMaxPage)
-		}
-		req.Page = int(n)
+	if err := parseBoundedInteger(args, "page_size", datastoreMaxPageSize, &req.PageSize); err != nil {
+		return err
 	}
-	if v, ok := args["page_size"]; ok {
-		n, ok := integerValue(v)
-		if !ok || n < 1 || n > datastoreMaxPageSize {
-			return req, fmt.Errorf("page_size must be an integer between 1 and %d", datastoreMaxPageSize)
-		}
-		req.PageSize = int(n)
+	return checkDatastorePaging(req.Page, req.PageSize)
+}
+
+// parseExplain reads the explain parameter.
+func (req *datastoreRequest) parseExplain(args map[string]any) error {
+	v, ok := args["explain"]
+	if !ok {
+		return nil
 	}
-	if err := checkDatastorePaging(req.Page, req.PageSize); err != nil {
-		return req, err
+	b, ok := v.(bool)
+	if !ok {
+		return errors.New("explain must be a boolean")
 	}
-	if v, ok := args["explain"]; ok {
-		b, ok := v.(bool)
-		if !ok {
-			return req, errors.New("explain must be a boolean")
-		}
-		req.Explain = b
+	req.Explain = b
+	return nil
+}
+
+// parseBoundedInteger stores the integer parameter name in dst when the
+// caller gives it, refusing a value outside 1 to limit. dst keeps its
+// default when the parameter is absent.
+func parseBoundedInteger(args map[string]any, name string, limit int64, dst *int) error {
+	v, ok := args[name]
+	if !ok {
+		return nil
 	}
-	return req, nil
+	n, ok := integerValue(v)
+	if !ok || n < 1 || n > limit {
+		return fmt.Errorf("%s must be an integer between 1 and %d", name, limit)
+	}
+	*dst = int(n)
+	return nil
 }
 
 // checkDatastorePaging refuses a page that reaches beyond the first
@@ -494,44 +543,91 @@ func qualified(alias, column string) string {
 //
 // explain is the caller's concern: the statement is the same either way.
 func buildDatastoreQuery(src datastoreSource, req datastoreRequest, vis visibleSet, now time.Time) (string, []any, error) {
-	if req.Source != src.Name {
-		return "", nil, fmt.Errorf("request source %q does not match %q", req.Source, src.Name)
-	}
-	if req.PageSize < 1 || req.PageSize > datastoreMaxPageSize {
-		return "", nil, fmt.Errorf("page_size must be an integer between 1 and %d", datastoreMaxPageSize)
-	}
-	if req.Page < 1 || req.Page > datastoreMaxPage {
-		return "", nil, fmt.Errorf("page must be an integer between 1 and %d", datastoreMaxPage)
-	}
-	if err := checkDatastorePaging(req.Page, req.PageSize); err != nil {
+	if err := checkDatastoreRequest(src, req); err != nil {
 		return "", nil, err
 	}
-	if len(req.Filters) > datastoreMaxListItems || len(req.OrderBy) > datastoreMaxListItems || len(req.GroupBy) > datastoreMaxListItems {
-		return "", nil, fmt.Errorf("filters, order_by and group_by take at most %d entries each", datastoreMaxListItems)
-	}
-	if err := checkShape(src, req); err != nil {
-		return "", nil, err
-	}
-
-	columns := req.Columns
-	if len(columns) == 0 && req.Shape != datastoreShapeAggregate {
-		columns = src.columnNames()
-	}
-	if err := checkColumnList(src, columns, "columns"); err != nil {
-		return "", nil, err
-	}
-	if err := checkColumnList(src, req.GroupBy, "group_by"); err != nil {
+	columns, err := datastoreColumns(src, req)
+	if err != nil {
 		return "", nil, err
 	}
 
 	q := &datastoreQuery{}
 	// inner holds the predicates the server builds (the caller's scope and
 	// the time window), and conditions the caller's own filters.
-	var inner, conditions []string
-
-	scope, err := scopeCondition(q, src, req, vis)
+	inner, window, err := serverConditions(q, src, req, vis, now)
 	if err != nil {
 		return "", nil, err
+	}
+	conditions, err := filterConditions(q, src, req.Filters)
+	if err != nil {
+		return "", nil, err
+	}
+
+	from, err := scopedFrom(src, inner)
+	if err != nil {
+		return "", nil, err
+	}
+	where := ""
+	if len(conditions) > 0 {
+		where = " WHERE " + strings.Join(conditions, " AND ")
+	}
+
+	sql, err := shapeStatement(q, src, req, columns, window, from, where)
+	if err != nil {
+		return "", nil, err
+	}
+
+	limit := q.bind(int64(req.PageSize) + 1)
+	offset := q.bind(int64(req.Page-1) * int64(req.PageSize))
+	return sql + " LIMIT " + limit + " OFFSET " + offset, q.args, nil
+}
+
+// checkDatastoreRequest repeats parseDatastoreRequest's limits, so a
+// request built any other way is held to them too, and checks that the
+// request suits src.
+func checkDatastoreRequest(src datastoreSource, req datastoreRequest) error {
+	if req.Source != src.Name {
+		return fmt.Errorf("request source %q does not match %q", req.Source, src.Name)
+	}
+	if req.PageSize < 1 || req.PageSize > datastoreMaxPageSize {
+		return fmt.Errorf("page_size must be an integer between 1 and %d", datastoreMaxPageSize)
+	}
+	if req.Page < 1 || req.Page > datastoreMaxPage {
+		return fmt.Errorf("page must be an integer between 1 and %d", datastoreMaxPage)
+	}
+	if err := checkDatastorePaging(req.Page, req.PageSize); err != nil {
+		return err
+	}
+	if len(req.Filters) > datastoreMaxListItems || len(req.OrderBy) > datastoreMaxListItems || len(req.GroupBy) > datastoreMaxListItems {
+		return fmt.Errorf("filters, order_by and group_by take at most %d entries each", datastoreMaxListItems)
+	}
+	return checkShape(src, req)
+}
+
+// datastoreColumns returns the columns the statement selects: the
+// caller's list, or every column of src for a shape other than
+// aggregate. It also checks the group_by columns.
+func datastoreColumns(src datastoreSource, req datastoreRequest) ([]string, error) {
+	columns := req.Columns
+	if len(columns) == 0 && req.Shape != datastoreShapeAggregate {
+		columns = src.columnNames()
+	}
+	if err := checkColumnList(src, columns, "columns"); err != nil {
+		return nil, err
+	}
+	if err := checkColumnList(src, req.GroupBy, "group_by"); err != nil {
+		return nil, err
+	}
+	return columns, nil
+}
+
+// serverConditions returns the predicates the server applies itself:
+// the caller's scope, then the time window. It binds them in that order.
+func serverConditions(q *datastoreQuery, src datastoreSource, req datastoreRequest, vis visibleSet, now time.Time) ([]string, datastoreWindow, error) {
+	var inner []string
+	scope, err := scopeCondition(q, src, req, vis)
+	if err != nil {
+		return nil, datastoreWindow{}, err
 	}
 	if scope != "" {
 		inner = append(inner, scope)
@@ -539,7 +635,7 @@ func buildDatastoreQuery(src datastoreSource, req datastoreRequest, vis visibleS
 
 	window, err := resolveDatastoreWindow(src, req, now)
 	if err != nil {
-		return "", nil, err
+		return nil, datastoreWindow{}, err
 	}
 	timeCol := ""
 	if src.TimeColumn != "" {
@@ -552,40 +648,34 @@ func buildDatastoreQuery(src datastoreSource, req datastoreRequest, vis visibleS
 	if window.end != nil {
 		inner = append(inner, timeCol+" <= "+q.bind(*window.end))
 	}
+	return inner, window, nil
+}
 
-	for i, f := range req.Filters {
+// filterConditions renders the caller's filters, binding their values
+// in order.
+func filterConditions(q *datastoreQuery, src datastoreSource, filters []datastoreFilter) ([]string, error) {
+	var conditions []string
+	for i, f := range filters {
 		cond, err := filterCondition(q, src, f, i)
 		if err != nil {
-			return "", nil, err
+			return nil, err
 		}
 		conditions = append(conditions, cond)
 	}
+	return conditions, nil
+}
 
-	from, err := scopedFrom(src, inner)
-	if err != nil {
-		return "", nil, err
-	}
-	where := ""
-	if len(conditions) > 0 {
-		where = " WHERE " + strings.Join(conditions, " AND ")
-	}
-
-	var sql string
+// shapeStatement builds the statement for req.Shape, without its LIMIT
+// and OFFSET.
+func shapeStatement(q *datastoreQuery, src datastoreSource, req datastoreRequest, columns []string, window datastoreWindow, from, where string) (string, error) {
 	switch req.Shape {
 	case datastoreShapeLatest:
-		sql, err = latestStatement(src, req, columns, from, where)
+		return latestStatement(src, req, columns, from, where)
 	case datastoreShapeAggregate:
-		sql, err = aggregateStatement(q, src, req, window, from, where)
+		return aggregateStatement(q, src, req, window, from, where)
 	default:
-		sql, err = rowsStatement(src, req, columns, from, where)
+		return rowsStatement(src, req, columns, from, where)
 	}
-	if err != nil {
-		return "", nil, err
-	}
-
-	limit := q.bind(int64(req.PageSize) + 1)
-	offset := q.bind(int64(req.Page-1) * int64(req.PageSize))
-	return sql + " LIMIT " + limit + " OFFSET " + offset, q.args, nil
 }
 
 // errDatastoreExplainRestricted refuses explain to a caller who cannot
@@ -697,76 +787,92 @@ func scopedFrom(src datastoreSource, inner []string) (string, error) {
 // may read, or "" when no limit applies. It fails closed: a scope it
 // does not know is an error rather than an unscoped query.
 func scopeCondition(q *datastoreQuery, src datastoreSource, req datastoreRequest, vis visibleSet) (string, error) {
-	switch src.Scope {
-	case scopeConnection, scopeAlert, scopeViaAlert:
-	case scopeHierarchy, scopeCluster, scopeGroup, scopeGlobal:
-		if len(req.ConnectionIDs) > 0 {
-			return "", fmt.Errorf("connection_ids does not apply to source %q; filter on its columns instead", src.Name)
-		}
-	default:
-		return "", fmt.Errorf("source %q has no scoping rule", src.Name)
+	if err := checkScopeRule(src, req); err != nil {
+		return "", err
 	}
-
-	// ids is the set to scope to, and restricted says whether to scope
-	// at all. Named connections must all be visible; the denial is the
-	// same whether a connection is missing or merely hidden.
-	var ids []int
-	restricted := !vis.All
-	if len(req.ConnectionIDs) > 0 {
-		for _, id := range req.ConnectionIDs {
-			if !vis.All && !slices.Contains(vis.IDs, id) {
-				return "", errConnectionNotAccessible
-			}
-		}
-		ids = slices.Clone(req.ConnectionIDs)
-		restricted = true
-	} else if restricted {
-		ids = make([]int, 0, len(vis.IDs))
-		ids = append(ids, vis.IDs...)
+	ids, restricted, err := scopeIDs(req, vis)
+	if err != nil {
+		return "", err
 	}
-
 	visible := func() string { return q.bind(ids) + "::int[]" }
 
 	switch src.Scope {
-	case scopeConnection:
-		if !restricted {
-			return "", nil
-		}
-		return qualified(datastoreTableAlias, src.ConnectionColumn) + " = ANY(" + visible() + ")", nil
-
 	case scopeAlert:
 		return alertCondition(q, datastoreTableAlias, req, vis, restricted, visible), nil
-
 	case scopeViaAlert:
-		cond := alertCondition(q, "a", req, vis, restricted, visible)
-		if cond == "" {
-			return "", nil
-		}
-		return "EXISTS (SELECT 1 FROM public.alerts a WHERE a.id = " +
-			qualified(datastoreTableAlias, "alert_id") + " AND " + cond + ")", nil
-
-	case scopeHierarchy:
-		if !restricted {
-			return "", nil
-		}
-		return hierarchyCondition(q, visible()), nil
-
-	case scopeCluster:
-		if !restricted {
-			return "", nil
-		}
-		return "EXISTS (SELECT 1 FROM public.connections c WHERE c.cluster_id = " +
-			qualified(datastoreTableAlias, "id") + " AND c.id = ANY(" + visible() + "))", nil
-
-	case scopeGroup:
-		if !restricted {
-			return "", nil
-		}
-		return "EXISTS (SELECT 1 FROM public.connections c JOIN public.clusters cl ON cl.id = c.cluster_id WHERE cl.group_id = " +
-			qualified(datastoreTableAlias, "id") + " AND c.id = ANY(" + visible() + "))", nil
-
-	default:
+		return viaAlertCondition(q, req, vis, restricted, visible), nil
+	}
+	if !restricted {
 		return "", nil
+	}
+	return restrictedScopeCondition(q, src, visible), nil
+}
+
+// checkScopeRule fails closed on a source with no known scoping rule,
+// and refuses connection_ids for a source whose rule does not scope by
+// one connection column.
+func checkScopeRule(src datastoreSource, req datastoreRequest) error {
+	switch src.Scope {
+	case scopeConnection, scopeAlert, scopeViaAlert:
+		return nil
+	case scopeHierarchy, scopeCluster, scopeGroup, scopeGlobal:
+		if len(req.ConnectionIDs) > 0 {
+			return fmt.Errorf("connection_ids does not apply to source %q; filter on its columns instead", src.Name)
+		}
+		return nil
+	default:
+		return fmt.Errorf("source %q has no scoping rule", src.Name)
+	}
+}
+
+// scopeIDs returns the set of connections to scope to, and whether to
+// scope at all. Named connections must all be visible; the denial is the
+// same whether a connection is missing or merely hidden.
+func scopeIDs(req datastoreRequest, vis visibleSet) ([]int, bool, error) {
+	if len(req.ConnectionIDs) > 0 {
+		for _, id := range req.ConnectionIDs {
+			if !vis.All && !slices.Contains(vis.IDs, id) {
+				return nil, false, errConnectionNotAccessible
+			}
+		}
+		return slices.Clone(req.ConnectionIDs), true, nil
+	}
+	if vis.All {
+		return nil, false, nil
+	}
+	ids := make([]int, 0, len(vis.IDs))
+	ids = append(ids, vis.IDs...)
+	return ids, true, nil
+}
+
+// viaAlertCondition admits a row whose alert passes alertCondition.
+func viaAlertCondition(q *datastoreQuery, req datastoreRequest, vis visibleSet, restricted bool, visible func() string) string {
+	cond := alertCondition(q, "a", req, vis, restricted, visible)
+	if cond == "" {
+		return ""
+	}
+	return "EXISTS (SELECT 1 FROM public.alerts a WHERE a.id = " +
+		qualified(datastoreTableAlias, "alert_id") + " AND " + cond + ")"
+}
+
+// restrictedScopeCondition returns the predicate of a connection,
+// hierarchy, cluster or group scope for a caller limited to the visible
+// set. Each case binds the visible set itself, so a scope that does not
+// use it binds nothing.
+func restrictedScopeCondition(q *datastoreQuery, src datastoreSource, visible func() string) string {
+	switch src.Scope {
+	case scopeConnection:
+		return qualified(datastoreTableAlias, src.ConnectionColumn) + " = ANY(" + visible() + ")"
+	case scopeHierarchy:
+		return hierarchyCondition(q, visible())
+	case scopeCluster:
+		return "EXISTS (SELECT 1 FROM public.connections c WHERE c.cluster_id = " +
+			qualified(datastoreTableAlias, "id") + " AND c.id = ANY(" + visible() + "))"
+	case scopeGroup:
+		return "EXISTS (SELECT 1 FROM public.connections c JOIN public.clusters cl ON cl.id = c.cluster_id WHERE cl.group_id = " +
+			qualified(datastoreTableAlias, "id") + " AND c.id = ANY(" + visible() + "))"
+	default:
+		return ""
 	}
 }
 
@@ -857,22 +963,9 @@ func resolveDatastoreWindow(src datastoreSource, req datastoreRequest, now time.
 		return datastoreWindow{}, nil
 	}
 
-	var start, end *time.Time
-	base := now
-	if req.TimeEnd != "" {
-		t, err := parseDatastoreTime(req.TimeEnd, "time_end", now, now)
-		if err != nil {
-			return datastoreWindow{}, err
-		}
-		end = &t
-		base = t
-	}
-	if req.TimeStart != "" {
-		t, err := parseDatastoreTime(req.TimeStart, "time_start", now, base)
-		if err != nil {
-			return datastoreWindow{}, err
-		}
-		start = &t
+	start, end, err := parseDatastoreBounds(req, now)
+	if err != nil {
+		return datastoreWindow{}, err
 	}
 
 	if src.Kind != datastoreKindMetric {
@@ -881,7 +974,36 @@ func resolveDatastoreWindow(src datastoreSource, req datastoreRequest, now time.
 		}
 		return datastoreWindow{start: start, end: end}, nil
 	}
+	return metricDatastoreWindow(start, end, now)
+}
 
+// parseDatastoreBounds reads time_end, then time_start, which counts back
+// from time_end when it is relative. An absent bound is nil.
+func parseDatastoreBounds(req datastoreRequest, now time.Time) (*time.Time, *time.Time, error) {
+	var start, end *time.Time
+	base := now
+	if req.TimeEnd != "" {
+		t, err := parseDatastoreTime(req.TimeEnd, "time_end", now, now)
+		if err != nil {
+			return nil, nil, err
+		}
+		end = &t
+		base = t
+	}
+	if req.TimeStart != "" {
+		t, err := parseDatastoreTime(req.TimeStart, "time_start", now, base)
+		if err != nil {
+			return nil, nil, err
+		}
+		start = &t
+	}
+	return start, end, nil
+}
+
+// metricDatastoreWindow bounds a metric source's window: end defaults to
+// now and start to the hour before end, and the result follows
+// metrics.ResolveCustomWindow's rules.
+func metricDatastoreWindow(start, end *time.Time, now time.Time) (datastoreWindow, error) {
 	if end == nil {
 		end = &now
 	}
@@ -919,29 +1041,40 @@ func filterCondition(q *datastoreQuery, src datastoreSource, f datastoreFilter, 
 			return "", fmt.Errorf("%s: operator %s takes no value or values", where, f.Op)
 		}
 		return column + " " + op, nil
-
 	case "in", "not in":
-		if f.HasValue {
-			return "", fmt.Errorf("%s: operator %s takes values (an array), not value", where, f.Op)
-		}
-		list, ok := f.Values.([]any)
-		if !ok || len(list) == 0 {
-			return "", fmt.Errorf("%s: operator %s needs values, a non-empty array", where, f.Op)
-		}
-		if len(list) > datastoreMaxInValues {
-			return "", fmt.Errorf("%s: operator %s takes at most %d values", where, f.Op, datastoreMaxInValues)
-		}
-		placeholders := make([]string, len(list))
-		for j, item := range list {
-			v, err := coerceFilterValue(c, item, where)
-			if err != nil {
-				return "", err
-			}
-			placeholders[j] = q.bind(v)
-		}
-		return column + " " + op + " (" + strings.Join(placeholders, ", ") + ")", nil
+		return listFilterCondition(q, c, f, column+" "+op, where)
+	default:
+		return scalarFilterCondition(q, c, f, column+" "+op, where)
 	}
+}
 
+// listFilterCondition renders an in or not in filter, binding each of
+// its values. lhs is the rendered column and operator.
+func listFilterCondition(q *datastoreQuery, c datastoreColumn, f datastoreFilter, lhs, where string) (string, error) {
+	if f.HasValue {
+		return "", fmt.Errorf("%s: operator %s takes values (an array), not value", where, f.Op)
+	}
+	list, ok := f.Values.([]any)
+	if !ok || len(list) == 0 {
+		return "", fmt.Errorf("%s: operator %s needs values, a non-empty array", where, f.Op)
+	}
+	if len(list) > datastoreMaxInValues {
+		return "", fmt.Errorf("%s: operator %s takes at most %d values", where, f.Op, datastoreMaxInValues)
+	}
+	placeholders := make([]string, len(list))
+	for j, item := range list {
+		v, err := coerceFilterValue(c, item, where)
+		if err != nil {
+			return "", err
+		}
+		placeholders[j] = q.bind(v)
+	}
+	return lhs + " (" + strings.Join(placeholders, ", ") + ")", nil
+}
+
+// scalarFilterCondition renders a filter that compares the column with
+// one value, binding it. lhs is the rendered column and operator.
+func scalarFilterCondition(q *datastoreQuery, c datastoreColumn, f datastoreFilter, lhs, where string) (string, error) {
 	if f.HasValues {
 		return "", fmt.Errorf("%s: operator %s takes value, not values (values is only for in and not in)", where, f.Op)
 	}
@@ -952,22 +1085,31 @@ func filterCondition(q *datastoreQuery, src datastoreSource, f datastoreFilter, 
 		return "", fmt.Errorf("%s: to match a missing value use the is null operator", where)
 	}
 	if f.Op == "like" {
-		if !slices.Contains(datastoreTextTypes, c.DataType) {
-			return "", fmt.Errorf("%s: operator like needs a text column, and %q is %s", where, c.Name, c.DataType)
-		}
-		pattern, ok := f.Value.(string)
-		if !ok {
-			return "", fmt.Errorf("%s: operator like needs a string value", where)
-		}
-		if endsWithEscape(pattern) {
-			return "", fmt.Errorf(`%s: a like pattern must not end with a single backslash; write \\ to match a literal backslash`, where)
+		if err := checkLikeFilter(c, f.Value, where); err != nil {
+			return "", err
 		}
 	}
 	v, err := coerceFilterValue(c, f.Value, where)
 	if err != nil {
 		return "", err
 	}
-	return column + " " + op + " " + q.bind(v), nil
+	return lhs + " " + q.bind(v), nil
+}
+
+// checkLikeFilter refuses a like filter on a column that is not text, or
+// whose pattern is not a string or ends with a lone escape character.
+func checkLikeFilter(c datastoreColumn, value any, where string) error {
+	if !slices.Contains(datastoreTextTypes, c.DataType) {
+		return fmt.Errorf("%s: operator like needs a text column, and %q is %s", where, c.Name, c.DataType)
+	}
+	pattern, ok := value.(string)
+	if !ok {
+		return fmt.Errorf("%s: operator like needs a string value", where)
+	}
+	if endsWithEscape(pattern) {
+		return fmt.Errorf(`%s: a like pattern must not end with a single backslash; write \\ to match a literal backslash`, where)
+	}
+	return nil
 }
 
 // endsWithEscape reports whether pattern ends in an odd-length run of
@@ -990,71 +1132,88 @@ func coerceFilterValue(c datastoreColumn, v any, where string) (any, error) {
 
 	switch {
 	case slices.Contains(datastoreIntegerTypes, c.DataType):
-		if s, ok := v.(string); ok {
-			n, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
-			if err != nil {
-				return nil, fmt.Errorf("%s: column %q needs an integer value", where, c.Name)
-			}
-			return n, nil
-		}
-		if _, ok := v.(bool); ok {
-			return nil, fmt.Errorf("%s: column %q needs an integer value", where, c.Name)
-		}
-		n, ok := integerValue(v)
-		if !ok {
+		return coerceIntegerValue(c, v, where)
+	case slices.Contains(datastoreFloatTypes, c.DataType):
+		return coerceFloatValue(c, v, where)
+	case c.DataType == typeBoolean:
+		return coerceBooleanValue(c, v, where)
+	default:
+		return coerceTextValue(v), nil
+	}
+}
+
+// coerceIntegerValue converts a filter value for an integer column.
+func coerceIntegerValue(c datastoreColumn, v any, where string) (any, error) {
+	if s, ok := v.(string); ok {
+		n, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
+		if err != nil {
 			return nil, fmt.Errorf("%s: column %q needs an integer value", where, c.Name)
 		}
 		return n, nil
-
-	case slices.Contains(datastoreFloatTypes, c.DataType):
-		switch n := v.(type) {
-		case float64:
-			return n, nil
-		case int:
-			return float64(n), nil
-		case int64:
-			return float64(n), nil
-		case json.Number:
-			if f, err := n.Float64(); err == nil {
-				return f, nil
-			}
-		case string:
-			if f, err := strconv.ParseFloat(strings.TrimSpace(n), 64); err == nil {
-				return f, nil
-			}
-		}
-		return nil, fmt.Errorf("%s: column %q needs a number value", where, c.Name)
-
-	case c.DataType == typeBoolean:
-		switch b := v.(type) {
-		case bool:
-			return b, nil
-		case string:
-			if parsed, err := strconv.ParseBool(strings.TrimSpace(b)); err == nil {
-				return parsed, nil
-			}
-		}
-		return nil, fmt.Errorf("%s: column %q needs a boolean value", where, c.Name)
-
-	default:
-		// Text columns, and every other type (times, intervals, LSNs,
-		// addresses, JSON), take the value as text; PostgreSQL parses it
-		// as the column's type, so pgx never has to encode a number into
-		// a type it has no plan for.
-		switch s := v.(type) {
-		case float64:
-			return strconv.FormatFloat(s, 'f', -1, 64), nil
-		case int:
-			return strconv.Itoa(s), nil
-		case int64:
-			return strconv.FormatInt(s, 10), nil
-		case json.Number:
-			return s.String(), nil
-		case bool:
-			return strconv.FormatBool(s), nil
-		}
-		return v, nil
 	}
+	if _, ok := v.(bool); ok {
+		return nil, fmt.Errorf("%s: column %q needs an integer value", where, c.Name)
+	}
+	n, ok := integerValue(v)
+	if !ok {
+		return nil, fmt.Errorf("%s: column %q needs an integer value", where, c.Name)
+	}
+	return n, nil
+}
+
+// coerceFloatValue converts a filter value for a floating-point or
+// numeric column.
+func coerceFloatValue(c datastoreColumn, v any, where string) (any, error) {
+	switch n := v.(type) {
+	case float64:
+		return n, nil
+	case int:
+		return float64(n), nil
+	case int64:
+		return float64(n), nil
+	case json.Number:
+		if f, err := n.Float64(); err == nil {
+			return f, nil
+		}
+	case string:
+		if f, err := strconv.ParseFloat(strings.TrimSpace(n), 64); err == nil {
+			return f, nil
+		}
+	}
+	return nil, fmt.Errorf("%s: column %q needs a number value", where, c.Name)
+}
+
+// coerceBooleanValue converts a filter value for a boolean column.
+func coerceBooleanValue(c datastoreColumn, v any, where string) (any, error) {
+	switch b := v.(type) {
+	case bool:
+		return b, nil
+	case string:
+		if parsed, err := strconv.ParseBool(strings.TrimSpace(b)); err == nil {
+			return parsed, nil
+		}
+	}
+	return nil, fmt.Errorf("%s: column %q needs a boolean value", where, c.Name)
+}
+
+// coerceTextValue renders a filter value as text. Text columns, and
+// every other type (times, intervals, LSNs, addresses, JSON), take the
+// value as text; PostgreSQL parses it as the column's type, so pgx never
+// has to encode a number into a type it has no plan for.
+func coerceTextValue(v any) any {
+	switch s := v.(type) {
+	case float64:
+		return strconv.FormatFloat(s, 'f', -1, 64)
+	case int:
+		return strconv.Itoa(s)
+	case int64:
+		return strconv.FormatInt(s, 10)
+	case json.Number:
+		return s.String()
+	case bool:
+		return strconv.FormatBool(s)
+	}
+	return v
 }
 
 // selectList renders columns qualified with alias, or bare when alias

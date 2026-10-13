@@ -1055,7 +1055,11 @@ that follow from that, most learned the hard way in #406 and #407:
   UTC, and a server whose `TimeZone` GUC carries a fractional offset
   would otherwise cut buckets at half past. Report how many raw samples
   each bucket covers, through the `historicalScanWithDBAndSamples` scan
-  type and `HistoricalMetricValue.SampleCount`, because
+  type (or `historicalScanBasicWithSamples` when the metric has no
+  database dimension, as `checkpoints_req_delta` does; both go through
+  `queryHistoricalMetricValuesWithSamples`, which rejects a NULL
+  database only for the former) and `HistoricalMetricValue.SampleCount`,
+  because
   `calculateAllBaseline` persists the sum of that field as the
   baseline's `sample_count` and `anomaly.tier1.warmup.*.min_samples` is
   counted in samples: one row per hour would leave these baselines short
@@ -1214,14 +1218,35 @@ conventions from that change hold across both:
   runs once per `calculateBaselines` cycle, binding
   `BaselineSupportedMetrics()` as a `text[]` and deleting
   `metric_name <> ALL($1)`, so rows the old fallback wrote disappear.
-  `TestAuditC7HistoricalSQLCoverage` pins by name the fifteen registry
+  `TestAuditC7HistoricalSQLCoverage` pins by name the eleven registry
   entries that have no historical query, and any entry gaining one must
-  be removed from that list. Two are excluded on purpose and must not
-  gain one: `pg_settings.max_connections` (a configuration value that
-  exists for the `high_max_connections` threshold rule) and
+  be removed from that list. All eleven are excluded on purpose, with
+  the reason for each in the Supported Metrics section of
+  `docs/developer-guide/alerter/anomaly-detection.md` (#490), so adding
+  one is a design decision, not a gap to fill.
+  `pg_settings.max_connections` (a configuration value that exists for
+  the `high_max_connections` threshold rule) and
   `pg_replication_slots.inactive_count` (a presence count that is almost
-  always zero); `baseline_exclusions_integration_test.go` pins both
-  (#576). Removing a historical query needs no migration, because the
+  always zero) are also pinned by
+  `baseline_exclusions_integration_test.go` (#576).
+
+- A historical query must compute the statistic its `latestSQL` computes,
+  one row per sample (or per hour bucket for counter sums), and each one
+  added since #567 has an integration test comparing the two on the same
+  samples (`metric_registry_equivalence_integration_test.go` for the
+  four #490 added; it reads the historical rows once, then deletes the
+  newest sample after each latest-query check so the next becomes
+  newest). The #490 shapes: `lag_bytes` takes `MAX` across standby pids
+  per `(connection_id, collected_at)`; `max_lock_wait_seconds` groups
+  every `pg_stat_activity` sample and uses `COALESCE(MAX(...) FILTER
+  (...), 0)`, so samples with no waiter enter the baseline as 0 even
+  though the latest query emits no row for them; `checkpoints_req_delta`
+  judges recovery per UTC hour bucket by the newest `pg_node_role` row in
+  that hour (no role row keeps the bucket, as the latest query does);
+  and `slow_query_count` rebuilds each interval mean with `LAG` over the
+  same identity window, pools identities per queryid before the mean, as
+  the latest query does, and only pairs samples less than 15 minutes
+  apart, since the latest query's window can never see a longer interval. Removing a historical query needs no migration, because the
   sweep deletes the metric's old baseline rows on the next cycle, and
   `processTier2And3` suppresses, without running Tier 2 or 3, any
   pending candidate whose metric fails `SupportsBaselines`. The

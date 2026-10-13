@@ -404,6 +404,43 @@ func TestMetricScanHelpers(t *testing.T) {
 			t.Error("expected a scan error for mistyped columns")
 		}
 	})
+
+	t.Run("queryHistoricalMetricValuesWithSamples", func(t *testing.T) {
+		got, err := ds.queryHistoricalMetricValuesWithSamples(ctx,
+			"SELECT 7::int, 'appdb'::text, 1.5::float8, now(), 3::bigint "+
+				"WHERE $1::int > 0", 7, true)
+		if err != nil {
+			t.Fatalf("error = %v", err)
+		}
+		if len(got) != 1 || got[0].DatabaseName == nil ||
+			*got[0].DatabaseName != "appdb" || got[0].SampleCount != 3 {
+			t.Fatalf("unexpected result: %+v", got)
+		}
+
+		noDB := "SELECT 7::int, NULL::text, 1.5::float8, now(), 3::bigint " +
+			"WHERE $1::int > 0"
+		got, err = ds.queryHistoricalMetricValuesWithSamples(ctx, noDB, 7, false)
+		if err != nil {
+			t.Fatalf("error = %v", err)
+		}
+		if len(got) != 1 || got[0].DatabaseName != nil {
+			t.Fatalf("unexpected result: %+v", got)
+		}
+		if _, err := ds.queryHistoricalMetricValuesWithSamples(
+			ctx, noDB, 7, true); err == nil {
+			t.Error("expected an error for a per-database row with no database")
+		}
+
+		if _, err := ds.queryHistoricalMetricValuesWithSamples(
+			ctx, "SELECT nonsense($1", 7, false); err == nil {
+			t.Error("expected a query error for invalid SQL")
+		}
+		if _, err := ds.queryHistoricalMetricValuesWithSamples(ctx,
+			"SELECT 'x'::text, 'y'::text, 'z'::text, 'w'::text, 'v'::text "+
+				"WHERE $1::int > 0", 7, false); err == nil {
+			t.Error("expected a scan error for mistyped columns")
+		}
+	})
 }
 
 // TestGetClusterPeers_ScanError covers the scan-error branch of

@@ -398,10 +398,12 @@ func ptr[T any](v T) *T {
 // that have no historicalSQL and therefore cannot be baselined. Since
 // #408 those metrics are excluded from baseline calculation and
 // detection through SupportsBaselines rather than routed through a
-// fallback that wrote permanently cold rows; giving them a historical
-// query is tracked separately. Listing every affected metric means
-// that adding, removing, or backfilling one produces a failure naming
-// the metric that changed, rather than an opaque count mismatch.
+// fallback that wrote permanently cold rows. GitHub issue #490 gave four
+// of them a historical query and decided that the rest stay excluded;
+// the developer guide's anomaly detection page says why for each one.
+// Listing every affected metric means that adding, removing, or
+// backfilling one produces a failure naming the metric that changed,
+// rather than an opaque count mismatch.
 func TestAuditC7HistoricalSQLCoverage(t *testing.T) {
 	var empty []string
 	for name, cfg := range metricRegistry {
@@ -421,14 +423,10 @@ func TestAuditC7HistoricalSQLCoverage(t *testing.T) {
 		"pg_replication_slots.inactive_count",
 		"pg_replication_slots.retained_bytes",
 		"pg_settings.max_connections",
-		"pg_stat_activity.max_lock_wait_seconds",
 		"pg_stat_all_tables.dead_tuple_percent",
 		"pg_stat_archiver.failed_count_delta",
-		"pg_stat_checkpointer.checkpoints_req_delta",
-		"pg_stat_replication.lag_bytes",
 		"pg_stat_replication.replay_lag_seconds",
 		"pg_stat_replication.standby_disconnected",
-		"pg_stat_statements.slow_query_count",
 		"table_last_autovacuum_hours",
 	}
 	// Both slices are sorted, so a positional diff names the first
@@ -518,11 +516,11 @@ func TestAuditC7DeleteBaselinesForUnsupportedMetrics(t *testing.T) {
 		metric string
 		dbName any
 	}{
-		{"pg_replication_slots.inactive", nil},         // no historicalSQL
-		{"pg_stat_statements.slow_query_count", "app"}, // no historicalSQL
-		{"metric_staleness", nil},                      // not in the registry
-		{"pg_stat_activity.count", nil},                // supported
-		{"pg_stat_database.deadlocks_delta", "app"},    // supported
+		{"pg_replication_slots.inactive", nil},       // no historicalSQL
+		{"pg_stat_archiver.failed_count_delta", nil}, // no historicalSQL
+		{"metric_staleness", nil},                    // not in the registry
+		{"pg_stat_activity.count", nil},              // supported
+		{"pg_stat_database.deadlocks_delta", "app"},  // supported
 	}
 	for _, r := range seed {
 		if _, err := pool.Exec(ctx, insertAuditBaselineSQL,
@@ -956,7 +954,8 @@ func TestMetricIsPerDatabase(t *testing.T) {
 	// look up the alert under the wrong key.
 	for _, name := range BaselineSupportedMetrics() {
 		cfg := metricRegistry[name]
-		historicalPerDB := cfg.historicalScan != historicalScanBasic
+		historicalPerDB := cfg.historicalScan == historicalScanWithDB ||
+			cfg.historicalScan == historicalScanWithDBAndSamples
 		if historicalPerDB != MetricIsPerDatabase(name) {
 			t.Errorf("%s: historical rows per database = %v, latest values per database = %v",
 				name, historicalPerDB, MetricIsPerDatabase(name))

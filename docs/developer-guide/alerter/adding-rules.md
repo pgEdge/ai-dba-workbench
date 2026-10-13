@@ -204,8 +204,12 @@ builds the `all`, `hourly` and `daily` baselines from this query,
 and the `historicalScan` field names its column layout:
 `historicalScanBasic` when the database name column is always
 `NULL`, `historicalScanWithDB` when the column carries a database
-name, and `historicalScanWithDBAndSamples` when the query returns
-pre-aggregated rows with a trailing `sample_count` column.
+name, and `historicalScanWithDBAndSamples` or
+`historicalScanBasicWithSamples` when the query returns
+pre-aggregated rows with a trailing `sample_count` column, with or
+without a database name. The historical query must compute the same
+statistic as the latest query, so add an integration test that
+compares the two on the same samples.
 
 A metric without a historical query is skipped by both baseline
 calculation and anomaly detection; the alerter does not build a

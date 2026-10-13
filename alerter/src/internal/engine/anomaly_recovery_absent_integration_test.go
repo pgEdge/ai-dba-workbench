@@ -354,7 +354,7 @@ func TestAnomalyRecoveryRetiresUnreachableAlerts(t *testing.T) {
 	db := "appdb"
 
 	legacy := env.seedMetricAlert(t, "pg_stat_database.cache_hit_ratio", nil, "active")
-	unsupported := env.seedMetricAlert(t, "pg_stat_replication.lag_bytes", nil, "active")
+	unsupported := env.seedMetricAlert(t, "pg_stat_archiver.failed_count_delta", nil, "active")
 	scoped := env.seedMetricAlert(t, "pg_stat_database.cache_hit_ratio", &db, "active")
 	reachable := env.seedMetricAlert(t, tierSkipMetric, nil, "active")
 	acknowledged := env.seedMetricAlert(t, "pg_stat_database.cache_hit_ratio", nil, "acknowledged")
@@ -435,7 +435,7 @@ func TestUnreachableAnomalyReason(t *testing.T) {
 		{tierSkipMetric, nil, false},
 		{tierSkipMetric, &db, false},
 		{absentRecoveryMetric, nil, false},
-		{"pg_stat_replication.lag_bytes", nil, true},
+		{"pg_stat_archiver.failed_count_delta", nil, true},
 		{"metric_staleness", nil, true},
 	}
 	for _, tc := range tests {

@@ -262,15 +262,20 @@ func (d *Datastore) queryHistoricalMetricValuesWithDB(ctx context.Context, sql s
 	return results, nil
 }
 
-// queryHistoricalMetricValuesWithDBAndSamples executes a historical SQL
+// queryHistoricalMetricValuesWithSamples executes a historical SQL
 // query that returns rows with (connection_id, database_name, value,
-// collected_at, sample_count), where database_name is a non-null string
-// and sample_count is the number of raw samples the row aggregates.
+// collected_at, sample_count), where sample_count is the number of raw
+// samples the row aggregates.
 //
 // Bucketed queries return one row per hour rather than one per sample, so
 // the caller cannot infer the sample count from the number of rows; the
 // query reports it instead. See GitHub issue #409.
-func (d *Datastore) queryHistoricalMetricValuesWithDBAndSamples(ctx context.Context, sql string, lookbackDays int) ([]HistoricalMetricValue, error) {
+//
+// When requireDB is true every row must name a database, as the
+// per-database bucketed queries do, and a NULL database_name is an
+// error; when it is false database_name is scanned as-is, which is NULL
+// for the per-connection bucketed queries (GitHub issue #490).
+func (d *Datastore) queryHistoricalMetricValuesWithSamples(ctx context.Context, sql string, lookbackDays int, requireDB bool) ([]HistoricalMetricValue, error) {
 	rows, err := d.queryInternal(ctx, sql, lookbackDays)
 	if err != nil {
 		return nil, err
@@ -280,12 +285,14 @@ func (d *Datastore) queryHistoricalMetricValuesWithDBAndSamples(ctx context.Cont
 	var results []HistoricalMetricValue
 	for rows.Next() {
 		var hv HistoricalMetricValue
-		var dbName string
-		if err := rows.Scan(&hv.ConnectionID, &dbName, &hv.Value,
+		if err := rows.Scan(&hv.ConnectionID, &hv.DatabaseName, &hv.Value,
 			&hv.CollectedAt, &hv.SampleCount); err != nil {
 			return nil, err
 		}
-		hv.DatabaseName = &dbName
+		if requireDB && hv.DatabaseName == nil {
+			return nil, fmt.Errorf("row for connection %d has no database name",
+				hv.ConnectionID)
+		}
 		results = append(results, hv)
 	}
 	if err := rows.Err(); err != nil {
@@ -320,7 +327,9 @@ func (d *Datastore) GetHistoricalMetricValues(ctx context.Context, metricName st
 	case historicalScanWithDB:
 		results, err = d.queryHistoricalMetricValuesWithDB(ctx, cfg.historicalSQL, lookbackDays)
 	case historicalScanWithDBAndSamples:
-		results, err = d.queryHistoricalMetricValuesWithDBAndSamples(ctx, cfg.historicalSQL, lookbackDays)
+		results, err = d.queryHistoricalMetricValuesWithSamples(ctx, cfg.historicalSQL, lookbackDays, true)
+	case historicalScanBasicWithSamples:
+		results, err = d.queryHistoricalMetricValuesWithSamples(ctx, cfg.historicalSQL, lookbackDays, false)
 	default:
 		return nil, fmt.Errorf("unknown historical scan type for metric: %s", metricName)
 	}

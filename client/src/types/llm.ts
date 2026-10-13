@@ -136,6 +136,7 @@ export interface ToolInputProperty {
     enum?: string[];
     minimum?: number;
     maximum?: number;
+    maxItems?: number;
     default?: string | number | boolean;
     items?: ToolInputProperty;
     properties?: Record<string, ToolInputProperty>;

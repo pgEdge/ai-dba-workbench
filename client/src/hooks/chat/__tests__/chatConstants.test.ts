@@ -22,6 +22,16 @@ import {
 
 describe('chatConstants', () => {
     describe('SYSTEM_PROMPT', () => {
+        it('matches the server datastore guidance', () => {
+            expect(SYSTEM_PROMPT).not.toContain('notification channels');
+            expect(SYSTEM_PROMPT).toContain(
+                '[{"column": "end_time", "op": ">", "value": "now"}]'
+            );
+            expect(SYSTEM_PROMPT).toContain(
+                "A 'system' alert concerns the Workbench itself"
+            );
+        });
+
         it('is a non-empty string', () => {
             expect(typeof SYSTEM_PROMPT).toBe('string');
             expect(SYSTEM_PROMPT.length).toBeGreaterThan(0);
@@ -237,8 +247,21 @@ describe('chatConstants', () => {
             ).toEqual(['asc', 'desc']);
             expect(props.buckets.maximum).toBe(500);
             expect(props.page.default).toBe(1);
+            expect(props.page.maximum).toBe(100000);
+            expect(props.filters.maxItems).toBe(20);
+            expect(props.group_by.maxItems).toBe(20);
+            expect(props.order_by.maxItems).toBe(20);
             expect(props.page_size.maximum).toBe(1000);
             expect(props.page_size.default).toBe(100);
+        });
+
+        it('describes the time window for every shape', () => {
+            const props = CHAT_TOOLS.find(t => t.name === 'query_datastore')
+                ?.inputSchema.properties as Record<string, ToolInputProperty>;
+            expect(props.shape.description).toContain(
+                'The time window applies to every shape.'
+            );
+            expect(props.time_start.description).toContain('30d');
         });
 
         it('contains the describe_datastore tool', () => {

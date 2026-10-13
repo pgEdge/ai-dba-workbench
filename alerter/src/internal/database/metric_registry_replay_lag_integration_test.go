@@ -71,16 +71,19 @@ func newReplayLagTestDatastore(t *testing.T) (*Datastore, *pgxpool.Pool, func())
 		t.Skipf("Test database ping failed: %v", err)
 	}
 
-	setup := `
-		DROP SCHEMA IF EXISTS metrics CASCADE;
-		CREATE SCHEMA metrics;
-	` + ddl + `
-		CREATE TABLE metrics.pg_stat_replication_default
-		    PARTITION OF metrics.pg_stat_replication DEFAULT;
-	`
-	if _, err := pool.Exec(ctx, setup); err != nil {
-		pool.Close()
-		t.Fatalf("failed to create metrics.pg_stat_replication: %v", err)
+	// Each statement runs on its own, so the collector's DDL is executed
+	// exactly as the collector source holds it.
+	for _, stmt := range []string{
+		`DROP SCHEMA IF EXISTS metrics CASCADE`,
+		`CREATE SCHEMA metrics`,
+		ddl,
+		`CREATE TABLE metrics.pg_stat_replication_default
+		    PARTITION OF metrics.pg_stat_replication DEFAULT`,
+	} {
+		if _, err := pool.Exec(ctx, stmt); err != nil {
+			pool.Close()
+			t.Fatalf("failed to create metrics.pg_stat_replication: %v", err)
+		}
 	}
 
 	cleanup := func() {
@@ -112,6 +115,7 @@ func insertReplicationSample(t *testing.T, pool *pgxpool.Pool, connID int,
 	t.Helper()
 
 	for _, r := range rows {
+		appName := fmt.Sprintf("standby_%d", r.pid)
 		if _, err := pool.Exec(context.Background(), `
 			INSERT INTO metrics.pg_stat_replication
 			    (connection_id, pid, role, application_name, state,
@@ -119,8 +123,7 @@ func insertReplicationSample(t *testing.T, pool *pgxpool.Pool, connID int,
 			VALUES ($1, $2, $3, $4,
 			        CASE WHEN $3 = 'primary' THEN 'streaming' END,
 			        make_interval(secs => $5), $6)
-		`, connID, r.pid, r.role, fmt.Sprintf("standby_%d", r.pid), r.lag,
-			at); err != nil {
+		`, connID, r.pid, r.role, appName, r.lag, at); err != nil {
 			t.Fatalf("failed to insert pg_stat_replication row (pid %d): %v",
 				r.pid, err)
 		}

@@ -41,15 +41,17 @@ data collected by the collector service.
 | `query_metrics` | Queries historical metrics with time-based aggregation. |
 | `list_connections` | Lists available monitored database connections. |
 | `describe_datastore` | Lists the sources `query_datastore` can read, or describes one source's columns. |
-| `query_datastore` | Runs a structured query against one datastore source, limited to the connections the caller can access. |
+| `query_datastore` | Runs a structured query against one datastore source; connection-specific rows are limited to the connections the caller can access. |
 
 ## Querying the Datastore
 
 The `query_datastore` tool reads the datastore, which is the workbench's own
 PostgreSQL database of collected metrics, alerts and configuration rather than
 a monitored database. The tool does not accept SQL; the server builds the
-query from structured parameters, so a caller can only read data about the
-connections that caller can access.
+query from structured parameters, so a caller can only read
+connection-specific data for the connections that caller can access.
+Estate-wide configuration, such as alert rules, alerter settings and global
+thresholds, blackouts and probe settings, remains readable.
 
 ### Datastore Sources
 
@@ -84,7 +86,11 @@ limits each one to the caller's connections:
 
 Metric sources return rows only for the connections the caller can access.
 For an API token, the accessible connections are further limited to the
-connections in the token's connection scope. Stored connection passwords and
+connections in the token's connection scope. Sources that hold estate-wide
+configuration, such as `alert_rules` and `alerter_settings`, return all rows,
+and sources such as `alert_thresholds`, `blackouts`, `blackout_schedules`,
+`probe_configs` and system alerts in `alerts` include estate-wide rows
+alongside connection-specific ones. Stored connection passwords and
 certificates are never available from any source, and metric columns whose
 names suggest a password, token or other secret are not offered.
 

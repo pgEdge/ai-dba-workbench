@@ -851,8 +851,9 @@ builtins:
 The `query_datastore` tool runs structured queries against the datastore, and
 the `describe_datastore` tool lists the sources that `query_datastore` can
 read and describes their columns. Both tools default to `true`. The
-`query_datastore` tool does not accept SQL, and the tool returns rows only for
-the connections the caller can access; the
+`query_datastore` tool does not accept SQL, and the tool limits
+connection-specific rows to the connections the caller can access, whilst
+estate-wide configuration rows remain readable; the
 [MCP Tools and Resources](../../user-guide/mcp-tools.md#querying-the-datastore)
 page describes the tool's parameters.
 

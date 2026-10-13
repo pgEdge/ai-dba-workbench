@@ -199,323 +199,393 @@ func metricCol(name, dataType string) datastoreColumn {
 // scoping rule can express.
 func configurationSources() []datastoreSource {
 	return []datastoreSource{
-		{
-			Name:             "connections",
-			Table:            "connections",
-			Description:      "Registered monitored connections. Stored passwords and certificate paths are not available.",
-			ConnectionColumn: "id",
-			Kind:             datastoreKindConfiguration,
-			Scope:            scopeConnection,
-			Columns: []datastoreColumn{
-				col("id", typeInteger),
-				col("name", typeVarchar),
-				col("description", typeText),
-				col("host", typeVarchar),
-				col("port", typeInteger),
-				col("database_name", typeVarchar),
-				col("sslmode", typeVarchar),
-				col("is_monitored", typeBoolean),
-				col("is_shared", typeBoolean),
-				col("enabled", typeBoolean),
-				col("owner_username", typeVarchar),
-				col("cluster_id", typeInteger),
-				col("role", typeVarchar),
-				col("membership_source", typeVarchar),
-				col("connection_error", typeText),
-				col("created_at", typeTimestamptz),
-				col("updated_at", typeTimestamptz),
-			},
+		connectionsSource(),
+		alertsSource(),
+		alertAcknowledgmentsSource(),
+		alertRulesSource(),
+		alertThresholdsSource(),
+		blackoutsSource(),
+		blackoutSchedulesSource(),
+		probeConfigsSource(),
+		alerterSettingsSource(),
+		metricBaselinesSource(),
+		anomalyCandidatesSource(),
+		correlationGroupsSource(),
+		clustersSource(),
+		clusterGroupsSource(),
+	}
+}
+
+// connectionsSource is the connections configuration source.
+func connectionsSource() datastoreSource {
+	return datastoreSource{
+		Name:             "connections",
+		Table:            "connections",
+		Description:      "Registered monitored connections. Stored passwords and certificate paths are not available.",
+		ConnectionColumn: "id",
+		Kind:             datastoreKindConfiguration,
+		Scope:            scopeConnection,
+		Columns: []datastoreColumn{
+			col("id", typeInteger),
+			col("name", typeVarchar),
+			col("description", typeText),
+			col("host", typeVarchar),
+			col("port", typeInteger),
+			col("database_name", typeVarchar),
+			col("sslmode", typeVarchar),
+			col("is_monitored", typeBoolean),
+			col("is_shared", typeBoolean),
+			col("enabled", typeBoolean),
+			col("owner_username", typeVarchar),
+			col("cluster_id", typeInteger),
+			col("role", typeVarchar),
+			col("membership_source", typeVarchar),
+			col("connection_error", typeText),
+			col("created_at", typeTimestamptz),
+			col("updated_at", typeTimestamptz),
 		},
-		{
-			Name:             "alerts",
-			Table:            "alerts",
-			Description:      "Threshold, anomaly, connection and system alerts raised by the alerter. For a formatted view use get_alert_history.",
-			TimeColumn:       "triggered_at",
-			ConnectionColumn: "connection_id",
-			Kind:             datastoreKindConfiguration,
-			Scope:            scopeAlert,
-			Columns: []datastoreColumn{
-				col("id", typeBigint),
-				col("alert_type", typeText),
-				col("rule_id", typeBigint),
-				col("connection_id", typeInteger),
-				col("database_name", typeText),
-				col("probe_name", typeText),
-				col("metric_name", typeText),
-				metricCol("metric_value", typeReal),
-				metricCol("threshold_value", typeReal),
-				col("operator", typeText),
-				col("severity", typeText),
-				col("title", typeText),
-				col("description", typeText),
-				col("object_name", typeText),
-				col("correlation_id", typeText),
-				col("status", typeText),
-				col("triggered_at", typeTimestamptz),
-				col("cleared_at", typeTimestamptz),
-				col("last_updated", typeTimestamptz),
-				metricCol("anomaly_score", typeReal),
-				col("anomaly_details", typeJSONB),
-				col("ai_analysis", typeText),
-				metricCol("ai_analysis_metric_value", typeReal),
-				col("last_reevaluated_at", typeTimestamptz),
-				metricCol("reevaluation_count", typeInteger),
-				col("reevaluation_fingerprint", typeText),
-			},
+	}
+}
+
+// alertsSource is the alerts configuration source.
+func alertsSource() datastoreSource {
+	return datastoreSource{
+		Name:             "alerts",
+		Table:            "alerts",
+		Description:      "Threshold, anomaly, connection and system alerts raised by the alerter. For a formatted view use get_alert_history.",
+		TimeColumn:       "triggered_at",
+		ConnectionColumn: "connection_id",
+		Kind:             datastoreKindConfiguration,
+		Scope:            scopeAlert,
+		Columns: []datastoreColumn{
+			col("id", typeBigint),
+			col("alert_type", typeText),
+			col("rule_id", typeBigint),
+			col("connection_id", typeInteger),
+			col("database_name", typeText),
+			col("probe_name", typeText),
+			col("metric_name", typeText),
+			metricCol("metric_value", typeReal),
+			metricCol("threshold_value", typeReal),
+			col("operator", typeText),
+			col("severity", typeText),
+			col("title", typeText),
+			col("description", typeText),
+			col("object_name", typeText),
+			col("correlation_id", typeText),
+			col("status", typeText),
+			col("triggered_at", typeTimestamptz),
+			col("cleared_at", typeTimestamptz),
+			col("last_updated", typeTimestamptz),
+			metricCol("anomaly_score", typeReal),
+			col("anomaly_details", typeJSONB),
+			col("ai_analysis", typeText),
+			metricCol("ai_analysis_metric_value", typeReal),
+			col("last_reevaluated_at", typeTimestamptz),
+			metricCol("reevaluation_count", typeInteger),
+			col("reevaluation_fingerprint", typeText),
 		},
-		{
-			Name:        "alert_acknowledgments",
-			Table:       "alert_acknowledgments",
-			Description: "Acknowledgements recorded against alerts.",
-			TimeColumn:  "acknowledged_at",
-			Kind:        datastoreKindConfiguration,
-			Scope:       scopeViaAlert,
-			Columns: []datastoreColumn{
-				col("id", typeBigint),
-				col("alert_id", typeBigint),
-				col("acknowledged_by", typeText),
-				col("acknowledged_at", typeTimestamptz),
-				col("acknowledge_type", typeText),
-				col("message", typeText),
-				col("false_positive", typeBoolean),
-			},
+	}
+}
+
+// alertAcknowledgmentsSource is the alert_acknowledgments configuration source.
+func alertAcknowledgmentsSource() datastoreSource {
+	return datastoreSource{
+		Name:        "alert_acknowledgments",
+		Table:       "alert_acknowledgments",
+		Description: "Acknowledgements recorded against alerts.",
+		TimeColumn:  "acknowledged_at",
+		Kind:        datastoreKindConfiguration,
+		Scope:       scopeViaAlert,
+		Columns: []datastoreColumn{
+			col("id", typeBigint),
+			col("alert_id", typeBigint),
+			col("acknowledged_by", typeText),
+			col("acknowledged_at", typeTimestamptz),
+			col("acknowledge_type", typeText),
+			col("message", typeText),
+			col("false_positive", typeBoolean),
 		},
-		{
-			Name:        "alert_rules",
-			Table:       "alert_rules",
-			Description: "Alert rule definitions and their default thresholds.",
-			Kind:        datastoreKindConfiguration,
-			Scope:       scopeGlobal,
-			Columns: []datastoreColumn{
-				col("id", typeBigint),
-				col("name", typeText),
-				col("description", typeText),
-				col("category", typeText),
-				col("metric_name", typeText),
-				col("metric_unit", typeText),
-				col("default_operator", typeText),
-				metricCol("default_threshold", typeReal),
-				col("default_severity", typeText),
-				col("default_enabled", typeBoolean),
-				col("required_extension", typeText),
-				col("is_built_in", typeBoolean),
-				col("created_at", typeTimestamptz),
-			},
+	}
+}
+
+// alertRulesSource is the alert_rules configuration source.
+func alertRulesSource() datastoreSource {
+	return datastoreSource{
+		Name:        "alert_rules",
+		Table:       "alert_rules",
+		Description: "Alert rule definitions and their default thresholds.",
+		Kind:        datastoreKindConfiguration,
+		Scope:       scopeGlobal,
+		Columns: []datastoreColumn{
+			col("id", typeBigint),
+			col("name", typeText),
+			col("description", typeText),
+			col("category", typeText),
+			col("metric_name", typeText),
+			col("metric_unit", typeText),
+			col("default_operator", typeText),
+			metricCol("default_threshold", typeReal),
+			col("default_severity", typeText),
+			col("default_enabled", typeBoolean),
+			col("required_extension", typeText),
+			col("is_built_in", typeBoolean),
+			col("created_at", typeTimestamptz),
 		},
-		{
-			Name:             "alert_thresholds",
-			Table:            "alert_thresholds",
-			Description:      "Per-server, per-cluster and per-group overrides of alert rule thresholds.",
-			ConnectionColumn: "connection_id",
-			Kind:             datastoreKindConfiguration,
-			Scope:            scopeHierarchy,
-			Columns: []datastoreColumn{
-				col("id", typeBigint),
-				col("rule_id", typeBigint),
-				col("scope", typeText),
-				col("connection_id", typeInteger),
-				col("cluster_id", typeInteger),
-				col("group_id", typeInteger),
-				col("database_name", typeText),
-				col("operator", typeText),
-				metricCol("threshold", typeReal),
-				col("severity", typeText),
-				col("enabled", typeBoolean),
-				col("created_at", typeTimestamptz),
-				col("updated_at", typeTimestamptz),
-			},
+	}
+}
+
+// alertThresholdsSource is the alert_thresholds configuration source.
+func alertThresholdsSource() datastoreSource {
+	return datastoreSource{
+		Name:             "alert_thresholds",
+		Table:            "alert_thresholds",
+		Description:      "Per-server, per-cluster and per-group overrides of alert rule thresholds.",
+		ConnectionColumn: "connection_id",
+		Kind:             datastoreKindConfiguration,
+		Scope:            scopeHierarchy,
+		Columns: []datastoreColumn{
+			col("id", typeBigint),
+			col("rule_id", typeBigint),
+			col("scope", typeText),
+			col("connection_id", typeInteger),
+			col("cluster_id", typeInteger),
+			col("group_id", typeInteger),
+			col("database_name", typeText),
+			col("operator", typeText),
+			metricCol("threshold", typeReal),
+			col("severity", typeText),
+			col("enabled", typeBoolean),
+			col("created_at", typeTimestamptz),
+			col("updated_at", typeTimestamptz),
 		},
-		{
-			Name:             "blackouts",
-			Table:            "blackouts",
-			Description:      "One-off blackout (maintenance) windows at estate, group, cluster or server scope. Query blackout_schedules too, or use get_blackouts.",
-			TimeColumn:       "start_time",
-			ConnectionColumn: "connection_id",
-			Kind:             datastoreKindConfiguration,
-			Scope:            scopeHierarchy,
-			Columns: []datastoreColumn{
-				col("id", typeBigint),
-				col("scope", typeText),
-				col("connection_id", typeInteger),
-				col("cluster_id", typeInteger),
-				col("group_id", typeInteger),
-				col("database_name", typeText),
-				col("reason", typeText),
-				col("start_time", typeTimestamptz),
-				col("end_time", typeTimestamptz),
-				col("created_by", typeText),
-				col("created_at", typeTimestamptz),
-			},
+	}
+}
+
+// blackoutsSource is the blackouts configuration source.
+func blackoutsSource() datastoreSource {
+	return datastoreSource{
+		Name:             "blackouts",
+		Table:            "blackouts",
+		Description:      "One-off blackout (maintenance) windows at estate, group, cluster or server scope. Query blackout_schedules too, or use get_blackouts.",
+		TimeColumn:       "start_time",
+		ConnectionColumn: "connection_id",
+		Kind:             datastoreKindConfiguration,
+		Scope:            scopeHierarchy,
+		Columns: []datastoreColumn{
+			col("id", typeBigint),
+			col("scope", typeText),
+			col("connection_id", typeInteger),
+			col("cluster_id", typeInteger),
+			col("group_id", typeInteger),
+			col("database_name", typeText),
+			col("reason", typeText),
+			col("start_time", typeTimestamptz),
+			col("end_time", typeTimestamptz),
+			col("created_by", typeText),
+			col("created_at", typeTimestamptz),
 		},
-		{
-			Name:             "blackout_schedules",
-			Table:            "blackout_schedules",
-			Description:      "Recurring blackout schedules (cron expressions) at estate, group, cluster or server scope.",
-			ConnectionColumn: "connection_id",
-			Kind:             datastoreKindConfiguration,
-			Scope:            scopeHierarchy,
-			Columns: []datastoreColumn{
-				col("id", typeBigint),
-				col("scope", typeText),
-				col("connection_id", typeInteger),
-				col("cluster_id", typeInteger),
-				col("group_id", typeInteger),
-				col("database_name", typeText),
-				col("name", typeText),
-				col("cron_expression", typeText),
-				metricCol("duration_minutes", typeInteger),
-				col("timezone", typeText),
-				col("reason", typeText),
-				col("enabled", typeBoolean),
-				col("created_by", typeText),
-				col("created_at", typeTimestamptz),
-				col("updated_at", typeTimestamptz),
-			},
+	}
+}
+
+// blackoutSchedulesSource is the blackout_schedules configuration source.
+func blackoutSchedulesSource() datastoreSource {
+	return datastoreSource{
+		Name:             "blackout_schedules",
+		Table:            "blackout_schedules",
+		Description:      "Recurring blackout schedules (cron expressions) at estate, group, cluster or server scope.",
+		ConnectionColumn: "connection_id",
+		Kind:             datastoreKindConfiguration,
+		Scope:            scopeHierarchy,
+		Columns: []datastoreColumn{
+			col("id", typeBigint),
+			col("scope", typeText),
+			col("connection_id", typeInteger),
+			col("cluster_id", typeInteger),
+			col("group_id", typeInteger),
+			col("database_name", typeText),
+			col("name", typeText),
+			col("cron_expression", typeText),
+			metricCol("duration_minutes", typeInteger),
+			col("timezone", typeText),
+			col("reason", typeText),
+			col("enabled", typeBoolean),
+			col("created_by", typeText),
+			col("created_at", typeTimestamptz),
+			col("updated_at", typeTimestamptz),
 		},
-		{
-			Name:             "probe_configs",
-			Table:            "probe_configs",
-			Description:      "Probe collection settings at global, group, cluster or server scope.",
-			ConnectionColumn: "connection_id",
-			Kind:             datastoreKindConfiguration,
-			Scope:            scopeHierarchy,
-			Columns: []datastoreColumn{
-				col("id", typeInteger),
-				col("name", typeText),
-				col("description", typeText),
-				col("scope", typeText),
-				col("connection_id", typeInteger),
-				col("cluster_id", typeInteger),
-				col("group_id", typeInteger),
-				col("is_enabled", typeBoolean),
-				metricCol("collection_interval_seconds", typeInteger),
-				metricCol("retention_days", typeInteger),
-				col("user_modified", typeBoolean),
-				col("created_at", typeTimestamptz),
-				col("updated_at", typeTimestamptz),
-			},
+	}
+}
+
+// probeConfigsSource is the probe_configs configuration source.
+func probeConfigsSource() datastoreSource {
+	return datastoreSource{
+		Name:             "probe_configs",
+		Table:            "probe_configs",
+		Description:      "Probe collection settings at global, group, cluster or server scope.",
+		ConnectionColumn: "connection_id",
+		Kind:             datastoreKindConfiguration,
+		Scope:            scopeHierarchy,
+		Columns: []datastoreColumn{
+			col("id", typeInteger),
+			col("name", typeText),
+			col("description", typeText),
+			col("scope", typeText),
+			col("connection_id", typeInteger),
+			col("cluster_id", typeInteger),
+			col("group_id", typeInteger),
+			col("is_enabled", typeBoolean),
+			metricCol("collection_interval_seconds", typeInteger),
+			metricCol("retention_days", typeInteger),
+			col("user_modified", typeBoolean),
+			col("created_at", typeTimestamptz),
+			col("updated_at", typeTimestamptz),
 		},
-		{
-			Name:        "alerter_settings",
-			Table:       "alerter_settings",
-			Description: "Estate-wide alerter settings (a single row).",
-			Kind:        datastoreKindConfiguration,
-			Scope:       scopeGlobal,
-			Columns: []datastoreColumn{
-				col("id", typeInteger),
-				metricCol("retention_days", typeInteger),
-				col("default_anomaly_enabled", typeBoolean),
-				metricCol("default_anomaly_sensitivity", typeReal),
-				metricCol("baseline_refresh_interval_mins", typeInteger),
-				metricCol("correlation_window_seconds", typeInteger),
-				col("updated_at", typeTimestamptz),
-			},
+	}
+}
+
+// alerterSettingsSource is the alerter_settings configuration source.
+func alerterSettingsSource() datastoreSource {
+	return datastoreSource{
+		Name:        "alerter_settings",
+		Table:       "alerter_settings",
+		Description: "Estate-wide alerter settings (a single row).",
+		Kind:        datastoreKindConfiguration,
+		Scope:       scopeGlobal,
+		Columns: []datastoreColumn{
+			col("id", typeInteger),
+			metricCol("retention_days", typeInteger),
+			col("default_anomaly_enabled", typeBoolean),
+			metricCol("default_anomaly_sensitivity", typeReal),
+			metricCol("baseline_refresh_interval_mins", typeInteger),
+			metricCol("correlation_window_seconds", typeInteger),
+			col("updated_at", typeTimestamptz),
 		},
-		{
-			Name:             "metric_baselines",
-			Table:            "metric_baselines",
-			Description:      "Statistical baselines the alerter's anomaly detection compares metrics against. For a formatted view use get_metric_baselines.",
-			ConnectionColumn: "connection_id",
-			Kind:             datastoreKindConfiguration,
-			Scope:            scopeConnection,
-			Columns: []datastoreColumn{
-				col("id", typeBigint),
-				col("connection_id", typeInteger),
-				col("database_name", typeText),
-				col("metric_name", typeText),
-				col("period_type", typeText),
-				col("day_of_week", typeInteger),
-				col("hour_of_day", typeInteger),
-				metricCol("mean", typeReal),
-				metricCol("stddev", typeReal),
-				metricCol("min", typeReal),
-				metricCol("max", typeReal),
-				metricCol("sample_count", typeBigint),
-				col("last_calculated", typeTimestamptz),
-				col("earliest_sample_at", typeTimestamptz),
-			},
+	}
+}
+
+// metricBaselinesSource is the metric_baselines configuration source.
+func metricBaselinesSource() datastoreSource {
+	return datastoreSource{
+		Name:             "metric_baselines",
+		Table:            "metric_baselines",
+		Description:      "Statistical baselines the alerter's anomaly detection compares metrics against. For a formatted view use get_metric_baselines.",
+		ConnectionColumn: "connection_id",
+		Kind:             datastoreKindConfiguration,
+		Scope:            scopeConnection,
+		Columns: []datastoreColumn{
+			col("id", typeBigint),
+			col("connection_id", typeInteger),
+			col("database_name", typeText),
+			col("metric_name", typeText),
+			col("period_type", typeText),
+			col("day_of_week", typeInteger),
+			col("hour_of_day", typeInteger),
+			metricCol("mean", typeReal),
+			metricCol("stddev", typeReal),
+			metricCol("min", typeReal),
+			metricCol("max", typeReal),
+			metricCol("sample_count", typeBigint),
+			col("last_calculated", typeTimestamptz),
+			col("earliest_sample_at", typeTimestamptz),
 		},
-		{
-			Name:             "anomaly_candidates",
-			Table:            "anomaly_candidates",
-			Description:      "Metric values the anomaly detector flagged, with each tier's verdict.",
-			TimeColumn:       "detected_at",
-			ConnectionColumn: "connection_id",
-			Kind:             datastoreKindConfiguration,
-			Scope:            scopeConnection,
-			Columns: []datastoreColumn{
-				col("id", typeBigint),
-				col("connection_id", typeInteger),
-				col("database_name", typeText),
-				col("metric_name", typeText),
-				metricCol("metric_value", typeReal),
-				metricCol("z_score", typeReal),
-				col("detected_at", typeTimestamptz),
-				col("context", typeJSONB),
-				col("tier1_pass", typeBoolean),
-				metricCol("tier2_score", typeReal),
-				col("tier2_pass", typeBoolean),
-				col("tier3_result", typeText),
-				col("tier3_pass", typeBoolean),
-				col("tier3_error", typeText),
-				col("final_decision", typeText),
-				col("alert_id", typeBigint),
-				col("processed_at", typeTimestamptz),
-			},
+	}
+}
+
+// anomalyCandidatesSource is the anomaly_candidates configuration source.
+func anomalyCandidatesSource() datastoreSource {
+	return datastoreSource{
+		Name:             "anomaly_candidates",
+		Table:            "anomaly_candidates",
+		Description:      "Metric values the anomaly detector flagged, with each tier's verdict.",
+		TimeColumn:       "detected_at",
+		ConnectionColumn: "connection_id",
+		Kind:             datastoreKindConfiguration,
+		Scope:            scopeConnection,
+		Columns: []datastoreColumn{
+			col("id", typeBigint),
+			col("connection_id", typeInteger),
+			col("database_name", typeText),
+			col("metric_name", typeText),
+			metricCol("metric_value", typeReal),
+			metricCol("z_score", typeReal),
+			col("detected_at", typeTimestamptz),
+			col("context", typeJSONB),
+			col("tier1_pass", typeBoolean),
+			metricCol("tier2_score", typeReal),
+			col("tier2_pass", typeBoolean),
+			col("tier3_result", typeText),
+			col("tier3_pass", typeBoolean),
+			col("tier3_error", typeText),
+			col("final_decision", typeText),
+			col("alert_id", typeBigint),
+			col("processed_at", typeTimestamptz),
 		},
-		{
-			Name:             "correlation_groups",
-			Table:            "correlation_groups",
-			Description:      "Groups of anomalies the alerter correlated in time on one connection.",
-			TimeColumn:       "start_time",
-			ConnectionColumn: "connection_id",
-			Kind:             datastoreKindConfiguration,
-			Scope:            scopeConnection,
-			Columns: []datastoreColumn{
-				col("id", typeBigint),
-				col("connection_id", typeInteger),
-				col("database_name", typeText),
-				col("start_time", typeTimestamptz),
-				col("end_time", typeTimestamptz),
-				metricCol("anomaly_count", typeInteger),
-				col("root_cause_guess", typeText),
-			},
+	}
+}
+
+// correlationGroupsSource is the correlation_groups configuration source.
+func correlationGroupsSource() datastoreSource {
+	return datastoreSource{
+		Name:             "correlation_groups",
+		Table:            "correlation_groups",
+		Description:      "Groups of anomalies the alerter correlated in time on one connection.",
+		TimeColumn:       "start_time",
+		ConnectionColumn: "connection_id",
+		Kind:             datastoreKindConfiguration,
+		Scope:            scopeConnection,
+		Columns: []datastoreColumn{
+			col("id", typeBigint),
+			col("connection_id", typeInteger),
+			col("database_name", typeText),
+			col("start_time", typeTimestamptz),
+			col("end_time", typeTimestamptz),
+			metricCol("anomaly_count", typeInteger),
+			col("root_cause_guess", typeText),
 		},
-		{
-			Name:        "clusters",
-			Table:       "clusters",
-			Description: "Database clusters; a connection's cluster is connections.cluster_id.",
-			Kind:        datastoreKindConfiguration,
-			Scope:       scopeCluster,
-			Columns: []datastoreColumn{
-				col("id", typeInteger),
-				col("group_id", typeInteger),
-				col("name", typeVarchar),
-				col("description", typeText),
-				col("replication_type", typeVarchar),
-				col("auto_cluster_key", typeVarchar),
-				col("dismissed", typeBoolean),
-				col("created_at", typeTimestamptz),
-				col("updated_at", typeTimestamptz),
-			},
+	}
+}
+
+// clustersSource is the clusters configuration source.
+func clustersSource() datastoreSource {
+	return datastoreSource{
+		Name:        "clusters",
+		Table:       "clusters",
+		Description: "Database clusters; a connection's cluster is connections.cluster_id.",
+		Kind:        datastoreKindConfiguration,
+		Scope:       scopeCluster,
+		Columns: []datastoreColumn{
+			col("id", typeInteger),
+			col("group_id", typeInteger),
+			col("name", typeVarchar),
+			col("description", typeText),
+			col("replication_type", typeVarchar),
+			col("auto_cluster_key", typeVarchar),
+			col("dismissed", typeBoolean),
+			col("created_at", typeTimestamptz),
+			col("updated_at", typeTimestamptz),
 		},
-		{
-			Name:        "cluster_groups",
-			Table:       "cluster_groups",
-			Description: "Groups of clusters; a cluster's group is clusters.group_id.",
-			Kind:        datastoreKindConfiguration,
-			Scope:       scopeGroup,
-			Columns: []datastoreColumn{
-				col("id", typeInteger),
-				col("name", typeVarchar),
-				col("description", typeText),
-				col("owner_username", typeVarchar),
-				col("is_shared", typeBoolean),
-				col("is_default", typeBoolean),
-				col("auto_group_key", typeVarchar),
-				col("created_at", typeTimestamptz),
-				col("updated_at", typeTimestamptz),
-			},
+	}
+}
+
+// clusterGroupsSource is the cluster_groups configuration source.
+func clusterGroupsSource() datastoreSource {
+	return datastoreSource{
+		Name:        "cluster_groups",
+		Table:       "cluster_groups",
+		Description: "Groups of clusters; a cluster's group is clusters.group_id.",
+		Kind:        datastoreKindConfiguration,
+		Scope:       scopeGroup,
+		Columns: []datastoreColumn{
+			col("id", typeInteger),
+			col("name", typeVarchar),
+			col("description", typeText),
+			col("owner_username", typeVarchar),
+			col("is_shared", typeBoolean),
+			col("is_default", typeBoolean),
+			col("auto_group_key", typeVarchar),
+			col("created_at", typeTimestamptz),
+			col("updated_at", typeTimestamptz),
 		},
 	}
 }
@@ -595,59 +665,13 @@ func lookupDatastoreSource(ctx context.Context, pool *pgxpool.Pool, name string)
 		return datastoreSource{}, errors.New("datastore not configured")
 	}
 
-	rows, err := pool.Query(ctx, datastoreMetricTableQuery, name)
+	description, err := lookupMetricTable(ctx, pool, name)
 	if err != nil {
-		return datastoreSource{}, fmt.Errorf("failed to look up source: %w", err)
+		return datastoreSource{}, err
 	}
-	var description string
-	found := false
-	for rows.Next() {
-		if err := rows.Scan(&description); err != nil {
-			rows.Close()
-			return datastoreSource{}, fmt.Errorf("failed to look up source: %w", err)
-		}
-		found = true
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return datastoreSource{}, fmt.Errorf("failed to look up source: %w", err)
-	}
-	if !found {
-		return datastoreSource{}, errUnknownDatastoreSource
-	}
-
-	colRows, err := pool.Query(ctx, datastoreMetricColumnsQuery, name)
+	columns, err := lookupMetricColumns(ctx, pool, name)
 	if err != nil {
-		return datastoreSource{}, fmt.Errorf("failed to read source columns: %w", err)
-	}
-	defer colRows.Close()
-
-	var columns []datastoreColumn
-	hasConnection, hasTime := false, false
-	for colRows.Next() {
-		var colName, dataType string
-		if err := colRows.Scan(&colName, &dataType); err != nil {
-			return datastoreSource{}, fmt.Errorf("failed to read source columns: %w", err)
-		}
-		if isSecretColumnName(colName) || !metrics.IsValidIdentifier(colName) {
-			continue
-		}
-		hasConnection = hasConnection || colName == metricConnectionColumn
-		hasTime = hasTime || colName == metricTimeColumn
-		columns = append(columns, datastoreColumn{
-			Name:     colName,
-			DataType: dataType,
-			IsMetric: metrics.IsMetricColumn(colName, dataType),
-		})
-	}
-	if err := colRows.Err(); err != nil {
-		return datastoreSource{}, fmt.Errorf("failed to read source columns: %w", err)
-	}
-
-	// A table without the probe bookkeeping columns cannot be scoped to
-	// connections, so it is not a source at all.
-	if !hasConnection || !hasTime {
-		return datastoreSource{}, errUnknownDatastoreSource
+		return datastoreSource{}, err
 	}
 
 	if description == "" {
@@ -663,6 +687,72 @@ func lookupDatastoreSource(ctx context.Context, pool *pgxpool.Pool, name string)
 		Scope:            scopeConnection,
 		Columns:          columns,
 	}, nil
+}
+
+// lookupMetricTable returns the comment on the parent probe table name
+// in the metrics schema, or errUnknownDatastoreSource when there is no
+// such table.
+func lookupMetricTable(ctx context.Context, pool *pgxpool.Pool, name string) (string, error) {
+	rows, err := pool.Query(ctx, datastoreMetricTableQuery, name)
+	if err != nil {
+		return "", fmt.Errorf("failed to look up source: %w", err)
+	}
+	var description string
+	found := false
+	for rows.Next() {
+		if err := rows.Scan(&description); err != nil {
+			rows.Close()
+			return "", fmt.Errorf("failed to look up source: %w", err)
+		}
+		found = true
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return "", fmt.Errorf("failed to look up source: %w", err)
+	}
+	if !found {
+		return "", errUnknownDatastoreSource
+	}
+	return description, nil
+}
+
+// lookupMetricColumns returns the columns of probe table name that a
+// caller may read, leaving out secrets and names that are not valid
+// identifiers. A table without the probe bookkeeping columns cannot be
+// scoped to connections, so it is not a source at all, and gives
+// errUnknownDatastoreSource.
+func lookupMetricColumns(ctx context.Context, pool *pgxpool.Pool, name string) ([]datastoreColumn, error) {
+	colRows, err := pool.Query(ctx, datastoreMetricColumnsQuery, name)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read source columns: %w", err)
+	}
+	defer colRows.Close()
+
+	var columns []datastoreColumn
+	hasConnection, hasTime := false, false
+	for colRows.Next() {
+		var colName, dataType string
+		if err := colRows.Scan(&colName, &dataType); err != nil {
+			return nil, fmt.Errorf("failed to read source columns: %w", err)
+		}
+		if isSecretColumnName(colName) || !metrics.IsValidIdentifier(colName) {
+			continue
+		}
+		hasConnection = hasConnection || colName == metricConnectionColumn
+		hasTime = hasTime || colName == metricTimeColumn
+		columns = append(columns, datastoreColumn{
+			Name:     colName,
+			DataType: dataType,
+			IsMetric: metrics.IsMetricColumn(colName, dataType),
+		})
+	}
+	if err := colRows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to read source columns: %w", err)
+	}
+	if !hasConnection || !hasTime {
+		return nil, errUnknownDatastoreSource
+	}
+	return columns, nil
 }
 
 // datastoreMetricSourcesQuery lists every parent probe table in the

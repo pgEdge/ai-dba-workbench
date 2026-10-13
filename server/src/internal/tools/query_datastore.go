@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
@@ -283,112 +284,147 @@ func explainDatastoreQuery(ctx context.Context, pool *pgxpool.Pool, src datastor
 // description, in client/src/hooks/chat/chatConstants.ts; change both
 // together.
 func queryDatastoreInputSchema() mcp.InputSchema {
-	columnList := func(description string) map[string]any {
-		return map[string]any{
-			"type":        "array",
-			"items":       map[string]any{"type": "string"},
-			"description": description,
-		}
+	properties := map[string]any{}
+	for _, part := range []map[string]any{
+		datastoreSelectionProperties(),
+		datastoreFilterProperties(),
+		datastoreShapeProperties(),
+		datastorePagingProperties(),
+	} {
+		maps.Copy(properties, part)
 	}
 	return mcp.InputSchema{
-		Type: "object",
-		Properties: map[string]any{
-			"source": map[string]any{
-				"type":        "string",
-				"description": "Source to query, as listed by describe_datastore.",
-			},
-			"columns": columnList("Columns to return. Defaults to every column of the source; with shape aggregate, the columns to aggregate."),
-			"connection_ids": map[string]any{
-				"type":        "array",
-				"items":       map[string]any{"type": "integer"},
-				"description": "Limit to these connection IDs. Omit to cover every connection you can access.",
-			},
-			"time_start": map[string]any{
-				"type":        "string",
-				"description": "Start of the time range: a relative duration such as 1h or 7d counted back from time_end, now, or an RFC 3339 timestamp. Metric sources default to one hour before time_end, for every shape including latest; change-tracked probes (pg_settings, pg_hba_file_rules, pg_ident_file_mappings, pg_server_info, pg_extension) store a row only when something changes, so give them a wide time_start such as 30d.",
-			},
-			"time_end": map[string]any{
-				"type":        "string",
-				"description": "End of the time range, in the same forms as time_start. Defaults to now for metric sources.",
-			},
-			"filters": map[string]any{
-				"type":        "array",
-				"maxItems":    datastoreMaxListItems,
-				"description": "Conditions every returned row must meet.",
-				"items": map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"column": map[string]any{"type": "string"},
-						"op": map[string]any{
-							"type": "string",
-							"enum": []string{"=", "!=", "<", "<=", ">", ">=", "in", "not in", "like", "is null", "is not null"},
-						},
-						"value": map[string]any{
-							"type":        "string",
-							"description": "The value to compare with, written as a string (for example \"app\", \"42\" or \"true\"), for every operator except in, not in, is null and is not null. A time column takes an RFC 3339 timestamp or now.",
-						},
-						"values": map[string]any{
-							"type":        "array",
-							"items":       map[string]any{"type": "string"},
-							"description": "The values to match, for in and not in only.",
-						},
+		Type:       "object",
+		Properties: properties,
+		Required:   []string{"source"},
+	}
+}
+
+// datastoreColumnListSchema describes an array of column names.
+func datastoreColumnListSchema(description string) map[string]any {
+	return map[string]any{
+		"type":        "array",
+		"items":       map[string]any{"type": "string"},
+		"description": description,
+	}
+}
+
+// datastoreSelectionProperties describes the parameters that pick the
+// source, columns, connections and time range.
+func datastoreSelectionProperties() map[string]any {
+	return map[string]any{
+		"source": map[string]any{
+			"type":        "string",
+			"description": "Source to query, as listed by describe_datastore.",
+		},
+		"columns": datastoreColumnListSchema("Columns to return. Defaults to every column of the source; with shape aggregate, the columns to aggregate."),
+		"connection_ids": map[string]any{
+			"type":        "array",
+			"items":       map[string]any{"type": "integer"},
+			"description": "Limit to these connection IDs. Omit to cover every connection you can access.",
+		},
+		"time_start": map[string]any{
+			"type":        "string",
+			"description": "Start of the time range: a relative duration such as 1h or 7d counted back from time_end, now, or an RFC 3339 timestamp. Metric sources default to one hour before time_end, for every shape including latest; change-tracked probes (pg_settings, pg_hba_file_rules, pg_ident_file_mappings, pg_server_info, pg_extension) store a row only when something changes, so give them a wide time_start such as 30d.",
+		},
+		"time_end": map[string]any{
+			"type":        "string",
+			"description": "End of the time range, in the same forms as time_start. Defaults to now for metric sources.",
+		},
+	}
+}
+
+// datastoreFilterProperties describes the filters parameter.
+func datastoreFilterProperties() map[string]any {
+	return map[string]any{
+		"filters": map[string]any{
+			"type":        "array",
+			"maxItems":    datastoreMaxListItems,
+			"description": "Conditions every returned row must meet.",
+			"items": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"column": map[string]any{"type": "string"},
+					"op": map[string]any{
+						"type": "string",
+						"enum": []string{"=", "!=", "<", "<=", ">", ">=", "in", "not in", "like", "is null", "is not null"},
 					},
-					"required": []string{"column", "op"},
-				},
-			},
-			"shape": map[string]any{
-				"type":        "string",
-				"enum":        []string{datastoreShapeRows, datastoreShapeLatest, datastoreShapeAggregate},
-				"description": "rows (default), latest (most recent row per connection and entity within the time window; metric sources only) or aggregate. The time window applies to every shape.",
-			},
-			"group_by": func() map[string]any {
-				m := columnList("Columns to group by; shape aggregate only.")
-				m["maxItems"] = datastoreMaxListItems
-				return m
-			}(),
-			"aggregation": map[string]any{
-				"type":        "string",
-				"enum":        []string{"avg", "sum", "min", "max", "count"},
-				"description": "Aggregate function; shape aggregate only.",
-			},
-			"buckets": map[string]any{
-				"type":        "integer",
-				"minimum":     1,
-				"maximum":     datastoreMaxBuckets,
-				"description": "Divide the time range into this many buckets; shape aggregate on a source with a time column only.",
-			},
-			"order_by": map[string]any{
-				"type":     "array",
-				"maxItems": datastoreMaxListItems,
-				"items": map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"column":    map[string]any{"type": "string"},
-						"direction": map[string]any{"type": "string", "enum": []string{"asc", "desc"}},
+					"value": map[string]any{
+						"type":        "string",
+						"description": "The value to compare with, written as a string (for example \"app\", \"42\" or \"true\"), for every operator except in, not in, is null and is not null. A time column takes an RFC 3339 timestamp or now.",
 					},
-					"required": []string{"column"},
+					"values": map[string]any{
+						"type":        "array",
+						"items":       map[string]any{"type": "string"},
+						"description": "The values to match, for in and not in only.",
+					},
 				},
-				"description": "Ordering terms. Ties are broken by the row's key columns.",
-			},
-			"page": map[string]any{
-				"type":        "integer",
-				"minimum":     1,
-				"maximum":     datastoreMaxPage,
-				"default":     1,
-				"description": "Page of results to return; page * page_size may be at most 100000.",
-			},
-			"page_size": map[string]any{
-				"type":        "integer",
-				"minimum":     1,
-				"maximum":     datastoreMaxPageSize,
-				"default":     datastoreDefaultPageSize,
-				"description": "Rows per page. Keep it small to save tokens.",
-			},
-			"explain": map[string]any{
-				"type":        "boolean",
-				"description": "Return the query plan (EXPLAIN, not ANALYZE) instead of rows. Only for callers who can access every connection.",
+				"required": []string{"column", "op"},
 			},
 		},
-		Required: []string{"source"},
+	}
+}
+
+// datastoreShapeProperties describes the shape parameter and the
+// parameters of shape aggregate.
+func datastoreShapeProperties() map[string]any {
+	groupBy := datastoreColumnListSchema("Columns to group by; shape aggregate only.")
+	groupBy["maxItems"] = datastoreMaxListItems
+	return map[string]any{
+		"shape": map[string]any{
+			"type":        "string",
+			"enum":        []string{datastoreShapeRows, datastoreShapeLatest, datastoreShapeAggregate},
+			"description": "rows (default), latest (most recent row per connection and entity within the time window; metric sources only) or aggregate. The time window applies to every shape.",
+		},
+		"group_by": groupBy,
+		"aggregation": map[string]any{
+			"type":        "string",
+			"enum":        []string{"avg", "sum", "min", "max", "count"},
+			"description": "Aggregate function; shape aggregate only.",
+		},
+		"buckets": map[string]any{
+			"type":        "integer",
+			"minimum":     1,
+			"maximum":     datastoreMaxBuckets,
+			"description": "Divide the time range into this many buckets; shape aggregate on a source with a time column only.",
+		},
+	}
+}
+
+// datastorePagingProperties describes the ordering, paging and explain
+// parameters.
+func datastorePagingProperties() map[string]any {
+	return map[string]any{
+		"order_by": map[string]any{
+			"type":     "array",
+			"maxItems": datastoreMaxListItems,
+			"items": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"column":    map[string]any{"type": "string"},
+					"direction": map[string]any{"type": "string", "enum": []string{"asc", "desc"}},
+				},
+				"required": []string{"column"},
+			},
+			"description": "Ordering terms. Ties are broken by the row's key columns.",
+		},
+		"page": map[string]any{
+			"type":        "integer",
+			"minimum":     1,
+			"maximum":     datastoreMaxPage,
+			"default":     1,
+			"description": "Page of results to return; page * page_size may be at most 100000.",
+		},
+		"page_size": map[string]any{
+			"type":        "integer",
+			"minimum":     1,
+			"maximum":     datastoreMaxPageSize,
+			"default":     datastoreDefaultPageSize,
+			"description": "Rows per page. Keep it small to save tokens.",
+		},
+		"explain": map[string]any{
+			"type":        "boolean",
+			"description": "Return the query plan (EXPLAIN, not ANALYZE) instead of rows. Only for callers who can access every connection.",
+		},
 	}
 }

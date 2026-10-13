@@ -1007,6 +1007,18 @@ that follow from that, most learned the hard way in #406 and #407:
   table and never creates a `metrics.pg_stat_archiver`. Check the CREATE
   TABLE statements in `collector/src/database/schema.go` before writing a
   FROM clause; there is one `metrics.*` table per probe and no views.
+  Hand-written test schemas cannot catch a column the collector never
+  stores: `pg_stat_replication.replay_lag_seconds` read a nonexistent
+  `replay_lsn_timestamp` until #625. Its test,
+  `metric_registry_replay_lag_integration_test.go`, builds the table by
+  extracting the collector's own CREATE TABLE from `schema.go`; copy
+  that for a new entry on a table whose columns you are not certain of.
+
+- When a metric must clear once the newest sample stops reporting a
+  value (PostgreSQL resets `replay_lag` to NULL after an idle standby
+  catches up), pick each connection's newest `collected_at` before
+  filtering the NULLs out, never after, or an older sample's value
+  stands in for the newer NULL and the alert never clears.
 
 - Never put a max-age predicate on `metrics.pg_settings`. The probe is
   change-tracked (`collector/src/probes/pg_settings_probe.go`) and skips

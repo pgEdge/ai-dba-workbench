@@ -294,20 +294,46 @@ var metricRegistry = map[string]metricQueryConfig{
 		historicalScan: historicalScanBasic,
 	},
 
-	// A primary with no connected standby has no pg_stat_replication row,
-	// so a missing row means the standby has gone (decommissioned or
-	// disconnected, which pg_stat_replication.standby_disconnected reports
-	// separately) rather than that lag data has stopped arriving; the lag
-	// alert clears. See GitHub issue #407.
+	// pg_stat_replication.replay_lag_seconds is the largest replay_lag,
+	// in seconds, across the standbys in each connection's newest
+	// pg_stat_replication sample: one row per connection, which the
+	// threshold hysteresis keys on (GitHub issue #620). replay_lag is
+	// PostgreSQL's own measure of how long recent WAL took to be
+	// replayed on the standby and acknowledged, so it is what an
+	// operator compares with replication lag in other tools.
+	//
+	// The newest sample is chosen before replay_lag is filtered, never
+	// after. PostgreSQL resets the lag columns to NULL a short while
+	// after an idle standby has fully caught up, and an older sample
+	// with a lag value must not stand in for a newer one without. A
+	// sample in which every standby reports NULL therefore yields no
+	// row, as do the WAL receiver rows stored on a standby, whose
+	// replay_lag is always NULL, and a connection with no sample in the
+	// window. Each of those is the recovery signal, so the entry is
+	// clearWhenAbsent.
+	//
+	// When the last standby disconnects the probe stores nothing, so the
+	// sample taken before it left stays the newest one, and an alert on
+	// its lag stays active, until that sample ages out of the five minute
+	// window. See GitHub issues #407 and #625.
 	"pg_stat_replication.replay_lag_seconds": {
 		probeName: "pg_stat_replication",
 		latestSQL: `
-			SELECT connection_id,
-			       EXTRACT(EPOCH FROM (NOW() - replay_lsn_timestamp))::float as value,
-			       collected_at
-			FROM metrics.pg_stat_replication
-			WHERE collected_at > NOW() - INTERVAL '5 minutes'
-			  AND replay_lsn_timestamp IS NOT NULL
+			WITH newest_sample AS (
+				SELECT connection_id, MAX(collected_at) AS collected_at
+				FROM metrics.pg_stat_replication
+				WHERE collected_at > NOW() - INTERVAL '5 minutes'
+				GROUP BY connection_id
+			)
+			SELECT r.connection_id,
+			       MAX(EXTRACT(EPOCH FROM r.replay_lag))::float as value,
+			       r.collected_at
+			FROM metrics.pg_stat_replication r
+			JOIN newest_sample n
+			  ON n.connection_id = r.connection_id
+			 AND n.collected_at = r.collected_at
+			WHERE r.replay_lag IS NOT NULL
+			GROUP BY r.connection_id, r.collected_at
 		`,
 		historicalSQL:   "",
 		scan:            scanBasic,

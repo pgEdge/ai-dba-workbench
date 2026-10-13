@@ -179,6 +179,7 @@ builtins:
     get_blackouts: true
     get_timeline_events: true
     query_datastore: true
+    describe_datastore: true
     generate_embedding: true
     search_knowledgebase: true
     store_memory: true
@@ -834,6 +835,7 @@ builtins:
     get_blackouts: true
     get_timeline_events: true
     query_datastore: true
+    describe_datastore: true
     generate_embedding: true
     search_knowledgebase: true
     store_memory: true
@@ -842,6 +844,26 @@ builtins:
   resources:
     system_info: true
     connection_info: true
+```
+
+#### Datastore Query Tools
+
+The `query_datastore` tool runs structured queries against the datastore, and
+the `describe_datastore` tool lists the sources that `query_datastore` can
+read and describes their columns. Both tools default to `true`. The
+`query_datastore` tool does not accept SQL, and the tool returns rows only for
+the connections the caller can access; the
+[MCP Tools and Resources](../../user-guide/mcp-tools.md#querying-the-datastore)
+page describes the tool's parameters.
+
+In the following example, the configuration disables both datastore query
+tools:
+
+```yaml
+builtins:
+  tools:
+    query_datastore: false
+    describe_datastore: false
 ```
 
 #### Memory Tools

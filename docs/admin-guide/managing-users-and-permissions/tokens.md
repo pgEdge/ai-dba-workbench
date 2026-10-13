@@ -97,12 +97,10 @@ holds everything a superuser does. The command-line scope and token commands
 work directly on the authentication database, so these checks do not apply
 to them.
 
-One MCP tool still reaches beyond a token's connection scope, so a token that
-must stay within its connections should not be granted it. The
-`query_datastore` tool runs read-only SQL over the whole datastore, including
-the `connections` table, so it can read every connection's host, username and
-encrypted credentials as well as every connection's metrics; issue #566 tracks
-limiting it to the connections the caller can read.
+The datastore tools stay within the token's connection scope as well. The
+`query_datastore` tool accepts structured queries rather than SQL and returns
+rows only for connections the token can access; neither `query_datastore` nor
+`describe_datastore` returns stored credentials.
 
 The MCP privilege scope applies to public MCP tools as well, so a token whose
 MCP scope names specific tools can call only those tools, apart from

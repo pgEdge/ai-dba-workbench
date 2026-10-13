@@ -12,6 +12,13 @@ project adheres to
 
 ### Added
 
+- Add the `describe_datastore` MCP tool, which lists the sources
+  that `query_datastore` can read, with each source's kind, time
+  column and scoping rule, and describes one source's columns
+  (#566). The new `builtins.tools.describe_datastore` option
+  switches the tool off, the tool is a grantable MCP privilege, and
+  Ellie can call the tool.
+
 - Raise a system alert when anomaly detection is degraded by
   a failing embedding or reasoning provider (#582). The
   alerter counts consecutive failures for each tier (tier 2
@@ -796,11 +803,10 @@ project adheres to
   repeated refusals from one caller are folded into a single
   row per minute that lists up to 20 of the targets, so that a
   client cannot flood the log by varying the path or the HTTP
-  method. One MCP tool still
-  reaches beyond a connection scope: `query_datastore` runs read-only SQL over
-  the whole datastore, including every connection's host,
-  username and encrypted credentials, and #566 tracks limiting
-  it to the connections the caller can read. A `read` entry
+  method. The `query_datastore` tool, which reached beyond a
+  connection scope by running read-only SQL over the whole
+  datastore, is now limited to the connections the caller can
+  read as well (#566). A `read` entry
   means read-only access to the monitored server, so it still
   allows a token to acknowledge, unacknowledge and save an
   analysis of an alert on that connection, and to manage
@@ -1626,8 +1632,8 @@ project adheres to
   `list_connections`, `get_alert_history`, `get_alert_rules`,
   `get_metric_baselines`, `query_datastore` or `get_timeline_events`
   to `false` left the tool enabled. That mattered most for
-  `query_datastore`, which runs arbitrary read-only SQL against the
-  datastore and could not be switched off at all. Every switch now
+  `query_datastore`, which then ran arbitrary read-only SQL against
+  the datastore and could not be switched off at all. Every switch now
   takes effect. The `get_blackouts` tool, which the documentation and
   the example configuration both advertised as switchable, had no
   backing configuration field at all; the tool now has one and
@@ -2409,6 +2415,28 @@ project adheres to
   remains available to API consumers. (#387)
 
 ### Security
+
+- Make the `query_datastore` MCP tool structured and limit the
+  tool to the connections the caller can read (#566). This is a
+  breaking change: the tool no longer accepts SQL and rejects a
+  `sql` or `query` argument, so a client must name a `source` and
+  describe the query with `columns`, `connection_ids`, a time range,
+  `filters`, a `shape` (`rows`, `latest` or `aggregate`),
+  `group_by`, `aggregation`, `buckets`, `order_by` and paging
+  instead. The tool previously ran read-only SQL over the whole
+  datastore, so any caller holding the tool privilege, including an
+  API token scoped to one connection, could read every connection's
+  host, username and encrypted credentials and every connection's
+  metrics. Results now cover only the connections the caller can
+  see, further limited to an API token's connection scope; each
+  configuration source exposes an explicit list of columns, and
+  stored credentials, certificate paths, connection strings and
+  columns named as secrets are never returned. Metric sources
+  default to the last hour, `page_size` defaults to 100 and is
+  capped at 1000, and counter rates and deltas remain the job of
+  `query_metrics`. Every query runs in a read-only transaction with
+  a statement timeout, and `explain` returns the plan from `EXPLAIN`
+  without executing the query.
 
 - Delete a user with `ai-dba-server -delete-user` only when the
   confirmation is an explicit `y` or `yes`. The answer was checked

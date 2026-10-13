@@ -353,14 +353,14 @@ export const CHAT_TOOLS: ToolDefinition[] = [
     {
         name: 'describe_datastore',
         description:
-            'List the sources (metric probes and configuration tables) that query_datastore accepts, or describe the columns of one source',
+            "List the sources query_datastore can read (metric probes and configuration tables), or, with source, that source's columns. Call this before query_datastore.",
         inputSchema: {
             type: 'object',
             properties: {
                 source: {
                     type: 'string',
                     description:
-                        'Name of the source to describe; omit to list all sources',
+                        'Source to describe. Omit to list every source.',
                 },
             },
             required: [],
@@ -369,63 +369,88 @@ export const CHAT_TOOLS: ToolDefinition[] = [
     {
         name: 'query_datastore',
         description:
-            'Run a structured, read-only query against one DATASTORE source (a metric probe or a configuration table such as blackouts, alert_rules or connections). Call describe_datastore first to find the sources and columns. SQL is not accepted.',
+            'Query one DATASTORE source (a metrics probe, or alerts, blackouts, connections and other configuration) with structured parameters; SQL is not accepted. Call describe_datastore first to list sources and columns. Use query_metrics for counter rates.',
         inputSchema: {
             type: 'object',
             properties: {
                 source: {
                     type: 'string',
-                    description: 'Source to query, as listed by describe_datastore',
+                    description:
+                        'Source to query, as listed by describe_datastore.',
                 },
                 columns: {
                     type: 'array',
                     items: { type: 'string' },
-                    description: 'Columns to return (default: all)',
+                    description:
+                        'Columns to return. Defaults to every column of the source; with shape aggregate, the columns to aggregate.',
                 },
                 connection_ids: {
                     type: 'array',
                     items: { type: 'integer' },
-                    description: 'Restrict results to these connection IDs',
+                    description:
+                        'Limit to these connection IDs. Omit to cover every connection you can access.',
                 },
                 time_start: {
                     type: 'string',
-                    description: "Start of time range (e.g., '7d', '24h')",
+                    description:
+                        'Start of the time range: a relative duration such as 1h or 7d, now, or an RFC 3339 timestamp. Metric sources default to one hour before time_end.',
                 },
                 time_end: {
                     type: 'string',
-                    description: 'End of time range (default: now)',
+                    description:
+                        'End of the time range, in the same forms as time_start. Defaults to now for metric sources.',
                 },
                 filters: {
                     type: 'array',
+                    description: 'Conditions every returned row must meet.',
                     items: {
                         type: 'object',
                         properties: {
                             column: { type: 'string' },
-                            op: { type: 'string' },
-                            value: {},
-                            values: { type: 'array', items: {} },
+                            op: {
+                                type: 'string',
+                                enum: [
+                                    '=', '!=', '<', '<=', '>', '>=', 'in',
+                                    'not in', 'like', 'is null', 'is not null',
+                                ],
+                            },
+                            value: {
+                                type: 'string',
+                                description:
+                                    'The value to compare with, written as a string (for example "app", "42" or "true"), for every operator except in, not in, is null and is not null.',
+                            },
+                            values: {
+                                type: 'array',
+                                items: { type: 'string' },
+                                description:
+                                    'The values to match, for in and not in only.',
+                            },
                         },
                         required: ['column', 'op'],
                     },
-                    description:
-                        'Filters, each with column, op and either value or values',
                 },
                 shape: {
                     type: 'string',
-                    description: 'rows (default), latest (most recent row per connection and entity; metric sources only) or aggregate',
+                    enum: ['rows', 'latest', 'aggregate'],
+                    description:
+                        'rows (default), latest (most recent row per connection and entity; metric sources only) or aggregate.',
                 },
                 group_by: {
                     type: 'array',
                     items: { type: 'string' },
-                    description: 'Columns to group by; shape aggregate only',
+                    description: 'Columns to group by; shape aggregate only.',
                 },
                 aggregation: {
                     type: 'string',
-                    description: 'Aggregate function (avg, sum, min, max or count); shape aggregate only',
+                    enum: ['avg', 'sum', 'min', 'max', 'count'],
+                    description: 'Aggregate function; shape aggregate only.',
                 },
                 buckets: {
                     type: 'integer',
-                    description: 'Divide the time range into this many buckets; shape aggregate only',
+                    minimum: 1,
+                    maximum: 500,
+                    description:
+                        'Divide the time range into this many buckets; shape aggregate on a source with a time column only.',
                 },
                 order_by: {
                     type: 'array',
@@ -433,24 +458,32 @@ export const CHAT_TOOLS: ToolDefinition[] = [
                         type: 'object',
                         properties: {
                             column: { type: 'string' },
-                            direction: { type: 'string' },
+                            direction: {
+                                type: 'string',
+                                enum: ['asc', 'desc'],
+                            },
                         },
                         required: ['column'],
                     },
-                    description:
-                        'Ordering terms, each with a column and an optional direction (asc or desc)',
+                    description: 'Ordering terms.',
                 },
                 page: {
                     type: 'integer',
-                    description: 'Page number (default 1)',
+                    minimum: 1,
+                    default: 1,
+                    description: 'Page of results to return.',
                 },
                 page_size: {
                     type: 'integer',
-                    description: 'Rows per page',
+                    minimum: 1,
+                    maximum: 1000,
+                    default: 100,
+                    description: 'Rows per page. Keep it small to save tokens.',
                 },
                 explain: {
                     type: 'boolean',
-                    description: 'Return the query plan instead of rows',
+                    description:
+                        'Return the query plan (EXPLAIN, not ANALYZE) instead of rows.',
                 },
             },
             required: ['source'],

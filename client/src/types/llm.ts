@@ -133,7 +133,13 @@ export function normaliseMessages(messages: Message[]): Message[] {
 export interface ToolInputProperty {
     type: string;
     description?: string;
-    items?: Record<string, unknown>;
+    enum?: string[];
+    minimum?: number;
+    maximum?: number;
+    default?: string | number | boolean;
+    items?: ToolInputProperty;
+    properties?: Record<string, ToolInputProperty>;
+    required?: string[];
 }
 
 /**

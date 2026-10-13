@@ -433,8 +433,8 @@ one in `internal/resources/context_aware_registry.go` short-circuits on
 `IsSuperuser` any more, because that flag comes from the admin scope
 and says nothing about tools; every caller goes through the per-item
 filter, which already admits sessions, unscoped tokens and wildcard
-scopes (a nil auth store denies, as above), and `rbacExemptTools` is
-still applied.
+scopes (a nil auth store denies, as above), and `rbacExemptTools` and
+`rbacCompanionTools` (through `canAccessTool`) are still applied.
 
 A token may change its own scope, under the same ceiling rule as any
 other scope change (below): narrowing is allowed, widening or clearing
@@ -651,8 +651,19 @@ named inaccessible connection gets the generic not-found text, and an
 empty visible set returns no connection-scoped rows whilst `global`
 sources still return. A new datastore table becomes queryable only by
 adding a catalog entry with an explicit scope and column list; never
-add a credential column. Pinned by `datastore_query_builder_test.go`
-and `query_datastore_integration_test.go`. Tests: `internal/auth/token_ceiling_test.go`
+add a credential column. The scope and time window go in an inner
+`(SELECT ... WHERE <scope> OFFSET 0) t` (`scopedFrom`), and the
+caller's filters, shape, ordering and paging apply outside it, so no
+caller predicate is evaluated against a row the caller may not see;
+the time window stays inside so partition pruning and the
+`(connection_id, collected_at)` index still apply. Errors from a
+running statement go through `datastoreQueryErrorFormatter` (general
+message, detail logged). `describe_datastore` is admitted by a
+`query_datastore` grant (`rbacCompanionTools` and `canAccessTool` in
+`context_aware_provider.go`, one way only). Pinned by
+`datastore_query_builder_test.go`, `query_datastore_integration_test.go`,
+`query_datastore_scope_integration_test.go` and
+`describe_datastore_access_test.go`. Tests: `internal/auth/token_ceiling_test.go`
 and `internal/auth/grant_scope_test.go` (unit, table-driven),
 `internal/api/rbac_token_ceiling_test.go`,
 `internal/api/rbac_grant_scope_test.go`,

@@ -67,7 +67,7 @@ limits each one to the caller's connections:
 
 | Source | Contents | Rows returned |
 |--------|----------|---------------|
-| `connections` | Registered monitored connections, without credentials or certificate paths. | Connections the caller can access. |
+| `connections` | Registered monitored connections, without stored passwords or certificate paths. | Connections the caller can access. |
 | `alerts` | Threshold, anomaly, connection and system alerts. | Alerts for accessible connections, plus system alerts for callers who may see them when no `connection_ids` are given. |
 | `alert_acknowledgments` | Acknowledgements recorded against alerts. | Rows for alerts the caller can see. |
 | `alert_rules` | Alert rule definitions and their default thresholds. | All rows. |
@@ -84,9 +84,8 @@ limits each one to the caller's connections:
 
 Metric sources return rows only for the connections the caller can access.
 For an API token, the accessible connections are further limited to the
-connections in the token's connection scope. Stored credentials, certificate
-paths, connection strings and any column whose name marks the column as a
-secret are never available from any source.
+connections in the token's connection scope. Stored connection passwords and
+certificates are never available from any source.
 
 ### Describing the Sources
 
@@ -98,7 +97,8 @@ column holds a metric or a dimension; for a metric source, the output also
 names the key columns that the `latest` shape uses.
 
 Only the columns that `describe_datastore` lists can be selected, filtered,
-grouped or ordered on in `query_datastore`.
+grouped or ordered on in `query_datastore`. A caller who holds the
+`query_datastore` privilege can also call `describe_datastore`.
 
 ### Query Parameters
 
@@ -113,21 +113,22 @@ The following table describes the `query_datastore` parameters:
 | `source` | The source to query, as listed by `describe_datastore`; required. |
 | `columns` | The columns to return; defaults to every column of the source, or names the columns to aggregate with the `aggregate` shape. |
 | `connection_ids` | Limits the results to these connection IDs; defaults to every accessible connection, and naming an inaccessible connection returns an error. Applies only to metric sources and to sources scoped by connection or alert. |
-| `time_start` | The start of the time range, as a relative duration such as `1h` or `7d`, `now`, or an RFC 3339 timestamp; metric sources default to one hour before `time_end`. |
+| `time_start` | The start of the time range, as a relative duration such as `1h` or `7d` counted back from `time_end`, `now`, or an RFC 3339 timestamp; metric sources default to one hour before `time_end`. |
 | `time_end` | The end of the time range, in the same forms as `time_start`; metric sources default to `now`. |
-| `filters` | An array of conditions, each with a `column`, an `op` and either a `value` or `values`. |
+| `filters` | An array of at most 20 conditions, each with a `column`, an `op` and either a `value` or `values`. |
 | `shape` | One of `rows` (the default), `latest` or `aggregate`. |
-| `group_by` | The columns to group by; `aggregate` shape only. |
+| `group_by` | At most 20 columns to group by; `aggregate` shape only. |
 | `aggregation` | One of `avg`, `sum`, `min`, `max` or `count`; required with the `aggregate` shape. |
 | `buckets` | Divides the time range into between 1 and 500 time buckets; `aggregate` shape on a source with a time column only. |
-| `order_by` | An array of ordering terms, each with a `column` and an optional `direction` of `asc` or `desc`. |
-| `page` | The page of results to return; defaults to 1. |
+| `order_by` | An array of at most 20 ordering terms, each with a `column` and an optional `direction` of `asc` or `desc`. |
+| `page` | The page of results to return; defaults to 1. The product of `page` and `page_size` may be at most 100000. |
 | `page_size` | The rows per page; defaults to 100, with a maximum of 1000. |
 | `explain` | When `true`, returns the query plan from `EXPLAIN` (never `EXPLAIN ANALYZE`) instead of rows. |
 
-The time range applies only to sources with a time column. The `latest`
-shape returns the most recent row per connection and entity, and applies only
-to metric sources. The `avg` and `sum` aggregations accept only numeric metric
+The time range applies only to sources with a time column, and the
+one-hour default window for metric sources applies to every shape, including
+`latest`. The `latest` shape returns the most recent row per connection and
+entity within the time window, and applies only to metric sources. The `avg` and `sum` aggregations accept only numeric metric
 columns.
 
 The filter operators `=`, `!=`, `<`, `<=`, `>`, `>=` and `like` take a
@@ -135,9 +136,24 @@ The filter operators `=`, `!=`, `<`, `<=`, `>`, `>=` and `like` take a
 needs a text column. The `in` and `not in` operators take `values`, a list of
 up to 1000 strings. The `is null` and `is not null` operators take neither.
 
+A filter on a time column takes an RFC 3339 timestamp or `now` as the
+`value`. The server breaks ties in the ordering using the row's key columns,
+so pages are stable when many rows share the same ordering value.
+
 The tool returns results as tab-separated values; when more rows exist, the
 response names the page to request next. Each query runs in a read-only
-transaction with a statement timeout.
+transaction with a statement timeout. When a query fails at run time, the tool
+returns a general message rather than the database error, and the server logs
+the detail.
+
+### Querying Change-Tracked Probes
+
+The `pg_settings`, `pg_hba_file_rules`, `pg_ident_file_mappings`,
+`pg_server_info` and `pg_extension` probes store a row only when something
+changes. The default one-hour window therefore often finds no rows, even with
+the `latest` shape. When a metric source returns no rows on the first page and
+the query gave no `time_start`, the response includes a hint to set a wider
+range. Give these probes a wide `time_start`, such as `30d`.
 
 ### Choosing a Datastore Tool
 
@@ -176,12 +192,34 @@ backends for each connection over the last day:
 }
 ```
 
+In the following example, the arguments request the current settings, using
+a wide window because the `pg_settings` probe stores rows only on change:
+
+```json
+{
+  "source": "pg_settings",
+  "connection_ids": [3],
+  "time_start": "30d",
+  "shape": "latest"
+}
+```
+
 In the following example, the arguments request the active alerts:
 
 ```json
 {
   "source": "alerts",
   "filters": [{"column": "status", "op": "=", "value": "active"}]
+}
+```
+
+In the following example, the arguments request the current and future
+one-time blackouts, filtering the time column `end_time` against `now`:
+
+```json
+{
+  "source": "blackouts",
+  "filters": [{"column": "end_time", "op": ">", "value": "now"}]
 }
 ```
 

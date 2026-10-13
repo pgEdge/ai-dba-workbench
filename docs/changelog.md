@@ -2424,11 +2424,11 @@ project adheres to
 
 - Breaking: make the `query_datastore` MCP tool structured and limit
   the tool to the connections the caller can read (#566). The tool no
-  longer accepts SQL and rejects a `sql` or `query` argument, so a client must name a `source` and
-  describe the query with `columns`, `connection_ids`, a time range,
-  `filters`, a `shape` (`rows`, `latest` or `aggregate`),
-  `group_by`, `aggregation`, `buckets`, `order_by` and paging
-  instead. The tool previously ran read-only SQL over the whole
+  longer accepts SQL and rejects a `sql` or `query` argument, so a
+  client must name a `source` and describe the query with `columns`,
+  `connection_ids`, a time range, `filters`, a `shape` (`rows`,
+  `latest` or `aggregate`), `group_by`, `aggregation`, `buckets`,
+  `order_by` and paging instead. The tool previously ran read-only SQL over the whole
   datastore, so any caller holding the tool privilege, including an
   API token scoped to one connection, could read every connection's
   host, username and encrypted credentials and every connection's
@@ -2447,7 +2447,9 @@ project adheres to
   but not the reverse. Counter rates and deltas remain the job of
   `query_metrics`. Every query runs in a read-only transaction with
   a statement timeout, and `explain` returns the plan from `EXPLAIN`
-  without executing the query.
+  without executing the query; it is available only to callers who
+  can access every connection, because plan row estimates cover the
+  whole table.
 
 - Delete a user with `ai-dba-server -delete-user` only when the
   confirmation is an explicit `y` or `yes`. The answer was checked

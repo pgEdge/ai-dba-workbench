@@ -124,7 +124,7 @@ The following table describes the `query_datastore` parameters:
 | `order_by` | An array of at most 20 ordering terms, each with a `column` and an optional `direction` of `asc` or `desc`. |
 | `page` | The page of results to return; defaults to 1. The product of `page` and `page_size` may be at most 100000. |
 | `page_size` | The rows per page; defaults to 100, with a maximum of 1000. |
-| `explain` | When `true`, returns the query plan from `EXPLAIN` (never `EXPLAIN ANALYZE`) instead of rows. |
+| `explain` | When `true`, returns the query plan from `EXPLAIN` (never `EXPLAIN ANALYZE`) instead of rows. Available only to callers who can access every connection, because plan row estimates are computed over the whole table. |
 
 The time range applies only to sources with a time column, and the
 one-hour default window for metric sources applies to every shape, including

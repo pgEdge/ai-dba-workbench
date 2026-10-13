@@ -506,7 +506,7 @@ export const CHAT_TOOLS: ToolDefinition[] = [
                 explain: {
                     type: 'boolean',
                     description:
-                        'Return the query plan (EXPLAIN, not ANALYZE) instead of rows.',
+                        'Return the query plan (EXPLAIN, not ANALYZE) instead of rows. Only for callers who can access every connection.',
                 },
             },
             required: ['source'],

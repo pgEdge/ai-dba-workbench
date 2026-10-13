@@ -28,11 +28,13 @@ import (
 // gets exactly the rows for the connection they can read.
 //
 // The configuration tables are created from the source catalog itself,
-// one column per permitted column, because the server module cannot
-// import the collector's schema manager. That proves the scoping against
-// a real planner and real rows, but not that the catalog matches the
-// production schema; TestConfigurationSources* in datastore_catalog_test.go
-// and the collector's schema are the check on that.
+// one column per permitted column, so the seeds below need only the
+// cataloged columns and none of the collector's constraints. That proves
+// the scoping against a real planner and real rows, but not that the
+// catalog matches the production schema;
+// TestConfigurationSourcesMatchCollectorSchema in
+// datastore_catalog_schema_integration_test.go checks that against the
+// schema the collector's SchemaManager creates.
 
 // dsProbeSchema is a metric source with two entity rows per connection.
 const dsProbeSchema = `

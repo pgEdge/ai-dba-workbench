@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -662,4 +663,82 @@ func lookupDatastoreSource(ctx context.Context, pool *pgxpool.Pool, name string)
 		Scope:            scopeConnection,
 		Columns:          columns,
 	}, nil
+}
+
+// datastoreMetricSourcesQuery lists every parent probe table in the
+// metrics schema that carries the bookkeeping columns
+// lookupDatastoreSource requires, so describe_datastore lists exactly the
+// metric sources query_datastore accepts.
+const datastoreMetricSourcesQuery = `
+        SELECT c.relname, COALESCE(obj_description(c.oid, 'pg_class'), '')
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'metrics'
+            AND c.relkind IN ('r', 'p')
+            AND NOT c.relispartition
+            AND EXISTS (SELECT 1 FROM pg_attribute a
+                        WHERE a.attrelid = c.oid AND a.attname = 'connection_id'
+                            AND a.attnum > 0 AND NOT a.attisdropped)
+            AND EXISTS (SELECT 1 FROM pg_attribute a
+                        WHERE a.attrelid = c.oid AND a.attname = 'collected_at'
+                            AND a.attnum > 0 AND NOT a.attisdropped)
+        ORDER BY c.relname
+    `
+
+// datastoreSourceSummary is one row of describe_datastore's source list.
+type datastoreSourceSummary struct {
+	Name        string
+	Kind        string
+	TimeColumn  string
+	Scope       datastoreScope
+	Description string
+}
+
+// listDatastoreSources returns every source query_datastore accepts:
+// the configuration sources, then the metric sources discovered from the
+// live metrics schema, each group in name order.
+func listDatastoreSources(ctx context.Context, pool *pgxpool.Pool) ([]datastoreSourceSummary, error) {
+	config := configurationSources()
+	slices.SortFunc(config, func(a, b datastoreSource) int { return strings.Compare(a.Name, b.Name) })
+	summaries := make([]datastoreSourceSummary, 0, len(config))
+	for i := range config {
+		src := &config[i]
+		summaries = append(summaries, datastoreSourceSummary{
+			Name:        src.Name,
+			Kind:        src.Kind,
+			TimeColumn:  src.TimeColumn,
+			Scope:       src.Scope,
+			Description: src.Description,
+		})
+	}
+
+	rows, err := pool.Query(ctx, datastoreMetricSourcesQuery)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list metric sources: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name, description string
+		if err := rows.Scan(&name, &description); err != nil {
+			return nil, fmt.Errorf("failed to list metric sources: %w", err)
+		}
+		if !metrics.IsValidIdentifier(name) {
+			continue
+		}
+		description = strings.TrimSpace(description)
+		if description == "" {
+			description = fmt.Sprintf("Metrics collected by the %s probe.", name)
+		}
+		summaries = append(summaries, datastoreSourceSummary{
+			Name:        name,
+			Kind:        datastoreKindMetric,
+			TimeColumn:  metricTimeColumn,
+			Scope:       scopeConnection,
+			Description: description,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to list metric sources: %w", err)
+	}
+	return summaries, nil
 }

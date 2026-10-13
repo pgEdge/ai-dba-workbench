@@ -639,9 +639,20 @@ exceeded "this token's access" (fixed so the denial audit coalesces).
   `internal/api/rbac_acting_token_deleted_test.go` and
   `internal/auth/token_scope_missing_token_test.go`.
 
-Known gaps, deliberately left: `query_datastore` reaches beyond any
-connection scope (#566), and editing or disabling a user and deleting a
-token not owned by a superuser are not ceiling-gated. Tests: `internal/auth/token_ceiling_test.go`
+Known gaps, deliberately left: editing or disabling a user and deleting
+a token not owned by a superuser are not ceiling-gated.
+
+`query_datastore` (#566) takes no SQL: `buildDatastoreQuery` in
+`internal/tools/datastore_query_builder.go` builds every statement from
+the source catalog in `datastore_catalog.go`, binding the caller's
+`VisibleConnectionIDs` set (and `CanSeeSystemAlerts`) as parameters
+under each source's scoping rule. A visibility error fails closed, a
+named inaccessible connection gets the generic not-found text, and an
+empty visible set returns no connection-scoped rows whilst `global`
+sources still return. A new datastore table becomes queryable only by
+adding a catalog entry with an explicit scope and column list; never
+add a credential column. Pinned by `datastore_query_builder_test.go`
+and `query_datastore_integration_test.go`. Tests: `internal/auth/token_ceiling_test.go`
 and `internal/auth/grant_scope_test.go` (unit, table-driven),
 `internal/api/rbac_token_ceiling_test.go`,
 `internal/api/rbac_grant_scope_test.go`,

@@ -165,9 +165,11 @@ moved.
   Known exceptions, not yet ruled on: the lockout disable in
   `disableForLockout` and the federated login's `is_superuser` sync in
   `federation.go` both bypass the guard (raised on PR #528).
-  Separately, `query_datastore` reads beyond a token's connection
-  scope (read-only SQL over the whole datastore, `connections`
-  credentials included), which #566 tracks. A `read` connection entry
+  `query_datastore` no longer runs SQL (#566): it builds each query
+  from the source catalog in `internal/tools/datastore_catalog.go`,
+  limited to the caller's visible connections and to columns that
+  carry no credentials; review any new catalog entry's scope and
+  columns. A `read` connection entry
   allows acknowledging, unacknowledging and saving an analysis of an
   alert, and managing blackouts and blackout schedules on that server;
   the user ruled this intended, so do not report it as a finding.

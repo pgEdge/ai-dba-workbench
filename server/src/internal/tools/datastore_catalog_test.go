@@ -196,8 +196,16 @@ func TestLookupDatastoreSourceWithoutPool(t *testing.T) {
 // metric source against the local test database.
 func TestLookupDatastoreSourceMetricDiscovery(t *testing.T) {
 	pool, _, cleanup := newToolsTestPool(t)
-	defer cleanup()
+	// Cleanups run last-in first-out, so the probe tables registered
+	// below are dropped before the pool closes.
+	t.Cleanup(cleanup)
 	ctx := context.Background()
+	t.Cleanup(func() {
+		if _, err := pool.Exec(context.Background(),
+			`DROP TABLE IF EXISTS metrics.ds_test_probe, metrics.ds_test_nokeys CASCADE`); err != nil {
+			t.Logf("drop test probe tables: %v", err)
+		}
+	})
 
 	stmts := []string{
 		`CREATE SCHEMA IF NOT EXISTS metrics`,

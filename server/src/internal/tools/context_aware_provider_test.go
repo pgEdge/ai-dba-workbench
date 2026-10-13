@@ -68,7 +68,7 @@ func TestContextAwareProvider_List(t *testing.T) {
 		// List tools - should return all tools
 		tools := provider.List()
 
-		// Should have all 18 tools (no filtering)
+		// Should have all 19 tools (no filtering)
 		expectedTools := []string{
 			"read_resource",
 			"generate_embedding",
@@ -79,6 +79,7 @@ func TestContextAwareProvider_List(t *testing.T) {
 			"count_rows",
 			"list_probes",
 			"describe_probe",
+			"describe_datastore",
 			"query_metrics",
 			"list_connections",
 			"get_alert_history",

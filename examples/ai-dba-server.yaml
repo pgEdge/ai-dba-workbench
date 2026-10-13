@@ -571,8 +571,10 @@ builtins:
     query_metrics: true
     list_connections: true
 
-    # Datastore query tool (arbitrary SQL on the datastore)
+    # Datastore query tools (structured queries limited to the
+    # connections the caller can access; SQL is not accepted)
     query_datastore: true
+    describe_datastore: true
 
     # The read_resource and test_query tools are always
     # enabled and cannot be turned off here

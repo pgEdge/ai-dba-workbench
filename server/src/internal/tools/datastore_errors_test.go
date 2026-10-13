@@ -51,6 +51,27 @@ func TestDatastoreQueryErrorFormatter(t *testing.T) {
 	}
 }
 
+func TestCheckDatastoreExplain(t *testing.T) {
+	for name, tc := range map[string]struct {
+		explain bool
+		vis     visibleSet
+		refused bool
+	}{
+		"every connection":          {true, visibleSet{All: true}, false},
+		"some connections":          {true, visibleSet{IDs: []int{1, 2}}, true},
+		"no connections":            {true, visibleSet{}, true},
+		"rows for some connections": {false, visibleSet{IDs: []int{1}}, false},
+	} {
+		err := checkDatastoreExplain(datastoreRequest{Explain: tc.explain}, tc.vis)
+		if tc.refused != errors.Is(err, errDatastoreExplainRestricted) {
+			t.Errorf("%s: got %v, refused want %v", name, err, tc.refused)
+		}
+	}
+	if errDatastoreExplainRestricted.Error() != "explain is available only to callers who can access every connection" {
+		t.Errorf("message changed: %q", errDatastoreExplainRestricted)
+	}
+}
+
 func TestDatastoreRowKeyWithoutID(t *testing.T) {
 	src := datastoreSource{
 		Name: "no_id", Table: "no_id", Kind: datastoreKindConfiguration,

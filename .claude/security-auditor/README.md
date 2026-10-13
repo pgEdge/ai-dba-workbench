@@ -176,7 +176,10 @@ moved.
   errors on some values (a LIKE pattern ending in an escape, a bad
   cast) is otherwise an oracle for hidden rows. Errors from a running
   datastore statement reach the caller only as a general message (the
-  detail is logged). `describe_datastore` is admitted by a
+  detail is logged). `explain` is refused unless the visible set is
+  All (`checkDatastoreExplain`), because planner row estimates are
+  computed over the whole table and count hidden connections' rows.
+  `describe_datastore` is admitted by a
   `query_datastore` grant or token scope (`rbacCompanionTools` in
   `internal/tools/context_aware_provider.go`), one way only.
   A `read` connection entry

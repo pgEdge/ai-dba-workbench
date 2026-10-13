@@ -588,6 +588,22 @@ func buildDatastoreQuery(src datastoreSource, req datastoreRequest, vis visibleS
 	return sql + " LIMIT " + limit + " OFFSET " + offset, q.args, nil
 }
 
+// errDatastoreExplainRestricted refuses explain to a caller who cannot
+// access every connection.
+var errDatastoreExplainRestricted = errors.New("explain is available only to callers who can access every connection")
+
+// checkDatastoreExplain refuses explain unless vis covers every
+// connection. The planner's row estimates come from statistics over the
+// whole table, hidden connections' rows included, so a plan for a
+// filter such as datname LIKE 'secr%' tells the caller how many such
+// rows exist anywhere, whatever the scope predicate says.
+func checkDatastoreExplain(req datastoreRequest, vis visibleSet) error {
+	if req.Explain && !vis.All {
+		return errDatastoreExplainRestricted
+	}
+	return nil
+}
+
 // checkShape rejects parameters that do not belong to the chosen shape.
 func checkShape(src datastoreSource, req datastoreRequest) error {
 	if req.Shape != datastoreShapeAggregate {

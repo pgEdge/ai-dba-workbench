@@ -169,7 +169,17 @@ moved.
   from the source catalog in `internal/tools/datastore_catalog.go`,
   limited to the caller's visible connections and to columns that
   carry no credentials; review any new catalog entry's scope and
-  columns. A `read` connection entry
+  columns. Scope predicates must be applied before any caller
+  predicate can be evaluated: the builder puts the scope and time
+  window in an inner `OFFSET 0` subquery the planner cannot merge, and
+  the caller's filters outside it, because a caller expression that
+  errors on some values (a LIKE pattern ending in an escape, a bad
+  cast) is otherwise an oracle for hidden rows. Errors from a running
+  datastore statement reach the caller only as a general message (the
+  detail is logged). `describe_datastore` is admitted by a
+  `query_datastore` grant or token scope (`rbacCompanionTools` in
+  `internal/tools/context_aware_provider.go`), one way only.
+  A `read` connection entry
   allows acknowledging, unacknowledging and saving an analysis of an
   alert, and managing blackouts and blackout schedules on that server;
   the user ruled this intended, so do not report it as a finding.

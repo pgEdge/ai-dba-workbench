@@ -46,6 +46,52 @@ CREATE TABLE metrics.ds_probe (
 COMMENT ON TABLE metrics.ds_probe IS 'Test probe for query_datastore.';
 `
 
+// dsFixtureFunctions creates the helper functions newDatastoreFixture
+// builds the catalog's tables with. The table, column and type names come
+// from the catalog, so they are passed as parameters and quoted by
+// format's %I; a type name is first resolved with to_regtype, and the
+// statement uses the resolved name.
+const dsFixtureFunctions = `
+CREATE OR REPLACE FUNCTION public.ds_fixture_drop_tables(tbls text[])
+RETURNS void LANGUAGE plpgsql AS $fn$
+BEGIN
+    IF cardinality(tbls) > 0 THEN
+        EXECUTE format('DROP TABLE IF EXISTS %s CASCADE',
+            (SELECT string_agg(format('public.%I', tbl), ', ') FROM unnest(tbls) AS tbl));
+    END IF;
+END
+$fn$;
+
+CREATE OR REPLACE FUNCTION public.ds_fixture_create_table(tbl text, cols text[], types text[])
+RETURNS void LANGUAGE plpgsql AS $fn$
+DECLARE
+    i integer;
+    typ regtype;
+BEGIN
+    EXECUTE format('CREATE TABLE IF NOT EXISTS public.%I ()', tbl);
+    FOR i IN 1 .. coalesce(cardinality(cols), 0) LOOP
+        typ := to_regtype(types[i]);
+        IF typ IS NULL THEN
+            RAISE EXCEPTION 'unknown type % for column %.%', types[i], tbl, cols[i];
+        END IF;
+        EXECUTE format('ALTER TABLE public.%I ADD COLUMN IF NOT EXISTS %I %s', tbl, cols[i], typ::text);
+    END LOOP;
+END
+$fn$;
+`
+
+// dsFixtureFunctionsDrop removes the functions dsFixtureFunctions creates.
+const dsFixtureFunctionsDrop = `
+DROP FUNCTION IF EXISTS public.ds_fixture_drop_tables(text[]);
+DROP FUNCTION IF EXISTS public.ds_fixture_create_table(text, text[], text[]);
+`
+
+// fixtureStatement is one constant seed statement and its parameters.
+type fixtureStatement struct {
+	sql  string
+	args []any
+}
+
 // datastoreFixture holds the seeded datastore and the IDs the tests
 // assert on.
 type datastoreFixture struct {
@@ -65,6 +111,15 @@ func newDatastoreFixture(t *testing.T) *datastoreFixture {
 	t.Cleanup(cleanup)
 	ctx := context.Background()
 
+	if _, err := pool.Exec(ctx, dsFixtureFunctions); err != nil {
+		t.Fatalf("create fixture functions: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := pool.Exec(context.Background(), dsFixtureFunctionsDrop); err != nil {
+			t.Logf("drop fixture functions: %v", err)
+		}
+	})
+
 	var tables, stale []string
 	for _, src := range configurationSources() {
 		tables = append(tables, src.Table)
@@ -76,26 +131,25 @@ func newDatastoreFixture(t *testing.T) *datastoreFixture {
 	// Another package's tests may have left the real schema behind in a
 	// shared database (CI uses one), with different column definitions
 	// such as identity ids; start from the catalog's own shape.
-	if _, err := pool.Exec(ctx,
-		"DROP TABLE IF EXISTS "+strings.Join(stale, ", ")+" CASCADE"); err != nil {
+	if _, err := pool.Exec(ctx, `SELECT public.ds_fixture_drop_tables($1)`, stale); err != nil {
 		t.Fatalf("drop stale datastore tables: %v", err)
 	}
 	for _, src := range configurationSources() {
-		stmts := []string{fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s ()", src.Table)}
+		cols := make([]string, 0, len(src.Columns))
+		types := make([]string, 0, len(src.Columns))
 		for _, c := range src.Columns {
-			stmts = append(stmts, fmt.Sprintf("ALTER TABLE %s ADD COLUMN IF NOT EXISTS %s %s", src.Table, c.Name, c.DataType))
+			cols = append(cols, c.Name)
+			types = append(types, c.DataType)
 		}
-		for _, stmt := range stmts {
-			if _, err := pool.Exec(ctx, stmt); err != nil {
-				t.Fatalf("schema %q: %v", stmt, err)
-			}
+		if _, err := pool.Exec(ctx, `SELECT public.ds_fixture_create_table($1, $2, $3)`,
+			src.Table, cols, types); err != nil {
+			t.Fatalf("schema for %q: %v", src.Table, err)
 		}
 	}
 	// Cleanups run last-in first-out, so these tables go before the
-	// pool closes.
+	// helper functions and the pool.
 	t.Cleanup(func() {
-		if _, err := pool.Exec(context.Background(),
-			"DROP TABLE IF EXISTS "+strings.Join(tables, ", ")+" CASCADE"); err != nil {
+		if _, err := pool.Exec(context.Background(), `SELECT public.ds_fixture_drop_tables($1)`, tables); err != nil {
 			t.Logf("drop datastore fixture tables: %v", err)
 		}
 	})
@@ -115,51 +169,52 @@ func newDatastoreFixture(t *testing.T) *datastoreFixture {
 		hidden:  seedBaselineConnection(t, pool, "hidden-conn", false, "someone-else"),
 	}
 
-	seed := []string{
-		`INSERT INTO cluster_groups (id, name) VALUES (1, 'visible-group'), (2, 'hidden-group')`,
-		`INSERT INTO clusters (id, group_id, name) VALUES (10, 1, 'visible-cluster'), (20, 2, 'hidden-cluster')`,
-		fmt.Sprintf(`UPDATE connections SET cluster_id = 10 WHERE id = %d`, f.visible),
-		fmt.Sprintf(`UPDATE connections SET cluster_id = 20 WHERE id = %d`, f.hidden),
-		fmt.Sprintf(`INSERT INTO alerts (id, alert_type, connection_id, title, status, triggered_at) VALUES
-            (1, 'threshold', %d, 'visible alert', 'active', now() - interval '10 minutes'),
-            (2, 'threshold', %d, 'hidden alert', 'active', now() - interval '10 minutes'),
-            (3, 'system', NULL, 'system alert', 'active', now() - interval '10 minutes')`, f.visible, f.hidden),
-		`INSERT INTO alert_acknowledgments (id, alert_id, acknowledged_by, message) VALUES
-            (1, 1, 'alice', 'visible ack'), (2, 2, 'alice', 'hidden ack'), (3, 3, 'alice', 'system ack')`,
-		fmt.Sprintf(`INSERT INTO blackouts (id, scope, connection_id, cluster_id, group_id, reason, start_time) VALUES
+	ids := []any{f.visible, f.hidden}
+	seed := []fixtureStatement{
+		{sql: `INSERT INTO cluster_groups (id, name) VALUES (1, 'visible-group'), (2, 'hidden-group')`},
+		{sql: `INSERT INTO clusters (id, group_id, name) VALUES (10, 1, 'visible-cluster'), (20, 2, 'hidden-cluster')`},
+		{sql: `UPDATE connections SET cluster_id = 10 WHERE id = $1`, args: []any{f.visible}},
+		{sql: `UPDATE connections SET cluster_id = 20 WHERE id = $1`, args: []any{f.hidden}},
+		{sql: `INSERT INTO alerts (id, alert_type, connection_id, title, status, triggered_at) VALUES
+            (1, 'threshold', $1, 'visible alert', 'active', now() - interval '10 minutes'),
+            (2, 'threshold', $2, 'hidden alert', 'active', now() - interval '10 minutes'),
+            (3, 'system', NULL, 'system alert', 'active', now() - interval '10 minutes')`, args: ids},
+		{sql: `INSERT INTO alert_acknowledgments (id, alert_id, acknowledged_by, message) VALUES
+            (1, 1, 'alice', 'visible ack'), (2, 2, 'alice', 'hidden ack'), (3, 3, 'alice', 'system ack')`},
+		{sql: `INSERT INTO blackouts (id, scope, connection_id, cluster_id, group_id, reason, start_time) VALUES
             (1, 'estate', NULL, NULL, NULL, 'estate', now()),
-            (2, 'server', %d, NULL, NULL, 'visible server', now()),
-            (3, 'server', %d, NULL, NULL, 'hidden server', now()),
+            (2, 'server', $1, NULL, NULL, 'visible server', now()),
+            (3, 'server', $2, NULL, NULL, 'hidden server', now()),
             (4, 'cluster', NULL, 10, NULL, 'visible cluster', now()),
             (5, 'cluster', NULL, 20, NULL, 'hidden cluster', now()),
             (6, 'group', NULL, NULL, 1, 'visible group', now()),
             (7, 'group', NULL, NULL, 2, 'hidden group', now()),
-            (8, 'cluster', NULL, NULL, NULL, 'malformed', now())`, f.visible, f.hidden),
-		`INSERT INTO alert_rules (id, name, metric_name) VALUES (1, 'rule one', 'm1'), (2, 'rule two', 'm2')`,
-		fmt.Sprintf(`INSERT INTO probe_configs (id, name, scope, connection_id, cluster_id, group_id) VALUES
+            (8, 'cluster', NULL, NULL, NULL, 'malformed', now())`, args: ids},
+		{sql: `INSERT INTO alert_rules (id, name, metric_name) VALUES (1, 'rule one', 'm1'), (2, 'rule two', 'm2')`},
+		{sql: `INSERT INTO probe_configs (id, name, scope, connection_id, cluster_id, group_id) VALUES
             (1, 'global probe', 'global', NULL, NULL, NULL),
-            (2, 'visible server probe', 'server', %d, NULL, NULL),
-            (3, 'hidden server probe', 'server', %d, NULL, NULL),
+            (2, 'visible server probe', 'server', $1, NULL, NULL),
+            (3, 'hidden server probe', 'server', $2, NULL, NULL),
             (4, 'visible cluster probe', 'cluster', NULL, 10, NULL),
             (5, 'hidden group probe', 'group', NULL, NULL, 2),
-            (6, 'malformed probe', 'server', NULL, NULL, NULL)`, f.visible, f.hidden),
-		fmt.Sprintf(`INSERT INTO alert_thresholds (id, rule_id, scope, connection_id, cluster_id, group_id, database_name) VALUES
-            (1, 1, 'server', %d, NULL, NULL, 'visible server'),
-            (2, 1, 'server', %d, NULL, NULL, 'hidden server'),
+            (6, 'malformed probe', 'server', NULL, NULL, NULL)`, args: ids},
+		{sql: `INSERT INTO alert_thresholds (id, rule_id, scope, connection_id, cluster_id, group_id, database_name) VALUES
+            (1, 1, 'server', $1, NULL, NULL, 'visible server'),
+            (2, 1, 'server', $2, NULL, NULL, 'hidden server'),
             (3, 1, 'cluster', NULL, 20, NULL, 'hidden cluster'),
-            (4, 1, 'group', NULL, NULL, 1, 'visible group')`, f.visible, f.hidden),
-		fmt.Sprintf(`INSERT INTO metric_baselines (connection_id, metric_name, period_type) VALUES
-            (%d, 'visible_metric', 'all'), (%d, 'hidden_metric', 'all')`, f.visible, f.hidden),
-		fmt.Sprintf(`INSERT INTO metrics.ds_probe (connection_id, collected_at, datname, numbackends, xact_commit) VALUES
-            (%[1]d, now() - interval '50 minutes', 'app', 1, 100),
-            (%[1]d, now() - interval '20 minutes', 'app', 3, 150),
-            (%[1]d, now() - interval '20 minutes', 'postgres', 2, 10),
-            (%[2]d, now() - interval '20 minutes', 'app', 9, 999),
-            (%[1]d, now() - interval '3 hours', 'app', 7, 50)`, f.visible, f.hidden),
+            (4, 1, 'group', NULL, NULL, 1, 'visible group')`, args: ids},
+		{sql: `INSERT INTO metric_baselines (connection_id, metric_name, period_type) VALUES
+            ($1, 'visible_metric', 'all'), ($2, 'hidden_metric', 'all')`, args: ids},
+		{sql: `INSERT INTO metrics.ds_probe (connection_id, collected_at, datname, numbackends, xact_commit) VALUES
+            ($1, now() - interval '50 minutes', 'app', 1, 100),
+            ($1, now() - interval '20 minutes', 'app', 3, 150),
+            ($1, now() - interval '20 minutes', 'postgres', 2, 10),
+            ($2, now() - interval '20 minutes', 'app', 9, 999),
+            ($1, now() - interval '3 hours', 'app', 7, 50)`, args: ids},
 	}
 	for _, stmt := range seed {
-		if _, err := pool.Exec(ctx, stmt); err != nil {
-			t.Fatalf("seed %q: %v", stmt, err)
+		if _, err := pool.Exec(ctx, stmt.sql, stmt.args...); err != nil {
+			t.Fatalf("seed %q: %v", stmt.sql, err)
 		}
 	}
 	return f

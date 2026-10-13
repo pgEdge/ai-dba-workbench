@@ -104,8 +104,9 @@ The alerter supports the following metric name patterns.
 
 ### Replication Metrics
 
-- `pg_stat_replication.replay_lag_seconds` - Replication lag in
-  seconds.
+- `pg_stat_replication.replay_lag_seconds` - Largest replay lag,
+  in seconds, across the standbys in the most recent sample; no
+  value when every standby has caught up.
 - `pg_stat_replication.lag_bytes` - Replication lag in bytes.
 - `pg_stat_replication.standby_disconnected` - Standby with no WAL
   receiver process.

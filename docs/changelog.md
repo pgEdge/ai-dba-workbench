@@ -1111,6 +1111,19 @@ project adheres to
 
 ### Fixed
 
+- Fix the `pg_stat_replication.replay_lag_seconds` alert metric,
+  which never returned a value because its query read a
+  `replay_lsn_timestamp` column that the collector does not store
+  (#625). The metric now reports, for each connection, the largest
+  `replay_lag` across the standbys in that connection's most recent
+  replication sample, which is the replay lag PostgreSQL itself
+  reports. It reports nothing once PostgreSQL resets `replay_lag` to
+  NULL for an idle standby that has caught up, so an alert on the
+  metric clears rather than lingering. The alert rule reference no
+  longer lists a built-in time-based replication lag rule, because
+  none has ever been seeded; operators can create a custom rule on
+  the metric instead.
+
 - Fix the `probe_unavailable` alert firing on healthy Spock clusters
   with no recent apply exceptions or conflict resolutions. The
   collector could not tell an installed extension with nothing to

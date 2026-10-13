@@ -160,20 +160,31 @@ running.
 
 ## Replication Rules
 
-### High Replication Lag (Time)
+### Replication Lag in Seconds (Custom Rule)
 
-This rule alerts when replication replay is behind the
-primary.
+The alerter does not seed a built-in rule for replication
+lag measured in time; the High Replication Lag (Bytes)
+rule below covers replication lag by default. To alert
+on time-based lag, create a custom rule on the
+`pg_stat_replication.replay_lag_seconds` metric, for
+example with the `>` operator and a threshold of 30
+seconds.
 
-| Property | Value |
-|----------|-------|
-| Metric | `pg_stat_replication.replay_lag_seconds` |
-| Operator | `>` |
-| Default Threshold | 30 |
-| Default Severity | warning |
+The metric reports, for each primary, the largest
+`replay_lag` across its standbys in the most recent
+replication sample. PostgreSQL measures `replay_lag` as
+the time between the primary flushing recent WAL and
+learning that a standby has replayed it, so the value
+approximates how long recent transactions take to become
+visible on the standby.
 
-Replication lag can indicate network issues, replica
-resource constraints, or write-heavy workloads.
+PostgreSQL resets `replay_lag` to NULL a short while
+after an idle standby has fully caught up. The metric
+reports no value in that case, and an alert on the
+metric then clears. When the last standby disconnects,
+the metric keeps reporting the lag from the last sample
+that included a standby for up to five minutes, and then
+reports no value.
 
 ### High Replication Lag (Bytes)
 

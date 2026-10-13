@@ -68,7 +68,11 @@ var datastoreAggregations = map[string]bool{
 }
 
 // datastoreFilter is one filter condition. Value is the caller's raw
-// JSON value; it is only ever bound as a parameter.
+// JSON value for a scalar operator, and Values the list for in and not
+// in; both are only ever bound as parameters. The input schema declares
+// them as a string and an array of strings, because some model
+// providers refuse a property without a type, but JSON numbers and
+// booleans are still accepted.
 type datastoreFilter struct {
 	Column string
 	Op     string
@@ -76,6 +80,9 @@ type datastoreFilter struct {
 	// HasValue records whether the caller supplied a value at all, so a
 	// missing value and an explicit null get distinct errors.
 	HasValue bool
+	Values   any
+	// HasValues records whether the caller supplied values at all.
+	HasValues bool
 }
 
 // datastoreOrder is one ordering term; Direction is "asc" or "desc".
@@ -351,7 +358,7 @@ func parseDatastoreFilters(args map[string]any) ([]datastoreFilter, error) {
 		if !ok {
 			return nil, fmt.Errorf("%s must be an object", where)
 		}
-		if err := checkObjectKeys(obj, where, "column", "op", "value"); err != nil {
+		if err := checkObjectKeys(obj, where, "column", "op", "value", "values"); err != nil {
 			return nil, err
 		}
 		column := stringValue(obj["column"])
@@ -368,7 +375,12 @@ func parseDatastoreFilters(args map[string]any) ([]datastoreFilter, error) {
 			return nil, fmt.Errorf("%s.op: unsupported operator %q; use one of %s", where, op, datastoreOperatorList)
 		}
 		value, hasValue := obj["value"]
-		filters = append(filters, datastoreFilter{Column: column, Op: op, Value: value, HasValue: hasValue})
+		values, hasValues := obj["values"]
+		filters = append(filters, datastoreFilter{
+			Column: column, Op: op,
+			Value: value, HasValue: hasValue,
+			Values: values, HasValues: hasValues,
+		})
 	}
 	return filters, nil
 }
@@ -813,15 +825,18 @@ func filterCondition(q *datastoreQuery, src datastoreSource, f datastoreFilter, 
 
 	switch f.Op {
 	case "is null", "is not null":
-		if f.HasValue {
-			return "", fmt.Errorf("%s: operator %s takes no value", where, f.Op)
+		if f.HasValue || f.HasValues {
+			return "", fmt.Errorf("%s: operator %s takes no value or values", where, f.Op)
 		}
 		return column + " " + op, nil
 
 	case "in", "not in":
-		list, ok := f.Value.([]any)
+		if f.HasValue {
+			return "", fmt.Errorf("%s: operator %s takes values (an array), not value", where, f.Op)
+		}
+		list, ok := f.Values.([]any)
 		if !ok || len(list) == 0 {
-			return "", fmt.Errorf("%s: operator %s needs a non-empty array value", where, f.Op)
+			return "", fmt.Errorf("%s: operator %s needs values, a non-empty array", where, f.Op)
 		}
 		if len(list) > datastoreMaxInValues {
 			return "", fmt.Errorf("%s: operator %s takes at most %d values", where, f.Op, datastoreMaxInValues)
@@ -837,6 +852,9 @@ func filterCondition(q *datastoreQuery, src datastoreSource, f datastoreFilter, 
 		return column + " " + op + " (" + strings.Join(placeholders, ", ") + ")", nil
 	}
 
+	if f.HasValues {
+		return "", fmt.Errorf("%s: operator %s takes value, not values (values is only for in and not in)", where, f.Op)
+	}
 	if !f.HasValue {
 		return "", fmt.Errorf("%s: operator %s needs a value", where, f.Op)
 	}

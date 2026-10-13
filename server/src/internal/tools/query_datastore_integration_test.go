@@ -123,6 +123,18 @@ func newDatastoreFixture(t *testing.T) *datastoreFixture {
             (7, 'group', NULL, NULL, 2, 'hidden group', now()),
             (8, 'cluster', NULL, NULL, NULL, 'malformed', now())`, f.visible, f.hidden),
 		`INSERT INTO alert_rules (id, name, metric_name) VALUES (1, 'rule one', 'm1'), (2, 'rule two', 'm2')`,
+		fmt.Sprintf(`INSERT INTO probe_configs (id, name, scope, connection_id, cluster_id, group_id) VALUES
+            (1, 'global probe', 'global', NULL, NULL, NULL),
+            (2, 'visible server probe', 'server', %d, NULL, NULL),
+            (3, 'hidden server probe', 'server', %d, NULL, NULL),
+            (4, 'visible cluster probe', 'cluster', NULL, 10, NULL),
+            (5, 'hidden group probe', 'group', NULL, NULL, 2),
+            (6, 'malformed probe', 'server', NULL, NULL, NULL)`, f.visible, f.hidden),
+		fmt.Sprintf(`INSERT INTO alert_thresholds (id, rule_id, scope, connection_id, cluster_id, group_id, database_name) VALUES
+            (1, 1, 'server', %d, NULL, NULL, 'visible server'),
+            (2, 1, 'server', %d, NULL, NULL, 'hidden server'),
+            (3, 1, 'cluster', NULL, 20, NULL, 'hidden cluster'),
+            (4, 1, 'group', NULL, NULL, 1, 'visible group')`, f.visible, f.hidden),
 		fmt.Sprintf(`INSERT INTO metric_baselines (connection_id, metric_name, period_type) VALUES
             (%d, 'visible_metric', 'all'), (%d, 'hidden_metric', 'all')`, f.visible, f.hidden),
 		fmt.Sprintf(`INSERT INTO metrics.ds_probe (connection_id, collected_at, datname, numbackends, xact_commit) VALUES
@@ -275,6 +287,23 @@ func TestQueryDatastoreScopesEveryRuleIntegration(t *testing.T) {
 		rows = mustQuery(t, tool, admin, map[string]any{"source": "blackouts", "columns": []any{"reason"}})
 		if len(rows) != 8 {
 			t.Errorf("superuser should see every blackout, got %v", column(rows, "reason"))
+		}
+	})
+
+	// probe_configs and alert_thresholds share the blackouts rule; these
+	// cases pin that their columns are wired to it too.
+	t.Run("hierarchy probe_configs and alert_thresholds", func(t *testing.T) {
+		rows := mustQuery(t, tool, user, map[string]any{"source": "probe_configs", "columns": []any{"name"}})
+		assertColumn(t, rows, "name", "global probe", "visible cluster probe", "visible server probe")
+		rows = mustQuery(t, tool, admin, map[string]any{"source": "probe_configs", "columns": []any{"name"}})
+		if len(rows) != 6 {
+			t.Errorf("superuser should see every probe config, got %v", column(rows, "name"))
+		}
+		rows = mustQuery(t, tool, user, map[string]any{"source": "alert_thresholds", "columns": []any{"database_name"}})
+		assertColumn(t, rows, "database_name", "visible group", "visible server")
+		rows = mustQuery(t, tool, admin, map[string]any{"source": "alert_thresholds", "columns": []any{"database_name"}})
+		if len(rows) != 4 {
+			t.Errorf("superuser should see every threshold, got %v", column(rows, "database_name"))
 		}
 	})
 

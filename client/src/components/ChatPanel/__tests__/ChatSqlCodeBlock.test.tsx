@@ -135,9 +135,20 @@ describe('ChatSqlCodeBlock', () => {
     });
 
     it('runs on the server named by a connection_id comment, without the comment', () => {
-        renderBlock('-- connection_id: 2\nSELECT 2', singleTarget);
+        renderBlock('-- connection_id: 2\nSELECT 2', {
+            ...singleTarget,
+            targets: [{ connectionId: 2 }],
+        });
         expect(screen.getByLabelText('Run on beta/postgres')).toBeInTheDocument();
         expect(screen.getByTestId('syntax-highlighter').textContent).toBe('SELECT 2');
+    });
+
+    it('asks the user to choose when the comment names a server the reply did not use', () => {
+        renderBlock('-- connection_id: 2\nSELECT 2', singleTarget);
+        expect(screen.queryByLabelText('Run on beta/postgres')).not.toBeInTheDocument();
+        expect(screen.getByRole('combobox', {
+            name: 'Server to run this query on',
+        })).toHaveTextContent('Choose a server to run on');
     });
 
     it('asks the user to choose when the target is unclear', async () => {

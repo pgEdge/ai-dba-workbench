@@ -494,6 +494,7 @@ describe('hasSqlParameters with other placeholder styles', () => {
         ['dollar-quoted bodies', 'DO $$ BEGIN PERFORM $1; END $$;'],
         ['tagged dollar-quoted bodies', 'DO $fn$ BEGIN x := :y; END $fn$;'],
         ['array slices', 'SELECT arr[lo:hi] FROM t'],
+        ['slices without a lower bound', 'SELECT arr[:n], (arr)[ :hi] FROM t'],
         ['times in literals', "SELECT '10:30'::time"],
         ['escape strings with escaped quotes', "SELECT E'it\\'s :x' AS s"],
         ['lower-case escape strings', "SELECT e'a\\\\' AS s, 'b :c' AS t"],

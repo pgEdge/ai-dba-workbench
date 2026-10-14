@@ -269,11 +269,12 @@ const RunnableCodeBlock: React.FC<RunnableCodeBlockProps> = ({
         });
     }, []);
 
-    const targetLabel = serverName
+    const targetName = serverName
         ? databaseName
-            ? `Run on ${serverName}/${databaseName}`
-            : `Run on ${serverName}`
-        : 'Run query';
+            ? `${serverName}/${databaseName}`
+            : serverName
+        : '';
+    const targetLabel = targetName ? `Run on ${targetName}` : 'Run query';
 
     let tooltipTitle = targetLabel;
     if (validating) {
@@ -451,7 +452,9 @@ const RunnableCodeBlock: React.FC<RunnableCodeBlockProps> = ({
                                 flexShrink: 0,
                             }} />
                             <Typography sx={getConfirmationTextSx(theme)}>
-                                This code block contains statements that modify the database:
+                                {targetName
+                                    ? `This code block contains statements that modify the database on ${targetName}:`
+                                    : 'This code block contains statements that modify the database:'}
                             </Typography>
                         </Box>
                         {queryState.writeStatements.map((stmt, idx) => (

@@ -96,10 +96,14 @@ const isValidDatabaseName = (value: unknown): value is string =>
     typeof value === 'string' && value !== '';
 
 /**
- * Extract the connection target from a tool call's arguments. This
- * mirrors the server's parseConnectionArgs: only a numeric
- * `connection_id` selects a connection, and only a non-empty string
- * `database_name` overrides the database.
+ * Extract the connection target from a tool call's arguments. This is
+ * stricter than the server's parseConnectionArgs: only a positive safe
+ * integer `connection_id` selects a connection, and only a non-empty
+ * string `database_name` overrides the database. The server also takes
+ * a fraction such as `3.7` as connection 3, and sends zero or a negative
+ * ID down the explicit path; the client treats all of those as
+ * unattributed, which can only widen the selector rather than bind Run
+ * to the wrong server.
  */
 export const extractToolTarget = (
     input: Record<string, unknown> | undefined,
@@ -196,23 +200,63 @@ const toDistinctOptions = (
 };
 
 /**
- * Plan a block whose `-- connection_id: N` comment names its server. It
- * runs there, on the database the reply used on that server or the
+ * Regex matching a routing comment on any line, used to spot a block
+ * that still names a server once its leading comment has been stripped.
+ */
+const ANY_CONNECTION_ID_COMMENT_RE = /^[ \t]*--[ \t]*connection_id:/m;
+
+/**
+ * Build a selector plan with nothing preselected, listing the reply's
+ * own targets first and then the other servers the user can see. With
+ * no server to offer, the block gets no Run button.
+ */
+const planSelection = (
+    runCode: string,
+    replyOptions: RunTargetOption[],
+    servers: Map<number, KnownServer>,
+): SqlBlockPlan => {
+    const otherServers = toDistinctOptions(
+        Array.from(servers.keys())
+            .filter((id) => !replyOptions.some((o) => o.connectionId === id))
+            .map((connectionId) => ({ connectionId })),
+        servers,
+    );
+    const options = [...replyOptions, ...otherServers];
+    if (options.length === 0) {
+        return { kind: 'copy' };
+    }
+    return { kind: 'select', code: runCode, options };
+};
+
+/**
+ * Plan a block whose `-- connection_id: N` comment names its server. The
+ * model writes the comment, so it binds Run only to a server the user
+ * can see and, when the reply ran SQL on named servers, only to one of
+ * those. It runs on the database the reply used on that server or the
  * server's default, unless the reply used several databases on it, in
- * which case the user chooses between them.
+ * which case the user chooses between them. A comment naming a server
+ * the reply did not use shows the selector instead, and one naming a
+ * server the user cannot see gets no Run button.
  */
 const planAnnotatedBlock = (
     id: number,
     runCode: string,
+    replyOptions: RunTargetOption[],
     reply: ReplyTargets,
     servers: Map<number, KnownServer>,
 ): SqlBlockPlan => {
+    if (!servers.has(id)) {
+        return { kind: 'copy' };
+    }
     const options = toDistinctOptions(
         reply.targets.filter((t) => t.connectionId === id),
         servers,
     );
     if (options.length > 1) {
         return { kind: 'select', code: runCode, options };
+    }
+    if (options.length === 0 && replyOptions.length > 0) {
+        return planSelection(runCode, replyOptions, servers);
     }
     return {
         kind: 'run',
@@ -232,7 +276,10 @@ const planAnnotatedBlock = (
  * which lists the reply's own targets first and then the other servers
  * they can see. Blocks with placeholders are templates, shown with the
  * shared template notice, and datastore-only replies without a comment
- * get no Run button.
+ * get no Run button, as does a block that is only the comment. A block
+ * holding a second routing comment, which would leave the displayed
+ * code naming a different server from the one Run uses, always shows
+ * the selector.
  *
  * @param code - The code block text, possibly with a leading comment.
  * @param reply - Where the reply's tool calls went.
@@ -250,16 +297,25 @@ export const planSqlBlock = (
         return { kind: 'template', code: runCode };
     }
 
+    if (runCode.trim() === '') {
+        return { kind: 'copy' };
+    }
+
+    const replyOptions = toDistinctOptions(reply.targets, servers);
+
+    if (ANY_CONNECTION_ID_COMMENT_RE.test(runCode)) {
+        return planSelection(runCode, replyOptions, servers);
+    }
+
     if (annotation.connectionId !== null) {
         return planAnnotatedBlock(
             annotation.connectionId,
             runCode,
+            replyOptions,
             reply,
             servers,
         );
     }
-
-    const replyOptions = toDistinctOptions(reply.targets, servers);
 
     if (
         replyOptions.length === 1
@@ -277,15 +333,5 @@ export const planSqlBlock = (
         return { kind: 'copy' };
     }
 
-    const otherServers = toDistinctOptions(
-        Array.from(servers.keys())
-            .filter((id) => !replyOptions.some((o) => o.connectionId === id))
-            .map((connectionId) => ({ connectionId })),
-        servers,
-    );
-    const options = [...replyOptions, ...otherServers];
-    if (options.length === 0) {
-        return { kind: 'copy' };
-    }
-    return { kind: 'select', code: runCode, options };
+    return planSelection(runCode, replyOptions, servers);
 };

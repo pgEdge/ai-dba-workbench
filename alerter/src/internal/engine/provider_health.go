@@ -20,8 +20,9 @@ package engine
 // The tracking wraps the llm.EmbeddingProvider and llm.ReasoningProvider
 // the engine holds, so the call sites in anomalies.go and reevaluation.go
 // are untouched. Which caller an outcome belongs to is carried in the
-// context: the re-evaluation worker's context is tagged when it starts,
-// and an untagged Classify call is Tier 3 classification. A reasoning
+// context: the re-evaluation worker's context is tagged when it starts.
+// An untagged Classify call is Tier 3 classification and an untagged
+// Reevaluate call is re-evaluation. A reasoning
 // call that returns a response holding no verdict the tier can parse
 // counts as a failure, since the model is not doing its job even though
 // the call succeeded (GitHub issue #594). The caller may still act on a
@@ -819,16 +820,31 @@ type healthTrackingReasoning struct {
 	tracker  *providerHealthTracker
 }
 
-// Classify implements llm.ReasoningProvider.
+// Classify implements llm.ReasoningProvider. The call counts against the
+// tier ctx is tagged with, Tier 3 classification when it carries none.
 func (h *healthTrackingReasoning) Classify(ctx context.Context, prompt string) (string, error) {
 	response, err := h.inner.Classify(ctx, prompt)
-	tier := providerTierFromContext(ctx, providerTierClassification)
+	h.recordVerdict(ctx, providerTierFromContext(ctx, providerTierClassification), response, err)
+	return response, err
+}
+
+// Reevaluate implements llm.ReasoningProvider. The call counts against the
+// tier ctx is tagged with, re-evaluation when it carries none.
+func (h *healthTrackingReasoning) Reevaluate(ctx context.Context, prompt string) (string, error) {
+	response, err := h.inner.Reevaluate(ctx, prompt)
+	h.recordVerdict(ctx, providerTierFromContext(ctx, providerTierReevaluation), response, err)
+	return response, err
+}
+
+// recordVerdict records the outcome of one reasoning call against tier,
+// counting a response that holds no verdict the tier can parse as a
+// failure.
+func (h *healthTrackingReasoning) recordVerdict(ctx context.Context, tier providerTier, response string, err error) {
 	outcome := err
 	if outcome == nil && !verdictParses(tier, response) {
 		outcome = errUnparseableVerdict
 	}
 	h.tracker.record(ctx, tier, h.provider, h.inner.ModelName(), outcome, false)
-	return response, err
 }
 
 // verdictParses reports whether response holds a decision the caller of
@@ -856,10 +872,10 @@ func (h *healthTrackingReasoning) ProviderName() string {
 	return h.inner.ProviderName()
 }
 
-// SystemPrompt implements llm.ReasoningProvider by delegating to the
-// wrapped provider.
-func (h *healthTrackingReasoning) SystemPrompt() string {
-	return h.inner.SystemPrompt()
+// ReevaluationSystemPrompt implements llm.ReasoningProvider by
+// delegating to the wrapped provider.
+func (h *healthTrackingReasoning) ReevaluationSystemPrompt() string {
+	return h.inner.ReevaluationSystemPrompt()
 }
 
 // healthCheck makes one cheap call and raises the alert for tier at

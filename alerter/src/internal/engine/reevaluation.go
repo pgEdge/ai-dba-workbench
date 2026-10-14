@@ -105,7 +105,7 @@ func (e *Engine) reevaluateAlert(
 	tier3Ctx, cancel := context.WithTimeout(ctx, timeout)
 
 	// Call the reasoning provider
-	response, err := e.reasoningProvider.Classify(tier3Ctx, prompt)
+	response, err := e.reasoningProvider.Reevaluate(tier3Ctx, prompt)
 	cancel()
 
 	if err != nil {
@@ -235,7 +235,7 @@ func (e *Engine) reevaluationFingerprint(
 	if p := e.reasoningProvider; p != nil {
 		// Each part is followed by a NUL so that text moving from one
 		// part to the next cannot produce the same hash.
-		for _, part := range []string{p.ProviderName(), p.ModelName(), p.SystemPrompt()} {
+		for _, part := range []string{p.ProviderName(), p.ModelName(), p.ReevaluationSystemPrompt()} {
 			h.Write([]byte(part))
 			h.Write([]byte{0})
 		}

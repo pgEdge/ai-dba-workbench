@@ -42,11 +42,20 @@ type EmbeddingProvider interface {
 	ModelName() string
 }
 
-// ReasoningProvider classifies anomalies using LLM reasoning.
+// ReasoningProvider classifies anomalies and re-evaluates acknowledged
+// anomaly alerts using LLM reasoning. Each kind of request is sent with
+// its own system prompt, so the model is never told to answer one
+// question in the terms of the other (GitHub issue #627).
 type ReasoningProvider interface {
-	// Classify analyzes the given prompt and returns a classification response.
-	// The response should contain either "alert" or "suppress" along with reasoning.
+	// Classify sends the Tier 3 classification system prompt with prompt
+	// and returns the model's response, which should carry an "alert" or
+	// "suppress" decision along with reasoning.
 	Classify(ctx context.Context, prompt string) (string, error)
+
+	// Reevaluate sends the re-evaluation system prompt with prompt and
+	// returns the model's response, which should carry a "clear" or
+	// "keep" decision along with reasoning.
+	Reevaluate(ctx context.Context, prompt string) (string, error)
 
 	// ModelName returns the name of the reasoning model being used.
 	ModelName() string
@@ -55,10 +64,10 @@ type ReasoningProvider interface {
 	// model, such as "anthropic" or "openai".
 	ProviderName() string
 
-	// SystemPrompt returns the system prompt that Classify sends with
-	// every request, so callers that cache a decision can tell when the
-	// instructions behind it have changed.
-	SystemPrompt() string
+	// ReevaluationSystemPrompt returns the system prompt that Reevaluate
+	// sends with every request, so the re-evaluation fingerprint can tell
+	// when the instructions behind a stored "keep" have changed.
+	ReevaluationSystemPrompt() string
 }
 
 // classificationSystemPrompt is the system prompt for anomaly classification.
@@ -76,6 +85,24 @@ Consider:
 - Could this be expected behavior (e.g., maintenance windows, backups)?
 - Are there similar past anomalies that were false positives?
 - What is the potential impact if this is a real issue?`
+
+// reevaluationSystemPrompt is the system prompt for re-evaluating an
+// anomaly alert that a user has acknowledged. Its decision values must
+// match reevaluationDecisionConfig in the engine package.
+const reevaluationSystemPrompt = `You are a database monitoring expert re-evaluating anomaly alerts that a user has acknowledged.
+
+Your task is to decide whether an acknowledged alert can safely be removed (clear) or should remain active (keep), based on the user's feedback, past acknowledgements of similar alerts, and the current context of the server and its cluster.
+
+Respond with a JSON object containing:
+1. "decision": either "clear" or "keep"
+2. "confidence": a number from 0 to 1 indicating your confidence
+3. "reasoning": a brief explanation of your decision
+
+Consider:
+- Did the user mark the alert as a false positive, or explain the anomaly in their note?
+- Have similar alerts been acknowledged in the same way before?
+- Do other alerts on the server or its cluster suggest the problem is real?
+- If you are uncertain, keep the alert.`
 
 // embeddingAdapter wraps pkg/embedding.Provider to implement the alerter's
 // EmbeddingProvider interface. It converts between float64 (pkg/embedding)

@@ -737,9 +737,15 @@ func (f *fakeReasoner) Classify(context.Context, string) (string, error) {
 	return "OK", nil
 }
 
+func (f *fakeReasoner) Reevaluate(ctx context.Context, prompt string) (string, error) {
+	return f.Classify(ctx, prompt)
+}
+
 func (f *fakeReasoner) ModelName() string    { return "reason-model" }
 func (f *fakeReasoner) ProviderName() string { return "reason-provider" }
-func (f *fakeReasoner) SystemPrompt() string { return "reason system prompt" }
+func (f *fakeReasoner) ReevaluationSystemPrompt() string {
+	return "reason system prompt"
+}
 
 func TestHealthTrackingWrappers(t *testing.T) {
 	h := newTrackerHarness(1)
@@ -757,8 +763,8 @@ func TestHealthTrackingWrappers(t *testing.T) {
 	if _, err := rsn.Classify(context.Background(), "x"); err == nil {
 		t.Error("classify error swallowed")
 	}
-	if _, err := rsn.Classify(withProviderTier(context.Background(), providerTierReevaluation), "x"); err == nil {
-		t.Error("classify error swallowed")
+	if _, err := rsn.Reevaluate(context.Background(), "x"); err == nil {
+		t.Error("reevaluate error swallowed")
 	}
 	for _, key := range []string{
 		providerHealthKey(providerTierEmbedding, "openai"),
@@ -961,8 +967,8 @@ func TestHealthTrackingReasoningDelegatesIdentity(t *testing.T) {
 	if got := rsn.ProviderName(); got != "reason-provider" {
 		t.Errorf("ProviderName() = %q, want the wrapped provider's", got)
 	}
-	if got := rsn.SystemPrompt(); got != "reason system prompt" {
-		t.Errorf("SystemPrompt() = %q, want the wrapped provider's", got)
+	if got := rsn.ReevaluationSystemPrompt(); got != "reason system prompt" {
+		t.Errorf("ReevaluationSystemPrompt() = %q, want the wrapped provider's", got)
 	}
 }
 
@@ -995,12 +1001,12 @@ func TestHealthTrackingReasoningCountsUnparseableVerdict(t *testing.T) {
 			h := newTrackerHarness(1)
 			rsn := &healthTrackingReasoning{inner: &fakeReasoner{response: tt.response},
 				provider: "anthropic", tracker: h.tracker}
-			ctx := context.Background()
+			call := rsn.Classify
 			if tt.tier == providerTierReevaluation {
-				ctx = withProviderTier(ctx, tt.tier)
+				call = rsn.Reevaluate
 			}
 
-			got, err := rsn.Classify(ctx, "prompt")
+			got, err := call(context.Background(), "prompt")
 			if err != nil || got != tt.response {
 				t.Fatalf("Classify() = %q, %v; want the response and no error", got, err)
 			}
@@ -1067,12 +1073,12 @@ func TestHealthTrackingReasoningFailureIndependentOfKeywordDecision(t *testing.T
 			h := newTrackerHarness(1)
 			rsn := &healthTrackingReasoning{inner: &fakeReasoner{response: tt.response},
 				provider: "anthropic", tracker: h.tracker}
-			ctx := context.Background()
+			call := rsn.Classify
 			if tt.tier == providerTierReevaluation {
-				ctx = withProviderTier(ctx, tt.tier)
+				call = rsn.Reevaluate
 			}
 
-			got, err := rsn.Classify(ctx, "prompt")
+			got, err := call(context.Background(), "prompt")
 			if err != nil {
 				t.Fatalf("Classify() error = %v", err)
 			}

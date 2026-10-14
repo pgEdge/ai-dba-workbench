@@ -159,3 +159,65 @@ func TestRetireDatabaseScopedAlertFailures(t *testing.T) {
 			alert.Description)
 	}
 }
+
+// Statements for TestRetireDatabaseScopedAlertFailedRewriteStillClears:
+// a trigger that rejects a change to an alert's description and lets
+// every other update through.
+const (
+	failDescriptionUpdatesSQL = `
+        CREATE OR REPLACE FUNCTION server_wide_test_fail_description() RETURNS trigger
+        LANGUAGE plpgsql AS $$
+        BEGIN
+            IF NEW.description IS DISTINCT FROM OLD.description THEN
+                RAISE EXCEPTION 'description update refused by test';
+            END IF;
+            RETURN NEW;
+        END;
+        $$;
+        CREATE TRIGGER server_wide_test_fail_description BEFORE UPDATE ON alerts
+            FOR EACH ROW EXECUTE FUNCTION server_wide_test_fail_description();
+    `
+
+	dropFailDescriptionUpdatesSQL = `
+        DROP TRIGGER IF EXISTS server_wide_test_fail_description ON alerts;
+        DROP FUNCTION IF EXISTS server_wide_test_fail_description();
+    `
+)
+
+// TestRetireDatabaseScopedAlertFailedRewriteStillClears checks that an
+// alert whose description cannot be rewritten is still cleared, keeping
+// its original description, because an alert stuck active is the larger
+// fault.
+func TestRetireDatabaseScopedAlertFailedRewriteStillClears(t *testing.T) {
+	engine, _, pool, cleanup := newEngineSpockTestEnv(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	connID := insertTestConnection(t, pool, "server-wide-640-rewrite")
+	db := "appdb"
+	id := insertServerWideTestAlert(t, pool, connID, &db, "seeded")
+
+	if _, err := pool.Exec(ctx, failDescriptionUpdatesSQL); err != nil {
+		t.Fatalf("failed to install trigger: %v", err)
+	}
+	defer func() {
+		if _, err := pool.Exec(context.Background(), dropFailDescriptionUpdatesSQL); err != nil {
+			t.Errorf("failed to drop trigger: %v", err)
+		}
+	}()
+
+	metric := slowQueryMetric
+	alert := &database.Alert{ID: id, MetricName: &metric, DatabaseName: &db,
+		Description: "seeded"}
+	engine.retireDatabaseScopedAlert(ctx, alert)
+
+	got := readUnmonitoredAlert(t, pool, id)
+	if got.status != "cleared" || got.clearedAt == nil {
+		t.Errorf("alert after a failed rewrite: status %q, cleared_at %v; want cleared",
+			got.status, got.clearedAt)
+	}
+	if got.description != "seeded" || alert.Description != "seeded" {
+		t.Errorf("description = %q (in memory %q), want the original kept",
+			got.description, alert.Description)
+	}
+}

@@ -1149,9 +1149,10 @@ project adheres to
   is now reported once per server, counting each statement once
   whichever database it ran in; statements from databases the
   collector does not probe, or that lack the extension, still
-  count. The alerter closes alerts on the metric that name a
-  database, without sending a clear notification, and raises a
-  single server alert if the condition still holds; baselines
+  count. The alerter closes active alerts on the metric that name
+  a database, without sending a clear notification, and raises a
+  single server alert if the condition still holds; acknowledged
+  ones are left for retention to delete, and baselines
   stored per database are removed by the next baseline cycle.
 
 - Fix the `pg_stat_replication.replay_lag_seconds` alert metric,

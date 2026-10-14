@@ -1481,7 +1481,12 @@ before the extension and absence gates (description prefixed with
 `databaseScopedClearDescriptionPrefix`, `ClearAlert`, no notification),
 since no latest value can match it and a non-`clearWhenAbsent` metric
 would otherwise hold it active for ever
-(`server_wide_alerts_integration_test.go`). Per-database baselines of a
+(`server_wide_alerts_integration_test.go`, including a trigger that
+rejects only a `description` change, so a failed rewrite must still
+clear). Only active alerts are retired, since the cleaner reads
+`GetActiveAlerts`; an acknowledged per-database alert stays
+acknowledged until retention deletes it, which the changelog states.
+Per-database baselines of a
 metric that became server-wide need no migration: the stale-baseline
 sweep (`DeleteStaleMetricBaselines`) deletes them on the next cycle.
 
@@ -1683,8 +1688,9 @@ is added to the INCLUDE list, which is why it is not there.
 ## Cumulative Counter Deltas per Identity (server)
 
 `pg_stat_statements` keeps one row per `(userid, dbid, toplevel)` for a
-queryid, which the collector stores once per probing `database_name`, and each row is an independent cumulative
-counter that `pg_stat_reset()` or a restart can zero on its own. Any
+queryid, which the collector stores once per probing `database_name`,
+and each row is an independent cumulative counter that
+`pg_stat_reset()` or a restart can zero on its own. Any
 query that turns those counters into per-period deltas must difference
 within each identity (`LAG` over an ascending window, or `LEAD` over a
 descending one where another window function needs that ordering

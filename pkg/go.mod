@@ -7,4 +7,4 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 )
 
-require github.com/pgEdge/pgedge-go-llm-lib v0.4.1-0.20261014141624-33aeed13b290
+require github.com/pgEdge/pgedge-go-llm-lib v0.5.0

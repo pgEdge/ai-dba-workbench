@@ -58,13 +58,9 @@ const catalogSchemaColumnsQuery = `
 // a new column is a decision rather than something silently never
 // offered.
 var catalogOmittedColumns = map[string][]string{
-	// password_encrypted, the certificate paths and owner_token are
-	// secrets; see TestConfigurationSourcesExposeNoSecrets. username and
-	// hostaddr are not secrets (the REST API returns both) but the catalog
-	// has never offered them; adding them is a separate decision.
+	// Secrets; see TestConfigurationSourcesExposeNoSecrets.
 	"connections": {
-		"username", "hostaddr", "password_encrypted", "sslcert", "sslkey",
-		"sslrootcert", "owner_token",
+		"password_encrypted", "sslcert", "sslkey", "sslrootcert", "owner_token",
 	},
 	// embedding_id refers to anomaly_embeddings, which query_datastore
 	// never exposes.

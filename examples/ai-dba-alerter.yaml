@@ -301,9 +301,21 @@ anomaly:
     # Default: true
     enabled: true
 
-    # Timeout for LLM API calls in seconds
+    # Timeout for each LLM API call in seconds. A candidate whose
+    # decision model call fails and falls back to the reasoning model
+    # makes two calls, each with this timeout.
     # Default: 30
     timeout_seconds: 30
+
+    # Used only when llm.decision_provider is set. The decision model
+    # returns the probability that the anomaly is a real issue; the
+    # candidate is suppressed when one minus that probability is at
+    # least this value, and alerted otherwise. A higher value
+    # suppresses fewer candidates. Calibration differs by provider, so
+    # tune it for the provider in use. Must be greater than 0 and less
+    # than 1 whilst a decision provider is configured.
+    # Default: 0.5
+    # decision_suppress_threshold: 0.5
 
   #-------------------------------------------------------------------------
   # LLM Provider Health
@@ -398,6 +410,17 @@ llm:
   # Default: ollama
   reasoning_provider: ollama
 
+  # Optional decision model for tier 3 classification. When set, tier 3
+  # asks the decision model first and falls back to the reasoning
+  # provider for any candidate it fails to classify (error, refusal,
+  # timeout or malformed answer). Re-evaluation of acknowledged alerts
+  # always uses the reasoning provider. The decision provider receives
+  # the same anomaly context as the reasoning provider. Changing it
+  # requires a restart; SIGHUP does not rebuild providers.
+  # Options: typesafe, openai, none (empty or disabled also mean none)
+  # Default: none
+  # decision_provider: typesafe
+
   # Maximum number of output tokens for a tier 3 reasoning call. The
   # budget applies both to anomaly candidate classification and to
   # acknowledged-alert re-evaluation.
@@ -465,6 +488,11 @@ llm:
     # Default: gpt-6-luna
     reasoning_model: gpt-6-luna
 
+    # OpenAI Decisions API model, used when decision_provider is openai.
+    # Shares api_key_file and base_url with the models above.
+    # Default: gpt-6-luna
+    # decision_model: gpt-6-luna
+
   #-------------------------------------------------------------------------
   # Anthropic Settings
   #-------------------------------------------------------------------------
@@ -521,6 +549,24 @@ llm:
     # Model to use for embeddings
     # Default: voyage-3-lite
     embedding_model: voyage-3-lite
+
+  #-------------------------------------------------------------------------
+  # TypeSafe Settings (Jev decision models; decision_provider only)
+  #-------------------------------------------------------------------------
+
+  # typesafe:
+  #   # Path to file containing the TypeSafe API key. Required, even
+  #   # when base_url is overridden; the TYPESAFE_API_KEY environment
+  #   # variable is not used.
+  #   api_key_file: /etc/ai-workbench/typesafe-api-key.txt
+  #
+  #   # Base URL for the TypeSafe API
+  #   # Default: https://api.typesafe.ai/v1
+  #   # base_url: https://api.typesafe.ai/v1
+  #
+  #   # Decision model
+  #   # Default: jev-latest
+  #   decision_model: jev-latest
 
 #=========================================================================
 # NOTIFICATION DELIVERY SETTINGS

@@ -42,9 +42,9 @@ Tier 2: Embedding Similarity (pgvector)
         |
         v
 Tier 3: LLM Classification
-  - Analyzes anomaly context with reasoning model
+  - Optionally asks a decision model for P(real issue) first
+  - Otherwise, or on failure, asks the reasoning model
   - Determines alert or suppress decision
-  - Provides reasoning for the decision
 ```
 
 Before Tier 2 runs on a candidate, the alerter checks whether an
@@ -486,19 +486,31 @@ Tier 2 settings are configured in the `anomaly.tier2` section:
 
 ## Tier 3: LLM Classification
 
-Tier 3 uses LLM reasoning to classify uncertain anomalies. The
-LLM receives context about the anomaly and similar past anomalies,
-then determines whether to alert or suppress.
+Tier 3 uses an LLM to classify uncertain anomalies. The model
+receives context about the anomaly and similar past anomalies,
+then determines whether to alert or suppress. Tier 3 uses a
+reasoning model by default, and can optionally ask a decision
+model first, as the Decision Model section describes. The code
+lives in `alerter/src/internal/engine/anomalies.go` and
+`alerter/src/internal/engine/tier3_decision.go`.
 
 ### Classification Prompt
 
-The alerter builds a classification prompt containing:
+The alerter builds the classification context in
+`buildClassificationContext`, which contains:
 
 - The current anomaly details including metric, value, and
   z-score.
 - Baseline statistics for context.
 - Similar past anomalies with their decisions.
-- Instructions for the classification response.
+- Past acknowledgements of the same metric and connection.
+- Cluster peers and their recent alerts.
+- Guidance on weighing past user feedback.
+
+The reasoning model's prompt, from `buildClassificationPrompt`, is
+that context followed by `classificationResponseInstructions`,
+which ask for the JSON response described below. The decision model
+receives the context alone.
 
 ### Response Parsing
 
@@ -517,19 +529,148 @@ When the LLM call fails, the alerter defaults to alerting. This
 fail-safe ensures that potential issues are not missed due to LLM
 unavailability.
 
+### Decision Model
+
+A decision model answers a yes or no question with the probability
+of yes, rather than generating text. When `llm.decision_provider` is
+`typesafe` or `openai`, `runTier3` asks the decision model first,
+through `llm.DecisionProvider.ClassifyDecision`, with the question
+"Is this a real issue that requires attention?" and the
+classification context as its input. An empty value, `none` or
+`disabled` leaves Tier 3 on the reasoning model alone, exactly as
+before the decision model existed (GitHub issue #626).
+
+The model returns P(real issue), the probability of yes. Tier 3
+suppresses the candidate when 1 - P(real issue) is at least
+`anomaly.tier3.decision_suppress_threshold`, and raises the alert
+otherwise; `llm.DecisionSuppresses` holds the comparison. The
+default threshold of 0.5 suppresses a candidate that the model
+judges more likely than not to be a false positive.
+
+A successful verdict sets `tier3_pass` and stores a one-line summary
+as `tier3_result`, since the model returns no text to store. The
+following example shows a summary:
+
+```text
+Decision model typesafe/jev-latest: alert (P(real issue)=0.87, suppress threshold 0.50)
+```
+
+The summary reaches the alert's `anomaly_details`, and the
+re-evaluation worker later reads it from there as the Tier 3
+analysis.
+
+The decision model applies to Tier 3 classification only. The
+re-evaluation of acknowledged anomaly alerts always uses the
+reasoning model, for the reasons the Decision Model Trade-offs
+section gives.
+
+### Decision Model Fallback
+
+Any decision model failure sends the candidate to the reasoning
+model, where one is configured. A failure includes an error from
+the provider, a timeout, a refusal to answer, a response with no
+answer to the question, and a probability that is not a number in
+the range 0 to 1; `libDecision.ClassifyDecision` returns each of
+these as an error, never as a verdict.
+
+The fallback follows these rules:
+
+- with a reasoning provider, the reasoning model classifies the
+  candidate as though no decision model existed, and `tier3_error`
+  records the decision model failure followed by `fell back to the
+  reasoning model`.
+- when the reasoning model then fails as well, the usual fail-safe
+  raises the alert, and `tier3_error` records both failures.
+- without a reasoning provider, the fail-safe raises the alert at
+  once, with the `tier3_result` `Decision model classification
+  failed, defaulting to alert`.
+
+Each model call has its own `anomaly.tier3.timeout_seconds` limit,
+so a candidate that falls back can take up to twice the timeout.
+The stale candidate cut-off, described under Enabling and
+Disabling, absorbs the occasional second call through its safety
+factor.
+
+### Tier 3 Source Recording
+
+Collector schema migration 22 adds two nullable columns to
+`anomaly_candidates`, because `tier3_result` alone no longer shows
+which kind of model decided a candidate:
+
+- `tier3_source` holds `decision` or `reasoning`, enforced by the
+  `anomaly_candidates_tier3_source_check` constraint.
+- `tier3_model` holds the provider and model, in the form
+  `provider/model`, that `tier3_source` names.
+
+`setTier3Source` sets both columns before each model call, so when
+every model fails the columns name the last model tried. Rows that
+Tier 3 has not classified, and rows classified before the
+migration, hold `NULL`. The alerter reads and writes both columns
+whenever it loads or updates a candidate, so the collector that
+applies migration 22 must be upgraded before, or together with,
+the alerter.
+
+### Decision Model Trade-offs
+
+A spike in October 2026 compared the decision providers with the
+stored Tier 3 decisions on 150 real candidates from the previous 30
+days, sampled evenly between candidates stored as alerts and
+candidates stored as suppressed. No user-labelled ground truth
+existed, so every figure measures agreement with the reasoning
+model that made the stored decisions, not accuracy. The reasoning
+model, Claude Haiku 4.5, agreed with the stored decisions on 91% of
+the candidates when run again.
+
+The following table compares the models at the default threshold
+of 0.5:
+
+| Model | Agreement with stored decisions | Median latency | Cost per 1,000 decisions |
+|-------|---------------------------------|----------------|--------------------------|
+| TypeSafe `jev-latest` | 89% | About 200 ms | About US$0.04 |
+| OpenAI `gpt-6-luna` decisions | 79% | Not measured | Not confirmed |
+| Claude Haiku 4.5 reasoning | 91% | About 3 s | About US$1.93 |
+
+The spike produced the following findings:
+
+- the Jev model agreed with Claude Haiku 4.5 on 88% of the
+  candidates.
+- the Jev model never suppressed a candidate stored as an alert;
+  every disagreement was an alert where the stored decision was to
+  suppress, which is the safer direction in which to err.
+- the OpenAI decision model suppressed some candidates that were
+  stored as alerts.
+- raising the threshold above 0.5 reduced agreement.
+- the costs use prices as of October 2026, with Jev at US$0.042 per
+  million input tokens and free output, and Claude Haiku 4.5 at US$1
+  per million input tokens and US$5 per million output tokens.
+- the OpenAI decision price could not be confirmed from official
+  pricing.
+
+On this evidence `typesafe` is the recommended decision provider,
+and `openai` is supported but weaker on this data. Each provider
+calibrates its probabilities differently, so a threshold tuned for
+one provider does not carry over to another.
+
+Re-evaluation was left on the reasoning model. In a synthetic test,
+the Jev model never cleared an alert whose acknowledgement note
+explained the anomaly, and no real acknowledgements were available
+to validate either decision model on re-evaluation.
+
 ### Configuration
 
-Tier 3 settings are configured in the `anomaly.tier3` section:
+Tier 3 settings are configured in the `anomaly.tier3` section. The
+following table describes the options:
 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `enabled` | `true` | Enable Tier 3 detection |
-| `timeout_seconds` | `30` | Timeout for LLM API calls |
+| `timeout_seconds` | `30` | Timeout for each LLM API call |
+| `decision_suppress_threshold` | `0.5` | Suppress when 1 - P(real issue) reaches this value; validated as greater than 0 and less than 1 only when a decision provider is set |
 
 ## LLM Provider Configuration
 
-The alerter supports multiple LLM providers for embeddings and
-reasoning.
+The alerter supports multiple LLM providers for embeddings,
+reasoning and Tier 3 decisions.
 
 ### Embedding Providers
 
@@ -563,6 +704,25 @@ Configure the reasoning provider in the `llm` section:
 | OpenAI | `gpt-6-luna` |
 | Anthropic | `claude-haiku-4-5` |
 | Gemini | `gemini-3.8-flash` |
+
+### Decision Providers
+
+Configure the optional decision provider with
+`llm.decision_provider`. The following table shows the default
+decision model for each provider and where its model is set:
+
+| Provider | Default model | Model option |
+|----------|---------------|--------------|
+| TypeSafe | `jev-latest` | `llm.typesafe.decision_model` |
+| OpenAI | `gpt-6-luna` | `llm.openai.decision_model` |
+
+`llm.NewDecisionProvider` builds the provider at startup through
+pgedge-go-llm-lib's `Client.Decide`. TypeSafe requires
+`llm.typesafe.api_key_file` even with a custom `base_url`, and the
+library's `TYPESAFE_API_KEY` fallback is never reached. OpenAI
+follows the reasoning provider's rule and accepts a `base_url`
+without a key. A provider that cannot be built logs a warning and
+leaves Tier 3 on the reasoning provider.
 
 ### Example Configuration
 
@@ -764,7 +924,7 @@ to generate alerts.
 Tier 1 never raises an alert on its own, because raw statistical
 detection is too noisy to alert on. Anomaly detection runs only
 whilst Tier 2 is enabled with an embedding provider or Tier 3 is
-enabled with a reasoning provider; disabling both tiers therefore
+enabled with a reasoning or decision provider; disabling both tiers therefore
 disables anomaly detection, and Tier 1 stores no candidates. The
 alerter creates the providers at startup for the tiers enabled at
 that point, so the rule applies in two places:
@@ -812,3 +972,15 @@ debug logging to see:
 The `anomaly_candidates` table stores all candidates with their
 tier results and final decisions. You can query this table to
 analyze anomaly detection effectiveness.
+
+In the following example, the query counts the Tier 3 outcomes of
+the last day by the kind of model and the model that produced them:
+
+```sql
+SELECT tier3_source, tier3_model, final_decision, count(*)
+FROM anomaly_candidates
+WHERE processed_at > now() - interval '1 day'
+  AND tier3_source IS NOT NULL
+GROUP BY tier3_source, tier3_model, final_decision
+ORDER BY tier3_source, tier3_model, final_decision;
+```

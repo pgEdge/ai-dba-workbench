@@ -12,6 +12,34 @@ project adheres to
 
 ### Added
 
+- Classify tier 3 anomaly candidates with an optional decision
+  model (#626). The new `llm.decision_provider` option selects
+  `typesafe` (the TypeSafe Jev models, configured in the new
+  `llm.typesafe` section with `api_key_file`, `base_url` and
+  `decision_model`, default `jev-latest`) or `openai` (the
+  OpenAI Decisions API, with the new
+  `llm.openai.decision_model` option, default `gpt-6-luna`);
+  leaving it empty, `none` or `disabled` keeps the existing
+  behaviour. The decision model returns the probability that a
+  candidate is a real issue, and tier 3 suppresses the candidate
+  when one minus that probability reaches the new
+  `anomaly.tier3.decision_suppress_threshold` option (default
+  0.5). Any decision model failure falls back to the reasoning
+  model for that candidate, or raises the alert when no
+  reasoning provider is configured; re-evaluation of
+  acknowledged alerts still uses the reasoning model. A failing
+  decision provider raises its own `Tier 3 decision` provider
+  health system alert. Collector schema migration 22 adds the
+  `tier3_source` and `tier3_model` columns to
+  `anomaly_candidates`, recording which kind of model, and which
+  model, decided each candidate; upgrade the collector before,
+  or together with, the alerter. Changing the decision provider
+  takes an alerter restart. In a spike on 150 real candidates,
+  the Jev model agreed with the stored reasoning-model decisions
+  89% of the time, at about a fiftieth of the cost and a
+  fifteenth of the median latency of Claude Haiku 4.5, so
+  `typesafe` is the recommended provider.
+
 - Raise a system alert when anomaly detection is degraded by
   a failing embedding or reasoning provider (#582). The
   alerter counts consecutive failures for each tier (tier 2

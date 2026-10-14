@@ -103,3 +103,16 @@ correlation:
     window_seconds: 120
 
 secret_file: /etc/pgedge/secret/ai-dba.secret
+
+# Optional Tier 3 decision model (see the alerter configuration docs).
+# Tier 3 must be enabled and an llm section configured; the decision
+# model is asked first, and the reasoning provider is the fallback.
+#
+# anomaly:
+#   tier3:
+#     decision_suppress_threshold: 0.5
+# llm:
+#   decision_provider: typesafe
+#   typesafe:
+#     api_key_file: /etc/pgedge/typesafe-api-key.txt
+#     decision_model: jev-latest

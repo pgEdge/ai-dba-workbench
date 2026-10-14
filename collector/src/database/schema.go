@@ -3836,7 +3836,7 @@ func (sm *SchemaManager) registerMigrations() {
 	// from. See GitHub issue #626.
 	//
 	// Both columns are nullable and added without a default, which is a
-	// catalogue-only change; rows classified before the upgrade, and
+	// metadata-only change; rows classified before the upgrade, and
 	// rows Tier 3 has not reached, keep NULL.
 	sm.migrations = append(sm.migrations, Migration{
 		Version:     22,

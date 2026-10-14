@@ -92,6 +92,11 @@ type Engine struct {
 	embeddingProvider llm.EmbeddingProvider
 	reasoningProvider llm.ReasoningProvider
 
+	// decisionProvider, when set, classifies Tier 3 candidates ahead of
+	// the reasoning provider, which then serves only as its fallback
+	// (GitHub issue #626). Re-evaluation never uses it.
+	decisionProvider llm.DecisionProvider
+
 	// providerHealth raises a system alert when a provider keeps
 	// failing; nil without a datastore. See provider_health.go.
 	providerHealth *providerHealthTracker
@@ -188,7 +193,20 @@ func (e *Engine) initLLMProviders() {
 			e.reasoningProvider = provider
 			e.log("Initialized reasoning provider: %s", provider.ModelName())
 		} else {
-			e.log("No reasoning provider configured, Tier 3 will be disabled")
+			e.log("No reasoning provider configured")
+		}
+
+		decider, err := llm.NewDecisionProvider(e.config)
+		if err != nil {
+			e.log("WARNING: Failed to initialize decision provider: %v", err)
+			e.log("Tier 3 will not use a decision model")
+		} else if decider != nil {
+			e.decisionProvider = decider
+			e.log("Initialized decision provider: %s/%s", decider.ProviderName(), decider.ModelName())
+		}
+
+		if e.reasoningProvider == nil && e.decisionProvider == nil {
+			e.log("No reasoning or decision provider available, Tier 3 will be disabled")
 		}
 	}
 
@@ -196,7 +214,8 @@ func (e *Engine) initLLMProviders() {
 	// successfully, disable anomaly detection entirely. Without AI to
 	// filter anomalies, raw statistical detection would generate too
 	// much noise.
-	if e.config.Anomaly.Enabled && e.embeddingProvider == nil && e.reasoningProvider == nil {
+	if e.config.Anomaly.Enabled && e.embeddingProvider == nil &&
+		e.reasoningProvider == nil && e.decisionProvider == nil {
 		e.config.Anomaly.Enabled = false
 		e.log("Anomaly detection auto-disabled: no LLM providers available")
 	}
@@ -204,13 +223,22 @@ func (e *Engine) initLLMProviders() {
 
 // anomalyProcessingAvailable reports whether a Tier 1 candidate can be
 // processed by at least one later tier under cfg: Tier 2 enabled with an
-// embedding provider, or Tier 3 enabled with a reasoning provider. The
+// embedding provider, or Tier 3 enabled with a reasoning or decision
+// provider (see tier3Available). The
 // providers are created once, at startup, for the tiers enabled then, so
 // a reload cannot add one. Without either, raw Tier 1 detection is too
 // noisy to alert on and anomaly detection is treated as disabled.
 func (e *Engine) anomalyProcessingAvailable(cfg *config.Config) bool {
 	return (cfg.Anomaly.Tier2.Enabled && e.embeddingProvider != nil) ||
-		(cfg.Anomaly.Tier3.Enabled && e.reasoningProvider != nil)
+		e.tier3Available(cfg)
+}
+
+// tier3Available reports whether Tier 3 can classify a candidate under
+// cfg: it is enabled, and a decision provider, a reasoning provider or
+// both were built at startup.
+func (e *Engine) tier3Available(cfg *config.Config) bool {
+	return cfg.Anomaly.Tier3.Enabled &&
+		(e.reasoningProvider != nil || e.decisionProvider != nil)
 }
 
 // Run starts the engine and runs until the context is canceled

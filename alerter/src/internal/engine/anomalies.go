@@ -624,7 +624,7 @@ func (e *Engine) processTier2And3(ctx context.Context) {
 		}
 
 		// Tier 3: LLM classification (only if Tier 2 passed or was skipped)
-		if cfg.Anomaly.Tier3.Enabled && e.reasoningProvider != nil &&
+		if e.tier3Available(cfg) &&
 			(candidate.Tier2Pass == nil || *candidate.Tier2Pass) {
 			e.processTier3(ctx, candidate, similarAnomalies)
 		}
@@ -683,7 +683,10 @@ func (e *Engine) expireStaleAnomalyCandidates(ctx context.Context) {
 // StaleCandidateSafetyFactor covers the Tier 2 embedding and database
 // work around each call and a candidate queued behind more than one full
 // batch. The timeout is used whether or not Tier 3 is enabled, which only
-// lengthens the cut-off. StaleCandidateMinAge keeps the cut-off at an
+// lengthens the cut-off. A candidate whose decision model call fails and
+// falls back to the reasoning model makes two Tier 3 calls, each with its
+// own timeout; that is the exception rather than the rule, and the
+// safety factor absorbs it. StaleCandidateMinAge keeps the cut-off at an
 // hour or more when the timeout is short. With the default 30-second
 // timeout the cut-off is 100 x 30s x 3, 2.5 hours.
 //
@@ -816,9 +819,10 @@ func (e *Engine) processTier2(ctx context.Context, candidate *database.AnomalyCa
 	return embedding, similarAnomalies
 }
 
-// processTier3 handles Tier 3 LLM classification
+// processTier3 handles Tier 3 classification. It gathers the context the
+// models are given, then hands the candidate to runTier3.
 func (e *Engine) processTier3(ctx context.Context, candidate *database.AnomalyCandidate, similarAnomalies []*database.SimilarAnomaly) {
-	e.debugLog("Tier 3: Processing candidate %d with LLM", candidate.ID)
+	e.debugLog("Tier 3: Processing candidate %d", candidate.ID)
 
 	// Fetch acknowledgement history for this metric+connection to inform the LLM
 	var ackHistory []*database.AcknowledgedAnomalyAlert
@@ -839,15 +843,74 @@ func (e *Engine) processTier3(ctx context.Context, candidate *database.AnomalyCa
 		clusterAlerts = nil
 	}
 
-	// Build the classification prompt
-	prompt := e.buildClassificationPrompt(candidate, similarAnomalies, ackHistory, clusterPeers, clusterAlerts)
+	classificationContext := e.buildClassificationContext(candidate, similarAnomalies, ackHistory, clusterPeers, clusterAlerts)
+	e.runTier3(ctx, candidate, classificationContext)
+}
 
-	// Create a timeout context for Tier 3
-	cfg := e.getConfig()
+// tier3Timeout is the time allowed for one Tier 3 model call.
+func tier3Timeout(cfg *config.Config) time.Duration {
 	timeout := time.Duration(cfg.Anomaly.Tier3.TimeoutSeconds) * time.Second
 	if timeout <= 0 {
 		timeout = DefaultTier3Timeout
 	}
+	return timeout
+}
+
+// runTier3 classifies candidate from classificationContext, the output of
+// buildClassificationContext, and records the outcome on the candidate.
+//
+// With a decision provider, the decision model is asked first. If it
+// fails (an error, a refusal, a timeout or a malformed answer), the
+// candidate falls back to the reasoning model where one is configured,
+// and is otherwise raised as an alert unclassified, the same fail-safe
+// the reasoning path applies to its own failures. Each model call has
+// its own Tier 3 timeout. See GitHub issue #626.
+func (e *Engine) runTier3(ctx context.Context, candidate *database.AnomalyCandidate, classificationContext string) {
+	cfg := e.getConfig()
+	timeout := tier3Timeout(cfg)
+
+	var decisionFailure string
+	if e.decisionProvider != nil {
+		failure, ok := e.classifyWithDecision(ctx, candidate, classificationContext, cfg, timeout)
+		if ok {
+			return
+		}
+		decisionFailure = failure
+		if e.reasoningProvider == nil {
+			candidate.Tier3Error = &decisionFailure
+			e.failSafeTier3(candidate, "Decision model classification failed, defaulting to alert")
+			return
+		}
+		e.log("Tier 3: Falling back to the reasoning model for candidate %d", candidate.ID)
+	}
+
+	e.classifyWithReasoning(ctx, candidate, classificationContext+classificationResponseInstructions, timeout, decisionFailure)
+}
+
+// failSafeTier3 records a Tier 3 failure: the candidate is raised as an
+// alert with result as its Tier 3 result.
+func (e *Engine) failSafeTier3(candidate *database.AnomalyCandidate, result string) {
+	tier3Pass := true
+	candidate.Tier3Pass = &tier3Pass
+	candidate.Tier3Result = &result
+}
+
+// setTier3Source records the kind of model, and the provider/model, that
+// produced the candidate's Tier 3 outcome.
+func setTier3Source(candidate *database.AnomalyCandidate, source, provider, model string) {
+	providerModel := provider + "/" + model
+	candidate.Tier3Source = &source
+	candidate.Tier3Model = &providerModel
+}
+
+// classifyWithReasoning classifies candidate with the reasoning model.
+// decisionFailure, when not empty, describes the decision model failure
+// that led here, and is kept in the candidate's Tier 3 error whatever the
+// reasoning model does.
+func (e *Engine) classifyWithReasoning(ctx context.Context, candidate *database.AnomalyCandidate,
+	prompt string, timeout time.Duration, decisionFailure string) {
+	setTier3Source(candidate, tier3SourceReasoning, e.reasoningProvider.ProviderName(), e.reasoningProvider.ModelName())
+
 	tier3Ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -856,13 +919,17 @@ func (e *Engine) processTier3(ctx context.Context, candidate *database.AnomalyCa
 	if err != nil {
 		e.log("ERROR: Tier 3 LLM classification failed for candidate %d: %v", candidate.ID, err)
 		errStr := err.Error()
+		if decisionFailure != "" {
+			errStr = decisionFailure + "; the reasoning model then failed too: " + errStr
+		}
 		candidate.Tier3Error = &errStr
 		// On LLM failure, default to alert (fail safe)
-		tier3Pass := true
-		candidate.Tier3Pass = &tier3Pass
-		result := "LLM classification failed, defaulting to alert"
-		candidate.Tier3Result = &result
+		e.failSafeTier3(candidate, "LLM classification failed, defaulting to alert")
 		return
+	}
+	if decisionFailure != "" {
+		fellBack := decisionFailure + "; fell back to the reasoning model"
+		candidate.Tier3Error = &fellBack
 	}
 
 	// Store the raw response
@@ -1104,8 +1171,33 @@ func (e *Engine) buildContextText(candidate *database.AnomalyCandidate) string {
 	return sb.String()
 }
 
-// buildClassificationPrompt builds the prompt for LLM classification
+// classificationResponseInstructions ends the reasoning model's Tier 3
+// prompt, telling it how to answer. The decision model is given the
+// prompt without it, since it answers with a probability rather than
+// text (GitHub issue #626).
+const classificationResponseInstructions = "Based on the above information, respond with a JSON object containing:\n" +
+	"- \"decision\": either \"alert\" (real issue) or \"suppress\" (false positive)\n" +
+	"- \"confidence\": a number from 0 to 1\n" +
+	"- \"reasoning\": a brief explanation\n"
+
+// buildClassificationPrompt builds the reasoning model's Tier 3 prompt:
+// the classification context followed by the response instructions.
 func (e *Engine) buildClassificationPrompt(
+	candidate *database.AnomalyCandidate,
+	similarAnomalies []*database.SimilarAnomaly,
+	ackHistory []*database.AcknowledgedAnomalyAlert,
+	clusterPeers []*database.ClusterPeerInfo,
+	clusterAlerts []*database.Alert,
+) string {
+	return e.buildClassificationContext(candidate, similarAnomalies, ackHistory, clusterPeers, clusterAlerts) +
+		classificationResponseInstructions
+}
+
+// buildClassificationContext describes the candidate and what is known
+// about it, ending with the guidance on past user feedback. It is the
+// decision model's whole input, and the reasoning model's prompt less its
+// response instructions.
+func (e *Engine) buildClassificationContext(
 	candidate *database.AnomalyCandidate,
 	similarAnomalies []*database.SimilarAnomaly,
 	ackHistory []*database.AcknowledgedAnomalyAlert,
@@ -1200,10 +1292,6 @@ func (e *Engine) buildClassificationPrompt(
 
 	sb.WriteString("\n## Instructions\n")
 	sb.WriteString("Consider any past user feedback, but evaluate whether it still applies. If the current anomaly is significantly more severe than when the user dismissed it (e.g., much higher z-score or value), the alert should still fire. Past feedback suggests context, not a blanket rule.\n")
-	sb.WriteString("Based on the above information, respond with a JSON object containing:\n")
-	sb.WriteString("- \"decision\": either \"alert\" (real issue) or \"suppress\" (false positive)\n")
-	sb.WriteString("- \"confidence\": a number from 0 to 1\n")
-	sb.WriteString("- \"reasoning\": a brief explanation\n")
 
 	return sb.String()
 }

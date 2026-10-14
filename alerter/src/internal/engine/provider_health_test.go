@@ -704,7 +704,7 @@ func TestProviderName(t *testing.T) {
 }
 
 func TestConfiguredSecrets(t *testing.T) {
-	if got := configuredSecrets(config.NewConfig()); len(got) != 4 {
+	if got := configuredSecrets(config.NewConfig()); len(got) != 5 {
 		t.Errorf("got %d secrets, want one per provider", len(got))
 	}
 }
@@ -946,7 +946,7 @@ func TestInitProviderHealth(t *testing.T) {
 		if got := e.providerHealth.settings(); got != cfg.Anomaly.ProviderHealth {
 			t.Errorf("settings = %+v, want %+v", got, cfg.Anomaly.ProviderHealth)
 		}
-		if got := e.providerHealth.secrets(); len(got) != 4 {
+		if got := e.providerHealth.secrets(); len(got) != 5 {
 			t.Errorf("secrets = %d", len(got))
 		}
 	})

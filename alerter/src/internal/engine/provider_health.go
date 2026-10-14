@@ -10,16 +10,18 @@
 
 package engine
 
-// Provider health tracking raises a system alert when the embedding or
-// reasoning provider keeps failing. Anomaly detection fails safe when a
-// provider call fails (Tier 2 passes the candidate on, Tier 3 raises the
-// alert unclassified, re-evaluation keeps the alert), so without this a
-// retired model or a revoked API key degrades detection with nothing
-// but log lines to show for it. See GitHub issue #582.
+// Provider health tracking raises a system alert when the embedding,
+// reasoning or decision provider keeps failing. Anomaly detection fails
+// safe when a provider call fails (Tier 2 passes the candidate on, Tier 3
+// raises the alert unclassified, re-evaluation keeps the alert), so
+// without this a retired model or a revoked API key degrades detection
+// with nothing but log lines to show for it. See GitHub issue #582.
 //
-// The tracking wraps the llm.EmbeddingProvider and llm.ReasoningProvider
-// the engine holds, so the call sites in anomalies.go and reevaluation.go
-// are untouched. Which caller an outcome belongs to is carried in the
+// The tracking wraps the llm.EmbeddingProvider, llm.ReasoningProvider and
+// llm.DecisionProvider the engine holds, so the call sites in
+// anomalies.go and reevaluation.go are untouched. The decision provider
+// serves Tier 3 alone and is tracked as a tier of its own (GitHub issue
+// #626). Which caller an outcome belongs to is carried in the
 // context: the re-evaluation worker's context is tagged when it starts.
 // An untagged Classify call is Tier 3 classification and an untagged
 // Reevaluate call is re-evaluation. A reasoning
@@ -62,6 +64,7 @@ const (
 	providerTierEmbedding      providerTier = "tier2"
 	providerTierClassification providerTier = "tier3"
 	providerTierReevaluation   providerTier = "reevaluation"
+	providerTierDecision       providerTier = "tier3_decision"
 )
 
 // label is the tier's name as an operator reads it.
@@ -71,6 +74,8 @@ func (t providerTier) label() string {
 		return "Tier 2 embedding"
 	case providerTierClassification:
 		return "Tier 3 classification"
+	case providerTierDecision:
+		return "Tier 3 decision"
 	default:
 		return "Re-evaluation"
 	}
@@ -87,6 +92,11 @@ func (t providerTier) consequence() string {
 	case providerTierClassification:
 		return "Anomaly candidates are raised as alerts without LLM " +
 			"classification, so false positives are not filtered out."
+	case providerTierDecision:
+		return "Anomaly candidates are classified by the reasoning model " +
+			"instead where one is configured, and are otherwise raised as " +
+			"alerts without classification, so false positives are not " +
+			"filtered out."
 	default:
 		return "Acknowledged anomaly alerts are not re-evaluated, so none " +
 			"is cleared on the strength of later evidence."
@@ -96,10 +106,11 @@ func (t providerTier) consequence() string {
 // sharedTiers returns the tiers whose calls go to the same provider
 // client as tier's: Tier 3 classification and re-evaluation share the
 // reasoning provider, so a successful call from either shows that the
-// provider answers again.
+// provider answers again. The embedding and decision providers each
+// serve one tier.
 func (t providerTier) sharedTiers() []providerTier {
-	if t == providerTierEmbedding {
-		return []providerTier{providerTierEmbedding}
+	if t == providerTierEmbedding || t == providerTierDecision {
+		return []providerTier{t}
 	}
 	return []providerTier{providerTierClassification, providerTierReevaluation}
 }
@@ -886,6 +897,48 @@ func (h *healthTrackingReasoning) healthCheck(ctx context.Context, tier provider
 	return err
 }
 
+// healthTrackingDecision wraps a decision provider and records the
+// outcome of every call against the Tier 3 decision tier.
+type healthTrackingDecision struct {
+	inner    llm.DecisionProvider
+	provider string
+	tracker  *providerHealthTracker
+}
+
+// ClassifyDecision implements llm.DecisionProvider. A refusal or a
+// malformed answer is an error from the inner provider, so it counts as
+// a failure like any other.
+func (h *healthTrackingDecision) ClassifyDecision(ctx context.Context, input string,
+	suppressThreshold float64) (llm.DecisionVerdict, error) {
+	verdict, err := h.inner.ClassifyDecision(ctx, input, suppressThreshold)
+	h.tracker.record(ctx, providerTierDecision, h.provider, h.inner.ModelName(), err, false)
+	return verdict, err
+}
+
+// Ping implements llm.DecisionProvider without recording the outcome;
+// healthCheck is the recorded form.
+func (h *healthTrackingDecision) Ping(ctx context.Context) error {
+	return h.inner.Ping(ctx)
+}
+
+// ModelName implements llm.DecisionProvider.
+func (h *healthTrackingDecision) ModelName() string {
+	return h.inner.ModelName()
+}
+
+// ProviderName implements llm.DecisionProvider.
+func (h *healthTrackingDecision) ProviderName() string {
+	return h.inner.ProviderName()
+}
+
+// healthCheck pings the provider, which costs no tokens, and raises the
+// alert at once if it fails.
+func (h *healthTrackingDecision) healthCheck(ctx context.Context) error {
+	err := h.inner.Ping(ctx)
+	h.tracker.record(ctx, providerTierDecision, h.provider, h.inner.ModelName(), err, true)
+	return err
+}
+
 // providerName normalises a configured provider name for use in a key.
 func providerName(name string) string {
 	name = strings.ToLower(strings.TrimSpace(name))
@@ -908,6 +961,7 @@ func configuredSecrets(cfg *config.Config) []string {
 		cfg.GetAnthropicAPIKey(),
 		cfg.GetVoyageAPIKey(),
 		cfg.GetGeminiAPIKey(),
+		cfg.GetTypeSafeAPIKey(),
 	}
 	for _, base := range []string{
 		cfg.LLM.Ollama.BaseURL,
@@ -915,6 +969,7 @@ func configuredSecrets(cfg *config.Config) []string {
 		cfg.LLM.Anthropic.BaseURL,
 		cfg.LLM.Voyage.BaseURL,
 		cfg.LLM.Gemini.BaseURL,
+		cfg.LLM.TypeSafe.BaseURL,
 	} {
 		secrets = append(secrets, baseURLSecrets(base)...)
 	}
@@ -982,6 +1037,13 @@ func (e *Engine) initProviderHealth() {
 			tracker:  e.providerHealth,
 		}
 	}
+	if e.decisionProvider != nil {
+		e.decisionProvider = &healthTrackingDecision{
+			inner:    e.decisionProvider,
+			provider: providerName(e.config.LLM.DecisionProvider),
+			tracker:  e.providerHealth,
+		}
+	}
 }
 
 // activeProviderHealthKeys returns the keys of the provider health
@@ -1005,6 +1067,9 @@ func (e *Engine) activeProviderHealthKeys() map[string]bool {
 		if cfg.Anomaly.Reevaluation.Enabled {
 			active[providerHealthKey(providerTierReevaluation, rsn.provider)] = true
 		}
+	}
+	if dec, ok := e.decisionProvider.(*healthTrackingDecision); ok && cfg.Anomaly.Tier3.Enabled {
+		active[providerHealthKey(providerTierDecision, dec.provider)] = true
 	}
 	return active
 }
@@ -1051,6 +1116,13 @@ func (e *Engine) checkProviderHealth(ctx context.Context) {
 		checkCtx, cancel := context.WithTimeout(ctx, timeout)
 		if err := emb.healthCheck(checkCtx); err != nil {
 			e.log("WARNING: Embedding provider %s failed its startup health check", emb.provider)
+		}
+		cancel()
+	}
+	if dec, ok := e.decisionProvider.(*healthTrackingDecision); ok && cfg.Anomaly.Tier3.Enabled {
+		checkCtx, cancel := context.WithTimeout(ctx, timeout)
+		if err := dec.healthCheck(checkCtx); err != nil {
+			e.log("WARNING: Decision provider %s failed its startup health check", dec.provider)
 		}
 		cancel()
 	}

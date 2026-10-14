@@ -1407,6 +1407,29 @@ candidate for an excluded metric is suppressed even after a reload.
 Tests that need a candidate to reach Tier 3 must use a baselined
 metric such as `pg_sys_load_avg_info.load_avg_fifteen_minutes`.
 
+### Tier 3 decision model (#626)
+
+Tier 3 runs when `Engine.tier3Available(cfg)`: Tier 3 enabled and a
+reasoning provider, a decision provider (`llm.decision_provider`) or both
+built at startup. Re-evaluation still requires the reasoning provider.
+`runTier3` (`engine/anomalies.go`) asks the decision model first
+(`classifyWithDecision` in `engine/tier3_decision.go`), giving it
+`buildClassificationContext`, which is the reasoning prompt without
+`classificationResponseInstructions`; `buildClassificationPrompt` must
+stay context plus instructions, byte for byte, which
+`TestClassificationPromptSplit` pins. On a decision failure it falls
+back to `classifyWithReasoning`, or fails safe to `alert` when there is
+no reasoning provider. Each call gets its own `tier3Timeout`, which
+`staleCandidateAge` absorbs through its safety factor. Every Tier 3
+outcome sets `anomaly_candidates.tier3_source` (`decision` or
+`reasoning`, CHECK constraint, collector migration 22) and
+`tier3_model` (`provider/model`); the hand-written `anomaly_candidates`
+schemas in `database/queries_full_integration_test.go` and
+`engine/anomalies_test.go` carry both columns, so a new column there
+needs adding in the same three places. The decision provider is health
+tracked as its own tier, `tier3_decision`, which shares no outcomes with
+the reasoning tiers.
+
 ### Anomaly alert recovery (#611)
 
 `cleanResolvedAlerts` only handles threshold alerts (`clearResolvedAlert`

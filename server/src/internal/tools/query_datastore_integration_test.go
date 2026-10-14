@@ -669,3 +669,40 @@ func TestDescribeDatastoreIntegration(t *testing.T) {
 		t.Errorf("no context: %v %+v", err, resp)
 	}
 }
+
+// TestDescribeDatastoreSkipsMetricTableNamedLikeConfigSource checks that
+// a probe table sharing a configuration source's name is listed once, as
+// the configuration source lookupDatastoreSource resolves it to, rather
+// than also as a metric source no query could reach.
+func TestDescribeDatastoreSkipsMetricTableNamedLikeConfigSource(t *testing.T) {
+	f := newDatastoreFixture(t)
+	ctx := context.Background()
+	// newToolsTestPool's teardown drops the metrics schema, and this
+	// table with it.
+	if _, err := f.pool.Exec(ctx, `CREATE TABLE metrics.alerts (
+            connection_id INTEGER NOT NULL,
+            collected_at TIMESTAMPTZ NOT NULL,
+            value BIGINT
+        )`); err != nil {
+		t.Fatalf("create metrics.alerts: %v", err)
+	}
+
+	summaries, err := listDatastoreSources(ctx, f.pool)
+	if err != nil {
+		t.Fatalf("listDatastoreSources: %v", err)
+	}
+	var kinds []string
+	for _, s := range summaries {
+		if s.Name == "alerts" {
+			kinds = append(kinds, s.Kind)
+		}
+	}
+	if !slices.Equal(kinds, []string{datastoreKindConfiguration}) {
+		t.Errorf("alerts listed with kinds %v, want only %q", kinds, datastoreKindConfiguration)
+	}
+
+	src, err := lookupDatastoreSource(ctx, f.pool, "alerts")
+	if err != nil || src.Kind != datastoreKindConfiguration {
+		t.Errorf("lookup alerts: kind %q, err %v", src.Kind, err)
+	}
+}

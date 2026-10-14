@@ -779,13 +779,17 @@ type datastoreSourceSummary struct {
 
 // listDatastoreSources returns every source query_datastore accepts:
 // the configuration sources, then the metric sources discovered from the
-// live metrics schema, each group in name order.
+// live metrics schema, each group in name order. A probe table named
+// like a configuration source is left out, since lookupDatastoreSource
+// always resolves that name to the configuration source.
 func listDatastoreSources(ctx context.Context, pool *pgxpool.Pool) ([]datastoreSourceSummary, error) {
 	config := configurationSources()
 	slices.SortFunc(config, func(a, b datastoreSource) int { return strings.Compare(a.Name, b.Name) })
 	summaries := make([]datastoreSourceSummary, 0, len(config))
+	configNames := make(map[string]bool, len(config))
 	for i := range config {
 		src := &config[i]
+		configNames[src.Name] = true
 		summaries = append(summaries, datastoreSourceSummary{
 			Name:        src.Name,
 			Kind:        src.Kind,
@@ -805,7 +809,10 @@ func listDatastoreSources(ctx context.Context, pool *pgxpool.Pool) ([]datastoreS
 		if err := rows.Scan(&name, &description); err != nil {
 			return nil, fmt.Errorf("failed to list metric sources: %w", err)
 		}
-		if !metrics.IsValidIdentifier(name) {
+		// lookupDatastoreSource resolves a configuration source first, so
+		// a probe table sharing a configuration source's name could never
+		// be read as a metric source; listing it would be misleading.
+		if !metrics.IsValidIdentifier(name) || configNames[name] {
 			continue
 		}
 		description = strings.TrimSpace(description)

@@ -123,6 +123,10 @@ type datastoreColumn struct {
 	// IsMetric marks a numeric value column, as opposed to a dimension
 	// or identifier; avg and sum aggregate only these.
 	IsMetric bool
+	// RedactBy, when set, names the column holding a setting's name, and
+	// the column's value is masked on every row whose setting name looks
+	// like it carries a credential (credentialSettingCondition).
+	RedactBy string
 }
 
 // datastoreSource is one source query_datastore accepts. Anything not
@@ -624,6 +628,71 @@ func isSecretColumnName(name string) bool {
 	return false
 }
 
+// metricRedactions lists, per probe, the columns that hold a setting's
+// value and the column that names the setting. A credential-bearing
+// setting such as primary_conninfo can hold a password in its value,
+// which no column-name check can catch, so those values are masked.
+var metricRedactions = map[string]struct {
+	KeyColumn string
+	Columns   []string
+}{
+	"pg_settings": {KeyColumn: "name", Columns: []string{"setting", "reset_val", "boot_val"}},
+}
+
+// credentialSettings are setting names whose value can carry a
+// credential: primary_conninfo is a libpq connection string that may
+// hold password=, and ssl_passphrase_command may hold the passphrase.
+// Any setting whose name contains a secretColumnFragments entry is
+// masked as well, which covers an extension setting such as
+// myext.password.
+var credentialSettings = []string{"primary_conninfo", "ssl_passphrase_command"}
+
+// redactedValue replaces a masked value, as PostgreSQL masks a password
+// in pg_stat_wal_receiver.conninfo.
+const redactedValue = "********"
+
+// redactionNote is appended to the description of a probe in
+// metricRedactions, so describe_datastore says which values are masked.
+const redactionNote = "Values of settings that can hold a credential, such as primary_conninfo, are shown as " +
+	redactedValue + "."
+
+// redactMetricColumns marks the value columns of probe name for masking.
+// If the probe has no column naming the setting, the value columns
+// cannot be masked row by row, so they are dropped instead.
+func redactMetricColumns(name string, columns []datastoreColumn) []datastoreColumn {
+	rule, ok := metricRedactions[name]
+	if !ok {
+		return columns
+	}
+	hasKey := slices.ContainsFunc(columns, func(c datastoreColumn) bool { return c.Name == rule.KeyColumn })
+	out := make([]datastoreColumn, 0, len(columns))
+	for _, c := range columns {
+		if slices.Contains(rule.Columns, c.Name) {
+			if !hasKey {
+				continue
+			}
+			c.RedactBy = rule.KeyColumn
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+// credentialSettingCondition is true for a row whose setting name, in
+// column key of alias, is a credentialSettings entry or contains a
+// secretColumnFragments entry. Every literal is a constant above,
+// checked by TestCredentialSettingLiteralsAreSafe, so nothing from the
+// caller reaches it.
+func credentialSettingCondition(alias, key string) string {
+	lhs := "lower(" + qualified(alias, key) + ")"
+	quoted := make([]string, len(credentialSettings))
+	for i, v := range credentialSettings {
+		quoted[i] = "'" + v + "'"
+	}
+	return "(" + lhs + " IN (" + strings.Join(quoted, ", ") + ") OR " +
+		lhs + " ~ '(" + strings.Join(secretColumnFragments, "|") + ")')"
+}
+
 // errUnknownDatastoreSource reports a source name the source list does not
 // hold. Its text names describe_datastore so a caller can recover.
 var errUnknownDatastoreSource = errors.New("unknown source: call describe_datastore to list the sources query_datastore accepts")
@@ -676,20 +745,31 @@ func lookupDatastoreSource(ctx context.Context, pool *pgxpool.Pool, name string)
 	if err != nil {
 		return datastoreSource{}, err
 	}
+	columns = redactMetricColumns(name, columns)
 
-	if description == "" {
-		description = fmt.Sprintf("Metrics collected by the %s probe.", name)
-	}
 	return datastoreSource{
 		Name:             name,
 		Table:            name,
-		Description:      strings.TrimSpace(description),
+		Description:      metricDescription(name, description),
 		TimeColumn:       metricTimeColumn,
 		ConnectionColumn: metricConnectionColumn,
 		Kind:             datastoreKindMetric,
 		Scope:            scopeConnection,
 		Columns:          columns,
 	}, nil
+}
+
+// metricDescription returns the description of probe name, from the
+// table's comment or a default, noting any values that are masked.
+func metricDescription(name, comment string) string {
+	description := strings.TrimSpace(comment)
+	if description == "" {
+		description = fmt.Sprintf("Metrics collected by the %s probe.", name)
+	}
+	if _, ok := metricRedactions[name]; ok {
+		description += " " + redactionNote
+	}
+	return description
 }
 
 // lookupMetricTable returns the comment on the parent probe table name
@@ -815,10 +895,7 @@ func listDatastoreSources(ctx context.Context, pool *pgxpool.Pool) ([]datastoreS
 		if !metrics.IsValidIdentifier(name) || configNames[name] {
 			continue
 		}
-		description = strings.TrimSpace(description)
-		if description == "" {
-			description = fmt.Sprintf("Metrics collected by the %s probe.", name)
-		}
+		description = metricDescription(name, description)
 		summaries = append(summaries, datastoreSourceSummary{
 			Name:        name,
 			Kind:        datastoreKindMetric,

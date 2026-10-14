@@ -92,7 +92,11 @@ and sources such as `alert_thresholds`, `blackouts`, `blackout_schedules`,
 `probe_configs` and system alerts in `alerts` include estate-wide rows
 alongside connection-specific ones. Stored connection passwords and
 certificates are never available from any source, and metric columns whose
-names suggest a password, token or other secret are not offered.
+names suggest a password, token or other secret are not offered. In
+`pg_settings`, the `setting`, `reset_val` and `boot_val` values of settings
+that can hold a credential (`primary_conninfo`, `ssl_passphrase_command`, and
+any setting whose name suggests a password, token or other secret) are shown
+as `********`.
 
 ### Describing the Sources
 

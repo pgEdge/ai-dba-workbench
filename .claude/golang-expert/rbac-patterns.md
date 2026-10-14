@@ -651,7 +651,10 @@ named inaccessible connection gets the generic not-found text, and an
 empty visible set returns no connection-scoped rows whilst `global`
 sources still return. A new datastore table becomes queryable only by
 adding a catalog entry with an explicit scope and column list; never
-add a credential column. The scope and time window go in an inner
+add a credential column. A value that can hold a credential (the
+`pg_settings` value columns for `primary_conninfo` and similar) is
+masked through `metricRedactions` and `innerSelectList`, inside the
+scoped subquery. The scope and time window go in an inner
 `(SELECT ... WHERE <scope> OFFSET 0) t` (`scopedFrom`), and the
 caller's filters, shape, ordering and paging apply outside it, so no
 caller predicate is evaluated against a row the caller may not see;

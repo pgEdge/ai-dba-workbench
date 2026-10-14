@@ -1042,16 +1042,17 @@ that follow from that, most learned the hard way in #406 and #407:
   bucket, so each bucket's first sample has no predecessor, exactly as
   the latest query's `LAG` starts inside its one-hour window. A `LAG`
   over the whole lookback gives every bucket one more delta than the
-  live value (six against five at a 600 second interval), biasing the
-  baseline upward so a steady server scores low (#490 for
+  live value (six against five at the checkpointer's 600 second
+  interval, twelve against eleven at `pg_stat_database`'s 300), biasing
+  the baseline upward so a steady server scores low (#490 for
   `checkpoints_req_delta`, #639 for `deadlocks_delta` and
   `temp_files_delta`);
   `metric_registry_hourly_deltas_integration_test.go` pins the interval
   independence, reset, single-sample, bucket, session timezone and
   sample count behaviour, and its `HistoricalMatchesLatest` test compares
   each bucket with the latest query run as of the end of that hour, for
-  two connections with two databases each. Three details of the historical query are easy
-  to get wrong. Filter inside the aggregate,
+  two connections with two databases each. Three details of the
+  historical query are easy to get wrong. Filter inside the aggregate,
   `SUM(GREATEST(x - prev_x, 0)) FILTER (WHERE prev_x IS NOT NULL)`, as
   the latest query does: a `WHERE prev_x IS NOT NULL` ahead of the
   `GROUP BY` drops the whole bucket, so a newly onboarded connection

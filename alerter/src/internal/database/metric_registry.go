@@ -1086,9 +1086,10 @@ var metricRegistry = map[string]metricQueryConfig{
 	// bucket, so each bucket's first sample has no predecessor, exactly
 	// as the latest query's LAG starts inside its one hour window: taking
 	// the delta over the whole lookback instead gave every bucket one more
-	// delta than the live value (six against five at a 600 second probe
-	// interval), and a perfectly steady server scored z = -3.33. The filter sits inside the aggregate so a bucket
-	// whose only sample has no predecessor reports 0, and each row
+	// delta than the live value (six against five at the probe's 600
+	// second interval), and a perfectly steady server scored z = -3.33.
+	// The filter sits inside the aggregate so a bucket whose only sample
+	// has no predecessor reports 0, and each row
 	// carries the number of raw samples it aggregates. It applies the
 	// recovery exclusion per bucket, judging each hour by the newest
 	// pg_node_role sample inside it, which is what the latest query would
@@ -1334,20 +1335,20 @@ var metricRegistry = map[string]metricQueryConfig{
 	// single sample reports 0 instead of vanishing from the result set.
 	// The historical query feeds baselines with the same per-hour figure,
 	// one row per connection, database and hour bucket. Its LAG is
-	// partitioned by connection, database and bucket, so each bucket's
-	// first sample has no predecessor, exactly as the latest query's LAG
-	// starts inside its one hour window; differencing across the whole
-	// lookback gave every bucket one more delta than the live value (six
-	// against five at a 600 second probe interval), biasing the baseline
-	// upward so a steady server scored low (GitHub issue #639, the shape
-	// #490 fixed for checkpoints_req_delta). Both queries filter inside
-	// the aggregate rather than in a WHERE clause, so a bucket whose only
-	// sample has no predecessor reports 0 instead of disappearing, which
-	// matters for a newly onboarded connection. The buckets are cut with date_trunc on the UTC value of collected_at
-	// because the collector stores UTC and the alerter's session TimeZone
-	// is whatever the server GUC says. Each row also carries the number of
-	// raw samples it aggregates, so baseline warmup still counts samples
-	// rather than buckets. See GitHub issue #409.
+	// partitioned by connection, database and bucket for the reason given
+	// for checkpoints_req_delta above; differencing across the whole
+	// lookback gave every bucket one more delta than the live value
+	// (twelve against eleven at the probe's 300 second interval), biasing
+	// the baseline upward so a steady server scored low (GitHub issue
+	// #639). Both queries filter inside the aggregate rather than in a
+	// WHERE clause, so a bucket whose only sample has no predecessor
+	// reports 0 instead of disappearing, which matters for a newly
+	// onboarded connection. The buckets are cut with date_trunc on the
+	// UTC value of collected_at because the collector stores UTC and the
+	// alerter's session TimeZone is whatever the server GUC says. Each
+	// row also carries the number of raw samples it aggregates, so
+	// baseline warmup still counts samples rather than buckets. See
+	// GitHub issue #409.
 	"pg_stat_database.deadlocks_delta": {
 		probeName: "pg_stat_database",
 		latestSQL: `
@@ -1410,9 +1411,9 @@ var metricRegistry = map[string]metricQueryConfig{
 	// hour, per connection and database. Same shape and reasoning as the
 	// deadlocks entry above, including the hourly historical buckets, the
 	// LAG partitioned by bucket, the UTC truncation and the per-bucket
-	// sample count: the per-sample MAX()
-	// over 15 minutes depended on the probe interval and dropped
-	// single-sample connections. See GitHub issue #409.
+	// sample count: the per-sample MAX() over 15 minutes depended on the
+	// probe interval and dropped single-sample connections. See GitHub
+	// issue #409.
 	"pg_stat_database.temp_files_delta": {
 		probeName: "pg_stat_database",
 		latestSQL: `

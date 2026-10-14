@@ -1206,92 +1206,114 @@ func (e *Engine) buildClassificationContext(
 
 	sb.WriteString("Analyze the following anomaly candidate and determine if it is a real issue that requires attention (alert) or a false positive that should be suppressed.\n\n")
 
-	sb.WriteString("## Current Anomaly\n")
-	fmt.Fprintf(&sb, "- Metric: %s\n", candidate.MetricName)
-	fmt.Fprintf(&sb, "- Value: %.4f\n", candidate.MetricValue)
-	fmt.Fprintf(&sb, "- Z-Score: %.2f (standard deviations from mean)\n", candidate.ZScore)
-	fmt.Fprintf(&sb, "- Connection ID: %d\n", candidate.ConnectionID)
-
-	if candidate.DatabaseName != nil {
-		fmt.Fprintf(&sb, "- Database: %s\n", *candidate.DatabaseName)
-	}
-
-	fmt.Fprintf(&sb, "- Detected at: %s\n", candidate.DetectedAt.Format(time.RFC3339))
-
-	// Parse and include baseline info from context
-	var contextData map[string]any
-	if err := json.Unmarshal([]byte(candidate.Context), &contextData); err == nil {
-		if mean, ok := contextData["baseline_mean"].(float64); ok {
-			fmt.Fprintf(&sb, "- Baseline mean: %.4f\n", mean)
-		}
-		if stddev, ok := contextData["baseline_stddev"].(float64); ok {
-			fmt.Fprintf(&sb, "- Baseline stddev: %.4f\n", stddev)
-		}
-		if effective, ok := contextData["effective_stddev"].(float64); ok {
-			floored := contextData["stddev_floored"] == true
-			fmt.Fprintf(&sb, "- Z-score divisor: %.4f (raised to a minimum floor: %t)\n", effective, floored)
-		}
-		if periodType, ok := contextData["period_type"].(string); ok {
-			fmt.Fprintf(&sb, "- Baseline period: %s\n", periodType)
-		}
-	}
-
-	// Include similar past anomalies if available
-	if len(similarAnomalies) > 0 {
-		sb.WriteString("\n## Similar Past Anomalies\n")
-		for i, sa := range similarAnomalies {
-			if i >= 5 {
-				fmt.Fprintf(&sb, "... and %d more similar anomalies\n", len(similarAnomalies)-5)
-				break
-			}
-			decision := "unknown"
-			if sa.FinalDecision != nil {
-				decision = *sa.FinalDecision
-			}
-			fmt.Fprintf(&sb, "- Similarity: %.2f%%, Decision: %s, Metric: %s\n",
-				sa.Similarity*100, decision, sa.MetricName)
-		}
-	} else {
-		sb.WriteString("\n## Similar Past Anomalies\nNo similar past anomalies found.\n")
-	}
-
-	// Include past user feedback if available
-	if len(ackHistory) > 0 {
-		sb.WriteString("\n## Past User Feedback\n")
-		sb.WriteString("Users have previously acknowledged alerts for this same metric and server:\n")
-		for _, ack := range ackHistory {
-			if ack.AckMessage != nil && *ack.AckMessage != "" {
-				fmt.Fprintf(&sb, "- Note: %s", *ack.AckMessage)
-			} else {
-				sb.WriteString("- (no message)")
-			}
-			if ack.FalsePositive {
-				sb.WriteString(" [MARKED AS FALSE POSITIVE]")
-			}
-			if ack.AcknowledgedBy != nil {
-				fmt.Fprintf(&sb, " (by %s", *ack.AcknowledgedBy)
-				if ack.AcknowledgedAt != nil {
-					fmt.Fprintf(&sb, " at %s", ack.AcknowledgedAt.Format(time.RFC3339))
-				}
-				sb.WriteString(")")
-			}
-			sb.WriteString("\n")
-			if ack.MetricValue != nil {
-				fmt.Fprintf(&sb, "  Original alert: value=%.4f", *ack.MetricValue)
-			}
-			if ack.ZScore != nil {
-				fmt.Fprintf(&sb, ", z-score=%.2f", *ack.ZScore)
-			}
-			fmt.Fprintf(&sb, ", severity=%s\n", ack.Severity)
-		}
-	}
-
+	writeCurrentAnomaly(&sb, candidate)
+	writeSimilarAnomalies(&sb, similarAnomalies)
+	writeAckHistory(&sb, ackHistory)
 	writeClusterContext(&sb, candidate.ConnectionID, clusterPeers, clusterAlerts)
 
 	sb.WriteString("\n## Instructions\n")
 	sb.WriteString("Consider any past user feedback, but evaluate whether it still applies. If the current anomaly is significantly more severe than when the user dismissed it (e.g., much higher z-score or value), the alert should still fire. Past feedback suggests context, not a blanket rule.\n")
 
 	return sb.String()
+}
+
+// writeCurrentAnomaly appends the "Current Anomaly" section, including
+// the baseline details carried in the candidate's JSON context.
+func writeCurrentAnomaly(sb *strings.Builder, candidate *database.AnomalyCandidate) {
+	sb.WriteString("## Current Anomaly\n")
+	fmt.Fprintf(sb, "- Metric: %s\n", candidate.MetricName)
+	fmt.Fprintf(sb, "- Value: %.4f\n", candidate.MetricValue)
+	fmt.Fprintf(sb, "- Z-Score: %.2f (standard deviations from mean)\n", candidate.ZScore)
+	fmt.Fprintf(sb, "- Connection ID: %d\n", candidate.ConnectionID)
+
+	if candidate.DatabaseName != nil {
+		fmt.Fprintf(sb, "- Database: %s\n", *candidate.DatabaseName)
+	}
+
+	fmt.Fprintf(sb, "- Detected at: %s\n", candidate.DetectedAt.Format(time.RFC3339))
+
+	// Parse and include baseline info from context
+	var contextData map[string]any
+	if err := json.Unmarshal([]byte(candidate.Context), &contextData); err == nil {
+		if mean, ok := contextData["baseline_mean"].(float64); ok {
+			fmt.Fprintf(sb, "- Baseline mean: %.4f\n", mean)
+		}
+		if stddev, ok := contextData["baseline_stddev"].(float64); ok {
+			fmt.Fprintf(sb, "- Baseline stddev: %.4f\n", stddev)
+		}
+		if effective, ok := contextData["effective_stddev"].(float64); ok {
+			floored := contextData["stddev_floored"] == true
+			fmt.Fprintf(sb, "- Z-score divisor: %.4f (raised to a minimum floor: %t)\n", effective, floored)
+		}
+		if periodType, ok := contextData["period_type"].(string); ok {
+			fmt.Fprintf(sb, "- Baseline period: %s\n", periodType)
+		}
+	}
+}
+
+// writeSimilarAnomalies appends the "Similar Past Anomalies" section,
+// listing at most five matches.
+func writeSimilarAnomalies(sb *strings.Builder, similarAnomalies []*database.SimilarAnomaly) {
+	if len(similarAnomalies) == 0 {
+		sb.WriteString("\n## Similar Past Anomalies\nNo similar past anomalies found.\n")
+		return
+	}
+
+	sb.WriteString("\n## Similar Past Anomalies\n")
+	for i, sa := range similarAnomalies {
+		if i >= 5 {
+			fmt.Fprintf(sb, "... and %d more similar anomalies\n", len(similarAnomalies)-5)
+			break
+		}
+		decision := "unknown"
+		if sa.FinalDecision != nil {
+			decision = *sa.FinalDecision
+		}
+		fmt.Fprintf(sb, "- Similarity: %.2f%%, Decision: %s, Metric: %s\n",
+			sa.Similarity*100, decision, sa.MetricName)
+	}
+}
+
+// writeAckHistory appends the "Past User Feedback" section when users
+// have acknowledged earlier alerts for the same metric and server.
+func writeAckHistory(sb *strings.Builder, ackHistory []*database.AcknowledgedAnomalyAlert) {
+	if len(ackHistory) == 0 {
+		return
+	}
+
+	sb.WriteString("\n## Past User Feedback\n")
+	sb.WriteString("Users have previously acknowledged alerts for this same metric and server:\n")
+	for _, ack := range ackHistory {
+		writeAckEntry(sb, ack)
+	}
+}
+
+// writeAckEntry appends one acknowledgement: its note, any false
+// positive marker, who acknowledged it and when, and the original alert.
+func writeAckEntry(sb *strings.Builder, ack *database.AcknowledgedAnomalyAlert) {
+	if ack.AckMessage != nil && *ack.AckMessage != "" {
+		fmt.Fprintf(sb, "- Note: %s", *ack.AckMessage)
+	} else {
+		sb.WriteString("- (no message)")
+	}
+	if ack.FalsePositive {
+		sb.WriteString(" [MARKED AS FALSE POSITIVE]")
+	}
+	if ack.AcknowledgedBy != nil {
+		fmt.Fprintf(sb, " (by %s", *ack.AcknowledgedBy)
+		if ack.AcknowledgedAt != nil {
+			fmt.Fprintf(sb, " at %s", ack.AcknowledgedAt.Format(time.RFC3339))
+		}
+		sb.WriteString(")")
+	}
+	sb.WriteString("\n")
+	if ack.MetricValue != nil {
+		fmt.Fprintf(sb, "  Original alert: value=%.4f", *ack.MetricValue)
+	}
+	if ack.ZScore != nil {
+		fmt.Fprintf(sb, ", z-score=%.2f", *ack.ZScore)
+	}
+	fmt.Fprintf(sb, ", severity=%s\n", ack.Severity)
 }
 
 // writeClusterContext appends a "Cluster Context" section to the prompt

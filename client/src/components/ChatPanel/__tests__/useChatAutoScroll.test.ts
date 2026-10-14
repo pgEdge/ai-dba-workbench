@@ -226,6 +226,29 @@ describe('useChatAutoScroll', () => {
         expect(harness.list.scrollTop).toBe(4120 - CLIENT_HEIGHT);
     });
 
+    it('scrolls to the bottom when a conversation is loaded into an '
+        + 'empty list', () => {
+        const { rerender } = render([]);
+
+        harness.replaceChildren([60, 2000, 60, 2000]);
+        rerender({ messages: [user(), assistant(), user(), assistant()] });
+
+        expect(harness.list.scrollTop).toBe(4120 - CLIENT_HEIGHT);
+    });
+
+    it('does not move the view when the messages are unchanged', () => {
+        const initial = history(3);
+        const { result, rerender } = render(initial);
+        harness.list.scrollTop = 100;
+        result.current();
+
+        // `render` passes a fresh ref object each time, so the effect
+        // runs again with the same message array.
+        rerender({ messages: initial });
+
+        expect(harness.list.scrollTop).toBe(100);
+    });
+
     it('treats a shorter message list as a replacement', () => {
         const initial = history(2);
         const { rerender } = render(initial);
@@ -261,6 +284,85 @@ describe('useChatAutoScroll', () => {
 
         expect(harness.list.lastElementChild).toBeNull();
         expect(harness.list.scrollTop).toBe(0);
+    });
+
+    describe('whilst inactive', () => {
+        const renderActive = (
+            initial: ScrollableMessage[],
+            active: boolean,
+        ) => {
+            const listRef = { current: harness.list };
+            return renderHook(
+                ({ messages, isActive }) => useChatAutoScroll(
+                    listRef,
+                    messages,
+                    isActive,
+                ),
+                { initialProps: { messages: initial, isActive: active } },
+            );
+        };
+
+        it('ignores scroll events and defers a long reply until active',
+            () => {
+                const initial = [...history(3), user()];
+                harness.addChild(60);
+                const { result, rerender } = renderActive(initial, true);
+                rerender({ messages: initial, isActive: false });
+
+                // A narrow, closed list reflows and scrolls by itself.
+                harness.list.scrollTop = 0;
+                result.current();
+
+                harness.addChild(1000);
+                const withReply = [...initial, assistant()];
+                rerender({ messages: withReply, isActive: false });
+                expect(harness.list.scrollTop).toBe(0);
+
+                rerender({ messages: withReply, isActive: true });
+                expect(harness.list.scrollTop).toBe(840);
+            });
+
+        it('defers scrolling to the bottom until active', () => {
+            const { rerender } = renderActive([], false);
+
+            harness.replaceChildren([60, 2000]);
+            const loaded = [user(), assistant()];
+            rerender({ messages: loaded, isActive: false });
+            expect(harness.list.scrollTop).toBe(0);
+
+            rerender({ messages: loaded, isActive: true });
+            expect(harness.list.scrollTop).toBe(2060 - CLIENT_HEIGHT);
+        });
+
+        it('does not move the view on activation with nothing pending',
+            () => {
+                const initial = history(3);
+                const { result, rerender } = renderActive(initial, true);
+                harness.list.scrollTop = 100;
+                result.current();
+
+                rerender({ messages: initial, isActive: false });
+                rerender({ messages: initial, isActive: true });
+
+                expect(harness.list.scrollTop).toBe(100);
+            });
+
+        it('defers nothing for a reply when the user had scrolled up',
+            () => {
+                const initial = [...history(3), user()];
+                harness.addChild(60);
+                const { result, rerender } = renderActive(initial, true);
+                harness.list.scrollTop = 100;
+                result.current();
+                rerender({ messages: initial, isActive: false });
+
+                harness.addChild(1000);
+                const withReply = [...initial, assistant()];
+                rerender({ messages: withReply, isActive: false });
+                rerender({ messages: withReply, isActive: true });
+
+                expect(harness.list.scrollTop).toBe(100);
+            });
     });
 
     it('does nothing without a list element', () => {

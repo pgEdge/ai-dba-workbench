@@ -353,6 +353,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
     const handleMessageListScroll = useChatAutoScroll(
         messageListRef,
         rawMessages,
+        open,
     );
 
     // -----------------------------------------------------------------------

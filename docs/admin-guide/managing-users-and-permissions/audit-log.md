@@ -616,14 +616,16 @@ before the event the record names; the server starts the second record
 only when that event fails under the secret in use, which honestly
 means it is the last event written under an earlier secret, and the
 purge never removes it. Whilst the record is left as the server wrote
-it and that event is missing, the log reports status `2`, but this is
-not a guarantee. Verification checks the event only when a record
-names one, and cannot check a moved record's keyed hash under the
-current secret, so someone able to write `auth.db` who removes the
-copy of the first record kept beside a moved record, or points it at
-an event still in the log, makes the log report status `3` again; so
-does rewriting the event before the missing one and putting an event
-carrying the recorded hash back in its place, linked into the chain.
+it, that event is missing and the secret has not changed again, the
+log reports status `2`, but this is not a guarantee. Verification
+checks the event only when a record names one, and cannot check a
+moved record's keyed hash under the current secret, so someone able to
+write `auth.db` who removes the copy of the first record kept beside a
+moved record, or points it at an event still in the log, makes the log
+report status `3` again; so does rewriting the event before the
+missing one and putting an event carrying the recorded hash back in
+its place, linked into the chain, and a further change of secret does
+the same with no edit at all.
 As in the window described below, only a re-anchor given the previous
 secret with `-previous-secret-file` refuses such a log, because the
 moved record, or the rewritten event, no longer verifies under that

@@ -92,14 +92,18 @@ import (
 // an earlier secret: the purge refuses a log with that shape, so the
 // row is still there, before the event the anchor names, with the hash
 // the binding records, and it fails under the previous secret. While
-// the binding is left as the server wrote it and its row is gone,
-// verification reports tampering; but verification checks a binding
-// only when one is set and cannot check its MAC, so clearing the
-// bound_* columns, or repointing them at a row that is in the log,
-// reads as a key mismatch again (TestClearedBindingIsTheDocumentedLimit).
-// So does a row altered so that it failed and then put back, which
-// verifies under the previous secret. Only the re-anchor given the
-// previous secret refuses all of these.
+// the binding is left as the server wrote it, its row is gone and the
+// secret has not changed again, verification reports tampering; but
+// verification checks a binding only when one is set and cannot check
+// its MAC, so clearing the bound_* columns, or repointing them at a row
+// that is in the log, reads as a key mismatch again
+// (TestClearedBindingIsTheDocumentedLimit). So does a row altered so
+// that it failed and then put back, which verifies under the previous
+// secret, and so does a further change of secret with no edit at all:
+// case 4 of checkRotatedAuditTail checks only the current-key anchor's
+// binding, and the promotion at the next event drops the primary's
+// (TestFurtherRotationIsTheDocumentedLimit). Only the re-anchor given
+// the previous secret refuses all of these.
 //
 // The current-key anchor's HMAC covers the primary anchor beside it as
 // well as the event it names (auditTailCurrentMAC). Without that, a

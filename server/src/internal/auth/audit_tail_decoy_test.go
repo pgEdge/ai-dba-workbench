@@ -348,6 +348,38 @@ func TestClearedBindingIsTheDocumentedLimit(t *testing.T) {
 	}
 }
 
+// TestFurtherRotationIsTheDocumentedLimit is the finding of the sixth
+// review of #565. With the decoy's promoted binding left as the server
+// wrote it, a further change of secret, with no edit to auth.db, reads
+// the cut as a change of secret again, status 3: before the first event
+// under the third secret, because verification then checks only the
+// current-key anchor's binding to the primary anchor, not the primary's
+// own bound_* columns, and after it, because that event's promotion
+// drops the binding. The re-anchor refuses the log given either earlier
+// secret.
+func TestFurtherRotationIsTheDocumentedLimit(t *testing.T) {
+	store, dir := promotedDecoyBinding(t)
+	store.Close()
+
+	for _, write := range []bool{false, true} {
+		store = openWithKey(t, dir, thirdAuditKey)
+		if write {
+			recordN(t, store, 1)
+		}
+		expectKeyMismatch(t, store)
+		store.Close()
+
+		for _, previous := range [][]byte{rotatedAuditKey,
+			AuditKeyForTesting()} {
+			plan := planWithPreviousKey(t, dir, thirdAuditKey, previous)
+			if unattendedReanchorAccepts(plan) {
+				t.Errorf("Expected the unattended re-anchor to refuse "+
+					"(write %v), got %+v", write, plan)
+			}
+		}
+	}
+}
+
 // TestSavedPrimaryAnchorIsTheDocumentedLimit is the second finding of
 // the fifth review of #565: a saved copy of the primary anchor, put back
 // after the events written after the one it names are cut under the

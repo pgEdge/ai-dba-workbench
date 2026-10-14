@@ -479,9 +479,11 @@ client address, before and after snapshots and a hash chain.
   (`TestClearedBindingIsTheDocumentedLimit`), as does rewriting the
   bound row's hash and putting the decoy back linked to it
   (`prev_hash` is unique, so the rewrite is needed;
-  `TestDecoyPutBackLinkedIntoTheChain`), and a row altered to fail and
-  then restored. Only the re-anchor with the previous key refuses
-  these, via `primaryTailVerifiesUnder`, `proveAuditHistory` or the
+  `TestDecoyPutBackLinkedIntoTheChain`), a row altered to fail and
+  then restored, and a further key change with no edit, since case 4
+  checks only slot 2's binding and the next promotion drops slot 1's
+  (`TestFurtherRotationIsTheDocumentedLimit`). Only the re-anchor with
+  the previous key refuses these, via `primaryTailVerifiesUnder`, `proveAuditHistory` or the
   binding proof.
   Operators are told to re-anchor with
   the previous secret after each rotation, before the next. A genuine

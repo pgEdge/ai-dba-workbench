@@ -139,7 +139,20 @@ func (m *MonitoredConnectionPoolManager) releaseSlot(connectionID int) {
 
 // openConnections returns how many connections the manager's pools
 // currently hold open, idle or in use, for a monitored connection.
+//
+// It holds the connection's lock whilst summing the pools, because the
+// sum is read one pool at a time: without the lock, a concurrent
+// acquireWithinCap could close an idle connection in a pool already
+// counted and then start opening one in a pool not yet counted, so the
+// total would include both although they were never open together
+// (issue #628). Under the lock no acquisition can evict a connection or
+// start opening one, and returning a connection only moves it from in
+// use to idle.
 func (m *MonitoredConnectionPoolManager) openConnections(connectionID int) int {
+	lock := m.connLock(connectionID)
+	lock.Lock()
+	defer lock.Unlock()
+
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	total := 0

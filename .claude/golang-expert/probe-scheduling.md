@@ -142,7 +142,10 @@ the slot until `ConstructingConns()` drops to zero
 (`releaseSlotAfterConstruction`) rather than releasing it at once. The
 tests in
 `monitored_pool_cap_test.go` check the total with `openConnections`
-and against `pg_stat_activity`.
+and against `pg_stat_activity`. `openConnections` takes the
+connection's lock: it sums the pools one at a time, so without the lock
+a concurrent eviction plus new connection could be counted twice and
+read as a cap breach (issue #628).
 
 `InvalidateChangedPools` compares `hashConnectionParams` over the
 sorted parameter map with `dbname` set to the connection's own

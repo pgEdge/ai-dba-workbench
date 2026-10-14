@@ -52,7 +52,7 @@ func (s *AuthStore) SweepCoalescedAudit() {
 // and denial that still holds suppressed repeats, whether or not its
 // window has closed, so that a clean shutdown does not discard their
 // counts. Close calls it, and so does the server's SIGTERM and SIGINT
-// handler, which exits the process without reaching Close. Calling it
+// handler, which can race the deferred Close in main. Calling it
 // again, or after Close, finds nothing left to write.
 func (s *AuthStore) FlushCoalescedAudit() {
 	s.sweepCoalescedAudit(time.Now(), true)

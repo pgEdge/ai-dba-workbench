@@ -303,9 +303,9 @@ func TestRecordDeniedCapsReason(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAudit(t)
 	defer cleanup()
 
-	if err := store.RecordDenied(testActor(), "user.create",
-		strings.Repeat("r", 2*maxAuditErrorBytes)); err != nil {
-		t.Fatalf("RecordDenied failed: %v", err)
+	if err := store.RecordCoalescedDenial(testActor(), "user.create",
+		"user", strings.Repeat("r", 2*maxAuditErrorBytes)); err != nil {
+		t.Fatalf("RecordCoalescedDenial failed: %v", err)
 	}
 	ev := lastAuditEvent(t, store)
 	if len(ev.Error) != maxAuditErrorBytes ||

@@ -1241,9 +1241,14 @@ conventions from that change hold across both:
   #490 shapes: `lag_bytes` takes `MAX` across standby pids per
   `(connection_id, collected_at)`, and its latest query reads only each
   connection's newest sample (the #625 pattern), so a departed standby
-  drops out at once; `max_lock_wait_seconds` emits only samples with a
-  client backend waiting on a lock, as the latest query does (no
-  zero-fill, the `blocked_count` precedent); `checkpoints_req_delta`
+  drops out at the next sample while another stays attached (when the
+  last one leaves the probe stores nothing, so the previous sample
+  stays newest for up to five minutes, as for `replay_lag_seconds`),
+  and a newest sample holding only NULL-LSN rows (a demoted primary's
+  WAL receiver) reports no row; `max_lock_wait_seconds` emits only
+  samples with a client backend waiting on a lock, as the latest query
+  does (no zero-fill, the `blocked_count` precedent);
+  `checkpoints_req_delta`
   partitions its `LAG` by connection and UTC hour bucket, so each
   bucket has as many deltas as the live one-hour value (unlike
   `deadlocks_delta` and `temp_files_delta`, whose lookback-wide `LAG`

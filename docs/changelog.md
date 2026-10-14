@@ -431,7 +431,10 @@ project adheres to
   per-interval mean execution times, and the longest lock wait in
   samples where a backend waits on a lock. The live `lag_bytes`
   value now reads only each server's newest sample, so a standby
-  that has disconnected no longer holds it up for five minutes.
+  that disconnects whilst another stays attached drops out of it at
+  the next sample rather than holding it up for five minutes; when
+  the last standby leaves, the probe stores nothing and the previous
+  sample still stands for up to five minutes.
   The developer guide now gives the reason each of the 11 remaining
   metrics stays out of anomaly detection.
 

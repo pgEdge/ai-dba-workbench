@@ -132,7 +132,10 @@ func lsns(sent, replay string) [2]*string {
 // whose LSNs are NULL, and agree on every sample. The newest sample has
 // lost the standby that lagged furthest in the sample before it, so a
 // latest query that took each pid's newest row would still report that
-// standby's lag.
+// standby's lag. A newer sample still holds only a row with NULL LSNs,
+// as a primary demoted to a standby stores for its WAL receiver, so
+// neither query may report a value for it; a latest query that filtered
+// NULLs before choosing the newest sample would report the older lag.
 func TestLagBytes_HistoricalMatchesLatest(t *testing.T) {
 	ds, pool, cleanup := newHistoricalMetricsTestDatastore(t)
 	defer cleanup()
@@ -143,6 +146,7 @@ func TestLagBytes_HistoricalMatchesLatest(t *testing.T) {
 	older := sampleInstant(4 * time.Minute)
 	middle := sampleInstant(3 * time.Minute)
 	newest := sampleInstant(2 * time.Minute)
+	nullOnly := sampleInstant(1 * time.Minute)
 	// The differences are 0x1000 = 4096 and 0x100000 = 1048576 bytes.
 	insertStandbyLSNSample(t, pool, connID, older, map[int][2]*string{
 		100: lsns("0/2001000", "0/2000000"),
@@ -156,12 +160,20 @@ func TestLagBytes_HistoricalMatchesLatest(t *testing.T) {
 	insertStandbyLSNSample(t, pool, connID, newest, map[int][2]*string{
 		100: lsns("0/4001000", "0/4000000"),
 	})
+	insertStandbyLSNSample(t, pool, connID, nullOnly, map[int][2]*string{
+		400: {nil, nil},
+	})
 
 	want := map[time.Time]float64{older: 4096, middle: 1048576, newest: 4096}
 	historical := historicalRowsByKey(t, ds, metric, connID)
 	if len(historical) != len(want) {
-		t.Fatalf("historical rows = %+v, want one per sample", historical)
+		t.Fatalf("historical rows = %+v, want one per sample with a standby LSN",
+			historical)
 	}
+	if latest, ok := latestRowsFor(t, ds, metric, connID)[""]; ok {
+		t.Fatalf("latest row = %+v with only NULL LSNs newest, want none", latest)
+	}
+	deleteSample(t, pool, "pg_stat_replication", connID, nullOnly)
 	for _, at := range []time.Time{newest, middle, older} {
 		row, ok := historical[historicalKey{at: at}]
 		if !ok {

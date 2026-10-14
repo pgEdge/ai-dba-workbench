@@ -939,12 +939,10 @@ restricted permissions. The alerter reads API keys
 from the paths specified in the `api_key_file`
 options of the `openai`, `anthropic`, `gemini`, `voyage`
 and `typesafe` sections. When a configured key file cannot
-be read, the alerter logs a warning and continues, but
-stops loading keys at that file. The alerter reads the keys
-in the order `openai`, `anthropic`, `voyage`, `gemini` and
-`typesafe`, so an unreadable OpenAI key file also leaves the
-TypeSafe key unloaded. A provider that requires a key it
-did not receive then fails to initialise.
+be read, the alerter logs a warning and continues with the
+next configured file, keeping each key that it reads
+successfully. A provider that requires a key it did not
+receive then fails to initialise.
 
 In the following example, the commands create an API
 key file with secure permissions:

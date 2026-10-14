@@ -758,7 +758,7 @@ func (c *Config) validateDecisionProvider() error {
 		return nil
 	case "typesafe", "openai":
 	default:
-		return fmt.Errorf("llm.decision_provider must be typesafe, openai, none or empty, not %q",
+		return fmt.Errorf("llm.decision_provider must be typesafe, openai, none, disabled or empty, not %q",
 			c.LLM.DecisionProvider)
 	}
 	if t := c.Anomaly.Tier3.DecisionSuppressThreshold; math.IsNaN(t) || t <= 0 || t >= 1 {

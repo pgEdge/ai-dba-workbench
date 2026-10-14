@@ -940,19 +940,16 @@ func (e *Engine) classifyWithReasoning(ctx context.Context, candidate *database.
 	decision, _ := e.parseLLMResponse(response)
 
 	switch strings.ToLower(decision) {
-	case "alert", "anomaly":
-		tier3Pass := true
-		candidate.Tier3Pass = &tier3Pass
-		e.debugLog("Tier 3: LLM classified candidate %d as ALERT", candidate.ID)
 	case "suppress", "suppressed", "false_positive":
 		tier3Pass := false
 		candidate.Tier3Pass = &tier3Pass
 		e.debugLog("Tier 3: LLM classified candidate %d as SUPPRESS", candidate.ID)
 	default:
-		// Unknown response, default to alert
+		// "alert", or a response the parser could not read, which it
+		// already reports as "alert": fail safe to an alert.
 		tier3Pass := true
 		candidate.Tier3Pass = &tier3Pass
-		e.debugLog("Tier 3: Unknown LLM response for candidate %d, defaulting to alert", candidate.ID)
+		e.debugLog("Tier 3: LLM classified candidate %d as ALERT", candidate.ID)
 	}
 }
 

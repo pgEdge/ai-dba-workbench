@@ -706,3 +706,20 @@ func TestRunTier3RedactsProviderErrors(t *testing.T) {
 		})
 	}
 }
+
+// TestRunTier3ReasoningUnknownVerdict checks that a reasoning model
+// response naming no verdict the parser knows raises the alert.
+func TestRunTier3ReasoningUnknownVerdict(t *testing.T) {
+	e := &Engine{config: config.NewConfig(),
+		reasoningProvider: &fakeReasoner{response: `{"decision": "maybe"}`}}
+	candidate := &database.AnomalyCandidate{ID: 3}
+
+	captureStderr(t, func() { e.runTier3(context.Background(), candidate, "x") })
+
+	if candidate.Tier3Pass == nil || !*candidate.Tier3Pass {
+		t.Errorf("Tier3Pass = %v, want the candidate raised as an alert", candidate.Tier3Pass)
+	}
+	if candidate.Tier3Error != nil {
+		t.Errorf("Tier3Error = %q, want nil", *candidate.Tier3Error)
+	}
+}

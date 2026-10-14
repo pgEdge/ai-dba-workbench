@@ -27,7 +27,7 @@ func TestDefaultMetricFloors(t *testing.T) {
 		"pg_stat_activity.count":                       {MinValue: 10, MinStdDev: 5},
 		"pg_stat_database.temp_files_delta":            {MinValue: 10, MinStdDev: 10},
 		"pg_stat_database.deadlocks_delta":             {MinStdDev: 1},
-		"pg_sys_disk_info.used_percent":                {MinValue: 50},
+		"pg_sys_disk_info.used_percent":                {MinValue: 50, MinStdDev: 2},
 		"pg_stat_database.cache_hit_ratio":             {},
 		"no_such_metric":                               {},
 	}

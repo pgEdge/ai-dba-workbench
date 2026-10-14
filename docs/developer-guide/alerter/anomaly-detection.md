@@ -342,7 +342,7 @@ that matters:
 | `pg_sys_cpu_usage_info.processor_time_percent` | 50 | 5 |
 | `pg_sys_memory_info.used_percent` | 50 | 5 |
 | `connection_utilization_percent` | 50 | 5 |
-| `pg_sys_disk_info.used_percent` | 50 | none |
+| `pg_sys_disk_info.used_percent` | 50 | 2 |
 | `pg_stat_activity.count` | 10 | 5 |
 | `pg_stat_database.temp_files_delta` | 10 | 10 |
 | `pg_stat_activity.blocked_count` | 2 | 1 |
@@ -359,11 +359,13 @@ The reasoning behind each default is recorded beside
 `defaultMetricFloors`. The integer counts whose threshold
 rules fire on any occurrence have no value floor, so the
 anomaly path hides no occurrence, but a `min_stddev` of 1,
-because a count cannot change by less than one. Disk usage
-and the cache hit ratio have no `min_stddev`: above the disk
-value floor of 50%, and at a cache hit ratio's usual mean of
-95% or more, the global relative floor already gives a larger
-divisor than any useful `min_stddev` would.
+because a count cannot change by less than one. The disk
+usage `min_stddev` of 2 only takes effect for a baseline mean
+below 40%, because the global relative floor of 5% scales with
+the baseline mean rather than the value. The cache hit ratio
+has no `min_stddev`: at its usual mean of 95% or more, the
+global relative floor already gives a larger divisor than any
+useful `min_stddev` would.
 
 #### Warmup Gate Semantics
 

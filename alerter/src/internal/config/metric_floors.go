@@ -63,9 +63,11 @@ type MetricFloor struct {
 //     spare, so no movement there is actionable. A 5-point divisor means
 //     a rise from a flat baseline must exceed 15 points to pass the
 //     default sensitivity of 3.
-//   - Disk used percent (rules at 80 and 95): the same 50% floor. It
-//     needs no divisor floor, since above 50% the global relative floor
-//     (5% of the mean) already gives a divisor of at least 2.5 points.
+//   - Disk used percent (rules at 80 and 95): the same 50% floor, and a
+//     2-point divisor. The relative floor scales with the baseline mean,
+//     not the value, so the divisor floor matters for a baseline mean
+//     below 40%: a disk steady at 30% that jumps to 50% would otherwise
+//     score z 13.3, against 10 with the 2-point divisor.
 //   - pg_stat_activity.count (rule at 200): fewer than 10 sessions is an
 //     idle server whatever its baseline; a divisor of 5 sessions.
 //   - pg_stat_database.temp_files_delta (rule at 100): fewer than 10
@@ -96,7 +98,7 @@ var defaultMetricFloors = map[string]MetricFloor{
 	"pg_sys_cpu_usage_info.processor_time_percent":  {MinValue: 50, MinStdDev: 5},
 	"pg_sys_memory_info.used_percent":               {MinValue: 50, MinStdDev: 5},
 	"connection_utilization_percent":                {MinValue: 50, MinStdDev: 5},
-	"pg_sys_disk_info.used_percent":                 {MinValue: 50},
+	"pg_sys_disk_info.used_percent":                 {MinValue: 50, MinStdDev: 2},
 	"pg_stat_activity.count":                        {MinValue: 10, MinStdDev: 5},
 	"pg_stat_database.temp_files_delta":             {MinValue: 10, MinStdDev: 10},
 	"pg_stat_activity.blocked_count":                {MinValue: 2, MinStdDev: 1},

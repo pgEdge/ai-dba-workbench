@@ -56,7 +56,9 @@ func decisionSummary(provider, model string, alert bool, realIssueProbability, t
 // giving it classificationContext as its input. On success it records the
 // verdict and returns true. On failure it records nothing on the
 // candidate beyond its Tier 3 source, logs the error, and returns a
-// description of the failure for the caller to store.
+// description of the failure for the caller to store. The error is
+// redacted once, as the alerter's own log is, and the same text is
+// logged and returned.
 func (e *Engine) classifyWithDecision(ctx context.Context, candidate *database.AnomalyCandidate,
 	classificationContext string, cfg *config.Config, timeout time.Duration) (string, bool) {
 	provider, model := e.decisionProvider.ProviderName(), e.decisionProvider.ModelName()
@@ -68,8 +70,9 @@ func (e *Engine) classifyWithDecision(ctx context.Context, candidate *database.A
 
 	verdict, err := e.decisionProvider.ClassifyDecision(decisionCtx, classificationContext, threshold)
 	if err != nil {
-		e.log("ERROR: Tier 3 decision model classification failed for candidate %d: %v", candidate.ID, err)
-		return fmt.Sprintf("decision model %s/%s failed: %v", provider, model, err), false
+		msg := redactProviderLogError(err.Error(), configuredSecrets(cfg))
+		e.log("ERROR: Tier 3 decision model classification failed for candidate %d: %s", candidate.ID, msg)
+		return fmt.Sprintf("decision model %s/%s failed: %s", provider, model, msg), false
 	}
 
 	result := decisionSummary(provider, model, verdict.Alert, verdict.RealIssueProbability, threshold)

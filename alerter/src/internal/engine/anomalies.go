@@ -884,7 +884,7 @@ func (e *Engine) runTier3(ctx context.Context, candidate *database.AnomalyCandid
 		e.log("Tier 3: Falling back to the reasoning model for candidate %d", candidate.ID)
 	}
 
-	e.classifyWithReasoning(ctx, candidate, classificationContext+classificationResponseInstructions, timeout, decisionFailure)
+	e.classifyWithReasoning(ctx, candidate, classificationContext+classificationResponseInstructions, cfg, timeout, decisionFailure)
 }
 
 // failSafeTier3 records a Tier 3 failure: the candidate is raised as an
@@ -906,9 +906,10 @@ func setTier3Source(candidate *database.AnomalyCandidate, source, provider, mode
 // classifyWithReasoning classifies candidate with the reasoning model.
 // decisionFailure, when not empty, describes the decision model failure
 // that led here, and is kept in the candidate's Tier 3 error whatever the
-// reasoning model does.
+// reasoning model does. A reasoning model error is redacted once, as the
+// alerter's own log is, and the same text is logged and stored.
 func (e *Engine) classifyWithReasoning(ctx context.Context, candidate *database.AnomalyCandidate,
-	prompt string, timeout time.Duration, decisionFailure string) {
+	prompt string, cfg *config.Config, timeout time.Duration, decisionFailure string) {
 	setTier3Source(candidate, tier3SourceReasoning, e.reasoningProvider.ProviderName(), e.reasoningProvider.ModelName())
 
 	tier3Ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -917,8 +918,8 @@ func (e *Engine) classifyWithReasoning(ctx context.Context, candidate *database.
 	// Call the LLM for classification
 	response, err := e.reasoningProvider.Classify(tier3Ctx, prompt)
 	if err != nil {
-		e.log("ERROR: Tier 3 LLM classification failed for candidate %d: %v", candidate.ID, err)
-		errStr := err.Error()
+		errStr := redactProviderLogError(err.Error(), configuredSecrets(cfg))
+		e.log("ERROR: Tier 3 LLM classification failed for candidate %d: %s", candidate.ID, errStr)
 		if decisionFailure != "" {
 			errStr = decisionFailure + "; the reasoning model then failed too: " + errStr
 		}

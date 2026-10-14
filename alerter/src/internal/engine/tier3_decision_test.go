@@ -13,9 +13,12 @@ package engine
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
+	"net/url"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -638,5 +641,68 @@ func TestConfiguredSecretsIncludesTypeSafe(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("TypeSafe base URL credentials not among the secrets: %q", secrets)
+	}
+}
+
+// TestRunTier3RedactsProviderErrors checks that a decision or reasoning
+// model error is redacted before it reaches the alerter's log or the
+// candidate's Tier 3 error, using the credentials in a configured base
+// URL (security review VULN-002).
+func TestRunTier3RedactsProviderErrors(t *testing.T) {
+	const baseURL = "https://gw.example.com/v1?token=abcd1234"
+	failure := func() error {
+		// The bare value stands for a provider that echoes the
+		// credential outside any URL, which only the configured
+		// secrets catch.
+		return fmt.Errorf("send request: %w (gateway rejected abcd1234)", &url.Error{
+			Op: "Post", URL: baseURL, Err: dialErr(syscall.ECONNREFUSED)})
+	}
+	tests := []struct {
+		name     string
+		decider  *fakeDecider
+		reasoner *fakeReasoner
+	}{
+		{"decision only", &fakeDecider{err: failure()}, nil},
+		{"reasoning only", nil, &fakeReasoner{err: failure()}},
+		{"decision then reasoning", &fakeDecider{err: failure()}, &fakeReasoner{err: failure()}},
+		{"decision then reasoning succeeds", &fakeDecider{err: failure()},
+			&fakeReasoner{response: `{"decision": "alert"}`}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := config.NewConfig()
+			cfg.LLM.TypeSafe.BaseURL = baseURL
+			cfg.LLM.OpenAI.BaseURL = baseURL
+			e := &Engine{config: cfg}
+			if tt.decider != nil {
+				e.decisionProvider = tt.decider
+			}
+			if tt.reasoner != nil {
+				e.reasoningProvider = tt.reasoner
+			}
+			candidate := &database.AnomalyCandidate{ID: 9}
+
+			output := captureStderr(t, func() { e.runTier3(context.Background(), candidate, "x") })
+
+			stored := strValue(candidate.Tier3Error)
+			if stored == "" {
+				t.Fatal("no Tier3Error recorded")
+			}
+			if !strings.Contains(output, "failed for candidate 9") {
+				t.Fatalf("failure not logged:\n%s", output)
+			}
+			for what, text := range map[string]string{"log": output, "Tier3Error": stored} {
+				if strings.Contains(text, "abcd1234") {
+					t.Errorf("%s repeats the credential: %q", what, text)
+				}
+				if !strings.Contains(text, redactedMarker) {
+					t.Errorf("%s shows no redaction: %q", what, text)
+				}
+			}
+			// The log keeps the endpoint for the operator.
+			if !strings.Contains(output, "gw.example.com") {
+				t.Errorf("log lacks the endpoint:\n%s", output)
+			}
+		})
 	}
 }

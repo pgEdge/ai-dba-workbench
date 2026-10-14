@@ -712,7 +712,7 @@ var providerMarkup = strings.NewReplacer(
 // The TypeSafe and Voyage providers instead flatten it into the message
 // of a *pgllm.ProviderError with no status code, which keeps the
 // endpoint in the text but not the *url.Error, so such an error is
-// recognised by its message and given a category from the text alone.
+// identified by its message and given a category from the text alone.
 func providerErrorText(err error, provider string) string {
 	var urlErr *url.Error
 	if !errors.As(err, &urlErr) {

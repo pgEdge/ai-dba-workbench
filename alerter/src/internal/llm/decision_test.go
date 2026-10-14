@@ -153,7 +153,7 @@ func TestLibDecisionClassifyErrors(t *testing.T) {
 }
 
 func TestLibDecisionPingAndNames(t *testing.T) {
-	pingErr := errors.New("unauthorised")
+	pingErr := errors.New("401 access denied")
 	fc := &fakeDecisionClient{pingErr: pingErr}
 	d := &libDecision{client: fc, provider: "typesafe", model: "jev-test"}
 	if err := d.Ping(context.Background()); !errors.Is(err, pingErr) || !fc.pinged {

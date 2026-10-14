@@ -590,17 +590,23 @@ The following providers serve decision models:
   `gpt-6-luna`.
 
 The alerter sends the decision provider the tier 3
-classification context for each candidate, which includes:
+classification context for each candidate. The context
+holds fixed instructions about the task and about weighing
+past user feedback, together with:
 
 - the metric name, value and z-score, the connection ID,
   the database name and the detection time.
 - the baseline mean, standard deviation and period.
-- the similarity and decision of similar past anomalies.
-- the notes of past acknowledgements of the same metric and
-  connection, with the usernames of the users who
-  acknowledged them.
-- the names and roles of cluster peer connections, and the
-  titles of active alerts on those peers.
+- the similarity, decision and metric name of up to five
+  similar past anomalies.
+- up to ten past acknowledgements of the same metric and
+  connection, each with its note, its false positive flag,
+  the username of the user who acknowledged it, the time of
+  the acknowledgement, and the original alert's value,
+  z-score and severity.
+- the number, names and roles of cluster peer connections.
+- the title, severity, server name and trigger time of each
+  active or acknowledged alert on those peers.
 
 The decision provider receives nothing beyond what the
 reasoning provider already receives. A decision provider
@@ -664,8 +670,14 @@ anomaly:
 
 The alerter creates the decision provider at startup only,
 so changing `decision_provider` or the `llm.typesafe`
-settings takes a restart. A configuration reload does apply
-a new `decision_suppress_threshold`.
+settings takes a restart. Turning the decision provider off
+also takes a restart: after a reload that sets
+`decision_provider` to `none`, tier 3 keeps using the
+provider built at startup. A configuration reload does apply
+a new `decision_suppress_threshold`; whilst the reloaded
+configuration has no decision provider, the alerter skips
+the threshold check and uses `0.5` in place of a value
+outside the valid range.
 
 #### Choosing a Decision Model
 
@@ -927,8 +939,12 @@ restricted permissions. The alerter reads API keys
 from the paths specified in the `api_key_file`
 options of the `openai`, `anthropic`, `gemini`, `voyage`
 and `typesafe` sections. When a configured key file cannot
-be read, the alerter logs a warning and continues; a
-provider whose key was not loaded then fails to initialise.
+be read, the alerter logs a warning and continues, but
+stops loading keys at that file. The alerter reads the keys
+in the order `openai`, `anthropic`, `voyage`, `gemini` and
+`typesafe`, so an unreadable OpenAI key file also leaves the
+TypeSafe key unloaded. A provider that requires a key it
+did not receive then fails to initialise.
 
 In the following example, the commands create an API
 key file with secure permissions:

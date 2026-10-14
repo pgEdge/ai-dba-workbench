@@ -504,7 +504,7 @@ The alerter builds the classification context in
 - Baseline statistics for context.
 - Similar past anomalies with their decisions.
 - Past acknowledgements of the same metric and connection.
-- Cluster peers and their recent alerts.
+- Cluster peers and the active or acknowledged alerts on them.
 - Guidance on weighing past user feedback.
 
 The reasoning model's prompt, from `buildClassificationPrompt`, is

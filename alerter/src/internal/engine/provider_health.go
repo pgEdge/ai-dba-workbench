@@ -51,6 +51,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	pgllm "github.com/pgEdge/pgedge-go-llm-lib/llm"
 	"github.com/pgedge/ai-workbench/alerter/internal/config"
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
 	"github.com/pgedge/ai-workbench/alerter/internal/llm"
@@ -706,9 +707,18 @@ var providerMarkup = strings.NewReplacer(
 // may repeat. A transport failure names the endpoint's host, address,
 // port and path, which not every user with alert access should learn,
 // so it is reduced to the operation and a category of failure.
+//
+// Most providers return the *url.Error from the HTTP client, wrapped.
+// The TypeSafe and Voyage providers instead flatten it into the message
+// of a *pgllm.ProviderError with no status code, which keeps the
+// endpoint in the text but not the *url.Error, so such an error is
+// recognised by its message and given a category from the text alone.
 func providerErrorText(err error, provider string) string {
 	var urlErr *url.Error
 	if !errors.As(err, &urlErr) {
+		if failure, ok := flattenedTransportFailure(err); ok {
+			return fmt.Sprintf("Request to %s endpoint failed: %s", provider, failure)
+		}
 		return err.Error()
 	}
 	op := strings.ToUpper(urlErr.Op)
@@ -749,6 +759,58 @@ func transportFailure(urlErr *url.Error) string {
 	default:
 		return "network error"
 	}
+}
+
+// flattenedTransportPrefixes begin the message of a request the library
+// could not build or send; the library's HTTP helper adds them.
+var flattenedTransportPrefixes = []string{"send request:", "create request:"}
+
+// flattenedTransportCategories map text a Go transport error contains to
+// the category transportFailure gives the same failure, most specific
+// first.
+var flattenedTransportCategories = []struct {
+	text     string
+	category string
+}{
+	{"Client.Timeout", "timed out"},
+	{"i/o timeout", "timed out"},
+	{"deadline exceeded", "timed out"},
+	{"no such host", "host name lookup failed"},
+	{"server misbehaving", "host name lookup failed"},
+	{"connection refused", "connection refused"},
+	{"connection reset", "connection reset"},
+	{"no route to host", "host unreachable"},
+	{"network is unreachable", "host unreachable"},
+	{"x509:", "TLS certificate verification failed"},
+	{"tls:", "TLS handshake failed"},
+	{"EOF", "connection closed by the server"},
+}
+
+// flattenedTransportFailure reports whether err is a transport failure
+// the library has flattened into a *pgllm.ProviderError: one with no
+// status code whose message is a request the library could not send,
+// or that names a URL. It returns the failure's category, never any of
+// the message itself.
+func flattenedTransportFailure(err error) (string, bool) {
+	var pe *pgllm.ProviderError
+	if !errors.As(err, &pe) || pe.StatusCode != 0 || !errors.Is(pe, pgllm.ErrProviderError) {
+		return "", false
+	}
+	transport := strings.Contains(pe.Message, "://")
+	for _, prefix := range flattenedTransportPrefixes {
+		if strings.HasPrefix(pe.Message, prefix) {
+			transport = true
+		}
+	}
+	if !transport {
+		return "", false
+	}
+	for _, c := range flattenedTransportCategories {
+		if strings.Contains(pe.Message, c.text) {
+			return c.category, true
+		}
+	}
+	return "network error", true
 }
 
 // redactProviderError prepares a provider error for an alert that every

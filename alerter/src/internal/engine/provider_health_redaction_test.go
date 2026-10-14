@@ -18,13 +18,16 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"strings"
 	"syscall"
 	"testing"
 
+	pgllm "github.com/pgEdge/pgedge-go-llm-lib/llm"
 	"github.com/pgedge/ai-workbench/alerter/internal/config"
+	"github.com/pgedge/ai-workbench/alerter/internal/llm"
 )
 
 // transportErr builds the error the LLM library returns when the HTTP
@@ -223,5 +226,193 @@ func TestProviderHealth_TransportFailureAlertHidesEndpoint(t *testing.T) {
 		"text-embedding-3-small", transportErr("Post", io.EOF), false)
 	if !strings.Contains(h.open().Description, "connection closed by the server") {
 		t.Errorf("description not refreshed: %q", h.open().Description)
+	}
+}
+
+// flattenedErr builds the *pgllm.ProviderError the TypeSafe and Voyage
+// providers return when the HTTP round trip fails: the transport error's
+// text, with no status code.
+func flattenedErr(inner error) error {
+	return &pgllm.ProviderError{
+		Err:      pgllm.ErrProviderError,
+		Message:  transportErr("Post", inner).Error(),
+		Provider: "typesafe",
+	}
+}
+
+// TestProviderErrorText_FlattenedTransportFailures proves a transport
+// failure the library has flattened into a ProviderError is reduced to
+// a category, never the endpoint (security review VULN-001).
+func TestProviderErrorText_FlattenedTransportFailures(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"refused", flattenedErr(dialErr(syscall.ECONNREFUSED)), "connection refused"},
+		{"reset", flattenedErr(dialErr(syscall.ECONNRESET)), "connection reset"},
+		{"host unreachable", flattenedErr(dialErr(syscall.EHOSTUNREACH)), "host unreachable"},
+		{"net unreachable", flattenedErr(dialErr(syscall.ENETUNREACH)), "host unreachable"},
+		{"dns", flattenedErr(&net.DNSError{Err: "no such host", Name: "llm.internal.example"}),
+			"host name lookup failed"},
+		{"dns misbehaving", flattenedErr(&net.DNSError{Err: "server misbehaving", Name: "llm.internal.example"}),
+			"host name lookup failed"},
+		{"timeout", flattenedErr(timeoutErr{}), "timed out"},
+		{"client timeout", flattenedErr(errors.New("(Client.Timeout exceeded while awaiting headers)")), "timed out"},
+		{"deadline", flattenedErr(context.DeadlineExceeded), "timed out"},
+		{"cert", flattenedErr(&tls.CertificateVerificationError{Err: x509.UnknownAuthorityError{}}),
+			"TLS certificate verification failed"},
+		{"handshake", flattenedErr(tls.RecordHeaderError{Msg: "tls: first record does not look like a TLS handshake"}),
+			"TLS handshake failed"},
+		{"eof", flattenedErr(io.EOF), "connection closed by the server"},
+		{"other", flattenedErr(errors.New("proxyconnect tcp: llm.internal.example")), "network error"},
+		{"create request", &pgllm.ProviderError{Err: pgllm.ErrProviderError,
+			Message: `create request: parse "http://llm.internal.example:11434/api": bad`}, "network error"},
+		{"URL without the prefix", &pgllm.ProviderError{Err: pgllm.ErrProviderError,
+			Message: "fetching http://192.0.2.10:11434/api/embed failed"}, "network error"},
+		{"wrapped", fmt.Errorf("classify: %w", flattenedErr(dialErr(syscall.ECONNREFUSED))), "connection refused"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := providerErrorText(tt.err, "typesafe")
+			if want := "Request to typesafe endpoint failed: " + tt.want; got != want {
+				t.Errorf("got %q, want %q", got, want)
+			}
+			for _, leak := range []string{"llm.internal.example", "192.0.2.10", "11434", "/api", "abc123", "pw"} {
+				if strings.Contains(got, leak) {
+					t.Errorf("%q leaks %q", got, leak)
+				}
+			}
+		})
+	}
+}
+
+// TestProviderErrorText_ProviderErrorsKept proves a ProviderError that is
+// not a flattened transport failure keeps its text.
+func TestProviderErrorText_ProviderErrorsKept(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{"bad response", &pgllm.ProviderError{Err: pgllm.ErrProviderError,
+			Message: "decision response has no answers", Provider: "typesafe"}},
+		{"with a status", &pgllm.ProviderError{Err: pgllm.ErrProviderError, StatusCode: 502,
+			Message: "send request: bad gateway", Provider: "typesafe"}},
+		{"other sentinel", &pgllm.ProviderError{Err: pgllm.ErrInvalidRequest,
+			Message: "send request: refused", Provider: "typesafe"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := providerErrorText(tt.err, "typesafe"); got != tt.err.Error() {
+				t.Errorf("got %q, want %q", got, tt.err.Error())
+			}
+		})
+	}
+}
+
+// refusingTransport fails every request as a refused connection to the
+// address in the request's URL, as a dial to an unreachable endpoint
+// would, without waiting on the network.
+type refusingTransport struct{}
+
+func (refusingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	addr, err := net.ResolveTCPAddr("tcp", req.URL.Host)
+	if err != nil {
+		return nil, err
+	}
+	return nil, &net.OpError{Op: "dial", Net: "tcp", Addr: addr,
+		Err: os.NewSyscallError("connect", syscall.ECONNREFUSED)}
+}
+
+// libClientDecider is a decision provider that calls a library client
+// directly, so a test can give the client its own HTTP client and no
+// retries.
+type libClientDecider struct {
+	client   pgllm.Client
+	provider string
+}
+
+func (d *libClientDecider) ClassifyDecision(ctx context.Context, input string, _ float64) (llm.DecisionVerdict, error) {
+	_, err := d.client.Decide(ctx, pgllm.DecisionRequest{
+		Model: "dec-model",
+		Input: input,
+		Questions: []pgllm.DecisionQuestion{{
+			Name: "real", Kind: pgllm.DecisionYesNo, Instructions: "Is this real?"}},
+	})
+	return llm.DecisionVerdict{}, err
+}
+
+func (d *libClientDecider) Ping(ctx context.Context) error { return d.client.Ping(ctx) }
+func (d *libClientDecider) ModelName() string              { return "dec-model" }
+func (d *libClientDecider) ProviderName() string           { return d.provider }
+
+// closedLocalURL returns a URL for a local port nothing listens on.
+func closedLocalURL(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	addr := ln.Addr().String()
+	if err := ln.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	return "http://" + addr + "/v1"
+}
+
+// TestProviderHealth_DecisionTransportFailureHidesEndpoint drives each
+// decision provider in the library at an unreachable endpoint, through
+// the health tracker, and checks that the alert names only a category
+// whilst the local log keeps the endpoint (security review VULN-001).
+func TestProviderHealth_DecisionTransportFailureHidesEndpoint(t *testing.T) {
+	for _, provider := range []string{"typesafe", "openai"} {
+		for _, endpoint := range []string{"unreachable", "closed local port"} {
+			t.Run(provider+" "+endpoint, func(t *testing.T) {
+				opts := pgllm.Options{
+					APIKey: "test-key-0123456789",
+					Retry:  pgllm.RetryConfig{Disabled: true},
+				}
+				var host string
+				if endpoint == "unreachable" {
+					opts.BaseURL = "http://192.0.2.1:9/v1"
+					opts.HTTPClient = &http.Client{Transport: refusingTransport{}}
+					host = "192.0.2.1:9"
+				} else {
+					opts.BaseURL = closedLocalURL(t)
+					host = strings.TrimSuffix(strings.TrimPrefix(opts.BaseURL, "http://"), "/v1")
+				}
+				client, err := pgllm.NewClient(provider, opts)
+				if err != nil {
+					t.Fatalf("NewClient: %v", err)
+				}
+				h := newTrackerHarness(1)
+				dec := &healthTrackingDecision{inner: &libClientDecider{client: client, provider: provider},
+					provider: provider, tracker: h.tracker}
+
+				_, callErr := dec.ClassifyDecision(context.Background(), "x", 0.5)
+				if callErr == nil {
+					t.Fatal("the call to an unreachable endpoint succeeded")
+				}
+				alert := h.store.openFor(providerHealthKey(providerTierDecision, provider))
+				if alert == nil {
+					t.Fatal("no alert raised")
+				}
+				if alert.AnomalyDetails == nil {
+					t.Fatal("no details")
+				}
+				hostName, _, _ := strings.Cut(host, ":")
+				for _, text := range []string{alert.Description, *alert.AnomalyDetails} {
+					if !strings.Contains(text, provider+" endpoint failed: connection refused") {
+						t.Errorf("alert text %q does not name the category (call error %q)", text, callErr)
+					}
+					if strings.Contains(text, hostName) || strings.Contains(text, "/v1") {
+						t.Errorf("alert text leaks the endpoint: %q", text)
+					}
+				}
+				if !h.loggedContaining(host) {
+					t.Errorf("local log lacks the endpoint %s: %v", host, h.logged)
+				}
+			})
+		}
 	}
 }

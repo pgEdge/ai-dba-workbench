@@ -1473,49 +1473,84 @@ var metricRegistry = map[string]metricQueryConfig{
 	},
 
 	// The value is the number of queryids whose mean execution time over
-	// the most recent probe interval exceeded 1000 ms. The query used to
-	// test pg_stat_statements.mean_exec_time, which is a lifetime average
+	// the most recent probe interval exceeded 1000 ms, counted once for
+	// the whole server. The query used to test
+	// pg_stat_statements.mean_exec_time, which is a lifetime average
 	// since the last pg_stat_statements_reset(): a query that ran slowly
 	// once kept the count elevated for ever, whether or not it ran again,
 	// and the alert cleared only on a manual stats reset or eviction.
+	//
+	// The metric is server-wide because pg_stat_statements is. The view
+	// reads one shared hash table for the whole cluster, so the collector
+	// stores the same counters once for every database it probes that has
+	// the extension installed, differing only in the database_name it
+	// connected through; the statement's own database is its dbid. The
+	// count used to be grouped by that probing name, so every such
+	// database reported the cluster's figure and an alert on it fired
+	// once per database. The probe cannot simply filter on its own dbid
+	// instead, because it only runs where the extension is installed and
+	// where the monitoring role may connect: the extension is commonly
+	// installed in one database alone, and the statements of every other
+	// database would then never be collected at all. See GitHub issue
+	// #640.
+	//
+	// samples therefore keeps one copy of each counter per collection,
+	// the one stored under the lowest database_name so that the choice is
+	// stable, as the server's Top Queries aggregation does. Its sort
+	// order is a prefix-compatible match for the identity window, so the
+	// planner sorts the rows once for both.
 	//
 	// The interval mean is delta(total_exec_time) / delta(calls) between
 	// the newest sample in the fifteen minute window (three samples at the
 	// 300 second probe interval) and the sample before it. The LEAD runs
 	// within each statement identity (queryid plus userid, dbid and
-	// toplevel, the table's key), because each identity is its own
-	// counter that a reset can zero independently and differencing across
-	// them subtracts one identity's counter from another's. The ROW_NUMBER
-	// shares the identity window, so the whole window is sorted once:
-	// ordering descending and reading the predecessor with LEAD rather
-	// than ordering ascending and reading it with LAG costs one WindowAgg
-	// and one sort instead of two, which measured at roughly a third off
-	// the execution time over 24000 rows in the window. An identity
-	// whose calls did not increase contributes nothing, which skips
-	// statements that never ran in the interval and statements whose
-	// counters were reset (calls fell), and a queryid with no executing
-	// identity has a NULL mean that the FILTER does not count. COUNT(*)
-	// FILTER over every queryid seen in the newest samples means a
-	// database with statements but no slow ones reports 0 rather than
-	// disappearing from the result set. See GitHub issue #407.
+	// toplevel), because each identity is its own counter that a reset
+	// can zero independently and differencing across them subtracts one
+	// identity's counter from another's. The ROW_NUMBER shares the
+	// identity window, so the whole window is sorted once: ordering
+	// descending and reading the predecessor with LEAD rather than
+	// ordering ascending and reading it with LAG costs one WindowAgg and
+	// one sort instead of two. An identity whose calls did not increase
+	// contributes nothing, which skips statements that never ran in the
+	// interval and statements whose counters were reset (calls fell),
+	// and a queryid with no executing identity has a NULL mean that the
+	// FILTER does not count. COUNT(*) FILTER over every queryid seen in
+	// the newest samples means a server with statements but no slow ones
+	// reports 0 rather than disappearing from the result set. See GitHub
+	// issue #407.
 	//
-	// The historical query rebuilds the same figure for every sample:
-	// each identity's sample is paired with that identity's previous
-	// sample by LAG, the interval means are taken per queryid, and the
-	// slow ones are counted per connection, database and collected_at.
-	// The pair only counts when the previous sample is less than fifteen
-	// minutes older, which is the bound the latest query's window puts on
-	// the pair it can see, so an interval spanning a collection gap feeds
-	// the baseline exactly when it could have produced a live value. It
-	// scans up to the probe's seven day retention of the table in one
-	// window sort, which is acceptable for a query that runs once per
-	// baseline cycle. See GitHub issue #490.
+	// The historical query rebuilds the same figure for every sample from
+	// the same one copy per counter: each identity's sample is paired with
+	// that identity's previous sample by LAG, the interval means are taken
+	// per queryid, and the slow ones are counted per connection and
+	// collected_at. The pair only counts when the previous sample is less
+	// than fifteen minutes older, which is the bound the latest query's
+	// window puts on the pair it can see, so an interval spanning a
+	// collection gap feeds the baseline exactly when it could have
+	// produced a live value. It scans up to the probe's seven day
+	// retention of the table in one window sort, which is acceptable for
+	// a query that runs once per baseline cycle. See GitHub issue #490.
 	"pg_stat_statements.slow_query_count": {
 		probeName: "pg_stat_statements",
 		latestSQL: `
-			WITH ranked AS (
+			WITH samples AS (
+				SELECT DISTINCT ON (connection_id, queryid, userid, dbid,
+				                    toplevel, collected_at)
+				       connection_id,
+				       queryid,
+				       userid,
+				       dbid,
+				       toplevel,
+				       calls,
+				       total_exec_time,
+				       collected_at
+				FROM metrics.pg_stat_statements
+				WHERE collected_at > NOW() - INTERVAL '15 minutes'
+				ORDER BY connection_id, queryid, userid, dbid, toplevel,
+				         collected_at DESC, database_name
+			),
+			ranked AS (
 				SELECT connection_id,
-				       database_name,
 				       queryid,
 				       calls,
 				       total_exec_time,
@@ -1523,17 +1558,14 @@ var metricRegistry = map[string]metricQueryConfig{
 				       ROW_NUMBER() OVER identity as rn,
 				       LEAD(calls) OVER identity as prev_calls,
 				       LEAD(total_exec_time) OVER identity as prev_total_exec_time
-				FROM metrics.pg_stat_statements
-				WHERE collected_at > NOW() - INTERVAL '15 minutes'
+				FROM samples
 				WINDOW identity AS (
-				    PARTITION BY connection_id, database_name, queryid,
-				                 userid, dbid, toplevel
+				    PARTITION BY connection_id, queryid, userid, dbid, toplevel
 				    ORDER BY collected_at DESC
 				)
 			),
 			newest AS (
 				SELECT connection_id,
-				       database_name,
 				       queryid,
 				       collected_at,
 				       CASE WHEN calls > prev_calls
@@ -1545,43 +1577,53 @@ var metricRegistry = map[string]metricQueryConfig{
 			),
 			per_query AS (
 				SELECT connection_id,
-				       database_name,
 				       queryid,
 				       SUM(delta_exec_time) / NULLIF(SUM(delta_calls), 0) as interval_mean_ms,
 				       MAX(collected_at) as collected_at
 				FROM newest
-				GROUP BY connection_id, database_name, queryid
+				GROUP BY connection_id, queryid
 			)
 			SELECT connection_id,
-			       database_name,
 			       COUNT(*) FILTER (WHERE interval_mean_ms > 1000)::float as value,
 			       MAX(collected_at) as collected_at
 			FROM per_query
-			GROUP BY connection_id, database_name
+			GROUP BY connection_id
 		`,
 		historicalSQL: `
-			WITH paired AS (
-				SELECT s.connection_id,
-				       s.database_name,
+			WITH samples AS (
+				SELECT DISTINCT ON (s.connection_id, s.queryid, s.userid,
+				                    s.dbid, s.toplevel, s.collected_at)
+				       s.connection_id,
 				       s.queryid,
+				       s.userid,
+				       s.dbid,
+				       s.toplevel,
 				       s.calls,
 				       s.total_exec_time,
-				       s.collected_at,
-				       LAG(s.calls) OVER identity as prev_calls,
-				       LAG(s.total_exec_time) OVER identity as prev_total_exec_time,
-				       LAG(s.collected_at) OVER identity as prev_collected_at
+				       s.collected_at
 				FROM metrics.pg_stat_statements s
 				JOIN connections c ON c.id = s.connection_id
 				WHERE s.collected_at > NOW() - INTERVAL '1 day' * $1
+				ORDER BY s.connection_id, s.queryid, s.userid, s.dbid,
+				         s.toplevel, s.collected_at, s.database_name
+			),
+			paired AS (
+				SELECT connection_id,
+				       queryid,
+				       calls,
+				       total_exec_time,
+				       collected_at,
+				       LAG(calls) OVER identity as prev_calls,
+				       LAG(total_exec_time) OVER identity as prev_total_exec_time,
+				       LAG(collected_at) OVER identity as prev_collected_at
+				FROM samples
 				WINDOW identity AS (
-				    PARTITION BY s.connection_id, s.database_name, s.queryid,
-				                 s.userid, s.dbid, s.toplevel
-				    ORDER BY s.collected_at
+				    PARTITION BY connection_id, queryid, userid, dbid, toplevel
+				    ORDER BY collected_at
 				)
 			),
 			deltas AS (
 				SELECT connection_id,
-				       database_name,
 				       queryid,
 				       collected_at,
 				       CASE WHEN calls > prev_calls
@@ -1594,23 +1636,22 @@ var metricRegistry = map[string]metricQueryConfig{
 			),
 			per_query AS (
 				SELECT connection_id,
-				       database_name,
 				       queryid,
 				       collected_at,
 				       SUM(delta_exec_time) / NULLIF(SUM(delta_calls), 0) as interval_mean_ms
 				FROM deltas
-				GROUP BY connection_id, database_name, queryid, collected_at
+				GROUP BY connection_id, queryid, collected_at
 			)
 			SELECT connection_id,
-			       database_name,
+			       NULL::text as database_name,
 			       COUNT(*) FILTER (WHERE interval_mean_ms > 1000)::float as value,
 			       collected_at
 			FROM per_query
-			GROUP BY connection_id, database_name, collected_at
-			ORDER BY connection_id, database_name, collected_at
+			GROUP BY connection_id, collected_at
+			ORDER BY connection_id, collected_at
 		`,
-		scan:           scanWithDB,
-		historicalScan: historicalScanWithDB,
+		scan:           scanBasic,
+		historicalScan: historicalScanBasic,
 	},
 
 	// The system_stats extension only populates processor_time_percent on

@@ -1107,13 +1107,23 @@ that follow from that, most learned the hard way in #406 and #407:
   DESC` over the deltas; `pg_stat_statements.slow_query_count` follows
   the per-identity shape described under "Cumulative Counter Deltas per
   Identity" below, differencing `total_exec_time` and `calls` within
-  `(queryid, userid, dbid, toplevel)` and counting with `COUNT(*) FILTER`
-  so a database with statements but no slow ones reports 0 rather than
-  vanishing. It takes the difference with `LEAD` over an identity window
-  ordered `collected_at DESC`, which the `ROW_NUMBER` that picks the
-  newest sample shares, so the window is sorted once: the ascending-`LAG`
-  plus descending-`ROW_NUMBER` form sorted it twice and measured about a
-  third slower on 24,000 rows in the window.
+  `(connection_id, queryid, userid, dbid, toplevel)` and counting with
+  `COUNT(*) FILTER` so a server with statements but no slow ones reports
+  0 rather than vanishing. Since #640 it is server-wide (`scanBasic`,
+  historical rows with a NULL database): a `samples` CTE first keeps one
+  copy of each counter per `collected_at` with `DISTINCT ON` (lowest
+  probing `database_name` wins, as in `buildTopQueriesSQL`), because the
+  probe stores the cluster-wide view once per database it probes, and
+  grouping by that probing name reported the whole server's count in
+  every database. A `dbid` filter in the probe was rejected: the probe
+  only runs where the extension is installed and the role may connect,
+  so it would drop every other database's statements. It takes the
+  difference with `LEAD` over an identity window ordered
+  `collected_at DESC`, which the `ROW_NUMBER` that picks the newest
+  sample shares, and whose sort the `DISTINCT ON` order already
+  satisfies, so the rows are sorted once (checked with `EXPLAIN`): the
+  ascending-`LAG` plus descending-`ROW_NUMBER` form sorted the window
+  twice and measured about a third slower on 24,000 rows.
 
 - A `latestSQL` must report the sample's own `collected_at`, never
   `NOW()`. Threshold hysteresis (`threshold.trigger_count` and
@@ -1263,7 +1273,9 @@ conventions from that change hold across both:
   the database to the partition), and judges recovery per bucket by
   the newest `pg_node_role` row in that hour (no role row keeps the
   bucket, as the latest query does); and `slow_query_count` rebuilds
-  each interval mean with `LAG` over the same identity window, pools
+  each interval mean with `LAG` over the same identity window and the
+  same one-copy-per-counter `samples` CTE (#640, whose test stores the
+  counters under three probing names and expects them counted once), pools
   identities per queryid before the mean, as the latest query does, and
   only pairs samples less than 15 minutes apart, since the latest
   query's window can never see a longer interval. To run a latest query
@@ -1459,7 +1471,24 @@ of this, `detectAnomalies` must not skip a metric on `ErrNoMetricData`.
 `retireUnreachableAnomalyAlert`: `ClearActiveAnomalyAlert`, no
 notification, and the description prefixed with
 `unreachableAnomalyDescriptionPrefix` (not re-prefixed on a retry).
-`anomaly_recovery_absent_integration_test.go` covers both.
+`anomaly_recovery_absent_integration_test.go` covers both. Since #640
+the reason also covers the opposite mismatch,
+`database.MetricIsServerWide` (registered and `scanBasic`; not simply
+`!MetricIsPerDatabase`, which is true for unregistered names) with an
+alert that names a database. The threshold cleaner has the same case:
+`checkAlertResolved` sends such an alert to `retireDatabaseScopedAlert`
+before the extension and absence gates (description prefixed with
+`databaseScopedClearDescriptionPrefix`, `ClearAlert`, no notification),
+since no latest value can match it and a non-`clearWhenAbsent` metric
+would otherwise hold it active for ever
+(`server_wide_alerts_integration_test.go`, including a trigger that
+rejects only a `description` change, so a failed rewrite must still
+clear). Only active alerts are retired, since the cleaner reads
+`GetActiveAlerts`; an acknowledged per-database alert stays
+acknowledged until retention deletes it, which the changelog states.
+Per-database baselines of a
+metric that became server-wide need no migration: the stale-baseline
+sweep (`DeleteStaleMetricBaselines`) deletes them on the next cycle.
 
 ## Time-Window Resolution (server)
 
@@ -1658,9 +1687,10 @@ is added to the INCLUDE list, which is why it is not there.
 
 ## Cumulative Counter Deltas per Identity (server)
 
-`pg_stat_statements` keeps one row per `(database_name, userid, dbid,
-toplevel)` for a queryid, and each row is an independent cumulative
-counter that `pg_stat_reset()` or a restart can zero on its own. Any
+`pg_stat_statements` keeps one row per `(userid, dbid, toplevel)` for a
+queryid, which the collector stores once per probing `database_name`,
+and each row is an independent cumulative counter that
+`pg_stat_reset()` or a restart can zero on its own. Any
 query that turns those counters into per-period deltas must difference
 within each identity (`LAG` over an ascending window, or `LEAD` over a
 descending one where another window function needs that ordering
@@ -2085,6 +2115,10 @@ run.
   freshness-cutoff and window audits, the once-per-pass
   `probeStalenessSnapshot`, and the latest-sample reductions for
   `cache_hit_ratio` and `slow_query_count`.
+- #640: `slow_query_count` made server-wide, counting each statement
+  once across the copies stored per probing database;
+  `MetricIsServerWide` and the retirement of alerts naming a database on
+  such a metric.
 - #409: `deadlocks_delta` and `temp_files_delta` moved to hourly sums,
   `required_extension` enforced in evaluation and resolution,
   `table_bloat_ratio` retired from the registry; collector migration 11.

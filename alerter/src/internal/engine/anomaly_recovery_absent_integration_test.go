@@ -357,6 +357,9 @@ func TestAnomalyRecoveryRetiresUnreachableAlerts(t *testing.T) {
 	unsupported := env.seedMetricAlert(t, "pg_stat_archiver.failed_count_delta", nil, "active")
 	scoped := env.seedMetricAlert(t, "pg_stat_database.cache_hit_ratio", &db, "active")
 	reachable := env.seedMetricAlert(t, tierSkipMetric, nil, "active")
+	// Raised whilst slow_query_count was reported per database; see
+	// GitHub issue #640.
+	serverWide := env.seedMetricAlert(t, "pg_stat_statements.slow_query_count", &db, "active")
 	acknowledged := env.seedMetricAlert(t, "pg_stat_database.cache_hit_ratio", nil, "acknowledged")
 	retiredBefore := env.seedMetricAlert(t, "pg_stat_database.deadlocks_delta", nil, "active")
 	already := unreachableAnomalyDescriptionPrefix + "earlier"
@@ -369,6 +372,7 @@ func TestAnomalyRecoveryRetiresUnreachableAlerts(t *testing.T) {
 	for name, id := range map[string]int64{
 		"legacy NULL database": legacy,
 		"unsupported metric":   unsupported,
+		"server-wide metric":   serverWide,
 	} {
 		wantStatus(t, env.alert(t, id), "cleared")
 		desc := env.description(t, id)
@@ -420,8 +424,8 @@ func TestRetireUnreachableAnomalyAlertFailures(t *testing.T) {
 	}
 }
 
-// TestUnreachableAnomalyReason pins the classification without a
-// database.
+// TestUnreachableAnomalyReason pins the classification of an alert's
+// database scope against its metric's.
 func TestUnreachableAnomalyReason(t *testing.T) {
 	db := "appdb"
 	name := func(s string) *string { return &s }
@@ -433,7 +437,9 @@ func TestUnreachableAnomalyReason(t *testing.T) {
 		{"pg_stat_database.cache_hit_ratio", &db, false},
 		{"pg_stat_database.cache_hit_ratio", nil, true},
 		{tierSkipMetric, nil, false},
-		{tierSkipMetric, &db, false},
+		{tierSkipMetric, &db, true},
+		{"pg_stat_statements.slow_query_count", nil, false},
+		{"pg_stat_statements.slow_query_count", &db, true},
 		{absentRecoveryMetric, nil, false},
 		{"pg_stat_archiver.failed_count_delta", nil, true},
 		{"metric_staleness", nil, true},

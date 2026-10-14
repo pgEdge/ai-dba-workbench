@@ -422,7 +422,7 @@ project adheres to
 - Build anomaly detection baselines for four more metrics (#490):
   `pg_stat_replication.lag_bytes`,
   `pg_stat_checkpointer.checkpoints_req_delta`,
-  `pg_stat_statements.slow_query_count` (per database) and
+  `pg_stat_statements.slow_query_count` (per server, #640) and
   `pg_stat_activity.max_lock_wait_seconds`, which were previously
   never scored by tier 1. Each historical query computes the same
   statistic as the metric's latest query: the largest lag across
@@ -1139,6 +1139,21 @@ project adheres to
   server doing the same work every hour scored as unusually
   quiet; each hour is now counted on its own, as the live value
   is.
+
+- Fix the `pg_stat_statements.slow_query_count` alert metric
+  reporting the whole server's count once for every database
+  (#640). `pg_stat_statements` is cluster-wide, and the collector
+  stores its rows once for each database it probes, so every
+  database reported the same figure and the Slow Query Count rule
+  raised one alert per database for a single problem. The metric
+  is now reported once per server, counting each statement once
+  whichever database it ran in; statements from databases the
+  collector does not probe, or that lack the extension, still
+  count. The alerter closes active alerts on the metric that name
+  a database, without sending a clear notification, and raises a
+  single server alert if the condition still holds; acknowledged
+  ones are left for retention to delete, and baselines
+  stored per database are removed by the next baseline cycle.
 
 - Fix the `pg_stat_replication.replay_lag_seconds` alert metric,
   which never returned a value because its query read a

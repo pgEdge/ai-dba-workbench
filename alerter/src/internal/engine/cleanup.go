@@ -350,6 +350,14 @@ func (e *Engine) checkAlertResolved(ctx context.Context, alert *database.Alert,
 		return
 	}
 
+	// An alert naming a database on a metric reported for the whole
+	// server can never match a latest value, so it would stay active for
+	// ever. See retireDatabaseScopedAlert.
+	if alert.DatabaseName != nil && database.MetricIsServerWide(*alert.MetricName) {
+		e.retireDatabaseScopedAlert(ctx, alert)
+		return
+	}
+
 	// An alert whose rule needs an extension the connection no longer
 	// reports is not resolved: the condition may well persist, the
 	// alerter simply cannot see it any more. Leave it active rather than
@@ -853,6 +861,62 @@ func classifyAbsentMetric(clearsWhenAbsent bool, probe string, window time.Durat
 	// missing from it is not reporting. Unavailable probes are no longer
 	// among them: they are present in the view and handled above.
 	return absentMetricProbeNotReporting
+}
+
+// databaseScopedClearDescriptionPrefix opens the description of a
+// threshold alert closed by retireDatabaseScopedAlert, so that the
+// alert's history says plainly why it ended.
+const databaseScopedClearDescriptionPrefix = "Closed without re-evaluation: "
+
+// databaseScopedClearDescription is the text such an alert is closed
+// with. It keeps what the alert last said, since that is still the most
+// useful thing in the record.
+func databaseScopedClearDescription(metric, previous string) string {
+	return fmt.Sprintf(databaseScopedClearDescriptionPrefix+
+		"the metric %s is now reported for the whole server rather than "+
+		"per database, so this alert, which names a database, can no longer "+
+		"be evaluated and was closed without the condition it reports being "+
+		"observed to end. The alert said: %s",
+		metric, previous)
+}
+
+// retireDatabaseScopedAlert closes an active threshold alert that names a
+// database on a metric now reported for the whole server. The cleaner
+// matches an alert to a latest value by database, and a server-wide
+// metric's values name none, so without this the alert would be judged
+// absent for ever; the metric is not absence-driven, so it would never
+// clear, and retention keeps active rows. The evaluator raises a fresh,
+// server-wide alert if the condition still holds.
+// pg_stat_statements.slow_query_count is the metric this exists for: it
+// was reported per database, with the same cluster-wide figure in every
+// database, until GitHub issue #640.
+//
+// No clear notification is queued, as for an unmonitored connection:
+// nothing was seen to recover, and an upgrade must not announce a burst
+// of per-database alerts as resolved. A description this function
+// already wrote is left alone, so a clear that keeps failing does not
+// nest one explanation inside the next; a failed rewrite still clears
+// the alert, because an alert stuck active is the larger fault. A failed
+// clear leaves the alert for the next pass.
+func (e *Engine) retireDatabaseScopedAlert(ctx context.Context, alert *database.Alert) {
+	metric := *alert.MetricName
+	e.log("Metric %s is reported for the whole server; closing alert %d, which names database %s",
+		metric, alert.ID, *alert.DatabaseName)
+
+	if !strings.HasPrefix(alert.Description, databaseScopedClearDescriptionPrefix) {
+		description := databaseScopedClearDescription(metric, alert.Description)
+		if err := e.datastore.UpdateAlertDescription(ctx, alert.ID, description); err != nil {
+			e.log("ERROR: Failed to record why alert %d was closed, clearing it with its "+
+				"original description: %v", alert.ID, err)
+		} else {
+			alert.Description = description
+		}
+	}
+
+	if err := e.datastore.ClearAlert(ctx, alert.ID); err != nil {
+		e.log("ERROR: Failed to clear alert %d, which names a database on a server-wide "+
+			"metric, leaving it for the next pass: %v", alert.ID, err)
+	}
 }
 
 // clearResolvedAlert clears an alert and queues a notification

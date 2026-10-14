@@ -36,6 +36,18 @@ func MetricIsPerDatabase(metricName string) bool {
 	return ok && (cfg.scan == scanWithDB || cfg.scan == scanWithDBObject)
 }
 
+// MetricIsServerWide reports whether the metric's latest query reports
+// one value per connection with no database. It is false for names
+// outside the registry, so it is not simply the negation of
+// MetricIsPerDatabase. The alerter uses it to retire an alert that names
+// a database on such a metric, which no latest value can ever match:
+// pg_stat_statements.slow_query_count was reported per database until
+// GitHub issue #640 made it server-wide.
+func MetricIsServerWide(metricName string) bool {
+	cfg, ok := metricRegistry[metricName]
+	return ok && cfg.scan == scanBasic
+}
+
 // BaselineSupportedMetrics returns the sorted names of every registry
 // metric that SupportsBaselines accepts. The order is fixed so callers
 // that pass the list as a query parameter produce a stable statement.

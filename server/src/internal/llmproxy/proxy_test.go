@@ -103,6 +103,9 @@ func (f *fakeProvider) Rerank(context.Context, pgllm.RerankRequest) (*pgllm.Rera
 func (f *fakeProvider) EmbedMultimodal(context.Context, pgllm.MultimodalEmbedRequest) ([][]float64, error) {
 	return nil, pgllm.ErrNotSupported
 }
+func (f *fakeProvider) Decide(context.Context, pgllm.DecisionRequest) (*pgllm.DecisionResponse, error) {
+	return nil, pgllm.ErrNotSupported
+}
 func (f *fakeProvider) ListModels(context.Context, ...pgllm.ListModelsOption) ([]string, error) {
 	return []string{"claude-test"}, nil
 }

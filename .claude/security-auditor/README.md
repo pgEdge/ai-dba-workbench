@@ -169,7 +169,10 @@ moved.
   from the source catalog in `internal/tools/datastore_catalog.go`,
   limited to the caller's visible connections and to columns that
   carry no credentials; review any new catalog entry's scope and
-  columns. Scope predicates must be applied before any caller
+  columns. A credential can also sit inside a value (pg_settings'
+  `primary_conninfo`), which no column-name check catches, so
+  `metricRedactions` masks such values in the inner subquery, where
+  the caller's filters cannot see the real value. Scope predicates must be applied before any caller
   predicate can be evaluated: the builder puts the scope and time
   window in an inner `OFFSET 0` subquery the planner cannot merge, and
   the caller's filters outside it, because a caller expression that

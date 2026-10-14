@@ -771,16 +771,44 @@ func fromClause(src datastoreSource) (string, error) {
 // The subquery selects the source's permitted columns under the same
 // alias, so the outer statement refers to them exactly as it would to
 // the table.
+//
+// A column marked for redaction is masked here too, so the caller's
+// filters, grouping and ordering only ever see the masked value and
+// cannot be used to guess the real one.
 func scopedFrom(src datastoreSource, inner []string) (string, error) {
 	from, err := fromClause(src)
 	if err != nil {
 		return "", err
 	}
-	if len(inner) == 0 {
+	redacts := slices.ContainsFunc(src.Columns, func(c datastoreColumn) bool { return c.RedactBy != "" })
+	if len(inner) == 0 && !redacts {
 		return from, nil
 	}
-	return "(SELECT " + selectList(datastoreTableAlias, src.columnNames()) + " FROM " + from +
-		" WHERE " + strings.Join(inner, " AND ") + " OFFSET 0) " + datastoreTableAlias, nil
+	where := ""
+	if len(inner) > 0 {
+		where = " WHERE " + strings.Join(inner, " AND ")
+	}
+	return "(SELECT " + innerSelectList(src) + " FROM " + from + where + " OFFSET 0) " +
+		datastoreTableAlias, nil
+}
+
+// innerSelectList renders scopedFrom's select list: each permitted
+// column, with a redacted column replaced by redactedValue on rows that
+// name a credential-bearing setting. An empty or NULL value is kept,
+// since it shows only that the setting is unset.
+func innerSelectList(src datastoreSource) string {
+	parts := make([]string, len(src.Columns))
+	for i, c := range src.Columns {
+		value := qualified(datastoreTableAlias, c.Name)
+		if c.RedactBy == "" {
+			parts[i] = value
+			continue
+		}
+		parts[i] = "CASE WHEN " + credentialSettingCondition(datastoreTableAlias, c.RedactBy) +
+			" AND " + value + " <> '' THEN '" + redactedValue + "' ELSE " + value + " END AS " +
+			metrics.QuoteIdentifier(c.Name)
+	}
+	return strings.Join(parts, ", ")
 }
 
 // scopeCondition returns the predicate that limits src to the rows vis

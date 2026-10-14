@@ -2493,7 +2493,9 @@ project adheres to
   alerter settings and global thresholds, blackouts and probe
   settings, remain readable; each configuration source exposes an
   explicit list of columns, and stored connection passwords and
-  certificates are never available.
+  certificates are never available. In `pg_settings`, the values of
+  settings that can hold a credential, such as `primary_conninfo`,
+  are shown as `********`.
   Metric sources default to the last hour for every shape, including
   `latest`, so change-tracked probes need a wide `time_start`;
   `page_size` defaults to 100 and is capped at 1000, `page` times

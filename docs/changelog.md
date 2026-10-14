@@ -1158,6 +1158,12 @@ project adheres to
 
 ### Fixed
 
+- Load every configured alerter API key file when one of them
+  cannot be read (#626). The alerter previously stopped at the
+  first unreadable file, so a bad OpenAI key file also left the
+  Anthropic, Voyage, Gemini and TypeSafe keys unloaded; it now
+  loads the rest and logs one warning per file that failed.
+
 - Fix the anomaly detection baselines for
   `pg_stat_database.deadlocks_delta` and
   `pg_stat_database.temp_files_delta`, which counted one more

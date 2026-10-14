@@ -10,6 +10,8 @@
 package config
 
 import (
+	"errors"
+	"io/fs"
 	"math"
 	"os"
 	"path/filepath"
@@ -610,6 +612,56 @@ func TestLoadAPIKeys(t *testing.T) {
 		err := cfg.LoadAPIKeys()
 		if err == nil {
 			t.Error("expected error for missing key file, got nil")
+		}
+	})
+
+	t.Run("unreadable key file does not stop the others", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		keys := map[string]string{
+			"anthropic.key": "sk-ant-test-key\n",
+			"gemini.key":    "gemini-test-key\n",
+			"typesafe.key":  "typesafe-test-key\n",
+		}
+		for name, body := range keys {
+			if err := os.WriteFile(filepath.Join(tmpDir, name), []byte(body), 0600); err != nil {
+				t.Fatalf("failed to create key file: %v", err)
+			}
+		}
+
+		cfg := NewConfig()
+		cfg.LLM.OpenAI.APIKeyFile = filepath.Join(tmpDir, "missing-openai.key")
+		cfg.LLM.Anthropic.APIKeyFile = filepath.Join(tmpDir, "anthropic.key")
+		cfg.LLM.Voyage.APIKeyFile = filepath.Join(tmpDir, "missing-voyage.key")
+		cfg.LLM.Gemini.APIKeyFile = filepath.Join(tmpDir, "gemini.key")
+		cfg.LLM.TypeSafe.APIKeyFile = filepath.Join(tmpDir, "typesafe.key")
+
+		err := cfg.LoadAPIKeys()
+		if err == nil {
+			t.Fatal("expected an error for the missing key files, got nil")
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("error %v does not wrap fs.ErrNotExist", err)
+		}
+		joined, ok := err.(interface{ Unwrap() []error })
+		if !ok || len(joined.Unwrap()) != 2 {
+			t.Fatalf("error %v is not the two failures joined", err)
+		}
+		for _, want := range []string{"failed to read OpenAI API key", "failed to read Voyage API key"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error %q does not contain %q", err, want)
+			}
+		}
+		if got := cfg.GetAnthropicAPIKey(); got != "sk-ant-test-key" {
+			t.Errorf("Anthropic API key = %q", got)
+		}
+		if got := cfg.GetGeminiAPIKey(); got != "gemini-test-key" {
+			t.Errorf("Gemini API key = %q", got)
+		}
+		if got := cfg.GetTypeSafeAPIKey(); got != "typesafe-test-key" {
+			t.Errorf("TypeSafe API key = %q", got)
+		}
+		if cfg.GetOpenAIAPIKey() != "" || cfg.GetVoyageAPIKey() != "" {
+			t.Error("a key was set from a file that could not be read")
 		}
 	})
 

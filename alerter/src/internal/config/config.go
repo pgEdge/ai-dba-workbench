@@ -11,6 +11,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -623,49 +624,36 @@ func (c *Config) LoadPassword() error {
 	return nil
 }
 
-// LoadAPIKeys loads API keys from their respective files
+// LoadAPIKeys loads API keys from their respective files. It attempts
+// every configured key file, so that one unreadable file does not leave
+// the other providers without their keys, keeps each key it reads, and
+// returns the failures joined with errors.Join, or nil when there are
+// none.
 func (c *Config) LoadAPIKeys() error {
-	if c.LLM.OpenAI.APIKeyFile != "" {
-		key, err := fileutil.ReadSecretFile(c.LLM.OpenAI.APIKeyFile)
-		if err != nil {
-			return fmt.Errorf("failed to read OpenAI API key: %w", err)
-		}
-		c.LLM.OpenAI.apiKey = key
+	keys := []struct {
+		provider string
+		file     string
+		key      *string
+	}{
+		{"OpenAI", c.LLM.OpenAI.APIKeyFile, &c.LLM.OpenAI.apiKey},
+		{"Anthropic", c.LLM.Anthropic.APIKeyFile, &c.LLM.Anthropic.apiKey},
+		{"Voyage", c.LLM.Voyage.APIKeyFile, &c.LLM.Voyage.apiKey},
+		{"Gemini", c.LLM.Gemini.APIKeyFile, &c.LLM.Gemini.apiKey},
+		{"TypeSafe", c.LLM.TypeSafe.APIKeyFile, &c.LLM.TypeSafe.apiKey},
 	}
-
-	if c.LLM.Anthropic.APIKeyFile != "" {
-		key, err := fileutil.ReadSecretFile(c.LLM.Anthropic.APIKeyFile)
-		if err != nil {
-			return fmt.Errorf("failed to read Anthropic API key: %w", err)
+	var errs []error
+	for _, k := range keys {
+		if k.file == "" {
+			continue
 		}
-		c.LLM.Anthropic.apiKey = key
-	}
-
-	if c.LLM.Voyage.APIKeyFile != "" {
-		key, err := fileutil.ReadSecretFile(c.LLM.Voyage.APIKeyFile)
+		key, err := fileutil.ReadSecretFile(k.file)
 		if err != nil {
-			return fmt.Errorf("failed to read Voyage API key: %w", err)
+			errs = append(errs, fmt.Errorf("failed to read %s API key: %w", k.provider, err))
+			continue
 		}
-		c.LLM.Voyage.apiKey = key
+		*k.key = key
 	}
-
-	if c.LLM.Gemini.APIKeyFile != "" {
-		key, err := fileutil.ReadSecretFile(c.LLM.Gemini.APIKeyFile)
-		if err != nil {
-			return fmt.Errorf("failed to read Gemini API key: %w", err)
-		}
-		c.LLM.Gemini.apiKey = key
-	}
-
-	if c.LLM.TypeSafe.APIKeyFile != "" {
-		key, err := fileutil.ReadSecretFile(c.LLM.TypeSafe.APIKeyFile)
-		if err != nil {
-			return fmt.Errorf("failed to read TypeSafe API key: %w", err)
-		}
-		c.LLM.TypeSafe.apiKey = key
-	}
-
-	return nil
+	return errors.Join(errs...)
 }
 
 // GetOpenAIAPIKey returns the loaded OpenAI API key

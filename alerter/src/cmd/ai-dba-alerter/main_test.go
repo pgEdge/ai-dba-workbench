@@ -11,6 +11,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -314,6 +315,47 @@ func TestReloadConfigOnSignal_APIKeyWarning(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "WARNING") {
 		t.Errorf("log = %q, want it to contain WARNING", buf.String())
+	}
+}
+
+// TestReloadConfigOnSignal_APIKeyWarningPerKey checks that each API
+// key file that cannot be read gets a warning line of its own.
+func TestReloadConfigOnSignal_APIKeyWarningPerKey(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "alerter.yaml")
+	body := minimalValidYAML +
+		"llm:\n  openai:\n    api_key_file: /definitely/not/here\n" +
+		"  typesafe:\n    api_key_file: /definitely/not/there\n"
+	if err := os.WriteFile(cfgPath, []byte(body), 0600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	var buf bytes.Buffer
+	got, err := reloadConfigOnSignal(&buf, cfgPath, true, flagOverrides{})
+	if err != nil {
+		t.Fatalf("reloadConfigOnSignal: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected non-nil config even when api-key files are missing")
+	}
+	var warnings []string
+	for _, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+		if strings.HasPrefix(line, "WARNING: Failed to load API key on reload: ") {
+			warnings = append(warnings, line)
+		}
+	}
+	if len(warnings) != 2 ||
+		!strings.Contains(warnings[0], "OpenAI") || !strings.Contains(warnings[1], "TypeSafe") {
+		t.Errorf("warnings = %q, want one line each for OpenAI and TypeSafe", warnings)
+	}
+}
+
+func TestWarnEach(t *testing.T) {
+	var buf bytes.Buffer
+	warnEach(&buf, "W: ", errors.New("single"))
+	warnEach(&buf, "W: ", errors.Join(errors.New("first"), errors.New("second")))
+	if got, want := buf.String(), "W: single\nW: first\nW: second\n"; got != want {
+		t.Errorf("output = %q, want %q", got, want)
 	}
 }
 

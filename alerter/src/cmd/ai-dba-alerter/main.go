@@ -155,12 +155,23 @@ func reloadConfigOnSignal(
 	// API keys are non-critical: an error here is logged but does
 	// not block the reload.
 	if err := newCfg.LoadAPIKeys(); err != nil {
-		fmt.Fprintf(logOut,
-			"WARNING: Failed to load API keys on reload: %v\n", err)
+		warnEach(logOut, "WARNING: Failed to load API key on reload: ", err)
 	}
 
 	fmt.Fprintf(logOut, "Configuration reloaded from %s\n", reloadPath)
 	return newCfg, nil
+}
+
+// warnEach writes each error joined in err on a line of its own, after
+// prefix, so that every line of the log carries the prefix.
+func warnEach(w io.Writer, prefix string, err error) {
+	errs := []error{err}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		errs = joined.Unwrap()
+	}
+	for _, e := range errs {
+		fmt.Fprintf(w, "%s%v\n", prefix, e)
+	}
 }
 
 func main() {
@@ -251,8 +262,9 @@ func main() {
 
 	// Load API keys for LLM providers
 	if err := cfg.LoadAPIKeys(); err != nil {
-		fmt.Fprintf(os.Stderr, "WARNING: %v\n", err)
-		// Continue without API keys - they may not be needed
+		// Continue without the keys that failed - they may not be
+		// needed, and the others are loaded
+		warnEach(os.Stderr, "WARNING: ", err)
 	}
 
 	// Initialize datastore connection

@@ -112,30 +112,56 @@ carries a historical query, because the baseline calculator has
 nothing else to build a baseline from. The `SupportsBaselines`
 helper in the `database` package makes that check, and both the
 baseline calculator and the detector skip any rule whose metric
-fails the check. Of the 31 registry metrics, 16 carry a historical
-query and 15 do not. The following metrics have no historical
-query and are therefore never baselined or scored:
+fails the check. Of the 31 registry metrics, 20 carry a historical
+query and 11 do not. Each historical query computes the same
+statistic as the metric's latest query, so a live value is always
+scored against a baseline of like values. GitHub issue #490 added
+historical queries for `pg_stat_replication.lag_bytes`,
+`pg_stat_checkpointer.checkpoints_req_delta`,
+`pg_stat_statements.slow_query_count` and
+`pg_stat_activity.max_lock_wait_seconds`. Like the latest query,
+the historical query for `max_lock_wait_seconds` only reports
+samples in which a client backend waits on a lock, so the baseline
+describes lock waits rather than uncontended operation. The
+historical query for `checkpoints_req_delta` sums each UTC hour's
+deltas within that hour, so every bucket carries as many deltas as
+the live one-hour value.
 
-- `age_percent`
-- `pg_node_role.subscription_worker_down`
-- `pg_replication_slots.inactive`
-- `pg_replication_slots.inactive_count`, deliberately: it is a
-  presence count that is almost always zero, and the
-  `replication_slot_inactive` threshold rule on
-  `pg_replication_slots.inactive` already alerts on the condition it
-  counts.
-- `pg_replication_slots.retained_bytes`
-- `pg_settings.max_connections`, deliberately: it is a configuration
-  value that exists for the `high_max_connections` threshold rule.
-- `pg_stat_activity.max_lock_wait_seconds`
-- `pg_stat_all_tables.dead_tuple_percent`
-- `pg_stat_archiver.failed_count_delta`
-- `pg_stat_checkpointer.checkpoints_req_delta`
-- `pg_stat_replication.lag_bytes`
-- `pg_stat_replication.replay_lag_seconds`
-- `pg_stat_replication.standby_disconnected`
-- `pg_stat_statements.slow_query_count`
-- `table_last_autovacuum_hours`
+The following metrics have no historical query, deliberately, and
+are therefore never baselined or scored:
+
+- `age_percent`: the value is a slow sawtooth whose drop after an
+  anti-wraparound (freeze) vacuum is exactly what a two-sided
+  z-score would flag, whilst the threshold rule already covers the
+  real wraparound risk.
+- `pg_node_role.subscription_worker_down`,
+  `pg_replication_slots.inactive` and
+  `pg_stat_replication.standby_disconnected`: each is a presence
+  flag that only ever emits 1, so a baseline would have no
+  variance and nothing normal to compare with.
+- `pg_replication_slots.inactive_count`: it is a presence count
+  that is almost always zero, and the `replication_slot_inactive`
+  threshold rule on `pg_replication_slots.inactive` already alerts
+  on the condition it counts.
+- `pg_replication_slots.retained_bytes`: it reports the same value
+  as `pg_replication_slots.max_retained_bytes`, which is already
+  baselined, and no built-in rule reads it, so a baseline would
+  only double the anomaly candidates.
+- `pg_settings.max_connections`: it is a configuration value that
+  exists for the `high_max_connections` threshold rule.
+- `pg_stat_all_tables.dead_tuple_percent`: it is reported per
+  table, which `metric_baselines` cannot store, it only emits rows
+  above the dead tuple floors, and it is a sawtooth that vacuum
+  resets.
+- `pg_stat_archiver.failed_count_delta`: its healthy value is
+  always zero, and any archive failure is already actionable
+  through the threshold rule.
+- `pg_stat_replication.replay_lag_seconds`:
+  `pg_stat_replication.lag_bytes` carries the same replication lag
+  signal.
+- `table_last_autovacuum_hours`: it is a time-since clock that only
+  emits tables already past their autovacuum trigger, so every row
+  is an alert condition; an object dimension would not change that.
 
 Threshold-based rules for these metrics are unaffected. Earlier
 releases built a baseline for such metrics from the single most
@@ -151,7 +177,8 @@ report them.
 
 Baselines are stored per connection and, for metrics whose
 historical query returns a database name (for example
-`cache_hit_ratio`, `deadlocks_delta` and `temp_files_delta`), per
+`cache_hit_ratio`, `deadlocks_delta`, `temp_files_delta` and
+`slow_query_count`), per
 database. Tier 1 reads back the baselines for the same database as
 the value being scored, so a value from one database is never
 compared with another database's baseline. A metric whose latest

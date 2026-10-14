@@ -419,6 +419,25 @@ project adheres to
 
 ### Changed
 
+- Build anomaly detection baselines for four more metrics (#490):
+  `pg_stat_replication.lag_bytes`,
+  `pg_stat_checkpointer.checkpoints_req_delta`,
+  `pg_stat_statements.slow_query_count` (per database) and
+  `pg_stat_activity.max_lock_wait_seconds`, which were previously
+  never scored by tier 1. Each historical query computes the same
+  statistic as the metric's latest query: the largest lag across
+  standbys, requested checkpoints counted within each hour and
+  leaving out hours spent in recovery, slow statements counted from
+  per-interval mean execution times, and the longest lock wait in
+  samples where a backend waits on a lock. The live `lag_bytes`
+  value now reads only each server's newest sample, so a standby
+  that disconnects whilst another stays attached drops out of it at
+  the next sample rather than holding it up for five minutes; when
+  the last standby leaves, the probe stores nothing and the previous
+  sample still stands for up to five minutes.
+  The developer guide now gives the reason each of the 11 remaining
+  metrics stays out of anomaly detection.
+
 - Apply the federated login policy under `http.auth.oidc` on a
   `SIGHUP` configuration reload instead of requiring a restart (#484).
   `provision_users`, `allowed_email_domains`, `superuser_group`,

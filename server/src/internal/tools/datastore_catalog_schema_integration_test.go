@@ -249,3 +249,30 @@ func TestMetricSourcesResolveAgainstCollectorSchema(t *testing.T) {
 		t.Error("the collector schema yields no metric sources")
 	}
 }
+
+// TestMetricRedactionsMatchCollectorSchema checks that every probe in
+// metricRedactions still has the setting-name column and every value
+// column it masks, so a collector rename cannot leave a credential
+// unmasked or quietly drop a column.
+func TestMetricRedactionsMatchCollectorSchema(t *testing.T) {
+	pool := newCollectorSchemaPool(t)
+	ctx := context.Background()
+
+	for name, rule := range metricRedactions {
+		src, err := lookupDatastoreSource(ctx, pool, name)
+		if err != nil {
+			t.Errorf("redacted probe %q cannot be looked up: %v", name, err)
+			continue
+		}
+		if _, ok := src.column(rule.KeyColumn); !ok {
+			t.Errorf("redacted probe %q has no %s column", name, rule.KeyColumn)
+		}
+		for _, c := range rule.Columns {
+			got, ok := src.column(c)
+			if !ok || got.RedactBy != rule.KeyColumn {
+				t.Errorf("probe %q column %s should be masked by %s, got %+v (present=%v)",
+					name, c, rule.KeyColumn, got, ok)
+			}
+		}
+	}
+}

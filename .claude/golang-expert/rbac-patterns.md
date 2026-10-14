@@ -667,6 +667,8 @@ takes the longest match), spell white space as the ASCII class `ws`,
 bound any repetition of comments, and have exactly one capturing
 group. A retyped column records its original type in `StoredType`,
 which `datastoreEntityKeys` uses.
+`TestMetricRedactionsMatchCollectorSchema` checks the real probe still
+has the columns each rule names.
 `TestConfigurationSourcesMatchCollectorSchema` checks every catalog
 table, column and type against the collector's real schema, and fails
 on a collector column of a catalogued table that is neither catalogued

@@ -159,20 +159,25 @@ type MetricBaseline struct {
 
 // AnomalyCandidate represents a candidate anomaly for tier 2/3 processing
 type AnomalyCandidate struct {
-	ID            int64      `json:"id"`
-	ConnectionID  int        `json:"connection_id"`
-	DatabaseName  *string    `json:"database_name,omitempty"`
-	MetricName    string     `json:"metric_name"`
-	MetricValue   float64    `json:"metric_value"`
-	ZScore        float64    `json:"z_score"`
-	DetectedAt    time.Time  `json:"detected_at"`
-	Context       string     `json:"context"`
-	Tier1Pass     bool       `json:"tier1_pass"`
-	Tier2Score    *float64   `json:"tier2_score,omitempty"`
-	Tier2Pass     *bool      `json:"tier2_pass,omitempty"`
-	Tier3Result   *string    `json:"tier3_result,omitempty"`
-	Tier3Pass     *bool      `json:"tier3_pass,omitempty"`
-	Tier3Error    *string    `json:"tier3_error,omitempty"`
+	ID           int64     `json:"id"`
+	ConnectionID int       `json:"connection_id"`
+	DatabaseName *string   `json:"database_name,omitempty"`
+	MetricName   string    `json:"metric_name"`
+	MetricValue  float64   `json:"metric_value"`
+	ZScore       float64   `json:"z_score"`
+	DetectedAt   time.Time `json:"detected_at"`
+	Context      string    `json:"context"`
+	Tier1Pass    bool      `json:"tier1_pass"`
+	Tier2Score   *float64  `json:"tier2_score,omitempty"`
+	Tier2Pass    *bool     `json:"tier2_pass,omitempty"`
+	Tier3Result  *string   `json:"tier3_result,omitempty"`
+	Tier3Pass    *bool     `json:"tier3_pass,omitempty"`
+	Tier3Error   *string   `json:"tier3_error,omitempty"`
+	// Tier3Source is "decision" or "reasoning": the kind of model whose
+	// outcome set Tier3Pass (GitHub issue #626).
+	Tier3Source *string `json:"tier3_source,omitempty"`
+	// Tier3Model is the provider/model that Tier3Source names.
+	Tier3Model    *string    `json:"tier3_model,omitempty"`
 	FinalDecision *string    `json:"final_decision,omitempty"`
 	AlertID       *int64     `json:"alert_id,omitempty"`
 	ProcessedAt   *time.Time `json:"processed_at,omitempty"`

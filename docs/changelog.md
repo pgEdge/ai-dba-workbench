@@ -1130,6 +1130,16 @@ project adheres to
 
 ### Fixed
 
+- Fix the anomaly detection baselines for
+  `pg_stat_database.deadlocks_delta` and
+  `pg_stat_database.temp_files_delta`, which counted one more
+  sample-to-sample increase in each hour than the live value
+  does, because each hour's first sample was compared with the
+  previous hour's last (#639). The baseline sat too high, so a
+  server doing the same work every hour scored as unusually
+  quiet; each hour is now counted on its own, as the live value
+  is.
+
 - Fix the `pg_stat_replication.replay_lag_seconds` alert metric,
   which never returned a value because its query read a
   `replay_lsn_timestamp` column that the collector does not store

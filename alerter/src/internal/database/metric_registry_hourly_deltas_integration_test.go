@@ -198,9 +198,11 @@ func TestMetricRegistry_HourlyDeltas_PerDatabase(t *testing.T) {
 // TestMetricRegistry_HourlyDeltas_HistoricalHourlyBuckets verifies the
 // baseline feed: one row per connection, database and hour bucket, whose
 // value is the sum of positive per-sample deltas inside that hour and
-// whose collected_at is the bucket start. The delta is computed before
-// bucketing, so the first sample of an hour is paired with the last
-// sample of the previous hour, and a reset inside a bucket adds zero.
+// whose collected_at is the bucket start. The delta is computed within
+// each bucket, as the latest query computes it within its one hour
+// window, so the first sample of an hour is not paired with the last
+// sample of the previous hour (GitHub issue #639), and a reset inside a
+// bucket adds zero.
 func TestMetricRegistry_HourlyDeltas_HistoricalHourlyBuckets(t *testing.T) {
 	ds, pool, cleanup := newHistoricalMetricsTestDatastore(t)
 	defer cleanup()
@@ -213,10 +215,11 @@ func TestMetricRegistry_HourlyDeltas_HistoricalHourlyBuckets(t *testing.T) {
 	// predecessor and contributes nothing).
 	insertCounterSamples(t, pool, connID, "appdb", h0, 10*time.Minute,
 		[]int64{10, 12, 15})
-	// Hour h1: 15 -> 16 is +1 across the hour boundary, then 16 -> 10 is
-	// a reset that counts 0, so the bucket totals 1.
+	// Hour h1: 15 -> 16 crosses the hour boundary and is not counted,
+	// 16 -> 10 is a reset that counts 0, and 10 -> 13 adds 3, so the
+	// bucket totals 3.
 	insertCounterSamples(t, pool, connID, "appdb", h1.Add(5*time.Minute),
-		35*time.Minute, []int64{16, 10})
+		20*time.Minute, []int64{16, 10, 13})
 
 	for _, metric := range hourlyDeltaMetrics {
 		t.Run(metric, func(t *testing.T) {
@@ -237,7 +240,7 @@ func TestMetricRegistry_HourlyDeltas_HistoricalHourlyBuckets(t *testing.T) {
 				bucket  time.Time
 				value   float64
 				samples int64
-			}{{h0, 5, 3}, {h1, 1, 2}}
+			}{{h0, 5, 3}, {h1, 3, 3}}
 			for i, w := range want {
 				if !got[i].CollectedAt.Equal(w.bucket) {
 					t.Errorf("bucket[%d] collected_at = %s, want %s",
@@ -400,5 +403,133 @@ func TestMetricRegistry_HourlyDeltas_HistoricalScanError(t *testing.T) {
 				t.Error("expected a scan error for a null database_name, got none")
 			}
 		})
+	}
+}
+
+// TestMetricRegistry_HourlyDeltas_HistoricalMatchesLatest checks that
+// every hourly historical bucket equals what the latest query reported at
+// the end of that hour, for two connections with two databases each whose
+// samples interleave. The samples span three hours at a 600 second
+// interval, so a bucket that took its first delta from the previous
+// hour's last sample would hold six deltas against the live value's five
+// (GitHub issue #639); a LAG that ignored the connection or the database
+// would difference one counter against another of a very different size;
+// and a template database must be absent from both queries.
+func TestMetricRegistry_HourlyDeltas_HistoricalMatchesLatest(t *testing.T) {
+	ds, pool, cleanup := newHistoricalMetricsTestDatastore(t)
+	defer cleanup()
+	clocked, setClock := newClockedDatastore(t, pool)
+
+	const hours = 3
+	h0 := time.Now().UTC().Truncate(time.Hour).Add(-5 * time.Hour)
+	first := insertConnection(t, pool, "hourly-delta-639-first")
+	second := insertConnection(t, pool, "hourly-delta-639-second")
+
+	series := []struct {
+		connID int
+		db     string
+		minute int
+		// counter returns the cumulative counter at sample n.
+		counter func(n int) int64
+		// want is the per-bucket value, or nil for no row.
+		want []float64
+	}{
+		{
+			// One per sample.
+			connID: first, db: "alpha", minute: 1,
+			counter: func(n int) int64 { return 1000 + int64(n) },
+			want:    []float64{5, 5, 5},
+		},
+		{
+			// Two per sample, with a statistics reset at the fourth
+			// sample of the second hour, counted as 0.
+			connID: first, db: "beta", minute: 3,
+			counter: func(n int) int64 {
+				if n >= 9 {
+					return 2 * int64(n-9)
+				}
+				return 10 + 2*int64(n)
+			},
+			want: []float64{10, 8, 10},
+		},
+		{
+			// The same database name as the first connection's, with a
+			// far larger counter.
+			connID: second, db: "alpha", minute: 5,
+			counter: func(n int) int64 { return 70000 + 3*int64(n) },
+			want:    []float64{15, 15, 15},
+		},
+		{
+			connID: second, db: "beta", minute: 7,
+			counter: func(n int) int64 { return 500 + 4*int64(n) },
+			want:    []float64{20, 20, 20},
+		},
+		{
+			// A template database: excluded from both queries.
+			connID: second, db: "template1", minute: 9,
+			counter: func(n int) int64 { return 9000 + 50*int64(n) },
+		},
+	}
+
+	// The latest query assumes no sample is newer than NOW(), so each
+	// hour's samples are written just before the clock reaches the end
+	// of that hour.
+	for h := 0; h < hours; h++ {
+		for _, s := range series {
+			for n := 6 * h; n < 6*(h+1); n++ {
+				at := h0.Add(time.Duration(s.minute+10*n) * time.Minute)
+				insertCounterSamples(t, pool, s.connID, s.db, at, 0,
+					[]int64{s.counter(n)})
+			}
+		}
+
+		setClock(h0.Add(time.Duration(h+1) * time.Hour))
+		for _, metric := range hourlyDeltaMetrics {
+			latest := map[int]map[string]MetricValue{
+				first:  latestRowsFor(t, clocked, metric, first),
+				second: latestRowsFor(t, clocked, metric, second),
+			}
+			for _, s := range series {
+				got, ok := latest[s.connID][s.db]
+				switch {
+				case s.want == nil && ok:
+					t.Errorf("%s %s: latest at the end of hour %d = %v, want no row",
+						metric, s.db, h, got.Value)
+				case s.want != nil && !ok:
+					t.Errorf("%s %s: no latest row at the end of hour %d", metric, s.db, h)
+				case ok:
+					assertClose(t, metric+" "+s.db+" latest", got.Value, s.want[h])
+				}
+			}
+		}
+	}
+
+	for _, metric := range hourlyDeltaMetrics {
+		historical := map[int]map[historicalKey]HistoricalMetricValue{
+			first:  historicalRowsByKey(t, ds, metric, first),
+			second: historicalRowsByKey(t, ds, metric, second),
+		}
+		if n := len(historical[first]) + len(historical[second]); n != 4*hours {
+			t.Errorf("%s: %d historical rows, want %d", metric, n, 4*hours)
+		}
+		for _, s := range series {
+			for h := 0; h < hours; h++ {
+				bucket := h0.Add(time.Duration(h) * time.Hour)
+				row, ok := historical[s.connID][historicalKey{s.db, bucket}]
+				switch {
+				case s.want == nil && ok:
+					t.Errorf("%s %s: historical bucket %d = %+v, want none",
+						metric, s.db, h, row)
+				case s.want != nil && !ok:
+					t.Errorf("%s %s: no historical bucket %d", metric, s.db, h)
+				case ok:
+					if row.SampleCount != 6 {
+						t.Errorf("%s %s: bucket %d sample count = %d, want 6",
+							metric, s.db, h, row.SampleCount)
+					}
+					assertClose(t, metric+" "+s.db+" historical", row.Value, s.want[h])
+				}
+			}
+		}
 	}
 }

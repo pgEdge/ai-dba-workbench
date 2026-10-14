@@ -297,13 +297,14 @@ const sqlCodeOnly = (statement: string): string =>
  * comments and literals are blanked out: angle-bracket stand-ins
  * (`<table_name>`), template braces (`{{schema}}`), shell-style
  * substitutions (`${table_name}`) and bare psql variables (`:name`, but
- * not a `::` cast or an `a[lo:hi]` slice).
+ * not a `::` cast, an `a[lo:hi]` slice or an `a[:hi]` slice that omits
+ * its lower bound).
  */
 const OTHER_PLACEHOLDER_RES: RegExp[] = [
     /<[A-Za-z_][\w.]*>/,
     /\{\{[^}]*\}\}/,
     /\$\{[^}]*\}/,
-    /(?<![:\w]):(?!:)[A-Za-z_]/,
+    /(?<![:\w])(?<!\[\s*):(?!:)[A-Za-z_]/,
 ];
 
 /** A plain run ending in the `:` that opens a quoted psql variable. */

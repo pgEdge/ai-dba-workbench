@@ -26,20 +26,33 @@ import { createTheme } from '@mui/material/styles';
 import ConnectionSelectorCodeBlock from '../ConnectionSelectorCodeBlock';
 import { renderWithTheme } from '../../../test/renderWithTheme';
 
-vi.mock('../RunnableCodeBlock', () => ({
-    default: (props: Record<string, unknown>) => (
-        <div
-            data-testid="runnable-code-block"
-            data-connection-id={String(props.connectionId)}
-            data-server-name={String(props.serverName)}
-            data-database-name={String(props.databaseName ?? '')}
-            data-language={String(props.language)}
-            data-is-sql={String(props.isSql)}
-        >
-            {String(props.codeContent)}
-        </div>
-    ),
-}));
+// Counts mounts of the mocked block, so a test can tell a remount from a
+// re-render with new props.
+const mounts = vi.hoisted(() => ({ count: 0 }));
+
+vi.mock('../RunnableCodeBlock', async () => {
+    const React = await vi.importActual<typeof import('react')>('react');
+    const MockRunnableCodeBlock = (props: Record<string, unknown>) => {
+        const [mountId] = React.useState(() => {
+            mounts.count += 1;
+            return mounts.count;
+        });
+        return (
+            <div
+                data-testid="runnable-code-block"
+                data-mount-id={String(mountId)}
+                data-connection-id={String(props.connectionId)}
+                data-server-name={String(props.serverName)}
+                data-database-name={String(props.databaseName ?? '')}
+                data-language={String(props.language)}
+                data-is-sql={String(props.isSql)}
+            >
+                {String(props.codeContent)}
+            </div>
+        );
+    };
+    return { default: MockRunnableCodeBlock };
+});
 
 const theme = createTheme();
 
@@ -207,6 +220,21 @@ describe('ConnectionSelectorCodeBlock', () => {
             expect(runnable.dataset.isSql).toBe('true');
             expect(runnable.dataset.databaseName).toBe('hr');
             expect(select).toHaveTextContent('alpha/hr (ID: 1)');
+        });
+
+        it('remounts the code block when the target changes', async () => {
+            const user = userEvent.setup();
+            renderWithTheme(
+                <ConnectionSelectorCodeBlock {...baseProps} options={options} />,
+            );
+            const firstMount = screen.getByTestId('runnable-code-block')
+                .dataset.mountId;
+
+            await user.click(screen.getByRole('combobox'));
+            await user.click(screen.getByRole('option', { name: 'beta (ID: 2)' }));
+
+            expect(screen.getByTestId('runnable-code-block').dataset.mountId)
+                .not.toBe(firstMount);
         });
 
         it('keeps the chosen target when the options are reordered', async () => {

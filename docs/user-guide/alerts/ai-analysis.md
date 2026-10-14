@@ -150,7 +150,8 @@ The system detects write statements such as `ALTER`,
 `CREATE`, `DROP`, `INSERT`, `UPDATE`, and `DELETE`. When
 a code block contains write statements, the system
 displays a confirmation prompt listing the detected
-statements. The user must click Execute to proceed or
+statements and naming the server, and the database where
+known, that they will run on. The user must click Execute to proceed or
 Cancel to abort.
 
 A `SELECT` statement that calls a function with side

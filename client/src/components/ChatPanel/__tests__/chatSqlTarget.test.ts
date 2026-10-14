@@ -245,6 +245,15 @@ describe('planSqlBlock', () => {
         expect(plan).toEqual({ kind: 'copy' });
     });
 
+    it('asks when a later comment names a server', () => {
+        const plan = planSqlBlock(
+            'SELECT 1;\n-- connection_id: 2',
+            reply({ targets: [{ connectionId: 1 }] }),
+            servers,
+        );
+        expect(plan.kind).toBe('select');
+    });
+
     it('offers no Run button when no server is known', () => {
         expect(planSqlBlock('SELECT 1', reply(), new Map())).toEqual({ kind: 'copy' });
     });
@@ -253,7 +262,7 @@ describe('planSqlBlock', () => {
         it('runs on the named server, stripping the comment', () => {
             const plan = planSqlBlock(
                 '-- connection_id: 3\nSELECT 1',
-                reply({ targets: [{ connectionId: 1 }] }),
+                reply({ targets: [{ connectionId: 3 }] }),
                 servers,
             );
             expect(plan).toEqual({
@@ -261,6 +270,65 @@ describe('planSqlBlock', () => {
                 code: 'SELECT 1',
                 target: { connectionId: 3, serverName: 'gamma', databaseName: undefined },
             });
+        });
+
+        it('runs on the named server when the reply named no server', () => {
+            const plan = planSqlBlock(
+                '-- connection_id: 3\nSELECT 1',
+                reply({ unattributed: true }),
+                servers,
+            );
+            expect(plan).toMatchObject({
+                kind: 'run',
+                target: { connectionId: 3, serverName: 'gamma' },
+            });
+        });
+
+        it('asks when the comment names a server the reply did not use', () => {
+            const plan = planSqlBlock(
+                '-- connection_id: 2\nSELECT 1',
+                reply({ targets: [{ connectionId: 1, databaseName: 'app' }] }),
+                servers,
+            );
+            expect(plan).toEqual({
+                kind: 'select',
+                code: 'SELECT 1',
+                options: [
+                    { connectionId: 1, serverName: 'alpha', databaseName: 'app' },
+                    { connectionId: 2, serverName: 'beta', databaseName: 'appdb' },
+                    { connectionId: 3, serverName: 'gamma', databaseName: undefined },
+                ],
+            });
+        });
+
+        it('offers no Run button for a server the user cannot see', () => {
+            expect(planSqlBlock(
+                '-- connection_id: 99\nSELECT 1',
+                reply({ targets: [{ connectionId: 99 }] }),
+                servers,
+            )).toEqual({ kind: 'copy' });
+        });
+
+        it('asks when a second comment names another server', () => {
+            const plan = planSqlBlock(
+                '-- connection_id: 2\n-- connection_id: 1\nSELECT 1;',
+                reply({ targets: [{ connectionId: 2 }] }),
+                servers,
+            );
+            expect(plan).toMatchObject({
+                kind: 'select',
+                code: '-- connection_id: 1\nSELECT 1;',
+            });
+            expect(plan.kind === 'select' && plan.options.map((o) => o.connectionId))
+                .toEqual([2, 1, 3]);
+        });
+
+        it('offers no Run button for a block that is only the comment', () => {
+            expect(planSqlBlock(
+                '-- connection_id: 1\n',
+                reply({ targets: [{ connectionId: 1 }] }),
+                servers,
+            )).toEqual({ kind: 'copy' });
         });
 
         it('uses the database the reply used on that server', () => {

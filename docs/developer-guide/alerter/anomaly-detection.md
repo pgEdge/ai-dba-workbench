@@ -627,7 +627,7 @@ of 0.5:
 | Model | Agreement with stored decisions | Median latency | Cost per 1,000 decisions |
 |-------|---------------------------------|----------------|--------------------------|
 | TypeSafe `jev-latest` | 89% | About 200 ms | About US$0.04 |
-| OpenAI `gpt-6-luna` decisions | 79% | Not measured | Not confirmed |
+| OpenAI `gpt-6-luna` decisions | 79% | About 250 ms | Not confirmed |
 | Claude Haiku 4.5 reasoning | 91% | About 3 s | About US$1.93 |
 
 The spike produced the following findings:

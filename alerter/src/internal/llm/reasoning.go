@@ -18,7 +18,8 @@ import (
 
 	pgllm "github.com/pgEdge/pgedge-go-llm-lib/llm"
 	// Register all built-in LLM providers (anthropic, openai, gemini,
-	// ollama, voyage) so pgllm.NewClient can construct them by name.
+	// ollama, typesafe, voyage) so pgllm.NewClient can construct them by
+	// name.
 	_ "github.com/pgEdge/pgedge-go-llm-lib/llm/all"
 )
 

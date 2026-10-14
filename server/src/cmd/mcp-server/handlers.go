@@ -46,6 +46,13 @@ func registerDatastoreHandler(mux *http.ServeMux, handler routeRegistrar, authWr
 	}
 }
 
+// denialRecorderWired, when set, is called with each handler that
+// SetupHandlers gives the RBAC handler's denial recorder. It is nil in
+// production; tests set it to check that no handler drops out of the
+// list, since a missing one would silently stop its refusals being
+// audited.
+var denialRecorderWired func(handler any)
+
 // HandlerDependencies holds all dependencies needed for HTTP handlers
 type HandlerDependencies struct {
 	AuthStore    *auth.AuthStore
@@ -308,6 +315,9 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 				probeOverrideHandler, channelOverrideHandler,
 			} {
 				h.SetDenialRecorder(rbacHandler.RecordDenial)
+				if denialRecorderWired != nil {
+					denialRecorderWired(h)
+				}
 			}
 			rbacHandler.RegisterRoutes(mux, authWrapper)
 			fmt.Fprintf(os.Stderr, "RBAC management: ENABLED\n")

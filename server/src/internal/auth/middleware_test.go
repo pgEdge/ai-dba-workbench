@@ -578,6 +578,29 @@ func TestIPExtractor_ExtractIP(t *testing.T) {
 		}
 	})
 
+	// Test case: one client spelt several ways yields one address, so
+	// the spellings share an audit address and a denial key
+	t.Run("forwarded addresses are canonicalised", func(t *testing.T) {
+		extractor := NewIPExtractor([]string{"10.0.0.0/8"})
+		for _, tc := range []struct{ header, value, want string }{
+			{"X-Forwarded-For", "2001:0DB8::1", "2001:db8::1"},
+			{"X-Forwarded-For", "2001:db8:0:0:0:0:0:1", "2001:db8::1"},
+			{"X-Forwarded-For", "[2001:DB8::1]:443", "2001:db8::1"},
+			{"X-Forwarded-For", "10.0.0.5, 10.0.0.2", "10.0.0.5"},
+			{"X-Real-IP", "2001:DB8:0::1", "2001:db8::1"},
+			{"X-Real-IP", "::ffff:198.51.100.4", "198.51.100.4"},
+		} {
+			req := httptest.NewRequest("GET", "/", nil)
+			req.RemoteAddr = "10.0.0.1:12345"
+			req.Header.Set(tc.header, tc.value)
+
+			if ip := extractor.ExtractIP(req); ip != tc.want {
+				t.Errorf("%s %q: expected %q, got %q", tc.header, tc.value,
+					tc.want, ip)
+			}
+		}
+	})
+
 	// Test case: malformed X-Forwarded-For entries
 	t.Run("malformed XFF entries skipped", func(t *testing.T) {
 		extractor := NewIPExtractor([]string{"10.0.0.0/8"})

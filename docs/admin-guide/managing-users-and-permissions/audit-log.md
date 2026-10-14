@@ -141,9 +141,10 @@ blackout schedule, a probe configuration or an alert, probe or channel
 override is recorded under the action the change would have used, such
 as `blackout.update`, `blackout_schedule.create`, `probe_config.update`
 or `alert_override.delete`. A request to change a cluster group that
-the caller does not own, or to create a group or a cluster without the
-`manage_connections` permission, is recorded under `cluster_group.create`,
-`cluster_group.update` or `cluster_group.delete`. A blackout or schedule
+the caller does not own, or to create a group, or a cluster within a
+group, without the `manage_connections` permission, is recorded under
+`cluster_group.create`, `cluster_group.update` or
+`cluster_group.delete`. A blackout or schedule
 on a connection the token cannot see is refused as though it did not
 exist, and, as with connections, that refusal is not recorded.
 

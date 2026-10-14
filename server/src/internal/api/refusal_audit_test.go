@@ -224,6 +224,19 @@ func TestBlackoutRefusalsAreAudited(t *testing.T) {
 		// answered as though it did not exist, and nothing is recorded.
 		{"stop hidden blackout", http.MethodPost, "/api/v1/blackouts/2/stop",
 			"", http.StatusNotFound, nil},
+		// The stored schedule is checked before the body, so a schedule
+		// the token cannot see, or one that does not exist, answers 404
+		// without a row even when the body names an out-of-scope target.
+		{"update hidden schedule", http.MethodPut,
+			"/api/v1/blackout-schedules/2", estateSchedule,
+			http.StatusNotFound, nil},
+		{"update missing schedule", http.MethodPut,
+			"/api/v1/blackout-schedules/999999", estateSchedule,
+			http.StatusNotFound, nil},
+		{"update visible schedule to estate", http.MethodPut,
+			"/api/v1/blackout-schedules/1", estateSchedule,
+			http.StatusForbidden, []routedDenial{
+				{"blackout_schedule.update", "blackout-schedules/1", targetOutOfTokenScope}}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

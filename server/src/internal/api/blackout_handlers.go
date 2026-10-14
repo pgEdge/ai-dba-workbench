@@ -776,6 +776,15 @@ func (h *BlackoutHandler) updateBlackoutSchedule(w http.ResponseWriter, r *http.
 		return
 	}
 
+	// Moving a schedule is a change to both where it was and where it
+	// goes, so the token must cover the existing target as well. The
+	// stored record is checked first, as updateBlackout does, so that a
+	// schedule the token cannot see answers 404 without an audit row
+	// whatever the body names.
+	if !h.requireBlackoutScheduleInTokenScope(w, r, id) {
+		return
+	}
+
 	// Validate scope
 	if err := validateBlackoutScope(req.Scope, req.GroupID, req.ClusterID, req.ConnectionID); err != nil {
 		log.Printf("[ERROR] Request error: %v", err)
@@ -808,12 +817,6 @@ func (h *BlackoutHandler) updateBlackoutSchedule(w http.ResponseWriter, r *http.
 	enabled := true
 	if req.Enabled != nil {
 		enabled = *req.Enabled
-	}
-
-	// Moving a schedule is a change to both where it was and where it
-	// goes, so the token must cover the existing target as well.
-	if !h.requireBlackoutScheduleInTokenScope(w, r, id) {
-		return
 	}
 
 	schedule := &database.BlackoutSchedule{

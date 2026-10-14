@@ -12,8 +12,11 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"sort"
 	"strings"
 	"testing"
 
@@ -198,5 +201,46 @@ func TestSetupHandlersRegistersOptionalEndpoints(t *testing.T) {
 	}
 	if caps["max_iterations"] != float64(7) {
 		t.Errorf("Expected max_iterations 7, got %v", caps["max_iterations"])
+	}
+}
+
+// TestSetupHandlersWiresDenialRecorders checks that every handler whose
+// refusals are audited is given the RBAC handler's denial recorder.
+// Dropping one from the list compiles and passes every handler test,
+// but in production its refusals would silently go unrecorded.
+func TestSetupHandlersWiresDenialRecorders(t *testing.T) {
+	store, _ := newWrapperTestStore(t)
+
+	var wired []string
+	denialRecorderWired = func(h any) {
+		wired = append(wired, fmt.Sprintf("%T", h))
+	}
+	t.Cleanup(func() { denialRecorderWired = nil })
+
+	deps := &HandlerDependencies{
+		AuthStore: store,
+		Datastore: database.NewTestDatastore(nil),
+		Config:    &config.Config{},
+	}
+	captureStderr(t, func() {
+		if err := SetupHandlers(deps)(http.NewServeMux()); err != nil {
+			t.Fatalf("SetupHandlers returned an error: %v", err)
+		}
+	})
+
+	want := []string{
+		"*api.AlertOverrideHandler",
+		"*api.AlertRuleHandler",
+		"*api.BlackoutHandler",
+		"*api.ChannelOverrideHandler",
+		"*api.ClusterHandler",
+		"*api.ConnectionHandler",
+		"*api.NotificationChannelHandler",
+		"*api.ProbeConfigHandler",
+		"*api.ProbeOverrideHandler",
+	}
+	sort.Strings(wired)
+	if !slices.Equal(wired, want) {
+		t.Errorf("Expected denial recorders on\n%v\ngot\n%v", want, wired)
 	}
 }

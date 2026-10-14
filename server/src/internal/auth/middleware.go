@@ -298,21 +298,26 @@ func (e *IPExtractor) ExtractIP(r *http.Request) string {
 }
 
 // parseForwardedIP returns the IP address in one forwarded header
-// entry, or "" when the entry holds none. Some proxies append the
-// client's port, as "203.0.113.7:51234" or "[2001:db8::1]:443", so a
-// port is stripped first: discarding such an entry would attribute
-// every client behind that proxy to the proxy itself, sharing one
-// login rate-limit bucket and one audit address between them.
+// entry, in canonical form, or "" when the entry holds none. Some
+// proxies append the client's port, as "203.0.113.7:51234" or
+// "[2001:db8::1]:443", so a port is stripped first: discarding such an
+// entry would attribute every client behind that proxy to the proxy
+// itself, sharing one login rate-limit bucket and one audit address
+// between them.
 func parseForwardedIP(entry string) string {
 	entry = strings.TrimSpace(entry)
 	if host, _, err := net.SplitHostPort(entry); err == nil {
 		entry = host
 	}
 	entry = strings.TrimSuffix(strings.TrimPrefix(entry, "["), "]")
-	if net.ParseIP(entry) == nil {
+	ip := net.ParseIP(entry)
+	if ip == nil {
 		return ""
 	}
-	return entry
+	// The canonical form is returned so that one client spelt several
+	// ways ("2001:DB8::1", "2001:db8:0:0:0:0:0:1") shares one audit
+	// address, denial key and rate-limit bucket.
+	return ip.String()
 }
 
 // extractIPFromRemoteAddr extracts the IP address from a RemoteAddr string.

@@ -121,13 +121,16 @@ func TestConnectionsSourceOmitsCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatalf("lookup: %v", err)
 	}
-	for _, name := range []string{"password_encrypted", "sslkey", "sslcert", "sslrootcert", "owner_token", "username", "hostaddr"} {
+	for _, name := range []string{"password_encrypted", "sslkey", "sslcert", "sslrootcert", "owner_token"} {
 		if _, ok := src.column(name); ok {
 			t.Errorf("connections exposes %q", name)
 		}
 	}
-	if _, ok := src.column("name"); !ok {
-		t.Error("connections should expose name")
+	// username and hostaddr are not secrets; the REST API returns both.
+	for _, name := range []string{"name", "username", "hostaddr"} {
+		if _, ok := src.column(name); !ok {
+			t.Errorf("connections should expose %q", name)
+		}
 	}
 }
 

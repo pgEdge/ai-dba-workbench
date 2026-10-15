@@ -126,6 +126,11 @@ are editing.
 `t.Parallel()` is not used in database-backed tests; the shared tables
 make it unsafe.
 
+The alerter engine's `captureStderr` holds a package mutex until the
+test's cleanup runs, so a second call within the same test or subtest
+deadlocks until the test timeout; give each captured call its own
+`t.Run`.
+
 ## Collector Tests and max_connections
 
 The collector does not pass `-p=1`, so its packages share the server's

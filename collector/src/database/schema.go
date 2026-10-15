@@ -3828,6 +3828,70 @@ func (sm *SchemaManager) registerMigrations() {
 			return nil
 		},
 	})
+
+	// Migration #22 records which kind of model produced each Tier 3
+	// verdict. The alerter can now classify candidates with a decision
+	// model, falling back to the reasoning model when the decision model
+	// fails, so tier3_result alone no longer says where a verdict came
+	// from. See GitHub issue #626.
+	//
+	// Both columns are nullable and added without a default, which is a
+	// metadata-only change; rows classified before the upgrade, and
+	// rows Tier 3 has not reached, keep NULL. The tier3_source CHECK is
+	// added NOT VALID and validated by migration 23.
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     22,
+		Description: "Record the source and model of Tier 3 anomaly classifications",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			_, err := tx.Exec(ctx, `
+				ALTER TABLE anomaly_candidates
+					ADD COLUMN IF NOT EXISTS tier3_source TEXT,
+					ADD COLUMN IF NOT EXISTS tier3_model TEXT;
+
+				COMMENT ON COLUMN anomaly_candidates.tier3_source IS
+					'Kind of model whose outcome set tier3_pass: decision for a decision model, reasoning for the reasoning model; when classification failed and the candidate was raised by default, the last kind tried. NULL if Tier 3 has not classified the candidate';
+				COMMENT ON COLUMN anomaly_candidates.tier3_model IS
+					'Provider and model, as provider/model, that tier3_source names';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to add Tier 3 source columns to anomaly_candidates: %w", err)
+			}
+
+			// A CHECK added in the same statement as its column makes
+			// PostgreSQL scan the whole table under the ACCESS EXCLUSIVE
+			// lock that ADD COLUMN takes, and that lock is held until
+			// the migration commits. Adding it NOT VALID skips the scan
+			// whilst still checking every new row; migration 23
+			// validates it in its own transaction, which needs only a
+			// SHARE UPDATE EXCLUSIVE lock and so does not block writers.
+			return addConstraintIfMissing(ctx, tx,
+				"anomaly_candidates",
+				"anomaly_candidates_tier3_source_check",
+				"CHECK (tier3_source IN ('decision', 'reasoning')) NOT VALID")
+		},
+	})
+
+	// Migration 23: Validate the tier3_source CHECK that migration 22
+	// added NOT VALID. It runs in a transaction of its own so that the
+	// scan holds only a SHARE UPDATE EXCLUSIVE lock, under which the
+	// alerter can keep writing Tier 3 verdicts. Validating a constraint
+	// that is already valid does nothing, so a re-run is harmless.
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     23,
+		Description: "Validate the Tier 3 source check on anomaly_candidates",
+		Up: func(tx pgx.Tx) error {
+			_, err := tx.Exec(context.Background(), `
+				ALTER TABLE anomaly_candidates
+					VALIDATE CONSTRAINT anomaly_candidates_tier3_source_check;
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to validate the Tier 3 source check on anomaly_candidates: %w", err)
+			}
+			return nil
+		},
+	})
 }
 
 // Migrate applies all pending migrations

@@ -11,6 +11,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -228,7 +229,23 @@ type Tier2Config struct {
 type Tier3Config struct {
 	Enabled        bool `yaml:"enabled"`
 	TimeoutSeconds int  `yaml:"timeout_seconds"`
+
+	// DecisionSuppressThreshold applies when llm.decision_provider is
+	// set. The decision model answers "is this anomaly a real issue
+	// that requires attention?" with the probability of yes, and Tier 3
+	// suppresses the candidate when the probability of no, one minus
+	// that, is at least this value; otherwise it raises the alert.
+	// Raising it suppresses fewer candidates. Must be greater than 0
+	// and less than 1 whilst a decision provider is configured.
+	// Default: DefaultDecisionSuppressThreshold. See GitHub issue #626.
+	DecisionSuppressThreshold float64 `yaml:"decision_suppress_threshold"`
 }
+
+// DefaultDecisionSuppressThreshold is the default for
+// anomaly.tier3.decision_suppress_threshold: a candidate is suppressed
+// when the decision model thinks it more likely than not to be a false
+// positive.
+const DefaultDecisionSuppressThreshold = 0.5
 
 // ReevaluationConfig holds re-evaluation settings for acknowledged anomaly alerts
 type ReevaluationConfig struct {
@@ -303,6 +320,15 @@ type LLMConfig struct {
 	EmbeddingProvider string `yaml:"embedding_provider"`
 	ReasoningProvider string `yaml:"reasoning_provider"`
 
+	// DecisionProvider selects an optional decision model for Tier 3
+	// classification: "typesafe" or "openai". Empty, "none" or
+	// "disabled" leaves Tier 3 on the reasoning provider alone. When it
+	// is set, Tier 3 asks the decision model first and falls back to
+	// the reasoning provider for any candidate the decision model fails
+	// to classify. Re-evaluation always uses the reasoning provider.
+	// See GitHub issue #626.
+	DecisionProvider string `yaml:"decision_provider"`
+
 	// MaxTokens caps the output tokens of a tier-3 reasoning call.
 	// Reasoning models charge their thinking blocks against this same
 	// budget, so a small value leaves no room for the classification
@@ -315,6 +341,18 @@ type LLMConfig struct {
 	Anthropic AnthropicConfig `yaml:"anthropic"`
 	Voyage    VoyageConfig    `yaml:"voyage"`
 	Gemini    GeminiConfig    `yaml:"gemini"`
+	TypeSafe  TypeSafeConfig  `yaml:"typesafe"`
+}
+
+// DecisionProviderEnabled reports whether llm.decision_provider selects a
+// decision provider rather than leaving it off.
+func (l *LLMConfig) DecisionProviderEnabled() bool {
+	switch l.DecisionProvider {
+	case "", "none", "disabled":
+		return false
+	default:
+		return true
+	}
 }
 
 // NotificationsConfig holds notification settings
@@ -404,7 +442,11 @@ type OpenAIConfig struct {
 	BaseURL        string `yaml:"base_url"`
 	EmbeddingModel string `yaml:"embedding_model"`
 	ReasoningModel string `yaml:"reasoning_model"`
-	apiKey         string
+
+	// DecisionModel is the model of OpenAI's Decisions API used when
+	// llm.decision_provider is "openai".
+	DecisionModel string `yaml:"decision_model"`
+	apiKey        string
 }
 
 // AnthropicConfig holds Anthropic provider settings
@@ -430,6 +472,15 @@ type GeminiConfig struct {
 	EmbeddingModel string `yaml:"embedding_model"`
 	ReasoningModel string `yaml:"reasoning_model"`
 	apiKey         string
+}
+
+// TypeSafeConfig holds the settings of the TypeSafe provider, which serves
+// the Jev decision models and is used only as llm.decision_provider.
+type TypeSafeConfig struct {
+	APIKeyFile    string `yaml:"api_key_file"`
+	BaseURL       string `yaml:"base_url"`
+	DecisionModel string `yaml:"decision_model"`
+	apiKey        string
 }
 
 // NewConfig creates a new Config with default values
@@ -484,8 +535,9 @@ func NewConfig() *Config {
 				SimilarityThreshold:  0.3,
 			},
 			Tier3: Tier3Config{
-				Enabled:        true,
-				TimeoutSeconds: 30,
+				Enabled:                   true,
+				TimeoutSeconds:            30,
+				DecisionSuppressThreshold: DefaultDecisionSuppressThreshold,
 			},
 			Reevaluation: ReevaluationConfig{
 				Enabled:         true,
@@ -518,6 +570,7 @@ func NewConfig() *Config {
 			OpenAI: OpenAIConfig{
 				EmbeddingModel: "text-embedding-3-small",
 				ReasoningModel: "gpt-6-luna",
+				DecisionModel:  "gpt-6-luna",
 			},
 			Anthropic: AnthropicConfig{
 				ReasoningModel: "claude-haiku-4-5",
@@ -528,6 +581,9 @@ func NewConfig() *Config {
 			Gemini: GeminiConfig{
 				EmbeddingModel: "gemini-embedding-001",
 				ReasoningModel: "gemini-3.8-flash",
+			},
+			TypeSafe: TypeSafeConfig{
+				DecisionModel: "jev-latest",
 			},
 		},
 	}
@@ -568,41 +624,36 @@ func (c *Config) LoadPassword() error {
 	return nil
 }
 
-// LoadAPIKeys loads API keys from their respective files
+// LoadAPIKeys loads API keys from their respective files. It attempts
+// every configured key file, so that one unreadable file does not leave
+// the other providers without their keys, keeps each key it reads, and
+// returns the failures joined with errors.Join, or nil when there are
+// none.
 func (c *Config) LoadAPIKeys() error {
-	if c.LLM.OpenAI.APIKeyFile != "" {
-		key, err := fileutil.ReadSecretFile(c.LLM.OpenAI.APIKeyFile)
-		if err != nil {
-			return fmt.Errorf("failed to read OpenAI API key: %w", err)
-		}
-		c.LLM.OpenAI.apiKey = key
+	keys := []struct {
+		provider string
+		file     string
+		key      *string
+	}{
+		{"OpenAI", c.LLM.OpenAI.APIKeyFile, &c.LLM.OpenAI.apiKey},
+		{"Anthropic", c.LLM.Anthropic.APIKeyFile, &c.LLM.Anthropic.apiKey},
+		{"Voyage", c.LLM.Voyage.APIKeyFile, &c.LLM.Voyage.apiKey},
+		{"Gemini", c.LLM.Gemini.APIKeyFile, &c.LLM.Gemini.apiKey},
+		{"TypeSafe", c.LLM.TypeSafe.APIKeyFile, &c.LLM.TypeSafe.apiKey},
 	}
-
-	if c.LLM.Anthropic.APIKeyFile != "" {
-		key, err := fileutil.ReadSecretFile(c.LLM.Anthropic.APIKeyFile)
-		if err != nil {
-			return fmt.Errorf("failed to read Anthropic API key: %w", err)
+	var errs []error
+	for _, k := range keys {
+		if k.file == "" {
+			continue
 		}
-		c.LLM.Anthropic.apiKey = key
-	}
-
-	if c.LLM.Voyage.APIKeyFile != "" {
-		key, err := fileutil.ReadSecretFile(c.LLM.Voyage.APIKeyFile)
+		key, err := fileutil.ReadSecretFile(k.file)
 		if err != nil {
-			return fmt.Errorf("failed to read Voyage API key: %w", err)
+			errs = append(errs, fmt.Errorf("failed to read %s API key: %w", k.provider, err))
+			continue
 		}
-		c.LLM.Voyage.apiKey = key
+		*k.key = key
 	}
-
-	if c.LLM.Gemini.APIKeyFile != "" {
-		key, err := fileutil.ReadSecretFile(c.LLM.Gemini.APIKeyFile)
-		if err != nil {
-			return fmt.Errorf("failed to read Gemini API key: %w", err)
-		}
-		c.LLM.Gemini.apiKey = key
-	}
-
-	return nil
+	return errors.Join(errs...)
 }
 
 // GetOpenAIAPIKey returns the loaded OpenAI API key
@@ -623,6 +674,11 @@ func (c *Config) GetVoyageAPIKey() string {
 // GetGeminiAPIKey returns the loaded Gemini API key
 func (c *Config) GetGeminiAPIKey() string {
 	return c.LLM.Gemini.apiKey
+}
+
+// GetTypeSafeAPIKey returns the loaded TypeSafe API key
+func (c *Config) GetTypeSafeAPIKey() string {
+	return c.LLM.TypeSafe.apiKey
 }
 
 // Validate checks if the configuration is valid
@@ -690,6 +746,23 @@ func (c *Config) Validate() error {
 		window > MaxProviderFailureRateWindow {
 		return fmt.Errorf("anomaly.provider_health.failure_rate_window must be between 1 and %d",
 			MaxProviderFailureRateWindow)
+	}
+	return c.validateDecisionProvider()
+}
+
+// validateDecisionProvider checks llm.decision_provider and, when one is
+// selected, anomaly.tier3.decision_suppress_threshold.
+func (c *Config) validateDecisionProvider() error {
+	switch c.LLM.DecisionProvider {
+	case "", "none", "disabled":
+		return nil
+	case "typesafe", "openai":
+	default:
+		return fmt.Errorf("llm.decision_provider must be typesafe, openai, none, disabled or empty, not %q",
+			c.LLM.DecisionProvider)
+	}
+	if t := c.Anomaly.Tier3.DecisionSuppressThreshold; math.IsNaN(t) || t <= 0 || t >= 1 {
+		return fmt.Errorf("anomaly.tier3.decision_suppress_threshold must be greater than 0 and less than 1")
 	}
 	return nil
 }

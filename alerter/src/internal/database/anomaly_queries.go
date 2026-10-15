@@ -68,8 +68,8 @@ func (d *Datastore) GetUnprocessedAnomalyCandidates(ctx context.Context, limit i
 	rows, err := d.pool.Query(ctx, `
 		SELECT id, connection_id, database_name, metric_name, metric_value,
 		       z_score, detected_at, context, tier1_pass, tier2_score, tier2_pass,
-		       tier3_result, tier3_pass, tier3_error, final_decision, alert_id,
-		       processed_at
+		       tier3_result, tier3_pass, tier3_error, tier3_source, tier3_model,
+		       final_decision, alert_id, processed_at
 		FROM anomaly_candidates
 		WHERE processed_at IS NULL AND tier1_pass = true
 		ORDER BY detected_at ASC
@@ -86,7 +86,8 @@ func (d *Datastore) GetUnprocessedAnomalyCandidates(ctx context.Context, limit i
 		err := rows.Scan(&c.ID, &c.ConnectionID, &c.DatabaseName, &c.MetricName,
 			&c.MetricValue, &c.ZScore, &c.DetectedAt, &c.Context, &c.Tier1Pass,
 			&c.Tier2Score, &c.Tier2Pass, &c.Tier3Result, &c.Tier3Pass,
-			&c.Tier3Error, &c.FinalDecision, &c.AlertID, &c.ProcessedAt)
+			&c.Tier3Error, &c.Tier3Source, &c.Tier3Model, &c.FinalDecision,
+			&c.AlertID, &c.ProcessedAt)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan anomaly candidate: %w", err)
 		}
@@ -122,10 +123,12 @@ func (d *Datastore) UpdateAnomalyCandidate(ctx context.Context, c *AnomalyCandid
 	_, err := d.pool.Exec(ctx, `
 		UPDATE anomaly_candidates
 		SET tier2_score = $2, tier2_pass = $3, tier3_result = $4, tier3_pass = $5,
-		    tier3_error = $6, final_decision = $7, alert_id = $8, processed_at = $9
+		    tier3_error = $6, final_decision = $7, alert_id = $8, processed_at = $9,
+		    tier3_source = $10, tier3_model = $11
 		WHERE id = $1
 	`, c.ID, c.Tier2Score, c.Tier2Pass, c.Tier3Result, c.Tier3Pass,
-		c.Tier3Error, c.FinalDecision, c.AlertID, c.ProcessedAt)
+		c.Tier3Error, c.FinalDecision, c.AlertID, c.ProcessedAt,
+		c.Tier3Source, c.Tier3Model)
 	return err
 }
 
@@ -229,14 +232,15 @@ func (d *Datastore) GetAnomalyCandidateByID(ctx context.Context, id int64) (*Ano
 	err := d.pool.QueryRow(ctx, `
 		SELECT id, connection_id, database_name, metric_name, metric_value,
 		       z_score, detected_at, context, tier1_pass, tier2_score, tier2_pass,
-		       tier3_result, tier3_pass, tier3_error, final_decision, alert_id,
-		       processed_at
+		       tier3_result, tier3_pass, tier3_error, tier3_source, tier3_model,
+		       final_decision, alert_id, processed_at
 		FROM anomaly_candidates
 		WHERE id = $1
 	`, id).Scan(&c.ID, &c.ConnectionID, &c.DatabaseName, &c.MetricName,
 		&c.MetricValue, &c.ZScore, &c.DetectedAt, &c.Context, &c.Tier1Pass,
 		&c.Tier2Score, &c.Tier2Pass, &c.Tier3Result, &c.Tier3Pass,
-		&c.Tier3Error, &c.FinalDecision, &c.AlertID, &c.ProcessedAt)
+		&c.Tier3Error, &c.Tier3Source, &c.Tier3Model, &c.FinalDecision,
+		&c.AlertID, &c.ProcessedAt)
 
 	if err != nil {
 		return nil, err

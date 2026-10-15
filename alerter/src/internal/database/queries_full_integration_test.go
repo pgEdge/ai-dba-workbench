@@ -253,6 +253,8 @@ CREATE TABLE anomaly_candidates (
     tier3_result TEXT,
     tier3_pass BOOLEAN,
     tier3_error TEXT,
+    tier3_source TEXT CHECK (tier3_source IN ('decision', 'reasoning')),
+    tier3_model TEXT,
     final_decision TEXT,
     alert_id BIGINT REFERENCES alerts(id) ON DELETE SET NULL,
     embedding_id BIGINT,

@@ -12,6 +12,39 @@ project adheres to
 
 ### Added
 
+- Classify tier 3 anomaly candidates with an optional decision
+  model (#626). The new `llm.decision_provider` option selects
+  `typesafe` (the TypeSafe Jev models, configured in the new
+  `llm.typesafe` section with `api_key_file`, `base_url` and
+  `decision_model`, default `jev-latest`) or `openai` (the
+  OpenAI Decisions API, with the new
+  `llm.openai.decision_model` option, default `gpt-6-luna`);
+  leaving it empty, `none` or `disabled` keeps the existing
+  behaviour. The decision model returns the probability that a
+  candidate is a real issue, and tier 3 suppresses the candidate
+  when one minus that probability reaches the new
+  `anomaly.tier3.decision_suppress_threshold` option (default
+  0.5). Any decision model failure falls back to the reasoning
+  model for that candidate, or raises the alert when no
+  reasoning provider is configured; re-evaluation of
+  acknowledged alerts still uses the reasoning model. A failing
+  decision provider raises its own `Tier 3 decision` provider
+  health system alert. Collector schema migrations 22 and 23
+  add the `tier3_source` and `tier3_model` columns to
+  `anomaly_candidates`, recording which kind of model, and which
+  model, decided each candidate; upgrade the collector before,
+  or together with, the alerter. An alerter upgraded first logs
+  `ERROR: Failed to get anomaly candidates` once each cycle and
+  raises no anomaly alerts, and its queued candidates expire
+  unprocessed after two and a half hours. Changing the decision
+  provider takes an alerter restart. In a
+  [spike](https://github.com/pgEdge/ai-dba-workbench/issues/626#issuecomment-6187170285)
+  on 150 real candidates, the Jev model agreed with the stored
+  reasoning-model decisions 89% of the time, at about a fiftieth
+  of the cost, at October 2026 prices, and a fifteenth of the
+  median latency of Claude Haiku 4.5, so `typesafe` is the
+  recommended provider.
+
 - Raise a system alert when anomaly detection is degraded by
   a failing embedding or reasoning provider (#582). The
   alerter counts consecutive failures for each tier (tier 2
@@ -1129,6 +1162,12 @@ project adheres to
   fixture. (#387)
 
 ### Fixed
+
+- Load every configured alerter API key file when one of them
+  cannot be read (#626). The alerter previously stopped at the
+  first unreadable file, so a bad OpenAI key file also left the
+  Anthropic, Voyage, Gemini and TypeSafe keys unloaded; it now
+  loads the rest and logs one warning per file that failed.
 
 - Fix the anomaly detection baselines for
   `pg_stat_database.deadlocks_delta` and

@@ -200,8 +200,8 @@ A system alert reports a fault in the Workbench itself
 rather than in a monitored server; the alert type is
 `system` and the alert belongs to no connection. The
 alerter currently raises one kind of system alert, for an
-embedding or reasoning provider that keeps failing and so
-degrades anomaly detection.
+embedding, reasoning or decision provider that keeps failing
+and so degrades anomaly detection.
 
 The alert title names the affected tier and provider, as
 in `Anomaly detection degraded: Tier 2 embedding provider
@@ -222,8 +222,12 @@ alert for a provider that fails such a share of its calls
 without failing consecutively. A successful tier 3 or
 re-evaluation call counts as a success for both, since they
 share the reasoning provider, and so can clear the alerts of
-both. Once cleared, the alert is not raised again for
-five minutes.
+both. A failing decision provider raises its own alert, with
+the tier named `Tier 3 decision`, which no reasoning call
+clears; a successful decision call clears it, as does a
+successful startup check of the decision provider, which
+lists the provider's models when the alerter starts. Once
+cleared, the alert is not raised again for five minutes.
 
 System alerts behave differently from connection alerts in
 the following ways:

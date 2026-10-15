@@ -372,21 +372,54 @@ similarity search for pattern matching.
 The `anomaly.tier3` section configures LLM-based
 classification for complex anomalies.
 
+The following table describes the tier 3 options:
+
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `enabled` | boolean | `true` | Enable tier 3 |
-| `timeout_seconds` | integer | `30` | LLM API timeout |
+| `timeout_seconds` | integer | `30` | Timeout for each LLM API call |
+| `decision_suppress_threshold` | number | `0.5` | Probability that a candidate is not a real issue at which the decision model suppresses it; must be greater than 0 and less than 1 whilst a decision provider is configured |
+
+Tier 3 classifies each candidate with the reasoning model
+unless `llm.decision_provider` selects a decision model.
+With a decision provider, tier 3 asks the decision model
+first and uses the reasoning model only as a fallback; the
+[Decision Model](#decision-model-decision_provider) section
+describes the behaviour. Tier 3 runs whilst it is enabled
+and either a reasoning or a decision provider initialised at
+startup.
+
+The decision model returns the probability that an anomaly
+is a real issue requiring attention. Tier 3 suppresses the
+candidate when one minus that probability is at least
+`decision_suppress_threshold`, and raises the alert
+otherwise. The default of `0.5` suppresses a candidate that
+the model judges more likely than not to be a false
+positive; a higher value suppresses fewer candidates. The
+alerter checks the value only when a decision provider is
+configured, and ignores the option otherwise. Each provider
+calibrates its probabilities differently, so tune the
+threshold for the provider in use rather than carrying a
+value across providers.
+
+Each model call has its own `timeout_seconds` limit. A
+candidate whose decision model call fails and then falls
+back to the reasoning model can therefore take up to twice
+the timeout.
 
 #### Provider Health (`provider_health`)
 
 The `anomaly.provider_health` section controls the system
-alert that the alerter raises when calls to the embedding or
-reasoning provider keep failing. Whilst a provider fails,
-anomaly detection runs in a degraded mode: tier 2 compares
-no candidate with past anomalies, tier 3 raises each
-candidate that reaches the tier without LLM classification,
-and the re-evaluation worker leaves acknowledged anomaly
-alerts unchanged.
+alert that the alerter raises when calls to the embedding,
+reasoning or decision provider keep failing. Whilst a
+provider fails, anomaly detection runs in a degraded mode:
+tier 2 compares no candidate with past anomalies, tier 3
+raises each candidate that reaches the tier without LLM
+classification, and the re-evaluation worker leaves
+acknowledged anomaly alerts unchanged. Whilst the decision
+provider fails, tier 3 classifies each candidate with the
+reasoning model where one is configured, and otherwise
+raises the candidate without classification.
 
 The following table describes the provider health options:
 
@@ -397,15 +430,19 @@ The following table describes the provider health options:
 | `failure_rate_window` | integer | `20` | Number of recent calls the failure rate covers; must be between 1 and 1000. A small window can set a limit of one failed call, as `failure_rate: 0.3` with a window of `3` does, so the first failure raises the alert before `failure_threshold` is reached |
 
 The alerter counts consecutive failures separately for tier
-2 embeddings, tier 3 classification and re-evaluation, and
-for each provider. When one count reaches the threshold, the
+2 embeddings, tier 3 classification, tier 3 decisions and
+re-evaluation, and for each provider. When one count reaches the threshold, the
 alerter raises a single warning alert for that tier and
 provider, and updates the alert's failure count as further
 calls fail. The next successful call to that provider resets
 the count and clears the alert, unless the failure rate
 described below keeps the alert open; tier 3 classification and
 re-evaluation share the reasoning provider, so a successful
-call from either clears the alerts of both. After clearing
+call from either clears the alerts of both. The decision
+provider serves tier 3 decisions alone, so no reasoning call
+clears its alert; a successful decision call clears it, as
+does a successful startup check of the decision provider,
+described below. After clearing
 an alert, the alerter does not raise it again for five
 minutes, so that a provider that fails intermittently cannot
 send a burst of notifications. A call cancelled before it
@@ -413,8 +450,11 @@ completes counts as neither a failure nor a success,
 although a call that times out counts as a failure. A tier
 3 or re-evaluation call also counts as a failure when the
 provider answers with a response that holds no decision the
-alerter can parse. The failure is recorded whatever the
-alerter then does with the candidate or alert, which may be
+alerter can parse; a decision call counts as a failure when
+the model refuses to answer, gives no answer, or gives a
+probability outside the range 0 to 1. The failure is
+recorded whatever the alerter then does with the candidate
+or alert, which may be
 to act on a keyword found in the response or to take the
 tier's default decision.
 
@@ -423,8 +463,12 @@ the providers of the enabled tiers at startup. A failed
 check raises the alert for its tier immediately, whatever
 the threshold or the five-minute wait; a failed reasoning
 check raises the tier 3 alert. A successful reasoning check
-clears both the tier 3 and the re-evaluation alerts. At
-startup the alerter also clears any open provider alert for
+clears both the tier 3 and the re-evaluation alerts. When
+tier 3 is enabled, the alerter also checks the decision
+provider by listing its models, which costs no tokens; a
+successful listing counts as a successful decision call, so
+it can clear the decision alert left open by a previous run.
+At startup the alerter also clears any open provider alert for
 a tier or provider that is no longer configured or enabled.
 See
 [System Alerts](../../user-guide/alerts/index.md#system-alerts)
@@ -494,7 +538,8 @@ across metrics.
 ### LLM Providers (`llm`)
 
 The `llm` section configures LLM providers for tier 3
-anomaly detection and embedding generation.
+anomaly detection and embedding generation, and the
+optional decision model for tier 3.
 
 Each provider section names its own embedding model, and the alerter
 accepts any model name the chosen provider recognises rather than
@@ -518,11 +563,175 @@ when the alerter starts. Storing embeddings as `halfvec` requires
 pgvector `0.7.0` or newer; upgrading an existing installation against
 an older pgvector causes the embedding-column migration to fail.
 
+The following table describes the provider selection
+options:
+
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `embedding_provider` | string | `ollama` | Embedding provider |
 | `reasoning_provider` | string | `ollama` | Classification provider |
+| `decision_provider` | string | None | Optional tier 3 decision provider: `typesafe` or `openai`; empty, `none` or `disabled` turns the decision model off |
 | `max_tokens` | integer | `4096` | Max output tokens per reasoning call |
+
+#### Decision Model (`decision_provider`)
+
+A decision model answers a yes or no question with the
+probability of yes, rather than generating text. When
+`decision_provider` names a provider, tier 3 asks the
+decision model whether each candidate is a real issue that
+requires attention, and applies
+`anomaly.tier3.decision_suppress_threshold` to the
+probability it returns. The decision model receives the
+same context as the reasoning model, without the reasoning
+model's instructions for a JSON response.
+
+The following providers serve decision models:
+
+- `typesafe` uses the TypeSafe Jev models, configured in the
+  `llm.typesafe` section; the default model is `jev-latest`.
+- `openai` uses the OpenAI Decisions API with the model in
+  `llm.openai.decision_model`; the default model is
+  `gpt-6-luna`.
+
+The alerter sends the decision provider the tier 3
+classification context for each candidate. The context
+holds fixed instructions about the task and about weighing
+past user feedback, together with:
+
+- the metric name, value and z-score, the connection ID,
+  the database name and the detection time.
+- the baseline mean, standard deviation and period.
+- the similarity, decision and metric name of up to five
+  similar past anomalies.
+- up to ten past acknowledgements of the same metric and
+  connection, each with its note, its false positive flag,
+  the username of the user who acknowledged it, the time of
+  the acknowledgement, and the original alert's value,
+  z-score and severity.
+- the number, names and roles of cluster peer connections.
+- the title, severity, server name and trigger time of each
+  active or acknowledged alert on those peers.
+
+The decision provider receives nothing beyond what the
+reasoning provider already receives. A decision provider
+such as TypeSafe may, however, be a third party that has not
+received the data before, so review the provider's data
+handling terms before enabling it.
+
+The decision model applies to tier 3 classification only.
+The re-evaluation of acknowledged anomaly alerts always uses
+the reasoning provider, whatever `decision_provider` holds.
+
+When the decision model fails for a candidate, tier 3 falls
+back to the reasoning model for that candidate. A failure
+includes an error, a timeout, a refusal to answer, a
+missing answer and a probability outside the range 0 to 1.
+When no reasoning provider is configured, tier 3 raises the
+candidate as an alert without classification, the same
+fail-safe that applies when the reasoning model fails. The
+candidate's tier 3 error records the decision model failure
+in either case.
+
+A decision provider can serve tier 3 on its own, without a
+reasoning provider; the alerter then has no fallback and
+does not re-evaluate acknowledged alerts with an LLM. When
+the decision provider cannot be created at startup, for
+example because the TypeSafe API key is missing, the alerter
+logs a warning and runs tier 3 on the reasoning provider
+alone.
+
+For a decision model verdict, the candidate's tier 3 result
+is a one-line summary rather than a model response, as in
+the following example:
+
+```text
+Decision model typesafe/jev-latest: alert (P(real issue)=0.87, suppress threshold 0.50)
+```
+
+The `tier3_source` column of the `anomaly_candidates` table
+records whether a `decision` or a `reasoning` model produced
+the tier 3 outcome, and the `tier3_model` column records the
+provider and model in the form `provider/model`. When every
+model fails, the columns name the last model tried.
+
+In the following example, the `llm` section selects the
+TypeSafe decision model and keeps the Anthropic reasoning
+model as the fallback:
+
+```yaml
+llm:
+  reasoning_provider: anthropic
+  decision_provider: typesafe
+  anthropic:
+    api_key_file: /etc/ai-workbench/anthropic-api-key.txt
+  typesafe:
+    api_key_file: /etc/ai-workbench/typesafe-api-key.txt
+    decision_model: jev-latest
+anomaly:
+  tier3:
+    decision_suppress_threshold: 0.5
+```
+
+The alerter creates the decision provider at startup only,
+so changing `decision_provider` or the `llm.typesafe`
+settings takes a restart. Turning the decision provider off
+also takes a restart: after a reload that sets
+`decision_provider` to `none`, tier 3 keeps using the
+provider built at startup. A configuration reload does apply
+a new `decision_suppress_threshold`; whilst the reloaded
+configuration has no decision provider, the alerter skips
+the threshold check and uses `0.5` in place of a value
+outside the valid range.
+
+#### Choosing a Decision Model
+
+A spike in October 2026 compared the decision providers
+with the stored tier 3 decisions on 150 real candidates
+from the previous 30 days, sampled evenly between candidates
+stored as alerts and candidates stored as suppressed. The
+stored decisions came from the reasoning model, so the
+figures measure agreement with that model rather than
+accuracy against decisions that users labelled; no such
+labels existed. The reasoning model, Claude Haiku 4.5,
+agreed with the stored decisions on 91% of the candidates
+when run again. The
+[spike results](https://github.com/pgEdge/ai-dba-workbench/issues/626#issuecomment-6187170285)
+on issue #626 give the full data.
+
+The following table compares the models at the default
+threshold of 0.5:
+
+| Model | Agreement with stored decisions | Median latency | Cost per 1,000 decisions |
+|-------|---------------------------------|----------------|--------------------------|
+| TypeSafe `jev-latest` | 89% | About 200 ms | About US$0.04 |
+| OpenAI `gpt-6-luna` decisions | 79% | About 250 ms | Not confirmed |
+| Claude Haiku 4.5 reasoning | 91% | About 3 s | About US$1.93 |
+
+The Jev model agreed with Claude Haiku 4.5 on 88% of the
+candidates, and never suppressed a candidate stored as an
+alert: every disagreement was an alert where the stored
+decision was to suppress. The OpenAI decision model
+suppressed some candidates that were stored as alerts. The
+costs use the published prices as of October 2026: Jev
+charges US$0.042 per million input tokens with no charge
+for output, and Claude Haiku 4.5 charges US$1 per million
+input tokens and US$5 per million output tokens. The spike
+could not confirm the OpenAI decision price from official
+pricing.
+
+On this evidence, `typesafe` is the recommended decision
+provider; `openai` is supported, but agreed less often and
+was more willing to suppress real alerts. Raising
+`decision_suppress_threshold` above 0.5 reduced agreement
+in the spike. Because each provider calibrates its
+probabilities differently, test any change to the threshold
+against your own candidates for the provider in use.
+
+Re-evaluation stays on the reasoning model because of the
+spike. In a synthetic test, the Jev model never cleared an
+alert whose acknowledgement note explained the anomaly, and
+no real acknowledgements were available to validate either
+decision model.
 
 #### Output Token Budget (`max_tokens`)
 
@@ -587,6 +796,14 @@ provider.
 | `base_url` | string | `https://api.openai.com/v1` | OpenAI base URL |
 | `embedding_model` | string | `text-embedding-3-small` | Embedding model |
 | `reasoning_model` | string | `gpt-6-luna` | Reasoning model |
+| `decision_model` | string | `gpt-6-luna` | Decisions API model when `decision_provider` is `openai` |
+
+The decision model shares the `api_key_file` and
+`base_url` options with the OpenAI embedding and reasoning
+models. A `base_url` that points at a local inference server
+therefore also receives the decision requests, and the
+server must implement the OpenAI Decisions API for them to
+succeed.
 
 The `openai` provider works with any server that
 implements the OpenAI-compatible API. Set `base_url`
@@ -663,6 +880,27 @@ provider for embeddings.
 | `base_url` | string | `https://api.voyageai.com/v1/embeddings` | Voyage base URL |
 | `embedding_model` | string | `voyage-3-lite` | Embedding model |
 
+#### TypeSafe Configuration
+
+The `llm.typesafe` section configures the TypeSafe
+provider, which serves the Jev decision models. The alerter
+uses TypeSafe only as a `decision_provider`; TypeSafe cannot
+serve as an embedding or reasoning provider.
+
+The following table describes the TypeSafe options:
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `api_key_file` | string | None | Path to API key file |
+| `base_url` | string | `https://api.typesafe.ai/v1` | TypeSafe base URL |
+| `decision_model` | string | `jev-latest` | Decision model |
+
+The TypeSafe provider always requires an API key, even
+when `base_url` points elsewhere, such as at a proxy. The
+alerter reads the key only from `api_key_file`, and does
+not fall back to the `TYPESAFE_API_KEY` environment
+variable.
+
 ### Notifications (`notifications`)
 
 The `notifications` section configures the
@@ -705,7 +943,12 @@ notifications:
 Store API keys for LLM providers in files with
 restricted permissions. The alerter reads API keys
 from the paths specified in the `api_key_file`
-options.
+options of the `openai`, `anthropic`, `gemini`, `voyage`
+and `typesafe` sections. When a configured key file cannot
+be read, the alerter logs a warning and continues with the
+next configured file, keeping each key that it reads
+successfully. A provider that requires a key it did not
+receive then fails to initialise.
 
 In the following example, the commands create an API
 key file with secure permissions:
@@ -737,6 +980,13 @@ control:
 - `SIGINT` and `SIGTERM` trigger a graceful shutdown.
 - `SIGHUP` reloads the configuration file without
   restarting the process.
+
+A reload does not recreate the LLM providers, which the
+alerter builds once at startup. Changing a provider, a
+model, a base URL or an API key file, including
+`llm.decision_provider`, therefore takes a restart; the
+reloaded values of settings such as
+`anomaly.tier3.decision_suppress_threshold` apply at once.
 
 In the following example, the `kill` command reloads
 the configuration:

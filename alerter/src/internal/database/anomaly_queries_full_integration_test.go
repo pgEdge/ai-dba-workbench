@@ -118,6 +118,27 @@ func TestGetUnprocessedAndUpdateAnomalyCandidate(t *testing.T) {
 		t.Errorf("expected c1.ID=%d, got %d", c1.ID, results[0].ID)
 	}
 
+	if results[0].Tier3Source != nil || results[0].Tier3Model != nil {
+		t.Errorf("unclassified candidate has Tier 3 source %v / model %v, want NULLs",
+			results[0].Tier3Source, results[0].Tier3Model)
+	}
+
+	// The Tier 3 source and model round-trip (GitHub issue #626).
+	source, model := "decision", "typesafe/jev-latest"
+	c2.Tier3Source, c2.Tier3Model = &source, &model
+	if err := ds.UpdateAnomalyCandidate(ctx, c2); err != nil {
+		t.Fatalf("UpdateAnomalyCandidate with Tier 3 source: %v", err)
+	}
+	got, err := ds.GetAnomalyCandidateByID(ctx, c2.ID)
+	if err != nil {
+		t.Fatalf("GetAnomalyCandidateByID: %v", err)
+	}
+	if got.Tier3Source == nil || *got.Tier3Source != source ||
+		got.Tier3Model == nil || *got.Tier3Model != model {
+		t.Errorf("Tier 3 source/model = %v/%v, want %s/%s",
+			got.Tier3Source, got.Tier3Model, source, model)
+	}
+
 	// Canceled context.
 	canceled, cancel := context.WithCancel(ctx)
 	cancel()

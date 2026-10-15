@@ -270,8 +270,8 @@ alert list displays without brain icons, and users can
 still view, acknowledge, and manage alerts normally.
 
 The alerter component also auto-disables anomaly
-detection across all three tiers when no LLM embedding
-or reasoning providers are configured. Disabling
+detection across all three tiers when no LLM embedding,
+reasoning or decision providers are configured. Disabling
 anomaly detection prevents noise from raw statistical
 detection. The alerter logs the following message at
 startup when this occurs:

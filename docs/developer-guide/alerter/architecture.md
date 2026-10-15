@@ -367,6 +367,22 @@ positives. The alerter supports the following providers:
 - OpenAI with `gpt-6-luna`.
 - Anthropic with `claude-haiku-4-5`.
 
+### Decision Providers
+
+A decision provider optionally classifies Tier 3 candidates ahead of
+the reasoning provider, returning the probability that an anomaly is
+a real issue rather than generated text. The reasoning provider then
+serves as the fallback for any candidate the decision model fails to
+classify. The alerter supports the following decision providers:
+
+- TypeSafe with `jev-latest`.
+- OpenAI with `gpt-6-luna` through the Decisions API.
+
+Re-evaluation of acknowledged alerts never uses the decision
+provider. See
+[Anomaly Detection](anomaly-detection.md#decision-model) for the
+classification path and its fallback.
+
 ## Configuration Reloading
 
 The alerter supports configuration reloading without restart.

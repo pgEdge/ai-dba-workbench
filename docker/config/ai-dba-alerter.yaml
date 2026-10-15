@@ -92,3 +92,16 @@ anomaly:
     failure_rate_window: 20
 
 secret_file: /etc/pgedge/ai-dba.secret
+
+# Optional Tier 3 decision model (see the alerter configuration docs).
+# The decision model is asked first, and the reasoning provider, when
+# configured, is the fallback. To use it, set enabled: true in the
+# existing anomaly.tier3 block above (optionally adding
+# decision_suppress_threshold: 0.5 there; do not add a second anomaly
+# key), then uncomment the llm section below.
+#
+# llm:
+#   decision_provider: typesafe
+#   typesafe:
+#     api_key_file: /etc/pgedge/typesafe-api-key.txt
+#     decision_model: jev-latest

@@ -189,9 +189,16 @@ moved.
   identifiers). A value nested in another literal
   (`CONNECTION 'password=''x'''`) is matched by `sqlNestedQuoted`, and
   one in an escape string (`E'password=\'x\''`) by
-  `sqlBackslashQuoted`. `PASSWORD` may be followed by white space, a
-  comment (`sqlSeparator`) or nothing; an unquoted `$n` value is kept
-  only when white space, a comma, a bracket or a semicolon ends it.
+  `sqlBackslashQuoted`. Row images are masked as JSON text, where every
+  backslash is doubled and a line break is `\n`, so each escape
+  backslash (`escapeBackslash`) may be doubled and `sqlSeparator`
+  accepts `\n`; `TestTextRedactionsInJSON` runs every case in that
+  form. `PASSWORD` may be followed by white space, a `/* */` or `--`
+  comment (`sqlSeparator`, not nested) or nothing, and may start a
+  quoted string (`'PASSWORD ''x'''` in a concatenated EXECUTE) when a
+  separator follows it; an unquoted `$n` value is kept only when white
+  space, a comma, a bracket, a semicolon, a double quote or a
+  backslash ends it.
   `pg_hba_file_rules.error` is masked whole (`WholeColumns`,
   `MaskWhole`), since PostgreSQL quotes an unparsable option there, and
   `nonCredentialSettings` exempts `password_encryption` and similar

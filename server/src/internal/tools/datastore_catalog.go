@@ -770,10 +770,16 @@ func secretKeyPattern(lead, trail string) string {
 // Pieces of the textRedactions patterns. A quoted value may lack its
 // closing quote, since pg_stat_activity truncates long statements, and
 // a quoted value accepts both a doubled quote and a backslash escape,
-// so an escaped quote never ends it early.
+// so an escaped quote never ends it early. Row images are masked as
+// JSON text, where every backslash is doubled, so an escape backslash
+// (escapeBackslash) may be one backslash or two: in SQL text that can
+// mask more than the value, but never less.
 const (
+	// escapeBackslash is the backslash that starts an escape, doubled
+	// in JSON text.
+	escapeBackslash = `\\\\?`
 	// sqlQuoted is a single-quoted SQL string.
-	sqlQuoted = `'(?:''|\\.|[^'\\])*'?`
+	sqlQuoted = `'(?:''|` + escapeBackslash + `.|[^'\\])*'?`
 	// sqlDollarQuoted is a dollar-quoted SQL string, $$...$$ or
 	// $tag$...$tag$. Without back-references the closing tag cannot be
 	// matched to the opening one, so a tagged string ends at the first
@@ -786,16 +792,30 @@ const (
 	// sqlNestedQuoted is a quoted value inside a SQL literal, as in
 	// CONNECTION 'password=''secret''', where its quotes are doubled
 	// and an escaped quote is '''' or \''.
-	sqlNestedQuoted = `''(?:''''|\\''|[^'])*(?:'')?`
+	sqlNestedQuoted = `''(?:''''|` + escapeBackslash + `''|[^'])*(?:'')?`
 	// sqlBackslashQuoted is a quoted value inside an escape string, as
-	// in CONNECTION E'password=\'secret\'', where its quotes are \' and
-	// an escaped quote is \\\'.
-	sqlBackslashQuoted = `\\'(?:\\\\\\'|[^\\]|\\[^'])*(?:\\')?`
+	// in CONNECTION E'password=\'secret\'', where its quotes are \', an
+	// escaped quote is \\\', an escaped backslash is \\ and a bare quote
+	// can only be doubled. A backslash followed by a quote always ends
+	// the value or escapes the quote, so in JSON text, where the closing
+	// \' is \\', the value cannot run on past it.
+	sqlBackslashQuoted = escapeBackslash + `'(?:` + escapeBackslash + escapeBackslash + escapeBackslash + `'|` +
+		escapeBackslash + escapeBackslash + `[^'\\]|` + escapeBackslash + `[^'\\]|''|[^'\\])*(?:` +
+		escapeBackslash + `')?`
+	// nameQuote is the double quote that may close a quoted name, as in
+	// SET "app.password", escaped as \" in JSON text.
+	nameQuote = `(?:\\?")?`
+	// jsonDoubleQuoted is a double-quoted value in JSON text, as in
+	// PGPASSWORD=\"secret\" inside a row image.
+	jsonDoubleQuoted = `\\"(?:[^\\]|\\[^"])*(?:\\")?`
 	// secretValue is a value that follows a secret name: any SQL string
 	// constant or one nested in another literal.
 	secretValue = `(?:` + sqlConstant + `|` + sqlNestedQuoted + `|` + sqlBackslashQuoted + `)`
-	// sqlSeparator is white space or a comment between SQL tokens.
-	sqlSeparator = `(?:[[:space:]]|/\*(?:[^*]|\*+[^*/])*\*+/)`
+	// sqlSeparator is white space or a comment between SQL tokens: a
+	// -- comment runs to the end of the line, and a nested /* */
+	// comment is not matched. In JSON text a line break is \n, so
+	// \n, \r and \t count as white space there and \n ends a -- comment.
+	sqlSeparator = `(?:[[:space:]]|\\[nrt]|--(?:[^\n\\]|\\[^n])*|/\*(?:[^*]|\*+[^*/])*\*+/)`
 	// identChars may surround a secret name, as in app.password or
 	// AWS_SECRET_ACCESS_KEY.
 	identChars = `[a-z0-9_.]*`
@@ -805,7 +825,7 @@ const (
 // connection strings, shell commands and row data. They are applied in
 // order, as regexp_replace calls inside the scoped subquery, so a
 // caller's filters and aggregates see only the masked text. A secret
-// name is any name holding a secretNamePatterns entry. They cannot
+// name is any name holding a textSecretNamePatterns entry. They cannot
 // catch every form: a password in any other form is returned as stored.
 var textRedactions = []textRedaction{
 	{
@@ -844,11 +864,12 @@ var textRedactions = []textRedaction{
 		// AWS_SECRET_ACCESS_KEY=... in a shell command, and
 		// SET app.password = '...'. An unquoted value is masked to the
 		// next white space; a parameter such as $1 is kept when white
-		// space, a comma, a bracket or a semicolon ends it.
+		// space, a comma, a bracket, a semicolon, a double quote or a
+		// backslash ends it.
 		Name: "keyword=value",
-		Pattern: `(` + secretKeyPattern(identChars, identChars) + `"?[[:space:]]*(?:=>?|:=)[[:space:]]*)` +
-			`(?:` + secretValue + `|"(?:[^"\\]|\\.)*"?|` +
-			`(?:[^[:space:]$'"]|\$[^0-9[:space:]]|\$[0-9]+[^0-9[:space:],);])[^[:space:]]*)`,
+		Pattern: `(` + secretKeyPattern(identChars, identChars) + nameQuote + sqlSeparator + `*(?:=>?|:=)` +
+			sqlSeparator + `*)(?:` + secretValue + `|"(?:[^"\\]|\\.)*"?|` + jsonDoubleQuoted + `|` +
+			`(?:[^[:space:]$'"]|\$[^0-9[:space:]]|\$[0-9]+[^0-9[:space:],);"\\])[^[:space:]]*)`,
 		Replacement: `\1` + redactedValue,
 	},
 	{
@@ -856,12 +877,15 @@ var textRedactions = []textRedaction{
 		// password '...' in a user mapping's OPTIONS, and
 		// SET app.password TO '...'. White space or a comment may
 		// separate the name from the value, or nothing at all, as in
-		// PASSWORD'...'; a name inside a quoted string, as in
+		// PASSWORD'...'. A name that starts a quoted string, as in
+		// EXECUTE 'ALTER ROLE app ' || 'PASSWORD ''...''', needs a
+		// separator after it, so a quoted name followed by a comma, as in
 		// set_config('app.password', ...), is left to the quoted name
 		// pattern. PASSWORD NULL and a $1 parameter are kept.
 		Name: "PASSWORD 'value'",
-		Pattern: `((?:^|[^'a-z0-9_.])` + secretKeyPattern(identChars, identChars) + `"?` + sqlSeparator +
-			`*(?:to` + sqlSeparator + `+)?)` + secretValue,
+		Pattern: `((?:(?:^|[^'a-z0-9_.])` + secretKeyPattern(identChars, identChars) + nameQuote + sqlSeparator + `*|` +
+			secretKeyPattern(`'`+identChars, identChars) + nameQuote + sqlSeparator + `+)` +
+			`(?:to` + sqlSeparator + `*)?)` + secretValue,
 		Replacement: `\1'` + redactedValue + `'`,
 	},
 }

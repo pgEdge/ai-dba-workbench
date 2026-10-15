@@ -388,5 +388,25 @@ describe('ChatPanel', () => {
 
             expect(scrollTop).toBe(50);
         });
+
+        it('defers a reply scroll until the panel reopens', () => {
+            setContext({ messages: pending });
+            const { rerender } = renderWithTheme(
+                <ChatPanel open onClose={vi.fn()} />,
+            );
+            scrollTop = 400;
+            fireEvent.scroll(screen.getByRole('log'));
+
+            rerender(<ChatPanel open={false} onClose={vi.fn()} />);
+            scrollHeight = 1800;
+            setContext({ messages: [...pending, reply] });
+            rerender(<ChatPanel open={false} onClose={vi.fn()} />);
+
+            expect(scrollTop).toBe(400);
+
+            rerender(<ChatPanel open onClose={vi.fn()} />);
+
+            expect(scrollTop).toBe(800 - 16);
+        });
     });
 });

@@ -11,25 +11,25 @@ package conversations
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 )
 
-// conversationUpdateSchema holds the conversations table in a schema of
-// its own, so that this test cannot disturb a table another package's
-// tests use in the same database.
-const conversationUpdateSchema = `
-DROP SCHEMA IF EXISTS conv_update_test CASCADE;
-CREATE SCHEMA conv_update_test;
-CREATE TABLE conv_update_test.conversations (
+// conversationTableDDL creates the conversations table in the schema
+// the fixture's connections search first.
+const conversationTableDDL = `
+CREATE TABLE conversations (
     id TEXT PRIMARY KEY,
     username TEXT NOT NULL,
     title TEXT NOT NULL,
@@ -42,7 +42,10 @@ CREATE TABLE conv_update_test.conversations (
 )`
 
 // newConversationUpdateFixture returns a handler over a fresh
-// conversations table and a session token for each named user.
+// conversations table and a session token for each named user. The
+// table lives in a schema with a random name that the fixture creates
+// and drops, so concurrent runs against one database cannot disturb
+// each other or a table another package's tests use.
 func newConversationUpdateFixture(t *testing.T, users ...string) (*Handler, *Store, map[string]string) {
 	t.Helper()
 
@@ -51,25 +54,33 @@ func newConversationUpdateFixture(t *testing.T, users ...string) (*Handler, *Sto
 		t.Skip("TEST_AI_WORKBENCH_SERVER not set, skipping conversation update test")
 	}
 
+	suffix := make([]byte, 8)
+	if _, err := rand.Read(suffix); err != nil {
+		t.Fatalf("Failed to name the test schema: %v", err)
+	}
+	schema := pgx.Identifier{"conv_test_" + hex.EncodeToString(suffix)}.Sanitize()
+
 	ctx := context.Background()
 	cfg, err := pgxpool.ParseConfig(connStr)
 	if err != nil {
 		t.Fatalf("ParseConfig: %v", err)
 	}
-	cfg.ConnConfig.RuntimeParams["search_path"] = "conv_update_test"
+	cfg.ConnConfig.RuntimeParams["search_path"] = schema
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		t.Fatalf("Failed to connect to the test database: %v", err)
 	}
-	if _, err := pool.Exec(ctx, conversationUpdateSchema); err != nil {
+	if _, err := pool.Exec(ctx, "CREATE SCHEMA "+schema); err != nil {
 		pool.Close()
-		t.Fatalf("Failed to create the conversations table: %v", err)
+		t.Fatalf("Failed to create the test schema: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(),
-			"DROP SCHEMA IF EXISTS conv_update_test CASCADE")
+		_, _ = pool.Exec(context.Background(), "DROP SCHEMA "+schema+" CASCADE")
 		pool.Close()
 	})
+	if _, err := pool.Exec(ctx, conversationTableDDL); err != nil {
+		t.Fatalf("Failed to create the conversations table: %v", err)
+	}
 
 	authStore, err := auth.NewAuthStore(t.TempDir(), 0, 0, auth.AuditKeyForTesting())
 	if err != nil {

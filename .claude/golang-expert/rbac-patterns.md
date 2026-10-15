@@ -136,7 +136,9 @@ if err != nil {
 isOwner := existing.OwnerUsername.Valid &&
     existing.OwnerUsername.String == username
 // 404 for a row the caller cannot see, identical to a missing one.
-if !h.clusterGroupVisibleForWrite(ctx, w, id, hasManageConns || isOwner,
+// emptyVisible is hasManageConns || isOwner in updateClusterGroup and
+// false in deleteClusterGroup (see below).
+if !h.clusterGroupVisibleForWrite(ctx, w, id, emptyVisible,
     "Failed to <verb> <resource>") {
     return
 }

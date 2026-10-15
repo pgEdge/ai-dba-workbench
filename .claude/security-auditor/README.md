@@ -224,11 +224,21 @@ moved.
   password in an unrecognised form, and read access to a connection
   grants that visibility, as the user guide states.
   The rules live in `internal/metrics/redaction.go` and apply on every
-  route returning probe rows: `query_datastore`,
+  route returning credential-bearing metrics: `query_datastore`,
   `GET /api/v1/metrics/latest` (#670) and the latest-rows mode of
-  `GET /api/v1/metrics/query`, through `ReturnableColumns` and
-  `MaskedProbeColumn`; `datastore_masking_routes_test.go` runs every
-  masked probe through all of them, so add a new route there. Scope predicates must be applied before
+  `GET /api/v1/metrics/query` (through `ReturnableColumns` and
+  `MaskedProbeColumn`), the statement text of
+  `GET /api/v1/metrics/top-queries` (`RedactedText`), and the old and
+  new values of configuration-change events on
+  `GET /api/v1/timeline/events` (`MaskedSetting`; changes are detected
+  on the raw values, and `get_timeline_events` lists no details).
+  `datastore_masking_routes_test.go` runs the masked probes through all
+  of them, so add a new route there. `TestCredentialTableReadersAreReviewed`
+  in `internal/metrics/source_guard_test.go` fails when server code reads
+  `pg_settings`, `pg_hba_file_rules`, `pg_stat_activity`,
+  `pg_stat_statements`, `spock_exception_log`, `spock_resolutions` or
+  `pg_stat_replication` without a masking helper or a reviewed
+  allow-list entry. Scope predicates must be applied before
   any caller
   predicate can be evaluated: the builder puts the scope and time
   window in an inner `OFFSET 0` subquery the planner cannot merge, and

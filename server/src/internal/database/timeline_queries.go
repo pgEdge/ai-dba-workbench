@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/pgedge/ai-workbench/server/internal/metrics"
 )
 
 // TimelineEvent represents a single event on the timeline
@@ -412,8 +414,8 @@ func buildConfigChangeQuery(whereClause string) string {
                 'change_count', COUNT(*),
                 'changes', jsonb_agg(jsonb_build_object(
                     'name', changes.name,
-                    'old_value', changes.prev_setting,
-                    'new_value', changes.setting,
+                    'old_value', %[4]s,
+                    'new_value', %[5]s,
                     'change_type', 'modified'
                 ) ORDER BY changes.name)
             )::TEXT AS details
@@ -438,7 +440,9 @@ func buildConfigChangeQuery(whereClause string) string {
 			return ""
 		}
 		return "WHERE " + innerFilter
-	}(), extraFilter)
+	}(), extraFilter,
+		metrics.MaskedSetting("changes.prev_setting", "changes.name"),
+		metrics.MaskedSetting("changes.setting", "changes.name"))
 }
 
 // buildConfigChangeCountQuery creates the count query for configuration

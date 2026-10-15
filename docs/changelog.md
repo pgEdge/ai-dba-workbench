@@ -2469,7 +2469,10 @@ project adheres to
   `query_datastore` (#670). Both routes returned credential settings
   such as `primary_conninfo`, secret `pg_hba_file_rules` options,
   passwords quoted in query text and Spock row images, and columns
-  named as secrets without masking.
+  named as secrets without masking. The statement text from
+  `GET /api/v1/metrics/top-queries` and the old and new values of
+  configuration change events from `GET /api/v1/timeline/events` are
+  masked in the same way.
 
 - Delete a user with `ai-dba-server -delete-user` only when the
   confirmation is an explicit `y` or `yes`. The answer was checked

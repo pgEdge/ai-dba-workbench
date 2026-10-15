@@ -1955,7 +1955,7 @@ func buildTopQueriesSQL(
             LIMIT $%d OFFSET $%d
         ) page
         LEFT JOIN LATERAL (
-            SELECT pss.query
+            SELECT %s AS query
             FROM metrics.pg_stat_statements pss
             WHERE pss.connection_id = $1
               AND pss.database_name = page.sample_database_name
@@ -1965,7 +1965,7 @@ func buildTopQueriesSQL(
             ORDER BY pss.collected_at DESC
             LIMIT 1
         ) qtext ON TRUE
-    `, cte, orderCol, orderDir, limitPos, limitPos+1)
+    `, cte, orderCol, orderDir, limitPos, limitPos+1, metrics.RedactedText("pss.query"))
 
 	return countSQL, pageSQL, filterArgs, pageArgs
 }

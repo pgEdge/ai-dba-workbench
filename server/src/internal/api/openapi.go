@@ -1568,7 +1568,7 @@ func buildSchemas() map[string]*OpenAPISchema {
 				"database_name":        {Type: "string", Description: "Database name where the query was executed, resolved from pg_stat_statements.dbid; when the dbid cannot be resolved, one of the databases the statistics were collected through"},
 				"sample_database_name": {Type: "string", Description: "Database the statistics were collected through, which is the database_name of the query's pg_stat_statements metric rows; pass this, not database_name, to /api/v1/metrics/query for the query's time series"},
 				"username":             {Type: "string", Description: "Database role that ran the query; empty when the role could not be resolved"},
-				"query":                {Type: "string", Description: "Query text"},
+				"query":                {Type: "string", Description: "Query text, with known password forms masked as ********"},
 				"calls":                {Type: "integer", Format: "int64", Description: "Total call count"},
 				"total_exec_time":      {Type: "number", Description: "Total execution time in ms"},
 				"mean_exec_time":       {Type: "number", Description: "Mean execution time in ms"},
@@ -2631,7 +2631,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/timeline/events": {
 			Get: &OpenAPIOperation{
 				Summary:     "List timeline events",
-				Description: "Returns timeline events within a time range",
+				Description: "Returns timeline events within a time range. A configuration change to a setting that can hold a credential, such as primary_conninfo, is still reported, with its old and new values masked as ********",
 				OperationID: "listTimelineEvents",
 				Tags:        []string{"Timeline"},
 				Security:    bearerAuth,
@@ -3849,7 +3849,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/metrics/top-queries": {
 			Get: &OpenAPIOperation{
 				Summary:     "Get top queries",
-				Description: "Returns the top queries by execution time, calls, or other metrics over the requested time range. The counters are cumulative in pg_stat_statements, so calls, rows, total_exec_time and the shared block counts are the summed differences between consecutive samples in the window, and mean_exec_time is derived from those sums; min_exec_time and max_exec_time remain lifetime values taken from the latest sample in the window. A statement with no executions in the window is not reported",
+				Description: "Returns the top queries by execution time, calls, or other metrics over the requested time range. The counters are cumulative in pg_stat_statements, so calls, rows, total_exec_time and the shared block counts are the summed differences between consecutive samples in the window, and mean_exec_time is derived from those sums; min_exec_time and max_exec_time remain lifetime values taken from the latest sample in the window. A statement with no executions in the window is not reported. Known password forms in the query text are masked as ********",
 				OperationID: "getTopQueries",
 				Tags:        []string{"Metrics"},
 				Security:    bearerAuth,

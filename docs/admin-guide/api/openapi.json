@@ -6497,7 +6497,7 @@
     "/metrics/top-queries": {
       "get": {
         "summary": "Get top queries",
-        "description": "Returns the top queries by execution time, calls, or other metrics over the requested time range. The counters are cumulative in pg_stat_statements, so calls, rows, total_exec_time and the shared block counts are the summed differences between consecutive samples in the window, and mean_exec_time is derived from those sums; min_exec_time and max_exec_time remain lifetime values taken from the latest sample in the window. A statement with no executions in the window is not reported",
+        "description": "Returns the top queries by execution time, calls, or other metrics over the requested time range. The counters are cumulative in pg_stat_statements, so calls, rows, total_exec_time and the shared block counts are the summed differences between consecutive samples in the window, and mean_exec_time is derived from those sums; min_exec_time and max_exec_time remain lifetime values taken from the latest sample in the window. A statement with no executions in the window is not reported. Known password forms in the query text are masked as ********",
         "operationId": "getTopQueries",
         "tags": [
           "Metrics"
@@ -10154,7 +10154,7 @@
     "/timeline/events": {
       "get": {
         "summary": "List timeline events",
-        "description": "Returns timeline events within a time range",
+        "description": "Returns timeline events within a time range. A configuration change to a setting that can hold a credential, such as primary_conninfo, is still reported, with its old and new values masked as ********",
         "operationId": "listTimelineEvents",
         "tags": [
           "Timeline"
@@ -14207,7 +14207,7 @@
           },
           "query": {
             "type": "string",
-            "description": "Query text"
+            "description": "Query text, with known password forms masked as ********"
           },
           "queryid": {
             "type": "string",

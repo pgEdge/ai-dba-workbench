@@ -4560,7 +4560,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/rbac/tokens": {
 			Get: &OpenAPIOperation{
 				Summary:     "List all tokens",
-				Description: "Returns all API tokens with scope information. Requires manage_token_scopes permission.",
+				Description: "Returns all API tokens with scope information. Requires manage_token_scopes permission; every holder sees every token, since any holder may narrow or delete any token.",
 				OperationID: "listTokens",
 				Tags:        []string{"RBAC Tokens"},
 				Security:    bearerAuth,
@@ -4584,7 +4584,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 			},
 			Post: &OpenAPIOperation{
 				Summary:     "Create token",
-				Description: "Creates a new API token for the specified user. The raw token is returned only once.",
+				Description: "Creates a new API token for the specified user. The raw token is returned only once. A caller who is not a superuser may create a token only for the user it acts as: a session's user, or an API token's owner.",
 				OperationID: "createToken",
 				Tags:        []string{"RBAC Tokens"},
 				Security:    bearerAuth,
@@ -4593,8 +4593,8 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"201": jsonResponse("TokenCreateResponse", "Token created with raw value"),
 					"400": jsonResponse("ErrorResponse", "Invalid request body or token name"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_token_scopes permission, or the new token owner's access exceeds the API token's access (its owner's privileges narrowed by its scope); a token for a superuser needs a superuser's token unrestricted in every scope kind, or a superuser's session"),
-					"500": jsonResponse("ErrorResponse", "Failed to create token, including when the owner could not be read"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_token_scopes permission; a caller who is not a superuser naming any owner but itself, or an owner that does not exist, is refused; or the new token owner's access exceeds the API token's access (its owner's privileges narrowed by its scope); a token for a superuser needs a superuser's token unrestricted in every scope kind, or a superuser's session"),
+					"500": jsonResponse("ErrorResponse", "Failed to create token, including when the owner could not be read; \"Failed to get user\" when the owner could not be looked up for a caller who is not a superuser"),
 				},
 			},
 		},
@@ -4634,7 +4634,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 			},
 			Put: &OpenAPIOperation{
 				Summary:     "Set token scope",
-				Description: "Sets scope restrictions for a token including connections, MCP privileges, and admin permissions. Each kind that is present replaces that kind's restriction, and a kind that is omitted or null is left unchanged. A kind with no entries is unrestricted, so an empty array would lift the restriction rather than deny everything; it is refused with 400, and DELETE is the way to clear a token's scope. An API token may change only within its own access, its own scope included: it may narrow its own scope but not widen it.",
+				Description: "Sets scope restrictions for a token including connections, MCP privileges, and admin permissions. Each kind that is present replaces that kind's restriction, and a kind that is omitted or null is left unchanged. A kind with no entries is unrestricted, so an empty array would lift the restriction rather than deny everything; it is refused with 400, and DELETE is the way to clear a token's scope. An API token may change only within its own access, its own scope included: it may narrow its own scope but not widen it. A caller who is not a superuser may widen only tokens owned by the user it acts as; a change to any other token must narrow it in every kind: each connection entry at or below the level the token already allows on that connection, and each MCP privilege and admin permission one the token already holds.",
 				OperationID: "setTokenScope",
 				Tags:        []string{"RBAC Tokens"},
 				Security:    bearerAuth,
@@ -4642,15 +4642,15 @@ func buildPaths() map[string]OpenAPIPathItem {
 				RequestBody: jsonRequestBody("TokenScopeRequest", "Scope configuration", true),
 				Responses: map[string]OpenAPIResponse{
 					"204": {Description: "Scope updated"},
-					"400": jsonResponse("ErrorResponse", "Invalid request, including an empty array for any scope kind; a connection scope that names a connection twice, has a negative connection ID or an unknown access level, or combines connection_id 0 (all connections) with any other entry; or an admin permission that is not a known permission name or \"*\""),
+					"400": jsonResponse("ErrorResponse", "Invalid request, including an empty array for any scope kind; a connection scope that names a connection twice, has a negative connection ID or an unknown access level, or combines connection_id 0 (all connections) with any other entry; or an admin permission that is not a known permission name or \"*\"; or an MCP privilege that is not a registered identifier or \"*\""),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_token_scopes permission, or the change grants access that exceeds the API token's access (its owner's privileges narrowed by its scope). Only the kinds present are judged: an entry the target token does not already allow must be within the caller's access, narrowing a kind that was unrestricted grants nothing, and keeping, narrowing or dropping a connection entry needs read access to that connection. The same rule applies to a token's own scope. A token owned by a superuser may be changed only by a superuser's session, or a superuser's token with an unrestricted admin scope, other than by that token itself, and an API token may widen such a token only when it is a superuser's token unrestricted in every scope kind"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_token_scopes permission, or the change grants access that exceeds the API token's access (its owner's privileges narrowed by its scope). Only the kinds present are judged: an entry the target token does not already allow must be within the caller's access, narrowing a kind that was unrestricted grants nothing, and keeping, narrowing or dropping a connection entry needs read access to that connection. The same rule applies to a token's own scope. A token owned by a superuser may be changed only by a superuser's session, or a superuser's token with an unrestricted admin scope, other than by that token itself, and an API token may widen such a token only when it is a superuser's token unrestricted in every scope kind. A caller who is not a superuser is refused a change that widens a token owned by another user"),
 					"500": jsonResponse("ErrorResponse", "Failed to set token scope, including when the target token or its owner could not be read inside the write; for an API token caller, also \"Failed to get token scope\" when the target token's current scope could not be read to judge the change"),
 				},
 			},
 			Delete: &OpenAPIOperation{
 				Summary:     "Clear token scope",
-				Description: "Removes all scope restrictions from a token. An API token may clear a scope only when the target's owner's access lies within its own, its own scope included.",
+				Description: "Removes all scope restrictions from a token. Clearing widens the token, so a caller who is not a superuser may clear only tokens owned by the user it acts as. An API token may clear a scope only when the target's owner's access lies within its own, its own scope included.",
 				OperationID: "clearTokenScope",
 				Tags:        []string{"RBAC Tokens"},
 				Security:    bearerAuth,
@@ -4658,7 +4658,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 				Responses: map[string]OpenAPIResponse{
 					"204": {Description: "Scope cleared"},
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_token_scopes permission, or, for each kind the target token is restricted in, its owner's access in that kind exceeds the API token's access (its owner's privileges narrowed by its scope), or a connection entry the clear drops is one the caller cannot read. The same rule applies to a token's own scope. A token owned by a superuser may be cleared only by a superuser's session, or a superuser's token with an unrestricted admin scope, other than by that token itself, and by an API token only when it is a superuser's token unrestricted in every scope kind"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_token_scopes permission, or, for each kind the target token is restricted in, its owner's access in that kind exceeds the API token's access (its owner's privileges narrowed by its scope), or a connection entry the clear drops is one the caller cannot read. The same rule applies to a token's own scope. A token owned by a superuser may be cleared only by a superuser's session, or a superuser's token with an unrestricted admin scope, other than by that token itself, and by an API token only when it is a superuser's token unrestricted in every scope kind. A caller who is not a superuser is refused the clear of a token owned by another user"),
 					"500": jsonResponse("ErrorResponse", "Failed to clear token scope, including when the target token or its owner could not be read inside the write; for an API token caller, also \"Failed to get token scope\" when the target token's current scope could not be read to judge the clear"),
 				},
 			},

@@ -519,7 +519,7 @@ type storedTokenScope struct {
 // false for a token that does not exist; err is ErrTokenScopeUnreadable
 // when a lookup fails.
 func (rc *RBACChecker) loadStoredTokenScope(tokenID int64) (
-	scope *storedTokenScope, found bool, err error) {
+	stored *storedTokenScope, found bool, err error) {
 
 	token, err := rc.authStore.GetTokenByID(tokenID)
 	if err != nil {
@@ -532,44 +532,31 @@ func (rc *RBACChecker) loadStoredTokenScope(tokenID int64) (
 	if err != nil || owner == nil {
 		return nil, false, ErrTokenScopeUnreadable
 	}
-	scope = &storedTokenScope{ownerID: token.OwnerID,
-		ownerSuperuser: owner.IsSuperuser, conns: map[int]string{}}
-
-	conns, err := rc.authStore.GetTokenScope(tokenID)
+	scope, err := rc.authStore.GetTokenScope(tokenID)
 	if err != nil {
 		return nil, false, ErrTokenScopeUnreadable
 	}
-	if conns != nil {
-		for _, sc := range conns.Connections {
-			scope.conns[sc.ConnectionID] = sc.AccessLevel
-		}
+	// GetTokenScope returns the raw MCP identifier IDs, rows naming only
+	// deleted identifiers included (see actorMCPScope: they still
+	// restrict the token, to nothing), and the admin permissions, so only
+	// the identifier names need a second read.
+	var conns []ScopedConnection
+	var perms []string
+	hasMCPRows := false
+	if scope != nil {
+		conns = scope.Connections
+		perms = scope.AdminPermissions
+		hasMCPRows = len(scope.MCPPrivileges) > 0
 	}
-	scope.connsRestricted = len(scope.conns) > 0
 
 	names, err := rc.authStore.GetTokenMCPScope(tokenID)
 	if err != nil {
 		return nil, false, ErrTokenScopeUnreadable
 	}
-	scope.mcp, scope.mcpRestricted = namedScope(names, mcpScopeWildcard)
-	if !scope.mcpRestricted && len(names) == 0 {
-		// See actorMCPScope: rows naming only deleted identifiers still
-		// restrict the token, to nothing.
-		hasRows, err := rc.authStore.HasTokenMCPScope(tokenID)
-		if err != nil {
-			return nil, false, ErrTokenScopeUnreadable
-		}
-		if hasRows {
-			scope.mcp, scope.mcpRestricted = map[string]bool{}, true
-		}
-	}
-
-	perms, err := rc.authStore.GetTokenAdminScope(tokenID)
-	if err != nil {
-		return nil, false, ErrTokenScopeUnreadable
-	}
-	scope.admin, scope.adminRestricted = namedScope(perms,
-		AdminPermissionWildcard)
-	return scope, true, nil
+	stored = newStoredTokenScope(conns, names, hasMCPRows, perms)
+	stored.ownerID = token.OwnerID
+	stored.ownerSuperuser = owner.IsSuperuser
+	return stored, true, nil
 }
 
 // connectionLevel is the level the stored scope allows on connectionID,
@@ -642,8 +629,19 @@ func (c *tokenCeiling) connectionsChangeCovered(stored *storedTokenScope,
 // scope does not: a connection entry above the level the stored scope
 // allows on that connection, or, in a restricted named kind, an entry
 // the token does not already hold. Narrowing an unrestricted kind never
-// widens it.
+// widens it. A kind supplied with no entries is written as no rows,
+// which lifts the restriction, so over a restricted kind it widens too;
+// the handler refuses such a change, and this keeps the store from
+// taking it for a narrowing should another caller pass one.
 func (s *storedTokenScope) widens(change TokenScopeChange) bool {
+	if liftsRestriction(change.Connections != nil, len(change.Connections),
+		s.connsRestricted) ||
+		liftsRestriction(change.MCPPrivileges != nil,
+			len(change.MCPPrivileges), s.mcpRestricted) ||
+		liftsRestriction(change.AdminPermissions != nil,
+			len(change.AdminPermissions), s.adminRestricted) {
+		return true
+	}
 	for _, sc := range change.Connections {
 		if accessLevelRank(sc.AccessLevel) >
 			accessLevelRank(s.connectionLevel(sc.ConnectionID)) {
@@ -652,6 +650,12 @@ func (s *storedTokenScope) widens(change TokenScopeChange) bool {
 	}
 	return namesWiden(change.MCPPrivileges, s.mcp, s.mcpRestricted) ||
 		namesWiden(change.AdminPermissions, s.admin, s.adminRestricted)
+}
+
+// liftsRestriction reports whether a supplied scope kind with no
+// entries would replace a restricted kind, leaving it unrestricted.
+func liftsRestriction(supplied bool, entries int, restricted bool) bool {
+	return supplied && entries == 0 && restricted
 }
 
 // namesWiden reports whether entries name anything a restricted named

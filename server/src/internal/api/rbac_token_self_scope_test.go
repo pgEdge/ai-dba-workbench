@@ -98,10 +98,12 @@ func TestSetTokenScopeSelfTarget(t *testing.T) {
 	}
 }
 
-// TestSetTokenScopeOtherTarget checks that the same rule governs
-// another token's scope: what the acting token holds may be granted,
-// what it does not may not. The other token's owner is not a superuser;
-// a superuser's token is for a superuser alone to change (see
+// TestSetTokenScopeOtherTarget checks that the same ceiling governs
+// another token's scope, what the acting token does not hold may not be
+// granted, and that a token owned by someone else may then only be
+// narrowed (issue #522): the acting token's admin scope is narrowed, so
+// it is not a superuser. The other token's owner is not a superuser; a
+// superuser's token is for a superuser alone to change (see
 // TestSuperuserOwnedTokenNeedsSuperuser).
 func TestSetTokenScopeOtherTarget(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t)
@@ -114,8 +116,14 @@ func TestSetTokenScopeOtherTarget(t *testing.T) {
 
 	assertRefusedWith(t, scopeRequest(handler, http.MethodPut, other, acting,
 		`{"admin_permissions":["*"]}`), refuseTokenScope)
-	assertStatus(t, scopeRequest(handler, http.MethodPut, other, acting,
+	assertRefusedWith(t, scopeRequest(handler, http.MethodPut, other, acting,
 		`{"admin_permissions":["manage_users","manage_token_scopes"]}`),
+		refuseTokenNotOwned)
+	if got := adminScopeOf(t, store, other); len(got) != 1 {
+		t.Fatalf("Expected the other token's scope to be untouched, got %v", got)
+	}
+	assertStatus(t, scopeRequest(handler, http.MethodPut, other, acting,
+		`{"connections":[{"connection_id":5,"access_level":"read"}]}`),
 		http.StatusNoContent)
 }
 

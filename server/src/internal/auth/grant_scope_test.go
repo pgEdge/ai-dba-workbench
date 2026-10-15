@@ -595,7 +595,7 @@ func TestTokenHoldsEverything(t *testing.T) {
 		t.Error("A session should be unrestricted")
 	}
 
-	if err := f.store.AsActor(systemActor).ClearTokenScope(f.tokenID, true); err != nil {
+	if err := f.store.AsActor(systemActor).ClearTokenScope(f.tokenID, true, AnyTokenOwner()); err != nil {
 		t.Fatalf("ClearTokenScope failed: %v", err)
 	}
 	if !f.checker.TokenHoldsEverything(ctx) {
@@ -605,7 +605,7 @@ func TestTokenHoldsEverything(t *testing.T) {
 	if f.checker.TokenHoldsEverything(ctx) {
 		t.Error("An MCP-bounded token should be restricted")
 	}
-	if err := f.store.AsActor(systemActor).ClearTokenScope(f.tokenID, true); err != nil {
+	if err := f.store.AsActor(systemActor).ClearTokenScope(f.tokenID, true, AnyTokenOwner()); err != nil {
 		t.Fatalf("ClearTokenScope failed: %v", err)
 	}
 	f.setAdminScope(t, PermManageUsers)
@@ -693,7 +693,7 @@ func TestReachAdminInTokenScope(t *testing.T) {
 	f, cleanup := newGrantScopeFixture(t)
 	defer cleanup()
 	ctx := f.tokenCtx()
-	if err := f.store.AsActor(systemActor).ClearTokenScope(f.tokenID, true); err != nil {
+	if err := f.store.AsActor(systemActor).ClearTokenScope(f.tokenID, true, AnyTokenOwner()); err != nil {
 		t.Fatalf("ClearTokenScope failed: %v", err)
 	}
 	f.setAdminScope(t, PermManageBlackouts)
@@ -861,7 +861,7 @@ func TestReachEverythingAdminPermissions(t *testing.T) {
 			defer cleanup()
 			ctx := f.tokenCtx()
 			f.registerMCP(t, "list_things", false)
-			if err := f.store.AsActor(systemActor).ClearTokenScope(f.tokenID, true); err != nil {
+			if err := f.store.AsActor(systemActor).ClearTokenScope(f.tokenID, true, AnyTokenOwner()); err != nil {
 				t.Fatalf("ClearTokenScope failed: %v", err)
 			}
 			if err := f.store.GrantAdminPermission(f.groupID, perm); err != nil {
@@ -879,7 +879,7 @@ func TestReachEverythingAdminPermissions(t *testing.T) {
 				t.Error("The holder should be outside an MCP-bounded scope")
 			}
 
-			if err := f.store.AsActor(systemActor).ClearTokenScope(f.tokenID, true); err != nil {
+			if err := f.store.AsActor(systemActor).ClearTokenScope(f.tokenID, true, AnyTokenOwner()); err != nil {
 				t.Fatalf("ClearTokenScope failed: %v", err)
 			}
 			named := perm
@@ -904,7 +904,7 @@ func TestReachOrdinaryAdminPermissionUnderMCPScope(t *testing.T) {
 	defer cleanup()
 	ctx := f.tokenCtx()
 	f.registerMCP(t, "list_things", false)
-	if err := f.store.AsActor(systemActor).ClearTokenScope(f.tokenID, true); err != nil {
+	if err := f.store.AsActor(systemActor).ClearTokenScope(f.tokenID, true, AnyTokenOwner()); err != nil {
 		t.Fatalf("ClearTokenScope failed: %v", err)
 	}
 	f.setMCPScope(t, "list_things")

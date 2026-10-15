@@ -2552,6 +2552,19 @@ project adheres to
   upgrading, every acknowledged alert with a stored "keep" verdict
   is sent back to the reasoning model once, the next time it falls
   due. (#682)
+- Stop `manage_token_scopes` working as a route to superuser. A holder
+  could previously create a token for any user and widen or clear the
+  scope of any token that a superuser did not own, and so act with
+  another user's whole access. A caller who is not a superuser, whether
+  a browser session or a token, can now create a token only for
+  themselves, and can widen or clear the scope only of their own tokens;
+  any holder can still narrow or delete any token, but a scope change to
+  someone else's token must narrow it in every scope type. The refusal
+  is `403 Forbidden` and is recorded in the RBAC audit log. A token
+  caller remains bound by its own access when changing a sibling token
+  with the same owner. A scope change naming an unknown MCP privilege
+  is now refused with `400 Bad Request` whoever the caller, rather than
+  sometimes with `403 Forbidden`. (#522)
 
 - Delete a user with `ai-dba-server -delete-user` only when the
   confirmation is an explicit `y` or `yes`. The answer was checked

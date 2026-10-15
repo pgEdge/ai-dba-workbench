@@ -34,11 +34,8 @@ func TestRBACHandler_CreateToken_Valid(t *testing.T) {
 	store.AddUserToGroup(gID, adminID)
 	store.GrantAdminPermission(gID, auth.PermManageTokenScopes)
 
-	// Create a target user for the token
-	store.CreateUser("tokenowner", "Password1234", "Token Owner", "", "")
-
 	body, _ := json.Marshal(map[string]string{
-		"owner_username": "tokenowner",
+		"owner_username": "admin",
 		"annotation":     "Test token",
 	})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/rbac/tokens",
@@ -65,8 +62,8 @@ func TestRBACHandler_CreateToken_Valid(t *testing.T) {
 	if _, ok := resp["id"]; !ok {
 		t.Error("Expected 'id' in response")
 	}
-	if resp["owner"] != "tokenowner" {
-		t.Errorf("Expected owner 'tokenowner', got %v", resp["owner"])
+	if resp["owner"] != "admin" {
+		t.Errorf("Expected owner 'admin', got %v", resp["owner"])
 	}
 	if resp["message"] == nil {
 		t.Error("Expected 'message' in response")
@@ -83,10 +80,8 @@ func TestRBACHandler_CreateToken_WithExpiry(t *testing.T) {
 	store.AddUserToGroup(gID, adminID)
 	store.GrantAdminPermission(gID, auth.PermManageTokenScopes)
 
-	store.CreateUser("tokenowner", "Password1234", "Token Owner", "", "")
-
 	body, _ := json.Marshal(map[string]string{
-		"owner_username": "tokenowner",
+		"owner_username": "admin",
 		"annotation":     "Expiring token",
 		"expires_in":     "30d",
 	})
@@ -123,10 +118,8 @@ func TestRBACHandler_CreateToken_NeverExpiry(t *testing.T) {
 	store.AddUserToGroup(gID, adminID)
 	store.GrantAdminPermission(gID, auth.PermManageTokenScopes)
 
-	store.CreateUser("tokenowner", "Password1234", "Token Owner", "", "")
-
 	body, _ := json.Marshal(map[string]string{
-		"owner_username": "tokenowner",
+		"owner_username": "admin",
 		"annotation":     "Never-expiring token",
 		"expires_in":     "never",
 	})
@@ -191,10 +184,8 @@ func TestRBACHandler_CreateToken_InvalidExpiry(t *testing.T) {
 	store.AddUserToGroup(gID, adminID)
 	store.GrantAdminPermission(gID, auth.PermManageTokenScopes)
 
-	store.CreateUser("tokenowner", "Password1234", "Token Owner", "", "")
-
 	body, _ := json.Marshal(map[string]string{
-		"owner_username": "tokenowner",
+		"owner_username": "admin",
 		"annotation":     "Bad expiry token",
 		"expires_in":     "invalid",
 	})
@@ -290,7 +281,6 @@ func tokenAdminSetup(t *testing.T) (*RBACHandler, *auth.AuthStore, int64, func()
 	gID, _ := store.CreateGroup("admins", "Admins")
 	store.AddUserToGroup(gID, adminID)
 	store.GrantAdminPermission(gID, auth.PermManageTokenScopes)
-	store.CreateUser("tokenowner", "Password1234", "Token Owner", "", "")
 	return handler, store, adminID, cleanup
 }
 
@@ -298,7 +288,7 @@ func TestRBACHandler_CreateToken_InvalidCharacters(t *testing.T) {
 	handler, store, adminID, cleanup := tokenAdminSetup(t)
 	defer cleanup()
 
-	rec := postToken(t, handler, store, adminID, "tokenowner", "bad/name!")
+	rec := postToken(t, handler, store, adminID, "admin", "bad/name!")
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("Expected status %d, got %d. Body: %s",
@@ -322,7 +312,7 @@ func TestRBACHandler_CreateToken_TooLong(t *testing.T) {
 	for i := 0; i < 256; i++ {
 		long += "a"
 	}
-	rec := postToken(t, handler, store, adminID, "tokenowner", long)
+	rec := postToken(t, handler, store, adminID, "admin", long)
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("Expected status %d, got %d. Body: %s",
@@ -345,7 +335,7 @@ func TestRBACHandler_CreateToken_EmptyNameAllowed(t *testing.T) {
 	handler, store, adminID, cleanup := tokenAdminSetup(t)
 	defer cleanup()
 
-	rec := postToken(t, handler, store, adminID, "tokenowner", "   ")
+	rec := postToken(t, handler, store, adminID, "admin", "   ")
 
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("Expected status %d, got %d. Body: %s",
@@ -360,13 +350,13 @@ func TestRBACHandler_CreateToken_DuplicateNamesAllowed(t *testing.T) {
 	handler, store, adminID, cleanup := tokenAdminSetup(t)
 	defer cleanup()
 
-	first := postToken(t, handler, store, adminID, "tokenowner", "Shared Name")
+	first := postToken(t, handler, store, adminID, "admin", "Shared Name")
 	if first.Code != http.StatusCreated {
 		t.Fatalf("First token: expected %d, got %d. Body: %s",
 			http.StatusCreated, first.Code, first.Body.String())
 	}
 
-	second := postToken(t, handler, store, adminID, "tokenowner", "Shared Name")
+	second := postToken(t, handler, store, adminID, "admin", "Shared Name")
 	if second.Code != http.StatusCreated {
 		t.Fatalf("Second token with duplicate name: expected %d, got %d. Body: %s",
 			http.StatusCreated, second.Code, second.Body.String())
@@ -374,14 +364,20 @@ func TestRBACHandler_CreateToken_DuplicateNamesAllowed(t *testing.T) {
 }
 
 // TestRBACHandler_CreateToken_UnknownOwner exercises the generic error
-// path: a syntactically valid token name with an owner that does not exist
-// makes CreateToken fail, which the handler maps to a 500.
+// path: a superuser naming an owner that does not exist makes CreateToken
+// fail, which the handler maps to a 500. Anyone else is refused before
+// the store is reached, exactly as for another user's name, so that the
+// answer does not say whether the name exists (issue #522).
 func TestRBACHandler_CreateToken_UnknownOwner(t *testing.T) {
 	handler, store, adminID, cleanup := tokenAdminSetup(t)
 	defer cleanup()
 
 	rec := postToken(t, handler, store, adminID, "no-such-user", "Valid Name")
+	assertRefusedWith(t, rec, refuseTokenForOtherOwner)
 
+	rec = tokenRouteRequest(handler, http.MethodPost, "/api/v1/rbac/tokens/",
+		`{"owner_username":"no-such-user","annotation":"Valid Name"}`,
+		withSuperuserSession)
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("Expected status %d, got %d. Body: %s",
 			http.StatusInternalServerError, rec.Code, rec.Body.String())

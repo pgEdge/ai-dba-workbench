@@ -1489,10 +1489,11 @@ type auditTarget struct {
 // rollback must happen first or the failure event is lost to the busy
 // timeout. The caller must hold s.mu, which recordFailure expects.
 //
-// A refusal with ErrSuperuserTargetForbidden is rolled back but not
-// recorded here: the handler answers it as a denial, and records it
-// through its denial audit, which coalesces repeated refusals. A failure
-// row as well would give the caller one uncoalesced row per request.
+// A refusal with ErrSuperuserTargetForbidden or ErrTokenNotOwned is
+// rolled back but not recorded here: the handler answers it as a denial,
+// and records it through its denial audit, which coalesces repeated
+// refusals. A failure row as well would give the caller one uncoalesced
+// row per request.
 func (s *AuthStore) failAudit(tx *sql.Tx, actor Actor, target *auditTarget,
 	cause error) {
 
@@ -1500,7 +1501,8 @@ func (s *AuthStore) failAudit(tx *sql.Tx, actor Actor, target *auditTarget,
 	// is already being returned to the caller.
 	tx.Rollback()
 
-	if target != nil && !errors.Is(cause, ErrSuperuserTargetForbidden) {
+	if target != nil && !errors.Is(cause, ErrSuperuserTargetForbidden) &&
+		!errors.Is(cause, ErrTokenNotOwned) {
 		s.recordFailure(actor, target.action, target.targetType,
 			target.targetID, target.targetName, cause)
 	}

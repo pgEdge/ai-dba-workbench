@@ -157,7 +157,7 @@ func TestTokenScopeClearSuperuserOwnedTarget(t *testing.T) {
 			"superuser token's scope")
 	}
 
-	if err := f.store.AsActor(systemActor).ClearTokenScope(f.tokenID, true); err != nil {
+	if err := f.store.AsActor(systemActor).ClearTokenScope(f.tokenID, true, AnyTokenOwner()); err != nil {
 		t.Fatalf("ClearTokenScope failed: %v", err)
 	}
 	got, err = f.checker.TokenScopeClearWithinCeiling(f.tokenCtx(), target, nil)

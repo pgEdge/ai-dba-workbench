@@ -177,8 +177,19 @@ moved.
   check catches, so `metricRedactions` masks such values, chosen by
   setting or option name against the broader `secretNamePatterns`, in
   the inner subquery, where the caller's filters cannot see the real
-  value. `GET /api/v1/metrics/latest` returns probe columns without
-  this masking (not yet ruled on). Scope predicates must be applied before any caller
+  value. Free-text columns (`pg_stat_activity.query`,
+  `pg_stat_statements.query`, Spock exception and resolution
+  statements and row images, `connections.connection_error`) pass
+  through `redactedText`, a chain of `regexp_replace` calls built from
+  `textRedactions` (PASSWORD '...', password=..., URI userinfo, JSON
+  password keys); test any new pattern in both Go and PostgreSQL
+  (`datastore_text_redaction_test.go`). The masking is best effort:
+  query text and row images can still carry sensitive data or a
+  password in an unrecognised form, and read access to a connection
+  grants that visibility, as the user guide states.
+  `GET /api/v1/metrics/latest` returns probe columns without this
+  masking (not yet ruled on). Scope predicates must be applied before
+  any caller
   predicate can be evaluated: the builder puts the scope and time
   window in an inner `OFFSET 0` subquery the planner cannot merge, and
   the caller's filters outside it, because a caller expression that

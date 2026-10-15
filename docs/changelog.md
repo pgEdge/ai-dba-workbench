@@ -2441,7 +2441,10 @@ project adheres to
   certificates are never available. In `pg_settings`, the values of
   settings that can hold a credential, such as `primary_conninfo`,
   are shown as `********`, as are the values of options such as
-  `ldapbindpasswd` in `pg_hba_file_rules`.
+  `ldapbindpasswd` in `pg_hba_file_rules` and passwords in recognised
+  forms in query text, Spock statements and row images, and connection
+  errors; such text may still hold other sensitive data, which read
+  access to a connection makes visible.
   Metric sources default to the last hour for every shape, including
   `latest`, so change-tracked probes need a wide `time_start`;
   `page_size` defaults to 100 and is capped at 1000, `page` times

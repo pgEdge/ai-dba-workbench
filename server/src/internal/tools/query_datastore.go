@@ -38,6 +38,9 @@ database. It holds two kinds of source:
   certificates are never available, and the values of settings and
   options that can hold a credential, such as primary_conninfo in
   pg_settings and ldapbindpasswd in pg_hba_file_rules, are masked.
+  Passwords in known forms in SQL text and row data (query text,
+  Spock exceptions and resolutions, connection errors) are masked too,
+  but such text may still hold sensitive data.
 </database_context>
 
 <workflow>

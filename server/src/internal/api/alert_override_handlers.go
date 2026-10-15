@@ -25,6 +25,8 @@ type AlertOverrideHandler struct {
 	authStore       *auth.AuthStore
 	rbacChecker     *auth.RBACChecker
 	checkPermission func(http.ResponseWriter, *http.Request) bool
+	// denialAuditor audits this handler's token-scope refusals.
+	denialAuditor
 }
 
 // NewAlertOverrideHandler creates a new alert override handler
@@ -167,7 +169,7 @@ func (h *AlertOverrideHandler) upsertOverride(w http.ResponseWriter, r *http.Req
 	if !h.checkPermission(w, r) {
 		return
 	}
-	if !requireTargetInTokenScope(w, r, h.rbacChecker, scope, &scopeID) {
+	if !requireTargetInTokenScope(w, r, h.rbacChecker, h.denialRecorder, scope, &scopeID) {
 		return
 	}
 
@@ -191,7 +193,7 @@ func (h *AlertOverrideHandler) deleteOverride(w http.ResponseWriter, r *http.Req
 	if !h.checkPermission(w, r) {
 		return
 	}
-	if !requireTargetInTokenScope(w, r, h.rbacChecker, scope, &scopeID) {
+	if !requireTargetInTokenScope(w, r, h.rbacChecker, h.denialRecorder, scope, &scopeID) {
 		return
 	}
 

@@ -260,10 +260,8 @@ func (e *IPExtractor) ExtractIP(r *http.Request) string {
 		// log and the session records, so a proxy sending a hostname,
 		// an empty value or arbitrary text must not be stored as
 		// though it were a client address.
-		if xri := strings.TrimSpace(r.Header.Get("X-Real-IP")); xri != "" {
-			if net.ParseIP(xri) != nil {
-				return xri
-			}
+		if xri := parseForwardedIP(r.Header.Get("X-Real-IP")); xri != "" {
+			return xri
 		}
 		return directIP
 	}
@@ -273,15 +271,11 @@ func (e *IPExtractor) ExtractIP(r *http.Request) string {
 	// prepend IPs to the left side of the header
 	parts := strings.Split(xff, ",")
 	for i := len(parts) - 1; i >= 0; i-- {
-		ip := strings.TrimSpace(parts[i])
+		ip := parseForwardedIP(parts[i])
 		if ip == "" {
 			continue
 		}
-
 		parsedIP := net.ParseIP(ip)
-		if parsedIP == nil {
-			continue
-		}
 
 		// Return the first (rightmost) IP that is not a trusted proxy
 		if !e.isTrustedProxy(parsedIP) {
@@ -290,14 +284,40 @@ func (e *IPExtractor) ExtractIP(r *http.Request) string {
 	}
 
 	// All IPs in the chain are trusted proxies, return the leftmost
-	// (This shouldn't normally happen in a properly configured setup)
-	if len(parts) > 0 {
-		if ip := strings.TrimSpace(parts[0]); ip != "" {
-			return ip
-		}
+	// (This shouldn't normally happen in a properly configured setup).
+	// As with X-Real-IP above, the entry is only used when it parses as
+	// an IP address: it reaches the audit log, the denial grouping key
+	// and the login rate limiter, so arbitrary header text must not be
+	// stored or keyed on as though it were a client address (issue
+	// #589).
+	if ip := parseForwardedIP(parts[0]); ip != "" {
+		return ip
 	}
 
 	return directIP
+}
+
+// parseForwardedIP returns the IP address in one forwarded header
+// entry, in canonical form, or "" when the entry holds none. Some
+// proxies append the client's port, as "203.0.113.7:51234" or
+// "[2001:db8::1]:443", so a port is stripped first: discarding such an
+// entry would attribute every client behind that proxy to the proxy
+// itself, sharing one login rate-limit bucket and one audit address
+// between them.
+func parseForwardedIP(entry string) string {
+	entry = strings.TrimSpace(entry)
+	if host, _, err := net.SplitHostPort(entry); err == nil {
+		entry = host
+	}
+	entry = strings.TrimSuffix(strings.TrimPrefix(entry, "["), "]")
+	ip := net.ParseIP(entry)
+	if ip == nil {
+		return ""
+	}
+	// The canonical form is returned so that one client spelt several
+	// ways ("2001:DB8::1", "2001:db8:0:0:0:0:0:1") shares one audit
+	// address, denial key and rate-limit bucket.
+	return ip.String()
 }
 
 // extractIPFromRemoteAddr extracts the IP address from a RemoteAddr string.

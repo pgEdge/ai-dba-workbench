@@ -26,6 +26,8 @@ type ProbeConfigHandler struct {
 	authStore       *auth.AuthStore
 	rbacChecker     *auth.RBACChecker
 	checkPermission func(http.ResponseWriter, *http.Request) bool
+	// denialAuditor audits this handler's token-scope refusals.
+	denialAuditor
 }
 
 // NewProbeConfigHandler creates a new probe config handler
@@ -181,6 +183,6 @@ func (h *ProbeConfigHandler) requireProbeConfigInTokenScope(
 	if existing.ConnectionID != nil {
 		scope = string(database.BlackoutScopeServer)
 	}
-	return requireTargetInTokenScope(w, r, h.rbacChecker, scope,
-		existing.ConnectionID)
+	return requireTargetInTokenScope(w, r, h.rbacChecker, h.denialRecorder,
+		scope, existing.ConnectionID)
 }

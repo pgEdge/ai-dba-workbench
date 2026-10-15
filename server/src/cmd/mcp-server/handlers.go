@@ -46,6 +46,13 @@ func registerDatastoreHandler(mux *http.ServeMux, handler routeRegistrar, authWr
 	}
 }
 
+// denialRecorderWired, when set, is called with each handler that
+// SetupHandlers gives the RBAC handler's denial recorder. It is nil in
+// production; tests set it to check that no handler drops out of the
+// list, since a missing one would silently stop its refusals being
+// audited.
+var denialRecorderWired func(handler any)
+
 // HandlerDependencies holds all dependencies needed for HTTP handlers
 type HandlerDependencies struct {
 	AuthStore    *auth.AuthStore
@@ -294,12 +301,24 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 			// lets a bounded token rename a group (issue #471).
 			rbacHandler.SetFederatedGroupMap(deps.Config.HTTP.Auth.OIDC.GroupMap)
 			// Token-scope refusals on the connection, cluster, alert
-			// rule and notification channel routes are audited through
-			// the RBAC handler's coalescing denial recorder.
-			connHandler.SetDenialRecorder(rbacHandler.RecordDenial)
-			clusterHandler.SetDenialRecorder(rbacHandler.RecordDenial)
-			alertRuleHandler.SetDenialRecorder(rbacHandler.RecordDenial)
-			notificationChannelHandler.SetDenialRecorder(rbacHandler.RecordDenial)
+			// rule, notification channel, blackout, probe config and
+			// alert, probe and channel override routes, and the
+			// ownership and permission refusals on the cluster-group
+			// routes, are audited through the RBAC handler's coalescing
+			// denial recorder.
+			for _, h := range []interface {
+				SetDenialRecorder(func(*http.Request, string))
+			}{
+				connHandler, clusterHandler, alertRuleHandler,
+				notificationChannelHandler, blackoutHandler,
+				probeConfigHandler, alertOverrideHandler,
+				probeOverrideHandler, channelOverrideHandler,
+			} {
+				h.SetDenialRecorder(rbacHandler.RecordDenial)
+				if denialRecorderWired != nil {
+					denialRecorderWired(h)
+				}
+			}
 			rbacHandler.RegisterRoutes(mux, authWrapper)
 			fmt.Fprintf(os.Stderr, "RBAC management: ENABLED\n")
 		}

@@ -1203,6 +1203,22 @@ project adheres to
   whilst the user has scrolled up to read earlier messages
   leaves the view where it is.
 
+- Record token-scope refusals of blackout, blackout schedule, probe
+  configuration and alert, probe and channel override changes in the
+  audit log, along with refused cluster-group changes by a user who
+  does not own the group or lacks the `manage_connections`
+  permission. Each is recorded under the action the change would
+  have used, such as `blackout.update` or `cluster_group.delete`,
+  rather than being left out of the log. When every address in an
+  `X-Forwarded-For` header from a trusted proxy is itself a trusted
+  proxy, the server now uses the leftmost entry as the client
+  address only if it parses as an IP address, and the proxy's own
+  address otherwise, so arbitrary header text no longer reaches the
+  audit log, the login rate limiter or the key used to coalesce
+  repeated denials. A forwarded address that carries a port, as
+  some proxies send it, is now read without the port rather than
+  skipped. (#589)
+
 - Fix the `probe_unavailable` alert firing on healthy Spock clusters
   with no recent apply exceptions or conflict resolutions. The
   collector could not tell an installed extension with nothing to

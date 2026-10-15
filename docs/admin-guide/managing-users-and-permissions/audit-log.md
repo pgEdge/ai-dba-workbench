@@ -135,10 +135,26 @@ followed by the lower-case HTTP method, so that the denial is kept rather
 than dropped, and any method outside the standard HTTP set records
 `rbac.other`.
 
+Refusals of configuration changes are recorded in the same way. A token
+whose connection scope does not cover the target of a blackout, a
+blackout schedule, a probe configuration or an alert, probe or channel
+override is recorded under the action the change would have used, such
+as `blackout.update`, `blackout_schedule.create`, `probe_config.update`
+or `alert_override.delete`. A request to change a cluster group that
+the caller does not own, or to create a group, or a cluster within a
+group, without the `manage_connections` permission, is recorded under
+`cluster_group.create`, `cluster_group.update` or
+`cluster_group.delete`. A blackout or schedule
+on a connection the token cannot see is refused as though it did not
+exist, and, as with connections, that refusal is not recorded.
+
 Each denial names the object the request was aimed at in
 `details.target`, as the kind of object followed by its numeric
 identifier, such as `users/12` or `connections/7`, or as the kind alone,
-such as `users`, when the request names no single object. A request
+such as `users`, when the request names no single object. An override
+is named by its kind, scope and scope identifier, such as
+`alert-overrides/server/5`; the rule, probe or channel it overrides is
+left out, because a probe name is free text taken from the request. A request
 that matches no known route records a target of `unmatched`, so that
 nothing taken verbatim from the request path reaches the log.
 
@@ -193,7 +209,10 @@ Each event names the kind of principal that caused the change in the
 | `system` | A change the server made with no principal to attribute it to. |
 
 A `user` or `token` event also carries the client address the request
-arrived from, resolved through the server's trusted proxy settings. A
+arrived from, resolved through the server's trusted proxy settings; a
+forwarded value is read without any port it carries, and one that
+then does not parse as an IP address is ignored in favour of the
+address of the connecting proxy. A
 `cli` event carries no address, because a command line has no peer
 address, and takes the actor name from the operating system user running
 the command. The `system` actor covers changes the server makes on its

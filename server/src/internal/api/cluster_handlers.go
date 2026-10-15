@@ -29,7 +29,8 @@ type ClusterHandler struct {
 	authStore   *auth.AuthStore
 	rbacChecker *auth.RBACChecker
 
-	// denialAuditor audits this handler's token-scope refusals.
+	// denialAuditor audits this handler's token-scope refusals, and
+	// the ownership and permission refusals on the cluster-group routes.
 	denialAuditor
 }
 
@@ -531,9 +532,11 @@ func (h *ClusterHandler) getClusterGroup(w http.ResponseWriter, r *http.Request,
 func (h *ClusterHandler) createClusterGroup(w http.ResponseWriter, r *http.Request) {
 	// Issue #207: gate cluster-group creation on manage_connections.
 	// Check before decoding the body so denied callers cannot probe payload
-	// shape via validation error messages.
+	// shape via validation error messages. The refusal is audited, as
+	// are the other ownership and permission refusals on the
+	// cluster-group routes (issue #589).
 	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections) {
-		RespondError(w, http.StatusForbidden,
+		h.denialRecorder.refuse(w, r,
 			"Permission denied: requires manage_connections permission")
 		return
 	}
@@ -611,7 +614,7 @@ func (h *ClusterHandler) updateClusterGroup(w http.ResponseWriter, r *http.Reque
 	// Permission check: manage_connections permission, or owner
 	isOwner := existingGroup.OwnerUsername.Valid && existingGroup.OwnerUsername.String == username
 	if !hasManageConns && !isOwner {
-		RespondError(w, http.StatusForbidden,
+		h.denialRecorder.refuse(w, r,
 			"You do not have permission to update this cluster group")
 		return
 	}
@@ -704,7 +707,7 @@ func (h *ClusterHandler) deleteClusterGroup(w http.ResponseWriter, r *http.Reque
 	isOwner := existingGroup.OwnerUsername.Valid &&
 		existingGroup.OwnerUsername.String == username
 	if !hasManageConns && !isOwner {
-		RespondError(w, http.StatusForbidden,
+		h.denialRecorder.refuse(w, r,
 			"You do not have permission to delete this cluster group")
 		return
 	}
@@ -828,7 +831,7 @@ func (h *ClusterHandler) listClustersInGroup(w http.ResponseWriter, r *http.Requ
 func (h *ClusterHandler) createClusterInGroup(w http.ResponseWriter, r *http.Request, groupID int) {
 	// Issue #207: gate cluster creation under a group on manage_connections.
 	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections) {
-		RespondError(w, http.StatusForbidden,
+		h.denialRecorder.refuse(w, r,
 			"Permission denied: requires manage_connections permission")
 		return
 	}
@@ -1177,7 +1180,7 @@ func computeAutoClusterKey(clusterID string) string {
 func (h *ClusterHandler) updateAutoDetectedGroup(w http.ResponseWriter, r *http.Request, groupID string) {
 	// Check user permissions - requires manage_connections permission
 	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections) {
-		RespondError(w, http.StatusForbidden,
+		h.denialRecorder.refuse(w, r,
 			"Permission denied: you do not have permission to rename auto-detected groups")
 		return
 	}

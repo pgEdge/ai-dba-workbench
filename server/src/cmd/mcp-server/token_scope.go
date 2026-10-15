@@ -111,7 +111,7 @@ func clearTokenScopeCommand(dataDir string, tokenID int64) error {
 	defer store.Close()
 
 	// Clear token scope, with the CLI's superuser authority
-	if err := cliStore(store).ClearTokenScope(tokenID, true, auth.AnyTokenOwner()); err != nil {
+	if err := cliStore(store).ClearTokenScope(tokenID, true, auth.AnyTokenOwner(), nil); err != nil {
 		return fmt.Errorf("failed to clear token scope: %w", err)
 	}
 

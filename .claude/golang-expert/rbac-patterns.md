@@ -610,7 +610,13 @@ exceeded "this token's access" (fixed so the denial audit coalesces).
   calls `requireOwnTokenOwner` straight after the empty-owner check,
   before the ceiling; another owner, or an unknown one, gets
   `refuseTokenForOtherOwner` (403, recorded denial), and a failed
-  `GetUser` 500. Scope writes pass `tokenOwnerGuard(r)` (an
+  `GetUser` 500. The insert then goes through
+  `ActorStore.CreateTokenFor(..., tokenOwnerGuard(r))`, which refuses
+  with `ErrTokenNotOwned` (mapped to `refuseTokenForOtherOwner`) an
+  owner id, read in the insert's tx, other than the guard's user, so a
+  user recreated under the name in between gets nothing.
+  `ActorStore.CreateToken` is the unguarded wrapper (`AnyTokenOwner()`)
+  for the CLI and tests. Scope writes pass `tokenOwnerGuard(r)` (an
   `auth.TokenOwnerGuard`: `AnyTokenOwner()` for a superuser and the
   CLI, else `TokensOwnedBy(userID)`; the zero value owns nothing) to
   `ActorStore.SetTokenScope` and `ClearTokenScope`, whose transaction
@@ -625,15 +631,31 @@ exceeded "this token's access" (fixed so the denial audit coalesces).
   kinds and unrestricted kinds never widen. `respondTokenWriteError`
   maps `ErrTokenNotOwned` to `refuseTokenNotOwned` (403), and
   `failAudit` skips it, so a refusal leaves only the coalesced denial
-  row. The single-kind setters (`SetTokenConnectionScope` and friends)
+  row. The ceiling reads the scope outside the write's tx, so
+  `requireTokenScopeChange` returns the `*auth.TokenScopeSnapshot` it
+  judged (`RBACChecker.JudgeTokenScopeChange` / `JudgeTokenScopeClear`;
+  nil for a session or `TokenHoldsEverything`) and the handler passes it
+  as the last argument of `SetTokenScope` / `ClearTokenScope`;
+  `guardJudgedTokenScopeTx` (`token_scope_snapshot.go`, last guard in
+  `beginGuardedTokenScopeChange`) re-reads the raw rows (connection id
+  and level, MCP identifier ids orphans included, admin permissions)
+  and refuses any difference with `ErrTokenScopeChanged`:
+  `refuseTokenScopeChanged`, 409, recorded denial, no failure row.
+  `tokenWriteChecked` (package var in `rbac_token_handlers.go`, nil in
+  the server) runs between the checks and the write so tests can race
+  them; tests that set it must not be parallel. Residual: the owner's
+  reach that `JudgeTokenScopeClear` compares against is still read
+  outside the tx. The single-kind setters (`SetTokenConnectionScope` and friends)
   are CLI-only and unguarded by owner; do not call them from a handler.
   The ceiling still runs first for token callers, siblings with the
   same owner included, so a narrowed token cannot mint or widen a
   sibling beyond itself. Delete stays open to any holder of
   `manage_token_scopes` (bar the superuser-owned rule below), and
   `listTokens` still lists every token, since any holder may narrow or
-  revoke any of them. Pinned by `internal/api/rbac_token_ownership_test.go`
-  and `internal/auth/token_owner_guard_test.go`.
+  revoke any of them. Pinned by `internal/api/rbac_token_ownership_test.go`,
+  `internal/api/rbac_token_write_race_test.go`,
+  `internal/auth/token_owner_guard_test.go` and
+  `internal/auth/token_scope_snapshot_test.go`.
 - Connection scope shape: `auth.ValidateScopedConnections` (store, HTTP
   and CLI alike) refuses a duplicate connection ID, a negative ID, an
   unknown level, and connection 0 (all connections) combined with any

@@ -1496,9 +1496,14 @@ func (s *AuthStore) StopSessionCleanup() {
 // token carries the role, so reading the flag here rather than before
 // the call means an owner promoted in between is still refused (issue
 // #607), and the expiry cap below is decided on the same row.
+//
+// owner refuses, with ErrTokenNotOwned, an owner whose id, read in the
+// same transaction, is not the guard's own user (issue #522). A handler
+// checks the owner's name first, but a user deleted and recreated under
+// that name in between would otherwise receive the token.
 func (s *AuthStore) createToken(actor Actor, ownerUsername, annotation string,
-	requestedExpiry *time.Time, callerIsSuperuser bool) (raw string,
-	stored *StoredToken, err error) {
+	requestedExpiry *time.Time, callerIsSuperuser bool,
+	owner TokenOwnerGuard) (raw string, stored *StoredToken, err error) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1535,6 +1540,10 @@ func (s *AuthStore) createToken(actor Actor, ownerUsername, annotation string,
 	}
 	if isSuperuser && !callerIsSuperuser {
 		err = ErrSuperuserTargetForbidden
+		return "", nil, err
+	}
+	if !owner.anyOwner && userID != owner.callerUserID {
+		err = ErrTokenNotOwned
 		return "", nil, err
 	}
 

@@ -301,6 +301,11 @@ func TestMetricRedactionsMatchCollectorSchema(t *testing.T) {
 				t.Errorf("probe %q options column %s should be masked, got %+v (present=%v)", name, c, got, ok)
 			}
 		}
+		for _, c := range rule.WholeColumns {
+			if got, ok := src.column(c); !ok || !got.MaskWhole {
+				t.Errorf("probe %q column %s should be masked whole, got %+v (present=%v)", name, c, got, ok)
+			}
+		}
 		for _, c := range rule.TextColumns {
 			if got, ok := src.column(c); !ok || !got.RedactText || got.DataType != typeText {
 				t.Errorf("probe %q text column %s should be redacted text, got %+v (present=%v)", name, c, got, ok)

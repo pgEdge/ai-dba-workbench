@@ -309,3 +309,94 @@ func TestEvaluateConnectionErrors_DatastoreFailures(t *testing.T) {
 		t.Errorf("pass without connection errors raised alerts %+v", got)
 	}
 }
+
+// refuseAlertWrites makes every insert into or update of alerts fail
+// with "refused" until the returned function is called.
+func refuseAlertWrites(t *testing.T, pool *pgxpool.Pool) func() {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `
+		CREATE OR REPLACE FUNCTION refuse_alert_write() RETURNS trigger LANGUAGE plpgsql AS
+		$$BEGIN RAISE EXCEPTION 'refused'; END$$;
+		DROP TRIGGER IF EXISTS refuse_alert_write ON alerts;
+		CREATE TRIGGER refuse_alert_write BEFORE INSERT OR UPDATE ON alerts
+		FOR EACH ROW EXECUTE FUNCTION refuse_alert_write()`); err != nil {
+		t.Fatalf("failed to add the refusing trigger: %v", err)
+	}
+	return func() {
+		if _, err := pool.Exec(ctx, `
+			DROP TRIGGER refuse_alert_write ON alerts;
+			DROP FUNCTION refuse_alert_write()`); err != nil {
+			t.Fatalf("failed to drop the refusing trigger: %v", err)
+		}
+	}
+}
+
+// TestEvaluateConnectionErrors_WriteFailures checks that the evaluator
+// logs and moves on when the blackouts cannot be read or an alert
+// cannot be raised, rewritten or cleared.
+func TestEvaluateConnectionErrors_WriteFailures(t *testing.T) {
+	engine, _, pool, cleanup := newEngineSpockTestEnv(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	refused := "connection refused"
+	connID := insertMonitoredConnection(t, pool, "conn-error-writes", &refused)
+
+	// captureStderr holds its lock until the test ends, so each pass
+	// that is captured runs as its own subtest.
+	refusedPass := func(name string) string {
+		var logged string
+		t.Run(name, func(t *testing.T) {
+			restore := refuseAlertWrites(t, pool)
+			defer restore()
+			logged = captureStderr(t, func() { engine.evaluateConnectionErrors(ctx) })
+		})
+		return logged
+	}
+
+	// Without a blackouts table the check fails and is treated as no
+	// blackout, so the alert is still raised.
+	if _, err := pool.Exec(ctx, `ALTER TABLE blackouts RENAME TO blackouts_hidden`); err != nil {
+		t.Fatalf("failed to hide blackouts: %v", err)
+	}
+	engine.evaluateConnectionErrors(ctx)
+	if _, err := pool.Exec(ctx, `ALTER TABLE blackouts_hidden RENAME TO blackouts`); err != nil {
+		t.Fatalf("failed to restore blackouts: %v", err)
+	}
+	alerts := activeConnectionAlerts(t, pool, connID)
+	if len(alerts) != 1 {
+		t.Fatalf("pass without a blackouts table: alerts %+v, want one", alerts)
+	}
+
+	// A changed error that cannot be written leaves the old description.
+	timedOut := "connection timed out"
+	setConnectionError(t, pool, connID, &timedOut)
+	logged := refusedPass("rewrite")
+	if !strings.Contains(logged, "Failed to update connection alert description") {
+		t.Errorf("a refused rewrite should be logged: %q", logged)
+	}
+	if got := activeConnectionAlerts(t, pool, connID); len(got) != 1 || got[0].description != refused {
+		t.Errorf("after a refused rewrite: alerts %+v, want %q", got, refused)
+	}
+
+	// A healthy connection whose alert cannot be cleared keeps it.
+	setConnectionError(t, pool, connID, nil)
+	logged = refusedPass("clear")
+	if !strings.Contains(logged, "Failed to clear connection alert") {
+		t.Errorf("a refused clear should be logged: %q", logged)
+	}
+	if got := activeConnectionAlerts(t, pool, connID); len(got) != 1 {
+		t.Errorf("after a refused clear: alerts %+v, want one", got)
+	}
+
+	// A new error whose alert cannot be raised raises nothing.
+	otherID := insertMonitoredConnection(t, pool, "conn-error-writes-new", &refused)
+	logged = refusedPass("raise")
+	if !strings.Contains(logged, "Failed to create connection alert") {
+		t.Errorf("a refused raise should be logged: %q", logged)
+	}
+	if got := activeConnectionAlerts(t, pool, otherID); len(got) != 0 {
+		t.Errorf("after a refused raise: alerts %+v, want none", got)
+	}
+}

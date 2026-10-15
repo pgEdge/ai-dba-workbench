@@ -299,13 +299,18 @@ func TestTokenOwnerGuardMissingToken(t *testing.T) {
 // read refuses the write, rather than letting it through as a
 // narrowing.
 func TestTokenOwnerGuardFailsClosed(t *testing.T) {
-	for _, table := range []string{"token_connection_scope",
-		"token_mcp_scope", "token_admin_scope"} {
+	// Each statement is a literal, so that no SQL is built from a
+	// variable.
+	renames := map[string]string{
+		"token_connection_scope": "ALTER TABLE token_connection_scope RENAME TO gone",
+		"token_mcp_scope":        "ALTER TABLE token_mcp_scope RENAME TO gone",
+		"token_admin_scope":      "ALTER TABLE token_admin_scope RENAME TO gone",
+	}
+	for table, rename := range renames {
 		t.Run(table, func(t *testing.T) {
 			f, cleanup := newOwnerGuardFixture(t)
 			defer cleanup()
-			if _, err := f.store.db.Exec("ALTER TABLE " + table +
-				" RENAME TO gone"); err != nil {
+			if _, err := f.store.db.Exec(rename); err != nil {
 				t.Fatalf("Failed to rename %s: %v", table, err)
 			}
 			err := f.store.AsActor(systemActor).SetTokenScope(f.tokenID,

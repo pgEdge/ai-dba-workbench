@@ -309,6 +309,62 @@ const lowerLevel = (a: string, b: string): string =>
     (LEVEL_RANK[a] ?? 0) <= (LEVEL_RANK[b] ?? 0) ? a : b;
 
 /**
+ * The level a held connection entry may be set to: no more than the
+ * token holds, nor more than the owner holds where that is known.
+ */
+const cappedLevel = (
+    choices: ScopeChoices,
+    id: number,
+    held: string,
+): string => {
+    if (choices.ownerIsSuperuser) {
+        return held;
+    }
+    const owner = choices.connectionLevels[id] ??
+        choices.connectionLevels[ALL_CONNECTIONS_ID];
+    return owner ? lowerLevel(owner, held) : held;
+};
+
+/**
+ * Narrows the connection choices to the entries a token restricted in
+ * connections already holds, each at no more than its stored level.
+ */
+const narrowConnectionChoices = (
+    storedConns: TokenScopeConnection[],
+    choices: ScopeChoices,
+): Pick<ScopeChoices, 'connections' | 'connectionLevels' | 'ownerIsSuperuser'> => {
+    const stored = new Map<number, string>();
+    storedConns.forEach((sc) => {
+        stored.set(sc.connection_id, sc.access_level);
+    });
+    const storedAll = stored.get(ALL_CONNECTIONS_ID);
+
+    const levels: Record<number, string> = {};
+    const connections = choices.connections.filter((c) => {
+        // The server reads a connection's level from its own entry,
+        // else from the "all connections" entry.
+        const held = stored.get(c.id) ?? storedAll;
+        if (held === undefined) {
+            return false;
+        }
+        levels[c.id] = cappedLevel(choices, c.id, held);
+        return true;
+    });
+    if (storedAll !== undefined) {
+        // The server judges the "all connections" entry against the
+        // lowest level any stored entry holds.
+        const held = Array.from(stored.values()).reduce(lowerLevel);
+        levels[ALL_CONNECTIONS_ID] = cappedLevel(choices,
+            ALL_CONNECTIONS_ID, held);
+    }
+    return {
+        connections,
+        connectionLevels: levels,
+        ownerIsSuperuser: false,
+    };
+};
+
+/**
  * Cuts the choices the owner's privileges allow down to those that
  * narrow a token's stored scope. A category the token is not restricted
  * in can be narrowed in any way, so its choices are left alone; in a
@@ -319,45 +375,14 @@ export const narrowScopeChoices = (
     scope: TokenScope | undefined,
     choices: ScopeChoices,
 ): ScopeChoices => {
-    const narrowed: ScopeChoices = { ...choices };
+    let narrowed: ScopeChoices = { ...choices };
 
     const storedConns = scope?.connections ?? [];
     if (storedConns.length > 0) {
-        const stored = new Map<number, string>();
-        storedConns.forEach((sc) => {
-            stored.set(sc.connection_id, sc.access_level);
-        });
-        const storedAll = stored.get(ALL_CONNECTIONS_ID);
-        // The level a held entry may be set to: no more than the token
-        // holds, nor more than the owner holds where that is known.
-        const cappedLevel = (id: number, held: string): string => {
-            if (choices.ownerIsSuperuser) {
-                return held;
-            }
-            const owner = choices.connectionLevels[id] ??
-                choices.connectionLevels[ALL_CONNECTIONS_ID];
-            return owner ? lowerLevel(owner, held) : held;
+        narrowed = {
+            ...narrowed,
+            ...narrowConnectionChoices(storedConns, choices),
         };
-
-        const levels: Record<number, string> = {};
-        narrowed.connections = choices.connections.filter((c) => {
-            // The server reads a connection's level from its own entry,
-            // else from the "all connections" entry.
-            const held = stored.get(c.id) ?? storedAll;
-            if (held === undefined) {
-                return false;
-            }
-            levels[c.id] = cappedLevel(c.id, held);
-            return true;
-        });
-        if (storedAll !== undefined) {
-            // The server judges the "all connections" entry against the
-            // lowest level any stored entry holds.
-            const held = Array.from(stored.values()).reduce(lowerLevel);
-            levels[ALL_CONNECTIONS_ID] = cappedLevel(ALL_CONNECTIONS_ID, held);
-        }
-        narrowed.connectionLevels = levels;
-        narrowed.ownerIsSuperuser = false;
     }
 
     const storedMcp = scope?.mcp_privileges ?? [];

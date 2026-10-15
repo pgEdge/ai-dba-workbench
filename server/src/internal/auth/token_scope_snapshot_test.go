@@ -300,8 +300,14 @@ func TestJudgeTokenScopeClearRefusedBeyondCeiling(t *testing.T) {
 // the write's transaction cannot read refuses the write with that error
 // rather than letting it through or calling it a change.
 func TestGuardJudgedTokenScopeTxReadFailures(t *testing.T) {
-	for _, table := range []string{"token_connection_scope",
-		"token_mcp_scope", "token_admin_scope"} {
+	// Each statement is a literal, so that no SQL is built from a
+	// variable.
+	drops := map[string]string{
+		"token_connection_scope": "DROP TABLE token_connection_scope",
+		"token_mcp_scope":        "DROP TABLE token_mcp_scope",
+		"token_admin_scope":      "DROP TABLE token_admin_scope",
+	}
+	for table, drop := range drops {
 		t.Run(table, func(t *testing.T) {
 			f, cleanup := newOwnerGuardFixture(t)
 			defer cleanup()
@@ -312,7 +318,7 @@ func TestGuardJudgedTokenScopeTxReadFailures(t *testing.T) {
 			}
 			//nolint:errcheck // The test only reads inside the transaction.
 			defer tx.Rollback()
-			if _, err := tx.Exec("DROP TABLE " + table); err != nil {
+			if _, err := tx.Exec(drop); err != nil {
 				t.Fatalf("DROP TABLE failed: %v", err)
 			}
 			err = guardJudgedTokenScopeTx(tx, f.tokenID, snap)

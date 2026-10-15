@@ -317,17 +317,29 @@ func TestTokenScopeUnknownNamesRejected(t *testing.T) {
 	}
 }
 
+// authTableRenames holds, for each auth table a test breaks, the
+// literal statement that renames it, so that no SQL is built from a
+// variable.
+var authTableRenames = map[string]string{
+	"users": "ALTER TABLE users RENAME TO users_gone",
+	"mcp_privilege_identifiers": "ALTER TABLE mcp_privilege_identifiers " +
+		"RENAME TO mcp_privilege_identifiers_gone",
+}
+
 // renameAuthTable renames a table in the auth database, so that every
 // read of it fails.
 func renameAuthTable(t *testing.T, dataDir, table string) {
 	t.Helper()
+	rename, ok := authTableRenames[table]
+	if !ok {
+		t.Fatalf("No rename statement for %s", table)
+	}
 	db, err := sql.Open("sqlite", filepath.Join(dataDir, "auth.db"))
 	if err != nil {
 		t.Fatalf("Failed to open the auth database: %v", err)
 	}
 	defer db.Close()
-	if _, err := db.Exec("ALTER TABLE " + table + " RENAME TO " + table +
-		"_gone"); err != nil {
+	if _, err := db.Exec(rename); err != nil {
 		t.Fatalf("Failed to rename %s: %v", table, err)
 	}
 }

@@ -655,7 +655,11 @@ add a credential column. A value that can hold a credential (the
 `pg_settings` value columns for `primary_conninfo` and similar, and
 secret entries in `pg_hba_file_rules.options`) is masked through
 `metricRedactions` and `innerSelectList` (`credentialSettingCondition`
-or `maskedOptions`), inside the scoped subquery. The scope and time window go in an inner
+or `maskedOptions`), inside the scoped subquery. Free-text columns that
+can quote a password (query text, Spock row images, connection errors)
+are marked `RedactText` and pass through `redactedText`, whose
+`textRedactions` patterns must stay within the regular expression
+syntax Go and PostgreSQL share. The scope and time window go in an inner
 `(SELECT ... WHERE <scope> OFFSET 0) t` (`scopedFrom`), and the
 caller's filters, shape, ordering and paging apply outside it, so no
 caller predicate is evaluated against a row the caller may not see;

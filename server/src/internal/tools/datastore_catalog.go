@@ -131,6 +131,10 @@ type datastoreColumn struct {
 	// pg_hba_file_rules.options; the value of each option whose name
 	// looks like it carries a credential is masked (maskedOptions).
 	MaskOptions bool
+	// RedactText marks a free-text column, such as query text or a
+	// replicated row image, whose text has the passwords that
+	// textRedactions match masked (redactedText).
+	RedactText bool
 }
 
 // datastoreSource is one source query_datastore accepts. Anything not
@@ -192,6 +196,12 @@ func col(name, dataType string) datastoreColumn {
 	return datastoreColumn{Name: name, DataType: dataType}
 }
 
+// redactedTextCol is a column whose free text is passed through
+// redactedText.
+func redactedTextCol(name, dataType string) datastoreColumn {
+	return datastoreColumn{Name: name, DataType: dataType, RedactText: true}
+}
+
 func metricCol(name, dataType string) datastoreColumn {
 	return datastoreColumn{Name: name, DataType: dataType, IsMetric: true}
 }
@@ -251,7 +261,7 @@ func connectionsSource() datastoreSource {
 			col("cluster_id", typeInteger),
 			col("role", typeVarchar),
 			col("membership_source", typeVarchar),
-			col("connection_error", typeText),
+			redactedTextCol("connection_error", typeText),
 			col("created_at", typeTimestamptz),
 			col("updated_at", typeTimestamptz),
 		},
@@ -637,20 +647,30 @@ func isSecretColumnName(name string) bool {
 // credential no column-name check can catch, so they are masked:
 // Columns hold a setting's value and KeyColumn names the setting (a
 // credential-bearing setting such as primary_conninfo can hold a
-// password), and OptionColumns are text[] columns of name=value options
+// password), OptionColumns are text[] columns of name=value options
 // (pg_hba.conf's ldapbindpasswd and radiussecrets hold one in clear
-// text). Note is added to the probe's description.
+// text), and TextColumns hold free text, such as SQL statements and
+// replicated row images, that can quote a password. Note is added to
+// the probe's description.
 var metricRedactions = map[string]struct {
 	KeyColumn     string
 	Columns       []string
 	OptionColumns []string
+	TextColumns   []string
 	Note          string
 }{
 	"pg_settings": {
 		KeyColumn: "name", Columns: []string{"setting", "reset_val", "boot_val"},
 		Note: redactionNote,
 	},
-	"pg_hba_file_rules": {OptionColumns: []string{"options"}, Note: optionsRedactionNote},
+	"pg_hba_file_rules":  {OptionColumns: []string{"options"}, Note: optionsRedactionNote},
+	"pg_stat_activity":   {TextColumns: []string{"query"}, Note: textRedactionNote},
+	"pg_stat_statements": {TextColumns: []string{"query"}, Note: textRedactionNote},
+	"spock_exception_log": {
+		TextColumns: []string{"ddl_statement", "error_message", "local_tup", "remote_old_tup", "remote_new_tup"},
+		Note:        textRedactionNote + " Row images are returned as text.",
+	},
+	"spock_resolutions": {TextColumns: []string{"local_tuple", "remote_tuple"}, Note: textRedactionNote},
 }
 
 // credentialSettings are setting names whose value can carry a
@@ -681,7 +701,74 @@ const (
 		redactedValue + "."
 	optionsRedactionNote = "Values of options that can hold a credential, such as ldapbindpasswd and " +
 		"radiussecrets, are shown as " + redactedValue + "."
+	textRedactionNote = "Passwords in known forms in SQL text and row data, such as PASSWORD '...' " +
+		"and password=... in a connection string, are shown as " + redactedValue +
+		"; other sensitive text is returned as stored."
 )
+
+// textRedaction is one password form redactedText masks: Pattern is a
+// case-insensitive regular expression in the subset PostgreSQL's
+// advanced regular expressions share with Go's RE2, so the unit tests
+// can check it in Go, and Replacement keeps capture group 1 (\1) and
+// puts redactedValue in place of the secret.
+type textRedaction struct {
+	Name        string
+	Pattern     string
+	Replacement string
+}
+
+// textRedactions are the usual places a password appears in SQL text,
+// connection strings and row data. They are applied in order, as
+// regexp_replace calls inside the scoped subquery, so a caller's filters
+// and aggregates see only the masked text. A quoted value may lack its
+// closing quote, since pg_stat_activity truncates long statements. They
+// cannot catch every form: a password in any other form is
+// returned as stored.
+var textRedactions = []textRedaction{
+	{
+		// postgresql://user:secret@host
+		Name:        "URI userinfo",
+		Pattern:     `(postgres(ql)?://[^:/@[:space:]'"]*:)[^@/[:space:]'"]+@`,
+		Replacement: `\1` + redactedValue + `@`,
+	},
+	{
+		// "password": "secret" in a JSON row image.
+		Name:        "JSON key",
+		Pattern:     `("[^"]*(passw(or)?d|secret)[^"]*"[[:space:]]*:[[:space:]]*)"([^"\\]|\\.)*"`,
+		Replacement: `\1"` + redactedValue + `"`,
+	},
+	{
+		// password=secret and password='secret' in a libpq connection
+		// string, and ldapbindpasswd= and radiussecrets= in pg_hba.conf.
+		Name:        "keyword=value",
+		Pattern:     `((passw(or)?d|secrets?)[[:space:]]*=[[:space:]]*)('([^'\\]|\\.)*'?|[^[:space:]'";)]+)`,
+		Replacement: `\1` + redactedValue,
+	},
+	{
+		// [ENCRYPTED] PASSWORD 'secret' in CREATE or ALTER ROLE and USER,
+		// and password 'secret' in a user mapping's OPTIONS.
+		Name:        "PASSWORD 'value'",
+		Pattern:     `((passw(or)?d|secrets?)[[:space:]]+e?)'(''|[^'])*'?`,
+		Replacement: `\1'` + redactedValue + `'`,
+	},
+}
+
+// sqlStringLiteral quotes a constant as a SQL string literal. It is
+// used only for the constants in textRedactions, never caller input.
+func sqlStringLiteral(v string) string {
+	return "'" + strings.ReplaceAll(v, "'", "''") + "'"
+}
+
+// redactedText returns value, cast to text, with every textRedactions
+// pattern masked. A NULL value stays NULL.
+func redactedText(value string) string {
+	out := value + "::text"
+	for _, r := range textRedactions {
+		out = "regexp_replace(" + out + ", " + sqlStringLiteral(r.Pattern) + ", " +
+			sqlStringLiteral(r.Replacement) + ", 'gi')"
+	}
+	return out
+}
 
 // redactMetricColumns marks the value columns of probe name for masking.
 // If the probe has no column naming the setting, the value columns
@@ -695,6 +782,12 @@ func redactMetricColumns(name string, columns []datastoreColumn) []datastoreColu
 	out := make([]datastoreColumn, 0, len(columns))
 	for _, c := range columns {
 		c.MaskOptions = slices.Contains(rule.OptionColumns, c.Name)
+		if slices.Contains(rule.TextColumns, c.Name) {
+			// A row image is masked as text and returned as text, since
+			// masking can leave it invalid as JSON.
+			c.RedactText = true
+			c.DataType = typeText
+		}
 		if slices.Contains(rule.Columns, c.Name) {
 			if !hasKey {
 				continue

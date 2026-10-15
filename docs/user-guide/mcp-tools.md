@@ -103,6 +103,34 @@ each entry in `options` whose name suggests a secret, such as
 `ldapbindpasswd` and `radiussecrets`, is shown as `********`, so
 `ldapbindpasswd=********` replaces the stored option.
 
+Some sources return free text: the `query` column of `pg_stat_activity` and
+`pg_stat_statements`, the statements, error messages and replicated row images
+of `spock_exception_log` and `spock_resolutions`, and the `connection_error`
+column of `connections`. The tool masks passwords that appear in the usual
+forms in this text, replacing the secret with `********`:
+
+- `PASSWORD '...'` in `CREATE ROLE` and `ALTER ROLE` statements, including
+  `ENCRYPTED PASSWORD`, and `password '...'` in a user mapping's `OPTIONS`.
+- `password=...` in a libpq connection string, such as the one given to
+  `CREATE SUBSCRIPTION ... CONNECTION` or `dblink_connect`.
+- The password in a connection URI, such as
+  `postgresql://user:secret@host`.
+- `ldapbindpasswd=...` and `radiussecrets=...`.
+- A JSON key whose name contains `password`, `passwd` or `secret` in a
+  replicated row image.
+
+Filters and aggregates see only the masked text. The replicated row images in
+`spock_exception_log` are returned as text rather than JSON, because masking
+can leave them invalid as JSON.
+
+!!! warning
+
+    The free-text columns can still hold sensitive information: SQL text and
+    replicated row data may contain personal or confidential values, and a
+    password written in a form the masking does not recognise is returned as
+    stored. Granting a user or token read access to a connection therefore
+    grants visibility of that text.
+
 ### Describing the Sources
 
 The `describe_datastore` tool accepts one optional parameter. When called

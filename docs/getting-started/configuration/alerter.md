@@ -439,8 +439,10 @@ the count and clears the alert, unless the failure rate
 described below keeps the alert open; tier 3 classification and
 re-evaluation share the reasoning provider, so a successful
 call from either clears the alerts of both. The decision
-provider serves tier 3 decisions alone, so only a
-successful decision call clears its alert. After clearing
+provider serves tier 3 decisions alone, so no reasoning call
+clears its alert; a successful decision call clears it, as
+does a successful startup check of the decision provider,
+described below. After clearing
 an alert, the alerter does not raise it again for five
 minutes, so that a provider that fails intermittently cannot
 send a burst of notifications. A call cancelled before it
@@ -463,8 +465,10 @@ the threshold or the five-minute wait; a failed reasoning
 check raises the tier 3 alert. A successful reasoning check
 clears both the tier 3 and the re-evaluation alerts. When
 tier 3 is enabled, the alerter also checks the decision
-provider by listing its models, which costs no tokens. At
-startup the alerter also clears any open provider alert for
+provider by listing its models, which costs no tokens; a
+successful listing counts as a successful decision call, so
+it can clear the decision alert left open by a previous run.
+At startup the alerter also clears any open provider alert for
 a tier or provider that is no longer configured or enabled.
 See
 [System Alerts](../../user-guide/alerts/index.md#system-alerts)
@@ -690,7 +694,9 @@ figures measure agreement with that model rather than
 accuracy against decisions that users labelled; no such
 labels existed. The reasoning model, Claude Haiku 4.5,
 agreed with the stored decisions on 91% of the candidates
-when run again.
+when run again. The
+[spike results](https://github.com/pgEdge/ai-dba-workbench/issues/626#issuecomment-6187170285)
+on issue #626 give the full data.
 
 The following table compares the models at the default
 threshold of 0.5:

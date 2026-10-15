@@ -223,9 +223,11 @@ without failing consecutively. A successful tier 3 or
 re-evaluation call counts as a success for both, since they
 share the reasoning provider, and so can clear the alerts of
 both. A failing decision provider raises its own alert, with
-the tier named `Tier 3 decision`, which only a successful
-decision call clears. Once cleared, the alert is not raised again for
-five minutes.
+the tier named `Tier 3 decision`, which no reasoning call
+clears; a successful decision call clears it, as does a
+successful startup check of the decision provider, which
+lists the provider's models when the alerter starts. Once
+cleared, the alert is not raised again for five minutes.
 
 System alerts behave differently from connection alerts in
 the following ways:

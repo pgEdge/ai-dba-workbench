@@ -598,7 +598,11 @@ Collector schema migration 22 adds two nullable columns to
 which kind of model decided a candidate:
 
 - `tier3_source` holds `decision` or `reasoning`, enforced by the
-  `anomaly_candidates_tier3_source_check` constraint.
+  `anomaly_candidates_tier3_source_check` constraint. Migration 22
+  adds the constraint `NOT VALID`, so that adding it does not scan
+  the table under the `ACCESS EXCLUSIVE` lock that adding the
+  columns takes, and migration 23 validates it in a transaction of
+  its own, under a lock that does not block writes.
 - `tier3_model` holds the provider and model, in the form
   `provider/model`, that `tier3_source` names.
 
@@ -608,7 +612,12 @@ Tier 3 has not classified, and rows classified before the
 migration, hold `NULL`. The alerter reads and writes both columns
 whenever it loads or updates a candidate, so the collector that
 applies migration 22 must be upgraded before, or together with,
-the alerter.
+the alerter. An alerter upgraded first logs `ERROR: Failed to get
+anomaly candidates` once each anomaly cycle, naming the missing
+column, and raises no anomaly alerts; the candidates that Tier 1
+queues meanwhile are expired unprocessed once they pass the stale
+candidate cut-off, two and a half hours at the default Tier 3
+timeout.
 
 ### Decision Model Trade-offs
 
@@ -619,7 +628,9 @@ candidates stored as suppressed. No user-labelled ground truth
 existed, so every figure measures agreement with the reasoning
 model that made the stored decisions, not accuracy. The reasoning
 model, Claude Haiku 4.5, agreed with the stored decisions on 91% of
-the candidates when run again.
+the candidates when run again. The
+[spike results](https://github.com/pgEdge/ai-dba-workbench/issues/626#issuecomment-6187170285)
+on issue #626 give the full data.
 
 The following table compares the models at the default threshold
 of 0.5:

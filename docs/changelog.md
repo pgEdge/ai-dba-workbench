@@ -29,16 +29,21 @@ project adheres to
   reasoning provider is configured; re-evaluation of
   acknowledged alerts still uses the reasoning model. A failing
   decision provider raises its own `Tier 3 decision` provider
-  health system alert. Collector schema migration 22 adds the
-  `tier3_source` and `tier3_model` columns to
+  health system alert. Collector schema migrations 22 and 23
+  add the `tier3_source` and `tier3_model` columns to
   `anomaly_candidates`, recording which kind of model, and which
   model, decided each candidate; upgrade the collector before,
-  or together with, the alerter. Changing the decision provider
-  takes an alerter restart. In a spike on 150 real candidates,
-  the Jev model agreed with the stored reasoning-model decisions
-  89% of the time, at about a fiftieth of the cost and a
-  fifteenth of the median latency of Claude Haiku 4.5, so
-  `typesafe` is the recommended provider.
+  or together with, the alerter. An alerter upgraded first logs
+  `ERROR: Failed to get anomaly candidates` once each cycle and
+  raises no anomaly alerts, and its queued candidates expire
+  unprocessed after two and a half hours. Changing the decision
+  provider takes an alerter restart. In a
+  [spike](https://github.com/pgEdge/ai-dba-workbench/issues/626#issuecomment-6187170285)
+  on 150 real candidates, the Jev model agreed with the stored
+  reasoning-model decisions 89% of the time, at about a fiftieth
+  of the cost, at October 2026 prices, and a fifteenth of the
+  median latency of Claude Haiku 4.5, so `typesafe` is the
+  recommended provider.
 
 - Raise a system alert when anomaly detection is degraded by
   a failing embedding or reasoning provider (#582). The

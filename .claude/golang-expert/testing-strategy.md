@@ -111,9 +111,11 @@ are editing.
   (#645), which imports the collector's `SchemaManager` (the server
   `go.mod` requires the collector module through a `replace`, and
   `server/Dockerfile` copies `collector/go.mod` for it) and migrates a
-  scratch database, `ai_workbench_catalog_schema_check`, created and
-  dropped with constant SQL. Because the name is fixed, two concurrent
-  runs of that test on one cluster collide.
+  scratch database named after the test database plus
+  `_catalog_schema` (for example `ai_workbench_pr652_catalog_schema`),
+  so concurrent runs against per-session test databases do not
+  collide. The server builds the name and quotes it with
+  `format('%I')`, so the SQL text sent from Go stays constant.
 - Collector packages create a fresh database per run named
   `ai_workbench_test_<yyyymmdd_hhmmss>_<micros>` (see
   `collector/src/database/schema_test.go` and the probes package

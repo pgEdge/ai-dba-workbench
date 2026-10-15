@@ -2693,7 +2693,27 @@ project adheres to
   stored, and the server redacts the timeline and latest-row values
   again for a datastore the collector has not yet migrated. Raw
   `query_datastore` SQL reads the stored rows directly and so is only
-  covered once the migration has run. (#643)
+  covered once the migration has run. A change to the password alone
+  is no longer recorded as a configuration change. (#643)
+
+- Redact passwords in collected statement text. PostgreSQL keeps the
+  text of statements such as `ALTER ROLE ... PASSWORD`, `CREATE USER
+  MAPPING ... OPTIONS (password ...)` and `CREATE SUBSCRIPTION ...
+  CONNECTION` as written, so the `pg_stat_activity` and
+  `pg_stat_statements` probes stored the password in the `query`
+  column, and the `spock_exception_log` probe could store one in
+  `ddl_statement` or `error_message`. The probes now split the text
+  into SQL tokens and replace string constants that hold a password,
+  or the password inside a connection string, with `********`,
+  leaving `pg_stat_statements` placeholders such as `$1` alone.
+  Collector schema migration 25 redacts the text already stored; it
+  rewrites only rows that mention a password or similar secret, but
+  still reads the whole of each table, so it can take a while on a
+  large datastore. The server redacts the text again when it returns
+  it from `GET /api/v1/metrics/latest`, the latest-row mode of
+  `GET /api/v1/metrics/query` and `GET /api/v1/metrics/top-queries`,
+  and `GET /api/v1/metrics/latest` now redacts `pg_settings` rows in
+  the same way. (#643)
 
 - Delete a user with `ai-dba-server -delete-user` only when the
   confirmation is an explicit `y` or `yes`. The answer was checked

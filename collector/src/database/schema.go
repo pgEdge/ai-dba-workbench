@@ -23,6 +23,7 @@ import (
 	"github.com/pgedge/ai-workbench/pkg/logger"
 	"github.com/pgedge/ai-workbench/pkg/pgsettings"
 	"github.com/pgedge/ai-workbench/pkg/rollback"
+	"github.com/pgedge/ai-workbench/pkg/sqlredact"
 )
 
 // Migration represents a database schema migration
@@ -3984,6 +3985,114 @@ func (sm *SchemaManager) registerMigrations() {
 			return nil
 		},
 	})
+
+	// Migration #25 removes passwords from statement text that was stored
+	// before the probes started redacting it. See GitHub issue #643.
+	//
+	// PostgreSQL keeps utility statements such as ALTER ROLE ... PASSWORD
+	// and CREATE SUBSCRIPTION ... CONNECTION verbatim in pg_stat_activity
+	// and pg_stat_statements, so the probes copied the secrets into the
+	// datastore. The probes now redact the text with sqlredact.RedactQuery
+	// before storing it, and this migration applies the same function to
+	// the rows already stored. The tables can be large, so only rows that
+	// match a cheap ILIKE pre-filter are read and rewritten; the tables
+	// are still scanned once per column.
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     25,
+		Description: "Redact passwords in stored statement text",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			if err := redactStoredStatementText(ctx, tx); err != nil {
+				return fmt.Errorf("failed to redact stored statement text: %w", err)
+			}
+
+			_, err := tx.Exec(ctx, `
+				COMMENT ON COLUMN metrics.pg_stat_activity.query IS
+					'Text of the backend''s most recent query; passwords and other secrets in string constants are redacted to ********';
+				COMMENT ON COLUMN metrics.pg_stat_statements.query IS
+					'Representative statement text; passwords and other secrets in string constants are redacted to ********';
+				COMMENT ON COLUMN metrics.spock_exception_log.ddl_statement IS
+					'DDL statement that failed to apply, with passwords and other secrets in string constants redacted to ********';
+				COMMENT ON COLUMN metrics.spock_exception_log.error_message IS
+					'Error reported when the change failed to apply, with secrets in any quoted statement text redacted to ********';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to comment statement text columns: %w", err)
+			}
+
+			return nil
+		},
+	})
+}
+
+// statementTextUpdates holds, for each column that stores statement text,
+// the statement that reads the distinct values that might hold a secret
+// and the one that rewrites them. $1 is the list of ILIKE patterns from
+// sqlredact.CandidatePatterns; $2 and $3 are parallel arrays of old and
+// new values. The table and column names are fixed here and never come
+// from input.
+var statementTextUpdates = []struct{ column, selectSQL, updateSQL string }{
+	{
+		"metrics.pg_stat_activity.query",
+		`SELECT DISTINCT query FROM metrics.pg_stat_activity
+		 WHERE query ILIKE ANY($1)`,
+		`UPDATE metrics.pg_stat_activity t SET query = r.new
+		 FROM unnest($2::text[], $3::text[]) AS r(old, new)
+		 WHERE t.query = r.old AND t.query ILIKE ANY($1)`,
+	},
+	{
+		"metrics.pg_stat_statements.query",
+		`SELECT DISTINCT query FROM metrics.pg_stat_statements
+		 WHERE query ILIKE ANY($1)`,
+		`UPDATE metrics.pg_stat_statements t SET query = r.new
+		 FROM unnest($2::text[], $3::text[]) AS r(old, new)
+		 WHERE t.query = r.old AND t.query ILIKE ANY($1)`,
+	},
+	{
+		"metrics.spock_exception_log.ddl_statement",
+		`SELECT DISTINCT ddl_statement FROM metrics.spock_exception_log
+		 WHERE ddl_statement ILIKE ANY($1)`,
+		`UPDATE metrics.spock_exception_log t SET ddl_statement = r.new
+		 FROM unnest($2::text[], $3::text[]) AS r(old, new)
+		 WHERE t.ddl_statement = r.old AND t.ddl_statement ILIKE ANY($1)`,
+	},
+	{
+		"metrics.spock_exception_log.error_message",
+		`SELECT DISTINCT error_message FROM metrics.spock_exception_log
+		 WHERE error_message ILIKE ANY($1)`,
+		`UPDATE metrics.spock_exception_log t SET error_message = r.new
+		 FROM unnest($2::text[], $3::text[]) AS r(old, new)
+		 WHERE t.error_message = r.old AND t.error_message ILIKE ANY($1)`,
+	},
+}
+
+// redactStoredStatementText rewrites every stored statement text that
+// holds a secret to its redacted form. Text that cannot hold one, by the
+// ILIKE pre-filter, is never read; redaction is idempotent, so text that
+// is already redacted is left alone.
+func redactStoredStatementText(ctx context.Context, tx pgx.Tx) error {
+	patterns := sqlredact.CandidatePatterns()
+	for _, stmt := range statementTextUpdates {
+		values, err := queryStrings(ctx, tx, stmt.selectSQL, patterns)
+		if err != nil {
+			return fmt.Errorf("failed to read %s: %w", stmt.column, err)
+		}
+		var olds, news []string
+		for _, value := range values {
+			if redacted := sqlredact.RedactQuery(value); redacted != value {
+				olds = append(olds, value)
+				news = append(news, redacted)
+			}
+		}
+		if len(olds) == 0 {
+			continue
+		}
+		if _, err := tx.Exec(ctx, stmt.updateSQL, patterns, olds, news); err != nil {
+			return fmt.Errorf("failed to redact %s: %w", stmt.column, err)
+		}
+	}
+	return nil
 }
 
 // pgSettingsValueUpdates holds, for each pg_settings column that stores a

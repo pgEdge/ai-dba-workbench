@@ -61,8 +61,9 @@ a new snapshot.
 Collector schema migration 24 applies the same
 redaction to rows stored by earlier versions, and the
 server redacts these values again when it returns
-them in timeline configuration change events and in
-the latest-row mode of `GET /api/v1/metrics/query`.
+them in timeline configuration change events, from
+`GET /api/v1/metrics/latest` and in the latest-row
+mode of `GET /api/v1/metrics/query`.
 
 ## Common Queries
 

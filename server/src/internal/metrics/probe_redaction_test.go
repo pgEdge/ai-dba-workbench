@@ -111,3 +111,78 @@ func TestQueryLatestRows_RedactsPgSettings(t *testing.T) {
 		}
 	}
 }
+
+func TestRedactProbeRows(t *testing.T) {
+	const leaked = "ALTER ROLE app PASSWORD 'hunter2'"
+	const redacted = "ALTER ROLE app PASSWORD '********'"
+
+	tests := []struct {
+		name, probe string
+		row, want   map[string]any
+	}{
+		{
+			name:  "activity query",
+			probe: "pg_stat_activity",
+			row:   map[string]any{"query": leaked, "state": leaked},
+			want:  map[string]any{"query": redacted, "state": leaked},
+		},
+		{
+			name:  "normalized statement",
+			probe: "pg_stat_statements",
+			row:   map[string]any{"query": "SELECT $1", "calls": int64(4)},
+			want:  map[string]any{"query": "SELECT $1", "calls": int64(4)},
+		},
+		{
+			name:  "unexpected type",
+			probe: "pg_stat_statements",
+			row:   map[string]any{"query": []byte(leaked)},
+			want:  map[string]any{"query": "********"},
+		},
+		{
+			name:  "spock exception",
+			probe: "spock_exception_log",
+			row:   map[string]any{"ddl_statement": leaked, "error_message": nil},
+			want:  map[string]any{"ddl_statement": redacted, "error_message": nil},
+		},
+		{
+			name:  "settings",
+			probe: "pg_settings",
+			row: map[string]any{
+				"name":    "primary_conninfo",
+				"setting": "host=192.0.2.1 password=s3cret",
+			},
+			want: map[string]any{
+				"name":    "primary_conninfo",
+				"setting": "host=192.0.2.1 password=********",
+			},
+		},
+		{
+			name:  "other probe",
+			probe: "pg_stat_database",
+			row:   map[string]any{"query": leaked},
+			want:  map[string]any{"query": leaked},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			RedactProbeRows(tt.probe, []map[string]any{tt.row})
+			for col, want := range tt.want {
+				if got := tt.row[col]; got != want {
+					t.Errorf("%s = %#v, want %#v", col, got, want)
+				}
+			}
+		})
+	}
+}
+
+func TestRedactStatementText(t *testing.T) {
+	got := RedactStatementText(
+		"CREATE USER MAPPING FOR app SERVER s OPTIONS (user 'app', password 'hunter2')")
+	want := "CREATE USER MAPPING FOR app SERVER s OPTIONS (user 'app', password '********')"
+	if got != want {
+		t.Errorf("RedactStatementText() = %q, want %q", got, want)
+	}
+	if got := RedactStatementText("SELECT 1"); got != "SELECT 1" {
+		t.Errorf("RedactStatementText(SELECT 1) = %q", got)
+	}
+}

@@ -2148,7 +2148,9 @@ func (h *PerfSummaryHandler) handleTopQueries(
 			continue
 		}
 		if queryText != nil {
-			row.Query = *queryText
+			// Statement text stored before the collector redacted it
+			// may hold a password (GitHub issue #643).
+			row.Query = metrics.RedactStatementText(*queryText)
 		}
 		results = append(results, row)
 	}

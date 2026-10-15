@@ -318,7 +318,12 @@ func (p *PgStatStatementsProbe) Execute(ctx context.Context, connectionName stri
 	// installed extension with no rows to report is a different thing
 	// from an absent one, which returns ErrExtensionNotInstalled, and
 	// the scheduler records the two differently.
-	return utils.ScanRowsToMaps(rows)
+	results, err := utils.ScanRowsToMaps(rows)
+	if err != nil {
+		return nil, err
+	}
+	redactStatementText(results, "query")
+	return results, nil
 }
 
 // Store stores the collected metrics in the datastore

@@ -58,6 +58,10 @@ backend is idle, and the column is null for every row
 collected from a server running PostgreSQL 13 or
 earlier, or running with `compute_query_id` off.
 
+The probe redacts passwords in the `query` column
+before storing it; see
+[Redacted Statement Text](#redacted-statement-text).
+
 ### pg_stat_checkpointer
 
 This probe monitors checkpointer process statistics.
@@ -586,7 +590,10 @@ The probe collects only the top 1000 queries ordered
 by total execution time to prevent excessive data
 collection on busy systems. Queries with NULL
 `queryid` are automatically filtered out. The limit
-is hard-coded in the probe implementation.
+is hard-coded in the probe implementation. The probe
+redacts passwords in the `query` column before storing
+it; see
+[Redacted Statement Text](#redacted-statement-text).
 
 **Columns Collected**: userid, dbid, toplevel,
 queryid, query, plans, total_plan_time,
@@ -687,7 +694,10 @@ command_counter, retry_errored_at)`; `database_name`
 discriminates rows captured from different databases on
 the same monitored connection so the natural Spock keys
 remain unique within a `(connection, database, sample)`
-tuple.
+tuple. The probe redacts passwords in the
+`ddl_statement` and `error_message` columns before
+storing them; see
+[Redacted Statement Text](#redacted-statement-text).
 
 **Columns Collected**: connection_id, database_name,
 collected_at, remote_origin, remote_commit_ts,
@@ -918,6 +928,59 @@ This probe monitors per-process CPU and memory usage.
   usage
 - Use Cases: Process-level resource analysis,
   identifying resource-intensive processes
+
+## Redacted Statement Text
+
+PostgreSQL keeps the text of a utility statement such
+as `ALTER ROLE ... PASSWORD` as it was written, so the
+password shows in `pg_stat_activity` and
+`pg_stat_statements` and can reach Spock's exception
+log. The `pg_stat_activity`, `pg_stat_statements` and
+`spock_exception_log` probes therefore redact the
+statement text they collect before storing it. A lexer
+splits the text into SQL tokens, following
+PostgreSQL's rules for string constants, dollar
+quoting, quoted identifiers and comments, and the
+probes apply two rules to the tokens:
+
+- A string constant that follows a name suggesting a
+  secret is replaced with `'********'` in full. This
+  covers `PASSWORD` (and `ENCRYPTED PASSWORD`) in
+  `CREATE ROLE`, `ALTER ROLE`, `CREATE USER` and
+  `ALTER USER`, the `password` and `sslpassword`
+  options of `CREATE USER MAPPING`, `ALTER USER
+  MAPPING`, `CREATE SERVER` and `ALTER SERVER`, and any
+  column, option or setting whose name contains
+  `password`, `passwd`, `passphrase`, `secret`,
+  `token`, `credential` or `private_key`.
+- Any other string constant that mentions a password,
+  or is a `postgres://` or `postgresql://` URI, is
+  parsed as a libpq connection string and has each
+  `password` and `sslpassword` value replaced, keeping
+  the rest; this covers the `CONNECTION` string of
+  `CREATE SUBSCRIPTION` and `ALTER SUBSCRIPTION`, and
+  connection strings passed to functions such as
+  `dblink_connect`.
+
+The redaction errs towards removing too much when the
+meaning is unclear: a secret held in a string
+constant containing a backslash, which PostgreSQL
+could read differently with
+`standard_conforming_strings` off, is redacted along
+with the rest of the text after it, and an escape
+string constant (`E'...'`) that mentions a password is
+replaced in full. Parameter
+placeholders such as `$1`, which `pg_stat_statements`
+leaves in place of constants, are never changed, and
+comments are not inspected.
+
+Collector schema migration 25 applies the same
+redaction to statement text stored by earlier
+versions. The server redacts the text again when it
+returns probe rows from `GET /api/v1/metrics/latest`
+and the latest-row mode of `GET /api/v1/metrics/query`,
+and when it returns query text from
+`GET /api/v1/metrics/top-queries`.
 
 ## System Limits and Constants
 

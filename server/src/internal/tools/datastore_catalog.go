@@ -641,11 +641,19 @@ var metricRedactions = map[string]struct {
 
 // credentialSettings are setting names whose value can carry a
 // credential: primary_conninfo is a libpq connection string that may
-// hold password=, and ssl_passphrase_command may hold the passphrase.
-// Any setting whose name contains a secretColumnFragments entry is
-// masked as well, which covers an extension setting such as
-// myext.password.
-var credentialSettings = []string{"primary_conninfo", "ssl_passphrase_command"}
+// hold password=, and the rest are shell commands that may carry a
+// passphrase or an inline secret such as PGPASSWORD=... or
+// AWS_SECRET_ACCESS_KEY=.... Any setting whose name contains a
+// secretColumnFragments entry is masked as well, which covers an
+// extension setting such as myext.password.
+var credentialSettings = []string{
+	"primary_conninfo",
+	"ssl_passphrase_command",
+	"archive_command",
+	"archive_cleanup_command",
+	"restore_command",
+	"recovery_end_command",
+}
 
 // redactedValue replaces a masked value, as PostgreSQL masks a password
 // in pg_stat_wal_receiver.conninfo.

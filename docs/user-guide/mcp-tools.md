@@ -94,9 +94,10 @@ alongside connection-specific ones. Stored connection passwords and
 certificates are never available from any source, and metric columns whose
 names suggest a password, token or other secret are not offered. In
 `pg_settings`, the `setting`, `reset_val` and `boot_val` values of settings
-that can hold a credential (`primary_conninfo`, `ssl_passphrase_command`, and
-any setting whose name suggests a password, token or other secret) are shown
-as `********`.
+that can hold a credential (`primary_conninfo`, the shell command settings
+`ssl_passphrase_command`, `archive_command`, `archive_cleanup_command`,
+`restore_command` and `recovery_end_command`, and any setting whose name
+suggests a password, token or other secret) are shown as `********`.
 
 ### Describing the Sources
 

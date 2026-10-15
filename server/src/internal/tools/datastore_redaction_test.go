@@ -74,7 +74,7 @@ func TestCredentialSettingLiteralsAreSafe(t *testing.T) {
 		t.Errorf("redactedValue %q is not safe to write as a SQL literal", redactedValue)
 	}
 	cond := credentialSettingCondition("t", "name")
-	for _, want := range []string{`lower(t."name") IN ('primary_conninfo', 'ssl_passphrase_command')`, `~ '(password|`} {
+	for _, want := range []string{`lower(t."name") IN ('primary_conninfo', 'ssl_passphrase_command', 'archive_command', 'archive_cleanup_command', 'restore_command', 'recovery_end_command')`, `~ '(password|`} {
 		if !strings.Contains(cond, want) {
 			t.Errorf("condition %s does not contain %s", cond, want)
 		}
@@ -119,6 +119,10 @@ func TestQueryDatastoreRedactsCredentialSettingsIntegration(t *testing.T) {
             ($1, 'primary_conninfo', $3, $3, $3, now() - interval '10 minutes'),
             ($1, 'myext.Password', 'example-secret', '', 'example-secret', now() - interval '10 minutes'),
             ($1, 'ssl_passphrase_command', 'echo example-secret', '', NULL, now() - interval '10 minutes'),
+            ($1, 'archive_command', 'AWS_SECRET_ACCESS_KEY=example-secret aws s3 cp %p s3://example/%f', '', 'AWS_SECRET_ACCESS_KEY=example-secret aws s3 cp %p s3://example/%f', now() - interval '10 minutes'),
+            ($1, 'restore_command', 'PGPASSWORD=example-secret fetch %f %p', '', 'PGPASSWORD=example-secret fetch %f %p', now() - interval '10 minutes'),
+            ($1, 'archive_cleanup_command', 'PGPASSWORD=example-secret cleanup %r', '', '', now() - interval '10 minutes'),
+            ($1, 'Recovery_End_Command', 'PGPASSWORD=example-secret notify', '', '', now() - interval '10 minutes'),
             ($1, 'work_mem', '4096', '4096', '4096', now() - interval '10 minutes'),
             ($2, 'primary_conninfo', $3, $3, $3, now() - interval '10 minutes')`,
 			args: []any{f.visible, f.hidden, secret}},

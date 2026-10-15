@@ -296,6 +296,17 @@ func auditVerifyExitCode(err error) int {
 // would soon stop believing the message when it mattered.
 func verifyAuditLogCommand(dataDir string) error {
 	store, err := openAuthStoreCLI(dataDir)
+	if errors.Is(err, auth.ErrAuditChainBroken) {
+		// The store refuses to open over an audit_tail table it did not
+		// create, which is as much tampering as a row that fails.
+		return &auditVerifyError{
+			code: auditExitTampered,
+			err: fmt.Errorf("failed to open auth store: %w\n"+
+				"       Treat this as possible tampering; the server will "+
+				"not start until auth.db is restored from a known-good "+
+				"copy", err),
+		}
+	}
 	if err != nil {
 		return fmt.Errorf("failed to open auth store: %w", err)
 	}
@@ -320,7 +331,7 @@ func verifyAuditLogCommand(dataDir string) error {
 // rechainAuditLogCommand handles the rechain-audit-log command, which
 // does one of two things. On a database written by a release that
 // predates the keyed chain, which refuses to open until it has been
-// run, it re-hashes the log as keyed version 2 rows under the server
+// run, it re-hashes the log as keyed rows under the server
 // secret. On a keyed log that no longer verifies, which stops the
 // retention purge, it re-anchors the log instead: it rewrites nothing,
 // and appends one event recording where the log now begins and which
@@ -515,7 +526,7 @@ func printAuditRechainPlan(out io.Writer, dataDir string,
 	}
 
 	fmt.Fprintf(out, "\nThis will re-hash all %d event(s) as keyed "+
-		"version 2 rows, in one transaction,\nand record the re-chain in "+
+		"rows, in one transaction,\nand record the re-chain in "+
 		"the log. It attests the log exactly as it now stands:\nwhatever "+
 		"this database currently says becomes what the keyed chain "+
 		"vouches for.\n", plan.Events)
@@ -708,6 +719,29 @@ func printAuditReanchorEvidence(out io.Writer, plan auth.AuditRechainPlan) {
 		"that would be accepted\nas history: %s\n", reason)
 }
 
+// printAuditReanchorWarning repeats, just before the question, that
+// nothing has proven the events the re-anchor would accept as history,
+// when nothing has. Verification checks no event written under the
+// previous secret, so without that proof the log may have been cut back
+// to any of them, not just to the change of secret.
+func printAuditReanchorWarning(out io.Writer, plan auth.AuditRechainPlan) {
+	if plan.HistoryProven || plan.HistoryEvents == 0 {
+		return
+	}
+
+	reason := "no previous secret was given (-previous-secret-file)"
+	if plan.PreviousKeyGiven {
+		reason = "(no reason given)"
+		if plan.HistoryProofErr != nil {
+			reason = logging.SanitizeForLog(plan.HistoryProofErr.Error())
+		}
+	}
+	fmt.Fprintf(out, "\nWARNING: NOT PROVEN. Nothing shows that the %d "+
+		"event(s) accepted as history\nare the ones the previous secret "+
+		"wrote, or that none were deleted from\ntheir end: %s\n",
+		plan.HistoryEvents, reason)
+}
+
 // confirmAuditReanchor decides whether a re-anchor proceeds.
 //
 // An interactive run asks, and only on a terminal: the question is for
@@ -730,6 +764,7 @@ func confirmAuditReanchor(in io.Reader, out io.Writer, assumeYes bool,
 			"-confirm-rechain and -previous-secret-file"); err != nil {
 			return false, err
 		}
+		printAuditReanchorWarning(out, plan)
 		return confirmAuditRechain(in, out)
 	}
 

@@ -173,8 +173,7 @@ func countingClusterHandler(t *testing.T, f *clusterCovFixture) (*ClusterHandler
 
 // TestClusterGroupLookupsCostTheSameForHiddenAndMissing checks that each
 // cluster-group route runs as many datastore queries for a group the
-// caller cannot see as for an id that does not exist, so the two cannot
-// be told apart by response time (issue #649).
+// caller cannot see as for an id that does not exist (issue #649).
 func TestClusterGroupLookupsCostTheSameForHiddenAndMissing(t *testing.T) {
 	f := newClusterCovFixture(t)
 	h, acquired := countingClusterHandler(t, f)

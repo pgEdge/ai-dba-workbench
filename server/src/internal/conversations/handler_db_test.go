@@ -11,6 +11,8 @@ package conversations
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -18,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
 
@@ -40,6 +43,25 @@ CREATE TABLE pg_temp.conversations (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 )`
+
+// prepareConversationSession creates the temporary conversations table
+// in a new session and checks that the unqualified name the store uses
+// resolves to it rather than to a permanent table; an error makes the
+// pool discard the connection.
+func prepareConversationSession(ctx context.Context, conn *pgx.Conn) error {
+	if _, err := conn.Exec(ctx, conversationTableDDL); err != nil {
+		return fmt.Errorf("create the conversations table: %w", err)
+	}
+	var inTemp bool
+	if err := conn.QueryRow(ctx, `SELECT to_regclass('conversations') =
+        to_regclass('pg_temp.conversations')`).Scan(&inTemp); err != nil {
+		return fmt.Errorf("resolve the conversations table: %w", err)
+	}
+	if !inTemp {
+		return errors.New("the conversations table does not resolve to pg_temp")
+	}
+	return nil
+}
 
 // newConversationUpdateFixture returns a handler over a fresh
 // conversations table and a session token for each named user. The
@@ -65,23 +87,18 @@ func newConversationUpdateFixture(t *testing.T, users ...string) (*Handler, *Sto
 	cfg.MaxConns = 1
 	cfg.MaxConnLifetime = time.Hour
 	cfg.MaxConnIdleTime = time.Hour
+	// Every session the pool opens, including any replacement for a
+	// connection that dies, gets its own temporary table before the
+	// store can use it, so an unqualified write can never reach a
+	// permanent table.
+	cfg.AfterConnect = prepareConversationSession
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		t.Fatalf("Failed to connect to the test database: %v", err)
 	}
 	t.Cleanup(pool.Close)
-	if _, err := pool.Exec(ctx, conversationTableDDL); err != nil {
-		t.Fatalf("Failed to create the conversations table: %v", err)
-	}
-	// The store's unqualified name must reach the temporary table, not a
-	// permanent one, or the tests below would write to and drop it.
-	var inTemp bool
-	if err := pool.QueryRow(ctx, `SELECT to_regclass('conversations') =
-        to_regclass('pg_temp.conversations')`).Scan(&inTemp); err != nil {
-		t.Fatalf("Failed to resolve the conversations table: %v", err)
-	}
-	if !inTemp {
-		t.Fatal("The conversations table does not resolve to pg_temp")
+	if err := pool.Ping(ctx); err != nil {
+		t.Fatalf("Failed to prepare the conversations table: %v", err)
 	}
 
 	authStore, err := auth.NewAuthStore(t.TempDir(), 0, 0, auth.AuditKeyForTesting())

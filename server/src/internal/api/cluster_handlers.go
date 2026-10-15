@@ -295,8 +295,8 @@ func (v clusterGroupVisibility) hidden(emptyVisible bool) bool {
 // writing 500 with failMsg and returning false when either fails. The
 // cluster-group handlers call it before they look the group up, so a
 // missing id, which has no members, runs the same queries as a group
-// the caller cannot see, and the two cannot be told apart by their
-// timing any more than by their 404 (issue #649).
+// the caller cannot see, which narrows the timing difference between
+// the two as well as giving them the same 404 (issue #649).
 func (h *ClusterHandler) loadClusterGroupVisibility(ctx context.Context,
 	w http.ResponseWriter, id int, failMsg string) (clusterGroupVisibility, bool) {
 

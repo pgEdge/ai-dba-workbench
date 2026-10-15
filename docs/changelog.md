@@ -2651,10 +2651,9 @@ project adheres to
   is the same whether or not the group exists. Every
   `/api/v1/cluster-groups/{id}` endpoint now also runs the same
   database queries for a missing group as for one the caller cannot
-  see, so the two cannot be told apart by response time either. `PUT
-  /api/v1/conversations/{id}` likewise answered another user's
-  conversation with 403, and now answers 404 as the get, rename and
-  delete endpoints already did. (#649)
+  see. `PUT /api/v1/conversations/{id}` likewise answered another
+  user's conversation with 403, and now answers 404 as the get, rename
+  and delete endpoints already did. (#649)
 
 - Delete a user with `ai-dba-server -delete-user` only when the
   confirmation is an explicit `y` or `yes`. The answer was checked

@@ -2441,7 +2441,8 @@ project adheres to
   certificates are never available. In `pg_settings`, the values of
   settings that can hold a credential, such as `primary_conninfo`,
   are shown as `********`, as are the values of options such as
-  `ldapbindpasswd` in `pg_hba_file_rules` and passwords in recognised
+  `ldapbindpasswd` in `pg_hba_file_rules`, a non-empty
+  `pg_hba_file_rules.error`, and passwords in recognised
   forms in query text, Spock statements and row images, and connection
   errors; such text may still hold other sensitive data, which read
   access to a connection makes visible.

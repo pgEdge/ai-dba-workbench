@@ -655,7 +655,8 @@ add a credential column. A value that can hold a credential (the
 `pg_settings` value columns for `primary_conninfo` and similar, and
 secret entries in `pg_hba_file_rules.options`) is masked through
 `metricRedactions` and `innerSelectList` (`credentialSettingCondition`
-or `maskedOptions`), inside the scoped subquery. Free-text columns that
+or `maskedOptions`), and `pg_hba_file_rules.error` is masked whole
+(`WholeColumns`/`MaskWhole`), inside the scoped subquery. Free-text columns that
 can quote a password (query text, Spock row images, connection errors)
 are marked `RedactText` and pass through `redactedText`, whose
 `textRedactions` patterns must stay within the regular expression

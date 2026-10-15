@@ -1090,7 +1090,7 @@ func TestClusterHandler_UpdateAutoDetectedGroup_InvalidJSON(t *testing.T) {
 // DeleteClusterGroup, GetDefaultGroupID, UpsertGroupByAutoKey, and the
 // RBAC visibility helpers that run as part of deleteClusterGroup
 // (resolveVisibleConnections -> GetAllConnections, and
-// groupHasVisibleConnection -> getConnectionIDsForGroup, which joins
+// loadClusterGroupVisibility -> getConnectionIDsForGroup, which joins
 // connections to clusters). The clusters and connections tables are
 // created empty: the cluster_groups operations do not depend on rows in
 // either, and the visibility helpers tolerate an empty connections set

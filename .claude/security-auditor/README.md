@@ -75,7 +75,13 @@ moved.
   clusters and cluster groups whose members the caller cannot see
   (the cluster-group update and delete handlers check visibility
   before ownership, so an unseen group never draws the ownership 403,
-  issue #649), another user's conversation on every
+  issue #649; their token-scope 403 runs before the lookup, so it does
+  not depend on whether the group exists; all four `/cluster-groups/{id}`
+  handlers load visibility before the lookup, so a missing and a hidden
+  group run the same queries; a group with no members is visible for
+  update to its owner and `manage_connections` holders, and for get,
+  list and delete only to callers who see every connection), another
+  user's conversation on every
   `/api/v1/conversations/{id}` method, the
   target cluster of `PUT /api/v1/connections/{id}/cluster` (a missing
   cluster id answers 404 too, not 500 from the foreign key),

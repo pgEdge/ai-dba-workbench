@@ -25,11 +25,11 @@ import (
 )
 
 // conversationTableDDL creates the conversations table as a temporary
-// table. PostgreSQL searches a session's temporary schema first, so the
-// unqualified name the store uses resolves to it, and nothing outside
-// the fixture's one session can see or disturb it.
+// table (pg_temp). PostgreSQL searches a session's temporary schema
+// first, so the unqualified name the store uses resolves to it, and
+// nothing outside the fixture's one session can see or disturb it.
 const conversationTableDDL = `
-CREATE TEMPORARY TABLE conversations (
+CREATE TABLE pg_temp.conversations (
     id TEXT PRIMARY KEY,
     username TEXT NOT NULL,
     title TEXT NOT NULL,
@@ -72,6 +72,16 @@ func newConversationUpdateFixture(t *testing.T, users ...string) (*Handler, *Sto
 	t.Cleanup(pool.Close)
 	if _, err := pool.Exec(ctx, conversationTableDDL); err != nil {
 		t.Fatalf("Failed to create the conversations table: %v", err)
+	}
+	// The store's unqualified name must reach the temporary table, not a
+	// permanent one, or the tests below would write to and drop it.
+	var inTemp bool
+	if err := pool.QueryRow(ctx, `SELECT to_regclass('conversations') =
+        to_regclass('pg_temp.conversations')`).Scan(&inTemp); err != nil {
+		t.Fatalf("Failed to resolve the conversations table: %v", err)
+	}
+	if !inTemp {
+		t.Fatal("The conversations table does not resolve to pg_temp")
 	}
 
 	authStore, err := auth.NewAuthStore(t.TempDir(), 0, 0, auth.AuditKeyForTesting())
@@ -297,8 +307,10 @@ func TestConversationRoutes(t *testing.T) {
 			msg: `"deleted":1`},
 	})
 
-	// With the table gone every datastore call fails.
-	if _, err := store.pool.Exec(ctx, "DROP TABLE conversations"); err != nil {
+	// With the table gone every datastore call fails. The name is
+	// qualified so that only the fixture's temporary table can be
+	// dropped, even if the pool's connection were ever replaced.
+	if _, err := store.pool.Exec(ctx, "DROP TABLE pg_temp.conversations"); err != nil {
 		t.Fatalf("Drop the conversations table: %v", err)
 	}
 	runConversationRoutes(t, h, tokens, []conversationRouteCase{

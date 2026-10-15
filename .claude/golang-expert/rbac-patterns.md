@@ -103,8 +103,8 @@ Use this for per-object mutations where the row has an
 caller who owns the row may still mutate it; everyone else needs
 `PermManageConnections`. The reference is `updateClusterGroup` /
 `deleteClusterGroup` in `cluster_handlers.go`, whose order is: caller
-authentication, the caller-only token-scope check, the lookup, the
-visibility check, then the ownership check:
+authentication, the caller-only token-scope check, the visibility
+load, the lookup, the visibility decision, then the ownership check:
 
 ```go
 username, _, err := getUserInfoCompat(r, h.authStore)
@@ -127,6 +127,13 @@ if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker,
 ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 defer cancel()
 
+// Runs the same queries whether or not the row exists.
+v, ok := h.loadClusterGroupVisibility(ctx, w, id,
+    "Failed to <verb> <resource>")
+if !ok {
+    return
+}
+
 existing, err := h.datastore.Get<Resource>(ctx, id)
 if err != nil {
     RespondError(w, http.StatusNotFound, "<Resource> not found")
@@ -136,10 +143,10 @@ if err != nil {
 isOwner := existing.OwnerUsername.Valid &&
     existing.OwnerUsername.String == username
 // 404 for a row the caller cannot see, identical to a missing one.
-// emptyVisible is hasManageConns || isOwner in updateClusterGroup and
+// The argument is hasManageConns || isOwner in updateClusterGroup and
 // false in deleteClusterGroup (see below).
-if !h.clusterGroupVisibleForWrite(ctx, w, id, emptyVisible,
-    "Failed to <verb> <resource>") {
+if v.hidden(hasManageConns || isOwner) {
+    RespondError(w, http.StatusNotFound, "<Resource> not found")
     return
 }
 if !hasManageConns && !isOwner {
@@ -159,14 +166,20 @@ that normally populates the context, so callers must set BOTH the
 Visibility MUST come before ownership (issue #649): a caller who
 cannot see the row gets the same 404 body as for a missing row, and
 no refusal is recorded for it; only a visible row the caller does
-not own draws the audited 403. `clusterGroupVisibleForWrite` treats
-a group with no member connections as visible only when its
-`emptyVisible` argument is true: `updateClusterGroup` passes
-`hasManageConns || isOwner`, so an owner can still rename a group
-they have just created (issue #58), whilst `deleteClusterGroup`
-passes `false`, matching the GET, which hides empty groups from
-every restricted caller. `TestClusterGroupWritesHideInvisibleGroups`
-in `cluster_group_visibility_test.go` locks this in.
+not own draws the audited 403. `loadClusterGroupVisibility` resolves
+the caller's visible connections and, for a restricted caller, the
+group's members before the lookup, so a missing id (no members) and
+a hidden group run the same queries; `getClusterGroup` and
+`listClustersInGroup` use it in the same order. `hidden` treats a
+group with no member connections as visible only when its argument
+is true: `updateClusterGroup` passes `hasManageConns || isOwner`, so
+an owner can still rename a group they have just created (issue
+#58), whilst `deleteClusterGroup`, `getClusterGroup` and
+`listClustersInGroup` pass `false`, hiding empty groups from every
+restricted caller. `TestClusterGroupWritesHideInvisibleGroups` and
+`TestClusterGroupLookupsCostTheSameForHiddenAndMissing` in
+`cluster_group_visibility_test.go` lock this in; the second counts
+pool acquisitions through a `PrepareConn` hook.
 
 Note on handler comments: the Variant 2 implementation must call
 `Get<Resource>` to read `owner_username` before it can decide

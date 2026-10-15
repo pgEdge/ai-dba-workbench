@@ -244,11 +244,6 @@ func (h *ClusterHandler) clusterHasVisibleConnection(ctx context.Context, cluste
 	return clusterHasVisibleConnectionFn(ctx, h.datastore, clusterID, visible)
 }
 
-// groupHasVisibleConnection delegates to the package-level helper.
-func (h *ClusterHandler) groupHasVisibleConnection(ctx context.Context, groupID int, visible map[int]bool) (bool, error) {
-	return groupHasVisibleConnectionFn(ctx, h.datastore, groupID, visible)
-}
-
 // clusterConnectionMembership delegates to the package-level helper.
 func (h *ClusterHandler) clusterConnectionMembership(ctx context.Context, clusterIDs []int) (map[int][]int, error) {
 	return clusterConnectionMembershipFn(ctx, h.datastore, clusterIDs)
@@ -274,38 +269,54 @@ func membersHidden(members []int, visible map[int]bool) bool {
 	return len(members) > 0 && !clusterMembersVisible(members, visible)
 }
 
-// clusterGroupVisibleForWrite reports whether the caller may see the
-// cluster group they are about to change or delete, and writes the
-// response when they may not: 404, as for a missing group, when the
-// group has member connections and none is visible to the caller, and
-// 500 with failMsg when visibility cannot be decided. A group with no
-// members counts as visible only when emptyVisible is true. A caller
-// with unrestricted visibility sees every group. Write handlers call it
-// before their ownership check, so that a refusal of a group the caller
-// cannot see does not confirm that it exists (issue #649).
-func (h *ClusterHandler) clusterGroupVisibleForWrite(ctx context.Context,
-	w http.ResponseWriter, id int, emptyVisible bool, failMsg string) bool {
+// clusterGroupVisibility is what decides whether a caller may see one
+// cluster group: whether they see every connection and, when they do
+// not, the connections visible to them and the group's members.
+type clusterGroupVisibility struct {
+	all     bool
+	visible map[int]bool
+	members []int
+}
+
+// hidden reports whether the group must be answered as missing: it has
+// members and none is visible to the caller, or it has none and
+// emptyVisible is false. A caller who sees every connection sees every
+// group.
+func (v clusterGroupVisibility) hidden(emptyVisible bool) bool {
+	if v.all {
+		return false
+	}
+	return membersHidden(v.members, v.visible) ||
+		(len(v.members) == 0 && !emptyVisible)
+}
+
+// loadClusterGroupVisibility resolves the caller's visible connections
+// and, when those are restricted, the group's member connections,
+// writing 500 with failMsg and returning false when either fails. The
+// cluster-group handlers call it before they look the group up, so a
+// missing id, which has no members, runs the same queries as a group
+// the caller cannot see, and the two cannot be told apart by their
+// timing any more than by their 404 (issue #649).
+func (h *ClusterHandler) loadClusterGroupVisibility(ctx context.Context,
+	w http.ResponseWriter, id int, failMsg string) (clusterGroupVisibility, bool) {
 
 	visible, allConnections, err := h.resolveVisibleConnections(ctx)
 	if err != nil {
 		log.Printf("[ERROR] Failed to resolve visible connections for cluster group %d: %v", id, err)
 		RespondError(w, http.StatusInternalServerError, failMsg)
-		return false
+		return clusterGroupVisibility{}, false
 	}
+	v := clusterGroupVisibility{all: allConnections, visible: visible}
 	if allConnections {
-		return true
+		return v, true
 	}
-	members, err := h.datastore.GetConnectionIDsForGroup(ctx, id)
+	v.members, err = h.datastore.GetConnectionIDsForGroup(ctx, id)
 	if err != nil {
 		log.Printf("[ERROR] Failed to check cluster group visibility (id=%d): %v", id, err)
 		RespondError(w, http.StatusInternalServerError, failMsg)
-		return false
+		return clusterGroupVisibility{}, false
 	}
-	if membersHidden(members, visible) || (len(members) == 0 && !emptyVisible) {
-		RespondError(w, http.StatusNotFound, "Cluster group not found")
-		return false
-	}
-	return true
+	return v, true
 }
 
 // filterGroupsByVisibility delegates to the package-level helper.
@@ -534,30 +545,23 @@ func (h *ClusterHandler) getClusterGroup(w http.ResponseWriter, r *http.Request,
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
+	// Visibility first, so a missing id and a hidden group cost the
+	// same queries (issue #649); a group with no members is hidden from
+	// every restricted caller.
+	v, ok := h.loadClusterGroupVisibility(ctx, w, id, "Failed to load cluster group")
+	if !ok {
+		return
+	}
+	if v.hidden(false) {
+		RespondError(w, http.StatusNotFound, "Cluster group not found")
+		return
+	}
+
 	group, err := h.datastore.GetClusterGroup(ctx, id)
 	if err != nil {
 		log.Printf("[ERROR] Cluster group not found (id=%d): %v", id, err)
 		RespondError(w, http.StatusNotFound, "Cluster group not found")
 		return
-	}
-
-	visible, allConnections, err := h.resolveVisibleConnections(ctx)
-	if err != nil {
-		log.Printf("[ERROR] Failed to resolve visible connections for cluster group %d: %v", id, err)
-		RespondError(w, http.StatusInternalServerError, "Failed to load cluster group")
-		return
-	}
-	if !allConnections {
-		ok, err := h.groupHasVisibleConnection(ctx, id, visible)
-		if err != nil {
-			log.Printf("[ERROR] Failed to check cluster group visibility (id=%d): %v", id, err)
-			RespondError(w, http.StatusInternalServerError, "Failed to load cluster group")
-			return
-		}
-		if !ok {
-			RespondError(w, http.StatusNotFound, "Cluster group not found")
-			return
-		}
 	}
 
 	RespondJSON(w, http.StatusOK, group)
@@ -646,6 +650,13 @@ func (h *ClusterHandler) updateClusterGroup(w http.ResponseWriter, r *http.Reque
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
+	// The visibility queries run before the lookup, so a missing id
+	// costs the same queries as a hidden group (issue #649).
+	v, ok := h.loadClusterGroupVisibility(ctx, w, id, "Failed to update cluster group")
+	if !ok {
+		return
+	}
+
 	existingGroup, err := h.datastore.GetClusterGroup(ctx, id)
 	if err != nil {
 		log.Printf("[ERROR] Cluster group not found for update (id=%d): %v", id, err)
@@ -661,8 +672,8 @@ func (h *ClusterHandler) updateClusterGroup(w http.ResponseWriter, r *http.Reque
 	// #58); anyone else would only be refused below, so is told it is
 	// not found.
 	isOwner := existingGroup.OwnerUsername.Valid && existingGroup.OwnerUsername.String == username
-	if !h.clusterGroupVisibleForWrite(ctx, w, id, hasManageConns || isOwner,
-		"Failed to update cluster group") {
+	if v.hidden(hasManageConns || isOwner) {
+		RespondError(w, http.StatusNotFound, "Cluster group not found")
 		return
 	}
 
@@ -731,6 +742,13 @@ func (h *ClusterHandler) deleteClusterGroup(w http.ResponseWriter, r *http.Reque
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
+	// The visibility queries run before the lookup, so a missing id
+	// costs the same queries as a hidden group (issue #649).
+	v, ok := h.loadClusterGroupVisibility(ctx, w, id, "Failed to delete cluster group")
+	if !ok {
+		return
+	}
+
 	existingGroup, err := h.datastore.GetClusterGroup(ctx, id)
 	if err != nil {
 		log.Printf("[ERROR] Cluster group not found for delete (id=%d): %v", id, err)
@@ -740,8 +758,8 @@ func (h *ClusterHandler) deleteClusterGroup(w http.ResponseWriter, r *http.Reque
 
 	// An empty group is hidden from every restricted caller here, as it
 	// is from the GET.
-	if !h.clusterGroupVisibleForWrite(ctx, w, id, false,
-		"Failed to delete cluster group") {
+	if v.hidden(false) {
+		RespondError(w, http.StatusNotFound, "Cluster group not found")
 		return
 	}
 
@@ -792,6 +810,20 @@ func (h *ClusterHandler) listClustersInGroup(w http.ResponseWriter, r *http.Requ
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
+	// Gate on parent-group visibility before reading the clusters, so
+	// the response mirrors getClusterGroup: callers who cannot see the
+	// group at all receive 404 rather than an empty list that leaks the
+	// group's existence, and a missing id costs the same queries as a
+	// hidden group (issue #649).
+	v, ok := h.loadClusterGroupVisibility(ctx, w, groupID, "Failed to filter clusters")
+	if !ok {
+		return
+	}
+	if v.hidden(false) {
+		RespondError(w, http.StatusNotFound, "Cluster group not found")
+		return
+	}
+
 	clusters, err := h.datastore.GetClustersInGroup(ctx, groupID)
 	if err != nil {
 		log.Printf("[ERROR] Failed to list clusters in group %d: %v", groupID, err)
@@ -799,27 +831,8 @@ func (h *ClusterHandler) listClustersInGroup(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	visible, allConnections, err := h.resolveVisibleConnections(ctx)
-	if err != nil {
-		log.Printf("[ERROR] Failed to resolve visible connections for group %d: %v", groupID, err)
-		RespondError(w, http.StatusInternalServerError, "Failed to filter clusters")
-		return
-	}
-	if !allConnections {
-		// Gate on parent-group visibility before per-cluster filtering so
-		// the response mirrors getClusterGroup: callers who cannot see
-		// the group at all must receive 404 rather than an empty list
-		// that leaks the group's existence.
-		groupVisible, err := h.groupHasVisibleConnection(ctx, groupID, visible)
-		if err != nil {
-			log.Printf("[ERROR] Failed to check cluster group visibility (id=%d): %v", groupID, err)
-			RespondError(w, http.StatusInternalServerError, "Failed to filter clusters")
-			return
-		}
-		if !groupVisible {
-			RespondError(w, http.StatusNotFound, "Cluster group not found")
-			return
-		}
+	if !v.all {
+		visible := v.visible
 		ids := make([]int, 0, len(clusters))
 		for i := range clusters {
 			ids = append(ids, clusters[i].ID)

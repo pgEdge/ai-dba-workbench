@@ -13,7 +13,14 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/pgedge/ai-workbench/server/internal/auth"
+	"github.com/pgedge/ai-workbench/server/internal/database"
 )
 
 // =============================================================================
@@ -133,6 +140,73 @@ func TestClusterGroupWritesHideInvisibleGroups(t *testing.T) {
 			if existing.Body.String() != missing.Body.String() {
 				t.Errorf("Existing group body %q differs from missing group body %q",
 					existing.Body.String(), missing.Body.String())
+			}
+		})
+	}
+}
+
+// countingClusterHandler returns a handler over its own pool and the
+// number of connections that pool has handed out, which counts the
+// datastore queries a request runs.
+func countingClusterHandler(t *testing.T, f *clusterCovFixture) (*ClusterHandler, *atomic.Int64) {
+	t.Helper()
+
+	cfg, err := pgxpool.ParseConfig(f.connStr)
+	if err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+	cfg.MaxConns = 2
+	var acquired atomic.Int64
+	cfg.PrepareConn = func(context.Context, *pgx.Conn) (bool, error) {
+		acquired.Add(1)
+		return true, nil
+	}
+	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("NewWithConfig: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	return NewClusterHandler(database.NewTestDatastore(pool), f.store,
+		auth.NewRBACChecker(f.store)), &acquired
+}
+
+// TestClusterGroupLookupsCostTheSameForHiddenAndMissing checks that each
+// cluster-group route runs as many datastore queries for a group the
+// caller cannot see as for an id that does not exist, so the two cannot
+// be told apart by response time (issue #649).
+func TestClusterGroupLookupsCostTheSameForHiddenAndMissing(t *testing.T) {
+	f := newClusterCovFixture(t)
+	h, acquired := countingClusterHandler(t, f)
+
+	for _, tc := range []struct {
+		name   string
+		method string
+		suffix string
+		body   string
+	}{
+		{"get", http.MethodGet, "", ""},
+		{"list clusters", http.MethodGet, "/clusters", ""},
+		{"update", http.MethodPut, "", `{"name":"Renamed"}`},
+		{"delete", http.MethodDelete, "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			queries := func(id string) (int64, string) {
+				before := acquired.Load()
+				rec := clusterCovServe(h, f.plain, tc.method,
+					"/api/v1/cluster-groups/"+id+tc.suffix, tc.body)
+				assertError(t, rec, http.StatusNotFound, "Cluster group not found")
+				return acquired.Load() - before, rec.Body.String()
+			}
+			missing, missingBody := queries("999")
+			hidden, hiddenBody := queries("3")
+			if missing != hidden {
+				t.Errorf("A missing group ran %d queries but a hidden one ran %d",
+					missing, hidden)
+			}
+			if missingBody != hiddenBody {
+				t.Errorf("Hidden group body %q differs from missing group body %q",
+					hiddenBody, missingBody)
 			}
 		})
 	}

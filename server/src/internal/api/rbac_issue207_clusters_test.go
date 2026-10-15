@@ -523,7 +523,7 @@ func TestClusterHandler_DeleteClusterGroup_Issue207_OwnerAllowed(t *testing.T) {
 	}
 	// Seed a cluster + owner-visible connection inside the group so the
 	// post-gate visibility check in deleteClusterGroup
-	// (groupHasVisibleConnection) succeeds. Without a visible member
+	// (loadClusterGroupVisibility) succeeds. Without a visible member
 	// connection the handler responds 404 even when the gate passes.
 	// The connection is unshared and owned by the caller, which mirrors
 	// the realistic owner-fallback scenario: an owner of an unshared

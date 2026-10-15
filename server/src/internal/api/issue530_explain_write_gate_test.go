@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 )
@@ -988,9 +989,12 @@ func TestIssue530_StandardConformingStringsOffRequiresConfirmation(t *testing.T)
 	if !resp.RequiresConfirmation {
 		t.Fatal("expected requires_confirmation for the hidden DELETE CTE")
 	}
-	if len(resp.WriteStatements) != 1 ||
-		!strings.Contains(resp.WriteStatements[0], "DELETE FROM t") {
-		t.Errorf("write statements = %q, want the WITH ... DELETE statement",
+	// The set_config call is a write in its own right (issue #646), so
+	// both statements are listed; the point here is that the hidden
+	// DELETE is among them.
+	if len(resp.WriteStatements) != 2 ||
+		!strings.Contains(resp.WriteStatements[1], "DELETE FROM t") {
+		t.Errorf("write statements = %q, want set_config and the WITH ... DELETE statement",
 			resp.WriteStatements)
 	}
 }
@@ -1095,10 +1099,15 @@ func TestIssue530_LexerReadingsMatchPostgres(t *testing.T) {
 // TestIssue530_ClientEncodingChangeStopsReadOnlyBatch proves that a
 // statement which moves the connection off UTF8 ends the batch before
 // the next statement is lexed under the new encoding, on both the pgx
-// path and the simple-protocol path.
+// path and the simple-protocol path. A direct set_config call is now
+// classified as a write (issue #646), so the change is made through a
+// wrapper function the classifier cannot see into, which is how a
+// statement classified as read-only can still change the encoding.
 func TestIssue530_ClientEncodingChangeStopsReadOnlyBatch(t *testing.T) {
 	h, pool, target, cleanup := newQueryExecTestHandler(t)
 	defer cleanup()
+
+	defer createSetClientEncodingWrapper(t, pool)()
 
 	connID := seedQueryExecConnection(t, pool, target, target.host, target.port)
 
@@ -1107,12 +1116,12 @@ func TestIssue530_ClientEncodingChangeStopsReadOnlyBatch(t *testing.T) {
 		query string
 	}{
 		{"pgx path",
-			"SELECT set_config('client_encoding', 'SJIS', false); SELECT 1"},
+			"SELECT issue530_set_client_encoding(false); SELECT 1"},
 		{"simple-protocol path",
-			"SELECT set_config('client_encoding', 'SJIS', false); " +
+			"SELECT issue530_set_client_encoding(false); " +
 				"EXPLAIN SELECT 1 WHERE 1 = $1"},
 		{"transaction-local change",
-			"SELECT set_config('client_encoding', 'SJIS', true); SELECT 1"},
+			"SELECT issue530_set_client_encoding(true); SELECT 1"},
 	}
 
 	for _, tt := range tests {
@@ -1139,6 +1148,26 @@ func TestIssue530_ClientEncodingChangeStopsReadOnlyBatch(t *testing.T) {
 	}
 }
 
+// createSetClientEncodingWrapper creates issue530_set_client_encoding,
+// a SQL function that switches client_encoding to SJIS. A direct
+// set_config call is classified as a write (issue #646), whereas a call
+// to a user-defined wrapper is not, so the tests use it to change the
+// encoding from a statement the classifier treats as read-only. The
+// returned function drops it, and must run before the pool closes.
+func createSetClientEncodingWrapper(t *testing.T, pool *pgxpool.Pool) func() {
+	t.Helper()
+	if _, err := pool.Exec(context.Background(), `CREATE OR REPLACE FUNCTION
+		issue530_set_client_encoding(is_local boolean) RETURNS text
+		LANGUAGE sql AS
+		$$SELECT set_config('client_encoding', 'SJIS', is_local)$$`); err != nil {
+		t.Fatalf("failed to create the wrapper function: %v", err)
+	}
+	return func() {
+		_, _ = pool.Exec(context.Background(),
+			"DROP FUNCTION IF EXISTS issue530_set_client_encoding(boolean)")
+	}
+}
+
 // TestIssue530_ClientEncodingChangeStopsConfirmedWriteBatch proves that
 // the confirmed write path also ends the batch once a statement moves
 // the connection off UTF8, so a statement after it is never lexed under
@@ -1148,6 +1177,8 @@ func TestIssue530_ClientEncodingChangeStopsReadOnlyBatch(t *testing.T) {
 func TestIssue530_ClientEncodingChangeStopsConfirmedWriteBatch(t *testing.T) {
 	h, pool, target, cleanup := newQueryExecTestHandler(t)
 	defer cleanup()
+
+	defer createSetClientEncodingWrapper(t, pool)()
 
 	connID := seedQueryExecConnection(t, pool, target, target.host, target.port)
 
@@ -1160,7 +1191,7 @@ func TestIssue530_ClientEncodingChangeStopsConfirmedWriteBatch(t *testing.T) {
 			"SET client_encoding = 'SJIS'; SELECT 1", 1},
 		{"read statement changes the encoding",
 			"CREATE TEMP TABLE issue530_enc (a int); " +
-				"SELECT set_config('client_encoding', 'SJIS', false); SELECT 1", 2},
+				"SELECT issue530_set_client_encoding(false); SELECT 1", 2},
 	}
 
 	for _, tt := range tests {

@@ -2595,6 +2595,21 @@ project adheres to
   that change global defaults also matched cluster and group
   overrides, and now select only the global row. (#647)
 
+- Treat a `SELECT` that calls a function with side effects as a
+  write statement when running SQL from an AI report, so it needs
+  write access and the confirmation prompt. Statements such as
+  `SELECT pg_terminate_backend(...)`, `SELECT set_config(...)` or
+  `SELECT nextval(...)` were classified as reads from their leading
+  keyword alone, so they ran without confirmation and were open to
+  users with read-only access to the connection. The check recognises
+  the documented PostgreSQL functions that signal or change server
+  state, together with the management functions of `pg_stat_statements`,
+  `pg_buffercache`, `pg_prewarm`, `pg_surgery`, `pg_visibility`,
+  `postgres_fdw`, `adminpack`, `dblink`, Spock, pglogical and
+  `pg_cron`, however the name is spelt, quoted or schema-qualified.
+  Functions called through a user-defined wrapper or view are not
+  detected. (#646)
+
 - Delete a user with `ai-dba-server -delete-user` only when the
   confirmation is an explicit `y` or `yes`. The answer was checked
   only when a whole line could be read, so input that ended without

@@ -553,8 +553,10 @@ const maxExplainDepth = 8
 // leading comments) begins with a read-only keyword: SELECT, WITH, SHOW,
 // EXPLAIN, or TABLE. Writable CTEs (WITH ... INSERT/UPDATE/DELETE/MERGE)
 // are classified as non-read-only, as are a query with a writing clause
-// (see hasWritingSelectClause) and an EXPLAIN that may execute a writing
-// inner statement (issue #530).
+// (see hasWritingSelectClause), a query that calls a side-effecting
+// function such as pg_terminate_backend or set_config (see
+// callsSideEffectingFunction, issue #646) and an EXPLAIN that may
+// execute a writing inner statement (issue #530).
 //
 // PostgreSQL lexes a plain '...' literal as a standard string when
 // standard_conforming_strings is on and as an escape string, in which a
@@ -620,11 +622,13 @@ func isReadOnlyStatementAtDepth(sql string, depth int, reading stringReading) bo
 				return false
 			}
 		}
-		return !hasWritingSelectClause(upper)
+		return !hasWritingSelectClause(upper) &&
+			!callsSideEffectingFunction(body, reading)
 	}
 
 	if strings.HasPrefix(upper, "SELECT") || strings.HasPrefix(upper, "TABLE ") {
-		return !hasWritingSelectClause(upper)
+		return !hasWritingSelectClause(upper) &&
+			!callsSideEffectingFunction(body, reading)
 	}
 
 	return strings.HasPrefix(upper, "SHOW")

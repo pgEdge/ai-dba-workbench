@@ -21,6 +21,7 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/database"
 	"github.com/pgedge/ai-workbench/server/internal/logging"
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
+	"github.com/pgedge/ai-workbench/server/internal/sqllex"
 )
 
 // TestQueryTool creates the test_query tool for validating SQL query correctness
@@ -90,6 +91,14 @@ DO NOT use for:
 			query, ok := args["query"].(string)
 			if !ok || query == "" {
 				return mcp.NewToolError("Parameter 'query' is required and must be a non-empty string")
+			}
+
+			if mayRunSideEffects(query) {
+				return mcp.NewToolError("The query calls a function with side " +
+					"effects (for example pg_terminate_backend, pg_reload_conf, " +
+					"set_config or nextval) and does not start with a statement " +
+					"EXPLAIN only plans, such as SELECT, so validating it could " +
+					"run it. Remove any leading ANALYZE, VERBOSE or option list.")
 			}
 
 			// Extract context from args (injected by registry.Execute)
@@ -188,6 +197,29 @@ DO NOT use for:
 // under, so that its failure does not leave the transaction aborted
 // for the per-statement retry.
 const testQuerySavepoint = "workbench_test_query"
+
+// mayRunSideEffects reports whether validating query could run a
+// side-effecting function. The tool validates by prefixing EXPLAIN to
+// the query, or to each of its statements, so a query that starts with
+// ANALYZE becomes an EXPLAIN ANALYZE that runs it, and a read-only
+// transaction does not stop a function such as pg_terminate_backend
+// (issue #646). A query calling such a function is therefore validated
+// only when the query and each of its statements begin with a
+// statement EXPLAIN merely plans.
+func mayRunSideEffects(query string) bool {
+	if !sqllex.CallsSideEffectingFunctionUnderAnyReading(query) {
+		return false
+	}
+	if !explainOnlyPlans(query) {
+		return true
+	}
+	for _, stmt := range splitStatements(query) {
+		if !explainOnlyPlans(stmt) {
+			return true
+		}
+	}
+	return false
+}
 
 // genericPlanMinVersionNum is the server_version_num of the first
 // release with EXPLAIN (GENERIC_PLAN), which is PostgreSQL 16.

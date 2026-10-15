@@ -2608,7 +2608,14 @@ project adheres to
   `postgres_fdw`, `adminpack`, `dblink`, Spock, pglogical and
   `pg_cron`, however the name is spelt, quoted or schema-qualified.
   Functions called through a user-defined wrapper or view are not
-  detected. (#646)
+  detected. The MCP tools that Ellie and other MCP clients use now
+  apply the same check: `query_database` treats such a `SELECT` as a
+  write, so it needs an explicit `connection_id` and read/write
+  access; `execute_explain` refuses to `EXPLAIN ANALYZE` it, although
+  the plan is still available with `analyze` set to false;
+  `test_query` refuses one prefixed with `ANALYZE` or other `EXPLAIN`
+  options, which previously ran it; and `count_rows` (in its `WHERE`
+  clause) and `query_datastore` refuse it outright. (#646)
 
 - Delete a user with `ai-dba-server -delete-user` only when the
   confirmation is an explicit `y` or `yes`. The answer was checked

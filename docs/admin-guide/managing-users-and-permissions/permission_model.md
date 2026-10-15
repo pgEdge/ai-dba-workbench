@@ -97,7 +97,9 @@ A connection privilege grants a group access to one monitored connection at a
 specified access level. The Workbench supports two connection access levels:
 
 - The `read` access level allows read-only operations against the connection;
-  the group inspects data and metadata without changing them.
+  the group inspects data and metadata without changing them. A `SELECT`
+  that calls a function with side effects, such as `pg_terminate_backend`
+  or `set_config`, counts as a write and needs the `read_write` level.
 - The `read_write` access level allows both read and write operations against
   the connection.
 

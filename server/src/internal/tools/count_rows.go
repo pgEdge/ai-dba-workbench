@@ -17,6 +17,7 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/database"
 	"github.com/pgedge/ai-workbench/server/internal/logging"
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
+	"github.com/pgedge/ai-workbench/server/internal/sqllex"
 )
 
 // CountRowsTool creates the count_rows tool for lightweight row counting
@@ -237,6 +238,14 @@ func validateWhereClause(clause string) error {
 		if strings.Contains(clause, ip.pattern) {
 			return fmt.Errorf("WHERE clause contains disallowed pattern '%s' (%s)", ip.pattern, ip.reason)
 		}
+	}
+
+	// The substring list above misses quoted, escaped and unlisted
+	// spellings, and a read-only transaction does not stop a
+	// side-effecting function, so check for such calls as the query
+	// endpoint does (issue #646).
+	if sqllex.CallsSideEffectingFunctionUnderAnyReading(clause) {
+		return fmt.Errorf("WHERE clause calls a function with side effects, which is not allowed")
 	}
 
 	return nil

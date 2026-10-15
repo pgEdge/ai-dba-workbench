@@ -12,6 +12,8 @@ package tools
 import (
 	"regexp"
 	"strings"
+
+	"github.com/pgedge/ai-workbench/server/internal/sqllex"
 )
 
 // Precompiled regexes for SQL clause detection. These match LIMIT and
@@ -40,10 +42,35 @@ func hasOffsetClause(sql string) bool {
 // WITH ... SELECT (CTEs), EXPLAIN, SHOW, VALUES, and TABLE as
 // SELECT-like. Leading whitespace, line comments (--), and block
 // comments (/* ... */) are stripped before the check.
+//
+// A SELECT-like statement that calls a known side-effecting function,
+// such as SELECT pg_terminate_backend(...), is not read-only: a
+// read-only transaction does not stop such functions, so the statement
+// is treated as a write (issue #646). The call is looked for under both
+// readings of a plain '...' literal, because the tool does not know the
+// server's standard_conforming_strings setting, and the check fails
+// closed on SQL it cannot tokenize. Such a statement also gets no
+// injected LIMIT, which would silently cap how many rows the function
+// acts on.
 func isSelectQuery(sql string) bool {
 	keyword := firstSQLKeyword(sql)
 	switch keyword {
 	case "SELECT", "SHOW", "VALUES", "TABLE", "EXPLAIN", "WITH":
+		return !sqllex.CallsSideEffectingFunctionUnderAnyReading(sql)
+	default:
+		return false
+	}
+}
+
+// explainOnlyPlans reports whether "EXPLAIN " followed by stmt only
+// plans stmt rather than running it. That holds when stmt starts, after
+// any leading comments, with a keyword that begins a statement EXPLAIN
+// can plan. Anything else, such as ANALYZE, VERBOSE or an option list in
+// parentheses, could make the composed command an EXPLAIN ANALYZE that
+// runs the statement, so it is reported as running.
+func explainOnlyPlans(stmt string) bool {
+	switch firstSQLKeyword(stmt) {
+	case "SELECT", "WITH", "INSERT", "UPDATE", "DELETE", "MERGE", "VALUES", "TABLE":
 		return true
 	default:
 		return false

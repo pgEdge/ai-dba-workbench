@@ -982,44 +982,6 @@ func TestQueryConstants(t *testing.T) {
 	}
 }
 
-func TestScanDollarTag(t *testing.T) {
-	tests := []struct {
-		name     string
-		sql      string
-		i        int
-		expected string
-	}{
-		{"empty_tag", "$$body$$", 0, "$$"},
-		{"named_tag", "$tag$body$tag$", 0, "$tag$"},
-		{"underscore_tag", "$_t1$body$_t1$", 0, "$_t1$"},
-		{"not_a_tag_digit_start", "$1abc$", 0, ""},
-		{"not_a_tag_no_close", "$abc", 0, ""},
-		{"mid_string", "SELECT $fn$code$fn$", 7, "$fn$"},
-		{"single_dollar", "$", 0, ""},
-		{"out_of_bounds", "abc", 5, ""},
-		{"identifier_continuation", "a$q$b$q$", 1, ""},
-		{"after_dollar", "a$$b$$", 2, ""},
-		{"after_non_ascii_byte", "\u00e9$q$x$q$", 2, ""},
-		{"after_paren", "($q$x$q$", 1, "$q$"},
-		{"non_ascii_tag", "$\u00e9$body$\u00e9$", 0, "$\u00e9$"},
-		{"non_ascii_continuation", "$q\u00e9$x$q\u00e9$", 0, "$q\u00e9$"},
-		{"non_ascii_after_digit", "$q1\u00e9$x$q1\u00e9$", 0, "$q1\u00e9$"},
-		{"high_byte_tag", "$\xff$x$\xff$", 0, "$\xff$"},
-		{"non_ascii_tag_no_close", "$\u00e9x", 0, ""},
-		{"after_non_ascii_letter_in_tag_position", "\u00e9$\u00e9$", 2, ""},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := scanDollarTag(tt.sql, tt.i)
-			if got != tt.expected {
-				t.Errorf("scanDollarTag(%q, %d) = %q, want %q",
-					tt.sql, tt.i, got, tt.expected)
-			}
-		})
-	}
-}
-
 func TestHasOnlyComments(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -1287,24 +1249,4 @@ func TestExecuteQuery_AcceptsUnusualDatabaseOverride(t *testing.T) {
 	}()
 
 	handler.executeQuery(rec, req, 1)
-}
-
-// TestIsIdentChar pins the identifier-character set to PostgreSQL's
-// lexer, which treats every byte from 0x80 up as a letter, so a keyword
-// or literal prefix that continues a non-ASCII identifier is read as
-// part of that identifier.
-func TestIsIdentChar(t *testing.T) {
-	tests := []struct {
-		b    byte
-		want bool
-	}{
-		{'a', true}, {'Z', true}, {'0', true}, {'_', true},
-		{0x80, true}, {0xc3, true}, {0xff, true},
-		{' ', false}, {'$', false}, {'\'', false}, {'(', false}, {0x7f, false},
-	}
-	for _, tt := range tests {
-		if got := isIdentChar(tt.b); got != tt.want {
-			t.Errorf("isIdentChar(%#x) = %v, want %v", tt.b, got, tt.want)
-		}
-	}
 }

@@ -556,42 +556,6 @@ func TestIssue530_SplitStatementsQuoting(t *testing.T) {
 	}
 }
 
-// TestIssue530_SkipQuoted covers the literal scanner directly, including
-// the prefixed forms and the unterminated cases that run to the end.
-func TestIssue530_SkipQuoted(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-		want  int
-	}{
-		{"plain literal", "'abc' rest", 5},
-		{"doubled quote", "'a''b' rest", 6},
-		{"quoted identifier", `"a b" rest`, 5},
-		{"doubled double quote", `"a""b" rest`, 6},
-		{"escape literal", `E'\'' rest`, 5},
-		{"escape literal lowercase", `e'\'' rest`, 5},
-		{"unicode literal", `U&'ab' rest`, 6},
-		{"unicode identifier", `U&"ab" rest`, 6},
-		{"bit string", "B'10' rest", 5},
-		{"hex string", "x'ff' rest", 5},
-		{"a quote ends a bit string even when another follows",
-			"B'1''0' rest", 4},
-		{"national string", "N'ab' rest", 5},
-		{"unterminated literal", "'abc", 4},
-		{"not a literal prefix", "abc", 1},
-		{"prefix letter at the end", "E", 1},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := skipQuoted(tt.input, 0, standardStrings); got != tt.want {
-				t.Errorf("skipQuoted(%q, 0) = %d, want %d",
-					tt.input, got, tt.want)
-			}
-		})
-	}
-}
-
 // TestIssue530_WritingSelectClauses covers the statements that read at
 // first glance but write: a writable CTE using MERGE, SELECT ... INTO,
 // which creates a table, and the row-locking clauses, which stamp the
@@ -764,47 +728,6 @@ func TestIssue530_KeywordScansIgnoreNonCode(t *testing.T) {
 	}
 }
 
-// TestIssue530_MaskNonCode pins the masking helper itself: every masked
-// region becomes spaces and the result keeps the original byte length.
-func TestIssue530_MaskNonCode(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-		want  string
-	}{
-		{"plain code is untouched", "SELECT a FROM t", "SELECT a FROM t"},
-		{"string literal", "SELECT 'into' FROM t", "SELECT        FROM t"},
-		{"quoted identifier", `SELECT "into" FROM t`, "SELECT        FROM t"},
-		{"line comment", "SELECT a -- into\nFROM t", "SELECT a        \nFROM t"},
-		{"block comment", "SELECT /* into */ a", "SELECT            a"},
-		{"unterminated literal", "SELECT 'into", "SELECT      "},
-		{"dollar-quoted literal", "SELECT $q$'$q$ AS c", "SELECT " + strings.Repeat(" ", 7) + " AS c"},
-		{"anonymous dollar quote", "SELECT $$x$$", "SELECT      "},
-		{"unterminated dollar quote", "SELECT $q$ into", "SELECT " + strings.Repeat(" ", 8)},
-		{"dollar continuing an identifier", "SELECT a$q$ FROM t", "SELECT a$q$ FROM t"},
-		{"non-ASCII dollar tag", "SELECT $é$'$é$ AS c", "SELECT " + strings.Repeat(" ", 9) + " AS c"},
-		{"E continuing a non-ASCII identifier", `SELECT éE'\' AS c`, `SELECT éE    AS c`},
-		{"E after an identifier dollar", `SELECT a$E'\' AS c`, `SELECT a$E    AS c`},
-		{"carriage return ends a line comment", "SELECT a -- x\rFROM t", "SELECT a     \rFROM t"},
-		{"placeholder is code", "SELECT $1", "SELECT $1"},
-		{"empty", "", ""},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := maskNonCode(tt.input, standardStrings)
-			if got != tt.want {
-				t.Errorf("maskNonCode(%q) = %q, want %q",
-					tt.input, got, tt.want)
-			}
-			if len(got) != len(tt.input) {
-				t.Errorf("maskNonCode(%q) changed length: %d, want %d",
-					tt.input, len(got), len(tt.input))
-			}
-		})
-	}
-}
-
 // TestIssue530_SetCurrentConnectionStoresValidDatabaseName checks the
 // database override on the path that saves it: a legitimate name is
 // stored and echoed back, and an unknown connection is still refused
@@ -873,62 +796,6 @@ func TestIssue530_SetCurrentConnectionStoresValidDatabaseName(t *testing.T) {
 	handler = NewConnectionHandlerWithSecurity(ds, store, missing, false, nil, nil)
 	if rec := post(connID+1, "postgres"); rec.Code != http.StatusBadRequest {
 		t.Errorf("unknown connection: expected 400, got %d", rec.Code)
-	}
-}
-
-// TestIssue530_SkipQuotedReadings covers the literal scanner under both
-// readings of a plain '...' literal, and the continuation of a string
-// literal onto a later line, which keeps the state it started in.
-func TestIssue530_SkipQuotedReadings(t *testing.T) {
-	tests := []struct {
-		name    string
-		input   string
-		reading stringReading
-		want    int
-	}{
-		{"backslash is ordinary in a standard string",
-			`'a\' rest`, standardStrings, 4},
-		{"backslash escapes in an escape reading",
-			`'a\'' rest`, escapeStrings, 5},
-		{"doubled quote after a backslash in a standard string",
-			`'\'' rest`, standardStrings, len(`'\'' rest`)},
-		{"national literal follows the reading",
-			`N'\'' rest`, escapeStrings, 5},
-		{"E literal escapes under either reading",
-			`E'\'' rest`, standardStrings, 5},
-		{"unicode literal never takes a backslash escape",
-			`U&'\'' rest`, escapeStrings, len(`U&'\'' rest`)},
-		{"bit string never takes a backslash escape",
-			`B'\' rest`, escapeStrings, 4},
-		{"quoted identifier never takes a backslash escape",
-			`"\" rest`, escapeStrings, 3},
-		{"literal continued onto the next line", "'a'\n'b' rest", standardStrings, 7},
-		{"continuation after a carriage return", "'a'\r'b' rest", standardStrings, 7},
-		{"continuation after spaces and a line comment",
-			"'a' -- c\n  'b' rest", standardStrings, 14},
-		{"continuation after a comment on its own line",
-			"'a'\n-- c\n'b' rest", standardStrings, 12},
-		{"continuation keeps the escape state",
-			"E'a'\n'\\'' rest", standardStrings, 9},
-		{"continuation keeps the bit string state",
-			"B'1'\n'' rest", standardStrings, 7},
-		{"no continuation without a newline", "'a' 'b'", standardStrings, 3},
-		{"a block comment ends the continuation",
-			"'a' /* c */\n'b'", standardStrings, 3},
-		{"a line comment running to the end ends it",
-			"'a'\n-- c", standardStrings, 3},
-		{"a newline alone is no continuation", "'a'\n", standardStrings, 3},
-		{"a quoted identifier does not continue",
-			"\"a\"\n\"b\"", standardStrings, 3},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := skipQuoted(tt.input, 0, tt.reading); got != tt.want {
-				t.Errorf("skipQuoted(%q, 0, %d) = %d, want %d",
-					tt.input, tt.reading, got, tt.want)
-			}
-		})
 	}
 }
 

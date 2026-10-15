@@ -7,7 +7,7 @@
  *
  *-------------------------------------------------------------------------
  */
-package api
+package sqllex
 
 import (
 	"strconv"
@@ -16,12 +16,13 @@ import (
 
 // This file finds calls to functions that change server, session or
 // database state from inside a query that otherwise only reads, so that
-// isReadOnlyStatement can classify such a query as a write (issue
-// #646). Most of these functions work inside a read-only transaction
-// (pg_terminate_backend, pg_reload_conf, set_config and the advisory
-// locks among them), so the read-only transaction the query endpoint
-// opens does not stop them; the classification is what puts them behind
-// the confirmation prompt and the write-access check.
+// the query endpoint (isReadOnlyStatement in package api) and the MCP
+// query tools (package tools) can classify such a query as a write
+// (issue #646). Most of these functions work inside a read-only
+// transaction (pg_terminate_backend, pg_reload_conf, set_config and the
+// advisory locks among them), so the read-only transaction both open
+// does not stop them; the classification is what puts them behind the
+// write-access check, and on the query endpoint the confirmation prompt.
 //
 // The lists below were built from the PostgreSQL 18 documentation (the
 // System Administration Functions chapter, the sequence, large object,
@@ -178,7 +179,7 @@ func isSideEffectingFunctionName(name string) bool {
 	return false
 }
 
-// callTokenKind is the kind of a token callsSideEffectingFunction reads.
+// callTokenKind is the kind of a token CallsSideEffectingFunction reads.
 type callTokenKind int
 
 const (
@@ -207,7 +208,21 @@ type callToken struct {
 	numeric bool
 }
 
-// callsSideEffectingFunction reports whether the code in sql, read under
+// CallsSideEffectingFunctionUnderAnyReading reports whether sql calls a
+// side-effecting function under either reading of a plain '...'
+// literal (see StringReadings). A caller that does not know the
+// server's standard_conforming_strings setting uses it, because a call
+// that one reading hides inside a literal is code under the other.
+func CallsSideEffectingFunctionUnderAnyReading(sql string) bool {
+	for _, reading := range StringReadings {
+		if CallsSideEffectingFunction(sql, reading) {
+			return true
+		}
+	}
+	return false
+}
+
+// CallsSideEffectingFunction reports whether the code in sql, read under
 // the given reading of a plain '...' literal, calls a side-effecting
 // function: a name on the lists above, or any function qualified with a
 // schema in sideEffectingSchemas, followed by an opening parenthesis.
@@ -219,7 +234,7 @@ type callToken struct {
 // It fails closed, reporting a call, when it cannot decode a U&"..."
 // identifier or when the statement uses UESCAPE, which changes the
 // escape character of such an identifier.
-func callsSideEffectingFunction(sql string, reading stringReading) bool {
+func CallsSideEffectingFunction(sql string, reading StringReading) bool {
 	tokens, ok := tokenizeForCalls(sql, reading)
 	if !ok {
 		return true
@@ -248,21 +263,21 @@ func callsSideEffectingFunction(sql string, reading stringReading) bool {
 	return false
 }
 
-// tokenizeForCalls splits sql into the tokens callsSideEffectingFunction
+// tokenizeForCalls splits sql into the tokens CallsSideEffectingFunction
 // reads, using the same lexer model as the rest of the classifier (see
-// skipNonCode). ok is false when the statement must be treated as a
+// SkipNonCode). ok is false when the statement must be treated as a
 // call without further reading: a U&"..." identifier that cannot be
 // decoded, or a UESCAPE clause.
-func tokenizeForCalls(sql string, reading stringReading) (tokens []callToken, ok bool) {
+func tokenizeForCalls(sql string, reading StringReading) (tokens []callToken, ok bool) {
 	i := 0
 	for i < len(sql) {
 		ch := sql[i]
-		if isSQLSpace(ch) {
+		if IsSQLSpace(ch) {
 			i++
 			continue
 		}
 
-		if j := skipNonCode(sql, i, reading); j != i {
+		if j := SkipNonCode(sql, i, reading); j != i {
 			name, isIdent, decoded := quotedIdentifierAt(sql, i, j)
 			switch {
 			case isIdent && !decoded:
@@ -278,9 +293,9 @@ func tokenizeForCalls(sql string, reading stringReading) (tokens []callToken, ok
 			continue
 		}
 
-		if isIdentChar(ch) {
+		if IsIdentChar(ch) {
 			start := i
-			for i < len(sql) && (isIdentChar(sql[i]) || sql[i] == '$') {
+			for i < len(sql) && (IsIdentChar(sql[i]) || sql[i] == '$') {
 				i++
 			}
 			word := strings.ToLower(sql[start:i])
@@ -315,7 +330,7 @@ func isCommentStart(s string, i int) bool {
 }
 
 // quotedIdentifierAt reports whether the non-code region s[i:end] that
-// skipNonCode found is a quoted identifier, "..." or U&"...", and if so
+// SkipNonCode found is a quoted identifier, "..." or U&"...", and if so
 // returns its name folded to lower case. decoded is false when a U&"..."
 // identifier holds an escape that cannot be decoded. Folding a quoted
 // name, which PostgreSQL keeps as written, can only make a match more
@@ -324,7 +339,7 @@ func quotedIdentifierAt(s string, i, end int) (name string, isIdent, decoded boo
 	unicode := false
 	switch {
 	case s[i] == '"':
-	case !continuesIdentifier(s, i):
+	case !ContinuesIdentifier(s, i):
 		length, kind := literalPrefix(s, i)
 		if length == 0 || kind != quotedIdentifier {
 			return "", false, false

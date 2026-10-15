@@ -18,6 +18,7 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/database"
 	"github.com/pgedge/ai-workbench/server/internal/logging"
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
+	"github.com/pgedge/ai-workbench/server/internal/sqllex"
 )
 
 // ExecuteExplainTool creates the execute_explain tool for query performance analysis
@@ -161,6 +162,17 @@ READ ONLY transaction to prevent side effects. However, be cautious with:
 				}
 			} else {
 				return mcp.NewToolError("Only SELECT queries are supported. EXPLAIN ANALYZE executes the query, which could have side effects for INSERT/UPDATE/DELETE/DDL statements.")
+			}
+
+			// EXPLAIN ANALYZE runs the query, and a read-only
+			// transaction does not stop a side-effecting function such
+			// as pg_terminate_backend, so such a SELECT may only be
+			// planned (issue #646).
+			if analyze && sqllex.CallsSideEffectingFunctionUnderAnyReading(query) {
+				return mcp.NewToolError("The query calls a function with side effects " +
+					"(for example pg_terminate_backend, pg_reload_conf, set_config or " +
+					"nextval). EXPLAIN ANALYZE executes the query, so it is not " +
+					"allowed; set analyze to false to see the plan without running it.")
 			}
 
 			// Build EXPLAIN command

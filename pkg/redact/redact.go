@@ -86,8 +86,14 @@ func secretKeyPattern(lead, trail string) string {
 // so an escaped quote never ends it early. Row images are masked as
 // JSON text, where every backslash is doubled, so an escape backslash
 // (escapeBackslash) may be one backslash or two: in SQL text that can
-// mask more than the value, but never less.
+// mask more than the value, but never less. White space is the ASCII
+// white space SQL itself accepts, spelt out so that PostgreSQL, whose
+// [[:space:]] follows the database locale, and Go agree.
 const (
+	// ws is one ASCII white space character, and notWS starts a
+	// bracket expression that excludes them.
+	ws    = `[ \t\n\r\f\v]`
+	notWS = `[^ \t\n\r\f\v`
 	// escapeBackslash is the backslash that starts an escape, doubled
 	// in JSON text.
 	escapeBackslash = `\\\\?`
@@ -116,75 +122,115 @@ const (
 		escapeBackslash + escapeBackslash + `[^'\\]|` + escapeBackslash + `[^'\\]|''|[^'\\])*(?:` +
 		escapeBackslash + `')?`
 	// nameQuote is the double quote that may close a quoted name, as in
-	// SET "app.password", escaped as \" in JSON text.
-	nameQuote = `(?:\\?")?`
-	// jsonDoubleQuoted is a double-quoted value in JSON text, as in
+	// SET "app.password", escaped as \" in JSON text and as \\\" in
+	// JSON text inside JSON text.
+	nameQuote = `(?:(?:\\|\\\\\\)?")?`
+	// doubleQuoted is a double-quoted value, as in PGPASSWORD="secret",
+	// and jsonDoubleQuoted is one in JSON text, as in
 	// PGPASSWORD=\"secret\" inside a row image.
+	doubleQuoted     = `"(?:[^"\\]|\\.)*"?`
 	jsonDoubleQuoted = `\\"(?:[^\\]|\\[^"])*(?:\\")?`
 	// secretValue is a value that follows a secret name: any SQL string
 	// constant or one nested in another literal.
 	secretValue = `(?:` + sqlConstant + `|` + sqlNestedQuoted + `|` + sqlBackslashQuoted + `)`
-	// sqlSeparator is white space or a comment between SQL tokens: a
-	// -- comment runs to the end of the line, and a nested /* */
-	// comment is not matched. In JSON text a line break is \n, so
-	// \n, \r and \t count as white space there and \n ends a -- comment.
-	sqlSeparator = `(?:[[:space:]]|\\[nrt]|--(?:[^\n\\]|\\[^n])*|/\*(?:[^*]|\*+[^*/])*\*+/)`
+	// blank is one white space character. In JSON text a line break
+	// is \n, so an escaped \n, \r or \t, with one backslash or two,
+	// counts as white space there.
+	blank = `(?:` + ws + `|` + escapeBackslash + `[nrt])`
+	// blockComment is a closed /* */ comment whose body is at most 32
+	// characters, or runs of stars each followed by one character, and
+	// lineComment a -- comment, which runs to the end of the line (\n
+	// in JSON text). A longer or nested comment is not matched, so a
+	// value behind one is not masked.
+	blockComment = `/\*(?:[^*]|\*+[^*/]){0,32}\*+/`
+	lineComment  = `--(?:[^\n\\]|\\[^n])*`
+	// sep is white space with up to two comments, and sep1 is the
+	// same but not empty. Requiring a block comment to be closed and
+	// short, and bounding the number of comments, keeps a run of
+	// comments from making a match scan to the end of the text at every
+	// secret name, which took minutes on a megabyte of password=/* .
+	sep  = blank + `*(?:(?:` + blockComment + `|` + lineComment + `)` + blank + `*){0,2}`
+	sep1 = `(?:` + blank + `|` + blockComment + `|` + lineComment + `)` + sep
 	// identChars may surround a secret name, as in app.password or
 	// AWS_SECRET_ACCESS_KEY.
 	identChars = `[a-z0-9_.]*`
 )
 
+// MaxTextLength is the length, in characters, to which Text and the
+// server's RedactedText cut a value before masking it, so that the
+// time a crafted value can take to mask is bounded (about a second at
+// most in PostgreSQL). Text longer than this is returned cut short.
+const MaxTextLength = 65536
+
 // textRedactions are the usual places a password appears in SQL text,
 // connection strings, shell commands and row data. They are applied in
 // order, by Text and, as regexp_replace calls inside the server's scoped
 // subquery, by RedactedText, so a caller's filters and aggregates see
-// only the masked text. A secret
-// name is any name holding a textSecretNamePatterns entry. They cannot
-// catch every form: a password in any other form is returned as stored.
+// only the masked text. A secret name is any name holding a
+// textSecretNamePatterns entry. Masking is best effort: a password in
+// any other form is returned as stored.
 var textRedactions = []TextRedaction{
 	{
 		// scheme://user:secret@host, including a truncated one that ends
-		// before the @.
+		// before the @. A user name may hold a doubled quote, as in
+		// 'postgresql://o''brien:secret@host', or a double quote.
 		Name:        "URI userinfo",
-		Pattern:     `([a-z][a-z0-9+.-]*://[^:/@[:space:]'"]*:)[^@[:space:]]+(?:@|$)`,
+		Pattern:     `([a-z][a-z0-9+.-]*://(?:` + notWS + `:/@']|'')*:)` + notWS + `@]+(?:@|$)`,
 		Replacement: `\1` + RedactedValue + `@`,
 	},
 	{
 		// "password": value in a JSON row image, whatever the value's
-		// type; a nested value is masked to its first closing bracket.
+		// type, and the bare keys "pass" and "pwd"; a nested value is
+		// masked to its first closing bracket.
 		Name: "JSON key",
-		Pattern: `(` + secretKeyPattern(`"[^"]*`, `[^"]*`) + `"[[:space:]]*:[[:space:]]*)` +
-			`(?:"(?:[^"\\]|\\.)*"?|\{[^}]*\}?|\[[^\]]*\]?|[^,}\][:space:]]+)`,
+		Pattern: `((?:` + secretKeyPattern(`"[^"]*`, `[^"]*`) + `|"(?:pass|pwd)\\?)"` + ws + `*:` + ws + `*)` +
+			`(?:"(?:[^"\\]|\\.)*"?|\{[^}]*\}?|\[[^\]]*\]?|` + notWS + `,}\]]+)`,
 		Replacement: `\1"` + RedactedValue + `"`,
 	},
 	{
 		// ALTER SYSTEM SET archive_command = '...' and the other
 		// credentialSettings.
 		Name: "SET credential setting",
-		Pattern: `(set[[:space:]]+"?(?:` + strings.Join(credentialSettings, "|") + `)"?` +
-			`(?:[[:space:]]*=|[[:space:]]+to)[[:space:]]*)` + sqlConstant,
+		Pattern: `(set` + sep1 + nameQuote + `(?:` + strings.Join(credentialSettings, "|") + `)` + nameQuote +
+			`(?:` + sep + `=|` + sep1 + `to)` + sep + `)` + sqlConstant,
 		Replacement: `\1'` + RedactedValue + `'`,
 	},
 	{
-		// set_config('app.password', 'secret', false) and
+		// set_config('app.password', 'secret', false), with or without a
+		// cast on the name or the new_value => argument name, and
 		// json_build_object('password', 'secret').
-		Name:        "quoted name, value",
-		Pattern:     `(` + secretKeyPattern(`'[^']*`, `[^']*`) + `'[[:space:]]*,[[:space:]]*)` + sqlConstant,
+		Name: "quoted name, value",
+		Pattern: `(` + secretKeyPattern(`'[^']*`, `[^']*`) + `'(?:::[a-z_ ]+)?` + sep + `,` + sep +
+			`(?:new_value` + sep + `=>` + sep + `)?)` + sqlConstant,
 		Replacement: `\1'` + RedactedValue + `'`,
 	},
 	{
 		// password=secret in a libpq connection string, ldapbindpasswd=
 		// and radiussecrets= in pg_hba.conf, PGPASSWORD=... and
 		// AWS_SECRET_ACCESS_KEY=... in a shell command, and
-		// SET app.password = '...'. An unquoted value is masked to the
-		// next white space; a parameter such as $1 is kept when white
-		// space, a comma, a bracket, a semicolon, a double quote or a
-		// backslash ends it.
+		// SET app.password = '...'. A quoted value may follow white
+		// space or up to two /* */ comments, which are masked with it.
+		// An unquoted value is masked to the next white space that no
+		// backslash escapes, as in password=correct\ horse, whatever it
+		// starts with, so a value such as --secret is not taken for a
+		// comment; a parameter such as $1 is kept when white space, a
+		// comma, a bracket, a semicolon, a double quote or a backslash
+		// ends it.
 		Name: "keyword=value",
-		Pattern: `(` + secretKeyPattern(identChars, identChars) + nameQuote + sqlSeparator + `*(?:=>?|:=)` +
-			sqlSeparator + `*)(?:` + secretValue + `|"(?:[^"\\]|\\.)*"?|` + jsonDoubleQuoted + `|` +
-			`(?:[^[:space:]$'"]|\$[^0-9[:space:]]|\$[0-9]+[^0-9[:space:],);"\\])[^[:space:]]*)`,
+		Pattern: `(` + secretKeyPattern(identChars, identChars) + nameQuote + sep + `(?:=>?|:=)` + ws + `*)(?:` +
+			`(?:(?:` + blockComment + `|` + escapeBackslash + `[nrt])` + blank + `*){0,2}` +
+			`(?:` + secretValue + `|` + doubleQuoted + `|` + jsonDoubleQuoted + `)|` +
+			`(?:` + blockComment + `)*(?:` + notWS + `$'"/]|/` + notWS + `*]|\$` + notWS + `0-9]|\$[0-9]+` + notWS + `0-9,);"\\])` +
+			`(?:` + escapeBackslash + `[^\n\r]|` + notWS + `])*)`,
 		Replacement: `\1` + RedactedValue,
+	},
+	{
+		// EXECUTE 'ALTER ROLE app PASSWORD ' || '''secret''', where the
+		// value is a quoted value in the next literal.
+		Name: "concatenated PASSWORD",
+		Pattern: `(` + secretKeyPattern(identChars, identChars) + nameQuote + sep + `'` + sep + `\|\|` + sep + `'` +
+			ws + `*)` + sqlNestedQuoted,
+		Replacement: `\1''` + RedactedValue + `''`,
 	},
 	{
 		// [ENCRYPTED] PASSWORD '...' in CREATE or ALTER ROLE and USER,
@@ -197,9 +243,9 @@ var textRedactions = []TextRedaction{
 		// set_config('app.password', ...), is left to the quoted name
 		// pattern. PASSWORD NULL and a $1 parameter are kept.
 		Name: "PASSWORD 'value'",
-		Pattern: `((?:(?:^|[^'a-z0-9_.])` + secretKeyPattern(identChars, identChars) + nameQuote + sqlSeparator + `*|` +
-			secretKeyPattern(`'`+identChars, identChars) + nameQuote + sqlSeparator + `+)` +
-			`(?:to` + sqlSeparator + `*)?)` + secretValue,
+		Pattern: `((?:(?:^|[^'a-z0-9_.])` + secretKeyPattern(identChars, identChars) + nameQuote + sep + `|` +
+			secretKeyPattern(`'`+identChars, identChars) + nameQuote + sep1 + `)` +
+			`(?:to` + sep + `)?)` + secretValue,
 		Replacement: `\1'` + RedactedValue + `'`,
 	},
 }
@@ -239,10 +285,28 @@ var compiledRedactions = func() []compiledRedaction {
 
 // Text returns s with every textRedactions pattern masked, as the
 // server's RedactedText does in SQL. It cannot catch every form: a
-// password in any other form is returned as it is.
+// password in any other form is returned as it is. Text longer than
+// MaxTextLength characters is cut to that length first, as PostgreSQL's
+// left() cuts it.
 func Text(s string) string {
+	s = truncate(s, MaxTextLength)
 	for _, r := range compiledRedactions {
 		s = r.re.ReplaceAllString(s, r.replacement)
+	}
+	return s
+}
+
+// truncate returns s cut to at most n characters (runes).
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	i := 0
+	for pos := range s {
+		if i == n {
+			return s[:pos]
+		}
+		i++
 	}
 	return s
 }

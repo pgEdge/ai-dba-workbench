@@ -10,7 +10,9 @@
 package tools
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"regexp"
 	"strings"
 	"testing"
@@ -117,6 +119,28 @@ var textRedactionCases = []textRedactionCase{
 		`SELECT dblink_connect(E'password=******** dbname=db')`},
 	{"backslash quoted role password", `EXECUTE E'ALTER ROLE app PASSWORD \'s3cret x\''`,
 		`EXECUTE E'ALTER ROLE app PASSWORD '********''`},
+	{"backslash quoted with escaped backslash", `SELECT dblink_connect(E'password=\'s3cr\\et x\' dbname=db')`,
+		`SELECT dblink_connect(E'password=******** dbname=db')`},
+	{"quoted role password after concatenation", "EXECUTE 'ALTER ROLE app ' || 'PASSWORD ''s3cret a b'''",
+		"EXECUTE 'ALTER ROLE app ' || 'PASSWORD '********''"},
+	{"quoted role password after a comment", "EXECUTE 'PASSWORD/* c */''s3cret a b'''", "EXECUTE 'PASSWORD/* c */'********''"},
+	{"set to after a comment", "SET app.password TO /* c */ 'example-secret'", "SET app.password TO /* c */ '********'"},
+	{"set to with no space", "SET app.password TO'example-secret'", "SET app.password TO'********'"},
+	{"comment holding stars and a slash", "ALTER ROLE app PASSWORD /* ** / */ 'example-secret'",
+		"ALTER ROLE app PASSWORD /* ** / */ '********'"},
+	{"line comment", "ALTER ROLE app PASSWORD -- set it\n'example-secret' LOGIN", "ALTER ROLE app PASSWORD -- set it\n'********' LOGIN"},
+	{"equals after a comment", "SET app.password = /* c */ 'example secret'", "SET app.password = /* c */ ********"},
+	{"json escape string conninfo", `{"stmt": "CONNECTION E'host=192.0.2.1 password=\\'s3cret a b\\''"}`,
+		`{"stmt": "CONNECTION E'host=192.0.2.1 password=********'"}`},
+	{"json escape string with escaped quote", `{"stmt": "SELECT dblink_connect(E'password=\\'s3cr\\\\\\'et x\\' dbname=db')"}`,
+		`{"stmt": "SELECT dblink_connect(E'password=******** dbname=db')"}`},
+	{"json role password with escaped quote", `{"stmt": "ALTER ROLE app PASSWORD E's3cr\\'et x'"}`,
+		`{"stmt": "ALTER ROLE app PASSWORD '********'"}`},
+	{"json conninfo with escaped quote", `{"c": "host=192.0.2.1 password='s3cr\\'et x' port=5432"}`,
+		`{"c": "host=192.0.2.1 password=******** port=5432"}`},
+	{"json double quoted shell value", `{"cmd": "PGPASSWORD=\"example secret\" pg_dump db"}`, `{"cmd": "PGPASSWORD=******** pg_dump db"}`},
+	{"json quoted name", `{"stmt": "SET \"app.api_key\" TO 'example-secret'"}`, `{"stmt": "SET \"app.api_key\" TO '********'"}`},
+	{"json parameter kept", `{"stmt": "SELECT 1 WHERE password_encryption = $1"}`, `{"stmt": "SELECT 1 WHERE password_encryption = $1"}`},
 	{"plain text kept", "SELECT * FROM t WHERE password_encryption = $1", "SELECT * FROM t WHERE password_encryption = $1"},
 	{"normalised parameter", "ALTER ROLE app PASSWORD $1", "ALTER ROLE app PASSWORD $1"},
 	{"normalised set parameter", "SELECT set_config('app.password', $1, false)",
@@ -158,6 +182,48 @@ func TestTextRedactions(t *testing.T) {
 				t.Errorf("a secret survived: %q", got)
 			}
 		})
+	}
+}
+
+// jsonText returns s as a JSON string, as to_jsonb(s)::text writes it
+// in a row image: quotes and backslashes are escaped.
+func jsonText(t *testing.T, s string) string {
+	t.Helper()
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(s); err != nil {
+		t.Fatalf("encode %q: %v", s, err)
+	}
+	return string(bytes.TrimSuffix(b.Bytes(), []byte("\n")))
+}
+
+// checkJSONForm checks got, the masked JSON form of tc.in, against the
+// JSON form of tc.want. A value at the end of the text may also take
+// the closing JSON quote, since an unquoted or truncated value is
+// masked to the next white space or the end. An input that is already
+// JSON text is skipped: escaped twice, it is not a form a row image
+// holds.
+func checkJSONForm(t *testing.T, tc textRedactionCase, got string) {
+	t.Helper()
+	if strings.HasPrefix(tc.in, "{") {
+		return
+	}
+	if secretLeft(got) || strings.Contains(got, "secret a b") {
+		t.Errorf("%s: a secret survived in JSON text: %q", tc.name, got)
+	}
+	want := jsonText(t, tc.want)
+	if got != want && got != strings.TrimSuffix(want, `"`) {
+		t.Errorf("%s: JSON form\ngot  %q\nwant %q", tc.name, got, want)
+	}
+}
+
+// TestTextRedactionsInJSON masks every case as it appears in a row
+// image, where every backslash is doubled and every double quote
+// escaped.
+func TestTextRedactionsInJSON(t *testing.T) {
+	for _, tc := range textRedactionCases {
+		checkJSONForm(t, tc, applyTextRedactionsInGo(t, jsonText(t, tc.in)))
 	}
 }
 
@@ -245,18 +311,30 @@ func connectionsSourceColumn(name string) (datastoreColumn, bool) {
 // built once from constants; the text under test is a bound parameter.
 var redactTextQuery = "SELECT " + redactedText("$1::text")
 
+// redactJSONQuery masks its one parameter as a row image holds it, in
+// the JSON text of a jsonb string.
+var redactJSONQuery = "SELECT " + redactedText("to_jsonb($1::text)")
+
 // TestRedactedTextIntegration runs redactedText in PostgreSQL on every
-// case, so the patterns behave there as they do in Go.
+// case, as plain text and as a jsonb row image, so the patterns behave
+// there as they do in Go.
 func TestRedactedTextIntegration(t *testing.T) {
 	pool, _, cleanup := newToolsTestPool(t)
 	defer cleanup()
 	for _, tc := range textRedactionCases {
-		var got string
+		var got, gotJSON string
 		if err := pool.QueryRow(context.Background(), redactTextQuery, tc.in).Scan(&got); err != nil {
 			t.Fatalf("%s: %v", tc.name, err)
 		}
 		if got != tc.want {
 			t.Errorf("%s: got  %q\nwant %q", tc.name, got, tc.want)
+		}
+		if err := pool.QueryRow(context.Background(), redactJSONQuery, tc.in).Scan(&gotJSON); err != nil {
+			t.Fatalf("%s as JSON: %v", tc.name, err)
+		}
+		checkJSONForm(t, tc, gotJSON)
+		if inGo := applyTextRedactionsInGo(t, jsonText(t, tc.in)); gotJSON != inGo {
+			t.Errorf("%s: JSON form differs between PostgreSQL and Go:\npg %q\ngo %q", tc.name, gotJSON, inGo)
 		}
 	}
 	var null *string
@@ -324,7 +402,8 @@ func TestQueryDatastoreRedactsFreeTextIntegration(t *testing.T) {
             collected_at TIMESTAMPTZ NOT NULL)`},
 		{sql: `INSERT INTO metrics.spock_exception_log (connection_id, id, local_tup, ddl_statement, error_message, collected_at) VALUES
             ($1, 1, '{"id": 1, "password": "example-secret"}', 'ALTER ROLE app PASSWORD ''example-secret''', NULL, now() - interval '10 minutes'),
-            ($1, 2, NULL, NULL, 'could not connect to postgresql://app:example-secret@192.0.2.1/db', now() - interval '10 minutes'),
+            ($1, 2, '{"stmt": "CONNECTION E''host=192.0.2.1 password=\\''example-secret s3cr-tail\\''''"}', NULL,
+             'could not connect to postgresql://app:example-secret@192.0.2.1/db', now() - interval '10 minutes'),
             ($2, 1, NULL, 'ALTER ROLE app PASSWORD ''example-secret''', NULL, now() - interval '10 minutes')`,
 			args: []any{f.visible, f.hidden}},
 		{sql: `UPDATE connections SET connection_error = 'connect to host=192.0.2.1 password=example-secret failed'`},
@@ -355,7 +434,7 @@ func TestQueryDatastoreRedactsFreeTextIntegration(t *testing.T) {
 				if isErr {
 					t.Fatalf("%s query failed: %s", shape, text)
 				}
-				if strings.Contains(text, "example-secret") {
+				if strings.Contains(text, "example-secret") || strings.Contains(text, "s3cr") {
 					t.Fatalf("%s: a credential reached the caller:\n%s", shape, text)
 				}
 				for _, want := range []string{`"password": "` + redactedValue + `"`, "PASSWORD '" + redactedValue + "'",

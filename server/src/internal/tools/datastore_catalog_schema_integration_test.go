@@ -270,9 +270,10 @@ func TestMetricSourcesResolveAgainstCollectorSchema(t *testing.T) {
 }
 
 // TestMetricRedactionsMatchCollectorSchema checks that every probe in
-// metricRedactions still has the setting-name column and every value
-// column it masks, so a collector rename cannot leave a credential
-// unmasked or quietly drop a column.
+// metricRedactions still has the setting-name column and every column
+// it masks, and that each is masked the way the rule says, so a
+// collector rename cannot leave a credential unmasked or quietly drop a
+// column.
 func TestMetricRedactionsMatchCollectorSchema(t *testing.T) {
 	pool := newCollectorSchemaPool(t)
 	ctx := context.Background()
@@ -283,8 +284,10 @@ func TestMetricRedactionsMatchCollectorSchema(t *testing.T) {
 			t.Errorf("redacted probe %q cannot be looked up: %v", name, err)
 			continue
 		}
-		if _, ok := src.column(rule.KeyColumn); !ok {
-			t.Errorf("redacted probe %q has no %s column", name, rule.KeyColumn)
+		if rule.KeyColumn != "" {
+			if _, ok := src.column(rule.KeyColumn); !ok {
+				t.Errorf("redacted probe %q has no %s column", name, rule.KeyColumn)
+			}
 		}
 		for _, c := range rule.Columns {
 			got, ok := src.column(c)
@@ -292,6 +295,27 @@ func TestMetricRedactionsMatchCollectorSchema(t *testing.T) {
 				t.Errorf("probe %q column %s should be masked by %s, got %+v (present=%v)",
 					name, c, rule.KeyColumn, got, ok)
 			}
+		}
+		for _, c := range rule.OptionColumns {
+			if got, ok := src.column(c); !ok || !got.MaskOptions {
+				t.Errorf("probe %q options column %s should be masked, got %+v (present=%v)", name, c, got, ok)
+			}
+		}
+		for _, c := range rule.TextColumns {
+			if got, ok := src.column(c); !ok || !got.RedactText || got.DataType != typeText {
+				t.Errorf("probe %q text column %s should be redacted text, got %+v (present=%v)", name, c, got, ok)
+			}
+		}
+	}
+
+	// connections.connection_error is free text from libpq, which can
+	// quote a connection string; the catalog redacts it.
+	for _, src := range configurationSources() {
+		if src.Name != "connections" {
+			continue
+		}
+		if got, ok := src.column("connection_error"); !ok || !got.RedactText {
+			t.Errorf("connections.connection_error should be redacted text, got %+v (present=%v)", got, ok)
 		}
 	}
 }

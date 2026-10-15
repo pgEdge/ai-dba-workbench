@@ -35,8 +35,9 @@ database. It holds two kinds of source:
 - configuration sources: connections, alerts, blackouts, thresholds, probe
   settings, baselines, clusters and similar tables, each limited to the
   columns that are safe to read. Stored connection passwords and
-  certificates are never available, and the values of settings that can
-  hold a credential, such as primary_conninfo in pg_settings, are masked.
+  certificates are never available, and the values of settings and
+  options that can hold a credential, such as primary_conninfo in
+  pg_settings and ldapbindpasswd in pg_hba_file_rules, are masked.
 </database_context>
 
 <workflow>

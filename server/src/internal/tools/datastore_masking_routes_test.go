@@ -16,8 +16,10 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pgedge/ai-workbench/server/internal/api"
+	"github.com/pgedge/ai-workbench/server/internal/database"
 	"github.com/pgedge/ai-workbench/server/internal/metrics"
 )
 
@@ -135,5 +137,116 @@ func TestMaskedProbesOnEveryRouteIntegration(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// collectorShapeTables are the tables, in the collector's shape, that
+// the top-queries and timeline routes read. The SQL is constant.
+var collectorShapeTables = []struct{ drop, create string }{
+	{`DROP TABLE IF EXISTS metrics.pg_settings`,
+		`CREATE TABLE metrics.pg_settings (connection_id integer NOT NULL,
+            collected_at timestamptz NOT NULL, name text, setting text)`},
+	{`DROP TABLE IF EXISTS metrics.pg_stat_statements`,
+		`CREATE TABLE metrics.pg_stat_statements (connection_id integer NOT NULL,
+            collected_at timestamptz NOT NULL, queryid bigint NOT NULL, userid bigint, dbid bigint,
+            toplevel boolean NOT NULL DEFAULT TRUE, database_name text, query text NOT NULL,
+            calls bigint NOT NULL DEFAULT 0, total_exec_time double precision NOT NULL DEFAULT 0,
+            mean_exec_time double precision NOT NULL DEFAULT 0, min_exec_time double precision NOT NULL DEFAULT 0,
+            max_exec_time double precision NOT NULL DEFAULT 0, rows bigint NOT NULL DEFAULT 0,
+            shared_blks_hit bigint NOT NULL DEFAULT 0, shared_blks_read bigint NOT NULL DEFAULT 0)`},
+	{`DROP TABLE IF EXISTS metrics.pg_stat_activity`,
+		`CREATE TABLE metrics.pg_stat_activity (connection_id integer NOT NULL,
+            collected_at timestamptz NOT NULL, datid bigint, datname text, usesysid bigint,
+            usename text, client_addr inet, client_hostname text, query_id bigint)`},
+	{`DROP TABLE IF EXISTS metrics.pg_stat_database`,
+		`CREATE TABLE metrics.pg_stat_database (connection_id integer NOT NULL,
+            collected_at timestamptz NOT NULL, database_name text NOT NULL, datid bigint, datname text)`},
+}
+
+// TestMaskedQueryTextAndSettingChangesIntegration checks that the
+// top-queries route returns masked statement text, and that a change to
+// a credential setting still appears on the timeline, through both
+// GET /api/v1/timeline/events and get_timeline_events, with its old and
+// new values masked (get_timeline_events lists no details).
+func TestMaskedQueryTextAndSettingChangesIntegration(t *testing.T) {
+	f := newDatastoreFixture(t)
+	ctx := context.Background()
+	for _, tbl := range collectorShapeTables {
+		if _, err := f.pool.Exec(ctx, tbl.drop); err != nil {
+			t.Fatalf("%s: %v", tbl.drop, err)
+		}
+		if _, err := f.pool.Exec(ctx, tbl.create); err != nil {
+			t.Fatalf("%s: %v", tbl.create, err)
+		}
+		drop := tbl.drop
+		t.Cleanup(func() {
+			if _, err := f.pool.Exec(context.Background(), drop); err != nil {
+				t.Logf("%s: %v", drop, err)
+			}
+		})
+	}
+	seed := []string{
+		`INSERT INTO metrics.pg_settings VALUES
+            ($1, now() - interval '10 minutes', 'primary_conninfo', 'host=192.0.2.1 password=example-secret-old'),
+            ($1, now() - interval '1 minute', 'primary_conninfo', 'host=192.0.2.1 password=example-secret'),
+            ($1, now() - interval '10 minutes', 'work_mem', '4MB'),
+            ($1, now() - interval '1 minute', 'work_mem', '8MB')`,
+		`INSERT INTO metrics.pg_stat_statements (connection_id, collected_at, queryid, userid, dbid,
+            database_name, query, calls, total_exec_time, mean_exec_time) VALUES
+            ($1, now() - interval '6 minutes', 1001, 10, 100, 'appdb', 'ALTER ROLE app PASSWORD ''example-secret''', 0, 0, 0),
+            ($1, now() - interval '1 minute', 1001, 10, 100, 'appdb', 'ALTER ROLE app PASSWORD ''example-secret''', 5, 50, 10)`,
+	}
+	for _, sql := range seed {
+		if _, err := f.pool.Exec(ctx, sql, f.visible); err != nil {
+			t.Fatalf("seed: %v\n%s", err, sql)
+		}
+	}
+
+	mux := http.NewServeMux()
+	noAuth := func(h http.HandlerFunc) http.HandlerFunc { return h }
+	api.NewPerfSummaryHandler(f.ds, f.store).RegisterRoutes(mux, noAuth)
+	api.NewTimelineHandler(f.ds, f.store, f.checker).RegisterRoutes(mux, noAuth)
+
+	conn := strconv.Itoa(f.visible)
+	window := "&start_time=" + time.Now().Add(-time.Hour).UTC().Format(time.RFC3339) +
+		"&end_time=" + time.Now().UTC().Format(time.RFC3339)
+	outputs := map[string]string{}
+	for route, target := range map[string]string{
+		"metrics/top-queries": "/api/v1/metrics/top-queries?connection_id=" + conn,
+		"timeline/events":     "/api/v1/timeline/events?event_types=config_change&connection_id=" + conn + window,
+	} {
+		req := httptest.NewRequest(http.MethodGet, target, nil).WithContext(superuserContext())
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s returned %d: %s", route, rec.Code, rec.Body.String())
+		}
+		outputs[route] = rec.Body.String()
+	}
+	tool := GetTimelineEventsTool(f.ds, f.checker, database.NewVisibilityLister(f.ds))
+	text, isErr := call(t, tool, superuserContext(), map[string]any{
+		"connection_id": f.visible, "event_types": "config_change", "start_time": "1h"})
+	if isErr {
+		t.Fatalf("get_timeline_events: %s", text)
+	}
+	outputs["get_timeline_events"] = text
+
+	for route, out := range outputs {
+		if strings.Contains(out, "example-secret") {
+			t.Errorf("%s returned a credential:\n%s", route, out)
+		}
+		// get_timeline_events lists events without their details.
+		if route != "get_timeline_events" && !strings.Contains(out, metrics.RedactedValue) {
+			t.Errorf("%s should show the masked value:\n%s", route, out)
+		}
+	}
+	if !strings.Contains(outputs["get_timeline_events"], "Changed 2 settings") {
+		t.Errorf("get_timeline_events should report the change:\n%s", outputs["get_timeline_events"])
+	}
+	if !strings.Contains(outputs["metrics/top-queries"], "ALTER ROLE app PASSWORD") {
+		t.Errorf("top-queries should keep the statement text:\n%s", outputs["metrics/top-queries"])
+	}
+	if out := outputs["timeline/events"]; !strings.Contains(out, "primary_conninfo") || !strings.Contains(out, "8MB") {
+		t.Errorf("timeline/events should report both setting changes:\n%s", out)
 	}
 }

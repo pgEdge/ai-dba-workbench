@@ -15,11 +15,17 @@ import (
 )
 
 // This file holds the rules that keep credentials out of collected
-// metrics on every route that returns them: query_datastore and
-// GET /api/v1/metrics/latest. A column whose name marks it as a secret
-// is never returned, and the values in ProbeRedactions are masked in
-// the SQL that reads them, so a filter or sort sees only the masked
-// value.
+// metrics on every route that returns them: query_datastore,
+// GET /api/v1/metrics/latest, the latest-rows mode of
+// GET /api/v1/metrics/query, the statement text of
+// GET /api/v1/metrics/top-queries, and the setting values of
+// configuration-change events on GET /api/v1/timeline/events (the
+// get_timeline_events tool lists no event details). A column whose name
+// marks it as a secret is never returned, and the values in
+// ProbeRedactions are masked in the SQL that reads them, so a filter or
+// sort sees only the masked value. TestCredentialTableReadersAreReviewed
+// fails when other server code reads a table that can hold a
+// credential without these helpers or a review.
 
 // secretColumnFragments are name fragments that mark a column as
 // holding a credential. A metric column whose name contains one is never

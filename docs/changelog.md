@@ -2768,6 +2768,13 @@ project adheres to
   and `GET /api/v1/metrics/latest` now redacts `pg_settings` rows in
   the same way. (#643)
 
+- Mask credentials in `GET /api/v1/metrics/latest` and in the
+  latest-rows mode of `GET /api/v1/metrics/query` in the same way as
+  `query_datastore` (#670). Both routes returned credential settings
+  such as `primary_conninfo`, secret `pg_hba_file_rules` options,
+  passwords quoted in query text and Spock row images, and columns
+  named as secrets without masking.
+
 - Delete a user with `ai-dba-server -delete-user` only when the
   confirmation is an explicit `y` or `yes`. The answer was checked
   only when a whole line could be read, so input that ended without

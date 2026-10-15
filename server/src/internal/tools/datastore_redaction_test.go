@@ -11,10 +11,10 @@ package tools
 
 import (
 	"context"
-	"regexp"
-	"slices"
 	"strings"
 	"testing"
+
+	"github.com/pgedge/ai-workbench/server/internal/metrics"
 )
 
 func settingsColumns(names ...string) []datastoreColumn {
@@ -72,33 +72,6 @@ func TestRedactMetricColumns(t *testing.T) {
 			}
 		}
 	})
-}
-
-// TestCredentialSettingLiteralsAreSafe pins the constants that
-// credentialSettingCondition writes into SQL as literals.
-func TestCredentialSettingLiteralsAreSafe(t *testing.T) {
-	safe := regexp.MustCompile(`^[a-z0-9_]+$`)
-	for _, v := range slices.Concat(credentialSettings, nonCredentialSettings, secretColumnFragments) {
-		if !safe.MatchString(v) {
-			t.Errorf("%q is not safe to write as a SQL literal", v)
-		}
-	}
-	safePattern := regexp.MustCompile(`^[a-z_?$]+$`)
-	for _, v := range slices.Concat(secretNamePatterns, textSecretNamePatterns) {
-		if !safePattern.MatchString(v) {
-			t.Errorf("pattern %q is not safe to write as a SQL literal", v)
-		}
-	}
-	if !safe.MatchString(strings.ReplaceAll(redactedValue, "*", "a")) {
-		t.Errorf("redactedValue %q is not safe to write as a SQL literal", redactedValue)
-	}
-	cond := credentialSettingCondition("t", "name")
-	for _, want := range []string{`lower(t."name") IN ('archive_cleanup_command', 'archive_command', 'primary_conninfo', 'recovery_end_command', 'restore_command', 'ssl_passphrase_command')`, `~ '(password|`, `|pass$|key$|api_?key|access_key|salt)'`,
-		`NOT IN ('md5_password_warnings', 'password_encryption', 'ssl_passphrase_command_supports_reload')`} {
-		if !strings.Contains(cond, want) {
-			t.Errorf("condition %s does not contain %s", cond, want)
-		}
-	}
 }
 
 func TestScopedFromRedactsWithoutServerPredicates(t *testing.T) {
@@ -174,15 +147,15 @@ func TestQueryDatastoreRedactsCredentialSettingsIntegration(t *testing.T) {
 			for _, r := range parseResultRows(t, text) {
 				switch r["name"] {
 				case "work_mem", "password_encryption", "md5_password_warnings":
-					if r["setting"] == redactedValue || r["setting"] == "" {
+					if r["setting"] == metrics.RedactedValue || r["setting"] == "" {
 						t.Errorf("%s should not be masked: %v", r["name"], r)
 					}
 				case "primary_conninfo":
-					if r["setting"] != redactedValue || r["boot_val"] != redactedValue || r["reset_val"] != redactedValue {
+					if r["setting"] != metrics.RedactedValue || r["boot_val"] != metrics.RedactedValue || r["reset_val"] != metrics.RedactedValue {
 						t.Errorf("primary_conninfo should be masked: %v", r)
 					}
 				default:
-					if r["setting"] != redactedValue {
+					if r["setting"] != metrics.RedactedValue {
 						t.Errorf("%s should be masked: %v", r["name"], r)
 					}
 				}
@@ -213,31 +186,8 @@ func TestQueryDatastoreRedactsCredentialSettingsIntegration(t *testing.T) {
 
 	for _, args := range []map[string]any{{"source": "pg_settings"}, {}} {
 		text, isErr := call(t, DescribeDatastoreTool(f.pool), superuserContext(), args)
-		if isErr || !strings.Contains(text, redactionNote) {
+		if isErr || !strings.Contains(text, metrics.SettingRedactionNote) {
 			t.Errorf("describe_datastore %v should note the masking: (error=%v) %s", args, isErr, text)
-		}
-	}
-}
-
-func TestSecretNamePatterns(t *testing.T) {
-	re := regexp.MustCompile("(" + strings.Join(secretNamePatterns, "|") + ")")
-	for name, want := range map[string]bool{
-		"ldapbindpasswd":          true,
-		"radiussecrets":           true,
-		"myext.api_key":           true,
-		"myext.apikey":            true,
-		"myext.access_key_id":     true,
-		"myext.dsn":               true,
-		"myext.connection_string": true,
-		"myext.salt":              true,
-		"myext.pass":              true,
-		"ldapserver":              false,
-		"work_mem":                false,
-		"shared_buffers":          false,
-		"ssl_key_file":            false,
-	} {
-		if got := re.MatchString(name); got != want {
-			t.Errorf("%q matches = %v, want %v", name, got, want)
 		}
 	}
 }
@@ -290,8 +240,8 @@ func TestQueryDatastoreMasksHBAOptionsIntegration(t *testing.T) {
 				if strings.Contains(text, "example-secret") {
 					t.Fatalf("%s: a credential reached the caller:\n%s", shape, text)
 				}
-				for _, want := range []string{"LdapBindPasswd=" + redactedValue, "radiussecrets=" + redactedValue,
-					"\t\t" + redactedValue,
+				for _, want := range []string{"LdapBindPasswd=" + metrics.RedactedValue, "radiussecrets=" + metrics.RedactedValue,
+					"\t\t" + metrics.RedactedValue,
 					"ldapserver=ldap.example.com", "ldapport=389", "radiusservers=192.0.2.1"} {
 					if !strings.Contains(text, want) {
 						t.Errorf("%s: result should contain %q:\n%s", shape, want, text)
@@ -310,7 +260,7 @@ func TestQueryDatastoreMasksHBAOptionsIntegration(t *testing.T) {
 			}
 			rows = mustQuery(t, f.tool(), caller, map[string]any{
 				"source":  "pg_hba_file_rules",
-				"filters": []any{map[string]any{"column": "options", "op": "=", "value": "{radiusservers=192.0.2.1,radiussecrets=" + redactedValue + "}"}},
+				"filters": []any{map[string]any{"column": "options", "op": "=", "value": "{radiusservers=192.0.2.1,radiussecrets=" + metrics.RedactedValue + "}"}},
 			})
 			if len(rows) != 1 {
 				t.Errorf("a filter on the masked options matched %d rows, want 1", len(rows))
@@ -328,7 +278,7 @@ func TestQueryDatastoreMasksHBAOptionsIntegration(t *testing.T) {
 	}
 
 	text, isErr := call(t, DescribeDatastoreTool(f.pool), superuserContext(), map[string]any{"source": "pg_hba_file_rules"})
-	if isErr || !strings.Contains(text, optionsRedactionNote) {
+	if isErr || !strings.Contains(text, metrics.OptionsRedactionNote) {
 		t.Errorf("describe_datastore should note the options masking: (error=%v) %s", isErr, text)
 	}
 }

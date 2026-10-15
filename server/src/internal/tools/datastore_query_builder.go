@@ -795,7 +795,7 @@ func scopedFrom(src datastoreSource, inner []string) (string, error) {
 }
 
 // innerSelectList renders scopedFrom's select list: each permitted
-// column, with a redacted column replaced by redactedValue on rows that
+// column, with a redacted column replaced by metrics.RedactedValue on rows that
 // name a credential-bearing setting, and the credential-bearing options
 // in an options column masked, and known password forms in free text
 // masked. An empty or NULL value is kept, since it shows only that the
@@ -805,24 +805,22 @@ func innerSelectList(src datastoreSource) string {
 	for i, c := range src.Columns {
 		value := qualified(datastoreTableAlias, c.Name)
 		if c.MaskOptions {
-			parts[i] = maskedOptions(value) + " AS " + metrics.QuoteIdentifier(c.Name)
+			parts[i] = metrics.MaskedOptions(value) + " AS " + metrics.QuoteIdentifier(c.Name)
 			continue
 		}
 		if c.MaskWhole {
-			parts[i] = "CASE WHEN " + value + " <> '' THEN '" + redactedValue + "' ELSE " + value + " END AS " +
-				metrics.QuoteIdentifier(c.Name)
+			parts[i] = metrics.MaskedWhole(value) + " AS " + metrics.QuoteIdentifier(c.Name)
 			continue
 		}
 		if c.RedactText {
-			parts[i] = redactedText(value) + " AS " + metrics.QuoteIdentifier(c.Name)
+			parts[i] = metrics.RedactedText(value) + " AS " + metrics.QuoteIdentifier(c.Name)
 			continue
 		}
 		if c.RedactBy == "" {
 			parts[i] = value
 			continue
 		}
-		parts[i] = "CASE WHEN " + credentialSettingCondition(datastoreTableAlias, c.RedactBy) +
-			" AND " + value + " <> '' THEN '" + redactedValue + "' ELSE " + value + " END AS " +
+		parts[i] = metrics.MaskedSetting(value, qualified(datastoreTableAlias, c.RedactBy)) + " AS " +
 			metrics.QuoteIdentifier(c.Name)
 	}
 	return strings.Join(parts, ", ")

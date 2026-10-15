@@ -240,6 +240,11 @@ func (h *LatestSnapshotHandler) handleLatestSnapshot(
 		return
 	}
 
+	// Leave out the columns that are never returned, such as one whose
+	// name marks it as a secret, so they cannot be an entity key or a
+	// sort column either.
+	allColumns = metrics.ReturnableColumns(probeName, allColumns)
+
 	// Determine dimension (entity key) columns for DISTINCT ON
 	dimensionCols := BuildDimensionColumns(allColumns, colTypes)
 
@@ -435,7 +440,10 @@ const systemSchemaPredicate = `"schemaname" NOT IN ('pg_catalog', 'information_s
 
 // queryLatestSnapshot builds and executes the DISTINCT ON query that
 // returns the latest row for each unique entity, then applies sorting
-// and pagination. It uses a single query with COUNT(*) OVER() to
+// and pagination. Columns that can carry a credential are masked in the
+// inner query, as query_datastore masks them, under their own names, so
+// DISTINCT ON, the sort and the response all see only the masked value;
+// a column that must never be returned is left out. It uses a single query with COUNT(*) OVER() to
 // retrieve both rows and the total count, and moves schema exclusion
 // to the outer query for better index utilization.
 func queryLatestSnapshot(
@@ -454,11 +462,21 @@ func queryLatestSnapshot(
 	schemas latestSchemaFilter,
 ) ([]map[string]any, int, error) {
 	// Build the list of columns to return (exclude internal columns)
-	var returnCols []string
+	// and the masked expression that selects each.
+	var returnCols, selectParts []string
 	for _, col := range allColumns {
-		if !internalColumns[col] {
-			returnCols = append(returnCols, col)
+		if internalColumns[col] {
+			continue
 		}
+		expr, ok := metrics.MaskedProbeColumn(probeName, col, allColumns, metrics.QuoteIdentifier)
+		if !ok {
+			continue
+		}
+		if quoted := metrics.QuoteIdentifier(col); expr != quoted {
+			expr += " AS " + quoted
+		}
+		returnCols = append(returnCols, col)
+		selectParts = append(selectParts, expr)
 	}
 
 	if len(dimensionCols) == 0 {
@@ -483,11 +501,6 @@ func queryLatestSnapshot(
 	distinctOrderParts = append(distinctOrderParts, "collected_at DESC")
 	distinctOrderClause := strings.Join(distinctOrderParts, ", ")
 
-	// Build SELECT column list for the inner query
-	var selectParts []string
-	for _, col := range returnCols {
-		selectParts = append(selectParts, metrics.QuoteIdentifier(col))
-	}
 	selectClause := strings.Join(selectParts, ", ")
 
 	// Build inner WHERE clause: connection_id, database_name, and

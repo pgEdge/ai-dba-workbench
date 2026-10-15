@@ -529,6 +529,27 @@ back. An instance holding a few hours of history therefore
 draws a 30-day request as a mostly empty 30-day axis, rather
 than as the same chart a one-hour request produces.
 
+### Masked Credentials
+
+The `/api/v1/metrics/latest` endpoint and the latest-rows mode
+of `/api/v1/metrics/query` mask credentials in the same way as
+the `query_datastore` MCP tool:
+
+- The value of a setting that can hold a credential, such as
+  `primary_conninfo`, is returned as `********`.
+- Secret options in `pg_hba_file_rules.options`, such as
+  `ldapbindpasswd`, have their values masked.
+- Known password forms in query text, Spock DDL statements,
+  error messages and row images are masked; row images are
+  returned as text, since masking can leave them invalid as
+  JSON.
+- A column whose name marks it as a secret is never returned
+  and cannot be named in `order_by`.
+
+The masking cannot recognise every form a password can take,
+so query text and replicated row data may still contain
+sensitive values.
+
 ## Error Responses
 
 All API errors return a consistent JSON format.

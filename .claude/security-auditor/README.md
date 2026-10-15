@@ -223,15 +223,13 @@ moved.
   files). A credential can also sit inside a value (pg_settings'
   `primary_conninfo` or `archive_command`, pg_hba_file_rules'
   `ldapbindpasswd=` and `radiussecrets=` options), which no column-name
-  check catches, so `metricRedactions` masks such values, chosen by
+  check catches, so `ProbeRedactions` masks such values, chosen by
   setting or option name against the broader `secretNamePatterns`, in
   the inner subquery, where the caller's filters cannot see the real
   value. Free-text columns (`pg_stat_activity.query`,
   `pg_stat_statements.query`, Spock exception and resolution
-  statements and row images, `connections.connection_error`,
-  `alerts.description` and `alerts.ai_analysis`) pass, in
-  `query_datastore` only, through `redactedText`: `left(value, 65536)`
-  under a chain of `regexp_replace` calls built from
+  statements and row images, `connections.connection_error`) pass
+  through `RedactedText`, a chain of `regexp_replace` calls built from
   `textRedactions` (URI userinfo, JSON keys, ALTER SYSTEM SET of a
   `credentialSettings` entry, quoted name and value as in `set_config`,
   name=value, and name followed by a string constant, with secret names
@@ -266,18 +264,20 @@ moved.
   dollar-quoted, truncated), keeps only capture group 1, and is applied
   through E'' literals so `standard_conforming_strings` cannot change
   it; add every bypass input to `textRedactionCases`, which run in both
-  Go and PostgreSQL, plain and as JSON, record forms left unmasked in
-  `textRedactionKnownLimits`, and keep the 1 MiB adversarial inputs
-  fast in both engines and, in PostgreSQL, in both forms
-  (`datastore_text_redaction_test.go`). A dollar-quoted value that
+  Go and PostgreSQL, and keep the 1 MB adversarial test fast
+  (`internal/metrics/redaction_test.go`). A dollar-quoted value that
   itself contains a `$name$` tag leaks its tail, since the patterns
   cannot use back-references. Row images retyped to text keep their
   stored type for entity-key selection (`StoredType`). The masking is best effort:
   query text and row images can still carry sensitive data or a
   password in an unrecognised form, and read access to a connection
   grants that visibility, as the user guide states.
-  `GET /api/v1/metrics/latest` returns probe columns without this
-  masking (not yet ruled on). Scope predicates must be applied before
+  The rules live in `internal/metrics/redaction.go` and apply on every
+  route returning probe rows: `query_datastore`,
+  `GET /api/v1/metrics/latest` (#670) and the latest-rows mode of
+  `GET /api/v1/metrics/query`, through `ReturnableColumns` and
+  `MaskedProbeColumn`; `datastore_masking_routes_test.go` runs every
+  masked probe through all of them, so add a new route there. Scope predicates must be applied before
   any caller
   predicate can be evaluated: the builder puts the scope and time
   window in an inner `OFFSET 0` subquery the planner cannot merge, and

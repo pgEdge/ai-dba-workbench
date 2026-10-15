@@ -124,6 +124,20 @@ var Cases = []Case{
 		"ALTER ROLE app PASSWORD '********' LOGIN"},
 	{"backslash quoted with escaped backslash", `SELECT dblink_connect(E'password=\'s3cr\\et x\' dbname=db')`,
 		`SELECT dblink_connect(E'password=******** dbname=db')`},
+	// The conninfo password hunter2\'Secret123 battery: its escaped
+	// backslash is \\\\ and its escaped quote \\\' in the escape string.
+	{"backslash quoted with escaped backslash and quote",
+		`CREATE SUBSCRIPTION s CONNECTION E'host=h password=\'hunter2\\\\\\\'Secret123 battery\'' PUBLICATION p`,
+		`CREATE SUBSCRIPTION s CONNECTION E'host=h password=********' PUBLICATION p`},
+	// The conninfo password hunter2\Secret123 battery.
+	{"backslash quoted with a lone escaped backslash",
+		`CREATE SUBSCRIPTION s CONNECTION E'host=h password=\'hunter2\\\\Secret123 battery\'' PUBLICATION p`,
+		`CREATE SUBSCRIPTION s CONNECTION E'host=h password=********' PUBLICATION p`},
+	// Not a secret, but a quoted word password followed by a quote
+	// reads as PASSWORD '...', so the rest is masked: more than the
+	// value, never less.
+	{"password word before concatenation", `SELECT 'password ' || name FROM users WHERE id = 1`,
+		`SELECT 'password '********'`},
 	{"quoted role password after concatenation", "EXECUTE 'ALTER ROLE app ' || 'PASSWORD ''s3cret a b'''",
 		"EXECUTE 'ALTER ROLE app ' || 'PASSWORD '********''"},
 	{"quoted role password after a comment", "EXECUTE 'PASSWORD/* c */''s3cret a b'''", "EXECUTE 'PASSWORD/* c */'********''"},
@@ -268,9 +282,6 @@ func JSONText(s string) string {
 // escape is doubled, so the patterns there mask more than the value,
 // but never less.
 var JSONWants = map[string]string{
-	// The doubled backslash before the closing quote of the value
-	// reads as an escaped quote, so the value runs to the next space.
-	"C21: E conninfo escaped backslash then quote": JSONText(`SELECT dblink_connect(E'password=******** x\' dbname=db')`),
 	// The line break is \n in JSON text, which an unquoted value
 	// takes as an escape, so the value runs to the next space.
 	"C30: password value then multiline": JSONText("CREATE SUBSCRIPTION s CONNECTION 'host=h\npassword=******** PUBLICATION p"),

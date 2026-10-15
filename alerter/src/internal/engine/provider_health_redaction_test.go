@@ -287,6 +287,45 @@ func TestProviderErrorText_FlattenedTransportFailures(t *testing.T) {
 	}
 }
 
+// TestProviderErrorText_ReadFailureAfterStatus proves a response body
+// the library could not read, after the status line arrived, is reduced
+// to a category whatever its status code, so the connection's addresses
+// never reach an alert.
+func TestProviderErrorText_ReadFailureAfterStatus(t *testing.T) {
+	tests := []struct {
+		name   string
+		status int
+		inner  string
+		want   string
+	}{
+		{"reset after 200", 200,
+			"read tcp 127.0.0.1:40312->192.0.2.10:11434: read: connection reset by peer", "connection reset"},
+		{"truncated after 200", 200, "unexpected EOF", "connection closed by the server"},
+		{"timeout after 500", 500,
+			"read tcp 127.0.0.1:40312->192.0.2.10:11434: i/o timeout", "timed out"},
+		{"other after 200", 200, "read tcp 127.0.0.1:40312->192.0.2.10:11434: bad", "network error"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := fmt.Errorf("decide: %w", &pgllm.ProviderError{
+				Err:        pgllm.ErrProviderError,
+				StatusCode: tt.status,
+				Message:    "read response: " + tt.inner,
+				Provider:   "typesafe",
+			})
+			got := providerErrorText(err, "typesafe")
+			if want := "Request to typesafe endpoint failed: " + tt.want; got != want {
+				t.Errorf("got %q, want %q", got, want)
+			}
+			for _, leak := range []string{"127.0.0.1", "40312", "192.0.2.10", "11434", "read tcp"} {
+				if strings.Contains(got, leak) {
+					t.Errorf("%q leaks %q", got, leak)
+				}
+			}
+		})
+	}
+}
+
 // TestProviderErrorText_ProviderErrorsKept proves a ProviderError that is
 // not a flattened transport failure keeps its text.
 func TestProviderErrorText_ProviderErrorsKept(t *testing.T) {
@@ -300,6 +339,10 @@ func TestProviderErrorText_ProviderErrorsKept(t *testing.T) {
 			Message: "send request: bad gateway", Provider: "typesafe"}},
 		{"other sentinel", &pgllm.ProviderError{Err: pgllm.ErrInvalidRequest,
 			Message: "send request: refused", Provider: "typesafe"}},
+		{"decode failure with a status", &pgllm.ProviderError{Err: pgllm.ErrProviderError, StatusCode: 200,
+			Message: "decode response: unexpected end of JSON input", Provider: "typesafe"}},
+		{"read prefix on another sentinel", &pgllm.ProviderError{Err: pgllm.ErrInvalidRequest, StatusCode: 200,
+			Message: "read response: refused", Provider: "typesafe"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

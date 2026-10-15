@@ -710,9 +710,11 @@ var providerMarkup = strings.NewReplacer(
 //
 // Most providers return the *url.Error from the HTTP client, wrapped.
 // The TypeSafe and Voyage providers instead flatten it into the message
-// of a *pgllm.ProviderError with no status code, which keeps the
-// endpoint in the text but not the *url.Error, so such an error is
-// identified by its message and given a category from the text alone.
+// of a *pgllm.ProviderError with no status code, or with the status of a
+// response whose body could not then be read, which keeps the endpoint
+// or the connection's addresses in the text but not the *url.Error, so
+// such an error is identified by its message and given a category from
+// the text alone.
 func providerErrorText(err error, provider string) string {
 	var urlErr *url.Error
 	if !errors.As(err, &urlErr) {
@@ -786,20 +788,32 @@ var flattenedTransportCategories = []struct {
 	{"EOF", "connection closed by the server"},
 }
 
+// flattenedReadPrefix begins the message of a response whose body the
+// library could not read, such as a connection reset after a 200. The
+// status line had arrived, so the error carries its status code, and
+// the message names the local and remote addresses of the connection.
+const flattenedReadPrefix = "read response:"
+
 // flattenedTransportFailure reports whether err is a transport failure
-// the library has flattened into a *pgllm.ProviderError: one with no
-// status code whose message is a request the library could not send,
+// the library has flattened into a *pgllm.ProviderError: a response
+// whose body could not be read, whatever its status code, or one with
+// no status code whose message is a request the library could not send,
 // or that names a URL. It returns the failure's category, never any of
 // the message itself.
 func flattenedTransportFailure(err error) (string, bool) {
 	var pe *pgllm.ProviderError
-	if !errors.As(err, &pe) || pe.StatusCode != 0 || !errors.Is(pe, pgllm.ErrProviderError) {
+	if !errors.As(err, &pe) || !errors.Is(pe, pgllm.ErrProviderError) {
 		return "", false
 	}
-	transport := strings.Contains(pe.Message, "://")
-	for _, prefix := range flattenedTransportPrefixes {
-		if strings.HasPrefix(pe.Message, prefix) {
+	transport := strings.HasPrefix(pe.Message, flattenedReadPrefix)
+	if pe.StatusCode == 0 {
+		if strings.Contains(pe.Message, "://") {
 			transport = true
+		}
+		for _, prefix := range flattenedTransportPrefixes {
+			if strings.HasPrefix(pe.Message, prefix) {
+				transport = true
+			}
 		}
 	}
 	if !transport {

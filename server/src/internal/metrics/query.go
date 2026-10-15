@@ -2083,7 +2083,8 @@ func GetProbeAllColumns(ctx context.Context, pool *pgxpool.Pool, probeName strin
 //
 // Precondition: outputCols must already have the internal bookkeeping columns
 // (connection_id, collected_at, inserted_at) stripped by
-// selectLatestOutputColumns. The inner subquery appends connection_id and
+// selectLatestOutputColumns, and the columns that are never returned
+// left out by ReturnableColumns. The inner subquery appends connection_id and
 // collected_at itself, so if outputCols still contained them the subquery
 // would emit duplicate column labels and the outer references would be
 // ambiguous, breaking the query.
@@ -2097,9 +2098,22 @@ func buildLatestRowsQuery(
 	order string,
 	limit int,
 ) (string, []any) {
-	var selectParts []string
+	// The inner query masks each column that can carry a credential under
+	// its own name, so the DISTINCT ON, the sort and the result see only
+	// the masked value; a column ReturnableColumns would have left out is
+	// selected as NULL, failing closed.
+	var selectParts, innerParts []string
 	for _, col := range outputCols {
-		selectParts = append(selectParts, QuoteIdentifier(col))
+		quoted := QuoteIdentifier(col)
+		selectParts = append(selectParts, quoted)
+		expr, ok := MaskedProbeColumn(probeName, col, outputCols, QuoteIdentifier)
+		switch {
+		case !ok:
+			expr = "NULL AS " + quoted
+		case expr != quoted:
+			expr += " AS " + quoted
+		}
+		innerParts = append(innerParts, expr)
 	}
 	selectClause := strings.Join(selectParts, ", ")
 
@@ -2183,7 +2197,7 @@ func buildLatestRowsQuery(
     `,
 		selectClause,
 		distinctClause,
-		selectClause,
+		strings.Join(innerParts, ", "),
 		QuoteIdentifier(probeName),
 		whereClause,
 		distinctClause,
@@ -2271,7 +2285,9 @@ func discoverLatestRowColumns(
 		return nil, nil, "", fmt.Errorf("failed to get probe columns: %w", err)
 	}
 
-	outputCols := selectLatestOutputColumns(allCols)
+	// A column that must never be returned, such as one whose name marks
+	// it as a secret, is neither returned nor a sort column.
+	outputCols := ReturnableColumns(probeName, selectLatestOutputColumns(allCols))
 	if len(outputCols) == 0 {
 		return nil, nil, "", fmt.Errorf("no columns found in probe %q", probeName)
 	}

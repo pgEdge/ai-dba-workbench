@@ -126,19 +126,19 @@ type datastoreColumn struct {
 	IsMetric bool
 	// RedactBy, when set, names the column holding a setting's name, and
 	// the column's value is masked on every row whose setting name looks
-	// like it carries a credential (credentialSettingCondition).
+	// like it carries a credential (metrics.MaskedSetting).
 	RedactBy string
 	// MaskOptions marks a text[] column of name=value options, such as
 	// pg_hba_file_rules.options; the value of each option whose name
-	// looks like it carries a credential is masked (maskedOptions).
+	// looks like it carries a credential is masked (metrics.MaskedOptions).
 	MaskOptions bool
 	// MaskWhole marks a column, such as pg_hba_file_rules.error, that
-	// can quote a credential in a form no pattern catches; a
-	// non-empty value is replaced by redactedValue.
+	// can quote a credential in a form no pattern catches; a non-empty
+	// value is replaced by metrics.RedactedValue (metrics.MaskedWhole).
 	MaskWhole bool
 	// RedactText marks a free-text column, such as query text or a
-	// replicated row image, whose text has the passwords that
-	// textRedactions match masked (redactedText).
+	// replicated row image, whose text has known password forms masked
+	// (metrics.RedactedText).
 	RedactText bool
 	// StoredType is the column's type in its table when DataType differs
 	// from it, as for a row image returned as text. Whether the column
@@ -215,7 +215,7 @@ func col(name, dataType string) datastoreColumn {
 }
 
 // redactedTextCol is a column whose free text is passed through
-// redactedText.
+// metrics.RedactedText.
 func redactedTextCol(name, dataType string) datastoreColumn {
 	return datastoreColumn{Name: name, DataType: dataType, RedactText: true}
 }
@@ -629,351 +629,25 @@ func clusterGroupsSource() datastoreSource {
 	}
 }
 
-// secretColumnFragments are name fragments that mark a column as
-// holding a credential. A metric column whose name contains one is never
-// offered, so a future probe cannot expose a secret by accident. The
-// connection string fragments cover pg_stat_wal_receiver.conninfo and
-// the like: PostgreSQL obscures the password in some of them, but the
-// rest of a connection string is still credential material.
-var secretColumnFragments = []string{
-	"password", "passwd", "passphrase", "secret", "token", "credential", "private_key",
-	"conninfo", "connstr", "connection_string", "dsn",
-	"sslcert", "sslkey", "sslrootcert",
-}
-
-// secretNamePatterns are the regular expressions, matched against a
-// lower-cased setting or option name, that mark its value as possibly
-// holding a credential: every secretColumnFragments entry, plus
-// patterns too broad for column names. Masking a harmless value is
-// acceptable; exposing a credential is not.
-var secretNamePatterns = append(slices.Clone(secretColumnFragments),
-	"pass$", "key$", "api_?key", "access_key", "salt")
-
-// textSecretNamePatterns are the names whose value is masked in free
-// text: the secretColumnFragments, which are specific enough not to
-// catch ordinary identifiers such as sort_key or bypass, plus the API
-// and access key names.
-var textSecretNamePatterns = append(slices.Clone(secretColumnFragments), "api_?key", "access_key")
-
-// nonCredentialSettings match secretNamePatterns but hold no secret, so
-// pg_settings shows their values.
-var nonCredentialSettings = []string{
-	"password_encryption",
-	"md5_password_warnings",
-	"ssl_passphrase_command_supports_reload",
-}
-
-// isSecretColumnName reports whether a column name looks like it holds
-// a credential or other secret.
-func isSecretColumnName(name string) bool {
-	lower := strings.ToLower(name)
-	for _, fragment := range secretColumnFragments {
-		if strings.Contains(lower, fragment) {
-			return true
-		}
-	}
-	return false
-}
-
-// metricRedactions lists, per probe, the values that can carry a
-// credential no column-name check can catch, so they are masked:
-// Columns hold a setting's value and KeyColumn names the setting (a
-// credential-bearing setting such as primary_conninfo can hold a
-// password), OptionColumns are text[] columns of name=value options
-// (pg_hba.conf's ldapbindpasswd and radiussecrets hold one in clear
-// text), and TextColumns hold free text, such as SQL statements and
-// replicated row images, that can quote a password. WholeColumns can
-// quote a credential in a form no pattern catches, as
-// pg_hba_file_rules.error quotes an option it cannot parse, so a
-// non-empty value is masked entirely. Note is added to the probe's
-// description.
-var metricRedactions = map[string]struct {
-	KeyColumn     string
-	Columns       []string
-	OptionColumns []string
-	TextColumns   []string
-	WholeColumns  []string
-	Note          string
-}{
-	"pg_settings": {
-		KeyColumn: "name", Columns: []string{"setting", "reset_val", "boot_val"},
-		Note: redactionNote,
-	},
-	"pg_hba_file_rules": {
-		OptionColumns: []string{"options"}, WholeColumns: []string{"error"},
-		Note: optionsRedactionNote,
-	},
-	"pg_stat_activity":   {TextColumns: []string{"query"}, Note: textRedactionNote},
-	"pg_stat_statements": {TextColumns: []string{"query"}, Note: textRedactionNote},
-	"spock_exception_log": {
-		TextColumns: []string{"ddl_statement", "error_message", "local_tup", "remote_old_tup", "remote_new_tup"},
-		Note:        textRedactionNote + " Row images are returned as text.",
-	},
-	"spock_resolutions": {TextColumns: []string{"local_tuple", "remote_tuple"}, Note: textRedactionNote},
-}
-
-// credentialSettings are setting names whose value can carry a
-// credential: primary_conninfo is a libpq connection string that may
-// hold password=, and the rest are shell commands that may carry a
-// passphrase or an inline secret such as PGPASSWORD=... or
-// AWS_SECRET_ACCESS_KEY=.... Any setting whose name contains a
-// secretNamePatterns entry is masked as well, which covers an extension
-// setting such as myext.password.
-var credentialSettings = []string{
-	"primary_conninfo",
-	"ssl_passphrase_command",
-	"archive_command",
-	"archive_cleanup_command",
-	"restore_command",
-	"recovery_end_command",
-}
-
-// redactedValue replaces a masked value, as PostgreSQL masks a password
-// in pg_stat_wal_receiver.conninfo.
-const redactedValue = "********"
-
-// redactionNote and optionsRedactionNote are appended to the
-// description of a probe in metricRedactions, so describe_datastore says
-// which values are masked.
-const (
-	redactionNote = "Values of settings that can hold a credential, such as primary_conninfo, are shown as " +
-		redactedValue + "."
-	optionsRedactionNote = "Values of options that can hold a credential, such as ldapbindpasswd and " +
-		"radiussecrets, are shown as " + redactedValue + ", and so is a non-empty error, which can quote an " +
-		"option."
-	textRedactionNote = "Passwords in known forms in SQL text and row data, such as PASSWORD '...', " +
-		"password=... in a connection string and the value of a JSON key naming a password or secret, " +
-		"are shown as " + redactedValue + "; other sensitive text, including passwords in other forms, " +
-		"is returned as stored."
-)
-
-// textRedaction is one password form redactedText masks: Pattern is a
-// case-insensitive regular expression in the subset PostgreSQL's
-// advanced regular expressions share with Go's RE2, so the unit tests
-// can check it in Go, and Replacement keeps capture group 1 (\1), the
-// only capturing group, and puts redactedValue in place of the secret.
-// Every quantifier is greedy, so PostgreSQL takes the longest match, as
-// Go does in the tests.
-type textRedaction struct {
-	Name        string
-	Pattern     string
-	Replacement string
-}
-
-// secretKeyPattern returns a regular expression with no capturing
-// group that matches a name holding a textSecretNamePatterns entry,
-// such as password, AWS_SECRET_ACCESS_KEY or app.api_key: lead and
-// trail are what may come before and after the entry.
-func secretKeyPattern(lead, trail string) string {
-	return lead + "(?:" + strings.Join(textSecretNamePatterns, "|") + ")" + trail
-}
-
-// Pieces of the textRedactions patterns. A quoted value may lack its
-// closing quote, since pg_stat_activity truncates long statements, and
-// a quoted value accepts both a doubled quote and a backslash escape,
-// so an escaped quote never ends it early. Row images are masked as
-// JSON text, where every backslash is doubled, so an escape backslash
-// (escapeBackslash) may be one backslash or two: in SQL text that can
-// mask more than the value, but never less. White space is the ASCII
-// white space SQL itself accepts, spelt out so that PostgreSQL, whose
-// [[:space:]] follows the database locale, and Go agree.
-const (
-	// ws is one ASCII white space character, and notWS starts a
-	// bracket expression that excludes them.
-	ws    = `[ \t\n\r\f\v]`
-	notWS = `[^ \t\n\r\f\v`
-	// escapeBackslash is the backslash that starts an escape, doubled
-	// in JSON text.
-	escapeBackslash = `\\\\?`
-	// sqlQuoted is a single-quoted SQL string.
-	sqlQuoted = `'(?:''|` + escapeBackslash + `.|[^'\\])*'?`
-	// sqlDollarQuoted is a dollar-quoted SQL string, $$...$$ or
-	// $tag$...$tag$. Without back-references the closing tag cannot be
-	// matched to the opening one, so a tagged string ends at the first
-	// $name$; a parameter such as $1 is not a dollar quote.
-	sqlDollarQuoted = `\$\$(?:[^$]|\$[^$])*(?:\$\$)?` +
-		`|\$[a-z_][a-z0-9_]*\$(?:[^$]|\$\$|\$[^a-z_$]|\$[a-z_][a-z0-9_]*(?:[^a-z0-9_$]|$))*(?:\$[a-z_][a-z0-9_]*\$)?`
-	// sqlConstant is any SQL string constant: '...', E'...', N'...',
-	// U&'...' or dollar-quoted.
-	sqlConstant = `(?:(?:e|n|u&)?` + sqlQuoted + `|` + sqlDollarQuoted + `)`
-	// sqlNestedQuoted is a quoted value inside a SQL literal, as in
-	// CONNECTION 'password=''secret''', where its quotes are doubled
-	// and an escaped quote is '''' or \''.
-	sqlNestedQuoted = `''(?:''''|` + escapeBackslash + `''|[^'])*(?:'')?`
-	// sqlBackslashQuoted is a quoted value inside an escape string, as
-	// in CONNECTION E'password=\'secret\'', where its quotes are \', an
-	// escaped quote is \\\', an escaped backslash is \\\\ (the
-	// conninfo escape \\, escaped again for the escape string) and a
-	// bare quote can only be doubled. A backslash followed by a quote
-	// always ends the value or escapes the quote, so in JSON text, where
-	// the closing \' is \\', the value cannot run on past it.
-	sqlBackslashQuoted = escapeBackslash + `'(?:` +
-		escapeBackslash + escapeBackslash + escapeBackslash + escapeBackslash + `|` +
-		escapeBackslash + escapeBackslash + escapeBackslash + `'|` +
-		escapeBackslash + escapeBackslash + `[^'\\]|` + escapeBackslash + `[^'\\]|''|[^'\\])*(?:` +
-		escapeBackslash + `')?`
-	// nameQuote is the double quote that may close a quoted name, as in
-	// SET "app.password", escaped as \" in JSON text and as \\\" in
-	// JSON text inside JSON text.
-	nameQuote = `(?:(?:\\|\\\\\\)?")?`
-	// doubleQuoted is a double-quoted value, as in PGPASSWORD="secret",
-	// and jsonDoubleQuoted is one in JSON text, as in
-	// PGPASSWORD=\"secret\" inside a row image.
-	doubleQuoted     = `"(?:[^"\\]|\\.)*"?`
-	jsonDoubleQuoted = `\\"(?:[^\\]|\\[^"])*(?:\\")?`
-	// secretValue is a value that follows a secret name: any SQL string
-	// constant or one nested in another literal.
-	secretValue = `(?:` + sqlConstant + `|` + sqlNestedQuoted + `|` + sqlBackslashQuoted + `)`
-	// blank is one white space character. In JSON text a line break
-	// is \n, so an escaped \n, \r or \t, with one backslash or two,
-	// counts as white space there.
-	blank = `(?:` + ws + `|` + escapeBackslash + `[nrt])`
-	// blockComment is a closed /* */ comment whose body is at most 32
-	// characters, or runs of stars each followed by one character, and
-	// lineComment a -- comment, which runs to the end of the line (\n
-	// in JSON text). A longer or nested comment is not matched, so a
-	// value behind one is not masked.
-	blockComment = `/\*(?:[^*]|\*+[^*/]){0,32}\*+/`
-	lineComment  = `--(?:[^\n\\]|\\[^n])*`
-	// sep is white space with up to two comments, and sep1 is the
-	// same but not empty. Requiring a block comment to be closed and
-	// short, and bounding the number of comments, keeps a run of
-	// comments from making a match scan to the end of the text at every
-	// secret name, which took minutes on a megabyte of password=/* .
-	sep  = blank + `*(?:(?:` + blockComment + `|` + lineComment + `)` + blank + `*){0,2}`
-	sep1 = `(?:` + blank + `|` + blockComment + `|` + lineComment + `)` + sep
-	// identChars may surround a secret name, as in app.password or
-	// AWS_SECRET_ACCESS_KEY.
-	identChars = `[a-z0-9_.]*`
-)
-
-// maxTextLength is the length, in characters, to which redactedText
-// cuts a value before masking it, so that the time a crafted value can
-// take to mask is bounded (about a second at most). Text longer than
-// this is returned cut short.
-const maxTextLength = 65536
-
-// textRedactions are the usual places a password appears in SQL text,
-// connection strings, shell commands and row data. They are applied in
-// order, as regexp_replace calls inside the scoped subquery, so a
-// caller's filters and aggregates see only the masked text. A secret name is any name holding a
-// textSecretNamePatterns entry. Masking is best effort: a password in
-// any other form is returned as stored.
-var textRedactions = []textRedaction{
-	{
-		// scheme://user:secret@host, including a truncated one that ends
-		// before the @. A user name may hold a doubled quote, as in
-		// 'postgresql://o''brien:secret@host', or a double quote.
-		Name:        "URI userinfo",
-		Pattern:     `([a-z][a-z0-9+.-]*://(?:` + notWS + `:/@']|'')*:)` + notWS + `@]+(?:@|$)`,
-		Replacement: `\1` + redactedValue + `@`,
-	},
-	{
-		// "password": value in a JSON row image, whatever the value's
-		// type, and the bare keys "pass" and "pwd"; a nested value is
-		// masked to its first closing bracket.
-		Name: "JSON key",
-		Pattern: `((?:` + secretKeyPattern(`"[^"]*`, `[^"]*`) + `|"(?:pass|pwd)\\?)"` + ws + `*:` + ws + `*)` +
-			`(?:"(?:[^"\\]|\\.)*"?|\{[^}]*\}?|\[[^\]]*\]?|` + notWS + `,}\]]+)`,
-		Replacement: `\1"` + redactedValue + `"`,
-	},
-	{
-		// ALTER SYSTEM SET archive_command = '...' and the other
-		// credentialSettings.
-		Name: "SET credential setting",
-		Pattern: `(set` + sep1 + nameQuote + `(?:` + strings.Join(credentialSettings, "|") + `)` + nameQuote +
-			`(?:` + sep + `=|` + sep1 + `to)` + sep + `)` + sqlConstant,
-		Replacement: `\1'` + redactedValue + `'`,
-	},
-	{
-		// set_config('app.password', 'secret', false), with or without a
-		// cast on the name or the new_value => argument name, and
-		// json_build_object('password', 'secret').
-		Name: "quoted name, value",
-		Pattern: `(` + secretKeyPattern(`'[^']*`, `[^']*`) + `'(?:::[a-z_ ]+)?` + sep + `,` + sep +
-			`(?:new_value` + sep + `=>` + sep + `)?)` + sqlConstant,
-		Replacement: `\1'` + redactedValue + `'`,
-	},
-	{
-		// password=secret in a libpq connection string, ldapbindpasswd=
-		// and radiussecrets= in pg_hba.conf, PGPASSWORD=... and
-		// AWS_SECRET_ACCESS_KEY=... in a shell command, and
-		// SET app.password = '...'. A quoted value may follow white
-		// space or up to two /* */ comments, which are masked with it.
-		// An unquoted value is masked to the next white space that no
-		// backslash escapes, as in password=correct\ horse, whatever it
-		// starts with, so a value such as --secret is not taken for a
-		// comment; a parameter such as $1 is kept when white space, a
-		// comma, a bracket, a semicolon, a double quote or a backslash
-		// ends it.
-		Name: "keyword=value",
-		Pattern: `(` + secretKeyPattern(identChars, identChars) + nameQuote + sep + `(?:=>?|:=)` + ws + `*)(?:` +
-			`(?:(?:` + blockComment + `|` + escapeBackslash + `[nrt])` + blank + `*){0,2}` +
-			`(?:` + secretValue + `|` + doubleQuoted + `|` + jsonDoubleQuoted + `)|` +
-			`(?:` + blockComment + `)*(?:` + notWS + `$'"/]|/` + notWS + `*]|\$` + notWS + `0-9]|\$[0-9]+` + notWS + `0-9,);"\\])` +
-			`(?:` + escapeBackslash + `[^\n\r]|` + notWS + `])*)`,
-		Replacement: `\1` + redactedValue,
-	},
-	{
-		// EXECUTE 'ALTER ROLE app PASSWORD ' || '''secret''', where the
-		// value is a quoted value in the next literal.
-		Name: "concatenated PASSWORD",
-		Pattern: `(` + secretKeyPattern(identChars, identChars) + nameQuote + sep + `'` + sep + `\|\|` + sep + `'` +
-			ws + `*)` + sqlNestedQuoted,
-		Replacement: `\1''` + redactedValue + `''`,
-	},
-	{
-		// [ENCRYPTED] PASSWORD '...' in CREATE or ALTER ROLE and USER,
-		// password '...' in a user mapping's OPTIONS, and
-		// SET app.password TO '...'. White space or a comment may
-		// separate the name from the value, or nothing at all, as in
-		// PASSWORD'...'. A name that starts a quoted string, as in
-		// EXECUTE 'ALTER ROLE app ' || 'PASSWORD ''...''', needs a
-		// separator after it, so a quoted name followed by a comma, as in
-		// set_config('app.password', ...), is left to the quoted name
-		// pattern. PASSWORD NULL and a $1 parameter are kept.
-		Name: "PASSWORD 'value'",
-		Pattern: `((?:(?:^|[^'a-z0-9_.])` + secretKeyPattern(identChars, identChars) + nameQuote + sep + `|` +
-			secretKeyPattern(`'`+identChars, identChars) + nameQuote + sep1 + `)` +
-			`(?:to` + sep + `)?)` + secretValue,
-		Replacement: `\1'` + redactedValue + `'`,
-	},
-}
-
-// sqlStringLiteral quotes a constant as an escape string literal,
-// doubling quotes and backslashes, so it means the same whatever
-// standard_conforming_strings is set to. It is used only for the
-// constants in textRedactions, never caller input.
-func sqlStringLiteral(v string) string {
-	return "E'" + strings.ReplaceAll(strings.ReplaceAll(v, `\`, `\\`), "'", "''") + "'"
-}
-
-// redactedText returns value, cast to text and cut to maxTextLength
-// characters, with every textRedactions pattern masked. A NULL value
-// stays NULL.
-func redactedText(value string) string {
-	out := "left(" + value + "::text, " + strconv.Itoa(maxTextLength) + ")"
-	for _, r := range textRedactions {
-		out = "regexp_replace(" + out + ", " + sqlStringLiteral(r.Pattern) + ", " +
-			sqlStringLiteral(r.Replacement) + ", 'gi')"
-	}
-	return out
-}
-
-// redactMetricColumns marks the value columns of probe name for masking.
-// If the probe has no column naming the setting, the value columns
-// cannot be masked row by row, so they are dropped instead.
+// redactMetricColumns marks the columns of probe name for masking as
+// metrics.ProbeColumnMask says, dropping those it omits.
 func redactMetricColumns(name string, columns []datastoreColumn) []datastoreColumn {
-	rule, ok := metricRedactions[name]
-	if !ok {
-		return columns
+	names := make([]string, len(columns))
+	for i, c := range columns {
+		names[i] = c.Name
 	}
-	hasKey := slices.ContainsFunc(columns, func(c datastoreColumn) bool { return c.Name == rule.KeyColumn })
 	out := make([]datastoreColumn, 0, len(columns))
 	for _, c := range columns {
-		c.MaskOptions = slices.Contains(rule.OptionColumns, c.Name)
-		c.MaskWhole = slices.Contains(rule.WholeColumns, c.Name)
-		if slices.Contains(rule.TextColumns, c.Name) {
+		switch metrics.ProbeColumnMask(name, c.Name, names) {
+		case metrics.MaskOmit:
+			continue
+		case metrics.MaskSetting:
+			c.RedactBy = metrics.ProbeRedactions[name].KeyColumn
+		case metrics.MaskOptions:
+			c.MaskOptions = true
+		case metrics.MaskWhole:
+			c.MaskWhole = true
+		case metrics.MaskText:
 			// A row image is masked as text and returned as text, since
 			// masking can leave it invalid as JSON.
 			c.RedactText = true
@@ -982,52 +656,9 @@ func redactMetricColumns(name string, columns []datastoreColumn) []datastoreColu
 				c.DataType = typeText
 			}
 		}
-		if slices.Contains(rule.Columns, c.Name) {
-			if !hasKey {
-				continue
-			}
-			c.RedactBy = rule.KeyColumn
-		}
 		out = append(out, c)
 	}
 	return out
-}
-
-// credentialSettingCondition is true for a row whose setting name, in
-// column key of alias, is a credentialSettings entry or contains a
-// secretNamePatterns entry. Every literal is a constant above, checked
-// by TestCredentialSettingLiteralsAreSafe, so nothing from the caller
-// reaches it.
-func credentialSettingCondition(alias, key string) string {
-	lhs := "lower(" + qualified(alias, key) + ")"
-	quoted := make([]string, len(credentialSettings))
-	for i, v := range credentialSettings {
-		quoted[i] = "'" + v + "'"
-	}
-	exempt := make([]string, len(nonCredentialSettings))
-	for i, v := range nonCredentialSettings {
-		exempt[i] = "'" + v + "'"
-	}
-	return "(" + lhs + " IN (" + strings.Join(quoted, ", ") + ") OR (" +
-		secretNameMatch(lhs) + " AND " + lhs + " NOT IN (" + strings.Join(exempt, ", ") + ")))"
-}
-
-// secretNameMatch is true when the lower-cased name lhs matches a
-// secretNamePatterns entry.
-func secretNameMatch(lhs string) string {
-	return lhs + " ~ '(" + strings.Join(secretNamePatterns, "|") + ")'"
-}
-
-// maskedOptions returns value, a text[] of name=value options, with the
-// value of every option whose name matches secretNamePatterns replaced
-// by redactedValue, keeping the options' order. A NULL array stays NULL.
-func maskedOptions(value string) string {
-	const opt = "o.opt"
-	name := "split_part(" + opt + ", '=', 1)"
-	return "CASE WHEN " + value + " IS NULL THEN NULL ELSE ARRAY(SELECT CASE WHEN strpos(" + opt +
-		", '=') > 0 AND " + secretNameMatch("lower("+name+")") + " THEN " + name + " || '=" +
-		redactedValue + "' ELSE " + opt + " END FROM unnest(" + value +
-		") WITH ORDINALITY AS o(opt, n) ORDER BY o.n) END"
 }
 
 // errUnknownDatastoreSource reports a source name the source list does not
@@ -1103,7 +734,7 @@ func metricDescription(name, comment string) string {
 	if description == "" {
 		description = fmt.Sprintf("Metrics collected by the %s probe.", name)
 	}
-	if rule, ok := metricRedactions[name]; ok {
+	if rule, ok := metrics.ProbeRedactions[name]; ok {
 		description += " " + rule.Note
 	}
 	return description
@@ -1145,7 +776,7 @@ func lookupMetricColumns(ctx context.Context, pool *pgxpool.Pool, name string) (
 		if err := colRows.Scan(&colName, &dataType); err != nil {
 			return nil, fmt.Errorf("failed to read source columns: %w", err)
 		}
-		if isSecretColumnName(colName) || !metrics.IsValidIdentifier(colName) {
+		if metrics.IsSecretColumnName(colName) || !metrics.IsValidIdentifier(colName) {
 			continue
 		}
 		hasConnection = hasConnection || colName == metricConnectionColumn

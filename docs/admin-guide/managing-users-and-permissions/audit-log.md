@@ -126,11 +126,14 @@ action the request would have used had it been allowed, so that a denial
 and the change it was refused share a vocabulary. Two action names
 appear only on denials: `audit.read`, for a refused read of the audit
 log itself, and `token.scope.set`, for a refused scope update, because a
-single endpoint covers all three scope types. A token refused a cluster
-move of a connection that its connection scope names only at `read` is
-recorded as `connection.cluster.update`, as is a cluster move of a
-connection the caller cannot see at all. A refused request that matches
-no known route records `rbac.`
+single endpoint covers all three scope types. A refused read of a
+configuration object, such as a notification channel, is recorded as
+the object's kind followed by `.read`, such as
+`notification_channel.read` or `alert_override.read`. A token refused
+a cluster move of a connection that its connection scope names only at
+`read` is recorded as `connection.cluster.update`, as is a cluster move
+of a connection the caller cannot see at all. A refused request that
+matches no known route records `rbac.`
 followed by the lower-case HTTP method, so that the denial is kept rather
 than dropped, and any method outside the standard HTTP set records
 `rbac.other`.
@@ -168,6 +171,21 @@ requires manage_alert_rules permission`. A current connection selected
 before the caller lost access to it is refused when the client reads
 it, and recorded as `connection.read`; repeated reads are coalesced
 like any other denial, as described below.
+
+A request refused because the caller lacks the admin permission it
+needs is recorded in the same way, with a reason that names the
+permission, such as
+`Permission denied: requires manage_blackouts permission`. This
+covers blackouts and blackout schedules (`manage_blackouts`), alert
+rules and alert overrides (`manage_alert_rules`), probe configurations
+and probe overrides (`manage_probes`), notification channels, their
+recipients and channel overrides (`manage_notification_channels`), and
+clusters, cluster relationships and connections
+(`manage_connections`). A request to
+create a connection without `manage_connections` is recorded as
+`connection.create`, and one to change or delete a connection that the
+caller neither owns nor may manage as `connection.update` or
+`connection.delete`.
 
 Each denial names the object the request was aimed at in
 `details.target`, as the kind of object followed by its numeric

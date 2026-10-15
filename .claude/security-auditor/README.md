@@ -392,6 +392,13 @@ moved.
   by authenticated callers) and `denialKey` both bound the client
   address through `capAuditIP` (`maxAuditIPLen`, 64 bytes, cut on a
   UTF-8 boundary); never copy `Actor.IP` into a key without it.
+- Every REST 403 for a missing admin permission is audited (since
+  `#648`): `requireAdminPermission` in `internal/api/helpers.go`
+  records through the handler's `denialAuditor`, and the cluster and
+  connection handlers refuse through `h.denialRecorder.refuse`. A new
+  permission 403 written with a bare `RespondError` is an audit gap.
+  Known remaining gap: the `store_system_memory` refusal in
+  `internal/api/memory_handlers.go`, whose handler has no recorder.
 - A blanket superuser gate is the exception, because it names nothing
   to intersect against: `RBACChecker.IsSuperuser` returns false for a
   token whose admin scope has been narrowed, which is what

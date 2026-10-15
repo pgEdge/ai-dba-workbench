@@ -27,7 +27,8 @@ type AlertRuleHandler struct {
 	rbacChecker     *auth.RBACChecker
 	checkPermission func(http.ResponseWriter, *http.Request) bool
 
-	// denialAuditor audits this handler's token-scope refusals.
+	// denialAuditor audits this handler's token-scope and
+	// permission refusals.
 	denialAuditor
 }
 
@@ -38,7 +39,7 @@ func NewAlertRuleHandler(datastore *database.Datastore, authStore *auth.AuthStor
 		authStore:   authStore,
 		rbacChecker: rbacChecker,
 	}
-	h.checkPermission = RequireAdminPermission(rbacChecker, auth.PermManageAlertRules, "manage alert rules")
+	h.checkPermission = requireAdminPermission(rbacChecker, &h.denialAuditor, auth.PermManageAlertRules)
 	return h
 }
 

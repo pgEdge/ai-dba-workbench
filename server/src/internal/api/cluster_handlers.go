@@ -939,7 +939,7 @@ func (h *ClusterHandler) updateCluster(w http.ResponseWriter, r *http.Request, i
 	// down still returns 404 for callers who cannot see the cluster, so
 	// the gate is layered on top of existing visibility filtering.
 	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections) {
-		RespondError(w, http.StatusForbidden,
+		h.denialRecorder.refuse(w, r,
 			"Permission denied: requires manage_connections permission")
 		return
 	}
@@ -1010,7 +1010,7 @@ func (h *ClusterHandler) deleteCluster(w http.ResponseWriter, r *http.Request, i
 	// manage_connections can delete; everyone else is rejected before
 	// any datastore read.
 	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections) {
-		RespondError(w, http.StatusForbidden,
+		h.denialRecorder.refuse(w, r,
 			"Permission denied: requires manage_connections permission")
 		return
 	}
@@ -1072,7 +1072,7 @@ type AutoDetectedClusterRequest struct {
 func (h *ClusterHandler) updateAutoDetectedCluster(w http.ResponseWriter, r *http.Request, clusterID string) {
 	// Check user permissions - requires manage_connections permission
 	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections) {
-		RespondError(w, http.StatusForbidden,
+		h.denialRecorder.refuse(w, r,
 			"Permission denied: you do not have permission to modify auto-detected clusters")
 		return
 	}
@@ -1134,7 +1134,7 @@ func (h *ClusterHandler) updateAutoDetectedCluster(w http.ResponseWriter, r *htt
 // soft-deletes the cluster.
 func (h *ClusterHandler) deleteAutoDetectedCluster(w http.ResponseWriter, r *http.Request, clusterID string) {
 	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections) {
-		RespondError(w, http.StatusForbidden,
+		h.denialRecorder.refuse(w, r,
 			"Permission denied: you do not have permission to delete auto-detected clusters")
 		return
 	}
@@ -1312,7 +1312,7 @@ func (h *ClusterHandler) addServerToCluster(w http.ResponseWriter, r *http.Reque
 	// Issue #207: server-attach is a system-topology mutation with no
 	// clear owner concept; apply the plain admin gate.
 	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections) {
-		RespondError(w, http.StatusForbidden,
+		h.denialRecorder.refuse(w, r,
 			"Permission denied: requires manage_connections permission")
 		return
 	}
@@ -1395,7 +1395,7 @@ func (h *ClusterHandler) handleRemoveServerFromCluster(w http.ResponseWriter, r 
 	// Issue #207: server-detach is a system-topology mutation with no
 	// clear owner concept; apply the plain admin gate.
 	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections) {
-		RespondError(w, http.StatusForbidden,
+		h.denialRecorder.refuse(w, r,
 			"Permission denied: requires manage_connections permission")
 		return
 	}
@@ -1499,7 +1499,7 @@ func (h *ClusterHandler) handleCreateCluster(w http.ResponseWriter, r *http.Requ
 	// Issue #207: cluster creation has no notion of owner before
 	// creation, so apply the plain admin gate.
 	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections) {
-		RespondError(w, http.StatusForbidden,
+		h.denialRecorder.refuse(w, r,
 			"Permission denied: requires manage_connections permission")
 		return
 	}
@@ -1598,7 +1598,7 @@ func (h *ClusterHandler) setConnectionRelationships(w http.ResponseWriter, r *ht
 	// Issue #207: topology relationships are a system-wide concern with
 	// no per-object owner; apply the plain admin gate.
 	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections) {
-		RespondError(w, http.StatusForbidden,
+		h.denialRecorder.refuse(w, r,
 			"Permission denied: requires manage_connections permission")
 		return
 	}
@@ -1728,7 +1728,7 @@ func (h *ClusterHandler) handleDeleteRelationship(w http.ResponseWriter, r *http
 	// Issue #207: topology relationships are a system-wide concern with
 	// no per-object owner; apply the plain admin gate.
 	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections) {
-		RespondError(w, http.StatusForbidden,
+		h.denialRecorder.refuse(w, r,
 			"Permission denied: requires manage_connections permission")
 		return
 	}
@@ -1757,7 +1757,7 @@ func (h *ClusterHandler) clearConnectionRelationships(w http.ResponseWriter, r *
 	// Issue #207: topology relationships are a system-wide concern with
 	// no per-object owner; apply the plain admin gate.
 	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections) {
-		RespondError(w, http.StatusForbidden,
+		h.denialRecorder.refuse(w, r,
 			"Permission denied: requires manage_connections permission")
 		return
 	}

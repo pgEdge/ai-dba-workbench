@@ -269,7 +269,7 @@ func TestChannelOverrideHandler_UpsertRequiresPermission(t *testing.T) {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
 
-	expectedError := "Permission denied: you do not have permission to manage notification channels"
+	expectedError := "Permission denied: requires manage_notification_channels permission"
 	if response.Error != expectedError {
 		t.Errorf("Expected error %q, got %q", expectedError, response.Error)
 	}
@@ -296,7 +296,7 @@ func TestChannelOverrideHandler_DeleteRequiresPermission(t *testing.T) {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
 
-	expectedError := "Permission denied: you do not have permission to manage notification channels"
+	expectedError := "Permission denied: requires manage_notification_channels permission"
 	if response.Error != expectedError {
 		t.Errorf("Expected error %q, got %q", expectedError, response.Error)
 	}

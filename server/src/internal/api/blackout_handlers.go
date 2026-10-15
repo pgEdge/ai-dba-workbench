@@ -29,7 +29,8 @@ type BlackoutHandler struct {
 	authStore       *auth.AuthStore
 	rbacChecker     *auth.RBACChecker
 	checkPermission func(http.ResponseWriter, *http.Request) bool
-	// denialAuditor audits this handler's token-scope refusals.
+	// denialAuditor audits this handler's token-scope and
+	// permission refusals.
 	denialAuditor
 }
 
@@ -40,7 +41,7 @@ func NewBlackoutHandler(datastore *database.Datastore, authStore *auth.AuthStore
 		authStore:   authStore,
 		rbacChecker: rbacChecker,
 	}
-	h.checkPermission = RequireAdminPermission(rbacChecker, auth.PermManageBlackouts, "manage blackouts")
+	h.checkPermission = requireAdminPermission(rbacChecker, &h.denialAuditor, auth.PermManageBlackouts)
 	return h
 }
 

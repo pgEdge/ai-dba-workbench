@@ -25,7 +25,8 @@ type AlertOverrideHandler struct {
 	authStore       *auth.AuthStore
 	rbacChecker     *auth.RBACChecker
 	checkPermission func(http.ResponseWriter, *http.Request) bool
-	// denialAuditor audits this handler's token-scope refusals.
+	// denialAuditor audits this handler's token-scope and
+	// permission refusals.
 	denialAuditor
 }
 
@@ -36,7 +37,7 @@ func NewAlertOverrideHandler(datastore *database.Datastore, authStore *auth.Auth
 		authStore:   authStore,
 		rbacChecker: rbacChecker,
 	}
-	h.checkPermission = RequireAdminPermission(rbacChecker, auth.PermManageAlertRules, "manage alert rules")
+	h.checkPermission = requireAdminPermission(rbacChecker, &h.denialAuditor, auth.PermManageAlertRules)
 	return h
 }
 

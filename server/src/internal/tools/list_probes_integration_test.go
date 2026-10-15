@@ -17,9 +17,13 @@ package tools
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // listProbesNames returns the probe names from a list_probes TSV response,
@@ -58,16 +62,7 @@ func TestListProbes_ExcludesPartitionsNotProbes(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	// Seed and analyze on one connection: ANALYZE discounts the inserts
-	// its own backend has not yet reported, whereas inserts left pending
-	// on another pooled backend would be added on top of its count when
-	// that backend later flushed them.
-	conn, err := pool.Acquire(ctx)
-	if err != nil {
-		t.Fatalf("failed to acquire a connection: %v", err)
-	}
-	defer conn.Release()
-	_, err = conn.Exec(ctx, `
+	_, err := pool.Exec(ctx, `
 		CREATE TABLE metrics.pg_stat_replication (
 		    connection_id INTEGER NOT NULL,
 		    collected_at TIMESTAMPTZ NOT NULL
@@ -111,9 +106,38 @@ func TestListProbes_ExcludesPartitionsNotProbes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create probe tables: %v", err)
 	}
+	// The seeding backend reports its inserts to the statistics system
+	// some time after they commit, adding them to n_live_tup. Wait until
+	// they have all been reported before running ANALYZE, so that none
+	// can be added on top of the count ANALYZE sets.
+	leaves := map[string]int64{
+		"pg_stat_database_20261012":    3,
+		"pg_stat_database_20261019_c1": 2,
+		"pg_stat_replication":          2,
+	}
+	flushDeadline := time.Now().Add(30 * time.Second)
+	for name, want := range leaves {
+		for {
+			var inserted int64
+			if err := pool.QueryRow(ctx, `
+				SELECT COALESCE(n_tup_ins, 0) FROM pg_stat_user_tables
+				WHERE schemaname = 'metrics' AND relname = $1`,
+				name).Scan(&inserted); err != nil {
+				t.Fatalf("failed to read statistics for %s: %v", name, err)
+			}
+			if inserted == want {
+				break
+			}
+			if time.Now().After(flushDeadline) {
+				t.Fatalf("inserts into %s not reported: n_tup_ins = %d, want %d",
+					name, inserted, want)
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
+	}
 	// ANALYZE sets n_live_tup for each leaf partition and plain table to
 	// its row count, which is exact for tables this small.
-	if _, err := conn.Exec(ctx, `ANALYZE metrics.pg_stat_database_20261012,
+	if _, err := pool.Exec(ctx, `ANALYZE metrics.pg_stat_database_20261012,
 		metrics.pg_stat_database_20261019_c1, metrics.pg_stat_replication`); err != nil {
 		t.Fatalf("failed to analyze probe tables: %v", err)
 	}
@@ -172,6 +196,64 @@ func TestListProbes_ExcludesPartitionsNotProbes(t *testing.T) {
 	}
 	if !strings.HasPrefix(text, "Found 3 metrics probes:") {
 		t.Errorf("unexpected summary line:\n%s", text)
+	}
+}
+
+// TestListProbes_OmitsUnreadableTables checks that a table the datastore
+// role cannot SELECT from is left out of the list.
+func TestListProbes_OmitsUnreadableTables(t *testing.T) {
+	pool, _, cleanup := newToolsTestPool(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	// Roles are cluster-wide, so give this one a unique name in case
+	// another test run shares the instance.
+	role := fmt.Sprintf("list_probes_reader_%d", time.Now().UnixNano())
+	if _, err := pool.Exec(ctx, fmt.Sprintf(`
+		CREATE ROLE %[1]s NOLOGIN;
+		GRANT USAGE ON SCHEMA metrics TO %[1]s;
+		GRANT SELECT ON metrics.pg_connectivity TO %[1]s;
+		CREATE TABLE metrics.pg_restricted (
+		    connection_id INTEGER NOT NULL,
+		    collected_at TIMESTAMPTZ NOT NULL
+		);`, role)); err != nil {
+		t.Fatalf("failed to set up the restricted role: %v", err)
+	}
+	defer func() {
+		if _, err := pool.Exec(context.Background(), fmt.Sprintf(`
+			DROP TABLE IF EXISTS metrics.pg_restricted;
+			REVOKE ALL ON metrics.pg_connectivity FROM %[1]s;
+			REVOKE ALL ON SCHEMA metrics FROM %[1]s;
+			DROP ROLE IF EXISTS %[1]s;`, role)); err != nil {
+			t.Logf("failed to drop the restricted role: %v", err)
+		}
+	}()
+
+	cfg := pool.Config()
+	cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
+		_, err := conn.Exec(ctx, "SET ROLE "+role)
+		return err
+	}
+	restricted, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatalf("failed to create the restricted pool: %v", err)
+	}
+	defer restricted.Close()
+
+	// The superuser pool sees both tables.
+	all := listProbesNames(t, mustSuccess(t, ListProbesTool(pool),
+		map[string]any{"__context": ctx}))
+	if _, ok := all["pg_restricted"]; !ok {
+		t.Fatalf("pg_restricted missing for a role that can read it: %v", all)
+	}
+
+	probes := listProbesNames(t, mustSuccess(t, ListProbesTool(restricted),
+		map[string]any{"__context": ctx}))
+	if _, ok := probes["pg_restricted"]; ok {
+		t.Errorf("pg_restricted listed for a role that cannot read it")
+	}
+	if _, ok := probes["pg_connectivity"]; !ok {
+		t.Errorf("pg_connectivity missing for a role that can read it: %v", probes)
 	}
 }
 

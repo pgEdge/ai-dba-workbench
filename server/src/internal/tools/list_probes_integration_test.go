@@ -216,6 +216,9 @@ func TestListProbes_OmitsUnreadableTables(t *testing.T) {
 		BEGIN
 			INSERT INTO public.list_probes_test_role VALUES (r);
 			EXECUTE format('CREATE ROLE %I NOLOGIN', r);
+			-- A non-superuser with CREATEROLE cannot SET ROLE to a role it
+			-- creates on PostgreSQL 16 and later without this grant.
+			EXECUTE format('GRANT %I TO %I', r, current_user);
 			EXECUTE format('GRANT USAGE ON SCHEMA metrics TO %I', r);
 			EXECUTE format('GRANT SELECT ON metrics.pg_connectivity TO %I', r);
 		END $$;

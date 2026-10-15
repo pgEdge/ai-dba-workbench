@@ -257,11 +257,12 @@ func (e *Engine) buildReevaluationPrompt(
 	var sb strings.Builder
 
 	sb.WriteString("Re-evaluate the following acknowledged anomaly alert and decide whether it should be cleared or kept active based on user feedback and context.\n\n")
+	sb.WriteString(promptDataNotice)
 
 	// Section 1: Alert Details
 	sb.WriteString("## Alert Details\n")
 	if alert.MetricName != nil {
-		fmt.Fprintf(&sb, "- Metric: %s\n", *alert.MetricName)
+		fmt.Fprintf(&sb, "- Metric: %s\n", promptValue(*alert.MetricName))
 	}
 	if alert.MetricValue != nil {
 		fmt.Fprintf(&sb, "- Value: %.4f\n", *alert.MetricValue)
@@ -288,7 +289,7 @@ func (e *Engine) buildReevaluationPrompt(
 				}
 			}
 			if tier3, ok := details["tier3_result"].(string); ok && tier3 != "" {
-				fmt.Fprintf(&sb, "- Tier 3 analysis: %s\n", tier3)
+				fmt.Fprintf(&sb, "- Tier 3 analysis: %s\n", promptValue(tier3))
 			}
 		}
 	}
@@ -296,13 +297,13 @@ func (e *Engine) buildReevaluationPrompt(
 	// Section 2: User Feedback on This Alert
 	sb.WriteString("\n## User Feedback on This Alert\n")
 	if alert.AckMessage != nil && *alert.AckMessage != "" {
-		fmt.Fprintf(&sb, "- Message: %s\n", *alert.AckMessage)
+		fmt.Fprintf(&sb, "- Message: %s\n", promptValue(*alert.AckMessage))
 	} else {
 		sb.WriteString("- Message: (none provided)\n")
 	}
 	fmt.Fprintf(&sb, "- Marked as false positive: %t\n", alert.FalsePositive)
 	if alert.AcknowledgedBy != nil {
-		fmt.Fprintf(&sb, "- Acknowledged by: %s\n", *alert.AcknowledgedBy)
+		fmt.Fprintf(&sb, "- Acknowledged by: %s\n", promptValue(*alert.AcknowledgedBy))
 	}
 	if alert.AcknowledgedAt != nil {
 		fmt.Fprintf(&sb, "- Acknowledged at: %s\n", alert.AcknowledgedAt.Format(time.RFC3339))
@@ -314,15 +315,17 @@ func (e *Engine) buildReevaluationPrompt(
 	if len(historicalAcks) > 0 {
 		fmt.Fprintf(&sb, "Found %d past acknowledgements for the same metric on this server:\n", len(historicalAcks))
 		for _, ha := range historicalAcks {
+			// The placeholders stay unquoted, so that they cannot be
+			// mistaken for a note or user name that reads the same.
 			msg := "(none)"
 			if ha.AckMessage != nil && *ha.AckMessage != "" {
-				msg = *ha.AckMessage
+				msg = promptValue(*ha.AckMessage)
 			}
 			ackBy := "unknown"
 			if ha.AcknowledgedBy != nil {
-				ackBy = *ha.AcknowledgedBy
+				ackBy = promptValue(*ha.AcknowledgedBy)
 			}
-			fmt.Fprintf(&sb, "- Alert %d: message=%q, false_positive=%t, acknowledged_by=%s\n",
+			fmt.Fprintf(&sb, "- Alert %d: message=%s, false_positive=%t, acknowledged_by=%s\n",
 				ha.ID, msg, ha.FalsePositive, ackBy)
 		}
 	} else {
@@ -340,10 +343,10 @@ func (e *Engine) buildReevaluationPrompt(
 			otherCount++
 			metricName := "N/A"
 			if ca.MetricName != nil {
-				metricName = *ca.MetricName
+				metricName = promptValue(*ca.MetricName)
 			}
 			fmt.Fprintf(&sb, "- %s (severity: %s, type: %s, metric: %s, triggered: %s)\n",
-				ca.Title, ca.Severity, ca.AlertType, metricName,
+				promptValue(ca.Title), ca.Severity, ca.AlertType, metricName,
 				ca.TriggeredAt.Format(time.RFC3339))
 		}
 		if otherCount == 0 {

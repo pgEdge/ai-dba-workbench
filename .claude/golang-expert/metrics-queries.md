@@ -1417,7 +1417,13 @@ built at startup. Re-evaluation still requires the reasoning provider.
 `buildClassificationContext`, which is the reasoning prompt without
 `classificationResponseInstructions`; `buildClassificationPrompt` must
 stay context plus instructions, byte for byte, which
-`TestClassificationPromptSplit` pins. On a decision failure it falls
+`TestClassificationPromptSplit` pins (it also rejects the word `JSON`
+anywhere in the context). Every value the alerter does not control,
+in this prompt and in `buildReevaluationPrompt`, goes through
+`promptValue` (`engine/prompt_data.go`, #682), which `strconv.Quote`s it
+so a newline cannot forge a `##` section; placeholders such as
+`(none)` stay unquoted, and `prompt_data_test.go` holds the per-field
+injection tests a new field must join. On a decision failure it falls
 back to `classifyWithReasoning`, or fails safe to `alert` when there is
 no reasoning provider. Each call gets its own `tier3Timeout`, which
 `staleCandidateAge` absorbs through its safety factor. Every Tier 3

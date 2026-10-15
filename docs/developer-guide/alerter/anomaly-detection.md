@@ -512,6 +512,19 @@ that context followed by `classificationResponseInstructions`,
 which ask for the JSON response described below. The decision model
 receives the context alone.
 
+Text that the alerter does not control, such as database, metric
+and connection names, alert titles, node roles, acknowledgement
+notes and user names, and an earlier Tier 3 result, passes through
+`promptValue` in `alerter/src/internal/engine/prompt_data.go`. The
+function writes each value as a double-quoted string with line
+breaks and other non-printable characters escaped, so a value
+cannot end its line and start a Markdown section of its own. The
+prompt tells the model to treat quoted values as data rather than
+instructions. The re-evaluation prompt follows the same rule; since
+its fingerprint covers the rendered prompt, an acknowledged alert
+with a stored "keep" verdict goes back to the LLM once, the next
+time it falls due after upgrading.
+
 ### Response Parsing
 
 The alerter expects a JSON response with:

@@ -59,18 +59,21 @@ type Server struct {
 
 	// httpMu guards httpServer so Shutdown and RunHTTP can race safely
 	// when a signal arrives during early HTTP startup.
-	httpMu     sync.Mutex
-	httpServer *http.Server // Active HTTP server in HTTP mode; nil otherwise
+	httpMu       sync.Mutex
+	httpServer   *http.Server // Active HTTP server in HTTP mode; nil otherwise
+	shuttingDown bool         // Set by Shutdown; stops a later RunHTTP from serving
 }
 
 // Shutdown gracefully stops the active HTTP server, if one is running.
-// It is safe to call before RunHTTP has installed a server (no-op) and
-// safe to call concurrently from a signal handler. The provided
-// context bounds how long Shutdown will wait for in-flight requests to
-// drain before returning. Callers should treat a non-nil error as
+// It is safe to call concurrently from a signal handler, and before
+// RunHTTP has installed a server, in which case that RunHTTP returns
+// nil without serving rather than listening after the shutdown. The
+// provided context bounds how long Shutdown will wait for in-flight
+// requests to drain before returning. Callers should treat a non-nil error as
 // informational; on SIGTERM the server typically exits regardless.
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.httpMu.Lock()
+	s.shuttingDown = true
 	srv := s.httpServer
 	s.httpMu.Unlock()
 	if srv == nil {
@@ -80,12 +83,18 @@ func (s *Server) Shutdown(ctx context.Context) error {
 }
 
 // setHTTPServer records the active HTTP server so Shutdown can reach
-// it. Calling with a nil argument clears the reference, which
-// callers do in a defer after RunHTTP returns.
-func (s *Server) setHTTPServer(srv *http.Server) {
+// it, and reports false without recording it once Shutdown has been
+// called, so that a signal which arrives before the server is
+// published still stops it. Calling with a nil argument clears the
+// reference, which RunHTTP does in a defer on its way out.
+func (s *Server) setHTTPServer(srv *http.Server) bool {
 	s.httpMu.Lock()
+	defer s.httpMu.Unlock()
+	if srv != nil && s.shuttingDown {
+		return false
+	}
 	s.httpServer = srv
-	s.httpMu.Unlock()
+	return true
 }
 
 // NewServer creates a new MCP server

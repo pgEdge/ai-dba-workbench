@@ -729,10 +729,21 @@ func (s *Server) Run(flags *Flags, configPath string) error {
 
 	// Setup SIGTERM/SIGINT handler for graceful shutdown and Go
 	// coverage-counter flush.
-	s.setupShutdownHandler()
+	shutdown := s.setupShutdownHandler()
 
 	// Run the server
-	return s.mcpServer.RunHTTP(httpConfig)
+	return s.serveHTTP(httpConfig, shutdown)
+}
+
+// serveHTTP runs the HTTP server until it stops, and returns only once
+// a shutdown requested through h has finished draining. RunHTTP
+// returns as soon as a signal starts the drain, but main's deferred
+// Close writes the coalesced audit counts, so it must not run while a
+// handler can still record one (issue #650).
+func (s *Server) serveHTTP(httpConfig *mcp.HTTPConfig, h *shutdownHandle) error {
+	err := s.mcpServer.RunHTTP(httpConfig)
+	h.waitForDrain()
+	return err
 }
 
 // handlerDependencies builds the HTTP handlers' dependencies. The
@@ -796,8 +807,9 @@ func (s *Server) logStartupInfo() {
 }
 
 // setupShutdownHandler registers a SIGTERM/SIGINT handler that drains
-// the active HTTP server and, when the binary was built with -cover,
-// flushes coverage counters to $GOCOVERDIR before exit.
+// the active HTTP server so that main can return normally, which
+// writes coverage counters to $GOCOVERDIR when the binary was built
+// with -cover; the handler's own fallback exit flushes them itself.
 //
 // Without this, the Go runtime kills the process on SIGTERM without
 // running the -cover atexit hook, so E2E coverage reports come back
@@ -805,18 +817,22 @@ func (s *Server) logStartupInfo() {
 // not call this helper; its short-lived os.Exit(0) already triggers
 // the runtime's normal counter flush.
 //
-// The closer is deliberately not s.Close: main.go already defers
-// s.Close on a clean RunHTTP return, and racing that defer against
-// a goroutine-driven Close has caused double-close panics in past
-// graceful-shutdown implementations. RunHTTP returns as soon as
-// Shutdown starts, so main usually returns through that defer, which
-// flushes the auth store, before the handler finishes draining; the
-// handler's closer also writes the suppressed counts of coalesced
-// audit failures and denials, for when it gets there first. Both take
-// the auth store's lock, so whichever runs second finds nothing to
-// write.
-func (s *Server) setupShutdownHandler() {
-	installShutdownHandler(s.shutdownDeps())
+// RunHTTP returns as soon as Shutdown starts, so Run waits on the
+// returned handle until the drain has finished, or its grace period
+// has lapsed, before returning; main then returns through its deferred
+// s.Close, whose AuthStore.Close writes the suppressed counts of
+// coalesced audit failures and denials after the last in-flight
+// handler has recorded its own.
+//
+// The closer is deliberately not s.Close: racing main's deferred
+// Close against a goroutine-driven one has caused double-close panics
+// in past graceful-shutdown implementations. The handler runs its
+// closer, which only writes the coalesced audit counts, if main has
+// not returned within shutdownCleanupGrace of the drain or a further
+// signal arrives, and then exits; both flushes take the auth store's
+// lock, so whichever runs second finds nothing to write.
+func (s *Server) setupShutdownHandler() *shutdownHandle {
+	return installShutdownHandler(s.shutdownDeps())
 }
 
 // shutdownDeps returns the production dependencies for the

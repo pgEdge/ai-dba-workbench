@@ -188,7 +188,9 @@ the event itself is stamped when it is written. The server writes the
 summary for a burst that has stopped at its next periodic cleanup, which
 runs every five minutes, or sooner if a later identical attempt arrives
 first; a clean shutdown, including one requested with `SIGTERM` or
-`SIGINT`, writes a summary for every window that is still open. The
+`SIGINT`, writes a summary for every window that is still open once
+the requests in progress have finished, waiting up to five seconds for
+them so that their own denials and failures are counted. The
 counts of the open windows are lost from the audit log if the server
 crashes, or if the summary write at shutdown fails; in the latter case
 the server log records each unwritten summary, with its actor, action,

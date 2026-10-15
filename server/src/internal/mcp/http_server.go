@@ -119,8 +119,12 @@ func (s *Server) RunHTTP(config *HTTPConfig) error {
 	// Publish the server so callers (notably the SIGTERM handler in
 	// cmd/mcp-server) can invoke Shutdown. Clear the reference on the
 	// way out so a subsequent Shutdown call is a harmless no-op once
-	// the listener has already stopped.
-	s.setHTTPServer(httpServer)
+	// the listener has already stopped. A Shutdown that ran before
+	// this point stops the server here, as it would have stopped it
+	// once listening.
+	if !s.setHTTPServer(httpServer) {
+		return nil
+	}
 	defer s.setHTTPServer(nil)
 
 	// Start server with or without TLS. Treat http.ErrServerClosed as a

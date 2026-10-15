@@ -1320,6 +1320,15 @@ project adheres to
   some proxies send it, is now read without the port rather than
   skipped. (#589)
 
+- Wait for in-flight HTTP requests to finish, for up to the five-second
+  shutdown grace period, before the server writes the coalesced audit
+  counts and exits on `SIGTERM` or `SIGINT` (#650). The server returned
+  as soon as the drain began, so a denial or failed login recorded by a
+  request still in progress could miss the final summary and go
+  uncounted. A second signal cuts the wait short, and the server now
+  also stops cleanly if the signal arrives before it has started
+  listening.
+
 - Fix the `probe_unavailable` alert firing on healthy Spock clusters
   with no recent apply exceptions or conflict resolutions. The
   collector could not tell an installed extension with nothing to

@@ -2472,7 +2472,9 @@ project adheres to
   named as secrets without masking. The statement text from
   `GET /api/v1/metrics/top-queries` and the old and new values of
   configuration change events from `GET /api/v1/timeline/events` are
-  masked in the same way.
+  masked in the same way. As in `query_datastore`, free text is cut to
+  its first 65,536 characters and masked on a best-effort basis, so a
+  password in a form the masking does not recognise is still returned.
 
 - Delete a user with `ai-dba-server -delete-user` only when the
   confirmation is an explicit `y` or `yes`. The answer was checked

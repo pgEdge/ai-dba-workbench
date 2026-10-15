@@ -33,45 +33,48 @@ type maskedProbe struct {
 	hidden string
 }
 
+// maskedProbes seed their rows a minute in the past, so that a database
+// clock slightly ahead of the server's cannot put them after the end of
+// a query window.
 var maskedProbes = []maskedProbe{
 	{name: "pg_settings", drop: `DROP TABLE IF EXISTS metrics.pg_settings`,
 		create: `CREATE TABLE metrics.pg_settings (connection_id integer NOT NULL,
             collected_at timestamptz NOT NULL, name text, setting text, reset_val text, boot_val text)`,
-		insert: `INSERT INTO metrics.pg_settings VALUES ($1, now(), 'primary_conninfo',
+		insert: `INSERT INTO metrics.pg_settings VALUES ($1, now() - interval '1 minute', 'primary_conninfo',
             'host=192.0.2.1 password=example-secret', 'host=192.0.2.1 password=example-secret', '')`},
 	{name: "pg_hba_file_rules", drop: `DROP TABLE IF EXISTS metrics.pg_hba_file_rules`,
 		create: `CREATE TABLE metrics.pg_hba_file_rules (connection_id integer NOT NULL,
             collected_at timestamptz NOT NULL, type text, auth_method text, options text[], error text)`,
-		insert: `INSERT INTO metrics.pg_hba_file_rules VALUES ($1, now(), 'host', 'ldap',
+		insert: `INSERT INTO metrics.pg_hba_file_rules VALUES ($1, now() - interval '1 minute', 'host', 'ldap',
             '{ldapserver=192.0.2.1,ldapbindpasswd=example-secret}', NULL),
-            ($1, now(), 'host', NULL, NULL, 'authentication option not in name=value format: example-secret')`},
+            ($1, now() - interval '1 minute', 'host', NULL, NULL, 'authentication option not in name=value format: example-secret')`},
 	{name: "pg_stat_activity", drop: `DROP TABLE IF EXISTS metrics.pg_stat_activity`,
 		create: `CREATE TABLE metrics.pg_stat_activity (connection_id integer NOT NULL,
             collected_at timestamptz NOT NULL, datname text, query text)`,
-		insert: `INSERT INTO metrics.pg_stat_activity VALUES ($1, now(), 'appdb',
+		insert: `INSERT INTO metrics.pg_stat_activity VALUES ($1, now() - interval '1 minute', 'appdb',
             'ALTER ROLE app PASSWORD ''example-secret''')`},
 	{name: "pg_stat_statements", drop: `DROP TABLE IF EXISTS metrics.pg_stat_statements`,
 		create: `CREATE TABLE metrics.pg_stat_statements (connection_id integer NOT NULL,
             collected_at timestamptz NOT NULL, datname text, queryid bigint, query text)`,
-		insert: `INSERT INTO metrics.pg_stat_statements VALUES ($1, now(), 'appdb', 1,
+		insert: `INSERT INTO metrics.pg_stat_statements VALUES ($1, now() - interval '1 minute', 'appdb', 1,
             'CREATE USER app WITH PASSWORD ''example-secret''')`},
 	{name: "spock_exception_log", drop: `DROP TABLE IF EXISTS metrics.spock_exception_log`,
 		create: `CREATE TABLE metrics.spock_exception_log (connection_id integer NOT NULL,
             collected_at timestamptz NOT NULL, id integer, local_tup jsonb, remote_old_tup jsonb,
             remote_new_tup jsonb, ddl_statement text, error_message text)`,
-		insert: `INSERT INTO metrics.spock_exception_log VALUES ($1, now(), 1,
+		insert: `INSERT INTO metrics.spock_exception_log VALUES ($1, now() - interval '1 minute', 1,
             '{"password": "example-secret"}', '{"api_key": "example-secret"}', '{"token": 31337}',
             'CREATE SUBSCRIPTION s CONNECTION ''host=192.0.2.1 password=example-secret'' PUBLICATION p',
             'could not connect to postgresql://app:example-secret@192.0.2.1/db')`},
 	{name: "spock_resolutions", drop: `DROP TABLE IF EXISTS metrics.spock_resolutions`,
 		create: `CREATE TABLE metrics.spock_resolutions (connection_id integer NOT NULL,
             collected_at timestamptz NOT NULL, relname text, local_tuple text, remote_tuple text)`,
-		insert: `INSERT INTO metrics.spock_resolutions VALUES ($1, now(), 'users',
+		insert: `INSERT INTO metrics.spock_resolutions VALUES ($1, now() - interval '1 minute', 'users',
             '{"id": 1, "password": "example-secret"}', '{"id": 1, "secret": "example-secret"}')`},
 	{name: "ds_masking_secret_probe", drop: `DROP TABLE IF EXISTS metrics.ds_masking_secret_probe`, hidden: "api_token",
 		create: `CREATE TABLE metrics.ds_masking_secret_probe (connection_id integer NOT NULL,
             collected_at timestamptz NOT NULL, name text, api_token text, calls bigint)`,
-		insert: `INSERT INTO metrics.ds_masking_secret_probe VALUES ($1, now(), 'app', 'example-secret', 1)`},
+		insert: `INSERT INTO metrics.ds_masking_secret_probe VALUES ($1, now() - interval '1 minute', 'app', 'example-secret', 1)`},
 }
 
 // probesToMask returns a maskedProbes fixture for every probe in

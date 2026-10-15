@@ -2476,6 +2476,16 @@ project adheres to
   its first 65,536 characters and masked on a best-effort basis, so a
   password in a form the masking does not recognise is still returned.
 
+- Mask passwords in the descriptions of connection error alerts
+  (#679). The alerter copied the collector's connection error into the
+  alert description as it was, so a libpq error quoting a connection
+  string or URI with its password carried the password into the
+  alert, its notifications and any AI analysis of it. The alerter now
+  masks the error with the patterns the server uses for
+  `query_datastore`, and rewrites an active alert that still holds
+  the unmasked text on its next evaluation; cleared alerts keep the
+  description they had.
+
 - Delete a user with `ai-dba-server -delete-user` only when the
   confirmation is an explicit `y` or `yes`. The answer was checked
   only when a whole line could be read, so input that ended without

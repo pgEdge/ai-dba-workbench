@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
+	"github.com/pgedge/ai-workbench/pkg/redact"
 )
 
 // evaluateThresholds checks all threshold rules against current metrics
@@ -677,6 +678,13 @@ func (e *Engine) evaluateConnectionErrors(ctx context.Context) {
 		}
 
 		if conn.ConnectionError != nil {
+			// A libpq error can quote the connection string, password
+			// included, so mask it with the server's rules before it
+			// reaches the alert, the log, a notification or an LLM
+			// prompt. An existing alert holding the raw text is
+			// rewritten with the masked text on the next pass.
+			connError := redact.Text(*conn.ConnectionError)
+
 			// Check if there's a blackout active for this connection
 			connID := conn.ConnectionID
 			active, err := e.datastore.IsBlackoutActive(ctx, &connID, nil)
@@ -696,17 +704,17 @@ func (e *Engine) evaluateConnectionErrors(ctx context.Context) {
 			}
 
 			if !found {
-				alert, err := e.datastore.CreateConnectionAlert(ctx, conn.ConnectionID, conn.Name, *conn.ConnectionError)
+				alert, err := e.datastore.CreateConnectionAlert(ctx, conn.ConnectionID, conn.Name, connError)
 				if err != nil {
 					e.log("ERROR: Failed to create connection alert for connection %d: %v", conn.ConnectionID, err)
 					continue
 				}
-				e.log("Connection error alert created for %s: %s", conn.Name, *conn.ConnectionError)
+				e.log("Connection error alert created for %s: %s", conn.Name, connError)
 
 				// Queue notification for async processing
 				e.queueNotification(alert, database.NotificationTypeAlertFire)
-			} else if desc != *conn.ConnectionError {
-				if err := e.datastore.UpdateConnectionAlertDescription(ctx, alertID, *conn.ConnectionError); err != nil {
+			} else if desc != connError {
+				if err := e.datastore.UpdateConnectionAlertDescription(ctx, alertID, connError); err != nil {
 					e.log("ERROR: Failed to update connection alert description for connection %d: %v", conn.ConnectionID, err)
 				} else {
 					e.debugLog("Updated connection error description for %s", conn.Name)

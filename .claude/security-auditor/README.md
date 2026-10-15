@@ -216,18 +216,20 @@ moved.
   string constant form (quoted with either escape style, E'', U&'',
   dollar-quoted, truncated), keeps only capture group 1, and is applied
   through E'' literals so `standard_conforming_strings` cannot change
-  it; add every bypass input to `textRedactionCases`, which run in both
-  Go and PostgreSQL, plain and as JSON, record forms left unmasked in
-  `textRedactionKnownLimits`, and keep the 1 MiB adversarial inputs
-  fast in both engines and, in PostgreSQL, in both forms
-  (`internal/metrics/redaction_test.go`). A dollar-quoted value that
+  it; add every bypass input to `redacttest.Cases`, which run in both
+  Go (`pkg/redact`) and PostgreSQL (`internal/metrics/redaction_test.go`),
+  and keep `redacttest.AdversarialInputs` fast in both. A dollar-quoted value that
   itself contains a `$name$` tag leaks its tail, since the patterns
   cannot use back-references. Row images retyped to text keep their
   stored type for entity-key selection (`StoredType`). The masking is best effort:
   query text and row images can still carry sensitive data or a
   password in an unrecognised form, and read access to a connection
   grants that visibility, as the user guide states.
-  The rules live in `internal/metrics/redaction.go` and apply on every
+  The free-text patterns themselves live in `pkg/redact` (with the
+  shared test inputs in `pkg/redact/redacttest`), so the alerter masks
+  `connections.connection_error` with `redact.Text` before it becomes an
+  alert description, notification or LLM prompt (#679).
+  The SQL rules live in `internal/metrics/redaction.go` and apply on every
   route returning credential-bearing metrics: `query_datastore`,
   `GET /api/v1/metrics/latest` (#670) and the latest-rows mode of
   `GET /api/v1/metrics/query` (through `ReturnableColumns` and

@@ -2442,10 +2442,13 @@ project adheres to
   settings that can hold a credential, such as `primary_conninfo`,
   are shown as `********`, as are the values of options such as
   `ldapbindpasswd` in `pg_hba_file_rules`, a non-empty
-  `pg_hba_file_rules.error`, and passwords in recognised
-  forms in query text, Spock statements and row images, and connection
-  errors; such text may still hold other sensitive data, which read
-  access to a connection makes visible.
+  `pg_hba_file_rules.error`, and, on a best-effort basis, passwords
+  in recognised forms in query text, Spock statements and row images,
+  connection errors, and alert descriptions and AI analyses, each cut
+  to its first 65,536 characters; such text may still hold other
+  sensitive data, including passwords in forms the masking does not
+  recognise, which read access to a connection makes visible. Other
+  tools and the web client may show this text as stored.
   Metric sources default to the last hour for every shape, including
   `latest`, so change-tracked probes need a wide `time_start`;
   `page_size` defaults to 100 and is capped at 1000, `page` times

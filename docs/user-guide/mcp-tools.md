@@ -108,9 +108,11 @@ option it cannot parse, such as an unquoted list of RADIUS secrets, in it.
 
 Some sources return free text: the `query` column of `pg_stat_activity` and
 `pg_stat_statements`, the statements, error messages and replicated row images
-of `spock_exception_log` and `spock_resolutions`, and the `connection_error`
-column of `connections`. The tool masks passwords that appear in the usual
-forms in this text, replacing the secret with `********`:
+of `spock_exception_log` and `spock_resolutions`, the `connection_error`
+column of `connections`, and the `description` and `ai_analysis` columns of
+`alerts`, which can quote a connection error. The `query_datastore` tool masks,
+on a best-effort basis, passwords that appear in the usual forms in this text,
+replacing the secret with `********`:
 
 - `PASSWORD '...'` in `CREATE ROLE` and `ALTER ROLE` statements, including
   `ENCRYPTED PASSWORD`, and `password '...'` in a user mapping's `OPTIONS`;
@@ -135,15 +137,22 @@ In free text, the names that suggest a secret are those containing
 `private_key`, a connection string or SSL file name, `api_key` or
 `access_key`; the shorter endings used for `pg_settings`, such as `key` and
 `pass`, are left out, so ordinary identifiers such as `sort_key` and `bypass`
-are kept. Filters and aggregates see only the masked text. The replicated row images in
-`spock_exception_log` are returned as text rather than JSON, because masking
-can leave them invalid as JSON.
+are kept. White space or up to two short comments may separate a name from its
+value. Filters and aggregates see only the masked text. Each free-text value is
+cut to its first 65,536 characters before it is masked, so that a crafted value
+cannot make masking slow; a longer value is returned cut short. The replicated
+row images in `spock_exception_log` are returned as text rather than JSON,
+because masking can leave them invalid as JSON.
+
+This masking applies to `query_datastore`; other tools and the web client may
+show the same text as it is stored.
 
 !!! warning
 
     The free-text columns can still hold sensitive information: SQL text and
     replicated row data may contain personal or confidential values, and a
-    password written in a form the masking does not recognise is returned as
+    password written in a form the masking does not recognise, such as one
+    passed to `format()` or written after a long comment, is returned as
     stored. Granting a user or token read access to a connection therefore
     grants visibility of that text.
 

@@ -20,8 +20,8 @@ import (
 )
 
 // textRedactionCase is one input and the text redactedText should turn
-// it into. The secrets are all "example-secret" or start "s3cr", so a
-// test can check none survives.
+// it into. Every secret is one secretLeft finds, so a test can
+// check none survives.
 type textRedactionCase struct {
 	name, in, want string
 }
@@ -119,6 +119,8 @@ var textRedactionCases = []textRedactionCase{
 		`SELECT dblink_connect(E'password=******** dbname=db')`},
 	{"backslash quoted role password", `EXECUTE E'ALTER ROLE app PASSWORD \'s3cret x\''`,
 		`EXECUTE E'ALTER ROLE app PASSWORD '********''`},
+	{"backslash and newline in a quoted password", "ALTER ROLE app PASSWORD E's3cr\\\net x' LOGIN",
+		"ALTER ROLE app PASSWORD '********' LOGIN"},
 	{"backslash quoted with escaped backslash", `SELECT dblink_connect(E'password=\'s3cr\\et x\' dbname=db')`,
 		`SELECT dblink_connect(E'password=******** dbname=db')`},
 	{"quoted role password after concatenation", "EXECUTE 'ALTER ROLE app ' || 'PASSWORD ''s3cret a b'''",
@@ -129,7 +131,7 @@ var textRedactionCases = []textRedactionCase{
 	{"comment holding stars and a slash", "ALTER ROLE app PASSWORD /* ** / */ 'example-secret'",
 		"ALTER ROLE app PASSWORD /* ** / */ '********'"},
 	{"line comment", "ALTER ROLE app PASSWORD -- set it\n'example-secret' LOGIN", "ALTER ROLE app PASSWORD -- set it\n'********' LOGIN"},
-	{"equals after a comment", "SET app.password = /* c */ 'example secret'", "SET app.password = /* c */ ********"},
+	{"equals after a comment", "SET app.password = /* c */ 'example secret'", "SET app.password = ********"},
 	{"json escape string conninfo", `{"stmt": "CONNECTION E'host=192.0.2.1 password=\\'s3cret a b\\''"}`,
 		`{"stmt": "CONNECTION E'host=192.0.2.1 password=********'"}`},
 	{"json escape string with escaped quote", `{"stmt": "SELECT dblink_connect(E'password=\\'s3cr\\\\\\'et x\\' dbname=db')"}`,
@@ -145,18 +147,150 @@ var textRedactionCases = []textRedactionCase{
 	{"normalised parameter", "ALTER ROLE app PASSWORD $1", "ALTER ROLE app PASSWORD $1"},
 	{"normalised set parameter", "SELECT set_config('app.password', $1, false)",
 		"SELECT set_config('app.password', $1, false)"},
+	// The inputs below are from the fourth security review, which
+	// tested the patterns in both engines; the review's case numbers
+	// are kept in the names.
+	{"C1: conninfo value starting with --", "CREATE SUBSCRIPTION s CONNECTION 'host=192.0.2.1 password=--Secret123 dbname=d' PUBLICATION p",
+		"CREATE SUBSCRIPTION s CONNECTION 'host=192.0.2.1 password=******** dbname=d' PUBLICATION p"},
+	{"C1b: bare conninfo --", "host=192.0.2.1 password=--Secret123 dbname=d",
+		"host=192.0.2.1 password=******** dbname=d"},
+	{"C1c: value starting /*", "host=192.0.2.1 password=/*x*/hunter2 dbname=d",
+		"host=192.0.2.1 password=******** dbname=d"},
+	{"C1d: PGPASSWORD --", "PGPASSWORD=--hunter2 pg_dump -h 192.0.2.1 db",
+		"PGPASSWORD=******** pg_dump -h 192.0.2.1 db"},
+	{"C2: set_config cast", "SELECT set_config('app.password'::text, 'hunter2', false)",
+		"SELECT set_config('app.password'::text, '********', false)"},
+	{"C3: set_config comment", "SELECT set_config('app.password',/**/'hunter2', false)",
+		"SELECT set_config('app.password',/**/'********', false)"},
+	{"C4: set_config line comment", "SELECT set_config('app.password', --c\n'hunter2', false)",
+		"SELECT set_config('app.password', --c\n'********', false)"},
+	{"C5: set_config named", "SELECT set_config(setting_name => 'app.password', new_value => 'hunter2', is_local => false)",
+		"SELECT set_config(setting_name => 'app.password', new_value => '********', is_local => false)"},
+	{"C6: alter system comment before =", "ALTER SYSTEM SET archive_command /* x */ = 'curl -u admin:hunter2 -T %p https://backup.example.com'",
+		"ALTER SYSTEM SET archive_command /* x */ = '********'"},
+	{"C7: alter system comment after SET", "ALTER SYSTEM SET/**/archive_command = 'sshpass -p hunter2 scp %p backup:'",
+		"ALTER SYSTEM SET/**/archive_command = '********'"},
+	{"C7b: alter system newline", "ALTER SYSTEM SET\narchive_command = 'sshpass -p hunter2 scp %p backup:'",
+		"ALTER SYSTEM SET\narchive_command = '********'"},
+	{"C8: uri user with quote", "SELECT dblink_connect('postgresql://o''brien:hunter2@db.example.com/app')",
+		"SELECT dblink_connect('postgresql://o''brien:********@db.example.com/app')"},
+	{"C8b: uri user with double quote", "postgresql://a\"b:hunter2@db.example.com/app",
+		"postgresql://a\"b:********@db.example.com/app"},
+	{"C9: libpq backslash space", "host=192.0.2.1 password=correct\\ horse\\ battery dbname=d",
+		"host=192.0.2.1 password=******** dbname=d"},
+	{"C12: json pass key", "{\"user\": \"app\", \"pass\": \"hunter2\", \"pwd\": \"hunter2\"}",
+		"{\"user\": \"app\", \"pass\": \"********\", \"pwd\": \"********\"}"},
+	{"C13: concat after PASSWORD", "EXECUTE 'ALTER ROLE app PASSWORD ' || '''hunter2''';",
+		"EXECUTE 'ALTER ROLE app PASSWORD '********'********''';"},
+	{"C13b: concat split", "EXECUTE 'ALTER ROLE app PASSWORD' || ' ''hunter2''';",
+		"EXECUTE 'ALTER ROLE app PASSWORD'********' ''********''';"},
+	{"C14: crlf", "ALTER ROLE app PASSWORD\r\n'hunter2'",
+		"ALTER ROLE app PASSWORD\r\n'********'"},
+	{"C15: E string escaped quote", "ALTER ROLE app PASSWORD E'hun\\'ter2'",
+		"ALTER ROLE app PASSWORD '********'"},
+	{"C16: user mapping quoted option", "CREATE USER MAPPING FOR u SERVER s OPTIONS (user 'u', \"password\" 'hunter2')",
+		"CREATE USER MAPPING FOR u SERVER s OPTIONS (user 'u', \"password\" '********')"},
+	{"C20: E string trailing escaped backslash", "ALTER ROLE app PASSWORD E'hunter2\\\\' LOGIN",
+		"ALTER ROLE app PASSWORD '********'"},
+	{"C21: E conninfo escaped backslash then quote", "SELECT dblink_connect(E'password=\\'hun\\\\\\\\\\'ter2 x\\' dbname=db')",
+		"SELECT dblink_connect(E'password=******** dbname=db')"},
+	{"C22: PASSWORD after quote char", "EXECUTE 'ALTER ROLE app'||'PASSWORD ''hunter2'''",
+		"EXECUTE 'ALTER ROLE app'||'PASSWORD '********''"},
+	{"C23: tab sep in E-string", "EXECUTE E'ALTER ROLE app PASSWORD\\t\\'hunter2\\''",
+		"EXECUTE E'ALTER ROLE app PASSWORD\\t'********''"},
+	{"C24: alter role password then comment then dollar", "ALTER ROLE app PASSWORD --x\n$q$hunter2$q$",
+		"ALTER ROLE app PASSWORD --x\n'********'"},
+	{"C26: SET var TO without space via comment", "SET app.password/**/TO/**/'hunter2'",
+		"SET app.password/**/TO/**/'********'"},
+	{"C27: quoted name value with space before comma in JSON", "{\"stmt\": \"SELECT set_config('app.password', 'hunter2', false)\"}",
+		"{\"stmt\": \"SELECT set_config('app.password', '********', false)\"}"},
+	{"C28: URI with @ in user via percent", "postgresql://app%40x:hunter2@db.example.com/app",
+		"postgresql://app%40x:********@db.example.com/app"},
+	{"C29: conninfo keyword uppercase with spaces", "HOST=h PASSWORD = 'hunter2'",
+		"HOST=h PASSWORD = ********"},
+	{"C30: password value then multiline", "CREATE SUBSCRIPTION s CONNECTION 'host=h\npassword=hunter2\ndbname=d' PUBLICATION p",
+		"CREATE SUBSCRIPTION s CONNECTION 'host=h\npassword=********\ndbname=d' PUBLICATION p"},
+	{"C31: PASSWORD followed by U& UESCAPE", "ALTER ROLE app PASSWORD U&'hunter2!0032' UESCAPE '!'",
+		"ALTER ROLE app PASSWORD '********' UESCAPE '!'"},
+	{"C32: SET credential with E", "ALTER SYSTEM SET restore_command = E'sshpass -p hunter2 scp backup:%f %p'",
+		"ALTER SYSTEM SET restore_command = '********'"},
+	{"C33: ALTER ROLE SET", "ALTER ROLE app SET archive_command = 'sshpass -p hunter2 x'",
+		"ALTER ROLE app SET archive_command = '********'"},
+	{"C35: em space", "host=h password=hunter2\u2003rest",
+		"host=h password=********"},
 }
+
+// textRedactionKnownLimits are forms the patterns do not mask, each with
+// the text both engines return, so that a change in what they do is
+// noticed: format() fills %L from an argument the patterns cannot tie
+// to PASSWORD; a value starting with a $1-style parameter is kept, as
+// statements normalised by pg_stat_statements hold them; a quoted value
+// followed directly by more text, as a shell joins 'abc'secret, is
+// masked only to its closing quote; YAML and HTTP header syntax and
+// hyphenated names are not matched; a value
+// nested in a JSON object under a secret key is masked only to the
+// first closing brace; and a no-break space is not white space, as it
+// is not to PostgreSQL's own parser.
+var textRedactionKnownLimits = []textRedactionCase{
+	{"C10: format %L", "DO $$BEGIN EXECUTE format('ALTER ROLE %I PASSWORD %L', 'app', 'hunter2'); END$$",
+		"DO $$BEGIN EXECUTE format('ALTER ROLE %I PASSWORD %L', '********', 'hunter2'); END$$"},
+	{"C11: dollar digits comma", "host=192.0.2.1 password=$12,hunter2 dbname=d",
+		"host=192.0.2.1 password=$12,hunter2 dbname=d"},
+	{"C11b: dollar digits end", "host=192.0.2.1 password=$42",
+		"host=192.0.2.1 password=$42"},
+	{"C17: shell quote suffix", "PGPASSWORD='abc'hunter2 pg_dump db",
+		"PGPASSWORD=********hunter2 pg_dump db"},
+	{"C17b: shell dq suffix", "PGPASSWORD=\"abc\"hunter2 pg_dump db",
+		"PGPASSWORD=********hunter2 pg_dump db"},
+	{"C18: yaml colon", "password: hunter2",
+		"password: hunter2"},
+	{"C19: json nested object", "{\"password\": {\"a\": \"}\", \"b\": \"hunter2\"}}",
+		"{\"password\": \"********\"\", \"b\": \"hunter2\"}}"},
+	{"C25: secret key with hyphen header", "curl -H 'X-Api-Key: hunter2' https://api.example.com",
+		"curl -H 'X-Api-Key: hunter2' https://api.example.com"},
+	{"C34: PASSWORD with non-breaking space", "ALTER ROLE app PASSWORD\u00a0'hunter2'",
+		"ALTER ROLE app PASSWORD\u00a0'hunter2'"},
+}
+
+// jsonWants are the plain-text forms of the masked JSON forms of cases
+// whose masked JSON form is not the JSON form of want, keyed by case
+// name: in JSON text a backslash escape is doubled, so the patterns
+// there mask more than the value, but never less.
+var jsonWants = map[string]string{
+	// The doubled backslash before the closing quote of the value
+	// reads as an escaped quote, so the value runs to the next space.
+	"C21: E conninfo escaped backslash then quote": `SELECT dblink_connect(E'password=******** x\' dbname=db')`,
+	// The line break is \n in JSON text, which an unquoted value
+	// takes as an escape, so the value runs to the next space.
+	"C30: password value then multiline": "CREATE SUBSCRIPTION s CONNECTION 'host=h\npassword=******** PUBLICATION p",
+}
+
+// secretMarkers are the secrets the cases hold, other than
+// example-secret, which secretLeft finds by its two halves so that
+// example.com is not taken for one.
+var secretMarkers = []string{"s3cr", "31337", "hunter2", "Secret123", "horse", "battery"}
 
 // secretLeft reports whether s still holds one of the test secrets.
 func secretLeft(s string) bool {
-	return strings.Contains(s, "example") && strings.Contains(s, "secret") && !strings.Contains(s, "example.com") ||
-		strings.Contains(s, "s3cr") || strings.Contains(s, "31337")
+	if strings.Contains(s, "example") && strings.Contains(s, "secret") && !strings.Contains(s, "example.com") {
+		return true
+	}
+	for _, m := range secretMarkers {
+		if strings.Contains(s, m) {
+			return true
+		}
+	}
+	return false
 }
 
 // applyTextRedactionsInGo applies textRedactions with Go's regexp
-// package, converting PostgreSQL's \1 to Go's ${1}.
+// package, converting PostgreSQL's \1 to Go's ${1}, after cutting s to
+// maxTextLength characters as redactedText's left() does.
 func applyTextRedactionsInGo(t *testing.T, s string) string {
 	t.Helper()
+	if r := []rune(s); len(r) > maxTextLength {
+		s = string(r[:maxTextLength])
+	}
 	for _, r := range textRedactions {
 		// PostgreSQL's . matches a newline and, since every quantifier
 		// is greedy, it takes the longest match: s and Longest do the
@@ -198,21 +332,26 @@ func jsonText(t *testing.T, s string) string {
 	return string(bytes.TrimSuffix(b.Bytes(), []byte("\n")))
 }
 
-// checkJSONForm checks got, the masked JSON form of tc.in, against the
-// JSON form of tc.want. A value at the end of the text may also take
-// the closing JSON quote, since an unquoted or truncated value is
-// masked to the next white space or the end. An input that is already
-// JSON text is skipped: escaped twice, it is not a form a row image
+// checkJSONForm checks got, the masked JSON form of tc.in, holds no
+// secret and matches the JSON form of tc.want, or of its jsonWants
+// entry. A value at the end of the text may also take the closing JSON
+// quote, since an unquoted or truncated value is masked to the next
+// white space or the end. An input that is already JSON text need only
+// hold no secret: escaped twice, its exact form is not one a row image
 // holds.
 func checkJSONForm(t *testing.T, tc textRedactionCase, got string) {
 	t.Helper()
-	if strings.HasPrefix(tc.in, "{") {
-		return
-	}
 	if secretLeft(got) || strings.Contains(got, "secret a b") {
 		t.Errorf("%s: a secret survived in JSON text: %q", tc.name, got)
 	}
-	want := jsonText(t, tc.want)
+	if strings.HasPrefix(tc.in, "{") {
+		return
+	}
+	plain, ok := jsonWants[tc.name]
+	if !ok {
+		plain = tc.want
+	}
+	want := jsonText(t, plain)
 	if got != want && got != strings.TrimSuffix(want, `"`) {
 		t.Errorf("%s: JSON form\ngot  %q\nwant %q", tc.name, got, want)
 	}
@@ -236,6 +375,7 @@ func TestTextRedactionPatterns(t *testing.T) {
 		"SET credential setting": "SET restore_command TO 'example-secret'",
 		"quoted name, value":     "('password', 'example-secret')",
 		"keyword=value":          "password=example-secret",
+		"concatenated PASSWORD":  "PASSWORD ' || '''example-secret'''",
 		"PASSWORD 'value'":       "PASSWORD 'example-secret'",
 	}
 	if len(samples) != len(textRedactions) {
@@ -267,7 +407,8 @@ func TestRedactedTextSQL(t *testing.T) {
 		}
 	}
 	sql := redactedText(`"t"."query"`)
-	if strings.Count(sql, "regexp_replace(") != len(textRedactions) || !strings.Contains(sql, `"t"."query"::text`) ||
+	if strings.Count(sql, "regexp_replace(") != len(textRedactions) ||
+		!strings.Contains(sql, `left("t"."query"::text, 65536)`) ||
 		strings.Count(sql, ", 'gi')") != len(textRedactions) {
 		t.Errorf("unexpected SQL: %s", sql)
 	}
@@ -292,19 +433,54 @@ func TestRedactMetricColumnsText(t *testing.T) {
 	if strings.Join(keys, ",") != "ddl_statement,relname" {
 		t.Errorf("entity keys = %v", keys)
 	}
-	conn, ok := connectionsSourceColumn("connection_error")
-	if !ok || !conn.RedactText {
-		t.Errorf("connections.connection_error should be redacted: %+v", conn)
+	for _, c := range []struct{ source, column string }{
+		{"connections", "connection_error"}, {"alerts", "description"}, {"alerts", "ai_analysis"},
+	} {
+		got, ok := configurationSourceColumn(c.source, c.column)
+		if !ok || !got.RedactText {
+			t.Errorf("%s.%s should be redacted: %+v", c.source, c.column, got)
+		}
 	}
 }
 
-func connectionsSourceColumn(name string) (datastoreColumn, bool) {
+func configurationSourceColumn(source, name string) (datastoreColumn, bool) {
 	for _, src := range configurationSources() {
-		if src.Name == "connections" {
+		if src.Name == source {
 			return src.column(name)
 		}
 	}
 	return datastoreColumn{}, false
+}
+
+// TestTextRedactionKnownLimits pins what the patterns return for the
+// forms they do not mask, so a change in what they do is noticed.
+func TestTextRedactionKnownLimits(t *testing.T) {
+	for _, tc := range textRedactionKnownLimits {
+		if got := applyTextRedactionsInGo(t, tc.in); got != tc.want {
+			t.Errorf("%s:\ngot  %q\nwant %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+// TestTextRedactionsAdversarialInGo masks 1 MiB inputs built to make a
+// regular expression engine backtrack, cut to maxTextLength as
+// redactedText cuts them.
+func TestTextRedactionsAdversarialInGo(t *testing.T) {
+	for name, in := range adversarialInputs(1 << 20) {
+		start := time.Now()
+		applyTextRedactionsInGo(t, in)
+		if elapsed := time.Since(start); elapsed > 10*time.Second {
+			t.Errorf("%s took %s", name, elapsed)
+		}
+	}
+}
+
+func TestTextRedactionsTruncate(t *testing.T) {
+	in := "password=example-secret " + strings.Repeat("é", maxTextLength)
+	got := applyTextRedactionsInGo(t, in)
+	if n := len([]rune(got)); n != maxTextLength-len("example-secret")+len(redactedValue) {
+		t.Errorf("got %d characters", n)
+	}
 }
 
 // redactTextQuery masks its one parameter with redactedText. It is
@@ -337,15 +513,30 @@ func TestRedactedTextIntegration(t *testing.T) {
 			t.Errorf("%s: JSON form differs between PostgreSQL and Go:\npg %q\ngo %q", tc.name, gotJSON, inGo)
 		}
 	}
+	for _, tc := range textRedactionKnownLimits {
+		var got string
+		if err := pool.QueryRow(context.Background(), redactTextQuery, tc.in).Scan(&got); err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if got != tc.want {
+			t.Errorf("known limit %s: got  %q\nwant %q", tc.name, got, tc.want)
+		}
+	}
+	var long string
+	if err := pool.QueryRow(context.Background(), redactTextQuery, strings.Repeat("é", maxTextLength+10)).Scan(&long); err != nil ||
+		len([]rune(long)) != maxTextLength {
+		t.Errorf("a long value should be cut to %d characters, got %d (%v)", maxTextLength, len([]rune(long)), err)
+	}
 	var null *string
 	if err := pool.QueryRow(context.Background(), redactTextQuery, nil).Scan(&null); err != nil || null != nil {
 		t.Errorf("NULL should stay NULL: %v, %v", null, err)
 	}
 }
 
-// TestRedactedTextAdversarialIntegration masks inputs of about 1 MB
-// built to make a regular expression engine backtrack, and checks each
-// finishes well within a statement timeout.
+// TestRedactedTextAdversarialIntegration masks inputs of about 1 MiB
+// built to make a regular expression engine backtrack, as plain text
+// and as a row image, and checks each finishes well within a statement
+// timeout.
 func TestRedactedTextAdversarialIntegration(t *testing.T) {
 	pool, _, cleanup := newToolsTestPool(t)
 	defer cleanup()
@@ -358,8 +549,28 @@ func TestRedactedTextAdversarialIntegration(t *testing.T) {
 	if _, err := conn.Exec(ctx, "SET statement_timeout = '30s'"); err != nil {
 		t.Fatalf("set statement_timeout: %v", err)
 	}
-	const size = 1 << 20
-	inputs := map[string]string{
+	inputs := adversarialInputs(1 << 20)
+	for name, in := range inputs {
+		for form, query := range map[string]string{"text": redactTextQuery, "JSON": redactJSONQuery} {
+			start := time.Now()
+			var got string
+			if err := conn.QueryRow(ctx, query, in).Scan(&got); err != nil {
+				t.Errorf("%s as %s: %v", name, form, err)
+				continue
+			}
+			if elapsed := time.Since(start); elapsed > 10*time.Second {
+				t.Errorf("%s as %s took %s", name, form, elapsed)
+			}
+		}
+	}
+}
+
+// adversarialInputs returns inputs of about size bytes built to make a
+// regular expression engine backtrack: runs of quotes, backslashes,
+// dollar signs and comments, repeated secret names and long runs of the
+// characters that may surround a secret name.
+func adversarialInputs(size int) map[string]string {
+	return map[string]string{
 		"quote pairs":        "password '" + strings.Repeat("''", size/2),
 		"nested quotes":      "password=''" + strings.Repeat("''''", size/4),
 		"lone quotes":        "password ''" + strings.Repeat("'", size),
@@ -374,17 +585,18 @@ func TestRedactedTextAdversarialIntegration(t *testing.T) {
 		"dollar digits":      "password=" + strings.Repeat("$1", size/2),
 		"comments":           "PASSWORD" + strings.Repeat("/*/*", size/4),
 		"backslash quotes":   `password=\'` + strings.Repeat(`\\'`, size/3),
-	}
-	for name, in := range inputs {
-		start := time.Now()
-		var got string
-		if err := conn.QueryRow(ctx, redactTextQuery, in).Scan(&got); err != nil {
-			t.Errorf("%s: %v", name, err)
-			continue
-		}
-		if elapsed := time.Since(start); elapsed > 10*time.Second {
-			t.Errorf("%s took %s", name, elapsed)
-		}
+		// Runs of comments after a secret name, which once made every
+		// match scan to the end of the text, and comments before
+		// another secret name.
+		"open comments after equals":   strings.Repeat("password=/* ", size/12),
+		"open comments after PASSWORD": strings.Repeat("PASSWORD /* ", size/12),
+		"line comments after equals":   strings.Repeat("password=-- ", size/12),
+		"comment then name":            strings.Repeat("password /* password='x' ", size/25),
+		"line comment then name":       strings.Repeat("password-- password='x' ", size/24),
+		"comment then SET":             strings.Repeat("set /* set archive_command='x' ", size/31),
+		"comment then quoted name":     strings.Repeat("'password' /* 'password', 'x' ", size/31),
+		"comment then unquoted value":  strings.Repeat("password=/* password=x ", size/23),
+		"comment then concatenation":   strings.Repeat(`password ' /* password ' || ''\'x'' `, size/36),
 	}
 }
 
@@ -407,6 +619,8 @@ func TestQueryDatastoreRedactsFreeTextIntegration(t *testing.T) {
             ($2, 1, NULL, 'ALTER ROLE app PASSWORD ''example-secret''', NULL, now() - interval '10 minutes')`,
 			args: []any{f.visible, f.hidden}},
 		{sql: `UPDATE connections SET connection_error = 'connect to host=192.0.2.1 password=example-secret failed'`},
+		{sql: `UPDATE alerts SET description = 'connect to host=192.0.2.1 password=example-secret failed',
+            ai_analysis = 'Run ALTER ROLE app PASSWORD ''example-secret'''`},
 	}
 	for _, s := range stmts {
 		if _, err := f.pool.Exec(ctx, s.sql, s.args...); err != nil {
@@ -469,6 +683,13 @@ func TestQueryDatastoreRedactsFreeTextIntegration(t *testing.T) {
 			})
 			if isErr || strings.Contains(text, "example-secret") || !strings.Contains(text, "password="+redactedValue) {
 				t.Errorf("connection_error should be masked: (error=%v) %s", isErr, text)
+			}
+			text, isErr = call(t, f.tool(), caller, map[string]any{
+				"source": "alerts", "columns": []any{"id", "description", "ai_analysis"},
+			})
+			if isErr || strings.Contains(text, "example-secret") || !strings.Contains(text, "password="+redactedValue) ||
+				!strings.Contains(text, "PASSWORD '"+redactedValue+"'") {
+				t.Errorf("alert description and ai_analysis should be masked: (error=%v) %s", isErr, text)
 			}
 		})
 	}

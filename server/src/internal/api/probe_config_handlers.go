@@ -90,13 +90,21 @@ func (h *ProbeConfigHandler) handleProbeConfigSubpath(w http.ResponseWriter, r *
 	}
 }
 
-// listProbeConfigs handles GET /api/v1/probe-configs
+// listProbeConfigs handles GET /api/v1/probe-configs. Without
+// connection_id it lists the global defaults, which every caller may
+// see; with it, the connection must be visible to the caller, and a
+// hidden connection answers 404 exactly as a missing one does (issue
+// #647).
 func (h *ProbeConfigHandler) listProbeConfigs(w http.ResponseWriter, r *http.Request) {
 	var connectionID *int
 	if idStr := r.URL.Query().Get("connection_id"); idStr != "" {
 		parsed, err := strconv.Atoi(idStr)
 		if err != nil {
 			RespondError(w, http.StatusBadRequest, "Invalid connection_id parameter")
+			return
+		}
+		if !scopeVisibleToCaller(r.Context(), w, h.rbacChecker, h.datastore,
+			"server", parsed, "Connection not found") {
 			return
 		}
 		connectionID = &parsed
@@ -112,7 +120,10 @@ func (h *ProbeConfigHandler) listProbeConfigs(w http.ResponseWriter, r *http.Req
 	RespondJSON(w, http.StatusOK, configs)
 }
 
-// getProbeConfig handles GET /api/v1/probe-configs/{id}
+// getProbeConfig handles GET /api/v1/probe-configs/{id}. A config
+// scoped to a server, cluster or group the caller cannot see answers
+// 404 with the same message as a missing one (issue #647); a global
+// config is visible to every caller.
 func (h *ProbeConfigHandler) getProbeConfig(w http.ResponseWriter, r *http.Request, id int64) {
 	config, err := h.datastore.GetProbeConfig(r.Context(), id)
 	if err != nil {
@@ -124,8 +135,28 @@ func (h *ProbeConfigHandler) getProbeConfig(w http.ResponseWriter, r *http.Reque
 		RespondError(w, http.StatusInternalServerError, "Failed to fetch probe config")
 		return
 	}
+	if scope, scopeID, scoped := probeConfigVisibilityTarget(config); scoped &&
+		!scopeVisibleToCaller(r.Context(), w, h.rbacChecker, h.datastore,
+			scope, scopeID, "Probe config not found") {
+		return
+	}
 
 	RespondJSON(w, http.StatusOK, config)
+}
+
+// probeConfigVisibilityTarget returns the scope and scope ID that decide
+// who may see a probe config, in the form scopeVisibleToCaller takes.
+// scoped is false for a global config, which names no target.
+func probeConfigVisibilityTarget(c *database.ProbeConfig) (scope string, scopeID int, scoped bool) {
+	switch {
+	case c.ConnectionID != nil:
+		return "server", *c.ConnectionID, true
+	case c.ClusterID != nil:
+		return "cluster", *c.ClusterID, true
+	case c.GroupID != nil:
+		return "group", *c.GroupID, true
+	}
+	return "", 0, false
 }
 
 // updateProbeConfig handles PUT /api/v1/probe-configs/{id}

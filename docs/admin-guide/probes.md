@@ -390,6 +390,14 @@ The probe configuration REST API provides endpoints
 for managing probe settings. All write operations
 require the `manage_probes` permission.
 
+Any signed-in user can read the global defaults. A
+configuration for a server, cluster or group is
+returned only when the caller can see that server, or
+a server in that cluster or group; otherwise the
+endpoint responds with 404, as for a configuration
+that does not exist. An API token sees only the
+servers in its connection scope.
+
 The following table lists the available endpoints:
 
 | Method | Endpoint | Description |

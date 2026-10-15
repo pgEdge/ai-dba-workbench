@@ -7510,7 +7510,7 @@
     "/probe-configs": {
       "get": {
         "summary": "List probe configurations",
-        "description": "Returns probe configurations, optionally filtered by connection ID",
+        "description": "Returns the global probe configurations, or with connection_id the configurations for that connection. A connection the caller cannot see answers 404, as a missing one does.",
         "operationId": "listProbeConfigs",
         "tags": [
           "Probe Configuration"
@@ -7539,8 +7539,28 @@
               }
             }
           },
+          "400": {
+            "description": "Invalid connection_id parameter",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Connection not found or not visible to the caller",
             "content": {
               "application/json": {
                 "schema": {
@@ -7560,7 +7580,7 @@
     "/probe-configs/{id}": {
       "get": {
         "summary": "Get probe configuration",
-        "description": "Returns a specific probe configuration by ID",
+        "description": "Returns a specific probe configuration by ID. A configuration scoped to a connection, cluster or group the caller cannot see answers 404, as a missing one does.",
         "operationId": "getProbeConfig",
         "tags": [
           "Probe Configuration"
@@ -7587,6 +7607,16 @@
               }
             }
           },
+          "400": {
+            "description": "Invalid probe config ID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Unauthorized",
             "content": {
@@ -7598,7 +7628,7 @@
             }
           },
           "404": {
-            "description": "Probe config not found",
+            "description": "Probe config not found or not visible to the caller",
             "content": {
               "application/json": {
                 "schema": {

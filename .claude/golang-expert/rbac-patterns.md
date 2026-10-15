@@ -274,6 +274,20 @@ so tests compare the missing and forbidden responses byte for byte
 (`connection_access_test.go`). `query_metrics`, `get_alert_rules` and
 the connection resolver use the same wording without suggestions.
 
+REST reads of a record tied to a server, cluster or group reuse
+`scopeVisibleToCaller` (`internal/api/rbac_visibility.go`) with the
+record's own not-found message, so a hidden target answers 404 exactly
+as a missing one; it applies the token scope through
+`VisibleConnectionIDs`. A route addressed by connection ID calls it
+before the query (probe override lists, `?connection_id=` on
+`/api/v1/probe-configs`); a route addressed by record ID loads the
+record first and then checks its target (`getProbeConfig`, via
+`probeConfigVisibilityTarget`, issue #647). Estate-wide (global) rows
+stay readable by every caller. An unrestricted superuser session gets
+200 with an empty list for a missing connection ID, since nothing is
+hidden from it. `probe_config_visibility_test.go` holds the
+caller-by-scope matrix to extend.
+
 ### Denial test (no Postgres required)
 
 ```go

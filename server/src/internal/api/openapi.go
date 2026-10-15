@@ -3319,14 +3319,16 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/probe-configs": {
 			Get: &OpenAPIOperation{
 				Summary:     "List probe configurations",
-				Description: "Returns probe configurations, optionally filtered by connection ID",
+				Description: "Returns the global probe configurations, or with connection_id the configurations for that connection. A connection the caller cannot see answers 404, as a missing one does.",
 				OperationID: "listProbeConfigs",
 				Tags:        []string{"Probe Configuration"},
 				Security:    bearerAuth,
 				Parameters:  []OpenAPIParameter{queryParamInt("connection_id", "Filter by connection ID")},
 				Responses: map[string]OpenAPIResponse{
 					"200": jsonArrayResponse("ProbeConfig", "List of probe configurations"),
+					"400": jsonResponse("ErrorResponse", "Invalid connection_id parameter"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"404": jsonResponse("ErrorResponse", "Connection not found or not visible to the caller"),
 				},
 			},
 		},
@@ -3334,15 +3336,16 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/probe-configs/{id}": {
 			Get: &OpenAPIOperation{
 				Summary:     "Get probe configuration",
-				Description: "Returns a specific probe configuration by ID",
+				Description: "Returns a specific probe configuration by ID. A configuration scoped to a connection, cluster or group the caller cannot see answers 404, as a missing one does.",
 				OperationID: "getProbeConfig",
 				Tags:        []string{"Probe Configuration"},
 				Security:    bearerAuth,
 				Parameters:  []OpenAPIParameter{pathParamInt("id", "Probe config ID")},
 				Responses: map[string]OpenAPIResponse{
 					"200": jsonResponse("ProbeConfig", "Probe configuration details"),
+					"400": jsonResponse("ErrorResponse", "Invalid probe config ID"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"404": jsonResponse("ErrorResponse", "Probe config not found"),
+					"404": jsonResponse("ErrorResponse", "Probe config not found or not visible to the caller"),
 				},
 			},
 			Put: &OpenAPIOperation{

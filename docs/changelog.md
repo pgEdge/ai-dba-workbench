@@ -2573,6 +2573,19 @@ project adheres to
   someone else's token, and no longer sees edit or delete actions on a
   superuser's token. (#522)
 
+- Check connection visibility on the probe configuration read
+  endpoints. `GET /api/v1/probe-configs?connection_id=N` and
+  `GET /api/v1/probe-configs/{id}` returned a connection's probe
+  settings to any signed-in user, including one with no grants. The
+  list now answers 404 for a connection the caller cannot see, and
+  the single-item endpoint answers 404 for a configuration whose
+  server, cluster or group the caller cannot see, in both cases
+  exactly as for one that does not exist; an API token sees only the
+  connections in its scope. Global defaults stay visible to every
+  caller. The unfiltered list now returns only the global defaults,
+  as documented; it previously also returned the cluster and group
+  overrides, whatever cluster or group they belonged to. (#647)
+
 - Delete a user with `ai-dba-server -delete-user` only when the
   confirmation is an explicit `y` or `yes`. The answer was checked
   only when a whole line could be read, so input that ended without

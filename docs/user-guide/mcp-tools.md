@@ -110,16 +110,24 @@ column of `connections`. The tool masks passwords that appear in the usual
 forms in this text, replacing the secret with `********`:
 
 - `PASSWORD '...'` in `CREATE ROLE` and `ALTER ROLE` statements, including
-  `ENCRYPTED PASSWORD`, and `password '...'` in a user mapping's `OPTIONS`.
+  `ENCRYPTED PASSWORD`, and `password '...'` in a user mapping's `OPTIONS`;
+  any form of SQL string constant is recognised, including `E'...'`,
+  `U&'...'` and dollar quoting.
+- A value given to a setting whose name suggests a secret, such as
+  `SET app.password TO '...'` or `set_config('app.password', '...', false)`,
+  and to a credential-bearing setting in `ALTER SYSTEM SET`, such as
+  `archive_command` or `primary_conninfo`.
 - `password=...` in a libpq connection string, such as the one given to
-  `CREATE SUBSCRIPTION ... CONNECTION` or `dblink_connect`.
-- The password in a connection URI, such as
-  `postgresql://user:secret@host`.
-- `ldapbindpasswd=...` and `radiussecrets=...`.
-- A JSON key whose name contains `password`, `passwd` or `secret` in a
-  replicated row image.
+  `CREATE SUBSCRIPTION ... CONNECTION` or `dblink_connect`, and any other
+  `name=value` pair whose name suggests a secret, such as `PGPASSWORD=...`,
+  `AWS_SECRET_ACCESS_KEY=...`, `ldapbindpasswd=...` and `radiussecrets=...`;
+  an unquoted value is masked up to the next white space.
+- The password in a URI, such as `postgresql://user:secret@host`.
+- The value of a JSON key whose name suggests a secret, such as `password`,
+  `token` or `api_key`, in a replicated row image, whatever the value's type.
 
-Filters and aggregates see only the masked text. The replicated row images in
+The names that suggest a secret are the same ones used to mask `pg_settings`
+values. Filters and aggregates see only the masked text. The replicated row images in
 `spock_exception_log` are returned as text rather than JSON, because masking
 can leave them invalid as JSON.
 

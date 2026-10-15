@@ -659,7 +659,10 @@ or `maskedOptions`), inside the scoped subquery. Free-text columns that
 can quote a password (query text, Spock row images, connection errors)
 are marked `RedactText` and pass through `redactedText`, whose
 `textRedactions` patterns must stay within the regular expression
-syntax Go and PostgreSQL share. The scope and time window go in an inner
+syntax Go and PostgreSQL share, use greedy quantifiers only (the Go
+tests use `Longest`, as PostgreSQL takes the longest match) and have
+exactly one capturing group. A retyped column records its original
+type in `StoredType`, which `datastoreEntityKeys` uses. The scope and time window go in an inner
 `(SELECT ... WHERE <scope> OFFSET 0) t` (`scopedFrom`), and the
 caller's filters, shape, ordering and paging apply outside it, so no
 caller predicate is evaluated against a row the caller may not see;

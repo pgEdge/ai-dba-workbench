@@ -135,6 +135,19 @@ type datastoreColumn struct {
 	// replicated row image, whose text has the passwords that
 	// textRedactions match masked (redactedText).
 	RedactText bool
+	// StoredType is the column's type in its table when DataType differs
+	// from it, as for a row image returned as text. Whether the column
+	// is an entity key follows the stored type, so masking a column
+	// does not change which rows shape latest returns.
+	StoredType string
+}
+
+// keyType returns the type that decides whether c is an entity key.
+func (c datastoreColumn) keyType() string {
+	if c.StoredType != "" {
+		return c.StoredType
+	}
+	return c.DataType
 }
 
 // datastoreSource is one source query_datastore accepts. Anything not
@@ -701,62 +714,129 @@ const (
 		redactedValue + "."
 	optionsRedactionNote = "Values of options that can hold a credential, such as ldapbindpasswd and " +
 		"radiussecrets, are shown as " + redactedValue + "."
-	textRedactionNote = "Passwords in known forms in SQL text and row data, such as PASSWORD '...' " +
-		"and password=... in a connection string, are shown as " + redactedValue +
-		"; other sensitive text is returned as stored."
+	textRedactionNote = "Passwords in known forms in SQL text and row data, such as PASSWORD '...', " +
+		"password=... in a connection string and the value of a JSON key naming a password or secret, " +
+		"are shown as " + redactedValue + "; other sensitive text, including passwords in other forms, " +
+		"is returned as stored."
 )
 
 // textRedaction is one password form redactedText masks: Pattern is a
 // case-insensitive regular expression in the subset PostgreSQL's
 // advanced regular expressions share with Go's RE2, so the unit tests
-// can check it in Go, and Replacement keeps capture group 1 (\1) and
-// puts redactedValue in place of the secret.
+// can check it in Go, and Replacement keeps capture group 1 (\1), the
+// only capturing group, and puts redactedValue in place of the secret.
+// Every quantifier is greedy, so PostgreSQL takes the longest match, as
+// Go does in the tests.
 type textRedaction struct {
 	Name        string
 	Pattern     string
 	Replacement string
 }
 
+// secretKeyPattern returns a regular expression with no capturing
+// group that matches a name holding a secretNamePatterns entry, such as
+// password, AWS_SECRET_ACCESS_KEY or app.api_key: lead and trail are
+// what may come before and after the entry, and an entry anchored with
+// $ must end the name.
+func secretKeyPattern(lead, trail string) string {
+	alts := make([]string, len(secretNamePatterns))
+	for i, p := range secretNamePatterns {
+		if name, anchored := strings.CutSuffix(p, "$"); anchored {
+			alts[i] = name
+		} else {
+			alts[i] = p + trail
+		}
+	}
+	return lead + "(?:" + strings.Join(alts, "|") + ")"
+}
+
+// Pieces of the textRedactions patterns. A quoted value may lack its
+// closing quote, since pg_stat_activity truncates long statements, and
+// a quoted value accepts both a doubled quote and a backslash escape,
+// so an escaped quote never ends it early.
+const (
+	// sqlQuoted is a single-quoted SQL string.
+	sqlQuoted = `'(?:''|\\.|[^'\\])*'?`
+	// sqlDollarQuoted is a dollar-quoted SQL string, $$...$$ or
+	// $tag$...$tag$. Without back-references the closing tag cannot be
+	// matched to the opening one, so a tagged string ends at the first
+	// $name$; a parameter such as $1 is not a dollar quote.
+	sqlDollarQuoted = `\$\$(?:[^$]|\$[^$])*(?:\$\$)?` +
+		`|\$[a-z_][a-z0-9_]*\$(?:[^$]|\$\$|\$[^a-z_$]|\$[a-z_][a-z0-9_]*(?:[^a-z0-9_$]|$))*(?:\$[a-z_][a-z0-9_]*\$)?`
+	// sqlConstant is any SQL string constant: '...', E'...', N'...',
+	// U&'...' or dollar-quoted.
+	sqlConstant = `(?:(?:e|n|u&)?` + sqlQuoted + `|` + sqlDollarQuoted + `)`
+	// identChars may surround a secret name, as in app.password or
+	// AWS_SECRET_ACCESS_KEY.
+	identChars = `[a-z0-9_.]*`
+)
+
 // textRedactions are the usual places a password appears in SQL text,
-// connection strings and row data. They are applied in order, as
-// regexp_replace calls inside the scoped subquery, so a caller's filters
-// and aggregates see only the masked text. A quoted value may lack its
-// closing quote, since pg_stat_activity truncates long statements. They
-// cannot catch every form: a password in any other form is
-// returned as stored.
+// connection strings, shell commands and row data. They are applied in
+// order, as regexp_replace calls inside the scoped subquery, so a
+// caller's filters and aggregates see only the masked text. A secret
+// name is any name holding a secretNamePatterns entry. They cannot
+// catch every form: a password in any other form is returned as stored.
 var textRedactions = []textRedaction{
 	{
-		// postgresql://user:secret@host
+		// scheme://user:secret@host, including a truncated one that ends
+		// before the @.
 		Name:        "URI userinfo",
-		Pattern:     `(postgres(ql)?://[^:/@[:space:]'"]*:)[^@/[:space:]'"]+@`,
+		Pattern:     `([a-z][a-z0-9+.-]*://[^:/@[:space:]'"]*:)[^@[:space:]]+(?:@|$)`,
 		Replacement: `\1` + redactedValue + `@`,
 	},
 	{
-		// "password": "secret" in a JSON row image.
-		Name:        "JSON key",
-		Pattern:     `("[^"]*(passw(or)?d|secret)[^"]*"[[:space:]]*:[[:space:]]*)"([^"\\]|\\.)*"`,
+		// "password": value in a JSON row image, whatever the value's
+		// type; a nested value is masked to its first closing bracket.
+		Name: "JSON key",
+		Pattern: `(` + secretKeyPattern(`"[^"]*`, `[^"]*`) + `"[[:space:]]*:[[:space:]]*)` +
+			`(?:"(?:[^"\\]|\\.)*"?|\{[^}]*\}?|\[[^\]]*\]?|[^,}\][:space:]]+)`,
 		Replacement: `\1"` + redactedValue + `"`,
 	},
 	{
-		// password=secret and password='secret' in a libpq connection
-		// string, and ldapbindpasswd= and radiussecrets= in pg_hba.conf.
-		Name:        "keyword=value",
-		Pattern:     `((passw(or)?d|secrets?)[[:space:]]*=[[:space:]]*)('([^'\\]|\\.)*'?|[^[:space:]'";)]+)`,
+		// ALTER SYSTEM SET archive_command = '...' and the other
+		// credentialSettings.
+		Name: "SET credential setting",
+		Pattern: `(set[[:space:]]+"?(?:` + strings.Join(credentialSettings, "|") + `)"?` +
+			`(?:[[:space:]]*=|[[:space:]]+to)[[:space:]]*)` + sqlConstant,
+		Replacement: `\1'` + redactedValue + `'`,
+	},
+	{
+		// set_config('app.password', 'secret', false) and
+		// json_build_object('password', 'secret').
+		Name:        "quoted name, value",
+		Pattern:     `(` + secretKeyPattern(`'[^']*`, `[^']*`) + `'[[:space:]]*,[[:space:]]*)` + sqlConstant,
+		Replacement: `\1'` + redactedValue + `'`,
+	},
+	{
+		// password=secret in a libpq connection string, ldapbindpasswd=
+		// and radiussecrets= in pg_hba.conf, PGPASSWORD=... and
+		// AWS_SECRET_ACCESS_KEY=... in a shell command, and
+		// SET app.password = '...'. An unquoted value is masked to the
+		// next white space; a $1 parameter is kept.
+		Name: "keyword=value",
+		Pattern: `(` + secretKeyPattern(identChars, identChars) + `"?[[:space:]]*(?:=>?|:=)[[:space:]]*)` +
+			`(?:` + sqlConstant + `|"(?:[^"\\]|\\.)*"?|[^[:space:]$'"][^[:space:]]*)`,
 		Replacement: `\1` + redactedValue,
 	},
 	{
-		// [ENCRYPTED] PASSWORD 'secret' in CREATE or ALTER ROLE and USER,
-		// and password 'secret' in a user mapping's OPTIONS.
-		Name:        "PASSWORD 'value'",
-		Pattern:     `((passw(or)?d|secrets?)[[:space:]]+e?)'(''|[^'])*'?`,
+		// [ENCRYPTED] PASSWORD '...' in CREATE or ALTER ROLE and USER,
+		// password '...' in a user mapping's OPTIONS, and
+		// SET app.password TO '...'. PASSWORD NULL and a $1 parameter
+		// are kept.
+		Name: "PASSWORD 'value'",
+		Pattern: `(` + secretKeyPattern(identChars, identChars) + `"?[[:space:]]+(?:to[[:space:]]+)?)` +
+			sqlConstant,
 		Replacement: `\1'` + redactedValue + `'`,
 	},
 }
 
-// sqlStringLiteral quotes a constant as a SQL string literal. It is
-// used only for the constants in textRedactions, never caller input.
+// sqlStringLiteral quotes a constant as an escape string literal,
+// doubling quotes and backslashes, so it means the same whatever
+// standard_conforming_strings is set to. It is used only for the
+// constants in textRedactions, never caller input.
 func sqlStringLiteral(v string) string {
-	return "'" + strings.ReplaceAll(v, "'", "''") + "'"
+	return "E'" + strings.ReplaceAll(strings.ReplaceAll(v, `\`, `\\`), "'", "''") + "'"
 }
 
 // redactedText returns value, cast to text, with every textRedactions
@@ -786,7 +866,10 @@ func redactMetricColumns(name string, columns []datastoreColumn) []datastoreColu
 			// A row image is masked as text and returned as text, since
 			// masking can leave it invalid as JSON.
 			c.RedactText = true
-			c.DataType = typeText
+			if c.DataType != typeText {
+				c.StoredType = c.DataType
+				c.DataType = typeText
+			}
 		}
 		if slices.Contains(rule.Columns, c.Name) {
 			if !hasKey {

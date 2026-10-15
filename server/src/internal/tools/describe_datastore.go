@@ -136,7 +136,7 @@ func describeDatastoreSource(ctx context.Context, pool *pgxpool.Pool, name strin
 			kind = "metric"
 		}
 		rows = append(rows, []any{c.Name, c.DataType, kind})
-		colTypes[c.Name] = c.DataType
+		colTypes[c.Name] = c.keyType()
 	}
 
 	var sb strings.Builder

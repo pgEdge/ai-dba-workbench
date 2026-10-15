@@ -651,6 +651,22 @@ button until it is resolved. Creating a token is a POST followed by a
 scope PUT, so `AdminTokenScopes.tsx` deletes the new token when the
 PUT is refused, rather than leave it holding its owner's whole access.
 
+## Token Ownership Rules
+
+Since issue #522 the server refuses (HTTP 403) a caller who is not a
+superuser creating a token for another user, or widening or clearing
+another user's token; any `manage_token_scopes` holder may still
+narrow or delete one, and only a superuser may touch a superuser's
+token. `AdminTokenScopes.tsx` reads `user.isSuperuser` and
+`user.username` from `useAuth` and, for a non-superuser, fixes the
+create dialog's owner to the current user (`ownerLocked`), hides the
+row actions on superuser-owned tokens, and, when editing someone
+else's token, passes the editor the choices from `narrowScopeChoices`
+(in `tokens/tokenTypes.ts`, mirroring the server's `widens` check in
+`server/src/internal/auth/grant_scope.go`) and refuses locally to lift
+a restriction with `narrowOnlyLiftError`. Keep the two in step when
+the server rules change; any other refusal shows the server's message.
+
 ## Messaging Channel Field Descriptors
 
 `AdminMessagingChannels.tsx` is shared by the Slack, Mattermost and

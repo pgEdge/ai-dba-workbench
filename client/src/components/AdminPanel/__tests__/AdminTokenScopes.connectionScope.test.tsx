@@ -38,6 +38,13 @@ vi.mock('../EffectivePermissionsPanel', () => ({
     default: () => null,
 }));
 
+vi.mock('../../../contexts/useAuth', () => ({
+    useAuth: () => ({
+        user: { username: 'admin', isSuperuser: true },
+        adminPermissions: [],
+    }),
+}));
+
 import AdminTokenScopes from '../AdminTokenScopes';
 import { ALL_CONNECTIONS_LABEL } from '../tokens/tokenTypes';
 

@@ -2564,7 +2564,10 @@ project adheres to
   caller remains bound by its own access when changing a sibling token
   with the same owner. A scope change naming an unknown MCP privilege
   is now refused with `400 Bad Request` whoever the caller, rather than
-  sometimes with `403 Forbidden`. (#522)
+  sometimes with `403 Forbidden`. In the web client, a user who is not
+  a superuser now sees the token owner fixed to themselves, is offered
+  only narrowing choices when editing someone else's token, and no
+  longer sees edit or delete actions on a superuser's token. (#522)
 
 - Delete a user with `ai-dba-server -delete-user` only when the
   confirmation is an explicit `y` or `yes`. The answer was checked

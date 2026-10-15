@@ -22,6 +22,7 @@ export type {
     User,
     CreateTokenResponse,
     UserPrivilegesResponse,
+    ScopeChoices,
 } from './tokenTypes';
 
 // Constants
@@ -39,6 +40,8 @@ export {
     connectionScopeProblem,
     filterMcpPrivileges,
     filterAdminPermissions,
+    narrowScopeChoices,
+    narrowOnlyLiftError,
 } from './tokenTypes';
 
 // Components

@@ -22,8 +22,130 @@ import {
     ALL_CONNECTIONS_LABEL,
     addScopedConnection,
     connectionScopeProblem,
+    narrowScopeChoices,
+    narrowOnlyLiftError,
 } from '../tokenTypes';
-import type { ScopedConnection } from '../tokenTypes';
+import type { ScopedConnection, ScopeChoices } from '../tokenTypes';
+
+describe('narrowing another owner\'s token', () => {
+    const CONNS = [
+        { id: 1, name: 'Primary DB' },
+        { id: 2, name: 'Replica DB' },
+        { id: 3, name: 'Archive DB' },
+    ];
+    const MCP = [
+        { id: 10, identifier: 'query_read' },
+        { id: 11, identifier: 'query_write' },
+    ];
+    const OWNER: ScopeChoices = {
+        connections: CONNS,
+        connectionLevels: { 1: 'read_write', 2: 'read', 3: 'read_write' },
+        ownerIsSuperuser: false,
+        mcpPrivileges: MCP,
+        adminPermissions: ADMIN_PERMISSIONS,
+        allowAllMcp: true,
+        allowAllAdmin: true,
+    };
+
+    it('leaves the choices alone for an unrestricted token', () => {
+        expect(narrowScopeChoices(undefined, OWNER)).toEqual(OWNER);
+        expect(narrowScopeChoices({ scoped: false }, OWNER)).toEqual(OWNER);
+    });
+
+    it('treats wildcard MCP and admin scopes as unrestricted', () => {
+        const narrowed = narrowScopeChoices({
+            scoped: true,
+            mcp_privileges: [MCP_WILDCARD_ID],
+            admin_permissions: ['*'],
+        }, OWNER);
+        expect(narrowed.mcpPrivileges).toEqual(MCP);
+        expect(narrowed.allowAllMcp).toBe(true);
+        expect(narrowed.adminPermissions).toEqual(ADMIN_PERMISSIONS);
+        expect(narrowed.allowAllAdmin).toBe(true);
+    });
+
+    it('offers only held connections, capped at the held level', () => {
+        const narrowed = narrowScopeChoices({
+            scoped: true,
+            connections: [
+                { connection_id: 1, access_level: 'read' },
+                { connection_id: 2, access_level: 'read_write' },
+            ],
+        }, OWNER);
+        expect(narrowed.connections.map((c) => c.id)).toEqual([1, 2]);
+        // Held read on 1; the owner holds only read on 2.
+        expect(narrowed.connectionLevels).toEqual({ 1: 'read', 2: 'read' });
+        expect(narrowed.ownerIsSuperuser).toBe(false);
+    });
+
+    it('keeps the held level for a superuser owner', () => {
+        const narrowed = narrowScopeChoices({
+            scoped: true,
+            connections: [{ connection_id: 2, access_level: 'read_write' }],
+        }, { ...OWNER, ownerIsSuperuser: true, connectionLevels: {} });
+        expect(narrowed.connectionLevels).toEqual({ 2: 'read_write' });
+        expect(narrowed.ownerIsSuperuser).toBe(false);
+    });
+
+    it('keeps the held level when the owner\'s level is unknown', () => {
+        const narrowed = narrowScopeChoices({
+            scoped: true,
+            connections: [{ connection_id: 3, access_level: 'read_write' }],
+        }, { ...OWNER, connectionLevels: {} });
+        expect(narrowed.connectionLevels).toEqual({ 3: 'read_write' });
+    });
+
+    it('offers every connection under an "all connections" entry', () => {
+        const narrowed = narrowScopeChoices({
+            scoped: true,
+            connections: [
+                { connection_id: ALL_CONNECTIONS_ID, access_level: 'read' },
+            ],
+        }, {
+            ...OWNER,
+            connectionLevels: { [ALL_CONNECTIONS_ID]: 'read_write' },
+        });
+        expect(narrowed.connections).toEqual(CONNS);
+        expect(narrowed.connectionLevels).toEqual({
+            [ALL_CONNECTIONS_ID]: 'read', 1: 'read', 2: 'read', 3: 'read',
+        });
+    });
+
+    it('takes the lowest stored level for the "all connections" entry', () => {
+        const narrowed = narrowScopeChoices({
+            scoped: true,
+            connections: [
+                { connection_id: ALL_CONNECTIONS_ID, access_level: 'read_write' },
+                { connection_id: 1, access_level: 'read' },
+            ],
+        }, { ...OWNER, ownerIsSuperuser: true });
+        expect(narrowed.connectionLevels[ALL_CONNECTIONS_ID]).toBe('read');
+        expect(narrowed.connectionLevels[1]).toBe('read');
+        expect(narrowed.connectionLevels[2]).toBe('read_write');
+    });
+
+    it('offers only held MCP privileges and admin permissions', () => {
+        const narrowed = narrowScopeChoices({
+            scoped: true,
+            mcp_privileges: [11],
+            admin_permissions: ['manage_users'],
+        }, OWNER);
+        expect(narrowed.mcpPrivileges).toEqual([MCP[1]]);
+        expect(narrowed.allowAllMcp).toBe(false);
+        expect(narrowed.adminPermissions.map((p) => p.id))
+            .toEqual(['manage_users']);
+        expect(narrowed.allowAllAdmin).toBe(false);
+        // Connections are unrestricted and left alone.
+        expect(narrowed.connections).toEqual(CONNS);
+    });
+
+    it('names the owner and the categories in the lift error', () => {
+        const message = narrowOnlyLiftError('alice', ['connections', 'MCP privileges']);
+        expect(message).toContain('belongs to alice');
+        expect(message).toContain('connections and MCP privileges');
+        expect(message).toContain('Only the owner or a superuser');
+    });
+});
 
 const ALL: ScopedConnection = {
     id: ALL_CONNECTIONS_ID,

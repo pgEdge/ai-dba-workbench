@@ -40,6 +40,10 @@ func TestPgHbaFileRulesProbe_GetQueryForVersion(t *testing.T) {
 	if strings.Contains(post16, "NULL::text AS file_name") {
 		t.Errorf("PG16+ should select file_name directly")
 	}
+	// An error row's NULL rule_number gets a negative key (issue #680).
+	if !strings.Contains(post16, "COALESCE(") || !strings.Contains(post16, "-(ROW_NUMBER() OVER (") {
+		t.Errorf("PG16+ should key error rows with a negative row number, got %q", post16)
+	}
 }
 
 func TestPgIdentFileMappingsProbe_GetQueryForVersion(t *testing.T) {

@@ -10,6 +10,7 @@
 package probes
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -184,4 +185,117 @@ func TestPgHbaFileRulesProbe_GetConfig(t *testing.T) {
 	if returnedConfig.RetentionDays != 365 {
 		t.Errorf("GetConfig().RetentionDays = %v, want 365", returnedConfig.RetentionDays)
 	}
+}
+
+func TestMaskHBAError(t *testing.T) {
+	// The messages are PostgreSQL 18's, as pg_hba_file_rules reports
+	// them for lines it cannot parse.
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "unquoted token after a colon",
+			in:   "authentication option not in name=value format: ldapbindpasswdS3cret",
+			want: "authentication option not in name=value format: ********",
+		},
+		{
+			name: "quoted token",
+			in:   `invalid IP address "ldapbindpasswd=S3cret": Name or service not known`,
+			want: `invalid IP address "********"`,
+		},
+		{
+			name: "quoted token holding a quote",
+			in:   `invalid connection type "a"S3cret"`,
+			want: `invalid connection type "********"`,
+		},
+		{
+			name: "several quoted names",
+			in:   `authentication method "ldap" requires argument "ldapbasedn", "ldapprefix", or "ldapsuffix" to be set`,
+			want: `authentication method "********"`,
+		},
+		{
+			name: "message quoting nothing is kept",
+			in:   "end-of-line before IP address specification",
+			want: "end-of-line before IP address specification",
+		},
+		{
+			name: "numbers are kept",
+			in:   "the number of RADIUS secrets (2) must be 1 or the same as the number of RADIUS servers (3)",
+			want: "the number of RADIUS secrets (2) must be 1 or the same as the number of RADIUS servers (3)",
+		},
+		{
+			name: "errors from several included files",
+			in: "could not open file \"/etc/postgresql/a.conf\": No such file or directory\n" +
+				"authentication option not in name=value format: radiussecretsS3cret",
+			want: "could not open file \"********\"\n" +
+				"authentication option not in name=value format: ********",
+		},
+		{
+			name: "empty",
+			in:   "",
+			want: "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := maskHBAError(tt.in)
+			if got != tt.want {
+				t.Errorf("maskHBAError(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+			if again := maskHBAError(got); again != got {
+				t.Errorf("masking twice gave %q, want %q", again, got)
+			}
+		})
+	}
+}
+
+func TestMaskHBAErrors(t *testing.T) {
+	t.Run("no errors returns the input", func(t *testing.T) {
+		in := []map[string]any{
+			{"rule_number": int32(1), "error": nil},
+			{"rule_number": int32(2), "error": ""},
+		}
+		out := maskHBAErrors(in)
+		if &out[0] != &in[0] {
+			t.Error("expected the input slice back when nothing is masked")
+		}
+	})
+
+	t.Run("nil input", func(t *testing.T) {
+		if out := maskHBAErrors(nil); out != nil {
+			t.Errorf("maskHBAErrors(nil) = %v, want nil", out)
+		}
+	})
+
+	t.Run("masks a copy", func(t *testing.T) {
+		valid := map[string]any{"rule_number": int32(1), "error": nil}
+		broken := map[string]any{
+			"rule_number": int32(-1),
+			"line_number": int32(3),
+			"error":       "authentication option not in name=value format: ldapbindpasswdS3cret",
+		}
+		in := []map[string]any{valid, broken}
+		out := maskHBAErrors(in)
+
+		if len(out) != 2 {
+			t.Fatalf("got %d rows, want 2", len(out))
+		}
+		if got := out[1]["error"]; got != "authentication option not in name=value format: ********" {
+			t.Errorf("masked error = %v", got)
+		}
+		if out[1]["line_number"] != int32(3) || out[1]["rule_number"] != int32(-1) {
+			t.Errorf("other columns changed: %v", out[1])
+		}
+		if msg, ok := broken["error"].(string); !ok || !strings.Contains(msg, "S3cret") {
+			t.Error("the caller's row was changed")
+		}
+		if in[1]["error"] != broken["error"] {
+			t.Error("the caller's slice was changed")
+		}
+		if out[0]["rule_number"] != int32(1) {
+			t.Errorf("valid row changed: %v", out[0])
+		}
+	})
 }

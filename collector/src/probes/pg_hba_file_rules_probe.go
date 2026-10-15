@@ -12,6 +12,7 @@ package probes
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -40,7 +41,13 @@ func (p *PgHbaFileRulesProbe) GetQuery() string {
 // GetQueryForVersion returns the appropriate SQL query for the given PostgreSQL version
 func (p *PgHbaFileRulesProbe) GetQueryForVersion(pgVersion int) string {
 	if pgVersion >= 16 {
-		// PG16+ has rule_number column
+		// PG16+ has a rule_number column, but it is NULL for a line
+		// PostgreSQL could not parse, and metrics.pg_hba_file_rules
+		// keys every row on rule_number. Such a row is given a negative
+		// key, numbered in file order, so it cannot collide with a
+		// valid rule's positive number (a line number could, and so
+		// could the same line in two included files), and a valid
+		// rule keeps its own number.
 		return `
             SELECT
                 rule_number,
@@ -54,11 +61,33 @@ func (p *PgHbaFileRulesProbe) GetQueryForVersion(pgVersion int) string {
                 auth_method,
                 options,
                 error
-            FROM pg_hba_file_rules
+            FROM (
+                SELECT
+                    COALESCE(
+                        r.rule_number,
+                        -(ROW_NUMBER() OVER (
+                            PARTITION BY r.rule_number IS NULL
+                            ORDER BY r.file_name, r.line_number, r.error
+                        ))::integer
+                    ) AS rule_number,
+                    r.file_name,
+                    r.line_number,
+                    r.type,
+                    r.database,
+                    r.user_name,
+                    r.address,
+                    r.netmask,
+                    r.auth_method,
+                    r.options,
+                    r.error
+                FROM pg_hba_file_rules r
+            ) hba
             ORDER BY rule_number
         `
 	}
-	// PG14-15: rule_number and file_name don't exist
+	// PG14-15: rule_number and file_name don't exist. There are no
+	// include files before PG16, so the line number is unique and
+	// keys valid and error rows alike.
 	return `
         SELECT
             line_number AS rule_number,
@@ -91,6 +120,10 @@ func (p *PgHbaFileRulesProbe) Execute(ctx context.Context, connectionName string
 
 // Store stores the collected metrics in the datastore only if data has changed
 func (p *PgHbaFileRulesProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, timestamp time.Time, metrics []map[string]any) error {
+	// Mask the values quoted in error text before change detection, so
+	// the comparison and the stored rows both see the masked form.
+	metrics = maskHBAErrors(metrics)
+
 	// Check if data has changed
 	changed, err := HasDataChanged(ctx, datastoreConn, connectionID, "pg_hba_file_rules", metrics,
 		`SELECT rule_number, file_name, line_number, type, database,
@@ -155,4 +188,63 @@ func (p *PgHbaFileRulesProbe) Store(ctx context.Context, datastoreConn *pgxpool.
 	}
 
 	return nil
+}
+
+// hbaErrorMask replaces a value masked in pg_hba_file_rules.error, as
+// PostgreSQL masks a password in pg_stat_wal_receiver.conninfo.
+const hbaErrorMask = "********"
+
+// maskHBAErrors returns metrics with every error value passed through
+// maskHBAError. Rows with an error are copied, so the caller's maps are
+// never changed; the other rows are shared.
+func maskHBAErrors(metrics []map[string]any) []map[string]any {
+	var masked []map[string]any
+	for i, metric := range metrics {
+		msg, ok := metric["error"].(string)
+		if !ok || msg == "" {
+			continue
+		}
+		if masked == nil {
+			masked = make([]map[string]any, len(metrics))
+			copy(masked, metrics)
+		}
+		row := make(map[string]any, len(metric))
+		for k, v := range metric {
+			row[k] = v
+		}
+		row["error"] = maskHBAError(msg)
+		masked[i] = row
+	}
+	if masked == nil {
+		return metrics
+	}
+	return masked
+}
+
+// maskHBAError masks the values PostgreSQL quotes from pg_hba.conf in
+// the error for a line it could not parse, keeping its description of
+// the problem. A quoted value can hold a credential, as in
+// "authentication option not in name=value format: ldapbindpasswdS3cret".
+// Every message in PostgreSQL's hba.c (16 to 18) that quotes the line
+// puts the value in double quotes or after a colon, so each line of
+// the error is cut at its first double quote or colon and the rest is
+// replaced by hbaErrorMask. A message with neither, such as
+// "end-of-line before IP address specification", is kept whole. The
+// errors from several included files are joined by newlines, so each
+// line is masked separately. Masking an error twice gives the same
+// result as masking it once.
+func maskHBAError(msg string) string {
+	lines := strings.Split(msg, "\n")
+	for i, line := range lines {
+		cut := strings.IndexAny(line, `":`)
+		if cut < 0 {
+			continue
+		}
+		if line[cut] == '"' {
+			lines[i] = line[:cut] + `"` + hbaErrorMask + `"`
+		} else {
+			lines[i] = line[:cut] + ": " + hbaErrorMask
+		}
+	}
+	return strings.Join(lines, "\n")
 }

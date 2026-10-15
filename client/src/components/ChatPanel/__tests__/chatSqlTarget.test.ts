@@ -247,6 +247,17 @@ describe('planSqlBlock', () => {
         expect(plan.kind).toBe('select');
     });
 
+    it('asks when the reply queried the datastore and a hidden server', () => {
+        const plan = planSqlBlock(
+            'SELECT 1',
+            reply({ targets: [{ connectionId: 9 }], usedDatastore: true }),
+            servers,
+        );
+        expect(plan).toMatchObject({ kind: 'select' });
+        expect(plan.kind === 'select' && plan.options.map((o) => o.connectionId))
+            .toEqual([1, 2, 3]);
+    });
+
     it('shows every known server when the reply ran no SQL tools', () => {
         const plan = planSqlBlock('SELECT 1', reply(), servers);
         expect(plan).toMatchObject({ kind: 'select' });

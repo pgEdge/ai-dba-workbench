@@ -148,10 +148,11 @@ reply itself:
 
 - When the block starts with a `-- connection_id: N`
   comment that names a server the reply's tool calls
-  used, or the reply's tool calls named no server, the
-  query runs on that connection, using the database that
-  the reply's tool calls used on it or the connection's
-  default database.
+  used, and no tool call ran on the selected connection
+  without naming a server, or when the reply's tool calls
+  named no server at all, the query runs on that
+  connection, using the database that the reply's tool
+  calls used on it or the connection's default database.
 - Otherwise, when every SQL tool call in the reply ran on
   the same server and database, and you can see that
   server, the query runs there.

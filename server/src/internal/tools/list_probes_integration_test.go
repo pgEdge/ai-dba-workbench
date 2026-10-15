@@ -207,14 +207,16 @@ func TestListProbes_OmitsUnreadableTables(t *testing.T) {
 	ctx := context.Background()
 	// Roles are cluster-wide, so the server gives this one a unique name
 	// in case another test run shares the instance, and records it in a
-	// table in this test's database. The SQL below reads the name from
-	// there and quotes it with %I, so it is never spliced into SQL text.
+	// table in the test-owned metrics schema, which the restricted role
+	// cannot read and so never sees listed. The SQL below reads the name
+	// from there and quotes it with %I, so it is never spliced into SQL
+	// text.
 	if _, err := pool.Exec(ctx, `
-		CREATE TABLE public.list_probes_test_role (name TEXT NOT NULL);
+		CREATE TABLE metrics.list_probes_test_role (name TEXT NOT NULL);
 		DO $$
 		DECLARE r text := 'list_probes_reader_' || md5(random()::text);
 		BEGIN
-			INSERT INTO public.list_probes_test_role VALUES (r);
+			INSERT INTO metrics.list_probes_test_role VALUES (r);
 			EXECUTE format('CREATE ROLE %I NOLOGIN', r);
 			-- A non-superuser with CREATEROLE cannot SET ROLE to a role it
 			-- creates on PostgreSQL 16 and later without this grant.
@@ -233,13 +235,13 @@ func TestListProbes_OmitsUnreadableTables(t *testing.T) {
 			DO $$
 			DECLARE r text;
 			BEGIN
-				SELECT name INTO r FROM public.list_probes_test_role;
+				SELECT name INTO r FROM metrics.list_probes_test_role;
 				DROP TABLE IF EXISTS metrics.pg_restricted;
 				EXECUTE format('REVOKE ALL ON metrics.pg_connectivity FROM %I', r);
 				EXECUTE format('REVOKE ALL ON SCHEMA metrics FROM %I', r);
 				EXECUTE format('DROP ROLE IF EXISTS %I', r);
 			END $$;
-			DROP TABLE IF EXISTS public.list_probes_test_role;`); err != nil {
+			DROP TABLE IF EXISTS metrics.list_probes_test_role;`); err != nil {
 			t.Logf("failed to drop the restricted role: %v", err)
 		}
 	}()
@@ -248,7 +250,7 @@ func TestListProbes_OmitsUnreadableTables(t *testing.T) {
 	cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
 		// set_config('role', ...) is SET ROLE with a computed name.
 		_, err := conn.Exec(ctx, `SELECT set_config('role',
-			(SELECT name FROM public.list_probes_test_role), false)`)
+			(SELECT name FROM metrics.list_probes_test_role), false)`)
 		return err
 	}
 	restricted, err := pgxpool.NewWithConfig(ctx, cfg)

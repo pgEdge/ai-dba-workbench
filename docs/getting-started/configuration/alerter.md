@@ -305,6 +305,57 @@ The log line names the connection, metric, period type, and
 sample count, which is enough to confirm whether a missing
 alert reflects warmup suppression or a genuinely quiet metric.
 
+#### Tier 1: Per-Metric Floors
+
+The `anomaly.tier1.metric_floors` map sets two floors for each
+metric, so that a value which is unusual for a quiet baseline
+but harmless in absolute terms does not raise an alert. Each
+key is a metric name, and each entry accepts two options:
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `min_value` | float | Value below which the metric is never anomalous; `0` disables |
+| `min_stddev` | float | Minimum z-score divisor in the metric's units; `0` disables |
+
+A value under `min_value` raises no anomaly candidate, and it
+counts as in band when the alerter decides whether to clear an
+open anomaly alert. The `min_stddev` option raises the divisor
+of the z-score to at least the given value, so a small change
+on a baseline that has never moved scores a small z-score; it
+only takes effect whilst it exceeds 5% of the baseline mean,
+the default relative variance floor. When the baseline has no
+spread of its own, the alert severity is capped at `warning`;
+threshold rules remain the way to raise a critical alert on an
+absolute value.
+
+The alerter has built-in floors for its standard metrics, for
+example `min_value: 50` and `min_stddev: 5` for CPU usage
+percent, and `min_value: 10` and `min_stddev: 5` for the
+session count; the
+[anomaly detection guide](../../developer-guide/alerter/anomaly-detection.md#per-metric-floors)
+lists them all. An entry overrides a built-in floor field by
+field, so an entry that sets only `min_value` keeps the
+built-in `min_stddev`. The alerter refuses a negative or
+non-finite value, or an empty metric name, and logs a warning
+at startup and on each reload for an entry naming a metric
+that anomaly detection does not score, such as a mistyped
+name.
+
+In the following example, the `metric_floors` map raises the
+CPU value floor and disables both floors for the session
+count:
+
+```yaml
+anomaly:
+  tier1:
+    metric_floors:
+      pg_sys_cpu_usage_info.processor_time_percent:
+        min_value: 70
+      pg_stat_activity.count:
+        min_value: 0
+        min_stddev: 0
+```
+
 #### Tier 2: Embedding Similarity
 
 The `anomaly.tier2` section configures pgvector-based

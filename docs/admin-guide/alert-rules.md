@@ -444,6 +444,10 @@ already counted neither advances nor restarts the count.
 The default of 3 therefore clears an alert on the third
 in-band sample, about ten minutes after the first for a
 probe that collects every 300 seconds.
+A value under the metric's `min_value` floor in
+`anomaly.tier1.metric_floors` counts as inside the band,
+because the detector never treats such a value as
+anomalous.
 
 Whilst the value stays outside the band, the alerter
 updates the alert's metric value, anomaly score and last

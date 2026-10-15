@@ -178,6 +178,11 @@ type Tier1Config struct {
 	// passes that re-score a sample already counted do not add to
 	// it. Must be at least 1. See GitHub issue #611.
 	ClearCount int `yaml:"clear_count"`
+
+	// MetricFloors overrides the built-in per-metric floors, keyed by
+	// metric name; read the resolved floors with MetricFloor. See
+	// metric_floors.go and GitHub issue #617.
+	MetricFloors map[string]MetricFloorConfig `yaml:"metric_floors"`
 }
 
 // DefaultAnomalyClearCount is the default for anomaly.tier1.clear_count:
@@ -671,6 +676,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Anomaly.Tier1.ClearCount < 1 {
 		return fmt.Errorf("anomaly.tier1.clear_count must be at least 1")
+	}
+	if err := validateMetricFloors(c.Anomaly.Tier1.MetricFloors); err != nil {
+		return err
 	}
 	if c.Anomaly.ProviderHealth.FailureThreshold < 1 {
 		return fmt.Errorf("anomaly.provider_health.failure_threshold must be at least 1")

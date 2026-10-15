@@ -268,7 +268,11 @@ moved.
   caller chooses without limit, such as the request path, a resource
   id or a non-standard HTTP method, or a client mints a fresh key, and
   so a fresh audit row, per request. Such values belong in the row's
-  bounded `targets` list instead.
+  bounded `targets` list instead. The failure-audit key (`failureKey`
+  in `internal/auth/audit_failures.go`, which coalesces failed changes
+  by authenticated callers) and `denialKey` both bound the client
+  address through `capAuditIP` (`maxAuditIPLen`, 64 bytes, cut on a
+  UTF-8 boundary); never copy `Actor.IP` into a key without it.
 - A blanket superuser gate is the exception, because it names nothing
   to intersect against: `RBACChecker.IsSuperuser` returns false for a
   token whose admin scope has been narrowed, which is what

@@ -145,7 +145,22 @@ type denialState struct {
 	lastSeen        time.Time
 	suppressed      denialWindow
 	closedFirstSeen time.Time
-	prev, next      *denialState
+	evictionLinks[denialState]
+}
+
+// links gives the eviction list access to the state's neighbors.
+//
+//nolint:unused // called through the evictionEntry constraint
+func (s *denialState) links() *evictionLinks[denialState] {
+	return &s.evictionLinks
+}
+
+// windowStart is the time the state's current window opened, by which
+// the eviction list is ordered.
+//
+//nolint:unused // called through the evictionEntry constraint
+func (s *denialState) windowStart() time.Time {
+	return s.firstSeen
 }
 
 // denialSummary carries the repeats an evicted entry never got to
@@ -191,8 +206,7 @@ func (d denialSummary) event() *AuditEvent {
 type denialCoalescer struct {
 	mu      sync.Mutex
 	entries map[denialKey]*denialState
-	oldest  *denialState
-	newest  *denialState
+	evictionList[denialState, *denialState]
 }
 
 // admit decides whether a denial is written or merely counted. It
@@ -246,52 +260,6 @@ func (c *denialCoalescer) admit(key denialKey, target string,
 	return record, closed, c.evict(key, now)
 }
 
-// pushNewest appends state to the newest end of the eviction list. The
-// caller must hold c.mu.
-func (c *denialCoalescer) pushNewest(state *denialState) {
-	state.prev = c.newest
-	state.next = nil
-	if c.newest != nil {
-		c.newest.next = state
-	} else {
-		c.oldest = state
-	}
-	c.newest = state
-}
-
-// insertBefore links state into the eviction list just ahead of next,
-// or at the newest end when next is nil. The caller must hold c.mu.
-func (c *denialCoalescer) insertBefore(state, next *denialState) {
-	if next == nil {
-		c.pushNewest(state)
-		return
-	}
-	state.next = next
-	state.prev = next.prev
-	if next.prev != nil {
-		next.prev.next = state
-	} else {
-		c.oldest = state
-	}
-	next.prev = state
-}
-
-// unlink removes state from the eviction list. The caller must hold
-// c.mu.
-func (c *denialCoalescer) unlink(state *denialState) {
-	if state.prev != nil {
-		state.prev.next = state.next
-	} else {
-		c.oldest = state.next
-	}
-	if state.next != nil {
-		state.next.prev = state.prev
-	} else {
-		c.newest = state.prev
-	}
-	state.prev, state.next = nil, nil
-}
-
 // reopen undoes the window that admit opened for key when the denial's
 // own row could not be written, so that the next identical denial is
 // recorded rather than suppressed behind a row that never reached the
@@ -315,12 +283,7 @@ func (c *denialCoalescer) reopen(key denialKey, closed denialWindow) {
 	}
 	state.firstSeen = state.closedFirstSeen
 	state.suppressed = closed
-
-	next := c.oldest
-	for next != nil && !next.firstSeen.After(state.firstSeen) {
-		next = next.next
-	}
-	c.insertBefore(state, next)
+	c.insertOrdered(state)
 }
 
 // drop deletes one entry, appending a summary to expired if the entry

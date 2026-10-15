@@ -65,6 +65,14 @@ func TestCapAuditErrorKeepsRunesWhole(t *testing.T) {
 	}
 }
 
+// checkFailureList fails the test unless the failure eviction list
+// holds every entry of the map exactly once, in firstSeen order.
+func checkFailureList(t *testing.T, c *failureCoalescer) {
+	t.Helper()
+	checkEvictionList(t, &c.evictionList, c.entries,
+		func(s *failureState) failureKey { return s.key })
+}
+
 func failureKeyFor(target string) failureKey {
 	return failureKeyOf(testActor(), "user.create", "user", nil, target,
 		"user already exists")
@@ -169,7 +177,8 @@ func TestFailureCoalescerCapsMapSize(t *testing.T) {
 	}
 
 	last := failureKeyFor("newest")
-	_, _, expired := c.admit(last, start.Add(time.Second))
+	_, _, expired := c.admit(last,
+		start.Add(maxFailureKeys*time.Millisecond))
 	if len(c.entries) != maxFailureKeys {
 		t.Errorf("expected %d entries, got %d", maxFailureKeys, len(c.entries))
 	}
@@ -182,6 +191,121 @@ func TestFailureCoalescerCapsMapSize(t *testing.T) {
 	if len(expired) != 1 || expired[0].suppressed != 1 {
 		t.Errorf("expected one summary for the evicted entry, got %+v", expired)
 	}
+	checkFailureList(t, &c)
+}
+
+// TestFailureCoalescerEvictionStopsAtOpenWindow checks that eviction
+// walks from the oldest end only as far as it drops, leaving every
+// entry whose window is still open, and drops several closed entries,
+// oldest first, in one pass.
+func TestFailureCoalescerEvictionStopsAtOpenWindow(t *testing.T) {
+	var c failureCoalescer
+	start := time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)
+	first := failureKeyFor("first")
+	second := failureKeyFor("second")
+	open := failureKeyFor("open")
+
+	c.admit(first, start)
+	c.admit(first, start.Add(time.Second))
+	c.admit(second, start.Add(2*time.Second))
+	c.admit(second, start.Add(3*time.Second))
+	c.admit(open, start.Add(30*time.Second))
+
+	_, _, expired := c.admit(failureKeyFor("new"),
+		start.Add(failureCoalesceWindow+2*time.Second))
+	if len(expired) != 2 || expired[0].key != first ||
+		expired[1].key != second {
+		t.Fatalf("expired = %+v, want first then second", expired)
+	}
+	if _, ok := c.entries[open]; !ok || len(c.entries) != 2 {
+		t.Errorf("expected the open window and the new key to remain, "+
+			"got %d entries", len(c.entries))
+	}
+	if c.oldest.key != open || c.newest.key != failureKeyFor("new") {
+		t.Error("expected the open window oldest and the new key newest")
+	}
+	checkFailureList(t, &c)
+}
+
+// TestFailureCoalescerReopenedWindowMovesToNewest checks that a key
+// whose window closes and reopens moves to the newest end of the list,
+// so that it is not evicted ahead of entries opened after its first
+// window.
+func TestFailureCoalescerReopenedWindowMovesToNewest(t *testing.T) {
+	var c failureCoalescer
+	start := time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)
+	busy := failureKeyFor("busy")
+	other := failureKeyFor("other")
+	late := failureKeyFor("late")
+
+	c.admit(busy, start)
+	c.admit(other, start.Add(30*time.Second))
+	c.admit(busy, start.Add(failureCoalesceWindow))
+
+	if c.oldest.key != other || c.newest.key != busy {
+		t.Fatal("expected the reopened window at the newest end")
+	}
+	checkFailureList(t, &c)
+
+	// Put back the window that the closing failure closed, as a write
+	// failure would: it returns to its place ahead of late, which opened
+	// after it.
+	c.admit(busy, start.Add(failureCoalesceWindow+time.Second))
+	c.admit(late, start.Add(90*time.Second))
+	_, repeats, _ := c.admit(busy, start.Add(2*failureCoalesceWindow))
+	if repeats != 2 {
+		t.Fatalf("expected the closing failure to report 2, got %d", repeats)
+	}
+	c.reopen(busy, repeats)
+	if c.oldest.key != busy || c.newest.key != late {
+		t.Error("expected the reopened window back ahead of late")
+	}
+	checkFailureList(t, &c)
+}
+
+// TestFailureCoalescerReopenWithoutRepeatsDrops checks that undoing a
+// window that closed nothing drops the entry from both the map and the
+// eviction list, and that reopening an unknown key does nothing.
+func TestFailureCoalescerReopenWithoutRepeatsDrops(t *testing.T) {
+	var c failureCoalescer
+	start := time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)
+	key := failureKeyFor("bob")
+
+	c.admit(failureKeyFor("carol"), start)
+	c.admit(key, start.Add(time.Second))
+	c.reopen(key, 0)
+	if _, ok := c.entries[key]; ok {
+		t.Error("expected the entry dropped")
+	}
+	c.reopen(failureKeyFor("nobody"), 0)
+	if len(c.entries) != 1 {
+		t.Errorf("expected one entry to remain, got %d", len(c.entries))
+	}
+	checkFailureList(t, &c)
+}
+
+// TestFailureCoalescerRestoreKeepsOrder checks that summaries put back
+// after a failed write land in their place on the eviction list, among
+// the entries that stayed, whatever order they are passed in.
+func TestFailureCoalescerRestoreKeepsOrder(t *testing.T) {
+	var c failureCoalescer
+	start := time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)
+
+	c.admit(failureKeyFor("middle"), start.Add(2*time.Second))
+	c.restore([]failureSummary{
+		{key: failureKeyFor("last"), suppressed: 1,
+			firstSeen: start.Add(3 * time.Second)},
+		{key: failureKeyFor("first"), suppressed: 1, firstSeen: start},
+	})
+
+	var order []string
+	for state := c.oldest; state != nil; state = state.next {
+		order = append(order, state.key.targetName)
+	}
+	if strings.Join(order, ",") != "first,middle,last" {
+		t.Errorf("list order = %v, want first, middle, last", order)
+	}
+	checkFailureList(t, &c)
 }
 
 func TestFailureKeyEventRestoresAttribution(t *testing.T) {
@@ -231,6 +355,57 @@ func TestFailureKeyBoundsAddress(t *testing.T) {
 	if key := failureKeyOf(Actor{IP: v6}, "user.delete", "user", nil, "",
 		"boom"); key.actorIP != v6 {
 		t.Errorf("Expected a real address to be kept, got %q", key.actorIP)
+	}
+}
+
+// TestCapAuditIP checks the cap at and around its limit, and that it
+// never splits a multi-byte UTF-8 character.
+func TestCapAuditIP(t *testing.T) {
+	exact := strings.Repeat("a", maxAuditIPLen)
+	if got := capAuditIP(exact); got != exact {
+		t.Errorf("Expected a %d-byte address kept whole, got %d bytes",
+			maxAuditIPLen, len(got))
+	}
+	if got := capAuditIP(exact + "b"); got != exact {
+		t.Errorf("Expected one byte over the cap cut to %d bytes, got %d",
+			maxAuditIPLen, len(got))
+	}
+
+	// Each pad puts a different byte of the three-byte "€" across the
+	// cap.
+	for pad := maxAuditIPLen - 3; pad < maxAuditIPLen; pad++ {
+		got := capAuditIP(strings.Repeat("a", pad) + "€€")
+		if len(got) > maxAuditIPLen {
+			t.Errorf("pad %d: capped address is %d bytes", pad, len(got))
+		}
+		if !utf8.ValidString(got) {
+			t.Errorf("pad %d: capped address is not valid UTF-8: %q",
+				pad, got)
+		}
+	}
+}
+
+// TestRecordFailureStoresCappedAddress drives a failure with a long
+// client address through the store and checks that the row written
+// carries the capped address.
+func TestRecordFailureStoresCappedAddress(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAudit(t)
+	defer cleanup()
+
+	actor := testActor()
+	actor.IP = strings.Repeat("a", 4096)
+	store.mu.Lock()
+	store.recordFailure(actor, "user.create", "user", nil, "bob",
+		errors.New("user already exists"))
+	store.mu.Unlock()
+
+	ev := lastAuditEvent(t, store)
+	if ev.Action != "user.create" || ev.Outcome != OutcomeFailure {
+		t.Fatalf("expected the failure row, got %s %s", ev.Action, ev.Outcome)
+	}
+	if ev.ActorIP != strings.Repeat("a", maxAuditIPLen) {
+		t.Errorf("Expected the stored address capped at %d bytes, got %d",
+			maxAuditIPLen, len(ev.ActorIP))
 	}
 }
 
@@ -367,15 +542,16 @@ func TestFailureCoalescerDrain(t *testing.T) {
 	quiet := failureKeyFor("quiet")
 	open := failureKeyFor("open")
 
-	// Admit late before early so that map order cannot pass for the
-	// sort.
+	// Repeats of early arrive after late opens, so the order of the
+	// summaries is the order the windows opened, not of the last repeat.
+	c.admit(early, start)
+	c.admit(quiet, start)
 	c.admit(late, start.Add(time.Second))
 	c.admit(late, start.Add(2*time.Second))
-	c.admit(early, start)
 	c.admit(early, start.Add(3*time.Second))
-	c.admit(quiet, start)
 	c.admit(open, start.Add(30*time.Second))
 	c.admit(open, start.Add(31*time.Second))
+	checkFailureList(t, &c)
 
 	swept := c.drain(start.Add(failureCoalesceWindow+2*time.Second), false)
 	if len(swept) != 2 || swept[0].key != early || swept[1].key != late {
@@ -385,6 +561,7 @@ func TestFailureCoalescerDrain(t *testing.T) {
 		t.Fatalf("expected only the open window to remain, got %d",
 			len(c.entries))
 	}
+	checkFailureList(t, &c)
 
 	final := c.drain(start, true)
 	if len(final) != 1 || final[0].key != open || final[0].suppressed != 1 {
@@ -420,12 +597,15 @@ func TestFailureSummaryEventCarriesWindow(t *testing.T) {
 	}
 }
 
-// ageEntry moves one tracked window's start back by d.
+// ageEntry moves one tracked window's start back by d, and moves the
+// entry to its new place on the eviction list.
 func ageEntry(s *AuthStore, key failureKey, d time.Duration) {
 	s.failures.mu.Lock()
 	defer s.failures.mu.Unlock()
 	state := s.failures.entries[key]
+	s.failures.unlink(state)
 	state.firstSeen = state.firstSeen.Add(-d)
+	s.failures.insertOrdered(state)
 }
 
 // repeatFailure records the same failure n times through the store.
@@ -562,8 +742,10 @@ func TestSweepAuditFailuresRestoresOnWriteError(t *testing.T) {
 		t.Fatalf("expected bob restored with 2 repeats, got %+v", state)
 	}
 
-	fresh := &failureState{firstSeen: time.Now()}
+	fresh := &failureState{key: failureKeyFor("bob"), firstSeen: time.Now()}
+	store.failures.unlink(state)
 	store.failures.entries[failureKeyFor("bob")] = fresh
+	store.failures.pushNewest(fresh)
 	store.failures.restore([]failureSummary{{
 		key:        failureKeyFor("bob"),
 		suppressed: 5,
@@ -571,6 +753,7 @@ func TestSweepAuditFailuresRestoresOnWriteError(t *testing.T) {
 	if store.failures.entries[failureKeyFor("bob")] != fresh {
 		t.Error("restore replaced an entry re-created since the drain")
 	}
+	checkFailureList(t, &store.failures)
 
 	var empty failureCoalescer
 	empty.restore([]failureSummary{{key: failureKeyFor("carol"),
@@ -775,6 +958,7 @@ func TestCoalesceFailureRestoresAtCap(t *testing.T) {
 	if _, ok := store.failures.entries[failureKeyFor("newest")]; ok {
 		t.Error("the unwritten failure kept its window")
 	}
+	checkFailureList(t, &store.failures)
 }
 
 // TestFailureCoalescerReopen checks that a failure whose row carried

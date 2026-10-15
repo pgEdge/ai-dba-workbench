@@ -179,8 +179,10 @@ moved.
   the inner subquery, where the caller's filters cannot see the real
   value. Free-text columns (`pg_stat_activity.query`,
   `pg_stat_statements.query`, Spock exception and resolution
-  statements and row images, `connections.connection_error`) pass
-  through `redactedText`, a chain of `regexp_replace` calls built from
+  statements and row images, `connections.connection_error`,
+  `alerts.description` and `alerts.ai_analysis`) pass, in
+  `query_datastore` only, through `redactedText`: `left(value, 65536)`
+  under a chain of `regexp_replace` calls built from
   `textRedactions` (URI userinfo, JSON keys, ALTER SYSTEM SET of a
   `credentialSettings` entry, quoted name and value as in `set_config`,
   name=value, and name followed by a string constant, with secret names
@@ -191,10 +193,18 @@ moved.
   one in an escape string (`E'password=\'x\''`) by
   `sqlBackslashQuoted`. Row images are masked as JSON text, where every
   backslash is doubled and a line break is `\n`, so each escape
-  backslash (`escapeBackslash`) may be doubled and `sqlSeparator`
-  accepts `\n`; `TestTextRedactionsInJSON` runs every case in that
-  form. `PASSWORD` may be followed by white space, a `/* */` or `--`
-  comment (`sqlSeparator`, not nested) or nothing, and may start a
+  backslash (`escapeBackslash`) may be doubled and `blank` accepts
+  `\n`; `TestTextRedactionsInJSON` runs every case in that form and
+  requires the secret to be gone even for JSON inputs. White space is
+  the ASCII class `ws`, never `[[:space:]]`, so the engines agree. A
+  name may be followed by white space and at most two comments
+  (`sep`): a block comment must be closed and is bounded to 32 body
+  units, so a run of `/*` cannot make each match scan to the end of
+  the text (the 64 Ki cap bounds the rest; about 1 s worst case in
+  PostgreSQL, under the tools' 10 s `statement_timeout`). An unquoted
+  value after `=` is masked whatever it starts with (`--x`, `/*x*/x`);
+  comments after `=` are allowed only before a quoted value. `PASSWORD`
+  may be followed by `sep` or nothing, and may start a
   quoted string (`'PASSWORD ''x'''` in a concatenated EXECUTE) when a
   separator follows it; an unquoted `$n` value is kept only when white
   space, a comma, a bracket, a semicolon, a double quote or a
@@ -207,7 +217,9 @@ moved.
   dollar-quoted, truncated), keeps only capture group 1, and is applied
   through E'' literals so `standard_conforming_strings` cannot change
   it; add every bypass input to `textRedactionCases`, which run in both
-  Go and PostgreSQL, and keep the 1 MB adversarial test fast
+  Go and PostgreSQL, plain and as JSON, record forms left unmasked in
+  `textRedactionKnownLimits`, and keep the 1 MiB adversarial inputs
+  fast in both engines and, in PostgreSQL, in both forms
   (`datastore_text_redaction_test.go`). A dollar-quoted value that
   itself contains a `$name$` tag leaks its tail, since the patterns
   cannot use back-references. Row images retyped to text keep their

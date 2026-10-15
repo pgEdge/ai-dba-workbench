@@ -142,8 +142,8 @@ func TestQueryDatastoreRedactsFreeTextIntegration(t *testing.T) {
 			text, isErr = call(t, f.tool(), caller, map[string]any{
 				"source": "alerts", "columns": []any{"id", "description", "ai_analysis"},
 			})
-			if isErr || strings.Contains(text, "example-secret") || !strings.Contains(text, "password="+redactedValue) ||
-				!strings.Contains(text, "PASSWORD '"+redactedValue+"'") {
+			if isErr || strings.Contains(text, "example-secret") || !strings.Contains(text, "password="+metrics.RedactedValue) ||
+				!strings.Contains(text, "PASSWORD '"+metrics.RedactedValue+"'") {
 				t.Errorf("alert description and ai_analysis should be masked: (error=%v) %s", isErr, text)
 			}
 		})

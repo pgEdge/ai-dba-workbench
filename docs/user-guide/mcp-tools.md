@@ -157,8 +157,9 @@ cannot make masking slow; a longer value is returned cut short. The replicated
 row images in `spock_exception_log` are returned as text rather than JSON,
 because masking can leave them invalid as JSON.
 
-This masking applies to `query_datastore`; other tools and the web client may
-show the same text as it is stored.
+This masking applies to `query_datastore` and to the metrics routes of the
+REST API listed in the API reference; other tools and the web client may show
+the same text as it is stored.
 
 !!! warning
 

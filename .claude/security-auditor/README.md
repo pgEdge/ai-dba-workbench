@@ -228,8 +228,10 @@ moved.
   the inner subquery, where the caller's filters cannot see the real
   value. Free-text columns (`pg_stat_activity.query`,
   `pg_stat_statements.query`, Spock exception and resolution
-  statements and row images, `connections.connection_error`) pass
-  through `RedactedText`, a chain of `regexp_replace` calls built from
+  statements and row images and, in `query_datastore` only,
+  `connections.connection_error`, `alerts.description` and
+  `alerts.ai_analysis`) pass through `RedactedText`:
+  `left(value, 65536)` under a chain of `regexp_replace` calls built from
   `textRedactions` (URI userinfo, JSON keys, ALTER SYSTEM SET of a
   `credentialSettings` entry, quoted name and value as in `set_config`,
   name=value, and name followed by a string constant, with secret names
@@ -264,7 +266,9 @@ moved.
   dollar-quoted, truncated), keeps only capture group 1, and is applied
   through E'' literals so `standard_conforming_strings` cannot change
   it; add every bypass input to `textRedactionCases`, which run in both
-  Go and PostgreSQL, and keep the 1 MB adversarial test fast
+  Go and PostgreSQL, plain and as JSON, record forms left unmasked in
+  `textRedactionKnownLimits`, and keep the 1 MiB adversarial inputs
+  fast in both engines and, in PostgreSQL, in both forms
   (`internal/metrics/redaction_test.go`). A dollar-quoted value that
   itself contains a `$name$` tag leaks its tail, since the patterns
   cannot use back-references. Row images retyped to text keep their
@@ -283,11 +287,16 @@ moved.
   on the raw values, and `get_timeline_events` lists no details).
   `datastore_masking_routes_test.go` runs the masked probes through all
   of them, so add a new route there. `TestCredentialTableReadersAreReviewed`
-  in `internal/metrics/source_guard_test.go` fails when server code reads
-  `pg_settings`, `pg_hba_file_rules`, `pg_stat_activity`,
-  `pg_stat_statements`, `spock_exception_log`, `spock_resolutions` or
-  `pg_stat_replication` without a masking helper or a reviewed
-  allow-list entry. Scope predicates must be applied before
+  in `internal/metrics/source_guard_test.go` checks each SQL string
+  literal: one naming `pg_settings`, `pg_hba_file_rules`,
+  `pg_stat_activity`, `pg_stat_statements`, `spock_exception_log`,
+  `spock_resolutions` or `pg_stat_replication` fails unless the
+  function (or package-level constant) holding it calls a masking
+  helper or is a reviewed allow-list entry, and one naming a probe
+  table chosen at run time (`metrics.%s`, `"metrics." + ...`) fails
+  unless its function calls `ReturnableColumns` or `MaskedProbeColumn`
+  or is reviewed. A function that masks one value and returns another
+  raw still passes, so review what each helper-using function returns. Scope predicates must be applied before
   any caller
   predicate can be evaluated: the builder puts the scope and time
   window in an inner `OFFSET 0` subquery the planner cannot merge, and

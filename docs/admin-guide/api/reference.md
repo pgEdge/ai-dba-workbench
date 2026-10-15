@@ -532,8 +532,8 @@ than as the same chart a one-hour request produces.
 ### Masked Credentials
 
 The `/api/v1/metrics/latest` endpoint and the latest-rows mode
-of `/api/v1/metrics/query` mask credentials in the same way as
-the `query_datastore` MCP tool:
+of `/api/v1/metrics/query` mask credentials, on a best-effort
+basis, in the same way as the `query_datastore` MCP tool:
 
 - The value of a setting that can hold a credential, such as
   `primary_conninfo`, is returned as `********`.
@@ -541,22 +541,23 @@ the `query_datastore` MCP tool:
   `ldapbindpasswd`, have their values masked, and a non-empty
   `pg_hba_file_rules.error` is returned as `********`, since it
   can quote an option.
-- Known password forms in query text, Spock DDL statements,
-  error messages and row images are masked; row images are
+- Passwords in known forms in query text, Spock DDL
+  statements, error messages and row images are masked; each
+  value is first cut to 65,536 characters, and row images are
   returned as text, since masking can leave them invalid as
   JSON.
 - A column whose name marks it as a secret is never returned
   and cannot be named in `order_by`.
 
-The statement text returned by `/api/v1/metrics/top-queries` has
-known password forms masked in the same way. Configuration
+The statement text returned by `/api/v1/metrics/top-queries` is
+cut and masked in the same way. Configuration
 change events from `/api/v1/timeline/events` still report a
 change to a setting that can hold a credential, but show its old
 and new values as `********`.
 
 The masking cannot recognise every form a password can take,
 so query text and replicated row data may still contain
-sensitive values.
+sensitive values, including passwords in other forms.
 
 ## Error Responses
 

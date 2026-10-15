@@ -1568,7 +1568,7 @@ func buildSchemas() map[string]*OpenAPISchema {
 				"database_name":        {Type: "string", Description: "Database name where the query was executed, resolved from pg_stat_statements.dbid; when the dbid cannot be resolved, one of the databases the statistics were collected through"},
 				"sample_database_name": {Type: "string", Description: "Database the statistics were collected through, which is the database_name of the query's pg_stat_statements metric rows; pass this, not database_name, to /api/v1/metrics/query for the query's time series"},
 				"username":             {Type: "string", Description: "Database role that ran the query; empty when the role could not be resolved"},
-				"query":                {Type: "string", Description: "Query text, with known password forms masked as ********"},
+				"query":                {Type: "string", Description: "Query text, cut to 65,536 characters, with passwords in known forms masked as ******** on a best-effort basis; a password in another form is returned as stored"},
 				"calls":                {Type: "integer", Format: "int64", Description: "Total call count"},
 				"total_exec_time":      {Type: "number", Description: "Total execution time in ms"},
 				"mean_exec_time":       {Type: "number", Description: "Mean execution time in ms"},
@@ -3720,7 +3720,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/metrics/query": {
 			Get: &OpenAPIOperation{
 				Summary:     "Query metrics",
-				Description: "Queries time-series metrics for one or more connections. When limit or order_by is given, the latest rows are returned with credentials masked as for /metrics/latest",
+				Description: "Queries time-series metrics for one or more connections. When limit or order_by is given, the latest rows are returned with credentials masked, on a best-effort basis, as for /metrics/latest",
 				OperationID: "queryMetrics",
 				Tags:        []string{"Metrics"},
 				Security:    bearerAuth,
@@ -3851,7 +3851,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/metrics/top-queries": {
 			Get: &OpenAPIOperation{
 				Summary:     "Get top queries",
-				Description: "Returns the top queries by execution time, calls, or other metrics over the requested time range. The counters are cumulative in pg_stat_statements, so calls, rows, total_exec_time and the shared block counts are the summed differences between consecutive samples in the window, and mean_exec_time is derived from those sums; min_exec_time and max_exec_time remain lifetime values taken from the latest sample in the window. A statement with no executions in the window is not reported. Known password forms in the query text are masked as ********",
+				Description: "Returns the top queries by execution time, calls, or other metrics over the requested time range. The counters are cumulative in pg_stat_statements, so calls, rows, total_exec_time and the shared block counts are the summed differences between consecutive samples in the window, and mean_exec_time is derived from those sums; min_exec_time and max_exec_time remain lifetime values taken from the latest sample in the window. A statement with no executions in the window is not reported. The query text is cut to 65,536 characters, and passwords in known forms in it are masked as ******** on a best-effort basis; a password in another form is returned as stored",
 				OperationID: "getTopQueries",
 				Tags:        []string{"Metrics"},
 				Security:    bearerAuth,
@@ -3942,7 +3942,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/metrics/latest": {
 			Get: &OpenAPIOperation{
 				Summary:     "Get latest probe snapshot",
-				Description: "Returns the most recent collected row for each unique entity in a probe table, with optional filtering, sorting, and pagination. Credentials are masked: credential settings, secret hba options, non-empty hba errors and known password forms in free text are replaced with ********, row images are returned as text, and secret-named columns are omitted",
+				Description: "Returns the most recent collected row for each unique entity in a probe table, with optional filtering, sorting, and pagination. Credentials are masked on a best-effort basis: credential settings, secret hba options, non-empty hba errors and passwords in known forms in free text are replaced with ********, free text is cut to 65,536 characters, row images are returned as text, and secret-named columns are omitted. A password in another form is returned as stored",
 				OperationID: "getLatestSnapshot",
 				Tags:        []string{"Metrics"},
 				Security:    bearerAuth,

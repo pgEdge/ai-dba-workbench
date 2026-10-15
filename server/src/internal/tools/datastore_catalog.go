@@ -131,6 +131,10 @@ type datastoreColumn struct {
 	// pg_hba_file_rules.options; the value of each option whose name
 	// looks like it carries a credential is masked (maskedOptions).
 	MaskOptions bool
+	// MaskWhole marks a column, such as pg_hba_file_rules.error, that
+	// can quote a credential in a form no pattern catches; a
+	// non-empty value is replaced by redactedValue.
+	MaskWhole bool
 	// RedactText marks a free-text column, such as query text or a
 	// replicated row image, whose text has the passwords that
 	// textRedactions match masked (redactedText).
@@ -644,6 +648,20 @@ var secretColumnFragments = []string{
 var secretNamePatterns = append(slices.Clone(secretColumnFragments),
 	"pass$", "key$", "api_?key", "access_key", "salt")
 
+// textSecretNamePatterns are the names whose value is masked in free
+// text: the secretColumnFragments, which are specific enough not to
+// catch ordinary identifiers such as sort_key or bypass, plus the API
+// and access key names.
+var textSecretNamePatterns = append(slices.Clone(secretColumnFragments), "api_?key", "access_key")
+
+// nonCredentialSettings match secretNamePatterns but hold no secret, so
+// pg_settings shows their values.
+var nonCredentialSettings = []string{
+	"password_encryption",
+	"md5_password_warnings",
+	"ssl_passphrase_command_supports_reload",
+}
+
 // isSecretColumnName reports whether a column name looks like it holds
 // a credential or other secret.
 func isSecretColumnName(name string) bool {
@@ -663,20 +681,27 @@ func isSecretColumnName(name string) bool {
 // password), OptionColumns are text[] columns of name=value options
 // (pg_hba.conf's ldapbindpasswd and radiussecrets hold one in clear
 // text), and TextColumns hold free text, such as SQL statements and
-// replicated row images, that can quote a password. Note is added to
-// the probe's description.
+// replicated row images, that can quote a password. WholeColumns can
+// quote a credential in a form no pattern catches, as
+// pg_hba_file_rules.error quotes an option it cannot parse, so a
+// non-empty value is masked entirely. Note is added to the probe's
+// description.
 var metricRedactions = map[string]struct {
 	KeyColumn     string
 	Columns       []string
 	OptionColumns []string
 	TextColumns   []string
+	WholeColumns  []string
 	Note          string
 }{
 	"pg_settings": {
 		KeyColumn: "name", Columns: []string{"setting", "reset_val", "boot_val"},
 		Note: redactionNote,
 	},
-	"pg_hba_file_rules":  {OptionColumns: []string{"options"}, Note: optionsRedactionNote},
+	"pg_hba_file_rules": {
+		OptionColumns: []string{"options"}, WholeColumns: []string{"error"},
+		Note: optionsRedactionNote,
+	},
 	"pg_stat_activity":   {TextColumns: []string{"query"}, Note: textRedactionNote},
 	"pg_stat_statements": {TextColumns: []string{"query"}, Note: textRedactionNote},
 	"spock_exception_log": {
@@ -713,7 +738,8 @@ const (
 	redactionNote = "Values of settings that can hold a credential, such as primary_conninfo, are shown as " +
 		redactedValue + "."
 	optionsRedactionNote = "Values of options that can hold a credential, such as ldapbindpasswd and " +
-		"radiussecrets, are shown as " + redactedValue + "."
+		"radiussecrets, are shown as " + redactedValue + ", and so is a non-empty error, which can quote an " +
+		"option."
 	textRedactionNote = "Passwords in known forms in SQL text and row data, such as PASSWORD '...', " +
 		"password=... in a connection string and the value of a JSON key naming a password or secret, " +
 		"are shown as " + redactedValue + "; other sensitive text, including passwords in other forms, " +
@@ -734,20 +760,11 @@ type textRedaction struct {
 }
 
 // secretKeyPattern returns a regular expression with no capturing
-// group that matches a name holding a secretNamePatterns entry, such as
-// password, AWS_SECRET_ACCESS_KEY or app.api_key: lead and trail are
-// what may come before and after the entry, and an entry anchored with
-// $ must end the name.
+// group that matches a name holding a textSecretNamePatterns entry,
+// such as password, AWS_SECRET_ACCESS_KEY or app.api_key: lead and
+// trail are what may come before and after the entry.
 func secretKeyPattern(lead, trail string) string {
-	alts := make([]string, len(secretNamePatterns))
-	for i, p := range secretNamePatterns {
-		if name, anchored := strings.CutSuffix(p, "$"); anchored {
-			alts[i] = name
-		} else {
-			alts[i] = p + trail
-		}
-	}
-	return lead + "(?:" + strings.Join(alts, "|") + ")"
+	return lead + "(?:" + strings.Join(textSecretNamePatterns, "|") + ")" + trail
 }
 
 // Pieces of the textRedactions patterns. A quoted value may lack its
@@ -766,6 +783,13 @@ const (
 	// sqlConstant is any SQL string constant: '...', E'...', N'...',
 	// U&'...' or dollar-quoted.
 	sqlConstant = `(?:(?:e|n|u&)?` + sqlQuoted + `|` + sqlDollarQuoted + `)`
+	// sqlNestedQuoted is a quoted value inside a SQL literal, as in
+	// CONNECTION 'password=''secret''', where its quotes are doubled
+	// and an escaped quote is '''' or \''.
+	sqlNestedQuoted = `''(?:''''|\\''|[^'])*(?:'')?`
+	// secretValue is a value that follows a secret name: any SQL string
+	// constant or one nested in another literal.
+	secretValue = `(?:` + sqlConstant + `|` + sqlNestedQuoted + `)`
 	// identChars may surround a secret name, as in app.password or
 	// AWS_SECRET_ACCESS_KEY.
 	identChars = `[a-z0-9_.]*`
@@ -816,7 +840,7 @@ var textRedactions = []textRedaction{
 		// next white space; a $1 parameter is kept.
 		Name: "keyword=value",
 		Pattern: `(` + secretKeyPattern(identChars, identChars) + `"?[[:space:]]*(?:=>?|:=)[[:space:]]*)` +
-			`(?:` + sqlConstant + `|"(?:[^"\\]|\\.)*"?|[^[:space:]$'"][^[:space:]]*)`,
+			`(?:` + secretValue + `|"(?:[^"\\]|\\.)*"?|(?:[^[:space:]$'"]|\$[^0-9[:space:]])[^[:space:]]*)`,
 		Replacement: `\1` + redactedValue,
 	},
 	{
@@ -826,7 +850,7 @@ var textRedactions = []textRedaction{
 		// are kept.
 		Name: "PASSWORD 'value'",
 		Pattern: `(` + secretKeyPattern(identChars, identChars) + `"?[[:space:]]+(?:to[[:space:]]+)?)` +
-			sqlConstant,
+			secretValue,
 		Replacement: `\1'` + redactedValue + `'`,
 	},
 }
@@ -862,6 +886,7 @@ func redactMetricColumns(name string, columns []datastoreColumn) []datastoreColu
 	out := make([]datastoreColumn, 0, len(columns))
 	for _, c := range columns {
 		c.MaskOptions = slices.Contains(rule.OptionColumns, c.Name)
+		c.MaskWhole = slices.Contains(rule.WholeColumns, c.Name)
 		if slices.Contains(rule.TextColumns, c.Name) {
 			// A row image is masked as text and returned as text, since
 			// masking can leave it invalid as JSON.
@@ -893,8 +918,12 @@ func credentialSettingCondition(alias, key string) string {
 	for i, v := range credentialSettings {
 		quoted[i] = "'" + v + "'"
 	}
-	return "(" + lhs + " IN (" + strings.Join(quoted, ", ") + ") OR " +
-		secretNameMatch(lhs) + ")"
+	exempt := make([]string, len(nonCredentialSettings))
+	for i, v := range nonCredentialSettings {
+		exempt[i] = "'" + v + "'"
+	}
+	return "(" + lhs + " IN (" + strings.Join(quoted, ", ") + ") OR (" +
+		secretNameMatch(lhs) + " AND " + lhs + " NOT IN (" + strings.Join(exempt, ", ") + ")))"
 }
 
 // secretNameMatch is true when the lower-cased name lhs matches a

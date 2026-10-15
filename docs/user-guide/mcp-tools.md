@@ -98,10 +98,13 @@ settings that can hold a credential (`primary_conninfo`, the shell command
 settings `ssl_passphrase_command`, `archive_command`,
 `archive_cleanup_command`, `restore_command` and `recovery_end_command`, and
 any setting whose name suggests a password, key, token, connection string or
-other secret) are shown as `********`. In `pg_hba_file_rules`, the value of
-each entry in `options` whose name suggests a secret, such as
-`ldapbindpasswd` and `radiussecrets`, is shown as `********`, so
-`ldapbindpasswd=********` replaces the stored option.
+other secret, apart from `password_encryption`, `md5_password_warnings` and
+`ssl_passphrase_command_supports_reload`, which hold none) are shown as
+`********`. In `pg_hba_file_rules`, the value of each entry in `options` whose
+name suggests a secret, such as `ldapbindpasswd` and `radiussecrets`, is shown
+as `********`, so `ldapbindpasswd=********` replaces the stored option; a
+non-empty `error` is shown as `********` too, because PostgreSQL quotes an
+option it cannot parse, such as an unquoted list of RADIUS secrets, in it.
 
 Some sources return free text: the `query` column of `pg_stat_activity` and
 `pg_stat_statements`, the statements, error messages and replicated row images
@@ -121,13 +124,18 @@ forms in this text, replacing the secret with `********`:
   `CREATE SUBSCRIPTION ... CONNECTION` or `dblink_connect`, and any other
   `name=value` pair whose name suggests a secret, such as `PGPASSWORD=...`,
   `AWS_SECRET_ACCESS_KEY=...`, `ldapbindpasswd=...` and `radiussecrets=...`;
-  an unquoted value is masked up to the next white space.
+  an unquoted value is masked up to the next white space, and a quoted value
+  inside a SQL string, as in `CONNECTION 'password=''...'''`, is recognised.
 - The password in a URI, such as `postgresql://user:secret@host`.
 - The value of a JSON key whose name suggests a secret, such as `password`,
   `token` or `api_key`, in a replicated row image, whatever the value's type.
 
-The names that suggest a secret are the same ones used to mask `pg_settings`
-values. Filters and aggregates see only the masked text. The replicated row images in
+In free text, the names that suggest a secret are those containing
+`password`, `passwd`, `passphrase`, `secret`, `token`, `credential`,
+`private_key`, a connection string or SSL file name, `api_key` or
+`access_key`; the shorter endings used for `pg_settings`, such as `key` and
+`pass`, are left out, so ordinary identifiers such as `sort_key` and `bypass`
+are kept. Filters and aggregates see only the masked text. The replicated row images in
 `spock_exception_log` are returned as text rather than JSON, because masking
 can leave them invalid as JSON.
 

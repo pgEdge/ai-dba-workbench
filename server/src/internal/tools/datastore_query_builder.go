@@ -780,7 +780,9 @@ func scopedFrom(src datastoreSource, inner []string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	redacts := slices.ContainsFunc(src.Columns, func(c datastoreColumn) bool { return c.RedactBy != "" || c.MaskOptions || c.RedactText })
+	redacts := slices.ContainsFunc(src.Columns, func(c datastoreColumn) bool {
+		return c.RedactBy != "" || c.MaskOptions || c.MaskWhole || c.RedactText
+	})
 	if len(inner) == 0 && !redacts {
 		return from, nil
 	}
@@ -804,6 +806,11 @@ func innerSelectList(src datastoreSource) string {
 		value := qualified(datastoreTableAlias, c.Name)
 		if c.MaskOptions {
 			parts[i] = maskedOptions(value) + " AS " + metrics.QuoteIdentifier(c.Name)
+			continue
+		}
+		if c.MaskWhole {
+			parts[i] = "CASE WHEN " + value + " <> '' THEN '" + redactedValue + "' ELSE " + value + " END AS " +
+				metrics.QuoteIdentifier(c.Name)
 			continue
 		}
 		if c.RedactText {

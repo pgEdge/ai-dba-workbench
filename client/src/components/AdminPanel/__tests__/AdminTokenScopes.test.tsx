@@ -45,6 +45,15 @@ vi.mock('../EffectivePermissionsPanel', () => ({
     default: () => null,
 }));
 
+// A superuser may create and change any token, so these tests see the
+// panel without the issue #522 restrictions.
+vi.mock('../../../contexts/useAuth', () => ({
+    useAuth: () => ({
+        user: { username: 'admin', isSuperuser: true },
+        adminPermissions: [],
+    }),
+}));
+
 import AdminTokenScopes from '../AdminTokenScopes';
 
 const theme = createTheme();

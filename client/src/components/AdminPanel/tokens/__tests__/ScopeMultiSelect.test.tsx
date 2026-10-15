@@ -109,6 +109,14 @@ describe('ScopeMultiSelect', () => {
         expect(screen.queryByRole('option', { name: 'Option C' })).not.toBeInTheDocument();
     });
 
+    it('withholds the All option when allowAll is false', async () => {
+        renderComponent({ allowAll: false });
+        await openDropdown();
+
+        expect(screen.queryByRole('option', { name: 'All Options' })).not.toBeInTheDocument();
+        expect(screen.getByRole('option', { name: 'Option A' })).toBeInTheDocument();
+    });
+
     it('is disabled when disabled prop is true', () => {
         renderComponent({ disabled: true });
         const input = screen.getByRole('combobox');

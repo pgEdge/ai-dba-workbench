@@ -61,6 +61,15 @@ export interface EditTokenDialogProps {
     error: string | null;
     /** The token being edited. */
     token: Token | null;
+    /**
+     * The owner of a token the caller may only narrow, because it is
+     * someone else's and the caller is not a superuser; null otherwise.
+     */
+    narrowOnlyOwner?: string | null;
+    /** Whether the "all MCP privileges" option is offered. */
+    allowAllMcp?: boolean;
+    /** Whether the "all admin permissions" option is offered. */
+    allowAllAdmin?: boolean;
 
     // Scope fields
     /** Available connections filtered by owner's privileges. */
@@ -99,6 +108,9 @@ const EditTokenDialog: React.FC<EditTokenDialogProps> = ({
     loading,
     error,
     token,
+    narrowOnlyOwner = null,
+    allowAllMcp = true,
+    allowAllAdmin = true,
     availableConnections,
     scopedConnections,
     onScopedConnectionsChange,
@@ -147,6 +159,13 @@ const EditTokenDialog: React.FC<EditTokenDialogProps> = ({
                         {error}
                     </Alert>
                 )}
+                {narrowOnlyOwner && (
+                    <Alert severity="info" sx={{ mb: 2, borderRadius: 1 }}>
+                        This token belongs to {narrowOnlyOwner}. You can
+                        narrow its scope or delete it, but only its owner
+                        or a superuser can widen or clear its scope.
+                    </Alert>
+                )}
 
                 <Typography
                     variant="subtitle2"
@@ -182,6 +201,7 @@ const EditTokenDialog: React.FC<EditTokenDialogProps> = ({
                             : option.identifier || ''
                     }
                     allOption={ALL_MCP_OPTION}
+                    allowAll={allowAllMcp}
                     disabled={loading}
                     emptyHelperText={NO_MCP_RESTRICTION_TEXT}
                 />
@@ -204,6 +224,7 @@ const EditTokenDialog: React.FC<EditTokenDialogProps> = ({
                             : option.label || option.id || ''
                     }
                     allOption={ALL_ADMIN_OPTION}
+                    allowAll={allowAllAdmin}
                     disabled={loading}
                     emptyHelperText={NO_ADMIN_RESTRICTION_TEXT}
                 />

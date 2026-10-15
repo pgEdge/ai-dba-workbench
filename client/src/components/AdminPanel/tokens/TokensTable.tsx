@@ -55,6 +55,11 @@ export interface TokensTableProps {
     onDelete: (token: Token) => void;
     /** Function to get MCP privilege name by ID. */
     getMcpPrivilegeName: (id: number) => string;
+    /**
+     * Whether the current user may change or delete a superuser's
+     * tokens; only a superuser may, so the actions are hidden otherwise.
+     */
+    canModifySuperuserTokens?: boolean;
 }
 
 /**
@@ -68,6 +73,7 @@ const TokensTable: React.FC<TokensTableProps> = ({
     onEdit,
     onDelete,
     getMcpPrivilegeName,
+    canModifySuperuserTokens = true,
 }) => {
     const theme = useTheme();
     const deleteIconSx = getDeleteIconSx(theme);
@@ -104,6 +110,8 @@ const TokensTable: React.FC<TokensTableProps> = ({
                         tokens.map((token) => {
                             const hasScope = token.scope?.scoped;
                             const isExpanded = expandedToken === token.id;
+                            const locked = !!token.is_superuser &&
+                                !canModifySuperuserTokens;
 
                             return (
                                 <React.Fragment key={token.id}>
@@ -172,27 +180,31 @@ const TokensTable: React.FC<TokensTableProps> = ({
                                             {formatExpiry(token.expires_at)}
                                         </TableCell>
                                         <TableCell align="right">
-                                            <IconButton
-                                                size="small"
-                                                onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    onEdit(token);
-                                                }}
-                                                aria-label="edit token"
-                                            >
-                                                <EditIcon fontSize="small" />
-                                            </IconButton>
-                                            <IconButton
-                                                size="small"
-                                                onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    onDelete(token);
-                                                }}
-                                                sx={deleteIconSx}
-                                                aria-label="delete token"
-                                            >
-                                                <DeleteIcon fontSize="small" />
-                                            </IconButton>
+                                            {!locked && (
+                                                <>
+                                                    <IconButton
+                                                        size="small"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            onEdit(token);
+                                                        }}
+                                                        aria-label="edit token"
+                                                    >
+                                                        <EditIcon fontSize="small" />
+                                                    </IconButton>
+                                                    <IconButton
+                                                        size="small"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            onDelete(token);
+                                                        }}
+                                                        sx={deleteIconSx}
+                                                        aria-label="delete token"
+                                                    >
+                                                        <DeleteIcon fontSize="small" />
+                                                    </IconButton>
+                                                </>
+                                            )}
                                         </TableCell>
                                     </TableRow>
                                     <TableRow>

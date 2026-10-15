@@ -629,7 +629,7 @@ the same with no edit at all.
 As in the window described below, only a re-anchor given the previous
 secret with `-previous-secret-file` refuses such a log, because the
 moved record, or the rewritten event, no longer verifies under that
-secret.
+secret, or the log spans more than two secrets.
 
 Until the server writes its first event under a new secret, neither
 record verifies under the secret in use, so verification can check the

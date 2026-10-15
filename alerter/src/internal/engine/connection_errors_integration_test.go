@@ -128,6 +128,40 @@ func TestEvaluateConnectionErrors_Lifecycle(t *testing.T) {
 	}
 }
 
+// TestEvaluateConnectionErrors_MasksCredentials checks that a password in
+// a connection error never reaches the alert: a new alert is raised with
+// the masked text, and an active alert that still holds the raw text is
+// rewritten with it. See GitHub issue #679.
+func TestEvaluateConnectionErrors_MasksCredentials(t *testing.T) {
+	engine, _, pool, cleanup := newEngineSpockTestEnv(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	raw := `could not connect to postgresql://app:example-secret@192.0.2.1/db: ` +
+		`invalid connection option in "host=192.0.2.1 password=example-secret dbname=db"`
+	masked := `could not connect to postgresql://app:********@192.0.2.1/db: ` +
+		`invalid connection option in "host=192.0.2.1 password=******** dbname=db"`
+	connID := insertMonitoredConnection(t, pool, "conn-error-masked", &raw)
+
+	engine.evaluateConnectionErrors(ctx)
+	alerts := activeConnectionAlerts(t, pool, connID)
+	if len(alerts) != 1 || alerts[0].description != masked {
+		t.Fatalf("after first pass: alerts = %+v, want one reading %q", alerts, masked)
+	}
+
+	// An alert raised before the masking holds the raw text.
+	if _, err := pool.Exec(ctx, `UPDATE alerts SET description = $2 WHERE id = $1`,
+		alerts[0].id, raw); err != nil {
+		t.Fatalf("failed to store the raw description: %v", err)
+	}
+	engine.evaluateConnectionErrors(ctx)
+	rewritten := activeConnectionAlerts(t, pool, connID)
+	if len(rewritten) != 1 || rewritten[0].id != alerts[0].id || rewritten[0].description != masked {
+		t.Fatalf("after rewrite: alerts = %+v, want alert %d reading %q",
+			rewritten, alerts[0].id, masked)
+	}
+}
+
 // TestEvaluateConnectionErrors_Blackout checks that a connection in a
 // blackout raises no connection error alert.
 func TestEvaluateConnectionErrors_Blackout(t *testing.T) {

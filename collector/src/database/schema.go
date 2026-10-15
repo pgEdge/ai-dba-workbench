@@ -3892,6 +3892,59 @@ func (sm *SchemaManager) registerMigrations() {
 			return nil
 		},
 	})
+
+	// Migration 24: Mask the secrets that metrics.pg_hba_file_rules
+	// stored before the pg_hba_file_rules probe masked them itself
+	// (issue #680). The SQL matches maskHBAOptions and maskHBAError in
+	// collector/src/probes/pg_hba_file_rules_probe.go, so the masked
+	// history equals what the probe now collects and the next
+	// collection writes no new snapshot; the two must change together.
+	// Each UPDATE touches only the rows whose value it changes, and
+	// masking a masked value changes nothing, so a re-run is harmless.
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     24,
+		Description: "Mask secrets stored in pg_hba_file_rules options and errors",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+			// The values of ldapbindpasswd and radiussecrets, the
+			// options PostgreSQL reports with a credential as the
+			// value, keeping the element order.
+			if _, err := tx.Exec(ctx, `
+				UPDATE metrics.pg_hba_file_rules
+				SET options = ARRAY(
+				    SELECT regexp_replace(o,
+				        '^(ldapbindpasswd|radiussecrets)=.*$', '\1=********')
+				    FROM unnest(options) WITH ORDINALITY AS u(o, n)
+				    ORDER BY n)
+				WHERE EXISTS (
+				    SELECT 1 FROM unnest(options) AS o
+				    WHERE o ~ '^(ldapbindpasswd|radiussecrets)='
+				      AND o NOT IN ('ldapbindpasswd=********',
+				                    'radiussecrets=********'))
+			`); err != nil {
+				return fmt.Errorf("failed to mask secret options in pg_hba_file_rules: %w", err)
+			}
+			// Each line of an error is cut at its first double quote
+			// or colon and the rest replaced, as "********" after a
+			// quote or ": ********" after a colon. The 'n' flag makes
+			// ^ match at the start of every line.
+			if _, err := tx.Exec(ctx, `
+				UPDATE metrics.pg_hba_file_rules
+				SET error = regexp_replace(
+				        regexp_replace(error,
+				            '^([^":\n]*)"[^\n]*', '\1"********"', 'gn'),
+				        '^([^":\n]*):[^\n]*', '\1: ********', 'gn')
+				WHERE error ~ '[":]'
+				  AND error <> regexp_replace(
+				        regexp_replace(error,
+				            '^([^":\n]*)"[^\n]*', '\1"********"', 'gn'),
+				        '^([^":\n]*):[^\n]*', '\1: ********', 'gn')
+			`); err != nil {
+				return fmt.Errorf("failed to mask error text in pg_hba_file_rules: %w", err)
+			}
+			return nil
+		},
+	})
 }
 
 // Migrate applies all pending migrations

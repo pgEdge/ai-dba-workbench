@@ -308,6 +308,14 @@ that is not in `name=value` form is stored as
 `authentication option not in name=value format:
 ********`.
 
+PostgreSQL also reports the `ldapbindpasswd` and
+`radiussecrets` options of a valid rule with their
+values, so the collector stores them as
+`ldapbindpasswd=********` and
+`radiussecrets=********`. Datastore migration 24
+applies the same masking to the rules stored before
+the collector masked them.
+
 ### pg_ident_file_mappings
 
 This probe monitors PostgreSQL `pg_ident.conf` user

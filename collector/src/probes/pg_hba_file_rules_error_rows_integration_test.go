@@ -33,7 +33,8 @@ import (
 // The error at line 3 of pg_hba.conf would collide with rule 3 if the
 // line number were the key, and so would the error at line 3 of the
 // included file; both quote a credential in the forms PostgreSQL 18
-// reports.
+// reports. The valid LDAP and RADIUS rules carry their secrets in
+// options, as PostgreSQL reports them.
 const hbaFixtureView = `
 CREATE SCHEMA hba_fixture;
 CREATE VIEW hba_fixture.pg_hba_file_rules AS
@@ -50,7 +51,12 @@ SELECT * FROM (VALUES
      'authentication option not in name=value format: ldapbindpasswdS3cretValue'),
     (3, '/etc/postgresql/pg_hba.conf', 4, 'host',
      ARRAY['all'], ARRAY['all'], '198.51.100.0', '255.255.255.0',
-     'ldap', ARRAY['ldapserver=ldap.example.com', 'ldapprefix=cn='], NULL::text),
+     'ldap', ARRAY['ldapserver=ldap.example.com', 'ldapbinddn=cn=reader',
+                   'ldapbindpasswd=S3cretValue'], NULL::text),
+    (4, '/etc/postgresql/pg_hba.conf', 5, 'host',
+     ARRAY['all'], ARRAY['all'], '203.0.113.0', '255.255.255.0',
+     'radius', ARRAY['radiusservers=radius.example.com',
+                     'radiussecrets=S3cretValue'], NULL::text),
     (NULL, '/etc/postgresql/extra.conf', 3, NULL,
      NULL::text[], NULL::text[], NULL::text, NULL::text,
      NULL, NULL::text[],
@@ -116,6 +122,99 @@ func newMigratedProbeDatastore(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
+// TestPgHbaFileRulesProbe_MigrationMatchesProbeIntegration stores the
+// fixture unmasked, as the probe did before issue #680, and re-runs
+// migration 24 over it. The migrated history must hold no credential
+// and must equal what the probe now collects, so the next collection
+// writes no new snapshot.
+func TestPgHbaFileRulesProbe_MigrationMatchesProbeIntegration(t *testing.T) {
+	pool := newMigratedProbeDatastore(t)
+	ctx := context.Background()
+
+	datastoreConn := acquireConn(t, pool)
+	monitoredConn := acquireConn(t, pool)
+
+	if _, err := datastoreConn.Exec(ctx, hbaFixtureView); err != nil {
+		t.Fatalf("create fixture view: %v", err)
+	}
+	if _, err := monitoredConn.Exec(ctx,
+		"SET search_path TO hba_fixture, pg_catalog"); err != nil {
+		t.Fatalf("set search_path: %v", err)
+	}
+	var connectionID int
+	if err := datastoreConn.QueryRow(ctx, `
+		INSERT INTO connections
+		    (name, host, port, database_name, username, owner_username)
+		VALUES ('hba-history', 'db.example.com', 5432, 'postgres',
+		        'monitor', 'tester')
+		RETURNING id`).Scan(&connectionID); err != nil {
+		t.Fatalf("insert connection: %v", err)
+	}
+
+	p := NewPgHbaFileRulesProbe(&ProbeConfig{
+		Name:                      ProbeNamePgHbaFileRules,
+		CollectionIntervalSeconds: 3600,
+		RetentionDays:             365,
+	})
+	metrics, err := p.Execute(ctx, "hba-history", monitoredConn, 16)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	// Store the snapshot unmasked, bypassing Store.
+	oldAt := time.Now().UTC().Add(-time.Hour)
+	if err := p.EnsurePartition(ctx, datastoreConn, oldAt); err != nil {
+		t.Fatalf("EnsurePartition: %v", err)
+	}
+	for _, m := range metrics {
+		if _, err := datastoreConn.Exec(ctx, `
+			INSERT INTO metrics.pg_hba_file_rules
+			    (connection_id, collected_at, rule_number, file_name,
+			     line_number, type, database, user_name, address,
+			     netmask, auth_method, options, error)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+			connectionID, oldAt, m["rule_number"], m["file_name"],
+			m["line_number"], m["type"], m["database"], m["user_name"],
+			m["address"], m["netmask"], m["auth_method"], m["options"],
+			m["error"]); err != nil {
+			t.Fatalf("store unmasked rule: %v", err)
+		}
+	}
+
+	// Re-run migration 24 as an upgrade would.
+	if _, err := datastoreConn.Exec(ctx,
+		"DELETE FROM schema_version WHERE version = 24"); err != nil {
+		t.Fatalf("forget migration 24: %v", err)
+	}
+	if err := database.NewSchemaManager().Migrate(datastoreConn); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	var leaked int
+	if err := datastoreConn.QueryRow(ctx, `
+		SELECT count(*) FROM metrics.pg_hba_file_rules
+		WHERE error LIKE '%S3cret%' OR options::text LIKE '%S3cret%'`).Scan(&leaked); err != nil {
+		t.Fatalf("check for the credential: %v", err)
+	}
+	if leaked != 0 {
+		t.Errorf("%d migrated rules still hold the credential", leaked)
+	}
+
+	if err := p.Store(ctx, datastoreConn, connectionID, time.Now().UTC(), metrics); err != nil {
+		t.Fatalf("Store: %v", err)
+	}
+	var snapshots int
+	if err := datastoreConn.QueryRow(ctx, `
+		SELECT count(DISTINCT collected_at) FROM metrics.pg_hba_file_rules
+		WHERE connection_id = $1`, connectionID).Scan(&snapshots); err != nil {
+		t.Fatalf("count snapshots: %v", err)
+	}
+	if snapshots != 1 {
+		t.Errorf("stored %d snapshots, want the migrated one only: the "+
+			"migration's masking differs from the probe's", snapshots)
+	}
+}
+
 // TestPgHbaFileRulesProbe_StoresErrorRowsIntegration is the regression
 // test for issue #680: on PostgreSQL 16 and later a line PostgreSQL
 // cannot parse has a NULL rule_number, which used to fail the insert of
@@ -159,8 +258,8 @@ func TestPgHbaFileRulesProbe_StoresErrorRowsIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if len(metrics) != 5 {
-		t.Fatalf("Execute returned %d rows, want the fixture's 5", len(metrics))
+	if len(metrics) != 6 {
+		t.Fatalf("Execute returned %d rows, want the fixture's 6", len(metrics))
 	}
 
 	collectedAt := time.Now().UTC()
@@ -207,6 +306,7 @@ func TestPgHbaFileRulesProbe_StoresErrorRowsIntegration(t *testing.T) {
 		{1, "/etc/postgresql/pg_hba.conf", 1, str("trust"), nil},
 		{2, "/etc/postgresql/pg_hba.conf", 2, str("scram-sha-256"), nil},
 		{3, "/etc/postgresql/pg_hba.conf", 4, str("ldap"), nil},
+		{4, "/etc/postgresql/pg_hba.conf", 5, str("radius"), nil},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("stored %d rules, want %d: %+v", len(got), len(want), got)
@@ -232,12 +332,32 @@ func TestPgHbaFileRulesProbe_StoresErrorRowsIntegration(t *testing.T) {
 	var leaked int
 	if err := datastoreConn.QueryRow(ctx, `
 		SELECT count(*) FROM metrics.pg_hba_file_rules
-		WHERE connection_id = $1 AND error LIKE '%S3cret%'`,
+		WHERE connection_id = $1
+		  AND (error LIKE '%S3cret%' OR options::text LIKE '%S3cret%')`,
 		connectionID).Scan(&leaked); err != nil {
 		t.Fatalf("check for the credential: %v", err)
 	}
 	if leaked != 0 {
-		t.Errorf("%d stored errors still quote the credential", leaked)
+		t.Errorf("%d stored rules still hold the credential", leaked)
+	}
+
+	var ldapOptions, radiusOptions []string
+	if err := datastoreConn.QueryRow(ctx, `
+		SELECT
+		    (SELECT options FROM metrics.pg_hba_file_rules
+		     WHERE connection_id = $1 AND rule_number = 3),
+		    (SELECT options FROM metrics.pg_hba_file_rules
+		     WHERE connection_id = $1 AND rule_number = 4)`,
+		connectionID).Scan(&ldapOptions, &radiusOptions); err != nil {
+		t.Fatalf("read stored options: %v", err)
+	}
+	if got, want := strings.Join(ldapOptions, " "),
+		"ldapserver=ldap.example.com ldapbinddn=cn=reader ldapbindpasswd=********"; got != want {
+		t.Errorf("LDAP options = %q, want %q", got, want)
+	}
+	if got, want := strings.Join(radiusOptions, " "),
+		"radiusservers=radius.example.com radiussecrets=********"; got != want {
+		t.Errorf("RADIUS options = %q, want %q", got, want)
 	}
 
 	// A second collection of the same file must match the stored,
@@ -275,6 +395,10 @@ func TestPgHbaFileRulesProbe_StoresErrorRowsIntegration(t *testing.T) {
 	for _, m := range metrics {
 		if e, ok := m["error"].(string); ok && !strings.Contains(e, "S3cret") {
 			t.Errorf("Store changed the caller's error value to %q", e)
+		}
+		if m["auth_method"] == "ldap" &&
+			!strings.Contains(fmt.Sprint(m["options"]), "S3cret") {
+			t.Errorf("Store changed the caller's options to %v", m["options"])
 		}
 	}
 }

@@ -120,9 +120,10 @@ func (p *PgHbaFileRulesProbe) Execute(ctx context.Context, connectionName string
 
 // Store stores the collected metrics in the datastore only if data has changed
 func (p *PgHbaFileRulesProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, timestamp time.Time, metrics []map[string]any) error {
-	// Mask the values quoted in error text before change detection, so
-	// the comparison and the stored rows both see the masked form.
-	metrics = maskHBAErrors(metrics)
+	// Mask the secrets in options and the values quoted in error text
+	// before change detection, so the comparison and the stored rows
+	// both see the masked form.
+	metrics = maskHBASecrets(metrics)
 
 	// Check if data has changed
 	changed, err := HasDataChanged(ctx, datastoreConn, connectionID, "pg_hba_file_rules", metrics,
@@ -190,18 +191,31 @@ func (p *PgHbaFileRulesProbe) Store(ctx context.Context, datastoreConn *pgxpool.
 	return nil
 }
 
-// hbaErrorMask replaces a value masked in pg_hba_file_rules.error, as
-// PostgreSQL masks a password in pg_stat_wal_receiver.conninfo.
-const hbaErrorMask = "********"
+// hbaMask replaces a value masked in pg_hba_file_rules, as PostgreSQL
+// masks a password in pg_stat_wal_receiver.conninfo.
+const hbaMask = "********"
 
-// maskHBAErrors returns metrics with every error value passed through
-// maskHBAError. Rows with an error are copied, so the caller's maps are
-// never changed; the other rows are shared.
-func maskHBAErrors(metrics []map[string]any) []map[string]any {
+// hbaSecretOptions are the options pg_hba_file_rules.options reports
+// with a credential as the value. PostgreSQL (14 to 18) prints every
+// option as name=value, and these two are the only secrets among them.
+// Migration 24 masks the same names in rows stored before this was
+// added, so the two lists must change together.
+var hbaSecretOptions = map[string]bool{
+	"ldapbindpasswd": true,
+	"radiussecrets":  true,
+}
+
+// maskHBASecrets returns metrics with every error value passed through
+// maskHBAError and every options value through maskHBAOptions. Rows
+// that need masking are copied, so the caller's maps are never
+// changed; the other rows are shared.
+func maskHBASecrets(metrics []map[string]any) []map[string]any {
 	var masked []map[string]any
 	for i, metric := range metrics {
-		msg, ok := metric["error"].(string)
-		if !ok || msg == "" {
+		msg, hasError := metric["error"].(string)
+		hasError = hasError && msg != ""
+		options, hasSecret := maskHBAOptions(metric["options"])
+		if !hasError && !hasSecret {
 			continue
 		}
 		if masked == nil {
@@ -212,13 +226,73 @@ func maskHBAErrors(metrics []map[string]any) []map[string]any {
 		for k, v := range metric {
 			row[k] = v
 		}
-		row["error"] = maskHBAError(msg)
+		if hasError {
+			row["error"] = maskHBAError(msg)
+		}
+		if hasSecret {
+			row["options"] = options
+		}
 		masked[i] = row
 	}
 	if masked == nil {
 		return metrics
 	}
 	return masked
+}
+
+// maskHBAOptions masks the value of each option named in
+// hbaSecretOptions, giving for example "ldapbindpasswd=********". It
+// returns a new array and true when an element was masked, and the
+// value unchanged and false otherwise. pgx scans a text[] as []any;
+// []string is accepted as well.
+func maskHBAOptions(value any) (any, bool) {
+	switch opts := value.(type) {
+	case []any:
+		var out []any
+		for i, o := range opts {
+			s, ok := o.(string)
+			if !ok {
+				continue
+			}
+			if m, changed := maskHBAOption(s); changed {
+				if out == nil {
+					out = make([]any, len(opts))
+					copy(out, opts)
+				}
+				out[i] = m
+			}
+		}
+		if out != nil {
+			return out, true
+		}
+	case []string:
+		var out []string
+		for i, s := range opts {
+			if m, changed := maskHBAOption(s); changed {
+				if out == nil {
+					out = make([]string, len(opts))
+					copy(out, opts)
+				}
+				out[i] = m
+			}
+		}
+		if out != nil {
+			return out, true
+		}
+	}
+	return value, false
+}
+
+// maskHBAOption masks one name=value option whose name is in
+// hbaSecretOptions, and reports whether the result differs from the
+// input, so an option already masked is reported unchanged.
+func maskHBAOption(option string) (string, bool) {
+	name, _, found := strings.Cut(option, "=")
+	if !found || !hbaSecretOptions[name] {
+		return option, false
+	}
+	masked := name + "=" + hbaMask
+	return masked, masked != option
 }
 
 // maskHBAError masks the values PostgreSQL quotes from pg_hba.conf in
@@ -228,7 +302,7 @@ func maskHBAErrors(metrics []map[string]any) []map[string]any {
 // Every message in PostgreSQL's hba.c (16 to 18) that quotes the line
 // puts the value in double quotes or after a colon, so each line of
 // the error is cut at its first double quote or colon and the rest is
-// replaced by hbaErrorMask. A message with neither, such as
+// replaced by hbaMask. A message with neither, such as
 // "end-of-line before IP address specification", is kept whole. The
 // errors from several included files are joined by newlines, so each
 // line is masked separately. Masking an error twice gives the same
@@ -241,9 +315,9 @@ func maskHBAError(msg string) string {
 			continue
 		}
 		if line[cut] == '"' {
-			lines[i] = line[:cut] + `"` + hbaErrorMask + `"`
+			lines[i] = line[:cut] + `"` + hbaMask + `"`
 		} else {
-			lines[i] = line[:cut] + ": " + hbaErrorMask
+			lines[i] = line[:cut] + ": " + hbaMask
 		}
 	}
 	return strings.Join(lines, "\n")

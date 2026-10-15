@@ -186,7 +186,7 @@ jobs:
               run: npm run build
 
             - name: Upload client artifact
-              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+              uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
               with:
                   name: ai-dba-client-dist
                   path: client/dist/
@@ -223,7 +223,7 @@ jobs:
                   mkdocs build -v
 
             - name: Upload documentation artifact
-              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+              uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
               with:
                   name: ai-workbench-docs-site
                   path: site/
@@ -327,21 +327,21 @@ jobs:
                       ai-dba-alerter -C staging examples
 
             - name: Upload server archive
-              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+              uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
               with:
                   name: ai-dba-server-${{ matrix.goos }}-${{ matrix.goarch }}
                   path: ai-dba-server-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
                   retention-days: 1
 
             - name: Upload collector archive
-              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+              uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
               with:
                   name: ai-dba-collector-${{ matrix.goos }}-${{ matrix.goarch }}
                   path: ai-dba-collector-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
                   retention-days: 1
 
             - name: Upload alerter archive
-              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+              uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
               with:
                   name: ai-dba-alerter-${{ matrix.goos }}-${{ matrix.goarch }}
                   path: ai-dba-alerter-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
@@ -513,7 +513,7 @@ jobs:
                   pgedge_builder_token: ${{ secrets.PGEDGE_BUILDER_TOKEN }}
 
             - name: Upload RPM cell artifact
-              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+              uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
               with:
                   name: rpm__el-${{ steps.cell.outputs.os_version }}__${{ matrix.arch }}
                   path: output/el${{ steps.cell.outputs.os_version }}-${{ matrix.arch }}/
@@ -729,7 +729,7 @@ jobs:
                   pgedge_builder_token: ${{ secrets.PGEDGE_BUILDER_TOKEN }}
 
             - name: Upload DEB cell artifact
-              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+              uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
               with:
                   name: deb__${{ steps.cell.outputs.distro }}__${{ matrix.arch }}
                   path: output/${{ steps.cell.outputs.distro }}-${{ matrix.arch }}/
@@ -1209,7 +1209,7 @@ jobs:
                   aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
             - name: Upload aggregated manifest as workflow artifact
-              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+              uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
               with:
                   name: aggregated-manifest
                   path: aggregated/manifest.json

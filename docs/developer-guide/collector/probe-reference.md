@@ -256,7 +256,10 @@ configuration changes are detected.
 - Special Behavior: Uses SHA256 hash comparison to
   detect changes; the garbage collector ensures the
   most recent snapshot for each server is never
-  deleted.
+  deleted. The probe redacts credentials in the
+  `setting`, `reset_val` and `boot_val` columns
+  before storing them; see
+  [Redacted Settings](pg-settings-usage.md#redacted-settings).
 
 **Columns Collected**: name, setting, unit,
 category, short_desc, extra_desc, context, vartype,

@@ -28,6 +28,41 @@ features:
   snapshot for each server regardless of age.
 - Hourly checks run every hour by default to detect
   changes promptly.
+- Credential redaction removes passwords and other
+  secrets before the probe stores a snapshot.
+
+### Redacted Settings
+
+PostgreSQL shows `primary_conninfo` in full, password
+included, to members of `pg_read_all_settings`, which
+`pg_monitor` includes. The probe therefore redacts
+the following settings in the `setting`, `reset_val`
+and `boot_val` columns before storing them:
+
+- `primary_conninfo` keeps the connection string but
+  has the value of each `password` and `sslpassword`
+  parameter replaced with `********`; the probe
+  parses both the keyword/value and the URI forms, and
+  stores `********` in place of a value it cannot
+  parse.
+- `ssl_passphrase_command` is replaced with
+  `********` in full, since the command commonly
+  embeds the passphrase.
+- An extension setting (one with a dot in its name)
+  whose name contains `password`, `passwd`,
+  `passphrase`, `secret`, `token`, `credential` or
+  `private_key` is replaced with `********` in full.
+
+An empty value, meaning the setting is unset, is
+stored as it is. Because the probe compares redacted
+values, a change to the password alone does not store
+a new snapshot.
+
+Collector schema migration 24 applies the same
+redaction to rows stored by earlier versions, and the
+server redacts these values again when it returns
+them in timeline configuration change events and in
+the latest-row mode of `GET /api/v1/metrics/query`.
 
 ## Common Queries
 

@@ -19,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pgedge/ai-workbench/pkg/pgsettings"
 )
 
 // DerivedMetricKind enumerates the computed metric types the generic
@@ -2373,7 +2374,45 @@ func QueryLatestRows(
 	}
 	defer rows.Close()
 
-	return scanLatestRows(rows, outputCols)
+	result, err := scanLatestRows(rows, outputCols)
+	if err != nil {
+		return nil, err
+	}
+	if probeName == pgSettingsProbe {
+		redactSettingRows(result)
+	}
+	return result, nil
+}
+
+// pgSettingsProbe is the probe table that stores configuration settings.
+const pgSettingsProbe = "pg_settings"
+
+// settingValueColumns are the pg_settings columns holding a value of the
+// setting itself.
+var settingValueColumns = []string{"setting", "reset_val", "boot_val"}
+
+// redactSettingRows removes credentials, such as the password in
+// primary_conninfo, from pg_settings rows before they are returned. The
+// collector redacts them before storing and migrates rows stored
+// earlier (GitHub issue #643); this covers a datastore it has not
+// migrated yet. A value of an unexpected type in such a row is replaced
+// outright.
+func redactSettingRows(rows []map[string]any) {
+	for _, row := range rows {
+		name, ok := row["name"].(string)
+		if !ok || !pgsettings.IsCredentialSetting(name) {
+			continue
+		}
+		for _, col := range settingValueColumns {
+			switch v := row[col].(type) {
+			case nil:
+			case string:
+				row[col] = pgsettings.RedactValue(name, v)
+			default:
+				row[col] = pgsettings.RedactedValue
+			}
+		}
+	}
 }
 
 // sanitizeFloat returns nil for non-finite floats. Go's encoding/json

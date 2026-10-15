@@ -211,6 +211,15 @@ decomposed into small, separately testable helpers:
   into flat maps, normalising each value through `normalizeLatestValue`
   (RFC3339 for `time.Time`, `sanitizeFloat` dropping NaN/Inf to JSON
   null, `pgtype.Numeric`/`pgtype.Interval` collapsed to seconds/float).
+- For `pg_settings`, `QueryLatestRows` passes the scanned rows through
+  `redactSettingRows`, which masks `setting`, `reset_val` and `boot_val`
+  of credential-bearing settings with `pkg/pgsettings` (issue #643). The
+  collector already redacts at collection time and its migration 24
+  scrubs older rows; this is the read-side backstop. Timeline
+  `config_change` events get the same treatment in
+  `server/src/internal/database/settings_redaction.go`. Any new path that
+  returns stored `pg_settings` values must call `pgsettings.RedactValue`
+  too.
 
 ### The /metrics/latest snapshot endpoint and its schema filters
 

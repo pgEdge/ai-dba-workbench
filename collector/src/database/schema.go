@@ -21,6 +21,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/pkg/logger"
+	"github.com/pgedge/ai-workbench/pkg/pgsettings"
 	"github.com/pgedge/ai-workbench/pkg/rollback"
 )
 
@@ -3945,6 +3946,111 @@ func (sm *SchemaManager) registerMigrations() {
 			return nil
 		},
 	})
+
+	// Migration #25 removes credentials from pg_settings snapshots that
+	// were stored before the probe started redacting them. See GitHub
+	// issue #643.
+	//
+	// PostgreSQL shows primary_conninfo, password included, to members of
+	// pg_read_all_settings, so a standby's replication password was
+	// copied into metrics.pg_settings and returned by the server. The
+	// probe now redacts it before storing, using pgsettings.RedactValue,
+	// and this migration applies the same function to the rows already
+	// stored. The conninfo parsing lives in Go, so the rewrite is done
+	// here rather than in SQL: each distinct value of a credential-bearing
+	// setting is redacted once and every row holding it is updated.
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     25,
+		Description: "Redact credentials in stored pg_settings values",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			if err := redactStoredPgSettings(ctx, tx); err != nil {
+				return fmt.Errorf("failed to redact stored pg_settings values: %w", err)
+			}
+
+			_, err := tx.Exec(ctx, `
+				COMMENT ON COLUMN metrics.pg_settings.setting IS
+					'Current value of the setting; credentials (the password in primary_conninfo, the whole of ssl_passphrase_command and of extension settings named like a secret) are redacted to ********';
+				COMMENT ON COLUMN metrics.pg_settings.reset_val IS
+					'Value the setting would reset to, redacted as for setting';
+				COMMENT ON COLUMN metrics.pg_settings.boot_val IS
+					'Value the setting takes at server start when not otherwise set, redacted as for setting';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to comment pg_settings value columns: %w", err)
+			}
+
+			return nil
+		},
+	})
+}
+
+// pgSettingsValueUpdates holds, for each pg_settings column that stores a
+// value of the setting, the statements that read its distinct values for
+// one setting and rewrite one of them. The column names are fixed here
+// and never come from input.
+var pgSettingsValueUpdates = []struct{ selectSQL, updateSQL string }{
+	{
+		`SELECT DISTINCT setting FROM metrics.pg_settings
+		 WHERE name = $1 AND setting IS NOT NULL`,
+		`UPDATE metrics.pg_settings SET setting = $3
+		 WHERE name = $1 AND setting = $2`,
+	},
+	{
+		`SELECT DISTINCT reset_val FROM metrics.pg_settings
+		 WHERE name = $1 AND reset_val IS NOT NULL`,
+		`UPDATE metrics.pg_settings SET reset_val = $3
+		 WHERE name = $1 AND reset_val = $2`,
+	},
+	{
+		`SELECT DISTINCT boot_val FROM metrics.pg_settings
+		 WHERE name = $1 AND boot_val IS NOT NULL`,
+		`UPDATE metrics.pg_settings SET boot_val = $3
+		 WHERE name = $1 AND boot_val = $2`,
+	},
+}
+
+// redactStoredPgSettings rewrites every stored value of a credential-
+// bearing setting to its redacted form. Redaction is idempotent, so
+// values that are already redacted are left alone.
+func redactStoredPgSettings(ctx context.Context, tx pgx.Tx) error {
+	names, err := queryStrings(ctx, tx,
+		`SELECT DISTINCT name FROM metrics.pg_settings`)
+	if err != nil {
+		return fmt.Errorf("failed to list stored settings: %w", err)
+	}
+
+	for _, name := range names {
+		if !pgsettings.IsCredentialSetting(name) {
+			continue
+		}
+		for _, stmt := range pgSettingsValueUpdates {
+			values, err := queryStrings(ctx, tx, stmt.selectSQL, name)
+			if err != nil {
+				return fmt.Errorf("failed to read values of %s: %w", name, err)
+			}
+			for _, value := range values {
+				redacted := pgsettings.RedactValue(name, value)
+				if redacted == value {
+					continue
+				}
+				if _, err := tx.Exec(ctx, stmt.updateSQL, name, value, redacted); err != nil {
+					return fmt.Errorf("failed to redact a value of %s: %w", name, err)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// queryStrings runs a query returning one text column and collects it.
+func queryStrings(ctx context.Context, tx pgx.Tx, sql string, args ...any) ([]string, error) {
+	rows, err := tx.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, pgx.RowTo[string])
 }
 
 // Migrate applies all pending migrations

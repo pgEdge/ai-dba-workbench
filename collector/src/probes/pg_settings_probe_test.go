@@ -201,3 +201,77 @@ func containsColumn(query string, column string) bool {
 	}
 	return false
 }
+
+// TestRedactCredentialSettings verifies that the password in
+// primary_conninfo, and the whole of other credential-bearing settings,
+// are removed from every value column before storage (issue #643),
+// whilst other settings and NULL values pass through untouched.
+func TestRedactCredentialSettings(t *testing.T) {
+	settings := []map[string]any{
+		{
+			"name":      "primary_conninfo",
+			"setting":   "host=192.0.2.1 user=replicator password=s3cret",
+			"reset_val": "host=192.0.2.1 user=replicator password='old secret'",
+			"boot_val":  "",
+			"source":    "configuration file",
+		},
+		{
+			"name":      "ssl_passphrase_command",
+			"setting":   "echo s3cret",
+			"reset_val": "echo s3cret",
+			"boot_val":  nil,
+		},
+		{
+			"name":      "myext.api_token",
+			"setting":   []byte("s3cret"),
+			"reset_val": "s3cret",
+			"boot_val":  "",
+		},
+		{
+			"name":      "work_mem",
+			"setting":   "4096",
+			"reset_val": "4096",
+			"boot_val":  "4096",
+		},
+		{"setting": "no name"},
+	}
+
+	redactCredentialSettings(settings)
+
+	want := []map[string]any{
+		{
+			"name":      "primary_conninfo",
+			"setting":   "host=192.0.2.1 user=replicator password=********",
+			"reset_val": "host=192.0.2.1 user=replicator password=********",
+			"boot_val":  "",
+			"source":    "configuration file",
+		},
+		{
+			"name":      "ssl_passphrase_command",
+			"setting":   "********",
+			"reset_val": "********",
+			"boot_val":  nil,
+		},
+		{
+			"name":      "myext.api_token",
+			"setting":   "********",
+			"reset_val": "********",
+			"boot_val":  "",
+		},
+		{
+			"name":      "work_mem",
+			"setting":   "4096",
+			"reset_val": "4096",
+			"boot_val":  "4096",
+		},
+		{"setting": "no name"},
+	}
+
+	for i := range want {
+		for col, w := range want[i] {
+			if got := settings[i][col]; got != w {
+				t.Errorf("row %d %s = %#v, want %#v", i, col, got, w)
+			}
+		}
+	}
+}

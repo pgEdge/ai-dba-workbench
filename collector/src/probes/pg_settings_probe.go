@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/collector/src/utils"
 	"github.com/pgedge/ai-workbench/pkg/logger"
+	"github.com/pgedge/ai-workbench/pkg/pgsettings"
 )
 
 // PgSettingsProbe collects PostgreSQL configuration settings
@@ -67,7 +68,40 @@ func (p *PgSettingsProbe) Execute(ctx context.Context, connectionName string, mo
 	}
 	defer rows.Close()
 
-	return utils.ScanRowsToMaps(rows)
+	settings, err := utils.ScanRowsToMaps(rows)
+	if err != nil {
+		return nil, err
+	}
+	redactCredentialSettings(settings)
+	return settings, nil
+}
+
+// settingValueColumns are the pg_settings columns that hold a value of the
+// setting itself, any of which can carry a credential.
+var settingValueColumns = []string{"setting", "reset_val", "boot_val"}
+
+// redactCredentialSettings removes credentials from the value columns of
+// settings that can hold one, such as the password in primary_conninfo,
+// so they never reach the datastore. It runs before change detection, so
+// a change to the password alone does not store a new snapshot. A value
+// of an unexpected type in such a row is replaced outright rather than
+// passed through.
+func redactCredentialSettings(settings []map[string]any) {
+	for _, row := range settings {
+		name, ok := row["name"].(string)
+		if !ok || !pgsettings.IsCredentialSetting(name) {
+			continue
+		}
+		for _, col := range settingValueColumns {
+			switch v := row[col].(type) {
+			case nil:
+			case string:
+				row[col] = pgsettings.RedactValue(name, v)
+			default:
+				row[col] = pgsettings.RedactedValue
+			}
+		}
+	}
 }
 
 // Store stores the collected metrics in the datastore only if changes are detected

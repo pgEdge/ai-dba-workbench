@@ -117,6 +117,7 @@ func (d *Datastore) GetTimelineEvents(ctx context.Context, filter TimelineFilter
 	if err != nil {
 		return nil, fmt.Errorf("failed to read timeline events: %w", err)
 	}
+	redactTimelineEvents(events)
 
 	// scanAll guarantees a non-nil zero-length slice on empty result
 	// sets, so no manual normalization is needed here.

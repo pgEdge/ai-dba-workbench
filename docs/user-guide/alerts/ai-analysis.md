@@ -151,27 +151,40 @@ The system detects write statements such as `ALTER`,
 a code block contains write statements, the system
 displays a confirmation prompt listing the detected
 statements and naming the server, and the database where
-known, that they will run on. The user must click Execute to proceed or
-Cancel to abort.
+known, that they will run on. The user must click Execute
+to proceed or Cancel to abort. Running a write statement
+also requires write access to the connection.
 
-A `SELECT` statement that calls a function with side
-effects also counts as a write statement, even though it
-begins with `SELECT`. The system recognises the built-in
-PostgreSQL functions that change server state, such as
-`pg_terminate_backend`, `pg_cancel_backend`, `set_config`,
-`nextval`, the advisory lock and large object functions,
-and the replication slot and statistics reset functions,
-along with the management functions of extensions such as
-`pg_stat_statements`, `pg_prewarm`, `dblink`,
-`pg_background`, Spock, pglogical, and `pg_cron`. The
-check also catches a call written in field-selection
-notation, such as `(pid).pg_terminate_backend`, which
-PostgreSQL runs as `pg_terminate_backend(pid)`; a column
-that shares one of these names, such as `t.nextval`, also
-counts as a write. The
-system cannot see inside user-defined functions or views,
-so a statement that reaches a side effect through one of
-those still runs as a read.
+A query that calls a function with side effects beyond
+its own transaction also counts as a write, even though it
+begins with `SELECT`, because a read-only transaction does
+not stop such a function. The functions include those
+that signal or terminate other sessions
+(`pg_cancel_backend`, `pg_terminate_backend`), reload the
+configuration or rotate the log, switch WAL or control
+recovery, manage replication slots and origins, reset
+statistics, take advisory locks, send notifications,
+change settings with `set_config`, advance sequences with
+`nextval`, write large objects or server files, open
+`dblink` connections, evict or prewarm shared buffers,
+run SQL in the background with `pg_background`, and manage
+Spock, pglogical or `pg_cron`. Any call to a function in
+the `spock`, `pglogical` or `cron` schema counts as a
+write, even one that only reports status, as do Spock
+management functions called without the schema name, such
+as `sub_create` or `repset_add_table`. Functions such as
+`query_to_xml` that run SQL passed to them as text count
+as writes too, because the system cannot check that SQL.
+The match ignores case, schema qualification and quoting,
+and finds calls anywhere in the statement, including
+subqueries and CTEs, whether written with parentheses or
+in field-selection notation such as
+`(pid).pg_terminate_backend`, which PostgreSQL runs as
+`pg_terminate_backend(pid)`; a column that shares one of
+these names, such as `t.nextval`, also counts as a write.
+A view or a user-defined function that calls one of these
+functions is not detected, so review queries against
+unfamiliar views and functions before running them.
 
 Confirmed statements run in order on a single database
 connection, so a `BEGIN` and its `COMMIT` in the same code

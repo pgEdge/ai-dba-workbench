@@ -177,16 +177,34 @@ describe('planSqlBlock', () => {
         expect(plan.kind).toBe('run');
     });
 
-    it('labels an unknown server by its ID', () => {
+    it('asks when the reply ran on a server the user cannot see', () => {
         const plan = planSqlBlock(
             'SELECT 1',
             reply({ targets: [{ connectionId: 9 }] }),
             servers,
         );
-        expect(plan).toMatchObject({
-            kind: 'run',
-            target: { connectionId: 9, serverName: 'Server 9', databaseName: undefined },
-        });
+        expect(plan).toMatchObject({ kind: 'select' });
+        expect(plan.kind === 'select' && plan.options.map((o) => o.connectionId))
+            .toEqual([1, 2, 3]);
+    });
+
+    it('asks when the reply also ran on a server the user cannot see', () => {
+        const plan = planSqlBlock(
+            'SELECT 1',
+            reply({ targets: [{ connectionId: 1 }, { connectionId: 9 }] }),
+            servers,
+        );
+        expect(plan).toMatchObject({ kind: 'select' });
+        expect(plan.kind === 'select' && plan.options.map((o) => o.connectionId))
+            .toEqual([1, 2, 3]);
+    });
+
+    it('offers no Run button for a reply target when no server is known', () => {
+        expect(planSqlBlock(
+            'SELECT 1',
+            reply({ targets: [{ connectionId: 1 }] }),
+            new Map(),
+        )).toEqual({ kind: 'copy' });
     });
 
     it('shows the selector when the reply used several targets', () => {
@@ -254,6 +272,15 @@ describe('planSqlBlock', () => {
         expect(plan.kind).toBe('select');
     });
 
+    it('asks when a comment after code on the same line names a server', () => {
+        const plan = planSqlBlock(
+            '-- connection_id: 1\nSELECT 1; -- connection_id: 2',
+            reply({ targets: [{ connectionId: 1 }] }),
+            servers,
+        );
+        expect(plan.kind).toBe('select');
+    });
+
     it('offers no Run button when no server is known', () => {
         expect(planSqlBlock('SELECT 1', reply(), new Map())).toEqual({ kind: 'copy' });
     });
@@ -282,6 +309,28 @@ describe('planSqlBlock', () => {
                 kind: 'run',
                 target: { connectionId: 3, serverName: 'gamma' },
             });
+        });
+
+        it('asks when the reply also ran on the selected connection', () => {
+            const plan = planSqlBlock(
+                '-- connection_id: 2\nSELECT 1',
+                reply({ targets: [{ connectionId: 2 }], unattributed: true }),
+                servers,
+            );
+            expect(plan).toMatchObject({ kind: 'select' });
+            expect(plan.kind === 'select' && plan.options.map((o) => o.connectionId))
+                .toEqual([2, 1, 3]);
+        });
+
+        it('asks when the reply used only a server the user cannot see', () => {
+            const plan = planSqlBlock(
+                '-- connection_id: 2\nSELECT 1',
+                reply({ targets: [{ connectionId: 9 }] }),
+                servers,
+            );
+            expect(plan).toMatchObject({ kind: 'select' });
+            expect(plan.kind === 'select' && plan.options.map((o) => o.connectionId))
+                .toEqual([1, 2, 3]);
         });
 
         it('asks when the comment names a server the reply did not use', () => {

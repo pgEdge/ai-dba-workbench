@@ -896,9 +896,13 @@ instead of text, empty text) returns the original text unchanged.
 - The `-- connection_id` comment is model-written, so treat it as a
   hint, not an authority: it binds Run only to a server the user can
   see and, when the reply ran SQL on named servers, only to one of
-  those. A second routing comment anywhere in the block forces the
-  selector, so the displayed code can never name a different server
-  from the one Run uses.
+  those, and never when the reply also ran a call on the selected
+  connection. A second routing comment anywhere in the block, even
+  after code on the same line, forces the selector, so the displayed
+  code can never name a different server from the one Run uses.
+- Only reply targets on servers the user can see are bound or offered,
+  but every target counts towards deciding whether the reply was
+  ambiguous, so a hidden second server still forces the selector.
 - Pass per-message data to code blocks through a context
   (`ReplyTargetsContext`), not as a dependency of the memoised
   react-markdown `components`: changing those remounts every block and

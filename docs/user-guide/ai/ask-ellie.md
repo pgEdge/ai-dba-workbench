@@ -153,14 +153,17 @@ reply itself:
   the reply's tool calls used on it or the connection's
   default database.
 - Otherwise, when every SQL tool call in the reply ran on
-  the same server and database, the query runs there.
+  the same server and database, and you can see that
+  server, the query runs there.
 - When the target is unclear, the block displays a
   server selector with nothing preselected, and the play
   button appears once you choose a server. The target is
   unclear when, for example, the reply covers several
   servers, the comment names a server that the reply's
-  tool calls did not use, or the block contains more
-  than one `-- connection_id` comment.
+  tool calls did not use, the reply also ran a tool call
+  on the selected connection without naming a server, or
+  the block contains more than one `-- connection_id`
+  comment.
 
 Some blocks offer only the copy button:
 
@@ -184,7 +187,13 @@ analysis: your access to the connection, the read-only
 check, and the confirmation prompt for statements that
 modify data, which names the server and database the
 statements will run on, as described in
-[AI Alert Analysis](../alerts/ai-analysis.md).
+[AI Alert Analysis](../alerts/ai-analysis.md). A query
+that calls a function with side effects, such as
+`pg_terminate_backend` or `pg_reload_conf`, counts as a
+write and also needs confirmation. A view or a
+user-defined function that calls one of these functions
+is not detected, so review queries against unfamiliar
+views and functions before running them.
 
 ## Chat Memory
 

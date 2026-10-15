@@ -12,7 +12,11 @@
 // PostgreSQL tests so both sides are checked against the same cases.
 package redacttest
 
-import "strings"
+import (
+	"bytes"
+	"encoding/json"
+	"strings"
+)
 
 // Case is one input and the text redact.Text, and the server's
 // RedactedText, should turn it into. The secrets are all "example-secret" or start "s3cr", so a
@@ -116,10 +120,59 @@ var Cases = []Case{
 		`SELECT dblink_connect(E'password=******** dbname=db')`},
 	{"backslash quoted role password", `EXECUTE E'ALTER ROLE app PASSWORD \'s3cret x\''`,
 		`EXECUTE E'ALTER ROLE app PASSWORD '********''`},
+	{"backslash quoted with escaped backslash", `SELECT dblink_connect(E'password=\'s3cr\\et x\' dbname=db')`,
+		`SELECT dblink_connect(E'password=******** dbname=db')`},
+	{"quoted role password after concatenation", "EXECUTE 'ALTER ROLE app ' || 'PASSWORD ''s3cret a b'''",
+		"EXECUTE 'ALTER ROLE app ' || 'PASSWORD '********''"},
+	{"quoted role password after a comment", "EXECUTE 'PASSWORD/* c */''s3cret a b'''", "EXECUTE 'PASSWORD/* c */'********''"},
+	{"set to after a comment", "SET app.password TO /* c */ 'example-secret'", "SET app.password TO /* c */ '********'"},
+	{"set to with no space", "SET app.password TO'example-secret'", "SET app.password TO'********'"},
+	{"comment holding stars and a slash", "ALTER ROLE app PASSWORD /* ** / */ 'example-secret'",
+		"ALTER ROLE app PASSWORD /* ** / */ '********'"},
+	{"line comment", "ALTER ROLE app PASSWORD -- set it\n'example-secret' LOGIN", "ALTER ROLE app PASSWORD -- set it\n'********' LOGIN"},
+	{"equals after a comment", "SET app.password = /* c */ 'example secret'", "SET app.password = /* c */ ********"},
+	{"json escape string conninfo", `{"stmt": "CONNECTION E'host=192.0.2.1 password=\\'s3cret a b\\''"}`,
+		`{"stmt": "CONNECTION E'host=192.0.2.1 password=********'"}`},
+	{"json escape string with escaped quote", `{"stmt": "SELECT dblink_connect(E'password=\\'s3cr\\\\\\'et x\\' dbname=db')"}`,
+		`{"stmt": "SELECT dblink_connect(E'password=******** dbname=db')"}`},
+	{"json role password with escaped quote", `{"stmt": "ALTER ROLE app PASSWORD E's3cr\\'et x'"}`,
+		`{"stmt": "ALTER ROLE app PASSWORD '********'"}`},
+	{"json conninfo with escaped quote", `{"c": "host=192.0.2.1 password='s3cr\\'et x' port=5432"}`,
+		`{"c": "host=192.0.2.1 password=******** port=5432"}`},
+	{"json double quoted shell value", `{"cmd": "PGPASSWORD=\"example secret\" pg_dump db"}`, `{"cmd": "PGPASSWORD=******** pg_dump db"}`},
+	{"json quoted name", `{"stmt": "SET \"app.api_key\" TO 'example-secret'"}`, `{"stmt": "SET \"app.api_key\" TO '********'"}`},
+	{"json parameter kept", `{"stmt": "SELECT 1 WHERE password_encryption = $1"}`, `{"stmt": "SELECT 1 WHERE password_encryption = $1"}`},
 	{"plain text kept", "SELECT * FROM t WHERE password_encryption = $1", "SELECT * FROM t WHERE password_encryption = $1"},
 	{"normalised parameter", "ALTER ROLE app PASSWORD $1", "ALTER ROLE app PASSWORD $1"},
 	{"normalised set parameter", "SELECT set_config('app.password', $1, false)",
 		"SELECT set_config('app.password', $1, false)"},
+}
+
+// JSONText returns s as a JSON string, as to_jsonb(s)::text writes it
+// in a row image: quotes and backslashes are escaped.
+func JSONText(s string) string {
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(s) // a string always encodes
+	return string(bytes.TrimSuffix(b.Bytes(), []byte("\n")))
+}
+
+// JSONFormOK reports whether got, the masked JSON form of c.In, holds
+// no secret and matches the JSON form of c.Want. A value at the end of
+// the text may also take the closing JSON quote, since an unquoted or
+// truncated value is masked to the next white space or the end. A case
+// whose input is already JSON text always passes: escaped twice, it is
+// not a form a row image holds.
+func JSONFormOK(c Case, got string) bool {
+	if strings.HasPrefix(c.In, "{") {
+		return true
+	}
+	if SecretLeft(got) || strings.Contains(got, "secret a b") {
+		return false
+	}
+	want := JSONText(c.Want)
+	return got == want || got == strings.TrimSuffix(want, `"`)
 }
 
 // SecretLeft reports whether s still holds one of the test secrets.

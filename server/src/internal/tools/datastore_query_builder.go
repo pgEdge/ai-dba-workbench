@@ -1317,7 +1317,7 @@ func datastoreRowKey(src datastoreSource) []string {
 func datastoreEntityKeys(src datastoreSource) []string {
 	types := make(map[string]string, len(src.Columns))
 	for _, c := range src.Columns {
-		types[c.Name] = c.DataType
+		types[c.Name] = c.keyType()
 	}
 	return metrics.EntityKeyColumns(src.columnNames(), types)
 }

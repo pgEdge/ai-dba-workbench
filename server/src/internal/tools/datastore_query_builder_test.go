@@ -404,7 +404,9 @@ func TestBuildDatastoreQueryScopesEverySource(t *testing.T) {
 			if !bindPlaceholder.MatchString(sql) {
 				t.Errorf("SQL for %s lacks a $n::int[] placeholder:\n%s", src.Name, sql)
 			}
-			if strings.Contains(sql, "{") {
+			// The text masking patterns contain braces, so look for
+			// the opening of an array literal rather than any brace.
+			if strings.Contains(sql, "'{") {
 				t.Errorf("SQL for %s carries an array literal:\n%s", src.Name, sql)
 			}
 		})

@@ -181,9 +181,19 @@ moved.
   `pg_stat_statements.query`, Spock exception and resolution
   statements and row images, `connections.connection_error`) pass
   through `redactedText`, a chain of `regexp_replace` calls built from
-  `textRedactions` (PASSWORD '...', password=..., URI userinfo, JSON
-  password keys); test any new pattern in both Go and PostgreSQL
-  (`datastore_text_redaction_test.go`). The masking is best effort:
+  `textRedactions` (URI userinfo, JSON keys, ALTER SYSTEM SET of a
+  `credentialSettings` entry, quoted name and value as in `set_config`,
+  name=value, and name followed by a string constant, with secret names
+  derived from `secretNamePatterns`). Each pattern accepts every SQL
+  string constant form (quoted with either escape style, E'', U&'',
+  dollar-quoted, truncated), keeps only capture group 1, and is applied
+  through E'' literals so `standard_conforming_strings` cannot change
+  it; add every bypass input to `textRedactionCases`, which run in both
+  Go and PostgreSQL, and keep the 1 MB adversarial test fast
+  (`datastore_text_redaction_test.go`). A dollar-quoted value that
+  itself contains a `$name$` tag leaks its tail, since the patterns
+  cannot use back-references. Row images retyped to text keep their
+  stored type for entity-key selection (`StoredType`). The masking is best effort:
   query text and row images can still carry sensitive data or a
   password in an unrecognised form, and read access to a connection
   grants that visibility, as the user guide states.

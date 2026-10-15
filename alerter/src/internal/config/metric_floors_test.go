@@ -28,6 +28,10 @@ func TestDefaultMetricFloors(t *testing.T) {
 		"pg_stat_database.temp_files_delta":            {MinValue: 10, MinStdDev: 10},
 		"pg_stat_database.deadlocks_delta":             {MinStdDev: 1},
 		"pg_sys_disk_info.used_percent":                {MinValue: 50, MinStdDev: 2},
+		"pg_stat_replication.lag_bytes":                {MinValue: 16 << 20, MinStdDev: 8 << 20},
+		"pg_stat_activity.max_lock_wait_seconds":       {MinValue: 5, MinStdDev: 2},
+		"pg_stat_checkpointer.checkpoints_req_delta":   {MinValue: 3, MinStdDev: 1},
+		"pg_stat_statements.slow_query_count":          {MinValue: 3, MinStdDev: 1},
 		"pg_stat_database.cache_hit_ratio":             {},
 		"no_such_metric":                               {},
 	}

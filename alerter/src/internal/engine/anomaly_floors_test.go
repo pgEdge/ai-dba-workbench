@@ -133,6 +133,28 @@ func TestBuildClassificationPromptIncludesDivisor(t *testing.T) {
 	}
 }
 
+// TestEveryScoredMetricHasDefaultFloor fails when a metric becomes
+// baselineable without a built-in floor, which on a flat zero baseline
+// lets a single occurrence score z = max_z_score. A metric that
+// deliberately has none is listed here with the reason beside
+// defaultMetricFloors.
+func TestEveryScoredMetricHasDefaultFloor(t *testing.T) {
+	noFloor := map[string]bool{
+		"pg_stat_database.cache_hit_ratio": true,
+	}
+	for _, metric := range database.BaselineSupportedMetrics() {
+		hasFloor := config.DefaultMetricFloor(metric) != (config.MetricFloor{})
+		if hasFloor == noFloor[metric] {
+			t.Errorf("%s: built-in floor present = %v, want %v", metric, hasFloor, !noFloor[metric])
+		}
+	}
+	for _, metric := range config.DefaultMetricFloorNames() {
+		if !database.SupportsBaselines(metric) {
+			t.Errorf("default floor for %s, which anomaly detection does not score", metric)
+		}
+	}
+}
+
 func TestUnknownMetricFloorNames(t *testing.T) {
 	cfg := config.NewConfig()
 	cfg.Anomaly.Enabled = false

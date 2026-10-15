@@ -52,7 +52,7 @@ type MetricFloor struct {
 // smallest change that matters in its units, and a value below which
 // nothing is worth reporting. A divisor floor alone still lets a large
 // jump from a flat baseline score highly, which is intended: 0 to 200
-// temporary files in one sample is still an anomaly.
+// temporary files in an hour is still an anomaly.
 //
 // Every MinValue sits well below the default threshold rule on the same
 // metric, so the threshold path still reports a value that matters
@@ -71,7 +71,7 @@ type MetricFloor struct {
 //   - pg_stat_activity.count (rule at 200): fewer than 10 sessions is an
 //     idle server whatever its baseline; a divisor of 5 sessions.
 //   - pg_stat_database.temp_files_delta (rule at 100): fewer than 10
-//     temporary files in a sample is routine for sorts and hashes that
+//     temporary files in an hour is routine for sorts and hashes that
 //     spill past work_mem; a divisor of 10 files.
 //   - pg_stat_activity.blocked_count (rule at 5): one blocked backend is
 //     an ordinary lock wait; a divisor of 1.
@@ -83,6 +83,16 @@ type MetricFloor struct {
 //   - Replication slot retained WAL (rule at 1 GiB): below 256 MiB, 16
 //     default WAL segments, is ordinary retention between checkpoints;
 //     a divisor of 64 MiB, four segments.
+//   - pg_stat_replication.lag_bytes (rule at 100 MiB): less than one
+//     default 16 MiB WAL segment of lag is ordinary for a standby
+//     replaying a busy primary; a divisor of 8 MiB.
+//   - pg_stat_activity.max_lock_wait_seconds (rule at 30 seconds): a
+//     lock wait under 5 seconds is ordinary row-lock contention; a
+//     divisor of 2 seconds.
+//   - pg_stat_checkpointer.checkpoints_req_delta (rule at 12 an hour)
+//     and pg_stat_statements.slow_query_count (rule at 10): fewer than
+//     3 is routine, and a divisor of 1 because a count cannot change by
+//     less than 1.
 //   - Integer counts whose threshold rules already fire on any
 //     occurrence (deadlocks, Spock exceptions and Spock resolutions) get
 //     no MinValue, so the anomaly path hides no occurrence, but a
@@ -107,6 +117,10 @@ var defaultMetricFloors = map[string]MetricFloor{
 	"pg_stat_activity.idle_in_transaction_seconds":  {MinValue: 60, MinStdDev: 10},
 	"pg_sys_load_avg_info.load_avg_fifteen_minutes": {MinValue: 1, MinStdDev: 0.5},
 	"pg_replication_slots.max_retained_bytes":       {MinValue: 256 << 20, MinStdDev: 64 << 20},
+	"pg_stat_replication.lag_bytes":                 {MinValue: 16 << 20, MinStdDev: 8 << 20},
+	"pg_stat_activity.max_lock_wait_seconds":        {MinValue: 5, MinStdDev: 2},
+	"pg_stat_checkpointer.checkpoints_req_delta":    {MinValue: 3, MinStdDev: 1},
+	"pg_stat_statements.slow_query_count":           {MinValue: 3, MinStdDev: 1},
 	"pg_stat_database.deadlocks_delta":              {MinStdDev: 1},
 	"spock_exception_log.recent_count":              {MinStdDev: 1},
 	"spock_resolutions.recent_count":                {MinStdDev: 1},

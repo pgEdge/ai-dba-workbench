@@ -351,6 +351,10 @@ that matters:
 | `pg_stat_activity.idle_in_transaction_seconds` | 60 | 10 |
 | `pg_sys_load_avg_info.load_avg_fifteen_minutes` | 1 | 0.5 |
 | `pg_replication_slots.max_retained_bytes` | 256 MiB | 64 MiB |
+| `pg_stat_replication.lag_bytes` | 16 MiB | 8 MiB |
+| `pg_stat_activity.max_lock_wait_seconds` | 5 | 2 |
+| `pg_stat_checkpointer.checkpoints_req_delta` | 3 | 1 |
+| `pg_stat_statements.slow_query_count` | 3 | 1 |
 | `pg_stat_database.deadlocks_delta` | none | 1 |
 | `spock_exception_log.recent_count` | none | 1 |
 | `spock_resolutions.recent_count` | none | 1 |

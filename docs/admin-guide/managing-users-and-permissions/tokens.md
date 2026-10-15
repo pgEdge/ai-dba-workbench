@@ -102,6 +102,13 @@ rule, and the token ceiling described below still applies to a token caller,
 siblings included, so a narrowed token cannot mint or widen a sibling beyond
 itself.
 
+The server checks a token caller's scope change against the target token's
+scope as it stands when the request arrives. If another request changes that
+scope before the change is written, the server writes nothing and answers
+`409 Conflict`, so that a change cannot restore access that an administrator
+removed in the meantime; the caller can retry the request, which the server
+then judges against the scope as it now stands.
+
 A token that a superuser owns carries the superuser role, so the server
 guards such tokens more closely. Creating a token for a superuser, and
 setting the scope of, clearing the scope of, or deleting a token that a

@@ -55,7 +55,7 @@ func newOwnerGuardFixture(t *testing.T) (*ownerGuardFixture, func()) {
 		}
 	}
 	if err := store.AsActor(systemActor).SetTokenScope(tokenID,
-		restrictedChange(), true, AnyTokenOwner()); err != nil {
+		restrictedChange(), true, AnyTokenOwner(), nil); err != nil {
 		fail("SetTokenScope failed: %v", err)
 	}
 	owner, err := store.GetUser("owner")
@@ -142,7 +142,7 @@ func TestTokenOwnerGuardNarrowOnly(t *testing.T) {
 			before, rows := f.scope(t), f.auditCount(t)
 
 			err := f.store.AsActor(systemActor).SetTokenScope(f.tokenID,
-				tc.change, true, TokensOwnedBy(f.otherID))
+				tc.change, true, TokensOwnedBy(f.otherID), nil)
 			if !tc.widens {
 				if err != nil {
 					t.Fatalf("Expected the narrowing to succeed, got %v", err)
@@ -166,7 +166,7 @@ func TestTokenOwnerGuardNarrowOnly(t *testing.T) {
 				"any":   AnyTokenOwner(),
 			} {
 				if err := f.store.AsActor(systemActor).SetTokenScope(
-					f.tokenID, tc.change, true, guard); err != nil {
+					f.tokenID, tc.change, true, guard, nil); err != nil {
 					t.Errorf("Expected %s to widen the token, got %v",
 						name, err)
 				}
@@ -181,11 +181,11 @@ func TestTokenOwnerGuardUnrestrictedKinds(t *testing.T) {
 	f, cleanup := newOwnerGuardFixture(t)
 	defer cleanup()
 	if err := f.store.AsActor(systemActor).ClearTokenScope(f.tokenID, true,
-		AnyTokenOwner()); err != nil {
+		AnyTokenOwner(), nil); err != nil {
 		t.Fatalf("ClearTokenScope failed: %v", err)
 	}
 	if err := f.store.AsActor(systemActor).SetTokenScope(f.tokenID,
-		restrictedChange(), true, TokensOwnedBy(f.otherID)); err != nil {
+		restrictedChange(), true, TokensOwnedBy(f.otherID), nil); err != nil {
 		t.Fatalf("Expected restricting an unrestricted token to succeed, got %v",
 			err)
 	}
@@ -204,7 +204,7 @@ func TestTokenOwnerGuardOrphanedMCPRows(t *testing.T) {
 	}
 	err := f.store.AsActor(systemActor).SetTokenScope(f.tokenID,
 		TokenScopeChange{MCPPrivileges: []string{"tool_c"}}, true,
-		TokensOwnedBy(f.otherID))
+		TokensOwnedBy(f.otherID), nil)
 	if !errors.Is(err, ErrTokenNotOwned) {
 		t.Fatalf("Expected ErrTokenNotOwned, got %v", err)
 	}
@@ -238,7 +238,7 @@ func TestTokenOwnerGuardClear(t *testing.T) {
 			defer cleanup()
 			rows := f.auditCount(t)
 			err := f.store.AsActor(systemActor).ClearTokenScope(f.tokenID,
-				true, tc.guard(f))
+				true, tc.guard(f), nil)
 			if !tc.refused {
 				if err != nil {
 					t.Fatalf("Expected the clear to succeed, got %v", err)
@@ -265,7 +265,7 @@ func TestTokenOwnerGuardZeroGuardNarrows(t *testing.T) {
 	defer cleanup()
 	if err := f.store.AsActor(systemActor).SetTokenScope(f.tokenID,
 		TokenScopeChange{AdminPermissions: []string{PermManageUsers}}, true,
-		TokenOwnerGuard{}); err != nil {
+		TokenOwnerGuard{}, nil); err != nil {
 		t.Fatalf("Expected the narrowing to succeed, got %v", err)
 	}
 }
@@ -280,11 +280,11 @@ func TestTokenOwnerGuardMissingToken(t *testing.T) {
 	writes := map[string]func() error{
 		"set": func() error {
 			return f.store.AsActor(systemActor).SetTokenScope(99999,
-				TokenScopeChange{AdminPermissions: []string{"*"}}, true, guard)
+				TokenScopeChange{AdminPermissions: []string{"*"}}, true, guard, nil)
 		},
 		"clear": func() error {
 			return f.store.AsActor(systemActor).ClearTokenScope(99999, true,
-				guard)
+				guard, nil)
 		},
 	}
 	for name, write := range writes {
@@ -310,7 +310,7 @@ func TestTokenOwnerGuardFailsClosed(t *testing.T) {
 			}
 			err := f.store.AsActor(systemActor).SetTokenScope(f.tokenID,
 				TokenScopeChange{AdminPermissions: []string{PermManageUsers}},
-				true, TokensOwnedBy(f.otherID))
+				true, TokensOwnedBy(f.otherID), nil)
 			if err == nil {
 				t.Fatal("Expected the write to fail")
 			}

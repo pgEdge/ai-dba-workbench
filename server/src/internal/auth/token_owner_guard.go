@@ -15,12 +15,12 @@ import (
 	"fmt"
 )
 
-// ErrTokenNotOwned reports a scope write that would widen a token the
-// caller does not own (issue #522). Only a token's owner, or a
-// superuser, may widen or clear its scope; anyone else holding
-// manage_token_scopes may only narrow it.
+// ErrTokenNotOwned reports a token write that only the token's owner,
+// or a superuser, may make (issue #522): creating a token for another
+// user, or widening or clearing the scope of a token the caller does not
+// own. Anyone else holding manage_token_scopes may only narrow a token.
 var ErrTokenNotOwned = errors.New(
-	"only a token's owner or a superuser may widen or clear its scope")
+	"only a token's owner or a superuser may create, widen or clear it")
 
 // TokenOwnerGuard says whom a token scope write acts for, so that the
 // store can refuse, inside the write's own transaction, a write that

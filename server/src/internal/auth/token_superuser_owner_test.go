@@ -37,10 +37,10 @@ var ownedTokenWrites = []struct {
 	{"set scope", func(s *ActorStore, tokenID int64, allowed bool) error {
 		return s.SetTokenScope(tokenID, TokenScopeChange{
 			AdminPermissions: []string{"*"},
-		}, allowed, AnyTokenOwner())
+		}, allowed, AnyTokenOwner(), nil)
 	}},
 	{"clear scope", func(s *ActorStore, tokenID int64, allowed bool) error {
-		return s.ClearTokenScope(tokenID, allowed, AnyTokenOwner())
+		return s.ClearTokenScope(tokenID, allowed, AnyTokenOwner(), nil)
 	}},
 	{"set connection scope", func(s *ActorStore, tokenID int64, allowed bool) error {
 		return s.SetTokenConnectionScope(tokenID, []ScopedConnection{
@@ -213,7 +213,7 @@ func TestSuperuserOwnedTokenConcurrentPromotion(t *testing.T) {
 			defer wg.Done()
 			widenErr = store.AsActor(testActor()).SetTokenScope(tokenID,
 				TokenScopeChange{AdminPermissions: []string{"*"}}, false,
-				AnyTokenOwner())
+				AnyTokenOwner(), nil)
 		}()
 		wg.Wait()
 
@@ -278,7 +278,7 @@ func TestSuperuserOwnedTokenSetScopeIsAtomic(t *testing.T) {
 					Connections: []ScopedConnection{
 						{ConnectionID: 1, AccessLevel: AccessLevelRead}},
 					AdminPermissions: []string{"*"},
-				}, false, AnyTokenOwner())
+				}, false, AnyTokenOwner(), nil)
 			if !tc.wantErr(err) {
 				t.Fatalf("Unexpected error %v", err)
 			}
@@ -317,7 +317,7 @@ func TestSetTokenScopeWritesEveryKind(t *testing.T) {
 
 	before := lastAuditEvent(t, store).ID
 	if err := actor.SetTokenScope(tokenID, TokenScopeChange{}, false,
-		AnyTokenOwner()); err != nil {
+		AnyTokenOwner(), nil); err != nil {
 		t.Fatalf("Expected an empty change to pass, got %v", err)
 	}
 	if got := lastAuditEvent(t, store).ID; got != before {
@@ -328,7 +328,7 @@ func TestSetTokenScopeWritesEveryKind(t *testing.T) {
 		MCPPrivileges:    []string{"tool_a"},
 		Connections:      []ScopedConnection{{ConnectionID: 3, AccessLevel: AccessLevelRead}},
 		AdminPermissions: []string{PermManageGroups},
-	}, false, AnyTokenOwner()); err != nil {
+	}, false, AnyTokenOwner(), nil); err != nil {
 		t.Fatalf("SetTokenScope failed: %v", err)
 	}
 	scope, err := store.GetTokenScope(tokenID)
@@ -377,7 +377,7 @@ func TestSetTokenScopeRejectsInvalidInput(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := actor.SetTokenScope(tokenID, change, false,
-				AnyTokenOwner()); err == nil {
+				AnyTokenOwner(), nil); err == nil {
 				t.Errorf("Expected the change to be refused")
 			}
 			assertOwnedTokenUntouched(t, store, tokenID)
@@ -417,7 +417,7 @@ func TestSuperuserOwnedTokenGuardMissingToken(t *testing.T) {
 	store, _, cleanup := newOwnedTokenStore(t)
 	defer cleanup()
 
-	err := store.AsActor(testActor()).ClearTokenScope(99999, false, AnyTokenOwner())
+	err := store.AsActor(testActor()).ClearTokenScope(99999, false, AnyTokenOwner(), nil)
 	if errors.Is(err, ErrSuperuserTargetForbidden) {
 		t.Errorf("Expected a missing token not to be refused as forbidden")
 	}

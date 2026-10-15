@@ -513,6 +513,10 @@ type storedTokenScope struct {
 	mcpRestricted   bool
 	admin           map[string]bool
 	adminRestricted bool
+	// snapshot is the rows the scope was built from, which a write
+	// judged against this scope passes to the store (see
+	// TokenScopeSnapshot); only loadStoredTokenScope sets it.
+	snapshot *TokenScopeSnapshot
 }
 
 // loadStoredTokenScope reads the scope stored for tokenID. found is
@@ -541,19 +545,20 @@ func (rc *RBACChecker) loadStoredTokenScope(tokenID int64) (
 	// restrict the token, to nothing), and the admin permissions, so only
 	// the identifier names need a second read.
 	var conns []ScopedConnection
+	var mcpIDs []int64
 	var perms []string
-	hasMCPRows := false
 	if scope != nil {
 		conns = scope.Connections
+		mcpIDs = scope.MCPPrivileges
 		perms = scope.AdminPermissions
-		hasMCPRows = len(scope.MCPPrivileges) > 0
 	}
 
 	names, err := rc.authStore.GetTokenMCPScope(tokenID)
 	if err != nil {
 		return nil, false, ErrTokenScopeUnreadable
 	}
-	stored = newStoredTokenScope(conns, names, hasMCPRows, perms)
+	stored = newStoredTokenScope(conns, names, len(mcpIDs) > 0, perms)
+	stored.snapshot = newTokenScopeSnapshot(conns, mcpIDs, perms)
 	stored.ownerID = token.OwnerID
 	stored.ownerSuperuser = owner.IsSuperuser
 	return stored, true, nil
@@ -707,38 +712,60 @@ func namesChangeCovered(entries []string, wildcard string,
 func (rc *RBACChecker) TokenScopeChangeWithinCeiling(ctx context.Context,
 	tokenID int64, change TokenScopeChange) (bool, error) {
 
+	allowed, _, err := rc.JudgeTokenScopeChange(ctx, tokenID, change)
+	return allowed, err
+}
+
+// JudgeTokenScopeChange is TokenScopeChangeWithinCeiling that also
+// returns the stored scope it judged the change against, for the write
+// to pass to ActorStore.SetTokenScope, which refuses it with
+// ErrTokenScopeChanged should the scope have changed since. The
+// snapshot is nil for a session, which has no ceiling, and whenever the
+// change is refused.
+func (rc *RBACChecker) JudgeTokenScopeChange(ctx context.Context,
+	tokenID int64, change TokenScopeChange) (bool, *TokenScopeSnapshot,
+	error) {
+
 	c, ok := rc.actorCeiling(ctx)
 	if !ok {
-		return false, nil
+		return false, nil, nil
 	}
 	if c.session {
-		return true, nil
+		return true, nil, nil
 	}
 	stored, found, err := rc.loadStoredTokenScope(tokenID)
 	if err != nil || !found {
-		return false, err
+		return false, nil, err
 	}
+	if !c.changeWithinCeiling(stored, change) {
+		return false, nil, nil
+	}
+	return true, stored.snapshot, nil
+}
+
+// changeWithinCeiling judges change against the stored scope for
+// JudgeTokenScopeChange.
+func (c *tokenCeiling) changeWithinCeiling(stored *storedTokenScope,
+	change TokenScopeChange) bool {
+
 	// A superuser's token is bounded by its scope alone, so widening it
 	// hands out superuser access, which only a token that may make
 	// someone a superuser holds to give (see holdsSuperuser).
 	if stored.ownerSuperuser && !c.holdsSuperuser() && stored.widens(change) {
-		return false, nil
+		return false
 	}
 	if change.Connections != nil &&
 		!c.connectionsChangeCovered(stored, change.Connections) {
-		return false, nil
+		return false
 	}
 	if change.MCPPrivileges != nil &&
 		!namesChangeCovered(change.MCPPrivileges, mcpScopeWildcard,
 			stored.mcp, stored.mcpRestricted, c.coversMCP) {
-		return false, nil
+		return false
 	}
-	if change.AdminPermissions != nil &&
-		!namesChangeCovered(change.AdminPermissions, AdminPermissionWildcard,
-			stored.admin, stored.adminRestricted, c.coversAdmin) {
-		return false, nil
-	}
-	return true, nil
+	return change.AdminPermissions == nil ||
+		namesChangeCovered(change.AdminPermissions, AdminPermissionWildcard,
+			stored.admin, stored.adminRestricted, c.coversAdmin)
 }
 
 // TokenScopeClearWithinCeiling reports whether the acting caller may
@@ -750,38 +777,57 @@ func (rc *RBACChecker) TokenScopeChangeWithinCeiling(ctx context.Context,
 func (rc *RBACChecker) TokenScopeClearWithinCeiling(ctx context.Context,
 	tokenID int64, lister ConnectionVisibilityLister) (bool, error) {
 
+	allowed, _, err := rc.JudgeTokenScopeClear(ctx, tokenID, lister)
+	return allowed, err
+}
+
+// JudgeTokenScopeClear is TokenScopeClearWithinCeiling that also
+// returns the stored scope it judged the clear against, for the write
+// to pass to ActorStore.ClearTokenScope; see JudgeTokenScopeChange.
+func (rc *RBACChecker) JudgeTokenScopeClear(ctx context.Context,
+	tokenID int64, lister ConnectionVisibilityLister) (bool,
+	*TokenScopeSnapshot, error) {
+
 	c, ok := rc.actorCeiling(ctx)
 	if !ok {
-		return false, nil
+		return false, nil, nil
 	}
 	if c.session {
-		return true, nil
+		return true, nil, nil
 	}
 	stored, found, err := rc.loadStoredTokenScope(tokenID)
 	if err != nil || !found {
-		return false, err
+		return false, nil, err
 	}
 	owner, ok := rc.loadUserReach(stored.ownerID)
 	if !ok {
-		return false, ErrTokenScopeUnreadable
+		return false, nil, ErrTokenScopeUnreadable
 	}
+	if !c.clearWithinCeiling(stored, owner, lister) {
+		return false, nil, nil
+	}
+	return true, stored.snapshot, nil
+}
+
+// clearWithinCeiling judges clearing the stored scope, which hands the
+// token its owner's whole reach, for JudgeTokenScopeClear.
+func (c *tokenCeiling) clearWithinCeiling(stored *storedTokenScope,
+	owner *principalReach, lister ConnectionVisibilityLister) bool {
+
 	// Clearing any restriction of a superuser's token widens it towards
 	// superuser access, as in TokenScopeChangeWithinCeiling.
 	if owner.superuser && !c.holdsSuperuser() &&
 		(stored.connsRestricted || stored.mcpRestricted ||
 			stored.adminRestricted) {
-		return false, nil
+		return false
 	}
 	if stored.connsRestricted &&
 		(!c.connectionsChangeCovered(stored, nil) ||
 			!c.coversReachConnections(owner, lister)) {
-		return false, nil
+		return false
 	}
 	if stored.mcpRestricted && !c.coversReachMCP(owner) {
-		return false, nil
+		return false
 	}
-	if stored.adminRestricted && !c.coversReachAdmin(owner) {
-		return false, nil
-	}
-	return true, nil
+	return !stored.adminRestricted || c.coversReachAdmin(owner)
 }

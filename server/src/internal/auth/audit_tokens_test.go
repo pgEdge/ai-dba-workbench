@@ -627,7 +627,7 @@ func TestAuditTokensClearScope(t *testing.T) {
 	}
 
 	as := store.AsActor(testActor())
-	if err := as.ClearTokenScope(token.ID, true, AnyTokenOwner()); err != nil {
+	if err := as.ClearTokenScope(token.ID, true, AnyTokenOwner(), nil); err != nil {
 		t.Fatalf("ClearTokenScope failed: %v", err)
 	}
 
@@ -663,7 +663,7 @@ func TestAuditTokensScopeOnMissingTokenStillRecords(t *testing.T) {
 	defer cleanup()
 
 	as := store.AsActor(testActor())
-	if err := as.ClearTokenScope(4242, true, AnyTokenOwner()); err != nil {
+	if err := as.ClearTokenScope(4242, true, AnyTokenOwner(), nil); err != nil {
 		t.Fatalf("ClearTokenScope failed: %v", err)
 	}
 
@@ -715,7 +715,7 @@ func TestAuditTokensChainStaysIntact(t *testing.T) {
 	if err := as.SetTokenAdminScope(token.ID, []string{"manage_users"}, true); err != nil {
 		t.Fatalf("SetTokenAdminScope failed: %v", err)
 	}
-	if err := as.ClearTokenScope(token.ID, true, AnyTokenOwner()); err != nil {
+	if err := as.ClearTokenScope(token.ID, true, AnyTokenOwner(), nil); err != nil {
 		t.Fatalf("ClearTokenScope failed: %v", err)
 	}
 	if err := as.DeleteToken(strconv.FormatInt(token.ID, 10), true); err != nil {
@@ -856,7 +856,7 @@ func TestAuditTokensClosedStoreFailsToBegin(t *testing.T) {
 		{"SetTokenAdminScope", func() error {
 			return as.SetTokenAdminScope(token.ID, nil, true)
 		}},
-		{"ClearTokenScope", func() error { return as.ClearTokenScope(token.ID, true, AnyTokenOwner()) }},
+		{"ClearTokenScope", func() error { return as.ClearTokenScope(token.ID, true, AnyTokenOwner(), nil) }},
 	}
 
 	for _, tc := range cases {
@@ -896,7 +896,7 @@ func TestAuditTokensBrokenScopeTablesRecordFailure(t *testing.T) {
 			}},
 		{"clear", "token_connection_scope", "token.scope.clear",
 			func(as *ActorStore, id int64) error {
-				return as.ClearTokenScope(id, true, AnyTokenOwner())
+				return as.ClearTokenScope(id, true, AnyTokenOwner(), nil)
 			}},
 		{"delete", "token_admin_scope", "token.delete",
 			func(as *ActorStore, id int64) error {
@@ -1109,7 +1109,7 @@ func TestAuditTokensAuditTableMissing(t *testing.T) {
 			return as.SetTokenAdminScope(id, nil, true)
 		}},
 		{"ClearTokenScope", func(as *ActorStore, id int64) error {
-			return as.ClearTokenScope(id, true, AnyTokenOwner())
+			return as.ClearTokenScope(id, true, AnyTokenOwner(), nil)
 		}},
 	}
 
@@ -1296,13 +1296,13 @@ func TestAuditTokensScopeMutationFailures(t *testing.T) {
 			"failed to add wildcard admin permission to token scope"},
 		{"ClearConnections", seedConnectionScope,
 			blockDelete("token_connection_scope"),
-			func(as *ActorStore, id int64) error { return as.ClearTokenScope(id, true, AnyTokenOwner()) },
+			func(as *ActorStore, id int64) error { return as.ClearTokenScope(id, true, AnyTokenOwner(), nil) },
 			"failed to clear token connection scope"},
 		{"ClearTools", seedMCPScope, blockDelete("token_mcp_scope"),
-			func(as *ActorStore, id int64) error { return as.ClearTokenScope(id, true, AnyTokenOwner()) },
+			func(as *ActorStore, id int64) error { return as.ClearTokenScope(id, true, AnyTokenOwner(), nil) },
 			"failed to clear token MCP scope"},
 		{"ClearAdmin", seedAdminScope, blockDelete("token_admin_scope"),
-			func(as *ActorStore, id int64) error { return as.ClearTokenScope(id, true, AnyTokenOwner()) },
+			func(as *ActorStore, id int64) error { return as.ClearTokenScope(id, true, AnyTokenOwner(), nil) },
 			"failed to clear token admin scope"},
 		{"DeleteScopeRows", seedConnectionScope,
 			blockDelete("token_connection_scope"),

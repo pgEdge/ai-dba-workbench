@@ -197,16 +197,19 @@ func (s *AuthStore) beginTokenScopeChange(actor Actor, tokenID int64,
 	action string, superuserOwnerAllowed bool) (*sql.Tx, *auditTarget, error) {
 
 	return s.beginGuardedTokenScopeChange(actor, tokenID, action,
-		superuserOwnerAllowed, AnyTokenOwner(), nil)
+		superuserOwnerAllowed, AnyTokenOwner(), nil, nil)
 }
 
 // beginGuardedTokenScopeChange is beginTokenScopeChange that then also
 // refuses, with ErrTokenNotOwned, a change that widens a token owner
 // does not own (see guardTokenOwnerTx); change nil means the scope is
-// being cleared.
+// being cleared. Last it refuses, with ErrTokenScopeChanged, a write
+// whose token's scope is no longer the one judged recorded when a
+// ceiling check approved it (see guardJudgedTokenScopeTx).
 func (s *AuthStore) beginGuardedTokenScopeChange(actor Actor, tokenID int64,
 	action string, superuserOwnerAllowed bool, owner TokenOwnerGuard,
-	change *TokenScopeChange) (*sql.Tx, *auditTarget, error) {
+	change *TokenScopeChange, judged *TokenScopeSnapshot) (*sql.Tx,
+	*auditTarget, error) {
 
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -229,6 +232,10 @@ func (s *AuthStore) beginGuardedTokenScopeChange(actor Actor, tokenID int64,
 		return nil, nil, err
 	}
 	if err := guardTokenOwnerTx(tx, tokenID, owner, change); err != nil {
+		s.failAudit(tx, actor, target, err)
+		return nil, nil, err
+	}
+	if err := guardJudgedTokenScopeTx(tx, tokenID, judged); err != nil {
 		s.failAudit(tx, actor, target, err)
 		return nil, nil, err
 	}
@@ -485,15 +492,16 @@ func (s *AuthStore) GetTokenScope(tokenID int64) (*TokenScope, error) {
 
 // clearTokenScope removes all scope restrictions from a token.
 // Clearing widens the token, so owner refuses it, with ErrTokenNotOwned,
-// for a token owner does not own.
+// for a token owner does not own. judged is as for setTokenScope.
 func (s *AuthStore) clearTokenScope(actor Actor, tokenID int64,
-	superuserOwnerAllowed bool, owner TokenOwnerGuard) (err error) {
+	superuserOwnerAllowed bool, owner TokenOwnerGuard,
+	judged *TokenScopeSnapshot) (err error) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	tx, target, err := s.beginGuardedTokenScopeChange(actor, tokenID,
-		actionClearScope, superuserOwnerAllowed, owner, nil)
+		actionClearScope, superuserOwnerAllowed, owner, nil, judged)
 	if err != nil {
 		return err
 	}

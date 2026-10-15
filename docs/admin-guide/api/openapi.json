@@ -9561,6 +9561,16 @@
               }
             }
           },
+          "409": {
+            "description": "For an API token caller, the target token's scope changed between the check of the change against the caller's access and the write; nothing was written, and the request may be retried",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "500": {
             "description": "Failed to set token scope, including when the target token or its owner could not be read inside the write; for an API token caller, also \"Failed to get token scope\" when the target token's current scope could not be read to judge the change",
             "content": {
@@ -9612,6 +9622,16 @@
           },
           "403": {
             "description": "Requires manage_token_scopes permission, or, for each kind the target token is restricted in, its owner's access in that kind exceeds the API token's access (its owner's privileges narrowed by its scope), or a connection entry the clear drops is one the caller cannot read. The same rule applies to a token's own scope. A token owned by a superuser may be cleared only by a superuser's session, or a superuser's token with an unrestricted admin scope, other than by that token itself, and by an API token only when it is a superuser's token unrestricted in every scope kind. A caller who is not a superuser is refused the clear of a token owned by another user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "For an API token caller, the target token's scope changed between the check of the clear against the caller's access and the write; nothing was cleared, and the request may be retried",
             "content": {
               "application/json": {
                 "schema": {

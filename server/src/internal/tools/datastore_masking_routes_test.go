@@ -13,6 +13,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -73,6 +74,47 @@ var maskedProbes = []maskedProbe{
 		insert: `INSERT INTO metrics.ds_masking_secret_probe VALUES ($1, now(), 'app', 'example-secret', 1)`},
 }
 
+// probesToMask returns a maskedProbes fixture for every probe in
+// metrics.ProbeRedactions, failing the test for one that has none, so a
+// new masked probe cannot skip the route checks, followed by the
+// fixtures for probes masked by column name alone.
+func probesToMask(t *testing.T) []maskedProbe {
+	t.Helper()
+	byName := make(map[string]maskedProbe, len(maskedProbes))
+	for _, p := range maskedProbes {
+		byName[p.name] = p
+	}
+	names := make([]string, 0, len(metrics.ProbeRedactions))
+	for name := range metrics.ProbeRedactions {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	out := make([]maskedProbe, 0, len(maskedProbes))
+	for _, name := range names {
+		p, ok := byName[name]
+		if !ok {
+			t.Errorf("metrics.ProbeRedactions masks %q but maskedProbes has no fixture for it", name)
+			continue
+		}
+		out = append(out, p)
+		delete(byName, name)
+	}
+	for _, p := range maskedProbes {
+		if _, ok := byName[p.name]; ok {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// TestMaskedProbesCoverProbeRedactions runs without a database, so a
+// missing fixture fails every test run.
+func TestMaskedProbesCoverProbeRedactions(t *testing.T) {
+	if got := probesToMask(t); len(got) != len(maskedProbes) {
+		t.Errorf("%d of %d fixtures used", len(got), len(maskedProbes))
+	}
+}
+
 // TestMaskedProbesOnEveryRouteIntegration runs every probe that holds a
 // credential through query_datastore, GET /api/v1/metrics/latest and the
 // latest-rows mode of GET /api/v1/metrics/query, and checks none returns
@@ -85,7 +127,7 @@ func TestMaskedProbesOnEveryRouteIntegration(t *testing.T) {
 	api.NewLatestSnapshotHandler(f.ds, f.store).RegisterRoutes(mux, noAuth)
 	api.NewMetricsHandler(f.ds, f.store).RegisterRoutes(mux, noAuth)
 
-	for _, p := range maskedProbes {
+	for _, p := range probesToMask(t) {
 		t.Run(p.name, func(t *testing.T) {
 			if _, err := f.pool.Exec(ctx, p.drop); err != nil {
 				t.Fatalf("%s: %v", p.drop, err)

@@ -643,7 +643,13 @@ func TestLatestSnapshot_MasksCredentials(t *testing.T) {
 	}
 
 	rec = getLatest(t, h, "connection_id=1&probe_name=pg_settings&order_by=ssl_passphrase")
+	// The handler must refuse the column itself, not leave PostgreSQL to
+	// fail on it.
+	want := `Invalid order_by: column "ssl_passphrase" does not exist in probe "pg_settings" output`
 	if rec.Code != http.StatusBadRequest {
-		t.Errorf("order_by on a secret column: expected 400, got %d (%s)", rec.Code, rec.Body.String())
+		t.Fatalf("order_by on a secret column: expected 400, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if got := decodeError(t, rec).Error; got != want {
+		t.Errorf("order_by on a secret column: got %q, want %q", got, want)
 	}
 }

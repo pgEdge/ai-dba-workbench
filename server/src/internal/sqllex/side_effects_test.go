@@ -250,18 +250,66 @@ func TestDecodeUnicodeEscapes(t *testing.T) {
 	}
 }
 
+// coreFunctionMinVersion holds the server_version_num of the first
+// release to ship each core function added after PostgreSQL 14, the
+// oldest release CI tests against. The list keeps these names because a
+// monitored server may run any version, but pg_proc on an older test
+// server does not have them.
+var coreFunctionMinVersion = map[string]int{
+	"pg_backup_start":            150000,
+	"pg_backup_stop":             150000,
+	"pg_log_standby_snapshot":    160000,
+	"pg_sync_replication_slots":  170000,
+	"pg_restore_relation_stats":  180000,
+	"pg_clear_relation_stats":    180000,
+	"pg_restore_attribute_stats": 180000,
+	"pg_clear_attribute_stats":   180000,
+}
+
+// TestCoreFunctionMinVersion_NamesAreCore keeps coreFunctionMinVersion
+// from naming a function no core family lists, which would hide nothing
+// but would go stale silently.
+func TestCoreFunctionMinVersion_NamesAreCore(t *testing.T) {
+	core := map[string]bool{}
+	for _, family := range sideEffectingFunctionFamilies {
+		if family.core {
+			for _, name := range family.names {
+				core[name] = true
+			}
+		}
+	}
+	for name := range coreFunctionMinVersion {
+		if !core[name] {
+			t.Errorf("coreFunctionMinVersion names %q, which no core family lists", name)
+		}
+	}
+}
+
 // TestSideEffectingFunctions_CoreNamesExist checks every name in a core
 // family against pg_proc on the test server, so that a misspelled name,
-// which would never match a real call, fails here.
+// which would never match a real call, fails here. A name newer than
+// the server under test is skipped; it is checked on servers that have
+// it.
 func TestSideEffectingFunctions_CoreNamesExist(t *testing.T) {
 	conn := connectSideEffectTestDB(t)
 	ctx := context.Background()
+
+	var serverVersion int
+	if err := conn.QueryRow(ctx,
+		"SELECT current_setting('server_version_num')::int").Scan(&serverVersion); err != nil {
+		t.Fatalf("failed to read server_version_num: %v", err)
+	}
 
 	for _, family := range sideEffectingFunctionFamilies {
 		if !family.core {
 			continue
 		}
 		for _, name := range family.names {
+			if minVersion, ok := coreFunctionMinVersion[name]; ok && serverVersion < minVersion {
+				t.Logf("skipping %q: needs server_version_num %d, server is %d",
+					name, minVersion, serverVersion)
+				continue
+			}
 			var exists bool
 			if err := conn.QueryRow(ctx,
 				"SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname = $1)",

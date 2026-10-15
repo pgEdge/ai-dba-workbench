@@ -1181,6 +1181,12 @@ project adheres to
   Anthropic, Voyage, Gemini and TypeSafe keys unloaded; it now
   loads the rest and logs one warning per file that failed.
 
+- Cap the client address held in the key that coalesces repeated
+  failed requests in the audit log at 64 bytes, as the key for
+  repeated denials already is, so that an unusually long address
+  can no longer inflate the coalescer's memory or the `actor_ip`
+  of the rows it writes. (#651)
+
 - Fix the anomaly detection baselines for
   `pg_stat_database.deadlocks_delta` and
   `pg_stat_database.temp_files_delta`, which counted one more

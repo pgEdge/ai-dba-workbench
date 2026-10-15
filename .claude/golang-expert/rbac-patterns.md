@@ -749,10 +749,12 @@ coalescer, in `server/src/internal/auth/audit_denials.go`.
 `recordDenial` calls `AuthStore.RecordCoalescedDenial(actor, action,
 target, reason)`, whose `denialCoalescer` keeps an in-memory map keyed
 by `denialKey` (actor type, actor id, actor name, client IP, capped
-at `maxDenialIPLen`, action, capped at `maxDenialActionLen`, and
-reason; built by `denialKeyOf`), so that two tokens of one user, or
-one token used from two addresses, never suppress each other's
-denials. The key must never hold a value
+at `maxAuditIPLen` by `capAuditIP`, action, capped at
+`maxDenialActionLen`, and reason; built by `denialKeyOf`), so that
+two tokens of one user, or one token used from two addresses, never
+suppress each other's denials. `maxAuditIPLen` and `capAuditIP` live
+in `audit_failures.go` and `failureKeyOf` applies the same cap to the
+failure key (issue #651). The key must never hold a value
 the caller chooses without limit: the path is deliberately not in it,
 and `deniedRoute` maps an unrecognised method to `rbac.other` (only
 the nine standard methods get `rbac.<lowercase method>`), since

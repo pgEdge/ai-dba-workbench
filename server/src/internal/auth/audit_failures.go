@@ -60,6 +60,24 @@ func capAuditError(text string) string {
 	return text[:cut] + auditErrorTruncated
 }
 
+// maxAuditIPLen caps the client address a denial or failure key
+// carries. The address extractor only returns text that parses as an
+// IP address, the longest of which is 45 bytes, but the cap keeps the
+// key bounded whatever the address source, so that a client cannot
+// open a fresh group, and with it a fresh audit row and map entry,
+// with every request by varying a long address (issues #589, #651).
+const maxAuditIPLen = 64
+
+// capAuditIP shortens a client address to at most maxAuditIPLen bytes
+// for use in a coalescing key.
+func capAuditIP(ip string) string {
+	if len(ip) > maxAuditIPLen {
+		return ip[:maxAuditIPLen]
+	}
+
+	return ip
+}
+
 // failureKey identifies a repeated failure. Two failures coalesce only
 // when the same principal, from the same client address, fails the same
 // action against the same target with the same error text.
@@ -85,7 +103,7 @@ func failureKeyOf(actor Actor, action, targetType string, targetID *int64,
 	key := failureKey{
 		actorType:  actor.Type,
 		actorName:  actor.Name,
-		actorIP:    actor.IP,
+		actorIP:    capAuditIP(actor.IP),
 		action:     action,
 		targetType: targetType,
 		targetName: targetName,

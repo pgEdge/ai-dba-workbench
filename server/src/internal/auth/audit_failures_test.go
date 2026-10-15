@@ -205,6 +205,35 @@ func TestFailureKeyEventRestoresAttribution(t *testing.T) {
 	}
 }
 
+// TestFailureKeyBoundsAddress checks that the client address a failure
+// key carries is capped, so that a long address cannot inflate the key
+// or open a fresh group per request (issue #651).
+func TestFailureKeyBoundsAddress(t *testing.T) {
+	long := strings.Repeat("a", 4096)
+	key := failureKeyOf(Actor{IP: long}, "user.delete", "user", nil, "",
+		"boom")
+	if len(key.actorIP) != maxAuditIPLen {
+		t.Errorf("Expected the address capped at %d bytes, got %d",
+			maxAuditIPLen, len(key.actorIP))
+	}
+	if ev := key.event(nil); ev.ActorIP != key.actorIP {
+		t.Errorf("Expected the event to carry the capped address, got %d bytes",
+			len(ev.ActorIP))
+	}
+
+	other := failureKeyOf(Actor{IP: long + "b"}, "user.delete", "user",
+		nil, "", "boom")
+	if other != key {
+		t.Error("Expected addresses differing past the cap to share a key")
+	}
+
+	const v6 = "2001:db8:85a3:8d3:1319:8a2e:370:7348"
+	if key := failureKeyOf(Actor{IP: v6}, "user.delete", "user", nil, "",
+		"boom"); key.actorIP != v6 {
+		t.Errorf("Expected a real address to be kept, got %q", key.actorIP)
+	}
+}
+
 // TestRecordFailureCoalescesRepeats drives the store end to end: a
 // failure repeated inside the window writes one row, the next one
 // after the window reports the count, and a burst that stops is

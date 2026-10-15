@@ -242,18 +242,10 @@ moved.
   one in an escape string (`E'password=\'x\''`) by
   `sqlBackslashQuoted`. Row images are masked as JSON text, where every
   backslash is doubled and a line break is `\n`, so each escape
-  backslash (`escapeBackslash`) may be doubled and `blank` accepts
-  `\n`; `TestTextRedactionsInJSON` runs every case in that form and
-  requires the secret to be gone even for JSON inputs. White space is
-  the ASCII class `ws`, never `[[:space:]]`, so the engines agree. A
-  name may be followed by white space and at most two comments
-  (`sep`): a block comment must be closed and is bounded to 32 body
-  units, so a run of `/*` cannot make each match scan to the end of
-  the text (the 64 Ki cap bounds the rest; about 1 s worst case in
-  PostgreSQL, under the tools' 10 s `statement_timeout`). An unquoted
-  value after `=` is masked whatever it starts with (`--x`, `/*x*/x`);
-  comments after `=` are allowed only before a quoted value. `PASSWORD`
-  may be followed by `sep` or nothing, and may start a
+  backslash (`escapeBackslash`) may be doubled and `sqlSeparator`
+  accepts `\n`; `TestTextInJSON` and `TestRedactedTextIntegration` run
+  every case in that form. `PASSWORD` may be followed by white space,
+  a `/* */` or `--` comment (`sqlSeparator`, not nested) or nothing, and may start a
   quoted string (`'PASSWORD ''x'''` in a concatenated EXECUTE) when a
   separator follows it; an unquoted `$n` value is kept only when white
   space, a comma, a bracket, a semicolon, a double quote or a

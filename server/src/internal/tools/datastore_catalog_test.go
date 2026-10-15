@@ -126,7 +126,8 @@ func TestConnectionsSourceOmitsCredentials(t *testing.T) {
 			t.Errorf("connections exposes %q", name)
 		}
 	}
-	// username and hostaddr are not secrets; the REST API returns both.
+	// username and hostaddr are not secrets. The REST API returns
+	// username; it omits hostaddr, which is no more sensitive than host.
 	for _, name := range []string{"name", "username", "hostaddr"} {
 		if _, ok := src.column(name); !ok {
 			t.Errorf("connections should expose %q", name)

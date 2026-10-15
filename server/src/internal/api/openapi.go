@@ -3942,7 +3942,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/metrics/latest": {
 			Get: &OpenAPIOperation{
 				Summary:     "Get latest probe snapshot",
-				Description: "Returns the most recent collected row for each unique entity in a probe table, with optional filtering, sorting, and pagination. Credentials are masked: credential settings, secret hba options and known password forms in free text are replaced with ********, row images are returned as text, and secret-named columns are omitted",
+				Description: "Returns the most recent collected row for each unique entity in a probe table, with optional filtering, sorting, and pagination. Credentials are masked: credential settings, secret hba options, non-empty hba errors and known password forms in free text are replaced with ********, row images are returned as text, and secret-named columns are omitted",
 				OperationID: "getLatestSnapshot",
 				Tags:        []string{"Metrics"},
 				Security:    bearerAuth,

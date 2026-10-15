@@ -27,18 +27,29 @@ import (
 // dropped, retyped or added; this file brings up the real schema with the
 // collector's SchemaManager in a database of its own and compares.
 
-// catalogSchemaDatabase is the scratch database the collector schema is
-// migrated into. It is separate from the shared test database because
-// other tests in this package and module create tables with the same
-// names but different shapes there. The name is a constant so the
-// statements below are constant SQL; two concurrent runs of this test
-// against the same PostgreSQL cluster would therefore collide.
-const catalogSchemaDatabase = "ai_workbench_catalog_schema_check"
+// The collector schema is migrated into a scratch database of its own,
+// separate from the shared test database because other tests in this
+// package and module create tables with the same names but different
+// shapes there. The scratch name is the test database's name plus
+// catalogSchemaSuffix, so concurrent runs against per-session test
+// databases on one cluster do not drop each other's scratch database.
+// The server builds the name and quotes it with format('%I'), so the
+// SQL text sent from here stays constant.
+const catalogSchemaSuffix = "_catalog_schema"
 
-const (
-	catalogSchemaDrop   = `DROP DATABASE IF EXISTS ai_workbench_catalog_schema_check WITH (FORCE)`
-	catalogSchemaCreate = `CREATE DATABASE ai_workbench_catalog_schema_check`
-)
+// catalogSchemaStatementsQuery returns the scratch database's name and
+// the statements that drop and create it.
+const catalogSchemaStatementsQuery = `
+        SELECT n,
+            format('DROP DATABASE IF EXISTS %I WITH (FORCE)', n),
+            format('CREATE DATABASE %I', n)
+        FROM (SELECT current_database() || $1 AS n) s
+    `
+
+// maxIdentifierLength is PostgreSQL's NAMEDATALEN - 1; a longer name
+// would be truncated, and the pool below would connect to the wrong
+// database.
+const maxIdentifierLength = 63
 
 // catalogSchemaColumnsQuery lists every column of every ordinary or
 // partitioned table in the public schema.
@@ -90,35 +101,43 @@ func newCollectorSchemaPool(t *testing.T) *pgxpool.Pool {
 	}
 	t.Cleanup(admin.Close)
 
-	if _, err := admin.Exec(ctx, catalogSchemaDrop); err != nil {
-		t.Fatalf("drop stale %s: %v", catalogSchemaDatabase, err)
+	var name, dropSQL, createSQL string
+	if err := admin.QueryRow(ctx, catalogSchemaStatementsQuery, catalogSchemaSuffix).
+		Scan(&name, &dropSQL, &createSQL); err != nil {
+		t.Fatalf("name the scratch database: %v", err)
 	}
-	if _, err := admin.Exec(ctx, catalogSchemaCreate); err != nil {
-		t.Fatalf("create %s: %v", catalogSchemaDatabase, err)
+	if len(name) > maxIdentifierLength {
+		t.Fatalf("scratch database name %q is longer than %d bytes", name, maxIdentifierLength)
+	}
+	if _, err := admin.Exec(ctx, dropSQL); err != nil {
+		t.Fatalf("drop stale %s: %v", name, err)
+	}
+	if _, err := admin.Exec(ctx, createSQL); err != nil {
+		t.Fatalf("create %s: %v", name, err)
 	}
 
 	cfg, err := pgxpool.ParseConfig(connStr)
 	if err != nil {
 		t.Fatalf("parse test database URL: %v", err)
 	}
-	cfg.ConnConfig.Database = catalogSchemaDatabase
+	cfg.ConnConfig.Database = name
 	cfg.MaxConns = 2
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
-		t.Fatalf("connect to %s: %v", catalogSchemaDatabase, err)
+		t.Fatalf("connect to %s: %v", name, err)
 	}
 	// Cleanups run last-in first-out: the pool closes before the drop,
 	// which runs before the admin pool closes.
 	t.Cleanup(func() {
 		pool.Close()
-		if _, err := admin.Exec(context.Background(), catalogSchemaDrop); err != nil {
-			t.Logf("drop %s: %v", catalogSchemaDatabase, err)
+		if _, err := admin.Exec(context.Background(), dropSQL); err != nil {
+			t.Logf("drop %s: %v", name, err)
 		}
 	})
 
 	conn, err := pool.Acquire(ctx)
 	if err != nil {
-		t.Fatalf("acquire connection to %s: %v", catalogSchemaDatabase, err)
+		t.Fatalf("acquire connection to %s: %v", name, err)
 	}
 	defer conn.Release()
 	if err := collectordb.NewSchemaManager().Migrate(conn); err != nil {

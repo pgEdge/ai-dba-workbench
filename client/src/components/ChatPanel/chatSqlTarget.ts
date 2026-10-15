@@ -200,10 +200,12 @@ const toDistinctOptions = (
 };
 
 /**
- * Regex matching a routing comment on any line, used to spot a block
- * that still names a server once its leading comment has been stripped.
+ * Regex matching a routing comment anywhere in the block, including
+ * after code on the same line, used to spot a block that still names a
+ * server once its leading comment has been stripped. A match inside a
+ * string literal only widens the block to the selector.
  */
-const ANY_CONNECTION_ID_COMMENT_RE = /^[ \t]*--[ \t]*connection_id:/m;
+const ANY_CONNECTION_ID_COMMENT_RE = /--[ \t]*connection_id:/;
 
 /**
  * Build a selector plan with nothing preselected, listing the reply's
@@ -235,7 +237,9 @@ const planSelection = (
  * those. It runs on the database the reply used on that server or the
  * server's default, unless the reply used several databases on it, in
  * which case the user chooses between them. A comment naming a server
- * the reply did not use shows the selector instead, and one naming a
+ * the reply did not use shows the selector instead, as does one whose
+ * server the reply used alongside a call that ran on the selected
+ * connection, which may be a different server. A comment naming a
  * server the user cannot see gets no Run button.
  */
 const planAnnotatedBlock = (
@@ -255,7 +259,10 @@ const planAnnotatedBlock = (
     if (options.length > 1) {
         return { kind: 'select', code: runCode, options };
     }
-    if (options.length === 0 && replyOptions.length > 0) {
+    if (options.length > 0 && reply.unattributed) {
+        return planSelection(runCode, replyOptions, servers);
+    }
+    if (options.length === 0 && reply.targets.length > 0) {
         return planSelection(runCode, replyOptions, servers);
     }
     return {
@@ -272,9 +279,9 @@ const planAnnotatedBlock = (
  * unambiguous: either the block's `-- connection_id: N` comment names a
  * server on which the reply used at most one database, or, without a
  * comment, every SQL-running tool call in the reply went to the same
- * server and database. Otherwise the user must choose from a selector,
- * which lists the reply's own targets first and then the other servers
- * they can see. Blocks with placeholders are templates, shown with the
+ * server and database, and the user can see that server. Otherwise the
+ * user must choose from a selector, which lists the reply's own targets
+ * on servers they can see first and then their other servers. Blocks with placeholders are templates, shown with the
  * shared template notice, and datastore-only replies without a comment
  * get no Run button, as does a block that is only the comment. A block
  * holding a second routing comment, which would leave the displayed
@@ -301,7 +308,12 @@ export const planSqlBlock = (
         return { kind: 'copy' };
     }
 
-    const replyOptions = toDistinctOptions(reply.targets, servers);
+    // Every distinct target decides whether the reply was unambiguous,
+    // but only those on servers the user can see are offered or bound.
+    const allReplyOptions = toDistinctOptions(reply.targets, servers);
+    const replyOptions = allReplyOptions.filter(
+        (o) => servers.has(o.connectionId),
+    );
 
     if (ANY_CONNECTION_ID_COMMENT_RE.test(runCode)) {
         return planSelection(runCode, replyOptions, servers);
@@ -318,7 +330,8 @@ export const planSqlBlock = (
     }
 
     if (
-        replyOptions.length === 1
+        allReplyOptions.length === 1
+        && replyOptions.length === 1
         && !reply.unattributed
         && !reply.usedDatastore
     ) {
@@ -326,7 +339,7 @@ export const planSqlBlock = (
     }
 
     if (
-        replyOptions.length === 0
+        allReplyOptions.length === 0
         && reply.usedDatastore
         && !reply.unattributed
     ) {

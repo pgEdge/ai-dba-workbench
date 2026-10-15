@@ -17,6 +17,9 @@ func TestSecretLeft(t *testing.T) {
 		"password=example-secret":    true,
 		"password=s3cret":            true,
 		`{"token": 31337}`:           true,
+		"PASSWORD 'hunter2'":         true,
+		"password=--Secret123":       true,
+		`correct\ horse\ battery`:    true,
 		"password=********":          false,
 		"https://example.com/secret": false,
 	} {
@@ -63,8 +66,38 @@ func TestJSONFormOK(t *testing.T) {
 			t.Errorf("JSONFormOK(%q) = %v, want %v", got, !want, want)
 		}
 	}
-	if !JSONFormOK(Case{"j", `{"password": "example-secret"}`, ""}, "anything") {
-		t.Error("a JSON input should always pass")
+	j := Case{"j", `{"password": "example-secret"}`, ""}
+	if !JSONFormOK(j, "anything masked") {
+		t.Error("a JSON input with no secret left should pass")
+	}
+	if JSONFormOK(j, `"{\"password\": \"example-secret\"}"`) {
+		t.Error("a JSON input with a secret left should fail")
+	}
+	for name, want := range JSONWants {
+		var c *Case
+		for i := range Cases {
+			if Cases[i].Name == name {
+				c = &Cases[i]
+			}
+		}
+		if c == nil {
+			t.Errorf("JSONWants names no case: %q", name)
+			continue
+		}
+		if !JSONFormOK(*c, want) || SecretLeft(want) {
+			t.Errorf("%s: JSONWants entry rejected or holds a secret", name)
+		}
+	}
+}
+
+func TestKnownLimitsComplete(t *testing.T) {
+	if len(KnownLimits) == 0 {
+		t.Fatal("no known limits")
+	}
+	for _, c := range KnownLimits {
+		if c.Name == "" || c.In == "" || c.Want == "" {
+			t.Errorf("incomplete known limit %+v", c)
+		}
 	}
 }
 

@@ -146,11 +146,11 @@ func sqlStringLiteral(v string) string {
 	return "E'" + strings.ReplaceAll(strings.ReplaceAll(v, `\`, `\\`), "'", "''") + "'"
 }
 
-// RedactedText returns value, cast to text and cut to maxTextLength
-// characters, with every textRedactions pattern masked. A NULL value
-// stays NULL.
+// RedactedText returns value, cast to text and cut to
+// redact.MaxTextLength characters, as redact.Text cuts it, with every
+// textRedactions pattern masked. A NULL value stays NULL.
 func RedactedText(value string) string {
-	out := "left(" + value + "::text, " + strconv.Itoa(maxTextLength) + ")"
+	out := "left(" + value + "::text, " + strconv.Itoa(redact.MaxTextLength) + ")"
 	for _, r := range textRedactions {
 		out = "regexp_replace(" + out + ", " + sqlStringLiteral(r.Pattern) + ", " +
 			sqlStringLiteral(r.Replacement) + ", 'gi')"

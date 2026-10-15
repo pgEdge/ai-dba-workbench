@@ -40,37 +40,6 @@ func TestRedactedTextSQL(t *testing.T) {
 	}
 }
 
-// TestTextRedactionKnownLimits pins what the patterns return for the
-// forms they do not mask, so a change in what they do is noticed.
-func TestTextRedactionKnownLimits(t *testing.T) {
-	for _, tc := range textRedactionKnownLimits {
-		if got := applyTextRedactionsInGo(t, tc.in); got != tc.want {
-			t.Errorf("%s:\ngot  %q\nwant %q", tc.name, got, tc.want)
-		}
-	}
-}
-
-// TestTextRedactionsAdversarialInGo masks 1 MiB inputs built to make a
-// regular expression engine backtrack, cut to maxTextLength as
-// RedactedText cuts them.
-func TestTextRedactionsAdversarialInGo(t *testing.T) {
-	for name, in := range adversarialInputs(1 << 20) {
-		start := time.Now()
-		applyTextRedactionsInGo(t, in)
-		if elapsed := time.Since(start); elapsed > 10*time.Second {
-			t.Errorf("%s took %s", name, elapsed)
-		}
-	}
-}
-
-func TestTextRedactionsTruncate(t *testing.T) {
-	in := "password=example-secret " + strings.Repeat("é", maxTextLength)
-	got := applyTextRedactionsInGo(t, in)
-	if n := len([]rune(got)); n != maxTextLength-len("example-secret")+len(RedactedValue) {
-		t.Errorf("got %d characters", n)
-	}
-}
-
 // redactTextQuery masks its one parameter with RedactedText. It is
 // built once from constants; the text under test is a bound parameter.
 var redactTextQuery = "SELECT " + RedactedText("$1::text")
@@ -103,19 +72,23 @@ func TestRedactedTextIntegration(t *testing.T) {
 			t.Errorf("%s: JSON form differs between PostgreSQL and Go:\npg %q\ngo %q", tc.Name, gotJSON, inGo)
 		}
 	}
-	for _, tc := range textRedactionKnownLimits {
+	// The forms the patterns do not mask come back as redact.Text
+	// returns them, so the engines agree on those too.
+	for _, tc := range redacttest.KnownLimits {
 		var got string
-		if err := pool.QueryRow(context.Background(), redactTextQuery, tc.in).Scan(&got); err != nil {
-			t.Fatalf("%s: %v", tc.name, err)
+		if err := pool.QueryRow(context.Background(), redactTextQuery, tc.In).Scan(&got); err != nil {
+			t.Fatalf("%s: %v", tc.Name, err)
 		}
-		if got != tc.want {
-			t.Errorf("known limit %s: got  %q\nwant %q", tc.name, got, tc.want)
+		if got != tc.Want {
+			t.Errorf("known limit %s: got  %q\nwant %q", tc.Name, got, tc.Want)
 		}
 	}
-	var long string
-	if err := pool.QueryRow(context.Background(), redactTextQuery, strings.Repeat("é", maxTextLength+10)).Scan(&long); err != nil ||
-		len([]rune(long)) != maxTextLength {
-		t.Errorf("a long value should be cut to %d characters, got %d (%v)", maxTextLength, len([]rune(long)), err)
+	long := strings.Repeat("é", redact.MaxTextLength+10)
+	var cut string
+	if err := pool.QueryRow(context.Background(), redactTextQuery, long).Scan(&cut); err != nil ||
+		cut != redact.Text(long) || len([]rune(cut)) != redact.MaxTextLength {
+		t.Errorf("a long value should be cut to %d characters, got %d (%v)", redact.MaxTextLength,
+			len([]rune(cut)), err)
 	}
 	var null *string
 	if err := pool.QueryRow(context.Background(), redactTextQuery, nil).Scan(&null); err != nil || null != nil {
@@ -139,17 +112,17 @@ func TestRedactedTextAdversarialIntegration(t *testing.T) {
 	if _, err := conn.Exec(ctx, "SET statement_timeout = '30s'"); err != nil {
 		t.Fatalf("set statement_timeout: %v", err)
 	}
-	const size = 1 << 20
-	inputs := redacttest.AdversarialInputs(size)
-	for name, in := range inputs {
-		start := time.Now()
-		var got string
-		if err := conn.QueryRow(ctx, redactTextQuery, in).Scan(&got); err != nil {
-			t.Errorf("%s: %v", name, err)
-			continue
-		}
-		if elapsed := time.Since(start); elapsed > 10*time.Second {
-			t.Errorf("%s took %s", name, elapsed)
+	for name, in := range redacttest.AdversarialInputs(1 << 20) {
+		for form, query := range map[string]string{"text": redactTextQuery, "JSON": redactJSONQuery} {
+			start := time.Now()
+			var got string
+			if err := conn.QueryRow(ctx, query, in).Scan(&got); err != nil {
+				t.Errorf("%s as %s: %v", name, form, err)
+				continue
+			}
+			if elapsed := time.Since(start); elapsed > 10*time.Second {
+				t.Errorf("%s as %s took %s", name, form, elapsed)
+			}
 		}
 	}
 }

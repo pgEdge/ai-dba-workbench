@@ -2607,7 +2607,8 @@ project adheres to
   `pg_buffercache`, `pg_prewarm`, `pg_surgery`, `pg_visibility`,
   `postgres_fdw`, `adminpack`, `dblink`, `pg_background`, Spock,
   pglogical and `pg_cron`, however the name is spelt, quoted or
-  schema-qualified.
+  schema-qualified, and whether it is called with parentheses or
+  through field selection, as in `(pid).pg_terminate_backend`.
   Functions called through a user-defined wrapper or view are not
   detected. The MCP tools that Ellie and other MCP clients use now
   apply the same check: `query_database` treats such a `SELECT` as a

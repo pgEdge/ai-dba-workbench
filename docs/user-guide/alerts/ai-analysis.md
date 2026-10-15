@@ -161,6 +161,11 @@ and the replication slot and statistics reset functions,
 along with the management functions of extensions such as
 `pg_stat_statements`, `pg_prewarm`, `dblink`,
 `pg_background`, Spock, pglogical, and `pg_cron`. The
+check also catches a call written in field-selection
+notation, such as `(pid).pg_terminate_backend`, which
+PostgreSQL runs as `pg_terminate_backend(pid)`; a column
+that shares one of these names, such as `t.nextval`, also
+counts as a write. The
 system cannot see inside user-defined functions or views,
 so a statement that reaches a side effect through one of
 those still runs as a read.

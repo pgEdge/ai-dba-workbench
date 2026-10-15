@@ -51,6 +51,16 @@ var sideEffectingSpellings = []struct {
 	{"set_config", "SELECT set_config('work_mem', '1MB', false)"},
 	{"nextval", "SELECT nextval('s')"},
 	{"pg_reload_conf", "SELECT pg_reload_conf()"},
+	// Field selection: PostgreSQL reads arg.func as func(arg).
+	{"field selection", "SELECT (0).pg_terminate_backend"},
+	{"field selection comment after dot", `SELECT (0)./**/"pg_terminate_backend"`},
+	{"field selection newline after dot", "SELECT (0).\npg_terminate_backend"},
+	{"field selection unicode", `SELECT (0).U&"pg\005fterminate\005fbackend"`},
+	{"field selection FROM alias", "SELECT p.pg_terminate_backend FROM unnest(ARRAY[0]) p"},
+	{"field selection in a CTE",
+		"WITH t AS (SELECT (0).pg_terminate_backend) SELECT * FROM t"},
+	{"call after a parenthesised main query",
+		"WITH a AS (SELECT 1) (SELECT 1) ORDER BY 1, pg_try_advisory_lock(0)"},
 }
 
 // harmlessSelects name side-effecting functions only as text, and stay
@@ -65,6 +75,10 @@ var harmlessSelects = []struct {
 	{"name in a line comment", "SELECT 1 -- pg_terminate_backend(0)"},
 	{"name as a column", "SELECT pg_terminate_backend FROM t"},
 	{"ordinary functions", "SELECT now(), count(*), current_setting('work_mem')"},
+	{"qualified columns", "SELECT s.sub_name, s.sub_enabled FROM spock.subscription s"},
+	{"decimal literal", "SELECT 1.5"},
+	{"CTE named like a function", "WITH schedule(id) AS (SELECT 1) SELECT * FROM schedule"},
+	{"alias column list", "SELECT * FROM generate_series(1, 2) AS dblink_rows(x)"},
 }
 
 // TestIsSelectQuery_SideEffectingFunctions pins issue #646 for the MCP
@@ -229,6 +243,9 @@ func TestValidateWhereClause_SideEffectingFunctions(t *testing.T) {
 		`pg_catalog.pg_reload_conf ()`,
 		`nextval('s') > 0`,
 		`pg_try_advisory_lock(1)`,
+		`(0).pg_reload_conf`,
+		`(0).U&"pg\005fterminate\005fbackend"`,
+		`id . "pg_reload_conf" IS NOT NULL`,
 	}
 	for _, clause := range refused {
 		err := validateWhereClause(clause)
@@ -402,4 +419,21 @@ func TestQueryDatabase_SideEffectingSelects(t *testing.T) {
 			t.Fatalf("got %+v, want the query reported valid", resp)
 		}
 	})
+}
+
+// TestQueryDatabase_LegacyPathNotReady verifies that query_database,
+// called without a connection_id, reports the database as not ready
+// rather than classifying or running the statement when the default
+// connection has no metadata loaded.
+func TestQueryDatabase_LegacyPathNotReady(t *testing.T) {
+	tool := QueryDatabaseTool(database.NewClient(nil), nil)
+	resp, err := tool.Handler(map[string]any{
+		"query": "SELECT (0).pg_terminate_backend",
+	})
+	if err != nil {
+		t.Fatalf("Handler returned a Go error: %v", err)
+	}
+	if !resp.IsError || responseText(resp) != mcp.DatabaseNotReadyError {
+		t.Errorf("got %+v, want the database-not-ready error", resp)
+	}
 }

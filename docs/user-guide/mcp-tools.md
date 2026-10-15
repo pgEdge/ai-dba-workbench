@@ -31,7 +31,9 @@ when these parameters are omitted.
 
 A `SELECT` that calls a function with side effects, such as
 `pg_terminate_backend`, `pg_cancel_backend`, `pg_reload_conf`,
-`set_config` or `nextval`, counts as a write. The
+`set_config` or `nextval`, counts as a write; this includes a
+call written in field-selection notation, such as
+`(pid).pg_terminate_backend`. The
 `query_database` tool runs such a query only with an explicit
 `connection_id` and read/write access to the connection. The
 `execute_explain` tool refuses to run `EXPLAIN ANALYZE` on such

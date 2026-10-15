@@ -34,7 +34,20 @@ do not copy either into another package.
   `CallsSideEffectingFunctionUnderAnyReading(sql)`. Matching ignores
   case, `pg_catalog.` or other schema qualification, double-quoted and
   `U&"..."` names, and whitespace or comments before `(`; names inside
-  literals and comments do not match. The function lists come from the
+  literals and comments do not match. Field selection is a call too:
+  PostgreSQL reads `arg.func` as `func(arg)`, so a listed name after a
+  `.` with no `(` matches (`(pid).pg_terminate_backend`,
+  `alias.pg_reload_conf`), which also makes a column such as `t.nextval`
+  a write. `notFieldSelectable` exempts listed names that are real
+  column or catalog relation names (`schedule`,
+  `pg_replication_origin_status`); a database test fails when a
+  `pg_catalog` or `information_schema` relation or column name matches.
+  `namesThatAreNotCalls` skips a name before `(` that the grammar never
+  calls: the name after `AS` (alias column list, type modifier) and a
+  CTE name, tracked per parenthesis depth so that a list ends at the
+  first token a definition cannot hold there, which keeps
+  `WITH a AS (...) (SELECT 1) ORDER BY 1, nextval('s')` a write. The
+  function lists come from the
   PostgreSQL, Spock, pg_cron, pglogical and pg_background
   documentation. A database test checks the "core" family against
   `pg_proc`, skipping names in `coreFunctionMinVersion` that are newer

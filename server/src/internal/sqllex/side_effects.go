@@ -28,11 +28,11 @@ import (
 // System Administration Functions chapter, the sequence, large object,
 // text search, XML and statistics function tables, and the contrib
 // module pages), from the PostgreSQL 9.6 and 14 documentation for the
-// names older servers still use, and from the Spock 4.1, 5.0 and 6.0
-// install scripts, the pg_cron README, the pglogical 2 documentation and
-// the pg_background README. The match errs towards calling
-// a query a write: a false positive costs one confirmation click,
-// whereas a false negative runs the function without one.
+// names older servers still use, and from the Spock 3.3, 4.0, 4.1, 5.0
+// and 6.0 install scripts, the pg_cron README, the pglogical 2
+// documentation and the pg_background README. The match errs towards
+// calling a query a write: a false positive costs one confirmation
+// click, whereas a false negative runs the function without one.
 //
 // What this cannot see: a user-defined function, view, operator or cast
 // that calls one of these functions internally. Those are reached
@@ -52,6 +52,9 @@ var sideEffectingFunctionFamilies = []struct {
 		"pg_cancel_backend", "pg_terminate_backend", "pg_reload_conf",
 		"pg_rotate_logfile", "pg_log_backend_memory_contexts",
 	}},
+	{"server signaling before PostgreSQL 17", false, []string{
+		"pg_rotate_logfile_old",
+	}},
 	{"configuration settings", true, []string{"set_config"}},
 	{"backup and WAL control", true, []string{
 		"pg_create_restore_point", "pg_switch_wal", "pg_backup_start",
@@ -66,7 +69,9 @@ var sideEffectingFunctionFamilies = []struct {
 	{"recovery control before PostgreSQL 10", false, []string{
 		"pg_xlog_replay_pause", "pg_xlog_replay_resume",
 	}},
-	{"snapshot synchronization", true, []string{"pg_log_standby_snapshot"}},
+	{"snapshot synchronization", true, []string{
+		"pg_log_standby_snapshot", "pg_export_snapshot",
+	}},
 	{"replication slots", true, []string{
 		"pg_create_physical_replication_slot",
 		"pg_create_logical_replication_slot", "pg_drop_replication_slot",
@@ -77,6 +82,7 @@ var sideEffectingFunctionFamilies = []struct {
 	{"statistics manipulation", true, []string{
 		"pg_restore_relation_stats", "pg_clear_relation_stats",
 		"pg_restore_attribute_stats", "pg_clear_attribute_stats",
+		"pg_stat_force_next_flush",
 	}},
 	{"index maintenance", true, []string{
 		"brin_summarize_new_values", "brin_summarize_range",
@@ -106,6 +112,7 @@ var sideEffectingFunctionFamilies = []struct {
 		"pg_truncate_visibility_map",
 		"postgres_fdw_disconnect", "postgres_fdw_disconnect_all",
 		"pg_file_write", "pg_file_sync", "pg_file_rename", "pg_file_unlink",
+		"pg_logfile_rotate",
 		// pg_cron, for a call that relies on search_path rather than
 		// naming the cron schema.
 		"schedule", "schedule_in_database", "unschedule", "alter_job",
@@ -129,7 +136,7 @@ var sideEffectingFunctionFamilies = []struct {
 		"synchronize_sequence", "replicate_ddl_command",
 	}},
 	{"Spock management", false, []string{
-		"cleanup_resolutions", "convert_column_to_int",
+		"cleanup_resolutions", "convert_column_to_int8",
 		"convert_sequence_to_snowflake",
 		"node_add_interface", "node_alter", "node_create", "node_drop",
 		"node_drop_interface", "node_info_apply", "node_info_emit",
@@ -148,6 +155,9 @@ var sideEffectingFunctionFamilies = []struct {
 		"sub_alter_skiplsn", "sub_alter_sync", "sub_create", "sub_disable",
 		"sub_drop", "sub_enable", "sub_remove_repset", "sub_resync_table",
 		"sync_event", "sync_seq", "terminate_active_transactions",
+		// Spock 3.3 only.
+		"set_cluster_readonly", "unset_cluster_readonly",
+		"prune_conflict_tracking",
 	}},
 }
 
@@ -202,6 +212,24 @@ func isSideEffectingFunctionName(name string) bool {
 	return false
 }
 
+// notFieldSelectable holds the names the lists above match that
+// field-selection notation can never call, but that a query reads as a
+// column or relation after a dot: pg_cron's cron.job table has a
+// schedule column, whilst cron.schedule takes two arguments, and
+// pg_replication_origin_status is a catalog view that the
+// pg_replication_origin_ prefix matches.
+var notFieldSelectable = map[string]bool{
+	"schedule":                     true,
+	"pg_replication_origin_status": true,
+}
+
+// isFieldSelectedFunctionName reports whether name, already folded to
+// lower case and written after a dot with no parenthesis following,
+// calls a side-effecting function in field-selection notation.
+func isFieldSelectedFunctionName(name string) bool {
+	return !notFieldSelectable[name] && isSideEffectingFunctionName(name)
+}
+
 // callTokenKind is the kind of a token CallsSideEffectingFunction reads.
 type callTokenKind int
 
@@ -210,25 +238,40 @@ const (
 	nameToken callTokenKind = iota
 	// openParenToken is "(".
 	openParenToken
+	// closeParenToken is ")".
+	closeParenToken
 	// dotToken is ".".
 	dotToken
+	// commaToken is ",".
+	commaToken
+	// semicolonToken is ";".
+	semicolonToken
 	// otherToken is any other operator, punctuation or literal.
 	otherToken
 )
 
 // callToken is one token of a statement, as far as finding function
 // calls needs: a name (folded to lower case, with a quoted identifier's
-// quotes and escapes decoded), the two punctuation marks a call is built
-// from, and everything else. Whitespace and comments produce no token,
-// so they are transparent between a name and its parenthesis, as they
-// are to PostgreSQL.
+// quotes and escapes decoded), the punctuation that calls, qualified
+// names and WITH lists are built from, and everything else. Whitespace
+// and comments produce no token, so they are transparent between a
+// name and its parenthesis, and between a dot and the name after it,
+// as they are to PostgreSQL.
 type callToken struct {
 	kind callTokenKind
 	text string
+	// quoted is set for a quoted identifier, which is never a keyword.
+	quoted bool
 	// numeric is set for a word that starts with a digit. PostgreSQL
 	// before 15 lexes 1pg_reload_conf as a number followed by an
 	// identifier, so every suffix of such a word is a candidate name.
 	numeric bool
+}
+
+// isKeyword reports whether tok is the unquoted word keyword, which is
+// given in lower case.
+func (tok callToken) isKeyword(keyword string) bool {
+	return tok.kind == nameToken && !tok.quoted && tok.text == keyword
 }
 
 // CallsSideEffectingFunctionUnderAnyReading reports whether sql calls a
@@ -247,12 +290,22 @@ func CallsSideEffectingFunctionUnderAnyReading(sql string) bool {
 
 // CallsSideEffectingFunction reports whether the code in sql, read under
 // the given reading of a plain '...' literal, calls a side-effecting
-// function: a name on the lists above, or any function qualified with a
-// schema in sideEffectingSchemas, followed by an opening parenthesis.
+// function. A call is either a name on the lists above, or any function
+// qualified with a schema in sideEffectingSchemas, followed by an
+// opening parenthesis; or a listed name written after a dot with no
+// parenthesis, since PostgreSQL reads arg.func as func(arg) for any
+// function of one argument (field-selection notation), so that
+// (pid).pg_terminate_backend, and alias.pg_reload_conf where alias is a
+// scalar FROM item, are calls too. The second form also matches a
+// column or table that shares a listed name, such as t.nextval, which
+// costs only a confirmation.
+//
 // Text inside string literals, dollar quotes and comments is never read
 // as a name. A name is matched however it is written: in any case, with
 // or without a schema, quoted, as a U&"..." identifier with Unicode
-// escapes, and with whitespace or comments before its parenthesis.
+// escapes, and with whitespace or comments before its parenthesis or
+// after its dot. A name followed by a parenthesis that the grammar
+// never reads as a call is skipped (see namesThatAreNotCalls).
 //
 // It fails closed, reporting a call, when it cannot decode a U&"..."
 // identifier or when the statement uses UESCAPE, which changes the
@@ -262,28 +315,163 @@ func CallsSideEffectingFunction(sql string, reading StringReading) bool {
 	if !ok {
 		return true
 	}
+	notCalls := namesThatAreNotCalls(tokens)
 	for k, tok := range tokens {
-		if tok.kind != nameToken || k+1 >= len(tokens) ||
-			tokens[k+1].kind != openParenToken {
+		if tok.kind != nameToken {
 			continue
 		}
-		if k >= 2 && tokens[k-1].kind == dotToken &&
-			tokens[k-2].kind == nameToken &&
-			sideEffectingSchemas[tokens[k-2].text] {
+		if k+1 < len(tokens) && tokens[k+1].kind == openParenToken {
+			if !notCalls[k] && callsWithParenthesis(tokens, k) {
+				return true
+			}
+			continue
+		}
+		if k >= 1 && tokens[k-1].kind == dotToken &&
+			isFieldSelectedFunctionName(tok.text) {
 			return true
 		}
-		if isSideEffectingFunctionName(tok.text) {
-			return true
-		}
-		if tok.numeric {
-			for i := 1; i < len(tok.text); i++ {
-				if isSideEffectingFunctionName(tok.text[i:]) {
-					return true
-				}
+	}
+	return false
+}
+
+// callsWithParenthesis reports whether the name at tokens[k], which an
+// opening parenthesis follows, calls a side-effecting function: it is
+// qualified with a schema in sideEffectingSchemas, it is listed, or it
+// is a word starting with a digit with a listed suffix.
+func callsWithParenthesis(tokens []callToken, k int) bool {
+	tok := tokens[k]
+	if k >= 2 && tokens[k-1].kind == dotToken &&
+		tokens[k-2].kind == nameToken &&
+		sideEffectingSchemas[tokens[k-2].text] {
+		return true
+	}
+	if isSideEffectingFunctionName(tok.text) {
+		return true
+	}
+	if tok.numeric {
+		for i := 1; i < len(tok.text); i++ {
+			if isSideEffectingFunctionName(tok.text[i:]) {
+				return true
 			}
 		}
 	}
 	return false
+}
+
+// withListState is how far namesThatAreNotCalls has read into a WITH
+// list of common table expressions at one parenthesis depth.
+type withListState int
+
+const (
+	// noWithList: no WITH list is open at this depth.
+	noWithList withListState = iota
+	// expectCTEName: the next name is a common table expression's,
+	// after WITH, WITH RECURSIVE or a comma that separates two of them.
+	expectCTEName
+	// inCTE: inside one common table expression's definition at this
+	// depth, which holds no function call outside its parentheses.
+	inCTE
+)
+
+// withListOpeners are the unquoted words after which WITH starts a
+// list of common table expressions: CREATE TABLE ... AS, CREATE VIEW
+// ... AS and PREPARE ... AS, and the EXPLAIN forms. WITH also starts
+// one at the start of a statement and after an opening parenthesis or
+// a semicolon. Elsewhere it is part of another clause (WITH ORDINALITY,
+// WITH TIME ZONE, WITH CHECK OPTION and so on), and opening a list
+// there could hide a call after a later comma.
+var withListOpeners = map[string]bool{
+	"as": true, "explain": true, "analyze": true,
+	"analyse": true, //nolint:misspell // PostgreSQL accepts ANALYSE
+	"verbose": true,
+}
+
+// withListClosers are the unquoted words that start the statement a
+// WITH list belongs to, and so end the list.
+var withListClosers = map[string]bool{
+	"select": true, "values": true, "table": true, "insert": true,
+	"update": true, "delete": true, "merge": true,
+}
+
+// namesThatAreNotCalls marks the names that an opening parenthesis may
+// follow but that PostgreSQL's grammar never reads as a function call,
+// so that a listed name used there is not taken for one: a name directly
+// after AS, which is an alias with a column list (AS t(a, b)) or a type
+// with a modifier (CAST(x AS numeric(10))), and the name of a common
+// table expression, which may take a column list (WITH t(a) AS (...)).
+//
+// A common table expression's name is the name that follows WITH, WITH
+// RECURSIVE or a comma in the WITH list, at the WITH's parenthesis
+// depth. The list stays open at that depth only through the tokens a
+// definition holds there (names, commas, and the parentheses of a
+// column list or a body), so a call after the list ends, such as one in
+// an ORDER BY after a parenthesised main query, is never skipped.
+func namesThatAreNotCalls(tokens []callToken) []bool {
+	notCalls := make([]bool, len(tokens))
+	lists := []withListState{noWithList}
+	depth := 0
+	for k, tok := range tokens {
+		var prev callToken
+		if k > 0 {
+			prev = tokens[k-1]
+		} else {
+			prev = callToken{kind: semicolonToken}
+		}
+		state := lists[depth]
+		switch tok.kind {
+		case nameToken:
+			switch {
+			case state == expectCTEName && tok.isKeyword("recursive") &&
+				prev.isKeyword("with"):
+			case state == expectCTEName:
+				notCalls[k] = true
+				lists[depth] = inCTE
+			case state == inCTE && !tok.quoted && withListClosers[tok.text]:
+				lists[depth] = noWithList
+			case tok.isKeyword("with") && (prev.kind == openParenToken ||
+				prev.kind == semicolonToken ||
+				(prev.kind == nameToken && !prev.quoted &&
+					withListOpeners[prev.text])):
+				lists[depth] = expectCTEName
+			}
+			if prev.isKeyword("as") {
+				notCalls[k] = true
+			}
+		case openParenToken:
+			// Inside a definition, only a column list after the name or a
+			// body after AS or MATERIALIZED opens a parenthesis.
+			opensDefinition := prev.isKeyword("as") ||
+				prev.isKeyword("materialized") ||
+				(prev.kind == nameToken && notCalls[k-1])
+			if state == expectCTEName || (state == inCTE && !opensDefinition) {
+				lists[depth] = noWithList
+			}
+			depth++
+			if depth == len(lists) {
+				lists = append(lists, noWithList)
+			}
+			lists[depth] = noWithList
+		case closeParenToken:
+			lists[depth] = noWithList
+			if depth > 0 {
+				depth--
+			}
+		case commaToken:
+			if state == inCTE {
+				lists[depth] = expectCTEName
+			} else {
+				lists[depth] = noWithList
+			}
+		case semicolonToken:
+			for d := range lists {
+				lists[d] = noWithList
+			}
+			depth = 0
+		default:
+			lists[depth] = noWithList
+		}
+	}
+	return notCalls
 }
 
 // tokenizeForCalls splits sql into the tokens CallsSideEffectingFunction
@@ -306,7 +494,9 @@ func tokenizeForCalls(sql string, reading StringReading) (tokens []callToken, ok
 			case isIdent && !decoded:
 				return nil, false
 			case isIdent:
-				tokens = append(tokens, callToken{kind: nameToken, text: name})
+				tokens = append(tokens, callToken{
+					kind: nameToken, text: name, quoted: true,
+				})
 			case isCommentStart(sql, i):
 				// Comments are transparent, as whitespace is.
 			default:
@@ -333,17 +523,29 @@ func tokenizeForCalls(sql string, reading StringReading) (tokens []callToken, ok
 			continue
 		}
 
-		switch ch {
-		case '(':
-			tokens = append(tokens, callToken{kind: openParenToken})
-		case '.':
-			tokens = append(tokens, callToken{kind: dotToken})
-		default:
-			tokens = append(tokens, callToken{kind: otherToken})
-		}
+		tokens = append(tokens, callToken{kind: punctuationKind(ch)})
 		i++
 	}
 	return tokens, true
+}
+
+// punctuationKind is the token kind of the single character ch, which
+// starts no name, literal or comment.
+func punctuationKind(ch byte) callTokenKind {
+	switch ch {
+	case '(':
+		return openParenToken
+	case ')':
+		return closeParenToken
+	case '.':
+		return dotToken
+	case ',':
+		return commaToken
+	case ';':
+		return semicolonToken
+	default:
+		return otherToken
+	}
 }
 
 // isCommentStart reports whether a line or block comment starts at s[i].

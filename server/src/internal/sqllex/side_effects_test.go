@@ -157,6 +157,72 @@ func TestCallsSideEffectingFunction(t *testing.T) {
 		{"monitoring query", "SELECT pid, state, pg_blocking_pids(pid) FROM pg_stat_activity", false},
 		{"unicode identifier that is not listed", `SELECT U&"d\0061ta" FROM t`, false},
 		{"unicode string literal", `SELECT U&'pg\005freload_conf()'`, false},
+
+		// Names added after the first review.
+		{"export snapshot", "SELECT pg_export_snapshot()", true},
+		{"stat force next flush", "SELECT pg_stat_force_next_flush()", true},
+		{"rotate logfile before 17", "SELECT pg_rotate_logfile_old()", true},
+		{"adminpack 1.0 rotate", "SELECT pg_logfile_rotate()", true},
+		{"spock convert column", "SELECT convert_column_to_int8('t', 'c')", true},
+		{"spock 3.3 readonly", "SELECT set_cluster_readonly()", true},
+		{"spock 3.3 prune", "SELECT prune_conflict_tracking()", true},
+
+		// Field selection: PostgreSQL reads arg.func as func(arg).
+		{"field selection", "SELECT (0).pg_terminate_backend", true},
+		{"field selection upper case", "SELECT (0).PG_TERMINATE_BACKEND", true},
+		{"field selection quoted", `SELECT (0)."pg_terminate_backend"`, true},
+		{"field selection comment after dot", `SELECT (0)./**/"pg_terminate_backend"`, true},
+		{"field selection newline after dot", "SELECT (0).\npg_terminate_backend", true},
+		{"field selection nested comment after dot", "SELECT (0)./* a /* b */ c */pg_terminate_backend", true},
+		{"field selection line comment before dot", "SELECT (0) -- c\n.pg_terminate_backend", true},
+		{"field selection spaces around dot", "SELECT (0) . pg_terminate_backend", true},
+		{"field selection unicode", `SELECT (0).U&"pg\005fterminate\005fbackend"`, true},
+		{"field selection unicode lower prefix", `SELECT (0).u&"pg\005fterminate\005fbackend"`, true},
+		{"field selection uescape", `SELECT (0).U&"pg!005fterminate!005fbackend" UESCAPE '!'`, true},
+		{"field selection double parens", "SELECT ((0)).pg_terminate_backend", true},
+		{"field selection cast", "SELECT (646::bigint).pg_advisory_xact_lock", true},
+		{"field selection array subscript", "SELECT (ARRAY[0])[1].pg_terminate_backend", true},
+		{"field selection FROM alias", "SELECT p.pg_terminate_backend FROM unnest(ARRAY[0]) p", true},
+		{"field selection in TABLE ORDER BY", "TABLE t ORDER BY (0).pg_terminate_backend", true},
+		{"field selection under explain analyze", "EXPLAIN ANALYZE SELECT (0).pg_terminate_backend", true},
+		{"field selection prefix family", "SELECT (1).pg_advisory_unlock", true},
+		{"field selection of reload", "SELECT x.pg_reload_conf FROM (SELECT 1) x", true},
+		{"column sharing a listed name", "SELECT t.nextval FROM t", true},
+
+		// Dots that are not field selection of a listed function.
+		{"decimal literal", "SELECT 1.5", false},
+		{"qualified columns", "SELECT t.id, t.name FROM t", false},
+		{"spock subscription columns", "SELECT s.sub_name, s.sub_enabled FROM spock.subscription s", false},
+		{"pg_cron schedule column", "SELECT j.schedule FROM cron.job j", false},
+		{"origin status view", "SELECT * FROM pg_catalog.pg_replication_origin_status", false},
+		{"alias named spock", "SELECT spock.node_id FROM t spock", false},
+
+		// Names before a parenthesis that are not calls.
+		{"CTE named like a function", "WITH schedule(id) AS (SELECT 1) SELECT * FROM schedule", false},
+		{"recursive CTE", "WITH RECURSIVE pg_notify(n) AS (SELECT 1) SELECT * FROM pg_notify", false},
+		{"materialized CTE", "WITH nextval(n) AS MATERIALIZED (SELECT 1) SELECT * FROM nextval", false},
+		{"not materialized CTE", "WITH nextval(n) AS NOT MATERIALIZED (SELECT 1) SELECT * FROM nextval", false},
+		{"second CTE", "WITH a AS (SELECT 1), setval(n) AS (SELECT 2) SELECT * FROM a, setval", false},
+		{"CTE in a subquery", "SELECT * FROM (WITH schedule(id) AS (SELECT 1) SELECT * FROM schedule) s", false},
+		{"CTE after explain", "EXPLAIN WITH schedule(id) AS (SELECT 1) SELECT * FROM schedule", false},
+		{"alias column list", "SELECT * FROM t AS create_node(x)", false},
+		{"dblink-named alias", "SELECT * FROM generate_series(1, 2) AS dblink_rows(x)", false},
+		{"cast with a type modifier", "SELECT CAST(x AS nextval(10)) FROM t", false},
+
+		// WITH lists that end before a call.
+		{"call after a parenthesised main query",
+			"WITH a AS (SELECT 1) (SELECT 1) ORDER BY 1, nextval('s')", true},
+		{"call after WITH ORDINALITY",
+			"SELECT * FROM unnest(ARRAY[1]) WITH ORDINALITY, pg_terminate_backend(0)", true},
+		{"call in the main query", "WITH a AS (SELECT 1) SELECT 1, nextval('s')", true},
+		{"call in a CTE body", "WITH a AS (SELECT nextval('s')) SELECT * FROM a", true},
+		{"call in a CTE body under explain options",
+			"EXPLAIN (ANALYZE) WITH a AS (SELECT nextval('s')) SELECT * FROM a", true},
+		{"call after a second statement",
+			"WITH a AS (SELECT 1) SELECT 1; SELECT nextval('s')", true},
+		{"call after a CTE name and a dot", "WITH a.nextval(1) SELECT 1", true},
+		{"call where a CTE name is expected", "WITH (nextval('s')) SELECT 1", true},
+		{"quoted with is not a keyword", `SELECT 1 AS "with", nextval('s')`, true},
 	}
 
 	for _, tt := range tests {
@@ -272,6 +338,7 @@ func TestDecodeUnicodeEscapes(t *testing.T) {
 var coreFunctionMinVersion = map[string]int{
 	"pg_backup_start":            150000,
 	"pg_backup_stop":             150000,
+	"pg_stat_force_next_flush":   150000,
 	"pg_log_standby_snapshot":    160000,
 	"pg_sync_replication_slots":  170000,
 	"pg_restore_relation_stats":  180000,
@@ -359,6 +426,14 @@ func TestSideEffectingFunctions_SpellingsMatchPostgres(t *testing.T) {
 		"SELECT set_config('work_mem', '8MB', true)",
 		"SELECT * FROM ROWS FROM (pg_notify('issue646', 'x'))",
 		"SELECT query_to_xml('SELECT 1', true, false, '')",
+		// Field selection, which calls the function with no parenthesis.
+		"SELECT (646::bigint).pg_advisory_xact_lock",
+		`SELECT (646::bigint)./**/"pg_advisory_xact_lock"`,
+		`SELECT (646::bigint).U&"pg\005fadvisory\005fxact\005flock"`,
+		"SELECT ((646::bigint)) -- c\n.pg_advisory_xact_lock",
+		"SELECT p.pg_advisory_xact_lock FROM unnest(ARRAY[646::bigint]) p",
+		"WITH a AS (SELECT 1) (SELECT 1) ORDER BY 1, pg_try_advisory_xact_lock(646)",
+		"SELECT * FROM unnest(ARRAY[1]) WITH ORDINALITY, pg_advisory_xact_lock(646)",
 	}
 
 	for _, stmt := range statements {
@@ -377,6 +452,44 @@ func TestSideEffectingFunctions_SpellingsMatchPostgres(t *testing.T) {
 				t.Fatalf("PostgreSQL rejected %q: %v", stmt, err)
 			}
 		})
+	}
+}
+
+// TestFieldSelection_NoCatalogNameMatches checks that no relation or
+// column in the system catalogs or information_schema has a name that
+// field selection treats as a call, so that a monitoring query such as
+// SELECT s.some_column FROM pg_catalog.some_view s is never taken for
+// a write. A name that fails here belongs in notFieldSelectable.
+func TestFieldSelection_NoCatalogNameMatches(t *testing.T) {
+	conn := connectSideEffectTestDB(t)
+	ctx := context.Background()
+
+	rows, err := conn.Query(ctx, `
+		SELECT c.relname FROM pg_class c
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		WHERE n.nspname IN ('pg_catalog', 'information_schema')
+		  AND c.relkind IN ('r', 'v', 'm', 'p', 'f')
+		UNION
+		SELECT a.attname FROM pg_attribute a
+		JOIN pg_class c ON c.oid = a.attrelid
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		WHERE n.nspname IN ('pg_catalog', 'information_schema')
+		  AND c.relkind IN ('r', 'v', 'm', 'p', 'f')
+		  AND a.attnum > 0 AND NOT a.attisdropped`)
+	if err != nil {
+		t.Fatalf("failed to list catalog names: %v", err)
+	}
+	names, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		t.Fatalf("failed to read catalog names: %v", err)
+	}
+	if len(names) == 0 {
+		t.Fatal("no catalog names found")
+	}
+	for _, name := range names {
+		if isFieldSelectedFunctionName(name) {
+			t.Errorf("catalog name %q is taken for a field-selected call", name)
+		}
 	}
 }
 

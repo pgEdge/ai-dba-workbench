@@ -780,7 +780,7 @@ func scopedFrom(src datastoreSource, inner []string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	redacts := slices.ContainsFunc(src.Columns, func(c datastoreColumn) bool { return c.RedactBy != "" })
+	redacts := slices.ContainsFunc(src.Columns, func(c datastoreColumn) bool { return c.RedactBy != "" || c.MaskOptions })
 	if len(inner) == 0 && !redacts {
 		return from, nil
 	}
@@ -794,12 +794,17 @@ func scopedFrom(src datastoreSource, inner []string) (string, error) {
 
 // innerSelectList renders scopedFrom's select list: each permitted
 // column, with a redacted column replaced by redactedValue on rows that
-// name a credential-bearing setting. An empty or NULL value is kept,
-// since it shows only that the setting is unset.
+// name a credential-bearing setting, and the credential-bearing options
+// in an options column masked. An empty or NULL value is kept, since it
+// shows only that the setting is unset.
 func innerSelectList(src datastoreSource) string {
 	parts := make([]string, len(src.Columns))
 	for i, c := range src.Columns {
 		value := qualified(datastoreTableAlias, c.Name)
+		if c.MaskOptions {
+			parts[i] = maskedOptions(value) + " AS " + metrics.QuoteIdentifier(c.Name)
+			continue
+		}
 		if c.RedactBy == "" {
 			parts[i] = value
 			continue

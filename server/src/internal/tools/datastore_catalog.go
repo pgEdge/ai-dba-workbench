@@ -127,6 +127,10 @@ type datastoreColumn struct {
 	// the column's value is masked on every row whose setting name looks
 	// like it carries a credential (credentialSettingCondition).
 	RedactBy string
+	// MaskOptions marks a text[] column of name=value options, such as
+	// pg_hba_file_rules.options; the value of each option whose name
+	// looks like it carries a credential is masked (maskedOptions).
+	MaskOptions bool
 }
 
 // datastoreSource is one source query_datastore accepts. Anything not
@@ -597,29 +601,30 @@ func clusterGroupsSource() datastoreSource {
 	}
 }
 
-// deniedMetricColumns lists probe columns never offered from a metric
-// source. pg_stat_replication.conninfo copies pg_stat_wal_receiver's
-// connection string; PostgreSQL obscures the password in it, but the
-// rest of a connection string is still credential material.
-var deniedMetricColumns = map[string]bool{
-	"conninfo":    true,
-	"sslcert":     true,
-	"sslkey":      true,
-	"sslrootcert": true,
-}
-
 // secretColumnFragments are name fragments that mark a column as
 // holding a credential. A metric column whose name contains one is never
-// offered, so a future probe cannot expose a secret by accident.
-var secretColumnFragments = []string{"password", "passwd", "secret", "token", "credential", "private_key"}
+// offered, so a future probe cannot expose a secret by accident. The
+// connection string fragments cover pg_stat_wal_receiver.conninfo and
+// the like: PostgreSQL obscures the password in some of them, but the
+// rest of a connection string is still credential material.
+var secretColumnFragments = []string{
+	"password", "passwd", "passphrase", "secret", "token", "credential", "private_key",
+	"conninfo", "connstr", "connection_string", "dsn",
+	"sslcert", "sslkey", "sslrootcert",
+}
+
+// secretNamePatterns are the regular expressions, matched against a
+// lower-cased setting or option name, that mark its value as possibly
+// holding a credential: every secretColumnFragments entry, plus
+// patterns too broad for column names. Masking a harmless value is
+// acceptable; exposing a credential is not.
+var secretNamePatterns = append(slices.Clone(secretColumnFragments),
+	"pass$", "key$", "api_?key", "access_key", "salt")
 
 // isSecretColumnName reports whether a column name looks like it holds
 // a credential or other secret.
 func isSecretColumnName(name string) bool {
 	lower := strings.ToLower(name)
-	if deniedMetricColumns[lower] {
-		return true
-	}
 	for _, fragment := range secretColumnFragments {
 		if strings.Contains(lower, fragment) {
 			return true
@@ -628,15 +633,24 @@ func isSecretColumnName(name string) bool {
 	return false
 }
 
-// metricRedactions lists, per probe, the columns that hold a setting's
-// value and the column that names the setting. A credential-bearing
-// setting such as primary_conninfo can hold a password in its value,
-// which no column-name check can catch, so those values are masked.
+// metricRedactions lists, per probe, the values that can carry a
+// credential no column-name check can catch, so they are masked:
+// Columns hold a setting's value and KeyColumn names the setting (a
+// credential-bearing setting such as primary_conninfo can hold a
+// password), and OptionColumns are text[] columns of name=value options
+// (pg_hba.conf's ldapbindpasswd and radiussecrets hold one in clear
+// text). Note is added to the probe's description.
 var metricRedactions = map[string]struct {
-	KeyColumn string
-	Columns   []string
+	KeyColumn     string
+	Columns       []string
+	OptionColumns []string
+	Note          string
 }{
-	"pg_settings": {KeyColumn: "name", Columns: []string{"setting", "reset_val", "boot_val"}},
+	"pg_settings": {
+		KeyColumn: "name", Columns: []string{"setting", "reset_val", "boot_val"},
+		Note: redactionNote,
+	},
+	"pg_hba_file_rules": {OptionColumns: []string{"options"}, Note: optionsRedactionNote},
 }
 
 // credentialSettings are setting names whose value can carry a
@@ -644,8 +658,8 @@ var metricRedactions = map[string]struct {
 // hold password=, and the rest are shell commands that may carry a
 // passphrase or an inline secret such as PGPASSWORD=... or
 // AWS_SECRET_ACCESS_KEY=.... Any setting whose name contains a
-// secretColumnFragments entry is masked as well, which covers an
-// extension setting such as myext.password.
+// secretNamePatterns entry is masked as well, which covers an extension
+// setting such as myext.password.
 var credentialSettings = []string{
 	"primary_conninfo",
 	"ssl_passphrase_command",
@@ -659,10 +673,15 @@ var credentialSettings = []string{
 // in pg_stat_wal_receiver.conninfo.
 const redactedValue = "********"
 
-// redactionNote is appended to the description of a probe in
-// metricRedactions, so describe_datastore says which values are masked.
-const redactionNote = "Values of settings that can hold a credential, such as primary_conninfo, are shown as " +
-	redactedValue + "."
+// redactionNote and optionsRedactionNote are appended to the
+// description of a probe in metricRedactions, so describe_datastore says
+// which values are masked.
+const (
+	redactionNote = "Values of settings that can hold a credential, such as primary_conninfo, are shown as " +
+		redactedValue + "."
+	optionsRedactionNote = "Values of options that can hold a credential, such as ldapbindpasswd and " +
+		"radiussecrets, are shown as " + redactedValue + "."
+)
 
 // redactMetricColumns marks the value columns of probe name for masking.
 // If the probe has no column naming the setting, the value columns
@@ -675,6 +694,7 @@ func redactMetricColumns(name string, columns []datastoreColumn) []datastoreColu
 	hasKey := slices.ContainsFunc(columns, func(c datastoreColumn) bool { return c.Name == rule.KeyColumn })
 	out := make([]datastoreColumn, 0, len(columns))
 	for _, c := range columns {
+		c.MaskOptions = slices.Contains(rule.OptionColumns, c.Name)
 		if slices.Contains(rule.Columns, c.Name) {
 			if !hasKey {
 				continue
@@ -688,9 +708,9 @@ func redactMetricColumns(name string, columns []datastoreColumn) []datastoreColu
 
 // credentialSettingCondition is true for a row whose setting name, in
 // column key of alias, is a credentialSettings entry or contains a
-// secretColumnFragments entry. Every literal is a constant above,
-// checked by TestCredentialSettingLiteralsAreSafe, so nothing from the
-// caller reaches it.
+// secretNamePatterns entry. Every literal is a constant above, checked
+// by TestCredentialSettingLiteralsAreSafe, so nothing from the caller
+// reaches it.
 func credentialSettingCondition(alias, key string) string {
 	lhs := "lower(" + qualified(alias, key) + ")"
 	quoted := make([]string, len(credentialSettings))
@@ -698,7 +718,25 @@ func credentialSettingCondition(alias, key string) string {
 		quoted[i] = "'" + v + "'"
 	}
 	return "(" + lhs + " IN (" + strings.Join(quoted, ", ") + ") OR " +
-		lhs + " ~ '(" + strings.Join(secretColumnFragments, "|") + ")')"
+		secretNameMatch(lhs) + ")"
+}
+
+// secretNameMatch is true when the lower-cased name lhs matches a
+// secretNamePatterns entry.
+func secretNameMatch(lhs string) string {
+	return lhs + " ~ '(" + strings.Join(secretNamePatterns, "|") + ")'"
+}
+
+// maskedOptions returns value, a text[] of name=value options, with the
+// value of every option whose name matches secretNamePatterns replaced
+// by redactedValue, keeping the options' order. A NULL array stays NULL.
+func maskedOptions(value string) string {
+	const opt = "o.opt"
+	name := "split_part(" + opt + ", '=', 1)"
+	return "CASE WHEN " + value + " IS NULL THEN NULL ELSE ARRAY(SELECT CASE WHEN strpos(" + opt +
+		", '=') > 0 AND " + secretNameMatch("lower("+name+")") + " THEN " + name + " || '=" +
+		redactedValue + "' ELSE " + opt + " END FROM unnest(" + value +
+		") WITH ORDINALITY AS o(opt, n) ORDER BY o.n) END"
 }
 
 // errUnknownDatastoreSource reports a source name the source list does not
@@ -774,8 +812,8 @@ func metricDescription(name, comment string) string {
 	if description == "" {
 		description = fmt.Sprintf("Metrics collected by the %s probe.", name)
 	}
-	if _, ok := metricRedactions[name]; ok {
-		description += " " + redactionNote
+	if rule, ok := metricRedactions[name]; ok {
+		description += " " + rule.Note
 	}
 	return description
 }

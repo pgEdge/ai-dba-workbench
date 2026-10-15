@@ -17,7 +17,6 @@ package tools
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -199,23 +198,6 @@ func TestListProbes_ExcludesPartitionsNotProbes(t *testing.T) {
 	}
 }
 
-// execWithTestRole runs sql on a single connection after storing role in
-// the list_probes_test.role setting, so that a DO block can read the name
-// and quote it itself rather than having it spliced into the SQL text.
-func execWithTestRole(ctx context.Context, pool *pgxpool.Pool, role, sql string) error {
-	conn, err := pool.Acquire(ctx)
-	if err != nil {
-		return err
-	}
-	defer conn.Release()
-	if _, err := conn.Exec(ctx,
-		`SELECT set_config('list_probes_test.role', $1, false)`, role); err != nil {
-		return err
-	}
-	_, err = conn.Exec(ctx, sql)
-	return err
-}
-
 // TestListProbes_OmitsUnreadableTables checks that a table the datastore
 // role cannot SELECT from is left out of the list.
 func TestListProbes_OmitsUnreadableTables(t *testing.T) {
@@ -223,42 +205,47 @@ func TestListProbes_OmitsUnreadableTables(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	// Roles are cluster-wide, so give this one a unique name in case
-	// another test run shares the instance. The name reaches the server
-	// only as a bind parameter, and the DO blocks quote it with %I.
-	role := fmt.Sprintf("list_probes_reader_%d", time.Now().UnixNano())
-	if err := execWithTestRole(ctx, pool, role, `DO $$
-		DECLARE r text := current_setting('list_probes_test.role');
+	// Roles are cluster-wide, so the server gives this one a unique name
+	// in case another test run shares the instance, and records it in a
+	// table in this test's database. The SQL below reads the name from
+	// there and quotes it with %I, so it is never spliced into SQL text.
+	if _, err := pool.Exec(ctx, `
+		CREATE TABLE public.list_probes_test_role (name TEXT NOT NULL);
+		DO $$
+		DECLARE r text := 'list_probes_reader_' || md5(random()::text);
 		BEGIN
+			INSERT INTO public.list_probes_test_role VALUES (r);
 			EXECUTE format('CREATE ROLE %I NOLOGIN', r);
 			EXECUTE format('GRANT USAGE ON SCHEMA metrics TO %I', r);
 			EXECUTE format('GRANT SELECT ON metrics.pg_connectivity TO %I', r);
-		END $$`); err != nil {
+		END $$;
+		CREATE TABLE metrics.pg_restricted (
+		    connection_id INTEGER NOT NULL,
+		    collected_at TIMESTAMPTZ NOT NULL
+		);`); err != nil {
 		t.Fatalf("failed to set up the restricted role: %v", err)
 	}
 	defer func() {
-		if err := execWithTestRole(context.Background(), pool, role, `DO $$
-			DECLARE r text := current_setting('list_probes_test.role');
+		if _, err := pool.Exec(context.Background(), `
+			DO $$
+			DECLARE r text;
 			BEGIN
+				SELECT name INTO r FROM public.list_probes_test_role;
 				DROP TABLE IF EXISTS metrics.pg_restricted;
 				EXECUTE format('REVOKE ALL ON metrics.pg_connectivity FROM %I', r);
 				EXECUTE format('REVOKE ALL ON SCHEMA metrics FROM %I', r);
 				EXECUTE format('DROP ROLE IF EXISTS %I', r);
-			END $$`); err != nil {
+			END $$;
+			DROP TABLE IF EXISTS public.list_probes_test_role;`); err != nil {
 			t.Logf("failed to drop the restricted role: %v", err)
 		}
 	}()
-	if _, err := pool.Exec(ctx, `CREATE TABLE metrics.pg_restricted (
-		connection_id INTEGER NOT NULL,
-		collected_at TIMESTAMPTZ NOT NULL
-	)`); err != nil {
-		t.Fatalf("failed to create the restricted table: %v", err)
-	}
 
 	cfg := pool.Config()
 	cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
-		// set_config('role', ...) is SET ROLE with the name as a parameter.
-		_, err := conn.Exec(ctx, `SELECT set_config('role', $1, false)`, role)
+		// set_config('role', ...) is SET ROLE with a computed name.
+		_, err := conn.Exec(ctx, `SELECT set_config('role',
+			(SELECT name FROM public.list_probes_test_role), false)`)
 		return err
 	}
 	restricted, err := pgxpool.NewWithConfig(ctx, cfg)

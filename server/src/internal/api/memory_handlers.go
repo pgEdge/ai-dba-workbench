@@ -25,6 +25,12 @@ type MemoryHandler struct {
 	memoryStore *memory.Store
 	authStore   *auth.AuthStore
 	rbacChecker *auth.RBACChecker
+	// denialAuditor audits this handler's store_system_memory
+	// refusals (issue #648).
+	denialAuditor
+	// checkSystemMemory gates deleting a system-scoped memory on the
+	// store_system_memory permission.
+	checkSystemMemory func(http.ResponseWriter, *http.Request) bool
 }
 
 // NewMemoryHandler creates a new memory handler
@@ -33,11 +39,14 @@ func NewMemoryHandler(
 	authStore *auth.AuthStore,
 	rbacChecker *auth.RBACChecker,
 ) *MemoryHandler {
-	return &MemoryHandler{
+	h := &MemoryHandler{
 		memoryStore: memoryStore,
 		authStore:   authStore,
 		rbacChecker: rbacChecker,
 	}
+	h.checkSystemMemory = requireAdminPermission(rbacChecker,
+		&h.denialAuditor, auth.PermStoreSystemMemory)
+	return h
 }
 
 // RegisterRoutes registers memory management routes on the mux
@@ -139,9 +148,7 @@ func (h *MemoryHandler) deleteMemory(
 
 	if mem.Scope == "system" {
 		// System-scoped memories require the store_system_memory permission
-		if !h.rbacChecker.HasAdminPermission(r.Context(), "store_system_memory") {
-			RespondError(w, http.StatusForbidden,
-				"Permission denied: you do not have permission to delete system memories")
+		if !h.checkSystemMemory(w, r) {
 			return
 		}
 		// Admin-level deletion without ownership check

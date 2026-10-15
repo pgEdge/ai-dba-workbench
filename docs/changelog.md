@@ -1260,8 +1260,10 @@ project adheres to
   `manage_notification_channels` or `manage_connections` who
   tried to create, change, delete or read a blackout, schedule,
   alert rule, override, probe configuration, notification
-  channel, cluster or connection was refused with a 403 but
-  nothing was written to the audit log. Each such refusal is
+  channel, cluster or connection, or a caller without
+  `store_system_memory` who tried to delete a system-scoped
+  memory, was refused with a 403 but nothing was written to
+  the audit log. Each such refusal is
   now recorded as a denied event under the action the request
   would have used, such as `blackout.create` or
   `notification_channel.read`, and coalesced with repeated

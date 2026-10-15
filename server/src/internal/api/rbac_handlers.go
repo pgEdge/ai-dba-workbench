@@ -302,6 +302,7 @@ var deniedAPIResources = map[string]string{
 	"alert-overrides":       "alert_override",
 	"probe-overrides":       "probe_override",
 	"channel-overrides":     "channel_override",
+	"memories":              "memory",
 }
 
 // deniedScopedResources lists the deniedAPIResources whose routes name

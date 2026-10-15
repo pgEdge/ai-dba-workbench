@@ -181,11 +181,14 @@ rules and alert overrides (`manage_alert_rules`), probe configurations
 and probe overrides (`manage_probes`), notification channels, their
 recipients and channel overrides (`manage_notification_channels`), and
 clusters, cluster relationships and connections
-(`manage_connections`). A request to
+(`manage_connections`), and system-scoped chat memories
+(`store_system_memory`). A request to
 create a connection without `manage_connections` is recorded as
-`connection.create`, and one to change or delete a connection that the
+`connection.create`, one to change or delete a connection that the
 caller neither owns nor may manage as `connection.update` or
-`connection.delete`.
+`connection.delete`, and one to delete a system-scoped memory without
+`store_system_memory` as `memory.delete`, with a target such as
+`memories/42`.
 
 Each denial names the object the request was aimed at in
 `details.target`, as the kind of object followed by its numeric

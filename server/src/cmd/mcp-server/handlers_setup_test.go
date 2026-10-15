@@ -237,6 +237,7 @@ func TestSetupHandlersWiresDenialRecorders(t *testing.T) {
 		"*api.ClusterHandler",
 		"*api.ConnectionHandler",
 		"*api.LatestSnapshotHandler",
+		"*api.MemoryHandler",
 		"*api.MetricsHandler",
 		"*api.NotificationChannelHandler",
 		"*api.PerfSummaryHandler",

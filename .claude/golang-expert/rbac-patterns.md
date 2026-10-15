@@ -1015,12 +1015,17 @@ client can append. A handler outside `RBACHandler` records through
 `PUT /connections/{id}/cluster`, the owner-or-`manage_connections`
 gates on update and delete, and the share gate), and `ClusterHandler`,
 `AlertRuleHandler`, `NotificationChannelHandler`, `BlackoutHandler`,
-`ProbeConfigHandler` and the three override handlers embed
+`ProbeConfigHandler`, the three override handlers and `MemoryHandler`
+(its `store_system_memory` gate on deleting a system-scoped memory,
+recorded as `memory.delete` on `memories/<id>`) embed
 `denialAuditor`, whose recorder they pass to
 `requireAllConnectionsInTokenScope`,
 `requireConnectionsInTokenScope`, `requireTargetInTokenScope` and
 `requireBlackoutTargetInTokenScope` (each refuses even with a nil
-recorder); `cmd/mcp-server/handlers.go` wires them in one loop.
+recorder); `cmd/mcp-server/handlers.go` wires them in one loop, which
+`TestSetupHandlersWiresDenialRecorders` pins. Never copy such a
+handler by value: its gate holds a pointer to the original's
+embedded `denialAuditor`.
 Their `checkPermission` gate is
 `requireAdminPermission(rbacChecker, &h.denialAuditor, perm)` in
 `helpers.go`, which reads the recorder from the auditor at refusal
@@ -1039,7 +1044,7 @@ for a record the token cannot see (issue #589).
 `connection.delete` and `connection.cluster.update` actions, and
 `deniedAPIRoute` names `cluster.*`, `cluster_group.*`,
 `notification_channel.*`, `alert_rule.*`, `blackout.*`,
-`blackout_schedule.*` and `probe_config.*` (a write to a
+`blackout_schedule.*`, `probe_config.*` and `memory.*` (a write to a
 sub-resource is recorded as an update of its parent, and any `GET`
 as `<resource>.read` on the object it names). Override
 writes (`PUT`/`DELETE /<kind>-overrides/{scope}/{id}/{item}`) go
@@ -1047,7 +1052,8 @@ through `deniedScopedRoute`, which records `<kind>/<scope>/<id>` only
 for a known scope and a positive id, and never the free-text item;
 it maps `GET /<kind>-overrides/context/{connId}/{item}` to
 `<resource>.read` on `<kind>/server/<connId>`. The route-level tests
-are in `admin_refusal_audit_test.go` and `refusal_audit_test.go`.
+are in `admin_refusal_audit_test.go`, `refusal_audit_test.go` and,
+for memories, `memory_handlers_test.go`.
 `IPExtractor.ExtractIP` returns only a parseable address (forwarded
 entries go through `parseForwardedIP`, which strips a port), falling
 back to the direct peer address.

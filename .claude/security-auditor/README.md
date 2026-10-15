@@ -397,8 +397,17 @@ moved.
   records through the handler's `denialAuditor`, and the cluster and
   connection handlers refuse through `h.denialRecorder.refuse`. A new
   permission 403 written with a bare `RespondError` is an audit gap.
-  Known remaining gap: the `store_system_memory` refusal in
-  `internal/api/memory_handlers.go`, whose handler has no recorder.
+  Recording needs an auth store: without one the server wires no
+  recorder and `RBACHandler.recordDenial` writes nothing, though the
+  request is still refused. Connection-access 403s are deliberately
+  not audited: the `CanAccessConnection` refusals on the read routes
+  in `latest_handlers.go`, `metrics_handlers.go`, `perf_summary*.go`,
+  `server_info_handlers.go` and `query_handlers.go` (plus the latter's
+  `HasWriteAccess` check), and the "Access denied" refusals in
+  `alert_handlers.go`, answer with a bare `RespondError`. Nor is the
+  MCP `store_memory` tool's `store_system_memory` refusal in
+  `internal/tools/store_memory.go`, which is an MCP tool error rather
+  than a REST 403.
 - A blanket superuser gate is the exception, because it names nothing
   to intersect against: `RBACChecker.IsSuperuser` returns false for a
   token whose admin scope has been narrowed, which is what

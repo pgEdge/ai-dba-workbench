@@ -311,6 +311,7 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 			// rule, notification channel, blackout, probe config and
 			// alert, probe and channel override routes, and the
 			// ownership and permission refusals on the cluster-group
+			// routes and the store_system_memory refusals on the memory
 			// routes, are audited through the RBAC handler's coalescing
 			// denial recorder, as are the connection-access refusals on
 			// the connection, query, metrics, latest snapshot,
@@ -324,7 +325,7 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 				probeConfigHandler, alertOverrideHandler,
 				probeOverrideHandler, channelOverrideHandler,
 				alertHandler, serverInfoHandler, perfHandler,
-				metricsHandler, latestHandler,
+				metricsHandler, latestHandler, memoryHandler,
 			} {
 				h.SetDenialRecorder(rbacHandler.RecordDenial)
 				if denialRecorderWired != nil {

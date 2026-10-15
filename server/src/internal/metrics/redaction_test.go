@@ -112,18 +112,24 @@ func TestRedactedTextAdversarialIntegration(t *testing.T) {
 	if _, err := conn.Exec(ctx, "SET statement_timeout = '30s'"); err != nil {
 		t.Fatalf("set statement_timeout: %v", err)
 	}
-	for name, in := range redacttest.AdversarialInputs(1 << 20) {
-		for form, query := range map[string]string{"text": redactTextQuery, "JSON": redactJSONQuery} {
-			start := time.Now()
-			var got string
-			if err := conn.QueryRow(ctx, query, in).Scan(&got); err != nil {
-				t.Errorf("%s as %s: %v", name, form, err)
-				continue
-			}
-			if elapsed := time.Since(start); elapsed > 10*time.Second {
-				t.Errorf("%s as %s took %s", name, form, elapsed)
-			}
+	timed := func(name, form string, run func(*string) error) {
+		start := time.Now()
+		var got string
+		if err := run(&got); err != nil {
+			t.Errorf("%s as %s: %v", name, form, err)
+			return
 		}
+		if elapsed := time.Since(start); elapsed > 10*time.Second {
+			t.Errorf("%s as %s took %s", name, form, elapsed)
+		}
+	}
+	for name, in := range redacttest.AdversarialInputs(1 << 20) {
+		timed(name, "text", func(got *string) error {
+			return conn.QueryRow(ctx, redactTextQuery, in).Scan(got)
+		})
+		timed(name, "JSON", func(got *string) error {
+			return conn.QueryRow(ctx, redactJSONQuery, in).Scan(got)
+		})
 	}
 }
 

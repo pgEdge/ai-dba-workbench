@@ -274,6 +274,40 @@ func membersHidden(members []int, visible map[int]bool) bool {
 	return len(members) > 0 && !clusterMembersVisible(members, visible)
 }
 
+// clusterGroupVisibleForWrite reports whether the caller may see the
+// cluster group they are about to change or delete, and writes the
+// response when they may not: 404, as for a missing group, when the
+// group has member connections and none is visible to the caller, and
+// 500 with failMsg when visibility cannot be decided. A group with no
+// members counts as visible only when emptyVisible is true. A caller
+// with unrestricted visibility sees every group. Write handlers call it
+// before their ownership check, so that a refusal of a group the caller
+// cannot see does not confirm that it exists (issue #649).
+func (h *ClusterHandler) clusterGroupVisibleForWrite(ctx context.Context,
+	w http.ResponseWriter, id int, emptyVisible bool, failMsg string) bool {
+
+	visible, allConnections, err := h.resolveVisibleConnections(ctx)
+	if err != nil {
+		log.Printf("[ERROR] Failed to resolve visible connections for cluster group %d: %v", id, err)
+		RespondError(w, http.StatusInternalServerError, failMsg)
+		return false
+	}
+	if allConnections {
+		return true
+	}
+	members, err := h.datastore.GetConnectionIDsForGroup(ctx, id)
+	if err != nil {
+		log.Printf("[ERROR] Failed to check cluster group visibility (id=%d): %v", id, err)
+		RespondError(w, http.StatusInternalServerError, failMsg)
+		return false
+	}
+	if membersHidden(members, visible) || (len(members) == 0 && !emptyVisible) {
+		RespondError(w, http.StatusNotFound, "Cluster group not found")
+		return false
+	}
+	return true
+}
+
 // filterGroupsByVisibility delegates to the package-level helper.
 func (h *ClusterHandler) filterGroupsByVisibility(ctx context.Context, groups []database.ClusterGroup, visible map[int]bool) ([]database.ClusterGroup, error) {
 	return filterGroupsByVisibilityFn(ctx, h.datastore, groups, visible)
@@ -600,10 +634,18 @@ func (h *ClusterHandler) updateClusterGroup(w http.ResponseWriter, r *http.Reque
 
 	hasManageConns := h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections)
 
+	// A group's definition decides which group-wide blackouts,
+	// overrides and grants reach its members, so a token must cover
+	// every connection to change it (issue #471). The check depends
+	// only on the caller, so it runs before the lookup and its refusal
+	// says nothing about whether the group exists.
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) {
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	// Get group to check ownership
 	existingGroup, err := h.datastore.GetClusterGroup(ctx, id)
 	if err != nil {
 		log.Printf("[ERROR] Cluster group not found for update (id=%d): %v", id, err)
@@ -611,42 +653,24 @@ func (h *ClusterHandler) updateClusterGroup(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Permission check: manage_connections permission, or owner
+	// Visibility comes before ownership, so that a group the caller
+	// cannot see gets the same 404 as a missing one rather than a 403
+	// that confirms it exists (issue #649). A group with no members
+	// stays visible to its owner and to a manage_connections holder, so
+	// its owner can still rename a group they have just created (issue
+	// #58); anyone else would only be refused below, so is told it is
+	// not found.
 	isOwner := existingGroup.OwnerUsername.Valid && existingGroup.OwnerUsername.String == username
+	if !h.clusterGroupVisibleForWrite(ctx, w, id, hasManageConns || isOwner,
+		"Failed to update cluster group") {
+		return
+	}
+
+	// Permission check: manage_connections permission, or owner
 	if !hasManageConns && !isOwner {
 		h.denialRecorder.refuse(w, r,
 			"You do not have permission to update this cluster group")
 		return
-	}
-
-	// A group's definition decides which group-wide blackouts,
-	// overrides and grants reach its members, so a token must cover
-	// every connection to change it (issue #471).
-	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) {
-		return
-	}
-
-	// A caller who cannot see any of the group's members gets the same
-	// 404 as the GET. A group with no members is left to the owner and
-	// manage_connections check above, so its owner can still rename a
-	// group they have just created (issue #58).
-	visible, allConnections, err := h.resolveVisibleConnections(ctx)
-	if err != nil {
-		log.Printf("[ERROR] Failed to resolve visible connections for cluster group %d: %v", id, err)
-		RespondError(w, http.StatusInternalServerError, "Failed to update cluster group")
-		return
-	}
-	if !allConnections {
-		members, err := h.datastore.GetConnectionIDsForGroup(ctx, id)
-		if err != nil {
-			log.Printf("[ERROR] Failed to check cluster group visibility (id=%d): %v", id, err)
-			RespondError(w, http.StatusInternalServerError, "Failed to update cluster group")
-			return
-		}
-		if membersHidden(members, visible) {
-			RespondError(w, http.StatusNotFound, "Cluster group not found")
-			return
-		}
 	}
 
 	var req ClusterGroupRequest
@@ -678,12 +702,13 @@ func (h *ClusterHandler) updateClusterGroup(w http.ResponseWriter, r *http.Reque
 
 func (h *ClusterHandler) deleteClusterGroup(w http.ResponseWriter, r *http.Request, id int) {
 	// Issue #207: owner-fallback authorization. Admins with
-	// manage_connections can delete any group; the group's owner can
-	// delete their own group. Authorization is enforced early (before
-	// request decoding and any response body write). GetClusterGroup is
-	// necessarily called to verify ownership, so a callable user can
-	// still distinguish 404 vs 403, but unauthenticated and clearly
-	// unauthorized callers are rejected up front.
+	// manage_connections can delete any group they can see; the group's
+	// owner can delete their own group. Authorization is enforced early
+	// (before any response body write). The ownership check needs the
+	// group row, so it follows the lookup and the visibility check: a
+	// group the caller cannot see answers 404 exactly as a missing one
+	// does, and only a visible group can draw the ownership 403 (issue
+	// #649).
 	username, _, err := getUserInfoCompat(r, h.authStore)
 	if err != nil {
 		RespondError(w, http.StatusUnauthorized,
@@ -693,6 +718,15 @@ func (h *ClusterHandler) deleteClusterGroup(w http.ResponseWriter, r *http.Reque
 
 	hasManageConns := h.rbacChecker.HasAdminPermission(r.Context(),
 		auth.PermManageConnections)
+
+	// Deleting a group cascades to its clusters and to the group-scope
+	// blackouts, schedules, probe configs, alert thresholds and channel
+	// overrides that reach its members, so a token must cover every
+	// connection to do it (issue #471). The check depends only on the
+	// caller, so it runs before the lookup.
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) {
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
@@ -704,39 +738,19 @@ func (h *ClusterHandler) deleteClusterGroup(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// An empty group is hidden from every restricted caller here, as it
+	// is from the GET.
+	if !h.clusterGroupVisibleForWrite(ctx, w, id, false,
+		"Failed to delete cluster group") {
+		return
+	}
+
 	isOwner := existingGroup.OwnerUsername.Valid &&
 		existingGroup.OwnerUsername.String == username
 	if !hasManageConns && !isOwner {
 		h.denialRecorder.refuse(w, r,
 			"You do not have permission to delete this cluster group")
 		return
-	}
-
-	// Deleting a group cascades to its clusters and to the group-scope
-	// blackouts, schedules, probe configs, alert thresholds and channel
-	// overrides that reach its members, so a token must cover every
-	// connection to do it (issue #471).
-	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) {
-		return
-	}
-
-	visible, allConnections, err := h.resolveVisibleConnections(ctx)
-	if err != nil {
-		log.Printf("[ERROR] Failed to resolve visible connections for cluster group %d: %v", id, err)
-		RespondError(w, http.StatusInternalServerError, "Failed to delete cluster group")
-		return
-	}
-	if !allConnections {
-		ok, err := h.groupHasVisibleConnection(ctx, id, visible)
-		if err != nil {
-			log.Printf("[ERROR] Failed to check cluster group visibility (id=%d): %v", id, err)
-			RespondError(w, http.StatusInternalServerError, "Failed to delete cluster group")
-			return
-		}
-		if !ok {
-			RespondError(w, http.StatusNotFound, "Cluster group not found")
-			return
-		}
 	}
 
 	// Protect the default group from deletion

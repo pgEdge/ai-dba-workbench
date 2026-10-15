@@ -2638,6 +2638,21 @@ project adheres to
   `analyze` and `buffers` both false and text output no longer fails
   with a syntax error. (#646)
 
+- Stop the cluster-group update and delete endpoints confirming that a
+  group the caller cannot see exists. `PUT` and `DELETE` on
+  `/api/v1/cluster-groups/{id}` checked ownership before visibility, so
+  a caller who neither owned nor could see a group got 403 where a
+  missing id got 404. Both now check visibility first and answer an
+  unseen group with the same 404 as a missing one, recording no
+  refusal for it; a visible group the caller does not own still draws
+  the audited 403, and the owner of a group with no member connections
+  can still rename it. An API token whose connection scope does not
+  cover every connection is now refused before the lookup, so its 403
+  is the same whether or not the group exists. `PUT
+  /api/v1/conversations/{id}` likewise answered another user's
+  conversation with 403, and now answers 404 as the get, rename and
+  delete endpoints already did. (#649)
+
 - Delete a user with `ai-dba-server -delete-user` only when the
   confirmation is an explicit `y` or `yes`. The answer was checked
   only when a whole line could be read, so input that ended without

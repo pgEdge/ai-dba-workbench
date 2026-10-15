@@ -447,8 +447,10 @@ func TestClusterHandler_DeleteCluster_Issue207_Denied(t *testing.T) {
 // TestClusterHandler_DeleteClusterGroup_Issue207_Denied verifies the
 // owner-fallback variant on the negative path: a non-owner caller
 // without manage_connections cannot delete a cluster group. The handler
-// must look up the group's owner before deciding, so the datastore is a
-// real Postgres instance gated on TEST_AI_WORKBENCH_SERVER.
+// must look up the group before deciding, so the datastore is a real
+// Postgres instance gated on TEST_AI_WORKBENCH_SERVER. The group has no
+// members, so the caller cannot see it and is refused with the same 404
+// as for a missing group (issue #649).
 func TestClusterHandler_DeleteClusterGroup_Issue207_Denied(t *testing.T) {
 	ds, _, cleanupDS := newTestDatastore(t)
 	defer cleanupDS()
@@ -477,9 +479,9 @@ func TestClusterHandler_DeleteClusterGroup_Issue207_Denied(t *testing.T) {
 
 	handler.handleClusterGroupSubpath(rec, req)
 
-	if rec.Code != http.StatusForbidden {
+	if rec.Code != http.StatusNotFound {
 		t.Errorf("Expected status %d, got %d. Body: %s",
-			http.StatusForbidden, rec.Code, rec.Body.String())
+			http.StatusNotFound, rec.Code, rec.Body.String())
 	}
 
 	// The group must still exist after the rejected delete.

@@ -72,7 +72,11 @@ moved.
   `internal/api/perf_summary_handlers.go`, and `getConnection` in
   `internal/api/connection_handlers.go`). The exceptions answer 404 for
   a record the caller cannot see, as for one that does not exist:
-  clusters and cluster groups whose members the caller cannot see, the
+  clusters and cluster groups whose members the caller cannot see
+  (the cluster-group update and delete handlers check visibility
+  before ownership, so an unseen group never draws the ownership 403,
+  issue #649), another user's conversation on every
+  `/api/v1/conversations/{id}` method, the
   target cluster of `PUT /api/v1/connections/{id}/cluster` (a missing
   cluster id answers 404 too, not 500 from the foreign key),
   blackouts and blackout schedules outside a token's connection scope,

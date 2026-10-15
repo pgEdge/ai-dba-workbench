@@ -1426,9 +1426,11 @@ func TestClusterHandler_UpdateClusterGroup_Integration_NotFound(t *testing.T) {
 
 // TestClusterHandler_UpdateClusterGroup_Integration_Forbidden confirms that
 // an authenticated user with no manage_connections permission who is not
-// the owner of the target group is rejected with 403. The group in this
-// test is created with no owner, so the ownership branch also returns
-// false, meaning the combined "not owner and not privileged" rule fires.
+// the owner of the target group is refused. The group in this test has no
+// owner and no members, so the caller cannot see it and gets the same 404
+// as for a missing group rather than a 403 that confirms it exists (issue
+// #649); the 403 for a visible group is covered by
+// TestClusterGroupWritesHideInvisibleGroups.
 func TestClusterHandler_UpdateClusterGroup_Integration_Forbidden(t *testing.T) {
 	ds, _, cleanupDS := newTestDatastore(t)
 	defer cleanupDS()
@@ -1468,9 +1470,9 @@ func TestClusterHandler_UpdateClusterGroup_Integration_Forbidden(t *testing.T) {
 
 	handler.handleClusterGroupSubpath(rec, req)
 
-	if rec.Code != http.StatusForbidden {
+	if rec.Code != http.StatusNotFound {
 		t.Errorf("Expected status %d, got %d. Body: %s",
-			http.StatusForbidden, rec.Code, rec.Body.String())
+			http.StatusNotFound, rec.Code, rec.Body.String())
 	}
 }
 
@@ -2650,9 +2652,10 @@ func TestClusterHandler_UpdateClusterGroup_Issue304_PreservesSharedWhenOmitted(t
 }
 
 // TestClusterHandler_UpdateClusterGroup_Issue304_ForbiddenDoesNotShare
-// confirms that a non-owner without manage_connections is rejected with 403
-// and, crucially, that the is_shared flag is NOT changed as a side effect of
-// the denied request.
+// confirms that a non-owner without manage_connections is refused and,
+// crucially, that the is_shared flag is NOT changed as a side effect of the
+// denied request. The group has no members, so the caller cannot see it and
+// is refused with 404 rather than 403 (issue #649).
 func TestClusterHandler_UpdateClusterGroup_Issue304_ForbiddenDoesNotShare(t *testing.T) {
 	ds, pool, cleanupDS := newTestDatastore(t)
 	defer cleanupDS()
@@ -2697,9 +2700,9 @@ func TestClusterHandler_UpdateClusterGroup_Issue304_ForbiddenDoesNotShare(t *tes
 
 	handler.handleClusterGroupSubpath(rec, req)
 
-	if rec.Code != http.StatusForbidden {
+	if rec.Code != http.StatusNotFound {
 		t.Fatalf("Expected status %d, got %d. Body: %s",
-			http.StatusForbidden, rec.Code, rec.Body.String())
+			http.StatusNotFound, rec.Code, rec.Body.String())
 	}
 
 	// The denied request must not have shared the group.

@@ -21,6 +21,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/pkg/logger"
+	"github.com/pgedge/ai-workbench/pkg/redact"
 	"github.com/pgedge/ai-workbench/pkg/rollback"
 )
 
@@ -3828,6 +3829,66 @@ func (sm *SchemaManager) registerMigrations() {
 			return nil
 		},
 	})
+
+	// Migration 24: mask passwords in stored connection alert descriptions
+	//
+	// A connection alert's description is the monitored connection's
+	// error, and a libpq error can quote the connection string, password
+	// included. The alerter masks new descriptions with pkg/redact and
+	// rewrites open alerts on each pass, but cleared alerts keep the text
+	// they were raised with, so this rewrites every connection alert once
+	// with the same rules. Only rows whose text changes are updated.
+	// Versions 22 and 23 are left for the open pull requests that claim
+	// them; see the pull request for GitHub issue #679.
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     24,
+		Description: "Mask passwords in connection alert descriptions",
+		Up: func(tx pgx.Tx) error {
+			return maskConnectionAlertDescriptions(context.Background(), tx)
+		},
+	})
+}
+
+// maskConnectionAlertDescriptions rewrites the description of every
+// connection alert that holds text redact.Text masks with the masked
+// text.
+func maskConnectionAlertDescriptions(ctx context.Context, tx pgx.Tx) error {
+	rows, err := tx.Query(ctx, `
+		SELECT id, description FROM alerts
+		WHERE alert_type = 'connection'
+		ORDER BY id
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to read connection alerts: %w", err)
+	}
+	type change struct {
+		id          int64
+		description string
+	}
+	var changes []change
+	for rows.Next() {
+		var c change
+		if err := rows.Scan(&c.id, &c.description); err != nil {
+			rows.Close()
+			return fmt.Errorf("failed to read connection alerts: %w", err)
+		}
+		if m := redact.Text(c.description); m != c.description {
+			changes = append(changes, change{c.id, m})
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("failed to read connection alerts: %w", err)
+	}
+
+	for _, c := range changes {
+		if _, err := tx.Exec(ctx,
+			`UPDATE alerts SET description = $2 WHERE id = $1`,
+			c.id, c.description); err != nil {
+			return fmt.Errorf("failed to mask connection alert %d: %w", c.id, err)
+		}
+	}
+	return nil
 }
 
 // Migrate applies all pending migrations

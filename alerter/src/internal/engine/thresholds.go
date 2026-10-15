@@ -662,6 +662,27 @@ func stalenessAlertDescription(probeName, connectionName string,
 		probeName, connectionName, elapsedMinutes, thresholdMinutes)
 }
 
+// maskOpenConnectionAlerts rewrites the description of every connection
+// alert that has not been cleared, and holds text the server's rules
+// mask, with the masked text. A failure is logged and left for the next
+// pass.
+func (e *Engine) maskOpenConnectionAlerts(ctx context.Context) {
+	alerts, err := e.datastore.GetOpenConnectionAlertDescriptions(ctx)
+	if err != nil {
+		e.log("ERROR: Failed to get open connection alerts: %v", err)
+		return
+	}
+	for _, a := range alerts {
+		masked := redact.Text(a.Description)
+		if masked == a.Description {
+			continue
+		}
+		if err := e.datastore.UpdateAlertDescription(ctx, a.ID, masked); err != nil {
+			e.log("ERROR: Failed to mask connection alert %d: %v", a.ID, err)
+		}
+	}
+}
+
 // evaluateConnectionErrors checks monitored connections for error states
 func (e *Engine) evaluateConnectionErrors(ctx context.Context) {
 	e.debugLog("Evaluating connection errors...")
@@ -672,6 +693,12 @@ func (e *Engine) evaluateConnectionErrors(ctx context.Context) {
 		return
 	}
 
+	// Mask every open connection alert first, including acknowledged
+	// alerts and alerts on a connection in a blackout, which the loop
+	// below skips, so that one raised before the masking does not keep
+	// the raw text until it is cleared.
+	e.maskOpenConnectionAlerts(ctx)
+
 	for _, conn := range connections {
 		if ctx.Err() != nil {
 			return
@@ -681,8 +708,7 @@ func (e *Engine) evaluateConnectionErrors(ctx context.Context) {
 			// A libpq error can quote the connection string, password
 			// included, so mask it with the server's rules before it
 			// reaches the alert, the log, a notification or an LLM
-			// prompt. An existing alert holding the raw text is
-			// rewritten with the masked text on the next pass.
+			// prompt.
 			connError := redact.Text(*conn.ConnectionError)
 
 			// Check if there's a blackout active for this connection

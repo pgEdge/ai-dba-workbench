@@ -253,7 +253,8 @@ func TestAlertClearedSummaryNegativeClampedToZero(t *testing.T) {
 }
 
 // TestAlertFiredSummaryPreservesDescription confirms the alert_fired
-// summary continues to be a.description verbatim. The Ellie investigation
+// summary continues to be a.description verbatim when it quotes no
+// password. The Ellie investigation
 // established that the fired-row summary is the immutable historical
 // record and must not be rewritten alongside the cleared-row enrichment.
 func TestAlertFiredSummaryPreservesDescription(t *testing.T) {
@@ -294,5 +295,42 @@ func TestAlertFiredSummaryPreservesDescription(t *testing.T) {
 	}
 	if result.Events[0].Summary != desc {
 		t.Errorf("fired summary mismatch\n got: %q\nwant: %q", result.Events[0].Summary, desc)
+	}
+}
+
+// TestAlertSummariesMaskPasswords checks that the fired and cleared
+// summaries do not return a password the alert description quotes, as a
+// connection alert raised before the alerter masked it does (#679).
+func TestAlertSummariesMaskPasswords(t *testing.T) {
+	pool, ds, cleanup := newAlertClearedTestEnv(t)
+	defer cleanup()
+
+	var connID int
+	if err := pool.QueryRow(context.Background(),
+		`INSERT INTO connections (name) VALUES ('masked') RETURNING id`,
+	).Scan(&connID); err != nil {
+		t.Fatalf("insert connection: %v", err)
+	}
+
+	raw := `could not connect to postgresql://app:example-secret@192.0.2.1/db`
+	masked := `could not connect to postgresql://app:********@192.0.2.1/db`
+	cleared := insertClearedAlert(t, pool, connID, raw, 27*time.Second)
+	if got, want := fetchClearedSummary(t, ds, connID, cleared), "Resolved after 27s. Fired: "+masked; got != want {
+		t.Errorf("cleared summary mismatch\n got: %q\nwant: %q", got, want)
+	}
+
+	cid := connID
+	result, err := ds.GetTimelineEvents(context.Background(), TimelineFilter{
+		ConnectionID: &cid,
+		StartTime:    cleared.Add(-2 * time.Hour),
+		EndTime:      cleared.Add(time.Hour),
+		EventTypes:   []string{EventTypeAlertFired},
+		Limit:        10,
+	})
+	if err != nil {
+		t.Fatalf("GetTimelineEvents: %v", err)
+	}
+	if len(result.Events) != 1 || result.Events[0].Summary != masked {
+		t.Errorf("fired events = %+v, want one with summary %q", result.Events, masked)
 	}
 }

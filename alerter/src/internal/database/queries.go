@@ -116,6 +116,40 @@ func (d *Datastore) UpdateConnectionAlertDescription(ctx context.Context, alertI
 	return d.UpdateAlertDescription(ctx, alertID, description)
 }
 
+// AlertDescription is one alert's id and description.
+type AlertDescription struct {
+	ID          int64
+	Description string
+}
+
+// GetOpenConnectionAlertDescriptions returns the id and description of
+// every connection alert that has not been cleared, active or
+// acknowledged, on any connection.
+func (d *Datastore) GetOpenConnectionAlertDescriptions(ctx context.Context) ([]AlertDescription, error) {
+	rows, err := d.pool.Query(ctx, `
+		SELECT id, description FROM alerts
+		WHERE alert_type = 'connection' AND status IN ('active', 'acknowledged')
+		ORDER BY id
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get open connection alerts: %w", err)
+	}
+	defer rows.Close()
+
+	var alerts []AlertDescription
+	for rows.Next() {
+		var a AlertDescription
+		if err := rows.Scan(&a.ID, &a.Description); err != nil {
+			return nil, fmt.Errorf("failed to scan open connection alert: %w", err)
+		}
+		alerts = append(alerts, a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("row iteration error: %w", err)
+	}
+	return alerts, nil
+}
+
 // GetAlerterSettings retrieves the global alerter settings
 func (d *Datastore) GetAlerterSettings(ctx context.Context) (*AlerterSettings, error) {
 	var settings AlerterSettings

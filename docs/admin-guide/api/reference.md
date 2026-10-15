@@ -553,7 +553,10 @@ The statement text returned by `/api/v1/metrics/top-queries` is
 cut and masked in the same way. Configuration
 change events from `/api/v1/timeline/events` still report a
 change to a setting that can hold a credential, but show its old
-and new values as `********`.
+and new values as `********`. Alert descriptions returned by
+`/api/v1/alerts` and in the alert events of
+`/api/v1/timeline/events` are cut and masked in the same way,
+since a connection alert quotes the connection error.
 
 The masking cannot recognise every form a password can take,
 so query text and replicated row data may still contain

@@ -2482,9 +2482,14 @@ project adheres to
   string or URI with its password carried the password into the
   alert, its notifications and any AI analysis of it. The alerter now
   masks the error with the patterns the server uses for
-  `query_datastore`, and rewrites an active alert that still holds
-  the unmasked text on its next evaluation; cleared alerts keep the
-  description they had.
+  `query_datastore`, and on each evaluation rewrites any active or
+  acknowledged connection alert that still holds the unmasked text,
+  including one on a connection in a blackout. Collector migration 24
+  masks the stored descriptions of existing connection alerts, cleared
+  ones included, and the server masks alert descriptions in
+  `GET /api/v1/alerts` and the timeline's alert events on a
+  best-effort basis. Notifications already sent are not changed, and
+  stored AI analyses and chat history are not rewritten.
 
 - Delete a user with `ai-dba-server -delete-user` only when the
   confirmation is an explicit `y` or `yes`. The answer was checked

@@ -129,6 +129,27 @@ func TestGetAlerts_SystemAlerts(t *testing.T) {
 	}
 }
 
+// TestGetAlerts_MasksDescription checks that a password quoted in an
+// alert description, as a connection alert raised before the alerter
+// masked it quotes the connection error, is not returned (#679).
+func TestGetAlerts_MasksDescription(t *testing.T) {
+	f := newSystemAlertsFixture(t)
+	ctx := context.Background()
+	if _, err := f.pool.Exec(ctx, `UPDATE alerts SET description = $2 WHERE id = $1`, f.alertAID,
+		`could not connect: host=192.0.2.1 password=example-secret dbname=db`); err != nil {
+		t.Fatalf("store raw description: %v", err)
+	}
+
+	result, err := f.ds.GetAlerts(ctx, AlertListFilter{ConnectionID: &f.connA})
+	if err != nil {
+		t.Fatalf("GetAlerts: %v", err)
+	}
+	want := `could not connect: host=192.0.2.1 password=******** dbname=db`
+	if len(result.Alerts) != 1 || result.Alerts[0].Description != want {
+		t.Fatalf("alerts = %+v, want one with description %q", result.Alerts, want)
+	}
+}
+
 // TestGetAlertCounts_SystemAlerts proves system alerts are counted in
 // System and Total, never in ByServer, and only on request.
 func TestGetAlertCounts_SystemAlerts(t *testing.T) {

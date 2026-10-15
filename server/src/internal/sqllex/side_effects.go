@@ -29,7 +29,8 @@ import (
 // text search, XML and statistics function tables, and the contrib
 // module pages), from the PostgreSQL 9.6 and 14 documentation for the
 // names older servers still use, and from the Spock 4.1, 5.0 and 6.0
-// install scripts and the pg_cron README. The match errs towards calling
+// install scripts, the pg_cron README, the pglogical 2 documentation and
+// the pg_background README. The match errs towards calling
 // a query a write: a false positive costs one confirmation click,
 // whereas a false negative runs the function without one.
 //
@@ -105,6 +106,27 @@ var sideEffectingFunctionFamilies = []struct {
 		"pg_truncate_visibility_map",
 		"postgres_fdw_disconnect", "postgres_fdw_disconnect_all",
 		"pg_file_write", "pg_file_sync", "pg_file_rename", "pg_file_unlink",
+		// pg_cron, for a call that relies on search_path rather than
+		// naming the cron schema.
+		"schedule", "schedule_in_database", "unschedule", "alter_job",
+		// pglogical management, likewise. The show_* status functions
+		// and the wait_* functions, which only block, are left out.
+		"create_node", "drop_node",
+		"alter_node_add_interface", "alter_node_drop_interface",
+		"create_subscription", "drop_subscription",
+		"alter_subscription_disable", "alter_subscription_enable",
+		"alter_subscription_interface",
+		"alter_subscription_synchronize",
+		"alter_subscription_resynchronize_table",
+		"alter_subscription_add_replication_set",
+		"alter_subscription_remove_replication_set",
+		"create_replication_set", "alter_replication_set",
+		"drop_replication_set",
+		"replication_set_add_table", "replication_set_add_all_tables",
+		"replication_set_remove_table",
+		"replication_set_add_sequence", "replication_set_add_all_sequences",
+		"replication_set_remove_sequence",
+		"synchronize_sequence", "replicate_ddl_command",
 	}},
 	{"Spock management", false, []string{
 		"cleanup_resolutions", "convert_column_to_int",
@@ -141,6 +163,7 @@ var sideEffectingFunctionPrefixes = []string{
 	"pg_logical_slot_",       // logical decoding, which consumes changes
 	"pg_stat_reset",          // statistics resets
 	"dblink",                 // dblink, which can run SQL anywhere
+	"pg_background_",         // pg_background, which runs SQL in a worker
 }
 
 // sideEffectingSchemas are the schemas in which every function call is

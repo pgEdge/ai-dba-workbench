@@ -2605,8 +2605,9 @@ project adheres to
   the documented PostgreSQL functions that signal or change server
   state, together with the management functions of `pg_stat_statements`,
   `pg_buffercache`, `pg_prewarm`, `pg_surgery`, `pg_visibility`,
-  `postgres_fdw`, `adminpack`, `dblink`, Spock, pglogical and
-  `pg_cron`, however the name is spelt, quoted or schema-qualified.
+  `postgres_fdw`, `adminpack`, `dblink`, `pg_background`, Spock,
+  pglogical and `pg_cron`, however the name is spelt, quoted or
+  schema-qualified.
   Functions called through a user-defined wrapper or view are not
   detected. The MCP tools that Ellie and other MCP clients use now
   apply the same check: `query_database` treats such a `SELECT` as a
@@ -2615,7 +2616,13 @@ project adheres to
   the plan is still available with `analyze` set to false;
   `test_query` refuses one prefixed with `ANALYZE` or other `EXPLAIN`
   options, which previously ran it; and `count_rows` (in its `WHERE`
-  clause) and `query_datastore` refuse it outright. (#646)
+  clause) and `query_datastore` refuse it outright. `test_query` and
+  the query validation endpoint now plan with a fixed `EXPLAIN` option
+  list, so a statement starting with `ANALYZE` or `VERBOSE` is a
+  syntax error rather than being run, and a `--` comment ending in a
+  carriage return no longer hides one. `execute_explain` with
+  `analyze` and `buffers` both false and text output no longer fails
+  with a syntax error. (#646)
 
 - Delete a user with `ai-dba-server -delete-user` only when the
   confirmation is an explicit `y` or `yes`. The answer was checked

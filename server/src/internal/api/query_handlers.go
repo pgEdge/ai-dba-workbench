@@ -69,38 +69,7 @@ const queryTimeout = 30 * time.Second
 // hasOnlyComments returns true when the string contains only SQL
 // comments (line and block) and whitespace but no real SQL content.
 func hasOnlyComments(s string) bool {
-	i := 0
-	for i < len(s) {
-		ch := s[i]
-		if sqllex.IsSQLSpace(ch) {
-			i++
-			continue
-		}
-		if ch == '-' && i+1 < len(s) && s[i+1] == '-' {
-			for i < len(s) && !sqllex.IsSQLNewline(s[i]) {
-				i++
-			}
-			continue
-		}
-		if ch == '/' && i+1 < len(s) && s[i+1] == '*' {
-			depth := 1
-			i += 2
-			for i < len(s) && depth > 0 {
-				if s[i] == '/' && i+1 < len(s) && s[i+1] == '*' {
-					depth++
-					i += 2
-				} else if s[i] == '*' && i+1 < len(s) && s[i+1] == '/' {
-					depth--
-					i += 2
-				} else {
-					i++
-				}
-			}
-			continue
-		}
-		return false
-	}
-	return true
+	return sqllex.HasOnlyComments(s)
 }
 
 // splitStatements splits a SQL string into individual statements by
@@ -117,86 +86,7 @@ func splitStatements(sql string) []string {
 // splitStatementsAs is splitStatements with the given reading of a plain
 // '...' literal.
 func splitStatementsAs(sql string, reading sqllex.StringReading) []string {
-	var statements []string
-	start := 0
-	i := 0
-
-	for i < len(sql) {
-		ch := sql[i]
-
-		// Quoted string or quoted identifier, including the prefixed
-		// forms E'...', U&'...' and U&"...".
-		if sqllex.IsQuoteStart(sql, i) {
-			i = sqllex.SkipQuoted(sql, i, reading)
-			continue
-		}
-
-		// Dollar-quoted string
-		if ch == '$' {
-			tag := sqllex.ScanDollarTag(sql, i)
-			if tag != "" {
-				i += len(tag)
-				closeIdx := strings.Index(sql[i:], tag)
-				if closeIdx < 0 {
-					i = len(sql)
-				} else {
-					i += closeIdx + len(tag)
-				}
-				continue
-			}
-			i++
-			continue
-		}
-
-		// Line comment
-		if ch == '-' && i+1 < len(sql) && sql[i+1] == '-' {
-			for i < len(sql) && !sqllex.IsSQLNewline(sql[i]) {
-				i++
-			}
-			continue
-		}
-
-		// Block comment (with nesting)
-		if ch == '/' && i+1 < len(sql) && sql[i+1] == '*' {
-			depth := 1
-			i += 2
-			for i < len(sql) && depth > 0 {
-				if sql[i] == '/' && i+1 < len(sql) && sql[i+1] == '*' {
-					depth++
-					i += 2
-				} else if sql[i] == '*' && i+1 < len(sql) && sql[i+1] == '/' {
-					depth--
-					i += 2
-				} else {
-					i++
-				}
-			}
-			continue
-		}
-
-		// Semicolon: split point
-		if ch == ';' {
-			part := strings.TrimSpace(sql[start:i])
-			if part != "" && !hasOnlyComments(part) {
-				statements = append(statements, part)
-			}
-			i++
-			start = i
-			continue
-		}
-
-		i++
-	}
-
-	// Handle trailing statement (no final semicolon)
-	if start < len(sql) {
-		part := strings.TrimSpace(sql[start:])
-		if part != "" && !hasOnlyComments(part) {
-			statements = append(statements, part)
-		}
-	}
-
-	return statements
+	return sqllex.SplitStatements(sql, reading)
 }
 
 // executeQuery handles POST /api/v1/connections/{id}/query
@@ -454,52 +344,11 @@ func (h *ConnectionHandler) executeQuery(w http.ResponseWriter, r *http.Request,
 	RespondJSON(w, http.StatusOK, resp)
 }
 
-// stripLeadingComments removes leading SQL line comments (-- ...),
-// block comments (/* ... */ with nesting), and blank lines from a SQL
-// string, returning the remaining statement body. This allows
-// detection of the first SQL keyword even when the statement begins
-// with comments.
+// stripLeadingComments removes leading whitespace and SQL comments from
+// sql, returning the remaining statement body (see
+// sqllex.StripLeadingComments).
 func stripLeadingComments(sql string) string {
-	i := 0
-	for i < len(sql) {
-		ch := sql[i]
-
-		// Skip whitespace
-		if sqllex.IsSQLSpace(ch) {
-			i++
-			continue
-		}
-
-		// Line comment: skip to end of line
-		if ch == '-' && i+1 < len(sql) && sql[i+1] == '-' {
-			for i < len(sql) && !sqllex.IsSQLNewline(sql[i]) {
-				i++
-			}
-			continue
-		}
-
-		// Block comment with nesting
-		if ch == '/' && i+1 < len(sql) && sql[i+1] == '*' {
-			depth := 1
-			i += 2
-			for i < len(sql) && depth > 0 {
-				if sql[i] == '/' && i+1 < len(sql) && sql[i+1] == '*' {
-					depth++
-					i += 2
-				} else if sql[i] == '*' && i+1 < len(sql) && sql[i+1] == '/' {
-					depth--
-					i += 2
-				} else {
-					i++
-				}
-			}
-			continue
-		}
-
-		// Found a non-comment, non-whitespace character
-		return sql[i:]
-	}
-	return ""
+	return sqllex.StripLeadingComments(sql)
 }
 
 // maxExplainDepth bounds the recursion isReadOnlyStatement performs
@@ -1851,7 +1700,7 @@ func explainCommand(stmt string, genericPlan bool) (string, string) {
 		return "EXPLAIN (GENERIC_PLAN) " + body, ""
 	}
 
-	return "EXPLAIN " + body, ""
+	return sqllex.PlainExplainPrefix + body, ""
 }
 
 // explainableStatements are the statement kinds this endpoint plans.

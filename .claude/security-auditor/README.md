@@ -15,6 +15,7 @@ moved.
 | `server/src/internal/oidc/` | OIDC discovery, the authorisation request, ID-token verification, claim extraction and the sealed login-state cookie |
 | `server/src/internal/api/` | HTTP handlers; every mutating handler carries an authorisation gate (see `../golang-expert/rbac-patterns.md`) |
 | `server/src/internal/tools/` | MCP tools, including ones that execute SQL against monitored databases |
+| `server/src/internal/sqllex/` | Shared SQL lexer and side-effecting-function classifier used by the query endpoint and the MCP query tools. The read-only transaction is the defence against data writes; this classifier is the only defence against side-effecting functions such as `pg_terminate_backend`, which run inside a read-only transaction. `test_query` is exempt from the tool-level privilege check (`context_aware_provider.go`) and needs only read access to the connection, so it must never execute what it validates |
 | `server/src/internal/database/` | Datastore queries; identifier interpolation is allow-listed and quoted |
 | `server/src/internal/llmproxy/` | Outbound proxy to LLM providers with its own `authorize` step and provider API keys |
 | `pkg/crypto/` | Encryption of stored monitored-database passwords (AES-GCM) |

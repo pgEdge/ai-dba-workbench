@@ -11,11 +11,12 @@
 // Package sqllex holds the pieces of PostgreSQL's lexer that the
 // server's SQL classifiers share: finding where a quoted literal,
 // quoted identifier, dollar-quoted string or comment ends, so that text
-// inside one is never read as code, and finding calls to functions that
-// change server, session or database state (see
-// CallsSideEffectingFunction). The query endpoint in package api and
-// the MCP tools in package tools both classify statements with it, so a
-// statement reads the same to both.
+// inside one is never read as code; splitting a script into statements
+// and finding each statement's first keyword (see SplitStatements and
+// FirstKeyword); and finding calls to functions that change server,
+// session or database state (see CallsSideEffectingFunction). The query
+// endpoint in package api and the MCP tools in package tools both
+// classify statements with it, so a statement reads the same to both.
 package sqllex
 
 import "strings"

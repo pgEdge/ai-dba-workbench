@@ -11,7 +11,6 @@ package tools
 
 import (
 	"regexp"
-	"strings"
 
 	"github.com/pgedge/ai-workbench/server/internal/sqllex"
 )
@@ -53,7 +52,7 @@ func hasOffsetClause(sql string) bool {
 // injected LIMIT, which would silently cap how many rows the function
 // acts on.
 func isSelectQuery(sql string) bool {
-	keyword := firstSQLKeyword(sql)
+	keyword := sqllex.FirstKeyword(sql)
 	switch keyword {
 	case "SELECT", "SHOW", "VALUES", "TABLE", "EXPLAIN", "WITH":
 		return !sqllex.CallsSideEffectingFunctionUnderAnyReading(sql)
@@ -62,74 +61,19 @@ func isSelectQuery(sql string) bool {
 	}
 }
 
-// explainOnlyPlans reports whether "EXPLAIN " followed by stmt only
-// plans stmt rather than running it. That holds when stmt starts, after
-// any leading comments, with a keyword that begins a statement EXPLAIN
-// can plan. Anything else, such as ANALYZE, VERBOSE or an option list in
-// parentheses, could make the composed command an EXPLAIN ANALYZE that
-// runs the statement, so it is reported as running.
+// explainOnlyPlans reports whether EXPLAIN in front of stmt only plans
+// stmt rather than running it. That holds when stmt starts, after any
+// leading comments, with a keyword that begins a statement EXPLAIN can
+// plan. Anything else, such as ANALYZE, VERBOSE or an option list in
+// parentheses, could turn a bare "EXPLAIN " into an EXPLAIN ANALYZE that
+// runs the statement, so it is reported as running. Callers also use
+// sqllex.PlainExplainPrefix, which makes those a syntax error, so this
+// check is a second guard rather than the only one.
 func explainOnlyPlans(stmt string) bool {
-	switch firstSQLKeyword(stmt) {
+	switch sqllex.FirstKeyword(stmt) {
 	case "SELECT", "WITH", "INSERT", "UPDATE", "DELETE", "MERGE", "VALUES", "TABLE":
 		return true
 	default:
 		return false
 	}
-}
-
-// firstSQLKeyword returns the first SQL keyword in the query after
-// stripping leading whitespace, line comments (--), and block
-// comments (/* ... */). The result is returned in uppercase.
-func firstSQLKeyword(sql string) string {
-	i := 0
-	n := len(sql)
-
-	for i < n {
-		// Skip whitespace
-		if sql[i] == ' ' || sql[i] == '\t' || sql[i] == '\n' || sql[i] == '\r' {
-			i++
-			continue
-		}
-
-		// Skip line comment: -- until end of line
-		if i+1 < n && sql[i] == '-' && sql[i+1] == '-' {
-			i += 2
-			for i < n && sql[i] != '\n' {
-				i++
-			}
-			continue
-		}
-
-		// Skip block comment: /* ... */ (with nesting)
-		if i+1 < n && sql[i] == '/' && sql[i+1] == '*' {
-			i += 2
-			depth := 1
-			for i < n && depth > 0 {
-				if i+1 < n && sql[i] == '/' && sql[i+1] == '*' {
-					depth++
-					i += 2
-				} else if i+1 < n && sql[i] == '*' && sql[i+1] == '/' {
-					depth--
-					i += 2
-				} else {
-					i++
-				}
-			}
-			continue
-		}
-
-		// Found start of a keyword; collect it.
-		start := i
-		for i < n && isIdentChar(sql[i]) {
-			i++
-		}
-		if i > start {
-			return strings.ToUpper(sql[start:i])
-		}
-
-		// Non-identifier, non-whitespace, non-comment character.
-		return ""
-	}
-
-	return ""
 }

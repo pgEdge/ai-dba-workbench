@@ -120,6 +120,8 @@ func TestExplainOnlyPlans(t *testing.T) {
 		{"VERBOSE SELECT 1", false},
 		{"(ANALYZE) SELECT 1", false},
 		{"-- c\nANALYZE SELECT 1", false},
+		{"-- x\rANALYZE\nSELECT 1", false},
+		{"-- x\r\nSELECT 1", true},
 		{"EXPLAIN ANALYZE SELECT 1", false},
 		{"", false},
 	}
@@ -145,6 +147,8 @@ func TestMayRunSideEffects(t *testing.T) {
 		{"option list prefix", "(ANALYZE) SELECT pg_terminate_backend(0)", true},
 		{"verbose analyze prefix", "VERBOSE ANALYZE SELECT pg_reload_conf()", true},
 		{"comment then analyze", "/* x */ ANALYZE SELECT pg_reload_conf()", true},
+		{"carriage return ends a comment", "-- x\rANALYZE\nSELECT pg_terminate_backend(1)", true},
+		{"carriage return in a later statement", "SELECT 1; -- x\rANALYZE SELECT pg_reload_conf()", true},
 		{"second statement analyzes", "SELECT 1; ANALYZE SELECT nextval('s')", true},
 		{"quoted name with analyze", `ANALYZE SELECT "pg_reload_conf"()`, true},
 		{"analyze without side effects", "ANALYZE SELECT 1", false},
@@ -172,6 +176,7 @@ func TestTestQuery_RefusesExecutingSideEffects(t *testing.T) {
 		"VERBOSE ANALYZE SELECT \"pg_terminate_backend\"(0)",
 		"-- c\nANALYZE SELECT U&\"pg\\005fterminate\\005fbackend\"(0)",
 		"SELECT 1; ANALYZE SELECT set_config('work_mem', '1MB', false)",
+		"-- x\rANALYZE\nSELECT pg_terminate_backend(1)",
 	}
 	for _, q := range queries {
 		resp, err := tool.Handler(map[string]any{"query": q})

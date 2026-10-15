@@ -24,14 +24,31 @@ do not copy either into another package.
 - `lexer.go`: string, quoted-identifier, dollar-quote and comment
   skipping (`SkipNonCode`, `MaskNonCode`, `SkipQuoted`), identifier
   helpers, and `StringReading` for the two ways a server may read
-  `'...\'...'` (`standard_conforming_strings` on or off).
+  `'...\'...'` (`standard_conforming_strings` on or off). A `--`
+  comment ends at `\n` or `\r`, as in PostgreSQL (`IsSQLNewline`).
+- `statements.go`: `SplitStatements`, `FirstKeyword`,
+  `StripLeadingComments`, `HasOnlyComments` and `PlainExplainPrefix`.
+  Both `api` and `tools` split and read first keywords through these;
+  do not write another splitter or comment skipper.
 - `side_effects.go`: `CallsSideEffectingFunction(sql, reading)` and
   `CallsSideEffectingFunctionUnderAnyReading(sql)`. Matching ignores
   case, `pg_catalog.` or other schema qualification, double-quoted and
   `U&"..."` names, and whitespace or comments before `(`; names inside
   literals and comments do not match. The function lists come from the
-  PostgreSQL, Spock and pg_cron documentation; a database test checks
-  the "core" family against `pg_proc`.
+  PostgreSQL, Spock, pg_cron, pglogical and pg_background
+  documentation. A database test checks the "core" family against
+  `pg_proc`, skipping names in `coreFunctionMinVersion` that are newer
+  than the server under test; add an entry there for any core name
+  added after PostgreSQL 14.
+
+## Prefixing EXPLAIN
+
+Never build `"EXPLAIN " + userSQL`: a statement that starts with
+`ANALYZE`, `VERBOSE` or `(ANALYZE)` turns that into an EXPLAIN ANALYZE
+that runs it. Use `sqllex.PlainExplainPrefix` (`EXPLAIN (COSTS TRUE) `)
+or another closed option list (`execute_explain`'s
+`buildExplainCommand` always includes `COSTS TRUE`), after which those
+are a syntax error.
 
 Use `CallsSideEffectingFunctionUnderAnyReading` unless the caller
 already knows the session's string reading; it fails closed.
@@ -48,8 +65,7 @@ already knows the session's string reading; it fails closed.
 - `execute_explain`: refuses `analyze` for such a query.
 - `test_query`: refuses when the statement, or any statement in it,
   does not start with a keyword EXPLAIN only plans (`explainOnlyPlans`),
-  because the tool prefixes `EXPLAIN ` and a leading `ANALYZE` would
-  run it.
+  as a second guard behind `PlainExplainPrefix`.
 - `count_rows` (`validateWhereClause`) and `query_datastore`: refuse.
 
 Any new path that classifies user SQL by its first keyword must also

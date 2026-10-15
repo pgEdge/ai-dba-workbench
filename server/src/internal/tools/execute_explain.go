@@ -175,26 +175,7 @@ READ ONLY transaction to prevent side effects. However, be cautious with:
 					"allowed; set analyze to false to see the plan without running it.")
 			}
 
-			// Build EXPLAIN command
-			var explainCmd strings.Builder
-			explainCmd.WriteString("EXPLAIN (")
-
-			var options []string
-			if analyze {
-				options = append(options, "ANALYZE TRUE")
-			}
-			if buffers {
-				options = append(options, "BUFFERS TRUE")
-			}
-			if format == "json" {
-				options = append(options, "FORMAT JSON")
-			}
-
-			explainCmd.WriteString(strings.Join(options, ", "))
-			explainCmd.WriteString(") ")
-			explainCmd.WriteString(query)
-
-			explainQuery := explainCmd.String()
+			explainQuery := buildExplainCommand(query, analyze, buffers, format)
 
 			// Extract context from args (injected by registry.Execute)
 			ctx, ok := args["__context"].(context.Context)
@@ -402,6 +383,25 @@ func containsSQLKeyword(upperSQL, keyword string) bool {
 
 		idx = end
 	}
+}
+
+// buildExplainCommand returns the EXPLAIN command for query with the
+// requested options. The option list always names COSTS TRUE, which is
+// PostgreSQL's default, so that it is never empty: "EXPLAIN () ..." is a
+// syntax error. The closed option list also makes a query starting with
+// ANALYZE or VERBOSE a syntax error rather than an extra option.
+func buildExplainCommand(query string, analyze, buffers bool, format string) string {
+	options := []string{"COSTS TRUE"}
+	if analyze {
+		options = append(options, "ANALYZE TRUE")
+	}
+	if buffers {
+		options = append(options, "BUFFERS TRUE")
+	}
+	if format == "json" {
+		options = append(options, "FORMAT JSON")
+	}
+	return "EXPLAIN (" + strings.Join(options, ", ") + ") " + query
 }
 
 // isIdentChar returns true if the byte is a valid SQL identifier character

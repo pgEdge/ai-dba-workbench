@@ -159,10 +159,11 @@ PostgreSQL functions that change server state, such as
 `nextval`, the advisory lock and large object functions,
 and the replication slot and statistics reset functions,
 along with the management functions of extensions such as
-`pg_stat_statements`, `pg_prewarm`, `dblink`, Spock, and
-`pg_cron`. The system cannot see inside user-defined
-functions or views, so a statement that reaches a side
-effect through one of those still runs as a read.
+`pg_stat_statements`, `pg_prewarm`, `dblink`,
+`pg_background`, Spock, pglogical, and `pg_cron`. The
+system cannot see inside user-defined functions or views,
+so a statement that reaches a side effect through one of
+those still runs as a read.
 
 Confirmed statements run in order on a single database
 connection, so a `BEGIN` and its `COMMIT` in the same code

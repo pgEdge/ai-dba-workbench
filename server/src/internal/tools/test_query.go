@@ -148,7 +148,7 @@ DO NOT use for:
 				return mcp.NewToolError(fmt.Sprintf(
 					"Query validation failed: %v", spErr))
 			}
-			explainQuery := "EXPLAIN " + query
+			explainQuery := sqllex.PlainExplainPrefix + query
 			rows, err := rot.Tx.Query(ctx, explainQuery)
 			if err != nil {
 				// Check if the error is about multiple statements
@@ -166,7 +166,7 @@ DO NOT use for:
 					}
 
 					for i, stmt := range statements {
-						stmtExplain := "EXPLAIN " + stmt
+						stmtExplain := sqllex.PlainExplainPrefix + stmt
 						stmtRows, stmtErr := rot.Tx.Query(ctx, stmtExplain)
 						if stmtErr != nil {
 							return mcp.NewToolError(fmt.Sprintf(
@@ -199,13 +199,15 @@ DO NOT use for:
 const testQuerySavepoint = "workbench_test_query"
 
 // mayRunSideEffects reports whether validating query could run a
-// side-effecting function. The tool validates by prefixing EXPLAIN to
-// the query, or to each of its statements, so a query that starts with
-// ANALYZE becomes an EXPLAIN ANALYZE that runs it, and a read-only
+// side-effecting function. The tool validates by putting
+// sqllex.PlainExplainPrefix in front of the query, or of each of its
+// statements, whose closed option list already makes a leading ANALYZE
+// a syntax error rather than an EXPLAIN ANALYZE. A read-only
 // transaction does not stop a function such as pg_terminate_backend
-// (issue #646). A query calling such a function is therefore validated
-// only when the query and each of its statements begin with a
-// statement EXPLAIN merely plans.
+// (issue #646), so as a second guard a query calling such a function is
+// validated only when the query and each of its statements, split
+// under either reading of a plain '...' literal, begin with a statement
+// EXPLAIN merely plans.
 func mayRunSideEffects(query string) bool {
 	if !sqllex.CallsSideEffectingFunctionUnderAnyReading(query) {
 		return false
@@ -213,9 +215,11 @@ func mayRunSideEffects(query string) bool {
 	if !explainOnlyPlans(query) {
 		return true
 	}
-	for _, stmt := range splitStatements(query) {
-		if !explainOnlyPlans(stmt) {
-			return true
+	for _, reading := range sqllex.StringReadings {
+		for _, stmt := range sqllex.SplitStatements(query, reading) {
+			if !explainOnlyPlans(stmt) {
+				return true
+			}
 		}
 	}
 	return false
@@ -319,194 +323,9 @@ func isPgError(err error, target **pgconn.PgError) bool {
 	return false
 }
 
-// splitStatements splits a SQL string into individual statements using a
-// SQL-aware tokeniser. The function correctly handles semicolons inside
-// single-quoted strings, double-quoted identifiers, dollar-quoted strings,
-// block comments, and line comments.
+// splitStatements splits a SQL string into its statements with the
+// shared lexer, reading a plain '...' literal as a standard string (see
+// sqllex.SplitStatements).
 func splitStatements(sql string) []string {
-	var statements []string
-	var current strings.Builder
-	i := 0
-	n := len(sql)
-
-	for i < n {
-		ch := sql[i]
-
-		// Line comment: -- until end of line
-		if ch == '-' && i+1 < n && sql[i+1] == '-' {
-			current.WriteByte(ch)
-			i++
-			current.WriteByte(sql[i])
-			i++
-			for i < n && sql[i] != '\n' {
-				current.WriteByte(sql[i])
-				i++
-			}
-			continue
-		}
-
-		// Block comment: /* ... */
-		if ch == '/' && i+1 < n && sql[i+1] == '*' {
-			current.WriteByte(ch)
-			i++
-			current.WriteByte(sql[i])
-			i++
-			depth := 1
-			for i < n && depth > 0 {
-				if sql[i] == '/' && i+1 < n && sql[i+1] == '*' {
-					depth++
-					current.WriteByte(sql[i])
-					i++
-					current.WriteByte(sql[i])
-					i++
-				} else if sql[i] == '*' && i+1 < n && sql[i+1] == '/' {
-					depth--
-					current.WriteByte(sql[i])
-					i++
-					current.WriteByte(sql[i])
-					i++
-				} else {
-					current.WriteByte(sql[i])
-					i++
-				}
-			}
-			continue
-		}
-
-		// Single-quoted string
-		if ch == '\'' {
-			current.WriteByte(ch)
-			i++
-			for i < n {
-				if sql[i] == '\'' {
-					current.WriteByte(sql[i])
-					i++
-					// Escaped quote ('')
-					if i < n && sql[i] == '\'' {
-						current.WriteByte(sql[i])
-						i++
-						continue
-					}
-					break
-				}
-				current.WriteByte(sql[i])
-				i++
-			}
-			continue
-		}
-
-		// Double-quoted identifier
-		if ch == '"' {
-			current.WriteByte(ch)
-			i++
-			for i < n {
-				if sql[i] == '"' {
-					current.WriteByte(sql[i])
-					i++
-					// Escaped quote ("")
-					if i < n && sql[i] == '"' {
-						current.WriteByte(sql[i])
-						i++
-						continue
-					}
-					break
-				}
-				current.WriteByte(sql[i])
-				i++
-			}
-			continue
-		}
-
-		// Dollar-quoted string: $tag$...$tag$ or $$...$$
-		if ch == '$' {
-			tag := parseDollarTag(sql, i)
-			if tag != "" {
-				// Write the opening tag
-				current.WriteString(tag)
-				i += len(tag)
-				// Find the closing tag
-				for i < n {
-					if sql[i] == '$' && strings.HasPrefix(sql[i:], tag) {
-						current.WriteString(tag)
-						i += len(tag)
-						break
-					}
-					current.WriteByte(sql[i])
-					i++
-				}
-				continue
-			}
-			// Not a dollar-quote tag; treat $ as normal character
-			current.WriteByte(ch)
-			i++
-			continue
-		}
-
-		// Semicolon: statement boundary
-		if ch == ';' {
-			stmt := strings.TrimSpace(current.String())
-			if stmt != "" {
-				statements = append(statements, stmt)
-			}
-			current.Reset()
-			i++
-			continue
-		}
-
-		// Normal character
-		current.WriteByte(ch)
-		i++
-	}
-
-	// Remaining text after the last semicolon (or if no semicolons)
-	stmt := strings.TrimSpace(current.String())
-	if stmt != "" {
-		statements = append(statements, stmt)
-	}
-
-	return statements
-}
-
-// parseDollarTag checks if the string at position i starts with a valid
-// dollar-quote tag (e.g. "$$" or "$tag$"). Returns the full tag including
-// both dollar signs, or an empty string if no valid tag is found.
-func parseDollarTag(sql string, i int) string {
-	n := len(sql)
-	if i >= n || sql[i] != '$' {
-		return ""
-	}
-
-	// Try to find the closing $ of the tag
-	j := i + 1
-	// $$ is valid (empty tag)
-	if j < n && sql[j] == '$' {
-		return "$$"
-	}
-
-	// Tag must start with a letter or underscore
-	if j >= n || (!isTagStart(sql[j])) {
-		return ""
-	}
-
-	// Scan tag body: letters, digits, underscores
-	for j < n && isTagBody(sql[j]) {
-		j++
-	}
-
-	// Must end with $
-	if j < n && sql[j] == '$' {
-		return sql[i : j+1]
-	}
-
-	return ""
-}
-
-// isTagStart returns true if the byte can start a dollar-quote tag name.
-func isTagStart(b byte) bool {
-	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || b == '_'
-}
-
-// isTagBody returns true if the byte can appear in a dollar-quote tag name.
-func isTagBody(b byte) bool {
-	return isTagStart(b) || (b >= '0' && b <= '9')
+	return sqllex.SplitStatements(sql, sqllex.StandardStrings)
 }

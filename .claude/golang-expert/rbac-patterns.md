@@ -699,10 +699,12 @@ recorded had it been allowed (`group.delete`, `token.scope.set`,
 `rbac.<lowercase method>` for an unrecognised route shape. A recording
 failure is logged with `[ERROR]` and never changes the response.
 
-Denials are coalesced before they reach the store. `recordDenial`
-consults `admitDenial`, which keeps an in-memory map on `RBACHandler`
-keyed by `denialKey` (actor type, actor id, actor name, client IP,
-action, capped at `maxDenialActionLen`, and reason) under `denialMu`,
+Denials are coalesced in the auth store, beside the failure
+coalescer, in `server/src/internal/auth/audit_denials.go`.
+`recordDenial` calls `AuthStore.RecordCoalescedDenial(actor, action,
+target, reason)`, whose `denialCoalescer` keeps an in-memory map keyed
+by `denialKey` (actor type, actor id, actor name, client IP, action,
+capped at `maxDenialActionLen`, and reason; built by `denialKeyOf`),
 so that two tokens of one user, or one token used from two addresses,
 never suppress each other's denials. The key must never hold a value
 the caller chooses without limit: the path is deliberately not in it,
@@ -712,26 +714,34 @@ either would let a client mint a fresh key, and so a fresh row, per
 request. The target instead goes in the row: `deniedRoute` normalises
 it to `kind/<id>` (a positive integer id) or `kind`, and
 `unmatchedDenialTarget` for a route it does not recognise. The first
-denial for a key is written at once with `details.target`, identical
+denial for a key is written at once with `details.target`; identical
 denials within `denialCoalesceWindow` (60s) are counted in a
 `denialWindow`, which keeps up to `maxDenialTargets` (20) distinct
-targets and counts the rest in `targets_truncated`, and the first
-denial after the window closes is written through
-`auth.RecordDeniedWithDetails` carrying `repeat_count`, `targets` and
-`targets_truncated`. Entries sit on an intrusive list ordered by
-`firstSeen` (`denialOldest`/`denialNewest`, kept by `pushNewestDenial`
-and `unlinkDenial`; not `container/list`, whose element type
-assertions errcheck flags), so `evictDenials` walks from the oldest
-end and stops at the first open window, which keeps each call
-amortised O(1) however many keys are held. The map is capped at
-`maxDenialKeys` (10 000); an evicted entry that still held suppressed
-repeats is returned as a `denialSummary` and written by
-`recordDenialSummaries` once `denialMu` is released, as a row carrying
-`window_closed` plus the window's fields, so a burst that stops
-before its window closes is still counted. Any new denial path must
-go through `recordDenial` rather than calling `RecordDenied`
-directly, or it loses the bound on how many rows one client can
-append. A handler outside `RBACHandler` records through
+targets and counts the rest in `targets_truncated`; and the first
+denial after the window closes is written carrying `repeat_count`,
+`targets` and `targets_truncated`. If a denial's own row cannot be
+written, `reopen` puts its window back so later denials are not
+suppressed behind a missing row. Entries sit on an intrusive list
+ordered by `firstSeen` (not `container/list`, whose element type
+assertions errcheck flags), so eviction walks from the oldest end and
+stays amortised O(1). The map is capped at `maxDenialKeys` (10 000).
+
+A window whose repeats were never reported is written as a summary
+row carrying `window_closed`, `first_seen` and `last_seen` plus the
+window's fields, in three ways: when eviction at the cap drops it;
+on the five-minute cleanup tick (`runCleanupTick` in
+`cmd/mcp-server/server.go`), where `SweepCoalescedAudit` drains every
+closed window; and at shutdown, where `FlushCoalescedAudit` drains
+every window, open or not. `AuthStore.Close` calls the flush, and so
+does the SIGTERM handler's closer; the two can race, and whichever
+runs second finds nothing to write. Sweep and flush live in
+`internal/auth/audit_coalesce.go` and write the closed denial and
+failure summaries of one pass in a single transaction, putting the
+entries back if it fails (and logging them with `[ERROR]` if a flush
+fails). There is no exported way to write a denial row that bypasses
+the coalescer; any new denial path must go through `recordDenial` or
+`RecordCoalescedDenial`, or it loses the bound on how many rows one
+client can append. A handler outside `RBACHandler` records through
 `RBACHandler.RecordDenial`, injected as a function:
 `ConnectionHandler` takes it via `SetDenialRecorder` and refuses
 through `refuseOutOfTokenScope` (its `manage_connections` refusal on

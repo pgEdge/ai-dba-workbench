@@ -427,15 +427,48 @@ func repeatGroupCreateFailure(t *testing.T, store *auth.AuthStore,
 	}
 }
 
+// repeatAuditDenial records the same audit.read denial n times
+// through the store's denial coalescer, as the REST layer does.
+func repeatAuditDenial(t *testing.T, store *auth.AuthStore, n int) {
+	t.Helper()
+	actor := auth.Actor{Type: auth.ActorUser, Name: "mallory",
+		IP: "192.0.2.1"}
+	for i := 0; i < n; i++ {
+		if err := store.RecordCoalescedDenial(actor, "audit.read", "audit",
+			"Permission denied: requires superuser privileges"); err != nil {
+			t.Fatalf("failed to record a denial: %v", err)
+		}
+	}
+}
+
 // groupCreateRepeatCounts returns details.repeat_count for every
 // group.create failure row, oldest first, with 0 for a row that has
 // none.
 func groupCreateRepeatCounts(t *testing.T, store *auth.AuthStore) []float64 {
 	t.Helper()
 
+	return auditRepeatCounts(t, store, "group.create", "failure")
+}
+
+// auditDenialRepeatCounts returns details.repeat_count for every
+// audit.read denial row, oldest first, with 0 for a row that has none.
+func auditDenialRepeatCounts(t *testing.T, store *auth.AuthStore) []float64 {
+	t.Helper()
+
+	return auditRepeatCounts(t, store, "audit.read", "denied")
+}
+
+// auditRepeatCounts returns details.repeat_count for every row with the
+// given action and outcome, oldest first, with 0 for a row that has
+// none.
+func auditRepeatCounts(t *testing.T, store *auth.AuthStore, action,
+	outcome string) []float64 {
+
+	t.Helper()
+
 	events, _, err := store.ListAuditEvents(auth.AuditFilter{
-		Action:  "group.create",
-		Outcome: "failure",
+		Action:  action,
+		Outcome: outcome,
 		Limit:   100,
 	})
 	if err != nil {
@@ -459,12 +492,13 @@ func groupCreateRepeatCounts(t *testing.T, store *auth.AuthStore) []float64 {
 
 // TestRunShutdown_FlushesAuditFailures drives runShutdown with the
 // server's own dependencies, as the SIGTERM and SIGINT handler does,
-// and checks that the suppressed counts of an open failure window
-// reach the audit log even though the process exits without calling
-// Server.Close.
+// and checks that the suppressed counts of an open failure window, and
+// of an open denial window, reach the audit log even though the
+// process exits without calling Server.Close.
 func TestRunShutdown_FlushesAuditFailures(t *testing.T) {
 	store, _ := newWrapperTestStore(t)
 	repeatGroupCreateFailure(t, store, "duplicate-group", 10)
+	repeatAuditDenial(t, store, 6)
 
 	s := &Server{authStore: store}
 	deps := s.shutdownDeps()
@@ -485,8 +519,12 @@ func TestRunShutdown_FlushesAuditFailures(t *testing.T) {
 	if len(got) != 2 || got[0] != 0 || got[1] != 9 {
 		t.Errorf("group.create failure repeat counts = %v, want [0 9]", got)
 	}
+	if got := auditDenialRepeatCounts(t, store); len(got) != 2 ||
+		got[0] != 0 || got[1] != 5 {
+		t.Errorf("audit.read denial repeat counts = %v, want [0 5]", got)
+	}
 
 	// A flush with no auth store, as in a server that never opened
 	// one, must do nothing rather than panic.
-	(&Server{}).flushAuditFailures()
+	(&Server{}).flushCoalescedAudit()
 }

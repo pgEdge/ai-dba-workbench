@@ -575,14 +575,14 @@ func (s *Server) startTokenCleanup() {
 // runCleanupTick does one round of the periodic cleanup: it removes
 // expired tokens and the connections they owned, purges audit events
 // past their retention, and writes the counts of coalesced audit
-// failures whose window has closed.
+// failures and denials whose window has closed.
 func (s *Server) runCleanupTick() {
 	if removed, hashes := s.authStore.CleanupExpiredTokens(); removed > 0 {
 		fmt.Fprintf(os.Stderr, "Removed %d expired token(s)\n", removed)
 		s.cleanupExpiredConnections(hashes)
 	}
 	s.purgeAuditEvents()
-	s.authStore.SweepAuditFailures()
+	s.authStore.SweepCoalescedAudit()
 }
 
 // purgeAuditEvents deletes RBAC audit events older than the
@@ -808,11 +808,13 @@ func (s *Server) logStartupInfo() {
 // The closer is deliberately not s.Close: main.go already defers
 // s.Close on a clean RunHTTP return, and racing that defer against
 // a goroutine-driven Close has caused double-close panics in past
-// graceful-shutdown implementations. The handler exits the process
-// without reaching that defer, though, so its closer writes the
-// suppressed counts of coalesced audit failures, which would otherwise
-// be lost; that is safe beside the deferred Close, since both take the
-// auth store's lock and whichever runs second finds nothing to write.
+// graceful-shutdown implementations. RunHTTP returns as soon as
+// Shutdown starts, so main usually returns through that defer, which
+// flushes the auth store, before the handler finishes draining; the
+// handler's closer also writes the suppressed counts of coalesced
+// audit failures and denials, for when it gets there first. Both take
+// the auth store's lock, so whichever runs second finds nothing to
+// write.
 func (s *Server) setupShutdownHandler() {
 	installShutdownHandler(s.shutdownDeps())
 }
@@ -823,17 +825,17 @@ func (s *Server) setupShutdownHandler() {
 func (s *Server) shutdownDeps() shutdownDeps {
 	return shutdownDeps{
 		server:      s.mcpServer,
-		closer:      s.flushAuditFailures,
+		closer:      s.flushCoalescedAudit,
 		gocoverdir:  os.Getenv("GOCOVERDIR"),
 		writeCounts: realCoverageWriter,
 	}
 }
 
-// flushAuditFailures writes a summary row for every coalesced audit
-// failure that still holds suppressed repeats.
-func (s *Server) flushAuditFailures() {
+// flushCoalescedAudit writes a summary row for every coalesced audit
+// failure and denial that still holds suppressed repeats.
+func (s *Server) flushCoalescedAudit() {
 	if s.authStore != nil {
-		s.authStore.FlushAuditFailures()
+		s.authStore.FlushCoalescedAudit()
 	}
 }
 

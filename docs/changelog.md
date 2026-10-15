@@ -1181,6 +1181,18 @@ project adheres to
   re-evaluation fingerprint, each acknowledged anomaly alert is
   re-evaluated once more after upgrading. (#627)
 
+- Write the suppressed counts of coalesced RBAC denials to the audit
+  log when the server shuts down, and at the five-minute cleanup for
+  a burst of denials that has stopped, rather than only when a later
+  identical denial arrives; until now a burst of refused requests that
+  ended shortly before a restart was never counted. Denial summary
+  events now carry `details.first_seen` and `details.last_seen`, as
+  failure summaries do, and the server writes the closed denial and
+  failure summaries of one cleanup or shutdown in a single
+  transaction. A denial whose own row cannot be written no longer
+  hides the identical denials after it, or drops the repeats it
+  would have reported. (#590)
+
 - Fix the `probe_unavailable` alert firing on healthy Spock clusters
   with no recent apply exceptions or conflict resolutions. The
   collector could not tell an installed extension with nothing to

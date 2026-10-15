@@ -1012,14 +1012,14 @@ func TestPurgeAuditEventsError(t *testing.T) {
 // Denials and failures
 // =============================================================================
 
-func TestRecordDenied(t *testing.T) {
+func TestRecordCoalescedDenialWritesFirstRow(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAudit(t)
 	defer cleanup()
 
 	actor := Actor{Type: ActorUser, ID: int64Ptr(4), Name: "bob", IP: "192.0.2.10"}
-	if err := store.RecordDenied(actor, "group.delete",
+	if err := store.RecordCoalescedDenial(actor, "group.delete", "group",
 		"requires manage_groups"); err != nil {
-		t.Fatalf("RecordDenied failed: %v", err)
+		t.Fatalf("RecordCoalescedDenial failed: %v", err)
 	}
 
 	events, total, err := store.ListAuditEvents(AuditFilter{})
@@ -1057,8 +1057,8 @@ func TestRecordDeniedError(t *testing.T) {
 	defer cleanup()
 
 	store.db.Close()
-	err := store.RecordDenied(Actor{Type: ActorUser, Name: "bob"},
-		"group.delete", "nope")
+	err := store.RecordCoalescedDenial(Actor{Type: ActorUser, Name: "bob"},
+		"group.delete", "group", "nope")
 	if err == nil {
 		t.Error("Expected an error from a closed database")
 	}
@@ -1496,8 +1496,8 @@ func TestRecordDeniedInsertError(t *testing.T) {
 		t.Fatalf("Failed to drop audit_events: %v", err)
 	}
 
-	err := store.RecordDenied(Actor{Type: ActorUser, Name: "bob"},
-		"group.delete", "nope")
+	err := store.RecordCoalescedDenial(Actor{Type: ActorUser, Name: "bob"},
+		"group.delete", "group", "nope")
 	if err == nil {
 		t.Error("Expected an error when the audit table is missing")
 	}

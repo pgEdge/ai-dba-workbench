@@ -1471,34 +1471,6 @@ func (s *AuthStore) failAudit(tx *sql.Tx, actor Actor, target *auditTarget,
 	}
 }
 
-// RecordDenied records an authorisation denial. The event carries no
-// target, because a request refused before the target is resolved has
-// none, and the reason is stored in the error column.
-func (s *AuthStore) RecordDenied(actor Actor, action, reason string) error {
-	return s.RecordDeniedWithDetails(actor, action, reason, nil)
-}
-
-// RecordDeniedWithDetails records an authorisation denial along with
-// structured details. Callers that coalesce repeated denials use it to
-// report how many identical refusals a single row stands for; details
-// of nil is identical to RecordDenied.
-func (s *AuthStore) RecordDeniedWithDetails(actor Actor, action,
-	reason string, details any) error {
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	ev := newEvent(actor, action, "", nil, "", details)
-	ev.Outcome = OutcomeDenied
-	ev.Error = capAuditError(reason)
-
-	if err := s.recordAuditInOwnTx(ev); err != nil {
-		return fmt.Errorf("failed to record denial: %w", err)
-	}
-
-	return nil
-}
-
 // recordAuditInOwnTx records one or more events, in order, in a
 // transaction of its own; either all of them are written or none is.
 // The caller must already hold s.mu.

@@ -189,7 +189,7 @@ moved.
   `internal/auth/token_ceiling.go`), failing closed when the groups
   cannot be listed.
 - The denial-audit coalescing key (`denialKey` in
-  `internal/api/rbac_handlers.go`) must never contain a value the
+  `internal/auth/audit_denials.go`) must never contain a value the
   caller chooses without limit, such as the request path, a resource
   id or a non-standard HTTP method, or a client mints a fresh key, and
   so a fresh audit row, per request. Such values belong in the row's

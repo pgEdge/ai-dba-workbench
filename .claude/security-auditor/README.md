@@ -187,7 +187,11 @@ moved.
   derived from `textSecretNamePatterns`, the column fragments plus API
   and access key names, without `key$`/`pass$`/`salt`, which over-mask
   identifiers). A value nested in another literal
-  (`CONNECTION 'password=''x'''`) is matched by `sqlNestedQuoted`.
+  (`CONNECTION 'password=''x'''`) is matched by `sqlNestedQuoted`, and
+  one in an escape string (`E'password=\'x\''`) by
+  `sqlBackslashQuoted`. `PASSWORD` may be followed by white space, a
+  comment (`sqlSeparator`) or nothing; an unquoted `$n` value is kept
+  only when white space, a comma, a bracket or a semicolon ends it.
   `pg_hba_file_rules.error` is masked whole (`WholeColumns`,
   `MaskWhole`), since PostgreSQL quotes an unparsable option there, and
   `nonCredentialSettings` exempts `password_encryption` and similar

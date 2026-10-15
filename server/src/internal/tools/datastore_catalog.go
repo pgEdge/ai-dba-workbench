@@ -787,9 +787,15 @@ const (
 	// CONNECTION 'password=''secret''', where its quotes are doubled
 	// and an escaped quote is '''' or \''.
 	sqlNestedQuoted = `''(?:''''|\\''|[^'])*(?:'')?`
+	// sqlBackslashQuoted is a quoted value inside an escape string, as
+	// in CONNECTION E'password=\'secret\'', where its quotes are \' and
+	// an escaped quote is \\\'.
+	sqlBackslashQuoted = `\\'(?:\\\\\\'|[^\\]|\\[^'])*(?:\\')?`
 	// secretValue is a value that follows a secret name: any SQL string
 	// constant or one nested in another literal.
-	secretValue = `(?:` + sqlConstant + `|` + sqlNestedQuoted + `)`
+	secretValue = `(?:` + sqlConstant + `|` + sqlNestedQuoted + `|` + sqlBackslashQuoted + `)`
+	// sqlSeparator is white space or a comment between SQL tokens.
+	sqlSeparator = `(?:[[:space:]]|/\*(?:[^*]|\*+[^*/])*\*+/)`
 	// identChars may surround a secret name, as in app.password or
 	// AWS_SECRET_ACCESS_KEY.
 	identChars = `[a-z0-9_.]*`
@@ -837,20 +843,25 @@ var textRedactions = []textRedaction{
 		// and radiussecrets= in pg_hba.conf, PGPASSWORD=... and
 		// AWS_SECRET_ACCESS_KEY=... in a shell command, and
 		// SET app.password = '...'. An unquoted value is masked to the
-		// next white space; a $1 parameter is kept.
+		// next white space; a parameter such as $1 is kept when white
+		// space, a comma, a bracket or a semicolon ends it.
 		Name: "keyword=value",
 		Pattern: `(` + secretKeyPattern(identChars, identChars) + `"?[[:space:]]*(?:=>?|:=)[[:space:]]*)` +
-			`(?:` + secretValue + `|"(?:[^"\\]|\\.)*"?|(?:[^[:space:]$'"]|\$[^0-9[:space:]])[^[:space:]]*)`,
+			`(?:` + secretValue + `|"(?:[^"\\]|\\.)*"?|` +
+			`(?:[^[:space:]$'"]|\$[^0-9[:space:]]|\$[0-9]+[^0-9[:space:],);])[^[:space:]]*)`,
 		Replacement: `\1` + redactedValue,
 	},
 	{
 		// [ENCRYPTED] PASSWORD '...' in CREATE or ALTER ROLE and USER,
 		// password '...' in a user mapping's OPTIONS, and
-		// SET app.password TO '...'. PASSWORD NULL and a $1 parameter
-		// are kept.
+		// SET app.password TO '...'. White space or a comment may
+		// separate the name from the value, or nothing at all, as in
+		// PASSWORD'...'; a name inside a quoted string, as in
+		// set_config('app.password', ...), is left to the quoted name
+		// pattern. PASSWORD NULL and a $1 parameter are kept.
 		Name: "PASSWORD 'value'",
-		Pattern: `(` + secretKeyPattern(identChars, identChars) + `"?[[:space:]]+(?:to[[:space:]]+)?)` +
-			secretValue,
+		Pattern: `((?:^|[^'a-z0-9_.])` + secretKeyPattern(identChars, identChars) + `"?` + sqlSeparator +
+			`*(?:to` + sqlSeparator + `+)?)` + secretValue,
 		Replacement: `\1'` + redactedValue + `'`,
 	},
 }

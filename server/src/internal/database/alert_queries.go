@@ -19,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/pgedge/ai-workbench/pkg/logger"
 	"github.com/pgedge/ai-workbench/pkg/rollback"
+	"github.com/pgedge/ai-workbench/server/internal/metrics"
 )
 
 // ErrAlertNotFound is returned when an alert is not found
@@ -215,11 +216,13 @@ func (d *Datastore) GetAlerts(ctx context.Context, filter AlertListFilter) (*Ale
 	}
 
 	// Query alerts with connection name, metric unit, and acknowledgment info
-	// Uses DISTINCT ON to get only the most recent acknowledgment per alert
+	// Uses DISTINCT ON to get only the most recent acknowledgment per alert.
+	// The description can quote a connection error holding a password, so
+	// it is masked as query_datastore masks it.
 	query := fmt.Sprintf(`
 		SELECT a.id, a.alert_type, a.rule_id, a.connection_id, a.database_name,
 		       a.object_name, a.probe_name, a.metric_name, a.metric_value, r.metric_unit,
-		       a.threshold_value, a.operator, a.severity, a.title, a.description,
+		       a.threshold_value, a.operator, a.severity, a.title, %s,
 		       a.correlation_id, a.status, a.triggered_at, a.cleared_at,
 		       a.last_updated, a.anomaly_score, a.anomaly_details,
 		       CASE WHEN a.alert_type = 'system' THEN ''
@@ -239,7 +242,7 @@ func (d *Datastore) GetAlerts(ctx context.Context, filter AlertListFilter) (*Ale
 		%s
 		ORDER BY a.triggered_at DESC
 		LIMIT $%d OFFSET $%d
-	`, whereClause, argNum, argNum+1)
+	`, metrics.RedactedText("a.description"), whereClause, argNum, argNum+1)
 
 	args = append(args, limit, offset)
 

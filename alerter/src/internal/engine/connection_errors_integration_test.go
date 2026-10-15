@@ -166,6 +166,82 @@ func TestEvaluateConnectionErrors_MasksCredentials(t *testing.T) {
 	}
 }
 
+// TestEvaluateConnectionErrors_MasksOpenAlerts checks that an
+// acknowledged alert, and an alert on a connection in a blackout, that
+// still hold the raw text are masked too, whilst a cleared alert is left
+// alone. See GitHub issue #679.
+func TestEvaluateConnectionErrors_MasksOpenAlerts(t *testing.T) {
+	engine, _, pool, cleanup := newEngineSpockTestEnv(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	raw := `could not connect: password=example-secret dbname=db`
+	masked := `could not connect: password=******** dbname=db`
+	ackID := insertMonitoredConnection(t, pool, "conn-error-acknowledged", &raw)
+	blackoutID := insertMonitoredConnection(t, pool, "conn-error-blacked-out", &raw)
+	now := time.Now()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO blackouts (scope, connection_id, start_time, end_time, reason)
+		VALUES ('server', $1, $2, $3, 'maintenance')`,
+		blackoutID, now.Add(-time.Hour), now.Add(time.Hour)); err != nil {
+		t.Fatalf("failed to insert blackout: %v", err)
+	}
+
+	alertIDs := map[string]int64{}
+	for name, a := range map[string]struct {
+		connID int
+		status string
+	}{
+		"acknowledged": {ackID, "acknowledged"},
+		"blackout":     {blackoutID, "active"},
+		"cleared":      {ackID, "cleared"},
+	} {
+		var id int64
+		if err := pool.QueryRow(ctx, `
+			INSERT INTO alerts (alert_type, connection_id, severity, title, description, status, triggered_at)
+			VALUES ('connection', $1, 'critical', 'Connection error', $2, $3, NOW()) RETURNING id`,
+			a.connID, raw, a.status).Scan(&id); err != nil {
+			t.Fatalf("failed to insert %s alert: %v", name, err)
+		}
+		alertIDs[name] = id
+	}
+
+	engine.evaluateConnectionErrors(ctx)
+	for name, want := range map[string]string{"acknowledged": masked, "blackout": masked, "cleared": raw} {
+		var got string
+		if err := pool.QueryRow(ctx, `SELECT description FROM alerts WHERE id = $1`,
+			alertIDs[name]).Scan(&got); err != nil {
+			t.Fatalf("failed to read %s alert: %v", name, err)
+		}
+		if got != want {
+			t.Errorf("%s alert: description = %q, want %q", name, got, want)
+		}
+	}
+
+	// An alert that cannot be rewritten is logged and left for the next
+	// pass.
+	if _, err := pool.Exec(ctx, `UPDATE alerts SET description = $2 WHERE id = $1`,
+		alertIDs["acknowledged"], raw); err != nil {
+		t.Fatalf("failed to store the raw description: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		CREATE FUNCTION refuse_alert_update() RETURNS trigger LANGUAGE plpgsql AS
+		$$BEGIN RAISE EXCEPTION 'refused'; END$$;
+		CREATE TRIGGER refuse_alert_update BEFORE UPDATE ON alerts
+		FOR EACH ROW EXECUTE FUNCTION refuse_alert_update()`); err != nil {
+		t.Fatalf("failed to add the refusing trigger: %v", err)
+	}
+	logged := captureStderr(t, func() { engine.maskOpenConnectionAlerts(ctx) })
+	if _, err := pool.Exec(ctx, `
+		DROP TRIGGER refuse_alert_update ON alerts;
+		DROP FUNCTION refuse_alert_update()`); err != nil {
+		t.Fatalf("failed to drop the refusing trigger: %v", err)
+	}
+	if !strings.Contains(logged, "Failed to mask connection alert") {
+		t.Errorf("a refused rewrite should be logged: %q", logged)
+	}
+}
+
 // TestEvaluateConnectionErrors_Blackout checks that a connection in a
 // blackout raises no connection error alert.
 func TestEvaluateConnectionErrors_Blackout(t *testing.T) {

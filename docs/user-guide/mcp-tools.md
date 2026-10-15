@@ -158,7 +158,8 @@ row images in `spock_exception_log` are returned as text rather than JSON,
 because masking can leave them invalid as JSON.
 
 This masking applies to `query_datastore` and to the metrics routes of the
-REST API listed in the API reference; other tools and the web client may show
+REST API listed in the API reference; alert descriptions are masked in the same
+way by the alerts API and the timeline. Other tools and the web client may show
 the same text as it is stored.
 
 !!! warning

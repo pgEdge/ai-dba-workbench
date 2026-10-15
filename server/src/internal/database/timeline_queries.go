@@ -775,7 +775,9 @@ func buildRestartCountQuery(whereClause string) string {
 	}())
 }
 
-// buildAlertFiredQuery creates the subquery for fired alerts
+// buildAlertFiredQuery creates the subquery for fired alerts. The
+// description can quote a connection error holding a password, so it is
+// masked as query_datastore masks it.
 func buildAlertFiredQuery(whereClause string) string {
 	tableWhere := strings.ReplaceAll(whereClause, "event_time", "triggered_at")
 
@@ -788,7 +790,7 @@ func buildAlertFiredQuery(whereClause string) string {
             a.triggered_at AS event_time,
             a.severity,
             'Alert Fired: ' || a.title AS title,
-            a.description AS summary,
+            %s AS summary,
             jsonb_build_object(
                 'alert_id', a.id,
                 'alert_type', a.alert_type,
@@ -804,7 +806,7 @@ func buildAlertFiredQuery(whereClause string) string {
         JOIN connections c ON a.connection_id = c.id
         LEFT JOIN alert_rules r ON a.rule_id = r.id
         %s
-    `, EventTypeAlertFired, tableWhere)
+    `, EventTypeAlertFired, metrics.RedactedText("a.description"), tableWhere)
 }
 
 // buildAlertFiredCountQuery creates the count query for fired alerts
@@ -826,9 +828,9 @@ func buildAlertFiredCountQuery(whereClause string) string {
 // The duration between triggered_at and cleared_at is rendered in
 // human-readable form ("Ns", "Nm Ms", "Nh Mm") so it reads naturally
 // in tool output and chat replies. The original a.description is
-// appended verbatim, preserving the historical alert text without
-// rewriting it. The corresponding alert_fired row continues to carry
-// a.description on its own as the historical record.
+// appended with any password masked as query_datastore masks it, but
+// otherwise as stored. The corresponding alert_fired row carries the
+// masked description on its own as the historical record.
 func buildAlertClearedQuery(whereClause string) string {
 	tableWhere := strings.ReplaceAll(whereClause, "event_time", "cleared_at")
 
@@ -849,7 +851,7 @@ func buildAlertClearedQuery(whereClause string) string {
             a.cleared_at AS event_time,
             'info' AS severity,
             'Alert Cleared: ' || a.title AS title,
-            'Resolved after ' || %s || '. Fired: ' || a.description AS summary,
+            'Resolved after ' || %s || '. Fired: ' || %s AS summary,
             jsonb_build_object(
                 'alert_id', a.id,
                 'original_severity', a.severity,
@@ -859,7 +861,7 @@ func buildAlertClearedQuery(whereClause string) string {
         FROM alerts a
         JOIN connections c ON a.connection_id = c.id
         %s
-    `, EventTypeAlertCleared, alertClearedDurationSQL, tableWhere)
+    `, EventTypeAlertCleared, alertClearedDurationSQL, metrics.RedactedText("a.description"), tableWhere)
 }
 
 // alertClearedDurationSQL renders the elapsed time between a fired

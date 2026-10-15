@@ -56,6 +56,9 @@ func TestQueriesReturnErrorOnClosedPool(t *testing.T) {
 	if err := ds.UpdateConnectionAlertDescription(ctx, 1, "x"); err == nil {
 		t.Errorf("UpdateConnectionAlertDescription should error on closed pool")
 	}
+	if _, err := ds.GetOpenConnectionAlertDescriptions(ctx); err == nil {
+		t.Errorf("GetOpenConnectionAlertDescriptions should error on closed pool")
+	}
 	if _, err := ds.GetAlerterSettings(ctx); err == nil {
 		t.Errorf("GetAlerterSettings should error on closed pool")
 	}

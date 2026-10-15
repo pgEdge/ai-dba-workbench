@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/pgedge/ai-workbench/server/internal/metrics"
 )
 
 // ---------------------------------------------------------------------------
@@ -1709,13 +1710,13 @@ func TestBuildAlertClearedQuery(t *testing.T) {
 		t.Error("expected query to contain 'Alert Cleared:' in title")
 	}
 	// The enriched summary must reference both the resolution prefix
-	// and the original a.description so the cleared row is
-	// self-contained and the historical text is preserved verbatim.
+	// and the original a.description, masked, so the cleared row is
+	// self-contained and no password it quotes is returned.
 	if !strings.Contains(query, "'Resolved after '") {
 		t.Error("expected query summary to start with 'Resolved after '")
 	}
-	if !strings.Contains(query, "|| '. Fired: ' || a.description") {
-		t.Error("expected query summary to append '. Fired: ' || a.description")
+	if !strings.Contains(query, "|| '. Fired: ' || "+metrics.RedactedText("a.description")+" AS summary") {
+		t.Error("expected query summary to append '. Fired: ' and the masked a.description")
 	}
 	if strings.Contains(query, "'Alert condition no longer active'") {
 		t.Error("legacy summary literal must no longer appear in cleared query")
@@ -1734,14 +1735,14 @@ func TestBuildAlertClearedQuery(t *testing.T) {
 }
 
 // TestBuildAlertFiredQuerySummaryUnchanged ensures the alert_fired
-// summary continues to carry a.description verbatim. The cleared row
-// summary was enriched; the fired row must not be touched because it
-// remains the historical record of the firing condition.
+// summary carries a.description, masked, on its own. The cleared row
+// summary was enriched; the fired row is not, because it remains the
+// historical record of the firing condition.
 func TestBuildAlertFiredQuerySummaryUnchanged(t *testing.T) {
 	query := buildAlertFiredQuery("")
 
-	if !strings.Contains(query, "a.description AS summary") {
-		t.Error("expected alert_fired summary to remain 'a.description AS summary' verbatim")
+	if !strings.Contains(query, metrics.RedactedText("a.description")+" AS summary") {
+		t.Error("expected alert_fired summary to be the masked a.description")
 	}
 	if strings.Contains(query, "'Resolved after '") {
 		t.Error("alert_fired query must not contain the cleared-row resolution prefix")

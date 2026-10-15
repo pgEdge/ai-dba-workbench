@@ -269,7 +269,13 @@ moved.
   The free-text patterns themselves live in `pkg/redact` (with the
   shared test inputs in `pkg/redact/redacttest`), so the alerter masks
   `connections.connection_error` with `redact.Text` before it becomes an
-  alert description, notification or LLM prompt (#679).
+  alert description, notification or LLM prompt (#679). Each pass also
+  rewrites every open (active or acknowledged) connection alert holding
+  maskable text, before the blackout check, and collector migration 24
+  masks the stored descriptions of all connection alerts once. The
+  server masks `alerts.description` with `RedactedText` in
+  `GET /api/v1/alerts` and the timeline fired and cleared summaries
+  (`get_alert_history` reads the description but does not return it).
   The SQL rules live in `internal/metrics/redaction.go` and apply on every
   route returning credential-bearing metrics: `query_datastore`,
   `GET /api/v1/metrics/latest` (#670) and the latest-rows mode of
@@ -290,9 +296,9 @@ moved.
   table chosen at run time (`metrics.%s`, `"metrics." + ...`) fails
   unless its function calls `ReturnableColumns` or `MaskedProbeColumn`
   or is reviewed. A function that masks one value and returns another
-  raw still passes, so review what each helper-using function returns. Scope predicates must be applied before
-  any caller
-  predicate can be evaluated: the builder puts the scope and time
+  raw still passes, so review what each helper-using function returns.
+  Scope predicates must be applied before any caller predicate can be
+  evaluated: the builder puts the scope and time
   window in an inner `OFFSET 0` subquery the planner cannot merge, and
   the caller's filters outside it, because a caller expression that
   errors on some values (a LIKE pattern ending in an escape, a bad

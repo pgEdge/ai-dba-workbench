@@ -3837,7 +3837,8 @@ func (sm *SchemaManager) registerMigrations() {
 	//
 	// Both columns are nullable and added without a default, which is a
 	// metadata-only change; rows classified before the upgrade, and
-	// rows Tier 3 has not reached, keep NULL.
+	// rows Tier 3 has not reached, keep NULL. The tier3_source CHECK is
+	// added NOT VALID and validated by migration 23.
 	sm.migrations = append(sm.migrations, Migration{
 		Version:     22,
 		Description: "Record the source and model of Tier 3 anomaly classifications",
@@ -3846,9 +3847,7 @@ func (sm *SchemaManager) registerMigrations() {
 
 			_, err := tx.Exec(ctx, `
 				ALTER TABLE anomaly_candidates
-					ADD COLUMN IF NOT EXISTS tier3_source TEXT
-						CONSTRAINT anomaly_candidates_tier3_source_check
-						CHECK (tier3_source IN ('decision', 'reasoning')),
+					ADD COLUMN IF NOT EXISTS tier3_source TEXT,
 					ADD COLUMN IF NOT EXISTS tier3_model TEXT;
 
 				COMMENT ON COLUMN anomaly_candidates.tier3_source IS
@@ -3860,6 +3859,36 @@ func (sm *SchemaManager) registerMigrations() {
 				return fmt.Errorf("failed to add Tier 3 source columns to anomaly_candidates: %w", err)
 			}
 
+			// A CHECK added in the same statement as its column makes
+			// PostgreSQL scan the whole table under the ACCESS EXCLUSIVE
+			// lock that ADD COLUMN takes, and that lock is held until
+			// the migration commits. Adding it NOT VALID skips the scan
+			// whilst still checking every new row; migration 23
+			// validates it in its own transaction, which needs only a
+			// SHARE UPDATE EXCLUSIVE lock and so does not block writers.
+			return addConstraintIfMissing(ctx, tx,
+				"anomaly_candidates",
+				"anomaly_candidates_tier3_source_check",
+				"CHECK (tier3_source IN ('decision', 'reasoning')) NOT VALID")
+		},
+	})
+
+	// Migration 23: Validate the tier3_source CHECK that migration 22
+	// added NOT VALID. It runs in a transaction of its own so that the
+	// scan holds only a SHARE UPDATE EXCLUSIVE lock, under which the
+	// alerter can keep writing Tier 3 verdicts. Validating a constraint
+	// that is already valid does nothing, so a re-run is harmless.
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     23,
+		Description: "Validate the Tier 3 source check on anomaly_candidates",
+		Up: func(tx pgx.Tx) error {
+			_, err := tx.Exec(context.Background(), `
+				ALTER TABLE anomaly_candidates
+					VALIDATE CONSTRAINT anomaly_candidates_tier3_source_check;
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to validate the Tier 3 source check on anomaly_candidates: %w", err)
+			}
 			return nil
 		},
 	})

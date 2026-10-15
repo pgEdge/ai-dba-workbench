@@ -1422,7 +1422,8 @@ back to `classifyWithReasoning`, or fails safe to `alert` when there is
 no reasoning provider. Each call gets its own `tier3Timeout`, which
 `staleCandidateAge` absorbs through its safety factor. Every Tier 3
 outcome sets `anomaly_candidates.tier3_source` (`decision` or
-`reasoning`, CHECK constraint, collector migration 22) and
+`reasoning`, CHECK constraint added NOT VALID by collector migration 22
+and validated by migration 23) and
 `tier3_model` (`provider/model`); the hand-written `anomaly_candidates`
 schemas in `database/queries_full_integration_test.go` and
 `engine/anomalies_test.go` carry both columns, so a new column there

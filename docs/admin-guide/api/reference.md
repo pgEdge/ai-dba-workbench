@@ -538,7 +538,9 @@ the `query_datastore` MCP tool:
 - The value of a setting that can hold a credential, such as
   `primary_conninfo`, is returned as `********`.
 - Secret options in `pg_hba_file_rules.options`, such as
-  `ldapbindpasswd`, have their values masked.
+  `ldapbindpasswd`, have their values masked, and a non-empty
+  `pg_hba_file_rules.error` is returned as `********`, since it
+  can quote an option.
 - Known password forms in query text, Spock DDL statements,
   error messages and row images are masked; row images are
   returned as text, since masking can leave them invalid as

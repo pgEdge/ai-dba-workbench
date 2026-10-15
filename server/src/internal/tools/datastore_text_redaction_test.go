@@ -146,6 +146,10 @@ func connectionsSourceColumn(name string) (datastoreColumn, bool) {
 	return datastoreColumn{}, false
 }
 
+// redactTextQuery masks its one parameter with redactedText. It is
+// built once from constants; the text under test is a bound parameter.
+var redactTextQuery = "SELECT " + redactedText("$1::text")
+
 // TestRedactedTextIntegration runs redactedText in PostgreSQL on every
 // case, so the patterns behave there as they do in Go.
 func TestRedactedTextIntegration(t *testing.T) {
@@ -153,7 +157,7 @@ func TestRedactedTextIntegration(t *testing.T) {
 	defer cleanup()
 	for _, tc := range textRedactionCases {
 		var got string
-		if err := pool.QueryRow(context.Background(), "SELECT "+redactedText("$1::text"), tc.in).Scan(&got); err != nil {
+		if err := pool.QueryRow(context.Background(), redactTextQuery, tc.in).Scan(&got); err != nil {
 			t.Fatalf("%s: %v", tc.name, err)
 		}
 		if got != tc.want {
@@ -161,7 +165,7 @@ func TestRedactedTextIntegration(t *testing.T) {
 		}
 	}
 	var null *string
-	if err := pool.QueryRow(context.Background(), "SELECT "+redactedText("NULL::jsonb")).Scan(&null); err != nil || null != nil {
+	if err := pool.QueryRow(context.Background(), redactTextQuery, nil).Scan(&null); err != nil || null != nil {
 		t.Errorf("NULL should stay NULL: %v, %v", null, err)
 	}
 }

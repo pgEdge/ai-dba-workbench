@@ -69,7 +69,8 @@ func TestQueryDatastoreRedactsFreeTextIntegration(t *testing.T) {
             collected_at TIMESTAMPTZ NOT NULL)`},
 		{sql: `INSERT INTO metrics.spock_exception_log (connection_id, id, local_tup, ddl_statement, error_message, collected_at) VALUES
             ($1, 1, '{"id": 1, "password": "example-secret"}', 'ALTER ROLE app PASSWORD ''example-secret''', NULL, now() - interval '10 minutes'),
-            ($1, 2, NULL, NULL, 'could not connect to postgresql://app:example-secret@192.0.2.1/db', now() - interval '10 minutes'),
+            ($1, 2, '{"stmt": "CONNECTION E''host=192.0.2.1 password=\\''example-secret s3cr-tail\\''''"}', NULL,
+             'could not connect to postgresql://app:example-secret@192.0.2.1/db', now() - interval '10 minutes'),
             ($2, 1, NULL, 'ALTER ROLE app PASSWORD ''example-secret''', NULL, now() - interval '10 minutes')`,
 			args: []any{f.visible, f.hidden}},
 		{sql: `UPDATE connections SET connection_error = 'connect to host=192.0.2.1 password=example-secret failed'`},
@@ -102,7 +103,7 @@ func TestQueryDatastoreRedactsFreeTextIntegration(t *testing.T) {
 				if isErr {
 					t.Fatalf("%s query failed: %s", shape, text)
 				}
-				if strings.Contains(text, "example-secret") {
+				if strings.Contains(text, "example-secret") || strings.Contains(text, "s3cr") {
 					t.Fatalf("%s: a credential reached the caller:\n%s", shape, text)
 				}
 				for _, want := range []string{`"password": "` + metrics.RedactedValue + `"`, "PASSWORD '" + metrics.RedactedValue + "'",

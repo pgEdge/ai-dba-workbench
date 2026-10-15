@@ -11,6 +11,7 @@ package engine
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -143,10 +144,13 @@ func TestEvaluateConnectionErrors_MasksCredentials(t *testing.T) {
 		`invalid connection option in "host=192.0.2.1 password=******** dbname=db"`
 	connID := insertMonitoredConnection(t, pool, "conn-error-masked", &raw)
 
-	engine.evaluateConnectionErrors(ctx)
+	logged := captureStderr(t, func() { engine.evaluateConnectionErrors(ctx) })
 	alerts := activeConnectionAlerts(t, pool, connID)
 	if len(alerts) != 1 || alerts[0].description != masked {
 		t.Fatalf("after first pass: alerts = %+v, want one reading %q", alerts, masked)
+	}
+	if strings.Contains(logged, "example-secret") || !strings.Contains(logged, masked) {
+		t.Errorf("the alert log line should hold only the masked error: %q", logged)
 	}
 
 	// An alert raised before the masking holds the raw text.

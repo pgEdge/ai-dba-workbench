@@ -120,6 +120,8 @@ var Cases = []Case{
 		`SELECT dblink_connect(E'password=******** dbname=db')`},
 	{"backslash quoted role password", `EXECUTE E'ALTER ROLE app PASSWORD \'s3cret x\''`,
 		`EXECUTE E'ALTER ROLE app PASSWORD '********''`},
+	{"backslash and newline in a quoted password", "ALTER ROLE app PASSWORD E's3cr\\\net x' LOGIN",
+		"ALTER ROLE app PASSWORD '********' LOGIN"},
 	{"backslash quoted with escaped backslash", `SELECT dblink_connect(E'password=\'s3cr\\et x\' dbname=db')`,
 		`SELECT dblink_connect(E'password=******** dbname=db')`},
 	{"quoted role password after concatenation", "EXECUTE 'ALTER ROLE app ' || 'PASSWORD ''s3cret a b'''",

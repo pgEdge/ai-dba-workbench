@@ -780,17 +780,17 @@ secret entries in `pg_hba_file_rules.options`) is masked through
 `metrics.ProbeRedactions` and `innerSelectList` (`metrics.MaskedSetting`
 or `metrics.MaskedOptions`), and `pg_hba_file_rules.error` is masked whole
 (`WholeColumns`/`metrics.MaskWhole`), inside the scoped subquery. Free-text columns that
-can quote a password (query text, Spock row images, connection errors,
-alert descriptions and AI analyses) are marked `RedactText` and pass
-through `metrics.RedactedText`, which cuts the value to `maxTextLength`
-characters and applies `textRedactions`, whose patterns must stay
-within the regular expression syntax Go and PostgreSQL share, use
-greedy quantifiers only (the Go tests use `Longest`, as PostgreSQL
-takes the longest match), spell white space as the ASCII class `ws`,
-bound any repetition of comments, and have exactly one capturing
-group. A retyped column records its original
-type in `StoredType`, which `datastoreEntityKeys` uses. These rules
-live in `internal/metrics/redaction.go`, shared with
+can quote a password (query text, Spock row images, connection errors)
+are marked `RedactText` and pass through `metrics.RedactedText`, which
+builds its `regexp_replace` chain from `pkg/redact`'s `textRedactions`
+(also applied in Go by `redact.Text`, which the alerter uses on
+connection errors). Those patterns must stay within the regular
+expression syntax Go and PostgreSQL share, use greedy quantifiers only
+(`redact.Text` compiles them with `Longest`, as PostgreSQL takes the
+longest match) and have exactly one capturing group; their test inputs
+are `redacttest.Cases`. A retyped column records its original type in
+`StoredType`, which `datastoreEntityKeys` uses. The column masking
+rules live in `internal/metrics/redaction.go`, shared with
 `GET /api/v1/metrics/latest` and the latest-rows mode of
 `GET /api/v1/metrics/query` (`ReturnableColumns`,
 `MaskedProbeColumn`), `GET /api/v1/metrics/top-queries`

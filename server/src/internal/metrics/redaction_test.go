@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pgedge/ai-workbench/pkg/redact"
 	"github.com/pgedge/ai-workbench/pkg/redact/redacttest"
 )
 
@@ -74,6 +75,10 @@ func TestTextRedactionsTruncate(t *testing.T) {
 // built once from constants; the text under test is a bound parameter.
 var redactTextQuery = "SELECT " + RedactedText("$1::text")
 
+// redactJSONQuery masks its one parameter as a row image holds it, in
+// the JSON text of a jsonb string.
+var redactJSONQuery = "SELECT " + RedactedText("to_jsonb($1::text)")
+
 // TestRedactedTextIntegration runs RedactedText in PostgreSQL on every
 // case, as plain text and as a jsonb row image, so the patterns behave
 // there as they do in Go.
@@ -81,12 +86,21 @@ func TestRedactedTextIntegration(t *testing.T) {
 	pool, cleanup := newLatestRowsTestPool(t)
 	defer cleanup()
 	for _, tc := range redacttest.Cases {
-		var got string
+		var got, gotJSON string
 		if err := pool.QueryRow(context.Background(), redactTextQuery, tc.In).Scan(&got); err != nil {
 			t.Fatalf("%s: %v", tc.Name, err)
 		}
 		if got != tc.Want {
 			t.Errorf("%s: got  %q\nwant %q", tc.Name, got, tc.Want)
+		}
+		if err := pool.QueryRow(context.Background(), redactJSONQuery, tc.In).Scan(&gotJSON); err != nil {
+			t.Fatalf("%s as JSON: %v", tc.Name, err)
+		}
+		if !redacttest.JSONFormOK(tc, gotJSON) {
+			t.Errorf("%s: JSON form %q", tc.Name, gotJSON)
+		}
+		if inGo := redact.Text(redacttest.JSONText(tc.In)); gotJSON != inGo {
+			t.Errorf("%s: JSON form differs between PostgreSQL and Go:\npg %q\ngo %q", tc.Name, gotJSON, inGo)
 		}
 	}
 	for _, tc := range textRedactionKnownLimits {

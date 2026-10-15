@@ -44,6 +44,30 @@ func TestCasesHoldSecrets(t *testing.T) {
 	}
 }
 
+func TestJSONText(t *testing.T) {
+	if got, want := JSONText(`a "b" \c <d>`), `"a \"b\" \\c <d>"`; got != want {
+		t.Errorf("JSONText = %s, want %s", got, want)
+	}
+}
+
+func TestJSONFormOK(t *testing.T) {
+	c := Case{"c", "password='example-secret' x", "password=******** x"}
+	for got, want := range map[string]bool{
+		`"password=******** x"`:       true,
+		`"password=******** x`:        true,
+		`"password=******** y"`:       false,
+		`"password=example-secret x"`: false,
+		`"password='secret a b' x"`:   false,
+	} {
+		if JSONFormOK(c, got) != want {
+			t.Errorf("JSONFormOK(%q) = %v, want %v", got, !want, want)
+		}
+	}
+	if !JSONFormOK(Case{"j", `{"password": "example-secret"}`, ""}, "anything") {
+		t.Error("a JSON input should always pass")
+	}
+}
+
 func TestAdversarialInputs(t *testing.T) {
 	const size = 1 << 12
 	inputs := AdversarialInputs(size)

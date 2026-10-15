@@ -34,6 +34,16 @@ func TestText(t *testing.T) {
 	}
 }
 
+// TestTextInJSON masks every case as it appears in a row image, where
+// every backslash is doubled and every double quote escaped.
+func TestTextInJSON(t *testing.T) {
+	for _, tc := range redacttest.Cases {
+		if got := redact.Text(redacttest.JSONText(tc.In)); !redacttest.JSONFormOK(tc, got) {
+			t.Errorf("%s: JSON form\ngot  %q\nwant %q", tc.Name, got, redacttest.JSONText(tc.Want))
+		}
+	}
+}
+
 // TestTextRedactionPatterns checks each pattern on its own, so removing
 // one fails a test.
 func TestTextRedactionPatterns(t *testing.T) {

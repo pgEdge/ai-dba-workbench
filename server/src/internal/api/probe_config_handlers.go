@@ -120,28 +120,59 @@ func (h *ProbeConfigHandler) listProbeConfigs(w http.ResponseWriter, r *http.Req
 	RespondJSON(w, http.StatusOK, configs)
 }
 
-// getProbeConfig handles GET /api/v1/probe-configs/{id}. A config
-// scoped to a server, cluster or group the caller cannot see answers
-// 404 with the same message as a missing one (issue #647); a global
-// config is visible to every caller.
+// getProbeConfig handles GET /api/v1/probe-configs/{id}.
 func (h *ProbeConfigHandler) getProbeConfig(w http.ResponseWriter, r *http.Request, id int64) {
+	config, ok := h.loadVisibleProbeConfig(w, r, id)
+	if !ok {
+		return
+	}
+	RespondJSON(w, http.StatusOK, config)
+}
+
+// loadVisibleProbeConfig loads a probe config and checks that the caller
+// may see it, writing the response and returning false when it may not.
+// A config scoped to a server, cluster or group the caller cannot see
+// answers 404 with the same message as a missing one (issue #647); a
+// global config is visible to every caller.
+func (h *ProbeConfigHandler) loadVisibleProbeConfig(
+	w http.ResponseWriter, r *http.Request, id int64) (*database.ProbeConfig, bool) {
+
 	config, err := h.datastore.GetProbeConfig(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, database.ErrProbeConfigNotFound) {
 			RespondError(w, http.StatusNotFound, "Probe config not found")
-			return
+			return nil, false
 		}
 		log.Printf("[ERROR] Failed to fetch probe config: %v", err)
 		RespondError(w, http.StatusInternalServerError, "Failed to fetch probe config")
-		return
+		return nil, false
 	}
 	if scope, scopeID, scoped := probeConfigVisibilityTarget(config); scoped &&
 		!scopeVisibleToCaller(r.Context(), w, h.rbacChecker, h.datastore,
 			scope, scopeID, "Probe config not found") {
-		return
+		return nil, false
 	}
+	return config, true
+}
 
-	RespondJSON(w, http.StatusOK, config)
+// requireProbeConfigVisible is loadVisibleProbeConfig for a caller that
+// does not need the config itself. A caller who sees every connection
+// needs no lookup, as in requireProbeConfigInTokenScope, and a missing
+// config is then reported by the update itself.
+func (h *ProbeConfigHandler) requireProbeConfigVisible(
+	w http.ResponseWriter, r *http.Request, id int64) bool {
+
+	_, all, err := resolveVisibleConnectionSet(r.Context(), h.rbacChecker, h.datastore)
+	if err != nil {
+		log.Printf("[ERROR] Failed to resolve visible connections: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to check scope visibility")
+		return false
+	}
+	if all {
+		return true
+	}
+	_, ok := h.loadVisibleProbeConfig(w, r, id)
+	return ok
 }
 
 // probeConfigVisibilityTarget returns the scope and scope ID that decide
@@ -159,9 +190,15 @@ func probeConfigVisibilityTarget(c *database.ProbeConfig) (scope string, scopeID
 	return "", 0, false
 }
 
-// updateProbeConfig handles PUT /api/v1/probe-configs/{id}
+// updateProbeConfig handles PUT /api/v1/probe-configs/{id}. A config the
+// caller cannot see answers 404 before the token scope or the body is
+// checked, so neither a 403 nor the updated config reveals that it
+// exists (issue #647).
 func (h *ProbeConfigHandler) updateProbeConfig(w http.ResponseWriter, r *http.Request, id int64) {
 	if !h.checkPermission(w, r) {
+		return
+	}
+	if !h.requireProbeConfigVisible(w, r, id) {
 		return
 	}
 	if !h.requireProbeConfigInTokenScope(w, r, id) {

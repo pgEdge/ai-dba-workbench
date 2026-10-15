@@ -813,8 +813,12 @@ stayed where the SQL put it, so ordinary collection emptied the query and
 the cleaner cleared a condition nobody had seen end. A per-connection
 override never reached the ratio at all, because
 `GetProbeStalenessByConnection` joins `probe_configs ... AND
-pc.connection_id IS NULL` (still true, and still correct for
-`metric_staleness`, which is a ratio question). Comparing the probe's
+pc.scope = 'global'` (still true, and still correct for
+`metric_staleness`, which is a ratio question). Match a global
+`probe_configs` row on `scope = 'global'`, never on
+`connection_id IS NULL`: cluster and group overrides have a NULL
+`connection_id` too, and matching on it duplicated staleness rows
+(issue #647). Comparing the probe's
 last collection against the metric's own window holds at any interval.
 The query reports `SinceCollected` alongside `StalenessRatio` for this;
 `probeFreshnessRatioLimit` is gone.

@@ -507,6 +507,11 @@ func (d *Datastore) GetUnmonitoredConnections(ctx context.Context) (map[int]stri
 // including the non-null last_collected the ratio divides by, which
 // UpsertProbeAvailability coalesces so that it never returns to NULL once
 // a probe has collected at all. See GitHub issue #465.
+//
+// The ratio divides by the probe's global interval, matched on
+// scope = 'global': cluster and group overrides also carry a NULL
+// connection_id, so matching on that column joined them too and
+// repeated each row once per override. See GitHub issue #647.
 func (d *Datastore) GetProbeStalenessByConnection(ctx context.Context) ([]ProbeStaleness, error) {
 	rows, err := d.pool.Query(ctx, `
 		SELECT c.id, c.name, pa.probe_name, pc.collection_interval_seconds,
@@ -514,7 +519,7 @@ func (d *Datastore) GetProbeStalenessByConnection(ctx context.Context) ([]ProbeS
 		       EXTRACT(EPOCH FROM (NOW() - pa.last_collected)) AS seconds_since_collected,
 		       pa.is_available, pa.unavailable_reason, pa.last_collected
 		FROM probe_availability pa
-		JOIN probe_configs pc ON pc.name = pa.probe_name AND pc.connection_id IS NULL
+		JOIN probe_configs pc ON pc.name = pa.probe_name AND pc.scope = 'global'
 		JOIN connections c ON c.id = pa.connection_id
 		WHERE pc.is_enabled = TRUE
 		  AND c.is_monitored = TRUE
@@ -560,7 +565,7 @@ func (d *Datastore) GetProbeStalenessContext(ctx context.Context, connectionID i
 	err = d.pool.QueryRow(ctx, `
 		SELECT c.name, pc.collection_interval_seconds
 		FROM connections c
-		JOIN probe_configs pc ON pc.name = $2 AND pc.connection_id IS NULL
+		JOIN probe_configs pc ON pc.name = $2 AND pc.scope = 'global'
 		WHERE c.id = $1
 	`, connectionID, probeName).Scan(&connectionName, &collectionInterval)
 	if err != nil {

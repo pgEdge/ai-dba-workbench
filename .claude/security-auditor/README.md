@@ -73,8 +73,12 @@ moved.
   a record the caller cannot see, as for one that does not exist:
   clusters and cluster groups whose members the caller cannot see, the
   target cluster of `PUT /api/v1/connections/{id}/cluster` (a missing
-  cluster id answers 404 too, not 500 from the foreign key), and
-  blackouts and blackout schedules outside a token's connection scope.
+  cluster id answers 404 too, not 500 from the foreign key),
+  blackouts and blackout schedules outside a token's connection scope,
+  and probe configs: `GET /api/v1/probe-configs?connection_id=N`,
+  `GET /api/v1/probe-configs/{id}` and `PUT /api/v1/probe-configs/{id}`
+  answer 404 for a server, cluster or group config the caller cannot
+  see, PUT before the token scope or the body is checked (#647).
   Judge an enumeration concern against the convention of the endpoint
   in question rather than assuming either model throughout.
 - The MCP tools that go through `resolveAccessibleConnection` in

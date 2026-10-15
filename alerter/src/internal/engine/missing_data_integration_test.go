@@ -603,8 +603,8 @@ func overrideProbeInterval(t *testing.T, pool *pgxpool.Pool, connID int, probe s
 	t.Helper()
 	if _, err := pool.Exec(context.Background(),
 		`INSERT INTO probe_configs
-		     (name, connection_id, is_enabled, collection_interval_seconds)
-		 VALUES ($1, $2, TRUE, $3)`, probe, connID, seconds); err != nil {
+		     (name, connection_id, scope, is_enabled, collection_interval_seconds)
+		 VALUES ($1, $2, 'server', TRUE, $3)`, probe, connID, seconds); err != nil {
 		t.Fatalf("failed to override the %s interval for connection %d: %v",
 			probe, connID, err)
 	}

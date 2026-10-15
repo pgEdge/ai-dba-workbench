@@ -3350,7 +3350,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 			},
 			Put: &OpenAPIOperation{
 				Summary:     "Update probe configuration",
-				Description: "Updates a probe configuration. Requires manage_probes permission.",
+				Description: "Updates a probe configuration. Requires manage_probes permission. A configuration scoped to a connection, cluster or group the caller cannot see answers 404, as a missing one does, before the request body is read.",
 				OperationID: "updateProbeConfig",
 				Tags:        []string{"Probe Configuration"},
 				Security:    bearerAuth,
@@ -3361,7 +3361,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
 					"403": jsonResponse("ErrorResponse", "Requires manage_probes permission, or the API token's connection scope does not cover the target"),
-					"404": jsonResponse("ErrorResponse", "Probe config not found"),
+					"404": jsonResponse("ErrorResponse", "Probe config not found or not visible to the caller"),
 				},
 			},
 		},

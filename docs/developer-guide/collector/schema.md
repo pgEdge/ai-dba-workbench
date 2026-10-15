@@ -465,7 +465,7 @@ updates the global default retention:
 UPDATE probe_configs
 SET retention_days = 30
 WHERE name = 'pg_stat_activity'
-  AND connection_id IS NULL;
+  AND scope = 'global';
 ```
 
 In the following example, the command sets retention

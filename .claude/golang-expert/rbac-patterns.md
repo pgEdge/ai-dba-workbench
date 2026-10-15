@@ -282,7 +282,11 @@ as a missing one; it applies the token scope through
 before the query (probe override lists, `?connection_id=` on
 `/api/v1/probe-configs`); a route addressed by record ID loads the
 record first and then checks its target (`getProbeConfig`, via
-`probeConfigVisibilityTarget`, issue #647). Estate-wide (global) rows
+`probeConfigVisibilityTarget`, issue #647). An admin-gated write on such
+a record runs the same check after the permission gate and before the
+token-scope gate and the body decode, so neither a 403 nor the echoed
+record confirms a hidden one exists (`updateProbeConfig`, via
+`requireProbeConfigVisible`). Estate-wide (global) rows
 stay readable by every caller. An unrestricted superuser session gets
 200 with an empty list for a missing connection ID, since nothing is
 hidden from it. `probe_config_visibility_test.go` holds the

@@ -48,23 +48,27 @@ func newProbeConfigVisibilityFixture(t *testing.T) *probeConfigVisibilityFixture
 		f.probeName).Scan(&pf.global); err != nil {
 		t.Fatalf("lookup global probe: %v", err)
 	}
-	seed := func(scope, column string, scopeID int) int {
+	// seed inserts an override at scope; the column matching the scope
+	// takes scopeID and the other two stay NULL.
+	seed := func(scope string, scopeID int) int {
 		t.Helper()
+		ids := map[string]*int{scope: &scopeID}
 		var id int
 		if err := f.pool.QueryRow(ctx,
-			`INSERT INTO probe_configs (name, description, scope, `+column+`)
-             VALUES ($1, 'override', $2, $3) RETURNING id`,
-			f.probeName, scope, scopeID).Scan(&id); err != nil {
+			`INSERT INTO probe_configs
+                 (name, description, scope, connection_id, cluster_id, group_id)
+             VALUES ($1, 'override', $2, $3, $4, $5) RETURNING id`,
+			f.probeName, scope, ids["server"], ids["cluster"], ids["group"]).Scan(&id); err != nil {
 			t.Fatalf("seed %s probe config: %v", scope, err)
 		}
 		return id
 	}
-	pf.visible["server"] = seed("server", "connection_id", f.connID)
-	pf.visible["cluster"] = seed("cluster", "cluster_id", f.clusterID)
-	pf.visible["group"] = seed("group", "group_id", f.groupID)
-	pf.hidden["server"] = seed("server", "connection_id", f.hiddenConnID)
-	pf.hidden["cluster"] = seed("cluster", "cluster_id", f.hiddenCluster)
-	pf.hidden["group"] = seed("group", "group_id", f.hiddenGroupID)
+	pf.visible["server"] = seed("server", f.connID)
+	pf.visible["cluster"] = seed("cluster", f.clusterID)
+	pf.visible["group"] = seed("group", f.groupID)
+	pf.hidden["server"] = seed("server", f.hiddenConnID)
+	pf.hidden["cluster"] = seed("cluster", f.hiddenCluster)
+	pf.hidden["group"] = seed("group", f.hiddenGroupID)
 
 	mux := http.NewServeMux()
 	NewProbeConfigHandler(f.ds, pf.store, auth.NewRBACChecker(pf.store)).
@@ -274,6 +278,13 @@ func TestProbeConfigVisibility_Issue647_Errors(t *testing.T) {
 	restricted := func(r *http.Request) *http.Request { return withUsername(withUser(r, 4242), "nobody") }
 	covExpect(t, covDo(h.handleProbeConfigs, http.MethodGet, probeConfigListPath(1), "", restricted),
 		http.StatusInternalServerError)
+
+	// PUT resolves visibility before it loads the config, for a caller
+	// who passes the manage_probes gate.
+	pf := &probeConfigVisibilityFixture{store: store}
+	_, prober := pf.prober(t, "broken_prober")
+	covExpect(t, covDo(h.handleProbeConfigSubpath, http.MethodPut, probeConfigPath(1), "{}", prober),
+		http.StatusInternalServerError)
 }
 
 // TestProbeConfigVisibilityTarget covers each scope the helper maps.
@@ -301,4 +312,91 @@ func TestProbeConfigVisibilityTarget(t *testing.T) {
 			}
 		})
 	}
+}
+
+// prober creates a session caller holding manage_probes through a group
+// of its own, plus a read grant on each listed connection.
+func (pf *probeConfigVisibilityFixture) prober(t *testing.T, name string, grants ...int) (int64, func(*http.Request) *http.Request) {
+	t.Helper()
+	userID, decorate := pf.user(t, name, grants...)
+	groupID, err := pf.store.CreateGroup(name+"_probers", "")
+	if err != nil {
+		t.Fatalf("create prober group: %v", err)
+	}
+	if err := pf.store.AddUserToGroup(groupID, userID); err != nil {
+		t.Fatalf("add user to prober group: %v", err)
+	}
+	if err := pf.store.GrantAdminPermission(groupID, auth.PermManageProbes); err != nil {
+		t.Fatalf("grant manage_probes: %v", err)
+	}
+	return userID, decorate
+}
+
+// TestProbeConfigUpdateVisibility_Issue647 checks that PUT applies the
+// same visibility rule as GET before the token scope and the body are
+// looked at: a manage_probes holder who cannot see a config gets the
+// missing config's 404, never a 403 or the config itself.
+func TestProbeConfigUpdateVisibility_Issue647(t *testing.T) {
+	pf := newProbeConfigVisibilityFixture(t)
+	const missingConfig = 999999
+
+	_, noGrants := pf.prober(t, "prober_none")
+	_, readGrant := pf.prober(t, "prober_read", pf.hiddenConnID)
+	scopedUserID, _ := pf.prober(t, "prober_scoped", pf.connID, pf.hiddenConnID)
+	scopedTokenID := pf.token(t, "prober_scoped", pf.connID)
+	scopedToken := func(r *http.Request) *http.Request {
+		return withUsername(withToken(r, scopedUserID, scopedTokenID), "prober_scoped")
+	}
+	_, plain := pf.user(t, "no_permission", pf.connID)
+
+	all := func(code int) map[string]int {
+		return map[string]int{"server": code, "cluster": code, "group": code}
+	}
+	callers := []struct {
+		name            string
+		decorate        func(*http.Request) *http.Request
+		global          int
+		visible, hidden map[string]int
+	}{
+		{"no grants", noGrants, http.StatusOK, all(http.StatusNotFound), all(http.StatusNotFound)},
+		{"read grant", readGrant, http.StatusOK, all(http.StatusNotFound), all(http.StatusOK)},
+		// The token reaches the visible configs, but only at read and
+		// only for one connection, so the token scope refuses each one;
+		// the hidden ones stay 404.
+		{"scoped token", scopedToken, http.StatusForbidden, all(http.StatusForbidden), all(http.StatusNotFound)},
+		{"superuser", withSuperuser, http.StatusOK, all(http.StatusOK), all(http.StatusOK)},
+		// Without manage_probes the permission gate answers first.
+		{"no permission", plain, http.StatusForbidden, all(http.StatusForbidden), all(http.StatusForbidden)},
+	}
+	for _, c := range callers {
+		t.Run(c.name, func(t *testing.T) {
+			covExpect(t, covDo(pf.serve, http.MethodPut, probeConfigPath(pf.global), "{}", c.decorate), c.global)
+			for scope, code := range c.visible {
+				covExpect(t, covDo(pf.serve, http.MethodPut, probeConfigPath(pf.visible[scope]), "{}", c.decorate), code)
+			}
+			for scope, code := range c.hidden {
+				covExpect(t, covDo(pf.serve, http.MethodPut, probeConfigPath(pf.hidden[scope]), "{}", c.decorate), code)
+			}
+		})
+	}
+
+	t.Run("hidden answers as missing", func(t *testing.T) {
+		for _, caller := range []struct {
+			name     string
+			decorate func(*http.Request) *http.Request
+		}{{"no grants", noGrants}, {"scoped token", scopedToken}} {
+			for scope, id := range pf.hidden {
+				// An invalid body must not change the answer either: the
+				// visibility check runs before the body is decoded.
+				for _, body := range []string{"{}", "not json"} {
+					h := covDo(pf.serve, http.MethodPut, probeConfigPath(id), body, caller.decorate)
+					m := covDo(pf.serve, http.MethodPut, probeConfigPath(missingConfig), body, caller.decorate)
+					if h.Code != http.StatusNotFound || h.Code != m.Code || h.Body.String() != m.Body.String() {
+						t.Errorf("%s config as %s with %q: hidden %d %q, missing %d %q", scope,
+							caller.name, body, h.Code, h.Body.String(), m.Code, m.Body.String())
+					}
+				}
+			}
+		}
+	})
 }

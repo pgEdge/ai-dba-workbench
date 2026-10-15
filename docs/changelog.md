@@ -2582,9 +2582,18 @@ project adheres to
   server, cluster or group the caller cannot see, in both cases
   exactly as for one that does not exist; an API token sees only the
   connections in its scope. Global defaults stay visible to every
-  caller. The unfiltered list now returns only the global defaults,
-  as documented; it previously also returned the cluster and group
-  overrides, whatever cluster or group they belonged to. (#647)
+  caller. `PUT /api/v1/probe-configs/{id}` applies the same check
+  before reading the request body, so a user with `manage_probes`
+  can no longer read or confirm a configuration they cannot see. The
+  unfiltered list now returns only the global defaults, as
+  documented; it previously also returned the cluster and group
+  overrides, whatever cluster or group they belonged to. The alerter
+  made the same mistake when computing probe staleness: a cluster or
+  group override duplicated each staleness row, and could supply the
+  interval for a stalled probe's alert in place of the global
+  default. The SQL examples in the probe documentation that change
+  global defaults also matched cluster and group overrides, and now
+  select only the global row. (#647)
 
 - Delete a user with `ai-dba-server -delete-user` only when the
   confirmation is an explicit `y` or `yes`. The answer was checked

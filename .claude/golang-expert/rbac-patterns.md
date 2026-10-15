@@ -793,8 +793,13 @@ type in `StoredType`, which `datastoreEntityKeys` uses. These rules
 live in `internal/metrics/redaction.go`, shared with
 `GET /api/v1/metrics/latest` and the latest-rows mode of
 `GET /api/v1/metrics/query` (`ReturnableColumns`,
-`MaskedProbeColumn`); any new route returning probe rows must use them
-and join `datastore_masking_routes_test.go`. The scope and time window go in an inner
+`MaskedProbeColumn`), `GET /api/v1/metrics/top-queries`
+(`RedactedText`) and the timeline's configuration change events
+(`MaskedSetting`); any new route returning probe rows must use them
+and join `datastore_masking_routes_test.go`, and
+`TestCredentialTableReadersAreReviewed` (`metrics/source_guard_test.go`)
+fails on a SQL string literal that reads a credential table without
+them unless it is on its reviewed list. The scope and time window go in an inner
 `(SELECT ... WHERE <scope> OFFSET 0) t` (`scopedFrom`), and the
 caller's filters, shape, ordering and paging apply outside it, so no
 caller predicate is evaluated against a row the caller may not see;

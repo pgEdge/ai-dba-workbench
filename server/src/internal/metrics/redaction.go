@@ -205,11 +205,14 @@ const (
 	sqlNestedQuoted = `''(?:''''|` + escapeBackslash + `''|[^'])*(?:'')?`
 	// sqlBackslashQuoted is a quoted value inside an escape string, as
 	// in CONNECTION E'password=\'secret\'', where its quotes are \', an
-	// escaped quote is \\\', an escaped backslash is \\ and a bare quote
-	// can only be doubled. A backslash followed by a quote always ends
-	// the value or escapes the quote, so in JSON text, where the closing
-	// \' is \\', the value cannot run on past it.
-	sqlBackslashQuoted = escapeBackslash + `'(?:` + escapeBackslash + escapeBackslash + escapeBackslash + `'|` +
+	// escaped quote is \\\', an escaped backslash is \\\\ (the
+	// conninfo escape \\, escaped again for the escape string) and a
+	// bare quote can only be doubled. A backslash followed by a quote
+	// always ends the value or escapes the quote, so in JSON text, where
+	// the closing \' is \\', the value cannot run on past it.
+	sqlBackslashQuoted = escapeBackslash + `'(?:` +
+		escapeBackslash + escapeBackslash + escapeBackslash + escapeBackslash + `|` +
+		escapeBackslash + escapeBackslash + escapeBackslash + `'|` +
 		escapeBackslash + escapeBackslash + `[^'\\]|` + escapeBackslash + `[^'\\]|''|[^'\\])*(?:` +
 		escapeBackslash + `')?`
 	// nameQuote is the double quote that may close a quoted name, as in

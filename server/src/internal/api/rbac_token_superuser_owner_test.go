@@ -88,9 +88,10 @@ func scopeAdminCallers(t *testing.T, store *auth.AuthStore) map[string]func(*htt
 // TestCreateTokenForSuperuserNeedsSuperuser checks that only a
 // superuser may mint a superuser's token: a session holding
 // manage_token_scopes is not bounded by a token ceiling, so it could
-// otherwise mint itself an unscoped superuser token. A token caller is
-// refused by its ceiling, which a superuser owner always exceeds, before
-// the store's own superuser check is reached.
+// otherwise mint itself an unscoped superuser token. Since issue #522 a
+// caller who is not a superuser may mint a token for no one but itself,
+// so the session and the token are both refused for root, and for
+// alice, before the ceiling or the store's superuser check is reached.
 func TestCreateTokenForSuperuserNeedsSuperuser(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
@@ -99,29 +100,33 @@ func TestCreateTokenForSuperuserNeedsSuperuser(t *testing.T) {
 		t.Fatalf("CreateUser failed: %v", err)
 	}
 	callers := scopeAdminCallers(t, store)
-	refusals := map[string]string{
-		"session": refuseNotSuperuser,
-		"token":   refuseTokenOwner,
-	}
 
 	for name, as := range callers {
-		t.Run(name, func(t *testing.T) {
-			rec := tokenRouteRequest(handler, http.MethodPost,
-				"/api/v1/rbac/tokens/", `{"owner_username":"root"}`, as)
-			assertRefusedWith(t, rec, refusals[name])
-		})
+		for _, owner := range []string{"root", "alice"} {
+			t.Run(name+" for "+owner, func(t *testing.T) {
+				rec := tokenRouteRequest(handler, http.MethodPost,
+					"/api/v1/rbac/tokens/",
+					`{"owner_username":"`+owner+`"}`, as)
+				assertRefusedWith(t, rec, refuseTokenForOtherOwner)
+			})
+		}
 	}
-	tokens, err := store.ListUserTokens("root")
-	if err != nil {
-		t.Fatalf("ListUserTokens failed: %v", err)
-	}
-	if len(tokens) != 0 {
-		t.Fatalf("Expected no token for root, got %d", len(tokens))
+	for _, owner := range []string{"root", "alice"} {
+		tokens, err := store.ListUserTokens(owner)
+		if err != nil {
+			t.Fatalf("ListUserTokens failed: %v", err)
+		}
+		if len(tokens) != 0 {
+			t.Fatalf("Expected no token for %s, got %d", owner, len(tokens))
+		}
 	}
 
 	assertStatus(t, tokenRouteRequest(handler, http.MethodPost,
-		"/api/v1/rbac/tokens/", `{"owner_username":"alice"}`,
+		"/api/v1/rbac/tokens/", `{"owner_username":"scope-admin"}`,
 		callers["session"]), http.StatusCreated)
+	assertStatus(t, tokenRouteRequest(handler, http.MethodPost,
+		"/api/v1/rbac/tokens/", `{"owner_username":"alice"}`,
+		withSuperuserSession), http.StatusCreated)
 	assertStatus(t, tokenRouteRequest(handler, http.MethodPost,
 		"/api/v1/rbac/tokens/", `{"owner_username":"root"}`,
 		withSuperuserSession), http.StatusCreated)
@@ -198,17 +203,22 @@ func TestSuperuserOwnedTokenNeedsSuperuser(t *testing.T) {
 }
 
 // TestNonSuperuserOwnedTokenSessionEdit checks that the superuser gate
-// leaves a token whose owner is not a superuser to the usual rules.
+// leaves a token whose owner is not a superuser to the usual rules: a
+// session holding manage_token_scopes may narrow or delete another
+// user's token, though not widen it (issue #522).
 func TestNonSuperuserOwnedTokenSessionEdit(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 	target := mustCreateScopedToken(t, store, "svc-plain",
-		[]string{auth.PermManageUsers})
+		[]string{auth.PermManageUsers, auth.PermManageGroups})
 	as := scopeAdminCallers(t, store)["session"]
 	tokenPath := "/api/v1/rbac/tokens/" + strconv.FormatInt(target, 10)
 
-	assertStatus(t, tokenRouteRequest(handler, http.MethodPut,
+	assertRefusedWith(t, tokenRouteRequest(handler, http.MethodPut,
 		tokenPath+"/scope", `{"admin_permissions":["*"]}`, as),
+		refuseTokenNotOwned)
+	assertStatus(t, tokenRouteRequest(handler, http.MethodPut,
+		tokenPath+"/scope", `{"admin_permissions":["manage_users"]}`, as),
 		http.StatusNoContent)
 	assertStatus(t, tokenRouteRequest(handler, http.MethodDelete,
 		tokenPath, "", as), http.StatusNoContent)
@@ -365,16 +375,21 @@ func TestSuperuserOwnedTokenRefusalsAuditOnce(t *testing.T) {
 	tokenPath := "/api/v1/rbac/tokens/" + strconv.FormatInt(target, 10)
 	session := scopeAdminCallers(t, store)["session"]
 
+	// Since issue #522 the create is refused because the owner is not
+	// the caller, before the superuser check is reached.
 	requests := []struct {
-		name, method, path, body, action string
+		name, method, path, body, action, refusal string
 	}{
 		{"create", http.MethodPost, "/api/v1/rbac/tokens/",
-			`{"owner_username":"svc-root"}`, "token.create"},
+			`{"owner_username":"svc-root"}`, "token.create",
+			refuseTokenForOtherOwner},
 		{"set scope", http.MethodPut, tokenPath + "/scope",
-			`{"admin_permissions":["manage_users"]}`, "token.scope.set"},
+			`{"admin_permissions":["manage_users"]}`, "token.scope.set",
+			refuseNotSuperuser},
 		{"clear scope", http.MethodDelete, tokenPath + "/scope", "",
-			"token.scope.clear"},
-		{"delete", http.MethodDelete, tokenPath, "", "token.delete"},
+			"token.scope.clear", refuseNotSuperuser},
+		{"delete", http.MethodDelete, tokenPath, "", "token.delete",
+			refuseNotSuperuser},
 	}
 	for _, rq := range requests {
 		t.Run(rq.name, func(t *testing.T) {
@@ -384,7 +399,7 @@ func TestSuperuserOwnedTokenRefusalsAuditOnce(t *testing.T) {
 			}
 			for i := 0; i < attempts; i++ {
 				assertRefusedWith(t, tokenRouteRequest(handler, rq.method,
-					rq.path, rq.body, session), refuseNotSuperuser)
+					rq.path, rq.body, session), rq.refusal)
 			}
 			events, after, err := store.ListAuditEvents(auth.AuditFilter{
 				Limit: attempts * 2})

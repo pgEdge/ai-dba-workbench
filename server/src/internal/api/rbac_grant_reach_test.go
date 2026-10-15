@@ -455,8 +455,11 @@ func TestSetTokenScopeComparesEveryKind(t *testing.T) {
 
 	assertStatus(t, f.do(f.mcpNarrowed, http.MethodPut, path,
 		fmt.Sprintf(`{"mcp_privileges":[%q]}`, reachToolInScope)), http.StatusNoContent)
-	assertStatus(t, f.do(f.adminNarrowed, http.MethodPut, path,
-		`{"admin_permissions":["manage_users","manage_groups"]}`), http.StatusNoContent)
+	// Within the ceiling, but the token is bob's, and a token whose
+	// admin scope is narrowed is not a superuser, so it may only narrow
+	// it (issue #522).
+	assertRefusedWith(t, f.do(f.adminNarrowed, http.MethodPut, path,
+		`{"admin_permissions":["manage_users","manage_groups"]}`), refuseTokenNotOwned)
 	// Leaving the MCP kind alone leaves it restricted, so a connection
 	// write within the token's access is allowed.
 	assertStatus(t, f.do(f.mcpNarrowed, http.MethodPut, path,

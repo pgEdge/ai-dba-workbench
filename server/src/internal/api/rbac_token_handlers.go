@@ -25,6 +25,18 @@ import (
 // Token Scopes
 // =============================================================================
 
+// The refusals given when a caller who is not a superuser reaches beyond
+// the tokens it owns (issue #522). Each is a fixed string, so that the
+// denial audit coalesces repeats, and neither names the owner or says
+// whether one exists.
+const (
+	refuseTokenForOtherOwner = "Permission denied: only a superuser may " +
+		"create a token owned by another user"
+	refuseTokenNotOwned = "Permission denied: only a superuser may widen " +
+		"or clear the scope of a token owned by another user; a change to " +
+		"such a token must narrow it"
+)
+
 // handleTokens handles GET/POST /api/v1/rbac/tokens
 func (h *RBACHandler) handleTokens(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -38,7 +50,10 @@ func (h *RBACHandler) handleTokens(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// listTokens returns all tokens with their scope information.
+// listTokens returns all tokens with their scope information. Every
+// holder of manage_token_scopes sees every token, since any of them may
+// narrow or revoke any token (issue #522); without it a caller may not
+// create or change a token at all, so there is nothing to list.
 func (h *RBACHandler) listTokens(w http.ResponseWriter, r *http.Request) {
 	if !h.requirePermission(w, r, auth.PermManageTokenScopes) {
 		return
@@ -133,6 +148,9 @@ func (h *RBACHandler) createToken(w http.ResponseWriter, r *http.Request) {
 
 	if req.OwnerUsername == "" {
 		RespondError(w, http.StatusBadRequest, "Owner username is required")
+		return
+	}
+	if !h.requireOwnTokenOwner(w, r, req.OwnerUsername) {
 		return
 	}
 
@@ -295,6 +313,48 @@ func (h *RBACHandler) handleTokenSubpath(w http.ResponseWriter, r *http.Request)
 	http.NotFound(w, r)
 }
 
+// requireOwnTokenOwner refuses, with 403, a caller that is not a
+// superuser creating a token for any owner but the user it acts as: a
+// session's user, or an API token's owner (issue #522). A new token acts
+// with its owner's access, so minting one for someone else is as good as
+// acting as them. An unknown owner is refused in the same way, so that
+// the answer does not say whether the name exists; a failed lookup is
+// refused with 500. Either refusal is recorded as a denial.
+func (h *RBACHandler) requireOwnTokenOwner(w http.ResponseWriter,
+	r *http.Request, ownerUsername string) bool {
+
+	ctx := r.Context()
+	if h.rbacChecker.IsSuperuser(ctx) {
+		return true
+	}
+	owner, err := h.authStore.GetUser(ownerUsername)
+	if err != nil {
+		log.Printf("[ERROR] Failed to look up token owner: %v", err)
+		const reason = "Failed to get user"
+		h.recordDenial(r, reason)
+		RespondError(w, http.StatusInternalServerError, reason)
+		return false
+	}
+	return h.requireGrantInTokenScope(w, r,
+		owner != nil && owner.ID == auth.GetUserIDFromContext(ctx),
+		refuseTokenForOtherOwner)
+}
+
+// tokenOwnerGuard is the owner rule the store applies to a scope write
+// made by this request (issue #522): a superuser may widen or clear any
+// token, and anyone else only those owned by the user it acts as, a
+// session's user or an API token's owner; a write to any other token
+// must narrow it. A token caller is also bounded by its ceiling, which
+// requireTokenScopeChange checks first, siblings with the same owner
+// included.
+func (h *RBACHandler) tokenOwnerGuard(r *http.Request) auth.TokenOwnerGuard {
+	ctx := r.Context()
+	if h.rbacChecker.IsSuperuser(ctx) {
+		return auth.AnyTokenOwner()
+	}
+	return auth.TokensOwnedBy(auth.GetUserIDFromContext(ctx))
+}
+
 // superuserOwnerAllowed reports whether the caller may change or delete
 // a token owned by a superuser, which the store checks against the owner
 // it reads inside the change's own transaction (issue #607). Only a
@@ -317,15 +377,20 @@ func (h *RBACHandler) superuserOwnerAllowed(r *http.Request,
 // respondTokenWriteError answers a failed token write. The store's
 // refusal to let a caller who is not a superuser mint, change or delete
 // a superuser's token is answered exactly as requireSuperuser answers,
-// and its coalesced denial row is the only audit row the refusal leaves,
-// since the store records no failure for ErrSuperuserTargetForbidden;
-// anything else is logged with logContext and answered with a 500
-// carrying failure.
+// and its refusal to let one widen or clear a token it does not own
+// with refuseTokenNotOwned; for either, the coalesced denial row is the
+// only audit row the refusal leaves, since the store records no failure
+// for ErrSuperuserTargetForbidden or ErrTokenNotOwned. Anything else is
+// logged with logContext and answered with a 500 carrying failure.
 func (h *RBACHandler) respondTokenWriteError(w http.ResponseWriter,
 	r *http.Request, err error, logContext, failure string) {
 
 	if errors.Is(err, auth.ErrSuperuserTargetForbidden) {
 		h.denyNotSuperuser(w, r)
+		return
+	}
+	if errors.Is(err, auth.ErrTokenNotOwned) {
+		h.requireGrantInTokenScope(w, r, false, refuseTokenNotOwned)
 		return
 	}
 	log.Printf("[ERROR] %s: %v", logContext, err)
@@ -372,6 +437,35 @@ func (h *RBACHandler) getTokenScope(w http.ResponseWriter, r *http.Request, toke
 		"mcp_privileges":    scope.MCPPrivileges,
 		"admin_permissions": scope.AdminPermissions,
 	})
+}
+
+// requireKnownMCPPrivileges refuses, with 400, an MCP scope naming an
+// identifier that is not registered, before any ceiling or owner check
+// can refuse it with 403 as an item the token does not hold (issue
+// #522). The store checks again as it writes, so an identifier deleted
+// in between still fails the write with ErrUnknownMCPPrivilege. A
+// failed lookup is answered with 500.
+func (h *RBACHandler) requireKnownMCPPrivileges(w http.ResponseWriter,
+	identifiers []string) bool {
+
+	for _, identifier := range identifiers {
+		if identifier == "*" {
+			continue
+		}
+		priv, err := h.authStore.GetMCPPrivilege(identifier)
+		if err != nil {
+			log.Printf("[ERROR] Failed to look up MCP privilege: %v", err)
+			RespondError(w, http.StatusInternalServerError,
+				"Failed to set token scope")
+			return false
+		}
+		if priv == nil {
+			RespondError(w, http.StatusBadRequest, fmt.Sprintf("%v: %q",
+				auth.ErrUnknownMCPPrivilege, identifier))
+			return false
+		}
+	}
+	return true
 }
 
 // emptyScopeKind names the first scope kind a scope PUT supplied as an
@@ -427,6 +521,9 @@ func (h *RBACHandler) setTokenScope(w http.ResponseWriter, r *http.Request, toke
 		RespondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if !h.requireKnownMCPPrivileges(w, req.MCPPrivileges) {
+		return
+	}
 	// What the change grants beyond the token's current scope must lie
 	// within the acting token's own access, and what it narrows needs
 	// read on each connection concerned, kind by kind for the kinds the
@@ -442,8 +539,11 @@ func (h *RBACHandler) setTokenScope(w http.ResponseWriter, r *http.Request, toke
 		return
 	}
 
+	// The store refuses a change that widens a token the caller does
+	// not own, judged in the write's own transaction (issue #522).
 	if err := h.actorStore(r).SetTokenScope(tokenID, change,
-		h.superuserOwnerAllowed(r, tokenID)); err != nil {
+		h.superuserOwnerAllowed(r, tokenID),
+		h.tokenOwnerGuard(r)); err != nil {
 		if errors.Is(err, auth.ErrUnknownMCPPrivilege) {
 			RespondError(w, http.StatusBadRequest, err.Error())
 			return
@@ -466,8 +566,11 @@ func (h *RBACHandler) clearTokenScope(w http.ResponseWriter, r *http.Request, to
 		return
 	}
 
+	// Clearing widens the token, so the store refuses it for a token
+	// the caller does not own (issue #522).
 	if err := h.actorStore(r).ClearTokenScope(tokenID,
-		h.superuserOwnerAllowed(r, tokenID)); err != nil {
+		h.superuserOwnerAllowed(r, tokenID),
+		h.tokenOwnerGuard(r)); err != nil {
 		h.respondTokenWriteError(w, r, err,
 			fmt.Sprintf("Failed to clear token scope for token %d", tokenID),
 			"Failed to clear token scope")

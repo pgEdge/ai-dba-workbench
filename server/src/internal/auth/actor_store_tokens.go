@@ -254,11 +254,14 @@ func (a *ActorStore) DeleteToken(identifier string,
 
 // SetTokenScope writes every scope kind the change supplies in one
 // transaction, attributing the change to this store's actor; see
-// AuthStore.setTokenScope.
+// AuthStore.setTokenScope. owner says whom the write acts for: a change
+// to a token it does not own must narrow the token, or is refused with
+// ErrTokenNotOwned (issue #522).
 func (a *ActorStore) SetTokenScope(tokenID int64, change TokenScopeChange,
-	superuserOwnerAllowed bool) error {
+	superuserOwnerAllowed bool, owner TokenOwnerGuard) error {
 
-	return a.s.setTokenScope(a.actor, tokenID, change, superuserOwnerAllowed)
+	return a.s.setTokenScope(a.actor, tokenID, change, superuserOwnerAllowed,
+		owner)
 }
 
 // SetTokenConnectionScope sets a token's connection scope, attributing
@@ -298,9 +301,11 @@ func (a *ActorStore) SetTokenAdminScope(tokenID int64, permissions []string,
 }
 
 // ClearTokenScope removes all of a token's scope restrictions,
-// attributing the change to this store's actor.
+// attributing the change to this store's actor. Clearing widens the
+// token, so it is refused with ErrTokenNotOwned unless owner owns the
+// token (issue #522).
 func (a *ActorStore) ClearTokenScope(tokenID int64,
-	superuserOwnerAllowed bool) error {
+	superuserOwnerAllowed bool, owner TokenOwnerGuard) error {
 
-	return a.s.clearTokenScope(a.actor, tokenID, superuserOwnerAllowed)
+	return a.s.clearTokenScope(a.actor, tokenID, superuserOwnerAllowed, owner)
 }

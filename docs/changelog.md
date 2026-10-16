@@ -1392,6 +1392,20 @@ project adheres to
   store_system_memory permission`, matching the REST permission
   refusals. (#674)
 
+- Record MCP tool calls refused for lack of a tool privilege or of
+  access to a connection in the audit log, coalesced with repeated
+  denials in the same way as the REST refusals. A call to a tool
+  the caller may not use is a denied `mcp.tool.call` on
+  `tools/<name>`, or on `unmatched` for a name the server does not
+  know. A tool refused a `connection_id` the caller cannot access
+  records a denied `connection.read`, `metrics.read`,
+  `connection.query` or `connection.query.validate` on
+  `connections/<id>`, depending on the tool; a `query_database`
+  write refused for want of `read_write` access is a denied
+  `connection.query.write`; and a selected connection the caller
+  has since lost access to is a denied `connection.read`. The
+  messages the tools return are unchanged. (#706)
+
 - Fix the `probe_unavailable` alert firing on healthy Spock clusters
   with no recent apply exceptions or conflict resolutions. The
   collector could not tell an installed extension with nothing to

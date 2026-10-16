@@ -203,6 +203,33 @@ for a system-scoped memory without the `store_system_memory` permission
 is recorded as `memory.create` with a target of `memories`, and is
 coalesced with repeated denials in the same way as a refused request.
 
+A call to a tool that the caller has no privilege to use is recorded as
+`mcp.tool.call`, with a target of `tools/` followed by the tool's name,
+or of `unmatched` when the server knows no tool by the name the call
+gave, so that a name taken verbatim from the call never reaches the log.
+The reason is the same for every tool, so that repeated refusals of
+different tools by one caller are coalesced together.
+
+A tool call refused because the caller cannot access the connection it
+names is recorded with a target of `connections/` followed by the
+connection's identifier, under an action that depends on the tool:
+
+| Tools | Action |
+|-------|--------|
+| `query_database`, `execute_explain`, `count_rows`, `similarity_search` | `connection.query` |
+| `test_query` | `connection.query.validate` |
+| `query_metrics`, `get_metric_baselines` | `metrics.read` |
+| `get_schema_info`, `get_alert_rules`, `get_alert_history`, `get_blackouts`, `get_timeline_events` | `connection.read` |
+
+A `query_database` write refused because the caller has only `read`
+access to the connection is recorded as `connection.query.write`, with
+the reason `Permission denied: you do not have write access to this
+connection`. A tool that falls back to the caller's selected connection,
+when the caller has since lost access to it, records a
+`connection.read` on that connection, as the REST API does when it
+refuses a read of the selected connection. In every case the message the
+tool returns to the caller is unchanged.
+
 Each denial names the object the request was aimed at in
 `details.target`, as the kind of object followed by its numeric
 identifier, such as `users/12` or `connections/7`, or as the kind alone,

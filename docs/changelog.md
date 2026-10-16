@@ -1175,6 +1175,13 @@ project adheres to
 
 ### Fixed
 
+- Fix Ask Ellie tool calls failing with the OpenAI provider
+  (#686). The web client returns tool results in a user
+  message, which the OpenAI provider dropped, so OpenAI
+  rejected the next request with a 400 error saying the tool
+  calls had no responses. The server now sends tool results to
+  every provider as tool messages.
+
 - Load every configured alerter API key file when one of them
   cannot be read (#626). The alerter previously stopped at the
   first unreadable file, so a bad OpenAI key file also left the

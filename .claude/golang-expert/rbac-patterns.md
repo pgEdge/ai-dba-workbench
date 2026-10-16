@@ -191,7 +191,13 @@ unaudited and identical to a missing id, when the caller neither can
 see the connection (`CanAccessConnection`) nor holds
 `manage_connections`; only then the ownership check, whose 403 is
 audited through `h.refuse`. `CanAccessConnection` runs whether or not
-the row exists, so the work done does not reveal it either.
+the row exists, so the work done does not reveal it either. For that
+to hold, `CanAccessConnection` reads the caller's group privileges
+before the sharing lookup, which fails for a missing id; keep that
+order, so a missing and a hidden connection run the same queries.
+`connection_write_visibility_test.go` locks in the byte-identical 404
+for sessions and API tokens, the manager exemption and the owner of a
+group-restricted connection.
 
 Note on handler comments: the Variant 2 implementation must call
 `Get<Resource>` to read `owner_username` before it can decide

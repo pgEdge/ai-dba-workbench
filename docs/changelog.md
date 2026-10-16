@@ -1214,8 +1214,9 @@ project adheres to
   the `deleted_at` column the mark uses.
 
 - Answer `404 Not Found` when updating or deleting a connection
-  the caller cannot see, exactly as for a missing one, so the
-  answer no longer reveals whether the connection exists; a
+  the caller cannot see, exactly as for a missing one and after
+  the same database queries, so neither the answer nor its
+  timing reveals whether the connection exists; a
   caller who can see the connection but may not change it still
   gets the audited `403 Forbidden` (part of #677). An update
   whose connection is deleted whilst the request is in flight

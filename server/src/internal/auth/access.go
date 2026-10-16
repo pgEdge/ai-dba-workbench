@@ -423,6 +423,20 @@ func (rc *RBACChecker) CanAccessConnection(ctx context.Context, connectionID int
 		return false, AccessLevelNone
 	}
 
+	// Get user's connection privileges through group membership. A
+	// context with no user ID holds no group grants; all tokens now have
+	// owners, so this is defensive. They are read before the sharing
+	// lookup, which fails for a connection that does not exist, so that
+	// a missing connection and one the caller cannot see run the same
+	// queries before being denied (issue #677).
+	var privileges map[int]string
+	if userID := GetUserIDFromContext(ctx); userID != 0 {
+		privileges, err = rc.authStore.GetUserConnectionPrivileges(userID)
+		if err != nil {
+			return false, AccessLevelNone
+		}
+	}
+
 	// Without a sharing lookup the connection is treated as shared and
 	// unowned, as it always has been.
 	facts := connectionAccessFacts{shared: true, restricted: isRestricted}
@@ -435,17 +449,6 @@ func (rc *RBACChecker) CanAccessConnection(ctx context.Context, connectionID int
 		username := GetUsernameFromContext(ctx)
 		facts.shared = isShared
 		facts.owned = username != "" && ownerUsername == username
-	}
-
-	// Get user's connection privileges through group membership. A
-	// context with no user ID holds no group grants; all tokens now have
-	// owners, so this is defensive.
-	var privileges map[int]string
-	if userID := GetUserIDFromContext(ctx); userID != 0 {
-		privileges, err = rc.authStore.GetUserConnectionPrivileges(userID)
-		if err != nil {
-			return false, AccessLevelNone
-		}
 	}
 
 	accessLevel, hasAccess := connectionAccessRule(facts, privileges, connectionID)

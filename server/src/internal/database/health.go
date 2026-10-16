@@ -31,7 +31,11 @@ import (
 // introduced by a new collector migration. The corresponding migration
 // must be merged to the collector first; otherwise an upgraded server
 // will refuse to start against a still-current collector schema.
-const MinCollectorSchemaVersion = 4
+//
+// Version 29 adds connections.deleted_at, which every connection query
+// filters on and the background connection purge depends on (issue
+// #669).
+const MinCollectorSchemaVersion = 29
 
 // pgErrCodeUndefinedTable is the SQLSTATE that PostgreSQL returns when
 // a relation referenced in a query does not exist.

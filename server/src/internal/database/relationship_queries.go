@@ -62,7 +62,7 @@ func (d *Datastore) GetConnectionClusterInfo(ctx context.Context, connectionID i
                cl.name, cl.replication_type, cl.auto_cluster_key
         FROM connections c
         LEFT JOIN clusters cl ON c.cluster_id = cl.id
-        WHERE c.id = $1
+        WHERE c.id = $1 AND c.deleted_at IS NULL
     `
 
 	var info ConnectionClusterInfo
@@ -123,7 +123,7 @@ func (d *Datastore) ResetMembershipSource(ctx context.Context, connectionID int)
 	query := `
         UPDATE connections
         SET membership_source = 'auto', updated_at = CURRENT_TIMESTAMP
-        WHERE id = $1
+        WHERE id = $1 AND deleted_at IS NULL
     `
 
 	result, err := d.pool.Exec(ctx, query, connectionID)
@@ -340,7 +340,7 @@ func (d *Datastore) AddServerToCluster(ctx context.Context, clusterID int, conne
 	// Verify the connection exists
 	var connExists bool
 	err = d.pool.QueryRow(ctx,
-		`SELECT EXISTS(SELECT 1 FROM connections WHERE id = $1)`,
+		`SELECT EXISTS(SELECT 1 FROM connections WHERE id = $1 AND deleted_at IS NULL)`,
 		connectionID,
 	).Scan(&connExists)
 	if err != nil {
@@ -354,7 +354,7 @@ func (d *Datastore) AddServerToCluster(ctx context.Context, clusterID int, conne
         UPDATE connections
         SET cluster_id = $2, role = $3, membership_source = 'manual',
             updated_at = CURRENT_TIMESTAMP
-        WHERE id = $1
+        WHERE id = $1 AND deleted_at IS NULL
     `
 
 	_, err = d.pool.Exec(ctx, query, connectionID, clusterID, role)

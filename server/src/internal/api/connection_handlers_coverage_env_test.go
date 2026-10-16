@@ -50,6 +50,8 @@ CREATE TABLE clusters (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE connections (
+    deleted_at TIMESTAMPTZ,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
     id SERIAL PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     description TEXT DEFAULT '',
@@ -84,14 +86,14 @@ CREATE TABLE cluster_node_relationships (
 );
 CREATE FUNCTION conn_handler_cov_block_delete() RETURNS trigger AS $$
 BEGIN
-    IF OLD.name = 'undeletable' THEN
+    IF OLD.name = 'undeletable' AND NEW.deleted_at IS NOT NULL THEN
         RAISE EXCEPTION 'delete blocked for test';
     END IF;
-    RETURN OLD;
+    RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 CREATE TRIGGER conn_handler_cov_block_delete
-    BEFORE DELETE ON connections
+    BEFORE UPDATE ON connections
     FOR EACH ROW EXECUTE FUNCTION conn_handler_cov_block_delete();
 `
 
@@ -313,8 +315,8 @@ func TestConnectionHandlerCoverage_UpdateConnection(t *testing.T) {
 		{"datastore rejects over-long value", e.asAdmin(http.MethodPut, path,
 			map[string]any{"database_name": strings.Repeat("d", 300)}),
 			http.StatusInternalServerError},
-		{"non-owner denied", e.asOwner(http.MethodPut, "/api/v1/connections/32",
-			map[string]any{"name": "x"}), http.StatusForbidden},
+		{"unseen connection is not found", e.asOwner(http.MethodPut, "/api/v1/connections/32",
+			map[string]any{"name": "x"}), http.StatusNotFound},
 		{"missing connection", e.asAdmin(http.MethodPut, "/api/v1/connections/999",
 			map[string]any{"name": "x"}), http.StatusNotFound},
 	}
@@ -340,8 +342,10 @@ func TestConnectionHandlerCoverage_DeleteConnection(t *testing.T) {
 	unauth := httptest.NewRequest(http.MethodDelete, "/api/v1/connections/31", nil)
 	expectConnHandlerStatus(t, e.serve(unauth), http.StatusUnauthorized)
 
+	// The owner cannot see another user's private connection, so it is
+	// not found, exactly as a missing one is (issue #677).
 	expectConnHandlerStatus(t, e.serve(e.asOwner(http.MethodDelete, "/api/v1/connections/32", nil)),
-		http.StatusForbidden)
+		http.StatusNotFound)
 	expectConnHandlerStatus(t, e.serve(e.asAdmin(http.MethodDelete, "/api/v1/connections/999", nil)),
 		http.StatusNotFound)
 	expectConnHandlerStatus(t, e.serve(e.asOwner(http.MethodDelete, "/api/v1/connections/33", nil)),
@@ -349,13 +353,14 @@ func TestConnectionHandlerCoverage_DeleteConnection(t *testing.T) {
 	expectConnHandlerStatus(t, e.serve(e.asOwner(http.MethodDelete, "/api/v1/connections/31", nil)),
 		http.StatusNoContent)
 
-	var n int
+	// The row stays, marked, until the background purge removes it.
+	var marked bool
 	if err := e.pool.QueryRow(context.Background(),
-		"SELECT count(*) FROM connections WHERE id = 31").Scan(&n); err != nil {
-		t.Fatalf("Count: %v", err)
+		"SELECT deleted_at IS NOT NULL FROM connections WHERE id = 31").Scan(&marked); err != nil {
+		t.Fatalf("Read back: %v", err)
 	}
-	if n != 0 {
-		t.Errorf("connection 31 should have been deleted")
+	if !marked {
+		t.Errorf("connection 31 should have been marked deleted")
 	}
 }
 

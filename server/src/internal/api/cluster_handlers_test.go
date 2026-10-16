@@ -333,7 +333,7 @@ func TestClusterHandler_CreateClusterGroup_NameAtLimit(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster-groups",
 		bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = withBearer(req, token)
+	req = withAuth(t, handler.authStore, req, token)
 	req = withUser(req, userID)
 	rec := httptest.NewRecorder()
 
@@ -1128,6 +1128,7 @@ CREATE TABLE clusters (
     CONSTRAINT clusters_group_name_unique UNIQUE (group_id, name)
 );
 CREATE TABLE connections (
+    deleted_at TIMESTAMPTZ,
     id SERIAL PRIMARY KEY,
     owner_username VARCHAR(255),
     owner_token VARCHAR(255),
@@ -1229,6 +1230,22 @@ func withBearer(req *http.Request, token string) *http.Request {
 	return req
 }
 
+// withAuth sets the bearer header and authenticates it the way the
+// server's middleware does, so the request carries the context the
+// handler sees in production. The handlers read the caller from that
+// context rather than re-validating the header (issue #668). Context
+// helpers such as withSuperuser must be applied after this one, as the
+// authentication overwrites their keys.
+func withAuth(t *testing.T, store *auth.AuthStore, req *http.Request, token string) *http.Request {
+	t.Helper()
+	req = withBearer(req, token)
+	ctx, err := auth.AuthenticateRequest(req, store)
+	if err != nil {
+		t.Fatalf("authenticating test request: %v", err)
+	}
+	return req.WithContext(ctx)
+}
+
 // TestClusterHandler_UpdateClusterGroup_Integration_HappyPath exercises the
 // full create → PUT → verify flow for a numeric-ID cluster group. This is
 // the primary regression test for GitHub issue #58.
@@ -1254,7 +1271,7 @@ func TestClusterHandler_UpdateClusterGroup_Integration_HappyPath(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut,
 		"/api/v1/cluster-groups/"+strconv.Itoa(created.ID), bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = withBearer(req, token)
+	req = withAuth(t, handler.authStore, req, token)
 	req = withUser(req, userID)
 	rec := httptest.NewRecorder()
 
@@ -1317,7 +1334,7 @@ func TestClusterHandler_UpdateClusterGroup_Integration_NameOnly(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut,
 		"/api/v1/cluster-groups/"+strconv.Itoa(created.ID), bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = withBearer(req, token)
+	req = withAuth(t, handler.authStore, req, token)
 	req = withUser(req, userID)
 	rec := httptest.NewRecorder()
 
@@ -1369,7 +1386,7 @@ func TestClusterHandler_UpdateClusterGroup_Integration_MissingName(t *testing.T)
 	req := httptest.NewRequest(http.MethodPut,
 		"/api/v1/cluster-groups/"+strconv.Itoa(created.ID), bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = withBearer(req, token)
+	req = withAuth(t, handler.authStore, req, token)
 	req = withUser(req, userID)
 	rec := httptest.NewRecorder()
 
@@ -1404,7 +1421,7 @@ func TestClusterHandler_UpdateClusterGroup_Integration_NotFound(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut,
 		"/api/v1/cluster-groups/999999", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = withBearer(req, token)
+	req = withAuth(t, handler.authStore, req, token)
 	req = withUser(req, userID)
 	rec := httptest.NewRecorder()
 
@@ -1464,7 +1481,7 @@ func TestClusterHandler_UpdateClusterGroup_Integration_Forbidden(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut,
 		"/api/v1/cluster-groups/"+strconv.Itoa(created.ID), bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = withBearer(req, token)
+	req = withAuth(t, handler.authStore, req, token)
 	req = withUser(req, userID)
 	rec := httptest.NewRecorder()
 
@@ -1971,6 +1988,7 @@ CREATE TABLE clusters (
 );
 
 CREATE TABLE connections (
+    deleted_at TIMESTAMPTZ,
     id SERIAL PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     cluster_id INTEGER REFERENCES clusters(id) ON DELETE SET NULL,
@@ -2347,7 +2365,7 @@ func TestClusterHandler_UpdateAutoDetectedGroup_Issue269_ValidName(t *testing.T)
 	req := httptest.NewRequest(http.MethodPut,
 		"/api/v1/cluster-groups/group-auto", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = withBearer(req, token)
+	req = withAuth(t, handler.authStore, req, token)
 	req = withUser(req, userID)
 	rec := httptest.NewRecorder()
 
@@ -2423,7 +2441,7 @@ func TestClusterHandler_CreateClusterGroup_Issue304_RecordsOwnerAndShared(t *tes
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster-groups",
 		bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = withBearer(req, token)
+	req = withAuth(t, handler.authStore, req, token)
 	req = withUser(req, userID)
 	rec := httptest.NewRecorder()
 
@@ -2476,7 +2494,7 @@ func TestClusterHandler_CreateClusterGroup_Issue304_DefaultsSharedFalse(t *testi
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster-groups",
 		bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = withBearer(req, token)
+	req = withAuth(t, handler.authStore, req, token)
 	req = withUser(req, userID)
 	rec := httptest.NewRecorder()
 
@@ -2558,7 +2576,7 @@ func TestClusterHandler_UpdateClusterGroup_Issue304_ToggleShared(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPut,
 			"/api/v1/cluster-groups/"+strconv.Itoa(created.ID), bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
-		req = withBearer(req, token)
+		req = withAuth(t, handler.authStore, req, token)
 		req = withUser(req, userID)
 		rec := httptest.NewRecorder()
 
@@ -2625,7 +2643,7 @@ func TestClusterHandler_UpdateClusterGroup_Issue304_PreservesSharedWhenOmitted(t
 	req := httptest.NewRequest(http.MethodPut,
 		"/api/v1/cluster-groups/"+strconv.Itoa(created.ID), bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = withBearer(req, token)
+	req = withAuth(t, handler.authStore, req, token)
 	req = withUser(req, userID)
 	rec := httptest.NewRecorder()
 
@@ -2694,7 +2712,7 @@ func TestClusterHandler_UpdateClusterGroup_Issue304_ForbiddenDoesNotShare(t *tes
 	req := httptest.NewRequest(http.MethodPut,
 		"/api/v1/cluster-groups/"+strconv.Itoa(created.ID), bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = withBearer(req, token)
+	req = withAuth(t, handler.authStore, req, token)
 	req = withUser(req, userID)
 	rec := httptest.NewRecorder()
 
@@ -2737,7 +2755,7 @@ func TestClusterHandler_UpdateClusterGroup_Issue304_InvalidName(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut,
 		"/api/v1/cluster-groups/"+strconv.Itoa(created.ID), bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = withBearer(req, token)
+	req = withAuth(t, handler.authStore, req, token)
 	req = withUser(req, userID)
 	rec := httptest.NewRecorder()
 
@@ -2768,7 +2786,7 @@ func TestClusterHandler_CreateClusterGroup_Issue304_DuplicateNameError(t *testin
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster-groups",
 		bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = withBearer(req, token)
+	req = withAuth(t, handler.authStore, req, token)
 	req = withUser(req, userID)
 	rec := httptest.NewRecorder()
 
@@ -2803,7 +2821,7 @@ func TestClusterHandler_UpdateClusterGroup_Issue304_DuplicateNameError(t *testin
 	req := httptest.NewRequest(http.MethodPut,
 		"/api/v1/cluster-groups/"+strconv.Itoa(target.ID), bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = withBearer(req, token)
+	req = withAuth(t, handler.authStore, req, token)
 	req = withUser(req, userID)
 	rec := httptest.NewRecorder()
 

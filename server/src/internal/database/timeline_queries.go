@@ -431,7 +431,7 @@ func buildConfigChangeQuery(whereClause string) string {
             FROM metrics.pg_settings
             %[2]s
         ) changes
-        JOIN connections c ON changes.connection_id = c.id
+        JOIN connections c ON changes.connection_id = c.id AND c.deleted_at IS NULL
         WHERE changes.rn > 1
           AND changes.setting IS DISTINCT FROM changes.prev_setting
           %[3]s
@@ -551,7 +551,7 @@ func buildHBAChangeQuery(whereClause string) string {
             %[2]s
             WINDOW w AS (PARTITION BY connection_id, rule_number ORDER BY collected_at)
         ) changes
-        JOIN connections c ON changes.connection_id = c.id
+        JOIN connections c ON changes.connection_id = c.id AND c.deleted_at IS NULL
         WHERE changes.rn > 1
           AND (changes.type IS DISTINCT FROM changes.prev_type
                OR changes.database IS DISTINCT FROM changes.prev_database
@@ -646,7 +646,7 @@ func buildIdentChangeQuery(whereClause string) string {
                 ) ORDER BY i.map_number) FILTER (WHERE i.map_number IS NOT NULL)
             )::TEXT AS details
         FROM metrics.pg_ident_file_mappings i
-        JOIN connections c ON i.connection_id = c.id
+        JOIN connections c ON i.connection_id = c.id AND c.deleted_at IS NULL
         %s
         AND i.collected_at > (
             SELECT MIN(collected_at)
@@ -720,7 +720,7 @@ func buildRestartQuery(whereClause string) string {
             WHERE postmaster_start_time IS NOT NULL
               %[2]s
         ) r
-        JOIN connections c ON r.connection_id = c.id
+        JOIN connections c ON r.connection_id = c.id AND c.deleted_at IS NULL
         WHERE r.prev_start_time IS NOT NULL
           AND r.postmaster_start_time IS NOT NULL
           AND r.prev_start_time != r.postmaster_start_time
@@ -1023,7 +1023,7 @@ func buildExtensionChangeQuery(whereClause string) string {
             %[2]s
             WINDOW w AS (PARTITION BY connection_id, database_name, extname ORDER BY collected_at)
         ) changes
-        JOIN connections c ON changes.connection_id = c.id
+        JOIN connections c ON changes.connection_id = c.id AND c.deleted_at IS NULL
         WHERE changes.rn > 1
           AND changes.extversion IS DISTINCT FROM changes.prev_extversion
           %[3]s

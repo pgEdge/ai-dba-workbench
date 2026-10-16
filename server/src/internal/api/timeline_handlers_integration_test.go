@@ -37,6 +37,8 @@ DROP TABLE IF EXISTS alert_rules CASCADE;
 DROP TABLE IF EXISTS connections CASCADE;
 
 CREATE TABLE connections (
+    deleted_at TIMESTAMPTZ,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
     id SERIAL PRIMARY KEY,
     owner_username VARCHAR(255),
     owner_token VARCHAR(255),

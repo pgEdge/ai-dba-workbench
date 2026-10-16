@@ -374,6 +374,7 @@ func TestEnsureProbeConfig(t *testing.T) {
 	// expected to find no rows in this test.
 	if _, err := conn.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS connections (
+		    deleted_at TIMESTAMPTZ,
 			id INTEGER PRIMARY KEY,
 			cluster_id INTEGER
 		);

@@ -13,8 +13,9 @@
 The collector writes probe output into `metrics.*` partitioned tables.
 The consolidated migration in `collector/src/database/schema.go` now adds
 a `FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE
-CASCADE` to each of them via `addConstraintIfMissing`, so deleting a
-connection removes its metric rows with it. That was not always true,
+CASCADE` to each of them via `addConstraintIfMissing`, so removing a
+connection row removes its metric rows with it (the server purges them
+in batches first; see below). That was not always true,
 and the queries written before it still assume orphaned metric rows can
 outlive their owning connection; keep that assumption rather than
 stripping the joins out, because it costs nothing and the cascade is the
@@ -23,25 +24,41 @@ violation downstream.
 
 ## Deleting a Connection
 
-Because of that cascade, `DELETE FROM connections` removes the
-connection's whole retention history and can take minutes, so it does
-not run under the budgets ordinary datastore calls get (issue #480).
-`database.ConnectionDeleteTimeout` (four minutes, kept under the HTTP
-server's 300 second `WriteTimeout`) is both the handler deadline, built
-by `connectionDeleteContext` in `api/connection_handlers.go` with
-`context.WithoutCancel` so that a client giving up does not roll the
-delete back, and a transaction-local `statement_timeout` that
-`DeleteConnection` sets with `set_config(..., true)` to override the
-pool-wide one. `DeleteConnection` deliberately does not take `d.mu`:
-holding the write lock through the cascade would stall every other
-datastore call. `TestDeleteConnection_OverridesPoolStatementTimeout`,
-`TestDeleteConnection_SurvivesRequestCancellation` and
-`TestDeleteConnection_DoesNotBlockDatastoreReaders` lock these
-properties in. If deletes outgrow four minutes, the next step is an
-asynchronous delete (hide the connection at once, reclaim its rows in
-the background), not a longer timeout; detaching partitions does not
-help directly, because the weekly partitions hold every connection's
-rows.
+Deleting a connection is two steps (issue #669), because the cascade
+through a long retention history could outlast any request budget.
+
+1. `Datastore.DeleteConnection` (server) marks the row: in one
+   transaction it sets `connections.deleted_at` (collector migration
+   24), turns `is_monitored` and `enabled` off, clears `cluster_id`,
+   and deletes the rows of every non-`metrics` table that cascades
+   from the connection (found in `pg_constraint`, so a new dependent
+   table needs no code change). A row already marked counts as
+   missing, so a repeat delete gives `ErrConnectionNotFound`.
+2. `database.ConnectionPurger`, started by `startConnectionPurger` in
+   `cmd/mcp-server/server.go`, runs at startup, every
+   `DefaultConnectionPurgeInterval` (five minutes) and on the nudge
+   the delete handler sends. `PurgeConnection` deletes the
+   connection's rows from each leaf partition under `metrics` in
+   committed batches of `DefaultConnectionPurgeBatchSize` (ctid
+   batches, never one big transaction), then removes the row. It is
+   restart-safe, because the marked row is the work queue.
+
+Every reader must therefore filter `deleted_at IS NULL`: the server's
+connection, cluster, topology, estate and tool queries, the collector's
+connection loading, and the alerter's queries and metric registry all
+do. A marked connection's metric rows still exist until the purge
+reaches them, which is one more reason to keep the orphan joins below
+and to join on `c.deleted_at IS NULL` where the connection must be
+live.
+
+The mark step still runs under `database.ConnectionDeleteTimeout`,
+both as the handler deadline (`connectionDeleteContext` in
+`api/connection_handlers.go`, built with `context.WithoutCancel` so a
+client giving up does not roll it back) and as a transaction-local
+`statement_timeout` set with `set_config(..., true)`. It does not take
+`d.mu`. The tests are in `connection_delete_integration_test.go`,
+`connection_purge_integration_test.go` and `connection_purge_test.go`
+(database) and `connection_delete_handler_test.go` (api).
 
 ## Filter Orphans at Query Time
 

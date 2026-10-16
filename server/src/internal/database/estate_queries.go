@@ -620,7 +620,7 @@ func (d *Datastore) GetConnectionContext(ctx context.Context, connectionID int) 
 	// Get connection name
 	var serverName string
 	err := d.pool.QueryRow(ctx,
-		`SELECT name FROM connections WHERE id = $1`, connectionID).Scan(&serverName)
+		`SELECT name FROM connections WHERE id = $1 AND deleted_at IS NULL`, connectionID).Scan(&serverName)
 	if err != nil {
 		return nil, fmt.Errorf("connection not found: %w", err)
 	}

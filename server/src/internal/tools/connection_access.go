@@ -61,7 +61,7 @@ func resolveAccessibleConnection(
 			return "", nil
 		}
 		var name string
-		err := pool.QueryRow(ctx, "SELECT name FROM connections WHERE id = $1", connectionID).Scan(&name)
+		err := pool.QueryRow(ctx, "SELECT name FROM connections WHERE id = $1 AND deleted_at IS NULL", connectionID).Scan(&name)
 		if err == nil {
 			return name, nil
 		}
@@ -113,10 +113,10 @@ func visibleConnectionSuggestions(
 		return nil
 	}
 
-	query := "SELECT id, name FROM connections ORDER BY id LIMIT $1"
+	query := "SELECT id, name FROM connections WHERE deleted_at IS NULL ORDER BY id LIMIT $1"
 	args := []any{maxConnectionSuggestions}
 	if !all {
-		query = "SELECT id, name FROM connections WHERE id = ANY($2) ORDER BY id LIMIT $1"
+		query = "SELECT id, name FROM connections WHERE id = ANY($2) AND deleted_at IS NULL ORDER BY id LIMIT $1"
 		args = append(args, ids)
 	}
 	rows, err := pool.Query(ctx, query, args...)

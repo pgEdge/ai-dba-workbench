@@ -191,6 +191,33 @@ Authorization: Bearer <token>
 
 Response: `204 No Content`
 
+### Delete a Connection
+
+The following endpoint deletes a connection; the caller
+must own the connection or hold the `manage_connections`
+permission:
+
+```
+DELETE /api/v1/connections/{id}
+Authorization: Bearer <token>
+```
+
+Response: `204 No Content`
+
+The server answers as soon as the connection is marked
+deleted. From that moment the connection disappears from
+every listing, the API and the MCP tools, and the
+collector and alerter stop monitoring it. The server then
+removes the connection's collected metrics in the
+background, in small batches, and removes the connection
+itself once the metrics are gone. A connection with a long
+metrics history may take some time to clear from the
+datastore, but the delete request does not wait for it.
+
+The background purge runs when the server starts, every
+five minutes, and immediately after each delete; a server
+restart resumes any purge that was interrupted.
+
 ## Session Persistence
 
 Connection selections are stored in the authentication
@@ -221,7 +248,8 @@ The connection APIs return standard error responses.
 |--------|-------------|
 | 400 | Invalid request (bad connection ID or missing fields). |
 | 401 | Invalid or missing authentication token. |
-| 404 | Connection not found, or no current connection selected. |
+| 403 | The caller can see the connection but may not change it. |
+| 404 | Connection not found, not visible to the caller, or no current connection selected. |
 | 500 | Internal server error. |
 | 503 | Datastore not configured. |
 

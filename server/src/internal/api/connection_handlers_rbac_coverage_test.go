@@ -39,9 +39,10 @@ import (
 // =============================================================================
 
 // connCovSchema is a self-contained schema carrying every table and column
-// the connection handlers read or write. conn_cov_delete_blocker holds a
-// foreign key without ON DELETE so a test can force DeleteConnection to fail
-// after the handler has passed its permission checks.
+// the connection handlers read or write. A row in conn_cov_delete_blocker
+// makes the conn_cov_block_mark trigger refuse to mark that connection
+// deleted, so a test can force DeleteConnection to fail after the handler
+// has passed its permission checks.
 const connCovSchema = `
 DROP TABLE IF EXISTS conn_cov_delete_blocker CASCADE;
 DROP TABLE IF EXISTS cluster_node_relationships CASCADE;
@@ -59,6 +60,8 @@ CREATE TABLE clusters (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE connections (
+    deleted_at TIMESTAMPTZ,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
     id SERIAL PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     description TEXT,
@@ -93,6 +96,20 @@ CREATE TABLE cluster_node_relationships (
 CREATE TABLE conn_cov_delete_blocker (
     connection_id INTEGER REFERENCES connections(id)
 );
+CREATE OR REPLACE FUNCTION conn_cov_block_mark() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.deleted_at IS NOT NULL AND EXISTS (
+        SELECT 1 FROM conn_cov_delete_blocker WHERE connection_id = OLD.id
+    ) THEN
+        RAISE EXCEPTION 'delete blocked for test';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+CREATE TRIGGER conn_cov_block_mark
+    BEFORE UPDATE ON connections
+    FOR EACH ROW EXECUTE FUNCTION conn_cov_block_mark();
 `
 
 // connCovAllowedHost is placed on the handler's host allowlist so create
@@ -160,6 +177,7 @@ func newConnCovFixture(t *testing.T, secret string) *connCovFixture {
             DROP TABLE IF EXISTS cluster_node_relationships CASCADE;
             DROP TABLE IF EXISTS connections CASCADE;
             DROP TABLE IF EXISTS clusters CASCADE;
+            DROP FUNCTION IF EXISTS conn_cov_block_mark();
         `)
 		pool.Close()
 	})
@@ -238,12 +256,13 @@ func (f *connCovFixture) exec(t *testing.T, sql string, args ...any) {
 	}
 }
 
-// rowExists reports whether a connection row with the given ID exists.
+// rowExists reports whether a live connection row with the given ID
+// exists; a row marked deleted and awaiting its purge does not count.
 func (f *connCovFixture) rowExists(t *testing.T, id int) bool {
 	t.Helper()
 	var exists bool
 	if err := f.pool.QueryRow(context.Background(),
-		"SELECT EXISTS (SELECT 1 FROM connections WHERE id = $1)", id).Scan(&exists); err != nil {
+		"SELECT EXISTS (SELECT 1 FROM connections WHERE id = $1 AND deleted_at IS NULL)", id).Scan(&exists); err != nil {
 		t.Fatalf("Check connection %d: %v", id, err)
 	}
 	return exists
@@ -631,6 +650,9 @@ func TestConnCov_UpdateConnection_Rejections(t *testing.T) {
 	owner := f.newCaller(t, "cov_upd_owner")
 	other := f.newCaller(t, "cov_upd_other")
 	id := f.seed(t, "original", owner.username, false)
+	// visible is shared, so other can see it but, not owning it, may
+	// not change it (issue #677).
+	visible := f.seed(t, "visible", owner.username, true)
 
 	shared := true
 	badHost := "10.0.0.1"
@@ -652,8 +674,10 @@ func TestConnCov_UpdateConnection_Rejections(t *testing.T) {
 			http.StatusForbidden, connectionOutOfTokenScope},
 		{"missing connection", &owner, id + 1000, ConnectionFullUpdateRequest{}, false,
 			http.StatusNotFound, "Connection not found"},
-		{"non-owner without permission", &other, id, ConnectionFullUpdateRequest{}, false,
-			http.StatusForbidden, "Permission denied: you must be the owner or have the manage_connections permission to update this connection"},
+		{"unseen connection", &other, id, ConnectionFullUpdateRequest{}, false,
+			http.StatusNotFound, "Connection not found"},
+		{"visible but not permitted", &other, visible, ConnectionFullUpdateRequest{}, false,
+			http.StatusForbidden, connectionUpdateDenied},
 		{"malformed JSON", &owner, id, "{broken", false,
 			http.StatusBadRequest, "Invalid request body"},
 		{"owner cannot share", &owner, id, ConnectionFullUpdateRequest{IsShared: &shared}, false,
@@ -758,6 +782,7 @@ func TestConnCov_DeleteConnection_Rejections(t *testing.T) {
 	owner := f.newCaller(t, "cov_del_owner")
 	other := f.newCaller(t, "cov_del_other")
 	id := f.seed(t, "keep-me", owner.username, false)
+	visible := f.seed(t, "visible", owner.username, true)
 	blocked := f.seed(t, "blocked", owner.username, false)
 	f.exec(t, "INSERT INTO conn_cov_delete_blocker (connection_id) VALUES ($1)", blocked)
 
@@ -772,8 +797,9 @@ func TestConnCov_DeleteConnection_Rejections(t *testing.T) {
 		{"no bearer", nil, id, false, http.StatusUnauthorized, "Invalid or missing authentication token"},
 		{"out of token scope", &owner, id, true, http.StatusForbidden, connectionOutOfTokenScope},
 		{"missing connection", &owner, id + 1000, false, http.StatusNotFound, "Connection not found"},
-		{"non-owner without permission", &other, id, false, http.StatusForbidden,
-			"Permission denied: you must be the owner or have the manage_connections permission to delete this connection"},
+		{"unseen connection", &other, id, false, http.StatusNotFound, "Connection not found"},
+		{"visible but not permitted", &other, visible, false, http.StatusForbidden,
+			connectionDeleteDenied},
 		{"datastore error", &owner, blocked, false, http.StatusInternalServerError, "Failed to delete connection"},
 	}
 	for _, tt := range tests {
@@ -789,7 +815,7 @@ func TestConnCov_DeleteConnection_Rejections(t *testing.T) {
 		})
 	}
 
-	if !f.rowExists(t, id) || !f.rowExists(t, blocked) {
+	if !f.rowExists(t, id) || !f.rowExists(t, visible) || !f.rowExists(t, blocked) {
 		t.Error("A refused delete removed a connection row")
 	}
 }

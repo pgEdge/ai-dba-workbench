@@ -605,7 +605,7 @@ func (h *ClusterHandler) createClusterGroup(w http.ResponseWriter, r *http.Reque
 	// mirrors updateClusterGroup's use of getUserInfoCompat and lets the
 	// owner-fallback authorization on update/delete apply to groups the
 	// user creates (issue #304).
-	username, _, err := getUserInfoCompat(r, h.authStore)
+	username, _, err := getUserInfoCompat(r)
 	if err != nil {
 		RespondError(w, http.StatusUnauthorized, "Invalid or missing authentication token")
 		return
@@ -630,7 +630,7 @@ func (h *ClusterHandler) createClusterGroup(w http.ResponseWriter, r *http.Reque
 
 func (h *ClusterHandler) updateClusterGroup(w http.ResponseWriter, r *http.Request, id int) {
 	// Check user permissions
-	username, _, err := getUserInfoCompat(r, h.authStore)
+	username, _, err := getUserInfoCompat(r)
 	if err != nil {
 		RespondError(w, http.StatusUnauthorized, "Invalid or missing authentication token")
 		return
@@ -720,7 +720,7 @@ func (h *ClusterHandler) deleteClusterGroup(w http.ResponseWriter, r *http.Reque
 	// group the caller cannot see answers 404 exactly as a missing one
 	// does, and only a visible group can draw the ownership 403 (issue
 	// #649).
-	username, _, err := getUserInfoCompat(r, h.authStore)
+	username, _, err := getUserInfoCompat(r)
 	if err != nil {
 		RespondError(w, http.StatusUnauthorized,
 			"Invalid or missing authentication token")

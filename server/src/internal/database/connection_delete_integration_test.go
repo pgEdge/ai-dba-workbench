@@ -80,6 +80,22 @@ func readClusterDismissed(t *testing.T, pool *pgxpool.Pool, id int) bool {
 	return dismissed
 }
 
+// connectionMarkedDeleted reports whether the connection row with the
+// given id carries a deleted_at mark, failing the test if the row is
+// missing. DeleteConnection only marks the row (issue #669); the
+// ConnectionPurger removes it later.
+func connectionMarkedDeleted(t *testing.T, pool *pgxpool.Pool, id int) bool {
+	t.Helper()
+	var marked bool
+	err := pool.QueryRow(context.Background(),
+		`SELECT deleted_at IS NOT NULL FROM connections WHERE id = $1`, id,
+	).Scan(&marked)
+	if err != nil {
+		t.Fatalf("Failed to read deleted_at for connection %d: %v", id, err)
+	}
+	return marked
+}
+
 // TestDeleteConnection_LastInAutoClusterDismisses verifies the fix
 // for issue #238. When the final connection attached to an
 // auto-detected cluster is deleted, the cluster is soft-dismissed in
@@ -113,16 +129,26 @@ func TestDeleteConnection_LastInAutoClusterDismisses(t *testing.T) {
 		t.Fatalf("DeleteConnection failed: %v", err)
 	}
 
-	// The connection row must be gone.
-	var remaining int
-	err = pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM connections WHERE id = $1`, connID,
-	).Scan(&remaining)
-	if err != nil {
-		t.Fatalf("counting connection rows failed: %v", err)
+	// The connection row must be marked, out of monitoring and out of
+	// its cluster.
+	if !connectionMarkedDeleted(t, pool, connID) {
+		t.Fatalf("expected connection %d to be marked deleted", connID)
 	}
-	if remaining != 0 {
-		t.Fatalf("expected connection %d to be deleted, found %d rows", connID, remaining)
+	var monitored, enabled bool
+	var cluster *int
+	if err := pool.QueryRow(ctx,
+		`SELECT is_monitored, enabled, cluster_id FROM connections WHERE id = $1`, connID,
+	).Scan(&monitored, &enabled, &cluster); err != nil {
+		t.Fatalf("reading marked connection failed: %v", err)
+	}
+	if monitored || enabled || cluster != nil {
+		t.Fatalf("marked connection: is_monitored=%v enabled=%v cluster_id=%v, want false/false/nil",
+			monitored, enabled, cluster)
+	}
+
+	// A second delete of the same id answers as for a missing row.
+	if err := ds.DeleteConnection(ctx, connID); !errors.Is(err, ErrConnectionNotFound) {
+		t.Fatalf("repeat DeleteConnection error = %v, want ErrConnectionNotFound", err)
 	}
 
 	// The auto-detected cluster must now be soft-dismissed.
@@ -262,7 +288,7 @@ func TestDeleteConnection_NotFoundReturnsError(t *testing.T) {
 }
 
 // TestDeleteConnection_CanceledContext exercises the non-ErrNoRows
-// error branch of the combined DELETE ... RETURNING. A context that
+// error branch of the combined UPDATE ... RETURNING that marks the row. A context that
 // is canceled before the call enters DeleteConnection causes the
 // QueryRow scan to fail with a wrapped context.Canceled, not with
 // pgx.ErrNoRows, so the function must surface a wrapped delete
@@ -297,14 +323,8 @@ func TestDeleteConnection_CanceledContext(t *testing.T) {
 
 	// Side effects must be confined to the transaction; the
 	// connection row and cluster should be untouched.
-	var remaining int
-	if err := pool.QueryRow(context.Background(),
-		`SELECT COUNT(*) FROM connections WHERE id = $1`, connID,
-	).Scan(&remaining); err != nil {
-		t.Fatalf("post-cancel connection count failed: %v", err)
-	}
-	if remaining != 1 {
-		t.Fatalf("expected connection %d to survive canceled delete, found %d rows", connID, remaining)
+	if connectionMarkedDeleted(t, pool, connID) {
+		t.Fatalf("expected connection %d to stay unmarked after a canceled delete", connID)
 	}
 	if readClusterDismissed(t, pool, clusterID) {
 		t.Fatalf("cluster %d was dismissed despite canceled delete", clusterID)
@@ -345,8 +365,8 @@ func TestDeleteConnection_ClosedPoolReturnsError(t *testing.T) {
 }
 
 // TestDeleteConnection_DeleteStepFails exercises the non-ErrNoRows
-// error branch of the combined DELETE ... RETURNING. We install a
-// BEFORE DELETE trigger that unconditionally raises an exception so
+// error branch of the combined UPDATE ... RETURNING that marks the row. We install a
+// BEFORE UPDATE trigger that unconditionally raises an exception so
 // the QueryRow scan fails with a SQL error (not pgx.ErrNoRows), and
 // DeleteConnection must surface a wrapped delete error.
 func TestDeleteConnection_DeleteStepFails(t *testing.T) {
@@ -366,7 +386,7 @@ func TestDeleteConnection_DeleteStepFails(t *testing.T) {
         $$;
         DROP TRIGGER IF EXISTS block_conn_delete ON connections;
         CREATE TRIGGER block_conn_delete
-        BEFORE DELETE ON connections
+        BEFORE UPDATE ON connections
         FOR EACH ROW EXECUTE FUNCTION block_connection_delete();
     `); err != nil {
 		t.Fatalf("failed to install delete-blocking trigger: %v", err)
@@ -381,22 +401,16 @@ func TestDeleteConnection_DeleteStepFails(t *testing.T) {
 			"expected delete-failure wrap, got %v", err)
 	}
 
-	// The transaction must roll back; the row should remain.
-	var remaining int
-	if err := pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM connections WHERE id = $1`, connID,
-	).Scan(&remaining); err != nil {
-		t.Fatalf("post-trigger connection count failed: %v", err)
-	}
-	if remaining != 1 {
-		t.Fatalf("expected connection to survive trigger-failed delete, got %d rows", remaining)
+	// The transaction must roll back; the row should stay unmarked.
+	if connectionMarkedDeleted(t, pool, connID) {
+		t.Fatal("expected connection to stay unmarked after a trigger-failed delete")
 	}
 }
 
 // TestDeleteConnection_DismissUpdateFails exercises the error
 // branch where the follow-up UPDATE clusters statement fails. We
 // drop the dismissed column on the clusters table after inserting
-// a row referencing an auto-detected cluster; the DELETE then
+// a row referencing an auto-detected cluster; the mark UPDATE then
 // succeeds inside the transaction but the UPDATE fails with an
 // undefined-column error, which must be surfaced as a wrapped
 // "failed to dismiss" error.
@@ -431,21 +445,15 @@ func TestDeleteConnection_DismissUpdateFails(t *testing.T) {
 	}
 
 	// The transaction must have rolled back; the connection row
-	// should still exist.
-	var remaining int
-	if err := pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM connections WHERE id = $1`, connID,
-	).Scan(&remaining); err != nil {
-		t.Fatalf("post-failure connection count failed: %v", err)
-	}
-	if remaining != 1 {
-		t.Fatalf("expected connection to survive rolled-back delete, got %d rows", remaining)
+	// should stay unmarked.
+	if connectionMarkedDeleted(t, pool, connID) {
+		t.Fatal("expected connection to stay unmarked after a rolled-back delete")
 	}
 }
 
 // TestDeleteConnection_OverridesPoolStatementTimeout is the regression
 // test for issue #480. The pool's statement_timeout is set far below
-// the time the DELETE takes (a BEFORE DELETE trigger stands in for a
+// the time the DELETE takes (a BEFORE UPDATE trigger stands in for a
 // cascade through a long metrics history), and a control query proves
 // that the pool timeout is live. The delete must still succeed, the
 // trigger must observe ConnectionDeleteTimeout as the effective
@@ -464,12 +472,12 @@ func TestDeleteConnection_OverridesPoolStatementTimeout(t *testing.T) {
             INSERT INTO delete_timeout_probe
             VALUES (current_setting('statement_timeout'));
             PERFORM pg_sleep(0.5);
-            RETURN OLD;
+            RETURN NEW;
         END;
         $$;
         DROP TRIGGER IF EXISTS slow_conn_delete ON connections;
         CREATE TRIGGER slow_conn_delete
-        BEFORE DELETE ON connections
+        BEFORE UPDATE ON connections
         FOR EACH ROW EXECUTE FUNCTION slow_connection_delete();
     `); err != nil {
 		t.Fatalf("failed to install slow delete trigger: %v", err)
@@ -507,14 +515,8 @@ func TestDeleteConnection_OverridesPoolStatementTimeout(t *testing.T) {
 		t.Fatalf("DeleteConnection under a 200ms pool timeout failed: %v", err)
 	}
 
-	var remaining int
-	if err := setupPool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM connections WHERE id = $1`, connID,
-	).Scan(&remaining); err != nil {
-		t.Fatalf("post-delete connection count failed: %v", err)
-	}
-	if remaining != 0 {
-		t.Fatalf("expected connection %d to be deleted, found %d rows", connID, remaining)
+	if !connectionMarkedDeleted(t, setupPool, connID) {
+		t.Fatalf("expected connection %d to be marked deleted", connID)
 	}
 
 	// Let Postgres render the expected value, so the comparison does
@@ -560,7 +562,7 @@ func TestDeleteConnection_CommitFails(t *testing.T) {
         $$;
         DROP TRIGGER IF EXISTS block_conn_commit ON connections;
         CREATE CONSTRAINT TRIGGER block_conn_commit
-        AFTER DELETE ON connections
+        AFTER UPDATE ON connections
         DEFERRABLE INITIALLY DEFERRED
         FOR EACH ROW EXECUTE FUNCTION block_connection_commit();
     `); err != nil {
@@ -576,19 +578,13 @@ func TestDeleteConnection_CommitFails(t *testing.T) {
 		t.Fatalf("DeleteConnection error = %v, want a commit failure", err)
 	}
 
-	var remaining int
-	if err := pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM connections WHERE id = $1`, connID,
-	).Scan(&remaining); err != nil {
-		t.Fatalf("post-commit connection count failed: %v", err)
-	}
-	if remaining != 1 {
-		t.Fatalf("expected connection to survive failed commit, got %d rows", remaining)
+	if connectionMarkedDeleted(t, pool, connID) {
+		t.Fatal("expected connection to stay unmarked after a failed commit")
 	}
 }
 
 // TestDeleteConnection_DoesNotBlockDatastoreReaders locks in that
-// DeleteConnection does not take d.mu. A BEFORE DELETE trigger holds the
+// DeleteConnection does not take d.mu. A BEFORE UPDATE trigger holds the
 // delete inside Postgres for several seconds, standing in for a long
 // cascade through metrics.*; once that delete is visibly sleeping in
 // pg_stat_activity, GetConnection (which takes d.mu.RLock) must return
@@ -607,12 +603,12 @@ func TestDeleteConnection_DoesNotBlockDatastoreReaders(t *testing.T) {
         RETURNS trigger LANGUAGE plpgsql AS $$
         BEGIN
             PERFORM pg_sleep(4);
-            RETURN OLD;
+            RETURN NEW;
         END;
         $$;
         DROP TRIGGER IF EXISTS slow_conn_delete_mu ON connections;
         CREATE TRIGGER slow_conn_delete_mu
-        BEFORE DELETE ON connections
+        BEFORE UPDATE ON connections
         FOR EACH ROW EXECUTE FUNCTION slow_connection_delete_mu();
     `); err != nil {
 		t.Fatalf("failed to install slow delete trigger: %v", err)
@@ -653,7 +649,7 @@ func TestDeleteConnection_DoesNotBlockDatastoreReaders(t *testing.T) {
                 SELECT 1 FROM pg_stat_activity
                 WHERE datname = current_database()
                   AND wait_event = 'PgSleep'
-                  AND query LIKE 'DELETE FROM connections%'
+                  AND query LIKE '%UPDATE connections c%'
             )
         `).Scan(&sleeping); err != nil {
 			t.Fatalf("waiting for the delete to start sleeping: %v", err)

@@ -4007,7 +4007,7 @@
       },
       "put": {
         "summary": "Update a connection",
-        "description": "Updates an existing connection",
+        "description": "Updates an existing connection. Requires ownership of the connection or the manage_connections permission. A connection the caller cannot see answers 404, exactly as a missing one does.",
         "operationId": "updateConnection",
         "tags": [
           "Connections"
@@ -4066,7 +4066,7 @@
             }
           },
           "403": {
-            "description": "Forbidden",
+            "description": "The caller can see the connection but may not change it, or the API token's connection scope excludes it",
             "content": {
               "application/json": {
                 "schema": {
@@ -4076,7 +4076,7 @@
             }
           },
           "404": {
-            "description": "Connection not found",
+            "description": "Connection not found, or not visible to the caller",
             "content": {
               "application/json": {
                 "schema": {
@@ -4094,7 +4094,7 @@
       },
       "delete": {
         "summary": "Delete a connection",
-        "description": "Deletes a connection",
+        "description": "Deletes a connection. Requires ownership of the connection or the manage_connections permission. The connection disappears from every listing and its monitoring and alerting stop as soon as the request returns; the server then removes its collected metrics in the background, in bounded batches, and finally the connection row itself. A connection the caller cannot see answers 404, exactly as a missing one does.",
         "operationId": "deleteConnection",
         "tags": [
           "Connections"
@@ -4112,7 +4112,7 @@
         ],
         "responses": {
           "204": {
-            "description": "Connection deleted"
+            "description": "Connection deleted; its metrics are removed in the background"
           },
           "401": {
             "description": "Unauthorized",
@@ -4125,7 +4125,7 @@
             }
           },
           "403": {
-            "description": "Forbidden",
+            "description": "The caller can see the connection but may not delete it, or the API token's connection scope excludes it",
             "content": {
               "application/json": {
                 "schema": {
@@ -4135,7 +4135,7 @@
             }
           },
           "404": {
-            "description": "Connection not found",
+            "description": "Connection not found, or not visible to the caller",
             "content": {
               "application/json": {
                 "schema": {

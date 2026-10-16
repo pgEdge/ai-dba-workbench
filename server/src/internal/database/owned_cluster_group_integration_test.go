@@ -31,6 +31,7 @@ CREATE TABLE clusters (
     group_id INTEGER REFERENCES cluster_groups(id)
 );
 CREATE TABLE connections (
+    deleted_at TIMESTAMPTZ,
     id INTEGER PRIMARY KEY,
     cluster_id INTEGER REFERENCES clusters(id)
 );

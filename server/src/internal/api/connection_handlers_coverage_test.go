@@ -53,6 +53,8 @@ CREATE TABLE clusters (
     dismissed BOOLEAN NOT NULL DEFAULT FALSE
 );
 CREATE TABLE connections (
+    deleted_at TIMESTAMPTZ,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
     id SERIAL PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     description TEXT,
@@ -464,7 +466,7 @@ func TestConnectionCoverage_UpdateConnection(t *testing.T) {
 	}{
 		{"missing authentication", nil, path, ConnectionFullUpdateRequest{}, http.StatusUnauthorized, ""},
 		{"not found", &h.admin, "/api/v1/connections/8999", ConnectionFullUpdateRequest{}, http.StatusNotFound, "Connection not found"},
-		{"non-owner forbidden", &h.other, path, ConnectionFullUpdateRequest{}, http.StatusForbidden, ""},
+		{"unseen connection is not found", &h.other, path, ConnectionFullUpdateRequest{}, http.StatusNotFound, "Connection not found"},
 		{"invalid JSON", &h.owner, path, "{not json", http.StatusBadRequest, "Invalid request body"},
 		{"invalid name", &h.owner, path, ConnectionFullUpdateRequest{Name: str("")}, http.StatusBadRequest, ""},
 		{"owner cannot share", &h.owner, path, ConnectionFullUpdateRequest{IsShared: &yes}, http.StatusForbidden,

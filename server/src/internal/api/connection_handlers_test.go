@@ -542,6 +542,8 @@ func TestConnectionHandler_HandleSubpath_EmptyPath(t *testing.T) {
 const listConnectionsIssue83TestSchema = `
 DROP TABLE IF EXISTS connections CASCADE;
 CREATE TABLE connections (
+    deleted_at TIMESTAMPTZ,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
     id SERIAL PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     description TEXT,
@@ -1077,7 +1079,7 @@ func TestConnectionHandler_CreateConnection_Issue270_FieldTooLong(t *testing.T) 
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/connections",
 				bytes.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
-			req = withBearer(req, token)
+			req = withAuth(t, handler.authStore, req, token)
 			req = withUser(req, userID)
 			rec := httptest.NewRecorder()
 
@@ -1119,7 +1121,7 @@ func TestConnectionHandler_CreateConnection_Issue270_AtLimitPassesValidation(t *
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections",
 		bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = withBearer(req, token)
+	req = withAuth(t, handler.authStore, req, token)
 	req = withUser(req, userID)
 	rec := httptest.NewRecorder()
 
@@ -1152,7 +1154,7 @@ func TestConnectionHandler_CreateConnection_Issue270_MultibyteAtLimitPasses(t *t
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections",
 		bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = withBearer(req, token)
+	req = withAuth(t, handler.authStore, req, token)
 	req = withUser(req, userID)
 	rec := httptest.NewRecorder()
 
@@ -1185,7 +1187,7 @@ func TestConnectionHandler_CreateConnection_Issue270_MultibyteOverLimitRejected(
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections",
 		bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = withBearer(req, token)
+	req = withAuth(t, handler.authStore, req, token)
 	req = withUser(req, userID)
 	rec := httptest.NewRecorder()
 

@@ -85,6 +85,12 @@ type HandlerDependencies struct {
 	// it to hand that ownership back to the server. It may be nil in
 	// tests that only exercise route registration.
 	RegisterCloser func(func())
+
+	// ConnectionPurgeNudge starts the background purge of deleted
+	// connections straight away; the connection delete handler calls it
+	// after marking a connection deleted. It may be nil, in which case
+	// the purge's own interval picks the connection up.
+	ConnectionPurgeNudge func()
 }
 
 // SetupHandlers configures all HTTP handlers for the server
@@ -207,6 +213,7 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 			deps.Config.ConnectionSecurity.AllowedHosts,
 			deps.Config.ConnectionSecurity.BlockedHosts,
 		)
+		connHandler.SetPurgeNudge(deps.ConnectionPurgeNudge)
 		registerDatastoreHandler(mux, connHandler, authWrapper, "Connection management", deps.Datastore)
 
 		// Cluster hierarchy endpoints (for ClusterNavigator component)

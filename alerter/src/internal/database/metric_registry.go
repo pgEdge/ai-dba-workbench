@@ -239,7 +239,7 @@ var metricRegistry = map[string]metricQueryConfig{
 			WITH activity_counts AS (
 				SELECT psa.connection_id, psa.collected_at, COUNT(*) as active
 				FROM metrics.pg_stat_activity psa
-				JOIN connections c ON c.id = psa.connection_id
+				JOIN connections c ON c.id = psa.connection_id AND c.deleted_at IS NULL
 				WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1
 				  AND psa.backend_type = 'client backend'
 				GROUP BY psa.connection_id, psa.collected_at
@@ -253,7 +253,7 @@ var metricRegistry = map[string]metricQueryConfig{
 				       COALESCE(LEAD(ps.collected_at) OVER w,
 				                'infinity'::timestamptz) as valid_to
 				FROM metrics.pg_settings ps
-				JOIN connections c ON c.id = ps.connection_id
+				JOIN connections c ON c.id = ps.connection_id AND c.deleted_at IS NULL
 				WHERE ps.name = 'max_connections'
 				WINDOW w AS (PARTITION BY ps.connection_id ORDER BY ps.collected_at)
 			)
@@ -291,7 +291,7 @@ var metricRegistry = map[string]metricQueryConfig{
 			SELECT psa.connection_id, NULL::text as database_name,
 			       COUNT(*)::float as value, psa.collected_at
 			FROM metrics.pg_stat_activity psa
-			JOIN connections c ON c.id = psa.connection_id
+			JOIN connections c ON c.id = psa.connection_id AND c.deleted_at IS NULL
 			WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1
 			  AND psa.backend_type = 'client backend'
 			GROUP BY psa.connection_id, psa.collected_at
@@ -388,7 +388,7 @@ var metricRegistry = map[string]metricQueryConfig{
 			       MAX((r.sent_lsn::pg_lsn - r.replay_lsn::pg_lsn)::float) as value,
 			       r.collected_at
 			FROM metrics.pg_stat_replication r
-			JOIN connections c ON c.id = r.connection_id
+			JOIN connections c ON c.id = r.connection_id AND c.deleted_at IS NULL
 			WHERE r.collected_at > NOW() - INTERVAL '1 day' * $1
 			  AND r.sent_lsn IS NOT NULL
 			  AND r.replay_lsn IS NOT NULL
@@ -569,7 +569,7 @@ var metricRegistry = map[string]metricQueryConfig{
 			       COALESCE(MAX(s.retained_bytes), 0)::float AS value,
 			       s.collected_at
 			  FROM metrics.pg_replication_slots s
-			  JOIN connections c ON c.id = s.connection_id
+			  JOIN connections c ON c.id = s.connection_id AND c.deleted_at IS NULL
 			 WHERE s.collected_at > NOW() - INTERVAL '1 day' * $1
 			 GROUP BY s.connection_id, s.collected_at
 			 ORDER BY s.connection_id, s.collected_at
@@ -619,7 +619,7 @@ var metricRegistry = map[string]metricQueryConfig{
 			       COUNT(*)::float AS value,
 			       s.collected_at
 			  FROM metrics.spock_exception_log s
-			  JOIN connections c ON c.id = s.connection_id
+			  JOIN connections c ON c.id = s.connection_id AND c.deleted_at IS NULL
 			 WHERE s.collected_at > NOW() - INTERVAL '1 day' * $1
 			 GROUP BY s.connection_id, s.collected_at
 			 ORDER BY s.connection_id, s.collected_at
@@ -666,7 +666,7 @@ var metricRegistry = map[string]metricQueryConfig{
 			       COUNT(*)::float AS value,
 			       s.collected_at
 			  FROM metrics.spock_resolutions s
-			  JOIN connections c ON c.id = s.connection_id
+			  JOIN connections c ON c.id = s.connection_id AND c.deleted_at IS NULL
 			 WHERE s.collected_at > NOW() - INTERVAL '1 day' * $1
 			 GROUP BY s.connection_id, s.collected_at
 			 ORDER BY s.connection_id, s.collected_at
@@ -762,7 +762,7 @@ var metricRegistry = map[string]metricQueryConfig{
 			SELECT psa.connection_id, NULL::text as database_name,
 			       COUNT(*)::float as value, psa.collected_at
 			FROM metrics.pg_stat_activity psa
-			JOIN connections c ON c.id = psa.connection_id
+			JOIN connections c ON c.id = psa.connection_id AND c.deleted_at IS NULL
 			WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1
 			  AND psa.wait_event_type = 'Lock'
 			  AND psa.backend_type = 'client backend'
@@ -801,7 +801,7 @@ var metricRegistry = map[string]metricQueryConfig{
 			       COALESCE(MAX(EXTRACT(EPOCH FROM (psa.collected_at - psa.xact_start))), 0)::float as value,
 			       psa.collected_at
 			FROM metrics.pg_stat_activity psa
-			JOIN connections c ON c.id = psa.connection_id
+			JOIN connections c ON c.id = psa.connection_id AND c.deleted_at IS NULL
 			WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1
 			  AND psa.state = 'idle in transaction'
 			  AND psa.xact_start IS NOT NULL
@@ -850,7 +850,7 @@ var metricRegistry = map[string]metricQueryConfig{
 			       MAX(EXTRACT(EPOCH FROM (psa.collected_at - psa.query_start)))::float as value,
 			       psa.collected_at
 			FROM metrics.pg_stat_activity psa
-			JOIN connections c ON c.id = psa.connection_id
+			JOIN connections c ON c.id = psa.connection_id AND c.deleted_at IS NULL
 			WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1
 			  AND psa.wait_event_type = 'Lock'
 			  AND psa.query_start IS NOT NULL
@@ -889,7 +889,7 @@ var metricRegistry = map[string]metricQueryConfig{
 			       COALESCE(MAX(EXTRACT(EPOCH FROM (psa.collected_at - psa.query_start))), 0)::float as value,
 			       psa.collected_at
 			FROM metrics.pg_stat_activity psa
-			JOIN connections c ON c.id = psa.connection_id
+			JOIN connections c ON c.id = psa.connection_id AND c.deleted_at IS NULL
 			WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1
 			  AND psa.state = 'active'
 			  AND psa.query_start IS NOT NULL
@@ -928,7 +928,7 @@ var metricRegistry = map[string]metricQueryConfig{
 			       COALESCE(MAX(EXTRACT(EPOCH FROM (psa.collected_at - psa.xact_start))), 0)::float as value,
 			       psa.collected_at
 			FROM metrics.pg_stat_activity psa
-			JOIN connections c ON c.id = psa.connection_id
+			JOIN connections c ON c.id = psa.connection_id AND c.deleted_at IS NULL
 			WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1
 			  AND psa.xact_start IS NOT NULL
 			  AND psa.backend_type = 'client backend'
@@ -1144,7 +1144,7 @@ var metricRegistry = map[string]metricQueryConfig{
 				           ORDER BY m.collected_at
 				       ) as prev_num_requested
 				FROM metrics.pg_stat_checkpointer m
-				JOIN connections c ON c.id = m.connection_id
+				JOIN connections c ON c.id = m.connection_id AND c.deleted_at IS NULL
 				WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1
 			),
 			bucket_role AS (
@@ -1288,7 +1288,7 @@ var metricRegistry = map[string]metricQueryConfig{
 				           ORDER BY m.collected_at
 				       ) as prev_collected_at
 				FROM metrics.pg_stat_database m
-				JOIN connections c ON c.id = m.connection_id
+				JOIN connections c ON c.id = m.connection_id AND c.deleted_at IS NULL
 				WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1
 				  AND m.datname IS NOT NULL
 				  AND m.datname NOT LIKE 'template%'
@@ -1386,7 +1386,7 @@ var metricRegistry = map[string]metricQueryConfig{
 				           ORDER BY m.collected_at
 				       ) as prev_deadlocks
 				FROM metrics.pg_stat_database m
-				JOIN connections c ON c.id = m.connection_id
+				JOIN connections c ON c.id = m.connection_id AND c.deleted_at IS NULL
 				WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1
 				  AND m.datname IS NOT NULL
 				  AND m.datname NOT LIKE 'template%'
@@ -1451,7 +1451,7 @@ var metricRegistry = map[string]metricQueryConfig{
 				           ORDER BY m.collected_at
 				       ) as prev_temp_files
 				FROM metrics.pg_stat_database m
-				JOIN connections c ON c.id = m.connection_id
+				JOIN connections c ON c.id = m.connection_id AND c.deleted_at IS NULL
 				WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1
 				  AND m.datname IS NOT NULL
 				  AND m.datname NOT LIKE 'template%'
@@ -1602,7 +1602,7 @@ var metricRegistry = map[string]metricQueryConfig{
 				       s.total_exec_time,
 				       s.collected_at
 				FROM metrics.pg_stat_statements s
-				JOIN connections c ON c.id = s.connection_id
+				JOIN connections c ON c.id = s.connection_id AND c.deleted_at IS NULL
 				WHERE s.collected_at > NOW() - INTERVAL '1 day' * $1
 				ORDER BY s.connection_id, s.queryid, s.userid, s.dbid,
 				         s.toplevel, s.collected_at, s.database_name
@@ -1680,7 +1680,7 @@ var metricRegistry = map[string]metricQueryConfig{
 			       ` + cpuBusyPercentExpr + ` as value,
 			       m.collected_at
 			FROM metrics.pg_sys_cpu_usage_info m
-			JOIN connections c ON c.id = m.connection_id
+			JOIN connections c ON c.id = m.connection_id AND c.deleted_at IS NULL
 			WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1
 			ORDER BY m.connection_id, m.collected_at
 		`,
@@ -1718,7 +1718,7 @@ var metricRegistry = map[string]metricQueryConfig{
 				SELECT m.connection_id, m.collected_at,
 				       MAX((m.used_space::float / NULLIF(m.total_space, 0)) * 100) as value
 				FROM metrics.pg_sys_disk_info m
-				JOIN connections c ON c.id = m.connection_id
+				JOIN connections c ON c.id = m.connection_id AND c.deleted_at IS NULL
 				WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1
 				  AND m.total_space > 0
 				  AND ` + pseudoFilesystemExclusion + `
@@ -1752,7 +1752,7 @@ var metricRegistry = map[string]metricQueryConfig{
 			       COALESCE(m.load_avg_fifteen_minutes, 0)::float as value,
 			       m.collected_at
 			FROM metrics.pg_sys_load_avg_info m
-			JOIN connections c ON c.id = m.connection_id
+			JOIN connections c ON c.id = m.connection_id AND c.deleted_at IS NULL
 			WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1
 			ORDER BY m.connection_id, m.collected_at
 		`,
@@ -1787,7 +1787,7 @@ var metricRegistry = map[string]metricQueryConfig{
 			       END as value,
 			       m.collected_at
 			FROM metrics.pg_sys_memory_info m
-			JOIN connections c ON c.id = m.connection_id
+			JOIN connections c ON c.id = m.connection_id AND c.deleted_at IS NULL
 			WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1
 			ORDER BY m.connection_id, m.collected_at
 		`,

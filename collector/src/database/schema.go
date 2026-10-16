@@ -4073,6 +4073,41 @@ func (sm *SchemaManager) registerMigrations() {
 			return nil
 		},
 	})
+
+	// Migration #29: mark deleted connections rather than deleting them
+	// in the request (issue #669). Deleting a connection row cascades
+	// through every metrics.* table, which takes longer than any HTTP
+	// request can wait once a connection has collected for a while. The
+	// DELETE endpoint now sets deleted_at and stops monitoring; the
+	// server purges the connection's metrics in bounded batches in the
+	// background and then removes the row. Every reader of connections
+	// skips rows with deleted_at set. ADD COLUMN without a default is a
+	// catalog-only change, so the brief ACCESS EXCLUSIVE lock it takes
+	// does not rewrite the table.
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     29,
+		Description: "Add connections.deleted_at for background connection deletion",
+		Up: func(tx pgx.Tx) error {
+			_, err := tx.Exec(context.Background(), `
+				ALTER TABLE connections
+					ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+
+				COMMENT ON COLUMN connections.deleted_at IS
+					'When the connection was deleted; NULL for a live connection. A deleted connection is hidden from every reader and is no longer monitored, whilst the server purges its metrics in the background and then removes the row';
+
+				CREATE INDEX IF NOT EXISTS idx_connections_deleted_at
+					ON connections (deleted_at)
+					WHERE deleted_at IS NOT NULL;
+
+				COMMENT ON INDEX idx_connections_deleted_at IS
+					'Partial index for finding deleted connections still awaiting the background purge';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to add connections.deleted_at: %w", err)
+			}
+			return nil
+		},
+	})
 }
 
 // statementTextUpdates holds, for each column that stores statement text,

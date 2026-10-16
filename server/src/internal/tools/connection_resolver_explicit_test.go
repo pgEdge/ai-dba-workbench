@@ -58,7 +58,8 @@ CREATE TABLE ai_wb_resolver_fixture.connections (
     is_shared BOOLEAN NOT NULL DEFAULT FALSE,
     membership_source VARCHAR(16) NOT NULL DEFAULT 'auto',
     cluster_id INTEGER,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMPTZ
 );
 `
 

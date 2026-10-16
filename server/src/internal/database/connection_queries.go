@@ -231,11 +231,12 @@ func scanConnectionListItem(conn *ConnectionListItem, scanner interface{ Scan(..
 // request is gone.
 const DefaultDatastoreStatementTimeout = 30 * time.Second
 
-// ConnectionDeleteTimeout is the budget for deleting a connection. The
-// DELETE cascades through every metrics.* table and removes the
-// connection's whole retention history, which DefaultDatastoreStatementTimeout
-// and the ten seconds the other connection handlers allow cannot cover
-// for a connection that has been collecting for days (issue #480). The
+// ConnectionDeleteTimeout is the budget for marking a connection
+// deleted. The mark also deletes the connection's rows from every
+// non-metrics table that cascades from it (alerts, history and the
+// like), which DefaultDatastoreStatementTimeout and the ten seconds the
+// other connection handlers allow may not cover (issue #480); the
+// metrics themselves are purged later by ConnectionPurger. The
 // longest budget the server grants any request is the HTTP server's 300
 // second WriteTimeout (internal/mcp/http_server.go), which exists for LLM
 // agentic loops; four minutes is the most the delete can take and still
@@ -357,6 +358,7 @@ func (d *Datastore) GetAllConnections(ctx context.Context) ([]ConnectionListItem
                is_monitored, is_shared, COALESCE(owner_username, ''),
                cluster_id, membership_source
         FROM connections
+        WHERE deleted_at IS NULL
         ORDER BY name
     `
 
@@ -381,7 +383,7 @@ func (d *Datastore) GetConnectionSharingInfo(ctx context.Context, id int) (isSha
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 
-	query := `SELECT is_shared, COALESCE(owner_username, '') FROM connections WHERE id = $1`
+	query := `SELECT is_shared, COALESCE(owner_username, '') FROM connections WHERE id = $1 AND deleted_at IS NULL`
 	err = d.pool.QueryRow(ctx, query, id).Scan(&isShared, &ownerUsername)
 	if err != nil {
 		return false, "", fmt.Errorf("failed to get connection sharing info: %w", err)
@@ -400,7 +402,7 @@ func (d *Datastore) GetConnection(ctx context.Context, id int) (*MonitoredConnec
                owner_username, owner_token, is_monitored, is_shared,
                membership_source
         FROM connections
-        WHERE id = $1
+        WHERE id = $1 AND deleted_at IS NULL
     `
 
 	conn, err := scanFullConnection(d.pool.QueryRow(ctx, query, id))
@@ -441,7 +443,7 @@ func (d *Datastore) UpdateConnectionName(ctx context.Context, id int, name strin
 	query := `
         UPDATE connections
         SET name = $2
-        WHERE id = $1
+        WHERE id = $1 AND deleted_at IS NULL
         RETURNING id, name, description, host, hostaddr, port, database_name, username,
                   password_encrypted, sslmode, sslcert, sslkey, sslrootcert,
                   owner_username, owner_token, is_monitored, is_shared,
@@ -502,25 +504,33 @@ func (d *Datastore) CreateConnection(ctx context.Context, params ConnectionCreat
 	return conn, nil
 }
 
-// DeleteConnection deletes a connection by ID. When the deleted
-// connection was the last member of an auto-detected cluster, that
-// cluster is soft-dismissed in the same transaction so it stops
-// appearing in autocomplete results (issue #238). User-created
-// clusters (auto_cluster_key IS NULL) are left untouched; the
-// soft-dismiss path is reserved for auto-detected rows which would
-// otherwise persist forever once their last connection is removed
-// because auto-detection only inserts new rows for unseen
-// auto_cluster_key values.
+// DeleteConnection deletes a connection by ID. It is the first half of
+// a two-step delete (issue #669): it marks the row deleted and removes
+// everything that makes the connection visible or active, and the
+// ConnectionPurger then removes the connection's metrics in bounded
+// batches and finally the row itself. Callers see the connection gone
+// as soon as this returns, because every reader filters on deleted_at
+// IS NULL, whilst the metrics history, which can run to gigabytes, no
+// longer has to go in one statement inside the request.
+//
+// In one transaction it sets deleted_at, switches monitoring and
+// alerting off, detaches the connection from its cluster, and deletes
+// the rows of every table outside the metrics schema that would cascade
+// from the row (alerts, blackouts, thresholds, relationships and so
+// on). When the connection was the last member of an auto-detected
+// cluster, that cluster is soft-dismissed so it stops appearing in
+// autocomplete results (issue #238); user-created clusters
+// (auto_cluster_key IS NULL) are left alone, because auto-detection
+// only inserts rows for unseen auto_cluster_key values and an empty
+// auto-detected row would otherwise persist forever.
 //
 // The transaction runs under a local statement_timeout of
-// ConnectionDeleteTimeout, overriding the pool-wide timeout, because
-// the cascade through metrics.* can legitimately take minutes. For the
-// same reason it does not take d.mu: the mutex guards no Go state here
-// (d.pool never changes after construction), and holding its write
-// lock for the length of the cascade would stall every other datastore
-// call in the API behind it. Consistency with concurrent writers rests
-// on the transaction, as it must anyway, since the collector writes to
-// the same tables without the mutex.
+// ConnectionDeleteTimeout, overriding the pool-wide one, so that a
+// connection with a long alert history still completes. It does not
+// take d.mu: the mutex guards no Go state here (d.pool never changes
+// after construction), and consistency with concurrent writers rests on
+// the transaction, as it must anyway, since the collector and alerter
+// write to the same tables without the mutex.
 func (d *Datastore) DeleteConnection(ctx context.Context, id int) error {
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {
@@ -537,21 +547,38 @@ func (d *Datastore) DeleteConnection(ctx context.Context, id int) error {
 		return fmt.Errorf("failed to set delete connection statement timeout: %w", err)
 	}
 
-	// Delete the connection row and capture its cluster_id in one
-	// statement. Doing both atomically avoids a TOCTOU window in
-	// which a concurrent transaction could reassign the connection
-	// to a different cluster between a separate SELECT and DELETE,
-	// causing us to dismiss the wrong cluster.
+	// Mark the row and capture the cluster it belonged to in one
+	// statement. The locked subquery reads cluster_id before the UPDATE
+	// clears it; doing both atomically avoids a window in which a
+	// concurrent transaction could move the connection to another
+	// cluster between a separate SELECT and UPDATE, causing us to
+	// dismiss the wrong cluster. A row already marked counts as
+	// missing, so a repeated DELETE answers 404.
 	var clusterID sql.NullInt64
-	err = tx.QueryRow(ctx,
-		`DELETE FROM connections WHERE id = $1 RETURNING cluster_id`,
-		id,
-	).Scan(&clusterID)
+	err = tx.QueryRow(ctx, `
+        UPDATE connections c
+        SET deleted_at = CURRENT_TIMESTAMP,
+            is_monitored = FALSE,
+            enabled = FALSE,
+            cluster_id = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        FROM (
+            SELECT id, cluster_id FROM connections
+            WHERE id = $1 AND deleted_at IS NULL
+            FOR UPDATE
+        ) old
+        WHERE c.id = old.id
+        RETURNING old.cluster_id
+    `, id).Scan(&clusterID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrConnectionNotFound
 		}
-		return fmt.Errorf("failed to delete connection: %w", err)
+		return fmt.Errorf("failed to mark connection deleted: %w", err)
+	}
+
+	if err := deleteConnectionDependents(ctx, tx, id); err != nil {
+		return err
 	}
 
 	// If the connection belonged to an auto-detected cluster and
@@ -685,7 +712,7 @@ func (d *Datastore) UpdateConnectionFull(ctx context.Context, id int, params Con
 	query := fmt.Sprintf(`
         UPDATE connections
         SET %s
-        WHERE id = $%d
+        WHERE id = $%d AND deleted_at IS NULL
         RETURNING id, name, description, host, hostaddr, port, database_name, username,
                   password_encrypted, sslmode, sslcert, sslkey, sslrootcert,
                   owner_username, owner_token, is_monitored, is_shared,
@@ -698,7 +725,7 @@ func (d *Datastore) UpdateConnectionFull(ctx context.Context, id int, params Con
 	}
 
 	// Clear connection error so it shows as initializing until the collector re-probes
-	_, _ = d.pool.Exec(ctx, "UPDATE connections SET connection_error = NULL WHERE id = $1", id) //nolint:errcheck // best-effort cleanup
+	_, _ = d.pool.Exec(ctx, "UPDATE connections SET connection_error = NULL WHERE id = $1 AND deleted_at IS NULL", id) //nolint:errcheck // best-effort cleanup
 
 	return conn, nil
 }

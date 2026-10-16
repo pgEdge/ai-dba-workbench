@@ -28,6 +28,7 @@ const connUpdatePasswordTestSchema = `
 DROP TABLE IF EXISTS connections CASCADE;
 
 CREATE TABLE connections (
+    deleted_at TIMESTAMPTZ,
     id SERIAL PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     description TEXT NOT NULL DEFAULT '',
@@ -44,6 +45,7 @@ CREATE TABLE connections (
     owner_username VARCHAR(255),
     owner_token VARCHAR(255),
     is_monitored BOOLEAN NOT NULL DEFAULT TRUE,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
     is_shared BOOLEAN NOT NULL DEFAULT FALSE,
     membership_source VARCHAR(16) NOT NULL DEFAULT 'auto',
     cluster_id INTEGER,

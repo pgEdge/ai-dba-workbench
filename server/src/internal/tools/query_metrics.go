@@ -188,7 +188,7 @@ To manage response sizes:
 			// On missing or error return a generic message; never echo the
 			// list of valid IDs/names, which would leak visibility.
 			var connName string
-			err = pool.QueryRow(ctx, "SELECT name FROM connections WHERE id = $1", connectionID).Scan(&connName)
+			err = pool.QueryRow(ctx, "SELECT name FROM connections WHERE id = $1 AND deleted_at IS NULL", connectionID).Scan(&connName)
 			if err != nil {
 				return mcp.NewToolError("connection not found or not accessible")
 			}

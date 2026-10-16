@@ -54,6 +54,7 @@ type Server struct {
 	mcpServer     *mcp.Server
 	overviewGen   *overview.Generator
 	overviewHub   *overview.Hub
+	connPurger    *database.ConnectionPurger
 	toolProvider  *tools.ContextAwareProvider
 	ctx           context.Context
 	cancel        context.CancelFunc
@@ -700,6 +701,12 @@ func (s *Server) Run(flags *Flags, configPath string) error {
 	// SIGHUP listener below is what drives it.
 	reloadableCfg := config.NewReloadableConfig(s.cfg, configPath, flags.ToReloadCLIFlags())
 
+	// Start purging deleted connections. It starts here rather than in
+	// NewServer because main verifies the schema in between, and the
+	// purge needs connections.deleted_at. It must start before the
+	// handlers are built, so that the delete handler gets its nudge.
+	s.startConnectionPurger()
+
 	httpConfig := s.newHTTPConfig(reloadableCfg)
 
 	// Log startup information
@@ -766,6 +773,27 @@ func (s *Server) overviewStreamCloser() func() {
 	return s.overviewHub.CloseAll
 }
 
+// startConnectionPurger starts the background purge of connections
+// marked deleted (issue #669), which stops when s.ctx is canceled. It
+// does nothing without a datastore or when already started.
+func (s *Server) startConnectionPurger() {
+	if s.datastore == nil || s.connPurger != nil {
+		return
+	}
+	s.connPurger = database.NewConnectionPurger(s.datastore)
+	go s.connPurger.Run(s.ctx)
+}
+
+// connectionPurgeNudge returns the function the connection delete
+// handler calls to start a purge straight away, or nil when no purger
+// is running.
+func (s *Server) connectionPurgeNudge() func() {
+	if s.connPurger == nil {
+		return nil
+	}
+	return s.connPurger.Nudge
+}
+
 // handlerDependencies builds the HTTP handlers' dependencies. The
 // handlers that apply a reload without a restart read the configuration
 // through reloadableCfg, so that a SIGHUP reaches them (issue #484).
@@ -786,7 +814,8 @@ func (s *Server) handlerDependencies(ipExtractor *auth.IPExtractor, reloadableCf
 		OIDCStateKey: s.oidcStateKey,
 		LiveConfig:   reloadableCfg.Get,
 
-		RegisterCloser: s.registerHandlerCloser,
+		RegisterCloser:       s.registerHandlerCloser,
+		ConnectionPurgeNudge: s.connectionPurgeNudge(),
 	}
 }
 

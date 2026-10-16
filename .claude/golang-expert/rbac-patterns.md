@@ -107,7 +107,7 @@ authentication, the caller-only token-scope check, the visibility
 load, the lookup, the visibility decision, then the ownership check:
 
 ```go
-username, _, err := getUserInfoCompat(r, h.authStore)
+username, _, err := getUserInfoCompat(r)
 if err != nil {
     RespondError(w, http.StatusUnauthorized,
         "Invalid or missing authentication token")
@@ -156,12 +156,15 @@ if !hasManageConns && !isOwner {
 }
 ```
 
-`getUserInfoCompat` validates the bearer token against the auth
-store, while `HasAdminPermission` reads the user ID from the request
-context. Both must succeed: handler-level tests bypass the middleware
-that normally populates the context, so callers must set BOTH the
-`Authorization` header (via `withBearer`) AND the user context (via
-`withUser`).
+`getUserInfoCompat` reads the username from the request context that
+`auth.AuthenticateRequest` built, so a session and an API token are
+accepted alike (issue #668; it used to validate the bearer as a
+session token and answered 401 to every API token). Handler-level
+tests bypass the middleware, so build the context the way it does
+with `withAuth(t, store, req, rawToken)` in `cluster_handlers_test.go`,
+which takes a session token or a raw API token; apply context helpers
+such as `withSuperuser` after it. `TestConnectionLifecycleForEachCaller`
+runs create, update and delete as both kinds of caller.
 
 Visibility MUST come before ownership (issue #649): a caller who
 cannot see the row gets the same 404 body as for a missing row, and
@@ -180,6 +183,15 @@ restricted caller. `TestClusterGroupWritesHideInvisibleGroups` and
 `TestClusterGroupLookupsCostTheSameForHiddenAndMissing` in
 `cluster_group_visibility_test.go` lock this in; the second counts
 pool acquisitions through a `PrepareConn` hook.
+
+Connection update and delete (`updateConnection`, `deleteConnection`)
+follow the issue #677 model instead, through `loadConnectionForChange`:
+token scope first (audited 403), then a 404 "Connection not found",
+unaudited and identical to a missing id, when the caller neither can
+see the connection (`CanAccessConnection`) nor holds
+`manage_connections`; only then the ownership check, whose 403 is
+audited through `h.refuse`. `CanAccessConnection` runs whether or not
+the row exists, so the work done does not reveal it either.
 
 Note on handler comments: the Variant 2 implementation must call
 `Get<Resource>` to read `owner_username` before it can decide
@@ -423,7 +435,7 @@ For Variant 2 handlers, add an integration test that:
 
 1. Creates a fresh row owned by the caller (UPDATE
    `owner_username = $caller` if `CreateX` does not set it).
-2. Sends the mutating request with `withBearer` AND `withUser`.
+2. Sends the mutating request through `withAuth(t, store, req, token)`.
 3. Asserts 200/204 (allowed), then verifies the row was actually
    mutated/deleted via a follow-up datastore query.
 
@@ -532,9 +544,9 @@ or clearing a source's relationships deletes all of them first,
 whatever the target), and adding or removing a server goes through
 `requireConnectionsInTokenScope` for that connection. The cluster-group
 create, update and delete handlers resolve the caller through
-`getUserInfoCompat`, which accepts session tokens only, so an API
-token gets 401 there after the scope gate; the gate is kept in case
-API tokens are ever admitted. A write addressed by id (blackout or
+`getUserInfoCompat`, which reads the authenticated context and so
+admits API tokens (issue #668), making the scope gate reachable there.
+A write addressed by id (blackout or
 schedule update and delete) checks the stored record, and a schedule
 update checks the body as well, so a token cannot move a record into
 or out of its scope; `requireBlackoutInTokenScope` skips the database
@@ -990,11 +1002,11 @@ for a known scope and a positive id, and never the free-text item.
 `IPExtractor.ExtractIP` returns only a parseable address (forwarded
 entries go through `parseForwardedIP`, which strips a port), falling
 back to the direct peer address.
-`updateConnection` and `deleteConnection` call the session-only
-`getUserInfoCompat` first, so a real token gets 401 there; only the
-cluster move reaches an audited connection token-scope refusal, and
-the other two gates are defensive, so do not document them as
-reachable.
+`updateConnection` and `deleteConnection` admit API tokens since
+issue #668, so their connection token-scope refusals are reachable and
+audited, as is the cluster move;
+`TestConnectionMutationHonoursTokenConnectionScope` and
+`TestConnectionScopeRefusalIsAudited` cover them.
 
 Mutations in these handlers go through `h.actorStore(r)` rather than
 `h.authStore`, so the audit row names the acting user or token:

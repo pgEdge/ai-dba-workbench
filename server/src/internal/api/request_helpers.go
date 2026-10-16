@@ -11,6 +11,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -28,30 +29,6 @@ type UserInfo struct {
 	IsSuperuser bool
 }
 
-// GetUserInfoFromRequest extracts username and superuser status from the
-// Authorization header. Returns an error if authentication fails.
-func GetUserInfoFromRequest(r *http.Request, authStore *auth.AuthStore) (*UserInfo, error) {
-	token := auth.ExtractBearerToken(r)
-	if token == "" {
-		return nil, fmt.Errorf("missing authentication credentials")
-	}
-
-	// Validate session token and get username
-	username, err := authStore.ValidateSessionToken(token)
-	if err != nil {
-		return nil, err
-	}
-
-	// Look up user to get superuser status
-	user, err := authStore.GetUser(username)
-	if err != nil {
-		// User exists but couldn't get details - return with superuser false
-		return &UserInfo{Username: username, IsSuperuser: false}, nil
-	}
-
-	return &UserInfo{Username: username, IsSuperuser: user.IsSuperuser}, nil
-}
-
 // GetTokenHashFromRequest extracts and hashes the token from the Authorization
 // header. Returns an empty string if the token cannot be extracted.
 func GetTokenHashFromRequest(r *http.Request) string {
@@ -62,14 +39,24 @@ func GetTokenHashFromRequest(r *http.Request) string {
 	return auth.GetTokenHashByRawToken(token)
 }
 
-// getUserInfoCompat is a convenience wrapper around GetUserInfoFromRequest
-// that returns the username and superuser status as separate values.
-func getUserInfoCompat(r *http.Request, authStore *auth.AuthStore) (string, bool, error) {
-	info, err := GetUserInfoFromRequest(r, authStore)
-	if err != nil {
-		return "", false, err
+// errNoAuthenticatedCaller is returned by getUserInfoCompat when the
+// request context carries no authenticated username, which only happens
+// when a handler is reached without the authentication wrapper.
+var errNoAuthenticatedCaller = errors.New("missing authentication credentials")
+
+// getUserInfoCompat returns the caller's username and superuser status
+// from the request context, where auth.AuthenticateRequest put them. It
+// serves API tokens and session tokens alike: an API token resolves to
+// its owner's username, so ownership checks treat a token exactly as
+// they treat its owner's session. It used to re-validate the bearer
+// header as a session token, which refused every API token with 401
+// (issue #668).
+func getUserInfoCompat(r *http.Request) (string, bool, error) {
+	username := auth.GetUsernameFromContext(r.Context())
+	if username == "" {
+		return "", false, errNoAuthenticatedCaller
 	}
-	return info.Username, info.IsSuperuser, nil
+	return username, auth.IsSuperuserFromContext(r.Context()), nil
 }
 
 // DecodeJSONBody decodes a JSON request body into the provided destination.

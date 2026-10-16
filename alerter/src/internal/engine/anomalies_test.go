@@ -275,6 +275,7 @@ CREATE TABLE clusters (
 );
 
 CREATE TABLE connections (
+    deleted_at TIMESTAMPTZ,
     id SERIAL PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     enabled BOOLEAN NOT NULL DEFAULT TRUE,

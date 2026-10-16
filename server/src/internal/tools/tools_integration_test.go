@@ -51,6 +51,7 @@ DROP SCHEMA IF EXISTS metrics CASCADE;
 CREATE SCHEMA metrics;
 
 CREATE TABLE connections (
+    deleted_at TIMESTAMPTZ,
     id SERIAL PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     host VARCHAR(255) NOT NULL DEFAULT '',

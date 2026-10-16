@@ -336,6 +336,7 @@ func applyMetricsSchema(ctx context.Context, pool *pgxpool.Pool) error {
 		// metrics.* back to connections are intentionally omitted; the
 		// probe schema in this helper is FK-free for test isolation.
 		`CREATE TABLE IF NOT EXISTS connections (
+		    deleted_at TIMESTAMPTZ,
 			id SERIAL PRIMARY KEY,
 			owner_username VARCHAR(255),
 			owner_token VARCHAR(255),

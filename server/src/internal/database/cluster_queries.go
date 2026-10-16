@@ -1038,7 +1038,7 @@ func (d *Datastore) getUngroupedServersInternal(ctx context.Context) ([]ServerIn
             ORDER BY collected_at DESC
             LIMIT 1
         ) m ON true
-        WHERE c.cluster_id IS NULL
+        WHERE c.cluster_id IS NULL AND c.deleted_at IS NULL
         ORDER BY c.name
     `, serverStatusCaseSQL("m.collected_at", "m.collected_at IS NULL"))
 
@@ -1181,7 +1181,7 @@ func (d *Datastore) AssignConnectionToCluster(ctx context.Context, connectionID 
 	query := `
         UPDATE connections
         SET cluster_id = $2, role = $3, membership_source = $4, updated_at = CURRENT_TIMESTAMP
-        WHERE id = $1
+        WHERE id = $1 AND deleted_at IS NULL
     `
 
 	result, err := d.pool.Exec(ctx, query, connectionID, clusterID, role, membershipSource)

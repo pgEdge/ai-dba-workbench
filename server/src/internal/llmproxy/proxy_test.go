@@ -1463,3 +1463,129 @@ func TestErrNoTextContentMessage(t *testing.T) {
 		}
 	}
 }
+
+// -----------------------------------------------------------------------
+// Tool-result role normalization (issue #686)
+// -----------------------------------------------------------------------
+
+func TestNormalizeToolResultRoles(t *testing.T) {
+	toolUse := pgllm.ContentBlock{
+		Type:    pgllm.BlockToolUse,
+		ToolUse: &pgllm.ToolUse{ID: "call_1", Name: "query_database", Input: json.RawMessage(`{}`)},
+	}
+	result1 := pgllm.ContentBlock{Type: pgllm.BlockToolResult, ToolUseID: "call_1", Text: "1"}
+	result2 := pgllm.ContentBlock{Type: pgllm.BlockToolResult, ToolUseID: "call_2", Text: "err", IsError: true}
+	text := pgllm.TextBlock("and also this")
+
+	tests := []struct {
+		name string
+		in   []pgllm.Message
+		want []pgllm.Message
+	}{
+		{
+			name: "nil messages",
+			in:   nil,
+			want: []pgllm.Message{},
+		},
+		{
+			name: "plain conversation unchanged",
+			in:   []pgllm.Message{pgllm.UserText("hi"), pgllm.AssistantText("hello")},
+			want: []pgllm.Message{pgllm.UserText("hi"), pgllm.AssistantText("hello")},
+		},
+		{
+			name: "user message of tool results becomes tool role",
+			in: []pgllm.Message{
+				pgllm.UserText("run SELECT 1"),
+				pgllm.AssistantBlocks(toolUse),
+				pgllm.UserBlocks(result1, result2),
+			},
+			want: []pgllm.Message{
+				pgllm.UserText("run SELECT 1"),
+				pgllm.AssistantBlocks(toolUse),
+				{Role: pgllm.RoleTool, Content: []pgllm.ContentBlock{result1, result2}},
+			},
+		},
+		{
+			name: "mixed user message is split with tool results first",
+			in:   []pgllm.Message{pgllm.UserBlocks(text, result1)},
+			want: []pgllm.Message{
+				{Role: pgllm.RoleTool, Content: []pgllm.ContentBlock{result1}},
+				pgllm.UserBlocks(text),
+			},
+		},
+		{
+			name: "existing tool role message unchanged",
+			in:   []pgllm.Message{pgllm.ToolResultMessage("call_1", "1", false)},
+			want: []pgllm.Message{pgllm.ToolResultMessage("call_1", "1", false)},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := normalizeToolResultRoles(tt.in)
+			gotJSON, err := json.Marshal(got)
+			if err != nil {
+				t.Fatalf("marshal got: %v", err)
+			}
+			wantJSON, err := json.Marshal(tt.want)
+			if err != nil {
+				t.Fatalf("marshal want: %v", err)
+			}
+			if !bytes.Equal(gotJSON, wantJSON) {
+				t.Errorf("normalizeToolResultRoles:\n got  %s\n want %s", gotJSON, wantJSON)
+			}
+		})
+	}
+}
+
+// TestNewHandler_ToolResultsReachProviderAsToolRole posts the exact wire
+// shape the web client's agentic loop sends (tool results in a user
+// message) and asserts the provider receives them as a tool-role message,
+// which the OpenAI provider requires (issue #686).
+func TestNewHandler_ToolResultsReachProviderAsToolRole(t *testing.T) {
+	fake := &fakeProvider{}
+	setFake(fake)
+	t.Cleanup(func() { setFake(nil) })
+
+	store := newTestAuthStore(t)
+	token := sessionTokenFor(t, store, "dave")
+
+	h, err := NewHandler(&Config{
+		Provider:        "anthropic",
+		Model:           "claude-test",
+		AnthropicAPIKey: "test-key",
+		AuthStore:       store,
+	})
+	if err != nil {
+		t.Fatalf("NewHandler error: %v", err)
+	}
+
+	body := `{"messages":[
+		{"role":"user","content":[{"type":"text","text":"run SELECT 1"}]},
+		{"role":"assistant","content":[{"type":"tool_use","tool_use":{"id":"call_1","name":"query_database","input":{}}}]},
+		{"role":"user","content":[{"type":"tool_result","tool_use_id":"call_1","text":"1"}]}
+	]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/llm/chat", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 from authed chat, got %d (%s)", w.Code, w.Body.String())
+	}
+	captured := fake.capturedRequest()
+	if captured == nil {
+		t.Fatal("provider never received a chat request")
+	}
+	if len(captured.Messages) != 3 {
+		t.Fatalf("expected 3 messages at the provider, got %d", len(captured.Messages))
+	}
+	last := captured.Messages[2]
+	if last.Role != pgllm.RoleTool {
+		t.Errorf("expected tool results to reach the provider as role %q, got %q", pgllm.RoleTool, last.Role)
+	}
+	if len(last.Content) != 1 || last.Content[0].ToolUseID != "call_1" {
+		t.Errorf("expected the call_1 tool result to be preserved, got %+v", last.Content)
+	}
+}

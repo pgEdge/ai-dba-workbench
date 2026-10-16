@@ -432,6 +432,7 @@ func (c *Config) authorize(r *http.Request) error {
 func (c *Config) transformRequest(r *http.Request, req *pgllm.ChatRequest) error {
 	ctx := r.Context()
 
+	req.Messages = normalizeToolResultRoles(req.Messages)
 	c.applyCompactDescriptions(req)
 
 	// Default to the Ellie system prompt when the request omits one, then
@@ -445,6 +446,48 @@ func (c *Config) transformRequest(r *http.Request, req *pgllm.ChatRequest) error
 
 	req.SystemPrompt = base
 	return nil
+}
+
+// normalizeToolResultRoles moves tool_result blocks out of user-role
+// messages and into tool-role messages. The web client follows the
+// Anthropic convention of returning tool results as a user message, but
+// the library's OpenAI provider only emits the role:"tool" messages that
+// OpenAI requires after an assistant tool call for llm.RoleTool, and
+// silently drops tool_result blocks from user messages; OpenAI then
+// rejects the turn with a 400 (issue #686). The Anthropic, Gemini and
+// Ollama providers all accept RoleTool, so normalizing here is safe for
+// every provider.
+//
+// A user message holding only tool_result blocks is re-tagged in place.
+// A user message mixing tool_result blocks with other content is split
+// into a tool-role message (first, so it directly follows the assistant
+// tool call) and a user message carrying the remaining blocks. All other
+// messages pass through unchanged.
+func normalizeToolResultRoles(msgs []pgllm.Message) []pgllm.Message {
+	out := make([]pgllm.Message, 0, len(msgs))
+	for _, msg := range msgs {
+		if msg.Role != pgllm.RoleUser {
+			out = append(out, msg)
+			continue
+		}
+		var results, rest []pgllm.ContentBlock
+		for _, block := range msg.Content {
+			if block.Type == pgllm.BlockToolResult {
+				results = append(results, block)
+			} else {
+				rest = append(rest, block)
+			}
+		}
+		if len(results) == 0 {
+			out = append(out, msg)
+			continue
+		}
+		out = append(out, pgllm.Message{Role: pgllm.RoleTool, Content: results})
+		if len(rest) > 0 {
+			out = append(out, pgllm.Message{Role: pgllm.RoleUser, Content: rest})
+		}
+	}
+	return out
 }
 
 // applyCompactDescriptions populates each tool's CompactDescription from the

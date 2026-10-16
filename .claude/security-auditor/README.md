@@ -50,6 +50,14 @@ moved.
 - Monitored-database credentials are encrypted at rest with a
   server-side secret and only decrypted in the collector when a pool
   is opened.
+- Monitored pools built by `database.Client.ConnectTo` reset session
+  state with `DISCARD ALL` in `AfterRelease` (#709); any new
+  long-lived pool on a monitored database must set the same hook.
+  The pools are keyed by token and connection, and `DISCARD ALL` does
+  not close dblink or postgres_fdw connections nor undo `LOAD` or
+  extension backend state, so those can pass between calls by the
+  same token on the same connection for up to the pool's one-hour
+  `MaxConnLifetime` (see `../golang-expert/pool-session-reset.md`).
 - Clearing an alert is a security-relevant decision, because a false
   resolution hides a live problem: the `clearWhenAbsent` flag on each
   `metricRegistry` entry in

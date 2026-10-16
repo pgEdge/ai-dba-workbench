@@ -93,6 +93,11 @@ func TestConnectToAppliesPoolConfig(t *testing.T) {
 		t.Errorf("pool config = max %d, min %d, idle %s; want 3, 1, 1m30s",
 			cfg.MaxConns, cfg.MinConns, cfg.MaxConnIdleTime)
 	}
+	// pgx's default lifetime bounds how long state the reset cannot
+	// clear (LOAD, dblink connections) can last; see sessionResetSteps.
+	if cfg.MaxConnLifetime != time.Hour {
+		t.Errorf("MaxConnLifetime = %s, want pgx's default of 1h", cfg.MaxConnLifetime)
+	}
 	if cfg.AfterRelease == nil {
 		t.Error("pool has no AfterRelease hook to reset session state")
 	}

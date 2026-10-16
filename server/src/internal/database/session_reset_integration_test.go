@@ -11,12 +11,14 @@ package database
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/pgedge/ai-workbench/server/internal/config"
@@ -112,6 +114,12 @@ func TestSessionResetOnRelease_ClearsSessionState(t *testing.T) {
 		"CREATE TEMP TABLE issue709_leak (id int)",
 		"PREPARE issue709_stmt AS SELECT 1",
 		"SELECT pg_advisory_lock(709709)",
+		"LISTEN issue709",
+		"DECLARE issue709_cursor CURSOR WITH HOLD FOR SELECT 1",
+		"CREATE TEMP SEQUENCE issue709_seq",
+		"SELECT nextval('issue709_seq')",
+		// Last, since the role may lack privileges the rest need.
+		"SET ROLE pg_read_all_settings",
 	}
 	for _, stmt := range setup {
 		if _, err := conn.Exec(ctx, stmt); err != nil {
@@ -161,6 +169,9 @@ func TestSessionResetOnRelease_ClearsSessionState(t *testing.T) {
 		{"application_name kept", "SHOW application_name", "pgEdge AI DBA Workbench"},
 		{"temp table dropped", "SELECT (to_regclass('pg_temp.issue709_leak') IS NULL)::text", "true"},
 		{"prepared statement deallocated", "SELECT count(*)::text FROM pg_prepared_statements WHERE name = 'issue709_stmt'", "0"},
+		{"role reset", "SELECT (current_user = session_user)::text", "true"},
+		{"LISTEN cleared", "SELECT count(*)::text FROM pg_listening_channels()", "0"},
+		{"WITH HOLD cursor closed", "SELECT count(*)::text FROM pg_cursors WHERE name = 'issue709_cursor'", "0"},
 		{"advisory lock released", "SELECT count(*)::text FROM pg_locks WHERE locktype = 'advisory' AND pid = pg_backend_pid()", "0"},
 	}
 	for _, c := range checks {
@@ -181,6 +192,15 @@ func TestSessionResetOnRelease_ClearsSessionState(t *testing.T) {
 		if value != c.want {
 			t.Errorf("%s: got %q, want %q", c.name, value, c.want)
 		}
+	}
+
+	// DISCARD ALL forgets the sequence values this session has seen, so
+	// lastval() has nothing to report.
+	var lastval int64
+	err = conn.QueryRow(ctx, "SELECT lastval()").Scan(&lastval)
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "55000" {
+		t.Errorf("lastval() after reset: got value %d, error %v; want SQLSTATE 55000", lastval, err)
 	}
 }
 

@@ -559,18 +559,20 @@ exceeded "this token's access" (fixed so the denial audit coalesces).
   create, rename or delete of a group named in the OIDC `group_map`:
   `TokenHoldsEverything`, a superuser's token unrestricted in every
   kind.
-- Token scope set (`TokenScopeChangeWithinCeiling`, self included):
+- Token scope set (`JudgeTokenScopeChange`, self included):
   only kinds present are judged; an entry the target does not already
   allow must be covered; narrowing an unrestricted kind is free; a
   connection entry kept, narrowed or dropped needs read on it.
-  Clear (`TokenScopeClearWithinCeiling`): for each kind the target is
+  Clear (`JudgeTokenScopeClear`): for each kind the target is
   restricted in, the owner's reach in that kind must fit. When the
   target's owner is a superuser, the target is bounded by its scope
   alone, so any widening (or any clear of a restricted target) also
   needs `holdsSuperuser()`: a session, or a superuser's token
   unrestricted in every kind. Both return `ErrTokenScopeUnreadable`
   (500 in the handler) when the stored scope, the target's owner or the
-  owner's reach cannot be read.
+  owner's reach cannot be read. There is no exported verdict-only
+  variant, so no handler can skip the snapshot; tests use the
+  unexported helpers in `token_ceiling_judge_helpers_test.go`.
 - Superuser-owned tokens: minting a token for a superuser owner, and
   setting, clearing or deleting a token whose owner is a superuser,
   need a superuser, for sessions and tokens alike. The owner is read in
@@ -643,9 +645,12 @@ exceeded "this token's access" (fixed so the denial audit coalesces).
   `refuseTokenScopeChanged`, 409, recorded denial, no failure row.
   `tokenWriteChecked` (package var in `rbac_token_handlers.go`, nil in
   the server) runs between the checks and the write so tests can race
-  them; tests that set it must not be parallel. Residual: the owner's
-  reach that `JudgeTokenScopeClear` compares against is still read
-  outside the tx. The single-kind setters (`SetTokenConnectionScope` and friends)
+  them; tests that set it must not be parallel. Residuals, both read
+  outside the tx and neither an escalation: the owner's reach that
+  `JudgeTokenScopeClear` compares against, and the acting token's own
+  scope (the ceiling), so a token narrowed mid-request can still give a
+  sibling what it held when judged, which it could have copied there
+  beforehand anyway. The single-kind setters (`SetTokenConnectionScope` and friends)
   are CLI-only and unguarded by owner; do not call them from a handler.
   The ceiling still runs first for token callers, siblings with the
   same owner included, so a narrowed token cannot mint or widen a

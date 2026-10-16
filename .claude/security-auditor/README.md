@@ -242,10 +242,18 @@ moved.
   one in an escape string (`E'password=\'x\''`) by
   `sqlBackslashQuoted`. Row images are masked as JSON text, where every
   backslash is doubled and a line break is `\n`, so each escape
-  backslash (`escapeBackslash`) may be doubled and `sqlSeparator`
-  accepts `\n`; `TestTextInJSON` and `TestRedactedTextIntegration` run
-  every case in that form. `PASSWORD` may be followed by white space,
-  a `/* */` or `--` comment (`sqlSeparator`, not nested) or nothing, and may start a
+  backslash (`escapeBackslash`) may be doubled and `blank` accepts
+  `\n`; `TestTextInJSON` and `TestRedactedTextIntegration` run every
+  case in that form and require the secret to be gone even for JSON
+  inputs. White space is the ASCII class `ws`, never `[[:space:]]`, so
+  the engines agree. A name may be followed by white space and at most
+  two comments (`sep`, not nested): a block comment must be closed and
+  is bounded to 32 body units, so a run of `/*` cannot make each match
+  scan to the end of the text (the 64 Ki cap bounds the rest; about 1 s
+  worst case in PostgreSQL, under the tools' 10 s `statement_timeout`).
+  An unquoted value after `=` is masked whatever it starts with (`--x`,
+  `/*x*/x`); comments after `=` are allowed only before a quoted value.
+  `PASSWORD` may be followed by `sep` or nothing, and may start a
   quoted string (`'PASSWORD ''x'''` in a concatenated EXECUTE) when a
   separator follows it; an unquoted `$n` value is kept only when white
   space, a comma, a bracket, a semicolon, a double quote or a
@@ -269,12 +277,18 @@ moved.
   The free-text patterns themselves live in `pkg/redact` (with the
   shared test inputs in `pkg/redact/redacttest`), so the alerter masks
   `connections.connection_error` with `redact.Text` before it becomes an
-  alert description, notification or LLM prompt (#679). Each pass also
-  rewrites every open (active or acknowledged) connection alert holding
-  maskable text, before the blackout check, and collector migration 24
-  masks the stored descriptions of all connection alerts once. The
-  server masks `alerts.description` with `RedactedText` in
-  `GET /api/v1/alerts` and the timeline fired and cleared summaries
+  alert description, notification or LLM prompt (#679). After the
+  evaluation loop, each pass also rewrites every other open (active or
+  acknowledged) connection alert holding maskable text, blackouts
+  included; it skips the alerts the loop raised or compared, and masks
+  with `redact.Settled`, which reapplies `Text` until the text stops
+  changing, because `Text` is not idempotent (a second pass can take
+  the quote after a masked value into the next value; `TestSettled`
+  pins the cases) and the two stages would otherwise rewrite the same
+  alert on every pass. Collector migration 24 masks the stored
+  descriptions of all connection alerts once. The server masks `alerts.description`
+  and `alerts.ai_analysis` with `RedactedText` in `GET /api/v1/alerts`,
+  and the description in the timeline fired and cleared summaries
   (`get_alert_history` reads the description but does not return it).
   The SQL rules live in `internal/metrics/redaction.go` and apply on every
   route returning credential-bearing metrics: `query_datastore`,

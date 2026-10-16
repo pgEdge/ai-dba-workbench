@@ -2822,8 +2822,9 @@ project adheres to
   `********`, along with the value of any environment variable
   assigned before the program, so `PGPASSWORD=s3cret pgbackrest
   archive-push %p` is stored as `PGPASSWORD=******** pgbackrest
-  ********`; a command that does not start with a plain program name
-  is replaced in full. Collector schema migration 28 redacts the rows
+  ********`; a command that does not start with a plain program name,
+  or that uses `$` expansion before it, is replaced in full. Collector
+  schema migration 28 redacts the rows
   already stored, and the server redacts the values again wherever it
   redacts `primary_conninfo`. A change to a command's arguments alone
   is no longer recorded as a configuration change. (#676)

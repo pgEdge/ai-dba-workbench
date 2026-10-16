@@ -167,8 +167,9 @@ func RedactValue(name, value string) string {
 //
 // A program name is kept only if it is a plain word of letters, digits
 // and the characters _ . / + - ~; a command that starts any other way, for
-// example with a quoted path, a subshell or a redirection, is replaced
-// in full, since its program name cannot be picked out with confidence.
+// example with a quoted path, a subshell or a redirection, or that uses
+// $ expansion or an empty value in a leading assignment, is replaced in
+// full, since its program name cannot be picked out with confidence.
 // A command of whitespace alone holds nothing and is returned unchanged.
 // The function is idempotent.
 func RedactShellCommand(command string) string {
@@ -185,8 +186,11 @@ func RedactShellCommand(command string) string {
 		}
 		rest = strings.TrimLeft(after, " \t")
 
-		if envName, _, isAssignment := strings.Cut(word, "="); isAssignment {
-			if !isShellVariableName(envName) {
+		if envName, envValue, isAssignment := strings.Cut(word, "="); isAssignment {
+			// An empty value followed by a space, as in "PGPASSWORD= s3cret
+			// cmd", is most likely a typo that would otherwise expose the
+			// next word as the program name.
+			if !isShellVariableName(envName) || envValue == "" {
 				return RedactedValue
 			}
 			out = append(out, envName+"="+RedactedValue)
@@ -208,9 +212,13 @@ func RedactShellCommand(command string) string {
 // nextShellWord splits the first shell word from s, which must not start
 // with a space or tab, honoring single quotes, double quotes and
 // backslash escapes. It reports false if a quote is not closed, if the
-// word ends in an unpaired backslash, or if the word contains an
-// unquoted character that would end or redirect the command, since what
-// follows could then be a second command.
+// word ends in an unpaired backslash, if the word contains an unquoted
+// character that would end or redirect the command, since what follows
+// could then be a second command, or if the word contains a $ or a
+// backtick outside single quotes. An expansion such as ${...}, $(...) or
+// $'...' can hold spaces and quotes that the shell keeps within one
+// word, so rather than model expansion the caller redacts such a command
+// in full.
 func nextShellWord(s string) (word, rest string, ok bool) {
 	i := 0
 	for i < len(s) {
@@ -226,7 +234,10 @@ func nextShellWord(s string) (word, rest string, ok bool) {
 		case '"':
 			i++
 			for i < len(s) && s[i] != '"' {
-				if s[i] == '\\' {
+				switch s[i] {
+				case '$', '`':
+					return "", "", false
+				case '\\':
 					i++
 				}
 				i++
@@ -240,7 +251,7 @@ func nextShellWord(s string) (word, rest string, ok bool) {
 				return "", "", false
 			}
 			i += 2
-		case ';', '&', '|', '<', '>', '(', ')', '`', '\n', '\r':
+		case ';', '&', '|', '<', '>', '(', ')', '`', '$', '\n', '\r':
 			return "", "", false
 		default:
 			i++

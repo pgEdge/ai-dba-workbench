@@ -56,7 +56,9 @@ and `boot_val` columns before storing them:
   stored as `PGPASSWORD=******** pgbackrest ********`.
   A command that does not start with a plain program
   name, such as one starting with a quoted path or a
-  subshell, is replaced with `********` in full.
+  subshell, or that uses `$` expansion or an empty
+  value in an assignment before the program, is
+  replaced with `********` in full.
 - `ssl_passphrase_command` is replaced with
   `********` in full, since the command commonly
   embeds the passphrase.

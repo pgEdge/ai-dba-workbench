@@ -48,9 +48,11 @@ openapi:
 # (DROP/CREATE the same tables), so running their test binaries concurrently
 # races.
 # -race enables the data-race detector; CI runs the same target.
+# -timeout 20m: internal/api alone takes up to ~8 minutes under -race on
+# CI, too close to go test's 10-minute default per-binary timeout.
 test:
 	@echo "Running tests..."
-	cd src && go test -race -p=1 -v ./...
+	cd src && go test -race -p=1 -timeout 20m -v ./...
 
 # Run linting
 lint:
@@ -79,7 +81,7 @@ fmt-check:
 # separate `test` target inside `test-all` and halve total test time.
 coverage:
 	@echo "Running tests with coverage..."
-	cd src && go test -race -p=1 -v -coverprofile=coverage.out ./...
+	cd src && go test -race -p=1 -timeout 20m -v -coverprofile=coverage.out ./...
 	cd src && go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report generated: src/coverage.html"
 	@cd src && total=$$(go tool cover -func=coverage.out | tail -1 | awk '{gsub(/%/, "", $$3); print $$3}'); \

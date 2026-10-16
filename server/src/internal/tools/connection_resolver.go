@@ -12,6 +12,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -39,6 +40,11 @@ type ResolvedConnection struct {
 	ConnStr string
 	ConnID  int
 	DBName  string
+	// AccessLevel is the caller's level on ConnID from the same RBAC
+	// decision that admitted the call, so a tool gating a write on it
+	// does not ask again and race a concurrent grant change. It is
+	// empty for the fallback client, which names no connection.
+	AccessLevel string
 }
 
 // NewConnectionResolver creates a ConnectionResolver. All parameters
@@ -63,23 +69,42 @@ func NewConnectionResolver(
 type connectionArgs struct {
 	ConnectionID int
 	HasConnID    bool
-	DatabaseName string
+	// InvalidConnID is set when connection_id is numeric but not a
+	// positive integer; ConnectionID is then zero, and Resolve refuses
+	// the call before any lookup.
+	InvalidConnID bool
+	DatabaseName  string
 }
+
+// invalidConnectionIDMessage answers a connection_id that is not a
+// positive integer.
+const invalidConnectionIDMessage = "connection_id must be a positive integer"
 
 // parseConnectionArgs extracts connection_id and database_name from the
 // tool argument map. connection_id arrives as float64 from JSON
-// unmarshalling.
+// unmarshalling; a NaN, infinite, fractional or non-positive value is
+// marked invalid rather than truncated, so that, for example, 3.7 can
+// never name connection 3.
 func parseConnectionArgs(args map[string]any) connectionArgs {
 	var ca connectionArgs
 
 	if raw, ok := args["connection_id"]; ok {
 		switch v := raw.(type) {
 		case float64:
-			ca.ConnectionID = int(v)
 			ca.HasConnID = true
+			if math.IsNaN(v) || math.IsInf(v, 0) || v != math.Trunc(v) ||
+				v < 1 || v > math.MaxInt32 {
+				ca.InvalidConnID = true
+			} else {
+				ca.ConnectionID = int(v)
+			}
 		case int:
-			ca.ConnectionID = v
 			ca.HasConnID = true
+			if v < 1 {
+				ca.InvalidConnID = true
+			} else {
+				ca.ConnectionID = v
+			}
 		}
 	}
 
@@ -109,6 +134,16 @@ func (r *ConnectionResolver) Resolve(
 
 	// When connection_id is provided, resolve explicitly.
 	if ca.HasConnID {
+		if ca.InvalidConnID {
+			resp := mcp.ToolResponse{
+				Content: []mcp.ContentItem{{
+					Type: "text",
+					Text: invalidConnectionIDMessage,
+				}},
+				IsError: true,
+			}
+			return nil, &resp
+		}
 		if r == nil {
 			resp := mcp.ToolResponse{
 				Content: []mcp.ContentItem{{
@@ -158,7 +193,7 @@ func (r *ConnectionResolver) resolveExplicit(
 	// connection ID so operators can correlate without widening the
 	// surface the caller sees. Fail-closed: we keep the deny even if
 	// the underlying cause was a transient lookup error.
-	canAccess, _ := r.rbacChecker.CanAccessConnection(ctx, ca.ConnectionID)
+	canAccess, accessLevel := r.rbacChecker.CanAccessConnection(ctx, ca.ConnectionID)
 	if !canAccess {
 		fmt.Fprintf(os.Stderr, "WARNING: connection_resolver: RBAC denied access to connection %d\n", ca.ConnectionID)
 		r.record.deny(ctx, action, connectionDenialTarget(ca.ConnectionID),
@@ -239,11 +274,12 @@ func (r *ConnectionResolver) resolveExplicit(
 	}
 
 	return &ResolvedConnection{
-		Client:  client,
-		Pool:    pool,
-		ConnStr: connStr,
-		ConnID:  ca.ConnectionID,
-		DBName:  effectiveDB,
+		Client:      client,
+		Pool:        pool,
+		ConnStr:     connStr,
+		ConnID:      ca.ConnectionID,
+		DBName:      effectiveDB,
+		AccessLevel: accessLevel,
 	}, nil
 }
 

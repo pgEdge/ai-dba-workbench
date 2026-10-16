@@ -298,7 +298,7 @@ func buildUnionQuery(connCondition, timeCondition, typeCondition string, filter 
 
 // buildCountQuery constructs the count query for total events
 func buildCountQuery(connCondition, timeCondition, typeCondition string, filter TimelineFilter) string {
-	whereClause := buildWhereClause(connCondition, timeCondition, "")
+	whereClause := buildWhereClause(connCondition, timeCondition, timelineLiveConnectionCondition)
 
 	// Determine which event types to include
 	includeTypes := make(map[string]bool)
@@ -363,6 +363,14 @@ func buildCountQuery(connCondition, timeCondition, typeCondition string, filter 
 
 	return fmt.Sprintf("SELECT %s AS total_count", strings.Join(countQueries, " + "))
 }
+
+// timelineLiveConnectionCondition keeps a connection marked for deletion
+// out of the event counts, as the event queries keep it out by joining
+// live connections, so TotalCount matches the events it totals (issue
+// #668). The count builders rewrite connection_id with their own table
+// alias, which is why the subquery names no column of that spelling;
+// connections.id is NOT NULL, so NOT IN is safe here.
+const timelineLiveConnectionCondition = "connection_id NOT IN (SELECT id FROM connections WHERE deleted_at IS NOT NULL)"
 
 // buildWhereClause combines conditions into a WHERE clause
 func buildWhereClause(connCondition, timeCondition, extraCondition string) string {

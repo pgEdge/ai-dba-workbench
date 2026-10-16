@@ -429,7 +429,9 @@ func (d *Datastore) getConnectionIDsForCluster(ctx context.Context, clusterID in
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 
-	query := `SELECT id FROM connections WHERE cluster_id = $1 ORDER BY id`
+	// The deleted_at test is defence in depth: marking a connection
+	// clears its cluster_id in the same statement.
+	query := `SELECT id FROM connections WHERE cluster_id = $1 AND deleted_at IS NULL ORDER BY id`
 	rows, err := d.pool.Query(ctx, query, clusterID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query connections for cluster: %w", err)
@@ -457,7 +459,7 @@ func (d *Datastore) getConnectionIDsForGroup(ctx context.Context, groupID int) (
         SELECT c.id
         FROM connections c
         JOIN clusters cl ON c.cluster_id = cl.id
-        WHERE cl.group_id = $1
+        WHERE cl.group_id = $1 AND c.deleted_at IS NULL
         ORDER BY c.id
     `
 	rows, err := d.pool.Query(ctx, query, groupID)

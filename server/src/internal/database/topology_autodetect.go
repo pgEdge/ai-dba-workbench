@@ -719,10 +719,19 @@ func (d *Datastore) createShellClustersForUnmerged(ctx context.Context, groups [
 	var shells []shellInfo
 	for rows.Next() {
 		var s shellInfo
-		if err := rows.Scan(&s.dbID, &s.name, &s.description, &s.replicationType, &s.autoClusterKey, &s.groupID); err != nil {
+		// group_id is nullable. Scan it through a pointer: a scan error
+		// closes rows in pgx, so failing on one group-less cluster would
+		// silently drop every shell cluster after it.
+		var groupID *int
+		if err := rows.Scan(&s.dbID, &s.name, &s.description, &s.replicationType, &s.autoClusterKey, &groupID); err != nil {
 			logger.Errorf("createShellClustersForUnmerged: failed to scan cluster: %v", err)
 			continue
 		}
+		if groupID == nil {
+			logger.Errorf("createShellClustersForUnmerged: cluster %q has no group", s.autoClusterKey)
+			continue
+		}
+		s.groupID = *groupID
 		shells = append(shells, s)
 	}
 	if err := rows.Err(); err != nil {

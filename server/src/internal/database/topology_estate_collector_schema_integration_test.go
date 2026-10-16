@@ -863,7 +863,7 @@ func TestCollectorSchema_TopologyEstateAndRelationships(t *testing.T) {
 
 	// Last, because it leaves man-b marked but still in its cluster: the
 	// ID lookups must not trust the cluster_id invariant alone.
-	t.Run("defence in depth", func(t *testing.T) {
+	t.Run("second safeguard", func(t *testing.T) {
 		e.exec(`UPDATE connections SET deleted_at = now() WHERE id = $1`, f.manB)
 		ids, err := ds.GetConnectionIDsForCluster(ctx, f.manualCluster)
 		if err != nil || !equalInts(ids, []int{f.manA}) {

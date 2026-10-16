@@ -429,7 +429,7 @@ func (d *Datastore) getConnectionIDsForCluster(ctx context.Context, clusterID in
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 
-	// The deleted_at test is defence in depth: marking a connection
+	// The deleted_at test is a second safeguard: marking a connection
 	// clears its cluster_id in the same statement.
 	query := `SELECT id FROM connections WHERE cluster_id = $1 AND deleted_at IS NULL ORDER BY id`
 	rows, err := d.pool.Query(ctx, query, clusterID)

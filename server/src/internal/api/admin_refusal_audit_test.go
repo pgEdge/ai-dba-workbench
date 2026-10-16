@@ -11,6 +11,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -362,6 +363,99 @@ func TestConnectionPermissionRefusalsAreAudited(t *testing.T) {
 			assertError(t, rec, http.StatusForbidden, tc.reason)
 			capture.expect(t, routedDenial{tc.action,
 				fmt.Sprintf("connections/%d", tc.id), tc.reason})
+		})
+	}
+}
+
+// TestRefusalWritesOneAuditRow checks, against the real denial
+// recorder, that one refusal on each route that both this gate and the
+// connection-access auditing (issue #675) touch writes exactly one
+// audit row naming its action and target, rather than one from each.
+func TestRefusalWritesOneAuditRow(t *testing.T) {
+	f := newConnCovFixture(t, "")
+	plain := f.newCaller(t, "one_row_plain")
+	session := scopeCaller{name: plain.username,
+		wrap: func(r *http.Request) *http.Request { return asCaller(r, plain) }}
+	other := f.seed(t, "one-row-other", "someone_else", true)
+
+	rc := auth.NewRBACChecker(f.store)
+	record := NewRBACHandler(f.store, rc).RecordDenial
+	f.handler.SetDenialRecorder(record)
+
+	alerts := NewAlertHandler(nil, f.store, rc)
+	alerts.setAlertResolver(&fakeAlertResolver{system: true})
+	alerts.SetDenialRecorder(record)
+
+	blackout := NewBlackoutHandler(unreachableDatastore(t), f.store, rc)
+	blackout.SetDenialRecorder(record)
+
+	manageConnections := permissionRefusal(auth.PermManageConnections)
+	cases := []struct {
+		name   string
+		serve  func() *httptest.ResponseRecorder
+		reason string
+		action string
+		target string
+	}{
+		{"connection cluster move", func() *httptest.ResponseRecorder {
+			return f.serve(asCaller(connCovRequest(t, http.MethodPut,
+				connCovPath(other, "cluster"), `{}`), plain))
+		}, manageConnections, deniedActionConnectionClusterUpdate,
+			connectionDenialTarget(other)},
+		{"connection create", func() *httptest.ResponseRecorder {
+			rec := httptest.NewRecorder()
+			f.handler.handleConnections(rec, asCaller(connCovRequest(t,
+				http.MethodPost, "/api/v1/connections", `{}`), plain))
+			return rec
+		}, manageConnections, "connection.create", "connections"},
+		{"system alert acknowledge", func() *httptest.ResponseRecorder {
+			rec := httptest.NewRecorder()
+			alerts.acknowledgeAlert(rec, asCaller(connCovRequest(t,
+				http.MethodPost, "/api/v1/alerts/acknowledge",
+				`{"alert_id": 9}`), plain))
+			return rec
+		}, systemAlertManageDenied, deniedActionAlertAcknowledge,
+			alertDenialTarget(9)},
+		{"blackout create", func() *httptest.ResponseRecorder {
+			return serveRoutes(blackout.RegisterRoutes, session,
+				http.MethodPost, "/api/v1/blackouts", `{}`)
+		}, permissionRefusal(auth.PermManageBlackouts), "blackout.create",
+			"blackouts"},
+	}
+
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if rec := tc.serve(); rec.Code != http.StatusForbidden {
+				t.Fatalf("Expected 403, got %d: %s", rec.Code, rec.Body)
+			}
+			events, _, err := f.store.ListAuditEvents(auth.AuditFilter{
+				Outcome: string(auth.OutcomeDenied)})
+			if err != nil {
+				t.Fatalf("ListAuditEvents failed: %v", err)
+			}
+			if len(events) != i+1 {
+				t.Fatalf("Expected %d denied rows after this refusal, got %d",
+					i+1, len(events))
+			}
+			matched := 0
+			for _, e := range events {
+				var details struct {
+					Target string `json:"target"`
+				}
+				if err := json.Unmarshal(e.Details, &details); err != nil {
+					t.Fatalf("Failed to decode details %s: %v", e.Details, err)
+				}
+				if e.Action == tc.action && details.Target == tc.target {
+					matched++
+					if e.Error != tc.reason {
+						t.Errorf("Expected reason %q, got %q", tc.reason, e.Error)
+					}
+				}
+			}
+			if matched != 1 {
+				t.Errorf("Expected exactly 1 %s row on %s, got %d", tc.action,
+					tc.target, matched)
+			}
 		})
 	}
 }

@@ -1011,9 +1011,11 @@ client can append. A handler outside `RBACHandler` records through
 `RBACHandler.RecordDenial`, injected as a function:
 `ConnectionHandler` takes it via `SetDenialRecorder` into a
 `denialRecorder` field and refuses through `h.denialRecorder.refuse`
-(token scope, the `manage_connections` gates on create and on
-`PUT /connections/{id}/cluster`, the owner-or-`manage_connections`
-gates on update and delete, and the share gate), and `ClusterHandler`,
+(token scope, the `manage_connections` gate on create, the
+owner-or-`manage_connections` gates on update and delete, and the
+share gate; the `manage_connections` gate on
+`PUT /connections/{id}/cluster` uses `refuseTarget`, below), and
+`ClusterHandler`,
 `AlertRuleHandler`, `NotificationChannelHandler`, `BlackoutHandler`,
 `ProbeConfigHandler`, the three override handlers and `MemoryHandler`
 (its `store_system_memory` gate on deleting a system-scoped memory,

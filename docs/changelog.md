@@ -1175,6 +1175,17 @@ project adheres to
 
 ### Fixed
 
+- Let the `query_database` MCP tool write to a monitored database
+  for users with `read_write` access to the connection (#663). The
+  write path ran on the same pool as reads, whose sessions default
+  to read-only transactions, so every `INSERT`, `UPDATE`, `DELETE`,
+  DDL statement and `nextval` call failed after passing the access
+  check. Writes now open an explicitly read-write transaction with
+  a two-second lock timeout, so a statement waiting on a
+  conflicting lock fails quickly rather than queueing other
+  sessions behind it; reads are unchanged, and a write against a
+  hot standby still fails.
+
 - Load every configured alerter API key file when one of them
   cannot be read (#626). The alerter previously stopped at the
   first unreadable file, so a bad OpenAI key file also left the

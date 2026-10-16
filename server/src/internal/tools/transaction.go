@@ -95,11 +95,17 @@ func BeginReadOnlyTx(ctx context.Context, pool *pgxpool.Pool) (rot *ManagedTx, e
 
 // BeginTx starts a read-write transaction on the given pool with the
 // same panic recovery, cleanup, and statement timeout as
-// BeginReadOnlyTx, but without SET TRANSACTION READ ONLY. Use this
-// for DML/DDL statements when the caller has verified that the user
-// holds read_write access to the connection.
+// BeginReadOnlyTx. Use this for DML/DDL statements when the caller has
+// verified that the user holds read_write access to the connection.
+//
+// The transaction is opened with BEGIN READ WRITE rather than a plain
+// BEGIN because monitored-database pools set
+// default_transaction_read_only=on for every session (see
+// database.Client.ConnectTo); a plain BEGIN would inherit that default
+// and reject every write. Requesting read-write mode explicitly fails
+// at BEGIN on a hot standby, which is the correct outcome there.
 func BeginTx(ctx context.Context, pool *pgxpool.Pool) (mt *ManagedTx, errResp *mcp.ToolResponse, cleanup func()) {
-	tx, err := pool.Begin(ctx)
+	tx, err := pool.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadWrite})
 	if err != nil {
 		resp, _ := mcp.NewToolError(fmt.Sprintf("Failed to begin transaction: %v", err)) //nolint:errcheck // NewToolError always succeeds
 		return nil, &resp, func() {}
@@ -122,6 +128,17 @@ func BeginTx(ctx context.Context, pool *pgxpool.Pool) (mt *ManagedTx, errResp *m
 	if err != nil {
 		_ = rollback.Tx(ctx, tx)                                                             //nolint:errcheck // cleanup on setup failure
 		resp, _ := mcp.NewToolError(fmt.Sprintf("Failed to set statement timeout: %v", err)) //nolint:errcheck // NewToolError always succeeds
+		return nil, &resp, func() {}
+	}
+
+	// Writes and DDL really take locks on the monitored database, so
+	// bound the wait: a statement queued behind a conflicting lock would
+	// otherwise block every later session on that table for the whole
+	// statement timeout.
+	_, err = tx.Exec(ctx, "SET LOCAL lock_timeout = '2s'")
+	if err != nil {
+		_ = rollback.Tx(ctx, tx)                                                        //nolint:errcheck // cleanup on setup failure
+		resp, _ := mcp.NewToolError(fmt.Sprintf("Failed to set lock timeout: %v", err)) //nolint:errcheck // NewToolError always succeeds
 		return nil, &resp, func() {}
 	}
 

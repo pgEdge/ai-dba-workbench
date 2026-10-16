@@ -209,7 +209,7 @@ func TestBeginReadOnlyTxCleanupIgnoresCanceledContext(t *testing.T) {
 // TestBeginTxCleanupIgnoresCanceledContext mirrors the read-only case
 // for the read-write constructor.
 func TestBeginTxCleanupIgnoresCanceledContext(t *testing.T) {
-	tracer := &txRollbackTracer{cancelAfter: "set local statement_timeout"}
+	tracer := &txRollbackTracer{cancelAfter: "set local lock_timeout"}
 	pool, closePool := newTracedToolsPool(t, tracer)
 	defer closePool()
 
@@ -328,6 +328,36 @@ func TestBeginReadOnlyTxTimeoutSetupFailureRollsBackCleanly(t *testing.T) {
 	assertCleanRollback(t, tracer, pool, pidBefore, start)
 }
 
+// TestBeginTxLockTimeoutSetupFailureRollsBackCleanly covers the second
+// setup-failure rollback in BeginTx, where the statement_timeout guard
+// succeeds and the lock_timeout guard is the statement that fails.
+func TestBeginTxLockTimeoutSetupFailureRollsBackCleanly(t *testing.T) {
+	tracer := &txRollbackTracer{cancelAfter: "set local statement_timeout"}
+	pool, closePool := newTracedToolsPool(t, tracer)
+	defer closePool()
+
+	pidBefore := toolsBackendPID(t, pool)
+	start := time.Now()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	tracer.mu.Lock()
+	tracer.cancel = cancel
+	tracer.mu.Unlock()
+
+	mt, errResp, cleanup := BeginTx(ctx, pool)
+	defer cleanup()
+
+	if errResp == nil {
+		t.Fatal("expected an error response when the lock timeout guard fails")
+	}
+	if mt != nil {
+		t.Error("expected a nil ManagedTx when transaction setup fails")
+	}
+
+	assertCleanRollback(t, tracer, pool, pidBefore, start)
+}
+
 // TestBeginTxConstructorsRejectClosedPool covers the begin-failure
 // branch of both constructors, where no transaction exists yet and the
 // returned cleanup must be a harmless no-op.
@@ -401,7 +431,7 @@ func TestBeginReadOnlyTxCleanupRollsBackOnPanic(t *testing.T) {
 // TestBeginTxCleanupRollsBackOnPanic mirrors the panic path for the
 // read-write constructor.
 func TestBeginTxCleanupRollsBackOnPanic(t *testing.T) {
-	tracer := &txRollbackTracer{cancelAfter: "set local statement_timeout"}
+	tracer := &txRollbackTracer{cancelAfter: "set local lock_timeout"}
 	pool, closePool := newTracedToolsPool(t, tracer)
 	defer closePool()
 

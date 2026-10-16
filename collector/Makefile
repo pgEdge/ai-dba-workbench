@@ -17,13 +17,15 @@ BINARY := ai-dba-collector
 
 # Minimum acceptable total statement coverage, in percent; the coverage
 # target fails below it. The project floor is 90% (see CLAUDE.md, Tests);
-# this default is pinned at the lowest CI total measured on 29 September
-# 2026, after the migration statement-failure tests for issue #575. The
-# total varies with the Postgres major CI tests against, from 92.1% on
-# PG 14 to 92.9% on PG 16, so the floor sits at the PG 14 figure. Raise
-# it whenever a change lifts the total and never lower it. Override for
+# this default is pinned at the lowest CI total measured on 15 October
+# 2026, after the version-branch probe tests for issue #643. The total
+# varies with the Postgres major CI tests against, from 92.9% on PG 15,
+# 17 and 18 to 93.2% on PG 16, and by about 0.1 between runs of the same
+# code, since the main package and the scheduler run timing-dependent
+# paths; one PG 18 run measured 92.8%, so the floor sits there. Raise it
+# whenever a change lifts the total and never lower it. Override for
 # local experiments with `make coverage COVERAGE_MIN=80`.
-COVERAGE_MIN ?= 92.3
+COVERAGE_MIN ?= 92.8
 
 # Get absolute path to output directory
 ABS_BIN_DIR := $(abspath $(BIN_DIR))

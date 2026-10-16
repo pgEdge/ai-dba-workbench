@@ -21,7 +21,9 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/pkg/logger"
+	"github.com/pgedge/ai-workbench/pkg/pgsettings"
 	"github.com/pgedge/ai-workbench/pkg/rollback"
+	"github.com/pgedge/ai-workbench/pkg/sqlredact"
 )
 
 // Migration represents a database schema migration
@@ -3945,6 +3947,219 @@ func (sm *SchemaManager) registerMigrations() {
 			return nil
 		},
 	})
+
+	// Migration #25 removes credentials from pg_settings snapshots that
+	// were stored before the probe started redacting them. See GitHub
+	// issue #643.
+	//
+	// PostgreSQL shows primary_conninfo, password included, to members of
+	// pg_read_all_settings, so a standby's replication password was
+	// copied into metrics.pg_settings and returned by the server. The
+	// probe now redacts it before storing, using pgsettings.RedactValue,
+	// and this migration applies the same function to the rows already
+	// stored. The conninfo parsing lives in Go, so the rewrite is done
+	// here rather than in SQL: each distinct value of a credential-bearing
+	// setting is redacted once and every row holding it is updated.
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     25,
+		Description: "Redact credentials in stored pg_settings values",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			if err := redactStoredPgSettings(ctx, tx); err != nil {
+				return fmt.Errorf("failed to redact stored pg_settings values: %w", err)
+			}
+
+			_, err := tx.Exec(ctx, `
+				COMMENT ON COLUMN metrics.pg_settings.setting IS
+					'Current value of the setting; credentials (the password in primary_conninfo, the whole of ssl_passphrase_command and of extension settings named like a secret) are redacted to ********';
+				COMMENT ON COLUMN metrics.pg_settings.reset_val IS
+					'Value the setting would reset to, redacted as for setting';
+				COMMENT ON COLUMN metrics.pg_settings.boot_val IS
+					'Value the setting takes at server start when not otherwise set, redacted as for setting';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to comment pg_settings value columns: %w", err)
+			}
+
+			return nil
+		},
+	})
+
+	// Migration #26 removes passwords from statement text that was stored
+	// before the probes started redacting it. See GitHub issue #643.
+	//
+	// PostgreSQL keeps utility statements such as ALTER ROLE ... PASSWORD
+	// and CREATE SUBSCRIPTION ... CONNECTION verbatim in pg_stat_activity
+	// and pg_stat_statements, so the probes copied the secrets into the
+	// datastore. The probes now redact the text with sqlredact.RedactQuery
+	// before storing it, and this migration applies the same function to
+	// the rows already stored. The tables can be large, so only rows that
+	// match a cheap ILIKE pre-filter are read and rewritten; the tables
+	// are still scanned once per column.
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     26,
+		Description: "Redact passwords in stored statement text",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			if err := redactStoredStatementText(ctx, tx); err != nil {
+				return fmt.Errorf("failed to redact stored statement text: %w", err)
+			}
+
+			_, err := tx.Exec(ctx, `
+				COMMENT ON COLUMN metrics.pg_stat_activity.query IS
+					'Text of the backend''s most recent query; passwords and other secrets in string constants are redacted to ********';
+				COMMENT ON COLUMN metrics.pg_stat_statements.query IS
+					'Representative statement text; passwords and other secrets in string constants are redacted to ********';
+				COMMENT ON COLUMN metrics.spock_exception_log.ddl_statement IS
+					'DDL statement that failed to apply, with passwords and other secrets in string constants redacted to ********';
+				COMMENT ON COLUMN metrics.spock_exception_log.error_message IS
+					'Error reported when the change failed to apply, with secrets in any quoted statement text redacted to ********';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to comment statement text columns: %w", err)
+			}
+
+			return nil
+		},
+	})
+}
+
+// statementTextUpdates holds, for each column that stores statement text,
+// the statement that reads the distinct values that might hold a secret
+// and the one that rewrites them. $1 is the list of ILIKE patterns from
+// sqlredact.CandidatePatterns; $2 and $3 are parallel arrays of old and
+// new values. The table and column names are fixed here and never come
+// from input.
+var statementTextUpdates = []struct{ column, selectSQL, updateSQL string }{
+	{
+		"metrics.pg_stat_activity.query",
+		`SELECT DISTINCT query FROM metrics.pg_stat_activity
+		 WHERE query ILIKE ANY($1)`,
+		`UPDATE metrics.pg_stat_activity t SET query = r.new
+		 FROM unnest($2::text[], $3::text[]) AS r(old, new)
+		 WHERE t.query = r.old AND t.query ILIKE ANY($1)`,
+	},
+	{
+		"metrics.pg_stat_statements.query",
+		`SELECT DISTINCT query FROM metrics.pg_stat_statements
+		 WHERE query ILIKE ANY($1)`,
+		`UPDATE metrics.pg_stat_statements t SET query = r.new
+		 FROM unnest($2::text[], $3::text[]) AS r(old, new)
+		 WHERE t.query = r.old AND t.query ILIKE ANY($1)`,
+	},
+	{
+		"metrics.spock_exception_log.ddl_statement",
+		`SELECT DISTINCT ddl_statement FROM metrics.spock_exception_log
+		 WHERE ddl_statement ILIKE ANY($1)`,
+		`UPDATE metrics.spock_exception_log t SET ddl_statement = r.new
+		 FROM unnest($2::text[], $3::text[]) AS r(old, new)
+		 WHERE t.ddl_statement = r.old AND t.ddl_statement ILIKE ANY($1)`,
+	},
+	{
+		"metrics.spock_exception_log.error_message",
+		`SELECT DISTINCT error_message FROM metrics.spock_exception_log
+		 WHERE error_message ILIKE ANY($1)`,
+		`UPDATE metrics.spock_exception_log t SET error_message = r.new
+		 FROM unnest($2::text[], $3::text[]) AS r(old, new)
+		 WHERE t.error_message = r.old AND t.error_message ILIKE ANY($1)`,
+	},
+}
+
+// redactStoredStatementText rewrites every stored statement text that
+// holds a secret to its redacted form. Text that cannot hold one, by the
+// ILIKE pre-filter, is never read; redaction is idempotent, so text that
+// is already redacted is left alone.
+func redactStoredStatementText(ctx context.Context, tx pgx.Tx) error {
+	patterns := sqlredact.CandidatePatterns()
+	for _, stmt := range statementTextUpdates {
+		values, err := queryStrings(ctx, tx, stmt.selectSQL, patterns)
+		if err != nil {
+			return fmt.Errorf("failed to read %s: %w", stmt.column, err)
+		}
+		var olds, news []string
+		for _, value := range values {
+			if redacted := sqlredact.RedactQuery(value); redacted != value {
+				olds = append(olds, value)
+				news = append(news, redacted)
+			}
+		}
+		if len(olds) == 0 {
+			continue
+		}
+		if _, err := tx.Exec(ctx, stmt.updateSQL, patterns, olds, news); err != nil {
+			return fmt.Errorf("failed to redact %s: %w", stmt.column, err)
+		}
+	}
+	return nil
+}
+
+// pgSettingsValueUpdates holds, for each pg_settings column that stores a
+// value of the setting, the statements that read its distinct values for
+// one setting and rewrite one of them. The column names are fixed here
+// and never come from input.
+var pgSettingsValueUpdates = []struct{ selectSQL, updateSQL string }{
+	{
+		`SELECT DISTINCT setting FROM metrics.pg_settings
+		 WHERE name = $1 AND setting IS NOT NULL`,
+		`UPDATE metrics.pg_settings SET setting = $3
+		 WHERE name = $1 AND setting = $2`,
+	},
+	{
+		`SELECT DISTINCT reset_val FROM metrics.pg_settings
+		 WHERE name = $1 AND reset_val IS NOT NULL`,
+		`UPDATE metrics.pg_settings SET reset_val = $3
+		 WHERE name = $1 AND reset_val = $2`,
+	},
+	{
+		`SELECT DISTINCT boot_val FROM metrics.pg_settings
+		 WHERE name = $1 AND boot_val IS NOT NULL`,
+		`UPDATE metrics.pg_settings SET boot_val = $3
+		 WHERE name = $1 AND boot_val = $2`,
+	},
+}
+
+// redactStoredPgSettings rewrites every stored value of a credential-
+// bearing setting to its redacted form. Redaction is idempotent, so
+// values that are already redacted are left alone.
+func redactStoredPgSettings(ctx context.Context, tx pgx.Tx) error {
+	names, err := queryStrings(ctx, tx,
+		`SELECT DISTINCT name FROM metrics.pg_settings`)
+	if err != nil {
+		return fmt.Errorf("failed to list stored settings: %w", err)
+	}
+
+	for _, name := range names {
+		if !pgsettings.IsCredentialSetting(name) {
+			continue
+		}
+		for _, stmt := range pgSettingsValueUpdates {
+			values, err := queryStrings(ctx, tx, stmt.selectSQL, name)
+			if err != nil {
+				return fmt.Errorf("failed to read values of %s: %w", name, err)
+			}
+			for _, value := range values {
+				redacted := pgsettings.RedactValue(name, value)
+				if redacted == value {
+					continue
+				}
+				if _, err := tx.Exec(ctx, stmt.updateSQL, name, value, redacted); err != nil {
+					return fmt.Errorf("failed to redact a value of %s: %w", name, err)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// queryStrings runs a query returning one text column and collects it.
+func queryStrings(ctx context.Context, tx pgx.Tx, sql string, args ...any) ([]string, error) {
+	rows, err := tx.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, pgx.RowTo[string])
 }
 
 // Migrate applies all pending migrations

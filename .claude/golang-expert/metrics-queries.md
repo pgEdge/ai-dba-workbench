@@ -211,6 +211,29 @@ decomposed into small, separately testable helpers:
   into flat maps, normalising each value through `normalizeLatestValue`
   (RFC3339 for `time.Time`, `sanitizeFloat` dropping NaN/Inf to JSON
   null, `pgtype.Numeric`/`pgtype.Interval` collapsed to seconds/float).
+- `QueryLatestRows` passes the scanned rows through
+  `metrics.RedactProbeRows` (`server/src/internal/metrics/probe_redaction.go`,
+  issue #643). For `pg_settings` it masks `setting`, `reset_val` and
+  `boot_val` of credential-bearing settings with `pkg/pgsettings`; for
+  `pg_stat_activity`/`pg_stat_statements` (`query`) and
+  `spock_exception_log` (`ddl_statement`, `error_message`) it runs
+  `pkg/sqlredact.RedactQuery` over the statement text. The collector
+  already redacts at collection time and migrations 25 (settings) and 26
+  (statement text) scrub older rows; this is the read-side backstop.
+  `/api/v1/metrics/latest` (`queryLatestSnapshot`) calls
+  `RedactProbeRows` too, top-queries uses `metrics.RedactStatementText`,
+  and timeline `config_change` events use
+  `server/src/internal/database/settings_redaction.go`. Any new path that
+  returns stored settings values or statement text must redact the same
+  way; when adding a probe that stores statement text, add its columns to
+  `statementTextColumns` there and to `statementTextUpdates` in the
+  collector's migration 26 equivalent (a new migration). The list of
+  credential settings lives only in `pkg/pgsettings`
+  (`CredentialSettings`, `NonCredentialSettings`, `RedactsWholeValue`);
+  `pkg/sqlredact` and `query_datastore`'s SQL masking in
+  `server/src/internal/tools/datastore_catalog.go` build from it, so add
+  a setting there rather than to a copy. Each redacting probe has an
+  `Execute` test in `collector/src/probes/redaction_wiring_test.go`.
 
 ### The /metrics/latest snapshot endpoint and its schema filters
 
@@ -1454,9 +1477,8 @@ database, and every scored value on a covered series goes through
 
 - out of band: `RefreshAnomalyAlert` writes `metric_value`,
   `anomaly_score`, `last_updated` and an escalate-only severity
-  (`escalatedSeverity` over `anomalyScore.severity`, the
-  `cappedAnomalySeverity` helper `createAnomalyAlert` also uses), with
-  no notification;
+  (`escalatedSeverity` over `anomalySeverity`, the helper
+  `createAnomalyAlert` also uses), with no notification;
 - in band: the streak (`anomalyStreak{count, lastSample}`) advances
   only when the value's `MetricValue.CollectedAt` is after
   `lastSample`, so passes that re-score one sample count it once; at
@@ -1524,37 +1546,6 @@ acknowledged until retention deletes it, which the changelog states.
 Per-database baselines of a
 metric that became server-wide need no migration: the stale-baseline
 sweep (`DeleteStaleMetricBaselines`) deletes them on the next cycle.
-
-### Per-metric floors and the severity cap (#617)
-
-`config/metric_floors.go` holds `defaultMetricFloors`, one
-`MetricFloor{MinValue, MinStdDev}` per baselineable metric, and
-`Tier1Config.MetricFloor(name)` overlays the optional
-`anomaly.tier1.metric_floors` override field by field (pointer fields,
-so an explicit 0 disables a floor). `scoreAnomalyValue` returns an
-`anomalyScore`, not a bare z-score:
-
-- `value < MinValue` returns `{scored: true, belowFloor: true}` before
-  any baseline lookup, so it raises no candidate and counts as in band
-  for recovery even on a cold baseline; `anomalyScore.inBand` is the one
-  in-band test, and detection and recovery both use it.
-- the divisor is `max(effectiveStdDev(global floor), MinStdDev)`, and
-  `stddevFloored` is set only for a flat baseline (`StdDev <=
-  variance_floor.absolute_floor`), never because the relative floor or
-  `MinStdDev` won, since that capped real-spread baselines (#619 review).
-- `cappedAnomalySeverity` turns `critical` into `warning` when
-  `stddevFloored` is set. `recordAnomalyCandidate` writes
-  `effective_stddev` and `stddev_floored` into the candidate `Context`,
-  and `createAnomalyAlert` reads the flag back with
-  `candidateStdDevFloored` (false for older contexts), so raising and
-  refreshing an alert apply the same cap.
-- `unknownMetricFloorNames` (engine, since `config` cannot import the
-  registry) lists `metric_floors` keys failing `SupportsBaselines`;
-  `NewEngine` and `ReloadConfig` log them as a warning, not an error.
-
-Engine tests that exercise the global variance floor on the load-average
-test metric must call `disableMetricFloors`, since its default floors
-(`MinValue` 1, `MinStdDev` 0.5) otherwise mask the case under test.
 
 ## Time-Window Resolution (server)
 

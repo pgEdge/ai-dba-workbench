@@ -2373,7 +2373,12 @@ func QueryLatestRows(
 	}
 	defer rows.Close()
 
-	return scanLatestRows(rows, outputCols)
+	result, err := scanLatestRows(rows, outputCols)
+	if err != nil {
+		return nil, err
+	}
+	RedactProbeRows(probeName, result)
+	return result, nil
 }
 
 // sanitizeFloat returns nil for non-finite floats. Go's encoding/json

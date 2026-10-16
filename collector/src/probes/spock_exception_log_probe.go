@@ -106,7 +106,12 @@ func (p *SpockExceptionLogProbe) Execute(ctx context.Context, connectionName str
 	}
 	defer rows.Close()
 
-	return utils.ScanRowsToMaps(rows)
+	results, err := utils.ScanRowsToMaps(rows)
+	if err != nil {
+		return nil, err
+	}
+	redactStatementText(results, "ddl_statement", "error_message")
+	return results, nil
 }
 
 // Store writes the captured rows to metrics.spock_exception_log. Empty

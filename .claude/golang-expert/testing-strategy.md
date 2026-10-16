@@ -333,6 +333,18 @@ remaining workflows (`ci-e2e.yml`, `ci-docker.yml`, `ci-docs.yml`,
 the Go unit suites. Check the workflow file for the current Go version
 rather than recording it here.
 
+Because `make coverage` runs once per Postgres version, the ratchet must
+pass on the version that measures lowest, usually 14, not on the local
+dev host's 18: probes that branch on version or on whether a view exists
+only reach their other branches on other versions. Set `COVERAGE_MIN`
+from the lowest per-version total in the CI log (`gh run view <id>
+--log`, "Total coverage" lines). To reach version branches from any
+version, `collector/src/probes/version_branch_test.go` shadows system
+views with temporary views (an unqualified name resolves to `pg_temp`
+before `pg_catalog`) and seeds `featureCache` entries;
+`statement_redaction_test.go` uses the same trick to make probe queries
+fail.
+
 `make test-e2e` at the repository root runs the Playwright smoke suite
 in `e2e/` against a Dockerised Postgres; it is intentionally not part
 of `make test-all`.

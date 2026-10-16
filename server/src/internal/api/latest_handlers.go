@@ -608,6 +608,11 @@ func queryLatestSnapshot(
 		result = []map[string]any{}
 	}
 
+	// Strip credentials from pg_settings values and passwords from
+	// statement text that a collector stored before redacting them
+	// (GitHub issue #643).
+	metrics.RedactProbeRows(probeName, result)
+
 	return result, totalCount, nil
 }
 

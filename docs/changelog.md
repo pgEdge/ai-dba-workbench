@@ -2677,6 +2677,54 @@ project adheres to
   user's conversation with 403, and now answers 404 as the get, rename
   and delete endpoints already did. (#649)
 
+- Redact passwords in collected `primary_conninfo` settings. The
+  `pg_settings` probe stored every setting as PostgreSQL showed it,
+  and PostgreSQL shows `primary_conninfo`, replication password
+  included, to `pg_monitor`, so a standby's password reached the
+  datastore and came back to anyone who could see the connection, in
+  timeline configuration change events, the latest-row mode of
+  `GET /api/v1/metrics/query` and raw `query_datastore` SQL. The
+  probe now replaces each `password` and `sslpassword` value in
+  `primary_conninfo` with `********` in the `setting`, `reset_val`
+  and `boot_val` columns, parsing both the keyword/value and URI
+  forms and keeping the rest of the string. It replaces in full
+  `ssl_passphrase_command`, `archive_command`,
+  `archive_cleanup_command`, `restore_command` and
+  `recovery_end_command`, any of which can embed a secret such as
+  `PGPASSWORD=...`, and any extension setting named like a secret.
+  Collector schema migration 25 redacts the rows already stored, and
+  the server redacts the timeline and latest-row values again for a
+  datastore the collector has not yet migrated; the structured
+  `query_datastore` tool masks the same settings, using the same
+  list. A change to the password alone is no longer recorded as a
+  configuration change. Redaction cannot recall a password that has
+  already been read from the datastore, so rotate any password that
+  these settings or the statement text below held whilst an earlier
+  version was collecting. (#643)
+
+- Redact passwords in collected statement text. PostgreSQL keeps the
+  text of statements such as `ALTER ROLE ... PASSWORD`, `CREATE USER
+  MAPPING ... OPTIONS (password ...)` and `CREATE SUBSCRIPTION ...
+  CONNECTION` as written, so the `pg_stat_activity` and
+  `pg_stat_statements` probes stored the password in the `query`
+  column, and the `spock_exception_log` probe could store one in
+  `ddl_statement` or `error_message`. The probes now split the text
+  into SQL tokens and replace string constants that hold a password,
+  or the password inside a connection string, with `********`,
+  leaving `pg_stat_statements` placeholders such as `$1` alone. This
+  includes the value given to `set_config` or `SET` for a setting
+  named like a secret, quoted or not, and a connection URI that
+  PostgreSQL's truncation of long statement text cut off before its
+  host.
+  Collector schema migration 26 redacts the text already stored; it
+  rewrites only rows that mention a password or similar secret, but
+  still reads the whole of each table, so it can take a while on a
+  large datastore. The server redacts the text again when it returns
+  it from `GET /api/v1/metrics/latest`, the latest-row mode of
+  `GET /api/v1/metrics/query` and `GET /api/v1/metrics/top-queries`,
+  and `GET /api/v1/metrics/latest` now redacts `pg_settings` rows in
+  the same way. (#643)
+
 - Delete a user with `ai-dba-server -delete-user` only when the
   confirmation is an explicit `y` or `yes`. The answer was checked
   only when a whole line could be read, so input that ended without

@@ -366,12 +366,9 @@ record first and then checks its target (`getProbeConfig`, via
 a record runs the same check after the permission gate and before the
 token-scope gate and the body decode, so neither a 403 nor the echoed
 record confirms a hidden one exists (`updateProbeConfig`, via
-`requireProbeConfigVisible`). Only `updateProbeConfig` does this so
-far: the probe, alert and channel override writes (`upsertOverride`,
-`deleteOverride`) check the admin permission and the token scope but
-not visibility, so a permission holder with no grant can still write
-a hidden target's override and gets 400 rather than 404 for a missing
-one; do not assume every write is covered. Estate-wide (global) rows
+`requireProbeConfigVisible`). The probe, alert and channel override
+writes do the same (see "Override Writes Check Visibility Before Token
+Scope" below). Estate-wide (global) rows
 stay readable by every caller. An unrestricted superuser session gets
 200 with an empty list for a missing connection ID, since nothing is
 hidden from it. `probe_config_visibility_test.go` holds the
@@ -1076,8 +1073,8 @@ audited, as is the cluster move;
 `TestConnectionMutationHonoursTokenConnectionScope` and
 `TestConnectionScopeRefusalIsAudited` cover them.
 
-Connection-access refusals (`CanAccessConnection` or the alert
-resolver says no) are audited too since issue #675, through
+Connection-access refusals (`CanAccessConnection` or
+`canActOnAlert` says no) are audited too since issue #675, through
 `server/src/internal/api/access_denial_targets.go`. Their routes name
 the object outside the path (a query parameter or the body), so the
 refusing handler calls `denialRecorder.refuseConnection` or
@@ -1098,6 +1095,15 @@ records; any other alert gets `alertAccessDenied`. The actions are the
 `MetricsHandler`, `LatestSnapshotHandler`, `PerfSummaryHandler`,
 `ServerInfoHandler` and `AlertHandler` embed `denialAuditor` and are in
 the wiring loop, which `TestSetupHandlersWiresDenialRecorders` pins.
+An alert mutation refuses, and records, only an alert the caller can
+see (`resolveVisibleAlert` answers a hidden one 404 with no row,
+issue #677), so the alert cases are not in `accessRefusalCases`, whose
+nil-store checker hides everything: `TestAlertRefusalsAreAudited` and
+`TestHiddenAlertIsNotAudited` in `alert_refusal_audit_test.go` cover
+them. `TestRefusalWritesOneAuditRow` (`admin_refusal_audit_test.go`)
+runs each alert and override write refusal through the real
+`RecordDenial` and asserts one row with its action and target, and
+none for a hidden target.
 `GET /connections/current` is audited as `connection.read` even
 though the client reads it on every load; the coalescer bounds it. The
 tests are in `access_denial_targets_test.go`.

@@ -256,7 +256,7 @@ func TestConnectionHandler_PerConnection_Owner_NotDenied(t *testing.T) {
 
 			requireNotForbidden(t, rec, tc.name+"/owner")
 			if rec.Code == http.StatusNotFound {
-				t.Fatalf("Expected the alert to be visible, got 404: %s",
+				t.Fatalf("Expected the connection to be visible, got 404: %s",
 					rec.Body.String())
 			}
 		})
@@ -290,7 +290,7 @@ func TestConnectionHandler_PerConnection_SharedNonOwner_NotDenied(t *testing.T) 
 
 			requireNotForbidden(t, rec, tc.name+"/shared")
 			if rec.Code == http.StatusNotFound {
-				t.Fatalf("Expected the alert to be visible, got 404: %s",
+				t.Fatalf("Expected the connection to be visible, got 404: %s",
 					rec.Body.String())
 			}
 		})
@@ -326,7 +326,7 @@ func TestConnectionHandler_PerConnection_GroupGranted_NotDenied(t *testing.T) {
 
 			requireNotForbidden(t, rec, tc.name+"/group-granted")
 			if rec.Code == http.StatusNotFound {
-				t.Fatalf("Expected the alert to be visible, got 404: %s",
+				t.Fatalf("Expected the connection to be visible, got 404: %s",
 					rec.Body.String())
 			}
 		})
@@ -357,7 +357,7 @@ func TestConnectionHandler_PerConnection_Superuser_NotDenied(t *testing.T) {
 
 			requireNotForbidden(t, rec, tc.name+"/superuser")
 			if rec.Code == http.StatusNotFound {
-				t.Fatalf("Expected the alert to be visible, got 404: %s",
+				t.Fatalf("Expected the connection to be visible, got 404: %s",
 					rec.Body.String())
 			}
 		})

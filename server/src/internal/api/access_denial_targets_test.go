@@ -135,7 +135,10 @@ type accessRefusalCase struct {
 
 // accessRefusalCases builds every connection-access refusal reachable
 // without a database. Each handler is built on a nil auth store, so its
-// RBAC checker refuses every connection and every alert.
+// RBAC checker refuses every connection. The alert routes are not here:
+// a caller refused every connection cannot see the alert either, and a
+// hidden alert answers 404 without a refusal (issue #677); see
+// TestAlertRefusalsAreAudited and TestHiddenAlertIsNotAudited.
 func accessRefusalCases() []accessRefusalCase {
 	ds := database.NewTestDatastore(nil)
 	denyAll := auth.NewRBACChecker(nil)
@@ -145,10 +148,6 @@ func accessRefusalCases() []accessRefusalCase {
 	perf := NewPerfSummaryHandler(ds, nil)
 	info := NewServerInfoHandler(ds, nil, denyAll, nil)
 	conn := NewConnectionHandlerWithSecurity(ds, nil, denyAll, true, nil, nil)
-	alerts := NewAlertHandler(nil, nil, denyAll)
-	alerts.alertResolver = &fakeAlertResolver{connID: 7}
-	systemAlerts := NewAlertHandler(nil, nil, denyAll)
-	systemAlerts.alertResolver = &fakeAlertResolver{system: true}
 
 	byID := func(id int) string {
 		return "Permission denied: you do not have access to connection " +
@@ -157,13 +156,6 @@ func accessRefusalCases() []accessRefusalCase {
 	read := func(action string, id int) recordedDenial {
 		return recordedDenial{action, connectionDenialTarget(id),
 			connectionAccessDenied}
-	}
-	alert := func(action string, id int64) recordedDenial {
-		return recordedDenial{action, alertDenialTarget(id), alertAccessDenied}
-	}
-	systemAlert := func(action string, id int64) recordedDenial {
-		return recordedDenial{action, alertDenialTarget(id),
-			systemAlertManageDenied}
 	}
 	withID := func(serve func(http.ResponseWriter, *http.Request, int)) func(http.ResponseWriter, *http.Request) {
 		return func(w http.ResponseWriter, r *http.Request) { serve(w, r, 7) }
@@ -225,30 +217,12 @@ func accessRefusalCases() []accessRefusalCase {
 			conn.setCurrentConnection(w, r, "token-hash")
 		}, http.MethodPost, "/api/v1/connections/current", `{"connection_id":7}`,
 			"Access denied", read(deniedActionConnectionCurrentUpdate, 7)},
-		{"acknowledge alert", alerts, alerts.handleAcknowledge,
-			http.MethodPost, "/api/v1/alerts/acknowledge", `{"alert_id":11}`,
-			"Access denied", alert(deniedActionAlertAcknowledge, 11)},
-		{"unacknowledge alert", alerts, alerts.handleAcknowledge,
-			http.MethodDelete, "/api/v1/alerts/acknowledge?alert_id=11", "",
-			"Access denied", alert(deniedActionAlertUnacknowledge, 11)},
-		{"acknowledge system alert", systemAlerts, systemAlerts.handleAcknowledge,
-			http.MethodPost, "/api/v1/alerts/acknowledge", `{"alert_id":12}`,
-			"Access denied", systemAlert(deniedActionAlertAcknowledge, 12)},
-		{"unacknowledge system alert", systemAlerts, systemAlerts.handleAcknowledge,
-			http.MethodDelete, "/api/v1/alerts/acknowledge?alert_id=12", "",
-			"Access denied", systemAlert(deniedActionAlertUnacknowledge, 12)},
-		{"save alert analysis", alerts, alerts.handleSaveAnalysis,
-			http.MethodPut, "/api/v1/alerts/analysis", `{"alert_id":11,"analysis":"x"}`,
-			"Access denied", alert(deniedActionAlertAnalysisUpdate, 11)},
-		{"save system alert analysis", systemAlerts, systemAlerts.handleSaveAnalysis,
-			http.MethodPut, "/api/v1/alerts/analysis", `{"alert_id":12,"analysis":"x"}`,
-			"Access denied", alert(deniedActionAlertAnalysisUpdate, 12)},
 	}
 }
 
 // TestConnectionAccessRefusalsAreAudited checks that every
 // connection-access refusal on the read routes, and the access refusals
-// on the query and alert routes, answers 403 with its usual message and
+// on the query routes, answers 403 with its usual message and
 // records one denial naming the object, with a reason that does not.
 func TestConnectionAccessRefusalsAreAudited(t *testing.T) {
 	for _, c := range accessRefusalCases() {

@@ -367,6 +367,16 @@ func TestConnectionPermissionRefusalsAreAudited(t *testing.T) {
 	}
 }
 
+// oneRowCase is one refusal TestRefusalWritesOneAuditRow sends, with
+// the reason, action and target its single audit row must carry.
+type oneRowCase struct {
+	name   string
+	serve  func() *httptest.ResponseRecorder
+	reason string
+	action string
+	target string
+}
+
 // TestRefusalWritesOneAuditRow checks, against the real denial
 // recorder, that one refusal on each route that both this gate and the
 // connection-access auditing (issue #675) touch writes exactly one
@@ -389,14 +399,59 @@ func TestRefusalWritesOneAuditRow(t *testing.T) {
 	blackout := NewBlackoutHandler(unreachableDatastore(t), f.store, rc)
 	blackout.SetDenialRecorder(record)
 
+	// A connection alert the caller can see but may not change: the
+	// lister reports it shared whilst the access check reports it
+	// private (see TestAlertRefusalsAreAudited).
+	connAlerts := NewAlertHandler(nil, f.store,
+		mockSharingChecker(t, f.store, other, "someone_else", false))
+	connAlerts.setAlertResolver(&fakeAlertResolver{connID: other})
+	connAlerts.setVisibilityLister(singleConnectionLister(other,
+		"someone_else", true))
+	connAlerts.SetDenialRecorder(record)
+
+	// The override writes check visibility before the token scope
+	// (issue #672), so a token that sees the target only at read is the
+	// caller that still draws a refusal.
+	readOnlyID := mustCreateScopedToken(t, f.store, "one_row_read_only", nil)
+	if err := f.store.AsActor(auth.SystemActor()).SetTokenConnectionScope(
+		readOnlyID, []auth.ScopedConnection{
+			{ConnectionID: other, AccessLevel: auth.AccessLevelRead},
+		}, true); err != nil {
+		t.Fatalf("SetTokenConnectionScope failed: %v", err)
+	}
+	readOnly := scopeCaller{name: "one_row_read_only",
+		wrap: func(r *http.Request) *http.Request {
+			return withSuperuserToken(r, readOnlyID)
+		}}
+	alertOverride := NewAlertOverrideHandler(f.ds, f.store, rc)
+	probeOverride := NewProbeOverrideHandler(f.ds, f.store, rc)
+	chanOverride := NewChannelOverrideHandler(f.ds, f.store, rc)
+	for _, h := range []interface {
+		SetDenialRecorder(func(*http.Request, string))
+	}{alertOverride, probeOverride, chanOverride} {
+		h.SetDenialRecorder(record)
+	}
+	overrideCase := func(name string,
+		register func(*http.ServeMux, func(http.HandlerFunc) http.HandlerFunc),
+		method, kind, suffix, body, action string) oneRowCase {
+		return oneRowCase{name, func() *httptest.ResponseRecorder {
+			return serveRoutes(register, readOnly, method,
+				fmt.Sprintf("/api/v1/%s/server/%d/%s", kind, other, suffix), body)
+		}, targetOutOfTokenScope, action,
+			fmt.Sprintf("%s/server/%d", kind, other)}
+	}
+	alertCase := func(name string, h *AlertHandler,
+		serve func(*AlertHandler, http.ResponseWriter, *http.Request),
+		method, path, body, reason, action string, alertID int64) oneRowCase {
+		return oneRowCase{name, func() *httptest.ResponseRecorder {
+			rec := httptest.NewRecorder()
+			serve(h, rec, asCaller(connCovRequest(t, method, path, body), plain))
+			return rec
+		}, reason, action, alertDenialTarget(alertID)}
+	}
+
 	manageConnections := permissionRefusal(auth.PermManageConnections)
-	cases := []struct {
-		name   string
-		serve  func() *httptest.ResponseRecorder
-		reason string
-		action string
-		target string
-	}{
+	cases := []oneRowCase{
 		{"connection cluster move", func() *httptest.ResponseRecorder {
 			return f.serve(asCaller(connCovRequest(t, http.MethodPut,
 				connCovPath(other, "cluster"), `{}`), plain))
@@ -421,6 +476,40 @@ func TestRefusalWritesOneAuditRow(t *testing.T) {
 				http.MethodPost, "/api/v1/blackouts", `{}`)
 		}, permissionRefusal(auth.PermManageBlackouts), "blackout.create",
 			"blackouts"},
+		alertCase("system alert unacknowledge", alerts,
+			(*AlertHandler).handleAcknowledge, http.MethodDelete,
+			"/api/v1/alerts/acknowledge?alert_id=9", "",
+			systemAlertManageDenied, deniedActionAlertUnacknowledge, 9),
+		alertCase("connection alert acknowledge", connAlerts,
+			(*AlertHandler).handleAcknowledge, http.MethodPost,
+			"/api/v1/alerts/acknowledge", `{"alert_id": 10}`,
+			alertAccessDenied, deniedActionAlertAcknowledge, 10),
+		alertCase("connection alert unacknowledge", connAlerts,
+			(*AlertHandler).handleAcknowledge, http.MethodDelete,
+			"/api/v1/alerts/acknowledge?alert_id=10", "",
+			alertAccessDenied, deniedActionAlertUnacknowledge, 10),
+		alertCase("connection alert analysis", connAlerts,
+			(*AlertHandler).handleSaveAnalysis, http.MethodPut,
+			"/api/v1/alerts/analysis", `{"alert_id": 10, "analysis": "x"}`,
+			alertAccessDenied, deniedActionAlertAnalysisUpdate, 10),
+		overrideCase("alert override upsert", alertOverride.RegisterRoutes,
+			http.MethodPut, "alert-overrides", "1", `{}`,
+			"alert_override.update"),
+		overrideCase("alert override delete", alertOverride.RegisterRoutes,
+			http.MethodDelete, "alert-overrides", "1", "",
+			"alert_override.delete"),
+		overrideCase("probe override upsert", probeOverride.RegisterRoutes,
+			http.MethodPut, "probe-overrides", "pg_stat_activity", `{}`,
+			"probe_override.update"),
+		overrideCase("probe override delete", probeOverride.RegisterRoutes,
+			http.MethodDelete, "probe-overrides", "pg_stat_activity", "",
+			"probe_override.delete"),
+		overrideCase("channel override upsert", chanOverride.RegisterRoutes,
+			http.MethodPut, "channel-overrides", "1", `{}`,
+			"channel_override.update"),
+		overrideCase("channel override delete", chanOverride.RegisterRoutes,
+			http.MethodDelete, "channel-overrides", "1", "",
+			"channel_override.delete"),
 	}
 
 	for i, tc := range cases {
@@ -458,4 +547,40 @@ func TestRefusalWritesOneAuditRow(t *testing.T) {
 			}
 		})
 	}
+
+	// A target the caller cannot see answers as missing and writes no
+	// row, since a row would itself confirm the target exists (issues
+	// #672 and #677).
+	t.Run("hidden targets write no row", func(t *testing.T) {
+		hidden := f.seed(t, "one-row-hidden", "someone_else", true)
+		hiddenAlerts := NewAlertHandler(nil, f.store,
+			mockSharingChecker(t, f.store, hidden, "someone_else", false))
+		hiddenAlerts.setAlertResolver(&fakeAlertResolver{connID: hidden})
+		hiddenAlerts.setVisibilityLister(&stubVisibilityLister{})
+		hiddenAlerts.SetDenialRecorder(record)
+
+		denied := func() int {
+			events, _, err := f.store.ListAuditEvents(auth.AuditFilter{
+				Outcome: string(auth.OutcomeDenied)})
+			if err != nil {
+				t.Fatalf("ListAuditEvents failed: %v", err)
+			}
+			return len(events)
+		}
+		before := denied()
+
+		rec := serveRoutes(probeOverride.RegisterRoutes, readOnly,
+			http.MethodDelete, fmt.Sprintf(
+				"/api/v1/probe-overrides/server/%d/pg_stat_activity", hidden), "")
+		expectStatus(t, rec, http.StatusNotFound)
+		rec = httptest.NewRecorder()
+		hiddenAlerts.acknowledgeAlert(rec, asCaller(connCovRequest(t,
+			http.MethodPost, "/api/v1/alerts/acknowledge",
+			`{"alert_id": 9}`), plain))
+		expectStatus(t, rec, http.StatusNotFound)
+
+		if after := denied(); after != before {
+			t.Errorf("Expected no new denied rows, got %d", after-before)
+		}
+	})
 }

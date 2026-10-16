@@ -225,10 +225,12 @@ pool acquisitions through a `PrepareConn` hook.
 Connection update and delete (`updateConnection`, `deleteConnection`)
 follow the issue #677 model instead, through `loadConnectionForChange`:
 token scope first (audited 403), then a 404 "Connection not found",
-unaudited and identical to a missing id, when the caller neither can
-see the connection (`CanAccessConnection`) nor holds
-`manage_connections`; only then the ownership check, whose 403 is
-audited through `h.refuse`. `CanAccessConnection` runs whether or not
+unaudited and identical to a missing id, when the caller cannot see
+the connection (`CanAccessConnection`), whether or not it holds
+`manage_connections` (issue #710, matching the cluster group handlers
+of issue #649); only then the ownership check, which
+`manage_connections` passes and whose 403 is audited through
+`h.refuse`. A superuser sees every live connection, so is unaffected. `CanAccessConnection` runs whether or not
 the row exists, so the work done does not reveal it either. For that
 to hold, `CanAccessConnection` reads the caller's group privileges
 before the sharing lookup, which fails for a missing id; keep that
@@ -238,7 +240,8 @@ order, so a missing and a hidden connection run the same queries.
 privileges read must stop before the sharing lookup runs), since the
 handler tests compare only status and body and pass with either order.
 `connection_write_visibility_test.go` locks in the byte-identical 404
-for sessions and API tokens, the manager exemption and the owner of a
+for sessions, API tokens and `manage_connections` holders, a manager
+changing a connection it can see, the superuser, and the owner of a
 group-restricted connection.
 
 Note on handler comments: the Variant 2 implementation must call

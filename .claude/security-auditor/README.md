@@ -98,9 +98,10 @@ moved.
   `GET /api/v1/probe-configs/{id}` and `PUT /api/v1/probe-configs/{id}`
   answer 404 for a server, cluster or group config the caller cannot
   see, PUT before the token scope or the body is checked (#647), and
-  `PUT` and `DELETE /api/v1/connections/{id}` for a caller without
-  `manage_connections` (#677; a `manage_connections` holder may change
-  a connection they cannot see, so is not answered 404 for one).
+  `PUT` and `DELETE /api/v1/connections/{id}` for every caller,
+  `manage_connections` holders included (#677, #710; the permission
+  lets a caller change a connection it can see without owning it, not
+  reach one it cannot see).
   Judge an enumeration concern against the convention of the endpoint
   in question rather than assuming either model throughout.
 - The MCP tools that go through `resolveAccessibleConnection` in

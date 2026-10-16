@@ -485,7 +485,7 @@ func (h *ConnectionHandler) updateConnection(w http.ResponseWriter, r *http.Requ
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	conn, ok := h.loadConnectionForChange(ctx, w, r, id, hasManageConns, "update")
+	conn, ok := h.loadConnectionForChange(ctx, w, r, id, "update")
 	if !ok {
 		return
 	}
@@ -595,7 +595,7 @@ func (h *ConnectionHandler) deleteConnection(w http.ResponseWriter, r *http.Requ
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	conn, ok := h.loadConnectionForChange(ctx, w, r, id, hasManageConns, "delete")
+	conn, ok := h.loadConnectionForChange(ctx, w, r, id, "delete")
 	if !ok {
 		return
 	}
@@ -646,12 +646,15 @@ const (
 // not the connection exists, and both refusals are the same response,
 // so neither the body nor the work done tells a caller which it was;
 // an unseen connection is not audited, as there is nothing the caller
-// was refused that it could know of. A caller holding manage_connections
-// (canManage) may change any connection, so it is not limited to the
-// ones it can see. The bool is false when the response has been written.
+// was refused that it could know of. manage_connections lets a caller
+// change a connection it can see without owning it, but not reach one
+// it cannot see: such a connection is missing to a manager as to
+// anyone else, as invisible cluster groups are (issues #649 and #710).
+// A superuser sees every live connection, so is unaffected. The bool
+// is false when the response has been written.
 func (h *ConnectionHandler) loadConnectionForChange(ctx context.Context, w http.ResponseWriter,
-	r *http.Request, id int, canManage bool, action string) (*database.MonitoredConnection, bool) {
-	if canAccess, _ := h.rbacChecker.CanAccessConnection(r.Context(), id); !canManage && !canAccess {
+	r *http.Request, id int, action string) (*database.MonitoredConnection, bool) {
+	if canAccess, _ := h.rbacChecker.CanAccessConnection(r.Context(), id); !canAccess {
 		RespondError(w, http.StatusNotFound, "Connection not found")
 		return nil, false
 	}

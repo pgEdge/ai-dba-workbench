@@ -312,10 +312,14 @@ func TestConnectionHandlerCoverage_UpdateConnection(t *testing.T) {
 			map[string]any{"host": "blocked.example.com"}), http.StatusBadRequest},
 		{"blocked port", e.asOwner(http.MethodPut, path,
 			map[string]any{"port": 22}), http.StatusBadRequest},
-		{"datastore rejects over-long value", e.asAdmin(http.MethodPut, path,
+		{"datastore rejects over-long value", e.asOwner(http.MethodPut, path,
 			map[string]any{"database_name": strings.Repeat("d", 300)}),
 			http.StatusInternalServerError},
 		{"unseen connection is not found", e.asOwner(http.MethodPut, "/api/v1/connections/32",
+			map[string]any{"name": "x"}), http.StatusNotFound},
+		// manage_connections does not reach a connection the caller
+		// cannot see (issue #710).
+		{"unseen connection is not found to an admin", e.asAdmin(http.MethodPut, path,
 			map[string]any{"name": "x"}), http.StatusNotFound},
 		{"missing connection", e.asAdmin(http.MethodPut, "/api/v1/connections/999",
 			map[string]any{"name": "x"}), http.StatusNotFound},

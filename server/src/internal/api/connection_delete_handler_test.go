@@ -255,8 +255,8 @@ func TestDeleteConnection_HandlerResponses(t *testing.T) {
 		}
 	})
 
-	t.Run("manage_connections deletes another user's private connection", func(t *testing.T) {
-		h := newDeleteConnectionHarness(t, id, owner).withSharingLookup()
+	t.Run("manage_connections deletes another user's visible connection", func(t *testing.T) {
+		h := newDeleteConnectionHarness(t, id, owner)
 		req := h.request(t, context.Background(), "issue480_admin",
 			[]string{auth.PermManageConnections})
 		rec := httptest.NewRecorder()
@@ -266,6 +266,25 @@ func TestDeleteConnection_HandlerResponses(t *testing.T) {
 		}
 		if !h.marked(t, id) {
 			t.Fatal("connection not marked deleted")
+		}
+	})
+
+	// manage_connections does not reach a connection the caller cannot
+	// see, which answers as a missing one does (issue #710).
+	t.Run("manage_connections cannot delete another user's private connection", func(t *testing.T) {
+		h := newDeleteConnectionHarness(t, id, owner).withSharingLookup()
+		req := h.request(t, context.Background(), "issue480_hidden_admin",
+			[]string{auth.PermManageConnections})
+		rec := httptest.NewRecorder()
+		h.handler.deleteConnection(rec, req, id)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want 404. Body: %s", rec.Code, rec.Body.String())
+		}
+		if h.marked(t, id) {
+			t.Fatal("hidden connection was marked deleted")
+		}
+		if n := h.deleteDenials(t); n != 0 {
+			t.Fatalf("hidden connection recorded %d refusals, want 0", n)
 		}
 	})
 

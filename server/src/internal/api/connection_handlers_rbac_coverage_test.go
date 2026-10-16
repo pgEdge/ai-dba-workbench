@@ -767,11 +767,12 @@ func TestConnCov_UpdateConnection_OwnerUpdates(t *testing.T) {
 
 // TestConnCov_UpdateConnection_AdminSharesOthersConnection confirms that a
 // caller holding manage_connections may update and share a connection they
-// do not own.
+// do not own but can see, here through a read grant.
 func TestConnCov_UpdateConnection_AdminSharesOthersConnection(t *testing.T) {
 	f := newConnCovFixture(t, connCovSecret)
-	admin := f.newCaller(t, "cov_upd_admin", auth.PermManageConnections)
 	id := f.seed(t, "someone-elses", "cov_upd_absent_owner", false)
+	admin := f.newGroupGrantedCaller(t, "cov_upd_admin", id, auth.AccessLevelRead)
+	f.grantAdminPermission(t, admin, auth.PermManageConnections)
 
 	shared := true
 	rec := f.serve(asCaller(connCovRequest(t, http.MethodPut, connCovPath(id, ""),
@@ -838,13 +839,14 @@ func TestConnCov_DeleteConnection_Rejections(t *testing.T) {
 }
 
 // TestConnCov_DeleteConnection_Success confirms that both the owner and a
-// caller holding manage_connections may delete a connection.
+// caller holding manage_connections may delete a connection, the latter
+// one it can see without owning.
 func TestConnCov_DeleteConnection_Success(t *testing.T) {
 	f := newConnCovFixture(t, connCovSecret)
 	owner := f.newCaller(t, "cov_del_ok_owner")
 	admin := f.newCaller(t, "cov_del_ok_admin", auth.PermManageConnections)
 	own := f.seed(t, "owned", owner.username, false)
-	foreign := f.seed(t, "foreign", "cov_del_absent_owner", false)
+	foreign := f.seed(t, "foreign", "cov_del_absent_owner", true)
 
 	rec := f.serve(asCaller(connCovRequest(t, http.MethodDelete, connCovPath(own, ""), nil), owner))
 	assertStatus(t, rec, http.StatusNoContent)

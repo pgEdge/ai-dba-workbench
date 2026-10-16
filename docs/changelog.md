@@ -1222,6 +1222,16 @@ project adheres to
   whose connection is deleted whilst the request is in flight
   also answers `404` rather than `500`.
 
+- Stop a holder of the `manage_connections` permission from
+  updating or deleting a connection they cannot see (#710).
+  `PUT /api/v1/connections/{id}` let such a caller change a
+  private connection belonging to someone else and read the
+  whole record back in the response, although `GET` refused
+  them. Both requests now answer `404 Not Found` for a
+  connection the caller cannot see, exactly as for a missing
+  one, as the cluster group endpoints already do (#649); a
+  superuser is unaffected.
+
 - Fix Ask Ellie tool calls failing with the OpenAI provider
   (#686). The web client returns tool results in a user
   message, which the OpenAI provider dropped, so OpenAI

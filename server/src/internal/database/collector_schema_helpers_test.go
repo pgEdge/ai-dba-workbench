@@ -15,6 +15,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	collectordb "github.com/pgedge/ai-workbench/collector/src/database"
@@ -122,9 +123,22 @@ func newCollectorSchemaDatastore(t *testing.T) (*Datastore, *pgxpool.Pool) {
 		t.Fatalf("migrate collector schema: %v", err)
 	}
 
-	for _, table := range collectorSchemaPartitionedTables {
-		if _, err := pool.Exec(ctx, "CREATE TABLE metrics."+table+"_default PARTITION OF metrics."+table+" DEFAULT"); err != nil {
-			t.Fatalf("attach default partition to metrics.%s: %v", table, err)
+	// Let the server quote each identifier with %I rather than building
+	// the DDL by concatenation in Go.
+	rows, err := pool.Query(ctx, `
+		SELECT format('CREATE TABLE metrics.%I PARTITION OF metrics.%I DEFAULT',
+		              tbl || '_default', tbl)
+		  FROM unnest($1::text[]) AS tbl`, collectorSchemaPartitionedTables)
+	if err != nil {
+		t.Fatalf("build default partition DDL: %v", err)
+	}
+	ddl, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		t.Fatalf("read default partition DDL: %v", err)
+	}
+	for _, stmt := range ddl {
+		if _, err := pool.Exec(ctx, stmt); err != nil {
+			t.Fatalf("attach default partition (%s): %v", stmt, err)
 		}
 	}
 

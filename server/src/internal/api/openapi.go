@@ -2398,7 +2398,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 			},
 			Delete: &OpenAPIOperation{
 				Summary:     "Delete a cluster group",
-				Description: "Deletes a cluster group. Requires manage_connections permission or ownership of the cluster group. A group the caller cannot see is answered with 404, as a missing one is.",
+				Description: "Deletes a cluster group. Requires manage_connections permission or ownership of the cluster group. A group the caller cannot see is answered with 404, as a missing one is; a group with no member connections is visible only to a caller who sees every connection.",
 				OperationID: "deleteClusterGroup",
 				Tags:        []string{"Cluster Groups"},
 				Security:    bearerAuth,

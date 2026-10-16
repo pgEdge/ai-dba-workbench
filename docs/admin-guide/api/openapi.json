@@ -2627,7 +2627,7 @@
       },
       "delete": {
         "summary": "Delete a cluster group",
-        "description": "Deletes a cluster group. Requires manage_connections permission or ownership of the cluster group. A group the caller cannot see is answered with 404, as a missing one is.",
+        "description": "Deletes a cluster group. Requires manage_connections permission or ownership of the cluster group. A group the caller cannot see is answered with 404, as a missing one is; a group with no member connections is visible only to a caller who sees every connection.",
         "operationId": "deleteClusterGroup",
         "tags": [
           "Cluster Groups"

@@ -297,12 +297,17 @@ func TestNewSchemaManager(t *testing.T) {
 	}
 
 	// Verify all migrations are registered
-	expectedVersions := []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23}
+	expectedVersions := []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24}
 	if len(sm.migrations) != len(expectedVersions) {
 		t.Fatalf("Expected %d migrations, got %d", len(expectedVersions), len(sm.migrations))
 	}
 
 	for i, expectedVersion := range expectedVersions {
+		if i > 0 && sm.migrations[i].Version <= sm.migrations[i-1].Version {
+			t.Errorf("Migration %d: version %d does not follow version %d",
+				i, sm.migrations[i].Version, sm.migrations[i-1].Version)
+		}
+
 		if sm.migrations[i].Version != expectedVersion {
 			t.Errorf("Migration %d: expected version %d, got %d",
 				i, expectedVersion, sm.migrations[i].Version)

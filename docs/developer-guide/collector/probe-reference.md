@@ -289,6 +289,36 @@ The probe only stores data when HBA rules change.
 line_number, type, database, user_name, address,
 netmask, auth_method, options, error
 
+A line that PostgreSQL cannot parse is stored with
+its line number and error, and with every other rule
+column empty; on PostgreSQL 16 and later its file
+name is stored as well. On PostgreSQL 16 and later,
+PostgreSQL gives such a line no rule number, so the
+collector stores a negative `rule_number` instead
+(-1, -2 and so on, ordered by file name and then
+line number, not by the order in which files are
+included); a valid rule keeps the number PostgreSQL
+assigns. On PostgreSQL 14 and 15, `rule_number`
+holds the line number for every row, and
+`file_name` is empty.
+
+The error text can quote a value from the line,
+such as a misspelt `ldapbindpasswd` option with its
+password. The collector therefore stores the error
+up to the first double quote or colon, and replaces
+the rest with `********`; for example, an option
+that is not in `name=value` form is stored as
+`authentication option not in name=value format:
+********`.
+
+PostgreSQL also reports the `ldapbindpasswd` and
+`radiussecrets` options of a valid rule with their
+values, so the collector stores them as
+`ldapbindpasswd=********` and
+`radiussecrets=********`. Datastore migration 24
+applies the same masking to the rules stored before
+the collector masked them.
+
 ### pg_ident_file_mappings
 
 This probe monitors PostgreSQL `pg_ident.conf` user

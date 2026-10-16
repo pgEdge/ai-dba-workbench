@@ -15,12 +15,28 @@
 
 services:
   postgres:
-    image: ${POSTGRES_IMAGE:-pgvector/pgvector:pg17}
+    # RPM mode uses the pgEdge-packaged PostgreSQL image, which ships
+    # system_stats (and pg_stat_statements) installed from the pgEdge RPM
+    # repository for the SELECTED major version — the same distribution
+    # used in production, and consistent with the RPM install path for the
+    # workbench itself. Selecting a version is a matter of PG_MAJOR (the
+    # image tag tracks it); the spec then does CREATE EXTENSION for
+    # system_stats and pg_stat_statements on top. This is preferred over
+    # compiling from source (as the Docker-mode image does). POSTGRES_IMAGE
+    # still overrides the whole tag when needed.
+    #
+    # Supported PG_MAJOR values: 16, 17, 18 (default), and 19. PG 19 requires
+    # the pgEdge image `pgedge-postgres:19-spock5-standard`, which is published
+    # only after PostgreSQL 19 GA — until then `PG_MAJOR=19` fails at image
+    # pull. Convenience scripts: `npm run test:rpm:pg18` / `test:rpm:pg19`.
+    image: ${POSTGRES_IMAGE:-ghcr.io/pgedge/pgedge-postgres:${PG_MAJOR:-18}-spock5-standard}
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
       POSTGRES_DB: ai_workbench
-      PGDATA: ${PGDATA_DIR:-/var/lib/postgresql/data}
+      # PGDATA tracks the selected version (RPM/pgEdge layout). Override
+      # with PGDATA_DIR if the chosen image uses a different path.
+      PGDATA: ${PGDATA_DIR:-/var/lib/pgsql/${PG_MAJOR:-18}/data}
     command: ["postgres", "-c", "listen_addresses=*"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
@@ -50,6 +66,7 @@ services:
     volumes:
       - workbench-data:/data
       - ${E2E_SECRET_DIR:-../secret}/llm_api_key:/etc/pgedge/llm_api_key:ro
+      - ${E2E_SECRET_DIR:-../secret}/embedding_api_key:/etc/pgedge/embedding_api_key:ro
     ports:
       - "8080:8443"
       - "3000:8444"

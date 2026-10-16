@@ -143,8 +143,11 @@ async function addServer(page: Page, cfg: ServerConfig): Promise<void> {
             .first()
             .click();
 
-        // Select role (appears after cluster is selected)
-        await page.getByLabel('Role').click();
+        // Select role (appears after cluster is selected). Use the combobox
+        // role rather than getByLabel('Role'): the latter substring-matches
+        // and collides with Top Queries rows whose aria-label contains a
+        // role-listing query (e.g. "SELECT rolname, rolsuper, rolcreaterole…").
+        await page.getByRole('combobox', { name: 'Role' }).click();
         await page
             .getByRole('option', { name: cfg.role })
             .click();

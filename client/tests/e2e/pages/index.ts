@@ -19,3 +19,7 @@ export { AlertManagementPage } from './AlertManagementPage';
 export { NotificationChannelPage } from './NotificationChannelPage';
 export { ThemePage } from './ThemePage';
 export { MonitoringPage } from './MonitoringPage';
+export { EventTimelinePage } from './EventTimelinePage';
+export { StatusPanelAlertsPage } from './StatusPanelAlertsPage';
+export { AnalysisDialog } from './AnalysisDialog';
+export { BlackoutPage } from './BlackoutPage';

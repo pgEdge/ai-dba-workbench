@@ -13,7 +13,9 @@ reasoning:
   # env: E2E_REASONING_PROVIDER=anthropic|openai|gemini|ollama
   provider: anthropic
   # env: E2E_REASONING_MODEL
-  model: claude-sonnet-4-6
+  # Haiku 4.5: cheapest capable Anthropic model — chosen for E2E to cut token
+  # cost (AI runs make dozens of LLM calls). Override via E2E_REASONING_MODEL.
+  model: claude-haiku-4-5-20251001
 
 embedding:
   # env: E2E_EMBEDDING_PROVIDER=voyage|openai|gemini|cohere|ollama

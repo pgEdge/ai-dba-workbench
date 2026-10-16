@@ -303,11 +303,23 @@ export class GroupManagementPage extends BasePage {
     /**
      * Assert that the given connection privilege label is visible
      * in the expanded group panel.
+     *
+     * The lookup is scoped to the CONNECTIONS section of the
+     * EffectivePermissionsPanel (data-testid
+     * "connection-privileges-section") so that matching on a bare
+     * connection name resolves to the privilege chip only, and not to
+     * the identically named server row rendered in the cluster
+     * navigator sidebar in the background (which would otherwise
+     * trigger a Playwright strict-mode violation).
      */
     async expectConnectionPrivilegeVisible(
         label: string | RegExp,
         timeout: number = 10_000,
     ): Promise<void> {
-        await expect(this.page.getByText(label)).toBeVisible({ timeout });
+        await expect(
+            this.page
+                .getByTestId('connection-privileges-section')
+                .getByText(label),
+        ).toBeVisible({ timeout });
     }
 }

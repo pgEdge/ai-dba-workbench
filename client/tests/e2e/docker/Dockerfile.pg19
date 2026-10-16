@@ -1,0 +1,144 @@
+#--------------------------------------------------------------------------
+#
+# pgEdge AI DBA Workbench
+#
+# Copyright (c) 2025 - 2026, pgEdge, Inc.
+# This software is released under The PostgreSQL License
+#
+#--------------------------------------------------------------------------
+
+# STOPGAP full-stack PostgreSQL 19 image for the E2E suite.
+#
+# pgEdge has not yet published a `pgedge-postgres:19-spock5-standard` container
+# image (the postgres-images repo only cuts 16/17/18), but the complete PG19
+# stack already exists as RPMs in the pgEdge dnf repo. This image installs that
+# same set — so it is equivalent to the image pgEdge will eventually publish,
+# and supports the ENTIRE suite including Spock:
+#
+#   pgedge-postgresql19-server   19-RC1     (pgEdge's PATCHED postgres 19,
+#                                            which provides the symbols spock
+#                                            needs, e.g. remoteTransactionStop-
+#                                            Timestamp)
+#   pgedge-spock50_19            5.0.13     (spock built for PG19)
+#   pgedge-system_stats_19       4.1        (now properly supports PG 16-19;
+#                                            earlier 4.0 was compiled against
+#                                            a pre-RC1 beta and segfaulted,
+#                                            which used to force a from-source
+#                                            build here — no longer needed)
+#   pgedge-pgvector_19           0.8.7      (a WORKING pgvector for PG19 —
+#                                            building it from vanilla source
+#                                            segfaults)
+#   pg_stat_statements           core contrib
+#
+# The RC1 package set above is only available on pgEdge's staging dnf channel
+# until it is promoted to release (GA). Build with
+# `--build-arg REPO_CHANNEL=staging` until then; REPO_CHANNEL defaults to
+# `release` so this image picks up the production channel for free once
+# pgEdge promotes the build, with no other change required.
+#
+# Replace with ghcr.io/pgedge/pgedge-postgres:19-spock5-standard once pgEdge
+# publishes it (add a pg19 package list to postgres-images + build). The RPM
+# layout here (/usr/pgsql-19/bin, PGDATA=/var/lib/pgsql/19/data) matches that
+# image, so the swap is a one-line image-tag change.
+#
+# SPOCK ON PG19 RC1 — fixed in-image, investigated 2026-10-13/14. The
+# pgedge-spock50_19 5.0.13 RPM is compiled against PG19 beta4; on RC1 it
+# silently corrupts DELETE replication (a DELETE of a just-replicated row is
+# misidentified as a delete_delete conflict and skipped downstream), failing
+# every zzz-spock e2e spec. Root cause (verified against the installed RC1
+# headers): PG19 added a `bool skipduplicates` 3rd parameter to
+# RelationFindReplTupleByIndex (executor/executor.h), so the beta4-compiled
+# binary calls it with a one-off argument shift and reads garbage for
+# lockmode. No spock release carries PG19 support, so the RUN stage below
+# compiles v5.0.13 from source with a vendored src/compat/19 (passing
+# skipduplicates=true, matching core's own idxisreplident at that call site)
+# and overlays the two .so files; this was verified live — DELETE now
+# propagates and spock.resolutions stays clean. This is an upstream spock
+# gap, not a Workbench/e2e bug; it still needs a real spock-side fix. Full
+# trail, evidence and the exact deltas: .claude/notes/spock-pg19-rc1-delete-bug.md
+FROM rockylinux:9
+
+# Declared so the compose build arg PG_MAJOR does not warn; the PG19 package
+# set is pinned regardless.
+ARG PG_MAJOR
+
+# Repository channel: staging | release. See the header comment above — this
+# must currently be set to `staging` to reach the PG19 RC1 package set.
+ARG REPO_CHANNEL=release
+
+# util-linux provides runuser/setpriv used by the entrypoint; glibc-langpack-en
+# supplies the en_US.UTF-8 locale initdb defaults to.
+ENV LANG=en_US.UTF-8 \
+    PATH=/usr/pgsql-19/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/sbin:/usr/bin:/bin \
+    PGDATA=/var/lib/pgsql/19/data
+
+# Configure the pgEdge dnf repository, repointing it at the staging channel
+# when REPO_CHANNEL=staging (same mechanism as Dockerfile.rpm-installer).
+RUN set -eux; \
+    dnf install -y dnf-plugins-core epel-release; \
+    dnf config-manager --set-enabled crb; \
+    dnf install -y \
+        https://dnf.pgedge.com/reporpm/pgedge-release-latest.noarch.rpm; \
+    if [ "${REPO_CHANNEL}" = "staging" ]; then \
+        sed -i 's/release/staging/g' /etc/yum.repos.d/pgedge*.repo; \
+    fi
+
+# Runtime packages installed from RPM.
+RUN set -eux; \
+    dnf install -y \
+        pgedge-postgresql19 \
+        pgedge-postgresql19-server \
+        pgedge-postgresql19-contrib \
+        pgedge-spock50_19 \
+        pgedge-pgvector_19 \
+        pgedge-system_stats_19 \
+        util-linux glibc-langpack-en; \
+    dnf clean all; \
+    rm -rf /var/cache/dnf
+
+# ---------------------------------------------------------------------------
+# Overlay a PG19-RC1-compatible spock built from source.
+#
+# The pgedge-spock50_19 5.0.13 RPM installed above was compiled against PG19
+# beta4. PG19 RC1 changed the logical-replication apply ABI
+# (RelationFindReplTupleByIndex gained a bool skipduplicates 3rd argument), so
+# the beta4 binary mis-calls it and silently corrupts DELETE replication —
+# every zzz-spock e2e spec fails. No spock release carries PG19 support, so we
+# compile v5.0.13 from source against this image's RC1 headers, with a vendored
+# src/compat/19 (docker/spock-pg19-compat/, derived from spock v6.0.0-test1's
+# compat/19 plus three RC1 deltas), and overlay just the two .so files. The
+# extension SQL and control file still come from the RPM — the version matches
+# (5.0.13), so they stay consistent. Full rationale and the runtime proof are
+# in .claude/notes/spock-pg19-rc1-delete-bug.md. Revert to the plain RPM once
+# pgEdge ships a spock release with real PG19 support. Mirrors the
+# install-toolchain / build / strip-toolchain pattern used elsewhere so the
+# runtime image stays lean.
+COPY spock-pg19-compat/spock_compat.h spock-pg19-compat/spock_compat.c \
+     /tmp/spock-compat19/
+RUN set -eux; \
+    dnf install -y \
+        pgedge-postgresql19-devel gcc clang llvm make git \
+        redhat-rpm-config gcc-plugin-annobin \
+        openssl-devel libxml2-devel jansson-devel krb5-devel; \
+    git clone --depth 1 --branch v5.0.13 \
+        https://github.com/pgEdge/spock.git /tmp/spock; \
+    mkdir -p /tmp/spock/src/compat/19; \
+    cp /tmp/spock-compat19/spock_compat.h /tmp/spock/src/compat/19/spock_compat.h; \
+    cp /tmp/spock-compat19/spock_compat.c /tmp/spock/src/compat/19/spock_compat.c; \
+    make -C /tmp/spock USE_PGXS=1 PG_CONFIG=/usr/pgsql-19/bin/pg_config; \
+    install -m 0755 /tmp/spock/spock.so /tmp/spock/spock_output.so \
+        "$(/usr/pgsql-19/bin/pg_config --pkglibdir)/"; \
+    rm -rf /tmp/spock /tmp/spock-compat19; \
+    dnf remove -y \
+        pgedge-postgresql19-devel gcc clang llvm make git \
+        redhat-rpm-config gcc-plugin-annobin \
+        openssl-devel libxml2-devel jansson-devel krb5-devel; \
+    dnf clean all; \
+    rm -rf /var/cache/dnf
+
+COPY pg19-entrypoint.sh /usr/local/bin/pg19-entrypoint.sh
+RUN chmod +x /usr/local/bin/pg19-entrypoint.sh
+
+EXPOSE 5432
+ENTRYPOINT ["/usr/local/bin/pg19-entrypoint.sh"]
+CMD ["postgres"]

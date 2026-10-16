@@ -65,10 +65,37 @@ export class ReplicationHelper {
     }
 
     /**
-     * Stops all replication instances by running stop-replication.sh
-     * inside the postgres container via docker exec.
+     * Per-spec teardown is intentionally a NO-OP.
+     *
+     * The replication cluster is set up ONCE (by the first monitoring
+     * spec's beforeAll) and then REUSED by every subsequent spec —
+     * {@link start} is idempotent and simply reattaches to the already
+     * running cluster. Previously each spec's afterAll stopped the cluster
+     * and the next spec's beforeAll restarted it; that stop→restart churn
+     * on the shared, single-container cluster (stale replication slots,
+     * half-stopped instances, re-auth) intermittently left the primary
+     * unauthenticated or unreachable, cascading failures across the whole
+     * monitoring suite. Leaving the cluster running avoids the churn; the
+     * stack teardown (`docker compose down -v`) is the real cleanup.
+     *
+     * Use {@link forceStop} if a test genuinely needs the cluster stopped.
      */
     async stop(): Promise<void> {
+        // Intentionally does nothing — see the doc comment above.
+        await Promise.resolve();
+    }
+
+    /**
+     * Actually stop all replication instances AND remove their data
+     * directories by running stop-replication.sh inside the postgres
+     * container via docker exec. This reclaims both RAM/CPU (the running
+     * instances) and disk (the /data/repl-* dirs); the container's default
+     * PGDATA (ai_workbench) is untouched. Not used by the per-spec teardown
+     * (see {@link stop}); called by the physical cleanup at the end of the
+     * physical phase for a genuine clean-slate shutdown. {@link start} then
+     * re-initdb's the instances from scratch on the next physical run.
+     */
+    async forceStop(): Promise<void> {
         const id = await this.getContainerId();
         await execAsync(`docker cp ${STOP_SCRIPT} ${id}:/tmp/stop-replication.sh`);
         await execAsync(`docker exec -u root ${id} bash /tmp/stop-replication.sh`, {
@@ -117,6 +144,42 @@ export class ReplicationHelper {
      * When `serverNames` is omitted or empty, the method falls back
      * to the original 5-second wait for backward compatibility.
      */
+    /**
+     * Stop or start the collector process.
+     *
+     * Used to hold an injected `connection_error` steady: the running
+     * collector clears a connection's error on its next successful probe
+     * (scheduler.go), so a test that needs the alerter to observe the error
+     * must pause the collector first, then resume it afterwards.
+     *
+     * Docker mode: `docker stop|start docker-collector-1`.
+     * RPM mode: `systemctl stop|start` the collector service inside the
+     * workbench container (best-effort).
+     */
+    async setCollectorRunning(running: boolean): Promise<void> {
+        const action = running ? 'start' : 'stop';
+        if (process.env['INSTALL_MODE'] === 'rpm') {
+            const { stdout } = await execAsync(
+                'docker ps --filter '
+                + '"label=com.docker.compose.service=workbench" '
+                + '--format "{{.ID}}"',
+            );
+            const wbId = stdout.trim().split('\n')[0];
+            if (!wbId) {
+                return;
+            }
+            await execAsync(
+                `docker exec ${wbId} systemctl ${action} `
+                + 'pgedge-ai-dba-collector.service',
+                { timeout: 30_000 },
+            ).catch(() => undefined);
+            return;
+        }
+        await execAsync(`docker ${action} docker-collector-1`, {
+            timeout: 30_000,
+        });
+    }
+
     async restartCollector(serverNames: string[] = []): Promise<void> {
         // In RPM mode the collector runs as a system service; there is no
         // Docker container to restart.  Skip the Docker restart and rely

@@ -10,9 +10,12 @@
 #   nginx             -- Serves the React client (port 8444)
 #
 # All database connection parameters are passed via CLI flags so that
-# the RPM-installed YAML config files are never modified (avoiding
-# YAML corruption from sed on richly-commented config files).
-# Only the secret_file path is patched via a safe top-level sed.
+# the RPM-installed YAML config files are never rewritten by sed on
+# richly-commented lines (avoiding YAML corruption). The only YAML
+# edits are: a safe top-level secret_file / address / allow_internal
+# sed, and the AI blocks (llm, embedding, knowledgebase) which are
+# injected by stripping the shipped section wholesale and appending a
+# fresh block, so no duplicate top-level keys are ever produced.
 #
 
 set -euo pipefail
@@ -154,6 +157,96 @@ if [ -n "${E2E_LLM_PROVIDER:-}" ]; then
             [ -n "${E2E_EMBEDDING_MODEL:-}" ] && printf '    embedding_model: %s\n' "${E2E_EMBEDDING_MODEL}"
         fi
     } >> "${CONFIG_DIR}/ai-dba-alerter.yaml"
+fi
+
+# -----------------------------------------------------------------------
+# Enable the server's embedding + knowledgebase so the generate_embedding
+# and search_knowledgebase MCP tools register. This mirrors docker mode's
+# KB wiring (helpers/kb-setup.helper.ts + the embedding:/knowledgebase:
+# blocks in fixtures/global.setup.ts). Without it the shipped server
+# config has embedding.enabled=false / knowledgebase.enabled=false, so
+# generate_embedding returns "Embedding generation is not enabled." and
+# search_knowledgebase is never registered.
+#
+# Mechanism is YAML editing, not env vars: config.applyEnvOverrides
+# (server/src/internal/config/config.go) honours ONLY PGEDGE_MEMORY_ENABLED
+# — there is no PGEDGE_* binding for any embedding/knowledgebase field (the
+# PGEDGE_EMBEDDING_ENABLED text in generate_embedding.go's error is only a
+# hint, not an implemented override). The shipped config already HAS
+# embedding:/knowledgebase: blocks (enabled: false), so we strip each
+# section wholesale and append a fresh block to avoid duplicate top-level
+# keys, exactly as the llm block above does.
+#
+# Gate (mirrors docker mode's three conditions): workbench-rpm.ts sets
+# E2E_EMBEDDING_PROVIDER / E2E_EMBEDDING_MODEL to '' whenever AI is
+# disabled, so a non-empty provider+model IS the in-container signal that
+# AI is enabled with an embedding model selected. The KB database is
+# installed by Dockerfile.rpm-installer at
+# /usr/share/pgedge/pgedge-ai-kb/kb-<provider>-<model>.db; its presence is
+# the third gate (and the server itself also stats this path before
+# registering search_knowledgebase). If any gate fails, both blocks are
+# left as shipped (disabled) and nothing breaks.
+#
+# The embedding API key is already mounted at /etc/pgedge/embedding_api_key
+# (docker/docker-compose.rpm.yml), independent of the reasoning
+# /etc/pgedge/llm_api_key, matching docker mode's buildServerEmbeddingBlock
+# and buildServerKnowledgebaseBlock.
+#
+# Server embedding block (config.EmbeddingConfig struct tags):
+#   embedding:
+#     enabled: true
+#     provider: <provider>
+#     model: <model>
+#     <provider>_api_key_file: /etc/pgedge/embedding_api_key   # or ollama_url
+#
+# Server knowledgebase block (config.KnowledgebaseConfig struct tags):
+#   knowledgebase:
+#     enabled: true
+#     database_path: /usr/share/pgedge/pgedge-ai-kb/kb-<provider>-<model>.db
+#     embedding_provider: <provider>
+#     embedding_model: <model>
+#     embedding_<provider>_api_key_file: /etc/pgedge/embedding_api_key  # or embedding_ollama_url
+# -----------------------------------------------------------------------
+EMB_PROV="${E2E_EMBEDDING_PROVIDER:-}"
+EMB_MODEL="${E2E_EMBEDDING_MODEL:-}"
+KB_DB_PATH="/usr/share/pgedge/pgedge-ai-kb/kb-${EMB_PROV}-${EMB_MODEL}.db"
+
+if [ -n "${EMB_PROV}" ] && [ -n "${EMB_MODEL}" ] && [ -f "${KB_DB_PATH}" ]; then
+    echo "[entrypoint] Enabling server embedding + knowledgebase: provider=${EMB_PROV} model=${EMB_MODEL} db=${KB_DB_PATH}"
+
+    # Strip the shipped embedding:/knowledgebase: blocks (enabled: false)
+    # so we never emit duplicate top-level keys, then append fresh blocks.
+    _remove_yaml_section "${CONFIG_DIR}/ai-dba-server.yaml" embedding
+    _remove_yaml_section "${CONFIG_DIR}/ai-dba-server.yaml" knowledgebase
+
+    {
+        printf '\nembedding:\n'
+        printf '  enabled: true\n'
+        printf '  provider: %s\n' "${EMB_PROV}"
+        printf '  model: %s\n' "${EMB_MODEL}"
+        case "${EMB_PROV}" in
+            voyage) printf '  voyage_api_key_file: /etc/pgedge/embedding_api_key\n' ;;
+            openai) printf '  openai_api_key_file: /etc/pgedge/embedding_api_key\n' ;;
+            gemini) printf '  gemini_api_key_file: /etc/pgedge/embedding_api_key\n' ;;
+            ollama) printf '  ollama_url: http://localhost:11434\n' ;;
+        esac
+
+        printf '\nknowledgebase:\n'
+        printf '  enabled: true\n'
+        printf '  database_path: %s\n' "${KB_DB_PATH}"
+        printf '  embedding_provider: %s\n' "${EMB_PROV}"
+        printf '  embedding_model: %s\n' "${EMB_MODEL}"
+        case "${EMB_PROV}" in
+            voyage) printf '  embedding_voyage_api_key_file: /etc/pgedge/embedding_api_key\n' ;;
+            openai) printf '  embedding_openai_api_key_file: /etc/pgedge/embedding_api_key\n' ;;
+            gemini) printf '  embedding_gemini_api_key_file: /etc/pgedge/embedding_api_key\n' ;;
+            ollama) printf '  embedding_ollama_url: http://localhost:11434\n' ;;
+        esac
+    } >> "${CONFIG_DIR}/ai-dba-server.yaml"
+else
+    kb_present=no
+    [ -f "${KB_DB_PATH}" ] && kb_present=yes
+    echo "[entrypoint] Server embedding + knowledgebase left disabled (provider='${EMB_PROV}' model='${EMB_MODEL}' db='${KB_DB_PATH}' present=${kb_present})."
 fi
 
 # -----------------------------------------------------------------------

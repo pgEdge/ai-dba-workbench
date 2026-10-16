@@ -13,7 +13,13 @@
 
 services:
   postgres:
-    image: ${POSTGRES_IMAGE:-postgres:17-alpine}
+    image: ${POSTGRES_IMAGE:-ai-dba-postgres-cluster:pg18}
+    build:
+      context: .
+      dockerfile: ${POSTGRES_DOCKERFILE:-Dockerfile.postgres-cluster}
+      args:
+        PG_MAJOR: ${PG_MAJOR:-18}
+        REPO_CHANNEL: ${REPO_CHANNEL:-release}
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
@@ -29,6 +35,271 @@ services:
     networks:
       - e2e-network
 
+  # ---------------------------------------------------------------------------
+  # Two-node NATIVE LOGICAL replication cluster (Publisher/Subscriber).
+  #
+  # Separate containers (unlike the in-container physical cluster on the
+  # `postgres` service) so the topology mirrors a real deployment. Both start
+  # with wal_level=logical and pg_stat_statements preloaded; system_stats is
+  # created at runtime by start-logical-replication.sh. node1 publishes the
+  # `documents` table and node2 subscribes. The workbench reaches them over
+  # e2e-network as pg-logical-node1:5432 / pg-logical-node2:5432; host ports
+  # 5450/5451 are exposed for test-side setup and verification.
+  # ---------------------------------------------------------------------------
+  pg-logical-node1:
+    # Gated behind the `logical` profile so the default `docker compose up -d`
+    # (global setup) does NOT start it — the node stays down through the
+    # physical phase and is brought up on demand by
+    # LogicalReplicationHelper.composeUpNodes() (which enables the profile)
+    # when the logical specs begin, then removed again by remove() at cleanup.
+    profiles: ["logical"]
+    image: ${POSTGRES_IMAGE:-ai-dba-postgres-cluster:pg18}
+    build:
+      context: .
+      dockerfile: ${POSTGRES_DOCKERFILE:-Dockerfile.postgres-cluster}
+      args:
+        PG_MAJOR: ${PG_MAJOR:-18}
+        REPO_CHANNEL: ${REPO_CHANNEL:-release}
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      POSTGRES_DB: ragdb
+    command:
+      - "postgres"
+      - "-c"
+      - "listen_addresses=*"
+      - "-c"
+      - "wal_level=logical"
+      - "-c"
+      - "max_wal_senders=10"
+      - "-c"
+      - "max_replication_slots=10"
+      - "-c"
+      - "shared_preload_libraries=pg_stat_statements"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ragdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    ports:
+      - "5450:5432"
+    networks:
+      - e2e-network
+
+  pg-logical-node2:
+    # See pg-logical-node1: gated behind the `logical` profile so it starts
+    # only when the logical specs bring the cluster up on demand.
+    profiles: ["logical"]
+    image: ${POSTGRES_IMAGE:-ai-dba-postgres-cluster:pg18}
+    build:
+      context: .
+      dockerfile: ${POSTGRES_DOCKERFILE:-Dockerfile.postgres-cluster}
+      args:
+        PG_MAJOR: ${PG_MAJOR:-18}
+        REPO_CHANNEL: ${REPO_CHANNEL:-release}
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      POSTGRES_DB: ragdb
+    command:
+      - "postgres"
+      - "-c"
+      - "listen_addresses=*"
+      - "-c"
+      - "wal_level=logical"
+      - "-c"
+      - "max_wal_senders=10"
+      - "-c"
+      - "max_replication_slots=10"
+      - "-c"
+      - "shared_preload_libraries=pg_stat_statements"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ragdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    ports:
+      - "5451:5432"
+    networks:
+      - e2e-network
+
+  # ---------------------------------------------------------------------------
+  # Three-node NATIVE SPOCK (multi-master) replication cluster.
+  #
+  # Separate containers (mirroring the logical pg-logical-node* pair) that run
+  # the dedicated spock image — the default postgres-cluster build image does
+  # NOT ship the spock extension, so these services pin
+  # ghcr.io/pgedge/pgedge-postgres:<major>-spock5-standard explicitly. All
+  # three nodes preload spock + pg_stat_statements, enable
+  # track_commit_timestamp and last_update_wins conflict resolution, and form a
+  # full mesh (each node subscribes to the other two) via
+  # start-spock-replication.sh. The workbench reaches them over e2e-network as
+  # pg-spock-node1:5432 / pg-spock-node2:5432 / pg-spock-node3:5432; host ports
+  # 5452/5453/5454 are exposed for test-side setup and verification.
+  #
+  # Gated behind the `spock` profile so the default `docker compose up -d`
+  # (global setup) does NOT start them — they stay down until the spock specs
+  # bring the cluster up on demand via SpockReplicationHelper.composeUpNodes(),
+  # then are removed again by remove() at cleanup.
+  # ---------------------------------------------------------------------------
+  pg-spock-node1:
+    profiles: ["spock"]
+    image: ${SPOCK_IMAGE:-ghcr.io/pgedge/pgedge-postgres:${PG_MAJOR:-18}-spock5-standard}
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      POSTGRES_DB: ragdb
+    command:
+      - "postgres"
+      - "-c"
+      - "listen_addresses=*"
+      - "-c"
+      - "wal_level=logical"
+      - "-c"
+      - "track_commit_timestamp=on"
+      - "-c"
+      - "shared_preload_libraries=spock,pg_stat_statements"
+      # PostgreSQL 18 gates logical-decoding output plugins behind an allow
+      # list; spock's apply workers create slots with the `spock_output`
+      # plugin, so it must be permitted or every subscription stays `down`.
+      - "-c"
+      - "output_plugin_libraries=spock_output"
+      - "-c"
+      - "max_worker_processes=16"
+      - "-c"
+      - "max_replication_slots=16"
+      - "-c"
+      - "max_wal_senders=16"
+      - "-c"
+      - "spock.conflict_resolution=last_update_wins"
+      - "-c"
+      - "spock.conflict_log_level=LOG"
+      # save_resolutions logs auto-resolved conflicts to the spock.resolutions
+      # table (OFF by default) — required for the collector's spock_resolutions
+      # probe to see anything. check_all_uc_indexes lets secondary UNIQUE
+      # collisions be detected/resolved too. Both are sighup GUCs but ALTER
+      # SYSTEM + reload does not reliably apply them, so set them at boot here.
+      - "-c"
+      - "spock.save_resolutions=on"
+      - "-c"
+      - "spock.check_all_uc_indexes=on"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ragdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    ports:
+      - "5452:5432"
+    networks:
+      - e2e-network
+
+  pg-spock-node2:
+    profiles: ["spock"]
+    image: ${SPOCK_IMAGE:-ghcr.io/pgedge/pgedge-postgres:${PG_MAJOR:-18}-spock5-standard}
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      POSTGRES_DB: ragdb
+    command:
+      - "postgres"
+      - "-c"
+      - "listen_addresses=*"
+      - "-c"
+      - "wal_level=logical"
+      - "-c"
+      - "track_commit_timestamp=on"
+      - "-c"
+      - "shared_preload_libraries=spock,pg_stat_statements"
+      # PostgreSQL 18 gates logical-decoding output plugins behind an allow
+      # list; spock's apply workers create slots with the `spock_output`
+      # plugin, so it must be permitted or every subscription stays `down`.
+      - "-c"
+      - "output_plugin_libraries=spock_output"
+      - "-c"
+      - "max_worker_processes=16"
+      - "-c"
+      - "max_replication_slots=16"
+      - "-c"
+      - "max_wal_senders=16"
+      - "-c"
+      - "spock.conflict_resolution=last_update_wins"
+      - "-c"
+      - "spock.conflict_log_level=LOG"
+      # save_resolutions logs auto-resolved conflicts to the spock.resolutions
+      # table (OFF by default) — required for the collector's spock_resolutions
+      # probe to see anything. check_all_uc_indexes lets secondary UNIQUE
+      # collisions be detected/resolved too. Both are sighup GUCs but ALTER
+      # SYSTEM + reload does not reliably apply them, so set them at boot here.
+      - "-c"
+      - "spock.save_resolutions=on"
+      - "-c"
+      - "spock.check_all_uc_indexes=on"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ragdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    ports:
+      - "5453:5432"
+    networks:
+      - e2e-network
+
+  pg-spock-node3:
+    profiles: ["spock"]
+    image: ${SPOCK_IMAGE:-ghcr.io/pgedge/pgedge-postgres:${PG_MAJOR:-18}-spock5-standard}
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      POSTGRES_DB: ragdb
+    command:
+      - "postgres"
+      - "-c"
+      - "listen_addresses=*"
+      - "-c"
+      - "wal_level=logical"
+      - "-c"
+      - "track_commit_timestamp=on"
+      - "-c"
+      - "shared_preload_libraries=spock,pg_stat_statements"
+      # PostgreSQL 18 gates logical-decoding output plugins behind an allow
+      # list; spock's apply workers create slots with the `spock_output`
+      # plugin, so it must be permitted or every subscription stays `down`.
+      - "-c"
+      - "output_plugin_libraries=spock_output"
+      - "-c"
+      - "max_worker_processes=16"
+      - "-c"
+      - "max_replication_slots=16"
+      - "-c"
+      - "max_wal_senders=16"
+      - "-c"
+      - "spock.conflict_resolution=last_update_wins"
+      - "-c"
+      - "spock.conflict_log_level=LOG"
+      # save_resolutions logs auto-resolved conflicts to the spock.resolutions
+      # table (OFF by default) — required for the collector's spock_resolutions
+      # probe to see anything. check_all_uc_indexes lets secondary UNIQUE
+      # collisions be detected/resolved too. Both are sighup GUCs but ALTER
+      # SYSTEM + reload does not reliably apply them, so set them at boot here.
+      - "-c"
+      - "spock.save_resolutions=on"
+      - "-c"
+      - "spock.check_all_uc_indexes=on"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ragdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    ports:
+      - "5454:5432"
+    networks:
+      - e2e-network
+
   server:
     build:
       context: ../../../..
@@ -40,6 +311,14 @@ services:
       - ${E2E_CONFIG_DIR:-../config}/ai-dba-server.yaml:/etc/pgedge/ai-dba-server.yaml:ro
       - ${E2E_SECRET_DIR:-../secret}/ai-dba.secret:/etc/pgedge/ai-dba.secret:ro
       - ${E2E_SECRET_DIR:-../secret}/llm_api_key:/etc/pgedge/llm_api_key:ro
+      - ${E2E_SECRET_DIR:-../secret}/embedding_api_key:/etc/pgedge/embedding_api_key:ro
+      # Knowledgebase database directory (docker-mode KB support). The host
+      # directory is populated by helpers/kb-setup.helper.ts from the selected
+      # E2E_EMBEDDING_MODEL before the stack starts; the generated server
+      # config's knowledgebase.database_path points at /opt/kb/<db>. When no
+      # model is selected the directory is empty and the server registers no
+      # search_knowledgebase tool. Always mounted so the bind never fails.
+      - ${E2E_KB_DIR:-../config/generated/kb}:/opt/kb:ro
       - server-data:/data
     ports:
       - "8080:8080"

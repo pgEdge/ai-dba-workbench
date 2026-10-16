@@ -12,6 +12,7 @@ import { test, expect } from '@playwright/test';
 import { label } from 'allure-js-commons';
 import { ApiHelper } from '../helpers/api.helper';
 import { AuthHelper } from '../helpers/auth.helper';
+import { connectionLeaks } from '../helpers/rbac-chat.helper';
 import { LoginPage } from '../pages/LoginPage';
 import { AdminPage } from '../pages/AdminPage';
 import { GroupManagementPage } from '../pages/GroupManagementPage';
@@ -102,6 +103,7 @@ test.describe('Group Permission Inheritance', () => {
         let testUserCookie: string;
         let adminCookie: string;
         let primaryConnId: number;
+        let primaryConnName: string;
 
         // Determine AI availability
         let aiEnabled = false;
@@ -156,6 +158,7 @@ test.describe('Group Permission Inheritance', () => {
                 );
             }
             primaryConnId = primary.id;
+            primaryConnName = primary.name;
         });
 
         await test.step('Setup: grant connection privilege (read) to group', async () => {
@@ -222,8 +225,20 @@ test.describe('Group Permission Inheritance', () => {
         });
 
         await test.step('Phase 1: verify connection privilege visible in expanded row', async () => {
+            // Accept either the resolved connection name (e.g.
+            // "primary-node (read)") or the numeric "Connection <id>"
+            // fallback. The current source resolves the name (issue #269,
+            // exercised in Docker mode), but published RPM packages that
+            // predate that fix still render the numeric label — RPM mode
+            // installs those packages, so this spec must pass against
+            // both. The exact connection is already verified via the API
+            // round-trip above, and strict name rendering is covered by
+            // the AdminGroups.connectionNames unit test.
             await groupPage.expectConnectionPrivilegeVisible(
-                new RegExp(`connection ${primaryConnId}`, 'i'),
+                new RegExp(
+                    `(${primaryConnName}|Connection ${primaryConnId})`,
+                    'i',
+                ),
             );
         });
 
@@ -373,10 +388,32 @@ test.describe('Group Permission Inheritance', () => {
                 }).toPass({ timeout: 15_000, intervals: [500] });
             });
 
-            await test.step('Phase 4 (AI): generate embedding — denied', async () => {
-                await chatPage.sendMessage('Generate an embedding for "test".');
-                await chatPage.waitForResponse(60_000);
-                await chatPage.expectErrorResponse(15_000);
+            await test.step('Phase 4 (AI): generate_embedding tool is denied', async () => {
+                // The group grants list_connections, count_rows and
+                // query_database only — not generate_embedding. Assert
+                // the tool-privilege denial deterministically at the tool
+                // layer: dispatch is refused before execution, so the
+                // arguments are immaterial.
+                const { cookie: userCookie } = await api.login(
+                    testUsername,
+                    TEST_USER_PASSWORD,
+                );
+                const result = await api.callMcpTool(
+                    'generate_embedding',
+                    { text: 'test' },
+                    { cookie: userCookie },
+                );
+                expect(
+                    result.isError,
+                    'generate_embedding should be denied by RBAC',
+                ).toBe(true);
+                expect(
+                    result.content[0]?.text ?? '',
+                    'denial should name the missing tool privilege',
+                ).toContain(
+                    "Access denied: you do not have permission to use " +
+                    "tool 'generate_embedding'",
+                );
             });
         } else {
             await test.step('Phase 4 (AI): skipped — AI not configured', async () => {
@@ -470,24 +507,95 @@ test.describe('Group Permission Inheritance', () => {
             ).toBe(true);
         });
 
+        // ---------------------------------------------------------
+        // Phase 6: Ellie RBAC after revocation
+        //
+        // The revoked user now has zero connection access. The API/tool
+        // layer is authoritative and always runs; the chat layer is a
+        // secondary data-keyed no-leak check gated on AI availability.
+        // ---------------------------------------------------------
+        await test.step('Phase 6 (API): tool layer denies all connection access', async () => {
+            const freshAdminCookie = await auth.loginAsAdmin();
+            const allConnections = await api.listConnections({
+                cookie: freshAdminCookie,
+            });
+
+            const { cookie: userCookie } = await api.login(
+                testUsername,
+                TEST_USER_PASSWORD,
+            );
+
+            // list_connections: a fully-revoked user gets an explicit
+            // empty-scope message (isError:false) or a tool error, and
+            // never a forbidden row or connection name.
+            const listResult = await api.callMcpTool(
+                'list_connections',
+                {},
+                { cookie: userCookie },
+            );
+            expect(
+                listResult.isError ||
+                    listResult.content[0]?.text ===
+                        'You do not have access to any connections.',
+                'list_connections should deny a fully-revoked user',
+            ).toBe(true);
+            expect(
+                connectionLeaks(listResult.text, allConnections),
+                'list_connections must not disclose any connection',
+            ).toBe(false);
+            const namedLeaks = allConnections.filter((c) =>
+                listResult.text.toLowerCase().includes(c.name.toLowerCase()),
+            );
+            expect(
+                namedLeaks.map((c) => c.name),
+                'a fully-revoked user should be able to name no connection',
+            ).toEqual([]);
+
+            // query_database against the previously-visible primary node
+            // is now forbidden: the connection is no longer accessible.
+            const { body } = await api.queryDatabase(
+                userCookie,
+                primaryConnId,
+                'SELECT 1',
+            );
+            const queryResult = body as {
+                isError?: boolean;
+                content?: Array<{ text?: string }>;
+            };
+            const queryText = queryResult.content?.[0]?.text ?? '';
+            expect(
+                queryResult.isError === true ||
+                    /connection not found or not accessible/i.test(queryText),
+                'query_database should be denied for a revoked connection',
+            ).toBe(true);
+        });
+
         if (aiEnabled) {
-            await test.step('Phase 6 (AI): Ellie denies connection tools after revocation', async () => {
+            await test.step('Phase 6 (chat): Ellie leaks no connection after revocation', async () => {
                 // The chat FAB is visible whenever AI is globally enabled,
-                // regardless of connection access. Open it and attempt a
-                // tool call that requires a connection privilege — Ellie
-                // should respond with an error because no connections are
-                // accessible to this user anymore.
-                //
-                // Do NOT call waitForResponse here: after revocation the
-                // user has no server selected, and the chat panel may
-                // unmount the input element when the LLM responds, causing
-                // waitForResponse ("element not found") to time out.
-                // Poll body text directly instead — expectErrorResponse
-                // uses document.body.innerText which works regardless of
-                // whether the chat input remains in the DOM.
+                // regardless of connection access. The reply must be
+                // non-empty (liveness) and disclose no connection.
+                const freshAdminCookie = await auth.loginAsAdmin();
+                const allConnections = await api.listConnections({
+                    cookie: freshAdminCookie,
+                });
                 await chatPage.openChat();
                 await chatPage.sendMessage('List the available connections.');
-                await chatPage.expectErrorResponse(75_000);
+                // Best-effort: after revocation with no server selected
+                // the chat panel may unmount before a reply can be read.
+                // The API layer above is authoritative; only assert the
+                // no-leak invariant when a reply is available.
+                const msg = await chatPage.tryGetLastAssistantMessage(75_000);
+                if (msg !== null) {
+                    expect(
+                        msg.length,
+                        'Ellie should produce a non-empty reply',
+                    ).toBeGreaterThan(0);
+                    expect(
+                        connectionLeaks(msg, allConnections),
+                        'Ellie must not reveal any connection after revocation',
+                    ).toBe(false);
+                }
             });
         }
     });

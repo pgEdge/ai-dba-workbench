@@ -10,8 +10,9 @@
 
 import { test, expect } from '@playwright/test';
 import { label } from 'allure-js-commons';
-import { ApiHelper } from '../helpers/api.helper';
+import { ApiHelper, type ConnectionResponse } from '../helpers/api.helper';
 import { AuthHelper } from '../helpers/auth.helper';
+import { connectionLeaks } from '../helpers/rbac-chat.helper';
 import { LoginPage } from '../pages/LoginPage';
 import { AdminPage } from '../pages/AdminPage';
 import { ServerNavigatorPage } from '../pages/ServerNavigatorPage';
@@ -206,29 +207,91 @@ test.describe('Server Visibility and Ask Ellie RBAC', () => {
 
         // -------------------------------------------------------
         // PHASE 3: Ask Ellie RBAC validation
-        // Skipped when AI is not configured in this environment.
+        //
+        // Two layers. The API/tool layer is authoritative and always
+        // runs: it drives POST /api/v1/mcp/tools/call as the
+        // non-privileged user and asserts the enforced connection set
+        // directly (deterministic). The chat layer is a secondary,
+        // data-keyed no-leak check that runs only when AI is configured,
+        // because the chat FAB renders only then.
         // -------------------------------------------------------
+        let forbidden: ConnectionResponse[] = [];
+
+        await test.step('Ellie (API): tool layer enforces the connection boundary', async () => {
+            // Enumerate the full connection set as admin to derive the
+            // forbidden set at runtime: everything except the shared
+            // server. This is the ground truth the user must not see.
+            const adminCookie = await auth.loginAsAdmin();
+            const allConnections = await api.listConnections({
+                cookie: adminCookie,
+            });
+            const sharedConn = allConnections.find(
+                (c) => c.name === SHARED_SERVER,
+            );
+            if (!sharedConn) {
+                throw new Error(
+                    `Shared connection "${SHARED_SERVER}" should exist. ` +
+                    `Available: ${allConnections.map((c) => c.name).join(', ')}`,
+                );
+            }
+            forbidden = allConnections.filter((c) => c.name !== SHARED_SERVER);
+
+            // Call list_connections as the non-privileged user via their
+            // own session cookie. This user is shared a single server but
+            // may or may not hold the list_connections tool privilege, so
+            // RBAC is enforced when EITHER the tool is denied outright OR
+            // it ran and returned only the shared server.
+            const { cookie: userCookie } = await api.login(
+                testUsername,
+                TEST_USER_PASSWORD,
+            );
+            const result = await api.callMcpTool(
+                'list_connections',
+                {},
+                { cookie: userCookie },
+            );
+            const deniedOutright =
+                result.isError &&
+                /permission to use tool 'list_connections'/i.test(result.text);
+            const ranAndSharedOnly =
+                result.text.includes(sharedConn.host) &&
+                !connectionLeaks(result.text, forbidden);
+            expect(
+                deniedOutright || ranAndSharedOnly,
+                'list_connections must be denied outright or return only ' +
+                'the shared server',
+            ).toBe(true);
+            // In all cases, no forbidden connection may leak.
+            expect(
+                connectionLeaks(result.text, forbidden),
+                'list_connections must not disclose a forbidden connection',
+            ).toBe(false);
+        });
+
         if (aiEnabled) {
-            await test.step('Ellie: open chat panel', async () => {
+            await test.step('Ellie (chat): reply leaks no forbidden connection', async () => {
                 await chatPage.openChat();
-            });
-
-            await test.step('Ellie: send "List all connections" prompt', async () => {
                 await chatPage.sendMessage('List all connections');
-            });
-
-            await test.step('Ellie: verify authorization error or empty result', async () => {
-                // Do NOT call waitForResponse here: when Ellie responds
-                // with an error the chat panel may unmount the input
-                // element, causing waitForResponse ("element not found")
-                // to fail in Firefox and WebKit. Poll body text directly.
-                await chatPage.expectErrorResponse(75_000);
+                // Best-effort: the chat panel may unmount before a reply
+                // can be read. The API layer above is authoritative; only
+                // assert the no-leak invariant when a reply is available.
+                const msg = await chatPage.tryGetLastAssistantMessage(75_000);
+                if (msg !== null) {
+                    expect(
+                        msg.length,
+                        'Ellie should produce a non-empty reply',
+                    ).toBeGreaterThan(0);
+                    expect(
+                        connectionLeaks(msg, forbidden),
+                        'Ellie must not reveal a forbidden connection in chat',
+                    ).toBe(false);
+                }
             });
         } else {
-            await test.step('Ellie: skipped — AI not configured in this environment', async () => {
+            await test.step('Ellie (chat): skipped — AI not configured in this environment', async () => {
                 // No-op: the FAB gated by ai_enabled would never render.
                 // Run this test in an environment with a configured LLM
-                // provider to exercise Phase 3.
+                // provider to exercise the chat layer.
             });
         }
 

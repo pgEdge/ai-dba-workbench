@@ -12,6 +12,7 @@ import { chromium, type FullConfig } from '@playwright/test';
 import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
+import { SCREENSHOT_DIR } from '../helpers/screenshot.helper';
 import * as yaml from 'js-yaml';
 import { ApiHelper } from '../helpers/api.helper';
 import { ADMIN_USER, API_URL, BASE_URL } from './test-data';
@@ -19,6 +20,11 @@ import { type E2EConfig, loadE2EConfig } from './e2e-config';
 import { LLM_CONFIG, ALERTER_LLM_CONFIG, type LlmConfig } from './llm-config';
 import { setupWorkbenchDocker, createAdminUserDocker } from './setup/workbench-docker';
 import { setupWorkbenchRPM, createAdminUserRPM } from './setup/workbench-rpm';
+import {
+    setupKnowledgebase,
+    buildServerKnowledgebaseBlock,
+    type KbResult,
+} from '../helpers/kb-setup.helper';
 
 /**
  * Playwright global setup function.
@@ -34,6 +40,24 @@ async function globalSetup(_config: FullConfig): Promise<void> {
     const api = new ApiHelper(API_URL);
 
     // -------------------------------------------------------
+    // 0. Clear screenshots from any previous run so this run's
+    //    per-tool captures start from a clean folder. Only *.png
+    //    is removed; the folder and its .gitkeep are preserved.
+    // -------------------------------------------------------
+    if (fs.existsSync(SCREENSHOT_DIR)) {
+        let removed = 0;
+        for (const entry of fs.readdirSync(SCREENSHOT_DIR)) {
+            if (entry.toLowerCase().endsWith('.png')) {
+                fs.rmSync(path.join(SCREENSHOT_DIR, entry), { force: true });
+                removed += 1;
+            }
+        }
+        if (removed > 0) {
+            console.log(`[E2E setup] Cleared ${removed} previous screenshot(s).`);
+        }
+    }
+
+    // -------------------------------------------------------
     // 0a. Generate secrets on first run
     // -------------------------------------------------------
     const e2eDir = path.join(__dirname, '..');
@@ -47,9 +71,25 @@ async function globalSetup(_config: FullConfig): Promise<void> {
     }
 
     // -------------------------------------------------------
-    // 0b. Generate configs (LLM injection + config/generated/)
+    // 0b. Obtain the knowledgebase database (docker mode only).
+    //     Driven by the same env selections as the rest of the run
+    //     (E2E_EMBEDDING_MODEL + REPO_CHANNEL); returns null when KB
+    //     should stay inactive. Runs BEFORE config generation (so the
+    //     knowledgebase block can be emitted) and BEFORE the stack comes
+    //     up (so the mounted database exists). RPM mode ships its own KB
+    //     via docker/Dockerfile.rpm-installer and is left untouched.
     // -------------------------------------------------------
-    generateE2EConfigs(e2eDir);
+    const kbResult = await setupKnowledgebase(e2eDir, {
+        installMode: e2eConfig.installMode,
+        aiEnabled: LLM_CONFIG.enabled,
+        model: process.env['E2E_EMBEDDING_MODEL'],
+        repoChannel: e2eConfig.repoChannel,
+    });
+
+    // -------------------------------------------------------
+    // 0c. Generate configs (LLM injection + config/generated/)
+    // -------------------------------------------------------
+    generateE2EConfigs(e2eDir, kbResult);
 
     // -------------------------------------------------------
     // 1. Start workbench stack (mode-specific)
@@ -206,6 +246,12 @@ function buildServerLlmBlock(config: LlmConfig): Record<string, unknown> {
     const block: Record<string, unknown> = {
         provider: config.reasoning.provider,
         model: config.reasoning.model,
+        // Deterministic sampling in E2E: temperature 0 minimises the model's
+        // creative guessing (hallucinated columns/syntax) in AI analysis, so
+        // the hard-strict AI-query assertions flake less. The product default
+        // is 0.7 (examples/ai-dba-server.yaml); this override is E2E-only and
+        // does not change the shipped default.
+        temperature: 0,
     };
 
     const keyFileMap: Record<string, string> = {
@@ -220,6 +266,47 @@ function buildServerLlmBlock(config: LlmConfig): Record<string, unknown> {
             ?? 'http://localhost:11434';
     } else if (keyFileMap[provider]) {
         block[keyFileMap[provider]] = '/etc/pgedge/llm_api_key';
+    }
+
+    return block;
+}
+
+/**
+ * Build the server-format top-level `embedding:` block from the resolved
+ * LlmConfig.
+ *
+ * This is the `config.EmbeddingConfig` block (distinct from the reasoning
+ * `llm:` block) that the `generate_embedding` tool, the similarity-search
+ * query embedding, and the memory tools all read (see
+ * server/src/internal/tools/{generate_embedding,similarity_search,
+ * store_memory,recall_memories}.go). Without it `cfg.Embedding.Enabled` is
+ * false and `generate_embedding` returns isError=true.
+ *
+ * The embedding provider is frequently DIFFERENT from the reasoning
+ * provider (the E2E default is anthropic reasoning + voyage embedding), so
+ * the key is read from its own file inside the container,
+ * /etc/pgedge/embedding_api_key (mounted from secret/embedding_api_key).
+ * Only called when AI is enabled.
+ */
+function buildServerEmbeddingBlock(config: LlmConfig): Record<string, unknown> {
+    const block: Record<string, unknown> = {
+        enabled: true,
+        provider: config.embedding.provider,
+        model: config.embedding.model,
+    };
+
+    const keyFileMap: Record<string, string> = {
+        voyage: 'voyage_api_key_file',
+        openai: 'openai_api_key_file',
+        gemini: 'gemini_api_key_file',
+    };
+
+    const provider = config.embedding.provider;
+    if (provider === 'ollama') {
+        block['ollama_url'] = config.embedding.baseUrl
+            ?? 'http://localhost:11434';
+    } else if (keyFileMap[provider]) {
+        block[keyFileMap[provider]] = '/etc/pgedge/embedding_api_key';
     }
 
     return block;
@@ -295,7 +382,7 @@ function buildAlerterLlmBlock(config: LlmConfig): Record<string, unknown> {
  * Sets process.env.E2E_CONFIG_DIR so docker-compose picks up the
  * generated configs.
  */
-function generateE2EConfigs(e2eDir: string): void {
+function generateE2EConfigs(e2eDir: string, kbResult: KbResult | null): void {
     const configDir = path.join(e2eDir, 'config');
     const generatedDir = path.join(configDir, 'generated');
     const secretDir = path.join(e2eDir, 'secret');
@@ -304,7 +391,7 @@ function generateE2EConfigs(e2eDir: string): void {
     fs.mkdirSync(generatedDir, { recursive: true });
     fs.mkdirSync(secretDir, { recursive: true });
 
-    // (a) Write the LLM API key file.
+    // (a) Write the LLM (reasoning) API key file.
     const keyFilePath = path.join(secretDir, 'llm_api_key');
     if (LLM_CONFIG.enabled && LLM_CONFIG.reasoning.apiKey) {
         fs.writeFileSync(keyFilePath, LLM_CONFIG.reasoning.apiKey, {
@@ -313,6 +400,21 @@ function generateE2EConfigs(e2eDir: string): void {
     } else {
         // Empty file so the Docker volume mount never fails.
         fs.writeFileSync(keyFilePath, '', { mode: 0o600 });
+    }
+
+    // (a2) Write the embedding-provider API key file. The embedding
+    // provider is frequently different from the reasoning provider (the
+    // E2E default is anthropic reasoning + voyage embedding), so it needs
+    // its own key, mounted at /etc/pgedge/embedding_api_key. Always write
+    // it (empty when disabled/keyless) so the Docker bind mount never
+    // fails, mirroring the llm_api_key handling above.
+    const embeddingKeyFilePath = path.join(secretDir, 'embedding_api_key');
+    if (LLM_CONFIG.enabled && LLM_CONFIG.embedding.apiKey) {
+        fs.writeFileSync(embeddingKeyFilePath, LLM_CONFIG.embedding.apiKey, {
+            mode: 0o600,
+        });
+    } else {
+        fs.writeFileSync(embeddingKeyFilePath, '', { mode: 0o600 });
     }
 
     // (b) Copy base configs to generated/.
@@ -344,14 +446,39 @@ function generateE2EConfigs(e2eDir: string): void {
             fs.readFileSync(serverConfigPath, 'utf8'),
         ) as Record<string, unknown> | null ?? {};
         serverYaml['llm'] = buildServerLlmBlock(LLM_CONFIG);
+        // Also configure the top-level embedding block so the
+        // generate_embedding tool, similarity-search query embedding, and
+        // the memory tools function. Without it the server has no embedding
+        // provider and generate_embedding returns isError=true.
+        serverYaml['embedding'] = buildServerEmbeddingBlock(LLM_CONFIG);
+        // When a KB database was obtained (docker mode + a selected
+        // E2E_EMBEDDING_MODEL), enable the knowledgebase and point it at the
+        // mounted database. The KB query re-embedding provider/model match
+        // the database, reusing the embedding provider's key file. When no KB
+        // was obtained, emit no block so search_knowledgebase stays
+        // unregistered (the server's enabled:false default + os.Stat gate).
+        if (kbResult) {
+            serverYaml['knowledgebase'] = buildServerKnowledgebaseBlock(
+                kbResult,
+                LLM_CONFIG.embedding.baseUrl ?? 'http://localhost:11434',
+            );
+        }
         fs.writeFileSync(
             serverConfigPath,
             yaml.dump(serverYaml, { lineWidth: -1 }),
         );
         console.log(
-            '[E2E setup] Generated server config with LLM block ' +
-            `\u2192 config/generated/ai-dba-server.yaml`,
+            '[E2E setup] Generated server config with LLM + embedding' +
+            `${kbResult ? ' + knowledgebase' : ''} blocks \u2192 ` +
+            'config/generated/ai-dba-server.yaml',
         );
+        if (kbResult) {
+            console.log(
+                `[E2E setup] Knowledgebase enabled: provider=` +
+                `${kbResult.provider}, model=${kbResult.model}, ` +
+                `database_path=${kbResult.containerDbPath}`,
+            );
+        }
 
         // (d) Merge LLM block into generated alerter config.
         const alerterConfigPath = path.join(

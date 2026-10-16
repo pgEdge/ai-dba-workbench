@@ -206,4 +206,154 @@ export class ServerNavigatorPage extends BasePage {
             .first()
             .click();
     }
+
+    /**
+     * Delete a server through the GUI: hover its row to reveal the action
+     * buttons, click the delete IconButton (the one carrying `DeleteIcon`, as
+     * opposed to the edit `SettingsIcon`), and confirm in the "Delete Server"
+     * confirmation dialog. Waits until the row is gone.
+     */
+    async deleteServer(name: string): Promise<void> {
+        const row = this.getServerRow(name).first();
+        await expect(row, `server "${name}" should be present`).toBeVisible({
+            timeout: 15_000,
+        });
+        await this.deleteServerRow(row);
+        await expect(
+            row,
+            `server "${name}" should be gone after delete`,
+        ).toBeHidden({ timeout: 15_000 });
+    }
+
+    /**
+     * Delete a specific server ROW (a `.server-item-row` locator) via the GUI:
+     * hover to reveal the action buttons, click the delete IconButton (the one
+     * carrying `DeleteIcon`), and confirm in the "Delete Server" dialog.
+     */
+    private async deleteServerRow(row: Locator): Promise<void> {
+        await row.hover();
+        await row
+            .locator('.action-buttons')
+            .locator('button')
+            .filter({
+                has: this.page.locator('[data-testid="DeleteIcon"]'),
+            })
+            .first()
+            .click({ force: true });
+
+        const dialog = this.page
+            .getByRole('dialog')
+            .filter({ hasText: 'Delete Server' });
+        await expect(
+            dialog,
+            'Delete Server confirmation dialog should open',
+        ).toBeVisible({ timeout: 10_000 });
+        await dialog.getByRole('button', { name: /^delete$/i }).click();
+        await expect(dialog).toBeHidden({ timeout: 15_000 });
+    }
+
+    /**
+     * Delete EVERY server under a cluster via the GUI, one at a time, until the
+     * cluster is empty. A cluster can hold more servers than any single spec
+     * registered (other specs add to the shared physical cluster), so a
+     * cleanup must remove them all. The loop stops when the cluster's
+     * "Delete cluster" control renders — that control only appears at zero
+     * servers, so its presence is the authoritative "empty" signal. Throws if
+     * the cluster cannot be emptied (e.g. members keep re-appearing).
+     */
+    async deleteAllServersInCluster(clusterName: string): Promise<void> {
+        // Wait for the navigator tree to render the cluster first — otherwise
+        // a not-yet-loaded tree reads as count() === 0 and the loop would exit
+        // immediately, deleting nothing.
+        await expect(
+            this.page
+                .locator('.draggable-cluster')
+                .filter({ hasText: clusterName })
+                .first(),
+            `cluster "${clusterName}" should be present before cleanup`,
+        ).toBeVisible({ timeout: 30_000 });
+
+        for (let attempt = 0; attempt < 25; attempt += 1) {
+            const clusterItem = this.page
+                .locator('.draggable-cluster')
+                .filter({ hasText: clusterName })
+                .first();
+            if ((await clusterItem.count()) === 0) {
+                return; // cluster no longer present
+            }
+
+            // The delete-cluster button is rendered only when the cluster has
+            // zero servers — treat its presence as "empty".
+            const emptyControl = clusterItem.getByRole('button', {
+                name: `Delete cluster ${clusterName}`,
+            });
+            if ((await emptyControl.count()) > 0) {
+                return;
+            }
+
+            // Expand if collapsed (no visible rows), then delete the first.
+            let rows = clusterItem.locator('.server-item-row');
+            if ((await rows.count()) === 0) {
+                await clusterItem
+                    .locator('.cluster-header')
+                    .getByRole('button')
+                    .first()
+                    .click({ force: true })
+                    .catch(() => undefined);
+                rows = clusterItem.locator('.server-item-row');
+            }
+            if ((await rows.count()) === 0) {
+                // Neither empty-control nor rows yet — data may be refetching.
+                await this.page.waitForTimeout(1_000);
+                continue;
+            }
+
+            await this.deleteServerRow(rows.first());
+            await this.page.waitForTimeout(500);
+        }
+        throw new Error(
+            `Could not empty cluster "${clusterName}" — servers remain after ` +
+            '25 deletions (members may be re-appearing via auto-detection)',
+        );
+    }
+
+    /**
+     * Delete a cluster through the GUI. The cluster's delete control only
+     * renders when it has zero servers, so delete its members first. Hovers
+     * the cluster header to reveal the `Delete cluster <name>` button, clicks
+     * it, and confirms in the "Delete Cluster" dialog. Waits until the cluster
+     * is gone from the navigator.
+     */
+    async deleteCluster(clusterName: string): Promise<void> {
+        const clusterItem = this.page
+            .locator('.draggable-cluster')
+            .filter({ hasText: clusterName })
+            .first();
+        await expect(
+            clusterItem,
+            `cluster "${clusterName}" should be present`,
+        ).toBeVisible({ timeout: 15_000 });
+
+        await clusterItem.locator('.cluster-header').hover();
+        await clusterItem
+            .getByRole('button', { name: `Delete cluster ${clusterName}` })
+            .click({ force: true });
+
+        const dialog = this.page
+            .getByRole('dialog')
+            .filter({ hasText: 'Delete Cluster' });
+        await expect(
+            dialog,
+            'Delete Cluster confirmation dialog should open',
+        ).toBeVisible({ timeout: 10_000 });
+        await dialog.getByRole('button', { name: /^delete$/i }).click();
+        await expect(dialog).toBeHidden({ timeout: 15_000 });
+
+        await expect(
+            this.page
+                .locator('.draggable-cluster')
+                .filter({ hasText: clusterName }),
+            `cluster "${clusterName}" should be gone after delete`,
+        ).toHaveCount(0, { timeout: 15_000 });
+    }
 }

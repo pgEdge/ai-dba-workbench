@@ -66,6 +66,7 @@ max_wal_senders = 10
 max_replication_slots = 10
 hot_standby = on
 logging_collector = off
+shared_preload_libraries = 'pg_stat_statements'
 EOF
 
     {
@@ -90,6 +91,16 @@ EOF
 EOSQL
 
     psql -p 5440 -U postgres -d ragdb <<-EOSQL
+        -- Monitoring extensions for the stats-verification E2E. These are
+        -- created here (as superuser) rather than through the MCP
+        -- query_database tool, which runs SQL in a read-only transaction
+        -- and therefore cannot execute CREATE EXTENSION (DDL).
+        -- pg_stat_statements requires the shared_preload_libraries entry
+        -- set in the primary postgresql.conf above; system_stats ships in
+        -- the custom cluster image (Dockerfile.postgres-cluster).
+        CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+        CREATE EXTENSION IF NOT EXISTS system_stats;
+
         CREATE TABLE documents (
             id        SERIAL PRIMARY KEY,
             content   TEXT NOT NULL,

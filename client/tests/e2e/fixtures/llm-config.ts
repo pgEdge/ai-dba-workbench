@@ -130,17 +130,28 @@ function validateEmbeddingProvider(value: string): EmbeddingProvider {
     return value as EmbeddingProvider;
 }
 
+/**
+ * Read an LLM API key from the environment. The `E2E_`-prefixed variable
+ * wins (it isolates the test's key from whatever is in the shell), but we
+ * fall back to the bare provider variable so that simply exporting
+ * `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY` / `VOYAGE_API_KEY`
+ * / `COHERE_API_KEY` also works.
+ */
+function readApiKey(name: string): string | undefined {
+    return process.env[`E2E_${name}`] ?? process.env[name];
+}
+
 /** Resolve the API key for a reasoning provider from env vars. */
 function resolveReasoningApiKey(
     provider: ReasoningProvider,
 ): string | undefined {
     switch (provider) {
         case 'anthropic':
-            return process.env['E2E_ANTHROPIC_API_KEY'];
+            return readApiKey('ANTHROPIC_API_KEY');
         case 'openai':
-            return process.env['E2E_OPENAI_API_KEY'];
+            return readApiKey('OPENAI_API_KEY');
         case 'gemini':
-            return process.env['E2E_GEMINI_API_KEY'];
+            return readApiKey('GEMINI_API_KEY');
         case 'ollama':
             return undefined;
     }
@@ -152,13 +163,13 @@ function resolveEmbeddingApiKey(
 ): string | undefined {
     switch (provider) {
         case 'voyage':
-            return process.env['E2E_VOYAGE_API_KEY'];
+            return readApiKey('VOYAGE_API_KEY');
         case 'openai':
-            return process.env['E2E_OPENAI_API_KEY'];
+            return readApiKey('OPENAI_API_KEY');
         case 'gemini':
-            return process.env['E2E_GEMINI_API_KEY'];
+            return readApiKey('GEMINI_API_KEY');
         case 'cohere':
-            return process.env['E2E_COHERE_API_KEY'];
+            return readApiKey('COHERE_API_KEY');
         case 'ollama':
             return undefined;
     }
@@ -186,50 +197,108 @@ export function loadLlmConfig(): LlmConfig {
         yml.ai_enabled === true,
     );
 
-    // --- reasoning ---
-    // Use || to treat empty string (from push-triggered workflow_dispatch
-    // where inputs.reasoning_provider resolves to "") the same as absent.
+    // --- reasoning provider ---
+    // Provider comes from env → config/llm.yaml. Use || so an empty string
+    // (e.g. a workflow_dispatch input that resolves to "") counts as absent.
+    // The hardcoded fallback applies ONLY when AI is disabled (the value is
+    // then irrelevant); when AI is enabled a missing provider is a hard error
+    // (see the fail-fast block below).
     const reasoningProviderRaw =
         (process.env['E2E_REASONING_PROVIDER'] || undefined) ??
         yml.reasoning?.provider ??
-        'anthropic';
-    const reasoningProvider = validateReasoningProvider(reasoningProviderRaw);
+        undefined;
+    const reasoningProvider = validateReasoningProvider(
+        reasoningProviderRaw ?? 'anthropic',
+    );
 
-    const reasoningModel =
+    const reasoningModelRaw =
         (process.env['E2E_REASONING_MODEL'] || undefined) ??
         yml.reasoning?.model ??
-        'claude-sonnet-4-6';
+        undefined;
+    const reasoningModel = reasoningModelRaw ?? 'claude-sonnet-4-6';
 
-    // --- embedding ---
+    // --- embedding provider ---
     const embeddingProviderRaw =
         (process.env['E2E_EMBEDDING_PROVIDER'] || undefined) ??
         yml.embedding?.provider ??
-        'voyage';
-    const embeddingProvider = validateEmbeddingProvider(embeddingProviderRaw);
+        undefined;
+    const embeddingProvider = validateEmbeddingProvider(
+        embeddingProviderRaw ?? 'voyage',
+    );
 
-    const embeddingModel =
+    const embeddingModelRaw =
         (process.env['E2E_EMBEDDING_MODEL'] || undefined) ??
         yml.embedding?.model ??
-        'voyage-3';
+        undefined;
+    const embeddingModel = embeddingModelRaw ?? 'voyage-3';
 
-    // --- API key validation when enabled ---
+    // --- Fail-fast AI configuration validation --------------------------
+    // AI-dependent specs must not run against a half-configured LLM setup,
+    // or they fail later with opaque errors. When AI is enabled, BOTH the
+    // reasoning (LLM) and embedding providers must be configured, and each
+    // (except keyless ollama) must have an API key. This runs at module load
+    // (LLM_CONFIG below) → in global.setup → before any test executes.
     const reasoningApiKey = resolveReasoningApiKey(reasoningProvider);
     const embeddingApiKey = resolveEmbeddingApiKey(embeddingProvider);
 
-    if (enabled && reasoningProvider !== 'ollama' && !reasoningApiKey) {
-        throw new Error(
-            `LLM is enabled (E2E_AI_ENABLED=true) but no API key is set ` +
-            `for reasoning provider "${reasoningProvider}". ` +
-            `Set the appropriate E2E_*_API_KEY environment variable.`,
-        );
-    }
-
-    if (enabled && embeddingProvider !== 'ollama' && !embeddingApiKey) {
-        console.warn(
-            `[llm-config] Warning: LLM is enabled but no API key is set ` +
-            `for embedding provider "${embeddingProvider}". ` +
-            `Embedding-dependent tests may fail.`,
-        );
+    if (enabled) {
+        if (!reasoningProviderRaw) {
+            throw new Error(
+                'AI is enabled (E2E_AI_ENABLED=true) but no LLM (reasoning) ' +
+                'provider is configured. Set E2E_REASONING_PROVIDER (or ' +
+                'reasoning.provider in config/llm.yaml) to one of: ' +
+                `${VALID_REASONING_PROVIDERS.join(', ')}.`,
+            );
+        }
+        if (!embeddingProviderRaw) {
+            throw new Error(
+                'AI is enabled (E2E_AI_ENABLED=true) but no embedding ' +
+                'provider is configured. Set E2E_EMBEDDING_PROVIDER (or ' +
+                'embedding.provider in config/llm.yaml) to one of: ' +
+                `${VALID_EMBEDDING_PROVIDERS.join(', ')}.`,
+            );
+        }
+        if (reasoningProvider !== 'ollama' && !reasoningApiKey) {
+            throw new Error(
+                'AI is enabled (E2E_AI_ENABLED=true) but no API key is set ' +
+                `for the LLM (reasoning) provider "${reasoningProvider}". Set ` +
+                `E2E_${reasoningProvider.toUpperCase()}_API_KEY (or the bare ` +
+                `${reasoningProvider.toUpperCase()}_API_KEY).`,
+            );
+        }
+        // Guard the common footgun: switching the PROVIDER but leaving the
+        // model at its provider-specific default. The default reasoning model
+        // (claude-sonnet-4-6) is anthropic-only and the default embedding
+        // model (voyage-3) is voyage-only; using them with another provider
+        // 404s at runtime (every AI test fails late with an opaque error).
+        // Require an explicit model whenever the provider isn't the default's.
+        if (reasoningProvider !== 'anthropic' && !reasoningModelRaw) {
+            throw new Error(
+                `AI is enabled with LLM (reasoning) provider ` +
+                `"${reasoningProvider}", but no model is configured — the ` +
+                `default "claude-sonnet-4-6" is anthropic-only and will 404 on ` +
+                `${reasoningProvider}. Set E2E_REASONING_MODEL (or ` +
+                `reasoning.model in config/llm.yaml) to a ${reasoningProvider} ` +
+                'model.',
+            );
+        }
+        if (embeddingProvider !== 'voyage' && !embeddingModelRaw) {
+            throw new Error(
+                `AI is enabled with embedding provider "${embeddingProvider}", ` +
+                `but no model is configured — the default "voyage-3" is ` +
+                `voyage-only and will fail on ${embeddingProvider}. Set ` +
+                `E2E_EMBEDDING_MODEL (or embedding.model in config/llm.yaml) to ` +
+                `a ${embeddingProvider} model.`,
+            );
+        }
+        if (embeddingProvider !== 'ollama' && !embeddingApiKey) {
+            throw new Error(
+                'AI is enabled (E2E_AI_ENABLED=true) but no API key is set ' +
+                `for the embedding provider "${embeddingProvider}". Set ` +
+                `E2E_${embeddingProvider.toUpperCase()}_API_KEY (or the bare ` +
+                `${embeddingProvider.toUpperCase()}_API_KEY).`,
+            );
+        }
     }
 
     return {

@@ -21,7 +21,11 @@ import { BasePage } from './BasePage';
  *   `aria-label="close chat"` (from ChatFAB.tsx)
  * - Chat input: `aria-label="Chat message input"` (from ChatInput.tsx)
  * - Send button: `aria-label="Send message"` (from ChatInput.tsx)
- * - Error responses: detected by regex on message text content
+ *
+ * RBAC denials are NOT asserted here by matching refusal wording (the
+ * LLM rewords its refusal every run). The specs assert the authorization
+ * boundary at the API/tool layer and use these readers only for a
+ * secondary, data-keyed no-leak check (see rbac-chat.helper.ts).
  */
 export class ChatPage extends BasePage {
     // ---------------------------------------------------------------
@@ -112,81 +116,153 @@ export class ChatPage extends BasePage {
     }
 
     /**
-     * Get the text content of the last assistant message bubble.
-     * After the response completes, extracts visible text from the
-     * chat panel area, excluding the input region.
+     * Non-throwing variant of {@link waitForResponse}: returns `true` when
+     * the response settled (the input re-enabled) and `false` on timeout,
+     * instead of throwing. Used by the provider-limit-aware chat helper to
+     * decide between skipping (an environmental AI provider limit) and
+     * failing (a genuine hang) without swallowing the latter.
      *
-     * @param timeout - Maximum time to wait for a message to appear.
+     * @param timeout - Maximum time to wait in milliseconds.
+     */
+    async didResponseSettle(timeout: number = 60_000): Promise<boolean> {
+        await this.page.waitForTimeout(500);
+        try {
+            await expect(this.chatInput).toBeEnabled({ timeout });
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+    /**
+     * Any error text currently visible for the last turn: the panel
+     * transcript (a failed turn renders an error bubble in it) folded
+     * together with any MUI Alert/snackbar (`role="alert"`). Used to
+     * classify a stuck response as an AI provider usage/rate limit
+     * (environmental) versus a genuine failure. Returns '' when nothing is
+     * present.
+     */
+    async responseErrorText(): Promise<string> {
+        const parts: string[] = [];
+        const transcript = await this.readTranscript();
+        if (transcript.length > 0) {
+            parts.push(transcript);
+        }
+        const alerts = this.page.getByRole('alert');
+        const count = await alerts.count().catch(() => 0);
+        for (let i = 0; i < count; i++) {
+            const text = await alerts
+                .nth(i)
+                .innerText()
+                .catch(() => '');
+            if (text.length > 0) {
+                parts.push(text);
+            }
+        }
+        return parts.join('\n');
+    }
+
+    /**
+     * Get the assistant's latest reply text.
+     *
+     * The app puts no role or test id on individual chat message rows —
+     * the bubbles are styled with MUI `sx`, which compiles to hashed CSS
+     * classes, not inline styles — so there is no stable per-row selector
+     * to isolate a single assistant bubble without touching product code.
+     * This reader therefore returns the visible transcript of the whole
+     * chat panel (every rendered message), anchored on the panel's stable
+     * `role="complementary"` / `aria-label="AI Chat Panel"` (index.tsx).
+     *
+     * For the RBAC no-leak check that is a feature, not a compromise:
+     * scanning the entire transcript catches a forbidden connection
+     * disclosed in ANY assistant turn, and the generic test prompts never
+     * contain another connection's host:port, so folding in the user's own
+     * messages and the static panel chrome cannot cause a false positive
+     * (see rbac-chat.helper.ts).
+     *
+     * @param timeout - Maximum time to wait for the response to settle.
      */
     async getLastAssistantMessage(
         timeout: number = 30_000,
     ): Promise<string> {
-        // Wait for the response to finish streaming.
         await this.waitForResponse(timeout);
-
         // Allow the DOM to settle after the response completes.
         await this.page.waitForTimeout(300);
 
-        // Assistant messages are rendered with align-items: flex-start
-        // inside the chat panel. Locate all such containers and
-        // return the text of the last one.
-        const assistantContainers = this.page.locator(
-            '[style*="align-items: flex-start"], ' +
-            '[style*="align-items:flex-start"]',
-        );
-
-        const count = await assistantContainers.count();
-        if (count === 0) {
-            throw new Error(
-                'No assistant messages found in the chat panel',
-            );
+        const text = await this.readTranscript();
+        if (text.length === 0) {
+            throw new Error('No chat transcript found in the chat panel');
         }
+        return text;
+    }
 
-        const lastText = await assistantContainers
-            .nth(count - 1)
-            .innerText();
+    /**
+     * Alias of {@link getLastAssistantMessage}. The panel transcript read
+     * already includes any Markdown results table rendered in an assistant
+     * bubble (tables are wrapped in a `[data-testid="chat-table-container"]`
+     * scroll box whose text `innerText` folds in), so no separate table
+     * pass is needed. Retained as a distinct name for caller intent.
+     *
+     * @param timeout - Maximum time to wait for a message to appear.
+     */
+    async getLastAssistantMessageWithTables(
+        timeout: number = 30_000,
+    ): Promise<string> {
+        return this.getLastAssistantMessage(timeout);
+    }
 
-        return lastText.trim();
+    /**
+     * Best-effort variant of {@link getLastAssistantMessage} that returns
+     * `null` instead of throwing when no transcript can be read.
+     *
+     * A denied turn with no server selected can unmount the chat input
+     * (so the response never "re-enables") and even the message list, so
+     * this reader never throws: it swallows a `waitForResponse` timeout,
+     * then returns the panel transcript if any is present or `null`
+     * otherwise. Callers use it for the secondary chat no-leak check; the
+     * authoritative RBAC proof is the API/tool-layer denial.
+     *
+     * @param timeout - Maximum time to wait for the response to settle.
+     */
+    async tryGetLastAssistantMessage(
+        timeout: number = 30_000,
+    ): Promise<string | null> {
+        try {
+            await this.waitForResponse(timeout);
+        } catch {
+            // The input never re-enabled (e.g. it unmounted). Fall
+            // through and read whatever messages are already present.
+        }
+        // Allow the DOM to settle after the response completes.
+        await this.page.waitForTimeout(300);
+
+        try {
+            const text = await this.readTranscript();
+            return text.length > 0 ? text : null;
+        } catch {
+            return null;
+        }
     }
 
     // ---------------------------------------------------------------
-    // Assertions
+    // Internal helpers
     // ---------------------------------------------------------------
 
-    /**
-     * Assert that the assistant's response contains an authorization
-     * or permission error. Polls the page's visible text until an
-     * error keyword appears or the timeout expires.
-     *
-     * Uses `document.body.innerText` rather than `page.content()` to
-     * read only rendered, visible text.  `page.content()` returns the
-     * full HTML including attribute values and CSS class names (e.g.
-     * `Mui-error`, `aria-label="..."`) which can be very long and does
-     * NOT contain the chat bubble text when the message element has not
-     * yet been flushed to the DOM — a race that is especially visible
-     * in Firefox CI where the input re-enables before React commits the
-     * assistant message node.
-     *
-     * @param timeout - Maximum time to wait for error text to appear.
-     */
-    async expectErrorResponse(timeout: number = 10_000): Promise<void> {
-        // LLMs phrase connection/permission failures in many ways.
-        // The pattern covers explicit auth errors as well as softer
-        // phrasing like "having trouble connecting" or "network issue"
-        // that indicate the assistant could not complete the operation.
-        const errorPattern =
-            /the model attempted to call|permission|authorized|forbidden|access denied|not allowed|403|401|unauthorized|error|denied|cannot|can't|unable|don't have a tool|trouble|issue|failed|problem/i;
+    /** The chat panel root (stable product hook: role=complementary). */
+    private get chatPanel(): Locator {
+        return this.page.getByRole('complementary', {
+            name: /AI Chat Panel/i,
+        });
+    }
 
-        await expect(async () => {
-            // innerText gives only visible, rendered text — no HTML
-            // tags, attribute strings, or hidden nodes.
-            const text: string = await this.page.evaluate(
-                () => document.body.innerText,
-            );
-            expect(
-                text,
-                'Expected an authorization/permission error in the chat response',
-            ).toMatch(errorPattern);
-        }).toPass({ timeout, intervals: [500] });
+    /**
+     * Read the visible text of the whole chat panel, or `''` when the
+     * panel is not present (e.g. a denied turn unmounted it).
+     */
+    private async readTranscript(): Promise<string> {
+        if ((await this.chatPanel.count()) === 0) {
+            return '';
+        }
+        return (await this.chatPanel.innerText()).trim();
     }
 }

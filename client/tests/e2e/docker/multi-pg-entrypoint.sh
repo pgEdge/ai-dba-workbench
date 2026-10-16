@@ -59,6 +59,7 @@ wal_level = replica
 max_wal_senders = 10
 max_replication_slots = 10
 hot_standby = on
+shared_preload_libraries = 'pg_stat_statements'
 EOF
 
     {

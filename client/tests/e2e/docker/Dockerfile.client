@@ -12,6 +12,12 @@ FROM node:22-slim AS builder
 
 WORKDIR /build/client
 
+# The node:22-slim tag drifted to npm 10.9.8, whose dependency-tree
+# resolver crashes with "Cannot read properties of null (reading
+# 'edgesOut')" on a fresh, lockfile-free install. Pin a newer npm so
+# the build is reproducible and immune to further base-image drift.
+RUN npm install -g npm@11
+
 # Copy client source and force a clean linux-native npm install.
 # The macOS package-lock.json omits linux/arm64 optional packages
 # (npm bug github.com/npm/cli/issues/4828); deleting it before
@@ -26,7 +32,10 @@ RUN npm run build
 FROM nginx:stable-alpine
 
 COPY --from=builder /build/client/dist /usr/share/nginx/html
-COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
+# Use the e2e-scoped nginx config (a copy of docker/nginx.conf plus a
+# longer /api/ read timeout for long AI analyses) so the test suite needs
+# no change to the production docker/nginx.conf.
+COPY client/tests/e2e/docker/nginx.conf /etc/nginx/conf.d/default.conf
 
 EXPOSE 80
 

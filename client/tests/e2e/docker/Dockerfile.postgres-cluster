@@ -1,0 +1,44 @@
+#--------------------------------------------------------------------------
+#
+# pgEdge AI DBA Workbench
+#
+# Copyright (c) 2025 - 2026, pgEdge, Inc.
+# This software is released under The PostgreSQL License
+#
+#--------------------------------------------------------------------------
+
+# Custom PostgreSQL image for the E2E replication cluster.
+#
+# Extends the pgvector/pgvector (Debian bookworm) base with the pgEdge
+# system_stats extension, compiled from source via PGXS. The base image
+# already ships pg_stat_statements; it is enabled at runtime through
+# shared_preload_libraries in the cluster start scripts. PG_MAJOR selects
+# the PostgreSQL major version (default 18); the base image, server-dev
+# headers, and the compiled extension all track it, so the monitored
+# database, system_stats, and pg_stat_statements can never drift apart.
+ARG PG_MAJOR=18
+FROM pgvector/pgvector:pg${PG_MAJOR}
+
+# Re-declare after FROM so PG_MAJOR is visible to the build stage.
+ARG PG_MAJOR
+# Pin to a released tag of pgedge_system_stats. v3.2.1 builds cleanly
+# against both PostgreSQL 17 and 18 and installs extension version 3.0.
+ARG SYSTEM_STATS_REF=v3.2.1
+
+# Build and install system_stats, then remove the build toolchain so the
+# runtime image stays lean. ca-certificates is intentionally left installed.
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+        build-essential \
+        git \
+        ca-certificates \
+        postgresql-server-dev-${PG_MAJOR}; \
+    git clone --depth 1 --branch "${SYSTEM_STATS_REF}" \
+        https://github.com/pgEdge/pgedge_system_stats.git /tmp/system_stats; \
+    make -C /tmp/system_stats USE_PGXS=1; \
+    make -C /tmp/system_stats USE_PGXS=1 install; \
+    rm -rf /tmp/system_stats; \
+    apt-get purge -y --auto-remove \
+        build-essential git postgresql-server-dev-${PG_MAJOR}; \
+    rm -rf /var/lib/apt/lists/*

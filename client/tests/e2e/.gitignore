@@ -7,3 +7,6 @@ allure-results/
 allure-report/
 .env.e2e
 config/generated/
+screenshots/*.png
+secret/
+screenshots/

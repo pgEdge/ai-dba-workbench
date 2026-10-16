@@ -26,11 +26,19 @@ import (
 // =============================================================================
 
 // clusterWriteVisibilitySetup adds two groups with no member
-// connections, 50 owned by the admin caller and 51 by someone else.
+// connections, 50 owned by the admin caller and 51 by someone else, and
+// the auto-detected Spock cluster 60 (key spock:priv) in group 3, whose
+// only member is the private connection 61.
 const clusterWriteVisibilitySetup = `
 INSERT INTO cluster_groups (id, name, owner_username) VALUES
     (50, 'Empty owned', 'cov_cl_admin'),
-    (51, 'Empty unowned', 'someone-else');`
+    (51, 'Empty unowned', 'someone-else');
+INSERT INTO clusters (id, group_id, auto_cluster_key, name, replication_type)
+    VALUES (60, 3, 'spock:priv', 'Private Spock', 'spock');
+INSERT INTO connections (id, name, host, database_name, is_shared,
+                         owner_username, cluster_id) VALUES
+    (61, 'sixty-one', 'db61.example.com', 'postgres', FALSE,
+     'someone-else', 60);`
 
 // newClusterWriteVisibilityFixture returns the cluster fixture with
 // clusterWriteVisibilitySetup applied.
@@ -110,7 +118,11 @@ func TestClusterWritesHideInvisibleGroups(t *testing.T) {
 			caller: f.admin, method: http.MethodPost,
 			path: "/api/v1/cluster-groups/2/clusters", body: `{"name":"Placed"}`,
 			status: http.StatusInternalServerError, msg: "Failed to create cluster"},
-		{name: "create in group lookup fails", h: f.failing(t, 2),
+		{name: "create in group default lookup fails", h: f.failing(t, 2),
+			caller: f.admin, method: http.MethodPost,
+			path: "/api/v1/cluster-groups/2/clusters", body: `{"name":"Placed"}`,
+			status: http.StatusInternalServerError, msg: "Failed to create cluster"},
+		{name: "create in group lookup fails", h: f.failing(t, 3),
 			caller: f.admin, method: http.MethodPost,
 			path: "/api/v1/cluster-groups/2/clusters", body: `{"name":"Placed"}`,
 			status: http.StatusInternalServerError, msg: "Failed to create cluster"},

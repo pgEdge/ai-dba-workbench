@@ -265,7 +265,7 @@ cluster's owner and should not be granted mutation rights.
 If a future schema change adds `owner_username` to the `clusters`
 table, migrate these two handlers to Variant 2.
 
-## Cluster Writes Check What They Point At (Issue #673)
+## Cluster Writes Check What They Point At (Issues #673, #708)
 
 The admin gate is not enough on writes that place a cluster; the
 caller must also see the target, and a hidden object answers exactly
@@ -276,12 +276,29 @@ as a missing one. The helpers live in
   moved into, a group (`createClusterInGroup`, `handleCreateCluster`,
   `updateCluster`). A missing or hidden group is 404 "Cluster group not
   found", and both paths run the same queries. An empty group is
-  visible only to its owner (session username) and to callers who see
-  every connection, so a restricted token never sees one.
+  visible only to its owner and to callers who see every connection.
+  The owner match uses `GetUsernameFromContext`, which for an API
+  token is the token owner's name; a narrowed token never gets that
+  far only because `requireAllConnectionsInTokenScope` runs first.
+- The default group (`is_default`) is always writable: a cluster with
+  no `group_id` lands there unchecked, and an explicit default
+  `group_id` passes `requireVisibleTargetGroup` too. Requiring
+  visibility would leave a restricted caller unable to create any
+  cluster.
+- `requireVisibleAutoDetectedCluster` guards PUT and DELETE on the
+  transient IDs. `server-{id}` is visible when connection `id` is, and
+  a supplied `auto_cluster_key` must be `binary:`, `standalone:` or
+  `logical:` plus that id. `cluster-spock-{prefix}` is visible when a
+  connection assigned to the `spock:{prefix}` row is
+  (`GetConnectionIDsForAutoClusterKey`, which reads the persisted
+  `connections.cluster_id`, so a Spock cluster with no row yet looks
+  hidden). Hidden is 404 "Cluster not found"; a PUT `group_id` then
+  goes through `requireVisibleTargetGroup`.
 
 Unrestricted callers skip all of this apart from the group lookup.
 The relationship routes are covered under "When To Gate" (issue #678).
-Tests: `cluster_write_visibility_test.go`.
+Tests: `cluster_write_visibility_test.go` and
+`cluster_write_visibility_auto_test.go`.
 
 ## System Alerts Have No Connection (Issue #582)
 

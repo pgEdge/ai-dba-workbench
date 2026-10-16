@@ -102,7 +102,9 @@ Use this for per-object mutations where the row has an
 `owner_username` column populated at creation time. A non-admin
 caller who owns the row may still mutate it; everyone else needs
 `PermManageConnections`. The reference is `updateClusterGroup` /
-`deleteClusterGroup` in `cluster_handlers.go`:
+`deleteClusterGroup` in `cluster_handlers.go`, whose order is: caller
+authentication, the caller-only token-scope check, the visibility
+load, the lookup, the visibility decision, then the ownership check:
 
 ```go
 username, _, err := getUserInfoCompat(r, h.authStore)
@@ -115,21 +117,40 @@ if err != nil {
 hasManageConns := h.rbacChecker.HasAdminPermission(r.Context(),
     auth.PermManageConnections)
 
+// Depends only on the caller, so it runs before the lookup and its
+// refusal says nothing about whether the row exists.
+if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker,
+    h.denialRecorder) {
+    return
+}
+
 ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 defer cancel()
 
+// Runs the same queries whether or not the row exists.
+v, ok := h.loadClusterGroupVisibility(ctx, w, id,
+    "Failed to <verb> <resource>")
+if !ok {
+    return
+}
+
 existing, err := h.datastore.Get<Resource>(ctx, id)
 if err != nil {
-    log.Printf("[ERROR] <resource> not found for <action> (id=%d): %v",
-        id, err)
     RespondError(w, http.StatusNotFound, "<Resource> not found")
     return
 }
 
 isOwner := existing.OwnerUsername.Valid &&
     existing.OwnerUsername.String == username
+// 404 for a row the caller cannot see, identical to a missing one.
+// The argument is hasManageConns || isOwner in updateClusterGroup and
+// false in deleteClusterGroup (see below).
+if v.hidden(hasManageConns || isOwner) {
+    RespondError(w, http.StatusNotFound, "<Resource> not found")
+    return
+}
 if !hasManageConns && !isOwner {
-    RespondError(w, http.StatusForbidden,
+    h.denialRecorder.refuse(w, r,
         "You do not have permission to <verb> this <resource>")
     return
 }
@@ -142,11 +163,23 @@ that normally populates the context, so callers must set BOTH the
 `Authorization` header (via `withBearer`) AND the user context (via
 `withUser`).
 
-A 404 leak here is acceptable: callers who can authenticate but who
-do not own the row and lack `PermManageConnections` cannot distinguish
-"row exists but I can't touch it" from "row doesn't exist" because
-the 404 happens before the 403 check. That matches the existing
-issue-#35 visibility contract.
+Visibility MUST come before ownership (issue #649): a caller who
+cannot see the row gets the same 404 body as for a missing row, and
+no refusal is recorded for it; only a visible row the caller does
+not own draws the audited 403. `loadClusterGroupVisibility` resolves
+the caller's visible connections and, for a restricted caller, the
+group's members before the lookup, so a missing id (no members) and
+a hidden group run the same queries; `getClusterGroup` and
+`listClustersInGroup` use it in the same order. `hidden` treats a
+group with no member connections as visible only when its argument
+is true: `updateClusterGroup` passes `hasManageConns || isOwner`, so
+an owner can still rename a group they have just created (issue
+#58), whilst `deleteClusterGroup`, `getClusterGroup` and
+`listClustersInGroup` pass `false`, hiding empty groups from every
+restricted caller. `TestClusterGroupWritesHideInvisibleGroups` and
+`TestClusterGroupLookupsCostTheSameForHiddenAndMissing` in
+`cluster_group_visibility_test.go` lock this in; the second counts
+pool acquisitions through a `PrepareConn` hook.
 
 Note on handler comments: the Variant 2 implementation must call
 `Get<Resource>` to read `owner_username` before it can decide
@@ -900,7 +933,8 @@ through `refuseOutOfTokenScope` (its `manage_connections` refusal on
 `requireBlackoutTargetInTokenScope` (each refuses even with a nil
 recorder); `cmd/mcp-server/handlers.go` wires them in one loop.
 `ClusterHandler`'s cluster-group ownership and `manage_connections`
-403s record through `h.denialRecorder.refuse`, and
+403s record through `h.denialRecorder.refuse` (a group the caller
+cannot see answers 404 first and records nothing, issue #649), and
 `BlackoutHandler.refuseOutOfScope` records its 403 but not its 404
 for a record the token cannot see (issue #589).
 `deniedConnectionAction` names the `connection.update`,

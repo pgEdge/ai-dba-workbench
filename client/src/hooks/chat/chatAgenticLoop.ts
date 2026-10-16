@@ -18,6 +18,7 @@
 
 import type { ChatMessageData } from '../../components/ChatPanel/ChatMessage';
 import type { ToolActivity } from '../../components/ChatPanel/ToolStatus';
+import { extractToolTarget } from '../../components/ChatPanel/chatSqlTarget';
 import type {
     LLMContentBlock,
     LLMResponse,
@@ -286,11 +287,14 @@ export async function runAgenticLoop(
         for (const toolUse of toolUses) {
             const toolName = toolUse.tool_use?.name ?? 'unknown';
 
-            // Mark tool as running in the activity tracker
+            // Mark tool as running in the activity tracker. The
+            // connection the call targeted is recorded so SQL in the
+            // final reply can be run on the same server and database.
             const activity: ToolActivity = {
                 name: toolName,
                 status: 'running',
                 startedAt: new Date().toISOString(),
+                ...extractToolTarget(toolUse.tool_use?.input),
             };
             collectedActivity.push(activity);
             onToolActivity([...collectedActivity]);

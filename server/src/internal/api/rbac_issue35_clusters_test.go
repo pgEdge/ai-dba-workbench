@@ -33,7 +33,7 @@ import (
 //     gated endpoint: a cluster is visible iff at least one of its
 //     member connections is in the caller's visible set. Empty clusters
 //     are invisible (no ownership claim to satisfy).
-//   - filterGroupsByVisibility, groupHasVisibleConnection, and
+//   - filterGroupsByVisibility, loadClusterGroupVisibility, and
 //     clusterHasVisibleConnection wrap clusterMembersVisible with the
 //     datastore lookups.
 //

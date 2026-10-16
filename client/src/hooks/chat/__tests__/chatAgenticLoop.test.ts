@@ -285,6 +285,43 @@ describe('chatAgenticLoop', () => {
                 expect(activity[0].status).toBe('completed');
             });
 
+            it('records the connection and database each tool call targeted', async () => {
+                const toolResponses = new Map([
+                    ['query_database', createToolCallResponse('ok')],
+                    ['list_connections', createToolCallResponse('Conn 1')],
+                ]);
+                const mockFetch = createMockFetch(
+                    [
+                        createToolUseResponse([
+                            {
+                                id: 'tool-1',
+                                name: 'query_database',
+                                input: {
+                                    query: 'SELECT 1',
+                                    connection_id: 3,
+                                    database_name: 'app',
+                                },
+                            },
+                            { id: 'tool-2', name: 'list_connections', input: {} },
+                        ]),
+                        createTextResponse('Done'),
+                    ],
+                    toolResponses,
+                );
+                const params = createLoopParams({ fetchFn: mockFetch });
+
+                const result = await runAgenticLoop(params);
+
+                const activity = result.finalMessage.activity ?? [];
+                expect(activity[0]).toMatchObject({
+                    name: 'query_database',
+                    connectionId: 3,
+                    databaseName: 'app',
+                });
+                expect(activity[1].connectionId).toBeUndefined();
+                expect(activity[1].databaseName).toBeUndefined();
+            });
+
             it('executes multiple tools sequentially', async () => {
                 const toolResponses = new Map([
                     ['list_connections', createToolCallResponse('Conn 1')],

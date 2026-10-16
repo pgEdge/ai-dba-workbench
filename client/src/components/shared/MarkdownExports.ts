@@ -18,7 +18,9 @@ export {
     extractLanguage,
     SQL_KEYWORDS_RE,
     SQL_STATEMENT_KEYWORDS,
+    parseConnectionIdComment,
 } from './sqlDetection';
+export type { ConnectionIdComment } from './sqlDetection';
 
 // Style constants and getters
 export {

@@ -53,6 +53,19 @@ project adheres to
   anyone holding `query_datastore` also has, and Ellie can call the
   tool.
 
+- Add a Run button to SQL code blocks in Ellie's chat
+  replies (#623). The query runs on the connection named by
+  a leading `-- connection_id: N` comment when the reply's
+  tool calls used that server, or on the single server and
+  database that the reply's tool calls used; when the
+  target is unclear the block shows a server selector
+  instead. Results appear inline and are not sent back to
+  Ellie. SQL with placeholders is labelled a template with
+  no Run button; besides `$1`, this now covers `<name>`,
+  `{{name}}`, `${name}` and `:name` placeholders in every
+  view. The write confirmation prompt now names the server
+  and database the statements will run on.
+
 - Raise a system alert when anomaly detection is degraded by
   a failing embedding or reasoning provider (#582). The
   alerter counts consecutive failures for each tier (tier 2
@@ -2624,6 +2637,24 @@ project adheres to
   carriage return no longer hides one. `execute_explain` with
   `analyze` and `buffers` both false and text output no longer fails
   with a syntax error. (#646)
+
+- Stop the cluster-group update and delete endpoints confirming that a
+  group the caller cannot see exists. `PUT` and `DELETE` on
+  `/api/v1/cluster-groups/{id}` checked ownership before visibility, so
+  a caller who neither owned nor could see a group got 403 where a
+  missing id got 404. Both now check visibility first and answer an
+  unseen group with the same 404 as a missing one, recording no
+  refusal for it; a visible group the caller does not own still draws
+  the audited 403, and the owner of a group with no member connections
+  can still rename it. An API token whose connection scope does not
+  cover every connection is now refused before the lookup, so its 403
+  is the same whether or not the group exists. The get, update and
+  delete endpoints for `/api/v1/cluster-groups/{id}`, and `GET
+  /api/v1/cluster-groups/{id}/clusters`, now also run the same
+  database queries for a missing group as for one the caller cannot
+  see. `PUT /api/v1/conversations/{id}` likewise answered another
+  user's conversation with 403, and now answers 404 as the get, rename
+  and delete endpoints already did. (#649)
 
 - Delete a user with `ai-dba-server -delete-user` only when the
   confirmation is an explicit `y` or `yes`. The answer was checked

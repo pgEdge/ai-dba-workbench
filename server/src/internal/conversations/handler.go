@@ -204,10 +204,11 @@ func (h *Handler) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 
 	conv, err := h.store.Update(r.Context(), id, username, req.Provider, req.Model, req.Connection, req.Messages)
 	if err != nil {
-		if errors.Is(err, ErrNotFound) {
+		// Another user's conversation is answered as a missing one, as
+		// in HandleRename and HandleDelete, so that the response does
+		// not confirm that the ID exists (issue #649).
+		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrAccessDenied) {
 			api.RespondError(w, http.StatusNotFound, "Conversation not found")
-		} else if errors.Is(err, ErrAccessDenied) {
-			api.RespondError(w, http.StatusForbidden, "Access denied")
 		} else {
 			api.RespondError(w, http.StatusInternalServerError, "Failed to update conversation")
 		}

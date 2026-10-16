@@ -134,6 +134,68 @@ have read/write access to the connection, and the
 `execute_explain` tool shows its plan but will not run it
 with `EXPLAIN ANALYZE`.
 
+## Running SQL from Replies
+
+SQL code blocks in Ellie's replies display a play button
+to the right of the copy button. Clicking the play button
+runs the query and shows the results in a table below the
+block; the results stay in the chat panel and are not sent
+back to Ellie. The tooltip on the play button names the
+server and database that the query will run on.
+
+The chat chooses the target server and database from the
+reply itself:
+
+- When the block starts with a `-- connection_id: N`
+  comment that names a server the reply's tool calls
+  used, and no tool call ran on the selected connection
+  without naming a server, or when the reply's tool calls
+  named no server at all, the query runs on that
+  connection, using the database that the reply's tool
+  calls used on it or the connection's default database.
+- Otherwise, when every SQL tool call in the reply ran on
+  the same server and database, and you can see that
+  server, the query runs there.
+- When the target is unclear, the block displays a
+  server selector with nothing preselected, and the play
+  button appears once you choose a server. The target is
+  unclear when, for example, the reply covers several
+  servers, the comment names a server that the reply's
+  tool calls did not use, the reply also ran a tool call
+  on the selected connection without naming a server, or
+  the block contains more than one `-- connection_id`
+  comment.
+
+Some blocks offer only the copy button:
+
+- SQL that contains placeholders, such as `$1`,
+  `<table_name>`, `{{schema}}`, `${table_name}` or
+  `:name`, is labelled a template, because it needs
+  values substituted in before it can run.
+- A block from a reply that queried only the Workbench
+  datastore, with no `-- connection_id` comment, cannot
+  run on a monitored server.
+- A block whose `-- connection_id` comment names a
+  server that you cannot see, or that contains nothing
+  but the comment, has nothing to run.
+- No block offers the play button when you can see no
+  servers.
+
+Other queries are checked against the target server
+before the play button is enabled. Running a query from
+the chat applies the same checks as the AI alert
+analysis: your access to the connection, the read-only
+check, and the confirmation prompt for statements that
+modify data, which names the server and database the
+statements will run on, as described in
+[AI Alert Analysis](../alerts/ai-analysis.md). A query
+that calls a function with side effects, such as
+`pg_terminate_backend` or `pg_reload_conf`, counts as a
+write and also needs confirmation. A view or a
+user-defined function that calls one of these functions
+is not detected, so review queries against unfamiliar
+views and functions before running them.
+
 ## Chat Memory
 
 Ellie can store and recall information across

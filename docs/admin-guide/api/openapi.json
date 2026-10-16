@@ -2540,7 +2540,7 @@
       },
       "put": {
         "summary": "Update a cluster group",
-        "description": "Updates a cluster group",
+        "description": "Updates a cluster group. Requires manage_connections permission or ownership of the cluster group. A group the caller cannot see is answered with 404, as a missing one is.",
         "operationId": "updateClusterGroup",
         "tags": [
           "Cluster Groups"
@@ -2599,7 +2599,7 @@
             }
           },
           "403": {
-            "description": "Forbidden, or the API token's connection scope does not cover every connection",
+            "description": "Requires manage_connections permission or ownership of the cluster group, or the API token's connection scope does not cover every connection",
             "content": {
               "application/json": {
                 "schema": {
@@ -2627,7 +2627,7 @@
       },
       "delete": {
         "summary": "Delete a cluster group",
-        "description": "Deletes a cluster group. Requires manage_connections permission or ownership of the cluster group.",
+        "description": "Deletes a cluster group. Requires manage_connections permission or ownership of the cluster group. A group the caller cannot see is answered with 404, as a missing one is; a group with no member connections is visible only to a caller who sees every connection.",
         "operationId": "deleteClusterGroup",
         "tags": [
           "Cluster Groups"
@@ -2668,7 +2668,7 @@
             }
           },
           "404": {
-            "description": "Group not found",
+            "description": "Group not found, or not visible to the caller",
             "content": {
               "application/json": {
                 "schema": {
@@ -4791,18 +4791,8 @@
               }
             }
           },
-          "403": {
-            "description": "Access denied",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
           "404": {
-            "description": "Conversation not found",
+            "description": "Conversation not found, or owned by another user",
             "content": {
               "application/json": {
                 "schema": {

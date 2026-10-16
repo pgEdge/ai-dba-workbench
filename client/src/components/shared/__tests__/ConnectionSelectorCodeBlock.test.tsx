@@ -26,20 +26,33 @@ import { createTheme } from '@mui/material/styles';
 import ConnectionSelectorCodeBlock from '../ConnectionSelectorCodeBlock';
 import { renderWithTheme } from '../../../test/renderWithTheme';
 
-vi.mock('../RunnableCodeBlock', () => ({
-    default: (props: Record<string, unknown>) => (
-        <div
-            data-testid="runnable-code-block"
-            data-connection-id={String(props.connectionId)}
-            data-server-name={String(props.serverName)}
-            data-database-name={String(props.databaseName ?? '')}
-            data-language={String(props.language)}
-            data-is-sql={String(props.isSql)}
-        >
-            {String(props.codeContent)}
-        </div>
-    ),
-}));
+// Counts mounts of the mocked block, so a test can tell a remount from a
+// re-render with new props.
+const mounts = vi.hoisted(() => ({ count: 0 }));
+
+vi.mock('../RunnableCodeBlock', async () => {
+    const React = await vi.importActual<typeof import('react')>('react');
+    const MockRunnableCodeBlock = (props: Record<string, unknown>) => {
+        const [mountId] = React.useState(() => {
+            mounts.count += 1;
+            return mounts.count;
+        });
+        return (
+            <div
+                data-testid="runnable-code-block"
+                data-mount-id={String(mountId)}
+                data-connection-id={String(props.connectionId)}
+                data-server-name={String(props.serverName)}
+                data-database-name={String(props.databaseName ?? '')}
+                data-language={String(props.language)}
+                data-is-sql={String(props.isSql)}
+            >
+                {String(props.codeContent)}
+            </div>
+        );
+    };
+    return { default: MockRunnableCodeBlock };
+});
 
 const theme = createTheme();
 
@@ -143,5 +156,123 @@ describe('ConnectionSelectorCodeBlock', () => {
 
         const runnable = screen.getByTestId('runnable-code-block');
         expect(runnable.dataset.databaseName).toBe('');
+    });
+
+    describe('with explicit options', () => {
+        const options = [
+            { connectionId: 1, serverName: 'alpha', databaseName: 'app' },
+            { connectionId: 1, serverName: 'alpha', databaseName: 'hr' },
+            { connectionId: 2, serverName: 'beta' },
+        ];
+
+        it('labels each option with its server, database and ID', async () => {
+            const user = userEvent.setup();
+            renderWithTheme(
+                <ConnectionSelectorCodeBlock {...baseProps} options={options} />,
+            );
+            await user.click(screen.getByRole('combobox'));
+            expect(screen.getByRole('option', { name: 'alpha/app (ID: 1)' })).toBeInTheDocument();
+            expect(screen.getByRole('option', { name: 'alpha/hr (ID: 1)' })).toBeInTheDocument();
+            expect(screen.getByRole('option', { name: 'beta (ID: 2)' })).toBeInTheDocument();
+        });
+
+        it('prefers options over the connection map and forwards the database', async () => {
+            const user = userEvent.setup();
+            renderWithTheme(
+                <ConnectionSelectorCodeBlock
+                    {...baseProps}
+                    options={options}
+                    connectionMap={new Map([[9, 'ignored']])}
+                    databaseName="fallback"
+                />,
+            );
+            let runnable = screen.getByTestId('runnable-code-block');
+            expect(runnable.dataset.connectionId).toBe('1');
+            expect(runnable.dataset.databaseName).toBe('app');
+
+            await user.click(screen.getByRole('combobox'));
+            await user.click(screen.getByRole('option', { name: 'beta (ID: 2)' }));
+            runnable = screen.getByTestId('runnable-code-block');
+            expect(runnable.dataset.connectionId).toBe('2');
+            expect(runnable.dataset.databaseName).toBe('fallback');
+        });
+
+        it('selects nothing and hides Run until the user chooses when required', async () => {
+            const user = userEvent.setup();
+            renderWithTheme(
+                <ConnectionSelectorCodeBlock
+                    {...baseProps}
+                    options={options}
+                    requireSelection
+                />,
+            );
+            const select = screen.getByRole('combobox', {
+                name: 'Server to run this query on',
+            });
+            expect(select).toHaveTextContent('Choose a server to run on');
+            let runnable = screen.getByTestId('runnable-code-block');
+            expect(runnable.dataset.isSql).toBe('false');
+            expect(runnable.dataset.connectionId).toBe('0');
+
+            await user.click(select);
+            await user.click(screen.getByRole('option', { name: 'alpha/hr (ID: 1)' }));
+            runnable = screen.getByTestId('runnable-code-block');
+            expect(runnable.dataset.isSql).toBe('true');
+            expect(runnable.dataset.databaseName).toBe('hr');
+            expect(select).toHaveTextContent('alpha/hr (ID: 1)');
+        });
+
+        it('remounts the code block when the target changes', async () => {
+            const user = userEvent.setup();
+            renderWithTheme(
+                <ConnectionSelectorCodeBlock {...baseProps} options={options} />,
+            );
+            const firstMount = screen.getByTestId('runnable-code-block')
+                .dataset.mountId;
+
+            await user.click(screen.getByRole('combobox'));
+            await user.click(screen.getByRole('option', { name: 'beta (ID: 2)' }));
+
+            expect(screen.getByTestId('runnable-code-block').dataset.mountId)
+                .not.toBe(firstMount);
+        });
+
+        it('keeps the chosen target when the options are reordered', async () => {
+            const user = userEvent.setup();
+            const { rerender } = renderWithTheme(
+                <ConnectionSelectorCodeBlock {...baseProps} options={options} />,
+            );
+            await user.click(screen.getByRole('combobox'));
+            await user.click(screen.getByRole('option', { name: 'beta (ID: 2)' }));
+
+            rerender(
+                <ConnectionSelectorCodeBlock
+                    {...baseProps}
+                    options={[...options].reverse()}
+                />,
+            );
+            const runnable = screen.getByTestId('runnable-code-block');
+            expect(runnable.dataset.connectionId).toBe('2');
+            expect(runnable.dataset.serverName).toBe('beta');
+        });
+
+        it('clears the selection when the chosen target disappears', async () => {
+            const user = userEvent.setup();
+            const { rerender } = renderWithTheme(
+                <ConnectionSelectorCodeBlock {...baseProps} options={options} />,
+            );
+            await user.click(screen.getByRole('combobox'));
+            await user.click(screen.getByRole('option', { name: 'beta (ID: 2)' }));
+
+            rerender(
+                <ConnectionSelectorCodeBlock
+                    {...baseProps}
+                    options={options.slice(0, 2)}
+                />,
+            );
+            const runnable = screen.getByTestId('runnable-code-block');
+            expect(runnable.dataset.isSql).toBe('false');
+            expect(runnable.dataset.connectionId).toBe('0');
+        });
     });
 });

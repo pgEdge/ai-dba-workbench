@@ -392,6 +392,38 @@ describe('RunnableCodeBlock query execution', () => {
         );
     });
 
+    it.each([
+        ['server and database', 'app', 'alpha/app'],
+        ['server', undefined, 'alpha'],
+    ])('names the %s in the confirmation prompt', async (_label, databaseName, target) => {
+        mockApiFetch.mockResolvedValueOnce(
+            makeOkResponse({
+                requires_confirmation: true,
+                write_statements: ['DROP TABLE t;'],
+            }),
+        );
+        renderWithTheme(
+            <RunnableCodeBlock
+                {...baseProps}
+                isSql={true}
+                codeContent="DROP TABLE t;"
+                serverName="alpha"
+                databaseName={databaseName}
+            />,
+        );
+
+        const user = userEvent.setup();
+        await user.click(getRunButton(`Run on ${target}`));
+
+        await waitFor(() =>
+            expect(
+                screen.getByText(
+                    `This code block contains statements that modify the database on ${target}:`,
+                ),
+            ).toBeInTheDocument(),
+        );
+    });
+
     it('surfaces the JSON error payload when the server returns non-2xx', async () => {
         mockApiFetch.mockResolvedValueOnce(
             makeErrorResponse({ json: { error: 'forbidden: ro-token' } }),
@@ -575,6 +607,27 @@ describe('RunnableCodeBlock validation gating', () => {
                 {...baseProps}
                 isSql={true}
                 codeContent="SELECT * FROM t WHERE id = $1;"
+            />,
+        );
+
+        expect(
+            screen.getByTestId('sql-template-notice'),
+        ).toHaveTextContent('query template');
+        expect(screen.queryByLabelText('Run query')).toBeNull();
+    });
+
+    it.each([
+        'SELECT * FROM <table_name>;',
+        'SELECT * FROM {{ schema }}.t;',
+        'SELECT * FROM ${table_name};',
+        'SELECT * FROM t WHERE id = :id;',
+        "SELECT * FROM t WHERE name = :'name';",
+    ])('treats %s as a template', (sql) => {
+        renderWithTheme(
+            <RunnableCodeBlock
+                {...baseProps}
+                isSql={true}
+                codeContent={sql}
             />,
         );
 

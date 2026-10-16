@@ -329,8 +329,8 @@ The panel provides the following actions:
 - Delete memories that are no longer needed using the
   delete button.
 
-Deleting system-scoped memories requires the
-`store_system_memory` admin permission.
+Pinning, unpinning or deleting a system-scoped memory
+requires the `store_system_memory` admin permission.
 
 ## Running Without AI
 

@@ -192,11 +192,13 @@ clusters, cluster relationships and connections
 change or delete a connection that the caller neither owns nor may
 manage as `connection.update` or `connection.delete`; an owner who
 tries to share a connection without `manage_connections` is recorded
-as `connection.update` too. A request to delete a system-scoped memory
-without `store_system_memory` is recorded as `memory.delete`, with a
-target such as `memories/42`. A server running without its
-authentication store still refuses these requests, but has nowhere to
-record them, so no event is written.
+as `connection.update` too. A request to pin or unpin a system-scoped
+memory without `store_system_memory` is recorded as `memory.update`,
+and one to delete it as `memory.delete`, each with a target such as
+`memories/42`; a request aimed at another user's memory is refused as
+though the memory did not exist, and that refusal is not recorded. A
+server running without its authentication store still refuses these
+requests, but has nowhere to record them, so no event is written.
 
 Refusals by MCP tools are recorded too. A `store_memory` call that asks
 for a system-scoped memory without the `store_system_memory` permission

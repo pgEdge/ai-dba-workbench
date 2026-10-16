@@ -2680,6 +2680,23 @@ project adheres to
   lists only the clusters with a visible member, as
   `GET /api/v1/clusters/list` already did.
 
+- Check what a cluster write points at (#673, #708). A caller
+  holding `manage_connections` could create a cluster in, or move
+  one into, a cluster group they cannot see, and could rename, move
+  or dismiss an auto-detected cluster they cannot see by its
+  `server-{id}` or `cluster-spock-{prefix}` ID.
+  `POST /api/v1/clusters`, `POST /api/v1/cluster-groups/{id}/clusters`
+  and `PUT /api/v1/clusters/{id}` now answer a hidden group with the
+  same 404 as a missing one, where a missing group previously gave
+  a 500; a group with no member connections stays writable by its
+  owner, and the default group stays writable to every caller
+  holding `manage_connections`, since a cluster created without a
+  group lands there. `PUT` and `DELETE` on an auto-detected cluster
+  ID answer 404 unless the caller can see the cluster, and a
+  supplied `auto_cluster_key` must name the same cluster.
+  Superusers, and callers who can see every connection, are
+  unaffected.
+
 - Breaking: make the `query_datastore` MCP tool structured and limit
   the tool to the connections the caller can read (#566). The tool no
   longer accepts SQL and rejects a `sql` or `query` argument, so a

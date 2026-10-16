@@ -210,10 +210,8 @@ func (d *Datastore) purgeConnection(ctx context.Context, id int, batchSize int,
 		return fmt.Errorf("failed to read metrics tables: %w", err)
 	}
 
-	for _, table := range tables {
-		if err := d.purgeMetricsTable(ctx, table.name, id, batchSize); err != nil {
-			return err
-		}
+	if err := d.purgeMetricsTables(ctx, tables, id, batchSize, false); err != nil {
+		return err
 	}
 
 	if beforeRemove != nil {
@@ -233,8 +231,16 @@ func (d *Datastore) purgeConnection(ctx context.Context, id int, batchSize int,
 	// returned so it is logged, but the stragglers it leaves are then
 	// orphaned, which the metrics readers tolerate by joining on
 	// connections.
+	return d.purgeMetricsTables(ctx, tables, id, batchSize, true)
+}
+
+// purgeMetricsTables runs purgeMetricsTable over tables, or over only
+// those without a foreign key when onlyWithoutFK is set, stopping at
+// the first failure.
+func (d *Datastore) purgeMetricsTables(ctx context.Context, tables []metricsTable,
+	id int, batchSize int, onlyWithoutFK bool) error {
 	for _, table := range tables {
-		if table.hasFK {
+		if onlyWithoutFK && table.hasFK {
 			continue
 		}
 		if err := d.purgeMetricsTable(ctx, table.name, id, batchSize); err != nil {

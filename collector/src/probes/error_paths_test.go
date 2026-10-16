@@ -133,6 +133,31 @@ func TestCheckHelpers_ErrorPath(t *testing.T) {
 			_, err := CheckExtensionExists(ctx, "x", c, "plpgsql")
 			return err
 		}},
+		// The node-role helpers and the probe config loaders take a
+		// live connection, so a closed one is the only way to reach
+		// their first error branch on every PostgreSQL version.
+		{"node_role_binary_replication", func(ctx context.Context, c *pgxpool.Conn) error {
+			p := NewPgNodeRoleProbe(&ProbeConfig{Name: ProbeNamePgNodeRole})
+			return p.getBinaryReplicationStatus(ctx, c, &NodeRoleInfo{})
+		}},
+		{"node_role_logical_replication", func(ctx context.Context, c *pgxpool.Conn) error {
+			p := NewPgNodeRoleProbe(&ProbeConfig{Name: ProbeNamePgNodeRole})
+			return p.getLogicalReplicationStatus(ctx, c, &NodeRoleInfo{})
+		}},
+		{"node_role_spock_status", func(ctx context.Context, c *pgxpool.Conn) error {
+			// A connection name no other test uses keeps the
+			// extension check out of the feature cache.
+			p := NewPgNodeRoleProbe(&ProbeConfig{Name: ProbeNamePgNodeRole})
+			return p.getSpockStatus(ctx, "err-node-role-spock", c, &NodeRoleInfo{})
+		}},
+		{"load_probe_configs", func(ctx context.Context, c *pgxpool.Conn) error {
+			_, err := LoadProbeConfigs(ctx, c)
+			return err
+		}},
+		{"ensure_probe_config", func(ctx context.Context, c *pgxpool.Conn) error {
+			_, err := EnsureProbeConfig(ctx, c, 1, ProbeNamePgNodeRole)
+			return err
+		}},
 	}
 
 	for _, tc := range cases {

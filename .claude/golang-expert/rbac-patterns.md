@@ -749,10 +749,13 @@ coalescer, in `server/src/internal/auth/audit_denials.go`.
 `recordDenial` calls `AuthStore.RecordCoalescedDenial(actor, action,
 target, reason)`, whose `denialCoalescer` keeps an in-memory map keyed
 by `denialKey` (actor type, actor id, actor name, client IP, capped
-at `maxDenialIPLen`, action, capped at `maxDenialActionLen`, and
-reason; built by `denialKeyOf`), so that two tokens of one user, or
-one token used from two addresses, never suppress each other's
-denials. The key must never hold a value
+at `maxAuditIPLen` by `capAuditIP`, action, capped at
+`maxDenialActionLen`, and reason; built by `denialKeyOf`), so that
+two tokens of one user, or one token used from two addresses, never
+suppress each other's denials. `maxAuditIPLen` and `capAuditIP` (which
+cuts on a UTF-8 rune boundary) live in `audit_failures.go`, and
+`failureKeyOf` applies the same cap to the failure key (issue #651).
+The key must never hold a value
 the caller chooses without limit: the path is deliberately not in it,
 and `deniedRoute` maps an unrecognised method to `rbac.other` (only
 the nine standard methods get `rbac.<lowercase method>`), since
@@ -771,6 +774,13 @@ suppressed behind a missing row. Entries sit on an intrusive list
 ordered by `firstSeen` (not `container/list`, whose element type
 assertions errcheck flags), so eviction walks from the oldest end and
 stays amortised O(1). The map is capped at `maxDenialKeys` (10 000).
+The list is the generic `evictionList` in `audit_eviction_list.go`,
+which the failure coalescer (`failureCoalescer`, capped at
+`maxFailureKeys`) shares; a state embeds `evictionLinks` and provides
+`links()` and `windowStart()`. Anything that changes a state's
+`firstSeen` must also move it on the list (`unlink` then `pushNewest`
+or `insertOrdered`), and tests check the invariant with
+`checkEvictionList`, so admit entries in time order in tests.
 
 A window whose repeats were never reported is written as a summary
 row carrying `window_closed`, `first_seen` and `last_seen` plus the

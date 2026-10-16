@@ -28,33 +28,45 @@ func denialKeyFor(name, action, reason string) denialKey {
 	return denialKeyOf(Actor{Type: ActorUser, Name: name}, action, reason)
 }
 
-// checkDenialList fails the test unless the eviction list holds every
-// entry of the map exactly once, linked both ways and ordered by
-// firstSeen, oldest first.
-func checkDenialList(t *testing.T, c *denialCoalescer) {
+// checkEvictionList fails the test unless list holds every entry of
+// entries exactly once, linked both ways and ordered by window start,
+// oldest first.
+func checkEvictionList[K comparable, T any, P evictionEntry[T]](
+	t *testing.T, list *evictionList[T, P], entries map[K]*T,
+	keyOf func(*T) K) {
+
 	t.Helper()
 
 	seen := 0
-	var prev *denialState
-	for state := c.oldest; state != nil; state = state.next {
-		if state.prev != prev {
-			t.Fatalf("entry %+v has a broken back link", state.key)
+	var prev *T
+	for entry := list.oldest; entry != nil; entry = P(entry).links().next {
+		if P(entry).links().prev != prev {
+			t.Fatalf("entry %+v has a broken back link", keyOf(entry))
 		}
-		if prev != nil && state.firstSeen.Before(prev.firstSeen) {
-			t.Fatalf("entry %+v is out of firstSeen order", state.key)
+		if prev != nil &&
+			P(entry).windowStart().Before(P(prev).windowStart()) {
+			t.Fatalf("entry %+v is out of window order", keyOf(entry))
 		}
-		if c.entries[state.key] != state {
-			t.Fatalf("entry %+v is listed but not mapped", state.key)
+		if entries[keyOf(entry)] != entry {
+			t.Fatalf("entry %+v is listed but not mapped", keyOf(entry))
 		}
-		prev = state
+		prev = entry
 		seen++
 	}
-	if c.newest != prev {
+	if list.newest != prev {
 		t.Fatal("newest does not point at the end of the list")
 	}
-	if seen != len(c.entries) {
-		t.Fatalf("list holds %d entries, map %d", seen, len(c.entries))
+	if seen != len(entries) {
+		t.Fatalf("list holds %d entries, map %d", seen, len(entries))
 	}
+}
+
+// checkDenialList fails the test unless the denial eviction list holds
+// every entry of the map exactly once, in firstSeen order.
+func checkDenialList(t *testing.T, c *denialCoalescer) {
+	t.Helper()
+	checkEvictionList(t, &c.evictionList, c.entries,
+		func(s *denialState) denialKey { return s.key })
 }
 
 // captureLog sends the standard logger to a buffer for the rest of the
@@ -759,9 +771,10 @@ func TestDenialCoalescerReopenBehindOlderEntry(t *testing.T) {
 func TestDenialKeyBoundsAddress(t *testing.T) {
 	long := strings.Repeat("a", 4096)
 	key := denialKeyOf(Actor{IP: long}, "user.delete", "reason")
-	if len(key.actorIP) != maxDenialIPLen {
-		t.Errorf("Expected the address capped at %d bytes, got %d",
-			maxDenialIPLen, len(key.actorIP))
+	// Compare against the literal so that loosening the cap fails here.
+	if len(key.actorIP) != 64 {
+		t.Errorf("Expected the address capped at 64 bytes, got %d",
+			len(key.actorIP))
 	}
 
 	const v6 = "2001:db8:85a3:8d3:1319:8a2e:370:7348"

@@ -555,6 +555,8 @@ func anomalyCandidatesSource() datastoreSource {
 			col("tier2_pass", typeBoolean),
 			col("tier3_result", typeText),
 			col("tier3_pass", typeBoolean),
+			col("tier3_source", typeText),
+			col("tier3_model", typeText),
 			col("tier3_error", typeText),
 			col("final_decision", typeText),
 			col("alert_id", typeBigint),

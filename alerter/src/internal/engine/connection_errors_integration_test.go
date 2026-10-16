@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pgedge/ai-workbench/pkg/redact"
 )
 
 // connectionAlert is the active connection alert for one connection, as
@@ -231,7 +232,7 @@ func TestEvaluateConnectionErrors_MasksOpenAlerts(t *testing.T) {
 		FOR EACH ROW EXECUTE FUNCTION refuse_alert_update()`); err != nil {
 		t.Fatalf("failed to add the refusing trigger: %v", err)
 	}
-	logged := captureStderr(t, func() { engine.maskOpenConnectionAlerts(ctx) })
+	logged := captureStderr(t, func() { engine.maskOpenConnectionAlerts(ctx, nil) })
 	if _, err := pool.Exec(ctx, `
 		DROP TRIGGER refuse_alert_update ON alerts;
 		DROP FUNCTION refuse_alert_update()`); err != nil {
@@ -239,6 +240,86 @@ func TestEvaluateConnectionErrors_MasksOpenAlerts(t *testing.T) {
 	}
 	if !strings.Contains(logged, "Failed to mask connection alert") {
 		t.Errorf("a refused rewrite should be logged: %q", logged)
+	}
+}
+
+// TestEvaluateConnectionErrors_MasksOnce checks that a connection error
+// in a form redact.Text masks further on a second pass is written once
+// and then left alone, whether the alert is the loop's (active) or the
+// masking pass's (acknowledged, or in a blackout), so that neither stage
+// rewrites, and bumps last_updated on, the same alert on every pass.
+func TestEvaluateConnectionErrors_MasksOnce(t *testing.T) {
+	engine, _, pool, cleanup := newEngineSpockTestEnv(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	raw := `could not connect: CONNECTION E'host=192.0.2.1 password=\'example-secret a b\'' PUBLICATION p`
+	if once := redact.Text(raw); redact.Text(once) == once {
+		t.Fatalf("redact.Text is idempotent on %q, so this test proves nothing", raw)
+	}
+	activeID := insertMonitoredConnection(t, pool, "conn-error-once-active", &raw)
+	// A connection still in error would also get a new active alert, so
+	// the acknowledged alert's connection has recovered.
+	ackID := insertMonitoredConnection(t, pool, "conn-error-once-acknowledged", nil)
+	blackoutID := insertMonitoredConnection(t, pool, "conn-error-once-blackout", &raw)
+	now := time.Now()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO blackouts (scope, connection_id, start_time, end_time, reason)
+		VALUES ('server', $1, $2, $3, 'maintenance')`,
+		blackoutID, now.Add(-time.Hour), now.Add(time.Hour)); err != nil {
+		t.Fatalf("failed to insert blackout: %v", err)
+	}
+	for connID, status := range map[int]string{ackID: "acknowledged", blackoutID: "active"} {
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO alerts (alert_type, connection_id, severity, title, description, status, triggered_at)
+			VALUES ('connection', $1, 'critical', 'Connection error', $2, $3, NOW())`,
+			connID, raw, status); err != nil {
+			t.Fatalf("failed to insert %s alert: %v", status, err)
+		}
+	}
+
+	// versions returns each open connection alert's row version, which
+	// any UPDATE changes, and fails if a description still holds the
+	// secret.
+	versions := func() map[int64]string {
+		t.Helper()
+		rows, err := pool.Query(ctx, `
+			SELECT id, xmin::text, description FROM alerts
+			WHERE alert_type = 'connection' AND status IN ('active', 'acknowledged')`)
+		if err != nil {
+			t.Fatalf("failed to read alerts: %v", err)
+		}
+		defer rows.Close()
+		got := map[int64]string{}
+		for rows.Next() {
+			var id int64
+			var xmin, desc string
+			if err := rows.Scan(&id, &xmin, &desc); err != nil {
+				t.Fatalf("failed to scan alert: %v", err)
+			}
+			if strings.Contains(desc, "example-secret") {
+				t.Errorf("alert %d still holds the secret: %q", id, desc)
+			}
+			got[id] = xmin
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatalf("failed to read alerts: %v", err)
+		}
+		return got
+	}
+
+	engine.evaluateConnectionErrors(ctx)
+	first := versions()
+	if len(first) != 3 || len(activeConnectionAlerts(t, pool, activeID)) != 1 {
+		t.Fatalf("after the first pass: %d open alerts, want 3", len(first))
+	}
+	for pass := 2; pass <= 3; pass++ {
+		engine.evaluateConnectionErrors(ctx)
+		for id, xmin := range versions() {
+			if xmin != first[id] {
+				t.Errorf("pass %d rewrote alert %d", pass, id)
+			}
+		}
 	}
 }
 

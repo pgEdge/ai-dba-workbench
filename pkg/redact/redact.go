@@ -299,6 +299,30 @@ func Text(s string) string {
 	return s
 }
 
+// maxSettlePasses bounds how many times Settled applies Text. Every
+// redacttest case settles within two passes, and of 50,000 fuzzed
+// inputs one needed three; TestSettled pins both.
+const maxSettlePasses = 3
+
+// Settled returns s masked with Text and then masked again until the
+// text stops changing, for at most maxSettlePasses passes. Text is not
+// idempotent: masking a masked value can mask further, for example the
+// closing quote after a masked conninfo password
+// (CONNECTION E'host=h password=********' loses its last quote). A
+// caller that stores masked text and masks it again on a later pass
+// uses Settled, so that the second pass finds nothing to rewrite.
+func Settled(s string) string {
+	s = Text(s)
+	for i := 1; i < maxSettlePasses; i++ {
+		next := Text(s)
+		if next == s {
+			break
+		}
+		s = next
+	}
+	return s
+}
+
 // truncate returns s cut to at most n characters (runes).
 func truncate(s string, n int) string {
 	if len(s) <= n {

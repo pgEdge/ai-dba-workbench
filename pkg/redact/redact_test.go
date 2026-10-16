@@ -90,6 +90,58 @@ func TestKnownLimits(t *testing.T) {
 	}
 }
 
+// notIdempotent names the cases whose masked text Text masks further on
+// a second pass, almost always by taking the closing quote after a
+// masked value into the next unquoted value. Settled exists for them.
+var notIdempotent = map[string]bool{
+	"named argument":                                    true,
+	"doubled quote conninfo":                            true,
+	"positional node_create":                            true,
+	"nested role password":                              true,
+	"backslash quoted conninfo":                         true,
+	"backslash quoted role password":                    true,
+	"json escape string conninfo":                       true,
+	"C22: PASSWORD after quote char":                    true,
+	"C23: tab sep in E-string":                          true,
+	"quoted role password after a comment":              true,
+	"quoted role password after concatenation":          true,
+	"backslash quoted with escaped backslash and quote": true,
+	"backslash quoted with a lone escaped backslash":    true,
+}
+
+// TestSettled pins which cases Text does not leave as it found them on a
+// second pass, and checks that Settled masks every case, and the one
+// fuzzed input found to need a third pass, to text Text leaves alone.
+func TestSettled(t *testing.T) {
+	seen := 0
+	for _, tc := range redacttest.Cases {
+		once := redact.Text(tc.In)
+		if changed := redact.Text(once) != once; changed != notIdempotent[tc.Name] {
+			t.Errorf("%s: masking the masked text changes it: %v, pinned %v", tc.Name, changed, notIdempotent[tc.Name])
+		}
+		if notIdempotent[tc.Name] {
+			seen++
+		}
+		settled := redact.Settled(tc.In)
+		if redact.Text(settled) != settled || redacttest.SecretLeft(settled) {
+			t.Errorf("%s: Settled gave %q", tc.Name, settled)
+		}
+	}
+	if seen != len(notIdempotent) {
+		t.Errorf("notIdempotent names %d cases, %d of them in redacttest.Cases", len(notIdempotent), seen)
+	}
+
+	third := `{"stmt": "CONNECTION E'host=192.0.2.1 password=\\'s3cret a b\\''"}` +
+		`E app sword=_key":AWS_SECRET_ACCESS_KEY=example-secret aws s3 cp %p s3://bucket/%f`
+	twice := redact.Text(redact.Text(third))
+	if redact.Text(twice) == twice {
+		t.Error("the third-pass input settles in two passes")
+	}
+	if settled := redact.Settled(third); redact.Text(settled) != settled {
+		t.Errorf("the third-pass input did not settle: %q", settled)
+	}
+}
+
 // TestTextTruncates checks Text cuts a value to MaxTextLength
 // characters, not bytes, before masking it.
 func TestTextTruncates(t *testing.T) {

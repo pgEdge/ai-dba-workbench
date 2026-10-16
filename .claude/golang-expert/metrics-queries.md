@@ -222,11 +222,15 @@ decomposed into small, separately testable helpers:
   (see `RawStatementColumns`), never over the column `RedactedText`
   masked in SQL, and deletes the alias; a statement with no stored
   value beside it becomes `********` (#670). The collector
-  already redacts at collection time and migrations 25 and 28 (settings;
-  28 added the shell-command settings such as `archive_command`, issue
-  #676) and 26 (statement text) scrub older rows; this is the read-side
-  backstop. Widening `pgsettings.IsCredentialSetting` or `RedactValue`
-  needs a new migration that reruns `redactStoredPgSettings`.
+  already redacts at collection time and migrations 25 (settings) and
+  26 (statement text) scrub older rows; this is the read-side backstop.
+  Migration 25 runs the current `pgsettings.RedactValue`, so widening
+  `IsCredentialSetting` or `RedactValue` needs a new migration that
+  reruns `redactStoredPgSettings` for databases already past 25, unless
+  25 already replaced the values whole (why migration 28, issue #676,
+  only rewrites the column comment). The server's SQL masking returns
+  every non-connection-string credential setting whole, so the
+  shell-command settings keep their program name only in stored rows.
   `/api/v1/metrics/latest` (`queryLatestSnapshot`) calls
   `RedactProbeRows` too, top-queries uses `metrics.RedactStatementText`,
   and timeline `config_change` events use

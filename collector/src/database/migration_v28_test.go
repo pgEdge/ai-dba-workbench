@@ -18,11 +18,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// The v28 migration redacts the shell-command settings, such as
-// archive_command, in pg_settings rows stored before the probe redacted
-// them, as described in GitHub issue #676. These tests seed rows as an
-// older collector would have stored them, rerun the migration, and check
-// what is left.
+// The v28 migration describes, in the metrics.pg_settings.setting column
+// comment, how the shell-command settings such as archive_command are
+// redacted, as described in GitHub issue #676. It rewrites no rows; the
+// rewrite of rows stored by an older collector is migration 25's, which
+// these tests also drive with shell-command values.
 
 // migrationV28 returns the registered version 28 migration.
 func migrationV28(t *testing.T) Migration {
@@ -76,10 +76,82 @@ func runMigrationV28(t *testing.T, pool *pgxpool.Pool, setup string) error {
 	return nil
 }
 
-// TestMigrationV28_RedactsShellCommands seeds shell-command rows in
-// every value column, reruns the migration, and checks each column of
-// each row.
-func TestMigrationV28_RedactsShellCommands(t *testing.T) {
+// readSettingComment returns the comment on metrics.pg_settings.setting.
+func readSettingComment(t *testing.T, pool *pgxpool.Pool) *string {
+	t.Helper()
+	var comment *string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT col_description('metrics.pg_settings'::regclass, attnum)
+		FROM pg_attribute
+		WHERE attrelid = 'metrics.pg_settings'::regclass AND attname = 'setting'
+	`).Scan(&comment); err != nil {
+		t.Fatalf("failed to read comment on setting: %v", err)
+	}
+	return comment
+}
+
+// TestMigrationV28_DescribesShellCommands clears the comment migration
+// 28 sets, reruns the migration, and checks the comment is back. It also
+// checks that a value an earlier migration 25 replaced in full is left
+// as it is, since the migration rewrites no rows.
+func TestMigrationV28_DescribesShellCommands(t *testing.T) {
+	pool, cleanup := migrateV21TestSchema(t)
+	defer cleanup()
+	if pool == nil {
+		return
+	}
+
+	if comment := readSettingComment(t, pool); comment == nil ||
+		!strings.Contains(*comment, "program name") {
+		t.Errorf("after Migrate, setting comment = %s, want it to mention the program name",
+			fmtStrPtr(comment))
+	}
+
+	seedV25Settings(t, pool, []v25Row{
+		{name: "archive_command", setting: "********", resetVal: "********",
+			bootVal: strPtr("")},
+	})
+	if _, err := pool.Exec(context.Background(),
+		`COMMENT ON COLUMN metrics.pg_settings.setting IS NULL`); err != nil {
+		t.Fatalf("failed to clear comment: %v", err)
+	}
+
+	if err := runMigrationV28(t, pool, ""); err != nil {
+		t.Fatalf("migration 28 failed: %v", err)
+	}
+
+	comment := readSettingComment(t, pool)
+	if comment == nil || !strings.Contains(*comment, "archive_command") ||
+		!strings.Contains(*comment, "program name") {
+		t.Errorf("setting comment = %s, want it to describe the archive_command redaction",
+			fmtStrPtr(comment))
+	}
+
+	rows, err := pool.Query(context.Background(),
+		`SELECT setting FROM metrics.pg_settings WHERE name = 'archive_command'`)
+	if err != nil {
+		t.Fatalf("failed to read pg_settings: %v", err)
+	}
+	settings, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		t.Fatalf("failed to scan pg_settings: %v", err)
+	}
+	if len(settings) != 2 {
+		t.Fatalf("got %d archive_command rows, want 2", len(settings))
+	}
+	for _, s := range settings {
+		if s != "********" {
+			t.Errorf("archive_command = %q, want it left as ********", s)
+		}
+	}
+}
+
+// TestMigrationV25_KeepsShellCommandProgramNames seeds shell-command
+// rows in every value column, as a collector older than migration 25
+// stored them, and checks that migration 25, which applies
+// pgsettings.RedactValue from the collector that runs it, keeps each
+// command's program name on a direct upgrade to this version.
+func TestMigrationV25_KeepsShellCommandProgramNames(t *testing.T) {
 	pool, cleanup := migrateV21TestSchema(t)
 	defer cleanup()
 	if pool == nil {
@@ -119,9 +191,7 @@ func TestMigrationV28_RedactsShellCommands(t *testing.T) {
 		},
 	})
 
-	if err := runMigrationV28(t, pool, ""); err != nil {
-		t.Fatalf("migration 28 failed: %v", err)
-	}
+	runMigrationV25(t, pool)
 
 	want := map[string][3]*string{
 		"archive_command": {
@@ -143,7 +213,7 @@ func TestMigrationV28_RedactsShellCommands(t *testing.T) {
 		"work_mem": {strPtr("4096"), strPtr("4096"), strPtr("4096")},
 	}
 
-	checkV28Settings := func() {
+	checkSettings := func() {
 		t.Helper()
 		rows, err := pool.Query(context.Background(), `
 			SELECT name, setting, reset_val, boot_val
@@ -179,26 +249,11 @@ func TestMigrationV28_RedactsShellCommands(t *testing.T) {
 			}
 		}
 	}
-	checkV28Settings()
+	checkSettings()
 
 	// A second run finds nothing left to change.
-	if err := runMigrationV28(t, pool, ""); err != nil {
-		t.Fatalf("second run of migration 28 failed: %v", err)
-	}
-	checkV28Settings()
-
-	var comment *string
-	if err := pool.QueryRow(context.Background(), `
-		SELECT col_description('metrics.pg_settings'::regclass, attnum)
-		FROM pg_attribute
-		WHERE attrelid = 'metrics.pg_settings'::regclass AND attname = 'setting'
-	`).Scan(&comment); err != nil {
-		t.Fatalf("failed to read comment on setting: %v", err)
-	}
-	if comment == nil || !strings.Contains(*comment, "archive_command") {
-		t.Errorf("metrics.pg_settings.setting comment = %s, want it to mention archive_command",
-			fmtStrPtr(comment))
-	}
+	runMigrationV25(t, pool)
+	checkSettings()
 }
 
 // TestMigrationV28_ReportsFailures drives each error path of the
@@ -216,10 +271,10 @@ func TestMigrationV28_ReportsFailures(t *testing.T) {
 		{
 			name:  "no table",
 			setup: `ALTER TABLE metrics.pg_settings RENAME TO pg_settings_hidden`,
-			want:  "failed to redact stored pg_settings values",
+			want:  "failed to comment pg_settings value columns",
 		},
 		{
-			name:  "comment fails",
+			name:  "no column",
 			setup: `ALTER TABLE metrics.pg_settings DROP COLUMN setting`,
 			want:  "failed to comment pg_settings value columns",
 		},

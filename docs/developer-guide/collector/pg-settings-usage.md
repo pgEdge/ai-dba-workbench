@@ -79,12 +79,15 @@ values, a change to the password alone, or to the
 arguments of a shell command alone, does not store a
 new snapshot.
 
-Collector schema migrations 25 and 28 apply the same
+Collector schema migration 25 applies the same
 redaction to rows stored by earlier versions, and the
 server redacts these values again when it returns
 them in timeline configuration change events, from
 `GET /api/v1/metrics/latest` and in the latest-row
-mode of `GET /api/v1/metrics/query`.
+mode of `GET /api/v1/metrics/query`. Those routes and
+the `query_datastore` tool return the archive and
+recovery commands as `********` in full; only the
+stored rows keep the program name.
 
 ## Common Queries
 

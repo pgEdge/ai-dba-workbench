@@ -4043,26 +4043,24 @@ func (sm *SchemaManager) registerMigrations() {
 		},
 	})
 
-	// Migration #28 removes credentials from the shell-command settings
-	// in pg_settings snapshots stored before the probe started redacting
-	// them. See GitHub issue #676.
+	// Migration #28 describes the redaction of the shell-command settings
+	// on metrics.pg_settings.setting. See GitHub issue #676.
 	//
+	// pgsettings.RedactValue now keeps the program name of
 	// archive_command, archive_cleanup_command, restore_command and
-	// recovery_end_command commonly embed a credential, such as a
-	// PGPASSWORD=... prefix or a storage key, and migration 25 left them
-	// as stored. pgsettings.RedactValue now keeps each command's program
-	// name and redacts the rest, and this migration reruns the migration
-	// 25 rewrite so that it applies to the rows already stored. Values
-	// migration 25 redacted are unchanged, since redaction is idempotent.
+	// recovery_end_command, and the names of the environment variables
+	// assigned before it, rather than replacing the whole value. No
+	// stored row needs rewriting: migration 25 applies RedactValue from
+	// the collector that runs it, so a database it reaches in this
+	// version is redacted the new way, and one it reached in an earlier
+	// version holds these values replaced in full, which cannot be
+	// restored and which RedactValue leaves as they are. Only the column
+	// comment changes.
 	sm.migrations = append(sm.migrations, Migration{
 		Version:     28,
-		Description: "Redact shell-command settings in stored pg_settings values",
+		Description: "Describe the shell-command redaction of pg_settings values",
 		Up: func(tx pgx.Tx) error {
 			ctx := context.Background()
-
-			if err := redactStoredPgSettings(ctx, tx); err != nil {
-				return fmt.Errorf("failed to redact stored pg_settings values: %w", err)
-			}
 
 			_, err := tx.Exec(ctx, `
 				COMMENT ON COLUMN metrics.pg_settings.setting IS

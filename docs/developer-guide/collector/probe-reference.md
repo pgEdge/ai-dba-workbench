@@ -953,11 +953,11 @@ probes apply two rules to the tokens:
   column, option or setting whose name contains
   `password`, `passwd`, `passphrase`, `secret`,
   `token`, `credential` or `private_key`, together
-  with the settings whose value the `pg_settings`
-  probe replaces in full, such as `restore_command`
-  and `archive_command`. The same applies when the
-  name is itself a string constant followed by a
-  comma, as in `set_config('myext.password', '...',
+  with the other settings the `pg_settings` probe
+  redacts, apart from `primary_conninfo`, such as
+  `restore_command` and `archive_command`. The same
+  applies when the name is itself a string constant
+  followed by a comma, as in `set_config('myext.password', '...',
   false)`. After a separator such as `=` or `TO`, a
   double-quoted identifier is replaced too, and in a
   `SET` command

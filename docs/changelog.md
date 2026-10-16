@@ -2731,15 +2731,13 @@ project adheres to
   `primary_conninfo` with `********` in the `setting`, `reset_val`
   and `boot_val` columns, parsing both the keyword/value and URI
   forms and keeping the rest of the string. It replaces in full
-  `ssl_passphrase_command`, `archive_command`,
-  `archive_cleanup_command`, `restore_command` and
-  `recovery_end_command`, any of which can embed a secret such as
-  `PGPASSWORD=...`, and any extension setting named like a secret.
-  Collector schema migration 25 redacts the rows already stored, and
-  the server redacts the timeline and latest-row values again for a
-  datastore the collector has not yet migrated; the structured
-  `query_datastore` tool masks the same settings, using the same
-  list. A change to the password alone is no longer recorded as a
+  `ssl_passphrase_command` and any extension setting named like a
+  secret, and redacts the archive and recovery commands as described
+  for #676 below. Collector schema migration 25 redacts the rows
+  already stored, and the server redacts the timeline and latest-row
+  values again for a datastore the collector has not yet migrated;
+  the structured `query_datastore` tool masks the same settings,
+  using the same list. A change to the password alone is no longer recorded as a
   configuration change. Redaction cannot recall a password that has
   already been read from the datastore, so rotate any password that
   these settings or the statement text below held whilst an earlier
@@ -2820,14 +2818,16 @@ project adheres to
   storage key or a password argument to a backup tool. The probe now
   keeps each command's program name and replaces its arguments with
   `********`, along with the value of any environment variable
-  assigned before the program, so `PGPASSWORD=s3cret pgbackrest
-  archive-push %p` is stored as `PGPASSWORD=******** pgbackrest
-  ********`; a command that does not start with a plain program name,
-  or that uses `$` expansion before it, is replaced in full. Collector
-  schema migration 28 redacts the rows
-  already stored, and the server redacts the values again wherever it
-  redacts `primary_conninfo`. A change to a command's arguments alone
-  is no longer recorded as a configuration change. (#676)
+  assigned before the program, so
+  `PGPASSWORD=s3cret pgbackrest archive-push %p` is stored as
+  `PGPASSWORD=******** pgbackrest ********`. A command that does not
+  start with a plain program name, or that uses `$` expansion or an
+  empty assignment before it, is replaced in full. Collector schema
+  migration 25 redacts the rows already stored in the same way. The
+  server's REST routes, timeline events and `query_datastore` still
+  return these settings as `********` in full, as does the redaction
+  of collected statement text. A change to a command's arguments
+  alone is not recorded as a configuration change. (#676)
 
 - Delete a user with `ai-dba-server -delete-user` only when the
   confirmation is an explicit `y` or `yes`. The answer was checked

@@ -220,44 +220,66 @@ func RedactShellCommand(command string) string {
 // word, so rather than model expansion the caller redacts such a command
 // in full.
 func nextShellWord(s string) (word, rest string, ok bool) {
-	i := 0
-	for i < len(s) {
-		switch c := s[i]; c {
-		case ' ', '\t':
+	for i := 0; i < len(s); {
+		if s[i] == ' ' || s[i] == '\t' {
 			return s[:i], s[i:], true
-		case '\'':
-			end := strings.IndexByte(s[i+1:], '\'')
-			if end < 0 {
-				return "", "", false
-			}
-			i += end + 2
-		case '"':
-			i++
-			for i < len(s) && s[i] != '"' {
-				switch s[i] {
-				case '$', '`':
-					return "", "", false
-				case '\\':
-					i++
-				}
-				i++
-			}
-			if i >= len(s) {
-				return "", "", false
-			}
-			i++
-		case '\\':
-			if i+1 >= len(s) {
-				return "", "", false
-			}
-			i += 2
-		case ';', '&', '|', '<', '>', '(', ')', '`', '$', '\n', '\r':
+		}
+		next, ok := skipShellWordPart(s, i)
+		if !ok {
 			return "", "", false
-		default:
+		}
+		i = next
+	}
+	return s, "", true
+}
+
+// unsafeShellChars are the unquoted characters that make nextShellWord
+// give up: those that end or redirect a command, start a subshell or
+// begin an expansion, and line breaks.
+const unsafeShellChars = ";&|<>()`$\n\r"
+
+// skipShellWordPart returns the index just past the part of a shell word
+// that starts at s[i]: a single-quoted string, a double-quoted string, a
+// backslash escape or one other character. It reports false where
+// nextShellWord gives up.
+func skipShellWordPart(s string, i int) (int, bool) {
+	switch s[i] {
+	case '\'':
+		end := strings.IndexByte(s[i+1:], '\'')
+		if end < 0 {
+			return 0, false
+		}
+		return i + end + 2, true
+	case '"':
+		return skipDoubleQuoted(s, i+1)
+	case '\\':
+		if i+1 >= len(s) {
+			return 0, false
+		}
+		return i + 2, true
+	}
+	if strings.IndexByte(unsafeShellChars, s[i]) >= 0 {
+		return 0, false
+	}
+	return i + 1, true
+}
+
+// skipDoubleQuoted returns the index just past the closing quote of a
+// double-quoted string whose contents start at s[i]. It reports false if
+// the quote is not closed, or if the contents hold a $ or a backtick,
+// which the shell expands inside double quotes.
+func skipDoubleQuoted(s string, i int) (int, bool) {
+	for ; i < len(s); i++ {
+		switch s[i] {
+		case '"':
+			return i + 1, true
+		case '$', '`':
+			return 0, false
+		case '\\':
 			i++
 		}
 	}
-	return s, "", true
+	return 0, false
 }
 
 // isShellVariableName reports whether name is a valid shell variable

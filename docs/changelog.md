@@ -2503,6 +2503,28 @@ project adheres to
   call sites all go together. `EnableAnalytics` defaulted to false, so
   no deployment was collecting these figures in any case.
 
+- Remove the write path from the `query_database` MCP tool, which is
+  now read-only for every caller (#663). `INSERT`, `UPDATE`,
+  `DELETE`, DDL and a `SELECT` that calls a side-effecting function
+  are refused even for a superuser or a caller with read/write access
+  to the connection, and a query holding more than one statement is
+  refused rather than run, so neither Ellie nor any other MCP client
+  can change a monitored database through the tool.
+
+- Remove the connection-string commands from the `query_database`
+  MCP tool (#662). A query ending `at postgres://...`, or one such as
+  `set default database to postgres://...`, made the server connect to
+  any host it could reach, bypassing the stored connections and their
+  access checks. The tool now runs only on the given `connection_id`,
+  after the usual access check, or on the caller's selected
+  connection, and any connection string in the query text reaches
+  PostgreSQL as part of the SQL. To query another database on a
+  stored connection, pass `connection_id` with `database_name`. The
+  tool also stops a statement once it has read `limit` rows rather
+  than reading the rest of its result, and starts the `LIMIT` and
+  `OFFSET` it adds on a new line, so a trailing `--` comment no
+  longer hides them and asking for the next page now advances.
+
 ### Removed
 
 - Remove the superseded `NewConnectionHandler` and
@@ -2664,9 +2686,8 @@ project adheres to
   through field selection, as in `(pid).pg_terminate_backend`.
   Functions called through a user-defined wrapper or view are not
   detected. The MCP tools that Ellie and other MCP clients use now
-  apply the same check: `query_database` treats such a `SELECT` as a
-  write, so it needs an explicit `connection_id` and read/write
-  access; `execute_explain` refuses to `EXPLAIN ANALYZE` it, although
+  apply the same check: `query_database` refuses such a `SELECT`, as
+  it now refuses every write; `execute_explain` refuses to `EXPLAIN ANALYZE` it, although
   the plan is still available with `analyze` set to false;
   `test_query` refuses one prefixed with `ANALYZE` or other `EXPLAIN`
   options, which previously ran it; and `count_rows` refuses it

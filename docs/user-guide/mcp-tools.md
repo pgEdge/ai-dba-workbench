@@ -34,8 +34,8 @@ A `SELECT` that calls a function with side effects, such as
 `set_config` or `nextval`, counts as a write; this includes a
 call written in field-selection notation, such as
 `(pid).pg_terminate_backend`. The
-`query_database` tool runs such a query only with an explicit
-`connection_id` and read/write access to the connection. The
+`query_database` tool refuses such a query, as it refuses every
+write, whatever access the caller holds on the connection. The
 `execute_explain` tool refuses to run `EXPLAIN ANALYZE` on such
 a query, but returns the plan when `analyze` is false. The
 `test_query` tool refuses such a query when an `ANALYZE` or

@@ -195,6 +195,10 @@ the row exists, so the work done does not reveal it either. For that
 to hold, `CanAccessConnection` reads the caller's group privileges
 before the sharing lookup, which fails for a missing id; keep that
 order, so a missing and a hidden connection run the same queries.
+`TestCanAccessConnectionReadsPrivilegesBeforeSharingLookup` in
+`internal/auth/access_order_test.go` locks in the order (a failed
+privileges read must stop before the sharing lookup runs), since the
+handler tests compare only status and body and pass with either order.
 `connection_write_visibility_test.go` locks in the byte-identical 404
 for sessions and API tokens, the manager exemption and the owner of a
 group-restricted connection.

@@ -23,25 +23,36 @@ violation downstream.
 
 ## Deleting a Connection
 
-Because of that cascade, `DELETE FROM connections` removes the
-connection's whole retention history and can take minutes, so it does
-not run under the budgets ordinary datastore calls get (issue #480).
+Because of that cascade, a bare `DELETE FROM connections` removes the
+connection's whole retention history in one transaction and can take
+minutes (issues #480 and #669). The delete therefore runs as three
+steps in `connectionDeleter` (`api/connection_deleter.go`):
+`DisableConnectionMonitoring` stops collection, `PurgeConnectionMetrics`
+(`database/connection_purge.go`) deletes the connection's rows from
+every leaf table under `metrics` holding a foreign key to
+`connections`, found through `pg_constraint` and `pg_partition_tree`,
+in `ConnectionPurgeBatchSize` batches that each commit on their own,
+and `DeleteConnection` then removes the row, its cascade left with
+almost nothing. Because every batch commits, an interrupted purge keeps
+its progress and a retry resumes it.
+
+The job runs in a goroutine under `context.WithoutCancel`, so a client
+giving up does not stop it, and a second request for the same
+connection joins the running job. `deleteConnection` waits up to
 `database.ConnectionDeleteTimeout` (four minutes, kept under the HTTP
-server's 300 second `WriteTimeout`) is both the handler deadline, built
-by `connectionDeleteContext` in `api/connection_handlers.go` with
-`context.WithoutCancel` so that a client giving up does not roll the
-delete back, and a transaction-local `statement_timeout` that
-`DeleteConnection` sets with `set_config(..., true)` to override the
-pool-wide one. `DeleteConnection` deliberately does not take `d.mu`:
-holding the write lock through the cascade would stall every other
-datastore call. `TestDeleteConnection_OverridesPoolStatementTimeout`,
+server's 300 second `WriteTimeout`) and answers 202 Accepted if the job
+is still running; the connection stays listed until it finishes.
+`DeleteConnection` also applies that timeout as a transaction-local
+`statement_timeout` via `set_config(..., true)`. Neither
+`DeleteConnection` nor `PurgeConnectionMetrics` takes `d.mu`: holding
+the write lock through the work would stall every other datastore call.
+`TestPurgeConnectionMetrics`, `TestConnectionDeleter_JoinsRunningJob`,
+`TestDeleteConnection_AcceptedWhileStillRunning`,
+`TestDeleteConnection_OverridesPoolStatementTimeout`,
 `TestDeleteConnection_SurvivesRequestCancellation` and
 `TestDeleteConnection_DoesNotBlockDatastoreReaders` lock these
-properties in. If deletes outgrow four minutes, the next step is an
-asynchronous delete (hide the connection at once, reclaim its rows in
-the background), not a longer timeout; detaching partitions does not
-help directly, because the weekly partitions hold every connection's
-rows.
+properties in. Detaching partitions does not help, because the weekly
+partitions hold every connection's rows.
 
 ## Filter Orphans at Query Time
 

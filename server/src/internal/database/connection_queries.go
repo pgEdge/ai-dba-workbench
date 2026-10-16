@@ -232,16 +232,20 @@ func scanConnectionListItem(conn *ConnectionListItem, scanner interface{ Scan(..
 const DefaultDatastoreStatementTimeout = 30 * time.Second
 
 // ConnectionDeleteTimeout is the budget for deleting a connection. The
-// DELETE cascades through every metrics.* table and removes the
-// connection's whole retention history, which DefaultDatastoreStatementTimeout
-// and the ten seconds the other connection handlers allow cannot cover
-// for a connection that has been collecting for days (issue #480). The
-// longest budget the server grants any request is the HTTP server's 300
-// second WriteTimeout (internal/mcp/http_server.go), which exists for LLM
-// agentic loops; four minutes is the most the delete can take and still
-// leave time to write its response within that limit. DeleteConnection
-// applies it as a transaction-local statement_timeout, overriding the
-// pool-wide one, and deleteConnection uses it as the request deadline.
+// DELETE cascades through every metrics.* table, which
+// DefaultDatastoreStatementTimeout and the ten seconds the other
+// connection handlers allow cannot cover for a connection that has been
+// collecting for days (issue #480). PurgeConnectionMetrics now clears
+// most of that history in short batches first (issue #669), but rows
+// written in the meantime, and the dependants outside metrics, still go
+// through the cascade. The longest budget the server grants any request
+// is the HTTP server's 300 second WriteTimeout
+// (internal/mcp/http_server.go), which exists for LLM agentic loops;
+// four minutes is the most a handler can wait and still leave time to
+// write its response within that limit. DeleteConnection applies it as
+// a transaction-local statement_timeout, overriding the pool-wide one,
+// and deleteConnection waits that long before answering 202 Accepted
+// and leaving the delete to finish in the background.
 const ConnectionDeleteTimeout = 4 * time.Minute
 
 // resolveStatementTimeout turns the configured statement_timeout into

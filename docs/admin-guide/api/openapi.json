@@ -4094,7 +4094,7 @@
       },
       "delete": {
         "summary": "Delete a connection",
-        "description": "Deletes a connection",
+        "description": "Deletes a connection. Monitoring stops at once, and the connection's collected metrics are removed in batches before the connection itself. If that is still running after four minutes the server answers 202 and finishes the delete in the background; the connection stays listed until it does, and repeating the request waits on the same delete rather than starting another.",
         "operationId": "deleteConnection",
         "tags": [
           "Connections"
@@ -4111,6 +4111,27 @@
           }
         ],
         "responses": {
+          "202": {
+            "description": "Delete still running; it completes in the background",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "deleting"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
           "204": {
             "description": "Connection deleted"
           },
@@ -4136,6 +4157,16 @@
           },
           "404": {
             "description": "Connection not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to delete connection",
             "content": {
               "application/json": {
                 "schema": {

@@ -1563,6 +1563,17 @@ project adheres to
   alerter's writes for the connection being deleted wait for it to
   finish, which can now take up to the same four minutes.
 
+- Fix deleting a connection whose metrics history is too large to
+  remove within four minutes (#669). The delete now stops monitoring
+  the connection at once, removes its collected metrics in small
+  batches that each commit on their own, and only then deletes the
+  connection, so no single transaction grows with the history and an
+  interrupted delete keeps its progress. If it is still running after
+  four minutes, `DELETE /api/v1/connections/{id}` returns
+  `202 Accepted` and the server finishes the delete in the
+  background; the connection stays listed until it does, and
+  repeating the request waits on the same delete.
+
 - Fix alerts staying active for ever on a server an operator has
   stopped monitoring. The probes of an unmonitored connection leave
   the staleness view, so every alert on it was judged to have a probe

@@ -13,6 +13,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,46 +21,6 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/database"
 )
-
-// TestConnectionDeleteContext checks the budget the DELETE runs under
-// (issue #480): the deadline is database.ConnectionDeleteTimeout rather
-// than the lookup's ten seconds, and canceling the request does not
-// cancel the delete.
-func TestConnectionDeleteContext(t *testing.T) {
-	type ctxKey struct{}
-	parent, cancelParent := context.WithCancel(
-		context.WithValue(context.Background(), ctxKey{}, "kept"))
-
-	before := time.Now()
-	ctx, cancel := connectionDeleteContext(parent)
-	defer cancel()
-
-	deadline, ok := ctx.Deadline()
-	if !ok {
-		t.Fatal("delete context has no deadline")
-	}
-	if earliest := before.Add(database.ConnectionDeleteTimeout); deadline.Before(earliest) {
-		t.Fatalf("deadline %v is earlier than %v", deadline, earliest)
-	}
-	if latest := time.Now().Add(database.ConnectionDeleteTimeout); deadline.After(latest) {
-		t.Fatalf("deadline %v is later than %v", deadline, latest)
-	}
-	if got := ctx.Value(ctxKey{}); got != "kept" {
-		t.Fatalf("request values not carried over: got %v", got)
-	}
-
-	cancelParent()
-	select {
-	case <-ctx.Done():
-		t.Fatalf("delete context canceled with its request: %v", ctx.Err())
-	default:
-	}
-
-	cancel()
-	if ctx.Err() == nil {
-		t.Fatal("delete context not canceled by its own cancel func")
-	}
-}
 
 // deleteConnectionHarness wires a real datastore and auth store for the
 // deleteConnection handler tests, seeding connection id owned by owner.
@@ -251,4 +212,52 @@ func TestDeleteConnection_HandlerResponses(t *testing.T) {
 			t.Fatalf("status = %d, want 401. Body: %s", rec.Code, rec.Body.String())
 		}
 	})
+}
+
+// TestDeleteConnection_AcceptedWhileStillRunning is the handler-level
+// regression test for issue #669: a delete that outlasts the handler's
+// wait is answered 202 Accepted and still completes in the background.
+func TestDeleteConnection_AcceptedWhileStillRunning(t *testing.T) {
+	const id, owner = 7669, "issue669_owner"
+	h := newDeleteConnectionHarness(t, id, owner)
+	h.installDeleteTrigger(t, issue480SlowDeleteFunction)
+	h.handler.deleteWait = 50 * time.Millisecond
+
+	req := h.request(t, context.Background(), owner, nil)
+	rec := httptest.NewRecorder()
+	h.handler.deleteConnection(rec, req, id)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d. Body: %s",
+			rec.Code, http.StatusAccepted, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"status":"deleting"`) {
+		t.Fatalf("body = %s, want a deleting status", rec.Body.String())
+	}
+
+	deadline := time.Now().Add(10 * time.Second)
+	for h.rowCount(t, id) != 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("background delete did not finish")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// TestDeleteConnection_ConnectionGoneMidDelete covers a connection
+// removed by someone else between the handler's lookup and its delete,
+// which is answered 404 rather than 500.
+func TestDeleteConnection_ConnectionGoneMidDelete(t *testing.T) {
+	const id, owner = 7670, "issue669_gone_owner"
+	h := newDeleteConnectionHarness(t, id, owner)
+	h.handler.deleter = newConnectionDeleter(&fakeConnectionDeleteStore{
+		disableErr: database.ErrConnectionNotFound,
+	})
+
+	req := h.request(t, context.Background(), owner, nil)
+	rec := httptest.NewRecorder()
+	h.handler.deleteConnection(rec, req, id)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404. Body: %s", rec.Code, rec.Body.String())
+	}
 }

@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
@@ -42,6 +43,28 @@ type ConnectionHandler struct {
 	// When nil, refusals are not audited (for example, when the server
 	// runs without an auth store).
 	denialRecorder func(*http.Request, string)
+
+	// deleter runs connection deletes in the background; see
+	// connectionDeleter. It is built on first use by connectionDeleter
+	// so that handlers built without the constructor still get one.
+	deleterOnce sync.Once
+	deleter     *connectionDeleter
+
+	// deleteWait is how long deleteConnection waits for a delete to
+	// finish before answering 202 Accepted. Zero selects
+	// database.ConnectionDeleteTimeout; tests shorten it.
+	deleteWait time.Duration
+}
+
+// connectionDeleter returns the handler's connectionDeleter, building it
+// on first use.
+func (h *ConnectionHandler) connectionDeleter() *connectionDeleter {
+	h.deleterOnce.Do(func() {
+		if h.deleter == nil {
+			h.deleter = newConnectionDeleter(h.datastore)
+		}
+	})
+	return h.deleter
 }
 
 // SetDenialRecorder installs the function used to audit refused
@@ -589,30 +612,49 @@ func (h *ConnectionHandler) deleteConnection(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Delete the connection under its own, much longer budget; see
-	// connectionDeleteContext.
-	deleteCtx, deleteCancel := connectionDeleteContext(r.Context())
-	defer deleteCancel()
-	if err := h.datastore.DeleteConnection(deleteCtx, id); err != nil {
-		log.Printf("[ERROR] Failed to delete connection (id=%d): %v", id, err)
-		RespondError(w, http.StatusInternalServerError,
-			"Failed to delete connection")
+	// The delete clears the connection's metrics in batches before
+	// removing the row, and runs in the background so that it finishes
+	// however large that history is (issue #669). Wait for it for up to
+	// the delete budget, which covers all but the largest histories;
+	// past that, answer 202 Accepted and let it run on.
+	wait := h.deleteWait
+	if wait <= 0 {
+		wait = database.ConnectionDeleteTimeout
+	}
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+
+	job := h.connectionDeleter().start(r.Context(), id)
+	select {
+	case <-job.done:
+	case <-timer.C:
+		log.Printf("[INFO] Connection delete still running after %v (id=%d); continuing in the background",
+			wait, id)
+		RespondJSON(w, http.StatusAccepted, ConnectionDeleteAcceptedResponse{
+			Status: "deleting",
+			Message: "The connection's collected metrics are still being removed; " +
+				"the connection will be deleted once that finishes",
+		})
 		return
 	}
 
-	w.WriteHeader(http.StatusNoContent)
+	switch {
+	case errors.Is(job.err, database.ErrConnectionNotFound):
+		RespondError(w, http.StatusNotFound, "Connection not found")
+	case job.err != nil:
+		RespondError(w, http.StatusInternalServerError,
+			"Failed to delete connection")
+	default:
+		w.WriteHeader(http.StatusNoContent)
+	}
 }
 
-// connectionDeleteContext returns the context for the DELETE itself. It
-// carries database.ConnectionDeleteTimeout rather than the ten seconds
-// the ownership lookup gets, because the delete cascades through the
-// connection's whole metrics history (issue #480). It is also detached
-// from the request's cancellation: a browser or reverse proxy that gives
-// up waiting would otherwise roll the delete back, and every retry would
-// fail the same way at whatever size the history had reached. The
-// deadline still bounds the work.
-func connectionDeleteContext(parent context.Context) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.WithoutCancel(parent), database.ConnectionDeleteTimeout)
+// ConnectionDeleteAcceptedResponse is the body of a 202 Accepted answer
+// to DELETE /api/v1/connections/{id}, sent when the delete is still
+// clearing the connection's metrics as the handler stops waiting.
+type ConnectionDeleteAcceptedResponse struct {
+	Status  string `json:"status"`
+	Message string `json:"message"`
 }
 
 // listDatabases handles GET /api/v1/connections/{id}/databases

@@ -2102,16 +2102,26 @@ func buildPaths() map[string]OpenAPIPathItem {
 			},
 			Delete: &OpenAPIOperation{
 				Summary:     "Delete a connection",
-				Description: "Deletes a connection",
+				Description: "Deletes a connection. Monitoring stops at once, and the connection's collected metrics are removed in batches before the connection itself. If that is still running after four minutes the server answers 202 and finishes the delete in the background; the connection stays listed until it does, and repeating the request waits on the same delete rather than starting another.",
 				OperationID: "deleteConnection",
 				Tags:        []string{"Connections"},
 				Security:    bearerAuth,
 				Parameters:  []OpenAPIParameter{pathParamInt("id", "Connection ID")},
 				Responses: map[string]OpenAPIResponse{
+					"202": {
+						Description: "Delete still running; it completes in the background",
+						Content: map[string]OpenAPIMediaType{
+							"application/json": {Schema: &OpenAPISchema{Type: "object", Properties: map[string]*OpenAPISchema{
+								"status":  {Type: "string", Enum: []string{"deleting"}},
+								"message": {Type: "string"},
+							}}},
+						},
+					},
 					"204": {Description: "Connection deleted"},
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
 					"403": jsonResponse("ErrorResponse", "Forbidden"),
 					"404": jsonResponse("ErrorResponse", "Connection not found"),
+					"500": jsonResponse("ErrorResponse", "Failed to delete connection"),
 				},
 			},
 		},

@@ -18,6 +18,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // integrationConfig is a fully populated Config implementation used by the
@@ -393,6 +395,55 @@ func TestGetMonitoredConnectionByID(t *testing.T) {
 	}
 	if _, err := ds.GetMonitoredConnectionByID(id); err == nil {
 		t.Error("expected error when row is not monitored")
+	}
+}
+
+// TestMonitoredConnectionReaders_SkipMarkedConnection verifies that a
+// connection the server has marked deleted (issue #669) is not collected
+// from, even if a later update has set is_monitored back to TRUE.
+func TestMonitoredConnectionReaders_SkipMarkedConnection(t *testing.T) {
+	ds := newDatastoreForTest(t)
+
+	conn, err := ds.GetConnection()
+	if err != nil {
+		t.Fatalf("GetConnection() error = %v", err)
+	}
+	defer ds.ReturnConnection(conn)
+
+	ctx := context.Background()
+	if _, err := conn.Exec(ctx, "DELETE FROM connections"); err != nil {
+		t.Fatalf("cleanup error = %v", err)
+	}
+	var live, marked int
+	for _, row := range []struct {
+		name string
+		id   *int
+	}{{"live-conn", &live}, {"marked-conn", &marked}} {
+		if err := conn.QueryRow(ctx, `
+			INSERT INTO connections (name, host, port, database_name, username,
+			                         owner_username, is_monitored)
+			VALUES ($1, '192.0.2.1', 5432, 'postgres', 'postgres', 'test-owner', TRUE)
+			RETURNING id`, row.name).Scan(row.id); err != nil {
+			t.Fatalf("seed %s error = %v", row.name, err)
+		}
+	}
+	if _, err := conn.Exec(ctx,
+		"UPDATE connections SET deleted_at = NOW() WHERE id = $1", marked); err != nil {
+		t.Fatalf("mark deleted error = %v", err)
+	}
+
+	got, err := ds.GetMonitoredConnections()
+	if err != nil {
+		t.Fatalf("GetMonitoredConnections() error = %v", err)
+	}
+	if len(got) != 1 || got[0].ID != live {
+		t.Errorf("GetMonitoredConnections() = %+v, want only connection %d", got, live)
+	}
+	if _, err := ds.GetMonitoredConnectionByID(live); err != nil {
+		t.Errorf("GetMonitoredConnectionByID(live) error = %v", err)
+	}
+	if _, err := ds.GetMonitoredConnectionByID(marked); !errors.Is(err, pgx.ErrNoRows) {
+		t.Errorf("GetMonitoredConnectionByID(marked) error = %v, want pgx.ErrNoRows", err)
 	}
 }
 

@@ -2341,7 +2341,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/cluster-groups": {
 			Get: &OpenAPIOperation{
 				Summary:     "List all cluster groups",
-				Description: "Returns all cluster groups",
+				Description: "Returns the cluster groups visible to the caller: those with a visible member connection. A group with no member connections is visible only to its owner and to callers who see every connection.",
 				OperationID: "listClusterGroups",
 				Tags:        []string{"Cluster Groups"},
 				Security:    bearerAuth,
@@ -2370,7 +2370,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/cluster-groups/{id}": {
 			Get: &OpenAPIOperation{
 				Summary:     "Get cluster group by ID",
-				Description: "Returns a specific cluster group",
+				Description: "Returns a specific cluster group. A group the caller cannot see is answered with 404, as a missing one is. A group with no member connections is visible only to its owner and to callers who see every connection.",
 				OperationID: "getClusterGroup",
 				Tags:        []string{"Cluster Groups"},
 				Security:    bearerAuth,
@@ -2378,12 +2378,12 @@ func buildPaths() map[string]OpenAPIPathItem {
 				Responses: map[string]OpenAPIResponse{
 					"200": jsonResponse("ClusterGroup", "Group details"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"404": jsonResponse("ErrorResponse", "Group not found"),
+					"404": jsonResponse("ErrorResponse", "Group not found, or not visible to the caller"),
 				},
 			},
 			Put: &OpenAPIOperation{
 				Summary:     "Update a cluster group",
-				Description: "Updates a cluster group. Requires manage_connections permission or ownership of the cluster group. A group the caller cannot see is answered with 404, as a missing one is.",
+				Description: "Updates a cluster group. Requires manage_connections permission or ownership of the cluster group. A group the caller cannot see is answered with 404, as a missing one is. A group with no member connections is visible only to its owner and to callers who see every connection.",
 				OperationID: "updateClusterGroup",
 				Tags:        []string{"Cluster Groups"},
 				Security:    bearerAuth,
@@ -2399,7 +2399,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 			},
 			Delete: &OpenAPIOperation{
 				Summary:     "Delete a cluster group",
-				Description: "Deletes a cluster group. Requires manage_connections permission or ownership of the cluster group. A group the caller cannot see is answered with 404, as a missing one is; a group with no member connections is visible only to a caller who sees every connection.",
+				Description: "Deletes a cluster group. Requires manage_connections permission or ownership of the cluster group. A group the caller cannot see is answered with 404, as a missing one is. A group with no member connections is visible only to its owner and to callers who see every connection.",
 				OperationID: "deleteClusterGroup",
 				Tags:        []string{"Cluster Groups"},
 				Security:    bearerAuth,
@@ -2416,7 +2416,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/cluster-groups/{id}/clusters": {
 			Get: &OpenAPIOperation{
 				Summary:     "List clusters in a group",
-				Description: "Returns all clusters belonging to a group",
+				Description: "Returns the clusters in a group that are visible to the caller. A missing group, or one the caller cannot see, is answered with 404. A group with no member connections is visible only to its owner and to callers who see every connection.",
 				OperationID: "listGroupClusters",
 				Tags:        []string{"Cluster Groups"},
 				Security:    bearerAuth,
@@ -2424,6 +2424,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 				Responses: map[string]OpenAPIResponse{
 					"200": jsonArrayResponse("Cluster", "List of clusters"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"404": jsonResponse("ErrorResponse", "Group not found, or not visible to the caller"),
 					"500": jsonResponse("ErrorResponse", "Failed to list clusters"),
 				},
 			},

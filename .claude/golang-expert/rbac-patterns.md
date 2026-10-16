@@ -169,12 +169,9 @@ if err != nil {
     return
 }
 
-isOwner := existing.OwnerUsername.Valid &&
-    existing.OwnerUsername.String == username
+isOwner := ownsClusterGroup(username, existing)
 // 404 for a row the caller cannot see, identical to a missing one.
-// The argument is hasManageConns || isOwner in updateClusterGroup and
-// false in deleteClusterGroup (see below).
-if v.hidden(hasManageConns || isOwner) {
+if v.hidden(isOwner) {
     RespondError(w, http.StatusNotFound, "<Resource> not found")
     return
 }
@@ -202,15 +199,27 @@ not own draws the audited 403. `loadClusterGroupVisibility` resolves
 the caller's visible connections and, for a restricted caller, the
 group's members before the lookup, so a missing id (no members) and
 a hidden group run the same queries; `getClusterGroup` and
-`listClustersInGroup` use it in the same order. `hidden` treats a
-group with no member connections as visible only when its argument
-is true: `updateClusterGroup` passes `hasManageConns || isOwner`, so
-an owner can still rename a group they have just created (issue
-#58), whilst `deleteClusterGroup`, `getClusterGroup` and
-`listClustersInGroup` pass `false`, hiding empty groups from every
-restricted caller. `TestClusterGroupWritesHideInvisibleGroups` and
+`listClustersInGroup` use it in the same order, and both look the
+group up before deciding, so a missing id is 404 for every caller.
+
+One rule governs a group with no member connections on every route
+(issue #705): it is visible to its owner and to callers who see every
+connection, and to nobody else, whatever permissions they hold.
+`hidden(isOwner)` takes only ownership; never pass `hasManageConns`
+into it, which is what let a restricted `manage_connections` holder
+rename another user's empty group. The writes match the owner on
+`getUserInfoCompat`'s username (`ownsClusterGroup`). The reads
+(`getClusterGroup`, `listClustersInGroup`, and `listClusterGroups`
+through `filterGroupsByVisibilityFn`'s `owner` argument) use
+`emptyGroupOwnerName`, the context username, or "" for an API token
+narrowed to some connections, so a narrowed token never counts as its
+owner; the writes refuse such a token before the lookup instead.
+`requireVisibleTargetGroup` applies the same `hidden` rule.
+`TestClusterGroupEmptyGroupOneRule`,
+`TestClusterGroupListShowsOwnEmptyGroups`,
+`TestClusterGroupWritesHideInvisibleGroups` and
 `TestClusterGroupLookupsCostTheSameForHiddenAndMissing` in
-`cluster_group_visibility_test.go` lock this in; the second counts
+`cluster_group_visibility_test.go` lock this in; the last counts
 pool acquisitions through a `PrepareConn` hook.
 
 Connection update and delete (`updateConnection`, `deleteConnection`)
@@ -276,10 +285,12 @@ as a missing one. The helpers live in
   moved into, a group (`createClusterInGroup`, `handleCreateCluster`,
   `updateCluster`). A missing or hidden group is 404 "Cluster group not
   found", and both paths run the same queries. An empty group is
-  visible only to its owner and to callers who see every connection.
-  The owner match uses `GetUsernameFromContext`, which for an API
-  token is the token owner's name; a narrowed token never gets that
-  far only because `requireAllConnectionsInTokenScope` runs first.
+  visible only to its owner and to callers who see every connection,
+  through the same `clusterGroupVisibility.hidden` rule as the
+  cluster-group routes (issue #705). The owner match uses
+  `GetUsernameFromContext`, which for an API token is the token
+  owner's name; a narrowed token never gets that far only because
+  `requireAllConnectionsInTokenScope` runs first.
 - The default group (`is_default`) is always writable: a cluster with
   no `group_id` lands there unchecked, and an explicit default
   `group_id` passes `requireVisibleTargetGroup` too. Requiring

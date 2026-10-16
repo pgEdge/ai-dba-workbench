@@ -114,12 +114,12 @@ The API provides endpoints in the following categories.
 | DELETE | `/api/v1/clusters/{id}/servers/{connectionId}` | Remove a server from a cluster. |
 | GET | `/api/v1/clusters/{id}/relationships` | List cluster relationships. |
 | DELETE | `/api/v1/clusters/{id}/relationships/{relationshipId}` | Delete a cluster relationship. |
-| GET | `/api/v1/cluster-groups` | List all cluster groups. |
+| GET | `/api/v1/cluster-groups` | List the cluster groups visible to the caller. |
 | POST | `/api/v1/cluster-groups` | Create a cluster group. |
 | GET | `/api/v1/cluster-groups/{id}` | Get a cluster group by ID. |
 | PUT | `/api/v1/cluster-groups/{id}` | Update a cluster group. |
 | DELETE | `/api/v1/cluster-groups/{id}` | Delete a cluster group. |
-| GET | `/api/v1/cluster-groups/{id}/clusters` | List clusters in a group. |
+| GET | `/api/v1/cluster-groups/{id}/clusters` | List the visible clusters in a group. |
 | POST | `/api/v1/cluster-groups/{id}/clusters` | Create a cluster in a group. |
 
 ### Alerts

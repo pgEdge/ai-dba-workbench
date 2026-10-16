@@ -15,7 +15,9 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
@@ -73,12 +75,14 @@ func injectLimitOffset(sqlQuery string, limit, offset int) (modified string, had
 	hadLimit = hasLimitClause(sqlQuery)
 	hadOffset = hasOffsetClause(sqlQuery)
 
+	// Each clause starts on a new line so that a trailing -- comment in
+	// the caller's query cannot comment it out.
 	modified = sqlQuery
 	if limit > 0 && !hadLimit {
-		modified = fmt.Sprintf("%s LIMIT %d", modified, limit+1)
+		modified = fmt.Sprintf("%s\nLIMIT %d", modified, limit+1)
 	}
 	if offset > 0 && !hadOffset {
-		modified = fmt.Sprintf("%s OFFSET %d", modified, offset)
+		modified = fmt.Sprintf("%s\nOFFSET %d", modified, offset)
 	}
 
 	return modified, hadLimit, hadOffset
@@ -138,7 +142,12 @@ func executeQueryWith(
 	}
 	defer cleanup()
 
-	rows, err := mt.Tx.Query(ctx, sqlQuery, queryArgs...)
+	// The statement runs under its own context so that it can be stopped
+	// once the row cap is reached; see stopAfterCap.
+	queryCtx, cancelQuery := context.WithCancel(ctx)
+	defer cancelQuery()
+
+	rows, err := mt.Tx.Query(queryCtx, sqlQuery, queryArgs...)
 	if err != nil {
 		resp, _ := mcp.NewToolError(formatErr(queryStageExecute, err)) //nolint:errcheck // NewToolError always succeeds
 		return nil, &resp
@@ -168,14 +177,33 @@ func executeQueryWith(
 		}
 		results = append(results, values)
 	}
-	rows.Close()
+	if wasTruncated {
+		stopAfterCap(rows, cancelQuery)
+	} else {
+		rows.Close()
+	}
 
-	if err := rows.Err(); err != nil {
+	// stoppedAtCap is true when the cap's cancellation, rather than the
+	// caller's context, ended the statement: the rows already read are
+	// the result, and the connection has been closed under the
+	// transaction, so there is nothing to commit and cleanup's rollback
+	// releases it to the pool to be discarded.
+	stoppedAtCap := wasTruncated && queryCtx.Err() != nil && ctx.Err() == nil
+	if err := rows.Err(); err != nil && !stoppedAtCap {
 		resp, _ := mcp.NewToolError(formatErr(queryStageIterate, err)) //nolint:errcheck // NewToolError always succeeds
 		return nil, &resp
 	}
 
 	resultsTSV := tsv.FormatResults(columnNames, results)
+
+	if stoppedAtCap {
+		return &queryResult{
+			ColumnNames:  columnNames,
+			Rows:         results,
+			WasTruncated: true,
+			ResultsTSV:   resultsTSV,
+		}, nil
+	}
 
 	if err := mt.Commit(); err != nil {
 		resp, _ := mcp.NewToolError(formatErr(queryStageCommit, err)) //nolint:errcheck // NewToolError always succeeds
@@ -190,13 +218,35 @@ func executeQueryWith(
 	}, nil
 }
 
+// capDrainGrace is how long closing a capped result may spend reading
+// the rows beyond the cap before the statement is canceled. A statement
+// bounded by the LIMIT injectLimitOffset adds has at most the one extra
+// row the cap has already read, so it finishes well inside the grace
+// and keeps its pooled connection; one without, such as a caller's
+// LIMIT 50000000, is stopped rather than run to completion.
+var capDrainGrace = 200 * time.Millisecond
+
+// stopAfterCap closes rows once the row cap has been reached. pgx's
+// rows.Close reads every remaining row, so the statement's context is
+// canceled if closing has not finished within capDrainGrace. pgx
+// answers the cancellation by setting an immediate deadline on the
+// socket, which ends the read and closes the connection, and the
+// server abandons the statement when it can no longer send rows.
+func stopAfterCap(rows pgx.Rows, cancelQuery context.CancelFunc) {
+	timer := time.AfterFunc(capDrainGrace, cancelQuery)
+	rows.Close()
+	timer.Stop()
+}
+
 // executeReadOnlyQuery runs sqlQuery inside a read-only transaction on
 // pool, returns at most limit rows (0 means no cap), and formats the
 // result as TSV. The cap is enforced while reading rather than relying
 // on the LIMIT injectLimitOffset adds, which is absent when the caller
-// wrote their own and is lost behind a trailing comment; reading stops
-// at the first row beyond the cap, which marks the result truncated.
-// queryArgs are bound to the statement's placeholders.
+// wrote their own (or when hasLimitClause matches the word LIMIT
+// anywhere else in the text); reading stops at the first row beyond the
+// cap, which marks the result truncated, and stopAfterCap then stops
+// the statement rather than reading the rest of its rows. queryArgs are
+// bound to the statement's placeholders.
 func executeReadOnlyQuery(
 	ctx context.Context,
 	pool *pgxpool.Pool,

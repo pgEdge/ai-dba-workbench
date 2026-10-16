@@ -11,7 +11,6 @@ package api
 
 import (
 	"bytes"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -684,35 +683,4 @@ func TestParseQueryString(t *testing.T) {
 			t.Errorf("Expected empty string, got %q", result)
 		}
 	})
-}
-
-func TestUserInfo(t *testing.T) {
-	// Test UserInfo struct
-	info := &UserInfo{
-		Username:    "testuser",
-		IsSuperuser: true,
-	}
-
-	if info.Username != "testuser" {
-		t.Errorf("Expected username 'testuser', got %q", info.Username)
-	}
-
-	if !info.IsSuperuser {
-		t.Error("Expected IsSuperuser to be true")
-	}
-
-	// Test with JSON serialization
-	data, err := json.Marshal(info)
-	if err != nil {
-		t.Fatalf("Failed to marshal UserInfo: %v", err)
-	}
-
-	var decoded UserInfo
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		t.Fatalf("Failed to unmarshal UserInfo: %v", err)
-	}
-
-	if decoded.Username != info.Username || decoded.IsSuperuser != info.IsSuperuser {
-		t.Error("UserInfo mismatch after JSON round-trip")
-	}
 }

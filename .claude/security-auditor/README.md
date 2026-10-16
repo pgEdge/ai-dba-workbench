@@ -105,9 +105,12 @@ moved.
   cluster's definition or relationships, need every connection in the
   token's scope; adding a server to or removing one from a cluster, or
   moving it between clusters, needs that connection at `read_write`.
-  The cluster-group create, update and delete routes accept session
-  tokens only (`getUserInfoCompat` answers 401 to an API token), and
-  carry the same all-connections gate in case that ever changes.
+  The cluster-group create, update and delete routes, and connection
+  create, update and delete, accept API tokens acting as their owner
+  (issue #668, `authenticatedUsername`, which reads the identity the
+  auth wrapper put in the context and never the bearer directly);
+  the cluster-group routes and connection create carry the same
+  all-connections gate.
 - Grants made with an API token are bounded by the token's effective
   access, its owner's privileges narrowed by its scope, per connection
   and level, MCP item and admin permission (ruling of 06-10-2026;

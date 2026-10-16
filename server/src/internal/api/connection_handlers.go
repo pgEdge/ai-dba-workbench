@@ -211,7 +211,7 @@ func (h *ConnectionHandler) listConnections(w http.ResponseWriter, r *http.Reque
 func (h *ConnectionHandler) createConnection(w http.ResponseWriter, r *http.Request) {
 	// Get current user info. The username is stamped onto the row as
 	// owner_username, so we authenticate before the permission gate.
-	username, _, err := getUserInfoCompat(r, h.authStore)
+	username, err := authenticatedUsername(r)
 	if err != nil {
 		RespondError(w, http.StatusUnauthorized, "Invalid or missing authentication token")
 		return
@@ -226,6 +226,15 @@ func (h *ConnectionHandler) createConnection(w http.ResponseWriter, r *http.Requ
 	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections) {
 		RespondError(w, http.StatusForbidden,
 			"Permission denied: requires manage_connections permission")
+		return
+	}
+
+	// A new connection, shared or not, changes the estate every caller
+	// sees, so, as for creating a cluster or a cluster group, an API
+	// token must cover every connection at read_write (issues #471 and
+	// #668). A token confined to some servers, or to read-only access,
+	// may not add one.
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) {
 		return
 	}
 
@@ -443,7 +452,7 @@ const connectionOutOfTokenScope = "Permission denied: this token's scope does no
 // updateConnection handles PUT /api/v1/connections/{id}
 func (h *ConnectionHandler) updateConnection(w http.ResponseWriter, r *http.Request, id int) {
 	// Get current user info for permission check
-	username, _, err := getUserInfoCompat(r, h.authStore)
+	username, err := authenticatedUsername(r)
 	if err != nil {
 		RespondError(w, http.StatusUnauthorized, "Invalid or missing authentication token")
 		return
@@ -552,7 +561,7 @@ func (h *ConnectionHandler) updateConnection(w http.ResponseWriter, r *http.Requ
 // deleteConnection handles DELETE /api/v1/connections/{id}
 func (h *ConnectionHandler) deleteConnection(w http.ResponseWriter, r *http.Request, id int) {
 	// Get current user info for permission check
-	username, _, err := getUserInfoCompat(r, h.authStore)
+	username, err := authenticatedUsername(r)
 	if err != nil {
 		RespondError(w, http.StatusUnauthorized, "Invalid or missing authentication token")
 		return

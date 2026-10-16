@@ -59,10 +59,10 @@ The reference implementation is `updateAutoDetectedCluster` in
 wording so the client-facing message stays uniform across endpoints.
 
 When a handler must stamp the caller's username onto the new row
-(e.g. `owner_username`), call `getUserInfoCompat` first to extract
+(e.g. `owner_username`), call `authenticatedUsername` first to extract
 the username, then place the Variant 1 gate immediately afterward
 and BEFORE any request-body decoding. The 401 from
-`getUserInfoCompat` is authentication, not authorization: a missing
+`authenticatedUsername` is authentication, not authorization: a missing
 or invalid bearer token must short-circuit before any permission
 check, but a valid token must still pass the gate before reaching
 `DecodeJSONBody` or any datastore call. The reference for this
@@ -105,7 +105,7 @@ caller who owns the row may still mutate it; everyone else needs
 `deleteClusterGroup` in `cluster_handlers.go`:
 
 ```go
-username, _, err := getUserInfoCompat(r, h.authStore)
+username, err := authenticatedUsername(r)
 if err != nil {
     RespondError(w, http.StatusUnauthorized,
         "Invalid or missing authentication token")
@@ -135,12 +135,17 @@ if !hasManageConns && !isOwner {
 }
 ```
 
-`getUserInfoCompat` validates the bearer token against the auth
-store, while `HasAdminPermission` reads the user ID from the request
-context. Both must succeed: handler-level tests bypass the middleware
-that normally populates the context, so callers must set BOTH the
-`Authorization` header (via `withBearer`) AND the user context (via
-`withUser`).
+`authenticatedUsername` (`request_helpers.go`) returns the username
+the auth wrapper put in the request context, which for an API token
+is the token owner's (issue #668), and refuses a request whose
+context has none. It never authenticates the bearer itself: a
+request that skipped the wrapper carries none of a token's scope, so
+the gates would treat the token as an unscoped session. Never resolve
+the caller with `ValidateSessionToken` in a handler either: that
+answers 401 to every API token. Handler-level tests set the username
+(`withUsername`, or `withSession` in `token_identity_test.go`, which
+also sets the bearer) and the user ID (`withUser`), or run the
+request through `asWrapped` to get the wrapper's full context.
 
 A 404 leak here is acceptable: callers who can authenticate but who
 do not own the row and lack `PermManageConnections` cannot distinguish
@@ -475,10 +480,8 @@ connection later moved into it, inherits its group's settings; setting
 or clearing a source's relationships deletes all of them first,
 whatever the target), and adding or removing a server goes through
 `requireConnectionsInTokenScope` for that connection. The cluster-group
-create, update and delete handlers resolve the caller through
-`getUserInfoCompat`, which accepts session tokens only, so an API
-token gets 401 there after the scope gate; the gate is kept in case
-API tokens are ever admitted. A write addressed by id (blackout or
+create, update and delete handlers, and connection create, accept
+API tokens (issue #668) and apply the all-connections gate to them. A write addressed by id (blackout or
 schedule update and delete) checks the stored record, and a schedule
 update checks the body as well, so a token cannot move a record into
 or out of its scope; `requireBlackoutInTokenScope` skips the database
@@ -815,11 +818,9 @@ for a known scope and a positive id, and never the free-text item.
 `IPExtractor.ExtractIP` returns only a parseable address (forwarded
 entries go through `parseForwardedIP`, which strips a port), falling
 back to the direct peer address.
-`updateConnection` and `deleteConnection` call the session-only
-`getUserInfoCompat` first, so a real token gets 401 there; only the
-cluster move reaches an audited connection token-scope refusal, and
-the other two gates are defensive, so do not document them as
-reachable.
+`updateConnection` and `deleteConnection` accept API tokens (issue
+#668), so their connection token-scope refusals are reachable and
+audited, as is the cluster move's.
 
 Mutations in these handlers go through `h.actorStore(r)` rather than
 `h.authStore`, so the audit row names the acting user or token:

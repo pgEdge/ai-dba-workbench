@@ -543,8 +543,7 @@ func (h *ClusterHandler) createClusterGroup(w http.ResponseWriter, r *http.Reque
 	// A new group holds clusters and group-wide settings that reach
 	// every connection later placed in it, so, as for the other
 	// container writes, a token must cover every connection (issue
-	// #471). The session lookup below refuses an API token today; this
-	// keeps the rule should that change.
+	// #471).
 	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) {
 		return
 	}
@@ -564,10 +563,10 @@ func (h *ClusterHandler) createClusterGroup(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Resolve the creating user so the new group records its owner. This
-	// mirrors updateClusterGroup's use of getUserInfoCompat and lets the
+	// mirrors updateClusterGroup's use of authenticatedUsername and lets the
 	// owner-fallback authorization on update/delete apply to groups the
 	// user creates (issue #304).
-	username, _, err := getUserInfoCompat(r, h.authStore)
+	username, err := authenticatedUsername(r)
 	if err != nil {
 		RespondError(w, http.StatusUnauthorized, "Invalid or missing authentication token")
 		return
@@ -592,7 +591,7 @@ func (h *ClusterHandler) createClusterGroup(w http.ResponseWriter, r *http.Reque
 
 func (h *ClusterHandler) updateClusterGroup(w http.ResponseWriter, r *http.Request, id int) {
 	// Check user permissions
-	username, _, err := getUserInfoCompat(r, h.authStore)
+	username, err := authenticatedUsername(r)
 	if err != nil {
 		RespondError(w, http.StatusUnauthorized, "Invalid or missing authentication token")
 		return
@@ -684,7 +683,7 @@ func (h *ClusterHandler) deleteClusterGroup(w http.ResponseWriter, r *http.Reque
 	// necessarily called to verify ownership, so a callable user can
 	// still distinguish 404 vs 403, but unauthenticated and clearly
 	// unauthorized callers are rejected up front.
-	username, _, err := getUserInfoCompat(r, h.authStore)
+	username, err := authenticatedUsername(r)
 	if err != nil {
 		RespondError(w, http.StatusUnauthorized,
 			"Invalid or missing authentication token")

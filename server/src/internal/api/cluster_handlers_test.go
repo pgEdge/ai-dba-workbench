@@ -325,7 +325,7 @@ func TestClusterHandler_CreateClusterGroup_NameAtLimit(t *testing.T) {
 	ds, _, cleanupDS := newTestDatastore(t)
 	defer cleanupDS()
 
-	handler, _, userID, token, cleanupStore := setupGroupUpdateHandler(t, ds)
+	handler, store, userID, token, cleanupStore := setupGroupUpdateHandler(t, ds)
 	defer cleanupStore()
 
 	atLimit := strings.Repeat("a", maxFieldLength)
@@ -333,7 +333,7 @@ func TestClusterHandler_CreateClusterGroup_NameAtLimit(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster-groups",
 		bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = withBearer(req, token)
+	req = withSession(t, store, req, token)
 	req = withUser(req, userID)
 	rec := httptest.NewRecorder()
 
@@ -1196,7 +1196,7 @@ func newTestDatastore(t *testing.T) (*database.Datastore, *pgxpool.Pool, func())
 // authenticates that user so the caller has a real session token to put
 // in the Authorization header.
 //
-// updateClusterGroup uses two different auth surfaces: getUserInfoCompat
+// updateClusterGroup uses two different auth surfaces: authenticatedUsername
 // validates a bearer token via the auth store, while rbacChecker.
 // HasAdminPermission reads the user ID from the request context (the
 // production middleware populates that context from the same token).
@@ -1236,7 +1236,7 @@ func TestClusterHandler_UpdateClusterGroup_Integration_HappyPath(t *testing.T) {
 	ds, pool, cleanupDS := newTestDatastore(t)
 	defer cleanupDS()
 
-	handler, _, userID, token, cleanupStore := setupGroupUpdateHandler(t, ds)
+	handler, store, userID, token, cleanupStore := setupGroupUpdateHandler(t, ds)
 	defer cleanupStore()
 
 	ctx := context.Background()
@@ -1254,7 +1254,7 @@ func TestClusterHandler_UpdateClusterGroup_Integration_HappyPath(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut,
 		"/api/v1/cluster-groups/"+strconv.Itoa(created.ID), bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = withBearer(req, token)
+	req = withSession(t, store, req, token)
 	req = withUser(req, userID)
 	rec := httptest.NewRecorder()
 
@@ -1303,7 +1303,7 @@ func TestClusterHandler_UpdateClusterGroup_Integration_NameOnly(t *testing.T) {
 	ds, pool, cleanupDS := newTestDatastore(t)
 	defer cleanupDS()
 
-	handler, _, userID, token, cleanupStore := setupGroupUpdateHandler(t, ds)
+	handler, store, userID, token, cleanupStore := setupGroupUpdateHandler(t, ds)
 	defer cleanupStore()
 
 	ctx := context.Background()
@@ -1317,7 +1317,7 @@ func TestClusterHandler_UpdateClusterGroup_Integration_NameOnly(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut,
 		"/api/v1/cluster-groups/"+strconv.Itoa(created.ID), bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = withBearer(req, token)
+	req = withSession(t, store, req, token)
 	req = withUser(req, userID)
 	rec := httptest.NewRecorder()
 
@@ -1356,7 +1356,7 @@ func TestClusterHandler_UpdateClusterGroup_Integration_MissingName(t *testing.T)
 	ds, _, cleanupDS := newTestDatastore(t)
 	defer cleanupDS()
 
-	handler, _, userID, token, cleanupStore := setupGroupUpdateHandler(t, ds)
+	handler, store, userID, token, cleanupStore := setupGroupUpdateHandler(t, ds)
 	defer cleanupStore()
 
 	ctx := context.Background()
@@ -1369,7 +1369,7 @@ func TestClusterHandler_UpdateClusterGroup_Integration_MissingName(t *testing.T)
 	req := httptest.NewRequest(http.MethodPut,
 		"/api/v1/cluster-groups/"+strconv.Itoa(created.ID), bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = withBearer(req, token)
+	req = withSession(t, store, req, token)
 	req = withUser(req, userID)
 	rec := httptest.NewRecorder()
 
@@ -1397,14 +1397,14 @@ func TestClusterHandler_UpdateClusterGroup_Integration_NotFound(t *testing.T) {
 	ds, _, cleanupDS := newTestDatastore(t)
 	defer cleanupDS()
 
-	handler, _, userID, token, cleanupStore := setupGroupUpdateHandler(t, ds)
+	handler, store, userID, token, cleanupStore := setupGroupUpdateHandler(t, ds)
 	defer cleanupStore()
 
 	body, _ := json.Marshal(ClusterGroupRequest{Name: "Ghost"})
 	req := httptest.NewRequest(http.MethodPut,
 		"/api/v1/cluster-groups/999999", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = withBearer(req, token)
+	req = withSession(t, store, req, token)
 	req = withUser(req, userID)
 	rec := httptest.NewRecorder()
 
@@ -1462,7 +1462,7 @@ func TestClusterHandler_UpdateClusterGroup_Integration_Forbidden(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut,
 		"/api/v1/cluster-groups/"+strconv.Itoa(created.ID), bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = withBearer(req, token)
+	req = withSession(t, store, req, token)
 	req = withUser(req, userID)
 	rec := httptest.NewRecorder()
 
@@ -2338,14 +2338,14 @@ func TestClusterHandler_UpdateAutoDetectedGroup_Issue269_ValidName(t *testing.T)
 	ds, pool, cleanupDS := newTestDatastore(t)
 	defer cleanupDS()
 
-	handler, _, userID, token, cleanupStore := setupGroupUpdateHandler(t, ds)
+	handler, store, userID, token, cleanupStore := setupGroupUpdateHandler(t, ds)
 	defer cleanupStore()
 
 	body, _ := json.Marshal(ClusterGroupRequest{Name: "Renamed Auto Group"})
 	req := httptest.NewRequest(http.MethodPut,
 		"/api/v1/cluster-groups/group-auto", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = withBearer(req, token)
+	req = withSession(t, store, req, token)
 	req = withUser(req, userID)
 	rec := httptest.NewRecorder()
 
@@ -2411,7 +2411,7 @@ func TestClusterHandler_CreateClusterGroup_Issue304_RecordsOwnerAndShared(t *tes
 	ds, pool, cleanupDS := newTestDatastore(t)
 	defer cleanupDS()
 
-	handler, _, userID, token, cleanupStore := setupGroupUpdateHandler(t, ds)
+	handler, store, userID, token, cleanupStore := setupGroupUpdateHandler(t, ds)
 	defer cleanupStore()
 
 	body, _ := json.Marshal(ClusterGroupRequest{
@@ -2421,7 +2421,7 @@ func TestClusterHandler_CreateClusterGroup_Issue304_RecordsOwnerAndShared(t *tes
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster-groups",
 		bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = withBearer(req, token)
+	req = withSession(t, store, req, token)
 	req = withUser(req, userID)
 	rec := httptest.NewRecorder()
 
@@ -2467,14 +2467,14 @@ func TestClusterHandler_CreateClusterGroup_Issue304_DefaultsSharedFalse(t *testi
 	ds, pool, cleanupDS := newTestDatastore(t)
 	defer cleanupDS()
 
-	handler, _, userID, token, cleanupStore := setupGroupUpdateHandler(t, ds)
+	handler, store, userID, token, cleanupStore := setupGroupUpdateHandler(t, ds)
 	defer cleanupStore()
 
 	body, _ := json.Marshal(ClusterGroupRequest{Name: "Private Group"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster-groups",
 		bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = withBearer(req, token)
+	req = withSession(t, store, req, token)
 	req = withUser(req, userID)
 	rec := httptest.NewRecorder()
 
@@ -2537,7 +2537,7 @@ func TestClusterHandler_UpdateClusterGroup_Issue304_ToggleShared(t *testing.T) {
 	ds, pool, cleanupDS := newTestDatastore(t)
 	defer cleanupDS()
 
-	handler, _, userID, token, cleanupStore := setupGroupUpdateHandler(t, ds)
+	handler, store, userID, token, cleanupStore := setupGroupUpdateHandler(t, ds)
 	defer cleanupStore()
 
 	ctx := context.Background()
@@ -2556,7 +2556,7 @@ func TestClusterHandler_UpdateClusterGroup_Issue304_ToggleShared(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPut,
 			"/api/v1/cluster-groups/"+strconv.Itoa(created.ID), bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
-		req = withBearer(req, token)
+		req = withSession(t, store, req, token)
 		req = withUser(req, userID)
 		rec := httptest.NewRecorder()
 
@@ -2608,7 +2608,7 @@ func TestClusterHandler_UpdateClusterGroup_Issue304_PreservesSharedWhenOmitted(t
 	ds, pool, cleanupDS := newTestDatastore(t)
 	defer cleanupDS()
 
-	handler, _, userID, token, cleanupStore := setupGroupUpdateHandler(t, ds)
+	handler, store, userID, token, cleanupStore := setupGroupUpdateHandler(t, ds)
 	defer cleanupStore()
 
 	ctx := context.Background()
@@ -2623,7 +2623,7 @@ func TestClusterHandler_UpdateClusterGroup_Issue304_PreservesSharedWhenOmitted(t
 	req := httptest.NewRequest(http.MethodPut,
 		"/api/v1/cluster-groups/"+strconv.Itoa(created.ID), bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = withBearer(req, token)
+	req = withSession(t, store, req, token)
 	req = withUser(req, userID)
 	rec := httptest.NewRecorder()
 
@@ -2691,7 +2691,7 @@ func TestClusterHandler_UpdateClusterGroup_Issue304_ForbiddenDoesNotShare(t *tes
 	req := httptest.NewRequest(http.MethodPut,
 		"/api/v1/cluster-groups/"+strconv.Itoa(created.ID), bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = withBearer(req, token)
+	req = withSession(t, store, req, token)
 	req = withUser(req, userID)
 	rec := httptest.NewRecorder()
 
@@ -2721,7 +2721,7 @@ func TestClusterHandler_UpdateClusterGroup_Issue304_InvalidName(t *testing.T) {
 	ds, _, cleanupDS := newTestDatastore(t)
 	defer cleanupDS()
 
-	handler, _, userID, token, cleanupStore := setupGroupUpdateHandler(t, ds)
+	handler, store, userID, token, cleanupStore := setupGroupUpdateHandler(t, ds)
 	defer cleanupStore()
 
 	ctx := context.Background()
@@ -2734,7 +2734,7 @@ func TestClusterHandler_UpdateClusterGroup_Issue304_InvalidName(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut,
 		"/api/v1/cluster-groups/"+strconv.Itoa(created.ID), bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = withBearer(req, token)
+	req = withSession(t, store, req, token)
 	req = withUser(req, userID)
 	rec := httptest.NewRecorder()
 
@@ -2753,7 +2753,7 @@ func TestClusterHandler_CreateClusterGroup_Issue304_DuplicateNameError(t *testin
 	ds, _, cleanupDS := newTestDatastore(t)
 	defer cleanupDS()
 
-	handler, _, userID, token, cleanupStore := setupGroupUpdateHandler(t, ds)
+	handler, store, userID, token, cleanupStore := setupGroupUpdateHandler(t, ds)
 	defer cleanupStore()
 
 	ctx := context.Background()
@@ -2765,7 +2765,7 @@ func TestClusterHandler_CreateClusterGroup_Issue304_DuplicateNameError(t *testin
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster-groups",
 		bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = withBearer(req, token)
+	req = withSession(t, store, req, token)
 	req = withUser(req, userID)
 	rec := httptest.NewRecorder()
 
@@ -2784,7 +2784,7 @@ func TestClusterHandler_UpdateClusterGroup_Issue304_DuplicateNameError(t *testin
 	ds, _, cleanupDS := newTestDatastore(t)
 	defer cleanupDS()
 
-	handler, _, userID, token, cleanupStore := setupGroupUpdateHandler(t, ds)
+	handler, store, userID, token, cleanupStore := setupGroupUpdateHandler(t, ds)
 	defer cleanupStore()
 
 	ctx := context.Background()
@@ -2800,7 +2800,7 @@ func TestClusterHandler_UpdateClusterGroup_Issue304_DuplicateNameError(t *testin
 	req := httptest.NewRequest(http.MethodPut,
 		"/api/v1/cluster-groups/"+strconv.Itoa(target.ID), bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = withBearer(req, token)
+	req = withSession(t, store, req, token)
 	req = withUser(req, userID)
 	rec := httptest.NewRecorder()
 

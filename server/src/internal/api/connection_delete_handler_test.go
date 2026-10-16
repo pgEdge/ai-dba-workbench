@@ -100,7 +100,7 @@ func (h *deleteConnectionHarness) request(t *testing.T, ctx context.Context,
 	}
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/connections/1", nil).
 		WithContext(ctx)
-	return withUser(withBearer(req, token), userID)
+	return withUser(withSession(t, h.store, req, token), userID)
 }
 
 func (h *deleteConnectionHarness) rowCount(t *testing.T, id int) int {

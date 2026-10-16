@@ -99,7 +99,7 @@ const (
 )
 
 // connCoverageUser is an authenticated caller: its session token for
-// getUserInfoCompat, and its ID and name for the RBAC context.
+// authenticatedUsername, and its ID and name for the RBAC context.
 type connCoverageUser struct {
 	id          int64
 	name        string
@@ -204,7 +204,7 @@ func (h *connCoverageHarness) newUser(name string, perms []string) connCoverageU
 }
 
 // superuser returns a caller that passes every RBAC gate. It reuses the
-// admin's session token so getUserInfoCompat still resolves a user.
+// admin's session token so authenticatedUsername still resolves a user.
 func (h *connCoverageHarness) superuser() connCoverageUser {
 	u := h.admin
 	u.isSuperuser = true

@@ -58,7 +58,7 @@ import (
 // setupIssue233CreateConnection builds a ConnectionHandler with a real
 // RBACChecker and a real auth store, then registers a user with the
 // caller-supplied permission set. The user is authenticated so the
-// returned bearer token will pass through getUserInfoCompat. The
+// returned bearer token will pass through authenticatedUsername. The
 // datastore is intentionally nil: the denial path must return 403
 // before the datastore is touched, and the admin-allowed path uses
 // the nil datastore to verify the gate fired (a post-gate datastore
@@ -114,7 +114,7 @@ func TestConnectionHandler_CreateConnection_Issue233_DeniedNonShared(t *testing.
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections",
 		bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = withBearer(req, token)
+	req = withSession(t, handler.authStore, req, token)
 	req = withUser(req, userID)
 	rec := httptest.NewRecorder()
 
@@ -144,7 +144,7 @@ func TestConnectionHandler_CreateConnection_Issue233_DeniedShared(t *testing.T) 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections",
 		bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = withBearer(req, token)
+	req = withSession(t, handler.authStore, req, token)
 	req = withUser(req, userID)
 	rec := httptest.NewRecorder()
 
@@ -166,7 +166,7 @@ func TestConnectionHandler_CreateConnection_Issue233_DeniedSkipsDecode(t *testin
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections",
 		bytes.NewBufferString("not json"))
 	req.Header.Set("Content-Type", "application/json")
-	req = withBearer(req, token)
+	req = withSession(t, handler.authStore, req, token)
 	req = withUser(req, userID)
 	rec := httptest.NewRecorder()
 
@@ -199,7 +199,7 @@ func TestConnectionHandler_CreateConnection_Issue233_AdminAllowed(t *testing.T) 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections",
 		bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = withBearer(req, token)
+	req = withSession(t, handler.authStore, req, token)
 	req = withUser(req, userID)
 	rec := httptest.NewRecorder()
 
@@ -214,7 +214,7 @@ func TestConnectionHandler_CreateConnection_Issue233_AdminAllowed(t *testing.T) 
 // test recovers; the assertion is that the gate did not reject.
 func TestConnectionHandler_CreateConnection_Issue233_SuperuserAllowed(t *testing.T) {
 	// Superuser bypass requires both a valid bearer token (so
-	// getUserInfoCompat succeeds) and the superuser flag on the
+	// authenticatedUsername succeeds) and the superuser flag on the
 	// request context (so HasAdminPermission returns true).
 	_, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
@@ -245,7 +245,7 @@ func TestConnectionHandler_CreateConnection_Issue233_SuperuserAllowed(t *testing
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections",
 		bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = withBearer(req, token)
+	req = withSession(t, handler.authStore, req, token)
 	req = withSuperuser(req)
 	rec := httptest.NewRecorder()
 
@@ -339,7 +339,7 @@ func TestConnectionHandler_UpdateConnectionCluster_Issue233(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPut,
 			"/api/v1/connections/4242/cluster", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
-		req = withBearer(req, token)
+		req = withSession(t, handler.authStore, req, token)
 		req = withUser(req, userID)
 		rec := httptest.NewRecorder()
 
@@ -357,7 +357,7 @@ func TestConnectionHandler_UpdateConnectionCluster_Issue233(t *testing.T) {
 			"/api/v1/connections/4242/cluster",
 			bytes.NewBufferString("not json"))
 		req.Header.Set("Content-Type", "application/json")
-		req = withBearer(req, token)
+		req = withSession(t, handler.authStore, req, token)
 		req = withUser(req, userID)
 		rec := httptest.NewRecorder()
 
@@ -380,7 +380,7 @@ func TestConnectionHandler_UpdateConnectionCluster_Issue233(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPut,
 			"/api/v1/connections/4242/cluster", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
-		req = withBearer(req, token)
+		req = withSession(t, handler.authStore, req, token)
 		req = withUser(req, userID)
 		rec := httptest.NewRecorder()
 
@@ -391,7 +391,7 @@ func TestConnectionHandler_UpdateConnectionCluster_Issue233(t *testing.T) {
 
 	t.Run("SuperuserAllowed", func(t *testing.T) {
 		// Superuser bypass requires both a valid bearer token (so the
-		// auth path through getUserInfoCompat succeeds when invoked)
+		// auth path through authenticatedUsername succeeds when invoked)
 		// and the superuser flag on the request context (so
 		// HasAdminPermission returns true).
 		_, store, cleanup := createTestRBACHandler(t)
@@ -422,7 +422,7 @@ func TestConnectionHandler_UpdateConnectionCluster_Issue233(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPut,
 			"/api/v1/connections/4242/cluster", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
-		req = withBearer(req, token)
+		req = withSession(t, handler.authStore, req, token)
 		req = withSuperuser(req)
 		rec := httptest.NewRecorder()
 

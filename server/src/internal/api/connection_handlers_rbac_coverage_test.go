@@ -280,7 +280,7 @@ func connCovRequest(t *testing.T, method, path string, body any) *http.Request {
 }
 
 // asCaller presents the request as the given session user, setting both the
-// bearer header read by getUserInfoCompat and the context values the
+// bearer header read by authenticatedUsername and the context values the
 // authentication middleware would otherwise populate.
 func asCaller(req *http.Request, c connCovCaller) *http.Request {
 	req = withBearer(req, c.token)

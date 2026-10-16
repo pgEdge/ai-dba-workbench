@@ -63,10 +63,11 @@ admin permission. A token may change an override, a probe configuration or a
 cluster membership on a single server only when that connection is in its scope
 with `read_write` access; a change that applies to a cluster, a group or the
 whole estate, that alters an alert rule, a global probe configuration or a
-notification channel, that creates a cluster, or that alters a cluster's
-definition or relationships, needs a connection scope that covers every
-connection at `read_write`. A cluster group can be created only from a browser
-session, so the server refuses an API token that tries, whatever its scope.
+notification channel, that creates a connection or a cluster, that creates,
+changes or deletes a cluster group, or that alters a cluster's definition or
+relationships, needs a connection scope that covers every connection at
+`read_write`. A connection or cluster group that a token creates is owned by
+the token's owner.
 
 A `read` entry in the connection scope means read-only access to the monitored
 server itself, so it still lets a token make changes that only record Workbench

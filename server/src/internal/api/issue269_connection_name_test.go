@@ -123,7 +123,7 @@ func TestConnectionHandler_CreateConnection_Issue269_InvalidChars(t *testing.T) 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections",
 		bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = withBearer(req, token)
+	req = withSession(t, handler.authStore, req, token)
 	req = withUser(req, userID)
 	rec := httptest.NewRecorder()
 
@@ -157,7 +157,7 @@ func TestConnectionHandler_CreateConnection_Issue269_PaddedNameRawTooLong(t *tes
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections",
 		bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = withBearer(req, token)
+	req = withSession(t, handler.authStore, req, token)
 	req = withUser(req, userID)
 	rec := httptest.NewRecorder()
 
@@ -223,7 +223,7 @@ func TestConnectionHandler_UpdateConnection_Issue269_InvalidChars(t *testing.T) 
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/connections/7269",
 		bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = withBearer(req, token)
+	req = withSession(t, store, req, token)
 	req = withUser(req, userID)
 	rec := httptest.NewRecorder()
 
@@ -261,7 +261,7 @@ func TestConnectionHandler_UpdateConnection_Issue269_ValidNameSucceeds(t *testin
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/connections/7270",
 		bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = withBearer(req, token)
+	req = withSession(t, store, req, token)
 	req = withUser(req, userID)
 	rec := httptest.NewRecorder()
 

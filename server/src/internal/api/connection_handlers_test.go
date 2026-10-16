@@ -1077,7 +1077,7 @@ func TestConnectionHandler_CreateConnection_Issue270_FieldTooLong(t *testing.T) 
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/connections",
 				bytes.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
-			req = withBearer(req, token)
+			req = withSession(t, handler.authStore, req, token)
 			req = withUser(req, userID)
 			rec := httptest.NewRecorder()
 
@@ -1119,7 +1119,7 @@ func TestConnectionHandler_CreateConnection_Issue270_AtLimitPassesValidation(t *
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections",
 		bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = withBearer(req, token)
+	req = withSession(t, handler.authStore, req, token)
 	req = withUser(req, userID)
 	rec := httptest.NewRecorder()
 
@@ -1152,7 +1152,7 @@ func TestConnectionHandler_CreateConnection_Issue270_MultibyteAtLimitPasses(t *t
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections",
 		bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = withBearer(req, token)
+	req = withSession(t, handler.authStore, req, token)
 	req = withUser(req, userID)
 	rec := httptest.NewRecorder()
 
@@ -1185,7 +1185,7 @@ func TestConnectionHandler_CreateConnection_Issue270_MultibyteOverLimitRejected(
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections",
 		bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = withBearer(req, token)
+	req = withSession(t, handler.authStore, req, token)
 	req = withUser(req, userID)
 	rec := httptest.NewRecorder()
 

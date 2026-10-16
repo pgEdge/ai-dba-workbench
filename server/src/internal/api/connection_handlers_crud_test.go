@@ -180,7 +180,7 @@ func (e *connCRUDEnv) request(method, path string, body any,
 	}
 	req := httptest.NewRequest(method, path, reader)
 	req.Header.Set("Content-Type", "application/json")
-	req = withBearer(req, e.token)
+	req = withUsername(withBearer(req, e.token), e.user)
 	if superuser {
 		return withSuperuser(req)
 	}

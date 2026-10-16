@@ -1175,6 +1175,16 @@ project adheres to
 
 ### Fixed
 
+- Accept API tokens when creating, updating or deleting a
+  connection or a cluster group (#668). These endpoints looked
+  the caller up as a browser session, so a token the server had
+  already authenticated was answered with `401 Unauthorized`; a
+  token now acts as its owner, so a connection or cluster group
+  it creates is owned by the token's owner. The token's
+  administrative and connection scopes still apply, and creating
+  a connection, like any cluster group write, needs a connection
+  scope covering every connection at `read_write`.
+
 - Load every configured alerter API key file when one of them
   cannot be read (#626). The alerter previously stopped at the
   first unreadable file, so a bad OpenAI key file also left the

@@ -11,6 +11,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -22,36 +23,6 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 )
 
-// UserInfo contains authenticated user information extracted from a request.
-type UserInfo struct {
-	Username    string
-	IsSuperuser bool
-}
-
-// GetUserInfoFromRequest extracts username and superuser status from the
-// Authorization header. Returns an error if authentication fails.
-func GetUserInfoFromRequest(r *http.Request, authStore *auth.AuthStore) (*UserInfo, error) {
-	token := auth.ExtractBearerToken(r)
-	if token == "" {
-		return nil, fmt.Errorf("missing authentication credentials")
-	}
-
-	// Validate session token and get username
-	username, err := authStore.ValidateSessionToken(token)
-	if err != nil {
-		return nil, err
-	}
-
-	// Look up user to get superuser status
-	user, err := authStore.GetUser(username)
-	if err != nil {
-		// User exists but couldn't get details - return with superuser false
-		return &UserInfo{Username: username, IsSuperuser: false}, nil
-	}
-
-	return &UserInfo{Username: username, IsSuperuser: user.IsSuperuser}, nil
-}
-
 // GetTokenHashFromRequest extracts and hashes the token from the Authorization
 // header. Returns an empty string if the token cannot be extracted.
 func GetTokenHashFromRequest(r *http.Request) string {
@@ -62,14 +33,27 @@ func GetTokenHashFromRequest(r *http.Request) string {
 	return auth.GetTokenHashByRawToken(token)
 }
 
-// getUserInfoCompat is a convenience wrapper around GetUserInfoFromRequest
-// that returns the username and superuser status as separate values.
-func getUserInfoCompat(r *http.Request, authStore *auth.AuthStore) (string, bool, error) {
-	info, err := GetUserInfoFromRequest(r, authStore)
-	if err != nil {
-		return "", false, err
+// errNoAuthenticatedUser is returned by authenticatedUsername when a
+// request carries no authenticated identity.
+var errNoAuthenticatedUser = errors.New("no authenticated user")
+
+// authenticatedUsername returns the username of the caller that made r,
+// accepting a session and an API token on equal terms (issue #668).
+//
+// The REST auth wrapper runs auth.AuthenticateRequest before any handler
+// and records the username in the request context for both kinds of
+// caller; for a token it is the token owner's username. The context is
+// the only source of identity: it is also what the RBAC and token-scope
+// checks read, so ownership and permission are judged for the same
+// caller. A request with no username in its context did not pass
+// through the wrapper, and is refused rather than authenticated here,
+// because its context would carry none of the token's scope and the
+// handler's gates would treat a token as an unscoped session.
+func authenticatedUsername(r *http.Request) (string, error) {
+	if username := auth.GetUsernameFromContext(r.Context()); username != "" {
+		return username, nil
 	}
-	return info.Username, info.IsSuperuser, nil
+	return "", errNoAuthenticatedUser
 }
 
 // DecodeJSONBody decodes a JSON request body into the provided destination.

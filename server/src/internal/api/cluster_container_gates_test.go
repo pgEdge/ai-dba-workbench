@@ -197,11 +197,10 @@ func TestClusterGroupWritesRespectTokenScope(t *testing.T) {
 		return name
 	}
 
-	// GetUserInfoFromRequest resolves only session tokens, so an API
-	// token is refused with 401 before these gates today. The token
-	// callers here carry a session bearer as well as the token context,
-	// so that the gate is exercised should that lookup ever accept API
-	// tokens.
+	// The token callers here carry the admin's username and user ID as
+	// well as the token context, as a token the admin owns would, so
+	// that the update and delete reach the scope gate through the owner
+	// check.
 	asToken := func(token scopeCaller) scopeCaller {
 		return scopeCaller{name: token.name, wrap: func(r *http.Request) *http.Request {
 			return token.wrap(f.admin.wrap(r))
@@ -274,8 +273,8 @@ func TestClusterCreationRespectsTokenScope(t *testing.T) {
 	f := newClusterCovFixture(t)
 
 	// As in TestClusterGroupWritesRespectTokenScope, a token caller also
-	// carries a session bearer so that it reaches the gates after the
-	// session lookup on POST /cluster-groups.
+	// carries its owner's username, which POST /cluster-groups resolves
+	// before its gates.
 	asToken := func(token scopeCaller) scopeCaller {
 		return scopeCaller{name: token.name, wrap: func(r *http.Request) *http.Request {
 			return token.wrap(f.admin.wrap(r))

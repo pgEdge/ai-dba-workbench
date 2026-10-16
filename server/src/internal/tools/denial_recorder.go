@@ -86,8 +86,12 @@ const (
 // connectionDenialTarget names a connection as a denial target, in the
 // connections/<id> form the REST routes record. The ID is an integer
 // the tool has already parsed, so no text from the call reaches the
-// log.
+// log; an ID that is not positive names the bare collection, as the
+// REST denialResourceTarget does.
 func connectionDenialTarget(connectionID int) string {
+	if connectionID <= 0 {
+		return "connections"
+	}
 	return "connections/" + strconv.Itoa(connectionID)
 }
 

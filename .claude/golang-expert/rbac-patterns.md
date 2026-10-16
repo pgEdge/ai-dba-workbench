@@ -1197,7 +1197,8 @@ as `p.record` (`context_aware_provider.go`); it calls
 recorder (no auth store) records nothing. Action, reason and target
 strings are the constants in `denial_recorder.go`, never tool
 arguments; connection targets come from `connectionDenialTarget(id)`
-on a parsed integer, and the tool gate in `Execute` names
+on a parsed integer (an ID that is not positive names the bare
+`connections`, as REST `denialResourceTarget` does), and the tool gate in `Execute` names
 `tools/<registry name>` or `unmatched` via `toolDenialTarget`.
 Recorded refusals (issues #674, #706): `store_memory` system scope as
 `memory.create` on `memories`; the tool gate as `mcp.tool.call`;
@@ -1207,11 +1208,18 @@ caller's action on an RBAC deny (`connection.query`,
 `resolveAccessibleConnection` takes the recorder and action
 (`metrics.read` for metrics tools, otherwise `connection.read`);
 `query_metrics` and `get_alert_rules` record directly; the
-`query_database` write gate records `connection.query.write`; and the
+`query_database` write gate records `connection.query.write`, gating
+on `ResolvedConnection.AccessLevel`, the level from the resolver's own
+`CanAccessConnection` decision, rather than checking a second time; and
+the
 provider sets `database.ClientResolver.Denied` to record a lost
 selected connection as `connection.read`. Reasons mirror the REST
 ones. The resources registry's `ClientResolver` has no `Denied` hook.
-Messages returned to the caller are unchanged. New tools that refuse
+`parseConnectionArgs` marks a NaN, infinite, fractional,
+non-positive or above-`MaxInt32` `connection_id` invalid rather than
+truncating it, and `Resolve` answers it with
+`invalidConnectionIDMessage`, recording nothing, before any lookup.
+Messages returned to the caller are otherwise unchanged. New tools that refuse
 on a connection must take the recorder and pass `p.record` from the
 provider. Tests: `denial_recorder_test.go`
 (`TestProviderWiresStoreMemoryDenialRecorder`) and

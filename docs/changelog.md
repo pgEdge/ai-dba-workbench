@@ -1414,7 +1414,10 @@ project adheres to
   write refused for want of `read_write` access is a denied
   `connection.query.write`; and a selected connection the caller
   has since lost access to is a denied `connection.read`. The
-  messages the tools return are unchanged. (#706)
+  messages the tools return are unchanged, except that a
+  `connection_id` that is not a positive integer, such as `3.7`, is
+  now refused rather than truncated to the connection it would
+  have named. (#706)
 
 - Fix the `probe_unavailable` alert firing on healthy Spock clusters
   with no recent apply exceptions or conflict resolutions. The

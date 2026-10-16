@@ -12,6 +12,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -69,6 +70,60 @@ func denialTarget(t *testing.T, event auth.AuditEvent) string {
 func TestConnectionDenialTarget(t *testing.T) {
 	if got := connectionDenialTarget(7); got != "connections/7" {
 		t.Errorf("connectionDenialTarget(7) = %q, want connections/7", got)
+	}
+	for _, id := range []int{0, -3} {
+		if got := connectionDenialTarget(id); got != "connections" {
+			t.Errorf("connectionDenialTarget(%d) = %q, want connections",
+				id, got)
+		}
+	}
+}
+
+// TestParseConnectionArgsRejectsInvalidIDs checks that a connection_id
+// that is not a positive integer is marked invalid rather than
+// truncated, and that Resolve refuses it before any lookup, recording
+// nothing (it names no connection).
+func TestParseConnectionArgsRejectsInvalidIDs(t *testing.T) {
+	invalid := map[string]any{
+		"zero":          float64(0),
+		"negative":      float64(-2),
+		"fractional":    3.7,
+		"NaN":           math.NaN(),
+		"infinite":      math.Inf(1),
+		"too large":     float64(math.MaxInt32) + 1,
+		"int zero":      0,
+		"int negative":  -1,
+		"tiny fraction": 0.5,
+	}
+	capture := &toolDenialCapture{}
+	resolver := NewConnectionResolver(nil, nil, nil, capture.record)
+	for name, raw := range invalid {
+		t.Run(name, func(t *testing.T) {
+			ca := parseConnectionArgs(map[string]any{"connection_id": raw})
+			if !ca.HasConnID || !ca.InvalidConnID || ca.ConnectionID != 0 {
+				t.Fatalf("Expected an invalid connection_id, got %+v", ca)
+			}
+			for _, r := range []*ConnectionResolver{resolver, nil} {
+				_, resp := r.Resolve(context.Background(),
+					deniedActionConnectionQuery,
+					map[string]any{"connection_id": raw}, nil)
+				if resp == nil || !resp.IsError ||
+					resp.Content[0].Text != invalidConnectionIDMessage {
+					t.Errorf("Expected %q, got %+v",
+						invalidConnectionIDMessage, resp)
+				}
+			}
+		})
+	}
+	if len(capture.denials) != 0 {
+		t.Errorf("Expected nothing recorded, got %v", capture.denials)
+	}
+
+	for _, raw := range []any{float64(1), float64(math.MaxInt32), 9} {
+		ca := parseConnectionArgs(map[string]any{"connection_id": raw})
+		if ca.InvalidConnID || ca.ConnectionID < 1 {
+			t.Errorf("Expected %v accepted, got %+v", raw, ca)
+		}
 	}
 }
 

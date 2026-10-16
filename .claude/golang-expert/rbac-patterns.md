@@ -802,7 +802,13 @@ rules live in `internal/metrics/redaction.go`, shared with
 and join `datastore_masking_routes_test.go`, and
 `TestCredentialTableReadersAreReviewed` (`metrics/source_guard_test.go`)
 fails on a SQL string literal that reads a credential table without
-them unless it is on its reviewed list. The scope and time window go in an inner
+them unless it is on its reviewed list.
+`TestMetricRedactionsMatchCollectorSchema` checks the real probe still
+has the columns each `metrics.ProbeRedactions` rule names.
+`TestConfigurationSourcesMatchCollectorSchema` checks every catalog
+table, column and type against the collector's real schema, and fails
+on a collector column of a catalogued table that is neither catalogued
+nor listed in `catalogOmittedColumns`. The scope and time window go in an inner
 `(SELECT ... WHERE <scope> OFFSET 0) t` (`scopedFrom`), and the
 caller's filters, shape, ordering and paging apply outside it, so no
 caller predicate is evaluated against a row the caller may not see;

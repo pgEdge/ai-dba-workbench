@@ -59,6 +59,15 @@ var sideEffectingSpellings = []struct {
 		"WITH t AS (SELECT (0).pg_terminate_backend) SELECT * FROM t"},
 	{"call after a parenthesised main query",
 		"WITH a AS (SELECT 1) (SELECT 1) ORDER BY 1, pg_try_advisory_lock(0)"},
+	// WITH as a column label does not open a list of CTEs.
+	{"call after a WITH column label",
+		"SELECT 1 AS with FROM pg_class, pg_terminate_backend(0)"},
+	{"call after a WITH column label, chained",
+		"SELECT 1 AS with FROM pg_class, pg_class c2, pg_terminate_backend(0)"},
+	{"call after a WITH column label, unicode",
+		`SELECT 1 AS with FROM pg_class, U&"pg\005fterminate\005fbackend"(0)`},
+	{"call after WITH TIME ZONE",
+		"SELECT now()::timestamp WITH TIME ZONE, pg_terminate_backend(0)"},
 }
 
 // harmlessSelects name side-effecting functions only as text, and stay

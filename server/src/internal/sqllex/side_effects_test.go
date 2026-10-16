@@ -223,6 +223,39 @@ func TestCallsSideEffectingFunction(t *testing.T) {
 		{"call after a CTE name and a dot", "WITH a.nextval(1) SELECT 1", true},
 		{"call where a CTE name is expected", "WITH (nextval('s')) SELECT 1", true},
 		{"quoted with is not a keyword", `SELECT 1 AS "with", nextval('s')`, true},
+
+		// WITH that is not followed by a CTE definition (issue #646
+		// review): the list must close, so the later call is found.
+		{"with as a column label",
+			"SELECT 1 AS with FROM pg_class, pg_terminate_backend(1)", true},
+		{"with as a column label, chained",
+			"SELECT 1 AS with FROM pg_class, pg_class c2, pg_terminate_backend(1)", true},
+		{"with as a column label, in ORDER BY",
+			"SELECT 1 AS with FROM pg_class ORDER BY relname, pg_terminate_backend(1)", true},
+		{"with as a column label, in a subquery",
+			"SELECT * FROM (SELECT 1 AS with FROM pg_class, pg_terminate_backend(1)) s", true},
+		{"with as a column label, quoted call",
+			`SELECT 1 AS with FROM pg_class, "pg_terminate_backend"(1)`, true},
+		{"WITH TIME ZONE",
+			"SELECT now()::timestamp WITH TIME ZONE, pg_terminate_backend(1)", true},
+		{"CTE column list holding a literal",
+			"WITH pg_terminate_backend(1) AS (SELECT 1) SELECT 1", true},
+		{"CTE column list without AS", "WITH nextval(n) SELECT 1", true},
+		{"CTE AS without a body", "WITH nextval(n) AS SELECT 1", true},
+		{"CTE NOT without MATERIALIZED", "WITH nextval(n) AS NOT (SELECT 1) SELECT 1", true},
+		{"CTE with a quoted AS", `WITH nextval(n) "as" (SELECT 1) SELECT 1`, true},
+		{"CTE with a quoted MATERIALIZED",
+			`WITH nextval(n) AS "materialized" (SELECT 1) SELECT 1`, true},
+		{"quoted recursive is a CTE name",
+			`WITH "recursive" pg_notify(n) AS (SELECT 1) SELECT 1`, true},
+		{"unterminated CTE column list", "WITH nextval(n", true},
+		{"CTE name at the end", "WITH nextval", false},
+		{"WITH after AS is not a CTE list",
+			"CREATE TABLE x AS WITH nextval(n) AS (SELECT 1) SELECT * FROM nextval", true},
+		{"CTE after a semicolon",
+			"SELECT 1; WITH schedule(id) AS (SELECT 1) SELECT * FROM schedule", false},
+		{"call after a parenthesised CTE query",
+			"SELECT (WITH a AS (SELECT 1) SELECT 1), nextval('s')", true},
 	}
 
 	for _, tt := range tests {
@@ -434,6 +467,11 @@ func TestSideEffectingFunctions_SpellingsMatchPostgres(t *testing.T) {
 		"SELECT p.pg_advisory_xact_lock FROM unnest(ARRAY[646::bigint]) p",
 		"WITH a AS (SELECT 1) (SELECT 1) ORDER BY 1, pg_try_advisory_xact_lock(646)",
 		"SELECT * FROM unnest(ARRAY[1]) WITH ORDINALITY, pg_advisory_xact_lock(646)",
+		// WITH as a column label, which must not open a CTE list.
+		"SELECT 1 AS with FROM pg_class, pg_advisory_xact_lock(646) LIMIT 1",
+		"SELECT 1 AS with FROM pg_class, pg_class c2, pg_advisory_xact_lock(646) LIMIT 1",
+		"SELECT 1 AS with FROM pg_class ORDER BY relname, pg_try_advisory_xact_lock(646) LIMIT 1",
+		"SELECT now()::timestamp WITH TIME ZONE, pg_advisory_xact_lock(646)",
 	}
 
 	for _, stmt := range statements {

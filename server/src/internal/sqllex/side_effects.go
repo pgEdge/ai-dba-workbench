@@ -374,14 +374,17 @@ const (
 )
 
 // withListOpeners are the unquoted words after which WITH starts a
-// list of common table expressions: CREATE TABLE ... AS, CREATE VIEW
-// ... AS and PREPARE ... AS, and the EXPLAIN forms. WITH also starts
+// list of common table expressions: the EXPLAIN forms. WITH also starts
 // one at the start of a statement and after an opening parenthesis or
 // a semicolon. Elsewhere it is part of another clause (WITH ORDINALITY,
-// WITH TIME ZONE, WITH CHECK OPTION and so on), and opening a list
-// there could hide a call after a later comma.
+// WITH TIME ZONE, WITH CHECK OPTION and so on) or a column label
+// (SELECT 1 AS with), and opening a list there could hide a call after
+// a later comma. AS is deliberately not an opener, because AS WITH may
+// be a column label; CREATE TABLE ... AS WITH and the like lose only
+// the CTE name skip, which costs a confirmation when that name is a
+// listed function's.
 var withListOpeners = map[string]bool{
-	"as": true, "explain": true, "analyze": true,
+	"explain": true, "analyze": true,
 	"analyse": true, //nolint:misspell // PostgreSQL accepts ANALYSE
 	"verbose": true,
 }
@@ -402,7 +405,9 @@ var withListClosers = map[string]bool{
 //
 // A common table expression's name is the name that follows WITH, WITH
 // RECURSIVE or a comma in the WITH list, at the WITH's parenthesis
-// depth. The list stays open at that depth only through the tokens a
+// depth, and only when a definition follows it (see isCTEDefinitionAt);
+// otherwise the list ends there and the name is checked like any other.
+// The list stays open at that depth only through the tokens a
 // definition holds there (names, commas, and the parentheses of a
 // column list or a body), so a call after the list ends, such as one in
 // an ORDER BY after a parenthesised main query, is never skipped.
@@ -416,7 +421,7 @@ func namesThatAreNotCalls(tokens []callToken) []bool {
 		}
 		switch tok.kind {
 		case nameToken:
-			notCalls[k] = w.name(prev, tok) || prev.isKeyword("as")
+			notCalls[k] = w.name(tokens, k, prev) || prev.isKeyword("as")
 		case openParenToken:
 			w.openParen(prev, k > 0 && notCalls[k-1])
 		case closeParenToken:
@@ -443,22 +448,68 @@ func (w *withListTracker) state() withListState { return w.lists[w.depth] }
 
 func (w *withListTracker) set(s withListState) { w.lists[w.depth] = s }
 
-// name updates the state for a name token and reports whether the name
-// is a common table expression's.
-func (w *withListTracker) name(prev, tok callToken) bool {
+// name updates the state for the name token at tokens[k] and reports
+// whether the name is a common table expression's.
+func (w *withListTracker) name(tokens []callToken, k int, prev callToken) bool {
+	tok := tokens[k]
 	state := w.state()
 	switch {
 	case state == expectCTEName && tok.isKeyword("recursive") &&
 		prev.isKeyword("with"):
-	case state == expectCTEName:
+	case state == expectCTEName && isCTEDefinitionAt(tokens, k):
 		w.set(inCTE)
 		return true
+	case state == expectCTEName:
+		w.set(noWithList)
 	case state == inCTE && !tok.quoted && withListClosers[tok.text]:
 		w.set(noWithList)
 	case tok.isKeyword("with") && opensWithList(prev):
 		w.set(expectCTEName)
 	}
 	return false
+}
+
+// isCTEDefinitionAt reports whether the name at tokens[k] starts a
+// common table expression's definition: an optional column list of
+// names, then AS, an optional MATERIALIZED or NOT MATERIALIZED, and the
+// opening parenthesis of the body. Nothing else may follow a CTE name,
+// so a name the grammar reads any other way is never skipped.
+func isCTEDefinitionAt(tokens []callToken, k int) bool {
+	i := k + 1
+	if i < len(tokens) && tokens[i].kind == openParenToken {
+		i = skipColumnList(tokens, i+1)
+		if i < 0 {
+			return false
+		}
+	}
+	if i >= len(tokens) || !tokens[i].isKeyword("as") {
+		return false
+	}
+	i++
+	if i < len(tokens) && tokens[i].isKeyword("not") {
+		i++
+		if i >= len(tokens) || !tokens[i].isKeyword("materialized") {
+			return false
+		}
+	}
+	if i < len(tokens) && tokens[i].isKeyword("materialized") {
+		i++
+	}
+	return i < len(tokens) && tokens[i].kind == openParenToken
+}
+
+// skipColumnList reads a column list of names (not numbers) and commas from
+// tokens[i], just after its opening parenthesis, and returns the index
+// after its closing parenthesis, or -1 if anything else is found.
+func skipColumnList(tokens []callToken, i int) int {
+	for i < len(tokens) && ((tokens[i].kind == nameToken &&
+		!tokens[i].numeric) || tokens[i].kind == commaToken) {
+		i++
+	}
+	if i >= len(tokens) || tokens[i].kind != closeParenToken {
+		return -1
+	}
+	return i + 1
 }
 
 // opensWithList reports whether a WITH after prev starts a list of

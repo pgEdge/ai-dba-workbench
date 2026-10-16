@@ -46,7 +46,11 @@ do not copy either into another package.
   calls: the name after `AS` (alias column list, type modifier) and a
   CTE name, tracked per parenthesis depth so that a list ends at the
   first token a definition cannot hold there, which keeps
-  `WITH a AS (...) (SELECT 1) ORDER BY 1, nextval('s')` a write. The
+  `WITH a AS (...) (SELECT 1) ORDER BY 1, nextval('s')` a write. A name
+  counts as a CTE name only when `[ (cols) ] AS [[NOT] MATERIALIZED] (`
+  follows it (`isCTEDefinitionAt`), and `AS` is not a WITH opener,
+  because `SELECT 1 AS with FROM t, pg_terminate_backend(1)` is a
+  column label followed by a call. The
   function lists come from the
   PostgreSQL, Spock, pg_cron, pglogical and pg_background
   documentation. A database test checks the "core" family against

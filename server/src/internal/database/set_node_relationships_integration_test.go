@@ -312,10 +312,12 @@ func TestNodeRelationships_CommitFailureReturnsError(t *testing.T) {
 	`); err != nil {
 		t.Fatalf("Failed to create the failing trigger: %v", err)
 	}
-	t.Cleanup(func() {
+	// A deferred drop runs before the earlier deferred cleanup closes the
+	// pool; t.Cleanup would run after it and leave the function behind.
+	defer func() {
 		_, _ = pool.Exec(context.Background(),
 			`DROP FUNCTION IF EXISTS fail_relationship_delete() CASCADE`)
-	})
+	}()
 
 	if err := ds.SetNodeRelationships(ctx, clusterID, source, nil, nil); err == nil {
 		t.Error("SetNodeRelationships with a failing commit returned nil; want error")

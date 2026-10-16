@@ -191,6 +191,19 @@ func newConnCovFixture(t *testing.T, secret string) *connCovFixture {
 	}
 }
 
+// racingPurge swaps the handler's checker, for the rest of the calling
+// test, for one without the connection sharing lookup. The production
+// checker refuses a superuser a connection that is missing or marked
+// deleted (issue #669), so a handler's own not-found branch is reached
+// only when the row is purged between the access check and the read;
+// dropping the lookup stands in for that race.
+func (f *connCovFixture) racingPurge(t *testing.T) {
+	t.Helper()
+	live := f.handler.rbacChecker
+	f.handler.rbacChecker = auth.NewRBACChecker(f.store)
+	t.Cleanup(func() { f.handler.rbacChecker = live })
+}
+
 // connCovCaller is an authenticated session user.
 type connCovCaller struct {
 	id       int64
@@ -634,8 +647,12 @@ func TestConnCov_GetConnection(t *testing.T) {
 	})
 
 	t.Run("missing connection", func(t *testing.T) {
-		rec := f.serve(asSuperuserCaller(connCovRequest(t, http.MethodGet, connCovPath(id+1000, ""), nil), owner))
-		assertError(t, rec, http.StatusNotFound, "Connection not found")
+		req := func() *http.Request {
+			return asSuperuserCaller(connCovRequest(t, http.MethodGet, connCovPath(id+1000, ""), nil), owner)
+		}
+		assertError(t, f.serve(req()), http.StatusForbidden, "Access denied")
+		f.racingPurge(t)
+		assertError(t, f.serve(req()), http.StatusNotFound, "Connection not found")
 	})
 }
 
@@ -886,8 +903,12 @@ func TestConnCov_ListDatabases(t *testing.T) {
 	})
 
 	t.Run("missing connection", func(t *testing.T) {
-		rec := f.serve(asSuperuserCaller(connCovRequest(t, http.MethodGet, connCovPath(id+1000, "databases"), nil), owner))
-		assertError(t, rec, http.StatusInternalServerError, "Failed to list databases")
+		req := func() *http.Request {
+			return asSuperuserCaller(connCovRequest(t, http.MethodGet, connCovPath(id+1000, "databases"), nil), owner)
+		}
+		assertError(t, f.serve(req()), http.StatusForbidden, "Access denied")
+		f.racingPurge(t)
+		assertError(t, f.serve(req()), http.StatusInternalServerError, "Failed to list databases")
 	})
 
 	t.Run("owner lists databases", func(t *testing.T) {
@@ -979,7 +1000,7 @@ func TestConnCov_SetCurrentConnection_Rejections(t *testing.T) {
 		{"malformed JSON", other, false, "{nope", http.StatusBadRequest, "Invalid request body"},
 		{"missing connection_id", other, false, CurrentConnectionRequest{}, http.StatusBadRequest, "connection_id is required"},
 		{"inaccessible connection", other, false, CurrentConnectionRequest{ConnectionID: id}, http.StatusForbidden, "Access denied"},
-		{"missing connection", other, true, CurrentConnectionRequest{ConnectionID: id + 1000}, http.StatusBadRequest, "Connection not found"},
+		{"missing connection", other, true, CurrentConnectionRequest{ConnectionID: id + 1000}, http.StatusForbidden, "Access denied"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1031,6 +1052,9 @@ func TestConnCov_GetCurrentConnection_RechecksAccess(t *testing.T) {
 	if err := f.store.SetConnectionSession(ownerHash, id+1000, nil); err != nil {
 		t.Fatalf("SetConnectionSession: %v", err)
 	}
+	rec = get(asSuperuserCaller(connCovRequest(t, http.MethodGet, "/api/v1/connections/current", nil), owner))
+	assertError(t, rec, http.StatusForbidden, "Access denied")
+	f.racingPurge(t)
 	rec = get(asSuperuserCaller(connCovRequest(t, http.MethodGet, "/api/v1/connections/current", nil), owner))
 	assertError(t, rec, http.StatusInternalServerError, "Failed to get connection details")
 }
@@ -1085,8 +1109,12 @@ func TestConnCov_GetConnectionContext(t *testing.T) {
 	})
 
 	t.Run("missing connection", func(t *testing.T) {
-		rec := f.serve(asSuperuserCaller(connCovRequest(t, http.MethodGet, connCovPath(id+1000, "context"), nil), owner))
-		assertError(t, rec, http.StatusNotFound, "Connection not found")
+		req := func() *http.Request {
+			return asSuperuserCaller(connCovRequest(t, http.MethodGet, connCovPath(id+1000, "context"), nil), owner)
+		}
+		assertError(t, f.serve(req()), http.StatusForbidden, "Access denied")
+		f.racingPurge(t)
+		assertError(t, f.serve(req()), http.StatusNotFound, "Connection not found")
 	})
 
 	t.Run("owner reads context", func(t *testing.T) {
@@ -1145,6 +1173,8 @@ func TestConnCov_GetConnectionCluster(t *testing.T) {
 	})
 
 	t.Run("missing connection", func(t *testing.T) {
+		assertError(t, get(owner, a+1000, true), http.StatusForbidden, "Access denied")
+		f.racingPurge(t)
 		assertError(t, get(owner, a+1000, true), http.StatusNotFound, "Connection not found")
 	})
 
@@ -1310,6 +1340,9 @@ func TestConnCov_UpdateConnectionCluster_Failures(t *testing.T) {
 		return f.serve(asSuperuserCaller(connCovRequest(t, http.MethodPut, connCovPath(id, "cluster"), body), admin))
 	}
 
+	assertError(t, put(missing, ConnectionClusterUpdateRequest{}),
+		http.StatusForbidden, "Access denied")
+	f.racingPurge(t)
 	assertError(t, put(missing, ConnectionClusterUpdateRequest{}),
 		http.StatusInternalServerError, "Failed to reset membership source")
 	// A connection that is not there answers 404 rather than 500 (issue

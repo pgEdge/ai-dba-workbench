@@ -87,6 +87,7 @@ func newConnectionGroupsTestHandler(
 
 	ds := database.NewTestDatastore(pool)
 	handler := NewPerfSummaryHandler(ds, store)
+	handler.sharingLookupFn = liveConnectionLookup
 	cleanup := func() {
 		_, _ = pool.Exec(context.Background(),
 			connectionGroupsTestSchemaTeardown)

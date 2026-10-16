@@ -12,6 +12,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -200,6 +201,53 @@ func TestHandleMetricsQuery_TimeSeriesMode_InvalidTimeRange(t *testing.T) {
 	}
 }
 
+// liveConnectionLookup is the sharing lookup for handler tests without a
+// database: every connection is live, shared and unowned.
+func liveConnectionLookup(context.Context, int) (bool, string, error) {
+	return true, "", nil
+}
+
+// TestHandleMetricsQuery_RefusesMarkedConnection is the regression test
+// for the #688 review finding that a superuser could still read the
+// metrics of a connection marked for deletion (issue #669): the lookup
+// finds no live row, so the gate refuses it before any query runs, on
+// both the time-series and the baselines endpoints.
+func TestHandleMetricsQuery_RefusesMarkedConnection(t *testing.T) {
+	called := false
+	handler := &MetricsHandler{
+		authStore: newTestAuthStore(t),
+		datastore: &database.Datastore{},
+		sharingLookupFn: func(context.Context, int) (bool, string, error) {
+			return false, "", errors.New("connection not found")
+		},
+		queryTimeSeriesFn: func(context.Context, *pgxpool.Pool, string, []int,
+			metrics.TimeWindow, metrics.MetricFilters, int, string, []string,
+		) (*metrics.MetricsQueryResult, error) {
+			called = true
+			return &metrics.MetricsQueryResult{}, nil
+		},
+	}
+
+	for _, url := range []string{
+		"/api/v1/metrics/query?connection_id=1&probe_name=pg_stat_database&time_range=1h",
+		"/api/v1/metrics/baselines?connection_id=1",
+	} {
+		req := withSuperuser(httptest.NewRequest(http.MethodGet, url, nil))
+		rec := httptest.NewRecorder()
+		if strings.Contains(url, "baselines") {
+			handler.handleMetricsBaselines(rec, req)
+		} else {
+			handler.handleMetricsQuery(rec, req)
+		}
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("%s: expected 403, got %d (%s)", url, rec.Code, rec.Body.String())
+		}
+	}
+	if called {
+		t.Error("the query ran for a marked connection")
+	}
+}
+
 func TestHandleMetricsQuery_TimeSeriesMode_ParsesIndexNameFilter(t *testing.T) {
 	// The Index detail dashboard's Scan Activity chart relies on the
 	// time-series path forwarding index_name into MetricFilters.IndexName.
@@ -211,8 +259,9 @@ func TestHandleMetricsQuery_TimeSeriesMode_ParsesIndexNameFilter(t *testing.T) {
 	var gotFilters metrics.MetricFilters
 	called := false
 	handler := &MetricsHandler{
-		authStore: newTestAuthStore(t),
-		datastore: &database.Datastore{},
+		authStore:       newTestAuthStore(t),
+		datastore:       &database.Datastore{},
+		sharingLookupFn: liveConnectionLookup,
 		queryTimeSeriesFn: func(
 			_ context.Context,
 			_ *pgxpool.Pool,
@@ -258,8 +307,9 @@ func TestHandleMetricsQuery_TimeSeriesMode_ParsesQueryIDFilter(t *testing.T) {
 	var gotFilters metrics.MetricFilters
 	called := false
 	handler := &MetricsHandler{
-		authStore: newTestAuthStore(t),
-		datastore: &database.Datastore{},
+		authStore:       newTestAuthStore(t),
+		datastore:       &database.Datastore{},
+		sharingLookupFn: liveConnectionLookup,
 		queryTimeSeriesFn: func(
 			_ context.Context,
 			_ *pgxpool.Pool,
@@ -304,8 +354,9 @@ func TestHandleMetricsQuery_TimeSeriesMode_SignedQueryIDNormalised(t *testing.T)
 	// forwarded verbatim, where a textual comparison would never match.
 	var gotFilters metrics.MetricFilters
 	handler := &MetricsHandler{
-		authStore: newTestAuthStore(t),
-		datastore: &database.Datastore{},
+		authStore:       newTestAuthStore(t),
+		datastore:       &database.Datastore{},
+		sharingLookupFn: liveConnectionLookup,
 		queryTimeSeriesFn: func(
 			_ context.Context,
 			_ *pgxpool.Pool,
@@ -344,8 +395,9 @@ func TestHandleMetricsQuery_TimeSeriesMode_InvalidQueryID(t *testing.T) {
 	// A queryid that is not a 64-bit integer is rejected before any
 	// query runs, so a malformed value can never reach the database.
 	handler := &MetricsHandler{
-		authStore: newTestAuthStore(t),
-		datastore: &database.Datastore{},
+		authStore:       newTestAuthStore(t),
+		datastore:       &database.Datastore{},
+		sharingLookupFn: liveConnectionLookup,
 		queryTimeSeriesFn: func(
 			_ context.Context,
 			_ *pgxpool.Pool,
@@ -383,7 +435,8 @@ func TestHandleMetricsQuery_TimeSeriesMode_InvalidQueryID(t *testing.T) {
 func TestHandleMetricsQuery_LatestRowsMode_InvalidQueryID(t *testing.T) {
 	// The latest-row path shares the same queryid validation, and must
 	// reject a malformed value before it touches the pool.
-	handler := &MetricsHandler{datastore: &database.Datastore{}, authStore: newTestAuthStore(t)}
+	handler := &MetricsHandler{datastore: &database.Datastore{}, authStore: newTestAuthStore(t),
+		sharingLookupFn: liveConnectionLookup}
 
 	req := withSuperuser(httptest.NewRequest(http.MethodGet,
 		"/api/v1/metrics/query?connection_id=1"+
@@ -427,7 +480,8 @@ func TestHandleMetricsQuery_TimeSeriesMode_DefaultQueryFn(t *testing.T) {
 		t.Skipf("Test database ping failed: %v", err)
 	}
 
-	handler := &MetricsHandler{datastore: database.NewTestDatastore(pool), authStore: newTestAuthStore(t)}
+	handler := &MetricsHandler{datastore: database.NewTestDatastore(pool), authStore: newTestAuthStore(t),
+		sharingLookupFn: liveConnectionLookup}
 
 	req := withSuperuser(httptest.NewRequest(http.MethodGet,
 		"/api/v1/metrics/query?connection_id=1"+
@@ -450,8 +504,9 @@ func newWindowCapturingHandler(
 	called *bool,
 ) *MetricsHandler {
 	return &MetricsHandler{
-		authStore: newTestAuthStore(t),
-		datastore: &database.Datastore{},
+		authStore:       newTestAuthStore(t),
+		datastore:       &database.Datastore{},
+		sharingLookupFn: liveConnectionLookup,
 		queryTimeSeriesFn: func(
 			_ context.Context,
 			_ *pgxpool.Pool,
@@ -719,8 +774,9 @@ func TestHandleMetricsQuery_TimeSeriesMode_ForwardsBucketsAndMetrics(t *testing.
 	var gotAggregation string
 	var gotMetrics []string
 	handler := &MetricsHandler{
-		authStore: newTestAuthStore(t),
-		datastore: &database.Datastore{},
+		authStore:       newTestAuthStore(t),
+		datastore:       &database.Datastore{},
+		sharingLookupFn: liveConnectionLookup,
 		queryTimeSeriesFn: func(
 			_ context.Context,
 			_ *pgxpool.Pool,
@@ -768,8 +824,9 @@ func TestHandleMetricsQuery_TimeSeriesMode_ForwardsBucketsAndMetrics(t *testing.
 // does, and records the bucket count it was asked for.
 func envelopeHandler(t *testing.T, gotBuckets *int) *MetricsHandler {
 	return &MetricsHandler{
-		authStore: newTestAuthStore(t),
-		datastore: &database.Datastore{},
+		authStore:       newTestAuthStore(t),
+		datastore:       &database.Datastore{},
+		sharingLookupFn: liveConnectionLookup,
 		queryTimeSeriesFn: func(
 			_ context.Context,
 			_ *pgxpool.Pool,
@@ -957,8 +1014,9 @@ func TestHandleMetricsQuery_TimeSeriesMode_EnvelopeCarriesPointFlags(t *testing.
 	observed := 90.0
 	carried := 90.0
 	handler := &MetricsHandler{
-		authStore: newTestAuthStore(t),
-		datastore: &database.Datastore{},
+		authStore:       newTestAuthStore(t),
+		datastore:       &database.Datastore{},
+		sharingLookupFn: liveConnectionLookup,
 		queryTimeSeriesFn: func(
 			_ context.Context,
 			_ *pgxpool.Pool,

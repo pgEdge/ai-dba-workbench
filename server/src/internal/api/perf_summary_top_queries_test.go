@@ -119,6 +119,7 @@ func newTopQueriesTestHandler(
 
 	ds := database.NewTestDatastore(pool)
 	handler := NewPerfSummaryHandler(ds, newTestAuthStore(t))
+	handler.sharingLookupFn = liveConnectionLookup
 	cleanup := func() {
 		_, _ = pool.Exec(context.Background(), topQueriesTestSchemaTeardown)
 		pool.Close()

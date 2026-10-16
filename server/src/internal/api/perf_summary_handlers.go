@@ -84,6 +84,18 @@ const excludeWorkbenchQueriesClause = "AND (pss.query IS NULL OR (" +
 type PerfSummaryHandler struct {
 	datastore *database.Datastore
 	authStore *auth.AuthStore
+
+	// sharingLookupFn reports whether a connection is live, shared and
+	// owned by whom. When nil the handler asks the datastore, as in
+	// production; tests whose fixtures hold no connections substitute one.
+	sharingLookupFn auth.ConnectionSharingLookupFunc
+}
+
+// accessChecker returns the RBAC checker for one request. Its sharing
+// lookup is what refuses a connection marked for deletion, even to a
+// superuser (issue #669).
+func (h *PerfSummaryHandler) accessChecker() *auth.RBACChecker {
+	return metricAccessChecker(h.authStore, h.datastore, h.sharingLookupFn)
 }
 
 // PerfSummaryResponse is the top-level JSON response.
@@ -341,7 +353,7 @@ func (h *PerfSummaryHandler) handlePerfSummary(
 	}
 
 	// Check RBAC access for each connection
-	rbacChecker := auth.NewRBACCheckerWithSharing(h.authStore, h.datastore.GetConnectionSharingInfo)
+	rbacChecker := h.accessChecker()
 	for _, connID := range connectionIDs {
 		canAccess, _ := rbacChecker.CanAccessConnection(r.Context(), connID)
 		if !canAccess {
@@ -983,7 +995,7 @@ func (h *PerfSummaryHandler) handleDatabaseSummaries(
 	}
 	connID := connectionIDs[0]
 
-	rbacChecker := auth.NewRBACCheckerWithSharing(h.authStore, h.datastore.GetConnectionSharingInfo)
+	rbacChecker := h.accessChecker()
 	canAccess, _ := rbacChecker.CanAccessConnection(r.Context(), connID)
 	if !canAccess {
 		RespondError(w, http.StatusForbidden,
@@ -1992,7 +2004,7 @@ func (h *PerfSummaryHandler) handleTopQueries(
 	}
 	connID := connectionIDs[0]
 
-	rbacChecker := auth.NewRBACCheckerWithSharing(h.authStore, h.datastore.GetConnectionSharingInfo)
+	rbacChecker := h.accessChecker()
 	canAccess, _ := rbacChecker.CanAccessConnection(r.Context(), connID)
 	if !canAccess {
 		RespondError(w, http.StatusForbidden,
@@ -2434,7 +2446,7 @@ func (h *PerfSummaryHandler) handleQueryStats(
 	}
 	connID := connectionIDs[0]
 
-	rbacChecker := auth.NewRBACCheckerWithSharing(h.authStore, h.datastore.GetConnectionSharingInfo)
+	rbacChecker := h.accessChecker()
 	canAccess, _ := rbacChecker.CanAccessConnection(r.Context(), connID)
 	if !canAccess {
 		RespondError(w, http.StatusForbidden,

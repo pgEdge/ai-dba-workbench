@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/server/internal/database"
 	"github.com/pgedge/ai-workbench/server/internal/metrics"
@@ -92,7 +93,42 @@ func openLatestTestPool(t *testing.T) *pgxpool.Pool {
 		pool.Close()
 		t.Skipf("Test database ping failed: %v", err)
 	}
+	createLatestConnections(t, pool, connStr)
 	return pool
+}
+
+// createLatestConnections gives the fixture live connections 1 and 2.
+// The RBAC gate admits even a superuser only to a connection that
+// exists and is not marked deleted (issue #669), so the probe rows the
+// tests read must belong to real connections. The table is minimal,
+// holding only what the sharing lookup reads, and is dropped afterwards
+// over a fresh connection, since some tests close the pool themselves.
+func createLatestConnections(t *testing.T, pool *pgxpool.Pool, connStr string) {
+	t.Helper()
+
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `CREATE TABLE connections (
+        id integer PRIMARY KEY,
+        is_shared boolean NOT NULL DEFAULT TRUE,
+        owner_username text,
+        deleted_at timestamp with time zone
+    )`); err != nil {
+		t.Fatalf("failed to create the connections fixture (is one left over?): %v", err)
+	}
+	t.Cleanup(func() {
+		conn, err := pgx.Connect(context.Background(), connStr)
+		if err != nil {
+			t.Logf("connections fixture teardown: %v", err)
+			return
+		}
+		defer conn.Close(context.Background())
+		if _, err := conn.Exec(context.Background(), "DROP TABLE IF EXISTS connections"); err != nil {
+			t.Logf("connections fixture teardown: %v", err)
+		}
+	})
+	if _, err := pool.Exec(ctx, "INSERT INTO connections (id) VALUES (1), (2)"); err != nil {
+		t.Fatalf("failed to seed the connections fixture: %v", err)
+	}
 }
 
 // Fixture DDL is held in constants so that no run-time value is ever
@@ -558,8 +594,9 @@ func TestLatestSnapshot_DatastoreFailures(t *testing.T) {
 	// the handler's internal-error branches without a fake database.
 	pool.Close()
 	h := &LatestSnapshotHandler{
-		datastore: database.NewTestDatastore(pool),
-		authStore: newTestAuthStore(t),
+		datastore:       database.NewTestDatastore(pool),
+		authStore:       newTestAuthStore(t),
+		sharingLookupFn: liveConnectionLookup,
 	}
 
 	rec := getLatest(t, h, "connection_id=1&probe_name="+latestTablesProbe)
@@ -670,5 +707,25 @@ func TestLatestSnapshot_MasksCredentials(t *testing.T) {
 	}
 	if got := decodeError(t, rec).Error; got != want {
 		t.Errorf("order_by on a secret column: got %q, want %q", got, want)
+	}
+}
+
+// TestLatestSnapshot_RefusesMarkedConnection is the regression test for
+// the #688 review finding that a superuser could still read the latest
+// metrics of a connection marked for deletion (issue #669) until the
+// purge removed them. Once the connection is marked, the gate refuses it.
+func TestLatestSnapshot_RefusesMarkedConnection(t *testing.T) {
+	h := setupLatestTablesFixture(t)
+	query := "connection_id=1&probe_name=" + latestTablesProbe
+	if rec := getLatest(t, h, query); rec.Code != http.StatusOK {
+		t.Fatalf("live connection: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	if _, err := h.datastore.GetPool().Exec(context.Background(),
+		"UPDATE connections SET deleted_at = now() WHERE id = 1"); err != nil {
+		t.Fatalf("mark connection deleted: %v", err)
+	}
+	if rec := getLatest(t, h, query); rec.Code != http.StatusForbidden {
+		t.Fatalf("marked connection: expected 403, got %d (%s)", rec.Code, rec.Body.String())
 	}
 }

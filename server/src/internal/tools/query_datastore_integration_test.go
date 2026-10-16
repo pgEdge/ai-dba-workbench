@@ -424,6 +424,17 @@ func TestQueryDatastoreHidesDeletedConnectionsIntegration(t *testing.T) {
 	rows := mustQuery(t, tool, admin, map[string]any{"source": "connections", "columns": []any{"name"}})
 	assertColumn(t, rows, "name", "visible-conn")
 
+	// An unrestricted caller names no connection, so the scope adds no
+	// predicate; the marked connection's metric rows must still be gone
+	// from plain rows and from aggregates (the #688 review).
+	vis := fmt.Sprint(f.visible)
+	rows = mustQuery(t, tool, admin, map[string]any{"source": "ds_probe"})
+	assertColumn(t, rows, "connection_id", vis, vis, vis)
+	rows = mustQuery(t, tool, admin, map[string]any{
+		"source": "ds_probe", "shape": "aggregate", "aggregation": "count",
+		"group_by": []any{"connection_id"}})
+	assertColumn(t, rows, "connection_id", vis)
+
 	text, isErr := call(t, tool, admin, map[string]any{
 		"source": "ds_probe", "connection_ids": []any{float64(f.hidden)}})
 	if !isErr || !strings.Contains(text, "connection not found or not accessible.") {

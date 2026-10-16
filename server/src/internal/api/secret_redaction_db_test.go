@@ -81,8 +81,9 @@ func TestLatestSnapshot_RedactsSecrets(t *testing.T) {
 	}
 
 	h := &LatestSnapshotHandler{
-		datastore: database.NewTestDatastore(pool),
-		authStore: newTestAuthStore(t),
+		datastore:       database.NewTestDatastore(pool),
+		authStore:       newTestAuthStore(t),
+		sharingLookupFn: liveConnectionLookup,
 	}
 
 	settings := decodeLatest(t, getLatest(t, h,

@@ -867,3 +867,31 @@ func TestSetTokenMCPScopeByNamesRejectsUnknownIdentifier(t *testing.T) {
 		t.Errorf("Expected the MCP scope to be untouched, got %+v", scope)
 	}
 }
+
+// TestCanAccessConnectionSuperuserNeedsLiveConnection is the regression
+// test for the #688 review finding that a superuser could still read a
+// connection marked for deletion (issue #669): with a sharing lookup
+// wired, as every production checker has, a superuser is refused a
+// connection the lookup cannot find, and keeps full access to one it can.
+func TestCanAccessConnectionSuperuserNeedsLiveConnection(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	checker := NewRBACCheckerWithSharing(store,
+		func(_ context.Context, id int) (bool, string, error) {
+			if id == 7 {
+				return true, "someone", nil
+			}
+			return false, "", errors.New("connection not found")
+		})
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, true)
+
+	ok, level := checker.CanAccessConnection(ctx, 8)
+	if ok || level != AccessLevelNone {
+		t.Errorf("marked connection: got (%v, %q), want (false, none)", ok, level)
+	}
+	ok, level = checker.CanAccessConnection(ctx, 7)
+	if !ok || level != AccessLevelReadWrite {
+		t.Errorf("live connection: got (%v, %q), want (true, read_write)", ok, level)
+	}
+}

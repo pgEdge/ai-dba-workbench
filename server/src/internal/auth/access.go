@@ -402,8 +402,17 @@ func (rc *RBACChecker) CanAccessConnection(ctx context.Context, connectionID int
 	// connections, at the level the scope records. The raw context
 	// flag is read here rather than IsSuperuser for the reason given
 	// on CanAccessMCPItem: this branch names the connection, so it
-	// intersects rather than refusing outright.
+	// intersects rather than refusing outright. A superuser reaches only
+	// a live connection: one marked deleted and awaiting its purge, or
+	// one that does not exist, is as inaccessible to a superuser as to
+	// anyone else (issue #669), so the sharing lookup, which finds
+	// neither, is consulted here too when the checker has one.
 	if IsSuperuserFromContext(ctx) {
+		if rc.connSharingLookupFn != nil {
+			if _, _, err := rc.connSharingLookupFn(ctx, connectionID); err != nil {
+				return false, AccessLevelNone
+			}
+		}
 		return rc.applyConnectionTokenScope(ctx, connectionID, AccessLevelReadWrite)
 	}
 

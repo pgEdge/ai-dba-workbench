@@ -289,7 +289,7 @@ func TestConnectionHandlerCoverage_GetConnection(t *testing.T) {
 	expectConnHandlerStatus(t, e.serve(e.asOwner(http.MethodGet, "/api/v1/connections/32", nil)),
 		http.StatusForbidden)
 	expectConnHandlerStatus(t, e.serve(e.asSuperuser(http.MethodGet, "/api/v1/connections/999", nil)),
-		http.StatusNotFound)
+		http.StatusForbidden)
 }
 
 func TestConnectionHandlerCoverage_UpdateConnection(t *testing.T) {
@@ -417,7 +417,7 @@ func TestConnectionHandlerCoverage_ConnectionContext(t *testing.T) {
 	expectConnHandlerStatus(t, e.serve(e.asOwner(http.MethodGet, "/api/v1/connections/32/context", nil)),
 		http.StatusForbidden)
 	expectConnHandlerStatus(t, e.serve(e.asSuperuser(http.MethodGet, "/api/v1/connections/999/context", nil)),
-		http.StatusNotFound)
+		http.StatusForbidden)
 	expectConnHandlerStatus(t, e.serve(e.asOwner(http.MethodPost, "/api/v1/connections/31/context", nil)),
 		http.StatusMethodNotAllowed)
 }
@@ -448,7 +448,7 @@ func TestConnectionHandlerCoverage_CurrentConnection(t *testing.T) {
 	expectConnHandlerStatus(t, e.serve(e.asOwner(http.MethodPost, path,
 		CurrentConnectionRequest{ConnectionID: foreignConnID})), http.StatusForbidden)
 	expectConnHandlerStatus(t, e.serve(e.asSuperuser(http.MethodPost, path,
-		CurrentConnectionRequest{ConnectionID: missingConnID})), http.StatusBadRequest)
+		CurrentConnectionRequest{ConnectionID: missingConnID})), http.StatusForbidden)
 
 	expectConnHandlerStatus(t, e.serve(e.asOwner(http.MethodDelete, path, nil)), http.StatusNoContent)
 	expectConnHandlerStatus(t, e.serve(e.asOwner(http.MethodGet, path, nil)), http.StatusNotFound)
@@ -461,13 +461,14 @@ func TestConnectionHandlerCoverage_CurrentConnection(t *testing.T) {
 	}
 	expectConnHandlerStatus(t, e.serve(e.asOwner(http.MethodGet, path, nil)), http.StatusForbidden)
 
-	// A selection whose connection has since disappeared is a 500.
+	// A selection whose connection has since disappeared is refused,
+	// even to a superuser, as a missing connection is (issue #669).
 	adminHash := auth.GetTokenHashByRawToken(e.adminToken)
 	if err := e.store.SetConnectionSession(adminHash, missingConnID, nil); err != nil {
 		t.Fatalf("SetConnectionSession: %v", err)
 	}
 	expectConnHandlerStatus(t, e.serve(e.asSuperuser(http.MethodGet, path, nil)),
-		http.StatusInternalServerError)
+		http.StatusForbidden)
 }
 
 func TestConnectionHandlerCoverage_GetCluster(t *testing.T) {
@@ -517,7 +518,7 @@ func TestConnectionHandlerCoverage_GetCluster(t *testing.T) {
 	expectConnHandlerStatus(t, e.serve(e.asOwner(http.MethodGet, "/api/v1/connections/32/cluster", nil)),
 		http.StatusForbidden)
 	expectConnHandlerStatus(t, e.serve(e.asSuperuser(http.MethodGet, "/api/v1/connections/999/cluster", nil)),
-		http.StatusNotFound)
+		http.StatusForbidden)
 	expectConnHandlerStatus(t, e.serve(e.asOwner(http.MethodPatch, "/api/v1/connections/31/cluster", nil)),
 		http.StatusMethodNotAllowed)
 
@@ -574,11 +575,11 @@ func TestConnectionHandlerCoverage_UpdateCluster(t *testing.T) {
 			http.StatusNotFound},
 		{"reset missing connection", e.asSuperuser(http.MethodPut,
 			"/api/v1/connections/999/cluster", ConnectionClusterUpdateRequest{}),
-			http.StatusInternalServerError},
+			http.StatusForbidden},
 		{"assign missing connection", e.asSuperuser(http.MethodPut,
 			"/api/v1/connections/999/cluster",
 			ConnectionClusterUpdateRequest{ClusterID: &clusterID}),
-			http.StatusNotFound},
+			http.StatusForbidden},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

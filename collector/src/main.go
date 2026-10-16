@@ -12,12 +12,15 @@ package main
 import (
 	"github.com/pgedge/ai-workbench/collector/src/database"
 	"github.com/pgedge/ai-workbench/collector/src/scheduler"
+	"github.com/pgedge/ai-workbench/pkg/flagutil"
 	"github.com/pgedge/ai-workbench/pkg/logger"
 
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/signal"
 	"syscall"
@@ -40,16 +43,33 @@ var (
 		"Print the latest datastore schema version this collector knows about and exit")
 
 	// Datastore connection flags
-	pgHost         = flag.String("pg-host", "", "PostgreSQL server hostname or IP address")
-	pgHostAddr     = flag.String("pg-hostaddr", "", "PostgreSQL server IP address")
-	pgDatabase     = flag.String("pg-database", "", "PostgreSQL database name")
-	pgUsername     = flag.String("pg-username", "", "PostgreSQL username")
-	pgPasswordFile = flag.String("pg-password-file", "", "Path to file containing PostgreSQL password")
-	pgPort         = flag.Int("pg-port", 5432, "PostgreSQL server port")
-	pgSSLMode      = flag.String("pg-sslmode", "prefer", "PostgreSQL SSL mode")
-	pgSSLCert      = flag.String("pg-sslcert", "", "Path to PostgreSQL client SSL certificate")
-	pgSSLKey       = flag.String("pg-sslkey", "", "Path to PostgreSQL client SSL key")
-	pgSSLRootCert  = flag.String("pg-sslrootcert", "", "Path to PostgreSQL root SSL certificate")
+	pgHost         = flag.String(flagPGHost, "", "PostgreSQL server hostname or IP address")
+	pgHostAddr     = flag.String(flagPGHostAddr, "", "PostgreSQL server IP address")
+	pgDatabase     = flag.String(flagPGDatabase, "", "PostgreSQL database name")
+	pgUsername     = flag.String(flagPGUsername, "", "PostgreSQL username")
+	pgPasswordFile = flag.String(flagPGPasswordFile, "", "Path to file containing PostgreSQL password")
+	pgPort         = flag.Int(flagPGPort, 5432, "PostgreSQL server port")
+	pgSSLMode      = flag.String(flagPGSSLMode, "prefer", "PostgreSQL SSL mode")
+	pgSSLCert      = flag.String(flagPGSSLCert, "", "Path to PostgreSQL client SSL certificate")
+	pgSSLKey       = flag.String(flagPGSSLKey, "", "Path to PostgreSQL client SSL key")
+	pgSSLRootCert  = flag.String(flagPGSSLRootCert, "", "Path to PostgreSQL root SSL certificate")
+)
+
+// Names of the datastore connection flags. They are named constants
+// so the registration above and the override logic in ApplyFlags
+// cannot drift apart; ApplyFlags looks a flag up by name to decide
+// whether the operator actually passed it.
+const (
+	flagPGHost         = "pg-host"
+	flagPGHostAddr     = "pg-hostaddr"
+	flagPGDatabase     = "pg-database"
+	flagPGUsername     = "pg-username"
+	flagPGPasswordFile = "pg-password-file"
+	flagPGPort         = "pg-port"
+	flagPGSSLMode      = "pg-sslmode"
+	flagPGSSLCert      = "pg-sslcert"
+	flagPGSSLKey       = "pg-sslkey"
+	flagPGSSLRootCert  = "pg-sslrootcert"
 )
 
 func main() {
@@ -76,7 +96,7 @@ func main() {
 	logger.Startupf("pgEdge AI DBA Workbench Collector v%s starting...", Version)
 
 	// Load configuration
-	config, err := loadConfiguration()
+	config, err := loadConfiguration(flagutil.Passed(flag.CommandLine))
 	if err != nil {
 		logger.Fatalf("Failed to load configuration: %v", err)
 	}
@@ -159,15 +179,25 @@ func maybePrintSchemaVersion(w io.Writer, enabled bool) (bool, error) {
 	return true, err
 }
 
+// discoverDefaultConfigPath locates a default configuration file when
+// --config is not given. It is a variable so tests can interpose
+// between discovery and load, which is the only deterministic way to
+// exercise the "file vanished after discovery" branch.
+var discoverDefaultConfigPath = GetDefaultConfigPath
+
 // loadConfiguration loads configuration from file, environment, and command line.
 // Priority (highest to lowest): CLI flags > environment variables > config file > defaults.
+//
+// The passed set names the flags the operator supplied on the command
+// line; it is threaded in from main rather than read from the global
+// flag set here so tests can drive both branches of every override.
 //
 // When --config is not given, the function consults the shared
 // helper which searches the per-user config directory first and
 // /etc/pgedge second. When neither exists the function logs an
 // informational message and proceeds with compiled-in defaults
 // rather than failing.
-func loadConfiguration() (*Config, error) {
+func loadConfiguration(passed flagutil.Set) (*Config, error) {
 	config := NewConfig()
 
 	// Determine config file path. The empty string from the helper
@@ -177,7 +207,7 @@ func loadConfiguration() (*Config, error) {
 	explicitConfigPath := (configPath != "")
 
 	if !explicitConfigPath {
-		configPath = GetDefaultConfigPath("")
+		configPath = discoverDefaultConfigPath("")
 	}
 
 	if configPath == "" {
@@ -189,15 +219,17 @@ func loadConfiguration() (*Config, error) {
 		logger.Startupf("Configuration loaded from: %s", configPath)
 	} else if explicitConfigPath {
 		// The user explicitly asked for a file; any failure to
-		// read it is fatal. We do not differentiate a missing
-		// file from a permission error here because both
-		// indicate operator intent that the file should exist
-		// and be readable.
-		if os.IsNotExist(err) {
+		// read it is fatal. A missing file gets a clearer message
+		// than the generic wrapped error, but both indicate
+		// operator intent that the file should exist and be
+		// readable. LoadFromFile wraps the underlying error, so
+		// errors.Is (which unwraps) is required here; os.IsNotExist
+		// does not unwrap and would never match.
+		if errors.Is(err, fs.ErrNotExist) {
 			return nil, fmt.Errorf("specified config file not found: %s", configPath)
 		}
 		return nil, fmt.Errorf("failed to load config file: %w", err)
-	} else if os.IsNotExist(err) {
+	} else if errors.Is(err, fs.ErrNotExist) {
 		// Auto-discovered path that has since vanished (TOCTOU
 		// race between the helper's stat and our load). Fall
 		// back to defaults rather than crashing, matching the
@@ -213,7 +245,7 @@ func loadConfiguration() (*Config, error) {
 	}
 
 	// Override with command line flags (highest priority)
-	config.ApplyFlags()
+	config.ApplyFlags(passed)
 
 	// Load password from file if specified
 	if err := config.LoadPassword(); err != nil {

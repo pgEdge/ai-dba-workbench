@@ -8,7 +8,6 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
 import { screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Home as HomeIcon } from '@mui/icons-material';

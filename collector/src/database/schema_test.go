@@ -61,7 +61,7 @@ func setupTestDatabase() error {
 	adminConnStr := getAdminConnectionString()
 
 	// Connect to admin database
-	adminPool, err := pgxpool.New(ctx, adminConnStr)
+	adminPool, err := newAdminPool(ctx, adminConnStr)
 	if err != nil {
 		return fmt.Errorf("failed to connect to admin database: %w", err)
 	}
@@ -99,20 +99,33 @@ func teardownTestDatabase() {
 	adminConnStr := getAdminConnectionString()
 
 	// Connect to admin database
-	adminPool, err := pgxpool.New(ctx, adminConnStr)
+	adminPool, err := newAdminPool(ctx, adminConnStr)
 	if err != nil {
 		fmt.Printf("Failed to connect to admin database for cleanup: %v\n", err)
 		return
 	}
 	defer adminPool.Close()
 
-	// Drop test database
-	_, err = adminPool.Exec(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS %s", testDBName))
+	// Drop test database. FORCE terminates any backend a test left
+	// connected, which would otherwise make the drop fail and leak the
+	// database (issue #486).
+	_, err = adminPool.Exec(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS %s WITH (FORCE)", testDBName))
 	if err != nil {
 		fmt.Printf("Warning: failed to drop test database %s: %v\n", testDBName, err)
 	} else {
 		fmt.Printf("Dropped test database: %s\n", testDBName)
 	}
+}
+
+// newAdminPool opens a single-connection pool for CREATE and DROP
+// DATABASE; anything larger only adds idle backends (issue #486).
+func newAdminPool(ctx context.Context, connStr string) (*pgxpool.Pool, error) {
+	cfg, err := pgxpool.ParseConfig(connStr)
+	if err != nil {
+		return nil, err
+	}
+	cfg.MaxConns = 1
+	return pgxpool.NewWithConfig(ctx, cfg)
 }
 
 // getAdminConnectionString returns the connection string for the admin database (postgres)
@@ -250,6 +263,7 @@ func cleanupTestSchema(t *testing.T, pool *pgxpool.Pool) {
 		"probe_availability",
 		"alerter_settings",
 		// Core tables
+		"maintenance_runs",
 		"probe_configs",
 		"connections",
 		"clusters",
@@ -283,7 +297,7 @@ func TestNewSchemaManager(t *testing.T) {
 	}
 
 	// Verify all migrations are registered
-	expectedVersions := []int{1, 2, 3, 4, 5, 6, 7, 8, 9}
+	expectedVersions := []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23}
 	if len(sm.migrations) != len(expectedVersions) {
 		t.Fatalf("Expected %d migrations, got %d", len(expectedVersions), len(sm.migrations))
 	}

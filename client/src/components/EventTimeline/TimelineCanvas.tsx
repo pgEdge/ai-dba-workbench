@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useMemo, memo } from 'react';
+import { useMemo, memo } from 'react';
 import {
     Box,
     Typography,
@@ -16,6 +16,7 @@ import {
 } from '@mui/material';
 import { getTimeRangeBounds, generateTimeMarkers, clusterEvents } from './utils';
 import EventMarker from './EventMarker';
+import type { TimelineCanvasProps } from './types';
 import {
     timelineCanvasContainerSx,
     timeAxisSx,
@@ -26,7 +27,7 @@ import {
 /**
  * TimelineCanvas - The actual timeline visualization
  */
-const TimelineCanvas = memo(({ events, timeRange, showServer, onEventClick }) => {
+const TimelineCanvas = memo(({ events, timeRange, showServer, onEventClick }: TimelineCanvasProps) => {
     const theme = useTheme();
     const { startTime, endTime } = useMemo(() => getTimeRangeBounds(timeRange), [timeRange]);
     const timeMarkers = useMemo(() => generateTimeMarkers(startTime, endTime), [startTime, endTime]);

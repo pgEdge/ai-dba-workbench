@@ -1,12 +1,10 @@
 module github.com/pgedge/ai-workbench/alerter
 
-go 1.26.1
-
-toolchain go1.26.2
+go 1.26.8
 
 require (
 	github.com/jackc/pgx/v5 v5.9.2
-	github.com/pgEdge/pgedge-go-llm-lib v0.1.1
+	github.com/pgEdge/pgedge-go-llm-lib v0.5.0
 	github.com/pgedge/ai-workbench/pkg v0.0.0
 	github.com/robfig/cron/v3 v3.0.1
 	gopkg.in/yaml.v3 v3.0.1
@@ -21,6 +19,6 @@ require (
 	github.com/kr/text v0.2.0 // indirect
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
 	golang.org/x/crypto v0.47.0 // indirect
-	golang.org/x/sync v0.19.0 // indirect
-	golang.org/x/text v0.33.0 // indirect
+	golang.org/x/sync v0.22.0 // indirect
+	golang.org/x/text v0.40.0 // indirect
 )

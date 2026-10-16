@@ -31,7 +31,7 @@ func createTestAuthStore(t *testing.T) (*AuthStore, func()) {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
 
-	store, err := NewAuthStore(tmpDir, 0, 0)
+	store, err := NewAuthStore(tmpDir, 0, 0, AuditKeyForTesting())
 	if err != nil {
 		os.RemoveAll(tmpDir)
 		t.Fatalf("Failed to create auth store: %v", err)
@@ -201,7 +201,7 @@ func TestAuthMiddleware_ValidToken(t *testing.T) {
 
 	// Create a user and token
 	store.CreateUser("tokenuser", "Password1234", "", "", "")
-	rawToken, _, err := store.CreateToken("tokenuser", "Test token", nil)
+	rawToken, _, err := store.AsActor(systemActor).CreateToken("tokenuser", "Test token", nil, true)
 	if err != nil {
 		t.Fatalf("Failed to create token: %v", err)
 	}
@@ -245,7 +245,7 @@ func TestAuthMiddleware_ExpiredToken(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	store, err := NewAuthStore(tmpDir, 0, 0)
+	store, err := NewAuthStore(tmpDir, 0, 0, AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
@@ -255,7 +255,7 @@ func TestAuthMiddleware_ExpiredToken(t *testing.T) {
 	// Create a user and a token that expires immediately
 	store.CreateUser("tokenuser", "Password1234", "", "", "")
 	expiryTime := time.Now().Add(1 * time.Millisecond)
-	rawToken, _, err := store.CreateToken("tokenuser", "Test expired token", &expiryTime)
+	rawToken, _, err := store.AsActor(systemActor).CreateToken("tokenuser", "Test expired token", &expiryTime, true)
 	if err != nil {
 		t.Fatalf("Failed to create token: %v", err)
 	}
@@ -319,7 +319,7 @@ func TestAuthMiddleware_ValidSessionToken(t *testing.T) {
 	os.MkdirAll(tmpDir, 0750)
 	defer os.RemoveAll(tmpDir)
 
-	store, err := NewAuthStore(tmpDir, 0, 0)
+	store, err := NewAuthStore(tmpDir, 0, 0, AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
@@ -467,6 +467,40 @@ func TestIPExtractor_ExtractIP(t *testing.T) {
 		}
 	})
 
+	// A proxy that sends something other than an IP address must not
+	// have it stored as one; the direct connection IP is used instead.
+	t.Run("trusted proxy rejects a malformed X-Real-IP", func(t *testing.T) {
+		for _, value := range []string{
+			"not-an-ip",
+			"proxy.example.com",
+			"203.0.113.50, 198.51.100.1",
+			"  ",
+			"203.0.113.999",
+		} {
+			extractor := NewIPExtractor([]string{"10.0.0.0/8"})
+			req := httptest.NewRequest("GET", "/", nil)
+			req.RemoteAddr = "10.0.0.1:12345"
+			req.Header.Set("X-Real-IP", value)
+
+			if ip := extractor.ExtractIP(req); ip != "10.0.0.1" {
+				t.Errorf("X-Real-IP %q: expected the direct IP 10.0.0.1, got %q",
+					value, ip)
+			}
+		}
+	})
+
+	// A padded but otherwise valid value is still accepted, trimmed.
+	t.Run("trusted proxy trims a valid X-Real-IP", func(t *testing.T) {
+		extractor := NewIPExtractor([]string{"10.0.0.0/8"})
+		req := httptest.NewRequest("GET", "/", nil)
+		req.RemoteAddr = "10.0.0.1:12345"
+		req.Header.Set("X-Real-IP", "  2001:db8::1  ")
+
+		if ip := extractor.ExtractIP(req); ip != "2001:db8::1" {
+			t.Errorf("Expected the trimmed IPv6 address, got %q", ip)
+		}
+	})
+
 	// Test case: trusted proxy with no forwarding headers
 	t.Run("trusted proxy no headers", func(t *testing.T) {
 		extractor := NewIPExtractor([]string{"10.0.0.0/8"})
@@ -503,6 +537,67 @@ func TestIPExtractor_ExtractIP(t *testing.T) {
 		// All are trusted, should return leftmost
 		if ip != "10.0.0.5" {
 			t.Errorf("Expected '10.0.0.5' (leftmost when all trusted), got %q", ip)
+		}
+	})
+
+	// Test case: every parseable entry is trusted and the leftmost is
+	// not an address, so the direct address is used rather than the
+	// arbitrary header text (issue #589)
+	t.Run("all trusted with unparseable leftmost returns direct IP", func(t *testing.T) {
+		extractor := NewIPExtractor([]string{"10.0.0.0/8"})
+		req := httptest.NewRequest("GET", "/", nil)
+		req.RemoteAddr = "10.0.0.1:12345"
+		req.Header.Set("X-Forwarded-For", strings.Repeat("x", 4096)+", 10.0.0.5")
+
+		ip := extractor.ExtractIP(req)
+		if ip != "10.0.0.1" {
+			t.Errorf("Expected the direct address '10.0.0.1', got %.40q", ip)
+		}
+	})
+
+	// Test case: proxies that append the client's port to the address
+	// still yield the client address rather than the proxy's
+	t.Run("forwarded entries with a port", func(t *testing.T) {
+		extractor := NewIPExtractor([]string{"10.0.0.0/8"})
+		for _, tc := range []struct{ header, value, want string }{
+			{"X-Forwarded-For", "203.0.113.7:51234", "203.0.113.7"},
+			{"X-Forwarded-For", "[2001:db8::1]:443, 10.0.0.2", "2001:db8::1"},
+			{"X-Forwarded-For", "[2001:db8::2]", "2001:db8::2"},
+			{"X-Forwarded-For", "10.0.0.5:80, 10.0.0.2:81", "10.0.0.5"},
+			{"X-Real-IP", "198.51.100.4:8080", "198.51.100.4"},
+			{"X-Real-IP", "proxy.example.com:8080", "10.0.0.1"},
+		} {
+			req := httptest.NewRequest("GET", "/", nil)
+			req.RemoteAddr = "10.0.0.1:12345"
+			req.Header.Set(tc.header, tc.value)
+
+			if ip := extractor.ExtractIP(req); ip != tc.want {
+				t.Errorf("%s %q: expected %q, got %q", tc.header, tc.value,
+					tc.want, ip)
+			}
+		}
+	})
+
+	// Test case: one client spelt several ways yields one address, so
+	// the spellings share an audit address and a denial key
+	t.Run("forwarded addresses are canonicalised", func(t *testing.T) {
+		extractor := NewIPExtractor([]string{"10.0.0.0/8"})
+		for _, tc := range []struct{ header, value, want string }{
+			{"X-Forwarded-For", "2001:0DB8::1", "2001:db8::1"},
+			{"X-Forwarded-For", "2001:db8:0:0:0:0:0:1", "2001:db8::1"},
+			{"X-Forwarded-For", "[2001:DB8::1]:443", "2001:db8::1"},
+			{"X-Forwarded-For", "10.0.0.5, 10.0.0.2", "10.0.0.5"},
+			{"X-Real-IP", "2001:DB8:0::1", "2001:db8::1"},
+			{"X-Real-IP", "::ffff:198.51.100.4", "198.51.100.4"},
+		} {
+			req := httptest.NewRequest("GET", "/", nil)
+			req.RemoteAddr = "10.0.0.1:12345"
+			req.Header.Set(tc.header, tc.value)
+
+			if ip := extractor.ExtractIP(req); ip != tc.want {
+				t.Errorf("%s %q: expected %q, got %q", tc.header, tc.value,
+					tc.want, ip)
+			}
 		}
 	})
 
@@ -753,6 +848,9 @@ func TestAuthMiddleware_PublicEndpoints(t *testing.T) {
 		UserInfoPath,
 		"/api/v1/auth/login",
 		"/api/v1/auth/logout",
+		"/api/v1/auth/oidc/start",
+		"/api/v1/auth/oidc/callback",
+		"/api/v1/capabilities",
 		LLMProvidersPath,
 		LLMModelsPath,
 	}
@@ -780,7 +878,7 @@ func TestAuthMiddleware_SessionCookie(t *testing.T) {
 	os.MkdirAll(tmpDir, 0750)
 	defer os.RemoveAll(tmpDir)
 
-	store, err := NewAuthStore(tmpDir, 0, 0)
+	store, err := NewAuthStore(tmpDir, 0, 0, AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
@@ -856,7 +954,7 @@ func TestAuthMiddleware_APITokenWithOwner(t *testing.T) {
 	os.MkdirAll(tmpDir, 0750)
 	defer os.RemoveAll(tmpDir)
 
-	store, err := NewAuthStore(tmpDir, 0, 0)
+	store, err := NewAuthStore(tmpDir, 0, 0, AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
@@ -865,7 +963,7 @@ func TestAuthMiddleware_APITokenWithOwner(t *testing.T) {
 
 	// Create a user and a token
 	store.CreateUser("testuser", "Testpass1234", "Test user", "", "")
-	rawToken, _, err := store.CreateToken("testuser", "User API token", nil)
+	rawToken, _, err := store.AsActor(systemActor).CreateToken("testuser", "User API token", nil, true)
 	if err != nil {
 		t.Fatalf("Failed to create token: %v", err)
 	}
@@ -905,7 +1003,7 @@ func TestAuthMiddleware_SuperuserToken(t *testing.T) {
 	os.MkdirAll(tmpDir, 0750)
 	defer os.RemoveAll(tmpDir)
 
-	store, err := NewAuthStore(tmpDir, 0, 0)
+	store, err := NewAuthStore(tmpDir, 0, 0, AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
@@ -915,7 +1013,7 @@ func TestAuthMiddleware_SuperuserToken(t *testing.T) {
 	// Create a superuser and a token for them
 	store.CreateUser("superuser-svc", "Testpass1234", "Superuser service", "", "")
 	store.SetUserSuperuser("superuser-svc", true)
-	rawToken, _, err := store.CreateToken("superuser-svc", "Superuser token", nil)
+	rawToken, _, err := store.AsActor(systemActor).CreateToken("superuser-svc", "Superuser token", nil, true)
 	if err != nil {
 		t.Fatalf("Failed to create token: %v", err)
 	}
@@ -950,7 +1048,7 @@ func TestAuthMiddleware_SuperuserSessionUser(t *testing.T) {
 	os.MkdirAll(tmpDir, 0750)
 	defer os.RemoveAll(tmpDir)
 
-	store, err := NewAuthStore(tmpDir, 0, 0)
+	store, err := NewAuthStore(tmpDir, 0, 0, AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
@@ -1042,4 +1140,131 @@ func TestIPExtractor_ExtractIP_EdgeCases(t *testing.T) {
 			t.Error("Expected false for nil IP")
 		}
 	})
+}
+
+// TestIsPublicPath locks in the set of paths served without credentials.
+// The OIDC endpoints and /api/v1/capabilities are on the list because an
+// unauthenticated browser has to reach them in order to log in at all.
+func TestIsPublicPath(t *testing.T) {
+	cases := map[string]bool{
+		HealthCheckPath:              true,
+		UserInfoPath:                 true,
+		LLMProvidersPath:             true,
+		LLMModelsPath:                true,
+		"/api/v1/auth/login":         true,
+		"/api/v1/auth/logout":        true,
+		"/api/v1/auth/oidc/start":    true,
+		"/api/v1/auth/oidc/callback": true,
+		"/api/v1/capabilities":       true,
+		"/api/v1/connections":        false,
+		"/api/v1/auth":               false,
+		"":                           false,
+	}
+	for path, want := range cases {
+		if got := IsPublicPath(path); got != want {
+			t.Errorf("IsPublicPath(%q) = %v, want %v", path, got, want)
+		}
+	}
+}
+
+// TestAuthMiddlewareMatchesAuthenticateRequestContext is the convergence
+// guard: whatever AuthMiddleware puts in the request context must be
+// exactly what a direct AuthenticateRequest call would have produced, for
+// both credential kinds.
+func TestAuthMiddlewareMatchesAuthenticateRequestContext(t *testing.T) {
+	store, cleanup := createTestAuthStore(t)
+	defer cleanup()
+
+	if err := store.CreateUser("convuser", "Testpass1234", "", "", ""); err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
+	apiToken, _, err := store.AsActor(systemActor).CreateToken("convuser", "conv token", nil, true)
+	if err != nil {
+		t.Fatalf("failed to create token: %v", err)
+	}
+	sessionToken, _, err := store.AuthenticateUser("convuser", "Testpass1234")
+	if err != nil {
+		t.Fatalf("failed to authenticate: %v", err)
+	}
+
+	keys := []contextKey{
+		TokenHashContextKey, UsernameContextKey, UserIDContextKey,
+		IsSuperuserContextKey, IsAPITokenContextKey, TokenIDContextKey,
+	}
+
+	for _, tc := range []struct {
+		name  string
+		token string
+	}{
+		{"api token", apiToken},
+		{"session token", sessionToken},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var fromMiddleware context.Context
+			handler := AuthMiddleware(store, true)(http.HandlerFunc(
+				func(w http.ResponseWriter, r *http.Request) {
+					fromMiddleware = r.Context()
+				}))
+
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/connections", nil)
+			req.Header.Set("Authorization", "Bearer "+tc.token)
+			handler.ServeHTTP(httptest.NewRecorder(), req)
+
+			if fromMiddleware == nil {
+				t.Fatal("middleware did not reach the wrapped handler")
+			}
+
+			direct, err := AuthenticateRequest(req, store)
+			if err != nil {
+				t.Fatalf("AuthenticateRequest: %v", err)
+			}
+
+			for _, key := range keys {
+				if fromMiddleware.Value(key) != direct.Value(key) {
+					t.Errorf("context key %q differs: middleware %v, direct %v",
+						key, fromMiddleware.Value(key), direct.Value(key))
+				}
+			}
+		})
+	}
+}
+
+// TestAuthMiddlewareSetsUsernameForAPITokens records the deliberate
+// behavior change from the convergence: an API token call now carries its
+// owner's username, where previously the middleware left it unset.
+func TestAuthMiddlewareSetsUsernameForAPITokens(t *testing.T) {
+	store, cleanup := createTestAuthStore(t)
+	defer cleanup()
+
+	if err := store.CreateUser("ownername", "Testpass1234", "", "", ""); err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
+	apiToken, stored, err := store.AsActor(systemActor).CreateToken("ownername", "token", nil, true)
+	if err != nil {
+		t.Fatalf("failed to create token: %v", err)
+	}
+
+	var seen context.Context
+	handler := AuthMiddleware(store, true)(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			seen = r.Context()
+		}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections", nil)
+	req.Header.Set("Authorization", "Bearer "+apiToken)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+	if got := GetUsernameFromContext(seen); got != "ownername" {
+		t.Errorf("username = %q, want %q", got, "ownername")
+	}
+	if got := GetTokenIDFromContext(seen); got != stored.ID {
+		t.Errorf("token ID = %d, want %d", got, stored.ID)
+	}
+	if !IsAPITokenFromContext(seen) {
+		t.Error("IsAPITokenFromContext = false, want true")
+	}
 }

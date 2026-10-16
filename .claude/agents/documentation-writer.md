@@ -45,7 +45,9 @@ the skill:
 
 `.claude/documentation-writer/README.md` describes the documentation
 layout of this repository and where each kind of page lives. Update it in
-the same change whenever the layout changes.
+the same change whenever the layout changes: a stale entry is worse than
+none, because it sends the next task down a path the code no longer
+supports.
 
 ## Responsibilities
 

@@ -21,6 +21,7 @@ import {
     TableRow,
     Paper,
     Button,
+    Chip,
     IconButton,
     Switch,
     TextField,
@@ -56,25 +57,25 @@ import {
     getTableContainerSx,
 } from './styles';
 import { useCrudPanel, extractErrorMessage } from './_shared';
+import {
+    type MessagingChannelConfig,
+    type MessagingChannelField,
+    emptyFieldValues,
+    editFieldValues,
+    isFieldMandatory,
+    findMissingRequiredField,
+} from './messagingChannelFields';
 
-/**
- * Configuration that varies between messaging platforms (Slack,
- * Mattermost, etc.).
- */
-export interface MessagingChannelConfig {
-    /** API channel_type value, e.g. 'slack' or 'mattermost'. */
-    channelType: string;
-    /** Human-readable platform name shown in headings and messages. */
-    platformName: string;
-    /** Label for the webhook URL form field. */
-    webhookUrlLabel: string;
-}
+export type { MessagingChannelConfig, MessagingChannelField };
 
 /**
  * Messaging channel as returned by the API.
  *
- * The server redacts `webhook_url` (issue #187); clients only see whether
- * one is configured via `webhook_url_set`.
+ * The server redacts secrets such as `webhook_url` and
+ * `telegram_bot_token` (issue #187); clients only see whether one is
+ * configured, via the descriptor's `setFlag`. Non-secret values (a
+ * Telegram chat ID, say) are echoed back via the descriptor's
+ * `valueKey`.
  */
 interface MessagingChannel {
     id: number;
@@ -82,24 +83,20 @@ interface MessagingChannel {
     description: string;
     enabled: boolean;
     is_estate_default: boolean;
-    webhook_url_set: boolean;
+    /** Per-field "is configured" flags, keyed by descriptor key. */
+    configured: Record<string, boolean>;
+    /** Per-field values echoed by the API, keyed by descriptor key. */
+    values: Record<string, string>;
 }
 
 interface ChannelFormState {
     name: string;
     description: string;
-    webhook_url: string;
     enabled: boolean;
     is_estate_default: boolean;
+    /** Credential field values, keyed by descriptor key. */
+    values: Record<string, string>;
 }
-
-const DEFAULT_FORM_STATE: ChannelFormState = {
-    name: '',
-    description: '',
-    webhook_url: '',
-    enabled: true,
-    is_estate_default: false,
-};
 
 interface AdminMessagingChannelsProps {
     config: MessagingChannelConfig;
@@ -107,7 +104,7 @@ interface AdminMessagingChannelsProps {
 
 const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config }) => {
     const theme = useTheme();
-    const { channelType, platformName, webhookUrlLabel } = config;
+    const { channelType, platformName, fields } = config;
 
     // Fetch and filter to this channel type. The endpoint returns every
     // channel type; we narrow by `channel_type` and normalise the raw
@@ -123,9 +120,20 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
                 description: (ch.description as string) || '',
                 enabled: ch.enabled as boolean,
                 is_estate_default: ch.is_estate_default as boolean,
-                webhook_url_set: Boolean(ch.webhook_url_set),
+                configured: Object.fromEntries(
+                    fields.map((field) => [
+                        field.key,
+                        field.setFlag ? Boolean(ch[field.setFlag]) : false,
+                    ]),
+                ),
+                values: Object.fromEntries(
+                    fields.map((field) => [
+                        field.key,
+                        field.valueKey ? (ch[field.valueKey] as string) || '' : '',
+                    ]),
+                ),
             }));
-    }, [channelType]);
+    }, [channelType, fields]);
 
     const crud = useCrudPanel<MessagingChannel>({
         fetchItems: fetchChannels,
@@ -133,9 +141,15 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
     });
 
     // Per-form fields for the create/edit dialog. Kept here because the
-    // shape is channel-specific (name + description + webhook URL +
-    // toggle pair).
-    const [form, setForm] = useState<ChannelFormState>(DEFAULT_FORM_STATE);
+    // shape is channel-specific (name + description + credential fields
+    // + toggle pair).
+    const [form, setForm] = useState<ChannelFormState>(() => ({
+        name: '',
+        description: '',
+        enabled: true,
+        is_estate_default: false,
+        values: emptyFieldValues(fields),
+    }));
 
     // Test-notification button uses its own per-row spinner; tracked
     // separately from the shared `saving` flag since it is a non-CRUD
@@ -145,27 +159,43 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
     // --- Create / Edit dialog ---
 
     const handleOpenCreate = () => {
-        setForm(DEFAULT_FORM_STATE);
+        setForm({
+            name: '',
+            description: '',
+            enabled: true,
+            is_estate_default: false,
+            values: emptyFieldValues(fields),
+        });
         crud.openCreate();
     };
 
     const handleOpenEdit = (e: React.MouseEvent, channel: MessagingChannel) => {
         e.stopPropagation();
-        // The webhook URL is a redacted secret on the server; never
-        // pre-populate it. An empty value at save time means "leave the
-        // existing URL unchanged".
+        // Secrets are redacted on the server; never pre-populate them.
+        // An empty value at save time means "leave the stored secret
+        // unchanged".
         setForm({
             name: channel.name,
             description: channel.description,
-            webhook_url: '',
             enabled: channel.enabled,
             is_estate_default: channel.is_estate_default,
+            values: editFieldValues(fields, channel.values),
         });
         crud.openEdit(channel);
     };
 
-    const handleFormChange = (field: keyof ChannelFormState, value: string | boolean) => {
+    const handleFormChange = (
+        field: 'name' | 'description' | 'enabled' | 'is_estate_default',
+        value: string | boolean,
+    ) => {
         setForm((prev) => ({ ...prev, [field]: value }));
+    };
+
+    const handleFieldChange = (key: string, value: string) => {
+        setForm((prev) => ({
+            ...prev,
+            values: { ...prev.values, [key]: value },
+        }));
     };
 
     const handleSaveChannel = async () => {
@@ -174,26 +204,27 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
             crud.setDialogError('Name is required.');
             return;
         }
-        // On create, the URL is required. On edit, an empty URL means
-        // "preserve the existing one", which is allowed only when the
-        // server already has one configured.
-        const trimmedUrl = form.webhook_url.trim();
-        if (!editingChannel && !trimmedUrl) {
-            crud.setDialogError('Webhook URL is required.');
-            return;
-        }
-        if (editingChannel && !trimmedUrl && !editingChannel.webhook_url_set) {
-            crud.setDialogError('Webhook URL is required.');
+        // Mandatory credential fields must be filled in. For secrets on
+        // edit this only applies while the server has none stored; see
+        // `isFieldMandatory`.
+        const missing = findMissingRequiredField(
+            fields,
+            form.values,
+            editingChannel ? editingChannel.configured : null,
+        );
+        if (missing) {
+            crud.setDialogError(`${missing.label} is required.`);
             return;
         }
 
         const successName = form.name.trim();
         let request: () => Promise<unknown>;
         if (editingChannel) {
-            // Update — send only changed fields. For the webhook URL,
-            // omit it entirely when the user left the form blank; the
-            // server preserves the stored value when the field is
-            // absent from the request body.
+            // Update — send only changed fields. Secrets are omitted
+            // entirely when the user left the form blank; the server
+            // preserves the stored value when the field is absent from
+            // the request body. Non-secret credential fields are
+            // always sent, since the form shows their current value.
             const body: Record<string, unknown> = {};
             if (form.name.trim() !== editingChannel.name) {
                 body.name = form.name.trim();
@@ -207,20 +238,29 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
             if (form.is_estate_default !== editingChannel.is_estate_default) {
                 body.is_estate_default = form.is_estate_default;
             }
-            if (trimmedUrl) {
-                body.webhook_url = trimmedUrl;
-            }
+            fields.forEach((field) => {
+                const value = (form.values[field.key] || '').trim();
+                if (field.secret) {
+                    if (value) {
+                        body[field.key] = value;
+                    }
+                    return;
+                }
+                body[field.key] = value;
+            });
             request = () => apiPut(`/api/v1/notification-channels/${editingChannel.id}`, body);
         } else {
-            request = () =>
-                apiPost('/api/v1/notification-channels', {
-                    channel_type: channelType,
-                    name: form.name.trim(),
-                    description: form.description.trim(),
-                    webhook_url: trimmedUrl,
-                    enabled: form.enabled,
-                    is_estate_default: form.is_estate_default,
-                });
+            const createBody: Record<string, unknown> = {
+                channel_type: channelType,
+                name: form.name.trim(),
+                description: form.description.trim(),
+                enabled: form.enabled,
+                is_estate_default: form.is_estate_default,
+            };
+            fields.forEach((field) => {
+                createBody[field.key] = (form.values[field.key] || '').trim();
+            });
+            request = () => apiPost('/api/v1/notification-channels', createBody);
         }
 
         const result = await crud.runMutation(request, {
@@ -301,17 +341,17 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
     const tableContainerSx = getTableContainerSx(theme);
     const editingChannel = crud.editingItem;
     const isEditing = editingChannel !== null;
-    // When editing a channel that already has a URL configured, allow
-    // saving without re-typing the URL. The empty value will be omitted
-    // from the PUT body so the server preserves the stored secret.
-    const webhookUrlOptional = isEditing && editingChannel.webhook_url_set;
-    const webhookUrlPlaceholder = webhookUrlOptional
-        ? 'Leave blank to keep existing URL'
-        : '';
+    const configuredFlags = editingChannel ? editingChannel.configured : null;
     const submitDisabled =
         crud.saving
         || !form.name.trim()
-        || (!form.webhook_url.trim() && !webhookUrlOptional);
+        || findMissingRequiredField(fields, form.values, configuredFlags) !== undefined;
+
+    // Credential fields that ask for their own table column. Name,
+    // description, enabled, estate default and actions are always
+    // present, so the empty-state row spans those five plus these.
+    const tableFields = fields.filter((field) => field.showInTable);
+    const columnCount = 5 + tableFields.length;
 
     return (
         <Box>
@@ -350,6 +390,11 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
                         <TableRow>
                             <TableCell sx={tableHeaderCellSx}>Name</TableCell>
                             <TableCell sx={tableHeaderCellSx}>Description</TableCell>
+                            {tableFields.map((field) => (
+                                <TableCell key={field.key} sx={tableHeaderCellSx}>
+                                    {field.label}
+                                </TableCell>
+                            ))}
                             <TableCell sx={tableHeaderCellSx}>Enabled</TableCell>
                             <TableCell sx={tableHeaderCellSx}>Estate Default</TableCell>
                             <TableCell sx={tableHeaderCellSx} align="right">Actions</TableCell>
@@ -365,6 +410,23 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
                                     <TableCell>
                                         {truncateDescription(channel.description)}
                                     </TableCell>
+                                    {tableFields.map((field) => (
+                                        <TableCell key={field.key}>
+                                            {field.setFlag ? (
+                                                <Chip
+                                                    label={
+                                                        channel.configured[field.key]
+                                                            ? 'Configured'
+                                                            : 'Not configured'
+                                                    }
+                                                    size="small"
+                                                    variant="outlined"
+                                                />
+                                            ) : (
+                                                channel.values[field.key]
+                                            )}
+                                        </TableCell>
+                                    ))}
                                     <TableCell>
                                         <Switch
                                             checked={channel.enabled}
@@ -422,7 +484,7 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
                             ))
                         ) : (
                             <TableRow>
-                                <TableCell colSpan={5} align="center" sx={emptyRowSx}>
+                                <TableCell colSpan={columnCount} align="center" sx={emptyRowSx}>
                                     <Typography color="text.secondary" sx={emptyRowTextSx}>
                                         No {platformName} channels configured.
                                     </Typography>
@@ -471,22 +533,38 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
                         rows={2}
                         InputLabelProps={{ shrink: true }}
                     />
-                    <TextField
-                        fullWidth
-                        label={webhookUrlLabel}
-                        value={form.webhook_url}
-                        onChange={(e) => { handleFormChange('webhook_url', e.target.value); }}
-                        disabled={crud.saving}
-                        margin="dense"
-                        required={!webhookUrlOptional}
-                        placeholder={webhookUrlPlaceholder}
-                        helperText={
-                            webhookUrlOptional
-                                ? 'A webhook URL is configured. Leave this blank to keep it unchanged.'
-                                : undefined
-                        }
-                        InputLabelProps={{ shrink: true }}
-                    />
+                    {fields.map((field) => {
+                        // A stored secret may be left blank on edit to
+                        // keep it; say so instead of the usual helper.
+                        const keepsStoredSecret = Boolean(
+                            field.secret && isEditing && editingChannel.configured[field.key],
+                        );
+                        return (
+                            <TextField
+                                key={field.key}
+                                fullWidth
+                                label={field.label}
+                                value={form.values[field.key] ?? ''}
+                                onChange={(e) => { handleFieldChange(field.key, e.target.value); }}
+                                disabled={crud.saving}
+                                margin="dense"
+                                required={isFieldMandatory(field, configuredFlags)}
+                                type={field.secret ? 'password' : 'text'}
+                                autoComplete={field.secret ? 'off' : undefined}
+                                placeholder={
+                                    keepsStoredSecret
+                                        ? `Leave blank to keep the existing ${field.label}`
+                                        : (field.placeholder ?? '')
+                                }
+                                helperText={
+                                    keepsStoredSecret
+                                        ? `A ${field.label} is configured. Leave this blank to keep it unchanged.`
+                                        : field.helperText
+                                }
+                                InputLabelProps={{ shrink: true }}
+                            />
+                        );
+                    })}
                     <Box sx={{ mt: 2, display: 'flex', flexDirection: 'column', gap: 1 }}>
                         <FormControlLabel
                             sx={{ ml: 0, gap: 1 }}

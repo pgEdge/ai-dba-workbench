@@ -202,21 +202,22 @@ func TestAssignServerRequest_JSON(t *testing.T) {
 
 // permissionSatisfiedHandler returns a ClusterHandler with no datastore,
 // suitable for tests that only need to verify the auth gate accepts the
-// caller. The RBACChecker is built from a nil auth store, whose
-// HasAdminPermission returns true for every call; the issue #207
-// admin-permission gates therefore pass and the body-validation or
-// decode-error path remains the unit under test. Any post-gate
-// datastore call will panic, which the tests recover from via
-// assertGatePassed or by exercising only pre-datastore paths.
-func permissionSatisfiedHandler() *ClusterHandler {
-	return NewClusterHandler(nil, nil, auth.NewRBACChecker(nil))
+// caller. The RBACChecker is built on a real test auth store, and the
+// tests mark their requests withSuperuser, so the issue #207
+// admin-permission gates pass and the body-validation or decode-error
+// path remains the unit under test. (A checker on a nil store denies
+// every call, see issue #477.) Any post-gate datastore call will panic,
+// which the tests recover from via assertGatePassed or by exercising
+// only pre-datastore paths.
+func permissionSatisfiedHandler(t *testing.T) *ClusterHandler {
+	return NewClusterHandler(nil, nil, newTestRBACChecker(t))
 }
 
 func TestClusterHandler_CreateClusterGroup_InvalidRequest(t *testing.T) {
-	handler := permissionSatisfiedHandler()
+	handler := permissionSatisfiedHandler(t)
 
 	// Test with invalid JSON
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster-groups", bytes.NewBufferString("invalid json"))
+	req := withSuperuser(httptest.NewRequest(http.MethodPost, "/api/v1/cluster-groups", bytes.NewBufferString("invalid json")))
 	rec := httptest.NewRecorder()
 
 	handler.createClusterGroup(rec, req)
@@ -236,11 +237,11 @@ func TestClusterHandler_CreateClusterGroup_InvalidRequest(t *testing.T) {
 }
 
 func TestClusterHandler_CreateClusterGroup_MissingName(t *testing.T) {
-	handler := permissionSatisfiedHandler()
+	handler := permissionSatisfiedHandler(t)
 
 	// Test with missing name
 	body := `{"description": "Test group"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster-groups", bytes.NewBufferString(body))
+	req := withSuperuser(httptest.NewRequest(http.MethodPost, "/api/v1/cluster-groups", bytes.NewBufferString(body)))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -267,12 +268,12 @@ func TestClusterHandler_CreateClusterGroup_MissingName(t *testing.T) {
 // ValidateDisplayName, the single authority for Name length (issues #269 and
 // #270), so the message is "...characters or fewer".
 func TestClusterHandler_CreateClusterGroup_NameTooLong(t *testing.T) {
-	handler := permissionSatisfiedHandler()
+	handler := permissionSatisfiedHandler(t)
 
 	longName := strings.Repeat("a", maxFieldLength+1)
 	body, _ := json.Marshal(ClusterGroupRequest{Name: longName})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster-groups",
-		bytes.NewReader(body))
+	req := withSuperuser(httptest.NewRequest(http.MethodPost, "/api/v1/cluster-groups",
+		bytes.NewReader(body)))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -284,12 +285,12 @@ func TestClusterHandler_CreateClusterGroup_NameTooLong(t *testing.T) {
 // TestClusterHandler_CreateClusterInGroup_NameTooLong locks in the Name
 // column guard for the group-scoped cluster create path (issues #269/#270).
 func TestClusterHandler_CreateClusterInGroup_NameTooLong(t *testing.T) {
-	handler := permissionSatisfiedHandler()
+	handler := permissionSatisfiedHandler(t)
 
 	longName := strings.Repeat("a", maxFieldLength+1)
 	body, _ := json.Marshal(ClusterRequest{Name: longName})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster-groups/1/clusters",
-		bytes.NewReader(body))
+	req := withSuperuser(httptest.NewRequest(http.MethodPost, "/api/v1/cluster-groups/1/clusters",
+		bytes.NewReader(body)))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -301,12 +302,12 @@ func TestClusterHandler_CreateClusterInGroup_NameTooLong(t *testing.T) {
 // TestClusterHandler_HandleCreateCluster_NameTooLong locks in the Name
 // column guard for the manual cluster create path (issues #269/#270).
 func TestClusterHandler_HandleCreateCluster_NameTooLong(t *testing.T) {
-	handler := permissionSatisfiedHandler()
+	handler := permissionSatisfiedHandler(t)
 
 	longName := strings.Repeat("a", maxFieldLength+1)
 	body, _ := json.Marshal(ManualClusterRequest{Name: longName})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/clusters",
-		bytes.NewReader(body))
+	req := withSuperuser(httptest.NewRequest(http.MethodPost, "/api/v1/clusters",
+		bytes.NewReader(body)))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -368,11 +369,11 @@ func assertLengthRejected(t *testing.T, rec *httptest.ResponseRecorder, wantMsg 
 }
 
 func TestClusterHandler_UpdateCluster_MissingBothNameAndGroupID(t *testing.T) {
-	handler := permissionSatisfiedHandler()
+	handler := permissionSatisfiedHandler(t)
 
 	// Test with missing both name and group_id
 	body := `{}`
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/clusters/1", bytes.NewBufferString(body))
+	req := withSuperuser(httptest.NewRequest(http.MethodPut, "/api/v1/clusters/1", bytes.NewBufferString(body)))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -582,11 +583,11 @@ func TestClusterHandler_HandleGroupClusters_MethodNotAllowed(t *testing.T) {
 }
 
 func TestClusterHandler_CreateClusterInGroup_MissingName(t *testing.T) {
-	handler := permissionSatisfiedHandler()
+	handler := permissionSatisfiedHandler(t)
 
 	body := `{"description": "Test"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster-groups/1/clusters",
-		bytes.NewBufferString(body))
+	req := withSuperuser(httptest.NewRequest(http.MethodPost, "/api/v1/cluster-groups/1/clusters",
+		bytes.NewBufferString(body)))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -729,10 +730,10 @@ func TestClusterHandler_HandleDeleteRelationship_MethodNotAllowed(t *testing.T) 
 }
 
 func TestClusterHandler_SetRelationships_InvalidJSON(t *testing.T) {
-	handler := permissionSatisfiedHandler()
+	handler := permissionSatisfiedHandler(t)
 
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/clusters/1/connections/2/relationships",
-		bytes.NewBufferString("invalid json"))
+	req := withSuperuser(httptest.NewRequest(http.MethodPut, "/api/v1/clusters/1/connections/2/relationships",
+		bytes.NewBufferString("invalid json")))
 	rec := httptest.NewRecorder()
 
 	handler.setConnectionRelationships(rec, req, 1, 2)
@@ -2230,7 +2231,7 @@ func TestClusterHandler_DeleteAutoDetectedCluster_WithPermission(t *testing.T) {
 // funnel through ValidateDisplayName, which rejects names containing
 // characters outside the permitted set (letters, digits, spaces, and
 // . _ - ( )) with HTTP 400 and a user-facing message. These tests use
-// permissionSatisfiedHandler() with a nil datastore so the validation
+// permissionSatisfiedHandler(t) with a nil datastore so the validation
 // rejection fires before any datastore access; a stray datastore call would
 // panic and surface as a failure.
 // =============================================================================
@@ -2244,11 +2245,11 @@ const issue269InvalidCharsMessage = "Name may only contain letters, numbers, " +
 	"spaces, and the characters . _ - ( )"
 
 func TestClusterHandler_CreateClusterGroup_Issue269_InvalidChars(t *testing.T) {
-	handler := permissionSatisfiedHandler()
+	handler := permissionSatisfiedHandler(t)
 
 	body, _ := json.Marshal(ClusterGroupRequest{Name: issue269InvalidName})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster-groups",
-		bytes.NewReader(body))
+	req := withSuperuser(httptest.NewRequest(http.MethodPost, "/api/v1/cluster-groups",
+		bytes.NewReader(body)))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -2258,11 +2259,11 @@ func TestClusterHandler_CreateClusterGroup_Issue269_InvalidChars(t *testing.T) {
 }
 
 func TestClusterHandler_CreateClusterInGroup_Issue269_InvalidChars(t *testing.T) {
-	handler := permissionSatisfiedHandler()
+	handler := permissionSatisfiedHandler(t)
 
 	body, _ := json.Marshal(ClusterRequest{Name: issue269InvalidName})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster-groups/1/clusters",
-		bytes.NewReader(body))
+	req := withSuperuser(httptest.NewRequest(http.MethodPost, "/api/v1/cluster-groups/1/clusters",
+		bytes.NewReader(body)))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -2272,11 +2273,11 @@ func TestClusterHandler_CreateClusterInGroup_Issue269_InvalidChars(t *testing.T)
 }
 
 func TestClusterHandler_HandleCreateCluster_Issue269_InvalidChars(t *testing.T) {
-	handler := permissionSatisfiedHandler()
+	handler := permissionSatisfiedHandler(t)
 
 	body, _ := json.Marshal(ManualClusterRequest{Name: issue269InvalidName})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/clusters",
-		bytes.NewReader(body))
+	req := withSuperuser(httptest.NewRequest(http.MethodPost, "/api/v1/clusters",
+		bytes.NewReader(body)))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -2286,13 +2287,13 @@ func TestClusterHandler_HandleCreateCluster_Issue269_InvalidChars(t *testing.T) 
 }
 
 func TestClusterHandler_UpdateCluster_Issue269_InvalidChars(t *testing.T) {
-	handler := permissionSatisfiedHandler()
+	handler := permissionSatisfiedHandler(t)
 
 	// A name is supplied, so it must pass the character policy even though
 	// name is optional on update.
 	body, _ := json.Marshal(ClusterRequest{Name: issue269InvalidName})
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/clusters/1",
-		bytes.NewReader(body))
+	req := withSuperuser(httptest.NewRequest(http.MethodPut, "/api/v1/clusters/1",
+		bytes.NewReader(body)))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -2302,11 +2303,11 @@ func TestClusterHandler_UpdateCluster_Issue269_InvalidChars(t *testing.T) {
 }
 
 func TestClusterHandler_UpdateAutoDetectedCluster_Issue269_InvalidChars(t *testing.T) {
-	handler := permissionSatisfiedHandler()
+	handler := permissionSatisfiedHandler(t)
 
 	body, _ := json.Marshal(AutoDetectedClusterRequest{Name: issue269InvalidName})
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/clusters/cluster-spock-foo",
-		bytes.NewReader(body))
+	req := withSuperuser(httptest.NewRequest(http.MethodPut, "/api/v1/clusters/cluster-spock-foo",
+		bytes.NewReader(body)))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -2316,11 +2317,11 @@ func TestClusterHandler_UpdateAutoDetectedCluster_Issue269_InvalidChars(t *testi
 }
 
 func TestClusterHandler_UpdateAutoDetectedGroup_Issue269_InvalidChars(t *testing.T) {
-	handler := permissionSatisfiedHandler()
+	handler := permissionSatisfiedHandler(t)
 
 	body, _ := json.Marshal(ClusterGroupRequest{Name: issue269InvalidName})
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/cluster-groups/group-auto",
-		bytes.NewReader(body))
+	req := withSuperuser(httptest.NewRequest(http.MethodPut, "/api/v1/cluster-groups/group-auto",
+		bytes.NewReader(body)))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -2510,14 +2511,14 @@ func TestClusterHandler_CreateClusterGroup_Issue304_DefaultsSharedFalse(t *testi
 
 // TestClusterHandler_CreateClusterGroup_Issue304_NoAuth confirms the create
 // handler rejects a request with no bearer token now that it must resolve the
-// creating user. The permission gate is satisfied via a nil auth store (which
-// treats every caller as permitted), so the 401 comes from the owner lookup.
+// creating user. The permission gate is satisfied by a superuser context
+// that carries no username, so the 401 comes from the owner lookup.
 func TestClusterHandler_CreateClusterGroup_Issue304_NoAuth(t *testing.T) {
-	handler := permissionSatisfiedHandler()
+	handler := permissionSatisfiedHandler(t)
 
 	body, _ := json.Marshal(ClusterGroupRequest{Name: "No Auth Group"})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster-groups",
-		bytes.NewReader(body))
+	req := withSuperuser(httptest.NewRequest(http.MethodPost, "/api/v1/cluster-groups",
+		bytes.NewReader(body)))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 

@@ -10,6 +10,7 @@
 
 import type { Theme } from '@mui/material/styles';
 import type { SxProps } from '@mui/material';
+import type { SystemStyleObject } from '@mui/system';
 
 /**
  * Common text field styling with hover and focus states.
@@ -135,7 +136,7 @@ export const cancelButtonSx: SxProps<Theme> = {
 /**
  * Returns save button styling with theme-aware colors.
  */
-export const getSaveButtonSx = (theme: Theme): SxProps<Theme> => ({
+export const getSaveButtonSx = (theme: Theme): SystemStyleObject<Theme> => ({
     textTransform: 'none',
     fontWeight: 600,
     minWidth: 80,

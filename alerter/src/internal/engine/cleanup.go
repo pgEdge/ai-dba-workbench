@@ -12,6 +12,8 @@ package engine
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
@@ -28,28 +30,344 @@ func (e *Engine) cleanResolvedAlerts(ctx context.Context) {
 		return
 	}
 
+	// Rules with a required_extension are gated on the connections whose
+	// newest pg_extension snapshot lists it. Resolve that set once per
+	// rule for the whole pass, as the evaluator does, rather than once
+	// per alert.
+	gates := e.resolveExtensionGates(ctx, alerts)
+
+	// Probe staleness is a single snapshot of every reporting probe, and
+	// both the staleness alerts and the absent-metric gate read the same
+	// one. Resolve it at most once for the pass rather than once per
+	// alert, lazily so that a pass which needs it never reads it.
+	staleness := &probeStalenessSnapshot{}
+
+	// An operator who stops monitoring a connection retires its alerts
+	// too, so the set of unmonitored connections is resolved once per pass
+	// alongside the other snapshots. See GitHub issue #500.
+	unmonitored := &unmonitoredConnectionSnapshot{}
+
 	for _, alert := range alerts {
 		if ctx.Err() != nil {
 			return
 		}
 
+		// A system alert concerns the alerter, not a connection, and is
+		// cleared by whatever raised it. See GitHub issue #582.
+		if alert.IsSystem() {
+			continue
+		}
+
+		// This check sits outside the threshold branch below because it
+		// applies to an alert of any type: an anomaly or connection alert
+		// on a connection nobody is monitoring is as stuck as a threshold
+		// one. An alert it claims skips the resolution checks entirely,
+		// so that a failed clear cannot fall through to the path that
+		// would notify.
+		if e.clearAlertForUnmonitoredConnection(ctx, alert, unmonitored) {
+			continue
+		}
+
 		if alert.AlertType == "threshold" && alert.RuleID != nil {
-			e.checkAlertResolved(ctx, alert)
+			e.checkAlertResolved(ctx, alert, gates[*alert.RuleID], staleness)
 		}
 	}
+
+	// A clear count belongs to an active alert, so drop the counts of
+	// alerts that have been cleared, acknowledged or deleted since. An
+	// acknowledged alert that is reactivated therefore counts its
+	// threshold.clear_count samples afresh. See hysteresis.go.
+	active := make(map[int64]bool, len(alerts))
+	for _, alert := range alerts {
+		active[alert.ID] = true
+	}
+	e.clearStreaks.retain(func(id int64) bool { return active[id] })
 }
 
-// checkAlertResolved checks if a threshold alert's condition has resolved
-func (e *Engine) checkAlertResolved(ctx context.Context, alert *database.Alert) {
+// unmonitoredConnectionSnapshot holds one cleanup pass's view of which
+// connections an operator has stopped monitoring, read on first use and
+// reused for every alert after that, exactly as probeStalenessSnapshot
+// is. A failed read is remembered too, for the same reason: retrying it
+// per alert would hammer a datastore that is already unwell, and every
+// caller treats the failure the same way, by leaving the alert active.
+type unmonitoredConnectionSnapshot struct {
+	connections map[int]string
+	err         error
+	loaded      bool
+}
+
+// get returns the pass's unmonitored connections, reading them through
+// the engine's datastore the first time it is called.
+func (s *unmonitoredConnectionSnapshot) get(ctx context.Context, e *Engine) (map[int]string, error) {
+	if !s.loaded {
+		s.connections, s.err = e.datastore.GetUnmonitoredConnections(ctx)
+		s.loaded = true
+	}
+	return s.connections, s.err
+}
+
+// unmonitoredClearDescriptionPrefix opens the description of every alert
+// closed because its connection is no longer monitored, so that the
+// history of the alert says plainly why it ended.
+const unmonitoredClearDescriptionPrefix = "Monitoring stopped: "
+
+// unmonitoredClearDescription is the text such an alert carries out. It
+// keeps whatever the alert last said after the new opening, because the
+// condition that raised it is still the most useful thing in the record,
+// and the reader needs to know both what was wrong and that nothing has
+// shown it to be better.
+func unmonitoredClearDescription(connectionName, previous string) string {
+	return fmt.Sprintf(
+		unmonitoredClearDescriptionPrefix+
+			"monitoring of %s was turned off, so this alert was closed "+
+			"without the condition it reports being observed to end. The "+
+			"alert said: %s",
+		connectionName, previous)
+}
+
+// clearAlertForUnmonitoredConnection closes an active alert whose
+// connection an operator has stopped monitoring, and reports whether the
+// alert belonged to such a connection at all, so the caller can skip the
+// ordinary resolution checks for an alert this path has taken charge of.
+//
+// It reports true even when the clear itself failed. The ordinary
+// resolution path would otherwise pick the alert up in the same pass,
+// and, finding the condition resolved, clear it and queue the very
+// clear notification this path exists to suppress. Leaving the alert
+// active for the next pass to retry is the safer of the two, so the
+// verdict is about which path owns the alert rather than about whether
+// the write succeeded.
+//
+// Nothing publishes a change to connections.is_monitored, so the cleanup
+// pass is the only place this can be noticed. Until it was, the probes of
+// an unmonitored connection left the staleness view, every absent metric
+// on it was classified as a probe that is not reporting, and its alerts
+// stayed active for ever: DeleteOldAlerts only reaps a retired alert, so
+// nothing removed them and nothing explained them. Un-monitoring a server
+// is deliberate operator action rather than a collector falling over, and
+// is_monitored is what tells the two apart, which is why this clears
+// where an unavailable probe holds the alert open. The wider rule that
+// pins an alert open behind a stalled probe is untouched. See GitHub
+// issue #500.
+//
+// No clear notification is queued. An operator who has just stopped
+// monitoring a server must not be sent a burst of messages announcing
+// conditions as resolved when nothing resolved them, and they already
+// know what they did.
+//
+// A failed read of the unmonitored set leaves every alert active and in
+// the ordinary path's hands, as a failed staleness read does; a failed
+// description rewrite still clears the alert, because an alert stuck
+// active for ever is the fault being fixed here and a stale description
+// is a far smaller one. Both failures are logged.
+func (e *Engine) clearAlertForUnmonitoredConnection(ctx context.Context,
+	alert *database.Alert, unmonitored *unmonitoredConnectionSnapshot) bool {
+	if unmonitored == nil {
+		unmonitored = &unmonitoredConnectionSnapshot{}
+	}
+
+	connections, err := unmonitored.get(ctx, e)
+	if err != nil {
+		e.log("ERROR: Cannot tell whether connection %d is still monitored for alert %d, "+
+			"leaving it active: %v", alert.ConnectionID, alert.ID, err)
+		return false
+	}
+
+	connectionName, found := connections[alert.ConnectionID]
+	if !found {
+		return false
+	}
+
+	e.log("Connection %d (%s) is no longer monitored; clearing alert %d",
+		alert.ConnectionID, connectionName, alert.ID)
+
+	// A description this function already wrote is left alone. It can only
+	// be there because a previous pass rewrote it and then failed to clear
+	// the alert, and rewriting it again would nest one explanation inside
+	// the next for as long as the clear kept failing.
+	if !strings.HasPrefix(alert.Description, unmonitoredClearDescriptionPrefix) {
+		description := unmonitoredClearDescription(connectionName, alert.Description)
+		if err := e.datastore.UpdateAlertDescription(ctx, alert.ID, description); err != nil {
+			e.log("ERROR: Failed to record why alert %d was closed, clearing it with its "+
+				"original description: %v", alert.ID, err)
+		} else {
+			alert.Description = description
+		}
+	}
+
+	if err := e.datastore.ClearAlert(ctx, alert.ID); err != nil {
+		e.log("ERROR: Failed to clear alert %d for unmonitored connection %d, "+
+			"leaving it for the next pass: %v",
+			alert.ID, alert.ConnectionID, err)
+	}
+
+	return true
+}
+
+// probeStalenessSnapshot holds one cleanup pass's view of which probes
+// are reporting, read on first use and reused for every alert after
+// that. A failed read is remembered too: retrying it once per alert
+// would hammer a datastore that is already unwell, and every caller
+// treats the failure the same way, by leaving the alert active.
+//
+// The entries are measured against the datastore's NOW() at the moment
+// they were read, and a pass can take long enough for that to matter: a
+// probe 4m58s late when the snapshot loads is 5m08s late for an alert
+// judged ten seconds on, which is outside a five minute window rather
+// than inside it. Every judgement therefore adds the snapshot's age, so
+// the effective window stays the metric's own rather than the window
+// plus however long the pass has been running. See GitHub issue #407.
+type probeStalenessSnapshot struct {
+	entries []database.ProbeStaleness
+	err     error
+	loaded  bool
+
+	// readAt is taken before the datastore read so that the age errs
+	// towards treating a probe as later than it is, never earlier.
+	readAt time.Time
+
+	// now is the clock the snapshot ages by; nil means time.Now. Tests
+	// set it to move the judgement away from the read.
+	now func() time.Time
+}
+
+// get returns the pass's probe staleness entries, reading them through
+// the engine's datastore the first time it is called.
+func (s *probeStalenessSnapshot) get(ctx context.Context, e *Engine) ([]database.ProbeStaleness, error) {
+	if !s.loaded {
+		s.readAt = s.clock()
+		s.entries, s.err = e.datastore.GetProbeStalenessByConnection(ctx)
+		s.loaded = true
+	}
+	return s.entries, s.err
+}
+
+// age is how long ago the entries were read, and so how much later than
+// their SinceCollected every probe now is. An unloaded snapshot has no
+// age.
+func (s *probeStalenessSnapshot) age() time.Duration {
+	if !s.loaded {
+		return 0
+	}
+	return s.clock().Sub(s.readAt)
+}
+
+func (s *probeStalenessSnapshot) clock() time.Time {
+	if s.now != nil {
+		return s.now()
+	}
+	return time.Now()
+}
+
+// currentStalenessRatio brings a snapshot entry's ratio forward by the
+// snapshot's age, so that a staleness alert is judged against how late
+// the probe is now rather than how late it was when the pass began. A
+// non-positive interval cannot occur, because the staleness query
+// divides by it, but the frozen ratio is returned rather than dividing
+// by zero here.
+func currentStalenessRatio(entry database.ProbeStaleness, age time.Duration) float64 {
+	if entry.CollectionInterval <= 0 {
+		return entry.StalenessRatio
+	}
+	return (entry.SinceCollected + age).Seconds() / float64(entry.CollectionInterval)
+}
+
+// resolveExtensionGates maps the rule id of each active threshold alert
+// to the set of connections on which that rule may be evaluated, or to
+// nil when the rule has no required_extension and no gate applies.
+//
+// Each rule is loaded once per cleanup pass and each extension resolved
+// once, so a pass costs one GetAlertRuleByID per distinct rule and one
+// GetConnectionsWithExtension per distinct extension however many alerts
+// are active. A rule that cannot be loaded, or an extension that cannot
+// be resolved, is logged and left ungated: a datastore fault must not
+// pin a whole class of alerts open. See GitHub issue #409.
+func (e *Engine) resolveExtensionGates(ctx context.Context, alerts []*database.Alert) map[int64]map[int]bool {
+	gates := make(map[int64]map[int]bool)
+	byExtension := make(map[string]map[int]bool)
+
+	for _, alert := range alerts {
+		if alert.AlertType != "threshold" || alert.RuleID == nil {
+			continue
+		}
+		if _, seen := gates[*alert.RuleID]; seen {
+			continue
+		}
+		gates[*alert.RuleID] = nil
+
+		rule, err := e.datastore.GetAlertRuleByID(ctx, *alert.RuleID)
+		if err != nil {
+			e.log("ERROR: Failed to load rule %d for alert %d, checking resolution without the extension gate: %v",
+				*alert.RuleID, alert.ID, err)
+			continue
+		}
+		if rule.RequiredExtension == nil || *rule.RequiredExtension == "" {
+			continue
+		}
+
+		ext := *rule.RequiredExtension
+		if set, resolved := byExtension[ext]; resolved {
+			gates[*alert.RuleID] = set
+			continue
+		}
+		set := e.connectionsWithRequiredExtension(ctx, rule)
+		byExtension[ext] = set
+		gates[*alert.RuleID] = set
+	}
+
+	return gates
+}
+
+// checkAlertResolved checks if a threshold alert's condition has
+// resolved. withExtension is the set of connections on which the alert's
+// rule may be evaluated, as resolved by resolveExtensionGates, or nil
+// when no extension gate applies. staleness carries the cleanup pass's
+// probe staleness snapshot, and may be nil for a caller checking a
+// single alert outside a pass.
+func (e *Engine) checkAlertResolved(ctx context.Context, alert *database.Alert,
+	withExtension map[int]bool, staleness *probeStalenessSnapshot) {
+	if staleness == nil {
+		staleness = &probeStalenessSnapshot{}
+	}
 	if alert.MetricName == nil || alert.ThresholdValue == nil || alert.Operator == nil {
 		return
 	}
 
-	// Probe-scoped alerts (metric_staleness) are raised by a bespoke
-	// evaluator and their metric has no registry entry, so they need a
-	// bespoke resolution check too.
+	// Probe-scoped alerts (metric_staleness and probe_unavailable) are
+	// raised by bespoke evaluators and neither metric has a registry
+	// entry, so they need bespoke resolution checks too. Both carry a
+	// probe name, so the metric name is what tells them apart: they
+	// resolve on entirely different conditions, and routing a
+	// probe_unavailable alert through the staleness check would judge it
+	// on a staleness ratio it was never raised on and rewrite its
+	// description with the hold wording issue #465 added.
 	if alert.ProbeName != nil {
-		e.checkStalenessAlertResolved(ctx, alert)
+		if *alert.MetricName == probeUnavailableMetricName {
+			e.checkProbeUnavailableAlertResolved(ctx, alert, staleness)
+			return
+		}
+		e.checkStalenessAlertResolved(ctx, alert, staleness)
+		return
+	}
+
+	// An alert naming a database on a metric reported for the whole
+	// server can never match a latest value, so it would stay active for
+	// ever. See retireDatabaseScopedAlert.
+	if alert.DatabaseName != nil && database.MetricIsServerWide(*alert.MetricName) {
+		e.retireDatabaseScopedAlert(ctx, alert)
+		return
+	}
+
+	// An alert whose rule needs an extension the connection no longer
+	// reports is not resolved: the condition may well persist, the
+	// alerter simply cannot see it any more. Leave it active rather than
+	// clearing it. The trade-off is that an operator who uninstalls the
+	// extension keeps the alert until they acknowledge or clear it, which
+	// is preferable to silently reporting the condition resolved. See
+	// GitHub issue #409.
+	if withExtension != nil && !withExtension[alert.ConnectionID] {
+		e.debugLog("Leaving alert %d active: connection %d does not report the extension its rule requires",
+			alert.ID, alert.ConnectionID)
 		return
 	}
 
@@ -57,10 +375,8 @@ func (e *Engine) checkAlertResolved(ctx context.Context, alert *database.Alert) 
 	values, err := e.datastore.GetLatestMetricValues(ctx, *alert.MetricName)
 	if err != nil {
 		if errors.Is(err, database.ErrNoMetricData) {
-			// The query ran and reported nothing for any connection —
-			// the condition no longer exists (e.g. all values filtered
-			// out), so clear
-			e.clearResolvedAlert(ctx, alert, 0)
+			// The query ran and reported nothing for any connection.
+			e.resolveAbsentMetric(ctx, alert, "no connection reports it", staleness)
 			return
 		}
 		// The metric could not be evaluated at all: either it has no
@@ -76,6 +392,7 @@ func (e *Engine) checkAlertResolved(ctx context.Context, alert *database.Alert) 
 	// Find the metric value matching this alert's connection and database
 	var found bool
 	var value float64
+	var sample time.Time
 	for _, mv := range values {
 		if mv.ConnectionID != alert.ConnectionID {
 			continue
@@ -88,20 +405,24 @@ func (e *Engine) checkAlertResolved(ctx context.Context, alert *database.Alert) 
 		}
 		found = true
 		value = mv.Value
+		sample = mv.CollectedAt
 		break
 	}
 
 	if !found {
-		// Metric no longer reports for this connection/database — clear
-		e.clearResolvedAlert(ctx, alert, 0)
+		e.resolveAbsentMetric(ctx, alert,
+			"no row for this connection and database", staleness)
 		return
 	}
 
-	// Check if threshold is still violated
-	stillViolated := e.checkThreshold(value, *alert.Operator, *alert.ThresholdValue)
-	if !stillViolated {
-		e.clearResolvedAlert(ctx, alert, value)
+	// Check if threshold is still violated. The alert clears only once
+	// it has not been on threshold.clear_count consecutive samples; a
+	// violating sample starts that count again.
+	if e.checkThreshold(value, *alert.Operator, *alert.ThresholdValue) {
+		e.recordViolatingSample(alert, sample)
+		return
 	}
+	e.recordResolvedSample(ctx, alert, sample, value)
 }
 
 // checkStalenessAlertResolved checks whether a probe-scoped staleness alert
@@ -111,8 +432,22 @@ func (e *Engine) checkAlertResolved(ctx context.Context, alert *database.Alert) 
 // does. The alert clears when the probe's staleness ratio no longer violates
 // the threshold stored on the alert, or when the probe stops being reported
 // at all because it was disabled or its connection is no longer monitored.
-func (e *Engine) checkStalenessAlertResolved(ctx context.Context, alert *database.Alert) {
-	entries, err := e.datastore.GetProbeStalenessByConnection(ctx)
+//
+// A probe that has gone unavailable is the case the check must not treat
+// as a resolution. The probe is still configured and its connection is
+// still monitored, but collection has stopped, so the metric queries
+// behind the condition alert go quiet at the same moment; clearing the
+// staleness alert then would retire the alert meant to report that the
+// alerter has gone blind, exactly as the condition alert it was watching
+// went quiet. Such an alert is held open and its description rewritten to
+// say why, whilst its title stays as it was so that it reads as the same
+// alert across notification history; the description is put back once the
+// probe collects again, and again on the way out if the alert clears
+// whilst still held, so that the alert never resolves in the words of the
+// hold. See GitHub issue #465.
+func (e *Engine) checkStalenessAlertResolved(ctx context.Context, alert *database.Alert,
+	staleness *probeStalenessSnapshot) {
+	entries, err := staleness.get(ctx, e)
 	if err != nil {
 		e.log("ERROR: Failed to get probe staleness for alert %d: %v", alert.ID, err)
 		return
@@ -122,17 +457,466 @@ func (e *Engine) checkStalenessAlertResolved(ctx context.Context, alert *databas
 		if entry.ConnectionID != alert.ConnectionID || entry.ProbeName != *alert.ProbeName {
 			continue
 		}
-		if !e.checkThreshold(entry.StalenessRatio, *alert.Operator, *alert.ThresholdValue) {
-			e.clearResolvedAlert(ctx, alert, entry.StalenessRatio)
+		if !entry.IsAvailable {
+			e.holdStalenessAlertForUnavailableProbe(ctx, alert, entry)
+			return
+		}
+		ratio := currentStalenessRatio(entry, staleness.age())
+
+		// The probe is collecting again, so a description written whilst
+		// it was unavailable is now wrong, and wrong in the text the
+		// clear notification and the stored alert history would carry.
+		// Put the staleness wording back before deciding whether the
+		// alert clears.
+		e.restoreStalenessAlertDescription(ctx, alert, entry.ProbeName,
+			entry.ConnectionName, entry.CollectionInterval, ratio)
+
+		if !e.checkThreshold(ratio, *alert.Operator, *alert.ThresholdValue) {
+			e.clearResolvedAlert(ctx, alert, ratio)
 		}
 		return
 	}
 
-	// The probe no longer appears in the staleness view, so there is
-	// nothing left to be stale about.
-	e.debugLog("Probe %s on connection %d is no longer reported; clearing alert %d",
+	// The probe no longer appears in the staleness view at all, which now
+	// means only deliberate operator action: the probe was disabled, the
+	// connection is no longer monitored, or the availability row itself
+	// has gone. There is nothing left to be stale about, so the alert
+	// clears, but at normal log level rather than debug so that an
+	// operator can see which of their changes retired the alert.
+	e.log("Probe %s on connection %d is no longer reported; clearing alert %d",
 		*alert.ProbeName, alert.ConnectionID, alert.ID)
+	e.restoreHeldDescriptionBeforeClear(ctx, alert)
 	e.clearResolvedAlert(ctx, alert, 0)
+}
+
+// checkProbeUnavailableAlertResolved checks whether a probe_unavailable
+// alert has resolved. The rule is evaluated by evaluateProbeUnavailable
+// rather than through metricRegistry, so the check reads the same
+// probe_availability source the evaluator does, and it is deliberately
+// separate from the staleness check: a probe_unavailable alert says the
+// probe has stopped collecting, and the only thing that resolves it is
+// the probe collecting again.
+//
+// The three cases are:
+//
+//   - the probe is in the staleness view and available again, so
+//     collection has resumed and the alert clears on a value of 1;
+//   - the probe is in the view and still unavailable, so the alert stays
+//     active;
+//   - the probe has left the view altogether, which means only deliberate
+//     operator action (the probe was disabled, the connection is no
+//     longer monitored, or the availability row has gone), so the alert
+//     clears, logged at operator level rather than debug so that the
+//     operator can see which of their changes retired it, exactly as
+//     issue #465 established for the equivalent staleness case.
+//
+// A held metric_staleness alert and a probe_unavailable alert may both be
+// open on the same probe at once, which is intended: one says the data
+// went stale, the other says why, and each resolves on its own terms.
+func (e *Engine) checkProbeUnavailableAlertResolved(ctx context.Context,
+	alert *database.Alert, staleness *probeStalenessSnapshot) {
+	entries, err := staleness.get(ctx, e)
+	if err != nil {
+		e.log("ERROR: Failed to get probe staleness for alert %d: %v", alert.ID, err)
+		return
+	}
+
+	for _, entry := range entries {
+		if entry.ConnectionID != alert.ConnectionID || entry.ProbeName != *alert.ProbeName {
+			continue
+		}
+		if !entry.IsAvailable {
+			e.debugLog("Probe %s on connection %d is still unavailable; leaving alert %d active",
+				entry.ProbeName, alert.ConnectionID, alert.ID)
+			return
+		}
+		e.log("Probe %s on connection %d is available again; clearing alert %d",
+			entry.ProbeName, alert.ConnectionID, alert.ID)
+		e.clearResolvedAlert(ctx, alert, probeAvailableValue)
+		return
+	}
+
+	e.log("Probe %s on connection %d is no longer reported; clearing alert %d",
+		*alert.ProbeName, alert.ConnectionID, alert.ID)
+	e.clearResolvedAlert(ctx, alert, probeUnavailableValue)
+}
+
+// holdStalenessAlertForUnavailableProbe leaves a staleness alert active
+// for a probe whose availability has gone false, and records why in the
+// alert's description so an operator reading the alert learns that
+// collection has stopped rather than that the probe is merely late.
+//
+// Both the rewrite and the line announcing it are conditional on the
+// text actually changing, because a cleanup pass runs on every cycle:
+// writing the same text again would bump last_updated for as long as the
+// probe stayed unavailable, and logging it again would put a line in the
+// operator's log every thirty seconds, in both cases for no new
+// information. The operator therefore gets one line when collection
+// stops and another only if the reason changes, in the same spirit as
+// resolveAbsentMetric, which reports each verdict once per pass rather
+// than once per probe. A failure to write the description is logged and
+// otherwise ignored, since the alert staying active matters more than
+// its wording; the next pass retries it, because alert.Description is
+// only advanced once the write has succeeded.
+func (e *Engine) holdStalenessAlertForUnavailableProbe(ctx context.Context,
+	alert *database.Alert, entry database.ProbeStaleness) {
+	reason := unavailableProbeReason(entry)
+
+	description := unavailableProbeDescription(entry, reason)
+	if description == alert.Description {
+		return
+	}
+
+	e.log("Probe %s on connection %d is unavailable (%s); leaving staleness alert %d active",
+		entry.ProbeName, alert.ConnectionID, reason, alert.ID)
+
+	if err := e.datastore.UpdateAlertDescription(ctx, alert.ID, description); err != nil {
+		e.log("ERROR: Failed to update description of alert %d: %v", alert.ID, err)
+		return
+	}
+	alert.Description = description
+}
+
+// unavailableProbeReason is whatever the collector recorded against the
+// probe, or a stand-in when it recorded nothing, so that neither the log
+// line nor the description has a hole in it.
+func unavailableProbeReason(entry database.ProbeStaleness) string {
+	if entry.UnavailableReason != nil && *entry.UnavailableReason != "" {
+		return *entry.UnavailableReason
+	}
+	return "no reason recorded"
+}
+
+// unavailableProbeDescriptionPrefix opens every description the cleaner
+// writes for a held alert, and is how the cleaner later tells its own
+// wording apart: the alert row carries no record of what it said when it
+// was raised, so the prefix is what distinguishes a description this code
+// wrote from the evaluator's own.
+const unavailableProbeDescriptionPrefix = "Collection has stopped: "
+
+// unavailableProbeDescription is the text a held staleness alert carries
+// whilst its probe is unavailable. It is deterministic, with nothing in it
+// that moves between passes, so that the idempotence check above compares
+// like with like.
+func unavailableProbeDescription(entry database.ProbeStaleness, reason string) string {
+	return fmt.Sprintf(
+		unavailableProbeDescriptionPrefix+
+			"the %s probe on %s is no longer available (%s). "+
+			"Metrics from this probe are neither arriving nor being evaluated, so "+
+			"conditions it reports on cannot be seen. This alert stays active until "+
+			"the probe collects again, or until the probe or connection is disabled.",
+		entry.ProbeName, entry.ConnectionName, reason)
+}
+
+// restoreStalenessAlertDescription undoes the hold, either because the
+// probe is collecting again or because the alert is about to clear.
+// Without it the alert would keep the wording of the hold for the rest of
+// its life, so the clear notification and the stored history would both
+// announce the resolution in the words "Collection has stopped ... This
+// alert stays active until the probe collects again", which is precisely
+// untrue at that point.
+//
+// Only a description the cleaner itself wrote is replaced, matched on
+// its prefix, so an alert the evaluator worded is left alone and the write
+// happens once on recovery rather than on every pass. The replacement is
+// the evaluator's own wording, rebuilt from the ratio recorded on the
+// alert, which is the measurement the alert was raised or last updated on
+// and so reproduces the text the evaluator would have written; the ratio
+// the caller passes stands in if the alert carries no value. A failed
+// write leaves the held text in place and is retried next pass, as the
+// hold's own write is; on the clear path there is no next pass, so the
+// alert clears with the held wording in the case the write fails, which
+// is the same trade-off the hold itself makes.
+//
+// The probe name, connection name and collection interval are passed in
+// rather than read from a staleness entry, because the clear path has no
+// entry to read: its whole premise is that the probe has left the view.
+func (e *Engine) restoreStalenessAlertDescription(ctx context.Context,
+	alert *database.Alert, probeName, connectionName string,
+	collectionInterval int, ratio float64) {
+	if !strings.HasPrefix(alert.Description, unavailableProbeDescriptionPrefix) {
+		return
+	}
+	if alert.MetricValue != nil {
+		ratio = *alert.MetricValue
+	}
+
+	description := stalenessAlertDescription(probeName, connectionName,
+		stalenessMinutes(collectionInterval, ratio),
+		stalenessMinutes(collectionInterval, *alert.ThresholdValue))
+	if description == alert.Description {
+		return
+	}
+
+	e.log("Restoring the staleness wording of alert %d for probe %s on %s",
+		alert.ID, probeName, connectionName)
+
+	if err := e.datastore.UpdateAlertDescription(ctx, alert.ID, description); err != nil {
+		e.log("ERROR: Failed to restore description of alert %d: %v", alert.ID, err)
+		return
+	}
+	alert.Description = description
+}
+
+// restoreHeldDescriptionBeforeClear puts the evaluator's wording back on
+// a held alert that is about to clear because its probe has left the
+// staleness view. An operator who disables a held probe, or stops
+// monitoring its connection, would otherwise retire the alert carrying
+// "Collection has stopped: ...", so both the AlertClear notification and
+// the stored alert history would describe a resolved alert in the words
+// of the hold. An alert the evaluator worded is left alone, exactly as on
+// the recovery path.
+//
+// The wording needs the connection name and the probe's collection
+// interval, which the staleness view no longer reports for this probe, so
+// they are read from the connection and probe_configs rows the view joins
+// against; those survive both a disabled probe and an unmonitored
+// connection. When they have genuinely gone, along with the connection
+// itself, there is nothing to rebuild the wording from and the alert
+// clears as it stands.
+func (e *Engine) restoreHeldDescriptionBeforeClear(ctx context.Context,
+	alert *database.Alert) {
+	if !strings.HasPrefix(alert.Description, unavailableProbeDescriptionPrefix) {
+		return
+	}
+
+	connectionName, interval, found, err := e.datastore.GetProbeStalenessContext(
+		ctx, alert.ConnectionID, *alert.ProbeName)
+	if err != nil {
+		e.log("ERROR: Cannot read the staleness context of alert %d, clearing it with the held description: %v",
+			alert.ID, err)
+		return
+	}
+	if !found {
+		e.debugLog("No connection or probe config remains for alert %d; clearing it with the held description",
+			alert.ID)
+		return
+	}
+
+	e.restoreStalenessAlertDescription(ctx, alert, *alert.ProbeName,
+		connectionName, interval, 0)
+}
+
+// resolveAbsentMetric decides what to do with an active alert whose metric
+// returned no row for it. A missing row is only a recovery signal for
+// metrics whose query goes quiet when the condition ends or whose subject
+// can legitimately disappear (the registry marks those clearWhenAbsent);
+// for every other metric it means the data has stopped arriving, and
+// clearing on it made alerts flap or resolve falsely whenever a probe ran
+// late or a collector stopped. Those alerts stay active until fresh data
+// shows the condition has ended, and the metric_staleness rule reports
+// the stalled probe.
+//
+// Even for a clearWhenAbsent metric an empty result only means recovery
+// if the data behind it is current: every one of those queries bounds
+// collected_at, so a stopped collector empties them just as effectively
+// as a recovered condition does, and clearing then would report a
+// genuinely inactive replication slot or runaway WAL retention as
+// resolved. The clear is therefore gated on the registry's probe for the
+// metric having collected inside the very window that query reads. See
+// GitHub issue #407.
+func (e *Engine) resolveAbsentMetric(ctx context.Context, alert *database.Alert,
+	reason string, staleness *probeStalenessSnapshot) {
+	metric := *alert.MetricName
+	clears := e.datastore.MetricClearsWhenAbsent(metric)
+	probe := e.datastore.MetricProbeName(metric)
+	window := e.datastore.MetricAbsenceWindow(metric)
+
+	// Only the metrics that can clear, and that name both a probe and a
+	// window to check it against, need the staleness read at all.
+	var entries []database.ProbeStaleness
+	if clears && probe != "" && window > 0 {
+		var err error
+		entries, err = staleness.get(ctx, e)
+		if err != nil {
+			e.log("ERROR: Cannot check whether probe %s is current for alert %d, "+
+				"leaving it active: %v", probe, alert.ID, err)
+			return
+		}
+	}
+
+	switch classifyAbsentMetric(clears, probe, window, alert.ConnectionID, entries,
+		staleness.age()) {
+	case absentMetricClear:
+		// The empty result is a non-breaching sample, and the probe's
+		// last collection is what identifies it, so a probe that has not
+		// collected again since the last pass does not advance the
+		// threshold.clear_count count.
+		e.recordResolvedSample(ctx, alert,
+			probeLastCollected(entries, alert.ConnectionID, probe), 0)
+	case absentMetricNotAbsenceDriven:
+		e.debugLog("Metric %s has no current value for alert %d (%s); leaving it active until data returns",
+			metric, alert.ID, reason)
+	case absentMetricNoProbe, absentMetricNoWindow:
+		// The registry audits keep this unreachable: an entry that
+		// clears when absent names a probe and declares the window its
+		// query reads. Both verdicts report the same operator problem,
+		// an entry the cleaner cannot judge, so they share a line.
+		e.log("WARNING: Metric %s clears when absent but its registry entry is "+
+			"incomplete (probe %q, window %s); leaving alert %d active",
+			metric, probe, window, alert.ID)
+	case absentMetricProbeNotReporting:
+		e.log("Alert %d on metric %s has no current value (%s) and probe %s has not "+
+			"collected for connection %d within the %s window its query reads; "+
+			"leaving the alert active",
+			alert.ID, metric, reason, probe, alert.ConnectionID, window)
+	}
+}
+
+// absentMetricVerdict is what the cleaner should do with an alert whose
+// metric returned no row for it.
+type absentMetricVerdict int
+
+const (
+	// absentMetricClear means the absence is a real recovery signal: the
+	// metric clears when absent and the probe behind it is current.
+	absentMetricClear absentMetricVerdict = iota
+
+	// absentMetricNotAbsenceDriven means the metric emits a row for every
+	// healthy connection, so a missing row is missing data. Expected
+	// whenever collection lags, hence logged at debug level.
+	absentMetricNotAbsenceDriven
+
+	// absentMetricNoProbe means the registry entry clears when absent but
+	// names no probe, so its freshness cannot be established.
+	absentMetricNoProbe
+
+	// absentMetricNoWindow means the registry entry clears when absent
+	// but declares no collection window, so there is nothing to judge
+	// the probe's last collection against. The registry audit tests keep
+	// this unreachable in practice.
+	absentMetricNoWindow
+
+	// absentMetricProbeNotReporting means the probe behind the metric has
+	// stalled, been disabled, or belongs to a connection that is no
+	// longer monitored, so the empty result proves nothing.
+	absentMetricProbeNotReporting
+)
+
+// classifyAbsentMetric decides, from the registry classification for a
+// metric and the current probe staleness entries, whether an absent row
+// may clear the alert. It is pure so that every branch, including the
+// entry that names no probe, is exercised without a database.
+//
+// window is how far back the metric's latest query looks. Outside it the
+// query reports nothing whatever the server is doing, so an absent row
+// is only evidence of recovery when the probe stored something inside
+// it; a probe whose last collection is older than the window tells us
+// only that the data stopped arriving. Measuring the gate against the
+// query's own window rather than against a multiple of the configured
+// collection interval keeps it correct at any interval, global or
+// per-connection: an operator who raises probe_configs.collection_
+// interval_seconds past the window would otherwise widen the gate whilst
+// the window stayed put, leaving the cleaner quiet exactly where
+// ordinary collection starts emptying the query.
+//
+// age is how long ago the entries were read. Their SinceCollected is
+// fixed at that moment, so the probe is age later than it says by the
+// time the alert is judged, and the comparison brings it forward before
+// deciding; otherwise a pass that ran on for ten seconds would clear on
+// a probe ten seconds outside its window.
+//
+// Failing safe in both directions is the point: a clearWhenAbsent metric
+// whose probe is demonstrably current clears as it always did, whilst an
+// unknown, stalled or disabled probe leaves the alert active. That is a
+// deliberate trade-off, because a probe the operator turns off, or a
+// connection they stop monitoring, now keeps the alert until they clear
+// or acknowledge it; the alternative is announcing a resolution nobody
+// observed, which for a critical rule such as replication_slot_inactive
+// means a genuinely inactive slot reported as fixed. See GitHub issue
+// #407.
+func classifyAbsentMetric(clearsWhenAbsent bool, probe string, window time.Duration,
+	connectionID int, entries []database.ProbeStaleness, age time.Duration) absentMetricVerdict {
+	if !clearsWhenAbsent {
+		return absentMetricNotAbsenceDriven
+	}
+	if probe == "" {
+		return absentMetricNoProbe
+	}
+	if window <= 0 {
+		return absentMetricNoWindow
+	}
+	for _, entry := range entries {
+		if entry.ConnectionID != connectionID || entry.ProbeName != probe {
+			continue
+		}
+		// An unavailable probe has stopped collecting whatever its last
+		// collection says, and a last collection that still happens to
+		// sit inside the window would otherwise clear the alert on data
+		// that has stopped arriving. Before issue #465 the staleness
+		// query filtered these rows out and they reached the verdict
+		// below; keeping the verdict identical preserves the protection
+		// issue #407 added.
+		if !entry.IsAvailable {
+			return absentMetricProbeNotReporting
+		}
+		if entry.SinceCollected+age <= window {
+			return absentMetricClear
+		}
+		return absentMetricProbeNotReporting
+	}
+
+	// The staleness view still filters out probes that are disabled,
+	// never collected, or whose connection is not monitored, so a probe
+	// missing from it is not reporting. Unavailable probes are no longer
+	// among them: they are present in the view and handled above.
+	return absentMetricProbeNotReporting
+}
+
+// databaseScopedClearDescriptionPrefix opens the description of a
+// threshold alert closed by retireDatabaseScopedAlert, so that the
+// alert's history says plainly why it ended.
+const databaseScopedClearDescriptionPrefix = "Closed without re-evaluation: "
+
+// databaseScopedClearDescription is the text such an alert is closed
+// with. It keeps what the alert last said, since that is still the most
+// useful thing in the record.
+func databaseScopedClearDescription(metric, previous string) string {
+	return fmt.Sprintf(databaseScopedClearDescriptionPrefix+
+		"the metric %s is now reported for the whole server rather than "+
+		"per database, so this alert, which names a database, can no longer "+
+		"be evaluated and was closed without the condition it reports being "+
+		"observed to end. The alert said: %s",
+		metric, previous)
+}
+
+// retireDatabaseScopedAlert closes an active threshold alert that names a
+// database on a metric now reported for the whole server. The cleaner
+// matches an alert to a latest value by database, and a server-wide
+// metric's values name none, so without this the alert would be judged
+// absent for ever; the metric is not absence-driven, so it would never
+// clear, and retention keeps active rows. The evaluator raises a fresh,
+// server-wide alert if the condition still holds.
+// pg_stat_statements.slow_query_count is the metric this exists for: it
+// was reported per database, with the same cluster-wide figure in every
+// database, until GitHub issue #640.
+//
+// No clear notification is queued, as for an unmonitored connection:
+// nothing was seen to recover, and an upgrade must not announce a burst
+// of per-database alerts as resolved. A description this function
+// already wrote is left alone, so a clear that keeps failing does not
+// nest one explanation inside the next; a failed rewrite still clears
+// the alert, because an alert stuck active is the larger fault. A failed
+// clear leaves the alert for the next pass.
+func (e *Engine) retireDatabaseScopedAlert(ctx context.Context, alert *database.Alert) {
+	metric := *alert.MetricName
+	e.log("Metric %s is reported for the whole server; closing alert %d, which names database %s",
+		metric, alert.ID, *alert.DatabaseName)
+
+	if !strings.HasPrefix(alert.Description, databaseScopedClearDescriptionPrefix) {
+		description := databaseScopedClearDescription(metric, alert.Description)
+		if err := e.datastore.UpdateAlertDescription(ctx, alert.ID, description); err != nil {
+			e.log("ERROR: Failed to record why alert %d was closed, clearing it with its "+
+				"original description: %v", alert.ID, err)
+		} else {
+			alert.Description = description
+		}
+	}
+
+	if err := e.datastore.ClearAlert(ctx, alert.ID); err != nil {
+		e.log("ERROR: Failed to clear alert %d, which names a database on a server-wide "+
+			"metric, leaving it for the next pass: %v", alert.ID, err)
+	}
 }
 
 // clearResolvedAlert clears an alert and queues a notification
@@ -161,19 +945,29 @@ func (e *Engine) cleanupOldData(ctx context.Context) {
 	retentionDays := settings.RetentionDays
 	cutoff := time.Now().AddDate(0, 0, -retentionDays)
 
-	// Delete old cleared/acknowledged alerts
+	// Delete old cleared/acknowledged alerts. Both deletes here run in
+	// batches and can stop part way, on an error or at shutdown, so the
+	// rows already deleted are reported either way; the error returned
+	// already names the operation that failed.
 	deleted, err := e.datastore.DeleteOldAlerts(ctx, cutoff)
-	if err != nil {
-		e.log("ERROR: Failed to delete old alerts: %v", err)
-	} else if deleted > 0 {
+	if deleted > 0 {
 		e.log("Deleted %d old alerts", deleted)
 	}
+	if err != nil {
+		e.log("ERROR: %v", err)
+	}
+
+	// Expire candidates that were never processed first, so the delete
+	// below ages them out; with anomaly detection disabled nothing else
+	// would ever stamp them.
+	e.expireStaleAnomalyCandidates(ctx)
 
 	// Delete old anomaly candidates
 	deleted, err = e.datastore.DeleteOldAnomalyCandidates(ctx, cutoff)
-	if err != nil {
-		e.log("ERROR: Failed to delete old anomaly candidates: %v", err)
-	} else if deleted > 0 {
+	if deleted > 0 {
 		e.log("Deleted %d old anomaly candidates", deleted)
+	}
+	if err != nil {
+		e.log("ERROR: %v", err)
 	}
 }

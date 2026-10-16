@@ -12,7 +12,9 @@ import type React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { ThemeProvider } from '@mui/material/styles';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
+import type { Mock } from 'vitest';
 import ClusterNavigator from '../ClusterNavigator';
+import type { Server } from '../ClusterNavigator/utils';
 import { createPgedgeTheme } from '../../theme/pgedgeTheme';
 
 const lightTheme = createPgedgeTheme('light');
@@ -185,8 +187,8 @@ const renderWithTheme = (ui: React.ReactElement, theme = lightTheme) =>
     render(<ThemeProvider theme={theme}>{ui}</ThemeProvider>);
 
 describe('ClusterNavigator', () => {
-    let onSelectServer;
-    let onRefresh;
+    let onSelectServer: Mock<(server: Server) => void>;
+    let onRefresh: Mock<() => void>;
 
     beforeEach(() => {
         onSelectServer = vi.fn();
@@ -411,7 +413,6 @@ describe('ClusterNavigator', () => {
                 data={mockClusterData}
                 onSelectServer={onSelectServer}
                 onRefresh={onRefresh}
-                mode="dark"
             />,
             darkTheme
         );

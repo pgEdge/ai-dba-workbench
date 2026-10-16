@@ -269,7 +269,7 @@
             }
           },
           "403": {
-            "description": "Permission denied",
+            "description": "Permission denied, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -353,7 +353,7 @@
             }
           },
           "403": {
-            "description": "Permission denied",
+            "description": "Permission denied, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -538,7 +538,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_alert_rules permission",
+            "description": "Requires manage_alert_rules permission, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -568,7 +568,7 @@
     "/alerts": {
       "get": {
         "summary": "List alerts",
-        "description": "Returns alerts with optional filtering",
+        "description": "Returns alerts with optional filtering. System alerts, which belong to no connection, are included only when neither connection_id nor connection_ids is given",
         "operationId": "listAlerts",
         "tags": [
           "Alerts"
@@ -697,7 +697,7 @@
     "/alerts/acknowledge": {
       "post": {
         "summary": "Acknowledge an alert",
-        "description": "Acknowledges an alert with an optional message",
+        "description": "Acknowledges an alert with an optional message. An alert on a connection needs access to that connection; a system alert, which has no connection, needs a superuser or the manage_alert_rules admin permission, and an API token must also hold manage_alert_rules in its admin scope if it has one",
         "operationId": "acknowledgeAlert",
         "tags": [
           "Alerts"
@@ -779,7 +779,7 @@
       },
       "delete": {
         "summary": "Unacknowledge an alert",
-        "description": "Removes acknowledgement from an alert",
+        "description": "Removes acknowledgement from an alert. An alert on a connection needs access to that connection; a system alert needs a superuser or the manage_alert_rules admin permission, bounded by an API token's admin scope as for acknowledgement",
         "operationId": "unacknowledgeAlert",
         "tags": [
           "Alerts"
@@ -883,7 +883,7 @@
     "/alerts/analysis": {
       "put": {
         "summary": "Save AI analysis for alert",
-        "description": "Saves an AI-generated analysis for a specific alert",
+        "description": "Saves an AI-generated analysis for a specific alert, which needs access to the alert's connection. A system alert has no connection or metric to explain, so saving analysis on one is refused with 400 to every caller who may see system alerts, and with 403 to any caller who may not",
         "operationId": "saveAlertAnalysis",
         "tags": [
           "Alerts"
@@ -916,7 +916,7 @@
             }
           },
           "400": {
-            "description": "Invalid request",
+            "description": "Invalid request, or the alert is a system alert",
             "content": {
               "application/json": {
                 "schema": {
@@ -956,7 +956,7 @@
     "/alerts/counts": {
       "get": {
         "summary": "Get alert counts by server",
-        "description": "Returns counts of active alerts grouped by server and severity",
+        "description": "Returns counts of active alerts grouped by server, with system alerts counted separately",
         "operationId": "getAlertCounts",
         "tags": [
           "Alerts"
@@ -1087,6 +1087,121 @@
           },
           "405": {
             "description": "Method not allowed"
+          }
+        }
+      }
+    },
+    "/auth/oidc/callback": {
+      "get": {
+        "summary": "Complete a federated login",
+        "description": "The identity provider returns the browser here after the consent screen. On success, sets the session cookie and redirects to the original return path; on failure, redirects to \"/\" with a login_error query parameter (\"provider\" when the identity provider itself declined, \"login\" for every failure on this side). Not registered at all, and so answers 404, on a deployment where OIDC is disabled or no provider was discovered at start-up.",
+        "operationId": "completeOIDCLogin",
+        "tags": [
+          "Authentication"
+        ],
+        "parameters": [
+          {
+            "name": "code",
+            "in": "query",
+            "description": "Authorization code issued by the identity provider",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "description": "Opaque value that must match the sealed state cookie",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "error",
+            "in": "query",
+            "description": "Error code reported by the identity provider instead of a code",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "Redirect to the return path on success, or to \"/\" with login_error set on failure"
+          },
+          "400": {
+            "description": "Missing or invalid state cookie, state mismatch, a state that has already been used, or missing authorization code",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "OIDC login is not enabled"
+          },
+          "405": {
+            "description": "Method not allowed; the Allow header names GET"
+          },
+          "429": {
+            "description": "Too many callback requests from this address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/oidc/start": {
+      "get": {
+        "summary": "Start a federated login",
+        "description": "Redirects the browser to the identity provider to begin an OIDC login. Sets a short-lived, sealed state cookie before redirecting. On a deployment where OIDC is disabled or no provider was discovered at start-up, redirects to \"/\" with login_error set to \"provider\" instead, so that a browser following the link lands back on the login screen rather than on an error page.",
+        "operationId": "startOIDCLogin",
+        "tags": [
+          "Authentication"
+        ],
+        "parameters": [
+          {
+            "name": "return",
+            "in": "query",
+            "description": "Path to return to after a successful login",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "Redirect to the identity provider, or to \"/\" with login_error set when OIDC login is not enabled"
+          },
+          "405": {
+            "description": "Method not allowed; the Allow header names GET"
+          },
+          "429": {
+            "description": "Too many login requests from this address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to create or seal the login state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -1238,7 +1353,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_blackouts permission",
+            "description": "Requires manage_blackouts permission, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -1373,7 +1488,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_blackouts permission",
+            "description": "Requires manage_blackouts permission, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -1444,7 +1559,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_blackouts permission",
+            "description": "Requires manage_blackouts permission, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -1618,7 +1733,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_blackouts permission",
+            "description": "Requires manage_blackouts permission, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -1753,7 +1868,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_blackouts permission",
+            "description": "Requires manage_blackouts permission, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -1824,7 +1939,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_blackouts permission",
+            "description": "Requires manage_blackouts permission, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -1892,7 +2007,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_blackouts permission",
+            "description": "Requires manage_blackouts permission, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -2096,7 +2211,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_notification_channels permission",
+            "description": "Requires manage_notification_channels permission, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -2175,7 +2290,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_notification_channels permission",
+            "description": "Requires manage_notification_channels permission, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -2349,7 +2464,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_connections permission",
+            "description": "Requires manage_connections permission, or the API token's connection scope does not cover every connection",
             "content": {
               "application/json": {
                 "schema": {
@@ -2484,7 +2599,7 @@
             }
           },
           "403": {
-            "description": "Forbidden",
+            "description": "Forbidden, or the API token's connection scope does not cover every connection",
             "content": {
               "application/json": {
                 "schema": {
@@ -2494,7 +2609,7 @@
             }
           },
           "404": {
-            "description": "Group not found",
+            "description": "Group not found, or not visible to the caller",
             "content": {
               "application/json": {
                 "schema": {
@@ -2543,7 +2658,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_connections permission or ownership of the cluster group",
+            "description": "Requires manage_connections permission or ownership of the cluster group, or the API token's connection scope does not cover every connection",
             "content": {
               "application/json": {
                 "schema": {
@@ -2691,7 +2806,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_connections permission",
+            "description": "Requires manage_connections permission, or the API token's connection scope does not cover every connection",
             "content": {
               "application/json": {
                 "schema": {
@@ -2804,7 +2919,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_connections permission",
+            "description": "Requires manage_connections permission, or the API token's connection scope does not cover every connection",
             "content": {
               "application/json": {
                 "schema": {
@@ -2979,7 +3094,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_connections permission",
+            "description": "Requires manage_connections permission, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -3038,7 +3153,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_connections permission",
+            "description": "Requires manage_connections permission, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -3129,7 +3244,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_connections permission",
+            "description": "Requires manage_connections permission, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -3207,7 +3322,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_connections permission",
+            "description": "Requires manage_connections permission, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -3338,7 +3453,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_connections permission",
+            "description": "Requires manage_connections permission, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -3449,7 +3564,7 @@
             "description": "Server added to cluster"
           },
           "400": {
-            "description": "Invalid request",
+            "description": "Invalid request or role",
             "content": {
               "application/json": {
                 "schema": {
@@ -3469,7 +3584,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_connections permission",
+            "description": "Requires manage_connections permission, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -3539,7 +3654,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_connections permission",
+            "description": "Requires manage_connections permission, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -4155,7 +4270,7 @@
             }
           },
           "400": {
-            "description": "Invalid request",
+            "description": "Invalid request or role",
             "content": {
               "application/json": {
                 "schema": {
@@ -4175,7 +4290,17 @@
             }
           },
           "403": {
-            "description": "Permission denied: requires manage_connections permission",
+            "description": "Permission denied: requires manage_connections permission, or the API token's connection scope does not cover the target",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Connection or cluster not found, or the cluster is not visible to the caller",
             "content": {
               "application/json": {
                 "schema": {
@@ -4267,6 +4392,105 @@
           },
           "500": {
             "description": "Failed to list databases",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/connections/{id}/query/validate": {
+      "post": {
+        "summary": "Validate SQL without executing it",
+        "description": "Plans each statement of the supplied SQL with EXPLAIN inside a read-only transaction that is always rolled back, so nothing is executed. Statements are split with a SQL-aware tokeniser and each is planned over the extended query protocol, which refuses more than one command, so SQL the tokeniser fails to divide is rejected rather than run. A statement carrying $N parameter placeholders is planned with EXPLAIN (GENERIC_PLAN) on PostgreSQL 16 and later, and reported as unsupported on older servers. Requires read access to the connection; no write permission is needed and no confirmation is involved.",
+        "operationId": "validateConnectionQuery",
+        "tags": [
+          "Connections"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Connection ID",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "SQL to validate",
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QueryValidateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Validation result for every statement",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueryValidateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Query is required, or the database name is invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied: you do not have access to this connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Connection not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to validate query",
             "content": {
               "application/json": {
                 "schema": {
@@ -5669,7 +5893,23 @@
           {
             "name": "time_range",
             "in": "query",
-            "description": "Time range (1h, 6h, 24h, 7d, 30d)",
+            "description": "Time range (1h, 6h, 24h, 7d, 30d, custom; default: 24h); custom requires time_start and time_end, and the span must not exceed 30 days",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "time_start",
+            "in": "query",
+            "description": "Window start as an RFC 3339 timestamp; required when time_range is custom",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "time_end",
+            "in": "query",
+            "description": "Window end as an RFC 3339 timestamp; required when time_range is custom",
             "schema": {
               "type": "string"
             }
@@ -5677,7 +5917,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Database summaries",
+            "description": "Database summaries; an empty databases array when the metrics schema has not been created",
             "content": {
               "application/json": {
                 "schema": {
@@ -5708,6 +5948,16 @@
           },
           "403": {
             "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to query database summaries",
             "content": {
               "application/json": {
                 "schema": {
@@ -5760,9 +6010,25 @@
             }
           },
           {
+            "name": "exclude_schemas",
+            "in": "query",
+            "description": "Comma-separated schema names to exclude (probes with a schemaname column only; 'none' excludes nothing)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "exclude_system_schemas",
+            "in": "query",
+            "description": "Exclude pg_catalog, information_schema and pg_toast* schemas, as pg_stat_user_tables does (probes with a schemaname column only)",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
             "name": "order_by",
             "in": "query",
-            "description": "Column to sort by (default: collected_at)",
+            "description": "Column to sort by (default: the first entity key column)",
             "schema": {
               "type": "string"
             }
@@ -5845,7 +6111,7 @@
           {
             "name": "connection_ids",
             "in": "query",
-            "description": "Comma-separated connection IDs",
+            "description": "Comma-separated connection IDs; at most 100 per request",
             "schema": {
               "type": "string"
             }
@@ -5861,7 +6127,23 @@
           {
             "name": "time_range",
             "in": "query",
-            "description": "Time range (1h, 6h, 24h, 7d, 30d)",
+            "description": "Time range (1h, 6h, 24h, 7d, 30d, custom; default: 1h); custom requires time_start and time_end, and the span must not exceed 30 days",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "time_start",
+            "in": "query",
+            "description": "Window start as an RFC 3339 timestamp; required when time_range is custom",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "time_end",
+            "in": "query",
+            "description": "Window end as an RFC 3339 timestamp; required when time_range is custom",
             "schema": {
               "type": "string"
             }
@@ -5928,7 +6210,7 @@
           {
             "name": "connection_ids",
             "in": "query",
-            "description": "Comma-separated connection IDs",
+            "description": "Comma-separated connection IDs; at most 100 per request",
             "schema": {
               "type": "string"
             }
@@ -6007,6 +6289,14 @@
             }
           },
           {
+            "name": "mount_point",
+            "in": "query",
+            "description": "Filter by filesystem mount point",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "queryid",
             "in": "query",
             "description": "Filter by pg_stat_statements query ID",
@@ -6017,7 +6307,7 @@
           {
             "name": "buckets",
             "in": "query",
-            "description": "Number of time buckets",
+            "description": "Number of time buckets, 1 to 500 (default 150). The count is clamped so that no bucket is narrower than the probe's collection interval; a one-hour window on a five-minute probe therefore yields at most 12 buckets however many are requested.",
             "schema": {
               "type": "integer"
             }
@@ -6025,15 +6315,22 @@
           {
             "name": "aggregation",
             "in": "query",
-            "description": "Aggregation method",
+            "description": "How samples within a bucket are combined (default avg). Ignored for _delta metrics, which always sum the increases in the bucket.",
             "schema": {
-              "type": "string"
+              "type": "string",
+              "enum": [
+                "avg",
+                "sum",
+                "min",
+                "max",
+                "last"
+              ]
             }
           },
           {
             "name": "metrics",
             "in": "query",
-            "description": "Comma-separated metric names",
+            "description": "Comma-separated metric names. A name may be a raw probe column; a cumulative counter column suffixed with _per_sec for its per-second rate or _delta for its per-bucket increase; a cumulative time counter (milliseconds) suffixed with _pct for the share of wall-clock time it advanced by, or a session time counter suffixed with _sessions for the average number of sessions it represents; or dead_tuple_ratio on a probe exposing n_live_tup and n_dead_tup. A real column of that name always takes precedence, and a suffix on a column of the wrong kind (for example _per_sec on a gauge) is rejected with 400.",
             "schema": {
               "type": "string"
             }
@@ -6088,10 +6385,119 @@
         ]
       }
     },
+    "/metrics/query-stats": {
+      "get": {
+        "summary": "Get period-scoped query statistics",
+        "description": "Returns the average execution time, call count, and total execution time of a single query over the requested time range, computed from the deltas between consecutive pg_stat_statements samples",
+        "operationId": "getQueryStats",
+        "tags": [
+          "Metrics"
+        ],
+        "parameters": [
+          {
+            "name": "connection_id",
+            "in": "query",
+            "description": "Connection ID",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "queryid",
+            "in": "query",
+            "description": "Query ID to report on",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "database_name",
+            "in": "query",
+            "description": "Restrict the statistics to the query's executions in this database",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "time_range",
+            "in": "query",
+            "description": "Time range (1h, 6h, 24h, 7d, 30d, custom; default: 1h); custom requires time_start and time_end",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "time_start",
+            "in": "query",
+            "description": "Window start as an RFC 3339 timestamp; required when time_range is custom",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "time_end",
+            "in": "query",
+            "description": "Window end as an RFC 3339 timestamp; required when time_range is custom",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Period-scoped query statistics",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueryStatsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/metrics/top-queries": {
       "get": {
         "summary": "Get top queries",
-        "description": "Returns the top queries by execution time, calls, or other metrics",
+        "description": "Returns the top queries by execution time, calls, or other metrics over the requested time range. The counters are cumulative in pg_stat_statements, so calls, rows, total_exec_time and the shared block counts are the summed differences between consecutive samples in the window, and mean_exec_time is derived from those sums; min_exec_time and max_exec_time remain lifetime values taken from the latest sample in the window. A statement with no executions in the window is not reported",
         "operationId": "getTopQueries",
         "tags": [
           "Metrics"
@@ -6161,6 +6567,30 @@
             "schema": {
               "type": "boolean"
             }
+          },
+          {
+            "name": "time_range",
+            "in": "query",
+            "description": "Time range (1h, 6h, 24h, 7d, 30d, custom; default: 1h); custom requires time_start and time_end, and the span must not exceed 30 days",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "time_start",
+            "in": "query",
+            "description": "Window start as an RFC 3339 timestamp; required when time_range is custom",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "time_end",
+            "in": "query",
+            "description": "Window end as an RFC 3339 timestamp; required when time_range is custom",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -6207,6 +6637,16 @@
           },
           "403": {
             "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to query top queries",
             "content": {
               "application/json": {
                 "schema": {
@@ -6312,7 +6752,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_notification_channels permission",
+            "description": "Requires manage_notification_channels permission, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -6447,7 +6887,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_notification_channels permission",
+            "description": "Requires manage_notification_channels permission, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -6518,7 +6958,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_notification_channels permission",
+            "description": "Requires manage_notification_channels permission, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -6666,7 +7106,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_notification_channels permission",
+            "description": "Requires manage_notification_channels permission, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -6754,7 +7194,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_notification_channels permission",
+            "description": "Requires manage_notification_channels permission, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -6824,7 +7264,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_notification_channels permission",
+            "description": "Requires manage_notification_channels permission, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -7235,7 +7675,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_probes permission",
+            "description": "Requires manage_probes permission, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -7417,7 +7857,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_probes permission",
+            "description": "Requires manage_probes permission, or the API token's connection scope does not cover the target",
             "content": {
               "application/json": {
                 "schema": {
@@ -7496,7 +7936,157 @@
             }
           },
           "403": {
-            "description": "Requires manage_probes permission",
+            "description": "Requires manage_probes permission, or the API token's connection scope does not cover the target",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/rbac/audit": {
+      "get": {
+        "summary": "List RBAC audit events",
+        "description": "Returns audit-log events, newest first. Requires superuser privileges. A request authenticated with an API token whose admin scope has been narrowed is refused, because no admin permission grants audit access; a token with no admin scope, or one holding the * wildcard, is accepted.",
+        "operationId": "listAuditEvents",
+        "tags": [
+          "RBAC Audit"
+        ],
+        "parameters": [
+          {
+            "name": "actor",
+            "in": "query",
+            "description": "Filter by actor name",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "actor_type",
+            "in": "query",
+            "description": "Filter by actor type: user, token, cli or system",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "action",
+            "in": "query",
+            "description": "Filter by action, such as user.create",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "target_type",
+            "in": "query",
+            "description": "Filter by target type",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "target_id",
+            "in": "query",
+            "description": "Filter by target ID",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "outcome",
+            "in": "query",
+            "description": "Filter by outcome: success, failure or denied",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "description": "Only events at or after this RFC 3339 timestamp",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "until",
+            "in": "query",
+            "description": "Only events at or before this RFC 3339 timestamp",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum events to return (default 50, capped at 500)",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Number of events to skip",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Audit events, newest first",
+            "headers": {
+              "X-Total-Count": {
+                "description": "Total events matching the filters, ignoring limit and offset",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AuditEvent"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query parameter",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Requires superuser privileges, and an unrestricted admin scope when authenticated by API token",
             "content": {
               "application/json": {
                 "schema": {
@@ -7626,7 +8216,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_groups permission",
+            "description": "Requires manage_groups permission, or the name is one the OIDC group map uses and the API token is not a superuser's token unrestricted in every scope kind",
             "content": {
               "application/json": {
                 "schema": {
@@ -7781,7 +8371,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_groups permission",
+            "description": "Requires manage_groups permission, or the request renames a group whose access exceeds the API token's access (its owner's privileges narrowed by its scope), or the old or new name is one the OIDC group map uses and the API token is not a superuser's token unrestricted in every scope kind",
             "content": {
               "application/json": {
                 "schema": {
@@ -7802,6 +8392,16 @@
           },
           "409": {
             "description": "A group with this name already exists",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The group could not be read to check a rename against the API token's scope",
             "content": {
               "application/json": {
                 "schema": {
@@ -7850,7 +8450,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_groups permission",
+            "description": "Requires manage_groups permission; an API token also needs read access to every connection membership of the group confers, and read_write on each connection whose last group grant the group holds, since deleting it lifts the restriction (an all-connections grant restricts no connection), decided in the delete's own transaction; or the group's name is one the OIDC group map uses and the token is not a superuser's token unrestricted in every scope kind",
             "content": {
               "application/json": {
                 "schema": {
@@ -7990,7 +8590,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_groups permission",
+            "description": "Requires manage_groups permission, or the access the group confers, through its own grants and those of every group it belongs to, exceeds the API token's access (its owner's privileges narrowed by its scope) at any connection's level, MCP item or admin permission",
             "content": {
               "application/json": {
                 "schema": {
@@ -8069,7 +8669,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_groups permission",
+            "description": "Requires manage_groups permission; an API token also needs read access to every connection membership of the group confers",
             "content": {
               "application/json": {
                 "schema": {
@@ -8127,7 +8727,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_permissions permission",
+            "description": "Requires superuser privileges, and an API token whose admin scope is unrestricted",
             "content": {
               "application/json": {
                 "schema": {
@@ -8143,10 +8743,10 @@
           }
         ]
       },
-      "put": {
-        "summary": "Set group admin permissions",
-        "description": "Sets the admin permissions for a group",
-        "operationId": "setGroupPermissions",
+      "post": {
+        "summary": "Grant a group an admin permission",
+        "description": "Grants a group one admin permission, or the wildcard '*' for every permission",
+        "operationId": "grantGroupPermission",
         "tags": [
           "RBAC Groups"
         ],
@@ -8162,22 +8762,31 @@
           }
         ],
         "requestBody": {
-          "description": "Permissions to set",
+          "description": "Admin permission to grant",
           "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "type": "object"
+                "type": "object",
+                "properties": {
+                  "permission": {
+                    "type": "string",
+                    "description": "Admin permission name, or '*'"
+                  }
+                },
+                "required": [
+                  "permission"
+                ]
               }
             }
           }
         },
         "responses": {
-          "200": {
-            "description": "Permissions updated"
+          "204": {
+            "description": "Permission granted"
           },
           "400": {
-            "description": "Invalid request",
+            "description": "Permission is required",
             "content": {
               "application/json": {
                 "schema": {
@@ -8197,7 +8806,67 @@
             }
           },
           "403": {
-            "description": "Requires manage_permissions permission",
+            "description": "Requires superuser privileges, and an API token whose admin scope is unrestricted; the token must also hold the permission itself and every connection at read_write, and, to grant manage_users, manage_groups, manage_permissions, manage_token_scopes or the wildcard, every MCP item and admin permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/rbac/groups/{id}/permissions/{permission}": {
+      "delete": {
+        "summary": "Revoke an admin permission from a group",
+        "description": "Revokes one admin permission from a group",
+        "operationId": "revokeGroupPermission",
+        "tags": [
+          "RBAC Groups"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Group ID",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "permission",
+            "in": "path",
+            "description": "Admin permission name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Permission revoked"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Requires superuser privileges, and an API token whose admin scope is unrestricted",
             "content": {
               "application/json": {
                 "schema": {
@@ -8215,66 +8884,10 @@
       }
     },
     "/rbac/groups/{id}/privileges/connections": {
-      "get": {
-        "summary": "Get group connection privileges",
-        "description": "Returns the connection-level privileges assigned to a group",
-        "operationId": "getGroupConnectionPrivileges",
-        "tags": [
-          "RBAC Groups"
-        ],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Group ID",
-            "required": true,
-            "schema": {
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Connection privileges",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Requires manage_permissions permission",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      },
-      "put": {
-        "summary": "Set group connection privileges",
-        "description": "Sets the connection-level privileges for a group",
-        "operationId": "setGroupConnectionPrivileges",
+      "post": {
+        "summary": "Grant a group connection access",
+        "description": "Grants a group read or read_write access to one connection; connection_id 0 grants every connection",
+        "operationId": "grantGroupConnectionPrivilege",
         "tags": [
           "RBAC Groups"
         ],
@@ -8290,22 +8903,40 @@
           }
         ],
         "requestBody": {
-          "description": "Connection privileges to set",
+          "description": "Connection privilege to grant",
           "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "type": "object"
+                "type": "object",
+                "properties": {
+                  "access_level": {
+                    "type": "string",
+                    "description": "Access level to grant",
+                    "enum": [
+                      "read",
+                      "read_write"
+                    ]
+                  },
+                  "connection_id": {
+                    "type": "integer",
+                    "description": "Connection ID, or 0 for every connection"
+                  }
+                },
+                "required": [
+                  "connection_id",
+                  "access_level"
+                ]
               }
             }
           }
         },
         "responses": {
-          "200": {
-            "description": "Privileges updated"
+          "204": {
+            "description": "Privilege granted"
           },
           "400": {
-            "description": "Invalid request",
+            "description": "Invalid connection_id or access_level",
             "content": {
               "application/json": {
                 "schema": {
@@ -8325,7 +8956,77 @@
             }
           },
           "403": {
-            "description": "Requires manage_permissions permission",
+            "description": "Requires manage_permissions permission, or the access level being granted on the connection exceeds the API token's access (its owner's privileges narrowed by its scope); a token holding a connection read-only may grant read on it but not read_write, and the all-connections entry needs the token to hold every connection at that level",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/rbac/groups/{id}/privileges/connections/{connection_id}": {
+      "delete": {
+        "summary": "Revoke a group's connection access",
+        "description": "Revokes a group's grant on one connection",
+        "operationId": "revokeGroupConnectionPrivilege",
+        "tags": [
+          "RBAC Groups"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Group ID",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "connection_id",
+            "in": "path",
+            "description": "Connection ID",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Privilege revoked"
+          },
+          "400": {
+            "description": "Invalid connection ID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Requires manage_permissions permission; an API token also needs read access to the connection, and read_write when the grant is the connection's last, since revoking it lifts the restriction (an all-connections grant restricts no connection, so revoking one needs only read); whether it is the last is decided in the revoke's own transaction, so a concurrent revoke cannot slip past it. A connection the token cannot see is refused exactly as one that does not exist. A read-level token may revoke another group's read_write, since a revoke only narrows",
             "content": {
               "application/json": {
                 "schema": {
@@ -8343,66 +9044,10 @@
       }
     },
     "/rbac/groups/{id}/privileges/mcp": {
-      "get": {
-        "summary": "Get group MCP privileges",
-        "description": "Returns the MCP tool privileges assigned to a group",
-        "operationId": "getGroupMCPPrivileges",
-        "tags": [
-          "RBAC Groups"
-        ],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Group ID",
-            "required": true,
-            "schema": {
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "MCP privileges",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Requires manage_permissions permission",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      },
-      "put": {
-        "summary": "Set group MCP privileges",
-        "description": "Sets the MCP tool privileges for a group",
-        "operationId": "setGroupMCPPrivileges",
+      "post": {
+        "summary": "Grant a group an MCP privilege",
+        "description": "Grants a group one MCP tool, resource or prompt privilege by identifier, or the wildcard '*' for every item",
+        "operationId": "grantGroupMCPPrivilege",
         "tags": [
           "RBAC Groups"
         ],
@@ -8418,22 +9063,99 @@
           }
         ],
         "requestBody": {
-          "description": "MCP privileges to set",
+          "description": "MCP privilege to grant",
           "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "type": "object"
+                "type": "object",
+                "properties": {
+                  "privilege": {
+                    "type": "string",
+                    "description": "MCP privilege identifier, or '*'"
+                  }
+                },
+                "required": [
+                  "privilege"
+                ]
               }
             }
           }
         },
         "responses": {
-          "200": {
-            "description": "Privileges updated"
+          "204": {
+            "description": "Privilege granted"
           },
           "400": {
-            "description": "Invalid request",
+            "description": "Privilege is required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Requires manage_permissions permission, or the privilege being granted is one the API token's access (its owner's privileges narrowed by its scope) cannot call; the wildcard needs a token whose owner holds it and whose MCP scope is unrestricted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "delete": {
+        "summary": "Revoke an MCP privilege from a group",
+        "description": "Revokes one MCP privilege, named by the name query parameter, from a group",
+        "operationId": "revokeGroupMCPPrivilege",
+        "tags": [
+          "RBAC Groups"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Group ID",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "name",
+            "in": "query",
+            "description": "MCP privilege identifier to revoke",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Privilege revoked"
+          },
+          "400": {
+            "description": "Query parameter 'name' is required",
             "content": {
               "application/json": {
                 "schema": {
@@ -8611,7 +9333,17 @@
             }
           },
           "403": {
-            "description": "Requires manage_token_scopes permission",
+            "description": "Requires manage_token_scopes permission, or the new token owner's access exceeds the API token's access (its owner's privileges narrowed by its scope); a token for a superuser needs a superuser's token unrestricted in every scope kind, or a superuser's session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to create token, including when the owner could not be read",
             "content": {
               "application/json": {
                 "schema": {
@@ -8662,7 +9394,17 @@
             }
           },
           "403": {
-            "description": "Requires manage_token_scopes permission",
+            "description": "Requires manage_token_scopes permission; a token owned by a superuser may be deleted only by a superuser's session, or a superuser's token with an unrestricted admin scope, or by that token itself",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to delete token",
             "content": {
               "application/json": {
                 "schema": {
@@ -8728,6 +9470,26 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "Token not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to get token scope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -8738,7 +9500,7 @@
       },
       "put": {
         "summary": "Set token scope",
-        "description": "Sets scope restrictions for a token including connections, MCP privileges, and admin permissions",
+        "description": "Sets scope restrictions for a token including connections, MCP privileges, and admin permissions. Each kind that is present replaces that kind's restriction, and a kind that is omitted or null is left unchanged. A kind with no entries is unrestricted, so an empty array would lift the restriction rather than deny everything; it is refused with 400, and DELETE is the way to clear a token's scope. An API token may change only within its own access, its own scope included: it may narrow its own scope but not widen it.",
         "operationId": "setTokenScope",
         "tags": [
           "RBAC Tokens"
@@ -8770,7 +9532,7 @@
             "description": "Scope updated"
           },
           "400": {
-            "description": "Invalid request",
+            "description": "Invalid request, including an empty array for any scope kind; a connection scope that names a connection twice, has a negative connection ID or an unknown access level, or combines connection_id 0 (all connections) with any other entry; or an admin permission that is not a known permission name or \"*\"",
             "content": {
               "application/json": {
                 "schema": {
@@ -8790,7 +9552,17 @@
             }
           },
           "403": {
-            "description": "Requires manage_token_scopes permission",
+            "description": "Requires manage_token_scopes permission, or the change grants access that exceeds the API token's access (its owner's privileges narrowed by its scope). Only the kinds present are judged: an entry the target token does not already allow must be within the caller's access, narrowing a kind that was unrestricted grants nothing, and keeping, narrowing or dropping a connection entry needs read access to that connection. The same rule applies to a token's own scope. A token owned by a superuser may be changed only by a superuser's session, or a superuser's token with an unrestricted admin scope, other than by that token itself, and an API token may widen such a token only when it is a superuser's token unrestricted in every scope kind",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to set token scope, including when the target token or its owner could not be read inside the write; for an API token caller, also \"Failed to get token scope\" when the target token's current scope could not be read to judge the change",
             "content": {
               "application/json": {
                 "schema": {
@@ -8808,7 +9580,7 @@
       },
       "delete": {
         "summary": "Clear token scope",
-        "description": "Removes all scope restrictions from a token",
+        "description": "Removes all scope restrictions from a token. An API token may clear a scope only when the target's owner's access lies within its own, its own scope included.",
         "operationId": "clearTokenScope",
         "tags": [
           "RBAC Tokens"
@@ -8839,7 +9611,17 @@
             }
           },
           "403": {
-            "description": "Requires manage_token_scopes permission",
+            "description": "Requires manage_token_scopes permission, or, for each kind the target token is restricted in, its owner's access in that kind exceeds the API token's access (its owner's privileges narrowed by its scope), or a connection entry the clear drops is one the caller cannot read. The same rule applies to a token's own scope. A token owned by a superuser may be cleared only by a superuser's session, or a superuser's token with an unrestricted admin scope, other than by that token itself, and by an API token only when it is a superuser's token unrestricted in every scope kind",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to clear token scope, including when the target token or its owner could not be read inside the write; for an API token caller, also \"Failed to get token scope\" when the target token's current scope could not be read to judge the clear",
             "content": {
               "application/json": {
                 "schema": {
@@ -8912,7 +9694,7 @@
       },
       "post": {
         "summary": "Create user",
-        "description": "Creates a new user or service account. Requires manage_users permission.",
+        "description": "Creates a new user or service account. Requires manage_users permission; setting is_superuser also requires the caller to be a superuser.",
         "operationId": "createUser",
         "tags": [
           "RBAC Users"
@@ -8965,7 +9747,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_users permission",
+            "description": "Requires manage_users permission, and superuser privileges to send is_superuser; also refused for an API token when the new user would exceed this token's access, which is its owner's privileges narrowed by its scope: a superuser needs a superuser's token unrestricted in every scope kind, and any other new user reaches the shared connections no group restricts, any connection its username already owns, every member connection of a cluster group its username owns, and the public MCP items",
             "content": {
               "application/json": {
                 "schema": {
@@ -8985,7 +9767,7 @@
     "/rbac/users/{id}": {
       "put": {
         "summary": "Update user",
-        "description": "Updates a user's details. Requires manage_users permission.",
+        "description": "Updates a user's details. Requires manage_users permission; setting or clearing is_superuser also requires the caller to be a superuser, as does updating any user who is already a superuser. Demoting or disabling the last enabled superuser is refused with 409.",
         "operationId": "updateUser",
         "tags": [
           "RBAC Users"
@@ -9049,7 +9831,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_users permission",
+            "description": "Requires manage_users permission, and superuser privileges to send is_superuser or to update a superuser; also refused for an API token when setting is_superuser without being a superuser's token unrestricted in every scope kind, or when setting the password of or re-enabling a user whose group grants, unrestricted connections, owned connections, owned cluster groups' member connections or public MCP items exceed the API token's access (its owner's privileges narrowed by its scope)",
             "content": {
               "application/json": {
                 "schema": {
@@ -9067,6 +9849,16 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "Cannot demote, disable or delete the last enabled superuser",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -9077,7 +9869,7 @@
       },
       "delete": {
         "summary": "Delete user",
-        "description": "Deletes a user. Requires manage_users permission.",
+        "description": "Deletes a user. Requires manage_users permission, and superuser privileges when the user being deleted is a superuser. Deleting the last enabled superuser is refused with 409.",
         "operationId": "deleteUser",
         "tags": [
           "RBAC Users"
@@ -9108,7 +9900,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_users permission",
+            "description": "Requires manage_users permission, and superuser privileges to delete a superuser; also refused when everything the user reaches exceeds the API token's access (its owner's privileges narrowed by its scope), since connection ownership is recorded by username and passes to whoever recreates the name",
             "content": {
               "application/json": {
                 "schema": {
@@ -9119,6 +9911,16 @@
           },
           "404": {
             "description": "User not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Cannot demote, disable or delete the last enabled superuser",
             "content": {
               "application/json": {
                 "schema": {
@@ -9323,6 +10125,16 @@
           },
           "403": {
             "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The model returned no usable analysis text",
             "content": {
               "application/json": {
                 "schema": {
@@ -9549,7 +10361,13 @@
           },
           "alert_type": {
             "type": "string",
-            "description": "Type of alert"
+            "description": "Type of alert; a system alert reports a fault in the Workbench itself and belongs to no connection",
+            "enum": [
+              "threshold",
+              "anomaly",
+              "connection",
+              "system"
+            ]
           },
           "cleared_at": {
             "type": "string",
@@ -9559,7 +10377,8 @@
           },
           "connection_id": {
             "type": "integer",
-            "description": "Associated connection ID"
+            "description": "Associated connection ID; null for a system alert",
+            "nullable": true
           },
           "false_positive": {
             "type": "boolean",
@@ -9597,7 +10416,7 @@
           },
           "server_name": {
             "type": "string",
-            "description": "Server name"
+            "description": "Server name; empty for a system alert"
           },
           "severity": {
             "type": "string",
@@ -9631,23 +10450,23 @@
       "AlertCountsResult": {
         "type": "object",
         "properties": {
-          "counts": {
+          "by_server": {
             "type": "object",
-            "description": "Alert counts by server ID",
+            "description": "Active alert count keyed by connection ID; system alerts are never included",
             "additionalProperties": {
-              "type": "object",
-              "properties": {
-                "critical": {
-                  "type": "integer"
-                },
-                "info": {
-                  "type": "integer"
-                },
-                "warning": {
-                  "type": "integer"
-                }
-              }
+              "type": "integer",
+              "format": "int64"
             }
+          },
+          "system": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Active system alerts, which belong to no connection"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Active alerts the caller may see, system alerts included"
           }
         }
       },
@@ -9871,6 +10690,111 @@
           "default_threshold": {
             "type": "number",
             "description": "Default threshold value"
+          }
+        }
+      },
+      "AuditEvent": {
+        "type": "object",
+        "description": "One row of the RBAC audit log",
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "Audited action, such as user.create"
+          },
+          "actor_id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Actor ID, null for cli and system actors",
+            "nullable": true
+          },
+          "actor_ip": {
+            "type": "string",
+            "description": "Client address of the actor, when known"
+          },
+          "actor_name": {
+            "type": "string",
+            "description": "Name of the actor"
+          },
+          "actor_type": {
+            "type": "string",
+            "description": "Kind of principal responsible",
+            "enum": [
+              "user",
+              "token",
+              "cli",
+              "system"
+            ]
+          },
+          "details": {
+            "type": "object",
+            "description": "Action-specific details"
+          },
+          "error": {
+            "type": "string",
+            "description": "Error message for a failed or denied operation"
+          },
+          "hash": {
+            "type": "string",
+            "description": "Hash chaining this event to its predecessor"
+          },
+          "hash_version": {
+            "type": "integer",
+            "description": "Version of the rendering the hash was computed under, so that rows written before a format change stay verifiable"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Event ID"
+          },
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the event was recorded"
+          },
+          "outcome": {
+            "type": "string",
+            "description": "Result of the audited operation",
+            "enum": [
+              "success",
+              "failure",
+              "denied"
+            ]
+          },
+          "prev_hash": {
+            "type": "string",
+            "description": "Hash of the preceding event"
+          },
+          "target_id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Target ID, null when the target has none",
+            "nullable": true
+          },
+          "target_name": {
+            "type": "string",
+            "description": "Name of the object acted upon"
+          },
+          "target_type": {
+            "type": "string",
+            "description": "Kind of object acted upon"
+          }
+        }
+      },
+      "AuthCapabilities": {
+        "type": "object",
+        "description": "What the login page needs in order to render itself",
+        "properties": {
+          "local_enabled": {
+            "type": "boolean",
+            "description": "Whether username and password login is enabled"
+          },
+          "oidc_enabled": {
+            "type": "boolean",
+            "description": "Whether federated (OIDC) login is enabled and a provider was discovered at start-up"
+          },
+          "oidc_label": {
+            "type": "string",
+            "description": "Label for the federated login button, empty when oidc_enabled is false"
           }
         }
       },
@@ -10150,12 +11074,56 @@
           }
         }
       },
+      "CacheHitRatioData": {
+        "type": "object",
+        "description": "Buffer cache hit ratio computed from per-interval deltas of the pg_stat_database block counters, never from the lifetime totals. The bucket width is the requested time range divided by 60, with a 10 second floor.",
+        "properties": {
+          "current": {
+            "type": "number",
+            "description": "Ratio percentage for the latest bucket in the range, or null when there is no data or that bucket saw no block access",
+            "nullable": true
+          },
+          "time_series": {
+            "type": "array",
+            "description": "Per-bucket ratios in chronological order",
+            "items": {
+              "$ref": "#/components/schemas/CacheHitRatioPoint"
+            }
+          }
+        },
+        "required": [
+          "current",
+          "time_series"
+        ]
+      },
+      "CacheHitRatioPoint": {
+        "type": "object",
+        "properties": {
+          "time": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Bucket start time"
+          },
+          "value": {
+            "type": "number",
+            "description": "Ratio percentage for the bucket, or null when no blocks were hit or read in it",
+            "nullable": true
+          }
+        },
+        "required": [
+          "time",
+          "value"
+        ]
+      },
       "CapabilitiesResponse": {
         "type": "object",
         "properties": {
           "ai_enabled": {
             "type": "boolean",
             "description": "Whether AI features are enabled"
+          },
+          "auth": {
+            "$ref": "#/components/schemas/AuthCapabilities"
           },
           "max_iterations": {
             "type": "integer",
@@ -10636,6 +11604,21 @@
           "role": {
             "type": "string",
             "description": "Cluster role for the connection",
+            "enum": [
+              "standalone",
+              "binary_primary",
+              "binary_standby",
+              "binary_cascading",
+              "logical_publisher",
+              "logical_subscriber",
+              "logical_bidirectional",
+              "spock_node",
+              "spock_standby",
+              "primary",
+              "replica",
+              "node",
+              "unknown"
+            ],
             "nullable": true
           }
         }
@@ -11058,23 +12041,48 @@
           }
         }
       },
+      "DatabaseSummary": {
+        "type": "object",
+        "properties": {
+          "active_connections": {
+            "type": "integer",
+            "description": "Backends connected to the database at the most recent collection"
+          },
+          "cache_hit_ratio": {
+            "$ref": "#/components/schemas/CacheHitRatioData"
+          },
+          "database_name": {
+            "type": "string",
+            "description": "Database name"
+          },
+          "dead_tuple_ratio": {
+            "type": "number",
+            "description": "Dead tuples as a percentage of live plus dead tuples"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Database size in bytes"
+          },
+          "size_pretty": {
+            "type": "string",
+            "description": "Human-readable database size"
+          },
+          "transaction_rate": {
+            "type": "number",
+            "description": "Transactions per second"
+          }
+        }
+      },
       "DatabaseSummaryResponse": {
         "type": "object",
         "properties": {
-          "connection_id": {
-            "type": "integer",
-            "description": "Connection ID"
-          },
           "databases": {
             "type": "array",
             "description": "Per-database summary data",
             "items": {
-              "type": "object"
+              "$ref": "#/components/schemas/DatabaseSummary"
             }
-          },
-          "time_range": {
-            "type": "string",
-            "description": "Time range used"
           }
         }
       },
@@ -11715,40 +12723,119 @@
           "content"
         ]
       },
+      "MetricDataPoint": {
+        "type": "object",
+        "properties": {
+          "filled": {
+            "type": "boolean",
+            "description": "True when the value was carried forward from an earlier observation rather than aggregated from a sample of this bucket; omitted otherwise"
+          },
+          "time": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Bucket start time"
+          },
+          "value": {
+            "type": "number",
+            "description": "Aggregated value for the bucket, or null when the bucket has no value: no sample fell in it and, for a raw column or dead_tuple_ratio, the last reading is more than three collection intervals old; for a counter-derived metric (_per_sec, _delta, _pct, _sessions), the interval spanned a counter reset or a collection gap of more than three collection intervals. Rates are never carried forward across a gap.",
+            "nullable": true
+          }
+        },
+        "required": [
+          "time",
+          "value"
+        ]
+      },
+      "MetricSeries": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "description": "One point per time bucket. Every series in a response has the same length and the same bucket times.",
+            "items": {
+              "$ref": "#/components/schemas/MetricDataPoint"
+            }
+          },
+          "metric": {
+            "type": "string",
+            "description": "Metric name as requested"
+          },
+          "name": {
+            "type": "string",
+            "description": "Series label: the metric name, suffixed with the connection (for example \"xact_commit_per_sec (conn 3)\") when more than one connection was queried"
+          },
+          "unit": {
+            "type": "string",
+            "description": "Unit of the values: \"/s\" for a _per_sec rate, \"%\" for a _pct time share or dead_tuple_ratio, \"sessions\" for a _sessions average, \"ms\" for a _delta of a time counter, and empty for a raw column or an event-count _delta"
+          }
+        },
+        "required": [
+          "name",
+          "metric",
+          "unit",
+          "data"
+        ]
+      },
       "MetricsQueryResult": {
         "type": "object",
+        "description": "A bucketed metrics query, describing the window that was queried alongside the data, so a chart axis can be anchored to the requested range rather than inferred from the points that came back",
         "properties": {
           "aggregation": {
             "type": "string",
-            "description": "Aggregation method"
+            "description": "Aggregation applied within each bucket"
+          },
+          "bucket_seconds": {
+            "type": "integer",
+            "description": "Width of one bucket in whole seconds, as the query used it, with a one second floor"
           },
           "buckets": {
             "type": "integer",
-            "description": "Number of time buckets"
+            "description": "Number of buckets the window was divided into: the requested count, reduced when the probe's collection interval is too wide to fill that many"
           },
           "connection_ids": {
             "type": "array",
-            "description": "Connection IDs queried",
+            "description": "Connections the series were read from",
             "items": {
               "type": "integer"
             }
           },
           "probe_name": {
             "type": "string",
-            "description": "Probe name"
+            "description": "Probe the series were read from"
           },
           "series": {
             "type": "array",
-            "description": "Time series data",
+            "description": "Time series in the order the metrics were requested (or column order when no metrics were named), one per metric per connection",
             "items": {
-              "type": "object"
+              "$ref": "#/components/schemas/MetricSeries"
             }
+          },
+          "time_end": {
+            "type": "string",
+            "format": "date-time",
+            "description": "End of the resolved window"
           },
           "time_range": {
             "type": "string",
-            "description": "Time range"
+            "description": "Range selection as requested, such as \"1h\" or \"custom\"; \"1h\" when the parameter was omitted"
+          },
+          "time_start": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Start of the resolved window"
           }
-        }
+        },
+        "required": [
+          "probe_name",
+          "connection_ids",
+          "time_range",
+          "time_start",
+          "time_end",
+          "bucket_seconds",
+          "buckets",
+          "aggregation",
+          "series"
+        ]
       },
       "ModelInfo": {
         "type": "object",
@@ -11823,7 +12910,14 @@
           },
           "channel_type": {
             "type": "string",
-            "description": "Channel type (email, slack, mattermost, webhook)"
+            "description": "Channel type",
+            "enum": [
+              "email",
+              "slack",
+              "mattermost",
+              "telegram",
+              "webhook"
+            ]
           },
           "created_at": {
             "type": "string",
@@ -11924,6 +13018,15 @@
             "type": "boolean",
             "description": "Whether an SMTP username is configured"
           },
+          "telegram_bot_token_set": {
+            "type": "boolean",
+            "description": "Whether a Telegram bot token is configured. The token itself is a bearer credential and is never returned."
+          },
+          "telegram_chat_id": {
+            "type": "string",
+            "description": "Telegram chat ID or @channelusername the channel posts to (telegram). Not a secret, so it is returned in clear.",
+            "nullable": true
+          },
           "template_alert_clear": {
             "type": "string",
             "description": "Template used when an alert clears; null means use the built-in default",
@@ -11963,7 +13066,14 @@
           },
           "channel_type": {
             "type": "string",
-            "description": "Channel type (email, slack, mattermost, webhook)"
+            "description": "Channel type",
+            "enum": [
+              "email",
+              "slack",
+              "mattermost",
+              "telegram",
+              "webhook"
+            ]
           },
           "description": {
             "type": "string",
@@ -11994,7 +13104,7 @@
           },
           "http_method": {
             "type": "string",
-            "description": "HTTP method for webhook"
+            "description": "HTTP method for webhook: GET, POST, PUT or PATCH. Omit or send an empty string for the POST default; any other value is rejected with 400."
           },
           "is_estate_default": {
             "type": "boolean",
@@ -12031,6 +13141,14 @@
           "smtp_username": {
             "type": "string",
             "description": "SMTP username (email). On PUT: omit to keep existing, empty string to clear, value to replace."
+          },
+          "telegram_bot_token": {
+            "type": "string",
+            "description": "Telegram bot token, in the form \u003cbot id\u003e:\u003ctoken\u003e (telegram). Required on POST for telegram channels and ignored on POST for every other channel type. On PUT: omit to keep existing, empty string to clear, value to replace. A PUT that changes channel_type to telegram revalidates the stored token. Never returned; the response exposes telegram_bot_token_set instead."
+          },
+          "telegram_chat_id": {
+            "type": "string",
+            "description": "Telegram chat ID or @channelusername (telegram). Required on POST for telegram channels and ignored on POST for every other channel type. On PUT: omit to keep existing, empty string to clear, value to replace."
           },
           "webhook_url": {
             "type": "string",
@@ -12138,19 +13256,71 @@
           }
         }
       },
+      "PerfAggregate": {
+        "type": "object",
+        "description": "Aggregate metrics across the requested connections; only present when more than one connection was requested",
+        "properties": {
+          "cache_hit_ratio": {
+            "type": "number",
+            "description": "Cache hit ratio percentage weighted by each connection's latest-bucket block deltas, or null when every connection was idle in its latest bucket",
+            "nullable": true
+          },
+          "commits_per_sec": {
+            "type": "number",
+            "description": "Commits per second summed across connections"
+          },
+          "rollback_percent": {
+            "type": "number",
+            "description": "Rollbacks as a percentage of all transactions across connections"
+          }
+        }
+      },
+      "PerfConnectionResponse": {
+        "type": "object",
+        "properties": {
+          "active_connections": {
+            "type": "integer",
+            "description": "Backends connected at the most recent collection, summed across databases"
+          },
+          "cache_hit_ratio": {
+            "$ref": "#/components/schemas/CacheHitRatioData"
+          },
+          "checkpoints": {
+            "type": "object",
+            "description": "Checkpoint activity time series"
+          },
+          "connection_id": {
+            "type": "integer",
+            "description": "Connection ID"
+          },
+          "connection_name": {
+            "type": "string",
+            "description": "Connection name"
+          },
+          "transactions": {
+            "type": "object",
+            "description": "Transaction throughput: commits_per_sec, rollback_percent and a time_series"
+          },
+          "xid_age": {
+            "type": "array",
+            "description": "Transaction ID age per database",
+            "items": {
+              "type": "object"
+            }
+          }
+        }
+      },
       "PerfSummaryResponse": {
         "type": "object",
         "properties": {
           "aggregate": {
-            "type": "object",
-            "description": "Aggregate performance metrics",
-            "nullable": true
+            "$ref": "#/components/schemas/PerfAggregate"
           },
           "connections": {
             "type": "array",
             "description": "Per-connection performance data",
             "items": {
-              "type": "object"
+              "$ref": "#/components/schemas/PerfConnectionResponse"
             }
           },
           "time_range": {
@@ -12323,6 +13493,93 @@
           }
         }
       },
+      "QueryStatsResponse": {
+        "type": "object",
+        "properties": {
+          "avg_exec_time": {
+            "type": "number",
+            "description": "Average execution time in ms over the requested period, or null when there is no usable data",
+            "nullable": true
+          },
+          "calls": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Calls made during the requested period"
+          },
+          "queryid": {
+            "type": "string",
+            "description": "Query ID the statistics apply to"
+          },
+          "total_exec_time": {
+            "type": "number",
+            "description": "Execution time in ms accumulated during the requested period"
+          }
+        },
+        "required": [
+          "queryid",
+          "avg_exec_time",
+          "calls",
+          "total_exec_time"
+        ]
+      },
+      "QueryValidateRequest": {
+        "type": "object",
+        "properties": {
+          "database_name": {
+            "type": "string",
+            "description": "Database to validate against; defaults to the connection's database"
+          },
+          "query": {
+            "type": "string",
+            "description": "SQL to validate; may contain several statements"
+          }
+        },
+        "required": [
+          "query"
+        ]
+      },
+      "QueryValidateResponse": {
+        "type": "object",
+        "properties": {
+          "statements": {
+            "type": "array",
+            "description": "Per-statement validation results, in the order the statements appeared",
+            "items": {
+              "$ref": "#/components/schemas/QueryValidationStatement"
+            }
+          },
+          "total_statements": {
+            "type": "integer",
+            "description": "Number of statements the SQL was split into"
+          },
+          "valid": {
+            "type": "boolean",
+            "description": "True when no statement was rejected; an unsupported statement does not make the request invalid"
+          }
+        }
+      },
+      "QueryValidationStatement": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "description": "The sanitized PostgreSQL message when the status is invalid, or the reason validation was not possible when the status is unsupported"
+          },
+          "query": {
+            "type": "string",
+            "description": "The statement as it was submitted"
+          },
+          "status": {
+            "type": "string",
+            "description": "valid when EXPLAIN planned the statement, invalid when EXPLAIN rejected it, unsupported when the statement could not be checked, for example because EXPLAIN cannot plan this kind of statement or planning timed out",
+            "enum": [
+              "valid",
+              "invalid",
+              "unsupported"
+            ]
+          }
+        }
+      },
       "RBACGroup": {
         "type": "object",
         "properties": {
@@ -12451,6 +13708,14 @@
             "type": "string",
             "description": "User annotation"
           },
+          "auth_issuer": {
+            "type": "string",
+            "description": "Issuer of the identity provider that owns a federated account. Absent for a local account, and for a federated account whose stored identity cannot be parsed. The provider subject is never reported"
+          },
+          "auth_source": {
+            "type": "string",
+            "description": "How the account signs in. The known values are local for a password held by the Workbench, oidc for an account federated to an identity provider, and unknown for a stored account with no recorded source. Other values may appear, since any other stored source is reported exactly as it is stored; any value other than local means the account cannot sign in with a password"
+          },
           "display_name": {
             "type": "string",
             "description": "Display name"
@@ -12480,7 +13745,10 @@
             "type": "string",
             "description": "Username"
           }
-        }
+        },
+        "required": [
+          "auth_source"
+        ]
       },
       "RelationshipInput": {
         "type": "object",
@@ -12837,24 +14105,27 @@
         "properties": {
           "admin_permissions": {
             "type": "array",
-            "description": "Admin permission names",
+            "description": "Admin permission names. Omit or send null to leave this kind unchanged; an empty array is refused with 400.",
             "items": {
               "type": "string"
-            }
+            },
+            "nullable": true
           },
           "connections": {
             "type": "array",
-            "description": "Connection scope entries",
+            "description": "Connection scope entries. Omit or send null to leave this kind unchanged; an empty array is refused with 400.",
             "items": {
               "type": "object"
-            }
+            },
+            "nullable": true
           },
           "mcp_privileges": {
             "type": "array",
-            "description": "MCP privilege names",
+            "description": "MCP privilege names. Omit or send null to leave this kind unchanged; an empty array is refused with 400.",
             "items": {
               "type": "string"
-            }
+            },
+            "nullable": true
           }
         }
       },
@@ -12902,27 +14173,54 @@
             "format": "int64",
             "description": "Total call count"
           },
+          "client_addr": {
+            "type": "string",
+            "description": "Address of the client most recently observed running the query in pg_stat_activity, or \"local\" when that backend connected over a Unix-domain socket; null only when the query was never observed in flight. Best-effort: only statements in flight when a sample was taken are captured, and this is the most recent client for the query's own database and role, not the only one",
+            "nullable": true
+          },
+          "client_hostname": {
+            "type": "string",
+            "description": "Resolved hostname of that client; null when unknown, including whenever log_hostname is off on the monitored server, and whenever the query was never observed in flight",
+            "nullable": true
+          },
+          "client_observed_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Time of the pg_stat_activity sample that observed the client; null when the query was never observed in flight, which is the only reliable signal of that since client_addr reports \"local\" for Unix-domain-socket backends",
+            "nullable": true
+          },
           "database_name": {
             "type": "string",
-            "description": "Database name where the query was executed"
+            "description": "Database name where the query was executed, resolved from pg_stat_statements.dbid; when the dbid cannot be resolved, one of the databases the statistics were collected through"
+          },
+          "max_exec_time": {
+            "type": "number",
+            "description": "Maximum execution time in ms"
           },
           "mean_exec_time": {
             "type": "number",
             "description": "Mean execution time in ms"
+          },
+          "min_exec_time": {
+            "type": "number",
+            "description": "Minimum execution time in ms"
           },
           "query": {
             "type": "string",
             "description": "Query text"
           },
           "queryid": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Query ID"
+            "type": "string",
+            "description": "Query ID as a decimal string, since the 64-bit value cannot be represented exactly in JavaScript"
           },
           "rows": {
             "type": "integer",
             "format": "int64",
             "description": "Total rows returned"
+          },
+          "sample_database_name": {
+            "type": "string",
+            "description": "Database the statistics were collected through, which is the database_name of the query's pg_stat_statements metric rows; pass this, not database_name, to /api/v1/metrics/query for the query's time series"
           },
           "shared_blks_hit": {
             "type": "integer",
@@ -12937,6 +14235,10 @@
           "total_exec_time": {
             "type": "number",
             "description": "Total execution time in ms"
+          },
+          "username": {
+            "type": "string",
+            "description": "Database role that ran the query; empty when the role could not be resolved"
           }
         }
       },
@@ -13060,7 +14362,7 @@
           },
           "is_superuser": {
             "type": "boolean",
-            "description": "Whether the user is a superuser"
+            "description": "Whether the user is a superuser. Only a superuser may send this field; anyone else is refused with 403."
           },
           "password": {
             "type": "string",
@@ -13088,7 +14390,7 @@
           },
           "is_superuser": {
             "type": "boolean",
-            "description": "Whether the user has superuser privileges"
+            "description": "Whether the caller may pass a superuser-only gate: true for a superuser's session, and for a superuser's API token only when the token's admin scope is empty or holds the wildcard"
           },
           "username": {
             "type": "string",
@@ -13105,6 +14407,14 @@
             "items": {
               "type": "string"
             }
+          },
+          "auth_issuer": {
+            "type": "string",
+            "description": "Issuer of the identity provider that owns a federated account. Absent for a local account, and for a federated account whose stored identity cannot be parsed. The provider subject is never reported"
+          },
+          "auth_source": {
+            "type": "string",
+            "description": "How the account signs in. The known values are local for a password held by the Workbench, oidc for an account federated to an identity provider, and unknown for a stored account with no recorded source. Other values may appear, since any other stored source is reported exactly as it is stored; any value other than local means the account cannot sign in with a password"
           },
           "connection_privileges": {
             "type": "object",
@@ -13135,7 +14445,10 @@
             "type": "string",
             "description": "Username"
           }
-        }
+        },
+        "required": [
+          "auth_source"
+        ]
       },
       "UserUpdateRequest": {
         "type": "object",
@@ -13158,7 +14471,7 @@
           },
           "is_superuser": {
             "type": "boolean",
-            "description": "Whether the user is a superuser"
+            "description": "Whether the user is a superuser. Only a superuser may send this field; anyone else is refused with 403."
           },
           "password": {
             "type": "string",
@@ -13172,7 +14485,7 @@
         "type": "http",
         "scheme": "bearer",
         "bearerFormat": "JWT",
-        "description": "Session token obtained from /auth/login"
+        "description": "Session token obtained from /auth/login, or an API token. Every request an API token makes is confined to the token's connection, MCP and admin scopes, even when its owner is a superuser, so a superuser-owned token can receive 403 where its owner's session would succeed. A token can never grant a user, a group or another token more than its own access, which is its owner's privileges narrowed by its scope, judged per connection and access level, MCP item and admin permission. A token holding a connection read-only may grant read on it but not read_write; an all-connections entry needs the token to hold every connection at that level; a group member may be added only if everything the group confers fits; and making a superuser needs a superuser's token unrestricted in every scope kind. Taking access away needs read on each connection concerned, and read_write where it removes a connection's last group grant (an all-connections grant restricts no connection, so removing one never needs it). Setting a password, re-enabling an account or minting a token for a user whose access exceeds the token's is refused with 403. A new user counts as reaching every shared connection no group restricts and every public MCP item, and a user or group holding manage_users, manage_groups, manage_permissions or manage_token_scopes counts as reaching every MCP item and admin permission, since each lets its holder acquire the rest. A read entry allows alert acknowledgement and analysis, and blackout management, on that connection. A token whose admin scope names specific permissions may exercise those permissions, but cannot pass a gate that requires superuser status outright, such as the audit log. A token with no scope of a given kind, or one holding the * wildcard, is unrestricted on that surface."
       }
     }
   }

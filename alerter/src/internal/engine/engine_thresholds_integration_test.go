@@ -11,7 +11,6 @@ package engine
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
 
@@ -127,6 +126,7 @@ CREATE TABLE alerts (
     last_updated TIMESTAMPTZ,
     last_reevaluated_at TIMESTAMPTZ,
     reevaluation_count INTEGER NOT NULL DEFAULT 0,
+    reevaluation_fingerprint TEXT,
     anomaly_score REAL,
     anomaly_details JSONB,
     ai_analysis TEXT,
@@ -170,6 +170,7 @@ CREATE TABLE probe_availability (
     probe_name TEXT NOT NULL,
     is_available BOOLEAN NOT NULL DEFAULT TRUE,
     last_collected TIMESTAMPTZ,
+    unavailable_reason TEXT,
     PRIMARY KEY (connection_id, probe_name)
 );
 
@@ -244,13 +245,7 @@ DROP TABLE IF EXISTS cluster_groups CASCADE;
 func newEngineSpockTestEnv(t *testing.T) (*Engine, *database.Datastore, *pgxpool.Pool, func()) {
 	t.Helper()
 
-	if os.Getenv("SKIP_DB_TESTS") != "" {
-		t.Skip("Skipping database test (SKIP_DB_TESTS is set)")
-	}
-	connStr := os.Getenv("TEST_AI_WORKBENCH_SERVER")
-	if connStr == "" {
-		t.Skip("TEST_AI_WORKBENCH_SERVER not set, skipping engine spock integration test")
-	}
+	connStr := requireLocalTestDSN(t, "the engine spock integration test")
 
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, connStr)
@@ -541,6 +536,7 @@ func TestEngine_SpockRecentExceptionsPresent_FireAndClear(t *testing.T) {
 	disableAllRulesExcept(t, pool, "spock_recent_exceptions_present")
 
 	connID := insertTestConnection(t, pool, "spock-exceptions-present-conn")
+	seedFreshProbe(t, pool, connID, "spock_exception_log")
 	sample := time.Now().UTC().Add(-1 * time.Minute)
 	insertSpockExceptionRow(t, pool, connID, sample, 1)
 
@@ -570,6 +566,7 @@ func TestEngine_SpockRecentExceptionsHigh_FireAndClear(t *testing.T) {
 	disableAllRulesExcept(t, pool, "spock_recent_exceptions_high")
 
 	connID := insertTestConnection(t, pool, "spock-exceptions-high-conn")
+	seedFreshProbe(t, pool, connID, "spock_exception_log")
 	sample := time.Now().UTC().Add(-1 * time.Minute)
 	for i := 1; i <= 10; i++ {
 		insertSpockExceptionRow(t, pool, connID, sample, i)
@@ -596,6 +593,7 @@ func TestEngine_SpockRecentResolutionsPresent_FireAndClear(t *testing.T) {
 	disableAllRulesExcept(t, pool, "spock_recent_resolutions_present")
 
 	connID := insertTestConnection(t, pool, "spock-resolutions-present-conn")
+	seedFreshProbe(t, pool, connID, "spock_resolutions")
 	sample := time.Now().UTC().Add(-1 * time.Minute)
 	insertSpockResolutionRow(t, pool, connID, sample, 1)
 
@@ -620,6 +618,7 @@ func TestEngine_SpockRecentResolutionsHigh_FireAndClear(t *testing.T) {
 	disableAllRulesExcept(t, pool, "spock_recent_resolutions_high")
 
 	connID := insertTestConnection(t, pool, "spock-resolutions-high-conn")
+	seedFreshProbe(t, pool, connID, "spock_resolutions")
 	sample := time.Now().UTC().Add(-1 * time.Minute)
 	for i := 1; i <= 25; i++ {
 		insertSpockResolutionRow(t, pool, connID, sample, i)
@@ -687,6 +686,7 @@ func TestEngine_ReplicationSlotRetentionHigh_FireAndClear(t *testing.T) {
 	disableAllRulesExcept(t, pool, "replication_slot_retention_high")
 
 	connID := insertTestConnection(t, pool, "slot-retention-high-conn")
+	seedFreshProbe(t, pool, connID, "pg_replication_slots")
 	const fifteenGiB = int64(15) * 1024 * 1024 * 1024
 	fireSample := time.Now().UTC().Add(-1 * time.Minute)
 	insertReplicationSlotRow(t, pool, connID, fireSample, "slot_a", true, fifteenGiB)
@@ -726,6 +726,7 @@ func TestEngine_SpockRecentExceptionsPresent_StaleSampleAutoClears(t *testing.T)
 	disableAllRulesExcept(t, pool, "spock_recent_exceptions_present")
 
 	connID := insertTestConnection(t, pool, "spock-exceptions-stale-conn")
+	seedFreshProbe(t, pool, connID, "spock_exception_log")
 	fresh := time.Now().UTC().Add(-1 * time.Minute)
 	insertSpockExceptionRow(t, pool, connID, fresh, 1)
 
@@ -764,6 +765,7 @@ func TestEngine_SpockRecentResolutionsPresent_StaleSampleAutoClears(t *testing.T
 	disableAllRulesExcept(t, pool, "spock_recent_resolutions_present")
 
 	connID := insertTestConnection(t, pool, "spock-resolutions-stale-conn")
+	seedFreshProbe(t, pool, connID, "spock_resolutions")
 	fresh := time.Now().UTC().Add(-1 * time.Minute)
 	insertSpockResolutionRow(t, pool, connID, fresh, 1)
 

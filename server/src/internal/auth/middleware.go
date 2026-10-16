@@ -11,6 +11,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net"
 	"net/http"
@@ -52,6 +53,28 @@ const (
 	LLMProvidersPath = "/api/v1/llm/providers"
 	LLMModelsPath    = "/api/v1/llm/models"
 )
+
+// publicPaths are served without authentication. The OIDC endpoints join
+// the list because they are how an unauthenticated browser obtains a
+// session in the first place, and capabilities because the login screen
+// reads it to decide which sign-in affordances to render.
+var publicPaths = map[string]struct{}{
+	HealthCheckPath:              {},
+	UserInfoPath:                 {},
+	"/api/v1/auth/login":         {},
+	"/api/v1/auth/logout":        {},
+	"/api/v1/auth/oidc/start":    {},
+	"/api/v1/auth/oidc/callback": {},
+	"/api/v1/capabilities":       {},
+	LLMProvidersPath:             {},
+	LLMModelsPath:                {},
+}
+
+// IsPublicPath reports whether a request path is served without credentials.
+func IsPublicPath(path string) bool {
+	_, ok := publicPaths[path]
+	return ok
+}
 
 // GetTokenHashFromContext retrieves the token hash from the request context
 // Returns empty string if no token hash is found (e.g., unauthenticated request)
@@ -167,6 +190,34 @@ func (e *IPExtractor) isTrustedProxy(ip net.IP) bool {
 	return false
 }
 
+// TrustsRequest reports whether this request arrived from a configured
+// trusted proxy, and therefore whether the forwarded headers it carries
+// mean anything.
+//
+// It exists so that callers which read a forwarded header other than
+// X-Forwarded-For (X-Forwarded-Proto, in particular, where it decides
+// whether the OIDC state cookie may use the "__Host-" name prefix) make
+// exactly the decision ExtractIP makes, rather than an approximation of
+// it. Approximating it is a real hazard: an extractor is built on every
+// deployment and is therefore never nil, so "an extractor exists" is
+// not the same question as "this request came through a proxy we
+// trust", and answering the former lets any client set the header and
+// choose the answer.
+//
+// It returns false whenever no trusted proxies are configured, which is
+// the same safe default ExtractIP applies.
+func (e *IPExtractor) TrustsRequest(r *http.Request) bool {
+	if e == nil || len(e.TrustedProxies) == 0 || r == nil {
+		return false
+	}
+
+	directIP := extractIPFromRemoteAddr(r.RemoteAddr)
+	if directIP == "" {
+		return false
+	}
+	return e.isTrustedProxy(net.ParseIP(directIP))
+}
+
 // ExtractIP securely extracts the client IP address from an HTTP request.
 //
 // Algorithm:
@@ -204,9 +255,13 @@ func (e *IPExtractor) ExtractIP(r *http.Request) string {
 	// Format: X-Forwarded-For: client, proxy1, proxy2
 	xff := r.Header.Get("X-Forwarded-For")
 	if xff == "" {
-		// No X-Forwarded-For header, try X-Real-IP
-		if xri := r.Header.Get("X-Real-IP"); xri != "" {
-			return strings.TrimSpace(xri)
+		// No X-Forwarded-For header, try X-Real-IP. The value is only
+		// used when it parses as an IP address: it reaches the audit
+		// log and the session records, so a proxy sending a hostname,
+		// an empty value or arbitrary text must not be stored as
+		// though it were a client address.
+		if xri := parseForwardedIP(r.Header.Get("X-Real-IP")); xri != "" {
+			return xri
 		}
 		return directIP
 	}
@@ -216,15 +271,11 @@ func (e *IPExtractor) ExtractIP(r *http.Request) string {
 	// prepend IPs to the left side of the header
 	parts := strings.Split(xff, ",")
 	for i := len(parts) - 1; i >= 0; i-- {
-		ip := strings.TrimSpace(parts[i])
+		ip := parseForwardedIP(parts[i])
 		if ip == "" {
 			continue
 		}
-
 		parsedIP := net.ParseIP(ip)
-		if parsedIP == nil {
-			continue
-		}
 
 		// Return the first (rightmost) IP that is not a trusted proxy
 		if !e.isTrustedProxy(parsedIP) {
@@ -233,14 +284,40 @@ func (e *IPExtractor) ExtractIP(r *http.Request) string {
 	}
 
 	// All IPs in the chain are trusted proxies, return the leftmost
-	// (This shouldn't normally happen in a properly configured setup)
-	if len(parts) > 0 {
-		if ip := strings.TrimSpace(parts[0]); ip != "" {
-			return ip
-		}
+	// (This shouldn't normally happen in a properly configured setup).
+	// As with X-Real-IP above, the entry is only used when it parses as
+	// an IP address: it reaches the audit log, the denial grouping key
+	// and the login rate limiter, so arbitrary header text must not be
+	// stored or keyed on as though it were a client address (issue
+	// #589).
+	if ip := parseForwardedIP(parts[0]); ip != "" {
+		return ip
 	}
 
 	return directIP
+}
+
+// parseForwardedIP returns the IP address in one forwarded header
+// entry, in canonical form, or "" when the entry holds none. Some
+// proxies append the client's port, as "203.0.113.7:51234" or
+// "[2001:db8::1]:443", so a port is stripped first: discarding such an
+// entry would attribute every client behind that proxy to the proxy
+// itself, sharing one login rate-limit bucket and one audit address
+// between them.
+func parseForwardedIP(entry string) string {
+	entry = strings.TrimSpace(entry)
+	if host, _, err := net.SplitHostPort(entry); err == nil {
+		entry = host
+	}
+	entry = strings.TrimSuffix(strings.TrimPrefix(entry, "["), "]")
+	ip := net.ParseIP(entry)
+	if ip == nil {
+		return ""
+	}
+	// The canonical form is returned so that one client spelt several
+	// ways ("2001:DB8::1", "2001:db8:0:0:0:0:0:1") shares one audit
+	// address, denial key and rate-limit bucket.
+	return ip.String()
 }
 
 // extractIPFromRemoteAddr extracts the IP address from a RemoteAddr string.
@@ -292,64 +369,26 @@ func AuthMiddleware(authStore *AuthStore, enabled bool) func(http.Handler) http.
 			}
 
 			// Skip authentication for public endpoints (needed before login)
-			switch r.URL.Path {
-			case HealthCheckPath, UserInfoPath, "/api/v1/auth/login", "/api/v1/auth/logout",
-				LLMProvidersPath, LLMModelsPath:
+			if IsPublicPath(r.URL.Path) {
 				next.ServeHTTP(w, r)
 				return
 			}
 
-			// Get token from Authorization header or session cookie
-			token := ExtractBearerToken(r)
-			if token == "" {
+			// Delegate credential validation to the single shared
+			// implementation so this middleware, the REST wrapper and
+			// the LLM proxy all derive an identical context.
+			ctx, err := AuthenticateRequest(r, authStore)
+			switch {
+			case errors.Is(err, ErrMissingCredentials):
 				http.Error(w, "Missing or invalid authentication credentials", http.StatusUnauthorized)
 				return
-			}
-
-			// Try to validate as API token first
-			storedToken, err := authStore.ValidateToken(token)
-			if err == nil && storedToken != nil {
-				// Valid API token - use token hash for connection isolation
-				tokenHash := GetTokenHashByRawToken(token)
-				ctx := context.WithValue(r.Context(), TokenHashContextKey, tokenHash)
-				ctx = context.WithValue(ctx, IsAPITokenContextKey, true)
-				ctx = context.WithValue(ctx, TokenIDContextKey, storedToken.ID)
-				ctx = context.WithValue(ctx, UserIDContextKey, storedToken.OwnerID)
-
-				// Look up user to determine superuser status
-				user, userErr := authStore.GetUserByID(storedToken.OwnerID)
-				if userErr == nil && user != nil {
-					ctx = context.WithValue(ctx, IsSuperuserContextKey, user.IsSuperuser)
-				}
-
-				r = r.WithContext(ctx)
-				next.ServeHTTP(w, r)
+			case err != nil:
+				// Neither API token nor session token is valid
+				http.Error(w, "Invalid or unknown token", http.StatusUnauthorized)
 				return
 			}
 
-			// Try to validate as session token
-			username, err := authStore.ValidateSessionToken(token)
-			if err == nil && username != "" {
-				// Valid session token - use token hash for connection isolation
-				tokenHash := GetTokenHashByRawToken(token)
-				ctx := context.WithValue(r.Context(), TokenHashContextKey, tokenHash)
-				ctx = context.WithValue(ctx, UsernameContextKey, username)
-				ctx = context.WithValue(ctx, IsAPITokenContextKey, false)
-
-				// Get user ID and superuser status for RBAC
-				user, userErr := authStore.GetUser(username)
-				if userErr == nil && user != nil {
-					ctx = context.WithValue(ctx, UserIDContextKey, user.ID)
-					ctx = context.WithValue(ctx, IsSuperuserContextKey, user.IsSuperuser)
-				}
-
-				r = r.WithContext(ctx)
-				next.ServeHTTP(w, r)
-				return
-			}
-
-			// Neither API token nor session token is valid
-			http.Error(w, "Invalid or unknown token", http.StatusUnauthorized)
+			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
 }

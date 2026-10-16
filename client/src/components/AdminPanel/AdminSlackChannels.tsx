@@ -14,7 +14,15 @@ import AdminMessagingChannels, { type MessagingChannelConfig } from './AdminMess
 const SLACK_CONFIG: MessagingChannelConfig = {
     channelType: 'slack',
     platformName: 'Slack',
-    webhookUrlLabel: 'Webhook URL',
+    fields: [
+        {
+            key: 'webhook_url',
+            label: 'Webhook URL',
+            setFlag: 'webhook_url_set',
+            secret: true,
+            required: true,
+        },
+    ],
 };
 
 const AdminSlackChannels: React.FC = () => (

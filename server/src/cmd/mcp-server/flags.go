@@ -43,6 +43,11 @@ type Flags struct {
 	DBPasswordFile string
 	DBSSLMode      string
 
+	// dbPasswordFromFile records that ResolvePasswords read DBPassword
+	// from -db-password-file, so that ToCLIFlags applies it over the
+	// configuration file just as it would a -db-password value.
+	dbPasswordFromFile bool
+
 	// Token management commands
 	AddTokenCmd    bool
 	RemoveTokenCmd string
@@ -59,6 +64,12 @@ type Flags struct {
 	EnableUserCmd        bool
 	DisableUserCmd       bool
 	AddServiceAccountCmd bool
+	LinkOIDCUserCmd      bool
+	UnlinkOIDCUserCmd    bool
+	OIDCIssuer           string
+	OIDCSubject          string
+	Relink               bool
+	RestorePassword      bool
 	Username             string
 	UserPassword         string
 	UserPasswordFile     string
@@ -102,6 +113,34 @@ type Flags struct {
 	TokenID            int64
 	ScopeConnections   string
 	ScopeTools         string
+
+	// Audit log commands
+	ListAuditCmd   bool
+	VerifyAuditCmd bool
+	// RechainAuditCmd re-hashes an existing audit log as keyed version
+	// 2 rows, which is the one-time upgrade step for a database written
+	// by a release predating the keyed chain. It is a separate command
+	// rather than something a start-up does because it attests whatever
+	// the log says at the moment it runs.
+	RechainAuditCmd bool
+	// ConfirmRechain is the non-interactive answer to the confirmation
+	// RechainAuditCmd asks for. It is a second flag rather than part of
+	// the first so that the command cannot be run to completion by
+	// copying one word out of an error message.
+	ConfirmRechain bool
+	// PreviousSecretFile names the server secret a keyed log's older
+	// events were written under. A re-anchor checks them under it, and
+	// ConfirmRechain re-anchors only once that check has passed.
+	PreviousSecretFile string
+	AuditActor         string
+	AuditAction        string
+	AuditTargetType    string
+	AuditTargetID      int64
+	AuditOutcome       string
+	AuditSince         string
+	AuditUntil         string
+	AuditLimit         int
+	JSONOutput         bool
 }
 
 // ParseFlags parses command-line flags and returns a Flags struct
@@ -145,6 +184,19 @@ func ParseFlags(defaultConfigPath string) *Flags {
 	flag.BoolVar(&f.EnableUserCmd, "enable-user", false, "Enable a user account")
 	flag.BoolVar(&f.DisableUserCmd, "disable-user", false, "Disable a user account")
 	flag.BoolVar(&f.AddServiceAccountCmd, "add-service-account", false, "Add a new service account")
+	flag.BoolVar(&f.LinkOIDCUserCmd, "link-oidc-user", false,
+		"Link an existing account to an OIDC identity (requires -username, -issuer, -subject)")
+	flag.BoolVar(&f.UnlinkOIDCUserCmd, "unlink-oidc-user", false,
+		"Unlink an account from its OIDC identity, returning it to local authentication")
+	flag.StringVar(&f.OIDCIssuer, "issuer", "",
+		"OIDC issuer URL, exactly as the server logged it (used with -link-oidc-user)")
+	flag.StringVar(&f.OIDCSubject, "subject", "",
+		"OIDC subject ('sub' claim), exactly as the server logged it (used with -link-oidc-user)")
+	flag.BoolVar(&f.Relink, "relink", false,
+		"Allow -link-oidc-user to move an account that is already linked to a different identity")
+	flag.BoolVar(&f.RestorePassword, "restore-password", false,
+		"Let -unlink-oidc-user keep the password the account had before it was linked, "+
+			"instead of making it unusable")
 	flag.StringVar(&f.Username, "username", "", "Username for user management commands")
 	flag.StringVar(&f.UserPassword, "password", "", "Password for user management commands (prefer -password-file for production use)")
 	flag.StringVar(&f.UserPasswordFile, "password-file", "", "Path to file containing the user password")
@@ -188,6 +240,25 @@ func ParseFlags(defaultConfigPath string) *Flags {
 	flag.Int64Var(&f.TokenID, "token-id", 0, "Token ID for token scope commands")
 	flag.StringVar(&f.ScopeConnections, "scope-connections", "", "Comma-separated list of connection IDs")
 	flag.StringVar(&f.ScopeTools, "scope-tools", "", "Comma-separated list of tool names")
+
+	// Audit log commands
+	flag.BoolVar(&f.ListAuditCmd, "list-audit", false, "List RBAC audit log events")
+	flag.BoolVar(&f.VerifyAuditCmd, "verify-audit-log", false, "Verify the audit log hash chain")
+	flag.BoolVar(&f.RechainAuditCmd, "rechain-audit-log", false,
+		"Re-hash an inherited audit log under the server secret, or re-anchor a keyed log that no longer verifies")
+	flag.BoolVar(&f.ConfirmRechain, "confirm-rechain", false,
+		"Confirm -rechain-audit-log without an interactive prompt")
+	flag.StringVar(&f.PreviousSecretFile, "previous-secret-file", "",
+		"Server secret file the audit log's older events were written under, which -confirm-rechain needs to re-anchor them")
+	flag.StringVar(&f.AuditActor, "audit-actor", "", "Filter audit events by actor name")
+	flag.StringVar(&f.AuditAction, "audit-action", "", "Filter audit events by action (e.g. group.create)")
+	flag.StringVar(&f.AuditTargetType, "audit-target-type", "", "Filter audit events by target type (user, group, token)")
+	flag.Int64Var(&f.AuditTargetID, "audit-target-id", 0, "Filter audit events by target ID")
+	flag.StringVar(&f.AuditOutcome, "audit-outcome", "", "Filter audit events by outcome (success, failure, denied)")
+	flag.StringVar(&f.AuditSince, "audit-since", "", "Only show audit events at or after this time (RFC 3339 or YYYY-MM-DD)")
+	flag.StringVar(&f.AuditUntil, "audit-until", "", "Only show audit events at or before this time (RFC 3339 or YYYY-MM-DD)")
+	flag.IntVar(&f.AuditLimit, "audit-limit", 50, "Maximum number of audit events to show")
+	flag.BoolVar(&f.JSONOutput, "json", false, "Emit output as one JSON object per line")
 
 	flag.Parse()
 	return f
@@ -241,19 +312,31 @@ func (f *Flags) ToCLIFlags() config.CLIFlags {
 		}
 	})
 
+	// A password read from -db-password-file is marked set as well, or
+	// the configuration would drop it and fall back to the file's
+	// password, or none (issue #591). This keys on what ResolvePasswords
+	// read rather than on the flag having been given, so that a call made
+	// before the file was read cannot mark an empty password as set.
+	if f.dbPasswordFromFile {
+		cliFlags.DBPassSet = true
+		cliFlags.DBPassword = f.DBPassword
+	}
+
 	return cliFlags
 }
 
-// ToReloadCLIFlags returns CLIFlags suitable for config reload operations
+// ToReloadCLIFlags returns the CLIFlags a SIGHUP reload applies over the
+// configuration file. A reload must rebuild the configuration exactly as
+// start-up did, so it carries every flag given explicitly on the command
+// line, with its "set" marker, rather than a subset. Dropping -tls, -cert,
+// -key or -chain made a reload validate the file as though TLS were off
+// whilst the process serves TLS, so a server started with -tls, OIDC
+// enabled, an https redirect_url and no trusted_proxies refused every
+// reload with the unprefixed state cookie error (issue #506). Values
+// without their marker were never applied at all, which is how the
+// database flags were silently lost on reload as well.
 func (f *Flags) ToReloadCLIFlags() config.CLIFlags {
-	return config.CLIFlags{
-		DBHost:     f.DBHost,
-		DBPort:     f.DBPort,
-		DBName:     f.DBName,
-		DBUser:     f.DBUser,
-		DBPassword: f.DBPassword,
-		DBSSLMode:  f.DBSSLMode,
-	}
+	return f.ToCLIFlags()
 }
 
 // ResolveDataDir returns the resolved data directory path with the following
@@ -283,7 +366,7 @@ func (f *Flags) HasTokenCommand() bool {
 func (f *Flags) HasUserCommand() bool {
 	return f.AddUserCmd || f.UpdateUserCmd || f.DeleteUserCmd ||
 		f.ListUsersCmd || f.EnableUserCmd || f.DisableUserCmd ||
-		f.AddServiceAccountCmd
+		f.AddServiceAccountCmd || f.LinkOIDCUserCmd || f.UnlinkOIDCUserCmd
 }
 
 // HasGroupCommand returns true if any group management command was specified
@@ -307,11 +390,16 @@ func (f *Flags) HasTokenScopeCommand() bool {
 		f.ClearTokenScopeCmd || f.ShowTokenScopeCmd
 }
 
+// HasAuditCommand returns true if any audit log command was specified
+func (f *Flags) HasAuditCommand() bool {
+	return f.ListAuditCmd || f.VerifyAuditCmd || f.RechainAuditCmd
+}
+
 // HasCLICommand returns true if any CLI command (not server mode) was specified
 func (f *Flags) HasCLICommand() bool {
 	return f.HasTokenCommand() || f.HasUserCommand() ||
 		f.HasGroupCommand() || f.HasPrivilegeCommand() ||
-		f.HasTokenScopeCommand()
+		f.HasTokenScopeCommand() || f.HasAuditCommand()
 }
 
 // isFlagSet returns true if the named flag was explicitly set on the command line.
@@ -338,6 +426,7 @@ func (f *Flags) ResolvePasswords() error {
 	if dbResult.Source != PasswordSourceNone {
 		f.DBPassword = dbResult.Value
 	}
+	f.dbPasswordFromFile = dbResult.Source == PasswordSourceFile
 
 	userResult, err := ResolvePassword(
 		f.UserPassword, isFlagSet("password"),
@@ -360,6 +449,6 @@ func GetDefaultPaths() (execPath, configPath, secretPath string, err error) {
 		return "", "", "", err
 	}
 	configPath = config.GetDefaultConfigPath(execPath)
-	secretPath = config.GetDefaultSecretPath(execPath)
+	secretPath = config.GetDefaultSecretPath()
 	return execPath, configPath, secretPath, nil
 }

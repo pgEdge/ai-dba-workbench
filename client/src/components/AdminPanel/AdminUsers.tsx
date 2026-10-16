@@ -32,6 +32,7 @@ import {
     FormControlLabel,
     Switch,
     Chip,
+    Tooltip,
 } from '@mui/material';
 import { alpha, useTheme } from '@mui/material/styles';
 import {
@@ -44,6 +45,7 @@ import {
 import DeleteConfirmationDialog from '../DeleteConfirmationDialog';
 import { SELECT_FIELD_SX } from '../shared/formStyles';
 import EffectivePermissionsPanel from './EffectivePermissionsPanel';
+import type { EffectivePermissionsPanelProps } from './EffectivePermissionsPanel';
 import PasswordStrengthField from './PasswordStrengthField';
 import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, codePointLength, utf8ByteLength } from './passwordStrength';
 import {
@@ -77,13 +79,31 @@ interface RbacUser {
     is_service_account?: boolean;
     is_superuser?: boolean;
     enabled?: boolean;
+    // Where the account's identity is managed: "local" for an account
+    // this server authenticates itself, "oidc" for one federated to an
+    // identity provider, or "unknown" where the stored value is empty.
+    // The provider subject is deliberately never sent, so the issuer is
+    // all the client can show.
+    auth_source?: string;
+    auth_issuer?: string;
 }
 
+// An account is treated as federated when the server reports any
+// authentication source other than "local", including "unknown", which
+// matches the server refusing a password login or write to such an
+// account. A missing or empty value is treated as local only because a
+// server predating federated login does not send the field at all, and
+// its responses should render as they always did.
+const isFederatedUser = (rowUser: RbacUser): boolean =>
+    rowUser.auth_source !== undefined
+    && rowUser.auth_source !== ''
+    && rowUser.auth_source !== 'local';
+
 interface UserPermissions {
-    connection_privileges?: unknown[];
-    admin_permissions?: unknown[];
-    mcp_privileges?: unknown[];
-    groups?: unknown[];
+    connection_privileges?: EffectivePermissionsPanelProps['connectionPrivileges'];
+    admin_permissions?: EffectivePermissionsPanelProps['adminPermissions'];
+    mcp_privileges?: EffectivePermissionsPanelProps['mcpPrivileges'];
+    groups?: EffectivePermissionsPanelProps['groups'];
 }
 
 interface CreateUserBody {
@@ -361,6 +381,21 @@ const AdminUsers: React.FC = () => {
     const editEmailInvalid =
         editEmail.trim().length > 0 && !isValidEmail(editEmail.trim());
 
+    // Wording for the federated notice in the edit dialog. It follows
+    // the server's own message for the 400 it returns on a password
+    // write to such an account, and adds the reconciliation caveat that
+    // explains a superuser flag reverting after the next sign-in.
+    const editUserFederated = editUser !== null && isFederatedUser(editUser);
+    const federatedEditNotice =
+        'This account signs in through '
+        + (editUser?.auth_issuer
+            ? `the identity provider at ${editUser.auth_issuer}`
+            : 'an identity provider')
+        + ', so it cannot be given a password; unlink the account first if '
+        + 'it needs to sign in locally. Its group membership, and its '
+        + 'superuser flag where the provider grants one, are reconciled at '
+        + 'every sign-in and can override a change made here.';
+
     if (loading) {
         return (
             <Box sx={loadingContainerSx}>
@@ -450,12 +485,86 @@ const AdminUsers: React.FC = () => {
                                                     fontSize: '0.875rem',
                                                 }}
                                             />
+                                        ) : isFederatedUser(rowUser) ? (
+                                            <Box
+                                                sx={{
+                                                    display: 'flex',
+                                                    flexDirection: 'column',
+                                                    alignItems: 'flex-start',
+                                                    gap: 0.25,
+                                                }}
+                                            >
+                                                {/*
+                                                  * An outlined, neutral chip rather than
+                                                  * a status colour: the label then holds
+                                                  * text.primary against the paper, which
+                                                  * clears 4.5:1 in both modes, and being
+                                                  * federated is a fact about the account
+                                                  * rather than a warning.
+                                                  */}
+                                                <Chip
+                                                    label="Federated"
+                                                    size="small"
+                                                    variant="outlined"
+                                                    sx={{
+                                                        color: 'text.primary',
+                                                        borderColor: isDark
+                                                            ? theme.palette.grey[600]
+                                                            : theme.palette.grey[500],
+                                                        fontSize: '0.875rem',
+                                                    }}
+                                                />
+                                                {rowUser.auth_issuer && (
+                                                    /*
+                                                     * The issuer is on the row rather than
+                                                     * only in a tooltip, so an
+                                                     * administrator can read it without
+                                                     * hovering; it is clamped to one
+                                                     * ellipsised line so that a long
+                                                     * issuer cannot widen the column, and
+                                                     * the tooltip carries the full value.
+                                                     */
+                                                    <Tooltip title={rowUser.auth_issuer}>
+                                                        <Typography
+                                                            variant="body2"
+                                                            sx={{
+                                                                color: 'text.secondary',
+                                                                maxWidth: 200,
+                                                                overflow: 'hidden',
+                                                                textOverflow: 'ellipsis',
+                                                                whiteSpace: 'nowrap',
+                                                            }}
+                                                        >
+                                                            {rowUser.auth_issuer}
+                                                        </Typography>
+                                                    </Tooltip>
+                                                )}
+                                            </Box>
                                         ) : (
                                             <Typography variant="body2">User</Typography>
                                         )}
                                     </TableCell>
-                                    <TableCell>{rowUser.display_name || '-'}</TableCell>
-                                    <TableCell>{rowUser.email || '-'}</TableCell>
+                                    {/*
+                                      * The display name and email may
+                                      * come from an identity provider,
+                                      * and the server is deliberately
+                                      * byte-transparent for them: the
+                                      * Unicode format category is
+                                      * permitted, because a zero-width
+                                      * joiner is part of legitimate
+                                      * names in several scripts. That
+                                      * admits a bidirectional
+                                      * override, so isolate the value
+                                      * with <bdi> to stop a crafted
+                                      * name reordering the row around
+                                      * it.
+                                      */}
+                                    <TableCell>
+                                        <bdi>{rowUser.display_name || '-'}</bdi>
+                                    </TableCell>
+                                    <TableCell>
+                                        <bdi>{rowUser.email || '-'}</bdi>
+                                    </TableCell>
                                     <TableCell>{rowUser.annotation || '-'}</TableCell>
                                     <TableCell align="center">
                                         <Switch
@@ -684,7 +793,26 @@ const AdminUsers: React.FC = () => {
                     {editError && (
                         <Alert severity="error" sx={{ mb: 2, borderRadius: 1 }}>{editError}</Alert>
                     )}
-                    {!editUser?.is_service_account && (
+                    {/*
+                      * A federated account cannot hold a password, and the
+                      * server returns 400 for an attempt to set one. Showing
+                      * the field and letting the administrator reach that
+                      * error would be worse than useless, because a password
+                      * submitted alongside an enabled or superuser change
+                      * rejects the whole update, so the field is replaced by
+                      * the reason it is absent. The same notice carries the
+                      * reconciliation warning for the Superuser toggle
+                      * below, which stays enabled because an administrator
+                      * may still legitimately set it.
+                      */}
+                    {editUserFederated ? (
+                        <Alert
+                            severity="info"
+                            sx={{ mt: 1, borderRadius: 1, wordBreak: 'break-word' }}
+                        >
+                            {federatedEditNotice}
+                        </Alert>
+                    ) : !editUser?.is_service_account ? (
                         <PasswordStrengthField
                             fullWidth
                             label="Password"
@@ -696,7 +824,7 @@ const AdminUsers: React.FC = () => {
                             InputLabelProps={{ shrink: true }}
                             hideFeedbackWhenEmpty
                         />
-                    )}
+                    ) : null}
                     <TextField
                         fullWidth
                         label="Display Name"

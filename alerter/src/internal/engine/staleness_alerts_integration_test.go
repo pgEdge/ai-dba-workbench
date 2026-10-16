@@ -424,8 +424,11 @@ func TestCheckAlertResolvedKeepsUnevaluableMetricAlerts(t *testing.T) {
 }
 
 // TestCheckAlertResolvedClearsWhenMetricReportsNoData pins the behavior
-// that is deliberately unchanged: a registry metric that runs successfully
-// and returns no rows still resolves the alert.
+// that is deliberately unchanged: a clearWhenAbsent registry metric that
+// runs successfully and returns no rows still resolves the alert, so long
+// as the probe behind it is still collecting. The probe seed is what
+// makes the empty result evidence of recovery rather than of a stopped
+// collector (GitHub issue #407).
 func TestCheckAlertResolvedClearsWhenMetricReportsNoData(t *testing.T) {
 	engine, _, pool, cleanup := newEngineSpockTestEnv(t)
 	defer cleanup()
@@ -433,6 +436,7 @@ func TestCheckAlertResolvedClearsWhenMetricReportsNoData(t *testing.T) {
 	ctx := context.Background()
 	ruleID := seedStalenessRule(t, pool)
 	connID := insertTestConnection(t, pool, "empty-metric")
+	seedFreshProbe(t, pool, connID, "pg_replication_slots")
 
 	var alertID int64
 	if err := pool.QueryRow(ctx, stalenessUnsupportedMetricAlertInsertSQL, ruleID, connID,
@@ -449,5 +453,49 @@ func TestCheckAlertResolvedClearsWhenMetricReportsNoData(t *testing.T) {
 	if alerts[0].status != "cleared" {
 		t.Errorf("alert status = %q, want \"cleared\" when the metric reports nothing",
 			alerts[0].status)
+	}
+}
+
+// TestStalenessAlertJudgedAfterSnapshotAgesStaysActive covers the frozen
+// StalenessRatio: the probe runs every 60 s and last collected 2m55s
+// before the snapshot was read, a ratio of 2.92 against the rule's "> 3",
+// so the frozen figure says the alert has resolved. Judged ten seconds
+// later the probe is 3m05s late, a ratio of 3.08, still in violation, and
+// the alert must stay active rather than clear and re-fire on the next
+// evaluation.
+func TestStalenessAlertJudgedAfterSnapshotAgesStaysActive(t *testing.T) {
+	engine, _, pool, cleanup := newEngineSpockTestEnv(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	capture := installStalenessNotificationCapture(t, engine)
+	ruleID := seedStalenessRule(t, pool)
+	connID := insertTestConnection(t, pool, "staleness-aged-snapshot")
+	seedStaleProbe(t, pool, connID, "pg_stat_activity", "30 minutes")
+
+	engine.evaluateThresholds(ctx)
+	alerts := readStalenessAlertsForRule(t, pool, ruleID)
+	if len(alerts) != 1 || alerts[0].status != "active" {
+		t.Fatalf("expected one active alert, got %+v", alerts)
+	}
+
+	if _, err := pool.Exec(ctx, `
+        UPDATE probe_availability
+           SET last_collected = NOW() - INTERVAL '2 minutes 55 seconds'
+         WHERE connection_id = $1 AND probe_name = $2`, connID,
+		"pg_stat_activity"); err != nil {
+		t.Fatalf("failed to age probe availability: %v", err)
+	}
+
+	alert := activeAlertByID(t, engine, alerts[0].id)
+	engine.checkAlertResolved(ctx, alert, nil, agedSnapshot(10*time.Second))
+
+	alerts = readStalenessAlertsForRule(t, pool, ruleID)
+	if len(alerts) != 1 || alerts[0].status != "active" {
+		t.Errorf("alert judged 10s after a 2.92 ratio snapshot = %+v, want active", alerts)
+	}
+	if counts := capture.drain(t); counts[database.NotificationTypeAlertClear] != 0 {
+		t.Errorf("clear notifications = %d, want 0",
+			counts[database.NotificationTypeAlertClear])
 	}
 }

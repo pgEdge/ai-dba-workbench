@@ -11,8 +11,9 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"math"
-	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -524,20 +525,7 @@ const (
 func newBaselinesIntegrationEnv(t *testing.T) (*Engine, *database.Datastore, *pgxpool.Pool, func()) {
 	t.Helper()
 
-	if os.Getenv("SKIP_DB_TESTS") != "" {
-		t.Skip("Skipping database test (SKIP_DB_TESTS is set)")
-	}
-	connStr := os.Getenv("TEST_AI_WORKBENCH_SERVER")
-	if connStr == "" {
-		t.Skip("TEST_AI_WORKBENCH_SERVER not set, skipping baselines integration test")
-	}
-
-	// Safety guard: refuse to run destructive DDL on anything other
-	// than the local test database. CLAUDE.local.md is explicit that
-	// regression tests must target 127.0.0.1/ai_workbench only;
-	// accidentally pointing TEST_AI_WORKBENCH_SERVER at any shared
-	// instance would have these tests wipe its schema.
-	assertLocalTestDSN(t, connStr)
+	connStr := requireLocalTestDSN(t, "the baselines integration test")
 
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, connStr)
@@ -638,7 +626,7 @@ func TestBaselineBuildPersistsEarliestSampleAt(t *testing.T) {
 
 	engine.calculateBaselines(ctx)
 
-	baselines, err := engine.datastore.GetMetricBaselines(ctx, connID, "pg_stat_activity.count")
+	baselines, err := engine.datastore.GetMetricBaselines(ctx, connID, "pg_stat_activity.count", nil)
 	if err != nil {
 		t.Fatalf("GetMetricBaselines failed: %v", err)
 	}
@@ -701,7 +689,7 @@ func TestBaselineBuildSharesEarliestAcrossPeriodTypes(t *testing.T) {
 
 	engine.calculateBaselines(ctx)
 
-	baselines, err := engine.datastore.GetMetricBaselines(ctx, connID, "pg_stat_activity.count")
+	baselines, err := engine.datastore.GetMetricBaselines(ctx, connID, "pg_stat_activity.count", nil)
 	if err != nil {
 		t.Fatalf("GetMetricBaselines failed: %v", err)
 	}
@@ -741,7 +729,7 @@ func TestBaselineBuildNullSafeForEmptyMetric(t *testing.T) {
 	// Deliberately seed no samples.
 	engine.calculateBaselines(ctx)
 
-	baselines, err := engine.datastore.GetMetricBaselines(ctx, connID, "pg_stat_activity.count")
+	baselines, err := engine.datastore.GetMetricBaselines(ctx, connID, "pg_stat_activity.count", nil)
 	if err != nil {
 		t.Fatalf("GetMetricBaselines failed: %v", err)
 	}
@@ -750,43 +738,274 @@ func TestBaselineBuildNullSafeForEmptyMetric(t *testing.T) {
 	}
 }
 
-// assertLocalTestDSN fails the test fast if the supplied DSN points
-// at anything other than a local loopback host and one of the known
-// safe test database names. CLAUDE.local.md is explicit that the
-// alerter integration tests must only target a local loopback
-// Postgres; the destructive DDL embedded in the integration schemas
-// would wipe any other instance the env var resolved to. The
-// loopback-only host check is the primary safety net. The database
-// allowlist is intentionally tiny: "ai_workbench" for local dev and
-// "postgres" for CI (the default database created by the postgres
-// Docker image). Shared across integration helpers in the engine
-// package.
-func assertLocalTestDSN(t *testing.T, dsn string) {
-	t.Helper()
-	allowedHosts := map[string]struct{}{
-		"127.0.0.1": {},
-		"localhost": {},
-		"":          {}, // unix socket; only reachable on this host
+// TestTotalSamples verifies that the sample count behind a set of
+// historical rows counts raw collector samples rather than rows, and that
+// a row with an unset count is read as a single sample.
+func TestTotalSamples(t *testing.T) {
+	tests := []struct {
+		name    string
+		samples []database.HistoricalMetricValue
+		want    int64
+	}{
+		{name: "empty", samples: nil, want: 0},
+		{
+			name: "one row per sample",
+			samples: []database.HistoricalMetricValue{
+				{SampleCount: 1}, {SampleCount: 1}, {SampleCount: 1},
+			},
+			want: 3,
+		},
+		{
+			name: "hourly buckets carry their own counts",
+			samples: []database.HistoricalMetricValue{
+				{SampleCount: 12}, {SampleCount: 11}, {SampleCount: 12},
+			},
+			want: 35,
+		},
+		{
+			name: "unset and negative counts read as one sample",
+			samples: []database.HistoricalMetricValue{
+				{SampleCount: 0}, {SampleCount: -3}, {SampleCount: 12},
+			},
+			want: 14,
+		},
 	}
-	allowedDBs := map[string]struct{}{
-		"ai_workbench": {},
-		"postgres":     {},
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := totalSamples(tt.samples); got != tt.want {
+				t.Errorf("totalSamples = %d, want %d", got, tt.want)
+			}
+		})
 	}
-	cfg, err := pgxpool.ParseConfig(dsn)
+}
+
+// TestMetricValues verifies the float extraction preserves order.
+func TestMetricValues(t *testing.T) {
+	got := metricValues([]database.HistoricalMetricValue{
+		{Value: 3.5}, {Value: 0}, {Value: -2},
+	})
+	want := []float64{3.5, 0, -2}
+	if len(got) != len(want) {
+		t.Fatalf("metricValues length = %d, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("metricValues[%d] = %v, want %v", i, got[i], want[i])
+		}
+	}
+}
+
+// TestBaselineSampleCountFollowsRawSamples verifies that a bucketed
+// historical feed, where one row covers a whole hour, produces baselines
+// whose sample_count reflects the raw samples behind the buckets rather
+// than the number of buckets.
+//
+// Baseline warmup is configured in samples
+// (anomaly.tier1.warmup.all.min_samples defaults to 100), so counting
+// hourly rows would leave the pg_stat_database deadlock and temporary
+// file baselines permanently cold at the shipped lookback. See GitHub
+// issue #409.
+func TestBaselineSampleCountFollowsRawSamples(t *testing.T) {
+	engine, _, pool, cleanup := newBaselinesIntegrationEnv(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	connID := insertBaselinesTestConnection(t, pool, "baseline-sample-count-conn")
+
+	// Six hourly buckets of twelve samples each, spaced a week apart so
+	// they share an hour of day and a day of week and the hourly and
+	// daily branches run as well as the 'all' one.
+	base := time.Now().UTC().Truncate(time.Hour).Add(-42 * 24 * time.Hour)
+	var values []database.HistoricalMetricValue
+	for i := 0; i < 6; i++ {
+		values = append(values, database.HistoricalMetricValue{
+			ConnectionID: connID,
+			Value:        float64(i),
+			CollectedAt:  base.Add(time.Duration(i) * 7 * 24 * time.Hour),
+			SampleCount:  12,
+		})
+	}
+	earliest := earliestTimestamp(values)
+
+	engine.calculateAllBaseline(ctx, connID, nil, "bucketed_metric", values, earliest)
+	engine.calculateHourlyBaselines(ctx, connID, nil, "bucketed_metric", values, 3, earliest)
+	engine.calculateDailyBaselines(ctx, connID, nil, "bucketed_metric", values, 3, earliest)
+
+	baselines, err := engine.datastore.GetMetricBaselines(ctx, connID, "bucketed_metric", nil)
 	if err != nil {
-		t.Fatalf("parse test DSN: %v", err)
+		t.Fatalf("GetMetricBaselines failed: %v", err)
 	}
-	host := cfg.ConnConfig.Host
-	if _, ok := allowedHosts[host]; !ok {
-		t.Fatalf("refusing to run destructive integration tests "+
-			"against non-loopback host %q; set "+
-			"TEST_AI_WORKBENCH_SERVER to a "+
-			"postgresql://...@127.0.0.1 DSN", host)
+
+	seen := make(map[string]int64)
+	for _, b := range baselines {
+		seen[b.PeriodType] = b.SampleCount
 	}
-	if _, ok := allowedDBs[cfg.ConnConfig.Database]; !ok {
-		t.Fatalf("refusing to run destructive integration tests "+
-			"against database %q; expected one of: "+
-			"ai_workbench, postgres",
-			cfg.ConnConfig.Database)
+	if got := seen["all"]; got != 72 {
+		t.Errorf("'all' baseline sample_count = %d, want 72 (6 buckets of 12 samples)", got)
+	}
+	if got, ok := seen["hourly"]; !ok || got != 72 {
+		t.Errorf("hourly baseline sample_count = %d (present %v), want 72", got, ok)
+	}
+	if got, ok := seen["daily"]; !ok || got != 72 {
+		t.Errorf("daily baseline sample_count = %d (present %v), want 72", got, ok)
+	}
+}
+
+// TestBaselineSampleCountDefaultsToOnePerRow verifies the unbucketed
+// case is unchanged: a historical feed of one row per sample, with no
+// explicit count, still reports one sample per row.
+func TestBaselineSampleCountDefaultsToOnePerRow(t *testing.T) {
+	engine, _, pool, cleanup := newBaselinesIntegrationEnv(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	connID := insertBaselinesTestConnection(t, pool, "baseline-per-sample-conn")
+
+	base := time.Now().UTC().Truncate(time.Hour).Add(-6 * time.Hour)
+	var values []database.HistoricalMetricValue
+	for i := 0; i < 5; i++ {
+		values = append(values, database.HistoricalMetricValue{
+			ConnectionID: connID,
+			Value:        float64(i),
+			CollectedAt:  base.Add(time.Duration(i) * time.Minute),
+		})
+	}
+
+	engine.calculateAllBaseline(ctx, connID, nil, "per_sample_metric", values,
+		earliestTimestamp(values))
+
+	baselines, err := engine.datastore.GetMetricBaselines(ctx, connID, "per_sample_metric", nil)
+	if err != nil {
+		t.Fatalf("GetMetricBaselines failed: %v", err)
+	}
+	if len(baselines) != 1 {
+		t.Fatalf("expected one baseline row, got %d", len(baselines))
+	}
+	if baselines[0].SampleCount != 5 {
+		t.Errorf("sample_count = %d, want 5", baselines[0].SampleCount)
+	}
+}
+
+// TestCalculateAllBaselineEdgeCases covers the two non-happy paths of
+// calculateAllBaseline: an empty sample set writes nothing, and a failed
+// upsert is logged rather than propagated.
+func TestCalculateAllBaselineEdgeCases(t *testing.T) {
+	engine, _, pool, cleanup := newBaselinesIntegrationEnv(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	connID := insertBaselinesTestConnection(t, pool, "baseline-edge-cases-conn")
+
+	// No samples: the function returns before touching the datastore.
+	engine.calculateAllBaseline(ctx, connID, nil, "empty_metric", nil, time.Time{})
+
+	baselines, err := engine.datastore.GetMetricBaselines(ctx, connID, "empty_metric", nil)
+	if err != nil {
+		t.Fatalf("GetMetricBaselines failed: %v", err)
+	}
+	if len(baselines) != 0 {
+		t.Errorf("expected no baseline rows for an empty sample set, got %d", len(baselines))
+	}
+
+	// An unknown connection violates the metric_baselines foreign key, so
+	// the upsert fails; the error is logged and the caller carries on.
+	engine.calculateAllBaseline(ctx, -1, nil, "unknown_conn_metric",
+		[]database.HistoricalMetricValue{{Value: 1, CollectedAt: time.Now().UTC()}},
+		time.Now().UTC())
+}
+
+// TestCalculateBaselinesErrorBranches drives calculateBaselines through
+// the failure paths a healthy database never reaches: the sweep of
+// unsupported-metric rows failing, a supported metric whose historical
+// query fails (here because its metrics table does not exist in the
+// test schema) and a zero lookback falling back to the default. Each is
+// logged and the run carries on, so the assertion is that the good
+// metric's baseline is still written.
+func TestCalculateBaselinesErrorBranches(t *testing.T) {
+	engine, _, pool, cleanup := newDetectAnomaliesEnv(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Reject deletes on metric_baselines so the unsupported-row sweep
+	// fails. The function is dropped before the environment cleanup
+	// closes the pool; the trigger goes with the table.
+	if _, err := pool.Exec(ctx, `
+        CREATE OR REPLACE FUNCTION reject_baseline_delete() RETURNS trigger AS $$
+        BEGIN
+            RAISE EXCEPTION 'baseline deletes are rejected by this test';
+        END;
+        $$ LANGUAGE plpgsql;
+        CREATE TRIGGER reject_baseline_delete
+            BEFORE DELETE ON metric_baselines
+            FOR EACH STATEMENT EXECUTE FUNCTION reject_baseline_delete();
+    `); err != nil {
+		t.Fatalf("failed to install delete trigger: %v", err)
+	}
+	defer func() {
+		if _, err := pool.Exec(context.Background(),
+			`DROP FUNCTION IF EXISTS reject_baseline_delete() CASCADE`); err != nil {
+			t.Errorf("failed to drop delete trigger function: %v", err)
+		}
+	}()
+
+	var connID int
+	if err := pool.QueryRow(ctx, insertAnomalyConnectionSQL,
+		"baseline-error-branches").Scan(&connID); err != nil {
+		t.Fatalf("failed to insert connection: %v", err)
+	}
+	if _, err := pool.Exec(ctx, insertAnomalyLoadAvgSQL, connID, "100"); err != nil {
+		t.Fatalf("failed to insert load average sample: %v", err)
+	}
+	// pg_stat_activity.count has a historical query, but the detection
+	// schema has no metrics.pg_stat_activity table, so the query fails.
+	for _, r := range []struct{ name, metric string }{
+		{"error_branch_missing_table", "pg_stat_activity.count"},
+		{"error_branch_good", "pg_sys_load_avg_info.load_avg_fifteen_minutes"},
+	} {
+		if _, err := pool.Exec(ctx, insertAnomalyRuleForMetricSQL, r.name, r.metric); err != nil {
+			t.Fatalf("failed to insert rule %s: %v", r.name, err)
+		}
+	}
+
+	// A zero lookback falls back to the default, and a daily span
+	// longer than that default is reported at normal log level rather
+	// than left to fail silently in selectBaseline.
+	cfg := engine.getConfig()
+	origLookback := cfg.Baselines.LookbackDays
+	origDailySpan := cfg.Anomaly.Tier1.Warmup.Daily.MinSpanHours
+	cfg.Baselines.LookbackDays = 0
+	cfg.Anomaly.Tier1.Warmup.Daily.MinSpanHours = config.DefaultLookbackDays*24 + 1
+	defer func() {
+		cfg.Baselines.LookbackDays = origLookback
+		cfg.Anomaly.Tier1.Warmup.Daily.MinSpanHours = origDailySpan
+	}()
+
+	output := captureStderr(t, func() {
+		engine.calculateBaselines(ctx)
+	})
+	want := fmt.Sprintf("WARNING: anomaly.tier1.warmup.daily.min_span_hours exceeds "+
+		"baselines.lookback_days (%d days)", config.DefaultLookbackDays)
+	if !strings.Contains(output, want) {
+		t.Errorf("expected unreachable daily tier warning %q in output:\n%s", want, output)
+	}
+	if strings.Contains(output, "warmup.hourly.min_span_hours exceeds") {
+		t.Errorf("hourly tier wrongly reported unreachable:\n%s", output)
+	}
+
+	baselines, err := engine.datastore.GetMetricBaselines(ctx, connID, "pg_sys_load_avg_info.load_avg_fifteen_minutes", nil)
+	if err != nil {
+		t.Fatalf("GetMetricBaselines failed: %v", err)
+	}
+	if len(baselines) != 1 || baselines[0].Mean != 100 {
+		t.Fatalf("expected one load average baseline with mean 100, got %+v", baselines)
+	}
+	missing, err := engine.datastore.GetMetricBaselines(ctx, connID, "pg_stat_activity.count", nil)
+	if err != nil {
+		t.Fatalf("GetMetricBaselines(pg_stat_activity.count) failed: %v", err)
+	}
+	if len(missing) != 0 {
+		t.Errorf("expected no baseline for the failed metric, got %d", len(missing))
 	}
 }

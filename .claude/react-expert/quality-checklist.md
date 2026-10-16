@@ -131,26 +131,447 @@ The rules for new or modified charts are as follows:
   anything derived from it describes the monitored database rather
   than the whole server, and the title should say so.
 
-- Label a cumulative series as cumulative in the legend, so that a
+- Never plot a raw `pg_stat_*` counter on a time-series chart. The
+  metrics API derives `<column>_per_sec` (the LAG delta over the
+  elapsed seconds, aggregated across the bucket, so query it with
+  `aggregation: 'avg'`) and `<column>_delta` (the per-bucket sum of
+  counter increases, with the `aggregation` parameter ignored). Use
+  `_per_sec` for anything that reads as a rate and `_delta` for
+  anything counted per interval, such as checkpoints or bytes spilled
+  to temporary files, and carry the unit in the legend and the tile
+  ('Commits/s', 'WAL Bytes/s', unit `/s`). Cumulative sessions, which
+  are deliberately shown as a running total, are the one remaining
+  exception, and its legend says 'Cumulative Sessions' so that a
   reader does not mistake it for a rate.
+
+- Anchor a time-series chart's x-axis to the window the server says
+  it queried, never to the points that came back (issue #430).
+  `/api/v1/metrics/query` answers its time-series mode with an
+  envelope (`MetricsQueryResult` in
+  `client/src/components/Dashboard/types.ts`) carrying `probe_name`,
+  `connection_ids`, `time_range`, `time_start`, `time_end`,
+  `bucket_seconds`, `buckets`, `aggregation` and `series`; its
+  latest-rows mode (a request passing `limit` or `order_by`) still
+  answers with flat rows. `useMetrics` keeps `data` as the series
+  array and exposes the window separately as
+  `{ start, end, bucketSeconds }`. Build categories and align series
+  with `client/src/components/Dashboard/metricsChart.ts`
+  (`buildWindowCategories`, `alignPointsToWindow`,
+  `buildMetricChartData`, `buildDerivedChartData`) rather than
+  mapping `d.time` and `d.value` in the component, so that a range
+  the instance has no history for reads as missing history instead
+  of redrawing the same few hours on every range.
+
+- Treat a `null` data point as a gap, never as 0. Every bucket of the
+  window is present in a `/api/v1/metrics/query` response and every
+  series shares those bucket times, so a bucket with no reading (a
+  collector gap, a counter reset or a rate that cannot be derived)
+  carries `"value": null`; rates never carry forward and gauges carry
+  forward for at most three probe intervals. A point whose value is
+  the last observation carried forward rather than an observed sample
+  also carries `"filled": true`, which `buildMetricChartData` passes
+  to `ChartDataSeries.filled`: the option builders then draw those
+  points with a hollow marker, shade each contiguous carried-forward
+  stretch once with a `markArea` (from the first series only, so
+  bands cannot compound) and append '(carried forward)' in the
+  tooltip, so the distinction never rests on colour alone.
+  `MetricDataPoint.value` and `ChartDataSeries.data` are therefore
+  nullable, ECharts draws a null as a break in the line or a missing
+  bar (leave `connectNulls` unset), and the shared tooltip labels it
+  'no data'. Any arithmetic over points must skip nulls explicitly:
+  `extractLatestValue` and `extractLatestRate` (copies in the
+  `ServerDashboard`, `DatabaseDashboard` and `ObjectDashboard`
+  `types.ts` files) return the last non-null point, a valid zero
+  reading included, since only null marks a missing bucket; a ratio
+  with a null on either side is null; a sum
+  across a window ignores null buckets and is null when none carry a
+  reading; and `Sparkline` renders nothing for an all-null series.
+  Filling a null with 0 (`value ?? 0`) is only acceptable inside a
+  running total, where a missing bucket genuinely contributes nothing.
+
+- Keep a KPI tile's arithmetic consistent with the metric it reads:
+  a `_per_sec` tile reports the latest bucket, whereas a `_delta`
+  tile sums its buckets across the selected window (Temp Bytes) or
+  derives a ratio from those sums (Requested Checkpoints, which is
+  the requested share of all checkpoints and shows '--' when no
+  checkpoint occurred). A `metricDescription` that describes a
+  cumulative total whilst the tile plots a rate, or the reverse, is
+  a bug: the AI analysis reads it.
+
+- Label a derived or estimated series as one, everywhere it appears.
+  `available_memory` on `pg_sys_memory_info` is the worked example: the
+  `system_stats` extension exposes no equivalent of the kernel's
+  `MemAvailable`, so the collector stores `free_memory + cache_total`
+  and NULL when either input is missing, which overstates availability
+  when the page cache is dirty or non-reclaimable slab is large. The
+  client charts it as 'Available (est.)', says the same in the
+  `metricDescription` the AI analysis reads, and carries a
+  `Typography variant="caption"` line beneath the `ChartPanel` (there
+  is no subtitle or description slot on `Chart` or `ChartPanel`)
+  separating it from 'Free', which is `MemFree` and counts only wholly
+  unused memory.
+
+- Show a supporting figure on a KPI tile through `KpiTile`'s optional
+  `secondaryText`, not through `trend`/`trendValue`, which mean a
+  direction and carry a trend colour and icon. It renders as a
+  `caption` line beneath the headline value and is appended to the
+  tile's `aria-label`. Pass `undefined` when the figure is
+  unavailable so no line renders at all; never a '0 B', 'NaN' or '--'
+  placeholder in that slot.
+
+- Report a failed metrics query rather than letting it read as an
+  absence of data. `ChartPanel` takes an optional `errorMessage`,
+  rendered in `color="error"` in place of `emptyMessage` whenever it
+  is set and the query is not loading, and every chart should pass
+  the `error` from its `useMetrics` result. An older server answers
+  an unknown derived metric with HTTP 400 'metric not found in
+  probe', which would otherwise show as a bare 'No data' message.
+
+- Never average a probe that records one row per entity without
+  filtering to a single entity first. `pg_sys_disk_info` stores a row
+  per mounted filesystem, so an unfiltered `aggregation: 'avg'` blends
+  the data volume, the WAL volume and every pseudo filesystem into a
+  figure that matches no real volume (issue #428).
+  `MetricQueryParams.mountPoint` emits the `mount_point` filter, and
+  `client/src/components/Dashboard/ServerDashboard/diskMounts.ts`
+  discovers the real mounts: `PSEUDO_FILESYSTEM_TYPES` lists the
+  kernel-backed and image-backed types to exclude (kept in step with
+  the alerter's SQL fragment in
+  `alerter/src/internal/database/metric_registry.go`),
+  `selectRealMounts` orders the rest fullest first so that the default
+  selection matches what the alerter's disk threshold reports, and
+  `useDiskMounts` reads them from the latest-row mode of
+  `/api/v1/metrics/query`, which applies `DISTINCT ON` over the
+  probe's entity keys and so returns one current row per mount. One
+  piece of selection state drives both the tile and the chart, both
+  name the mount in their label, and the selector is hidden on a
+  single-disk host. `pg_sys_network_info` and
+  `pg_sys_io_analysis_info` have the same shape and are still
+  unfiltered; that is issue #400.
+
+- Skip the query outright rather than sending an empty dimension.
+  `buildMetricsUrl` omits a falsy filter, so params carrying
+  `mountPoint: ''` ask for the averaged figure the filter exists to
+  remove, both on first paint and for good on a host with no real
+  filesystem. `useMetrics` takes `MetricQueryParams | null` and does
+  not fetch on null, so pass null until the dimension is known.
+  `useDiskMounts` returns `{ mounts, settled }` for the same reason:
+  an in-flight lookup and a host with no real filesystem both carry
+  an empty list but want different things on screen, so the panel
+  shows its loading state until `settled` and only then the empty
+  state, whose message names the real problem ('No real filesystem
+  reported for this server.') rather than blaming `system_stats`,
+  which is plainly working.
+
+- Take a usage percentage from the reported total rather than from
+  used plus free wherever the probe records one. A filesystem with
+  reserved blocks holds back space counted in neither, so the two
+  figures disagree; the Disk Usage tile therefore asks for
+  `total_space` alongside `used_space`.
 
 The reference implementation is
 `client/src/components/Dashboard/ServerDashboard/PostgresOverviewSection.tsx`,
-which draws backends with a `max_connections` reference series and
-keeps cumulative sessions on a separate chart. It reads the limit
+which draws backends with a `max_connections` reference series,
+keeps cumulative sessions on a separate chart and queries rate
+metrics for transactions, block I/O and tuple operations. It reads the limit
 from the latest `pg_server_info` row through the latest-row mode of
 `/api/v1/metrics/query` (`limit` and `order_by` parameters), since
 that probe only stores a row when the server configuration changes
 and a bucketed query would usually come back empty.
 
+### Latest-snapshot tables
+
+A section that lists a probe's current entities, such as the
+Replication Slots section, reads `/api/v1/metrics/latest` (one row per
+entity, last hour only, `limit` at most 100, `connection_id` and
+`collected_at` stripped) and deliberately ignores the dashboard time
+range. Two server behaviours matter when adding one:
+
+- The entity keys are the probe's text-typed columns, less those in
+  `textStatusColumns` in `server/src/internal/metrics/query.go`. A
+  text status that changes over time (`wal_status`) must be listed
+  there, or one entity comes back as one row per status and the
+  client cannot tell which is current.
+- `NUMERIC` columns arrive as JSON numbers (`normalizeNumeric` in
+  `server/src/internal/api/latest_handlers.go`), or `null` when not
+  finite. Still parse defensively, as `normaliseSlotRows` in
+  `ServerDashboard/replicationSlots.ts` does.
+
+### Ratios and gaps
+
+A ratio derived from counters must be computed per interval, never
+from the lifetime totals, because a since-`stats_reset` average
+cannot show a current problem (issue #401). `ChartDataSeries.data`
+and the `SparklinePoint` type in `client/src/components/Dashboard/types.ts`
+are `(number | null)[]` and `number | null` respectively: a null
+entry is a bucket with no value, ECharts draws it as a gap, the
+axis-range code in `Chart/options/common.ts` skips it, and
+`useChartAnalysis` leaves it out of the statistics it sends to the
+LLM. The rules are as follows:
+
+- For a ratio scoped to one database, ask `/api/v1/metrics/query`
+  for the derived `<counter>_per_sec` metrics with a `databaseName`
+  and compute the ratio per bucket; the shared helpers live in
+  `client/src/components/Dashboard/cacheHitRatio.ts`
+  (`buildCacheHitRatioPoints`, `latestCacheHitRatio`). The Database
+  dashboard's `PerformanceSection` is the worked example.
+
+- Never derive a server-wide ratio from `blks_hit_per_sec` and
+  `blks_read_per_sec` requested without a database. The
+  derived-metrics query sums the counters across databases and only
+  then differences them, so a database created inside the window
+  adds its lifetime counter to one interval and a dropped one drives
+  the delta negative. Read `cache_hit_ratio` from
+  `/api/v1/metrics/performance-summary` instead, where the server
+  differences per database before summing; the
+  `useServerCacheHit` hook in `client/src/hooks/` does this for the
+  server dashboard's `PostgresOverviewSection`, building its window
+  parameters with the `utils/timeRangeParams.ts` helpers so that a
+  custom range sends both bounds and a half-specified one sends no
+  request at all.
+
+- An idle bucket is null, never 0% and never 100%; a headline value
+  is the latest non-null bucket of the ratio series, shown as `--`
+  when there is none. Build the per-bucket ratio first and read its
+  last non-null point; never scan for the numerator and the
+  denominator separately with `extractLatestValue`, because the two
+  scans stop at whichever bucket each series last filled and can
+  pair readings from different buckets. Nor may a missing side
+  default to 0 (`dead ?? 0`), which turns a gap into a reassuring
+  0.0% built from no data. The Database dashboard's Dead Tuple Ratio
+  and Transactions tiles both read `latestNonNull` over their paired
+  sparkline for this reason; a bucket whose counts are genuinely
+  both zero is still a real 0% and is reported as such.
+
+- Render a null headline in a neutral colour (`text.secondary`)
+  rather than the critical red, and keep nulls in bar data so the
+  bar is left empty rather than drawn at zero.
+
+- The server sends `cache_hit_ratio.current` and each
+  `time_series[i].value` as `number | null`; the client types in
+  `StatusPanel/PerformanceTiles/types.ts` and
+  `Dashboard/ServerDashboard/types.ts` mirror that, and headline and
+  worst-of computations skip nulls.
+
+- Cache hit ratio descriptions carry the page-cache caveat from
+  `CACHE_HIT_CAVEAT`: `blks_hit` counts `shared_buffers` hits only,
+  and a read may still be served from the OS page cache, so a lower
+  ratio does not by itself mean slow I/O.
+
+### Axis-free charts and the contain-label pass
+
+`buildGrid()` in `client/src/components/Chart/options/common.ts` sets
+`containLabel: true`, and `Chart` deep-merges `echartsOptions` over it
+key by key, so overriding the four inset values leaves `containLabel`
+in place. That layout pass reserves room for each axis's estimated
+label rect whether or not the axis is shown, which at sparkline heights
+leaves no plot area at all: measured on echarts 6.1.0 in Chrome, a
+275x30 sparkline has a grid rect of 235.8 x -6.1 with `containLabel:
+true` against 271 x 26 with it off, and a twelve-point series paints
+708 of 8250 canvas pixels in a 3px band rather than 7220 in a 27px one
+(issue #458). A chart drawn without axes, such as
+`Dashboard/Sparkline.tsx`, must therefore set `grid.containLabel:
+false`. Setting `axisLabel: { show: false }` as well is redundant:
+`containLabel: false` skips the pass outright, and the two grid rects
+are identical with and without the axis-label overrides. Leave
+`buildGrid()` alone, since the tiles under
+`StatusPanel/PerformanceTiles/` rely on `containLabel: true` to fit
+their real axis labels.
+
+### Line series with no drawable segment
+
+ECharts draws a line series as segments between neighbouring values, so
+a series with no adjacent pair of values has no geometry: a single
+point, or points separated by null gaps, paint nothing whatsoever with
+markers off (0 of 8250 pixels on a 275x30 canvas, echarts 6.1.0). This
+is the ordinary state of a newly registered server, whose first
+collections leave one point in `time_series`, so any sparkline or small
+chart must handle it. `Dashboard/Sparkline.tsx` counts adjacent pairs
+and passes `showMarkers` to `Chart` when there are none, which puts a
+circle on each observation; the marker fallback turns itself off again
+as soon as the series can be joined up.
+
+Assertions on the props handed to a mocked `Chart` cannot catch either
+of these, since both charts receive perfectly reasonable options and
+draw nothing. `Dashboard/__tests__/Sparkline.render.test.tsx` mocks
+only the `echarts-for-react` wrapper and runs the fully merged option
+object through ECharts' own server-side SVG renderer, then measures the
+subpaths that were actually emitted; use that pattern for any bug where
+the question is what landed on the canvas.
+
+## Dashboard Time Window
+
+Every dashboard request that has a time dimension takes its window
+from `useDashboard().timeRange`, a `TimeRangeState` of `range` plus
+an optional `customStart` and `customEnd`. The two rules that turn
+that state into query parameters live in
+`client/src/utils/timeRangeParams.ts`, which is the only place they
+should be written; it is deliberately separate from
+`utils/timelineRange.ts`, which resolves the Event Timeline's own
+`TimelineTimeRange` into absolute `Date` bounds.
+
+- `appendTimeRangeParams(params, timeRange)` always sends
+  `time_range`, and sends `time_start` and `time_end` only when the
+  range is `custom` and both bounds are present; the server accepts
+  the bounds for no other range. It mutates and returns the
+  `URLSearchParams` it is given, so build the endpoint's own
+  parameters first and append the window last.
+
+- `isTimeRangeQueryable(timeRange)` is false whilst a custom range
+  has only one bound; skip the request entirely in that case,
+  leaving the existing data and error state alone. A half-specified
+  custom window is a transient state the user passes through in the
+  picker, and sending it earns a 400 and a visible error for no
+  benefit. `useMetrics`, `useServerCacheHit`, `useQueryStats`,
+  `useDatabaseSummaries`, `TopQueriesSection`, `QueryDetail`,
+  `KpiTilesSection` and `ComparativeChartsSection` all go through
+  the helper; `useConnectionGroups` still carries its own copy.
+  That early return must also abandon whatever request is in
+  flight, and clear the loading flag, or the response for the
+  previous window lands afterwards and is displayed as though it
+  described the new selection.
+
+- Put `range`, `customStart` and `customEnd` in the fetch callback's
+  dependency list, so that moving the selector refetches.
+
+- Guard the fetch against out-of-order responses with a request
+  sequence number. An `isMountedRef` cleared in the effect cleanup
+  is not enough on its own, because the next effect run sets it
+  straight back to `true`, so a slow `30d` response can land after a
+  quick `1h` one and overwrite it. This has been the most frequent
+  bug in the windowed panels, so the guard now lives in the
+  `useRequestSequence` hook, in
+  `client/src/hooks/useRequestSequence.ts`: call `beginRequest()`
+  immediately before the fetch, consult the predicate it returns
+  before parsing the response and again before every state update
+  derived from it, and call `supersedeRequest()` on an early return
+  that deliberately skips a fetch. The hook tracks the mounted flag
+  itself on a mount-only effect, so a consumer needs no
+  `isMountedRef` and must not reset one on each dependency change.
+  `useDatabaseSummaries`, `KpiTilesSection` and
+  `ComparativeChartsSection` use the hook; `useServerCacheHit`,
+  `useQueryStats`, `useConnectionGroups`, `TopQueriesSection`,
+  `QueryDetail` and `AdminAuditLog` still have the sequence number
+  written out inline, and should move across when next touched.
+
+- `useRetryingFetch`'s own attempt generation does not substitute
+  for this. It compares generations only after the supplied fetch
+  has returned, by which point that fetch has already written its
+  state, so a panel that wraps its fetch in `run()` still needs
+  `useRequestSequence` inside the fetch itself. `KpiTilesSection`
+  is the worked example.
+
+- Where the view is paged, treat the window as a filter that changes
+  the size of the result set and reset the offset when it moves, or
+  narrowing the window strands the user on a page that no longer
+  exists. `TopQueriesSection` resets during render off a tracked
+  previous value, the same way it handles a connection change, so
+  that the next fetch cannot run with a stale offset; an effect would
+  let one windowed request go out first. Key the tracked value on the
+  bounds as well as the range, because a custom window can be
+  narrowed without `range` ever leaving `custom`.
+
+- Route every offset reset through one helper rather than calling
+  `setPage(0)` at each call site, because the total row count read
+  from `X-Total-Count` has to be cleared alongside the offset.
+  `TopQueriesSection.resetPaging` does both, and its filter, toggle
+  and page-size handlers all go through it; a bare `setPage(0)`
+  leaves the previous filter's total on screen until the next
+  response lands.
+
+`/api/v1/metrics/top-queries` is windowed, and both of its callers
+pass the selected range: `TopQueriesSection` for the leaderboard and
+`QueryDetail` for the header statistics behind the overlay a row
+opens. The overlay takes the range from context rather than from the
+overlay payload, so nothing has to be threaded through `pushOverlay`.
+
+The windowed response aggregates `calls`, `rows`, `total_exec_time`
+and the block counters as sums of non-negative deltas, and derives
+`mean_exec_time` from those sums, but `min_exec_time` and
+`max_exec_time` cannot be delta-aggregated and remain lifetime
+`pg_stat_statements` values. The two `QueryDetail` tiles that show
+them are therefore labelled `Min Time (All Time)` and `Max Time
+(All Time)`, whilst `Total Calls` and `Total Time` carry the
+selected window in their labels, `(Last 1h)` and so on, or `(Custom
+Range)`, so that they cannot be read as lifetime figures beside the
+min and max. The mean tile is plain `Mean Time` because it is the
+ratio of the two windowed totals. Any new tile reading a windowed
+endpoint must say in its label which of the two it is.
+
+`QueryDetail` used to carry a second average tile, `Avg Time (Last
+1h)` or `Avg Time (Custom Range)`, fed by `useQueryStats`. Once
+`mean_exec_time` became windowed the two tiles computed the same
+figure over the same window from the same delta pairs, so the
+`useQueryStats` tile was dropped and with it a second round trip on
+every overlay open. `useQueryStats` and
+`/api/v1/metrics/query-stats` both remain for API consumers, but
+`QueryDetail` no longer calls the hook and nothing else in the
+client does either; check that before assuming the hook is live.
+
+The dropped tile distinguished a failed request, a pending one and a
+genuine zero, because `avg_exec_time` is nullable. `mean_exec_time`
+is a plain `float64`, so that distinction could not survive as such,
+but it does not need to: the top-queries SQL ends its `totals` CTE
+with `HAVING SUM(delta_calls) > 0`, so a statement that was not
+executed in the window falls out of the result entirely, the
+response is empty, `queryData` is `null`, and `Mean Time` renders
+`--` exactly as `Total Calls` and `Total Time` do. A failed or
+pending fetch is handled once for the whole component, as the error
+message or the spinner. Keep any future windowed tile on that same
+footing rather than reintroducing per-tile state.
+
+Two call sites still hardcode `time_range=24h` by decision, both in
+`components/StatusPanel/PerformanceTiles/`: `usePerformanceSummary`
+and `useDatabaseCacheHit`. They render above the Monitoring section
+that holds the selector, so a user looking at them cannot see the
+control that would be changing the numbers, and they are a fixed
+at-a-glance 24-hour summary instead. A comment at each says so; do
+not sweep them into a change that wires up the selector.
+
+`useDatabaseSummaries` takes the window as a `TimeRangeState` third
+argument and defaults to a fixed `24h`. `DatabaseSummariesSection`
+passes the selected window; `TopQueriesSection` deliberately does
+not, because it uses the hook only for the database filter list and
+that list should not shrink as the user narrows the period.
+
+A request may name at most 100 connection IDs in `connection_ids`, on
+`/metrics/performance-summary`, `/metrics/query`, `/metrics/top-queries`,
+`/metrics/query-stats` and `/metrics/database-summaries`; a longer list
+earns a 400 (issue #520). An estate can exceed that, so batch the list
+with `chunkConnectionIds` from `client/src/utils/connectionIdBatches.ts`,
+issue the batches with `Promise.all` and concatenate the `connections`
+arrays. `MAX_CONNECTION_IDS_PER_REQUEST` there must stay equal to
+`maxConnectionIDsPerRequest` in
+`server/src/internal/api/request_helpers.go`. `KpiTilesSection`,
+`ComparativeChartsSection`, `usePerformanceSummary` and `useMetrics`
+batch already; a failed batch must fail the whole load, never render a
+partial result. The merge drops the response's top-level `aggregate`,
+whose weighted cache hit average cannot be recomputed from the response
+fields, so a consumer needing it must read an unbatched response.
+`/api/v1/alerts` and `/api/v1/overview` also take `connection_ids` but
+are not capped, and are sent whole.
+
 ## TypeScript Standards
 
+Two ambient declaration files sit at the root of `client/src/`.
+`vite-env.d.ts` references `vite/client`, which is what makes asset
+imports such as `import logoLight from '../assets/images/logo-light.png'`
+typecheck; `react-syntax-highlighter.d.ts` declares the slice of
+`react-syntax-highlighter` and its Prism style module that the client
+uses, because the package ships no types and no `@types` package is
+installed. Extend the latter rather than casting at each import site
+if a new part of that library is needed.
+
 `client/package.json` depends on `@mui/material` at `^5.14.20`. The
-committed lockfile resolves that to `5.18.0`, where `slotProps` works
-and a handful of components already use it (`ConnectionLostOverlay.tsx`,
-`ClusterFields.tsx` and `TopQueriesSection.tsx`), but the declared
-minimum of `5.14.20` does not guarantee `slotProps` on `TextField`, so
-do not spread it further unless the minimum is raised. The convention
+committed lockfile resolves that to `5.18.0`, where `slotProps` is
+accepted by some components but not all: `Dialog`
+(`ConnectionLostOverlay.tsx`) and `FormControlLabel`
+(`TopQueriesSection.tsx`) take it, whereas `TextField` gained it only
+in MUI v6, so in v5 it is both ignored at runtime and rejected at
+compile time. Use `InputProps` (or `inputProps`) on `TextField`, as
+`ClusterFields.tsx` now does for its read-only replication type
+field, and do not spread `slotProps` further unless the declared
+minimum is raised to v6. The convention
 for native `<input>` attributes (`maxLength`, `min`, `max`,
 `aria-label`, `autoComplete` when not already a top-level prop) is
 `inputProps` on `TextField`, used across some twenty files (for
@@ -185,8 +606,9 @@ re-implementing the rules per dialog:
 - Drive the submit button's `disabled` state and the early-return
   guard in the submit handler with `validateName(name) !== null`;
   this also covers the empty/required case. For the token dialog,
-  combine it with the existing owner check: `owner &&
-  validateName(annotation) === null`.
+  combine it with the existing owner check and the connection scope
+  check: `owner && validateName(annotation) === null &&
+  connectionScopeProblem(scopedConnections) === null`.
 - Do not surface the "Name is required" message while the field is
   empty; suppress the inline error for an empty trimmed value
   (`value.trim() === '' ? null : validateName(value)`) so the
@@ -213,6 +635,61 @@ overrides it. Do not pass an `errorFallback` to the create/edit
 group mutations, or the server's "A group with this name already
 exists" message will be masked. Token names are intentionally not
 unique, so no duplicate handling belongs in the token dialog.
+
+## Token Connection Scope Rules
+
+The server refuses (HTTP 400) a token connection scope that names a
+connection twice or mixes "all connections" (connection 0) with
+particular connections. Both token dialogs edit the connection scope
+through `tokens/ConnectionScopeEditor.tsx`, which adds entries only
+through `addScopedConnection` (in `tokens/tokenTypes.ts`): choosing
+"All the owner's connections" replaces every entry, and a particular
+connection replaces the all-connections entry. A stored scope that
+already breaks the rules is loaded as it is; the editor shows
+`connectionScopeProblem` inline and the dialogs disable their submit
+button until it is resolved. Creating a token is a POST followed by a
+scope PUT, so `AdminTokenScopes.tsx` deletes the new token when the
+PUT is refused, rather than leave it holding its owner's whole access.
+
+## Messaging Channel Field Descriptors
+
+`AdminMessagingChannels.tsx` is shared by the Slack, Mattermost and
+Telegram admin panels. It renders no hardcoded credential field:
+each platform passes a `MessagingChannelConfig` whose `fields` are
+`MessagingChannelField` descriptors, defined with the pure helpers
+in `client/src/components/AdminPanel/messagingChannelFields.ts`.
+Add a platform by writing a new wrapper like
+`AdminTelegramChannels.tsx`; do not add per-platform branches to
+the shared panel.
+
+Each descriptor names the API request field (`key`), its form
+label, and how the API reports it back: `setFlag` for a secret the
+server redacts (issue #187) and only reports as configured, e.g.
+`webhook_url_set` or `telegram_bot_token_set`; `valueKey` for a
+non-secret the server echoes, e.g. `telegram_chat_id`. The
+resulting semantics are load-bearing and must not drift:
+
+- A `secret` field is masked (`type="password"`), is never
+  populated from the API when the edit dialog opens, and is
+  omitted from the PUT body while blank. Sending an empty string
+  would overwrite the stored secret with nothing.
+- A non-secret field is pre-populated from the response on edit and
+  is always sent, on both create and update.
+- `required` secrets are mandatory on create and on an edit where
+  the `setFlag` is false; they are optional once one is stored.
+  `required` non-secret fields are mandatory in both cases.
+  `findMissingRequiredField` is the single source of truth and
+  drives both the submit button's `disabled` state and the save
+  handler's guard.
+- `showInTable` adds a table column: a `setFlag` field renders a
+  Configured / Not configured chip, a `valueKey` field renders the
+  value. Slack and Mattermost deliberately opt out, so their table
+  keeps the five base columns.
+
+Tests for a new platform belong in a per-platform file (see
+`__tests__/AdminTelegramChannels.test.tsx`) and must assert that
+the secret is absent from the PUT body when left blank and that it
+never reaches the rendered document.
 
 ## Permission-Gated UI
 
@@ -247,6 +724,12 @@ Reference implementations:
 
 - `client/src/components/AdminPanel/index.tsx` filters whole nav
   sections by `hasPermission(item.permission)`.
+- A `NavItem` in that file may instead set `superuserOnly: true`,
+  which is checked before every other rule and shows the item only
+  when `user?.isSuperuser` is true. Use it for screens whose
+  endpoint the server restricts to superusers rather than to a
+  named permission, as the Audit Log tab does; such items carry an
+  empty `permission` string because no permission grants them.
 - `client/src/components/AddMenu.tsx` hides Add Server, Add Cluster,
   and Add Cluster Group when the user lacks `manage_connections`.
 
@@ -286,6 +769,90 @@ build in the production bundle and the imported value becomes the
 whole exports object; React then throws error #130 when it renders.
 Vitest resolves the deep path natively, so unit tests pass and only
 `npm run build` plus a browser session shows the failure.
+
+## Bidirectional Isolation for Server-Supplied Names
+
+Wrap any display name or email that the server may have taken from an
+identity provider in `<bdi>` (or set `unicode-bidi: isolate` on the
+element that holds it). The server is byte-transparent for these
+values: it rejects control characters but permits the Unicode format
+category, because a zero-width joiner is part of legitimate names in
+several scripts, so the value can carry a bidirectional override such
+as U+202E and reorder the interface text around it. React's JSX
+escaping does not help, since no markup is involved and the
+characters are ordinary text being rendered as instructed. The sites
+that do this today are the display name and email columns in
+`components/AdminPanel/AdminUsers.tsx`, and the federated sign-in
+button label in `components/Login.tsx`. The authenticated `User`
+object carries only `username`, and `ValidateUsername` rules out an
+override character there, but it does permit any Unicode letter, so a
+Hebrew or Arabic username is strong right-to-left and will still
+reorder the neutral characters next to it: punctuation, digits, or a
+surrounding label. `<bdi>` is therefore the right treatment for any
+name-shaped value, whatever the server validates, and it should be
+added at every new site that renders one.
+
+## LLM Chat Requests
+
+Every `POST /api/v1/llm/chat` call goes through
+`src/utils/llmChat.ts`: use `LLM_CHAT_PATH` for the path and
+`buildChatRequestInit({ messages, tools, systemPrompt, signal })` for
+the `RequestInit`. That builder is the only place that knows the
+library wire contract (typed content blocks via `normaliseMessages`,
+snake_case `tools[].input_schema` via `normaliseTools`, and
+`system_prompt`), and it omits `tools` when the list is empty and
+`signal` when none is given. Never hand-assemble the body at a call
+site; issue #370 was a silently emptied tool schema caused by exactly
+that, and #373 centralised the construction. Current callers are
+`utils/agenticLoop.ts`, `hooks/chat/chatAgenticLoop.ts`,
+`hooks/useChartAnalysis.ts` and `hooks/useQueryOverview.ts`.
+
+## Generated SQL Validation
+
+Generated SQL is never offered as runnable until it has been planned
+server-side. `src/utils/sqlValidation.ts` is the only client of
+`POST /api/v1/connections/{id}/query/validate`; it bounds concurrent
+requests at `MAX_CONCURRENT_VALIDATIONS` (3) and caches results per
+connection, database and SQL text, so a report full of code blocks
+issues a handful of requests rather than dozens. A failed request
+resolves to `null` and is not cached: the UI then treats the block as
+unvalidated and still offers Run.
+
+`src/hooks/useSqlValidation.ts` wraps that for components. Its effect
+keys on the request inputs alone, so an unrelated re-render never
+re-fires validation. Statement statuses collapse to a block state in
+`summariseValidation`: any `invalid` wins, then `unsupported`, else
+`valid`. `unsupported` is not a failure; it means EXPLAIN cannot plan
+that statement kind (DDL, `SET`, `VACUUM` and friends) and the block
+stays runnable with a hint.
+
+`RunnableCodeBlock` applies the gate. A block whose SQL contains `$N`
+placeholders (`hasSqlParameters` in `sqlDetection.ts`) is a template:
+no Run button, an explanatory notice, copy button kept, and no
+validation request. Everything else validates on mount, with Run
+disabled whilst pending or invalid, and an explicit "Run anyway"
+escape hatch on the invalid notice so a reviewer is never hard
+blocked. The Tooltip's wrapping `<span>` carries a stable
+`aria-label` (the run target), because MUI would otherwise put the
+changing tooltip title there and tests query by that label.
+
+Never split SQL on a raw `;`. `splitSqlStatements` in
+`sqlDetection.ts` tokenises single-quoted literals, quoted
+identifiers, dollar-quoted bodies and line and nested block comments
+first; `extractExecutableSQL` and `hasSqlParameters` are both built
+on it. A `--` comment ends at the first `\r` or `\n`, as in
+PostgreSQL's lexer; any other client code that skips line comments
+(such as `stripLeadingNoise` in `useQueryPlan.ts`) must do the same.
+The cluster routing comment has one home too:
+`CONNECTION_ID_COMMENT_RE` and `stripConnectionIdComment`, used by
+`MarkdownContent` and by `createRoutedSqlValidator`.
+
+`runAgenticLoop` takes an optional `validateSqlBlocks`. After the
+final text, it validates the ```sql blocks and, on failure, makes
+exactly one extra LLM round-trip asking for corrections. That round
+sits outside the `maxIterations` budget deliberately, and every
+failure path (no validator, null result, non-OK response, a tool call
+instead of text, empty text) returns the original text unchanged.
 
 ## Coverage Requirements
 

@@ -162,8 +162,9 @@ const IndexDetail: React.FC<ObjectDetailProps> = ({
             scanChart.data,
             ['idx_scan_per_sec'],
             ['Index Scans/s'],
+            scanChart.window,
         ),
-        [scanChart.data]
+        [scanChart.data, scanChart.window]
     );
 
     const displayName = schemaName

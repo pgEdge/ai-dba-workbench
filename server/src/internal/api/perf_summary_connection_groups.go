@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/pgedge/ai-workbench/pkg/rollback"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/logging"
 	"github.com/pgedge/ai-workbench/server/internal/metrics"
@@ -294,9 +295,7 @@ func (h *PerfSummaryHandler) handleConnectionGroups(
 			"Failed to query connection groups")
 		return
 	}
-	// Rolled back with a fresh context so that the rollback still runs
-	// even once ctx has been canceled or has timed out.
-	defer tx.Rollback(context.Background()) //nolint:errcheck // Rollback after commit is a no-op
+	defer rollback.Tx(ctx, tx) //nolint:errcheck // Rollback after commit is a no-op
 
 	response := h.queryConnectionGroups(ctx, tx, groupBy, connID,
 		window.Start, window.End)

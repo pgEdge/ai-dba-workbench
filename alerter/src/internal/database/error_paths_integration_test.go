@@ -11,7 +11,6 @@ package database
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
 
@@ -26,13 +25,7 @@ import (
 // without standing up a mock of the pgxpool interface.
 func newClosedPoolDatastore(t *testing.T) (*Datastore, func()) {
 	t.Helper()
-	if os.Getenv("SKIP_DB_TESTS") != "" {
-		t.Skip("Skipping database test (SKIP_DB_TESTS is set)")
-	}
-	connStr := os.Getenv("TEST_AI_WORKBENCH_SERVER")
-	if connStr == "" {
-		t.Skip("TEST_AI_WORKBENCH_SERVER not set, skipping closed-pool error test")
-	}
+	connStr := requireLocalTestDSN(t, "the closed-pool error test")
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, connStr)
 	if err != nil {
@@ -94,6 +87,9 @@ func TestQueriesReturnErrorOnClosedPool(t *testing.T) {
 	if _, err := ds.GetProbeStalenessByConnection(ctx); err == nil {
 		t.Errorf("GetProbeStalenessByConnection should error on closed pool")
 	}
+	if _, err := ds.GetUnmonitoredConnections(ctx); err == nil {
+		t.Errorf("GetUnmonitoredConnections should error on closed pool")
+	}
 	if _, err := ds.GetAlertRuleByName(ctx, "x"); err == nil {
 		t.Errorf("GetAlertRuleByName should error on closed pool")
 	}
@@ -150,8 +146,11 @@ func TestAlertQueriesReturnErrorOnClosedPool(t *testing.T) {
 	if _, err := ds.GetAlertsByConnection(ctx, 1); err == nil {
 		t.Errorf("GetAlertsByConnection should error on closed pool")
 	}
-	if err := ds.UpdateAlertReevaluation(ctx, 1); err == nil {
+	if err := ds.UpdateAlertReevaluation(ctx, 1, nil); err == nil {
 		t.Errorf("UpdateAlertReevaluation should error on closed pool")
+	}
+	if err := ds.DeferAlertReevaluation(ctx, 1); err == nil {
+		t.Errorf("DeferAlertReevaluation should error on closed pool")
 	}
 }
 
@@ -170,6 +169,9 @@ func TestAnomalyQueriesReturnErrorOnClosedPool(t *testing.T) {
 	if _, err := ds.GetUnprocessedAnomalyCandidates(ctx, 10); err == nil {
 		t.Errorf("GetUnprocessedAnomalyCandidates should error on closed pool")
 	}
+	if _, err := ds.ExpireUnprocessedAnomalyCandidates(ctx, time.Now()); err == nil {
+		t.Errorf("ExpireUnprocessedAnomalyCandidates should error on closed pool")
+	}
 	if err := ds.UpdateAnomalyCandidate(ctx, c); err == nil {
 		t.Errorf("UpdateAnomalyCandidate should error on closed pool")
 	}
@@ -182,7 +184,7 @@ func TestAnomalyQueriesReturnErrorOnClosedPool(t *testing.T) {
 	if _, err := ds.GetAnomalyCandidateByID(ctx, 1); err == nil {
 		t.Errorf("GetAnomalyCandidateByID should error on closed pool")
 	}
-	if _, err := ds.GetMetricBaselines(ctx, 1, "x"); err == nil {
+	if _, err := ds.GetMetricBaselines(ctx, 1, "x", nil); err == nil {
 		t.Errorf("GetMetricBaselines should error on closed pool")
 	}
 	if err := ds.UpsertMetricBaseline(ctx, &MetricBaseline{ConnectionID: 1, MetricName: "x", PeriodType: "all", LastCalculated: time.Now()}); err == nil {

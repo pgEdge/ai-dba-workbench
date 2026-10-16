@@ -11,20 +11,25 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
+	"log"
+	"net/url"
 	"os"
 	"os/signal"
 	"sync"
 	"syscall"
 	"time"
 
+	"github.com/pgedge/ai-workbench/pkg/crypto"
 	"github.com/pgedge/ai-workbench/pkg/fileutil"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/config"
 	"github.com/pgedge/ai-workbench/server/internal/conversations"
 	"github.com/pgedge/ai-workbench/server/internal/database"
-	"github.com/pgedge/ai-workbench/server/internal/llmproxy"
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
+	"github.com/pgedge/ai-workbench/server/internal/oidc"
 	"github.com/pgedge/ai-workbench/server/internal/overview"
 	"github.com/pgedge/ai-workbench/server/internal/prompts"
 	"github.com/pgedge/ai-workbench/server/internal/resources"
@@ -55,6 +60,12 @@ type Server struct {
 	dataDir       string
 	debug         bool
 	aiEnabled     bool
+
+	// oidcProvider is nil whenever federated login is switched off. When
+	// it is non-nil, oidcStateKey holds the 32-byte key the login state
+	// cookie is sealed with.
+	oidcProvider *oidc.Provider
+	oidcStateKey []byte
 
 	// handlerClosers holds cleanup functions for background resources
 	// created while wiring HTTP handlers. SetupHandlers runs on the
@@ -138,7 +149,15 @@ func NewServer(sc *ServerConfig) (*Server, error) {
 		return nil, err
 	}
 
-	if err := s.initAuthStore(); err != nil {
+	// The secret is loaded before the auth store rather than after it,
+	// because the store hashes every audit row it writes under a key
+	// derived from the secret and so cannot be opened without it.
+	serverSecret, err := s.loadServerSecret()
+	if err != nil {
+		return nil, err
+	}
+
+	if err := s.initAuthStore(serverSecret); err != nil {
 		return nil, err
 	}
 
@@ -146,8 +165,7 @@ func NewServer(sc *ServerConfig) (*Server, error) {
 		return nil, err
 	}
 
-	serverSecret, err := s.loadServerSecret(sc.ExecPath)
-	if err != nil {
+	if err := s.initOIDC(serverSecret); err != nil {
 		return nil, err
 	}
 
@@ -207,11 +225,19 @@ func (s *Server) validateTLS() error {
 	return nil
 }
 
-// initAuthStore initializes the authentication store
-func (s *Server) initAuthStore() error {
+// initAuthStore initializes the authentication store. serverSecret is
+// the secret loadServerSecret found; the audit chain key is derived
+// from it, so an empty secret is refused here rather than allowed to
+// produce a store whose first mutation fails.
+func (s *Server) initAuthStore(serverSecret string) error {
 	// Create data directory if it doesn't exist
 	if err := os.MkdirAll(s.dataDir, 0750); err != nil {
 		return fmt.Errorf("failed to create data directory: %w", err)
+	}
+
+	auditKey := auth.DeriveAuditKey(serverSecret)
+	if len(auditKey) == 0 {
+		return fmt.Errorf("cannot derive the audit chain key: the server secret is empty")
 	}
 
 	// Initialize auth store (SQLite database)
@@ -219,7 +245,8 @@ func (s *Server) initAuthStore() error {
 	s.authStore, err = auth.NewAuthStore(
 		s.dataDir,
 		s.cfg.HTTP.Auth.MaxUserTokenDays,
-		s.cfg.HTTP.Auth.MaxFailedAttemptsBeforeLockout,
+		s.cfg.HTTP.Auth.MaxFailedAttemptsBeforeLockout(),
+		auditKey,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to initialize auth store: %w", err)
@@ -255,22 +282,49 @@ func (s *Server) initRateLimiter() error {
 	)
 	fmt.Fprintf(os.Stderr, "Rate limiting enabled: %d attempts per %d minutes per IP\n",
 		s.cfg.HTTP.Auth.RateLimitMaxAttempts, s.cfg.HTTP.Auth.RateLimitWindowMinutes)
-	if s.cfg.HTTP.Auth.MaxFailedAttemptsBeforeLockout > 0 {
+	// Lockout is the only per-account protection against password guessing:
+	// the rate limiter above is keyed on the client address, is reset by
+	// any single successful login, and is not shared between replicas.
+	// A deployment that has switched lockout off should say so out loud
+	// at every start, in the same way an empty trusted proxy list does,
+	// rather than leaving the operator to infer it from a line that is
+	// simply absent.
+	if maxFailed := s.cfg.HTTP.Auth.MaxFailedAttemptsBeforeLockout(); maxFailed > 0 {
 		fmt.Fprintf(os.Stderr, "Account lockout enabled: %d failed attempts before lockout\n",
-			s.cfg.HTTP.Auth.MaxFailedAttemptsBeforeLockout)
+			maxFailed)
+	} else {
+		fmt.Fprintf(os.Stderr,
+			"WARNING: http.auth.max_failed_attempts_before_lockout is 0, so account lockout is\n"+
+				"         disabled and repeated password guesses against a single account are\n"+
+				"         limited only per client address. Set it to a positive number of\n"+
+				"         attempts unless lockout is deliberately switched off.\n")
 	}
 	return nil
 }
 
-// loadServerSecret loads the server secret for password decryption.
-// Search order: explicit s.cfg.SecretFile > per-user config dir
-// (e.g. ~/.config/pgedge/ai-dba-server.secret) > /etc/pgedge/
-// ai-dba-server.secret. Falling out of all three is a fatal error
-// because the server cannot decrypt stored passwords without it.
-func (s *Server) loadServerSecret(execPath string) (string, error) {
-	secretPath := s.cfg.SecretFile
+// loadServerSecret loads the server secret for password decryption and
+// for the keys derived from it. Falling out of the search order is a
+// fatal error because the server can neither decrypt stored passwords
+// nor extend the audit chain without it.
+func (s *Server) loadServerSecret() (string, error) {
+	return loadServerSecretFile(s.cfg.SecretFile)
+}
+
+// loadServerSecretFile resolves and reads the server secret. Search
+// order: an explicit secret_file from the configuration, then the
+// per-user config directory (e.g. ~/.config/pgedge/
+// ai-dba-server.secret), then /etc/pgedge/ai-dba-server.secret.
+//
+// It is a plain function rather than a method so that the command line,
+// which runs before the configuration is loaded and so has no *Server
+// to hang it off, resolves the secret by exactly the same rules the
+// server does. The two must agree: a command that failed to find the
+// secret the server uses would write audit rows the server cannot
+// verify.
+func loadServerSecretFile(configuredPath string) (string, error) {
+	secretPath := configuredPath
 	if secretPath == "" {
-		secretPath = config.GetDefaultSecretPath(execPath)
+		secretPath = config.GetDefaultSecretPath()
 	}
 
 	if secretPath == "" {
@@ -288,6 +342,130 @@ func (s *Server) loadServerSecret(execPath string) (string, error) {
 
 	fmt.Fprintf(os.Stderr, "Server secret: loaded from %s\n", secretPath)
 	return serverSecret, nil
+}
+
+// oidcStateKeySalt is the fixed PBKDF2 salt separating the OIDC login
+// state key from every other key derived from the same server secret,
+// most importantly the one that encrypts stored database passwords. It
+// is a constant rather than a random value because the key has to be
+// reproducible across restarts and across two servers sharing one
+// secret; the salt is not a secret, the server secret is. Never reuse a
+// salt from another subsystem here, and never change this string: doing
+// so invalidates every login in flight at that moment.
+const oidcStateKeySalt = "pgedge-ai-workbench/oidc-login-state/v1"
+
+// oidcDiscoveryTimeout bounds OpenID Connect discovery at start-up.
+// go-oidc issues that request through http.DefaultClient, which has no
+// timeout, so without this an identity provider that accepts the
+// connection and then says nothing would hang start-up forever, which
+// looks exactly like a hung server rather than a misconfigured provider.
+const oidcDiscoveryTimeout = 15 * time.Second
+
+// initOIDC performs OpenID Connect discovery and derives the login state
+// key, when federated login is enabled. It does nothing at all when it
+// is not, leaving s.oidcProvider nil, which is what makes the endpoints
+// answer 404.
+//
+// A discovery failure is fatal, deliberately and in the same spirit as
+// an unusable TLS certificate: if the provider cannot be reached at
+// start-up then nobody can log in through it, and a server that starts
+// anyway serves a login page whose button silently does not work.
+func (s *Server) initOIDC(serverSecret string) error {
+	if s.cfg == nil || !s.cfg.HTTP.Auth.OIDC.IsEnabled() {
+		return nil
+	}
+
+	stateKey := crypto.DeriveKey(serverSecret, []byte(oidcStateKeySalt))
+	if len(stateKey) == 0 {
+		return fmt.Errorf("cannot derive the OIDC login state key: the server secret is empty")
+	}
+
+	ctx, cancel := context.WithTimeout(s.ctx, oidcDiscoveryTimeout)
+	defer cancel()
+
+	provider, err := oidc.NewProvider(ctx, s.cfg.HTTP.Auth.OIDC)
+	if err != nil {
+		return fmt.Errorf("failed to initialize OIDC login: %w", err)
+	}
+
+	s.oidcProvider = provider
+	s.oidcStateKey = stateKey
+
+	fmt.Fprintf(os.Stderr, "OIDC login: ENABLED (issuer: %s)\n", s.cfg.HTTP.Auth.OIDC.Issuer)
+	logOIDCStartupWarnings(os.Stderr, s.cfg)
+
+	return nil
+}
+
+// logOIDCStartupWarnings prints the start-up notices for a configuration
+// with federated login enabled. Each of them names a consequence of the
+// configuration that is correct as far as validation can tell but that
+// an operator may not have intended, and nothing later in the life of
+// the process will say any of it.
+func logOIDCStartupWarnings(w io.Writer, cfg *config.Config) {
+	oidcCfg := cfg.HTTP.Auth.OIDC
+
+	// redirect_url is validated for shape, not pinned to this server's
+	// own origin, because the server cannot know the address the browser
+	// reaches it at. It is the address the identity provider delivers
+	// every authorization code to, so a typo here starts cleanly and
+	// sends every code to the wrong host; naming the host at start-up
+	// is what catches the typo. PKCE means a leaked code cannot be
+	// redeemed without the verifier, so the failure is broken login,
+	// not account takeover.
+	if redirect, err := url.Parse(oidcCfg.RedirectURL); err == nil && redirect.Host != "" {
+		fmt.Fprintf(w,
+			"OIDC login: the identity provider will deliver authorization codes to %s\n"+
+				"           (http.auth.oidc.redirect_url); confirm that this is the address the\n"+
+				"           browser reaches this server at.\n", redirect.Host)
+	}
+
+	// Without a trusted proxy list, every request behind a reverse proxy
+	// arrives with that proxy's address, so the start and callback rate
+	// limits have one key for the whole deployment rather than one per
+	// client: they stop nothing an attacker does and can be spent
+	// deliberately to deny everyone else a login. The same list decides
+	// whether the OIDC state cookie may use the "__Host-" name prefix
+	// when TLS terminates at the proxy, so without it (and without
+	// tls.enabled) the cookie is written under its plain name, and a host
+	// that can set cookies for a sibling subdomain can plant its own
+	// login state over a user's and have that user's browser finish the
+	// attacker's login (login CSRF, issue #506). Validation refuses that
+	// for an https redirect_url unless allow_unprefixed_state_cookie is
+	// set, so reaching the second notice means the operator accepted the
+	// risk or is on plain-HTTP loopback. With tls.enabled every request
+	// is provably HTTPS and the prefix is used, so that notice is not
+	// printed. The warning names each consequence so that an operator
+	// reads the list as required behind a proxy, not optional.
+	if len(cfg.HTTP.TrustedProxies) == 0 {
+		fmt.Fprintf(w,
+			"WARNING: http.trusted_proxies is empty. Behind a reverse proxy this is unsafe for\n"+
+				"         OIDC login: every request shares one rate-limit allowance for the OIDC\n"+
+				"         start and callback endpoints, so any client can spend it and block\n"+
+				"         federated login for everyone. Set http.trusted_proxies to the reverse\n"+
+				"         proxy's address; it is required for production deployments behind one.\n")
+		if !cfg.HTTP.TLS.Enabled {
+			fmt.Fprintf(w,
+				"WARNING: the OIDC login state cookie cannot use the __Host- prefix behind a\n"+
+					"         reverse proxy, so a host that can set cookies for a sibling subdomain\n"+
+					"         can log a user in to the attacker's own account (login CSRF).\n")
+		}
+	}
+
+	// superuser_group hands the Workbench superuser flag to whoever can
+	// add a member to one provider group, and superuser bypasses every
+	// group grant and every API token connection scope (the pre-existing
+	// short-circuit issue #482 tracks). Revocation takes effect at the
+	// person's next login and not before, so a live session or an
+	// existing token keeps full privilege until then.
+	if oidcCfg.SuperuserGroup != "" {
+		fmt.Fprintf(w,
+			"WARNING: http.auth.oidc.superuser_group is set (%q): every member of that identity\n"+
+				"         provider group holds Workbench superuser, which bypasses all group grants\n"+
+				"         and all API token connection scopes. Removal at the provider takes effect\n"+
+				"         at the member's next login; disable the account to revoke it sooner.\n",
+			oidcCfg.SuperuserGroup)
+	}
 }
 
 // initDatastore initializes the datastore connection
@@ -377,6 +555,7 @@ func (s *Server) startTokenCleanup() {
 	if removed, _ := s.authStore.CleanupExpiredTokens(); removed > 0 {
 		fmt.Fprintf(os.Stderr, "Removed %d expired token(s)\n", removed)
 	}
+	s.purgeAuditEvents()
 
 	// Start periodic cleanup goroutine
 	go func() {
@@ -387,13 +566,63 @@ func (s *Server) startTokenCleanup() {
 			case <-s.ctx.Done():
 				return
 			case <-ticker.C:
-				if removed, hashes := s.authStore.CleanupExpiredTokens(); removed > 0 {
-					fmt.Fprintf(os.Stderr, "Removed %d expired token(s)\n", removed)
-					s.cleanupExpiredConnections(hashes)
-				}
+				s.runCleanupTick()
 			}
 		}
 	}()
+}
+
+// runCleanupTick does one round of the periodic cleanup: it removes
+// expired tokens and the connections they owned, purges audit events
+// past their retention, and writes the counts of coalesced audit
+// failures and denials whose window has closed.
+func (s *Server) runCleanupTick() {
+	if removed, hashes := s.authStore.CleanupExpiredTokens(); removed > 0 {
+		fmt.Fprintf(os.Stderr, "Removed %d expired token(s)\n", removed)
+		s.cleanupExpiredConnections(hashes)
+	}
+	s.purgeAuditEvents()
+	s.authStore.SweepCoalescedAudit()
+}
+
+// purgeAuditEvents deletes RBAC audit events older than the
+// configured retention period (http.auth.audit_retention_days). It
+// runs once at startup and again on every token cleanup tick. A
+// retention of zero disables the purge, keeping audit events forever.
+func (s *Server) purgeAuditEvents() {
+	if s.authStore == nil {
+		return
+	}
+
+	days := s.cfg.HTTP.Auth.AuditRetentionDays()
+	if days <= 0 {
+		return
+	}
+
+	cutoff := time.Now().UTC().AddDate(0, 0, -days)
+	if removed, err := s.authStore.PurgeAuditEvents(cutoff); err != nil {
+		log.Print(auditPurgeFailureMessage(err))
+	} else if removed > 0 {
+		fmt.Fprintf(os.Stderr, "Removed %d audit event(s) older than %d days\n", removed, days)
+	}
+}
+
+// auditPurgeFailureMessage is the log line for a failed purge. A purge
+// that refuses because the log does not verify repeats at every tick
+// until an operator acts, so the line names the commands that diagnose
+// and recover from it.
+func auditPurgeFailureMessage(err error) string {
+	msg := fmt.Sprintf("[ERROR] Failed to purge audit events: %v", err)
+	if errors.Is(err, auth.ErrAuditKeyMismatch) ||
+		errors.Is(err, auth.ErrAuditChainBroken) {
+
+		msg += "; the purge will keep refusing until this is resolved. " +
+			"Run 'ai-dba-server -verify-audit-log' to see why, and " +
+			"'ai-dba-server -rechain-audit-log' to record a new starting " +
+			"point once you have accounted for it"
+	}
+
+	return msg
 }
 
 // hasValidLLMConfig returns true when the configured LLM provider has the
@@ -425,28 +654,22 @@ func (s *Server) startOverviewGenerator() {
 		return
 	}
 
-	llmConfig := &llmproxy.Config{
-		Provider:               s.cfg.LLM.Provider,
-		Model:                  s.cfg.LLM.Model,
-		AnthropicAPIKey:        s.cfg.LLM.AnthropicAPIKey,
-		AnthropicBaseURL:       s.cfg.LLM.AnthropicBaseURL,
-		OpenAIAPIKey:           s.cfg.LLM.OpenAIAPIKey,
-		OpenAIBaseURL:          s.cfg.LLM.OpenAIBaseURL,
-		GeminiAPIKey:           s.cfg.LLM.GeminiAPIKey,
-		GeminiBaseURL:          s.cfg.LLM.GeminiBaseURL,
-		OllamaURL:              s.cfg.LLM.OllamaURL,
-		MaxTokens:              s.cfg.LLM.MaxTokens,
-		Temperature:            s.cfg.LLM.Temperature,
-		UseCompactDescriptions: s.cfg.LLM.UseCompactDescriptions(),
-		LLMConfig:              &s.cfg.LLM,
-	}
+	s.buildOverviewGenerator()
+	s.overviewGen.Start(s.ctx)
+	fmt.Fprintf(os.Stderr, "AI Overview: ENABLED\n")
+	s.aiEnabled = true
+}
+
+// buildOverviewGenerator creates the overview generator and its SSE hub
+// from the LLM configuration without starting it. It is separate from
+// startOverviewGenerator so that the wiring can be tested without a
+// background goroutine that calls out to the configured provider.
+func (s *Server) buildOverviewGenerator() {
+	llmConfig := newLLMProxyConfig(&s.cfg.LLM)
 
 	s.overviewHub = overview.NewHub()
 	s.overviewGen = overview.NewGenerator(s.datastore, llmConfig)
 	s.overviewGen.SetHub(s.overviewHub)
-	s.overviewGen.Start(s.ctx)
-	fmt.Fprintf(os.Stderr, "AI Overview: ENABLED\n")
-	s.aiEnabled = true
 }
 
 // cleanupExpiredConnections cleans up database connections for expired tokens
@@ -490,8 +713,33 @@ func (s *Server) Run(flags *Flags, configPath string) error {
 	// This ensures X-Forwarded-For headers are only trusted from configured proxies
 	ipExtractor := auth.NewIPExtractor(s.cfg.HTTP.TrustedProxies)
 
+	// The reloadable configuration is created before the handlers so
+	// that those which apply a reload live can read through it; the
+	// SIGHUP listener below is what drives it.
+	reloadableCfg := config.NewReloadableConfig(s.cfg, configPath, flags.ToReloadCLIFlags())
+
 	// Setup HTTP handlers
-	deps := &HandlerDependencies{
+	httpConfig.SetupHandlers = SetupHandlers(s.handlerDependencies(ipExtractor, reloadableCfg))
+
+	// Log startup information
+	s.logStartupInfo()
+
+	// Setup SIGHUP handler for configuration reload; Close stops it.
+	s.registerHandlerCloser(s.setupSIGHUP(reloadableCfg))
+
+	// Setup SIGTERM/SIGINT handler for graceful shutdown and Go
+	// coverage-counter flush.
+	s.setupShutdownHandler()
+
+	// Run the server
+	return s.mcpServer.RunHTTP(httpConfig)
+}
+
+// handlerDependencies builds the HTTP handlers' dependencies. The
+// handlers that apply a reload without a restart read the configuration
+// through reloadableCfg, so that a SIGHUP reaches them (issue #484).
+func (s *Server) handlerDependencies(ipExtractor *auth.IPExtractor, reloadableCfg *config.ReloadableConfig) *HandlerDependencies {
+	return &HandlerDependencies{
 		AuthStore:    s.authStore,
 		RateLimiter:  s.rateLimiter,
 		IPExtractor:  ipExtractor,
@@ -503,22 +751,12 @@ func (s *Server) Run(flags *Flags, configPath string) error {
 		ToolProvider: s.toolProvider,
 		AIEnabled:    s.aiEnabled,
 
+		OIDCProvider: s.oidcProvider,
+		OIDCStateKey: s.oidcStateKey,
+		LiveConfig:   reloadableCfg.Get,
+
 		RegisterCloser: s.registerHandlerCloser,
 	}
-	httpConfig.SetupHandlers = SetupHandlers(deps)
-
-	// Log startup information
-	s.logStartupInfo()
-
-	// Setup SIGHUP handler for configuration reload
-	s.setupSIGHUP(flags, configPath)
-
-	// Setup SIGTERM/SIGINT handler for graceful shutdown and Go
-	// coverage-counter flush.
-	s.setupShutdownHandler()
-
-	// Run the server
-	return s.mcpServer.RunHTTP(httpConfig)
 }
 
 // logStartupInfo logs server startup information
@@ -567,24 +805,45 @@ func (s *Server) logStartupInfo() {
 // not call this helper; its short-lived os.Exit(0) already triggers
 // the runtime's normal counter flush.
 //
-// The closer slot is intentionally left nil: main.go already defers
+// The closer is deliberately not s.Close: main.go already defers
 // s.Close on a clean RunHTTP return, and racing that defer against
 // a goroutine-driven Close has caused double-close panics in past
-// graceful-shutdown implementations. Flushing coverage and forcing
-// exit(0) is the only thing the runtime cannot do on its own.
+// graceful-shutdown implementations. RunHTTP returns as soon as
+// Shutdown starts, so main usually returns through that defer, which
+// flushes the auth store, before the handler finishes draining; the
+// handler's closer also writes the suppressed counts of coalesced
+// audit failures and denials, for when it gets there first. Both take
+// the auth store's lock, so whichever runs second finds nothing to
+// write.
 func (s *Server) setupShutdownHandler() {
-	installShutdownHandler(shutdownDeps{
-		server:      s.mcpServer,
-		gocoverdir:  os.Getenv("GOCOVERDIR"),
-		writeCounts: realCoverageWriter,
-	})
+	installShutdownHandler(s.shutdownDeps())
 }
 
-// setupSIGHUP sets up the SIGHUP handler for configuration reload
-func (s *Server) setupSIGHUP(flags *Flags, configPath string) {
-	cliFlags := flags.ToReloadCLIFlags()
-	reloadableCfg := config.NewReloadableConfig(s.cfg, configPath, cliFlags)
+// shutdownDeps returns the production dependencies for the
+// SIGTERM/SIGINT handler; it is split out so that tests can drive
+// runShutdown with them.
+func (s *Server) shutdownDeps() shutdownDeps {
+	return shutdownDeps{
+		server:      s.mcpServer,
+		closer:      s.flushCoalescedAudit,
+		gocoverdir:  os.Getenv("GOCOVERDIR"),
+		writeCounts: realCoverageWriter,
+	}
+}
 
+// flushCoalescedAudit writes a summary row for every coalesced audit
+// failure and denial that still holds suppressed repeats.
+func (s *Server) flushCoalescedAudit() {
+	if s.authStore != nil {
+		s.authStore.FlushCoalescedAudit()
+	}
+}
+
+// setupSIGHUP sets up the SIGHUP handler for configuration reload. It
+// returns a function that unregisters the handler and waits for its
+// goroutine to exit, so no reload can write to os.Stderr afterwards;
+// the function is safe to call more than once.
+func (s *Server) setupSIGHUP(reloadableCfg *config.ReloadableConfig) func() {
 	// Register callback to update client manager when database config changes
 	reloadableCfg.OnReload(func(newCfg *config.Config) {
 		s.clientManager.UpdateDatabaseConfig(newCfg.Database)
@@ -593,14 +852,31 @@ func (s *Server) setupSIGHUP(flags *Flags, configPath string) {
 	// Start SIGHUP listener
 	sighup := make(chan os.Signal, 1)
 	signal.Notify(sighup, syscall.SIGHUP)
+	done := make(chan struct{})
+	exited := make(chan struct{})
 	go func() {
-		for range sighup {
-			fmt.Fprintf(os.Stderr, "Received SIGHUP, reloading configuration...\n")
-			if err := reloadableCfg.Reload(); err != nil {
-				fmt.Fprintf(os.Stderr, "ERROR: Failed to reload config: %v\n", err)
+		defer close(exited)
+		for {
+			select {
+			case <-done:
+				return
+			case <-sighup:
+				fmt.Fprintf(os.Stderr, "Received SIGHUP, reloading configuration...\n")
+				if err := reloadableCfg.Reload(); err != nil {
+					fmt.Fprintf(os.Stderr, "ERROR: Failed to reload config: %v\n", err)
+				}
 			}
 		}
 	}()
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			signal.Stop(sighup)
+			close(done)
+			<-exited
+		})
+	}
 }
 
 // VerifySchemaHealth delegates to the underlying datastore's schema

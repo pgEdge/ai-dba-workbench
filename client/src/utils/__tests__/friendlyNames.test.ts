@@ -45,6 +45,15 @@ describe('getFriendlyTitle', () => {
         expect(getFriendlyTitle('')).toBe('Alert');
     });
 
+    it('keeps the provider details of a degraded anomaly detection alert', () => {
+        expect(getFriendlyTitle(
+            'Anomaly detection degraded: Tier 2 embedding provider ollama failing',
+        )).toBe('Anomaly Detection Degraded: Tier 2 embedding provider ollama failing');
+        expect(getFriendlyTitle(
+            'Anomaly detection degraded: Re-evaluation provider OpenAI failing',
+        )).toBe('Anomaly Detection Degraded: Re-evaluation provider OpenAI failing');
+    });
+
     it('preserves connection error prefixes verbatim', () => {
         expect(getFriendlyTitle('Connection error: db1.example.com')).toBe(
             'Connection Error: db1.example.com',

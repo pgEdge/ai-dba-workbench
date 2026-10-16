@@ -27,6 +27,9 @@ import {
     ADMIN_PERMISSIONS,
     ALL_MCP_OPTION,
     ALL_ADMIN_OPTION,
+    isMcpWildcardId,
+    ALL_CONNECTIONS_ID,
+    ALL_CONNECTIONS_LABEL,
     filterMcpPrivileges,
     filterAdminPermissions,
 } from './tokens';
@@ -43,6 +46,70 @@ import type {
     CreateTokenResponse,
     UserPrivilegesResponse,
 } from './tokens';
+
+/** The body of PUT /api/v1/rbac/tokens/{id}/scope. */
+interface TokenScopeBody {
+    connections?: { connection_id: number; access_level: string }[];
+    mcp_privileges?: string[];
+    admin_permissions?: (string | number)[];
+}
+
+/**
+ * Builds the scope PUT body from the selected categories, leaving out
+ * every empty one. A category with no entries places no restriction on
+ * the token, and the server refuses an empty array rather than guess
+ * whether it means "no restriction" or "restricted to nothing", so an
+ * empty category is simply omitted.
+ */
+const buildScopeBody = (
+    connections: ScopedConnection[],
+    mcpPrivileges: McpPrivilegeOption[],
+    adminPermissions: AdminPermissionOption[],
+): TokenScopeBody => {
+    const body: TokenScopeBody = {};
+    if (connections.length > 0) {
+        body.connections = connections.map((c) => ({
+            connection_id: c.id,
+            access_level: c.access_level,
+        }));
+    }
+    if (mcpPrivileges.length > 0) {
+        body.mcp_privileges = mcpPrivileges.some((p) => p._isAll)
+            ? ['*']
+            : mcpPrivileges.map((p) => p.identifier);
+    }
+    if (adminPermissions.length > 0) {
+        body.admin_permissions = adminPermissions.some((p) => p._isAll)
+            ? ['*']
+            : adminPermissions.map((p) => p.id);
+    }
+    return body;
+};
+
+/**
+ * Explains why a scope edit cannot be saved as it stands: a category the
+ * token was restricted in has been emptied whilst others stay
+ * restricted. Omitting that category would leave its old restriction in
+ * place, and the API has no call that lifts one category alone.
+ */
+const liftOneCategoryError = (categories: string[]): string =>
+    `The ${categories.join(' and ')} restriction cannot be lifted on its own ` +
+    'whilst other categories stay restricted. For MCP privileges or admin ' +
+    `permissions, choose "All the owner's MCP privileges" or "All the ` +
+    `owner's admin permissions" instead. The connections restriction can ` +
+    'be lifted only together with every other one, so to keep the others, ' +
+    'create a new token with the scope it needs and then delete this one.';
+
+/**
+ * Explains why a scope edit cannot be saved at all: the stored scope
+ * holds entries the dialog could not show, most often because the MCP
+ * privilege list failed to load, so saving what the dialog holds would
+ * drop them and widen the token.
+ */
+const unshownScopeError = (categories: string[]): string =>
+    `This token's stored ${categories.join(' and ')} could not all be ` +
+    'shown, so saving now could widen its scope. Reload the page and try ' +
+    'again.';
 
 const AdminTokenScopes: React.FC = () => {
     const theme = useTheme();
@@ -87,6 +154,7 @@ const AdminTokenScopes: React.FC = () => {
     const [editAdminPermissions, setEditAdminPermissions] = useState<AdminPermissionOption[]>([]);
     const [editLoading, setEditLoading] = useState(false);
     const [editError, setEditError] = useState<string | null>(null);
+    const [editUnshownError, setEditUnshownError] = useState<string | null>(null);
     const [editAvailableConnections, setEditAvailableConnections] = useState<Connection[]>([]);
     const [editOwnerConnectionLevels, setEditOwnerConnectionLevels] = useState<Record<number, string>>({});
     const [editOwnerIsSuperuser, setEditOwnerIsSuperuser] = useState(false);
@@ -99,7 +167,7 @@ const AdminTokenScopes: React.FC = () => {
     const [deleteLoading, setDeleteLoading] = useState(false);
 
     const getMcpPrivilegeName = useCallback((id: number) => {
-        if (id === -1) {
+        if (isMcpWildcardId(id)) {
             return "All the owner's MCP privileges";
         }
         const priv = mcpPrivileges.find((p) => p.id === id);
@@ -193,6 +261,27 @@ const AdminTokenScopes: React.FC = () => {
         }
     };
 
+    /**
+     * Deletes a token just created whose scope the server then refused,
+     * since it would otherwise hold its owner's whole access, and
+     * returns the message to show for the refusal.
+     */
+    const discardUnscopedToken = async (
+        tokenId: number,
+        reason: string,
+    ): Promise<string> => {
+        try {
+            await apiDelete(`/api/v1/rbac/tokens/${tokenId}`);
+            return `The token was not created because its scope was ` +
+                `refused: ${reason}`;
+        } catch {
+            void fetchData();
+            return `The token was created, but its scope was refused ` +
+                `(${reason}) and the token could not be deleted, so it ` +
+                "holds its owner's whole access. Delete it from the list.";
+        }
+    };
+
     // Create token
     const handleCreateToken = async () => {
         if (!createOwner || !createAnnotation.trim()) {
@@ -206,21 +295,23 @@ const AdminTokenScopes: React.FC = () => {
                 annotation: createAnnotation.trim(),
                 expires_in: createExpiry,
             };
+            const scopeBody = buildScopeBody(
+                createConnections,
+                createMcpPrivileges,
+                createAdminPermissions,
+            );
             const data = await apiPost<CreateTokenResponse>('/api/v1/rbac/tokens', body);
 
-            if (createConnections.length > 0 || createMcpPrivileges.length > 0 || createAdminPermissions.length > 0) {
-                await apiPut(`/api/v1/rbac/tokens/${data.id}/scope`, {
-                    connections: createConnections.map((c) => ({
-                        connection_id: c.id,
-                        access_level: c.access_level,
-                    })),
-                    mcp_privileges: createMcpPrivileges.some((p) => p._isAll)
-                        ? ['*']
-                        : createMcpPrivileges.map((p) => p.identifier),
-                    admin_permissions: createAdminPermissions.some((p) => p._isAll)
-                        ? ['*']
-                        : createAdminPermissions.map((p) => p.id),
-                });
+            if (Object.keys(scopeBody).length > 0) {
+                try {
+                    await apiPut(`/api/v1/rbac/tokens/${data.id}/scope`, scopeBody);
+                } catch (scopeErr: unknown) {
+                    // The token exists but holds its owner's whole
+                    // access, so it must not outlive the refusal.
+                    throw new Error(await discardUnscopedToken(
+                        data.id, extractErrorMessage(scopeErr),
+                    ));
+                }
             }
 
             setCreateOpen(false);
@@ -262,18 +353,25 @@ const AdminTokenScopes: React.FC = () => {
     const handleOpenEdit = async (token: Token) => {
         setEditToken(token);
         const scopeConns = token.scope?.connections ?? [];
+        // The scope is loaded as stored, even one that breaks the
+        // server's rules; the dialog explains such a scope and blocks
+        // saving until it is resolved.
         setEditConnections(scopeConns.map((sc: TokenScopeConnection) => {
             const conn = connections.find((c) => c.id === sc.connection_id);
+            let name = conn ? conn.name : `Connection ${sc.connection_id}`;
+            if (sc.connection_id === ALL_CONNECTIONS_ID) {
+                name = ALL_CONNECTIONS_LABEL;
+            }
             return {
                 id: sc.connection_id,
-                name: conn ? conn.name : `Connection ${sc.connection_id}`,
+                name,
                 access_level: sc.access_level || 'read_write',
             };
         }));
 
         const scopeMcpIds = token.scope?.mcp_privileges ?? [];
-        const mcpNames = scopeMcpIds.map((id: number) => getMcpPrivilegeName(id));
-        if (mcpNames.includes('*')) {
+        const mcpWildcard = scopeMcpIds.some(isMcpWildcardId);
+        if (mcpWildcard) {
             setEditMcpPrivileges([ALL_MCP_OPTION]);
         } else {
             setEditMcpPrivileges(mcpPrivileges.filter((p) => scopeMcpIds.includes(p.id)));
@@ -286,7 +384,23 @@ const AdminTokenScopes: React.FC = () => {
             setEditAdminPermissions(ADMIN_PERMISSIONS.filter((p) => scopeAdminPerms.includes(p.id)));
         }
 
-        setEditError(null);
+        // A stored entry the dialog cannot show would be dropped by a
+        // save, lifting a restriction nobody chose to lift.
+        const unshown: string[] = [];
+        if (!mcpWildcard && scopeMcpIds.some(
+            (id: number) => !mcpPrivileges.some((p) => p.id === id),
+        )) {
+            unshown.push('MCP privileges');
+        }
+        if (!scopeAdminPerms.includes('*') && scopeAdminPerms.some(
+            (perm: string) => !ADMIN_PERMISSIONS.some((p) => p.id === perm),
+        )) {
+            unshown.push('admin permissions');
+        }
+        const unshownError = unshown.length > 0 ? unshownScopeError(unshown) : null;
+        setEditUnshownError(unshownError);
+
+        setEditError(unshownError);
         setEditOpen(true);
 
         if (token.user_id) {
@@ -339,21 +453,55 @@ const AdminTokenScopes: React.FC = () => {
         if (!editToken) {
             return;
         }
+        if (editUnshownError) {
+            setEditError(editUnshownError);
+            return;
+        }
+        const body = buildScopeBody(
+            editConnections,
+            editMcpPrivileges,
+            editAdminPermissions,
+        );
+
+        // Which categories the token is restricted in today, taken from
+        // the stored scope rather than the dialog, so that a restriction
+        // the dialog could not display still counts.
+        const scope = editToken.scope;
+        const wasRestricted = {
+            connections: (scope?.connections?.length ?? 0) > 0,
+            mcp_privileges: (scope?.mcp_privileges?.length ?? 0) > 0,
+            admin_permissions: (scope?.admin_permissions?.length ?? 0) > 0,
+        };
+        const anyWasRestricted = Object.values(wasRestricted).some(Boolean);
+        const lifted: string[] = [];
+        if (wasRestricted.connections && !body.connections) {
+            lifted.push('connections');
+        }
+        if (wasRestricted.mcp_privileges && !body.mcp_privileges) {
+            lifted.push('MCP privileges');
+        }
+        if (wasRestricted.admin_permissions && !body.admin_permissions) {
+            lifted.push('admin permissions');
+        }
+
+        const clearAll = Object.keys(body).length === 0;
+        if (!clearAll && lifted.length > 0) {
+            setEditError(liftOneCategoryError(lifted));
+            return;
+        }
+
         try {
             setEditLoading(true);
             setEditError(null);
-            await apiPut(`/api/v1/rbac/tokens/${editToken.id}/scope`, {
-                connections: editConnections.map((c) => ({
-                    connection_id: c.id,
-                    access_level: c.access_level,
-                })),
-                mcp_privileges: editMcpPrivileges.some((p) => p._isAll)
-                    ? ['*']
-                    : editMcpPrivileges.map((p) => p.identifier),
-                admin_permissions: editAdminPermissions.some((p) => p._isAll)
-                    ? ['*']
-                    : editAdminPermissions.map((p) => p.id),
-            });
+            if (clearAll) {
+                // Every category is now empty, so the token is to have
+                // no restriction at all; one DELETE does that atomically.
+                if (anyWasRestricted) {
+                    await apiDelete(`/api/v1/rbac/tokens/${editToken.id}/scope`);
+                }
+            } else {
+                await apiPut(`/api/v1/rbac/tokens/${editToken.id}/scope`, body);
+            }
             setEditOpen(false);
             fetchData();
         } catch (err: unknown) {

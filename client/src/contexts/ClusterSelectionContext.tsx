@@ -168,7 +168,7 @@ export const ClusterSelectionProvider = ({ children }: ClusterSelectionProviderP
 
         if (curCluster && curType === 'cluster') {
             for (const group of clusterData) {
-                const fresh = group.clusters?.find(
+                const fresh: ClusterEntry | undefined = group.clusters?.find(
                     c => c.id === curCluster.id,
                 );
                 if (fresh && fresh !== curCluster) {

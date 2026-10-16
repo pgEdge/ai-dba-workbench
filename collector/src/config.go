@@ -16,6 +16,7 @@ import (
 
 	"github.com/pgedge/ai-workbench/pkg/datastoreconfig"
 	"github.com/pgedge/ai-workbench/pkg/fileutil"
+	"github.com/pgedge/ai-workbench/pkg/flagutil"
 	"gopkg.in/yaml.v3"
 )
 
@@ -26,6 +27,9 @@ type Config struct {
 
 	// Connection pool settings
 	Pool PoolConfig `yaml:"pool"`
+
+	// Probe scheduling settings
+	Scheduler SchedulerConfig `yaml:"scheduler"`
 
 	// Path to file containing server secret for encryption.
 	// When unset, LoadSecret searches the per-user config directory
@@ -50,6 +54,30 @@ type PoolConfig struct {
 	MonitoredMaxWaitSeconds int `yaml:"monitored_max_wait_seconds"` // Max wait time to acquire a connection
 }
 
+// SchedulerConfig holds probe scheduling settings
+type SchedulerConfig struct {
+	// MaxConcurrentProbes caps how many probe executions may run at the
+	// same time across every monitored connection, so that the worst
+	// case does not scale with the number of connections.
+	MaxConcurrentProbes int `yaml:"max_concurrent_probes"`
+
+	// MaxConcurrentProbesPerConnection caps how many of those
+	// concurrent executions a single monitored connection may hold at
+	// the same time. A probe holds its slot for as long as it runs, up
+	// to pool.monitored_max_wait_seconds, so without this ceiling one
+	// slow but reachable server can occupy the whole global budget and
+	// queue healthy connections behind it.
+	MaxConcurrentProbesPerConnection int `yaml:"max_concurrent_probes_per_connection"`
+
+	// StartupJitterSeconds bounds the random delay applied before the
+	// first execution of a probe that is past due, has never run, or
+	// whose last collection time could not be determined, so that a
+	// restart does not fire every probe at once. The delay is drawn
+	// from [0, min(probe interval, StartupJitterSeconds)). Zero
+	// disables jitter.
+	StartupJitterSeconds int `yaml:"startup_jitter_seconds"`
+}
+
 // NewConfig creates a new Config with default values
 func NewConfig() *Config {
 	return &Config{
@@ -72,6 +100,11 @@ func NewConfig() *Config {
 			MonitoredMaxIdleSeconds: 300,
 			MonitoredMaxWaitSeconds: 120,
 		},
+		Scheduler: SchedulerConfig{
+			MaxConcurrentProbes:              8,
+			MaxConcurrentProbesPerConnection: 2,
+			StartupJitterSeconds:             60,
+		},
 	}
 }
 
@@ -89,36 +122,43 @@ func (c *Config) LoadFromFile(filename string) error {
 	return nil
 }
 
-// ApplyFlags applies command line flags to override config values
-func (c *Config) ApplyFlags() {
-	if *pgHost != "" {
+// ApplyFlags applies command line flags to override config values.
+//
+// The passed set names the flags the operator actually supplied on
+// the command line, as reported by flagutil.Passed. Only those flags
+// override the configuration file, so a file value that happens to
+// equal a flag's registered default survives, and a flag explicitly
+// passed with its default value still wins. Deciding on the value
+// alone cannot tell those two cases apart.
+func (c *Config) ApplyFlags(passed flagutil.Set) {
+	if passed.Has(flagPGHost) {
 		c.Datastore.Host = *pgHost
 	}
-	if *pgHostAddr != "" {
+	if passed.Has(flagPGHostAddr) {
 		c.Datastore.HostAddr = *pgHostAddr
 	}
-	if *pgDatabase != "" {
+	if passed.Has(flagPGDatabase) {
 		c.Datastore.Database = *pgDatabase
 	}
-	if *pgUsername != "" {
+	if passed.Has(flagPGUsername) {
 		c.Datastore.Username = *pgUsername
 	}
-	if *pgPasswordFile != "" {
+	if passed.Has(flagPGPasswordFile) {
 		c.Datastore.PasswordFile = *pgPasswordFile
 	}
-	if *pgPort != 5432 {
+	if passed.Has(flagPGPort) {
 		c.Datastore.Port = *pgPort
 	}
-	if *pgSSLMode != "prefer" {
+	if passed.Has(flagPGSSLMode) {
 		c.Datastore.SSLMode = *pgSSLMode
 	}
-	if *pgSSLCert != "" {
+	if passed.Has(flagPGSSLCert) {
 		c.Datastore.SSLCert = *pgSSLCert
 	}
-	if *pgSSLKey != "" {
+	if passed.Has(flagPGSSLKey) {
 		c.Datastore.SSLKey = *pgSSLKey
 	}
-	if *pgSSLRootCert != "" {
+	if passed.Has(flagPGSSLRootCert) {
 		c.Datastore.SSLRootCert = *pgSSLRootCert
 	}
 }
@@ -220,6 +260,15 @@ func (c *Config) Validate() error {
 	if c.Pool.MonitoredMaxWaitSeconds <= 0 {
 		return fmt.Errorf("pool.monitored_max_wait_seconds must be greater than 0")
 	}
+	if c.Scheduler.MaxConcurrentProbes <= 0 {
+		return fmt.Errorf("scheduler.max_concurrent_probes must be greater than 0")
+	}
+	if c.Scheduler.MaxConcurrentProbesPerConnection <= 0 {
+		return fmt.Errorf("scheduler.max_concurrent_probes_per_connection must be greater than 0")
+	}
+	if c.Scheduler.StartupJitterSeconds < 0 {
+		return fmt.Errorf("scheduler.startup_jitter_seconds must be non-negative")
+	}
 	return nil
 }
 
@@ -238,6 +287,11 @@ func (c *Config) GetDatastorePoolMaxConnections() int { return c.Pool.DatastoreM
 func (c *Config) GetDatastorePoolMaxIdleSeconds() int { return c.Pool.DatastoreMaxIdleSeconds }
 func (c *Config) GetDatastorePoolMaxWaitSeconds() int { return c.Pool.DatastoreMaxWaitSeconds }
 func (c *Config) GetMonitoredPoolMaxWaitSeconds() int { return c.Pool.MonitoredMaxWaitSeconds }
+func (c *Config) GetMaxConcurrentProbes() int         { return c.Scheduler.MaxConcurrentProbes }
+func (c *Config) GetStartupJitterSeconds() int        { return c.Scheduler.StartupJitterSeconds }
+func (c *Config) GetMaxConcurrentProbesPerConnection() int {
+	return c.Scheduler.MaxConcurrentProbesPerConnection
+}
 
 // GetDefaultConfigPath returns the path to an existing default
 // config file, or "" if none was found. Searches the per-user

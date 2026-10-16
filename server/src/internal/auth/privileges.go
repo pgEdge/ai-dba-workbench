@@ -11,6 +11,7 @@ package auth
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 )
 
@@ -183,78 +184,236 @@ func (s *AuthStore) ListMCPPrivilegesByType(itemType string) ([]*MCPPrivilege, e
 }
 
 // =============================================================================
+// Privilege Audit Helpers
+// =============================================================================
+
+// Audit action names for the privilege and admin permission mutations
+// recorded in this file.
+const (
+	auditActionPrivilegeMCPGrant         = "privilege.mcp.grant"
+	auditActionPrivilegeMCPRevoke        = "privilege.mcp.revoke"
+	auditActionPrivilegeConnectionGrant  = "privilege.connection.grant"
+	auditActionPrivilegeConnectionRevoke = "privilege.connection.revoke"
+	auditActionPermissionAdminGrant      = "permission.admin.grant"
+	auditActionPermissionAdminRevoke     = "permission.admin.revoke"
+)
+
+// auditTargetGroup is the audit target type used throughout this file:
+// a privilege or permission is always granted to, or revoked from, a
+// group.
+const auditTargetGroup = "group"
+
+// groupAuditName reads a group's name inside the caller's transaction,
+// for use as the audit target name. A missing group, or a failed read,
+// yields the empty string so that the event still carries the group id.
+func groupAuditName(tx *sql.Tx, groupID int64) string {
+	var name string
+	err := tx.QueryRow("SELECT name FROM user_groups WHERE id = ?",
+		groupID).Scan(&name)
+	if err != nil {
+		return ""
+	}
+
+	return name
+}
+
+// mcpPrivilegeAuditName renders a privilege identifier for the audit
+// details: "*" for the wildcard sentinel, the registered identifier
+// otherwise, and the empty string when the id is not registered.
+func mcpPrivilegeAuditName(tx *sql.Tx, privilegeID int64) string {
+	if privilegeID == MCPPrivilegeIDWildcard {
+		return "*"
+	}
+
+	var identifier string
+	err := tx.QueryRow(
+		"SELECT identifier FROM mcp_privilege_identifiers WHERE id = ?",
+		privilegeID).Scan(&identifier)
+	if err != nil {
+		return ""
+	}
+
+	return identifier
+}
+
+// =============================================================================
 // MCP Privilege Grants
 // =============================================================================
 
-// GrantMCPPrivilege grants an MCP privilege to a group
+// GrantMCPPrivilege grants an MCP privilege to a group, recording the
+// change as the system actor.
 func (s *AuthStore) GrantMCPPrivilege(groupID, privilegeID int64) error {
+	return s.grantMCPPrivilege(systemActor, groupID, privilegeID)
+}
+
+// grantMCPPrivilege grants an MCP privilege to a group and records the
+// audit event in the same transaction, so that the grant and its event
+// commit together.
+func (s *AuthStore) grantMCPPrivilege(actor Actor, groupID,
+	privilegeID int64) (err error) {
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	_, err := s.db.Exec(
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to grant MCP privilege: %w", err)
+	}
+
+	target := &auditTarget{
+		action:     auditActionPrivilegeMCPGrant,
+		targetType: auditTargetGroup,
+		targetID:   &groupID,
+	}
+	defer func() {
+		if err != nil {
+			s.failAudit(tx, actor, target, err)
+		}
+	}()
+
+	target.targetName = groupAuditName(tx, groupID)
+
+	if _, err = tx.Exec(
 		`INSERT OR IGNORE INTO group_mcp_privileges (group_id, privilege_identifier_id)
          VALUES (?, ?)`,
 		groupID, privilegeID,
-	)
-	if err != nil {
+	); err != nil {
+		return fmt.Errorf("failed to grant MCP privilege: %w", err)
+	}
+
+	if err = s.recordAudit(tx, newEvent(actor, auditActionPrivilegeMCPGrant,
+		auditTargetGroup, &groupID, target.targetName, map[string]any{
+			"privilege_id":   privilegeID,
+			"privilege_name": mcpPrivilegeAuditName(tx, privilegeID),
+		})); err != nil {
+		return fmt.Errorf("failed to grant MCP privilege: %w", err)
+	}
+
+	if err = tx.Commit(); err != nil {
 		return fmt.Errorf("failed to grant MCP privilege: %w", err)
 	}
 
 	return nil
 }
 
-// GrantMCPPrivilegeByName grants an MCP privilege to a group by identifier name.
-// When identifier is "*", it stores MCPPrivilegeIDWildcard (0) directly
+// GrantMCPPrivilegeByName grants an MCP privilege to a group by
+// identifier name, recording the change as the system actor. When
+// identifier is "*", it stores MCPPrivilegeIDWildcard (0) directly
 // instead of looking up a privilege identifier row.
 func (s *AuthStore) GrantMCPPrivilegeByName(groupID int64, identifier string) error {
+	return s.grantMCPPrivilegeByName(systemActor, groupID, identifier)
+}
+
+// grantMCPPrivilegeByName resolves the identifier, grants the privilege
+// and records the audit event in the same transaction.
+func (s *AuthStore) grantMCPPrivilegeByName(actor Actor, groupID int64,
+	identifier string) (err error) {
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to grant MCP privilege: %w", err)
+	}
+
+	target := &auditTarget{
+		action:     auditActionPrivilegeMCPGrant,
+		targetType: auditTargetGroup,
+		targetID:   &groupID,
+	}
+	defer func() {
+		if err != nil {
+			s.failAudit(tx, actor, target, err)
+		}
+	}()
+
+	target.targetName = groupAuditName(tx, groupID)
 
 	var privilegeID int64
 	if identifier == "*" {
 		privilegeID = MCPPrivilegeIDWildcard
 	} else {
-		err := s.db.QueryRow(
+		err = tx.QueryRow(
 			"SELECT id FROM mcp_privilege_identifiers WHERE identifier = ?",
 			identifier,
 		).Scan(&privilegeID)
-		if err == sql.ErrNoRows {
-			return fmt.Errorf("privilege not found: %s", identifier)
+		if errors.Is(err, sql.ErrNoRows) {
+			err = fmt.Errorf("privilege not found: %s", identifier)
+			return err
 		}
 		if err != nil {
 			return fmt.Errorf("failed to get privilege: %w", err)
 		}
 	}
 
-	_, err := s.db.Exec(
+	if _, err = tx.Exec(
 		`INSERT OR IGNORE INTO group_mcp_privileges (group_id, privilege_identifier_id)
          VALUES (?, ?)`,
 		groupID, privilegeID,
-	)
-	if err != nil {
+	); err != nil {
 		return fmt.Errorf("failed to grant MCP privilege: %w", err)
 	}
 
 	// If granting "All MCP Privileges", remove individual privilege grants
 	if identifier == "*" {
-		_, err = s.db.Exec(
+		if _, err = tx.Exec(
 			"DELETE FROM group_mcp_privileges WHERE group_id = ? AND privilege_identifier_id != ?",
 			groupID, MCPPrivilegeIDWildcard,
-		)
-		if err != nil {
+		); err != nil {
 			return fmt.Errorf("failed to clean up individual MCP privileges: %w", err)
 		}
+	}
+
+	if err = s.recordAudit(tx, newEvent(actor, auditActionPrivilegeMCPGrant,
+		auditTargetGroup, &groupID, target.targetName, map[string]any{
+			"privilege_id":   privilegeID,
+			"privilege_name": identifier,
+		})); err != nil {
+		return fmt.Errorf("failed to grant MCP privilege: %w", err)
+	}
+
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("failed to grant MCP privilege: %w", err)
 	}
 
 	return nil
 }
 
-// RevokeMCPPrivilege revokes an MCP privilege from a group
+// RevokeMCPPrivilege revokes an MCP privilege from a group, recording
+// the change as the system actor.
 func (s *AuthStore) RevokeMCPPrivilege(groupID, privilegeID int64) error {
+	return s.revokeMCPPrivilege(systemActor, groupID, privilegeID)
+}
+
+// revokeMCPPrivilege revokes an MCP privilege and records the audit
+// event in the same transaction.
+func (s *AuthStore) revokeMCPPrivilege(actor Actor, groupID,
+	privilegeID int64) (err error) {
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	result, err := s.db.Exec(
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to revoke MCP privilege: %w", err)
+	}
+
+	target := &auditTarget{
+		action:     auditActionPrivilegeMCPRevoke,
+		targetType: auditTargetGroup,
+		targetID:   &groupID,
+	}
+	defer func() {
+		if err != nil {
+			s.failAudit(tx, actor, target, err)
+		}
+	}()
+
+	target.targetName = groupAuditName(tx, groupID)
+	privilegeName := mcpPrivilegeAuditName(tx, privilegeID)
+
+	result, err := tx.Exec(
 		"DELETE FROM group_mcp_privileges WHERE group_id = ? AND privilege_identifier_id = ?",
 		groupID, privilegeID,
 	)
@@ -267,28 +426,77 @@ func (s *AuthStore) RevokeMCPPrivilege(groupID, privilegeID int64) error {
 		return fmt.Errorf("failed to get rows affected: %w", err)
 	}
 	if rows == 0 {
-		return fmt.Errorf("privilege grant not found")
+		err = fmt.Errorf("privilege grant not found")
+		return err
+	}
+
+	if err = s.recordAudit(tx, newEvent(actor, auditActionPrivilegeMCPRevoke,
+		auditTargetGroup, &groupID, target.targetName, map[string]any{
+			"privilege_id":   privilegeID,
+			"privilege_name": privilegeName,
+		})); err != nil {
+		return fmt.Errorf("failed to revoke MCP privilege: %w", err)
+	}
+
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("failed to revoke MCP privilege: %w", err)
 	}
 
 	return nil
 }
 
-// RevokeMCPPrivilegeByName revokes an MCP privilege from a group by identifier name.
-// When identifier is "*", it deletes the wildcard row (privilege_identifier_id = 0)
-// directly instead of looking up a privilege identifier row.
+// RevokeMCPPrivilegeByName revokes an MCP privilege from a group by
+// identifier name, recording the change as the system actor. When
+// identifier is "*", it deletes the wildcard row
+// (privilege_identifier_id = 0) directly instead of looking up a
+// privilege identifier row.
 func (s *AuthStore) RevokeMCPPrivilegeByName(groupID int64, identifier string) error {
+	return s.revokeMCPPrivilegeByName(systemActor, groupID, identifier)
+}
+
+// revokeMCPPrivilegeByName revokes an MCP privilege by identifier name
+// and records the audit event in the same transaction.
+func (s *AuthStore) revokeMCPPrivilegeByName(actor Actor, groupID int64,
+	identifier string) (err error) {
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to revoke MCP privilege: %w", err)
+	}
+
+	target := &auditTarget{
+		action:     auditActionPrivilegeMCPRevoke,
+		targetType: auditTargetGroup,
+		targetID:   &groupID,
+	}
+	defer func() {
+		if err != nil {
+			s.failAudit(tx, actor, target, err)
+		}
+	}()
+
+	target.targetName = groupAuditName(tx, groupID)
+
 	var result sql.Result
-	var err error
+	privilegeID := MCPPrivilegeIDWildcard
 	if identifier == "*" {
-		result, err = s.db.Exec(
+		result, err = tx.Exec(
 			"DELETE FROM group_mcp_privileges WHERE group_id = ? AND privilege_identifier_id = ?",
 			groupID, MCPPrivilegeIDWildcard,
 		)
 	} else {
-		result, err = s.db.Exec(
+		// The identifier may no longer be registered, in which case the
+		// delete below matches nothing and the caller sees the usual
+		// not-found error.
+		if scanErr := tx.QueryRow(
+			"SELECT id FROM mcp_privilege_identifiers WHERE identifier = ?",
+			identifier).Scan(&privilegeID); scanErr != nil {
+			privilegeID = 0
+		}
+		result, err = tx.Exec(
 			`DELETE FROM group_mcp_privileges
              WHERE group_id = ?
              AND privilege_identifier_id = (SELECT id FROM mcp_privilege_identifiers WHERE identifier = ?)`,
@@ -304,45 +512,171 @@ func (s *AuthStore) RevokeMCPPrivilegeByName(groupID int64, identifier string) e
 		return fmt.Errorf("failed to get rows affected: %w", err)
 	}
 	if rows == 0 {
-		return fmt.Errorf("privilege grant not found")
+		err = fmt.Errorf("privilege grant not found")
+		return err
+	}
+
+	if err = s.recordAudit(tx, newEvent(actor, auditActionPrivilegeMCPRevoke,
+		auditTargetGroup, &groupID, target.targetName, map[string]any{
+			"privilege_id":   privilegeID,
+			"privilege_name": identifier,
+		})); err != nil {
+		return fmt.Errorf("failed to revoke MCP privilege: %w", err)
+	}
+
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("failed to revoke MCP privilege: %w", err)
 	}
 
 	return nil
+}
+
+// connectionAccessLevelTx reads the access level currently granted to
+// a group for a connection, returning the empty string when no grant
+// exists. A lookup error is treated as "no grant" rather than failing
+// the mutation, because the value exists only to enrich the audit
+// details and must never be the reason a grant or revoke fails.
+func connectionAccessLevelTx(tx *sql.Tx, groupID int64, connectionID int) string {
+	var level string
+	if err := tx.QueryRow(
+		`SELECT access_level FROM connection_privileges
+         WHERE group_id = ? AND connection_id = ?`,
+		groupID, connectionID,
+	).Scan(&level); err != nil {
+		return ""
+	}
+
+	return level
+}
+
+// accessLevelDetail renders an access level as the "before" or "after"
+// side of a connection grant's audit details, or nil when there is no
+// grant on that side.
+func accessLevelDetail(level string) any {
+	if level == "" {
+		return nil
+	}
+	return map[string]any{"access_level": level}
 }
 
 // =============================================================================
 // Connection Privilege Grants
 // =============================================================================
 
-// GrantConnectionPrivilege grants access to a database connection for a group
+// GrantConnectionPrivilege grants access to a database connection for a
+// group, recording the change as the system actor.
 func (s *AuthStore) GrantConnectionPrivilege(groupID int64, connectionID int, accessLevel string) error {
+	return s.grantConnectionPrivilege(systemActor, groupID, connectionID,
+		accessLevel)
+}
+
+// grantConnectionPrivilege grants connection access to a group and
+// records the audit event in the same transaction.
+func (s *AuthStore) grantConnectionPrivilege(actor Actor, groupID int64,
+	connectionID int, accessLevel string) (err error) {
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to grant connection privilege: %w", err)
+	}
+
+	target := &auditTarget{
+		action:     auditActionPrivilegeConnectionGrant,
+		targetType: auditTargetGroup,
+		targetID:   &groupID,
+	}
+	defer func() {
+		if err != nil {
+			s.failAudit(tx, actor, target, err)
+		}
+	}()
+
+	target.targetName = groupAuditName(tx, groupID)
+
+	// Read the existing grant before it is replaced, so that the audit
+	// event records what the access level changed from as well as what
+	// it changed to.
+	before := connectionAccessLevelTx(tx, groupID, connectionID)
+
 	// Validate access level
 	if accessLevel != AccessLevelRead && accessLevel != AccessLevelReadWrite {
-		return fmt.Errorf("invalid access level: %s (must be 'read' or 'read_write')", accessLevel)
+		err = fmt.Errorf("invalid access level: %s (must be 'read' or 'read_write')", accessLevel)
+		return err
 	}
 
 	// Use INSERT OR REPLACE to update existing grants
-	_, err := s.db.Exec(
+	if _, err = tx.Exec(
 		`INSERT OR REPLACE INTO connection_privileges (group_id, connection_id, access_level)
          VALUES (?, ?, ?)`,
 		groupID, connectionID, accessLevel,
-	)
-	if err != nil {
+	); err != nil {
+		return fmt.Errorf("failed to grant connection privilege: %w", err)
+	}
+
+	if err = s.recordAudit(tx, newEvent(actor,
+		auditActionPrivilegeConnectionGrant, auditTargetGroup, &groupID,
+		target.targetName, map[string]any{
+			"connection_id": connectionID,
+			"before":        accessLevelDetail(before),
+			"after":         map[string]any{"access_level": accessLevel},
+		})); err != nil {
+		return fmt.Errorf("failed to grant connection privilege: %w", err)
+	}
+
+	if err = tx.Commit(); err != nil {
 		return fmt.Errorf("failed to grant connection privilege: %w", err)
 	}
 
 	return nil
 }
 
-// RevokeConnectionPrivilege revokes access to a database connection from a group
+// RevokeConnectionPrivilege revokes access to a database connection
+// from a group, recording the change as the system actor.
 func (s *AuthStore) RevokeConnectionPrivilege(groupID int64, connectionID int) error {
+	return s.revokeConnectionPrivilege(systemActor, groupID, connectionID, nil)
+}
+
+// revokeConnectionPrivilege revokes connection access from a group and
+// records the audit event in the same transaction. The guard is applied
+// in that transaction too (see LiftGuard).
+func (s *AuthStore) revokeConnectionPrivilege(actor Actor, groupID int64,
+	connectionID int, guard *LiftGuard) (err error) {
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	result, err := s.db.Exec(
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to revoke connection privilege: %w", err)
+	}
+
+	target := &auditTarget{
+		action:     auditActionPrivilegeConnectionRevoke,
+		targetType: auditTargetGroup,
+		targetID:   &groupID,
+	}
+	defer func() {
+		if err != nil {
+			s.failAudit(tx, actor, target, err)
+		}
+	}()
+
+	target.targetName = groupAuditName(tx, groupID)
+
+	// Read the grant before it is deleted, so that the audit event
+	// records the access level that was withdrawn.
+	before := connectionAccessLevelTx(tx, groupID, connectionID)
+
+	if liftErr := guardLiftTx(tx, guard, groupID,
+		connectionID); liftErr != nil {
+		err = liftErr
+		return err
+	}
+
+	result, err := tx.Exec(
 		"DELETE FROM connection_privileges WHERE group_id = ? AND connection_id = ?",
 		groupID, connectionID,
 	)
@@ -355,7 +689,21 @@ func (s *AuthStore) RevokeConnectionPrivilege(groupID int64, connectionID int) e
 		return fmt.Errorf("failed to get rows affected: %w", err)
 	}
 	if rows == 0 {
-		return fmt.Errorf("connection privilege not found")
+		err = fmt.Errorf("connection privilege not found")
+		return err
+	}
+
+	if err = s.recordAudit(tx, newEvent(actor,
+		auditActionPrivilegeConnectionRevoke, auditTargetGroup, &groupID,
+		target.targetName, map[string]any{
+			"connection_id": connectionID,
+			"before":        accessLevelDetail(before),
+		})); err != nil {
+		return fmt.Errorf("failed to revoke connection privilege: %w", err)
+	}
+
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("failed to revoke connection privilege: %w", err)
 	}
 
 	return nil
@@ -422,12 +770,16 @@ func (s *AuthStore) ListGroupMCPPrivileges(groupID int64) ([]*MCPPrivilege, erro
 	}
 
 	// Check for wildcard (All MCP Privileges) grant
+	// The error is returned rather than read as "no wildcard": callers
+	// use this list to bound grants by a token's scope (issue #471), and
+	// an unread wildcard would understate the group's reach.
 	var wildcardCount int
-	//nolint:errcheck // Best effort; zero on error is acceptable
-	s.db.QueryRow(
+	if err := s.db.QueryRow(
 		"SELECT COUNT(*) FROM group_mcp_privileges WHERE group_id = ? AND privilege_identifier_id = ?",
 		groupID, MCPPrivilegeIDWildcard,
-	).Scan(&wildcardCount)
+	).Scan(&wildcardCount); err != nil {
+		return nil, fmt.Errorf("failed to check group MCP wildcard privilege: %w", err)
+	}
 	if wildcardCount > 0 {
 		privileges = append([]*MCPPrivilege{{Identifier: "*"}}, privileges...)
 	}
@@ -597,13 +949,17 @@ func (s *AuthStore) GetUserMCPPrivileges(userID int64) (map[string]bool, error) 
 		}
 		rows.Close()
 
-		// Check for wildcard MCP privilege (privilege_identifier_id = 0)
+		// Check for wildcard MCP privilege (privilege_identifier_id = 0).
+		// A failed check is an error, not "no wildcard", so that a
+		// caller bounding grants by this map cannot understate reach.
 		var wildcardCount int
-		err = s.db.QueryRow(
+		if err := s.db.QueryRow(
 			"SELECT COUNT(*) FROM group_mcp_privileges WHERE group_id = ? AND privilege_identifier_id = ?",
 			groupID, MCPPrivilegeIDWildcard,
-		).Scan(&wildcardCount)
-		if err == nil && wildcardCount > 0 {
+		).Scan(&wildcardCount); err != nil {
+			return nil, fmt.Errorf("failed to check user MCP wildcard privilege: %w", err)
+		}
+		if wildcardCount > 0 {
 			privileges["*"] = true
 		}
 	}
@@ -666,15 +1022,19 @@ func (s *AuthStore) GetUserConnectionPrivileges(userID int64) (map[int]string, e
 	return privileges, nil
 }
 
-// IsConnectionAssignedToAnyGroup checks if a connection has been assigned to any group
-// This determines if the connection is "restricted" or "public"
+// IsConnectionAssignedToAnyGroup reports whether any group holds a
+// grant naming this connection, which makes the connection "restricted"
+// (see connectionAccessRule). Only a grant on the connection itself
+// counts: an "all connections" grant gives its group every connection
+// without restricting any of them for users outside the group (issue
+// #592).
 func (s *AuthStore) IsConnectionAssignedToAnyGroup(connectionID int) (bool, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	var count int
 	err := s.db.QueryRow(
-		"SELECT COUNT(*) FROM connection_privileges WHERE connection_id = ? OR connection_id = 0",
+		"SELECT COUNT(*) FROM connection_privileges WHERE connection_id = ?",
 		connectionID,
 	).Scan(&count)
 	if err != nil {
@@ -684,44 +1044,270 @@ func (s *AuthStore) IsConnectionAssignedToAnyGroup(connectionID int) (bool, erro
 	return count > 0, nil
 }
 
+// RestrictedConnectionIDs returns the set of connections that some group
+// holds a grant on, by the rule IsConnectionAssignedToAnyGroup applies
+// to one connection, so that VisibleConnectionIDs can apply it to every
+// connection with a single query.
+func (s *AuthStore) RestrictedConnectionIDs() (map[int]bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	rows, err := s.db.Query(
+		"SELECT DISTINCT connection_id FROM connection_privileges WHERE connection_id <> ?",
+		ConnectionIDAll,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list restricted connections: %w", err)
+	}
+	defer rows.Close()
+
+	restricted := make(map[int]bool)
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("failed to list restricted connections: %w", err)
+		}
+		restricted[id] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to list restricted connections: %w", err)
+	}
+
+	return restricted, nil
+}
+
+// ErrRevokeLiftsRestriction reports a revoke or group delete refused
+// because it would remove a connection's last group grant, so lifting
+// its group restriction and opening it, if shared, to every user, when
+// the caller's LiftGuard does not allow that for the connection.
+var ErrRevokeLiftsRestriction = errors.New(
+	"removal would lift a connection's group restriction")
+
+// LiftGuard says for which connections a revoke or group delete may
+// remove the last group grant. The caller computes it before calling the
+// store, since the store holds its write lock whilst it applies the
+// guard and so cannot consult the RBAC checker, and the store then
+// decides inside the same transaction as the delete, so that no
+// concurrent revoke can make a grant the last one in between. A nil
+// guard allows every lift, for the system and the CLI.
+type LiftGuard struct {
+	all     bool
+	allowed map[int]bool
+}
+
+// AllowAllLifts returns a guard that allows every lift, for a caller
+// that may open any connection, such as a session.
+func AllowAllLifts() *LiftGuard {
+	return &LiftGuard{all: true}
+}
+
+// AllowLifts returns a guard that allows a lift only on the given
+// connections. ConnectionIDAll stands for the "all connections" grant.
+func AllowLifts(connectionIDs ...int) *LiftGuard {
+	g := &LiftGuard{allowed: make(map[int]bool, len(connectionIDs))}
+	for _, id := range connectionIDs {
+		g.allowed[id] = true
+	}
+	return g
+}
+
+// allows reports whether the guard lets a removal lift the restriction
+// on connectionID.
+func (g *LiftGuard) allows(connectionID int) bool {
+	return g == nil || g.all || g.allowed[connectionID]
+}
+
+// liftsConnectionRestriction reports whether removing the group's grant
+// on connectionID would leave the connection assigned to no group when
+// it is assigned to one now, and so open it, if shared, to every user
+// (see IsConnectionAssignedToAnyGroup). A revoke and a group delete
+// remove the same row for a given connection, so one query serves both.
+// An "all connections" grant restricts no connection, so removing one
+// never lifts a restriction (issue #592).
+func liftsConnectionRestriction(q rowQuerier, groupID int64,
+	connectionID int) (bool, error) {
+
+	if connectionID == ConnectionIDAll {
+		return false, nil
+	}
+
+	// The rows that survive the removal are every other group's grants on
+	// the connection. The query is constant so that no SQL is assembled
+	// at run time.
+	const query = `
+        SELECT COUNT(*),
+               COALESCE(SUM(CASE WHEN group_id <> ? THEN 1 ELSE 0 END), 0)
+        FROM connection_privileges
+        WHERE connection_id = ?`
+
+	var before, after int
+	if err := q.QueryRow(query, groupID, connectionID).
+		Scan(&before, &after); err != nil {
+		return false, fmt.Errorf("failed to check connection restriction: %w", err)
+	}
+
+	return before > 0 && after == 0, nil
+}
+
+// guardLiftTx refuses with ErrRevokeLiftsRestriction when the guard
+// does not allow a lift on connectionID and the removal would lift it.
+func guardLiftTx(tx *sql.Tx, guard *LiftGuard, groupID int64,
+	connectionID int) error {
+
+	if guard.allows(connectionID) {
+		return nil
+	}
+	lifts, err := liftsConnectionRestriction(tx, groupID, connectionID)
+	if err != nil {
+		return err
+	}
+	if lifts {
+		return ErrRevokeLiftsRestriction
+	}
+	return nil
+}
+
 // =============================================================================
 // Admin Permission Grants
 // =============================================================================
 
-// GrantAdminPermission grants an admin permission to a group
+// GrantAdminPermission grants an admin permission to a group, recording
+// the change as the system actor.
 func (s *AuthStore) GrantAdminPermission(groupID int64, permission string) error {
+	return s.grantAdminPermission(systemActor, groupID, permission)
+}
+
+// grantAdminPermission grants an admin permission to a group and records
+// the audit event in the same transaction. Granting the wildcard removes
+// the group's individual permissions, and the removed names are listed
+// in the event details.
+func (s *AuthStore) grantAdminPermission(actor Actor, groupID int64,
+	permission string) (err error) {
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	_, err := s.db.Exec(
-		`INSERT OR IGNORE INTO group_admin_permissions (group_id, permission)
-         VALUES (?, ?)`,
-		groupID, permission,
-	)
+	tx, err := s.db.Begin()
 	if err != nil {
 		return fmt.Errorf("failed to grant admin permission: %w", err)
 	}
 
-	// If granting "All Admin Permissions", remove individual permission grants
+	target := &auditTarget{
+		action:     auditActionPermissionAdminGrant,
+		targetType: auditTargetGroup,
+		targetID:   &groupID,
+	}
+	defer func() {
+		if err != nil {
+			s.failAudit(tx, actor, target, err)
+		}
+	}()
+
+	target.targetName = groupAuditName(tx, groupID)
+
+	// Granting "All Admin Permissions" replaces the group's individual
+	// grants, so the names about to be removed are read before anything
+	// changes.
+	var removed []string
 	if permission == AdminPermissionWildcard {
-		_, err = s.db.Exec(
+		if removed, err = individualAdminPermissions(tx, groupID); err != nil {
+			return fmt.Errorf("failed to list individual admin permissions: %w", err)
+		}
+	}
+
+	if _, err = tx.Exec(
+		`INSERT OR IGNORE INTO group_admin_permissions (group_id, permission)
+         VALUES (?, ?)`,
+		groupID, permission,
+	); err != nil {
+		return fmt.Errorf("failed to grant admin permission: %w", err)
+	}
+
+	details := map[string]any{"permission": permission}
+
+	if permission == AdminPermissionWildcard {
+		if _, err = tx.Exec(
 			"DELETE FROM group_admin_permissions WHERE group_id = ? AND permission != ?",
 			groupID, AdminPermissionWildcard,
-		)
-		if err != nil {
+		); err != nil {
 			return fmt.Errorf("failed to clean up individual admin permissions: %w", err)
 		}
+
+		details["removed_individual"] = removed
+	}
+
+	if err = s.recordAudit(tx, newEvent(actor, auditActionPermissionAdminGrant,
+		auditTargetGroup, &groupID, target.targetName, details)); err != nil {
+		return fmt.Errorf("failed to grant admin permission: %w", err)
+	}
+
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("failed to grant admin permission: %w", err)
 	}
 
 	return nil
 }
 
-// RevokeAdminPermission revokes an admin permission from a group
+// individualAdminPermissions lists a group's non-wildcard admin
+// permissions inside the caller's transaction, so that the wildcard
+// grant can record what it removed.
+func individualAdminPermissions(tx *sql.Tx, groupID int64) ([]string, error) {
+	rows, err := tx.Query(
+		`SELECT permission FROM group_admin_permissions
+         WHERE group_id = ? AND permission != ?
+         ORDER BY permission`,
+		groupID, AdminPermissionWildcard,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	permissions := []string{}
+	for rows.Next() {
+		var permission string
+		if err := rows.Scan(&permission); err != nil {
+			return nil, err
+		}
+		permissions = append(permissions, permission)
+	}
+
+	return permissions, rows.Err()
+}
+
+// RevokeAdminPermission revokes an admin permission from a group,
+// recording the change as the system actor.
 func (s *AuthStore) RevokeAdminPermission(groupID int64, permission string) error {
+	return s.revokeAdminPermission(systemActor, groupID, permission)
+}
+
+// revokeAdminPermission revokes an admin permission from a group and
+// records the audit event in the same transaction.
+func (s *AuthStore) revokeAdminPermission(actor Actor, groupID int64,
+	permission string) (err error) {
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	result, err := s.db.Exec(
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to revoke admin permission: %w", err)
+	}
+
+	target := &auditTarget{
+		action:     auditActionPermissionAdminRevoke,
+		targetType: auditTargetGroup,
+		targetID:   &groupID,
+	}
+	defer func() {
+		if err != nil {
+			s.failAudit(tx, actor, target, err)
+		}
+	}()
+
+	target.targetName = groupAuditName(tx, groupID)
+
+	result, err := tx.Exec(
 		"DELETE FROM group_admin_permissions WHERE group_id = ? AND permission = ?",
 		groupID, permission,
 	)
@@ -734,7 +1320,19 @@ func (s *AuthStore) RevokeAdminPermission(groupID int64, permission string) erro
 		return fmt.Errorf("failed to get rows affected: %w", err)
 	}
 	if rows == 0 {
-		return fmt.Errorf("admin permission grant not found")
+		err = fmt.Errorf("admin permission grant not found")
+		return err
+	}
+
+	if err = s.recordAudit(tx, newEvent(actor, auditActionPermissionAdminRevoke,
+		auditTargetGroup, &groupID, target.targetName, map[string]any{
+			"permission": permission,
+		})); err != nil {
+		return fmt.Errorf("failed to revoke admin permission: %w", err)
+	}
+
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("failed to revoke admin permission: %w", err)
 	}
 
 	return nil
@@ -879,8 +1477,12 @@ func (s *AuthStore) GetGroupEffectiveMCPPrivileges(groupID int64) ([]string, err
         JOIN ancestor_groups ag ON gmp.group_id = ag.group_id
         WHERE gmp.privilege_identifier_id = ?
     `
-	//nolint:errcheck // Best effort; zero on error is acceptable
-	s.db.QueryRow(wildcardQuery, groupID, MCPPrivilegeIDWildcard).Scan(&wildcardCount)
+	// The error is returned rather than read as "no wildcard", because
+	// GroupWithinTokenScope bounds grants by this list (issue #471) and
+	// an unread wildcard would understate the group's reach.
+	if err := s.db.QueryRow(wildcardQuery, groupID, MCPPrivilegeIDWildcard).Scan(&wildcardCount); err != nil {
+		return nil, fmt.Errorf("failed to check group effective MCP wildcard privilege: %w", err)
+	}
 	if wildcardCount > 0 {
 		privileges = append([]string{"*"}, privileges...)
 	}

@@ -154,7 +154,43 @@ func buildSecuritySchemes() map[string]*OpenAPISecurityScheme {
 			Type:         "http",
 			Scheme:       "bearer",
 			BearerFormat: "JWT",
-			Description:  "Session token obtained from /auth/login",
+			Description: "Session token obtained from /auth/login, or an " +
+				"API token. Every request an API token makes is confined " +
+				"to the token's connection, MCP and admin scopes, even " +
+				"when its owner is a superuser, so a superuser-owned " +
+				"token can receive 403 where its owner's session would " +
+				"succeed. A token can never grant a user, a group or " +
+				"another token more than its own access, which is its " +
+				"owner's privileges narrowed by its scope, judged per " +
+				"connection and access level, MCP item and admin " +
+				"permission. A token holding a connection read-only may " +
+				"grant read on it but not read_write; an all-connections " +
+				"entry needs the token to hold every connection at that " +
+				"level; a group member may be added only if everything " +
+				"the group confers fits; and making a superuser needs a " +
+				"superuser's token unrestricted in every scope kind. " +
+				"Taking access away needs read on each connection " +
+				"concerned, and read_write where it removes a " +
+				"connection's last group grant (an all-connections " +
+				"grant restricts no connection, so removing one never " +
+				"needs it). Setting a password, " +
+				"re-enabling an account or minting a token for a user " +
+				"whose access exceeds the token's is refused with 403. " +
+				"A new user " +
+				"counts as reaching every shared connection no group " +
+				"restricts and every public MCP item, and a user or " +
+				"group holding manage_users, manage_groups, " +
+				"manage_permissions or manage_token_scopes counts as " +
+				"reaching every MCP item and admin permission, since " +
+				"each lets its holder acquire the rest. A read entry allows alert " +
+				"acknowledgement and analysis, and blackout management, " +
+				"on that connection. " +
+				"A token whose admin scope names specific " +
+				"permissions may exercise those permissions, but cannot " +
+				"pass a gate that requires superuser status outright, " +
+				"such as the audit log. A token with no scope of a given " +
+				"kind, or one holding the * wildcard, is unrestricted on " +
+				"that surface.",
 		},
 	}
 }
@@ -191,7 +227,7 @@ func buildSchemas() map[string]*OpenAPISchema {
 			Properties: map[string]*OpenAPISchema{
 				"authenticated": {Type: "boolean", Description: "Whether the user is authenticated"},
 				"username":      {Type: "string", Description: "Username of the authenticated user"},
-				"is_superuser":  {Type: "boolean", Description: "Whether the user has superuser privileges"},
+				"is_superuser":  {Type: "boolean", Description: "Whether the caller may pass a superuser-only gate: true for a superuser's session, and for a superuser's API token only when the token's admin scope is empty or holds the wildcard"},
 				"error":         {Type: "string", Description: "Error message if authentication failed"},
 			},
 		},
@@ -255,7 +291,7 @@ func buildSchemas() map[string]*OpenAPISchema {
 			Type: "object",
 			Properties: map[string]*OpenAPISchema{
 				"cluster_id":        {Type: "integer", Description: "Target cluster ID; null resets the connection to auto-detection", Nullable: true},
-				"role":              {Type: "string", Description: "Cluster role for the connection", Nullable: true},
+				"role":              {Type: "string", Description: "Cluster role for the connection", Nullable: true, Enum: []string{"standalone", "binary_primary", "binary_standby", "binary_cascading", "logical_publisher", "logical_subscriber", "logical_bidirectional", "spock_node", "spock_standby", "primary", "replica", "node", "unknown"}},
 				"membership_source": {Type: "string", Description: "How the connection is assigned: auto or manual"},
 			},
 		},
@@ -411,9 +447,9 @@ func buildSchemas() map[string]*OpenAPISchema {
 			Type: "object",
 			Properties: map[string]*OpenAPISchema{
 				"id":              {Type: "integer", Format: "int64", Description: "Alert ID"},
-				"connection_id":   {Type: "integer", Description: "Associated connection ID"},
-				"server_name":     {Type: "string", Description: "Server name"},
-				"alert_type":      {Type: "string", Description: "Type of alert"},
+				"connection_id":   {Type: "integer", Description: "Associated connection ID; null for a system alert", Nullable: true},
+				"server_name":     {Type: "string", Description: "Server name; empty for a system alert"},
+				"alert_type":      {Type: "string", Enum: []string{"threshold", "anomaly", "connection", "system"}, Description: "Type of alert; a system alert reports a fault in the Workbench itself and belongs to no connection"},
 				"severity":        {Type: "string", Enum: []string{"critical", "warning", "info"}, Description: "Alert severity"},
 				"status":          {Type: "string", Enum: []string{"active", "acknowledged", "cleared"}, Description: "Alert status"},
 				"title":           {Type: "string", Description: "Alert title"},
@@ -443,18 +479,13 @@ func buildSchemas() map[string]*OpenAPISchema {
 		"AlertCountsResult": {
 			Type: "object",
 			Properties: map[string]*OpenAPISchema{
-				"counts": {
-					Type: "object",
-					AdditionalProperties: &OpenAPISchema{
-						Type: "object",
-						Properties: map[string]*OpenAPISchema{
-							"critical": {Type: "integer"},
-							"warning":  {Type: "integer"},
-							"info":     {Type: "integer"},
-						},
-					},
-					Description: "Alert counts by server ID",
+				"total": {Type: "integer", Format: "int64", Description: "Active alerts the caller may see, system alerts included"},
+				"by_server": {
+					Type:                 "object",
+					AdditionalProperties: &OpenAPISchema{Type: "integer", Format: "int64"},
+					Description:          "Active alert count keyed by connection ID; system alerts are never included",
 				},
+				"system": {Type: "integer", Format: "int64", Description: "Active system alerts, which belong to no connection"},
 			},
 		},
 		"AcknowledgeRequest": {
@@ -1031,6 +1062,16 @@ func buildSchemas() map[string]*OpenAPISchema {
 			Properties: map[string]*OpenAPISchema{
 				"ai_enabled":     {Type: "boolean", Description: "Whether AI features are enabled"},
 				"max_iterations": {Type: "integer", Description: "Maximum LLM tool-use iterations"},
+				"auth":           {Ref: "#/components/schemas/AuthCapabilities"},
+			},
+		},
+		"AuthCapabilities": {
+			Type:        "object",
+			Description: "What the login page needs in order to render itself",
+			Properties: map[string]*OpenAPISchema{
+				"local_enabled": {Type: "boolean", Description: "Whether username and password login is enabled"},
+				"oidc_enabled":  {Type: "boolean", Description: "Whether federated (OIDC) login is enabled and a provider was discovered at start-up"},
+				"oidc_label":    {Type: "string", Description: "Label for the federated login button, empty when oidc_enabled is false"},
 			},
 		},
 		"AlertRuleUpdate": {
@@ -1201,22 +1242,26 @@ func buildSchemas() map[string]*OpenAPISchema {
 		"NotificationChannel": {
 			Type: "object",
 			Properties: map[string]*OpenAPISchema{
-				"id":                {Type: "integer", Format: "int64", Description: "Channel ID"},
-				"owner_username":    {Type: "string", Description: "Owner username", Nullable: true},
-				"owner_token":       {Type: "string", Description: "Owner service-token identifier; populated when the channel is owned by a token rather than a user", Nullable: true},
-				"enabled":           {Type: "boolean", Description: "Whether the channel is enabled"},
-				"channel_type":      {Type: "string", Description: "Channel type (email, slack, mattermost, webhook)"},
-				"name":              {Type: "string", Description: "Channel name"},
-				"description":       {Type: "string", Description: "Channel description", Nullable: true},
-				"endpoint_url":      {Type: "string", Description: "Endpoint URL (webhook)", Nullable: true},
-				"http_method":       {Type: "string", Description: "HTTP method for webhook"},
-				"header_names":      {Type: "array", Description: "Names of configured custom HTTP headers; values are never returned because they may carry bearer tokens or API keys", Items: &OpenAPISchema{Type: "string"}},
-				"auth_type":         {Type: "string", Description: "Webhook auth type (e.g. bearer, basic)", Nullable: true},
-				"smtp_host":         {Type: "string", Description: "SMTP host (email)", Nullable: true},
-				"smtp_port":         {Type: "integer", Description: "SMTP port (email)"},
-				"smtp_use_tls":      {Type: "boolean", Description: "Whether the SMTP connection uses TLS"},
-				"from_address":      {Type: "string", Description: "From address (email)", Nullable: true},
-				"from_name":         {Type: "string", Description: "From name (email)", Nullable: true},
+				"id":             {Type: "integer", Format: "int64", Description: "Channel ID"},
+				"owner_username": {Type: "string", Description: "Owner username", Nullable: true},
+				"owner_token":    {Type: "string", Description: "Owner service-token identifier; populated when the channel is owned by a token rather than a user", Nullable: true},
+				"enabled":        {Type: "boolean", Description: "Whether the channel is enabled"},
+				"channel_type":   {Type: "string", Enum: []string{"email", "slack", "mattermost", "telegram", "webhook"}, Description: "Channel type"},
+				"name":           {Type: "string", Description: "Channel name"},
+				"description":    {Type: "string", Description: "Channel description", Nullable: true},
+				"endpoint_url":   {Type: "string", Description: "Endpoint URL (webhook)", Nullable: true},
+				"http_method":    {Type: "string", Description: "HTTP method for webhook"},
+				"header_names":   {Type: "array", Description: "Names of configured custom HTTP headers; values are never returned because they may carry bearer tokens or API keys", Items: &OpenAPISchema{Type: "string"}},
+				"auth_type":      {Type: "string", Description: "Webhook auth type (e.g. bearer, basic)", Nullable: true},
+				"smtp_host":      {Type: "string", Description: "SMTP host (email)", Nullable: true},
+				"smtp_port":      {Type: "integer", Description: "SMTP port (email)"},
+				"smtp_use_tls":   {Type: "boolean", Description: "Whether the SMTP connection uses TLS"},
+				"from_address":   {Type: "string", Description: "From address (email)", Nullable: true},
+				"from_name":      {Type: "string", Description: "From name (email)", Nullable: true},
+				// The Telegram chat ID addresses the destination chat
+				// rather than authenticating to it, so unlike the bot
+				// token it is returned in clear for the UI to display.
+				"telegram_chat_id":  {Type: "string", Description: "Telegram chat ID or @channelusername the channel posts to (telegram). Not a secret, so it is returned in clear.", Nullable: true},
 				"is_estate_default": {Type: "boolean", Description: "Whether this is an estate default channel"},
 				// Per-event message templates. nil means "fall back to the
 				// built-in default template for the event type".
@@ -1234,19 +1279,20 @@ func buildSchemas() map[string]*OpenAPISchema {
 				// never returned by the API; clients use these flags
 				// to render a "configured" badge or to decide whether
 				// to show a "leave unchanged" affordance on edit.
-				"webhook_url_set":      {Type: "boolean", Description: "Whether a webhook URL is configured"},
-				"auth_credentials_set": {Type: "boolean", Description: "Whether webhook auth credentials are configured"},
-				"smtp_username_set":    {Type: "boolean", Description: "Whether an SMTP username is configured"},
-				"smtp_password_set":    {Type: "boolean", Description: "Whether an SMTP password is configured"},
-				"created_at":           {Type: "string", Format: "date-time", Description: "Creation timestamp"},
-				"updated_at":           {Type: "string", Format: "date-time", Description: "Last update timestamp"},
+				"webhook_url_set":        {Type: "boolean", Description: "Whether a webhook URL is configured"},
+				"auth_credentials_set":   {Type: "boolean", Description: "Whether webhook auth credentials are configured"},
+				"smtp_username_set":      {Type: "boolean", Description: "Whether an SMTP username is configured"},
+				"smtp_password_set":      {Type: "boolean", Description: "Whether an SMTP password is configured"},
+				"telegram_bot_token_set": {Type: "boolean", Description: "Whether a Telegram bot token is configured. The token itself is a bearer credential and is never returned."},
+				"created_at":             {Type: "string", Format: "date-time", Description: "Creation timestamp"},
+				"updated_at":             {Type: "string", Format: "date-time", Description: "Last update timestamp"},
 			},
 		},
 		"NotificationChannelCreateRequest": {
 			Type:     "object",
 			Required: []string{"channel_type", "name"},
 			Properties: map[string]*OpenAPISchema{
-				"channel_type":      {Type: "string", Description: "Channel type (email, slack, mattermost, webhook)"},
+				"channel_type":      {Type: "string", Enum: []string{"email", "slack", "mattermost", "telegram", "webhook"}, Description: "Channel type"},
 				"name":              {Type: "string", Description: "Channel name"},
 				"description":       {Type: "string", Description: "Channel description"},
 				"enabled":           {Type: "boolean", Description: "Whether the channel is enabled"},
@@ -1258,7 +1304,7 @@ func buildSchemas() map[string]*OpenAPISchema {
 				// on the response to detect whether they are configured.
 				"webhook_url":             {Type: "string", Description: "Webhook URL (Slack/Mattermost). On PUT: omit to keep existing, empty string to clear, value to replace."},
 				"endpoint_url":            {Type: "string", Description: "Endpoint URL (webhook)"},
-				"http_method":             {Type: "string", Description: "HTTP method for webhook"},
+				"http_method":             {Type: "string", Description: "HTTP method for webhook: GET, POST, PUT or PATCH. Omit or send an empty string for the POST default; any other value is rejected with 400."},
 				"headers":                 {Type: "object", Description: "HTTP headers for webhook. On PUT: omit to keep existing, send an empty object to clear, send a non-empty map to replace. Values are accepted but never returned; the response exposes only header_names.", AdditionalProperties: &OpenAPISchema{Type: "string"}},
 				"auth_type":               {Type: "string", Description: "Webhook auth type (e.g. bearer, basic)"},
 				"auth_credentials":        {Type: "string", Description: "Webhook auth credentials. On PUT: omit to keep existing, empty string to clear, value to replace."},
@@ -1269,6 +1315,8 @@ func buildSchemas() map[string]*OpenAPISchema {
 				"smtp_use_tls":            {Type: "boolean", Description: "Use TLS for SMTP (email)"},
 				"from_address":            {Type: "string", Description: "From address (email)"},
 				"from_name":               {Type: "string", Description: "From name (email)"},
+				"telegram_bot_token":      {Type: "string", Description: "Telegram bot token, in the form <bot id>:<token> (telegram). Required on POST for telegram channels and ignored on POST for every other channel type. On PUT: omit to keep existing, empty string to clear, value to replace. A PUT that changes channel_type to telegram revalidates the stored token. Never returned; the response exposes telegram_bot_token_set instead."},
+				"telegram_chat_id":        {Type: "string", Description: "Telegram chat ID or @channelusername (telegram). Required on POST for telegram channels and ignored on POST for every other channel type. On PUT: omit to keep existing, empty string to clear, value to replace."},
 				"reminder_enabled":        {Type: "boolean", Description: "Whether reminders are enabled"},
 				"reminder_interval_hours": {Type: "integer", Description: "Reminder interval in hours"},
 			},
@@ -1339,15 +1387,90 @@ func buildSchemas() map[string]*OpenAPISchema {
 				"generated_at": {Type: "string", Format: "date-time", Description: "When the analysis was generated"},
 			},
 		},
+		"MetricDataPoint": {
+			Type:     "object",
+			Required: []string{"time", "value"},
+			Properties: map[string]*OpenAPISchema{
+				"time": {Type: "string", Format: "date-time",
+					Description: "Bucket start time"},
+				"value": {Type: "number", Nullable: true,
+					Description: "Aggregated value for the bucket, or null " +
+						"when the bucket has no value: no sample fell in " +
+						"it and, for a raw column or dead_tuple_ratio, the " +
+						"last reading is more than three collection " +
+						"intervals old; for a counter-derived metric " +
+						"(_per_sec, _delta, _pct, _sessions), the interval " +
+						"spanned a counter reset or a collection gap of " +
+						"more than three collection intervals. Rates are " +
+						"never carried forward across a gap."},
+				"filled": {Type: "boolean",
+					Description: "True when the value was carried forward " +
+						"from an earlier observation rather than " +
+						"aggregated from a sample of this bucket; omitted " +
+						"otherwise"},
+			},
+		},
+		"MetricSeries": {
+			Type:     "object",
+			Required: []string{"name", "metric", "unit", "data"},
+			Properties: map[string]*OpenAPISchema{
+				"name": {Type: "string",
+					Description: "Series label: the metric name, suffixed " +
+						"with the connection (for example \"xact_commit_per_sec " +
+						"(conn 3)\") when more than one connection was queried"},
+				"metric": {Type: "string",
+					Description: "Metric name as requested"},
+				"unit": {Type: "string",
+					Description: "Unit of the values: \"/s\" for a _per_sec " +
+						"rate, \"%\" for a _pct time share or dead_tuple_ratio, " +
+						"\"sessions\" for a _sessions average, \"ms\" for a " +
+						"_delta of a time counter, and empty for a raw column " +
+						"or an event-count _delta"},
+				"data": {Type: "array",
+					Items: &OpenAPISchema{Ref: "#/components/schemas/MetricDataPoint"},
+					Description: "One point per time bucket. Every series " +
+						"in a response has the same length and the same " +
+						"bucket times."},
+			},
+		},
 		"MetricsQueryResult": {
 			Type: "object",
+			Required: []string{"probe_name", "connection_ids", "time_range",
+				"time_start", "time_end", "bucket_seconds", "buckets",
+				"aggregation", "series"},
+			Description: "A bucketed metrics query, describing the window " +
+				"that was queried alongside the data, so a chart axis can " +
+				"be anchored to the requested range rather than inferred " +
+				"from the points that came back",
 			Properties: map[string]*OpenAPISchema{
-				"probe_name":     {Type: "string", Description: "Probe name"},
-				"connection_ids": {Type: "array", Items: &OpenAPISchema{Type: "integer"}, Description: "Connection IDs queried"},
-				"time_range":     {Type: "string", Description: "Time range"},
-				"buckets":        {Type: "integer", Description: "Number of time buckets"},
-				"aggregation":    {Type: "string", Description: "Aggregation method"},
-				"series":         {Type: "array", Items: &OpenAPISchema{Type: "object"}, Description: "Time series data"},
+				"probe_name": {Type: "string",
+					Description: "Probe the series were read from"},
+				"connection_ids": {Type: "array",
+					Items:       &OpenAPISchema{Type: "integer"},
+					Description: "Connections the series were read from"},
+				"time_range": {Type: "string",
+					Description: "Range selection as requested, such as " +
+						"\"1h\" or \"custom\"; \"1h\" when the parameter " +
+						"was omitted"},
+				"time_start": {Type: "string", Format: "date-time",
+					Description: "Start of the resolved window"},
+				"time_end": {Type: "string", Format: "date-time",
+					Description: "End of the resolved window"},
+				"bucket_seconds": {Type: "integer",
+					Description: "Width of one bucket in whole seconds, as " +
+						"the query used it, with a one second floor"},
+				"buckets": {Type: "integer",
+					Description: "Number of buckets the window was divided " +
+						"into: the requested count, reduced when the " +
+						"probe's collection interval is too wide to fill " +
+						"that many"},
+				"aggregation": {Type: "string",
+					Description: "Aggregation applied within each bucket"},
+				"series": {Type: "array",
+					Items: &OpenAPISchema{Ref: "#/components/schemas/MetricSeries"},
+					Description: "Time series in the order the metrics were " +
+						"requested (or column order when no metrics were " +
+						"named), one per metric per connection"},
 			},
 		},
 		"BaselinesResult": {
@@ -1362,30 +1485,101 @@ func buildSchemas() map[string]*OpenAPISchema {
 			Type: "object",
 			Properties: map[string]*OpenAPISchema{
 				"time_range":  {Type: "string", Description: "Time range used"},
-				"connections": {Type: "array", Items: &OpenAPISchema{Type: "object"}, Description: "Per-connection performance data"},
-				"aggregate":   {Type: "object", Description: "Aggregate performance metrics", Nullable: true},
+				"connections": {Type: "array", Items: &OpenAPISchema{Ref: "#/components/schemas/PerfConnectionResponse"}, Description: "Per-connection performance data"},
+				"aggregate":   {Ref: "#/components/schemas/PerfAggregate"},
 			},
+		},
+		"PerfConnectionResponse": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"connection_id":      {Type: "integer", Description: "Connection ID"},
+				"connection_name":    {Type: "string", Description: "Connection name"},
+				"xid_age":            {Type: "array", Items: &OpenAPISchema{Type: "object"}, Description: "Transaction ID age per database"},
+				"cache_hit_ratio":    {Ref: "#/components/schemas/CacheHitRatioData"},
+				"transactions":       {Type: "object", Description: "Transaction throughput: commits_per_sec, rollback_percent and a time_series"},
+				"checkpoints":        {Type: "object", Description: "Checkpoint activity time series"},
+				"active_connections": {Type: "integer", Description: "Backends connected at the most recent collection, summed across databases"},
+			},
+		},
+		"PerfAggregate": {
+			Type:        "object",
+			Description: "Aggregate metrics across the requested connections; only present when more than one connection was requested",
+			Properties: map[string]*OpenAPISchema{
+				"cache_hit_ratio": {
+					Type:        "number",
+					Nullable:    true,
+					Description: "Cache hit ratio percentage weighted by each connection's latest-bucket block deltas, or null when every connection was idle in its latest bucket",
+				},
+				"commits_per_sec":  {Type: "number", Description: "Commits per second summed across connections"},
+				"rollback_percent": {Type: "number", Description: "Rollbacks as a percentage of all transactions across connections"},
+			},
+		},
+		"CacheHitRatioData": {
+			Type:        "object",
+			Description: "Buffer cache hit ratio computed from per-interval deltas of the pg_stat_database block counters, never from the lifetime totals. The bucket width is the requested time range divided by 60, with a 10 second floor.",
+			Properties: map[string]*OpenAPISchema{
+				"current": {
+					Type:        "number",
+					Nullable:    true,
+					Description: "Ratio percentage for the latest bucket in the range, or null when there is no data or that bucket saw no block access",
+				},
+				"time_series": {
+					Type:        "array",
+					Items:       &OpenAPISchema{Ref: "#/components/schemas/CacheHitRatioPoint"},
+					Description: "Per-bucket ratios in chronological order",
+				},
+			},
+			Required: []string{"current", "time_series"},
+		},
+		"CacheHitRatioPoint": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"time": {Type: "string", Format: "date-time", Description: "Bucket start time"},
+				"value": {
+					Type:        "number",
+					Nullable:    true,
+					Description: "Ratio percentage for the bucket, or null when no blocks were hit or read in it",
+				},
+			},
+			Required: []string{"time", "value"},
 		},
 		"DatabaseSummaryResponse": {
 			Type: "object",
 			Properties: map[string]*OpenAPISchema{
-				"connection_id": {Type: "integer", Description: "Connection ID"},
-				"time_range":    {Type: "string", Description: "Time range used"},
-				"databases":     {Type: "array", Items: &OpenAPISchema{Type: "object"}, Description: "Per-database summary data"},
+				"databases": {Type: "array", Items: &OpenAPISchema{Ref: "#/components/schemas/DatabaseSummary"}, Description: "Per-database summary data"},
+			},
+		},
+		"DatabaseSummary": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"database_name":      {Type: "string", Description: "Database name"},
+				"size_bytes":         {Type: "integer", Format: "int64", Description: "Database size in bytes"},
+				"size_pretty":        {Type: "string", Description: "Human-readable database size"},
+				"cache_hit_ratio":    {Ref: "#/components/schemas/CacheHitRatioData"},
+				"transaction_rate":   {Type: "number", Description: "Transactions per second"},
+				"dead_tuple_ratio":   {Type: "number", Description: "Dead tuples as a percentage of live plus dead tuples"},
+				"active_connections": {Type: "integer", Description: "Backends connected to the database at the most recent collection"},
 			},
 		},
 		"TopQueryRow": {
 			Type: "object",
 			Properties: map[string]*OpenAPISchema{
-				"queryid":          {Type: "integer", Format: "int64", Description: "Query ID"},
-				"database_name":    {Type: "string", Description: "Database name where the query was executed"},
-				"query":            {Type: "string", Description: "Query text"},
-				"calls":            {Type: "integer", Format: "int64", Description: "Total call count"},
-				"total_exec_time":  {Type: "number", Description: "Total execution time in ms"},
-				"mean_exec_time":   {Type: "number", Description: "Mean execution time in ms"},
-				"rows":             {Type: "integer", Format: "int64", Description: "Total rows returned"},
-				"shared_blks_hit":  {Type: "integer", Format: "int64", Description: "Shared blocks hit"},
-				"shared_blks_read": {Type: "integer", Format: "int64", Description: "Shared blocks read"},
+				"queryid":              {Type: "string", Description: "Query ID as a decimal string, since the 64-bit value cannot be represented exactly in JavaScript"},
+				"database_name":        {Type: "string", Description: "Database name where the query was executed, resolved from pg_stat_statements.dbid; when the dbid cannot be resolved, one of the databases the statistics were collected through"},
+				"sample_database_name": {Type: "string", Description: "Database the statistics were collected through, which is the database_name of the query's pg_stat_statements metric rows; pass this, not database_name, to /api/v1/metrics/query for the query's time series"},
+				"username":             {Type: "string", Description: "Database role that ran the query; empty when the role could not be resolved"},
+				"query":                {Type: "string", Description: "Query text"},
+				"calls":                {Type: "integer", Format: "int64", Description: "Total call count"},
+				"total_exec_time":      {Type: "number", Description: "Total execution time in ms"},
+				"mean_exec_time":       {Type: "number", Description: "Mean execution time in ms"},
+				"min_exec_time":        {Type: "number", Description: "Minimum execution time in ms"},
+				"max_exec_time":        {Type: "number", Description: "Maximum execution time in ms"},
+				"rows":                 {Type: "integer", Format: "int64", Description: "Total rows returned"},
+				"shared_blks_hit":      {Type: "integer", Format: "int64", Description: "Shared blocks hit"},
+				"shared_blks_read":     {Type: "integer", Format: "int64", Description: "Shared blocks read"},
+				"client_addr":          {Type: "string", Nullable: true, Description: "Address of the client most recently observed running the query in pg_stat_activity, or \"local\" when that backend connected over a Unix-domain socket; null only when the query was never observed in flight. Best-effort: only statements in flight when a sample was taken are captured, and this is the most recent client for the query's own database and role, not the only one"},
+				"client_hostname":      {Type: "string", Nullable: true, Description: "Resolved hostname of that client; null when unknown, including whenever log_hostname is off on the monitored server, and whenever the query was never observed in flight"},
+				"client_observed_at":   {Type: "string", Format: "date-time", Nullable: true, Description: "Time of the pg_stat_activity sample that observed the client; null when the query was never observed in flight, which is the only reliable signal of that since client_addr reports \"local\" for Unix-domain-socket backends"},
 			},
 		},
 		"ConnectionGroupsResponse": {
@@ -1428,6 +1622,16 @@ func buildSchemas() map[string]*OpenAPISchema {
 			// is always present but may be null is correctly described as
 			// both.
 			Required: []string{"group_label", "client_hostname", "total", "active", "idle", "idle_in_transaction", "other"},
+		},
+		"QueryStatsResponse": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"queryid":         {Type: "string", Description: "Query ID the statistics apply to"},
+				"avg_exec_time":   {Type: "number", Nullable: true, Description: "Average execution time in ms over the requested period, or null when there is no usable data"},
+				"calls":           {Type: "integer", Format: "int64", Description: "Calls made during the requested period"},
+				"total_exec_time": {Type: "number", Description: "Execution time in ms accumulated during the requested period"},
+			},
+			Required: []string{"queryid", "avg_exec_time", "calls", "total_exec_time"},
 		},
 		"LatestSnapshotResponse": {
 			Type: "object",
@@ -1507,6 +1711,11 @@ func buildSchemas() map[string]*OpenAPISchema {
 		},
 		"RBACUser": {
 			Type: "object",
+			// auth_source is the only property listed here because it is
+			// the only one this schema has ever declared as required; the
+			// rest are left as they were rather than sweeping an unrelated
+			// audit of the schema into the change that added this field.
+			Required: []string{"auth_source"},
 			Properties: map[string]*OpenAPISchema{
 				"id":                 {Type: "integer", Format: "int64", Description: "User ID"},
 				"username":           {Type: "string", Description: "Username"},
@@ -1516,6 +1725,41 @@ func buildSchemas() map[string]*OpenAPISchema {
 				"is_superuser":       {Type: "boolean", Description: "Whether the user is a superuser"},
 				"is_service_account": {Type: "boolean", Description: "Whether the user is a service account"},
 				"annotation":         {Type: "string", Description: "User annotation"},
+				"auth_source": {Type: "string",
+					Description: "How the account signs in. The known values are local for a password " +
+						"held by the Workbench, oidc for an account federated to an identity provider, " +
+						"and unknown for a stored account with no recorded source. Other values may " +
+						"appear, since any other stored source is reported exactly as it is stored; any " +
+						"value other than local means the account cannot sign in with a password"},
+				"auth_issuer": {Type: "string",
+					Description: "Issuer of the identity provider that owns a federated account. Absent " +
+						"for a local account, and for a federated account whose stored identity cannot " +
+						"be parsed. The provider subject is never reported"},
+			},
+		},
+		"AuditEvent": {
+			Type:        "object",
+			Description: "One row of the RBAC audit log",
+			Properties: map[string]*OpenAPISchema{
+				"id":          {Type: "integer", Format: "int64", Description: "Event ID"},
+				"occurred_at": {Type: "string", Format: "date-time", Description: "When the event was recorded"},
+				"actor_type": {Type: "string", Description: "Kind of principal responsible",
+					Enum: []string{"user", "token", "cli", "system"}},
+				"actor_id":    {Type: "integer", Format: "int64", Nullable: true, Description: "Actor ID, null for cli and system actors"},
+				"actor_name":  {Type: "string", Description: "Name of the actor"},
+				"actor_ip":    {Type: "string", Description: "Client address of the actor, when known"},
+				"action":      {Type: "string", Description: "Audited action, such as user.create"},
+				"target_type": {Type: "string", Description: "Kind of object acted upon"},
+				"target_id":   {Type: "integer", Format: "int64", Nullable: true, Description: "Target ID, null when the target has none"},
+				"target_name": {Type: "string", Description: "Name of the object acted upon"},
+				"outcome": {Type: "string", Description: "Result of the audited operation",
+					Enum: []string{"success", "failure", "denied"}},
+				"error":     {Type: "string", Description: "Error message for a failed or denied operation"},
+				"details":   {Type: "object", Description: "Action-specific details"},
+				"prev_hash": {Type: "string", Description: "Hash of the preceding event"},
+				"hash":      {Type: "string", Description: "Hash chaining this event to its predecessor"},
+				"hash_version": {Type: "integer", Description: "Version of the rendering the hash was " +
+					"computed under, so that rows written before a format change stay verifiable"},
 			},
 		},
 		"UserCreateRequest": {
@@ -1528,7 +1772,7 @@ func buildSchemas() map[string]*OpenAPISchema {
 				"email":              {Type: "string", Description: "Email address"},
 				"annotation":         {Type: "string", Description: "User annotation"},
 				"enabled":            {Type: "boolean", Description: "Whether the user is enabled"},
-				"is_superuser":       {Type: "boolean", Description: "Whether the user is a superuser"},
+				"is_superuser":       {Type: "boolean", Description: "Whether the user is a superuser. Only a superuser may send this field; anyone else is refused with 403."},
 				"is_service_account": {Type: "boolean", Description: "Whether the user is a service account"},
 			},
 		},
@@ -1540,14 +1784,29 @@ func buildSchemas() map[string]*OpenAPISchema {
 				"email":        {Type: "string", Description: "Email address"},
 				"annotation":   {Type: "string", Description: "User annotation"},
 				"enabled":      {Type: "boolean", Description: "Whether the user is enabled"},
-				"is_superuser": {Type: "boolean", Description: "Whether the user is a superuser"},
+				"is_superuser": {Type: "boolean", Description: "Whether the user is a superuser. Only a superuser may send this field; anyone else is refused with 403."},
 			},
 		},
 		"UserPrivilegesResponse": {
 			Type: "object",
+			// auth_source is the only property listed here because it is
+			// the only one this schema has ever declared as required; the
+			// rest are left as they were rather than sweeping an unrelated
+			// audit of the schema into the change that added this field.
+			Required: []string{"auth_source"},
 			Properties: map[string]*OpenAPISchema{
-				"username":              {Type: "string", Description: "Username"},
-				"is_superuser":          {Type: "boolean", Description: "Whether the user is a superuser"},
+				"username":     {Type: "string", Description: "Username"},
+				"is_superuser": {Type: "boolean", Description: "Whether the user is a superuser"},
+				"auth_source": {Type: "string",
+					Description: "How the account signs in. The known values are local for a password " +
+						"held by the Workbench, oidc for an account federated to an identity provider, " +
+						"and unknown for a stored account with no recorded source. Other values may " +
+						"appear, since any other stored source is reported exactly as it is stored; any " +
+						"value other than local means the account cannot sign in with a password"},
+				"auth_issuer": {Type: "string",
+					Description: "Issuer of the identity provider that owns a federated account. Absent " +
+						"for a local account, and for a federated account whose stored identity cannot " +
+						"be parsed. The provider subject is never reported"},
 				"groups":                {Type: "array", Items: &OpenAPISchema{Type: "string"}, Description: "Group names"},
 				"mcp_privileges":        {Type: "array", Items: &OpenAPISchema{Type: "string"}, Description: "MCP privilege identifiers"},
 				"connection_privileges": {Type: "object", Description: "Connection ID to access level mapping", AdditionalProperties: &OpenAPISchema{Type: "string"}},
@@ -1658,12 +1917,36 @@ func buildSchemas() map[string]*OpenAPISchema {
 				"admin_permissions": {Type: "array", Items: &OpenAPISchema{Type: "string"}, Description: "Admin permission names"},
 			},
 		},
+		"QueryValidateRequest": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"query":         {Type: "string", Description: "SQL to validate; may contain several statements"},
+				"database_name": {Type: "string", Description: "Database to validate against; defaults to the connection's database"},
+			},
+			Required: []string{"query"},
+		},
+		"QueryValidateResponse": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"valid":            {Type: "boolean", Description: "True when no statement was rejected; an unsupported statement does not make the request invalid"},
+				"total_statements": {Type: "integer", Description: "Number of statements the SQL was split into"},
+				"statements":       {Type: "array", Items: &OpenAPISchema{Ref: "#/components/schemas/QueryValidationStatement"}, Description: "Per-statement validation results, in the order the statements appeared"},
+			},
+		},
+		"QueryValidationStatement": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"query":  {Type: "string", Description: "The statement as it was submitted"},
+				"status": {Type: "string", Enum: []string{"valid", "invalid", "unsupported"}, Description: "valid when EXPLAIN planned the statement, invalid when EXPLAIN rejected it, unsupported when the statement could not be checked, for example because EXPLAIN cannot plan this kind of statement or planning timed out"},
+				"error":  {Type: "string", Description: "The sanitized PostgreSQL message when the status is invalid, or the reason validation was not possible when the status is unsupported"},
+			},
+		},
 		"TokenScopeRequest": {
 			Type: "object",
 			Properties: map[string]*OpenAPISchema{
-				"connections":       {Type: "array", Items: &OpenAPISchema{Type: "object"}, Description: "Connection scope entries"},
-				"mcp_privileges":    {Type: "array", Items: &OpenAPISchema{Type: "string"}, Description: "MCP privilege names"},
-				"admin_permissions": {Type: "array", Items: &OpenAPISchema{Type: "string"}, Description: "Admin permission names"},
+				"connections":       {Type: "array", Items: &OpenAPISchema{Type: "object"}, Nullable: true, Description: "Connection scope entries. Omit or send null to leave this kind unchanged; an empty array is refused with 400."},
+				"mcp_privileges":    {Type: "array", Items: &OpenAPISchema{Type: "string"}, Nullable: true, Description: "MCP privilege names. Omit or send null to leave this kind unchanged; an empty array is refused with 400."},
+				"admin_permissions": {Type: "array", Items: &OpenAPISchema{Type: "string"}, Nullable: true, Description: "Admin permission names. Omit or send null to leave this kind unchanged; an empty array is refused with 400."},
 			},
 		},
 	}
@@ -1688,6 +1971,56 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"401": jsonResponse("ErrorResponse", "Invalid credentials"),
 					"429": jsonResponse("ErrorResponse", "Too many failed attempts"),
 					"503": jsonResponse("ErrorResponse", "Authentication not configured"),
+				},
+			},
+		},
+		"/auth/oidc/start": {
+			Get: &OpenAPIOperation{
+				Summary: "Start a federated login",
+				Description: "Redirects the browser to the identity provider to begin an " +
+					"OIDC login. Sets a short-lived, sealed state cookie before " +
+					"redirecting. On a deployment where OIDC is disabled or no " +
+					"provider was discovered at start-up, redirects to \"/\" with " +
+					"login_error set to \"provider\" instead, so that a browser " +
+					"following the link lands back on the login screen rather " +
+					"than on an error page.",
+				OperationID: "startOIDCLogin",
+				Tags:        []string{"Authentication"},
+				Parameters: []OpenAPIParameter{
+					queryParamString("return", "Path to return to after a successful login"),
+				},
+				Responses: map[string]OpenAPIResponse{
+					"302": {Description: "Redirect to the identity provider, or to \"/\" with login_error set when OIDC login is not enabled"},
+					"405": {Description: "Method not allowed; the Allow header names GET"},
+					"429": jsonResponse("ErrorResponse", "Too many login requests from this address"),
+					"500": jsonResponse("ErrorResponse", "Failed to create or seal the login state"),
+				},
+			},
+		},
+		"/auth/oidc/callback": {
+			Get: &OpenAPIOperation{
+				Summary: "Complete a federated login",
+				Description: "The identity provider returns the browser here after the " +
+					"consent screen. On success, sets the session cookie and " +
+					"redirects to the original return path; on failure, redirects " +
+					"to \"/\" with a login_error query parameter (\"provider\" when " +
+					"the identity provider itself declined, \"login\" for every " +
+					"failure on this side). Not registered at all, and so answers " +
+					"404, on a deployment where OIDC is disabled or no provider was " +
+					"discovered at start-up.",
+				OperationID: "completeOIDCLogin",
+				Tags:        []string{"Authentication"},
+				Parameters: []OpenAPIParameter{
+					queryParamString("code", "Authorization code issued by the identity provider"),
+					queryParamString("state", "Opaque value that must match the sealed state cookie"),
+					queryParamString("error", "Error code reported by the identity provider instead of a code"),
+				},
+				Responses: map[string]OpenAPIResponse{
+					"302": {Description: "Redirect to the return path on success, or to \"/\" with login_error set on failure"},
+					"400": jsonResponse("ErrorResponse", "Missing or invalid state cookie, state mismatch, a state that has already been used, or missing authorization code"),
+					"404": {Description: "OIDC login is not enabled"},
+					"405": {Description: "Method not allowed; the Allow header names GET"},
+					"429": jsonResponse("ErrorResponse", "Too many callback requests from this address"),
 				},
 			},
 		},
@@ -1809,9 +2142,10 @@ func buildPaths() map[string]OpenAPIPathItem {
 				RequestBody: jsonRequestBody("ConnectionClusterUpdateRequest", "Cluster assignment update", true),
 				Responses: map[string]OpenAPIResponse{
 					"200": jsonResponse("ConnectionClusterInfo", "Updated cluster assignment"),
-					"400": jsonResponse("ErrorResponse", "Invalid request"),
+					"400": jsonResponse("ErrorResponse", "Invalid request or role"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Permission denied: requires manage_connections permission"),
+					"403": jsonResponse("ErrorResponse", "Permission denied: requires manage_connections permission, or the API token's connection scope does not cover the target"),
+					"404": jsonResponse("ErrorResponse", "Connection or cluster not found, or the cluster is not visible to the caller"),
 					"500": jsonResponse("ErrorResponse", "Failed to assign connection to cluster"),
 				},
 			},
@@ -1831,6 +2165,26 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"403": jsonResponse("ErrorResponse", "Access denied"),
 					"404": jsonResponse("ErrorResponse", "Connection not found"),
 					"500": jsonResponse("ErrorResponse", "Failed to list databases"),
+				},
+			},
+		},
+
+		"/connections/{id}/query/validate": {
+			Post: &OpenAPIOperation{
+				Summary:     "Validate SQL without executing it",
+				Description: "Plans each statement of the supplied SQL with EXPLAIN inside a read-only transaction that is always rolled back, so nothing is executed. Statements are split with a SQL-aware tokeniser and each is planned over the extended query protocol, which refuses more than one command, so SQL the tokeniser fails to divide is rejected rather than run. A statement carrying $N parameter placeholders is planned with EXPLAIN (GENERIC_PLAN) on PostgreSQL 16 and later, and reported as unsupported on older servers. Requires read access to the connection; no write permission is needed and no confirmation is involved.",
+				OperationID: "validateConnectionQuery",
+				Tags:        []string{"Connections"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{pathParamInt("id", "Connection ID")},
+				RequestBody: jsonRequestBody("QueryValidateRequest", "SQL to validate", true),
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonResponse("QueryValidateResponse", "Validation result for every statement"),
+					"400": jsonResponse("ErrorResponse", "Query is required, or the database name is invalid"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Permission denied: you do not have access to this connection"),
+					"404": jsonResponse("ErrorResponse", "Connection not found"),
+					"500": jsonResponse("ErrorResponse", "Failed to validate query"),
 				},
 			},
 		},
@@ -1900,7 +2254,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"201": jsonResponse("Cluster", "Cluster created"),
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission, or the API token's connection scope does not cover every connection"),
 				},
 			},
 		},
@@ -1931,7 +2285,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"200": jsonResponse("Cluster", "Updated cluster"),
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission, or the API token's connection scope does not cover the target"),
 					"404": jsonResponse("ErrorResponse", "Cluster not found"),
 				},
 			},
@@ -1945,7 +2299,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 				Responses: map[string]OpenAPIResponse{
 					"204": {Description: "Cluster deleted"},
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission, or the API token's connection scope does not cover the target"),
 					"404": jsonResponse("ErrorResponse", "Cluster not found"),
 				},
 			},
@@ -1975,9 +2329,9 @@ func buildPaths() map[string]OpenAPIPathItem {
 				RequestBody: jsonRequestBody("AddServerToClusterRequest", "Server assignment details", true),
 				Responses: map[string]OpenAPIResponse{
 					"204": {Description: "Server added to cluster"},
-					"400": jsonResponse("ErrorResponse", "Invalid request"),
+					"400": jsonResponse("ErrorResponse", "Invalid request or role"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission, or the API token's connection scope does not cover the target"),
 				},
 			},
 		},
@@ -2007,7 +2361,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"201": jsonResponse("ClusterGroup", "Group created"),
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission, or the API token's connection scope does not cover every connection"),
 				},
 			},
 		},
@@ -2038,8 +2392,8 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"200": jsonResponse("ClusterGroup", "Updated group"),
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Forbidden"),
-					"404": jsonResponse("ErrorResponse", "Group not found"),
+					"403": jsonResponse("ErrorResponse", "Forbidden, or the API token's connection scope does not cover every connection"),
+					"404": jsonResponse("ErrorResponse", "Group not found, or not visible to the caller"),
 				},
 			},
 			Delete: &OpenAPIOperation{
@@ -2052,7 +2406,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 				Responses: map[string]OpenAPIResponse{
 					"204": {Description: "Group deleted"},
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission or ownership of the cluster group"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission or ownership of the cluster group, or the API token's connection scope does not cover every connection"),
 					"404": jsonResponse("ErrorResponse", "Group not found"),
 				},
 			},
@@ -2084,7 +2438,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"201": jsonResponse("Cluster", "Cluster created"),
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission, or the API token's connection scope does not cover every connection"),
 				},
 			},
 		},
@@ -2093,7 +2447,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/alerts": {
 			Get: &OpenAPIOperation{
 				Summary:     "List alerts",
-				Description: "Returns alerts with optional filtering",
+				Description: "Returns alerts with optional filtering. System alerts, which belong to no connection, are included only when neither connection_id nor connection_ids is given",
 				OperationID: "listAlerts",
 				Tags:        []string{"Alerts"},
 				Security:    bearerAuth,
@@ -2120,7 +2474,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/alerts/counts": {
 			Get: &OpenAPIOperation{
 				Summary:     "Get alert counts by server",
-				Description: "Returns counts of active alerts grouped by server and severity",
+				Description: "Returns counts of active alerts grouped by server, with system alerts counted separately",
 				OperationID: "getAlertCounts",
 				Tags:        []string{"Alerts"},
 				Security:    bearerAuth,
@@ -2135,7 +2489,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/alerts/acknowledge": {
 			Post: &OpenAPIOperation{
 				Summary:     "Acknowledge an alert",
-				Description: "Acknowledges an alert with an optional message",
+				Description: "Acknowledges an alert with an optional message. An alert on a connection needs access to that connection; a system alert, which has no connection, needs a superuser or the manage_alert_rules admin permission, and an API token must also hold manage_alert_rules in its admin scope if it has one",
 				OperationID: "acknowledgeAlert",
 				Tags:        []string{"Alerts"},
 				Security:    bearerAuth,
@@ -2162,7 +2516,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 			},
 			Delete: &OpenAPIOperation{
 				Summary:     "Unacknowledge an alert",
-				Description: "Removes acknowledgement from an alert",
+				Description: "Removes acknowledgement from an alert. An alert on a connection needs access to that connection; a system alert needs a superuser or the manage_alert_rules admin permission, bounded by an API token's admin scope as for acknowledgement",
 				OperationID: "unacknowledgeAlert",
 				Tags:        []string{"Alerts"},
 				Security:    bearerAuth,
@@ -2228,7 +2582,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"200": jsonResponse("StatusResponse", "Override saved"),
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Permission denied"),
+					"403": jsonResponse("ErrorResponse", "Permission denied, or the API token's connection scope does not cover the target"),
 					"503": jsonResponse("ErrorResponse", "Datastore not configured"),
 				},
 			},
@@ -2246,7 +2600,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 				Responses: map[string]OpenAPIResponse{
 					"200": jsonResponse("StatusResponse", "Override deleted"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Permission denied"),
+					"403": jsonResponse("ErrorResponse", "Permission denied, or the API token's connection scope does not cover the target"),
 					"503": jsonResponse("ErrorResponse", "Datastore not configured"),
 				},
 			},
@@ -2609,7 +2963,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"204": {Description: "Server removed from cluster"},
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission, or the API token's connection scope does not cover the target"),
 				},
 			},
 		},
@@ -2650,7 +3004,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"204": {Description: "Relationship deleted"},
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission, or the API token's connection scope does not cover the target"),
 				},
 			},
 		},
@@ -2672,7 +3026,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"204": {Description: "Relationships updated"},
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission, or the API token's connection scope does not cover the target"),
 					"404": jsonResponse("ErrorResponse", "Cluster or connection not found"),
 				},
 			},
@@ -2690,7 +3044,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"204": {Description: "Relationships cleared"},
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission, or the API token's connection scope does not cover the target"),
 					"404": jsonResponse("ErrorResponse", "Cluster or connection not found"),
 				},
 			},
@@ -2700,7 +3054,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/alerts/analysis": {
 			Put: &OpenAPIOperation{
 				Summary:     "Save AI analysis for alert",
-				Description: "Saves an AI-generated analysis for a specific alert",
+				Description: "Saves an AI-generated analysis for a specific alert, which needs access to the alert's connection. A system alert has no connection or metric to explain, so saving analysis on one is refused with 400 to every caller who may see system alerts, and with 403 to any caller who may not",
 				OperationID: "saveAlertAnalysis",
 				Tags:        []string{"Alerts"},
 				Security:    bearerAuth,
@@ -2712,7 +3066,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 							"application/json": {Schema: &OpenAPISchema{Type: "object", Properties: map[string]*OpenAPISchema{"status": {Type: "string"}}}},
 						},
 					},
-					"400": jsonResponse("ErrorResponse", "Invalid request"),
+					"400": jsonResponse("ErrorResponse", "Invalid request, or the alert is a system alert"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
 					"403": jsonResponse("ErrorResponse", "Access denied"),
 				},
@@ -2760,7 +3114,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"200": jsonResponse("AlertRule", "Updated alert rule"),
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_alert_rules permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_alert_rules permission, or the API token's connection scope does not cover the target"),
 					"404": jsonResponse("ErrorResponse", "Alert rule not found"),
 				},
 			},
@@ -2799,7 +3153,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"201": jsonResponse("Blackout", "Blackout created"),
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_blackouts permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_blackouts permission, or the API token's connection scope does not cover the target"),
 				},
 			},
 		},
@@ -2830,7 +3184,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"200": jsonResponse("Blackout", "Updated blackout"),
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_blackouts permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_blackouts permission, or the API token's connection scope does not cover the target"),
 					"404": jsonResponse("ErrorResponse", "Blackout not found"),
 				},
 			},
@@ -2849,7 +3203,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 						},
 					},
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_blackouts permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_blackouts permission, or the API token's connection scope does not cover the target"),
 					"404": jsonResponse("ErrorResponse", "Blackout not found"),
 				},
 			},
@@ -2866,7 +3220,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 				Responses: map[string]OpenAPIResponse{
 					"200": jsonResponse("Blackout", "Stopped blackout"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_blackouts permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_blackouts permission, or the API token's connection scope does not cover the target"),
 					"404": jsonResponse("ErrorResponse", "Blackout not found"),
 				},
 			},
@@ -2905,7 +3259,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"201": jsonResponse("BlackoutSchedule", "Schedule created"),
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_blackouts permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_blackouts permission, or the API token's connection scope does not cover the target"),
 				},
 			},
 		},
@@ -2936,7 +3290,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"200": jsonResponse("BlackoutSchedule", "Updated schedule"),
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_blackouts permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_blackouts permission, or the API token's connection scope does not cover the target"),
 					"404": jsonResponse("ErrorResponse", "Schedule not found"),
 				},
 			},
@@ -2955,7 +3309,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 						},
 					},
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_blackouts permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_blackouts permission, or the API token's connection scope does not cover the target"),
 					"404": jsonResponse("ErrorResponse", "Schedule not found"),
 				},
 			},
@@ -3003,7 +3357,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"200": jsonResponse("ProbeConfig", "Updated probe configuration"),
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_probes permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_probes permission, or the API token's connection scope does not cover the target"),
 					"404": jsonResponse("ErrorResponse", "Probe config not found"),
 				},
 			},
@@ -3051,7 +3405,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					},
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_probes permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_probes permission, or the API token's connection scope does not cover the target"),
 				},
 			},
 			Delete: &OpenAPIOperation{
@@ -3073,7 +3427,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 						},
 					},
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_probes permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_probes permission, or the API token's connection scope does not cover the target"),
 				},
 			},
 		},
@@ -3102,7 +3456,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"201": jsonResponse("NotificationChannel", "Channel created"),
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_notification_channels permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_notification_channels permission, or the API token's connection scope does not cover the target"),
 				},
 			},
 		},
@@ -3133,7 +3487,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"200": jsonResponse("NotificationChannel", "Updated channel"),
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_notification_channels permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_notification_channels permission, or the API token's connection scope does not cover the target"),
 					"404": jsonResponse("ErrorResponse", "Channel not found"),
 				},
 			},
@@ -3152,7 +3506,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 						},
 					},
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_notification_channels permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_notification_channels permission, or the API token's connection scope does not cover the target"),
 					"404": jsonResponse("ErrorResponse", "Channel not found"),
 				},
 			},
@@ -3207,7 +3561,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"201": jsonResponse("EmailRecipient", "Recipient added"),
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_notification_channels permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_notification_channels permission, or the API token's connection scope does not cover the target"),
 				},
 			},
 		},
@@ -3228,7 +3582,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"200": jsonResponse("EmailRecipient", "Updated recipient"),
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_notification_channels permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_notification_channels permission, or the API token's connection scope does not cover the target"),
 				},
 			},
 			Delete: &OpenAPIOperation{
@@ -3249,7 +3603,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 						},
 					},
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_notification_channels permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_notification_channels permission, or the API token's connection scope does not cover the target"),
 				},
 			},
 		},
@@ -3296,7 +3650,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					},
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_notification_channels permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_notification_channels permission, or the API token's connection scope does not cover the target"),
 				},
 			},
 			Delete: &OpenAPIOperation{
@@ -3318,7 +3672,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 						},
 					},
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_notification_channels permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_notification_channels permission, or the API token's connection scope does not cover the target"),
 				},
 			},
 		},
@@ -3354,6 +3708,8 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"400": jsonResponse("ErrorResponse", "Invalid connection ID"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
 					"403": jsonResponse("ErrorResponse", "Permission denied"),
+					"502": jsonResponse("ErrorResponse",
+						"The model returned no usable analysis text"),
 				},
 			},
 		},
@@ -3367,7 +3723,8 @@ func buildPaths() map[string]OpenAPIPathItem {
 				Tags:        []string{"Metrics"},
 				Security:    bearerAuth,
 				Parameters: []OpenAPIParameter{
-					queryParamString("connection_ids", "Comma-separated connection IDs"),
+					queryParamString("connection_ids",
+						"Comma-separated connection IDs; at most 100 per request"),
 					queryParamInt("connection_id", "Single connection ID"),
 					queryParamStringRequired("probe_name", "Probe name to query"),
 					queryParamString("time_range",
@@ -3380,10 +3737,32 @@ func buildPaths() map[string]OpenAPIPathItem {
 					queryParamString("schema_name", "Filter by schema name"),
 					queryParamString("table_name", "Filter by table name"),
 					queryParamString("index_name", "Filter by index name"),
+					queryParamString("mount_point", "Filter by filesystem mount point"),
 					queryParamString("queryid", "Filter by pg_stat_statements query ID"),
-					queryParamInt("buckets", "Number of time buckets"),
-					queryParamString("aggregation", "Aggregation method"),
-					queryParamString("metrics", "Comma-separated metric names"),
+					queryParamInt("buckets", "Number of time buckets, "+
+						"1 to 500 (default 150). The count is clamped so "+
+						"that no bucket is narrower than the probe's "+
+						"collection interval; a one-hour window on a "+
+						"five-minute probe therefore yields at most 12 "+
+						"buckets however many are requested."),
+					queryParamEnum("aggregation",
+						"How samples within a bucket are combined "+
+							"(default avg). Ignored for _delta metrics, "+
+							"which always sum the increases in the bucket.",
+						[]string{"avg", "sum", "min", "max", "last"}),
+					queryParamString("metrics", "Comma-separated metric names. "+
+						"A name may be a raw probe column; a cumulative "+
+						"counter column suffixed with _per_sec for its "+
+						"per-second rate or _delta for its per-bucket "+
+						"increase; a cumulative time counter (milliseconds) "+
+						"suffixed with _pct for the share of wall-clock time "+
+						"it advanced by, or a session time counter suffixed "+
+						"with _sessions for the average number of sessions "+
+						"it represents; or dead_tuple_ratio on a probe "+
+						"exposing n_live_tup and n_dead_tup. A real column of "+
+						"that name always takes precedence, and a suffix on "+
+						"a column of the wrong kind (for example _per_sec "+
+						"on a gauge) is rejected with 400."),
 				},
 				Responses: map[string]OpenAPIResponse{
 					"200": jsonResponse("MetricsQueryResult", "Metrics query results"),
@@ -3422,9 +3801,15 @@ func buildPaths() map[string]OpenAPIPathItem {
 				Tags:        []string{"Metrics"},
 				Security:    bearerAuth,
 				Parameters: []OpenAPIParameter{
-					queryParamString("connection_ids", "Comma-separated connection IDs"),
+					queryParamString("connection_ids",
+						"Comma-separated connection IDs; at most 100 per request"),
 					queryParamInt("connection_id", "Single connection ID"),
-					queryParamString("time_range", "Time range (1h, 6h, 24h, 7d, 30d)"),
+					queryParamString("time_range",
+						"Time range (1h, 6h, 24h, 7d, 30d, custom; default: 1h); custom requires time_start and time_end, and the span must not exceed 30 days"),
+					queryParamString("time_start",
+						"Window start as an RFC 3339 timestamp; required when time_range is custom"),
+					queryParamString("time_end",
+						"Window end as an RFC 3339 timestamp; required when time_range is custom"),
 				},
 				Responses: map[string]OpenAPIResponse{
 					"200": jsonResponse("PerfSummaryResponse", "Performance summary"),
@@ -3444,13 +3829,19 @@ func buildPaths() map[string]OpenAPIPathItem {
 				Security:    bearerAuth,
 				Parameters: []OpenAPIParameter{
 					queryParamIntRequired("connection_id", "Connection ID"),
-					queryParamString("time_range", "Time range (1h, 6h, 24h, 7d, 30d)"),
+					queryParamString("time_range",
+						"Time range (1h, 6h, 24h, 7d, 30d, custom; default: 24h); custom requires time_start and time_end, and the span must not exceed 30 days"),
+					queryParamString("time_start",
+						"Window start as an RFC 3339 timestamp; required when time_range is custom"),
+					queryParamString("time_end",
+						"Window end as an RFC 3339 timestamp; required when time_range is custom"),
 				},
 				Responses: map[string]OpenAPIResponse{
-					"200": jsonResponse("DatabaseSummaryResponse", "Database summaries"),
+					"200": jsonResponse("DatabaseSummaryResponse", "Database summaries; an empty databases array when the metrics schema has not been created"),
 					"400": jsonResponse("ErrorResponse", "Invalid parameters"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
 					"403": jsonResponse("ErrorResponse", "Permission denied"),
+					"500": jsonResponse("ErrorResponse", "Failed to query database summaries"),
 				},
 			},
 		},
@@ -3458,7 +3849,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/metrics/top-queries": {
 			Get: &OpenAPIOperation{
 				Summary:     "Get top queries",
-				Description: "Returns the top queries by execution time, calls, or other metrics",
+				Description: "Returns the top queries by execution time, calls, or other metrics over the requested time range. The counters are cumulative in pg_stat_statements, so calls, rows, total_exec_time and the shared block counts are the summed differences between consecutive samples in the window, and mean_exec_time is derived from those sums; min_exec_time and max_exec_time remain lifetime values taken from the latest sample in the window. A statement with no executions in the window is not reported",
 				OperationID: "getTopQueries",
 				Tags:        []string{"Metrics"},
 				Security:    bearerAuth,
@@ -3474,6 +3865,12 @@ func buildPaths() map[string]OpenAPIPathItem {
 						"Exclude Workbench-internal queries, including "+
 							"collector probe queries and the collector's "+
 							"and alerter's own datastore queries"),
+					queryParamString("time_range",
+						"Time range (1h, 6h, 24h, 7d, 30d, custom; default: 1h); custom requires time_start and time_end, and the span must not exceed 30 days"),
+					queryParamString("time_start",
+						"Window start as an RFC 3339 timestamp; required when time_range is custom"),
+					queryParamString("time_end",
+						"Window end as an RFC 3339 timestamp; required when time_range is custom"),
 				},
 				Responses: map[string]OpenAPIResponse{
 					"200": jsonArrayResponseWithHeaders("TopQueryRow", "Top queries",
@@ -3481,6 +3878,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"400": jsonResponse("ErrorResponse", "Invalid parameters"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
 					"403": jsonResponse("ErrorResponse", "Permission denied"),
+					"500": jsonResponse("ErrorResponse", "Failed to query top queries"),
 				},
 			},
 		},
@@ -3511,6 +3909,34 @@ func buildPaths() map[string]OpenAPIPathItem {
 			},
 		},
 
+		"/metrics/query-stats": {
+			Get: &OpenAPIOperation{
+				Summary:     "Get period-scoped query statistics",
+				Description: "Returns the average execution time, call count, and total execution time of a single query over the requested time range, computed from the deltas between consecutive pg_stat_statements samples",
+				OperationID: "getQueryStats",
+				Tags:        []string{"Metrics"},
+				Security:    bearerAuth,
+				Parameters: []OpenAPIParameter{
+					queryParamIntRequired("connection_id", "Connection ID"),
+					queryParamStringRequired("queryid", "Query ID to report on"),
+					queryParamString("database_name",
+						"Restrict the statistics to the query's executions in this database"),
+					queryParamString("time_range",
+						"Time range (1h, 6h, 24h, 7d, 30d, custom; default: 1h); custom requires time_start and time_end"),
+					queryParamString("time_start",
+						"Window start as an RFC 3339 timestamp; required when time_range is custom"),
+					queryParamString("time_end",
+						"Window end as an RFC 3339 timestamp; required when time_range is custom"),
+				},
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonResponse("QueryStatsResponse", "Period-scoped query statistics"),
+					"400": jsonResponse("ErrorResponse", "Invalid parameters"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Permission denied"),
+				},
+			},
+		},
+
 		"/metrics/latest": {
 			Get: &OpenAPIOperation{
 				Summary:     "Get latest probe snapshot",
@@ -3522,7 +3948,9 @@ func buildPaths() map[string]OpenAPIPathItem {
 					queryParamIntRequired("connection_id", "Connection ID"),
 					queryParamStringRequired("probe_name", "Probe table name (e.g. pg_stat_all_tables)"),
 					queryParamString("database_name", "Filter by database name"),
-					queryParamString("order_by", "Column to sort by (default: collected_at)"),
+					queryParamString("exclude_schemas", "Comma-separated schema names to exclude (probes with a schemaname column only; 'none' excludes nothing)"),
+					queryParamBool("exclude_system_schemas", "Exclude pg_catalog, information_schema and pg_toast* schemas, as pg_stat_user_tables does (probes with a schemaname column only)"),
+					queryParamString("order_by", "Column to sort by (default: the first entity key column)"),
 					queryParamString("order", "Sort order: asc or desc (default: desc)"),
 					queryParamInt("limit", "Maximum rows to return (default 20, max 100)"),
 				},
@@ -3723,7 +4151,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 			},
 			Post: &OpenAPIOperation{
 				Summary:     "Create user",
-				Description: "Creates a new user or service account. Requires manage_users permission.",
+				Description: "Creates a new user or service account. Requires manage_users permission; setting is_superuser also requires the caller to be a superuser.",
 				OperationID: "createUser",
 				Tags:        []string{"RBAC Users"},
 				Security:    bearerAuth,
@@ -3742,7 +4170,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					},
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_users permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_users permission, and superuser privileges to send is_superuser; also refused for an API token when the new user would exceed this token's access, which is its owner's privileges narrowed by its scope: a superuser needs a superuser's token unrestricted in every scope kind, and any other new user reaches the shared connections no group restricts, any connection its username already owns, every member connection of a cluster group its username owns, and the public MCP items"),
 				},
 			},
 		},
@@ -3750,7 +4178,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/rbac/users/{id}": {
 			Put: &OpenAPIOperation{
 				Summary:     "Update user",
-				Description: "Updates a user's details. Requires manage_users permission.",
+				Description: "Updates a user's details. Requires manage_users permission; setting or clearing is_superuser also requires the caller to be a superuser, as does updating any user who is already a superuser. Demoting or disabling the last enabled superuser is refused with 409.",
 				OperationID: "updateUser",
 				Tags:        []string{"RBAC Users"},
 				Security:    bearerAuth,
@@ -3770,13 +4198,14 @@ func buildPaths() map[string]OpenAPIPathItem {
 					},
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_users permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_users permission, and superuser privileges to send is_superuser or to update a superuser; also refused for an API token when setting is_superuser without being a superuser's token unrestricted in every scope kind, or when setting the password of or re-enabling a user whose group grants, unrestricted connections, owned connections, owned cluster groups' member connections or public MCP items exceed the API token's access (its owner's privileges narrowed by its scope)"),
 					"404": jsonResponse("ErrorResponse", "User not found"),
+					"409": jsonResponse("ErrorResponse", "Cannot demote, disable or delete the last enabled superuser"),
 				},
 			},
 			Delete: &OpenAPIOperation{
 				Summary:     "Delete user",
-				Description: "Deletes a user. Requires manage_users permission.",
+				Description: "Deletes a user. Requires manage_users permission, and superuser privileges when the user being deleted is a superuser. Deleting the last enabled superuser is refused with 409.",
 				OperationID: "deleteUser",
 				Tags:        []string{"RBAC Users"},
 				Security:    bearerAuth,
@@ -3784,8 +4213,9 @@ func buildPaths() map[string]OpenAPIPathItem {
 				Responses: map[string]OpenAPIResponse{
 					"204": {Description: "User deleted"},
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_users permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_users permission, and superuser privileges to delete a superuser; also refused when everything the user reaches exceeds the API token's access (its owner's privileges narrowed by its scope), since connection ownership is recorded by username and passes to whoever recreates the name"),
 					"404": jsonResponse("ErrorResponse", "User not found"),
+					"409": jsonResponse("ErrorResponse", "Cannot demote, disable or delete the last enabled superuser"),
 				},
 			},
 		},
@@ -3857,7 +4287,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					},
 					"400": jsonResponse("ErrorResponse", "Invalid request body or group name"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_groups permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_groups permission, or the name is one the OIDC group map uses and the API token is not a superuser's token unrestricted in every scope kind"),
 					"409": jsonResponse("ErrorResponse", "A group with this name already exists"),
 				},
 			},
@@ -3890,9 +4320,10 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"200": jsonResponse("RBACGroup", "Updated group"),
 					"400": jsonResponse("ErrorResponse", "Invalid request body, group name, or empty payload"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_groups permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_groups permission, or the request renames a group whose access exceeds the API token's access (its owner's privileges narrowed by its scope), or the old or new name is one the OIDC group map uses and the API token is not a superuser's token unrestricted in every scope kind"),
 					"404": jsonResponse("ErrorResponse", "Group not found"),
 					"409": jsonResponse("ErrorResponse", "A group with this name already exists"),
+					"500": jsonResponse("ErrorResponse", "The group could not be read to check a rename against the API token's scope"),
 				},
 			},
 			Delete: &OpenAPIOperation{
@@ -3905,7 +4336,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 				Responses: map[string]OpenAPIResponse{
 					"204": {Description: "Group deleted"},
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_groups permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_groups permission; an API token also needs read access to every connection membership of the group confers, and read_write on each connection whose last group grant the group holds, since deleting it lifts the restriction (an all-connections grant restricts no connection), decided in the delete's own transaction; or the group's name is one the OIDC group map uses and the token is not a superuser's token unrestricted in every scope kind"),
 				},
 			},
 		},
@@ -3923,7 +4354,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"204": {Description: "Member added"},
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_groups permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_groups permission, or the access the group confers, through its own grants and those of every group it belongs to, exceeds the API token's access (its owner's privileges narrowed by its scope) at any connection's level, MCP item or admin permission"),
 				},
 			},
 		},
@@ -3944,7 +4375,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"204": {Description: "Member removed"},
 					"400": jsonResponse("ErrorResponse", "Invalid member type"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_groups permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_groups permission; an API token also needs read access to every connection membership of the group confers"),
 				},
 			},
 		},
@@ -3967,41 +4398,46 @@ func buildPaths() map[string]OpenAPIPathItem {
 		},
 
 		"/rbac/groups/{id}/privileges/mcp": {
-			Get: &OpenAPIOperation{
-				Summary:     "Get group MCP privileges",
-				Description: "Returns the MCP tool privileges assigned to a group",
-				OperationID: "getGroupMCPPrivileges",
-				Tags:        []string{"RBAC Groups"},
-				Security:    bearerAuth,
-				Parameters:  []OpenAPIParameter{pathParamInt("id", "Group ID")},
-				Responses: map[string]OpenAPIResponse{
-					"200": {
-						Description: "MCP privileges",
-						Content: map[string]OpenAPIMediaType{
-							"application/json": {Schema: &OpenAPISchema{Type: "object"}},
-						},
-					},
-					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_permissions permission"),
-				},
-			},
-			Put: &OpenAPIOperation{
-				Summary:     "Set group MCP privileges",
-				Description: "Sets the MCP tool privileges for a group",
-				OperationID: "setGroupMCPPrivileges",
+			Post: &OpenAPIOperation{
+				Summary:     "Grant a group an MCP privilege",
+				Description: "Grants a group one MCP tool, resource or prompt privilege by identifier, or the wildcard '*' for every item",
+				OperationID: "grantGroupMCPPrivilege",
 				Tags:        []string{"RBAC Groups"},
 				Security:    bearerAuth,
 				Parameters:  []OpenAPIParameter{pathParamInt("id", "Group ID")},
 				RequestBody: &OpenAPIRequestBody{
-					Description: "MCP privileges to set",
+					Description: "MCP privilege to grant",
 					Required:    true,
 					Content: map[string]OpenAPIMediaType{
-						"application/json": {Schema: &OpenAPISchema{Type: "object"}},
+						"application/json": {Schema: &OpenAPISchema{
+							Type: "object",
+							Properties: map[string]*OpenAPISchema{
+								"privilege": {Type: "string", Description: "MCP privilege identifier, or '*'"},
+							},
+							Required: []string{"privilege"},
+						}},
 					},
 				},
 				Responses: map[string]OpenAPIResponse{
-					"200": {Description: "Privileges updated"},
-					"400": jsonResponse("ErrorResponse", "Invalid request"),
+					"204": {Description: "Privilege granted"},
+					"400": jsonResponse("ErrorResponse", "Privilege is required"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_permissions permission, or the privilege being granted is one the API token's access (its owner's privileges narrowed by its scope) cannot call; the wildcard needs a token whose owner holds it and whose MCP scope is unrestricted"),
+				},
+			},
+			Delete: &OpenAPIOperation{
+				Summary:     "Revoke an MCP privilege from a group",
+				Description: "Revokes one MCP privilege, named by the name query parameter, from a group",
+				OperationID: "revokeGroupMCPPrivilege",
+				Tags:        []string{"RBAC Groups"},
+				Security:    bearerAuth,
+				Parameters: []OpenAPIParameter{
+					pathParamInt("id", "Group ID"),
+					queryParamStringRequired("name", "MCP privilege identifier to revoke"),
+				},
+				Responses: map[string]OpenAPIResponse{
+					"204": {Description: "Privilege revoked"},
+					"400": jsonResponse("ErrorResponse", "Query parameter 'name' is required"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
 					"403": jsonResponse("ErrorResponse", "Requires manage_permissions permission"),
 				},
@@ -4009,43 +4445,52 @@ func buildPaths() map[string]OpenAPIPathItem {
 		},
 
 		"/rbac/groups/{id}/privileges/connections": {
-			Get: &OpenAPIOperation{
-				Summary:     "Get group connection privileges",
-				Description: "Returns the connection-level privileges assigned to a group",
-				OperationID: "getGroupConnectionPrivileges",
-				Tags:        []string{"RBAC Groups"},
-				Security:    bearerAuth,
-				Parameters:  []OpenAPIParameter{pathParamInt("id", "Group ID")},
-				Responses: map[string]OpenAPIResponse{
-					"200": {
-						Description: "Connection privileges",
-						Content: map[string]OpenAPIMediaType{
-							"application/json": {Schema: &OpenAPISchema{Type: "object"}},
-						},
-					},
-					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_permissions permission"),
-				},
-			},
-			Put: &OpenAPIOperation{
-				Summary:     "Set group connection privileges",
-				Description: "Sets the connection-level privileges for a group",
-				OperationID: "setGroupConnectionPrivileges",
+			Post: &OpenAPIOperation{
+				Summary:     "Grant a group connection access",
+				Description: "Grants a group read or read_write access to one connection; connection_id 0 grants every connection",
+				OperationID: "grantGroupConnectionPrivilege",
 				Tags:        []string{"RBAC Groups"},
 				Security:    bearerAuth,
 				Parameters:  []OpenAPIParameter{pathParamInt("id", "Group ID")},
 				RequestBody: &OpenAPIRequestBody{
-					Description: "Connection privileges to set",
+					Description: "Connection privilege to grant",
 					Required:    true,
 					Content: map[string]OpenAPIMediaType{
-						"application/json": {Schema: &OpenAPISchema{Type: "object"}},
+						"application/json": {Schema: &OpenAPISchema{
+							Type: "object",
+							Properties: map[string]*OpenAPISchema{
+								"connection_id": {Type: "integer", Description: "Connection ID, or 0 for every connection"},
+								"access_level":  {Type: "string", Enum: []string{"read", "read_write"}, Description: "Access level to grant"},
+							},
+							Required: []string{"connection_id", "access_level"},
+						}},
 					},
 				},
 				Responses: map[string]OpenAPIResponse{
-					"200": {Description: "Privileges updated"},
-					"400": jsonResponse("ErrorResponse", "Invalid request"),
+					"204": {Description: "Privilege granted"},
+					"400": jsonResponse("ErrorResponse", "Invalid connection_id or access_level"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_permissions permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_permissions permission, or the access level being granted on the connection exceeds the API token's access (its owner's privileges narrowed by its scope); a token holding a connection read-only may grant read on it but not read_write, and the all-connections entry needs the token to hold every connection at that level"),
+				},
+			},
+		},
+
+		"/rbac/groups/{id}/privileges/connections/{connection_id}": {
+			Delete: &OpenAPIOperation{
+				Summary:     "Revoke a group's connection access",
+				Description: "Revokes a group's grant on one connection",
+				OperationID: "revokeGroupConnectionPrivilege",
+				Tags:        []string{"RBAC Groups"},
+				Security:    bearerAuth,
+				Parameters: []OpenAPIParameter{
+					pathParamInt("id", "Group ID"),
+					pathParamInt("connection_id", "Connection ID"),
+				},
+				Responses: map[string]OpenAPIResponse{
+					"204": {Description: "Privilege revoked"},
+					"400": jsonResponse("ErrorResponse", "Invalid connection ID"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_permissions permission; an API token also needs read access to the connection, and read_write when the grant is the connection's last, since revoking it lifts the restriction (an all-connections grant restricts no connection, so revoking one needs only read); whether it is the last is decided in the revoke's own transaction, so a concurrent revoke cannot slip past it. A connection the token cannot see is refused exactly as one that does not exist. A read-level token may revoke another group's read_write, since a revoke only narrows"),
 				},
 			},
 		},
@@ -4061,33 +4506,57 @@ func buildPaths() map[string]OpenAPIPathItem {
 				Responses: map[string]OpenAPIResponse{
 					"200": jsonResponse("GroupPermissionsResponse", "Group admin permissions"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_permissions permission"),
+					"403": jsonResponse("ErrorResponse", "Requires superuser privileges, and an API token whose admin scope is unrestricted"),
 				},
 			},
-			Put: &OpenAPIOperation{
-				Summary:     "Set group admin permissions",
-				Description: "Sets the admin permissions for a group",
-				OperationID: "setGroupPermissions",
+			Post: &OpenAPIOperation{
+				Summary:     "Grant a group an admin permission",
+				Description: "Grants a group one admin permission, or the wildcard '*' for every permission",
+				OperationID: "grantGroupPermission",
 				Tags:        []string{"RBAC Groups"},
 				Security:    bearerAuth,
 				Parameters:  []OpenAPIParameter{pathParamInt("id", "Group ID")},
 				RequestBody: &OpenAPIRequestBody{
-					Description: "Permissions to set",
+					Description: "Admin permission to grant",
 					Required:    true,
 					Content: map[string]OpenAPIMediaType{
-						"application/json": {Schema: &OpenAPISchema{Type: "object"}},
+						"application/json": {Schema: &OpenAPISchema{
+							Type: "object",
+							Properties: map[string]*OpenAPISchema{
+								"permission": {Type: "string", Description: "Admin permission name, or '*'"},
+							},
+							Required: []string{"permission"},
+						}},
 					},
 				},
 				Responses: map[string]OpenAPIResponse{
-					"200": {Description: "Permissions updated"},
-					"400": jsonResponse("ErrorResponse", "Invalid request"),
+					"204": {Description: "Permission granted"},
+					"400": jsonResponse("ErrorResponse", "Permission is required"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_permissions permission"),
+					"403": jsonResponse("ErrorResponse", "Requires superuser privileges, and an API token whose admin scope is unrestricted; the token must also hold the permission itself and every connection at read_write, and, to grant manage_users, manage_groups, manage_permissions, manage_token_scopes or the wildcard, every MCP item and admin permission"),
 				},
 			},
 		},
 
-		// RBAC Tokens
+		"/rbac/groups/{id}/permissions/{permission}": {
+			Delete: &OpenAPIOperation{
+				Summary:     "Revoke an admin permission from a group",
+				Description: "Revokes one admin permission from a group",
+				OperationID: "revokeGroupPermission",
+				Tags:        []string{"RBAC Groups"},
+				Security:    bearerAuth,
+				Parameters: []OpenAPIParameter{
+					pathParamInt("id", "Group ID"),
+					pathParamString("permission", "Admin permission name"),
+				},
+				Responses: map[string]OpenAPIResponse{
+					"204": {Description: "Permission revoked"},
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires superuser privileges, and an API token whose admin scope is unrestricted"),
+				},
+			},
+		},
+
 		"/rbac/tokens": {
 			Get: &OpenAPIOperation{
 				Summary:     "List all tokens",
@@ -4124,7 +4593,8 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"201": jsonResponse("TokenCreateResponse", "Token created with raw value"),
 					"400": jsonResponse("ErrorResponse", "Invalid request body or token name"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_token_scopes permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_token_scopes permission, or the new token owner's access exceeds the API token's access (its owner's privileges narrowed by its scope); a token for a superuser needs a superuser's token unrestricted in every scope kind, or a superuser's session"),
+					"500": jsonResponse("ErrorResponse", "Failed to create token, including when the owner could not be read"),
 				},
 			},
 		},
@@ -4140,7 +4610,8 @@ func buildPaths() map[string]OpenAPIPathItem {
 				Responses: map[string]OpenAPIResponse{
 					"204": {Description: "Token deleted"},
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_token_scopes permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_token_scopes permission; a token owned by a superuser may be deleted only by a superuser's session, or a superuser's token with an unrestricted admin scope, or by that token itself"),
+					"500": jsonResponse("ErrorResponse", "Failed to delete token"),
 				},
 			},
 		},
@@ -4157,11 +4628,13 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"200": jsonResponse("TokenScopeResponse", "Token scope details"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
 					"403": jsonResponse("ErrorResponse", "Requires manage_token_scopes permission"),
+					"404": jsonResponse("ErrorResponse", "Token not found"),
+					"500": jsonResponse("ErrorResponse", "Failed to get token scope"),
 				},
 			},
 			Put: &OpenAPIOperation{
 				Summary:     "Set token scope",
-				Description: "Sets scope restrictions for a token including connections, MCP privileges, and admin permissions",
+				Description: "Sets scope restrictions for a token including connections, MCP privileges, and admin permissions. Each kind that is present replaces that kind's restriction, and a kind that is omitted or null is left unchanged. A kind with no entries is unrestricted, so an empty array would lift the restriction rather than deny everything; it is refused with 400, and DELETE is the way to clear a token's scope. An API token may change only within its own access, its own scope included: it may narrow its own scope but not widen it.",
 				OperationID: "setTokenScope",
 				Tags:        []string{"RBAC Tokens"},
 				Security:    bearerAuth,
@@ -4169,14 +4642,15 @@ func buildPaths() map[string]OpenAPIPathItem {
 				RequestBody: jsonRequestBody("TokenScopeRequest", "Scope configuration", true),
 				Responses: map[string]OpenAPIResponse{
 					"204": {Description: "Scope updated"},
-					"400": jsonResponse("ErrorResponse", "Invalid request"),
+					"400": jsonResponse("ErrorResponse", "Invalid request, including an empty array for any scope kind; a connection scope that names a connection twice, has a negative connection ID or an unknown access level, or combines connection_id 0 (all connections) with any other entry; or an admin permission that is not a known permission name or \"*\""),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_token_scopes permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_token_scopes permission, or the change grants access that exceeds the API token's access (its owner's privileges narrowed by its scope). Only the kinds present are judged: an entry the target token does not already allow must be within the caller's access, narrowing a kind that was unrestricted grants nothing, and keeping, narrowing or dropping a connection entry needs read access to that connection. The same rule applies to a token's own scope. A token owned by a superuser may be changed only by a superuser's session, or a superuser's token with an unrestricted admin scope, other than by that token itself, and an API token may widen such a token only when it is a superuser's token unrestricted in every scope kind"),
+					"500": jsonResponse("ErrorResponse", "Failed to set token scope, including when the target token or its owner could not be read inside the write; for an API token caller, also \"Failed to get token scope\" when the target token's current scope could not be read to judge the change"),
 				},
 			},
 			Delete: &OpenAPIOperation{
 				Summary:     "Clear token scope",
-				Description: "Removes all scope restrictions from a token",
+				Description: "Removes all scope restrictions from a token. An API token may clear a scope only when the target's owner's access lies within its own, its own scope included.",
 				OperationID: "clearTokenScope",
 				Tags:        []string{"RBAC Tokens"},
 				Security:    bearerAuth,
@@ -4184,7 +4658,8 @@ func buildPaths() map[string]OpenAPIPathItem {
 				Responses: map[string]OpenAPIResponse{
 					"204": {Description: "Scope cleared"},
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_token_scopes permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_token_scopes permission, or, for each kind the target token is restricted in, its owner's access in that kind exceeds the API token's access (its owner's privileges narrowed by its scope), or a connection entry the clear drops is one the caller cannot read. The same rule applies to a token's own scope. A token owned by a superuser may be cleared only by a superuser's session, or a superuser's token with an unrestricted admin scope, other than by that token itself, and by an API token only when it is a superuser's token unrestricted in every scope kind"),
+					"500": jsonResponse("ErrorResponse", "Failed to clear token scope, including when the target token or its owner could not be read inside the write; for an API token caller, also \"Failed to get token scope\" when the target token's current scope could not be read to judge the clear"),
 				},
 			},
 		},
@@ -4205,6 +4680,50 @@ func buildPaths() map[string]OpenAPIPathItem {
 						},
 					},
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+				},
+			},
+		},
+
+		// RBAC Audit
+		"/rbac/audit": {
+			Get: &OpenAPIOperation{
+				Summary: "List RBAC audit events",
+				Description: "Returns audit-log events, newest first. " +
+					"Requires superuser privileges. A request authenticated " +
+					"with an API token whose admin scope has been narrowed " +
+					"is refused, because no admin permission grants audit " +
+					"access; a token with no admin scope, or one holding " +
+					"the * wildcard, is accepted.",
+				OperationID: "listAuditEvents",
+				Tags:        []string{"RBAC Audit"},
+				Security:    bearerAuth,
+				Parameters: []OpenAPIParameter{
+					queryParamString("actor", "Filter by actor name"),
+					queryParamString("actor_type",
+						"Filter by actor type: user, token, cli or system"),
+					queryParamString("action", "Filter by action, such as user.create"),
+					queryParamString("target_type", "Filter by target type"),
+					queryParamInt("target_id", "Filter by target ID"),
+					queryParamString("outcome",
+						"Filter by outcome: success, failure or denied"),
+					queryParamString("since",
+						"Only events at or after this RFC 3339 timestamp"),
+					queryParamString("until",
+						"Only events at or before this RFC 3339 timestamp"),
+					queryParamInt("limit",
+						"Maximum events to return (default 50, capped at 500)"),
+					queryParamInt("offset", "Number of events to skip"),
+				},
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonArrayResponseWithHeaders("AuditEvent",
+						"Audit events, newest first",
+						totalCountHeader("Total events matching the filters, "+
+							"ignoring limit and offset")),
+					"400": jsonResponse("ErrorResponse", "Invalid query parameter"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse",
+						"Requires superuser privileges, and an unrestricted "+
+							"admin scope when authenticated by API token"),
 				},
 			},
 		},
@@ -4290,6 +4809,18 @@ func pathParamString(name, description string) OpenAPIParameter {
 		Description: description,
 		Required:    true,
 		Schema:      &OpenAPISchema{Type: "string"},
+	}
+}
+
+// queryParamEnum builds an optional string query parameter restricted to
+// the given values.
+func queryParamEnum(name, description string, values []string) OpenAPIParameter {
+	return OpenAPIParameter{
+		Name:        name,
+		In:          "query",
+		Description: description,
+		Required:    false,
+		Schema:      &OpenAPISchema{Type: "string", Enum: values},
 	}
 }
 

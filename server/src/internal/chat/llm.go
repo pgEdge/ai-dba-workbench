@@ -61,6 +61,8 @@ You have access to TWO types of database connections:
    - list_probes: List available metrics probes being collected
    - describe_probe: Get column details for a specific probe
    - query_metrics: Query historical metrics with time-based aggregation
+   - describe_datastore: List the datastore sources and their columns
+   - query_datastore: Structured queries over one datastore source (metrics or configuration)
    - get_timeline_events: Query the unified incident-investigation timeline of configuration changes, HBA/ident edits, restarts, extension changes, alerts (fired/cleared/acknowledged), and blackout start/end markers. Prefer this over get_alert_history and get_blackouts when investigating "what happened" or "what changed" around an incident, because it returns config/HBA/restart/extension events those other tools cannot see.
    The datastore contains metrics collected from monitored servers over time.
 
@@ -90,60 +92,31 @@ When answering questions about database-specific metrics (size, cache hit ratio,
 4. When querying pg_stat_database or similar per-database views, be aware that each row represents a different database - make sure you're reporting the correct one.
 
 DATASTORE CONFIGURATION SCHEMA:
-The monitoring datastore contains configuration tables you can query with query_datastore.
+The monitoring datastore also holds the workbench's own configuration: connections,
+clusters and groups, alerts and their acknowledgments, alert rules and thresholds,
+blackouts and blackout schedules, probe settings, metric baselines and similar.
 Use these to answer questions about the workbench's own setup and configuration.
+- Call describe_datastore with no arguments to list every source (metric probes and
+  configuration tables) and how each is limited to the connections you can access.
+- Call describe_datastore with a source to see the columns you may use.
+- Then call query_datastore with a structured request: source, columns, filters,
+  connection_ids, time_start/time_end, shape (rows, latest or aggregate), order_by and
+  paging. query_datastore does not accept SQL.
+- Use query_metrics, not query_datastore, for counter rates and deltas over time.
+- A 'system' alert concerns the Workbench itself (for example a failing LLM provider
+  degrading anomaly detection) and has no connection_id.
 
 Blackouts (maintenance windows that suppress alerts):
-- blackouts: One-time blackout periods. Columns: id, scope (estate/group/cluster/server),
-  scope_id, name, reason, start_time, end_time, created_by, created_at.
-  Future one-time blackouts have end_time > NOW(). Past blackouts have end_time <= NOW().
-- blackout_schedules: Recurring scheduled blackouts with cron expressions. Columns: id,
-  scope, scope_id, name, reason, cron_expression, duration_minutes, timezone, enabled,
-  created_by, created_at. Active schedules have enabled = true.
+- blackouts holds one-time blackout periods; blackout_schedules holds recurring
+  schedules with cron expressions.
 IMPORTANT: When users ask about "scheduled blackouts" or "what blackouts are configured",
-ALWAYS query BOTH tables. One-time blackouts are in 'blackouts', recurring schedules are
-in 'blackout_schedules'. Both types suppress alerts during their active windows.
-
-Alert Configuration:
-- alert_rules: Threshold-based alert rules (26 built-in). Columns: id, name, description,
-  category, metric_table, metric_column, condition, default_warning, default_critical,
-  enabled, check_interval_seconds, sustained_seconds
-- alert_thresholds: Per-scope threshold overrides. Columns: id, rule_id, scope
-  (group/cluster/server), scope_id, warning_value, critical_value, enabled
-- alerts: Active and historical alerts. Columns: id, connection_id, alert_type
-  (threshold/anomaly/connection), rule_id, metric_name, severity (warning/critical),
-  current_value, threshold_value, message, status (active/resolved/acknowledged),
-  started_at, resolved_at
-- alert_acknowledgments: Acknowledgments. Columns: id, alert_id, acknowledged_by,
-  acknowledged_at, note
-
-Notification Channels:
-- notification_channels: Configured channels. Columns: id, name, channel_type
-  (slack/mattermost/webhook/email), config (JSON), enabled, created_by
-- email_recipients: Email addresses for email channels. Columns: id, channel_id, email
-- connection_notification_channels: Links connections to channels. Columns:
-  connection_id, channel_id
-
-Monitoring Configuration:
-- probe_configs: Probe collection settings (hierarchical scope). Columns: id,
-  probe_name, scope (global/group/cluster/server), scope_id, enabled,
-  collection_interval_seconds, retention_days
-- alerter_settings: Global alerter configuration (singleton). Columns: id,
-  anomaly_detection_enabled, check_interval_seconds, llm_provider, llm_model
-
-Infrastructure:
-- connections: Monitored database servers. Columns: id, name, host, port, dbname,
-  username, ssl_mode, monitoring_enabled, cluster_id, created_at
-- clusters: Database clusters. Columns: id, name, group_id, created_at
-- cluster_groups: Organizational groups. Columns: id, name, parent_id, created_at
-
-Example queries:
-- All blackout info: Query BOTH blackouts (WHERE end_time > NOW()) AND blackout_schedules (WHERE enabled = true)
-- Future one-time blackouts: SELECT * FROM blackouts WHERE end_time > NOW() ORDER BY start_time
-- Active recurring schedules: SELECT * FROM blackout_schedules WHERE enabled = true
-- Active alerts: SELECT * FROM alerts WHERE status = 'active'
-- Alert rules for a metric: SELECT * FROM alert_rules WHERE metric_table = 'pg_stat_activity'
-- Notification channels: SELECT * FROM notification_channels WHERE enabled = true
+ALWAYS look at BOTH: query both the blackouts and blackout_schedules sources with
+query_datastore, or call get_blackouts with include_schedules. One-time blackouts are in
+'blackouts', recurring schedules are in 'blackout_schedules'. Both types suppress alerts
+during their active windows.
+- Current and future one-time blackouts: query_datastore with source "blackouts" and
+  filters [{"column": "end_time", "op": ">", "value": "now"}]. Time columns take an
+  RFC 3339 timestamp or "now".
 
 3. MEMORY TOOLS - Use these tools to remember and recall information across conversations:
    - store_memory: Store a persistent memory with a category and content. Use scope "user" for personal memories or "system" for organization-wide knowledge. Set pinned=true for memories that should always be available.

@@ -8,7 +8,8 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useCallback, useMemo, memo, useState } from 'react';
+import { useCallback, useMemo, memo, useState } from 'react';
+import type { MouseEvent } from 'react';
 import {
     Box,
     Typography,
@@ -27,6 +28,8 @@ import {
 import { resolveColor } from './utils';
 import { ALL_EVENT_TYPES, FILTER_CHIPS, TIME_RANGE_OPTIONS } from './config';
 import { isCustomTimeRange } from '../../utils/timelineRange';
+import type { CustomTimeRange, TimeRangePreset } from '../../utils/timelineRange';
+import type { TimelineHeaderProps } from './types';
 import CustomTimeRangePopover from '../Dashboard/CustomTimeRangePopover';
 import {
     headerContainerSx,
@@ -54,7 +57,7 @@ const CUSTOM_RANGE_VALUE = 'custom';
  * Describe an applied custom window for the toggle's title attribute, so
  * that the selection stays legible without widening the compact toolbar.
  */
-const describeWindow = (range) =>
+const describeWindow = (range: CustomTimeRange): string =>
     `${new Date(range.start).toLocaleString()} - ${new Date(range.end).toLocaleString()}`;
 
 /**
@@ -68,16 +71,24 @@ export const TimelineHeader = memo(({
     onTimeRangeChange,
     eventTypes,
     onEventTypesChange,
-}) => {
+}: TimelineHeaderProps) => {
     const theme = useTheme();
-    const [anchorEl, setAnchorEl] = useState(null);
+    const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
 
     const toggleGroupSx = useMemo(() => getToggleGroupSx(theme), [theme]);
     const countChipSx = useMemo(() => getEventCountChipSx(theme, eventCount), [theme, eventCount]);
 
     const isCustom = isCustomTimeRange(timeRange);
 
-    const handleRangeChange = useCallback((event, value) => {
+    /*
+     * The toggle group only ever yields one of the preset values or the
+     * custom sentinel, so the handler is typed to that rather than to
+     * MUI's untyped value.
+     */
+    const handleRangeChange = useCallback((
+        _event: MouseEvent<HTMLElement>,
+        value: TimeRangePreset | typeof CUSTOM_RANGE_VALUE | null,
+    ) => {
         // The custom toggle opens the picker rather than selecting a
         // range directly, so its own click handler deals with it.
         if (value && value !== CUSTOM_RANGE_VALUE) {
@@ -85,7 +96,7 @@ export const TimelineHeader = memo(({
         }
     }, [onTimeRangeChange]);
 
-    const handleCustomClick = useCallback((event) => {
+    const handleCustomClick = useCallback((event: MouseEvent<HTMLElement>) => {
         setAnchorEl(event.currentTarget);
     }, []);
 
@@ -93,7 +104,7 @@ export const TimelineHeader = memo(({
         setAnchorEl(null);
     }, []);
 
-    const handleApply = useCallback((startISO, endISO) => {
+    const handleApply = useCallback((startISO: string, endISO: string) => {
         onTimeRangeChange({ start: new Date(startISO), end: new Date(endISO) });
         setAnchorEl(null);
     }, [onTimeRangeChange]);

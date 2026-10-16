@@ -11,7 +11,6 @@ package database
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
 
@@ -82,13 +81,7 @@ DROP TABLE IF EXISTS connections CASCADE;
 func newReactivateAlertTestDatastore(t *testing.T) (*Datastore, *pgxpool.Pool, func()) {
 	t.Helper()
 
-	if os.Getenv("SKIP_DB_TESTS") != "" {
-		t.Skip("Skipping database test (SKIP_DB_TESTS is set)")
-	}
-	connStr := os.Getenv("TEST_AI_WORKBENCH_SERVER")
-	if connStr == "" {
-		t.Skip("TEST_AI_WORKBENCH_SERVER not set, skipping reactivate alert integration test")
-	}
+	connStr := requireLocalTestDSN(t, "the reactivate alert integration test")
 
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, connStr)

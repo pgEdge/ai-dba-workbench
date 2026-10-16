@@ -31,6 +31,10 @@ Tier 1: Statistical Analysis (z-score)
   - Creates candidates for values exceeding threshold
         |
         v
+Pre-Tier Checks
+  - Skips Tier 2 and Tier 3 when no alert could be raised
+        |
+        v
 Tier 2: Embedding Similarity (pgvector)
   - Generates vector embeddings for anomaly context
   - Searches for similar past anomalies
@@ -38,10 +42,37 @@ Tier 2: Embedding Similarity (pgvector)
         |
         v
 Tier 3: LLM Classification
-  - Analyzes anomaly context with reasoning model
+  - Optionally asks a decision model for P(real issue) first
+  - Otherwise, or on failure, asks the reasoning model
   - Determines alert or suppress decision
-  - Provides reasoning for the decision
 ```
+
+Before Tier 2 runs on a candidate, the alerter checks whether an
+alert could be raised for the candidate at all. The paid tiers are
+skipped when any of the following conditions applies:
+
+- an active blackout covers the connection.
+- an active or acknowledged anomaly alert is already open for the
+  same metric, connection and database.
+- an anomaly alert on the same metric, connection and database
+  cleared within the last five minutes.
+- re-evaluation cleared a matching alert within the last 24 hours.
+- a user acknowledged a matching alert as a false positive within
+  the last 24 hours.
+
+A skipped candidate is marked as processed without tier results or
+an embedding; when an open alert exists, the candidate's `alert_id`
+points at that alert. A persistent condition therefore costs no
+embedding or LLM call on later evaluation cycles. The alerter repeats
+the same checks just before creating an alert, because a blackout or
+an acknowledgement can arrive during a slow Tier 3 call.
+
+Tier 1 runs the same checks before it stores a candidate, and stores
+none when any of them applies. A persistent condition therefore adds
+no row to `anomaly_candidates` on each evaluation cycle whilst an
+alert is open, a blackout is active or a suppression holds. The
+pre-tier checks still run for a candidate that was stored before one
+of those conditions began.
 
 ## Tier 1: Statistical Analysis
 
@@ -71,19 +102,159 @@ Tier 1 settings are configured in the `anomaly.tier1` section:
 | `enabled` | `true` | Enable Tier 1 detection |
 | `default_sensitivity` | `3.0` | Z-score threshold |
 | `evaluation_interval_seconds` | `60` | Evaluation interval |
+| `clear_count` | `3` | Consecutive in-band samples before an anomaly alert clears |
+
+### Supported Metrics
+
+Tier 1 scores a metric only when the metric's entry in the query
+registry (`alerter/src/internal/database/metric_registry.go`)
+carries a historical query, because the baseline calculator has
+nothing else to build a baseline from. The `SupportsBaselines`
+helper in the `database` package makes that check, and both the
+baseline calculator and the detector skip any rule whose metric
+fails the check. Of the 31 registry metrics, 20 carry a historical
+query and 11 do not. Each historical query computes the same
+statistic as the metric's latest query, so a live value is always
+scored against a baseline of like values. GitHub issue #490 added
+historical queries for `pg_stat_replication.lag_bytes`,
+`pg_stat_checkpointer.checkpoints_req_delta`,
+`pg_stat_statements.slow_query_count` and
+`pg_stat_activity.max_lock_wait_seconds`. Like the latest query,
+the historical query for `max_lock_wait_seconds` only reports
+samples in which a client backend waits on a lock, so the baseline
+describes lock waits rather than uncontended operation. The
+historical queries for `checkpoints_req_delta`, `deadlocks_delta`
+and `temp_files_delta` sum each UTC hour's deltas within that hour,
+so every bucket carries as many deltas as the live one-hour value
+(GitHub issue #639 brought the latter two into line).
+
+The following metrics have no historical query, deliberately, and
+are therefore never baselined or scored:
+
+- `age_percent`: the value is a slow sawtooth whose drop after an
+  anti-wraparound (freeze) vacuum is exactly what a two-sided
+  z-score would flag, whilst the threshold rule already covers the
+  real wraparound risk.
+- `pg_node_role.subscription_worker_down`,
+  `pg_replication_slots.inactive` and
+  `pg_stat_replication.standby_disconnected`: each is a presence
+  flag that only ever emits 1, so a baseline would have no
+  variance and nothing normal to compare with.
+- `pg_replication_slots.inactive_count`: it is a presence count
+  that is almost always zero, and the `replication_slot_inactive`
+  threshold rule on `pg_replication_slots.inactive` already alerts
+  on the condition it counts.
+- `pg_replication_slots.retained_bytes`: it reports the same value
+  as `pg_replication_slots.max_retained_bytes`, which is already
+  baselined, and no built-in rule reads it, so a baseline would
+  only double the anomaly candidates.
+- `pg_settings.max_connections`: it is a configuration value that
+  exists for the `high_max_connections` threshold rule.
+- `pg_stat_all_tables.dead_tuple_percent`: it is reported per
+  table, which `metric_baselines` cannot store, it only emits rows
+  above the dead tuple floors, and it is a sawtooth that vacuum
+  resets.
+- `pg_stat_archiver.failed_count_delta`: its healthy value is
+  always zero, and any archive failure is already actionable
+  through the threshold rule.
+- `pg_stat_replication.replay_lag_seconds`:
+  `pg_stat_replication.lag_bytes` carries the same replication lag
+  signal.
+- `table_last_autovacuum_hours`: it is a time-since clock that only
+  emits tables already past their autovacuum trigger, so every row
+  is an alert condition; an object dimension would not change that.
+
+Threshold-based rules for these metrics are unaffected. Earlier
+releases built a baseline for such metrics from the single most
+recent sample; that baseline held one sample and no earliest sample
+timestamp, so the warmup gate rejected the row on every cycle and
+the metric was silently never scored. The fallback path has been
+removed, and the baseline calculator deletes any leftover
+`metric_baselines` rows for unsupported metrics at the start of
+each cycle so that the `get_metric_baselines` MCP tool does not
+report them.
+
+### Database Scoping
+
+Baselines are stored per connection and, for metrics whose
+historical query returns a database name (for example
+`cache_hit_ratio`, `deadlocks_delta` and `temp_files_delta`), per
+database. Metrics reported for the whole server, such as
+`slow_query_count`, have one baseline per connection. Tier 1 reads
+back the baselines for the same database as the value being scored,
+so a value from one database is never compared with another
+database's baseline. A metric whose latest value is scoped to a table
+or other object is skipped, because the `metric_baselines` table has
+no object column to pair the value with; no such metric currently has
+a historical query.
+
+The anomaly candidate records the database name alongside the
+connection, so the active-alert check in `GetActiveAnomalyAlert`
+deduplicates per database rather than collapsing every database
+on the connection into one alert.
+
+### Stale Baseline Rows
+
+The baseline calculator writes an `hourly` or `daily` row only
+while that bucket holds at least three samples, and visits a
+connection or database only while it has samples inside
+`baselines.lookback_days`. Once it has rebuilt a metric, it deletes
+every row of that metric whose `last_calculated` timestamp is older
+than the start of the current cycle, because the cycle did not
+rewrite those rows and their statistics no longer describe the
+data. A metric whose historical query fails, or for which any
+baseline row fails to upsert, keeps its rows for that cycle; a row
+that failed to upsert still carries the previous cycle's timestamp,
+so pruning would otherwise delete the very row the cycle could not
+refresh.
 
 ### Baseline Selection
 
-The alerter selects the most appropriate baseline for each
-evaluation:
+The `selectBaseline` helper in
+[`alerter/src/internal/engine/anomalies.go`][anomalies-go] picks
+the row to score a value against from the baselines for that
+connection, database and metric. The helper considers the
+candidates in this order of preference:
 
-1. If an hourly baseline exists for the current hour, the alerter
-   uses the hourly baseline.
-2. If a daily baseline exists for the current day, the alerter
-   uses the daily baseline.
-3. Otherwise, the alerter uses the global baseline.
+1. The `hourly` baseline whose `hour_of_day` matches the current
+   hour.
+2. The `daily` baseline whose `day_of_week` matches the current
+   weekday.
+3. The `all` baseline.
 
-This approach accounts for time-based patterns in metric values.
+The first candidate that passes the warmup gate described below is
+used; a cold hourly row does not block a warm daily or `all` row,
+and a cold `all` row does not block a warm hourly one. When a
+cold row is passed over in favour of a less specific warm one, a
+debug log line names both rows. When no candidate is warm,
+detection is suppressed for that value and a debug log line
+reports the period type, sample count and earliest sample time of
+the most preferred row that exists.
+
+Whether a tier can ever be selected depends on the baseline
+lookback as well as on its warmup thresholds. The historical
+queries read only samples inside `baselines.lookback_days`, and
+each refresh rewrites `earliest_sample_at` from those samples, so
+no baseline's span can exceed the lookback. A tier whose
+`min_span_hours` is longer than the lookback in hours is dead
+configuration: the selector skips it every time and falls
+through to the next tier. `calculateBaselines` calls
+`Config.UnreachableWarmupPeriods` on each cycle and logs a
+warning naming any such tier. The shipped defaults (a 15 day
+lookback against 24, 120 and 336 hour spans) leave every tier
+reachable, and `TestShippedWarmupTiersReachable` pins that.
+
+The current hour and weekday are taken in UTC, and the baseline
+calculator buckets samples by UTC hour and weekday when writing
+the `hourly` and `daily` rows, so the two sides agree however the
+alerter's process time zone is set. A metric's diurnal or weekly
+cycle is still captured; the buckets are simply keyed in UTC.
+
+Time-aware rows are preferred over the `all` row because a metric
+with a daily or weekly cycle has a much tighter spread within one
+period than across the whole lookback window. Scoring against the
+grand mean inflates the divisor and hides genuine within-cycle
+deviation.
 
 ### Variance Floor and Warmup Gate
 
@@ -132,6 +303,74 @@ collapsing the floor to zero. When both knobs are zero, the
 floor collapses and the existing `stddev == 0` guard handles
 the degenerate case.
 
+#### Per-Metric Floors
+
+The global floor cannot size the divisor to a metric's units.
+An `absolute_floor` of `0.001` stops a division by zero, but
+on a baseline whose mean and standard deviation are both zero
+a change of one session or one temporary file still scores a
+z-score of 1,000, which the cap then clamps to 100. Raising
+the global floor does not help, because the metrics range
+from load averages below 1 to byte counts in the billions.
+
+Tier 1 therefore applies two floors per metric; the built-in
+defaults live in `alerter/src/internal/config/metric_floors.go`
+and the `anomaly.tier1.metric_floors` option overrides them.
+
+- `min_stddev` joins the global floor, so the divisor is
+  `max(effective_stddev, min_stddev)`. The value is the
+  smallest change that matters in the metric's units; a small
+  value on a flat baseline then scores low, whilst a large
+  jump still scores high and raises a candidate. A
+  `min_stddev` only takes effect whilst it exceeds the global
+  relative floor, which is 5% of the mean by default.
+- `min_value` is the value below which the metric is never
+  anomalous. Tier 1 checks the value floor before it reads a
+  baseline, so a value under the floor raises no candidate and
+  counts as in band for alert recovery even when the baseline
+  is cold. The floor suits metrics where only a high value is
+  a concern; a metric that matters when the metric falls, such
+  as the cache hit ratio, has no value floor.
+
+The following table lists the built-in defaults; each
+`min_value` sits well below the default threshold rule on
+the same metric, so the threshold path still reports a value
+that matters:
+
+| Metric | `min_value` | `min_stddev` |
+|--------|-------------|--------------|
+| `pg_sys_cpu_usage_info.processor_time_percent` | 50 | 5 |
+| `pg_sys_memory_info.used_percent` | 50 | 5 |
+| `connection_utilization_percent` | 50 | 5 |
+| `pg_sys_disk_info.used_percent` | 50 | 2 |
+| `pg_stat_activity.count` | 10 | 5 |
+| `pg_stat_database.temp_files_delta` | 10 | 10 |
+| `pg_stat_activity.blocked_count` | 2 | 1 |
+| `pg_stat_activity.max_query_duration_seconds` | 60 | 10 |
+| `pg_stat_activity.max_xact_duration_seconds` | 60 | 10 |
+| `pg_stat_activity.idle_in_transaction_seconds` | 60 | 10 |
+| `pg_sys_load_avg_info.load_avg_fifteen_minutes` | 1 | 0.5 |
+| `pg_replication_slots.max_retained_bytes` | 256 MiB | 64 MiB |
+| `pg_stat_replication.lag_bytes` | 16 MiB | 8 MiB |
+| `pg_stat_activity.max_lock_wait_seconds` | 5 | 2 |
+| `pg_stat_checkpointer.checkpoints_req_delta` | 3 | 1 |
+| `pg_stat_statements.slow_query_count` | 3 | 1 |
+| `pg_stat_database.deadlocks_delta` | none | 1 |
+| `spock_exception_log.recent_count` | none | 1 |
+| `spock_resolutions.recent_count` | none | 1 |
+
+The reasoning behind each default is recorded beside
+`defaultMetricFloors`. The integer counts whose threshold
+rules fire on any occurrence have no value floor, so the
+anomaly path hides no occurrence, but a `min_stddev` of 1,
+because a count cannot change by less than one. The disk
+usage `min_stddev` of 2 only takes effect for a baseline mean
+below 40%, because the global relative floor of 5% scales with
+the baseline mean rather than the value. The cache hit ratio
+has no `min_stddev`: at its usual mean of 95% or more, the
+global relative floor already gives a larger divisor than any
+useful `min_stddev` would.
+
 #### Warmup Gate Semantics
 
 The `isBaselineWarm` helper gates detection on two conditions
@@ -140,15 +379,17 @@ wall-clock span between the earliest recorded sample and now.
 Both must hold for the baseline to be considered warm. Each of
 the three `period_type` values (`all`, `hourly`, and `daily`)
 carries its own threshold pair, configured under
-`anomaly.tier1.warmup` in the alerter YAML.
+`anomaly.tier1.warmup` in the alerter YAML. The gate is applied
+to each candidate row in turn during baseline selection, so the
+`hourly` thresholds decide whether the hourly row is used and the
+`all` thresholds decide whether the `all` row is used.
 
 The gate fails closed in two distinct ways. When
 `SampleCount` falls below `MinSamples`, the gate reports the
 baseline cold and detection is skipped. When `MinSpanHours` is
 greater than zero and `EarliestSampleAt` is the zero value,
 the gate also reports cold; this covers rows written before
-the `metric_baselines.earliest_sample_at` column was added and
-fallback baselines that lack raw sample timestamps. Setting
+the `metric_baselines.earliest_sample_at` column was added. Setting
 both `min_samples: 0` and `min_span_hours: 0` for a
 `period_type` disables warmup suppression for that type; the
 zero value on `MinSpanHours` also skips the
@@ -157,7 +398,7 @@ spuriously fail closed when the operator has explicitly opted
 out.
 
 An unrecognised `period_type` falls back to the daily
-thresholds, which are the strictest of the three defaults.
+thresholds, which require the longest span of the three defaults.
 This is defensive only; the column is enum-constrained at
 write time.
 
@@ -169,6 +410,31 @@ cap of zero disables the clamp. The cap applies symmetrically
 to both extreme positive and extreme negative scores, so a
 runaway divisor cannot drive either tail beyond the configured
 bound.
+
+#### Severity
+
+An anomaly alert's severity comes from the absolute z-score
+in multiples of the sensitivity: four times or more is
+`critical`, twice or more is `warning`, and anything else is
+`info`. When the baseline has no spread of its own, meaning
+its standard deviation is at or below
+`variance_floor.absolute_floor`, the severity is capped at
+`warning`. Against such a flat baseline a floor supplies the
+whole divisor, so the z-score measures distance in units the
+floor chose rather than in the metric's observed spread; the
+score still marks the value as unusual, but it is not the
+evidence a critical alert implies. A baseline that does vary,
+however little, keeps the full severity range even when the
+relative floor or a `min_stddev` supplies the divisor.
+Threshold rules remain the path to a critical alert on an
+absolute value.
+
+Tier 1 records the divisor in the candidate's context as
+`effective_stddev`, with `stddev_floored` set when the
+baseline was flat, and the Tier 3 prompt includes both. The cap
+applies when the alert is raised and when recovery refreshes
+an open alert; a candidate written before the key existed
+keeps the uncapped severity.
 
 ## Tier 2: Embedding Similarity
 
@@ -220,19 +486,31 @@ Tier 2 settings are configured in the `anomaly.tier2` section:
 
 ## Tier 3: LLM Classification
 
-Tier 3 uses LLM reasoning to classify uncertain anomalies. The
-LLM receives context about the anomaly and similar past anomalies,
-then determines whether to alert or suppress.
+Tier 3 uses an LLM to classify uncertain anomalies. The model
+receives context about the anomaly and similar past anomalies,
+then determines whether to alert or suppress. Tier 3 uses a
+reasoning model by default, and can optionally ask a decision
+model first, as the Decision Model section describes. The code
+lives in `alerter/src/internal/engine/anomalies.go` and
+`alerter/src/internal/engine/tier3_decision.go`.
 
 ### Classification Prompt
 
-The alerter builds a classification prompt containing:
+The alerter builds the classification context in
+`buildClassificationContext`, which contains:
 
 - The current anomaly details including metric, value, and
   z-score.
 - Baseline statistics for context.
 - Similar past anomalies with their decisions.
-- Instructions for the classification response.
+- Past acknowledgements of the same metric and connection.
+- Cluster peers and the active or acknowledged alerts on them.
+- Guidance on weighing past user feedback.
+
+The reasoning model's prompt, from `buildClassificationPrompt`, is
+that context followed by `classificationResponseInstructions`,
+which ask for the JSON response described below. The decision model
+receives the context alone.
 
 ### Response Parsing
 
@@ -251,29 +529,181 @@ When the LLM call fails, the alerter defaults to alerting. This
 fail-safe ensures that potential issues are not missed due to LLM
 unavailability.
 
+### Decision Model
+
+A decision model answers a yes or no question with the probability
+of yes, rather than generating text. When `llm.decision_provider` is
+`typesafe` or `openai`, `runTier3` asks the decision model first,
+through `llm.DecisionProvider.ClassifyDecision`, with the question
+"Is this a real issue that requires attention?" and the
+classification context as its input. An empty value, `none` or
+`disabled` leaves Tier 3 on the reasoning model alone, exactly as
+before the decision model existed (GitHub issue #626).
+
+The model returns P(real issue), the probability of yes. Tier 3
+suppresses the candidate when 1 - P(real issue) is at least
+`anomaly.tier3.decision_suppress_threshold`, and raises the alert
+otherwise; `llm.DecisionSuppresses` holds the comparison. The
+default threshold of 0.5 suppresses a candidate that the model
+judges more likely than not to be a false positive.
+
+A successful verdict sets `tier3_pass` and stores a one-line summary
+as `tier3_result`, since the model returns no text to store. The
+following example shows a summary:
+
+```text
+Decision model typesafe/jev-latest: alert (P(real issue)=0.87, suppress threshold 0.50)
+```
+
+The summary reaches the alert's `anomaly_details`, and the
+re-evaluation worker later reads it from there as the Tier 3
+analysis.
+
+The decision model applies to Tier 3 classification only. The
+re-evaluation of acknowledged anomaly alerts always uses the
+reasoning model, for the reasons the Decision Model Trade-offs
+section gives.
+
+### Decision Model Fallback
+
+Any decision model failure sends the candidate to the reasoning
+model, where one is configured. A failure includes an error from
+the provider, a timeout, a refusal to answer, a response with no
+answer to the question, and a probability that is not a number in
+the range 0 to 1; `libDecision.ClassifyDecision` returns each of
+these as an error, never as a verdict.
+
+The fallback follows these rules:
+
+- with a reasoning provider, the reasoning model classifies the
+  candidate as though no decision model existed, and `tier3_error`
+  records the decision model failure followed by `fell back to the
+  reasoning model`.
+- when the reasoning model then fails as well, the usual fail-safe
+  raises the alert, and `tier3_error` records both failures.
+- without a reasoning provider, the fail-safe raises the alert at
+  once, with the `tier3_result` `Decision model classification
+  failed, defaulting to alert`.
+
+Each model call has its own `anomaly.tier3.timeout_seconds` limit,
+so a candidate that falls back can take up to twice the timeout.
+The stale candidate cut-off, described under Enabling and
+Disabling, absorbs the occasional second call through its safety
+factor.
+
+### Tier 3 Source Recording
+
+Collector schema migration 22 adds two nullable columns to
+`anomaly_candidates`, because `tier3_result` alone no longer shows
+which kind of model decided a candidate:
+
+- `tier3_source` holds `decision` or `reasoning`, enforced by the
+  `anomaly_candidates_tier3_source_check` constraint. Migration 22
+  adds the constraint `NOT VALID`, so that adding it does not scan
+  the table under the `ACCESS EXCLUSIVE` lock that adding the
+  columns takes, and migration 23 validates it in a transaction of
+  its own, under a lock that does not block writes.
+- `tier3_model` holds the provider and model, in the form
+  `provider/model`, that `tier3_source` names.
+
+`setTier3Source` sets both columns before each model call, so when
+every model fails the columns name the last model tried. Rows that
+Tier 3 has not classified, and rows classified before the
+migration, hold `NULL`. The alerter reads and writes both columns
+whenever it loads or updates a candidate, so the collector that
+applies migration 22 must be upgraded before, or together with,
+the alerter. An alerter upgraded first logs `ERROR: Failed to get
+anomaly candidates` once each anomaly cycle, naming the missing
+column, and raises no anomaly alerts; the candidates that Tier 1
+queues meanwhile are expired unprocessed once they pass the stale
+candidate cut-off, two and a half hours at the default Tier 3
+timeout.
+
+### Decision Model Trade-offs
+
+A spike in October 2026 compared the decision providers with the
+stored Tier 3 decisions on 150 real candidates from the previous 30
+days, sampled evenly between candidates stored as alerts and
+candidates stored as suppressed. No user-labelled ground truth
+existed, so every figure measures agreement with the reasoning
+model that made the stored decisions, not accuracy. The reasoning
+model, Claude Haiku 4.5, agreed with the stored decisions on 91% of
+the candidates when run again. The
+[spike results](https://github.com/pgEdge/ai-dba-workbench/issues/626#issuecomment-6187170285)
+on issue #626 give the full data.
+
+The following table compares the models at the default threshold
+of 0.5:
+
+| Model | Agreement with stored decisions | Median latency | Cost per 1,000 decisions |
+|-------|---------------------------------|----------------|--------------------------|
+| TypeSafe `jev-latest` | 89% | About 200 ms | About US$0.04 |
+| OpenAI `gpt-6-luna` decisions | 79% | About 250 ms | Not confirmed |
+| Claude Haiku 4.5 reasoning | 91% | About 3 s | About US$1.93 |
+
+The spike produced the following findings:
+
+- the Jev model agreed with Claude Haiku 4.5 on 88% of the
+  candidates.
+- the Jev model never suppressed a candidate stored as an alert;
+  every disagreement was an alert where the stored decision was to
+  suppress, which is the safer direction in which to err.
+- the OpenAI decision model suppressed some candidates that were
+  stored as alerts.
+- raising the threshold above 0.5 reduced agreement.
+- the costs use prices as of October 2026, with Jev at US$0.042 per
+  million input tokens and free output, and Claude Haiku 4.5 at US$1
+  per million input tokens and US$5 per million output tokens.
+- the OpenAI decision price could not be confirmed from official
+  pricing.
+
+On this evidence `typesafe` is the recommended decision provider,
+and `openai` is supported but weaker on this data. Each provider
+calibrates its probabilities differently, so a threshold tuned for
+one provider does not carry over to another.
+
+Re-evaluation was left on the reasoning model. In a synthetic test,
+the Jev model never cleared an alert whose acknowledgement note
+explained the anomaly, and no real acknowledgements were available
+to validate either decision model on re-evaluation.
+
 ### Configuration
 
-Tier 3 settings are configured in the `anomaly.tier3` section:
+Tier 3 settings are configured in the `anomaly.tier3` section. The
+following table describes the options:
 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `enabled` | `true` | Enable Tier 3 detection |
-| `timeout_seconds` | `30` | Timeout for LLM API calls |
+| `timeout_seconds` | `30` | Timeout for each LLM API call |
+| `decision_suppress_threshold` | `0.5` | Suppress when 1 - P(real issue) reaches this value; validated as greater than 0 and less than 1 only when a decision provider is set |
 
 ## LLM Provider Configuration
 
-The alerter supports multiple LLM providers for embeddings and
-reasoning.
+The alerter supports multiple LLM providers for embeddings,
+reasoning and Tier 3 decisions.
 
 ### Embedding Providers
 
-Configure the embedding provider in the `llm` section:
+Configure the embedding provider in the `llm` section. The following
+table shows the default embedding model for each provider and the
+dimensions that model produces:
 
-| Provider | Model | Dimensions |
+| Provider | Default model | Dimensions |
 |----------|-------|------------|
-| Ollama | `nomic-embed-text` | 768 (resized to 1536) |
+| Ollama | `nomic-embed-text` | 768 |
 | OpenAI | `text-embedding-3-small` | 1536 |
-| Voyage | `voyage-3-lite` | 1024 (resized to 1536) |
+| Voyage | `voyage-3-lite` | 512 |
+| Gemini | `gemini-embedding-001` | 3072 |
+
+Any model name the chosen provider recognises can be configured in
+place of the default. The alerter keeps each embedding at the width the
+model produces and zero-pads it to the `halfvec(4000)` column when it
+is stored or used as a query vector. A model that produces more than
+4000 dimensions is not truncated: the width check runs when the
+embedding is stored or searched, so the alerter logs an error for each
+candidate it processes with such a model, stores no embedding and
+passes the candidate through to tier 3.
 
 ### Reasoning Providers
 
@@ -282,9 +712,28 @@ Configure the reasoning provider in the `llm` section:
 | Provider | Model |
 |----------|-------|
 | Ollama | `qwen2.5:7b-instruct` |
-| OpenAI | `gpt-4o-mini` |
-| Anthropic | `claude-3-5-haiku-20241022` |
-| Gemini | `gemini-2.5-flash` |
+| OpenAI | `gpt-6-luna` |
+| Anthropic | `claude-haiku-4-5` |
+| Gemini | `gemini-3.8-flash` |
+
+### Decision Providers
+
+Configure the optional decision provider with
+`llm.decision_provider`. The following table shows the default
+decision model for each provider and where its model is set:
+
+| Provider | Default model | Model option |
+|----------|---------------|--------------|
+| TypeSafe | `jev-latest` | `llm.typesafe.decision_model` |
+| OpenAI | `gpt-6-luna` | `llm.openai.decision_model` |
+
+`llm.NewDecisionProvider` builds the provider at startup through
+pgedge-go-llm-lib's `Client.Decide`. TypeSafe requires
+`llm.typesafe.api_key_file` even with a custom `base_url`, and the
+library's `TYPESAFE_API_KEY` fallback is never reached. OpenAI
+follows the reasoning provider's rule and accepts a `base_url`
+without a key. A provider that cannot be built logs a warning and
+leaves Tier 3 on the reasoning provider.
 
 ### Example Configuration
 
@@ -311,7 +760,7 @@ llm:
   openai:
     api_key_file: /etc/ai-workbench/openai-api-key.txt
     embedding_model: text-embedding-3-small
-    reasoning_model: gpt-4o-mini
+    reasoning_model: gpt-6-luna
 ```
 
 ## Baseline Calculation
@@ -325,8 +774,15 @@ historical data.
 The alerter calculates three baseline types:
 
 - `all` baselines aggregate all historical values.
-- `hourly` baselines group values by hour of day (0-23).
-- `daily` baselines group values by day of week (0-6).
+- `hourly` baselines group values by UTC hour of day (0-23).
+- `daily` baselines group values by UTC day of week (0-6, with 0
+  being Sunday).
+
+Each type is written per connection and, when the metric's
+historical query returns a database name, per database. The
+calculator only processes metrics that carry a historical query;
+see the Supported Metrics section above for the list of metrics
+that are skipped and for the clean-up of their leftover rows.
 
 ### Baseline Statistics
 
@@ -341,9 +797,127 @@ Each baseline stores the following values:
 ### Lookback Period
 
 The baseline calculator uses a configurable lookback period to
-gather historical data. The default is 7 days. A longer lookback
+gather historical data. The default is 15 days, which gives every
+weekday at least two occurrences in the window and lets the daily
+tier's default 336 hour warmup span be reached. A longer lookback
 period provides more stable baselines but may not reflect recent
-changes in workload.
+changes in workload; a shorter one must be paired with shorter
+warmup spans, as described under Baseline Selection.
+
+## Anomaly Alert Recovery
+
+Tier 1 also clears anomaly alerts whose metric has recovered. The
+threshold alert cleaner re-evaluates a rule's condition, but an
+anomaly alert has no rule or threshold to re-evaluate, so the
+recovery check runs inside each Tier 1 pass instead. The code lives
+in `alerter/src/internal/engine/anomaly_recovery.go`.
+
+At the start of each pass, Tier 1 reads every anomaly alert whose
+status is `active` and re-scores the metric, connection and database
+behind each one against the same baseline Tier 1 selects for new
+candidates. A metric that no enabled rule still covers is scored for
+recovery only and never produces a new candidate. Each scored value
+has one of the following effects on the alerts for its series:
+
+- a value outside the sensitivity band refreshes the alert's
+  `metric_value`, `anomaly_score` and `last_updated` columns, and
+  raises the severity when the new z-score warrants a higher one.
+- a value inside the band adds one to the alert's consecutive
+  in-band count, provided the sample is newer than the last one the
+  count included.
+- a count that reaches `anomaly.tier1.clear_count` clears the alert
+  and queues the usual `alert_clear` notification.
+
+The count is of distinct samples rather than of passes. Tier 1 runs
+every `evaluation_interval_seconds` (60 by default), but most probes
+collect only every 300 to 600 seconds, so several consecutive passes
+usually re-score the same sample; counting passes would clear an
+alert on a single reading. Each count therefore records the
+`collected_at` of the newest sample it included, and only a sample
+with a later `collected_at` advances it. A pass that re-scores a
+sample already counted neither advances nor resets the count. Every
+latest query in the metric registry reports its sample's own
+`collected_at`, never `NOW()`, and
+`TestMetricRegistryLatestSQLReportsSampleTime` enforces that.
+
+A value under the metric's `min_value` floor counts as inside
+the band, matching detection, which never raises a candidate for
+such a value; the value floor needs no baseline, so the value
+counts even when the baseline is cold.
+
+The refresh never lowers the severity, so a smaller deviation does
+not quietly downgrade an alert raised as critical. The refresh
+discards a cached AI analysis when the metric value changes, as the
+threshold path does, but leaves the title and description alone, so
+the description still reports the values at which the alert fired.
+A refresh sends no notification.
+
+The alerter holds an alert open on a pass in which the metric or
+the connection did not report a value, and keeps its count, since
+no sample was missed and none was new. The following conditions
+hold an alert open and drop its count back to zero, so that
+clearing needs `clear_count` fresh in-band samples once the
+condition lifts:
+
+- the value lies outside the band.
+- no warm baseline exists, or the floored standard deviation is zero.
+- a blackout covers the connection or the database.
+
+Some metrics report a row only whilst their condition holds; the
+metric registry marks these `clearWhenAbsent`, and they include
+blocked sessions, long-running transactions and inactive replication
+slots. For these metrics a missing row is the recovery signal, so a
+pass in which an alert's series reports no row counts as an in-band
+sample, provided `classifyAbsentMetric` (the check the threshold
+cleaner uses for the same metrics) confirms that the metric's probe
+collected for the connection within the window the metric's query
+reads. The sample is keyed on the probe's `last_collected` time, so
+several passes over one collection count it once. When the probe is
+not demonstrably current, or the staleness view cannot be read, the
+pass holds the alert and keeps its count, and a blackout resets the
+count as it does for a scored value. For every other metric the
+alerter never clears an anomaly alert on the absence of evidence. A
+failed blackout check is treated as an active blackout, because
+holding an alert open a little longer is cheaper than clearing it
+during a maintenance window. A pass that fails before it completes,
+for example because the active alerts, the connections or the rules
+cannot be read, keeps the previous counts. A clear that fails to
+write keeps the count too, and the next pass that scores the series
+in band retries the clear without waiting for a newer sample.
+
+Some active alerts can never be re-scored: an alert on a metric
+that `SupportsBaselines` now rejects, which `anomalyMetrics` never
+fetches, and an alert with no database on a metric reported per
+database, as alerts raised before anomaly detection was scoped by
+database have. `loadAnomalyRecovery` closes each such alert on the
+first pass that sees it, without a clear notification, and prefixes
+its description with `Closed without re-evaluation:` and the
+reason, followed by the original description. Upgrading therefore
+closes any such alerts left over from earlier releases.
+
+Acknowledged anomaly alerts take no part in recovery. The
+re-evaluation worker owns those alerts, and its fingerprint covers
+the alert's value, z-score and severity, so refreshing them would
+invalidate a stored "keep" verdict and buy a fresh Tier 3 call. Every
+recovery write is conditional on the alert still being `active`, so
+an alert that a user acknowledges during a pass is left as the user
+left it.
+
+The consecutive counts live in memory. The counts restart from zero
+when the alerter restarts or when a pass runs with anomaly detection
+or Tier 1 disabled, so an alert then needs a further `clear_count`
+in-band samples before it clears. Recovery uses Tier 1 alone and
+makes no embedding or LLM call. When the alerter auto-disables
+anomaly detection at startup or on a reload, as described in the
+next section, recovery stops with it.
+
+After an anomaly alert clears, the pre-tier checks skip new
+candidates on the same metric, connection and database for the
+five-minute alert cooldown that also applies to threshold alerts.
+The cooldown applies however the alert was cleared, and stops a
+value hovering at the edge of the band from raising, clearing and
+raising again, with a paid Tier 2 and Tier 3
+classification each time.
 
 ## Enabling and Disabling
 
@@ -358,6 +932,44 @@ Disabling Tier 2 causes candidates to pass directly to Tier 3.
 Disabling Tier 3 causes all Tier 1 candidates that pass Tier 2
 to generate alerts.
 
+Tier 1 never raises an alert on its own, because raw statistical
+detection is too noisy to alert on. Anomaly detection runs only
+whilst Tier 2 is enabled with an embedding provider or Tier 3 is
+enabled with a reasoning or decision provider; disabling both tiers therefore
+disables anomaly detection, and Tier 1 stores no candidates. The
+alerter creates the providers at startup for the tiers enabled at
+that point, so the rule applies in two places:
+
+- At startup, the alerter sets `anomaly.enabled` to `false` and logs
+  `Anomaly detection auto-disabled: no LLM providers available` when
+  no provider initialises.
+- On a configuration reload, the alerter sets `anomaly.enabled` to
+  `false` and logs `Anomaly detection auto-disabled: no LLM provider
+  available for the enabled tiers` when no enabled tier has a
+  provider. A reload cannot add a provider, so enabling a tier that
+  was disabled at startup takes a restart.
+
+A processing run that is under way when a reload disables Tier 2 and
+Tier 3 stops before its next candidate, rather than letting the rest
+of the batch through with no tier result; the candidates it has not
+reached stay queued until a tier is enabled again or they expire.
+
+A candidate that stays unprocessed for too long is expired: the
+alerter marks it as processed with no final decision, so it raises
+no alert and the retention cleanup deletes it with the other
+processed candidates. The alerter logs the number of candidates it
+expires whenever that number is not zero. Expiry exists to clear
+candidates that nothing will ever process, so the cut-off is set
+well beyond the time a healthy queue needs to drain, and a genuine
+candidate that is merely waiting behind a backlog is still assessed.
+Each processing run handles up to 100 candidates in turn, and each
+Tier 3 call can take up to `anomaly.tier3.timeout_seconds`, so the
+cut-off is three times 100 Tier 3 timeouts, with a minimum of one
+hour; at the default timeout of 30 seconds the cut-off is two and a
+half hours. The alerter expires candidates before each processing
+run and during the retention cleanup, which also runs whilst anomaly
+detection is disabled.
+
 ## Monitoring Anomaly Detection
 
 The alerter logs anomaly detection activity at debug level. Enable
@@ -371,3 +983,15 @@ debug logging to see:
 The `anomaly_candidates` table stores all candidates with their
 tier results and final decisions. You can query this table to
 analyze anomaly detection effectiveness.
+
+In the following example, the query counts the Tier 3 outcomes of
+the last day by the kind of model and the model that produced them:
+
+```sql
+SELECT tier3_source, tier3_model, final_decision, count(*)
+FROM anomaly_candidates
+WHERE processed_at > now() - interval '1 day'
+  AND tier3_source IS NOT NULL
+GROUP BY tier3_source, tier3_model, final_decision
+ORDER BY tier3_source, tier3_model, final_decision;
+```

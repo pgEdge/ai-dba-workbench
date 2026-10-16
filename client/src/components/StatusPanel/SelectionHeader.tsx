@@ -109,7 +109,7 @@ const SelectionHeader: React.FC<SelectionHeaderProps> = ({ selection, alertCount
         if (alertCount > 0) {
             const parts = Object.entries(alertSeverities)
                 .sort(([a], [b]) => {
-                    const order = { critical: 0, warning: 1, info: 2 };
+                    const order: Record<string, number> = { critical: 0, warning: 1, info: 2 };
                     return (order[a] ?? 99) - (order[b] ?? 99);
                 })
                 .map(([sev, count]) =>

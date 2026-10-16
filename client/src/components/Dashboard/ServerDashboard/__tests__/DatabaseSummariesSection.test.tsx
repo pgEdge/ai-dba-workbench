@@ -13,6 +13,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import DatabaseSummariesSection from '../DatabaseSummariesSection';
 import type { DatabaseSummary } from '../types';
+import type { TimeRangeState } from '../../types';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -24,10 +25,12 @@ vi.mock('../../../../utils/apiClient', () => ({
 }));
 
 const mockPushOverlay = vi.fn();
+let mockTimeRange: TimeRangeState = { range: '24h' };
 vi.mock('../../../../contexts/useDashboard', () => ({
     useDashboard: () => ({
         refreshTrigger: 0,
         pushOverlay: mockPushOverlay,
+        timeRange: mockTimeRange,
     }),
 }));
 
@@ -37,9 +40,21 @@ vi.mock('../../../../contexts/useAuth', () => ({
     }),
 }));
 
-// Mock the Chart component (used by Sparkline) to avoid ECharts in tests.
+// Mock the Chart component (used by Sparkline) to avoid ECharts in
+// tests, exposing the series so a null bucket can be told from a zero.
 vi.mock('../../../Chart', () => ({
-    Chart: () => <div data-testid="sparkline-chart">chart</div>,
+    Chart: ({ data, colorPalette }: {
+        data: { series: Array<{ data: (number | null)[] }> };
+        colorPalette?: string[];
+    }) => (
+        <div
+            data-testid="sparkline-chart"
+            data-values={JSON.stringify(data.series[0]?.data ?? [])}
+            data-color={colorPalette?.[0] ?? ''}
+        >
+            chart
+        </div>
+    ),
 }));
 
 // ---------------------------------------------------------------------------
@@ -101,6 +116,60 @@ describe('DatabaseSummariesSection', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         vi.mocked(localStorage.getItem).mockReturnValue(null);
+        mockTimeRange = { range: '24h' };
+    });
+
+    it('follows the selected preset window', async () => {
+        mockApiFetch.mockResolvedValue(
+            okResponse({ databases: [makeDatabase()] }),
+        );
+        mockTimeRange = { range: '7d' };
+
+        renderSection();
+
+        await waitFor(() => {
+            expect(mockApiFetch).toHaveBeenCalledWith(
+                '/api/v1/metrics/database-summaries'
+                + '?connection_id=1&time_range=7d',
+            );
+        });
+    });
+
+    it('sends both bounds for a custom window', async () => {
+        mockApiFetch.mockResolvedValue(
+            okResponse({ databases: [makeDatabase()] }),
+        );
+        mockTimeRange = {
+            range: 'custom',
+            customStart: '2026-09-01T00:00:00Z',
+            customEnd: '2026-09-02T00:00:00Z',
+        };
+
+        renderSection();
+
+        await waitFor(() => {
+            expect(mockApiFetch).toHaveBeenCalledTimes(1);
+        });
+        const url = mockApiFetch.mock.calls[0][0] as string;
+        expect(url).toContain('time_range=custom');
+        expect(url).toContain('time_start=');
+        expect(url).toContain('time_end=');
+    });
+
+    it('makes no request when a custom bound is missing', async () => {
+        mockApiFetch.mockResolvedValue(
+            okResponse({ databases: [makeDatabase()] }),
+        );
+        mockTimeRange = {
+            range: 'custom',
+            customEnd: '2026-09-02T00:00:00Z',
+        };
+
+        renderSection();
+
+        await waitFor(() => {
+            expect(mockApiFetch).not.toHaveBeenCalled();
+        });
     });
 
     it('renders the Sparkline when time_series is populated', async () => {
@@ -175,6 +244,50 @@ describe('DatabaseSummariesSection', () => {
 
         // Current value falls back to the placeholder dash.
         expect(screen.getByText('--')).toBeInTheDocument();
+    });
+
+    it('renders a null current as a neutral dash and keeps null buckets as gaps', async () => {
+        mockApiFetch.mockResolvedValue(
+            okResponse({
+                databases: [
+                    makeDatabase({
+                        cache_hit_ratio: {
+                            current: null,
+                            time_series: [
+                                { time: '2024-01-01T00:00:00Z', value: 98.0 },
+                                { time: '2024-01-01T00:01:00Z', value: null },
+                                { time: '2024-01-01T00:02:00Z', value: 97.0 },
+                            ],
+                        },
+                    }),
+                ],
+            }),
+        );
+
+        renderSection();
+
+        const chart = await screen.findByTestId('sparkline-chart');
+        expect(chart).toHaveAttribute('data-values', '[98,null,97]');
+
+        // A null current is unknown, not 0%, so it renders as a dash in
+        // the neutral secondary text colour rather than the critical red.
+        const value = screen.getByText('--');
+        expect(value).toHaveStyle({ color: theme.palette.text.secondary });
+        expect(value).not.toHaveStyle({ color: '#f44336' });
+        expect(chart).toHaveAttribute('data-color', theme.palette.text.secondary);
+        expect(screen.queryByText('0.0%')).not.toBeInTheDocument();
+    });
+
+    it('colours the sparkline by the current ratio', async () => {
+        mockApiFetch.mockResolvedValue(
+            okResponse({ databases: [makeDatabase()] }),
+        );
+
+        renderSection();
+
+        const chart = await screen.findByTestId('sparkline-chart');
+        expect(chart).toHaveAttribute('data-color', '#4caf50');
+        expect(screen.getByText('98.5%')).toHaveStyle({ color: '#4caf50' });
     });
 
     it('shows the loading spinner while fetching', () => {

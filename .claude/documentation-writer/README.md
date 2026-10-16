@@ -38,6 +38,14 @@ manually alongside it.
 - Each README's table of contents mirrors the `mkdocs.yml` nav section.
 - Filenames under `docs/` are lowercase with hyphens between words.
 - Prose wraps at 79 characters; long URLs and nav paths are exempt.
+- Alerter configuration keys are documented in three places that must
+  agree: `docs/getting-started/configuration/alerter.md` (reference),
+  `docs/developer-guide/alerter/anomaly-detection.md` (design) and the
+  example configs `examples/ai-dba-alerter.yaml`,
+  `docker/config/ai-dba-alerter.yaml` and
+  `examples/walkthrough/config/ai-dba-alerter.yaml`.
+  `TestExampleConfigsParse` in `alerter/src/internal/config/config_test.go`
+  parses all three examples, so run it after editing them.
 
 ## Maintenance
 

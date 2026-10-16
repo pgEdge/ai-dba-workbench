@@ -35,6 +35,7 @@ alerter/
 │       │   ├── datastore.go      # DB connection
 │       │   ├── types.go          # Type definitions
 │       │   ├── queries.go        # Alert queries
+│       │   ├── metric_registry.go # Metric queries
 │       │   └── notification_queries.go
 │       ├── engine/
 │       │   ├── engine.go         # Core engine
@@ -50,6 +51,7 @@ alerter/
 │           ├── manager.go        # Notification mgr
 │           ├── slack.go          # Slack notifier
 │           ├── mattermost.go     # Mattermost
+│           ├── telegram.go       # Telegram notifier
 │           ├── webhook.go        # Webhook notifier
 │           ├── email.go          # Email notifier
 │           └── template.go       # Templates

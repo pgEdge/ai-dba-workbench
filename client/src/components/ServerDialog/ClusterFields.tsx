@@ -39,7 +39,7 @@ import { getSelectFieldSx } from '../shared/formStyles';
  */
 const CREATE_NEW_SENTINEL = '__create_new__';
 
-interface ClusterFieldsProps {
+export interface ClusterFieldsProps {
     mode: 'create' | 'edit';
     serverId?: number;
     value?: ClusterFieldsValue;
@@ -151,7 +151,7 @@ function getRoleLabel(role: string | null): string {
  * Autocomplete option type that includes both real clusters and the
  * "Create new cluster..." sentinel entry.
  */
-interface ClusterOption {
+export interface ClusterOption {
     id: number | typeof CREATE_NEW_SENTINEL;
     name: string;
     replication_type: string | null;
@@ -636,11 +636,7 @@ const ClusterFields: React.FC<ClusterFieldsProps> = ({
                     margin="dense"
                     InputLabelProps={{ shrink: true }}
                     sx={{ ...selectFieldSx, mt: 1 }}
-                    slotProps={{
-                        input: {
-                            readOnly: true,
-                        },
-                    }}
+                    InputProps={{ readOnly: true }}
                 />
             )}
 

@@ -118,11 +118,98 @@ func TestGetUnprocessedAndUpdateAnomalyCandidate(t *testing.T) {
 		t.Errorf("expected c1.ID=%d, got %d", c1.ID, results[0].ID)
 	}
 
+	if results[0].Tier3Source != nil || results[0].Tier3Model != nil {
+		t.Errorf("unclassified candidate has Tier 3 source %v / model %v, want NULLs",
+			results[0].Tier3Source, results[0].Tier3Model)
+	}
+
+	// The Tier 3 source and model round-trip (GitHub issue #626).
+	source, model := "decision", "typesafe/jev-latest"
+	c2.Tier3Source, c2.Tier3Model = &source, &model
+	if err := ds.UpdateAnomalyCandidate(ctx, c2); err != nil {
+		t.Fatalf("UpdateAnomalyCandidate with Tier 3 source: %v", err)
+	}
+	got, err := ds.GetAnomalyCandidateByID(ctx, c2.ID)
+	if err != nil {
+		t.Fatalf("GetAnomalyCandidateByID: %v", err)
+	}
+	if got.Tier3Source == nil || *got.Tier3Source != source ||
+		got.Tier3Model == nil || *got.Tier3Model != model {
+		t.Errorf("Tier 3 source/model = %v/%v, want %s/%s",
+			got.Tier3Source, got.Tier3Model, source, model)
+	}
+
 	// Canceled context.
 	canceled, cancel := context.WithCancel(ctx)
 	cancel()
 	if _, err := ds.GetUnprocessedAnomalyCandidates(canceled, 10); err == nil {
 		t.Errorf("expected cancel error")
+	}
+}
+
+func TestExpireUnprocessedAnomalyCandidates(t *testing.T) {
+	ds, pool, cleanup := newFullTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	connID := insertTestConnection(t, pool, "expire-conn")
+	now := time.Now()
+	cutoff := now.Add(-10 * time.Minute)
+
+	create := func(metric string, detectedAt time.Time) *AnomalyCandidate {
+		t.Helper()
+		c := &AnomalyCandidate{
+			ConnectionID: connID, MetricName: metric, MetricValue: 1, ZScore: 4,
+			DetectedAt: detectedAt, Context: "{}", Tier1Pass: true,
+		}
+		if err := ds.CreateAnomalyCandidate(ctx, c); err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	stale := create("stale", now.Add(-time.Hour))
+	fresh := create("fresh", now)
+	done := create("done", now.Add(-time.Hour))
+	processedAt := now.Add(-30 * time.Minute)
+	decision := "alert"
+	done.ProcessedAt = &processedAt
+	done.FinalDecision = &decision
+	if err := ds.UpdateAnomalyCandidate(ctx, done); err != nil {
+		t.Fatalf("UpdateAnomalyCandidate: %v", err)
+	}
+
+	expired, err := ds.ExpireUnprocessedAnomalyCandidates(ctx, cutoff)
+	if err != nil {
+		t.Fatalf("ExpireUnprocessedAnomalyCandidates: %v", err)
+	}
+	if expired != 1 {
+		t.Errorf("expired = %d, want 1", expired)
+	}
+
+	got, err := ds.GetAnomalyCandidateByID(ctx, stale.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ProcessedAt == nil || got.FinalDecision != nil {
+		t.Errorf("stale: processed_at = %v, final_decision = %v; want processed with no decision",
+			got.ProcessedAt, got.FinalDecision)
+	}
+	if got, err = ds.GetAnomalyCandidateByID(ctx, fresh.ID); err != nil {
+		t.Fatal(err)
+	} else if got.ProcessedAt != nil {
+		t.Errorf("fresh: processed_at = %v, want NULL", got.ProcessedAt)
+	}
+	if got, err = ds.GetAnomalyCandidateByID(ctx, done.ID); err != nil {
+		t.Fatal(err)
+	} else if got.FinalDecision == nil || *got.FinalDecision != "alert" ||
+		got.ProcessedAt == nil || !got.ProcessedAt.Equal(processedAt.Truncate(time.Microsecond)) {
+		t.Errorf("done: processed_at = %v, final_decision = %v; want unchanged",
+			got.ProcessedAt, got.FinalDecision)
+	}
+
+	// A second run finds nothing left to expire.
+	if expired, err = ds.ExpireUnprocessedAnomalyCandidates(ctx, cutoff); err != nil || expired != 0 {
+		t.Errorf("second run = %d, %v; want 0, nil", expired, err)
 	}
 }
 
@@ -273,7 +360,7 @@ func TestGetMetricBaselinesAndUpsert(t *testing.T) {
 	connID := insertTestConnection(t, pool, "mb-conn")
 
 	// Empty initially.
-	baselines, err := ds.GetMetricBaselines(ctx, connID, "m_b")
+	baselines, err := ds.GetMetricBaselines(ctx, connID, "m_b", nil)
 	if err != nil {
 		t.Fatalf("GetMetricBaselines: %v", err)
 	}
@@ -303,7 +390,7 @@ func TestGetMetricBaselinesAndUpsert(t *testing.T) {
 		t.Fatalf("UpsertMetricBaseline update: %v", err)
 	}
 
-	baselines, err = ds.GetMetricBaselines(ctx, connID, "m_b")
+	baselines, err = ds.GetMetricBaselines(ctx, connID, "m_b", nil)
 	if err != nil {
 		t.Fatalf("GetMetricBaselines after upsert: %v", err)
 	}
@@ -317,7 +404,7 @@ func TestGetMetricBaselinesAndUpsert(t *testing.T) {
 	// Canceled context.
 	canceled, cancel := context.WithCancel(ctx)
 	cancel()
-	if _, err := ds.GetMetricBaselines(canceled, connID, "m_b"); err == nil {
+	if _, err := ds.GetMetricBaselines(canceled, connID, "m_b", nil); err == nil {
 		t.Errorf("expected cancel error")
 	}
 
@@ -337,7 +424,7 @@ func TestGetMetricBaselinesAndUpsert(t *testing.T) {
 	`, connID); err != nil {
 		t.Fatalf("setup scan-fail row: %v", err)
 	}
-	if _, err := ds.GetMetricBaselines(ctx, connID, "m_scan_fail"); err == nil {
+	if _, err := ds.GetMetricBaselines(ctx, connID, "m_scan_fail", nil); err == nil {
 		t.Errorf("expected scan failure for NULL mean column")
 	}
 }
@@ -366,7 +453,7 @@ func TestUpsertAndGetMetricBaselineRoundtripsEarliestSampleAt(t *testing.T) {
 		t.Fatalf("UpsertMetricBaseline insert: %v", err)
 	}
 
-	got, err := ds.GetMetricBaselines(ctx, connID, "m_earliest")
+	got, err := ds.GetMetricBaselines(ctx, connID, "m_earliest", nil)
 	if err != nil {
 		t.Fatalf("GetMetricBaselines: %v", err)
 	}
@@ -385,7 +472,7 @@ func TestUpsertAndGetMetricBaselineRoundtripsEarliestSampleAt(t *testing.T) {
 	if err := ds.UpsertMetricBaseline(ctx, in); err != nil {
 		t.Fatalf("UpsertMetricBaseline update: %v", err)
 	}
-	got, err = ds.GetMetricBaselines(ctx, connID, "m_earliest")
+	got, err = ds.GetMetricBaselines(ctx, connID, "m_earliest", nil)
 	if err != nil {
 		t.Fatalf("GetMetricBaselines after update: %v", err)
 	}
@@ -414,7 +501,7 @@ func TestUpsertAndGetMetricBaselineRoundtripsEarliestSampleAt(t *testing.T) {
 	if err := ds.UpsertMetricBaseline(ctx, zero); err != nil {
 		t.Fatalf("UpsertMetricBaseline zero: %v", err)
 	}
-	gotZero, err := ds.GetMetricBaselines(ctx, connID, "m_earliest_zero")
+	gotZero, err := ds.GetMetricBaselines(ctx, connID, "m_earliest_zero", nil)
 	if err != nil {
 		t.Fatalf("GetMetricBaselines zero: %v", err)
 	}

@@ -76,13 +76,13 @@ const ConnectionScopeTable: React.FC<ConnectionScopeTableProps> = ({
                 </TableRow>
             </TableHead>
             <TableBody>
-                {connections.map((sc) => {
+                {connections.map((sc, index) => {
                     const canGrantReadWrite =
                         ownerConnectionLevels[sc.id] === 'read_write' ||
                         ownerIsSuperuser;
 
                     return (
-                        <TableRow key={sc.id}>
+                        <TableRow key={`${sc.id}-${index}`}>
                             <TableCell sx={{ py: 0.5 }}>{sc.name}</TableCell>
                             <TableCell sx={{ py: 0.5 }}>
                                 <TextField

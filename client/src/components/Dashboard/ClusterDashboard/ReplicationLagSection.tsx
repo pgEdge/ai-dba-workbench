@@ -15,6 +15,10 @@ import Typography from '@mui/material/Typography';
 import CircularProgress from '@mui/material/CircularProgress';
 import { useDashboard } from '../../../contexts/useDashboard';
 import { useMetrics } from '../../../hooks/useMetrics';
+import {
+    alignPointsToWindow,
+    buildWindowCategories,
+} from '../metricsChart';
 import type { MetricQueryParams } from '../types';
 import { formatLag } from '../../../utils/formatters';
 import KpiTile from '../KpiTile';
@@ -114,7 +118,12 @@ const ReplicationLagSection: React.FC<ReplicationLagSectionProps> = ({
         };
     }, [primaryServerId, timeRange.range]);
 
-    const { data: metricsData, loading, error } = useMetrics(metricsParams);
+    const {
+        data: metricsData,
+        window: metricsWindow,
+        loading,
+        error,
+    } = useMetrics(metricsParams);
 
     /* Build KPI values from the latest data point of each series. */
     const kpiItems = useMemo(() => {
@@ -126,11 +135,14 @@ const ReplicationLagSection: React.FC<ReplicationLagSectionProps> = ({
                 (series.metric || series.name).includes('lag'),
             )
             .map(series => {
-                const lastPoint = series.data[series.data.length - 1];
+                // The latest bucket with a reading: null buckets are
+                // gaps the server could not fill.
+                const lastPoint = [...series.data].reverse()
+                    .find(point => point.value !== null);
                 return {
                     metric: series.metric || series.name,
                     label: formatMetricLabel(series.metric || series.name),
-                    value: lastPoint.value,
+                    value: lastPoint?.value ?? null,
                 };
             });
     }, [metricsData]);
@@ -145,13 +157,32 @@ const ReplicationLagSection: React.FC<ReplicationLagSectionProps> = ({
         );
         if (withData.length === 0) { return null; }
 
-        const categories = withData[0].data.map(d => d.time);
-        const series = withData.map(s => ({
-            name: formatMetricLabel(s.metric || s.name),
-            data: s.data.map(d => d.value),
-        }));
+        /*
+         * Each standby contributes its own series, identified by name
+         * rather than by metric, so the series are aligned here rather
+         * than through buildMetricChartData's metric lookup. The axis
+         * is anchored to the queried window where the server reported
+         * one, falling back to the first standby's bucket times.
+         */
+        const windowCategories = buildWindowCategories(metricsWindow);
+        const categories = windowCategories.length > 0
+            ? windowCategories
+            : withData[0].data.map(d => d.time);
+
+        const series = withData.map(s => {
+            const aligned = alignPointsToWindow(
+                s.data,
+                categories,
+                windowCategories.length > 0 ? metricsWindow : null,
+            );
+            return {
+                name: formatMetricLabel(s.metric || s.name),
+                data: aligned.data,
+                filled: aligned.filled,
+            };
+        });
         return { categories, series };
-    }, [metricsData]);
+    }, [metricsData, metricsWindow]);
 
     if (primaryServerId === null && !loading) {
         return (
@@ -188,11 +219,13 @@ const ReplicationLagSection: React.FC<ReplicationLagSectionProps> = ({
         <Box>
             <Box sx={KPI_GRID_SX}>
                 {kpiItems.map(item => {
-                    const status = item.value > 30
-                        ? 'critical'
-                        : item.value > 5
-                            ? 'warning'
-                            : 'good';
+                    const status = item.value === null
+                        ? undefined
+                        : item.value > 30
+                            ? 'critical'
+                            : item.value > 5
+                                ? 'warning'
+                                : 'good';
                     return (
                         <KpiTile
                             key={item.metric}

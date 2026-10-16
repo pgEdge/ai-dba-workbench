@@ -76,20 +76,38 @@ Returns a TSV table with:
 				ctx = context.Background()
 			}
 
-			// Query for all tables in the metrics schema with their descriptions and row counts
+			// Query for the probe tables in the metrics schema with their
+			// descriptions and row counts. The collector stores each probe
+			// in a partitioned parent table with weekly partitions named
+			// <probe>_<YYYYMMDD>; partitions are excluded by catalog state
+			// (relispartition) rather than by name, because a name pattern
+			// cannot tell a partition from a probe reliably (issue #644).
+			// relkind 'r' and 'p' are the ordinary and partitioned tables
+			// that information_schema.tables reports as BASE TABLE, and the
+			// privilege check keeps tables the datastore role cannot read
+			// out of the list, as information_schema.tables did. A
+			// partitioned table holds no rows itself, so its row count is the
+			// sum over the leaf partitions at every level of its tree.
 			query := `
 				SELECT
-					t.table_name,
-					COALESCE(obj_description((quote_ident(t.table_schema) || '.' || quote_ident(t.table_name))::regclass), '') as description,
-					COALESCE(s.n_live_tup, 0) as row_count
-				FROM information_schema.tables t
-				LEFT JOIN pg_stat_user_tables s
-					ON s.schemaname = t.table_schema
-					AND s.relname = t.table_name
-				WHERE t.table_schema = 'metrics'
-					AND t.table_type = 'BASE TABLE'
-					AND t.table_name NOT LIKE '%_p%'  -- Exclude partition tables
-				ORDER BY t.table_name
+					c.relname::text AS table_name,
+					COALESCE(obj_description(c.oid, 'pg_class'), '') AS description,
+					CASE WHEN c.relkind = 'p' THEN (
+						SELECT COALESCE(SUM(ps.n_live_tup), 0)
+						FROM pg_partition_tree(c.oid) pt
+						JOIN pg_stat_user_tables ps ON ps.relid = pt.relid
+						WHERE pt.isleaf
+					)::bigint
+					ELSE COALESCE(s.n_live_tup, 0)
+					END AS row_count
+				FROM pg_class c
+				JOIN pg_namespace n ON n.oid = c.relnamespace
+				LEFT JOIN pg_stat_user_tables s ON s.relid = c.oid
+				WHERE n.nspname = 'metrics'
+					AND c.relkind IN ('r', 'p')
+					AND NOT c.relispartition
+					AND has_table_privilege(c.oid, 'SELECT')
+				ORDER BY c.relname
 			`
 
 			rows, err := pool.Query(ctx, query)

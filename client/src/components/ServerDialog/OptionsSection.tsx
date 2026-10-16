@@ -22,7 +22,7 @@ import {
     formControlLabelSx,
 } from './ServerDialog.styles';
 
-interface OptionsSectionProps {
+export interface OptionsSectionProps {
     formData: ServerFormData;
     isSaving: boolean;
     isSuperuser: boolean;

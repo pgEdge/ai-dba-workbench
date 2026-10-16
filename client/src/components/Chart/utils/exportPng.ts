@@ -8,9 +8,11 @@
  *-------------------------------------------------------------------------
  */
 
-interface ExportableChart {
-    getDataURL: (opts: { type: string; pixelRatio: number; backgroundColor: string }) => string;
-}
+import type { EChartsType } from 'echarts/core';
+
+/* Only the snapshot method is needed here, so the chart is accepted
+   through the narrowest slice of the ECharts instance type. */
+export type ExportableChart = Pick<EChartsType, 'getDataURL'>;
 
 export const exportChartAsPng = (
     chartInstance: ExportableChart,

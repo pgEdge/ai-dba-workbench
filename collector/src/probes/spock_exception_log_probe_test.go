@@ -11,6 +11,7 @@ package probes
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -83,10 +84,11 @@ func TestSpockExceptionLogProbe_StoreEmpty(t *testing.T) {
 
 // TestSpockExceptionLogProbe_ExecuteWhenSpockAbsent verifies the
 // graceful-skip behavior: when the Spock extension is not installed
-// in the connected database, Execute returns (nil, nil) rather than
-// raising an error or attempting to query a missing catalog. This
-// branch is hit on every collection cycle for non-Spock databases
-// and must not log noise or churn the connection pool.
+// in the connected database, Execute returns ErrExtensionNotInstalled
+// and nil metrics rather than querying a missing catalog. The scheduler
+// treats that sentinel as an absent extension, not a failure, so this
+// branch, hit on every cycle for non-Spock databases, logs no noise
+// (#612).
 //
 // The test is skipped when Spock is already installed on the host
 // integration database; the integration pool is created fresh per
@@ -106,8 +108,8 @@ func TestSpockExceptionLogProbe_ExecuteWhenSpockAbsent(t *testing.T) {
 	p := newSpockExceptionLogProbeForTest()
 
 	metrics, err := p.Execute(ctx, "no-spock", conn, pgVersion)
-	if err != nil {
-		t.Fatalf("Execute() returned error: %v", err)
+	if !errors.Is(err, ErrExtensionNotInstalled) {
+		t.Fatalf("Execute() = %v, want ErrExtensionNotInstalled", err)
 	}
 	if metrics != nil {
 		t.Errorf("Execute() returned %d metrics; want nil "+
@@ -226,6 +228,11 @@ func TestSpockExceptionLogProbe_ExecuteWithStubSpock(t *testing.T) {
 	metrics, err := p.Execute(ctx, "with-spock", conn, pgVersion)
 	if err != nil {
 		t.Fatalf("Execute (empty window): %v", err)
+	}
+	if metrics == nil {
+		t.Fatal("Execute (empty window) returned nil; want an " +
+			"empty, non-nil slice so the scheduler records Spock " +
+			"as installed (#612)")
 	}
 	if len(metrics) != 0 {
 		t.Errorf("Execute (empty window) returned %d metrics, "+

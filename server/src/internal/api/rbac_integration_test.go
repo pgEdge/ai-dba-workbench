@@ -83,7 +83,7 @@ func createTokenForUser(t *testing.T, store *auth.AuthStore, userID int64, token
 		t.Fatalf("Failed to get user by ID %d: %v", userID, err)
 	}
 
-	rawToken, storedToken, err := store.CreateToken(user.Username, tokenName, nil)
+	rawToken, storedToken, err := store.AsActor(auth.SystemActor()).CreateToken(user.Username, tokenName, nil, true)
 	if err != nil {
 		t.Fatalf("Failed to create token for user %s: %v", user.Username, err)
 	}
@@ -418,10 +418,10 @@ func TestRBACEnforcement_TokenAdminScope(t *testing.T) {
 
 	// Create a token scoped to manage_users and manage_groups only.
 	tokenID, _ := createTokenForUser(t, store, userID, "scoped_token")
-	if err := store.SetTokenAdminScope(tokenID, []string{
+	if err := store.AsActor(auth.SystemActor()).SetTokenAdminScope(tokenID, []string{
 		auth.PermManageUsers,
 		auth.PermManageGroups,
-	}); err != nil {
+	}, true); err != nil {
 		t.Fatalf("Failed to set token admin scope: %v", err)
 	}
 
@@ -476,7 +476,7 @@ func TestRBACEnforcement_TokenAdminScope(t *testing.T) {
 
 	// Create a second token with wildcard admin scope.
 	wildcardTokenID, _ := createTokenForUser(t, store, userID, "wildcard_token")
-	if err := store.SetTokenAdminScope(wildcardTokenID, []string{"*"}); err != nil {
+	if err := store.AsActor(auth.SystemActor()).SetTokenAdminScope(wildcardTokenID, []string{"*"}, true); err != nil {
 		t.Fatalf("Failed to set wildcard token admin scope: %v", err)
 	}
 
@@ -619,7 +619,7 @@ func TestRBACEnforcement_MCPToolAccess(t *testing.T) {
 
 	// Create a token scoped to tool_a only.
 	tokenID, _ := createTokenForUser(t, store, mcpUserID, "mcp_token")
-	if err := store.SetTokenMCPScope(tokenID, []int64{toolAID}); err != nil {
+	if err := store.AsActor(auth.SystemActor()).SetTokenMCPScope(tokenID, []int64{toolAID}, true); err != nil {
 		t.Fatalf("Failed to set token MCP scope: %v", err)
 	}
 
@@ -643,7 +643,7 @@ func TestRBACEnforcement_MCPToolAccess(t *testing.T) {
 
 	// Create a token with wildcard MCP scope.
 	wildcardTokenID, _ := createTokenForUser(t, store, mcpUserID, "wildcard_mcp_token")
-	if err := store.SetTokenMCPScope(wildcardTokenID, []int64{auth.MCPPrivilegeIDWildcard}); err != nil {
+	if err := store.AsActor(auth.SystemActor()).SetTokenMCPScope(wildcardTokenID, []int64{auth.MCPPrivilegeIDWildcard}, true); err != nil {
 		t.Fatalf("Failed to set wildcard token MCP scope: %v", err)
 	}
 
@@ -744,9 +744,9 @@ func TestRBACEnforcement_ConnectionAccess(t *testing.T) {
 
 	// Token scoped to connection 1 only.
 	tokenID, _ := createTokenForUser(t, store, connUserID, "conn_token")
-	if err := store.SetTokenConnectionScope(tokenID, []auth.ScopedConnection{
+	if err := store.AsActor(auth.SystemActor()).SetTokenConnectionScope(tokenID, []auth.ScopedConnection{
 		{ConnectionID: 1, AccessLevel: auth.AccessLevelReadWrite},
-	}); err != nil {
+	}, true); err != nil {
 		t.Fatalf("Failed to set token connection scope: %v", err)
 	}
 
@@ -777,9 +777,9 @@ func TestRBACEnforcement_ConnectionAccess(t *testing.T) {
 
 	// Token that downgrades access level.
 	downgradeTokenID, _ := createTokenForUser(t, store, connUserID, "downgrade_token")
-	if err := store.SetTokenConnectionScope(downgradeTokenID, []auth.ScopedConnection{
+	if err := store.AsActor(auth.SystemActor()).SetTokenConnectionScope(downgradeTokenID, []auth.ScopedConnection{
 		{ConnectionID: 1, AccessLevel: auth.AccessLevelRead},
-	}); err != nil {
+	}, true); err != nil {
 		t.Fatalf("Failed to set downgrade token scope: %v", err)
 	}
 
@@ -799,9 +799,9 @@ func TestRBACEnforcement_ConnectionAccess(t *testing.T) {
 
 	// Token with wildcard connection scope (read).
 	wildcardReadTokenID, _ := createTokenForUser(t, store, connUserID, "wildcard_read_token")
-	if err := store.SetTokenConnectionScope(wildcardReadTokenID, []auth.ScopedConnection{
+	if err := store.AsActor(auth.SystemActor()).SetTokenConnectionScope(wildcardReadTokenID, []auth.ScopedConnection{
 		{ConnectionID: auth.ConnectionIDAll, AccessLevel: auth.AccessLevelRead},
-	}); err != nil {
+	}, true); err != nil {
 		t.Fatalf("Failed to set wildcard read token scope: %v", err)
 	}
 
@@ -821,9 +821,9 @@ func TestRBACEnforcement_ConnectionAccess(t *testing.T) {
 
 	// Token with wildcard connection scope (read_write).
 	wildcardRWTokenID, _ := createTokenForUser(t, store, connUserID, "wildcard_rw_token")
-	if err := store.SetTokenConnectionScope(wildcardRWTokenID, []auth.ScopedConnection{
+	if err := store.AsActor(auth.SystemActor()).SetTokenConnectionScope(wildcardRWTokenID, []auth.ScopedConnection{
 		{ConnectionID: auth.ConnectionIDAll, AccessLevel: auth.AccessLevelReadWrite},
-	}); err != nil {
+	}, true); err != nil {
 		t.Fatalf("Failed to set wildcard rw token scope: %v", err)
 	}
 

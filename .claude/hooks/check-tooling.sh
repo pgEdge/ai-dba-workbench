@@ -52,4 +52,9 @@ check_bin golangci-lint "Go linting"
 check_bin npm "Node toolchain for client and e2e"
 check_bin gh "GitHub CLI for PR workflow"
 
+# If this hook ever fails to run, the fallback is a manual check: before
+# delegating documentation or browser work, confirm that
+# pgedge-skills:pgedge-docs and playwright-cli appear in the session's
+# available skills list, and stop and report if either is absent.
+
 exit 0

@@ -12,13 +12,50 @@
  * Shared types for StatusPanel sub-components
  */
 
+import type React from 'react';
 import type { Selection } from '../../types/selection';
 
 export interface StatusPanelProps {
     selection: Selection | null;
 }
 
-export interface TransformedAlert {
+/**
+ * Raw alert record as returned by `GET /api/v1/alerts`, before it is
+ * mapped into the camelCase `TransformedAlert` shape the display
+ * components consume.
+ */
+export interface ApiAlert {
+    id: number;
+    severity?: string;
+    title: string;
+    description?: string;
+    triggered_at?: string;
+    last_updated?: string;
+    // Omitted (the server encodes an empty name as absent) for a
+    // system alert.
+    server_name?: string;
+    // Null for a system alert, which belongs to no connection.
+    connection_id?: number | null;
+    database_name?: string;
+    object_name?: string;
+    alert_type?: string;
+    rule_id?: number;
+    metric_value?: number | string;
+    metric_unit?: string;
+    threshold_value?: number | string;
+    operator?: string;
+    acknowledged_at?: string;
+    acknowledged_by?: string;
+    ack_message?: string;
+    false_positive?: boolean;
+    ai_analysis?: string;
+    ai_analysis_metric_value?: number | string;
+}
+
+// Declared as a type alias rather than an interface so that it carries
+// an implicit index signature and can be passed to components (such as
+// AlertAnalysisDialog) that accept a `Record<string, unknown>` alert.
+export type TransformedAlert = {
     id: number | string;
     severity: string;
     title: string;
@@ -34,7 +71,11 @@ export interface TransformedAlert {
     // Pre-formatted relative time for lastUpdated (mirrors `time`).
     lastUpdatedTime?: string;
     server?: string;
+    // Undefined for a system alert; see isSystem.
     connectionId?: number;
+    // True for a system alert, which the alerter raises about the
+    // Workbench itself rather than about a monitored server.
+    isSystem?: boolean;
     databaseName?: string;
     objectName?: string;
     alertType?: string;
@@ -49,7 +90,7 @@ export interface TransformedAlert {
     falsePositive?: boolean;
     aiAnalysis?: string;
     aiAnalysisMetricValue?: number | string;
-}
+};
 
 export interface AlertItemProps {
     alert: TransformedAlert;
@@ -63,6 +104,12 @@ export interface AlertItemProps {
     isUnacknowledging?: (alertId: number | string) => boolean;
     onAnalyze?: (alert: TransformedAlert) => void;
     onEditOverride?: (alert: TransformedAlert) => void;
+    /**
+     * Whether the current user may acknowledge and restore system
+     * alerts, which the server allows only to a superuser or a holder
+     * of manage_alert_rules. Defaults to false, hiding the action.
+     */
+    canAcknowledgeSystem?: boolean;
 }
 
 export interface GroupedAlertInstanceProps {
@@ -73,6 +120,12 @@ export interface GroupedAlertInstanceProps {
     isUnacknowledging?: (alertId: number | string) => boolean;
     onAnalyze?: (alert: TransformedAlert) => void;
     onEditOverride?: (alert: TransformedAlert) => void;
+    /**
+     * Whether the current user may acknowledge and restore system
+     * alerts, which the server allows only to a superuser or a holder
+     * of manage_alert_rules. Defaults to false, hiding the action.
+     */
+    canAcknowledgeSystem?: boolean;
 }
 
 export interface GroupedAlertItemProps {
@@ -84,6 +137,12 @@ export interface GroupedAlertItemProps {
     isUnacknowledging?: (alertId: number | string) => boolean;
     onAnalyze?: (alert: TransformedAlert) => void;
     onEditOverride?: (alert: TransformedAlert) => void;
+    /**
+     * Whether the current user may acknowledge and restore system
+     * alerts, which the server allows only to a superuser or a holder
+     * of manage_alert_rules. Defaults to false, hiding the action.
+     */
+    canAcknowledgeSystem?: boolean;
     onAcknowledgeGroup?: (alerts: TransformedAlert[]) => void;
 }
 
@@ -105,7 +164,22 @@ export interface AlertsSectionProps {
     isUnacknowledging?: (alertId: number | string) => boolean;
     onAnalyze?: (alert: TransformedAlert) => void;
     onEditOverride?: (alert: TransformedAlert) => void;
+    /**
+     * Whether the current user may acknowledge and restore system
+     * alerts, which the server allows only to a superuser or a holder
+     * of manage_alert_rules. Defaults to false, hiding the action.
+     */
+    canAcknowledgeSystem?: boolean;
     onAcknowledgeGroup?: (alerts: TransformedAlert[]) => void;
+}
+
+export interface MetricCardProps {
+    label: string;
+    value: React.ReactNode;
+    trend?: 'up' | 'down';
+    trendValue?: React.ReactNode;
+    icon?: React.ElementType;
+    color?: string;
 }
 
 export interface SelectionHeaderProps {

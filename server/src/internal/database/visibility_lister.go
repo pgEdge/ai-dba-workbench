@@ -11,6 +11,7 @@ package database
 
 import (
 	"context"
+	"errors"
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 )
@@ -71,6 +72,28 @@ func (l *visibilityLister) GetAllConnections(ctx context.Context) ([]auth.Connec
 		return nil, err
 	}
 	return ConnectionsToVisibilityInfo(conns), nil
+}
+
+// ownedGroupConnectionLister is the internal interface for the owned
+// cluster group lookup, which *Datastore satisfies.
+type ownedGroupConnectionLister interface {
+	GetOwnedClusterGroupConnectionIDs(ctx context.Context, username string) ([]int, error)
+}
+
+// errOwnedGroupsUnsupported is returned when the lister's source cannot
+// enumerate owned cluster groups, so that the grant checks fail closed.
+var errOwnedGroupsUnsupported = errors.New("connection source cannot list owned cluster groups")
+
+// GetOwnedClusterGroupConnectionIDs implements auth.OwnedClusterGroupLister
+// by delegating to the datastore.
+func (l *visibilityLister) GetOwnedClusterGroupConnectionIDs(ctx context.Context,
+	username string) ([]int, error) {
+
+	src, ok := l.ds.(ownedGroupConnectionLister)
+	if !ok {
+		return nil, errOwnedGroupsUnsupported
+	}
+	return src.GetOwnedClusterGroupConnectionIDs(ctx, username)
 }
 
 // sliceVisibilityLister adapts an already-loaded slice of ConnectionListItem

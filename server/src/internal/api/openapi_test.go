@@ -11,6 +11,9 @@ package api
 
 import (
 	"encoding/json"
+	"reflect"
+	"slices"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -44,6 +47,8 @@ func TestBuildOpenAPISpec(t *testing.T) {
 	// Verify key paths exist
 	keyPaths := []string{
 		"/auth/login",
+		"/auth/oidc/start",
+		"/auth/oidc/callback",
 		"/user/info",
 		"/connections",
 		"/connections/{id}",
@@ -252,11 +257,16 @@ func TestBuildOpenAPISpec_SecurityRequirements(t *testing.T) {
 func TestBuildOpenAPISpec_MetricsQueryCustomWindowParams(t *testing.T) {
 	// The custom time-range feature is only discoverable through the spec,
 	// so every path that accepts it must document both timestamps and
-	// advertise the custom value on time_range. The perf-summary paths keep
-	// the preset list, since they do not accept a custom window.
+	// advertise the custom value on time_range.
 	spec := BuildOpenAPISpec()
 
-	for _, path := range []string{"/metrics/query", "/metrics/connection-groups"} {
+	for _, path := range []string{
+		"/metrics/query",
+		"/metrics/connection-groups",
+		"/metrics/database-summaries",
+		"/metrics/performance-summary",
+		"/metrics/query-stats",
+	} {
 		op := spec.Paths[path].Get
 		if op == nil {
 			t.Fatalf("Expected GET operation on %s", path)
@@ -283,15 +293,129 @@ func TestBuildOpenAPISpec_MetricsQueryCustomWindowParams(t *testing.T) {
 				path, desc)
 		}
 	}
+}
 
-	perfOp := spec.Paths["/metrics/performance-summary"].Get
-	if perfOp == nil {
-		t.Fatal("Expected GET operation on /metrics/performance-summary")
+func TestOpenAPIOIDCPathOperationsMatchHandlers(t *testing.T) {
+	spec := BuildOpenAPISpec()
+
+	tests := []struct {
+		path            string
+		wantStatuses    []string
+		wantQueryParams []string
+	}{
+		{
+			path: "/auth/oidc/start",
+			// No 404: a disabled deployment redirects to the login
+			// screen with login_error set, since the public
+			// capabilities endpoint already reports oidc_enabled and
+			// the 404 only stranded the user on an error page.
+			// Both handlers answer anything but GET with 405 and an
+			// Allow: GET header, so the spec documents that too.
+			wantStatuses:    []string{"302", "405", "429", "500"},
+			wantQueryParams: []string{"return"},
+		},
+		{
+			path:            "/auth/oidc/callback",
+			wantStatuses:    []string{"302", "400", "404", "405", "429"},
+			wantQueryParams: []string{"code", "state", "error"},
+		},
 	}
-	for _, p := range perfOp.Parameters {
-		if p.Name == "time_start" || p.Name == "time_end" {
-			t.Errorf("Unexpected %s parameter on /metrics/performance-summary",
-				p.Name)
+
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			item, ok := spec.Paths[tt.path]
+			if !ok {
+				t.Fatalf("path %s is missing", tt.path)
+			}
+			op := item.Get
+			if op == nil {
+				t.Fatalf("path %s has no GET operation", tt.path)
+			}
+
+			if op.Security != nil {
+				t.Errorf("path %s has a Security entry %v, want nil: these are how an "+
+					"unauthenticated browser obtains a session in the first place",
+					tt.path, op.Security)
+			}
+
+			gotStatuses := make([]string, 0, len(op.Responses))
+			for status := range op.Responses {
+				gotStatuses = append(gotStatuses, status)
+			}
+			sort.Strings(gotStatuses)
+			wantStatuses := append([]string(nil), tt.wantStatuses...)
+			sort.Strings(wantStatuses)
+			if !reflect.DeepEqual(gotStatuses, wantStatuses) {
+				t.Errorf("path %s response statuses = %v, want %v",
+					tt.path, gotStatuses, wantStatuses)
+			}
+
+			gotParams := make([]string, 0, len(op.Parameters))
+			for _, p := range op.Parameters {
+				gotParams = append(gotParams, p.Name)
+			}
+			sort.Strings(gotParams)
+			wantParams := append([]string(nil), tt.wantQueryParams...)
+			sort.Strings(wantParams)
+			if !reflect.DeepEqual(gotParams, wantParams) {
+				t.Errorf("path %s query parameters = %v, want %v",
+					tt.path, gotParams, wantParams)
+			}
+		})
+	}
+}
+
+func TestOpenAPICapabilitiesResponseDescribesAuthMethods(t *testing.T) {
+	spec := BuildOpenAPISpec()
+
+	schema, ok := spec.Components.Schemas["CapabilitiesResponse"]
+	if !ok {
+		t.Fatal("CapabilitiesResponse schema is missing")
+	}
+	auth, ok := schema.Properties["auth"]
+	if !ok {
+		t.Fatal("CapabilitiesResponse has no auth block")
+	}
+	if auth.Ref != "#/components/schemas/AuthCapabilities" {
+		t.Fatalf("auth ref = %q", auth.Ref)
+	}
+
+	authSchema, ok := spec.Components.Schemas["AuthCapabilities"]
+	if !ok {
+		t.Fatal("AuthCapabilities schema is missing")
+	}
+	for _, property := range []string{"local_enabled", "oidc_enabled", "oidc_label"} {
+		if _, ok := authSchema.Properties[property]; !ok {
+			t.Errorf("AuthCapabilities has no %q property", property)
 		}
+	}
+}
+
+// TestOpenAPIUserSchemasRequireAuthSource checks that the two schemas built
+// from a StoredUser declare auth_source as required, because the handlers
+// always set it, with no omitempty, so a consumer would otherwise be told to
+// expect a field that is in fact always there. auth_issuer stays optional: it
+// does carry omitempty, and is genuinely absent for a local account.
+func TestOpenAPIUserSchemasRequireAuthSource(t *testing.T) {
+	spec := BuildOpenAPISpec()
+
+	for _, name := range []string{"RBACUser", "UserPrivilegesResponse"} {
+		t.Run(name, func(t *testing.T) {
+			schema, ok := spec.Components.Schemas[name]
+			if !ok {
+				t.Fatalf("the spec has no %s schema", name)
+			}
+			if _, ok := schema.Properties["auth_source"]; !ok {
+				t.Fatalf("%s has no auth_source property", name)
+			}
+			if !slices.Contains(schema.Required, "auth_source") {
+				t.Fatalf("%s required list is %v, which omits auth_source",
+					name, schema.Required)
+			}
+			if slices.Contains(schema.Required, "auth_issuer") {
+				t.Fatalf("%s requires auth_issuer, which is absent for a local account",
+					name)
+			}
+		})
 	}
 }

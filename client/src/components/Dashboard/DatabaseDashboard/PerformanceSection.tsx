@@ -11,15 +11,25 @@
 import type React from 'react';
 import { useMemo } from 'react';
 import Box from '@mui/material/Box';
-import Typography from '@mui/material/Typography';
 import CircularProgress from '@mui/material/CircularProgress';
 import { useDashboard } from '../../../contexts/useDashboard';
 import { useMetrics } from '../../../hooks/useMetrics';
-import type { MetricQueryParams, MetricSeries, MetricDataPoint } from '../types';
+import type { MetricQueryParams, MetricDataPoint } from '../types';
+import {
+    buildMetricChartData as buildChartData,
+    buildDerivedChartData,
+} from '../metricsChart';
 import { KPI_GRID_SX, CHART_SECTION_SX } from '../styles';
 import KpiTile from '../KpiTile';
 import CollapsibleSection from '../CollapsibleSection';
+import ChartPanel from '../ChartPanel';
 import { Chart } from '../../Chart';
+import {
+    CACHE_HIT_METRICS,
+    CACHE_HIT_CAVEAT,
+    buildCacheHitRatioPoints,
+    latestCacheHitRatio,
+} from '../cacheHitRatio';
 import {
     type DatabaseSectionProps,
     extractSparklineData,
@@ -36,6 +46,11 @@ const CHART_BUCKETS = 150;
 
 /** Chart height in pixels */
 const CHART_HEIGHT = 250;
+
+/** Analysis description for the cache hit ratio KPI and chart. */
+const CACHE_HIT_DESCRIPTION =
+    'Buffer cache hit ratio per interval (null buckets had no block '
+    + `access). ${CACHE_HIT_CAVEAT}`;
 
 /**
  * Determine status for cache hit ratio values.
@@ -62,37 +77,37 @@ const getDeadTupleStatus = (
 };
 
 /**
- * Build chart data from metric series for the Chart component.
+ * Percentage that `part` makes of `part + rest`. A null on either side
+ * means the bucket has no reading, so the ratio is null too rather
+ * than a misleading 0 or 100; a zero total is reported as 0.
  */
-const buildChartData = (
-    series: MetricSeries[] | null,
-    metricNames: string[],
-    displayNames?: string[],
-) => {
-    if (!series) { return null; }
+const ratioPercent = (
+    part: number | null,
+    rest: number | null,
+): number | null => {
+    if (part === null || rest === null) { return null; }
+    const total = part + rest;
+    return total > 0 ? (part / total) * 100 : 0;
+};
 
-    const matchedSeries = metricNames.map((metric, idx) => {
-        const found = series.find(s => s.metric === metric);
-        return {
-            name: displayNames?.[idx] ?? metric,
-            data: found?.data.map(d => d.value) ?? [],
-            categories: found?.data.map(d => d.time) ?? [],
-        };
-    });
+/**
+ * Sum two optional readings, ignoring nulls; null when neither has a
+ * value, so a gap stays a gap instead of collapsing to 0.
+ */
+const sumNullable = (
+    a: number | null | undefined,
+    b: number | null | undefined,
+): number | null => {
+    if (a == null && b == null) { return null; }
+    return (a ?? 0) + (b ?? 0);
+};
 
-    if (matchedSeries.every(s => s.data.length === 0)) { return null; }
-
-    const categories = matchedSeries.find(
-        s => s.categories.length > 0
-    )?.categories ?? [];
-
-    return {
-        categories,
-        series: matchedSeries.map(s => ({
-            name: s.name,
-            data: s.data,
-        })),
-    };
+/** The last non-null reading in a point series, or null when none. */
+const latestNonNull = (points: MetricDataPoint[]): number | null => {
+    for (let i = points.length - 1; i >= 0; i--) {
+        if (points[i].value !== null) { return points[i].value; }
+    }
+    return null;
 };
 
 /**
@@ -117,6 +132,9 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
         metrics: ['database_size_bytes'],
     }), [connectionId, databaseName, timeRange.range]);
 
+    // The ratio is derived from per-interval rates rather than the
+    // lifetime counters, so it reflects the current interval and an
+    // idle bucket becomes a gap (see issue #401).
     const cacheKpiParams = useMemo((): MetricQueryParams => ({
         probeName: 'pg_stat_database',
         connectionId,
@@ -124,7 +142,7 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
         timeRange: timeRange.range,
         buckets: KPI_BUCKETS,
         aggregation: 'last',
-        metrics: ['blks_hit', 'blks_read'],
+        metrics: CACHE_HIT_METRICS,
     }), [connectionId, databaseName, timeRange.range]);
 
     const txnKpiParams = useMemo((): MetricQueryParams => ({
@@ -133,8 +151,8 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
         databaseName,
         timeRange: timeRange.range,
         buckets: KPI_BUCKETS,
-        aggregation: 'last',
-        metrics: ['xact_commit', 'xact_rollback'],
+        aggregation: 'avg',
+        metrics: ['xact_commit_per_sec', 'xact_rollback_per_sec'],
     }), [connectionId, databaseName, timeRange.range]);
 
     const deadTupleKpiParams = useMemo((): MetricQueryParams => ({
@@ -154,8 +172,8 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
         databaseName,
         timeRange: timeRange.range,
         buckets: CHART_BUCKETS,
-        aggregation: 'last',
-        metrics: ['xact_commit', 'xact_rollback'],
+        aggregation: 'avg',
+        metrics: ['xact_commit_per_sec', 'xact_rollback_per_sec'],
     }), [connectionId, databaseName, timeRange.range]);
 
     const cacheChartParams = useMemo((): MetricQueryParams => ({
@@ -165,7 +183,7 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
         timeRange: timeRange.range,
         buckets: CHART_BUCKETS,
         aggregation: 'last',
-        metrics: ['blks_hit', 'blks_read'],
+        metrics: CACHE_HIT_METRICS,
     }), [connectionId, databaseName, timeRange.range]);
 
     // Fetch KPI data
@@ -183,80 +201,57 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
         sizeKpi.data, 'database_size_bytes'
     );
 
-    // Compute cache hit ratio from raw blks_hit and blks_read
-    const blksHit = extractLatestValue(
-        cacheKpi.data, 'blks_hit'
+    // Per-bucket cache hit ratio from the hit and read rates; idle
+    // buckets are null (gaps) and the headline is the latest bucket
+    // that has a ratio, so a trailing idle bucket does not blank it.
+    const cacheHitSparkline = useMemo(
+        () => buildCacheHitRatioPoints(cacheKpi.data),
+        [cacheKpi.data]
     );
-    const blksRead = extractLatestValue(
-        cacheKpi.data, 'blks_read'
+    const cacheHitRatio = useMemo(
+        () => latestCacheHitRatio(cacheHitSparkline),
+        [cacheHitSparkline]
     );
-    const cacheHitRatio = useMemo(() => {
-        if (blksHit === null && blksRead === null) { return null; }
-        const hit = blksHit ?? 0;
-        const read = blksRead ?? 0;
-        const total = hit + read;
-        if (total === 0) { return 100; }
-        return (hit / total) * 100;
-    }, [blksHit, blksRead]);
 
-    // Build per-point sparkline for cache hit ratio
-    const cacheHitSparkline = useMemo((): MetricDataPoint[] => {
-        if (!cacheKpi.data) { return []; }
-        const hitSeries = cacheKpi.data.find(
-            s => s.metric === 'blks_hit'
+    /*
+     * The tile shows commits plus rollbacks, so the sparkline sums the
+     * two rate series bucket by bucket rather than tracking commits
+     * alone; points are paired by index, and a series that is short or
+     * missing contributes 0 for the buckets it does not cover. The
+     * headline is the latest non-null bucket of that summed series, so
+     * commits and rollbacks always come from the same bucket rather
+     * than each from its own latest reading.
+     */
+    const txnSparkline = useMemo((): MetricDataPoint[] => {
+        const commitData = extractSparklineData(
+            txnKpi.data, 'xact_commit_per_sec'
         );
-        const readSeries = cacheKpi.data.find(
-            s => s.metric === 'blks_read'
+        const rollbackData = extractSparklineData(
+            txnKpi.data, 'xact_rollback_per_sec'
         );
-        if (!hitSeries || !readSeries) { return []; }
-
-        const len = Math.min(
-            hitSeries.data.length, readSeries.data.length
-        );
+        const len = Math.max(commitData.length, rollbackData.length);
         const points: MetricDataPoint[] = [];
         for (let i = 0; i < len; i++) {
-            const h = hitSeries.data[i].value;
-            const r = readSeries.data[i].value;
-            const total = h + r;
+            const commit = i < commitData.length ? commitData[i] : null;
+            const rollback = i < rollbackData.length ? rollbackData[i] : null;
             points.push({
-                time: hitSeries.data[i].time,
-                value: total > 0 ? (h / total) * 100 : 0,
+                time: (commit ?? rollback as MetricDataPoint).time,
+                value: sumNullable(commit?.value, rollback?.value),
             });
         }
         return points;
-    }, [cacheKpi.data]);
+    }, [txnKpi.data]);
+    const txnRate = useMemo(() => latestNonNull(txnSparkline), [txnSparkline]);
 
-    // Transaction rate: use raw cumulative xact_commit
-    const txnCommit = extractLatestValue(
-        txnKpi.data, 'xact_commit'
-    );
-    const txnRollback = extractLatestValue(
-        txnKpi.data, 'xact_rollback'
-    );
-    const txnRate = useMemo(() => {
-        if (txnCommit === null && txnRollback === null) {
-            return null;
-        }
-        return (txnCommit ?? 0) + (txnRollback ?? 0);
-    }, [txnCommit, txnRollback]);
-
-    // Dead tuple ratio from raw n_dead_tup and n_live_tup
-    const nDeadTup = extractLatestValue(
-        deadTupleKpi.data, 'n_dead_tup'
-    );
-    const nLiveTup = extractLatestValue(
-        deadTupleKpi.data, 'n_live_tup'
-    );
-    const deadTupleRatio = useMemo(() => {
-        if (nDeadTup === null && nLiveTup === null) { return null; }
-        const dead = nDeadTup ?? 0;
-        const live = nLiveTup ?? 0;
-        const total = dead + live;
-        if (total === 0) { return 0; }
-        return (dead / total) * 100;
-    }, [nDeadTup, nLiveTup]);
-
-    // Build per-point sparkline for dead tuple ratio
+    /*
+     * Per-bucket dead tuple ratio. The dead and live counts are paired
+     * by bucket rather than each taken from its own latest reading, so
+     * the headline can never divide a dead count from one bucket by a
+     * live count from another; a bucket missing either count carries
+     * no ratio at all, so a gap shows as the no-data placeholder
+     * instead of a reassuring 0.0%. A bucket whose counts are both 0
+     * is still a genuine 0% and is reported as such.
+     */
     const deadTupleSparkline = useMemo((): MetricDataPoint[] => {
         if (!deadTupleKpi.data) { return []; }
         const deadSeries = deadTupleKpi.data.find(
@@ -272,67 +267,39 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
         );
         const points: MetricDataPoint[] = [];
         for (let i = 0; i < len; i++) {
-            const d = deadSeries.data[i].value;
-            const l = liveSeries.data[i].value;
-            const total = d + l;
             points.push({
                 time: deadSeries.data[i].time,
-                value: total > 0 ? (d / total) * 100 : 0,
+                value: ratioPercent(
+                    deadSeries.data[i].value, liveSeries.data[i].value,
+                ),
             });
         }
         return points;
     }, [deadTupleKpi.data]);
+    const deadTupleRatio = useMemo(
+        () => latestNonNull(deadTupleSparkline),
+        [deadTupleSparkline]
+    );
 
     // Build chart datasets
     const txnChartData = useMemo(
         () => buildChartData(
             txnChart.data,
-            ['xact_commit', 'xact_rollback'],
-            ['Commits', 'Rollbacks'],
+            ['xact_commit_per_sec', 'xact_rollback_per_sec'],
+            ['Commits/s', 'Rollbacks/s'],
+            txnChart.window,
         ),
-        [txnChart.data]
+        [txnChart.data, txnChart.window]
     );
 
-    // Build cache hit ratio chart from per-point computation
+    // Build the cache hit ratio chart from the per-bucket ratio; null
+    // buckets are passed through so ECharts draws them as gaps.
     const cacheChartData = useMemo(() => {
-        if (!cacheChart.data) { return null; }
-        const hitSeries = cacheChart.data.find(
-            s => s.metric === 'blks_hit'
+        const points = buildCacheHitRatioPoints(cacheChart.data);
+        return buildDerivedChartData(
+            points, 'Cache Hit Ratio %', cacheChart.window,
         );
-        const readSeries = cacheChart.data.find(
-            s => s.metric === 'blks_read'
-        );
-        if (!hitSeries || !readSeries) { return null; }
-        if (
-            hitSeries.data.length === 0
-            && readSeries.data.length === 0
-        ) {
-            return null;
-        }
-
-        const len = Math.min(
-            hitSeries.data.length, readSeries.data.length
-        );
-        const ratioData: number[] = [];
-        const categories: string[] = [];
-        for (let i = 0; i < len; i++) {
-            const h = hitSeries.data[i].value;
-            const r = readSeries.data[i].value;
-            const total = h + r;
-            ratioData.push(
-                total > 0 ? (h / total) * 100 : 0
-            );
-            categories.push(hitSeries.data[i].time);
-        }
-
-        return {
-            categories,
-            series: [{
-                name: 'Cache Hit Ratio %',
-                data: ratioData,
-            }],
-        };
-    }, [cacheChart.data]);
+    }, [cacheChart.data, cacheChart.window]);
 
     const isKpiLoading = sizeKpi.loading || cacheKpi.loading
         || txnKpi.loading || deadTupleKpi.loading;
@@ -365,11 +332,11 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
                 <KpiTile
                     label="Cache Hit Ratio"
                     value={formatValue(cacheHitRatio)}
-                    unit="%"
+                    unit={cacheHitRatio !== null ? '%' : undefined}
                     status={getCacheHitStatus(cacheHitRatio)}
                     sparklineData={cacheHitSparkline}
                     analysisContext={{
-                        metricDescription: 'Buffer cache hit ratio over time',
+                        metricDescription: CACHE_HIT_DESCRIPTION,
                         connectionId,
                         databaseName,
                         timeRange: timeRange.range,
@@ -377,13 +344,11 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
                 />
                 <KpiTile
                     label="Transactions"
-                    value={formatValue(txnRate, 0)}
-                    unit="total"
-                    sparklineData={extractSparklineData(
-                        txnKpi.data, 'xact_commit'
-                    )}
+                    value={formatValue(txnRate)}
+                    unit={txnRate !== null ? '/s' : undefined}
+                    sparklineData={txnSparkline}
                     analysisContext={{
-                        metricDescription: 'Transaction commit count over time',
+                        metricDescription: 'Transaction commits and rollbacks per second over time',
                         connectionId,
                         databaseName,
                         timeRange: timeRange.range,
@@ -392,7 +357,7 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
                 <KpiTile
                     label="Dead Tuple Ratio"
                     value={formatValue(deadTupleRatio)}
-                    unit="%"
+                    unit={deadTupleRatio !== null ? '%' : undefined}
                     status={getDeadTupleStatus(deadTupleRatio)}
                     sparklineData={deadTupleSparkline}
                     analysisContext={{
@@ -406,80 +371,64 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
 
             <Box sx={CHART_SECTION_SX}>
                 <Box>
-                    {txnChart.loading && !txnChartData ? (
-                        <Box sx={{
-                            display: 'flex',
-                            justifyContent: 'center',
-                            alignItems: 'center',
-                            height: CHART_HEIGHT,
-                        }}>
-                            <CircularProgress size={24} aria-label="Loading chart" />
-                        </Box>
-                    ) : txnChartData ? (
-                        <Chart
-                            type="line"
-                            data={txnChartData}
-                            title="Transactions Over Time"
-                            height={CHART_HEIGHT}
-                            smooth
-                            showLegend
-                            showTooltip
-                            enableExport={false}
-                            analysisContext={{
-                                metricDescription: 'Transaction commit and rollback counts for the database',
-                                connectionId,
-                                databaseName,
-                                timeRange: timeRange.range,
-                            }}
-                        />
-                    ) : (
-                        <Typography
-                            variant="body2"
-                            color="text.secondary"
-                            sx={{ textAlign: 'center', py: 4 }}
-                        >
-                            No transaction data available
-                        </Typography>
-                    )}
+                    <ChartPanel
+                        title="Transactions Over Time"
+                        loading={txnChart.loading && !txnChartData}
+                        hasData={!!txnChartData}
+                        emptyMessage="No transaction data available"
+                        errorMessage={txnChart.error}
+                        height={CHART_HEIGHT}
+                    >
+                        {txnChartData && (
+                            <Chart
+                                type="line"
+                                data={txnChartData}
+                                title="Transactions Over Time"
+                                height={CHART_HEIGHT}
+                                smooth
+                                showLegend
+                                showTooltip
+                                enableExport={false}
+                                analysisContext={{
+                                    metricDescription: 'Transaction commits and rollbacks per second for the database',
+                                    connectionId,
+                                    databaseName,
+                                    timeRange: timeRange.range,
+                                }}
+                            />
+                        )}
+                    </ChartPanel>
                 </Box>
 
                 <Box>
-                    {cacheChart.loading && !cacheChartData ? (
-                        <Box sx={{
-                            display: 'flex',
-                            justifyContent: 'center',
-                            alignItems: 'center',
-                            height: CHART_HEIGHT,
-                        }}>
-                            <CircularProgress size={24} aria-label="Loading chart" />
-                        </Box>
-                    ) : cacheChartData ? (
-                        <Chart
-                            type="line"
-                            data={cacheChartData}
-                            title="Cache Hit Ratio Over Time"
-                            height={CHART_HEIGHT}
-                            smooth
-                            areaFill
-                            showLegend
-                            showTooltip
-                            enableExport={false}
-                            analysisContext={{
-                                metricDescription: 'Buffer cache hit ratio showing cache effectiveness',
-                                connectionId,
-                                databaseName,
-                                timeRange: timeRange.range,
-                            }}
-                        />
-                    ) : (
-                        <Typography
-                            variant="body2"
-                            color="text.secondary"
-                            sx={{ textAlign: 'center', py: 4 }}
-                        >
-                            No cache hit ratio data available
-                        </Typography>
-                    )}
+                    <ChartPanel
+                        title="Cache Hit Ratio Over Time"
+                        loading={cacheChart.loading && !cacheChartData}
+                        hasData={!!cacheChartData}
+                        emptyMessage="No cache hit ratio data available"
+                        errorMessage={cacheChart.error}
+                        height={CHART_HEIGHT}
+                    >
+                        {cacheChartData && (
+                            <Chart
+                                type="line"
+                                data={cacheChartData}
+                                title="Cache Hit Ratio Over Time"
+                                height={CHART_HEIGHT}
+                                smooth
+                                areaFill
+                                showLegend
+                                showTooltip
+                                enableExport={false}
+                                analysisContext={{
+                                    metricDescription: CACHE_HIT_DESCRIPTION,
+                                    connectionId,
+                                    databaseName,
+                                    timeRange: timeRange.range,
+                                }}
+                            />
+                        )}
+                    </ChartPanel>
                 </Box>
             </Box>
         </CollapsibleSection>

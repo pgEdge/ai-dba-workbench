@@ -12,7 +12,8 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import PostgresOverviewSection from '../PostgresOverviewSection';
 import type { UseMetricsReturn } from '../../../../hooks/useMetrics';
-import type { MetricQueryParams, MetricSeries } from '../../types';
+import type { UseServerCacheHitResult } from '../../../../hooks/useServerCacheHit';
+import type { MetricQueryParams, MetricSeries, SparklinePoint, TimeRangeState } from '../../types';
 import type { ChartData } from '../../../Chart/types';
 
 // ---------------------------------------------------------------------------
@@ -26,10 +27,28 @@ vi.mock('../../../../hooks/useMetrics', () => ({
     useMetrics: (params: MetricQueryParams | null) => mockUseMetrics(params),
 }));
 
+type UseServerCacheHitFn = (
+    connectionId: number,
+    timeRange: TimeRangeState,
+    refreshKey?: number,
+) => UseServerCacheHitResult;
+
+const mockUseServerCacheHit = vi.fn<UseServerCacheHitFn>();
+vi.mock('../../../../hooks/useServerCacheHit', () => ({
+    useServerCacheHit: (
+        connectionId: number,
+        timeRange: TimeRangeState,
+        refreshKey?: number,
+    ) => mockUseServerCacheHit(connectionId, timeRange, refreshKey),
+}));
+
+const DASHBOARD_TIME_RANGE: TimeRangeState = { range: '1h' };
+const DASHBOARD_REFRESH_TRIGGER = 3;
+
 vi.mock('../../../../contexts/useDashboard', () => ({
     useDashboard: () => ({
-        timeRange: { range: '1h' },
-        refreshTrigger: 0,
+        timeRange: DASHBOARD_TIME_RANGE,
+        refreshTrigger: DASHBOARD_REFRESH_TRIGGER,
     }),
 }));
 
@@ -66,7 +85,11 @@ vi.mock('../../../../utils/logger', () => ({
  */
 vi.mock('../../../Chart', () => ({
     Chart: ({ title, data }: { title: string; data: ChartData }) => (
-        <div data-testid="chart" data-title={title}>
+        <div
+            data-testid="chart"
+            data-title={title}
+            data-categories={(data.categories ?? []).join(',')}
+        >
             <span>{title}</span>
             {data.series.map((s) => (
                 <span
@@ -75,6 +98,8 @@ vi.mock('../../../Chart', () => ({
                     data-chart={title}
                     data-series={s.name}
                     data-values={s.data.join(',')}
+                    data-json={JSON.stringify(s.data)}
+                    data-filled={(s.filled ?? []).join(',')}
                 >
                     {s.name}
                 </span>
@@ -87,11 +112,31 @@ vi.mock('../../../Chart', () => ({
 // Helpers
 // ---------------------------------------------------------------------------
 
+/** Rates requested by the Block I/O chart (issue #400). */
+const CACHE_KEY = 'blks_hit_per_sec,blks_read_per_sec';
+
 const CONNECTIONS_TITLE = 'Connections (Monitored Database)';
 const SESSIONS_TITLE = 'Sessions Established (Monitored Database)';
 
+/** Build the cache hit series the performance summary would return. */
+const cachePoints = (values: (number | null)[]): SparklinePoint[] =>
+    values.map((value, idx) => ({
+        time: `2024-01-01T00:0${idx}:00Z`,
+        value,
+    }));
+
+/** A resolved useServerCacheHit result for the given ratios. */
+const cacheReady = (values: (number | null)[]): UseServerCacheHitResult => ({
+    points: cachePoints(values),
+    loading: false,
+    error: null,
+});
+
 /** Build a MetricSeries for the given metric and values. */
-const series = (metric: string, values: number[]): MetricSeries => ({
+const series = (
+    metric: string,
+    values: (number | null)[],
+): MetricSeries => ({
     name: metric,
     metric,
     data: values.map((value, idx) => ({
@@ -103,6 +148,7 @@ const series = (metric: string, values: number[]): MetricSeries => ({
 /** Wrap metric series in a resolved UseMetricsReturn. */
 const ready = (data: MetricSeries[] | null): UseMetricsReturn => ({
     data,
+    window: null,
     loading: false,
     error: null,
     refetch: vi.fn(),
@@ -111,8 +157,18 @@ const ready = (data: MetricSeries[] | null): UseMetricsReturn => ({
 /** A UseMetricsReturn that is still loading with no data yet. */
 const loading = (): UseMetricsReturn => ({
     data: null,
+    window: null,
     loading: true,
     error: null,
+    refetch: vi.fn(),
+});
+
+/** A UseMetricsReturn that failed, as an older server would. */
+const failed = (message: string): UseMetricsReturn => ({
+    data: null,
+    window: null,
+    loading: false,
+    error: message,
     refetch: vi.fn(),
 });
 
@@ -136,24 +192,26 @@ const routeMetrics = (
                     series('numbackends', [10, 12]),
                     series('sessions', [8000, 8100]),
                 ]);
-            case 'xact_commit,xact_rollback':
+            case 'xact_commit_per_sec':
+                return ready([series('xact_commit_per_sec', [12, 25.5])]);
+            case 'xact_commit_per_sec,xact_rollback_per_sec':
                 return ready([
-                    series('xact_commit', [100, 200]),
-                    series('xact_rollback', [1, 2]),
+                    series('xact_commit_per_sec', [100, 200]),
+                    series('xact_rollback_per_sec', [1, 2]),
                 ]);
-            case 'blks_hit,blks_read':
+            case CACHE_KEY:
                 return ready([
-                    series('blks_hit', [90, 95]),
-                    series('blks_read', [10, 5]),
+                    series('blks_hit_per_sec', [90, 95]),
+                    series('blks_read_per_sec', [10, 5]),
                 ]);
-            case 'temp_bytes':
-                return ready([series('temp_bytes', [1024, 2048])]);
+            case 'temp_bytes_delta':
+                return ready([series('temp_bytes_delta', [1024, 2048])]);
             default:
                 return ready([
-                    series('tup_fetched', [1, 2]),
-                    series('tup_inserted', [3, 4]),
-                    series('tup_updated', [5, 6]),
-                    series('tup_deleted', [7, 8]),
+                    series('tup_fetched_per_sec', [1, 2]),
+                    series('tup_inserted_per_sec', [3, 4]),
+                    series('tup_updated_per_sec', [5, 6]),
+                    series('tup_deleted_per_sec', [7, 8]),
                 ]);
         }
     });
@@ -223,6 +281,7 @@ describe('PostgresOverviewSection', () => {
         vi.clearAllMocks();
         vi.mocked(localStorage.getItem).mockReturnValue(null);
         routeMetrics();
+        mockUseServerCacheHit.mockReturnValue(cacheReady([90, 95]));
         mockApiGet.mockResolvedValue([{ max_connections: 100 }]);
     });
 
@@ -426,11 +485,49 @@ describe('PostgresOverviewSection', () => {
                 expect(screen.getByText('Transactions')).toBeInTheDocument();
             });
             expect(seriesNamesFor('Transactions'))
-                .toEqual(['Commits', 'Rollbacks']);
+                .toEqual(['Commits/s', 'Rollbacks/s']);
             expect(seriesNamesFor('Block I/O'))
-                .toEqual(['Blocks Hit', 'Blocks Read']);
+                .toEqual(['Blocks Hit/s', 'Blocks Read/s']);
             expect(seriesNamesFor('Tuple Operations'))
-                .toEqual(['Fetched', 'Inserted', 'Updated', 'Deleted']);
+                .toEqual([
+                    'Fetched/s', 'Inserted/s', 'Updated/s', 'Deleted/s',
+                ]);
+        });
+
+        it('requests rate metrics rather than raw counters', async () => {
+            renderSection();
+
+            await waitFor(() => {
+                expect(screen.getByText('Transactions')).toBeInTheDocument();
+            });
+            const requested = mockUseMetrics.mock.calls
+                .map(([params]) => (params?.metrics ?? []).join(','));
+            expect(requested).toContain(
+                'xact_commit_per_sec,xact_rollback_per_sec'
+            );
+            expect(requested).toContain(
+                'blks_hit_per_sec,blks_read_per_sec'
+            );
+            expect(requested).toContain(
+                'tup_fetched_per_sec,tup_inserted_per_sec,'
+                + 'tup_updated_per_sec,tup_deleted_per_sec'
+            );
+            expect(requested).toContain('temp_bytes_delta');
+        });
+
+        it('reports a query error in place of the empty message', async () => {
+            routeMetrics({
+                'xact_commit_per_sec,xact_rollback_per_sec':
+                    failed('metric not found in probe'),
+            });
+            renderSection();
+
+            await waitFor(() => {
+                expect(screen.getByText('metric not found in probe'))
+                    .toBeInTheDocument();
+            });
+            expect(screen.queryByText('No transaction data available'))
+                .not.toBeInTheDocument();
         });
     });
 
@@ -446,15 +543,66 @@ describe('PostgresOverviewSection', () => {
             expect(screen.getAllByText('Backends').length)
                 .toBeGreaterThanOrEqual(2);
             expect(screen.getAllByText('Commits').length)
-                .toBeGreaterThanOrEqual(2);
+                .toBeGreaterThanOrEqual(1);
             expect(screen.getByText('12')).toBeInTheDocument();
-            // 95 hits against 5 reads gives a 95.0% ratio.
+            // The latest bucket of the performance summary series.
             expect(screen.getByText('95.0')).toBeInTheDocument();
             expect(screen.getByText('Temp Bytes')).toBeInTheDocument();
         });
 
+        it('shows the latest commit rate per second', async () => {
+            renderSection();
+
+            await waitFor(() => {
+                expect(screen.getAllByText('Commits').length)
+                    .toBeGreaterThanOrEqual(1);
+            });
+            expect(screen.getByText('25.5')).toBeInTheDocument();
+            expect(screen.getAllByText('/s').length)
+                .toBeGreaterThanOrEqual(1);
+        });
+
+        it('shows an idle commit rate as zero', async () => {
+            routeMetrics({
+                'xact_commit_per_sec': ready([
+                    series('xact_commit_per_sec', [12, 0]),
+                ]),
+            });
+            renderSection();
+
+            await waitFor(() => {
+                expect(screen.getAllByText('Commits').length)
+                    .toBeGreaterThanOrEqual(1);
+            });
+            // A quiet bucket is a real 0/s, not a stale 12/s.
+            expect(screen.getByText('0.0')).toBeInTheDocument();
+            expect(screen.queryByText('12.0')).not.toBeInTheDocument();
+        });
+
+        it('sums the temp byte deltas across the window', async () => {
+            renderSection();
+
+            await waitFor(() => {
+                expect(screen.getByText('Temp Bytes')).toBeInTheDocument();
+            });
+            // 1024 plus 2048 bytes spilled over the two buckets.
+            expect(screen.getByText('3.0 KB')).toBeInTheDocument();
+        });
+
+        it('shows a placeholder when no temp byte data is returned', async () => {
+            routeMetrics({ 'temp_bytes_delta': ready([]) });
+            renderSection();
+
+            await waitFor(() => {
+                expect(screen.getByText('Temp Bytes')).toBeInTheDocument();
+            });
+            expect(screen.getAllByText('--').length)
+                .toBeGreaterThanOrEqual(1);
+        });
+
         it('renders placeholders when the KPI queries return nothing', async () => {
             mockUseMetrics.mockImplementation(() => ready([]));
+            mockUseServerCacheHit.mockReturnValue(cacheReady([]));
             renderSection();
 
             await waitFor(() => {
@@ -471,52 +619,230 @@ describe('PostgresOverviewSection', () => {
             expect(screen.getByLabelText('Loading')).toBeInTheDocument();
         });
 
-        it('handles a cache hit ratio with no blocks accounted for', async () => {
-            routeMetrics({
-                'blks_hit,blks_read': ready([
-                    series('blks_hit', [0, 0]),
-                    series('blks_read', [0, 0]),
-                ]),
+        it('shows the section spinner whilst only the cache summary is loading', () => {
+            mockUseServerCacheHit.mockReturnValue({
+                points: [],
+                loading: true,
+                error: null,
             });
+            // The spinner is gated on the connections KPI having no data
+            // yet, so hold that query in flight too.
+            routeMetrics({ numbackends: loading() });
+            renderSection();
+
+            expect(screen.getByLabelText('Loading')).toBeInTheDocument();
+        });
+
+        it('reads the cache hit ratio from the performance summary', async () => {
             renderSection();
 
             await waitFor(() => {
                 expect(screen.getByText('Cache Hit Ratio')).toBeInTheDocument();
             });
-            expect(screen.getAllByText('--').length).toBeGreaterThanOrEqual(1);
+            // The hook follows the dashboard range and refresh cycle.
+            expect(mockUseServerCacheHit).toHaveBeenCalledWith(
+                7, DASHBOARD_TIME_RANGE, DASHBOARD_REFRESH_TRIGGER,
+            );
+            // The cache KPI no longer queries the metrics endpoint at
+            // all; the Block I/O chart still requests the per-second
+            // rates at chart resolution (issue #400).
+            const cacheCalls = mockUseMetrics.mock.calls
+                .map(([p]) => p)
+                .filter(p => (p?.metrics ?? []).join(',') === CACHE_KEY);
+            expect(cacheCalls.length).toBeGreaterThanOrEqual(1);
+            cacheCalls.forEach(p => expect(p?.buckets).toBe(150));
+            expect(seriesValuesFor('Block I/O', 'Blocks Hit/s')).toBe('90,95');
         });
 
-        it('pads the cache ratio sparkline when the series lengths differ', async () => {
-            routeMetrics({
-                'blks_hit,blks_read': ready([
-                    series('blks_hit', [90, 95, 99]),
-                    series('blks_read', [10]),
-                ]),
-            });
+        it('shows the placeholder when every cache bucket is idle', async () => {
+            mockUseServerCacheHit.mockReturnValue(cacheReady([null, null]));
             renderSection();
 
             await waitFor(() => {
                 expect(screen.getByText('Cache Hit Ratio')).toBeInTheDocument();
             });
-            // The sparkline pads the shorter read series with zeros; the
-            // tile itself still reports 99 hits against 10 reads.
-            expect(screen.getByText('90.8')).toBeInTheDocument();
+            const tile = screen.getByLabelText('Cache Hit Ratio: --');
+            // An idle bucket is a gap, not 0% and not 100%, so every
+            // sparkline point is null and Sparkline draws nothing at
+            // all (a 0% series would have drawn a flat line).
+            expect(tile.querySelector('[data-testid="chart-series"]'))
+                .toBeNull();
         });
 
-        it('pads the cache ratio sparkline when hits are missing entirely', async () => {
-            routeMetrics({
-                'blks_hit,blks_read': ready([
-                    series('blks_read', [10, 20]),
-                ]),
+        it('draws an idle bucket as a gap and headlines the latest ratio', async () => {
+            mockUseServerCacheHit.mockReturnValue(cacheReady([90, null, 60]));
+            renderSection();
+
+            await waitFor(() => {
+                expect(screen.getByText('60.0')).toBeInTheDocument();
             });
+            const tile = screen.getByLabelText('Cache Hit Ratio: 60.0 %');
+            const spark = tile.querySelector('[data-testid="chart-series"]');
+            expect(spark?.getAttribute('data-json')).toBe('[90,null,60]');
+        });
+
+        it('keeps the previous ratio when the newest bucket is idle', async () => {
+            mockUseServerCacheHit.mockReturnValue(cacheReady([80, null]));
+            renderSection();
+
+            await waitFor(() => {
+                expect(screen.getByText('80.0')).toBeInTheDocument();
+            });
+        });
+
+        it('reports a genuine 0% rather than skipping it', async () => {
+            mockUseServerCacheHit.mockReturnValue(cacheReady([80, 0]));
+            renderSection();
+
+            await waitFor(() => {
+                expect(screen.getByLabelText('Cache Hit Ratio: 0.0 %'))
+                    .toBeInTheDocument();
+            });
+        });
+
+        it('shows the placeholder when the summary has no series', async () => {
+            mockUseServerCacheHit.mockReturnValue(cacheReady([]));
             renderSection();
 
             await waitFor(() => {
                 expect(screen.getByText('Cache Hit Ratio')).toBeInTheDocument();
             });
-            // With no hit series at all the ratio is unknown, so the
-            // tile falls back to the placeholder.
-            expect(screen.getAllByText('--').length).toBeGreaterThanOrEqual(1);
+            expect(screen.getByLabelText('Cache Hit Ratio: --')).toBeInTheDocument();
         });
+    });
+
+    describe('null buckets', () => {
+        it('sums only the temp byte buckets that carry a reading', async () => {
+            routeMetrics({
+                'temp_bytes_delta': ready([
+                    series('temp_bytes_delta', [1024, null, 2048]),
+                ]),
+            });
+            renderSection();
+
+            await waitFor(() => {
+                expect(screen.getByText('Temp Bytes')).toBeInTheDocument();
+            });
+            expect(screen.getByText('3.0 KB')).toBeInTheDocument();
+        });
+
+        it('shows a placeholder when every temp byte bucket is null', async () => {
+            routeMetrics({
+                'temp_bytes_delta': ready([
+                    series('temp_bytes_delta', [null, null]),
+                ]),
+            });
+            renderSection();
+
+            await waitFor(() => {
+                expect(screen.getByText('Temp Bytes')).toBeInTheDocument();
+            });
+            expect(screen.getAllByText('--').length)
+                .toBeGreaterThanOrEqual(1);
+        });
+    });
+    describe('window-anchored axis (issue #430)', () => {
+        /**
+         * The server reports a six-bucket window whilst the probe has
+         * only the last two buckets of history, which is the state an
+         * instance younger than the selected range is in.
+         */
+        const WINDOW = {
+            start: '2026-09-16T09:00:00.000Z',
+            end: '2026-09-16T09:30:00.000Z',
+            bucketSeconds: 300,
+        };
+
+        const lateSeries = (metric: string): MetricSeries => ({
+            name: metric,
+            metric,
+            data: [
+                { time: '2026-09-16T09:20:00.000Z', value: 10 },
+                {
+                    time: '2026-09-16T09:25:00.000Z',
+                    value: 10,
+                    filled: true,
+                },
+            ],
+        });
+
+        const readyInWindow = (
+            data: MetricSeries[],
+        ): UseMetricsReturn => ({
+            data,
+            window: WINDOW,
+            loading: false,
+            error: null,
+            refetch: vi.fn(),
+        });
+
+        const chartFor = (title: string): HTMLElement =>
+            screen.getAllByTestId('chart')
+                .filter(el => el.getAttribute('data-title') === title)[0];
+
+        const seriesFor = (title: string, name: string): HTMLElement =>
+            screen.getAllByTestId('chart-series')
+                .filter(el => el.getAttribute('data-chart') === title
+                    && el.getAttribute('data-series') === name)[0];
+
+        it('spans the queried window rather than the data', async () => {
+            routeMetrics({
+                'numbackends,sessions': readyInWindow([
+                    lateSeries('numbackends'),
+                    lateSeries('sessions'),
+                ]),
+            });
+            renderSection();
+
+            await waitFor(() => {
+                expect(chartFor(CONNECTIONS_TITLE)).toBeInTheDocument();
+            });
+
+            const categories = chartFor(CONNECTIONS_TITLE)
+                .getAttribute('data-categories')?.split(',') ?? [];
+            expect(categories).toHaveLength(6);
+            expect(categories[0]).toBe('2026-09-16T09:00:00.000Z');
+            expect(categories[5]).toBe('2026-09-16T09:25:00.000Z');
+        });
+
+        it('draws the missing history as gaps, not as zeroes', async () => {
+            routeMetrics({
+                'numbackends,sessions': readyInWindow([
+                    lateSeries('numbackends'),
+                    lateSeries('sessions'),
+                ]),
+            });
+            renderSection();
+
+            await waitFor(() => {
+                expect(chartFor(CONNECTIONS_TITLE)).toBeInTheDocument();
+            });
+
+            const values = JSON.parse(
+                seriesFor(CONNECTIONS_TITLE, 'Backends')
+                    .getAttribute('data-json') ?? '[]',
+            ) as (number | null)[];
+            expect(values).toEqual([null, null, null, null, 10, 10]);
+        });
+
+        it('flags the carried-forward bucket for the chart to shade',
+            async () => {
+                routeMetrics({
+                    'numbackends,sessions': readyInWindow([
+                        lateSeries('numbackends'),
+                        lateSeries('sessions'),
+                    ]),
+                });
+                renderSection();
+
+                await waitFor(() => {
+                    expect(chartFor(CONNECTIONS_TITLE)).toBeInTheDocument();
+                });
+
+                expect(
+                    seriesFor(CONNECTIONS_TITLE, 'Backends')
+                        .getAttribute('data-filled'),
+                ).toBe('false,false,false,false,false,true');
+            });
     });
 });

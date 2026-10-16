@@ -12,12 +12,14 @@ package api
 import (
 	"context"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/database"
@@ -164,6 +166,13 @@ func (h *LatestSnapshotHandler) handleLatestSnapshot(
 		}
 	}
 
+	// Parse optional exclude_system_schemas flag. When set, the
+	// PostgreSQL system schemas are dropped using the same predicate
+	// PostgreSQL itself applies to build pg_stat_user_tables and
+	// pg_stat_user_indexes, so catalog, information_schema and TOAST
+	// relations never crowd user objects out of a leaderboard.
+	excludeSystemSchemas := ParseQueryBool(r, "exclude_system_schemas")
+
 	// Parse optional order_by; default is resolved after column
 	// discovery so that we can fall back to the first dimension column.
 	orderBy := ParseQueryString(r, "order_by")
@@ -277,15 +286,17 @@ func (h *LatestSnapshotHandler) handleLatestSnapshot(
 			break
 		}
 	}
-	if !hasSchemaCol {
-		excludeSchemas = nil
+	schemas := latestSchemaFilter{}
+	if hasSchemaCol {
+		schemas.exclude = excludeSchemas
+		schemas.excludeSystem = excludeSystemSchemas
 	}
 
 	// Build and execute the query
 	result, totalCount, err := queryLatestSnapshot(
 		ctx, pool, probeName, connectionID, databaseName, dbCol,
 		dimensionCols, allColumns, colTypes, orderBy, order, limit,
-		excludeSchemas,
+		schemas,
 	)
 	if err != nil {
 		RespondError(w, http.StatusBadRequest, err.Error())
@@ -402,6 +413,26 @@ func BuildDimensionColumns(
 	return metrics.EntityKeyColumns(allColumns, colTypes)
 }
 
+// latestSchemaFilter describes which schemas a latest-snapshot query
+// leaves out. It is only populated for probes that expose a schemaname
+// column; for any other probe it stays empty and filters nothing.
+type latestSchemaFilter struct {
+	// exclude lists schema names, already validated as identifiers,
+	// that are dropped by exact match.
+	exclude []string
+	// excludeSystem drops the PostgreSQL system schemas.
+	excludeSystem bool
+}
+
+// systemSchemaPredicate is the WHERE fragment that removes PostgreSQL
+// system schemas from a latest-snapshot result. It is the predicate
+// PostgreSQL uses to derive pg_stat_user_tables from pg_stat_all_tables
+// (and pg_stat_user_indexes from pg_stat_all_indexes): pg_catalog and
+// information_schema by name, and every TOAST schema (pg_toast and the
+// per-backend pg_toast_temp_N schemas) by prefix. It is a constant, so
+// no caller input reaches the SQL text through it.
+const systemSchemaPredicate = `"schemaname" NOT IN ('pg_catalog', 'information_schema') AND "schemaname" !~ '^pg_toast'`
+
 // queryLatestSnapshot builds and executes the DISTINCT ON query that
 // returns the latest row for each unique entity, then applies sorting
 // and pagination. It uses a single query with COUNT(*) OVER() to
@@ -420,7 +451,7 @@ func queryLatestSnapshot(
 	orderBy string,
 	order string,
 	limit int,
-	excludeSchemas []string,
+	schemas latestSchemaFilter,
 ) ([]map[string]any, int, error) {
 	// Build the list of columns to return (exclude internal columns)
 	var returnCols []string
@@ -488,9 +519,12 @@ func queryLatestSnapshot(
 	// filter out of the inner DISTINCT ON query allows the inner
 	// query to fully leverage the index scan.
 	var outerWhereParts []string
-	if len(excludeSchemas) > 0 {
+	if schemas.excludeSystem {
+		outerWhereParts = append(outerWhereParts, systemSchemaPredicate)
+	}
+	if len(schemas.exclude) > 0 {
 		var placeholders []string
-		for _, schema := range excludeSchemas {
+		for _, schema := range schemas.exclude {
 			placeholders = append(placeholders,
 				fmt.Sprintf("$%d", argNum))
 			args = append(args, schema)
@@ -602,7 +636,24 @@ func normalizeValue(v any) any {
 		return val
 	case time.Time:
 		return val.Format(time.RFC3339)
+	case pgtype.Numeric:
+		return normalizeNumeric(val)
 	default:
 		return fmt.Sprintf("%v", val)
 	}
+}
+
+// normalizeNumeric converts a NUMERIC value, which pgx scans into a
+// pgtype.Numeric struct, to a float64. Without it the struct falls to
+// the default case and is printed as its fields (for example
+// "{123456789 0 false finite true}"), which is how a column such as
+// pg_replication_slots.retained_bytes would otherwise reach the client.
+// NULL, NaN and the infinities have no JSON number form and become null.
+func normalizeNumeric(val pgtype.Numeric) any {
+	f, err := val.Float64Value()
+	if err != nil || !f.Valid || math.IsNaN(f.Float64) ||
+		math.IsInf(f.Float64, 0) {
+		return nil
+	}
+	return f.Float64
 }

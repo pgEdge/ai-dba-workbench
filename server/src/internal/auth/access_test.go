@@ -27,7 +27,7 @@ func createTestAuthStoreForAccess(t *testing.T) (*AuthStore, func()) {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
 
-	store, err := NewAuthStore(tmpDir, 0, 0)
+	store, err := NewAuthStore(tmpDir, 0, 0, AuditKeyForTesting())
 	if err != nil {
 		os.RemoveAll(tmpDir)
 		t.Fatalf("Failed to create auth store: %v", err)
@@ -263,13 +263,13 @@ func TestRBACCheckerTokenScoping(t *testing.T) {
 	store.GrantConnectionPrivilege(groupID, 2, AccessLevelReadWrite)
 
 	// Create token for user
-	_, storedToken, _ := store.CreateToken("testuser", "User token", nil)
+	_, storedToken, _ := store.AsActor(systemActor).CreateToken("testuser", "User token", nil, true)
 
 	// Scope token to only tool_a and connection 1
-	store.SetTokenMCPScopeByNames(storedToken.ID, []string{"tool_a"})
-	store.SetTokenConnectionScope(storedToken.ID, []ScopedConnection{
+	store.AsActor(systemActor).SetTokenMCPScopeByNames(storedToken.ID, []string{"tool_a"}, true)
+	store.AsActor(systemActor).SetTokenConnectionScope(storedToken.ID, []ScopedConnection{
 		{ConnectionID: 1, AccessLevel: AccessLevelReadWrite},
-	})
+	}, true)
 
 	// Create context with user and scoped token
 	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
@@ -488,25 +488,82 @@ func TestHasWriteAccess(t *testing.T) {
 // =============================================================================
 
 func TestRBACCheckerNilStore(t *testing.T) {
-	checker := NewRBACChecker(nil)
-	ctx := context.Background()
+	// A checker without an auth store must deny every check, even for a
+	// context that claims superuser, so that a nil store can never be
+	// mistaken for "no restrictions" (issue #477).
+	assertCheckerDeniesEverything(t, NewRBACChecker(nil))
+}
 
-	// Should act as superuser when store is nil
-	if !checker.IsSuperuser(ctx) {
-		t.Error("Expected superuser when store is nil")
+func TestRBACCheckerNilReceiver(t *testing.T) {
+	// A nil checker must deny exactly as a store-less one does, so that
+	// a caller handed no checker fails closed instead of panicking or
+	// skipping the check (issue #561).
+	var checker *RBACChecker
+	assertCheckerDeniesEverything(t, checker)
+
+	ids, all, err := checker.VisibleConnectionIDs(
+		context.WithValue(context.Background(), IsSuperuserContextKey, true),
+		nil)
+	if err != nil || all || len(ids) != 0 {
+		t.Errorf("Expected no visible connections from a nil checker, got %v/%v/%v",
+			ids, all, err)
+	}
+}
+
+func TestRBACCheckerNilReceiverSetConnectionSharingLookup(t *testing.T) {
+	// Wiring a sharing lookup into a nil checker must be a no-op rather
+	// than a panic, and the checker must still deny (issue #572).
+	var checker *RBACChecker
+	checker.SetConnectionSharingLookup(
+		func(context.Context, int) (bool, string, error) {
+			return true, "alice", nil
+		})
+	assertCheckerDeniesEverything(t, checker)
+}
+
+// assertCheckerDeniesEverything checks that every access method on
+// checker denies, for an anonymous context and for one that claims
+// superuser.
+func assertCheckerDeniesEverything(t *testing.T, checker *RBACChecker) {
+	t.Helper()
+	contexts := map[string]context.Context{
+		"anonymous": context.Background(),
+		"superuser": context.WithValue(context.Background(),
+			IsSuperuserContextKey, true),
 	}
 
-	if !checker.CanAccessMCPItem(ctx, "any_tool") {
-		t.Error("Expected MCP access when store is nil")
-	}
+	for name, ctx := range contexts {
+		t.Run(name, func(t *testing.T) {
+			if checker.IsSuperuser(ctx) {
+				t.Error("Expected no superuser when store is nil")
+			}
 
-	canAccess, level := checker.CanAccessConnection(ctx, 99)
-	if !canAccess || level != AccessLevelReadWrite {
-		t.Error("Expected full connection access when store is nil")
-	}
+			if checker.CanAccessMCPItem(ctx, "any_tool") {
+				t.Error("Expected no MCP access when store is nil")
+			}
 
-	if !checker.HasAdminPermission(ctx, PermManageUsers) {
-		t.Error("Expected admin permission when store is nil")
+			canAccess, level := checker.CanAccessConnection(ctx, 99)
+			if canAccess || level != AccessLevelNone {
+				t.Errorf("Expected no connection access when store is nil, got %v/%q",
+					canAccess, level)
+			}
+
+			if checker.HasWriteAccess(ctx, 99) {
+				t.Error("Expected no write access when store is nil")
+			}
+
+			if checker.HasAdminPermission(ctx, PermManageUsers) {
+				t.Error("Expected no admin permission when store is nil")
+			}
+
+			privs := checker.GetEffectivePrivileges(ctx)
+			if privs.IsSuperuser || len(privs.MCPPrivileges) != 0 ||
+				len(privs.ConnectionPrivileges) != 0 ||
+				len(privs.AdminPermissions) != 0 {
+				t.Errorf("Expected empty privileges when store is nil, got %+v",
+					privs)
+			}
+		})
 	}
 }
 
@@ -518,7 +575,11 @@ func TestRBACCheckerAllConnectionsGrant(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAccess(t)
 	defer cleanup()
 
-	checker := NewRBACChecker(store)
+	// The connections are unshared and owned by nobody, so the group
+	// grants alone decide access: a wildcard grant restricts no
+	// connection, and a shared one no group names is open at read_write
+	// (issue #592).
+	checker := NewRBACCheckerWithSharing(store, unsharedUnowned)
 
 	// Create user with "all connections" privilege
 	store.CreateUser("testuser", "Password1234", "Test user", "", "")
@@ -546,7 +607,11 @@ func TestRBACCheckerAllConnectionsHigherLevel(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAccess(t)
 	defer cleanup()
 
-	checker := NewRBACChecker(store)
+	// The connections are unshared and owned by nobody, so the group
+	// grants alone decide access: a wildcard grant restricts no
+	// connection, and a shared one no group names is open at read_write
+	// (issue #592).
+	checker := NewRBACCheckerWithSharing(store, unsharedUnowned)
 
 	// Create user with mixed privileges
 	store.CreateUser("testuser", "Password1234", "Test user", "", "")
@@ -583,7 +648,11 @@ func TestRBACCheckerSpecificThenAllConnections(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAccess(t)
 	defer cleanup()
 
-	checker := NewRBACChecker(store)
+	// The connections are unshared and owned by nobody, so the group
+	// grants alone decide access: a wildcard grant restricts no
+	// connection, and a shared one no group names is open at read_write
+	// (issue #592).
+	checker := NewRBACCheckerWithSharing(store, unsharedUnowned)
 
 	store.CreateUser("testuser", "Password1234", "Test user", "", "")
 	userID, _ := store.GetUserID("testuser")
@@ -648,11 +717,11 @@ func TestGetEffectivePrivilegesWithTokenScope(t *testing.T) {
 	store.GrantConnectionPrivilege(groupID, 2, AccessLevelReadWrite)
 
 	// Create token with scope limiting to tool_a and connection 1
-	_, storedToken, _ := store.CreateToken("testuser", "Scoped token", nil)
-	store.SetTokenMCPScopeByNames(storedToken.ID, []string{"tool_a"})
-	store.SetTokenConnectionScope(storedToken.ID, []ScopedConnection{
+	_, storedToken, _ := store.AsActor(systemActor).CreateToken("testuser", "Scoped token", nil, true)
+	store.AsActor(systemActor).SetTokenMCPScopeByNames(storedToken.ID, []string{"tool_a"}, true)
+	store.AsActor(systemActor).SetTokenConnectionScope(storedToken.ID, []ScopedConnection{
 		{ConnectionID: 1, AccessLevel: AccessLevelReadWrite},
-	})
+	}, true)
 
 	// Create context with user and scoped token
 	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
@@ -695,8 +764,8 @@ func TestRBACCheckerTokenScopingMCPWildcard(t *testing.T) {
 	store.GrantMCPPrivilegeByName(groupID, "tool_b")
 
 	// Create token with wildcard MCP scope
-	_, storedToken, _ := store.CreateToken("testuser", "Wildcard token", nil)
-	store.SetTokenMCPScopeByNames(storedToken.ID, []string{"*"})
+	_, storedToken, _ := store.AsActor(systemActor).CreateToken("testuser", "Wildcard token", nil, true)
+	store.AsActor(systemActor).SetTokenMCPScopeByNames(storedToken.ID, []string{"*"}, true)
 
 	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
 	ctx = context.WithValue(ctx, UserIDContextKey, userID)
@@ -726,8 +795,8 @@ func TestRBACCheckerTokenScopingAdminWildcard(t *testing.T) {
 	store.GrantAdminPermission(groupID, PermManageConnections)
 
 	// Create token with wildcard admin scope
-	_, storedToken, _ := store.CreateToken("testuser", "Wildcard token", nil)
-	store.SetTokenAdminScope(storedToken.ID, []string{"*"})
+	_, storedToken, _ := store.AsActor(systemActor).CreateToken("testuser", "Wildcard token", nil, true)
+	store.AsActor(systemActor).SetTokenAdminScope(storedToken.ID, []string{"*"}, true)
 
 	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
 	ctx = context.WithValue(ctx, UserIDContextKey, userID)
@@ -757,10 +826,10 @@ func TestRBACCheckerTokenScopingConnectionWildcard(t *testing.T) {
 	store.GrantConnectionPrivilege(groupID, 2, AccessLevelReadWrite)
 
 	// Create token with wildcard connection scope
-	_, storedToken, _ := store.CreateToken("testuser", "Wildcard token", nil)
-	store.SetTokenConnectionScope(storedToken.ID, []ScopedConnection{
+	_, storedToken, _ := store.AsActor(systemActor).CreateToken("testuser", "Wildcard token", nil, true)
+	store.AsActor(systemActor).SetTokenConnectionScope(storedToken.ID, []ScopedConnection{
 		{ConnectionID: ConnectionIDAll, AccessLevel: AccessLevelReadWrite},
-	})
+	}, true)
 
 	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
 	ctx = context.WithValue(ctx, UserIDContextKey, userID)
@@ -798,9 +867,9 @@ func TestGetEffectivePrivilegesWithMCPWildcard(t *testing.T) {
 	store.GrantAdminPermission(groupID, PermManageConnections)
 
 	// Create token with wildcard MCP and admin scopes
-	_, storedToken, _ := store.CreateToken("testuser", "Wildcard token", nil)
-	store.SetTokenMCPScopeByNames(storedToken.ID, []string{"*"})
-	store.SetTokenAdminScope(storedToken.ID, []string{"*"})
+	_, storedToken, _ := store.AsActor(systemActor).CreateToken("testuser", "Wildcard token", nil, true)
+	store.AsActor(systemActor).SetTokenMCPScopeByNames(storedToken.ID, []string{"*"}, true)
+	store.AsActor(systemActor).SetTokenAdminScope(storedToken.ID, []string{"*"}, true)
 
 	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
 	ctx = context.WithValue(ctx, UserIDContextKey, userID)
@@ -1006,6 +1075,12 @@ func TestGetUserMCPPrivilegesIncludesWildcard(t *testing.T) {
 	}
 }
 
+// unsharedUnowned reports every connection as unshared and owned by no
+// user, so that only group grants can admit a caller.
+func unsharedUnowned(_ context.Context, _ int) (bool, string, error) {
+	return false, "", nil
+}
+
 // mockSharingLookup returns a ConnectionSharingLookupFunc that serves
 // a fixed map of connection sharing info.
 func mockSharingLookup(info map[int]struct {
@@ -1143,6 +1218,21 @@ func TestCanAccessConnection_NoLookupFuncAllowsAccess(t *testing.T) {
 type stubVisibilityLister struct {
 	connections []ConnectionVisibilityInfo
 	err         error
+
+	// ownedGroups maps a username to the member connections of the
+	// cluster groups that user owns; ownedErr fails that lookup.
+	ownedGroups map[string][]int
+	ownedErr    error
+}
+
+// GetOwnedClusterGroupConnectionIDs implements OwnedClusterGroupLister.
+func (s *stubVisibilityLister) GetOwnedClusterGroupConnectionIDs(_ context.Context,
+	username string) ([]int, error) {
+
+	if s.ownedErr != nil {
+		return nil, s.ownedErr
+	}
+	return s.ownedGroups[username], nil
 }
 
 func (s *stubVisibilityLister) GetAllConnections(_ context.Context) ([]ConnectionVisibilityInfo, error) {
@@ -1331,9 +1421,10 @@ func TestVisibleConnectionIDs_SharedVisibleWithoutGrant(t *testing.T) {
 	}
 }
 
-func TestVisibleConnectionIDs_ExplicitGrantIntersectsSharedVisibility(t *testing.T) {
-	// When a user has explicit group/token grants, those grants act as an
-	// allow-list that further restricts shared-connection visibility.
+// TestVisibleConnectionIDs_ExplicitGrantKeepsSharedVisibility checks that
+// holding a grant on one connection does not hide a shared connection no
+// group restricts, which CanAccessConnection admits (issue #592).
+func TestVisibleConnectionIDs_ExplicitGrantKeepsSharedVisibility(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAccess(t)
 	defer cleanup()
 
@@ -1378,26 +1469,35 @@ func TestVisibleConnectionIDs_ExplicitGrantIntersectsSharedVisibility(t *testing
 	if !set[5] {
 		t.Error("Expected carol to see explicitly granted connection 5")
 	}
-	if set[1] {
-		t.Error("Explicit grants should restrict shared visibility: conn 1 should be hidden")
+	if !set[1] {
+		t.Error("A grant elsewhere must not hide shared connection 1, which no group restricts and CanAccessConnection admits (issue #592)")
 	}
 	if set[7] {
 		t.Error("Expected carol NOT to see unshared connection 7")
 	}
 }
 
-func TestVisibleConnectionIDs_NilStore_AllConnections(t *testing.T) {
+func TestVisibleConnectionIDs_NilStore_NoConnections(t *testing.T) {
 	checker := NewRBACChecker(nil)
+	contexts := map[string]context.Context{
+		"anonymous": context.Background(),
+		"superuser": context.WithValue(context.Background(),
+			IsSuperuserContextKey, true),
+	}
 
-	ids, all, err := checker.VisibleConnectionIDs(context.Background(), nil)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	if !all {
-		t.Error("Expected allConnections=true for nil store")
-	}
-	if ids != nil {
-		t.Errorf("Expected nil ids, got %v", ids)
+	for name, ctx := range contexts {
+		t.Run(name, func(t *testing.T) {
+			ids, all, err := checker.VisibleConnectionIDs(ctx, nil)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if all {
+				t.Error("Expected allConnections=false for nil store")
+			}
+			if ids != nil {
+				t.Errorf("Expected nil ids, got %v", ids)
+			}
+		})
 	}
 }
 
@@ -1455,10 +1555,10 @@ func TestGetEffectivePrivilegesScopedTokenWithUserWildcard(t *testing.T) {
 	store.GrantConnectionPrivilege(groupID, ConnectionIDAll, AccessLevelReadWrite)
 
 	// Token scoped to connection 11 with read-only access.
-	_, storedToken, _ := store.CreateToken("testuser", "Scoped token", nil)
-	store.SetTokenConnectionScope(storedToken.ID, []ScopedConnection{
+	_, storedToken, _ := store.AsActor(systemActor).CreateToken("testuser", "Scoped token", nil, true)
+	store.AsActor(systemActor).SetTokenConnectionScope(storedToken.ID, []ScopedConnection{
 		{ConnectionID: 11, AccessLevel: AccessLevelRead},
-	})
+	}, true)
 
 	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
 	ctx = context.WithValue(ctx, UserIDContextKey, userID)
@@ -1500,11 +1600,11 @@ func TestGetEffectivePrivilegesScopedTokenIntersectsSpecificGrant(t *testing.T) 
 	store.AddUserToGroup(groupID, userID)
 	store.GrantConnectionPrivilege(groupID, 11, AccessLevelReadWrite)
 
-	_, storedToken, _ := store.CreateToken("testuser", "Scoped token", nil)
-	store.SetTokenConnectionScope(storedToken.ID, []ScopedConnection{
+	_, storedToken, _ := store.AsActor(systemActor).CreateToken("testuser", "Scoped token", nil, true)
+	store.AsActor(systemActor).SetTokenConnectionScope(storedToken.ID, []ScopedConnection{
 		{ConnectionID: 11, AccessLevel: AccessLevelRead},
 		{ConnectionID: 12, AccessLevel: AccessLevelRead},
-	})
+	}, true)
 
 	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
 	ctx = context.WithValue(ctx, UserIDContextKey, userID)
@@ -1545,10 +1645,10 @@ func TestGetEffectivePrivilegesScopedTokenWildcardUserReadOnly(t *testing.T) {
 	store.AddUserToGroup(groupID, userID)
 	store.GrantConnectionPrivilege(groupID, ConnectionIDAll, AccessLevelRead)
 
-	_, storedToken, _ := store.CreateToken("testuser", "Scoped token", nil)
-	store.SetTokenConnectionScope(storedToken.ID, []ScopedConnection{
+	_, storedToken, _ := store.AsActor(systemActor).CreateToken("testuser", "Scoped token", nil, true)
+	store.AsActor(systemActor).SetTokenConnectionScope(storedToken.ID, []ScopedConnection{
 		{ConnectionID: 11, AccessLevel: AccessLevelReadWrite},
-	})
+	}, true)
 
 	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
 	ctx = context.WithValue(ctx, UserIDContextKey, userID)
@@ -1601,8 +1701,8 @@ func TestGetEffectivePrivilegesScopedTokenWithUserMCPWildcard(t *testing.T) {
 	store.GrantMCPPrivilegeByName(groupID, "*") // Wildcard grant ONLY
 
 	// Token scoped to tool_alpha only
-	_, storedToken, _ := store.CreateToken("testuser", "Scoped token", nil)
-	store.SetTokenMCPScopeByNames(storedToken.ID, []string{"tool_alpha"})
+	_, storedToken, _ := store.AsActor(systemActor).CreateToken("testuser", "Scoped token", nil, true)
+	store.AsActor(systemActor).SetTokenMCPScopeByNames(storedToken.ID, []string{"tool_alpha"}, true)
 
 	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
 	ctx = context.WithValue(ctx, UserIDContextKey, userID)
@@ -1648,8 +1748,8 @@ func TestGetEffectivePrivilegesScopedTokenWithUserAdminWildcard(t *testing.T) {
 	store.GrantAdminPermission(groupID, AdminPermissionWildcard)
 
 	// Token scoped to manage_users only
-	_, storedToken, _ := store.CreateToken("testuser", "Scoped token", nil)
-	store.SetTokenAdminScope(storedToken.ID, []string{PermManageUsers})
+	_, storedToken, _ := store.AsActor(systemActor).CreateToken("testuser", "Scoped token", nil, true)
+	store.AsActor(systemActor).SetTokenAdminScope(storedToken.ID, []string{PermManageUsers}, true)
 
 	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
 	ctx = context.WithValue(ctx, UserIDContextKey, userID)
@@ -1696,8 +1796,8 @@ func TestGetEffectivePrivilegesMCPWildcardUserMultipleScopedPrivileges(t *testin
 	store.GrantMCPPrivilegeByName(groupID, "*") // Wildcard grant ONLY
 
 	// Token scoped to tool_a and tool_b
-	_, storedToken, _ := store.CreateToken("testuser", "Scoped token", nil)
-	store.SetTokenMCPScopeByNames(storedToken.ID, []string{"tool_a", "tool_b"})
+	_, storedToken, _ := store.AsActor(systemActor).CreateToken("testuser", "Scoped token", nil, true)
+	store.AsActor(systemActor).SetTokenMCPScopeByNames(storedToken.ID, []string{"tool_a", "tool_b"}, true)
 
 	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
 	ctx = context.WithValue(ctx, UserIDContextKey, userID)
@@ -1739,8 +1839,8 @@ func TestGetEffectivePrivilegesAdminWildcardUserMultipleScopedPermissions(t *tes
 	store.GrantAdminPermission(groupID, AdminPermissionWildcard)
 
 	// Token scoped to manage_users and manage_connections
-	_, storedToken, _ := store.CreateToken("testuser", "Scoped token", nil)
-	store.SetTokenAdminScope(storedToken.ID, []string{PermManageUsers, PermManageConnections})
+	_, storedToken, _ := store.AsActor(systemActor).CreateToken("testuser", "Scoped token", nil, true)
+	store.AsActor(systemActor).SetTokenAdminScope(storedToken.ID, []string{PermManageUsers, PermManageConnections}, true)
 
 	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
 	ctx = context.WithValue(ctx, UserIDContextKey, userID)
@@ -1901,8 +2001,8 @@ func TestHasAdminPermissionTokenScopeDenied(t *testing.T) {
 	store.GrantAdminPermission(groupID, PermManageConnections)
 
 	// Create token scoped to ONLY manage_connections (not manage_users)
-	_, storedToken, _ := store.CreateToken("testuser", "Scoped admin token", nil)
-	store.SetTokenAdminScope(storedToken.ID, []string{PermManageConnections})
+	_, storedToken, _ := store.AsActor(systemActor).CreateToken("testuser", "Scoped admin token", nil, true)
+	store.AsActor(systemActor).SetTokenAdminScope(storedToken.ID, []string{PermManageConnections}, true)
 
 	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
 	ctx = context.WithValue(ctx, UserIDContextKey, userID)
@@ -1943,8 +2043,8 @@ func TestCanAccessMCPItemTokenScopeDenied(t *testing.T) {
 	store.GrantMCPPrivilegeByName(groupID, "tool_y")
 
 	// Create token scoped to ONLY tool_x
-	_, storedToken, _ := store.CreateToken("testuser", "Scoped MCP token", nil)
-	store.SetTokenMCPScopeByNames(storedToken.ID, []string{"tool_x"})
+	_, storedToken, _ := store.AsActor(systemActor).CreateToken("testuser", "Scoped MCP token", nil, true)
+	store.AsActor(systemActor).SetTokenMCPScopeByNames(storedToken.ID, []string{"tool_x"}, true)
 
 	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
 	ctx = context.WithValue(ctx, UserIDContextKey, userID)
@@ -1982,8 +2082,8 @@ func TestGetEffectivePrivilegesMCPScopeWithNonexistentPrivilegeID(t *testing.T) 
 	store.GrantMCPPrivilegeByName(groupID, "tool_valid")
 
 	// Create token with a valid MCP scope entry
-	_, storedToken, _ := store.CreateToken("testuser", "Scoped token", nil)
-	store.SetTokenMCPScopeByNames(storedToken.ID, []string{"tool_valid"})
+	_, storedToken, _ := store.AsActor(systemActor).CreateToken("testuser", "Scoped token", nil, true)
+	store.AsActor(systemActor).SetTokenMCPScopeByNames(storedToken.ID, []string{"tool_valid"}, true)
 
 	// Now manually insert an invalid privilege ID into token_mcp_scope
 	// This exercises the GetMCPPrivilegeByID error/nil path in GetEffectivePrivileges
@@ -2031,10 +2131,10 @@ func TestCanAccessConnectionTokenScopeNotInScope(t *testing.T) {
 	store.GrantConnectionPrivilege(groupID, 2, AccessLevelReadWrite)
 
 	// Create token scoped to ONLY connection 1
-	_, storedToken, _ := store.CreateToken("testuser", "Scoped token", nil)
-	store.SetTokenConnectionScope(storedToken.ID, []ScopedConnection{
+	_, storedToken, _ := store.AsActor(systemActor).CreateToken("testuser", "Scoped token", nil, true)
+	store.AsActor(systemActor).SetTokenConnectionScope(storedToken.ID, []ScopedConnection{
 		{ConnectionID: 1, AccessLevel: AccessLevelReadWrite},
-	})
+	}, true)
 
 	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
 	ctx = context.WithValue(ctx, UserIDContextKey, userID)
@@ -2079,10 +2179,10 @@ func TestGetEffectivePrivilegesConnectionWildcardReadCeiling(t *testing.T) {
 
 	// Token with wildcard connection scope at read level
 	// This should cap all connections to read access
-	_, storedToken, _ := store.CreateToken("testuser", "Wildcard read token", nil)
-	store.SetTokenConnectionScope(storedToken.ID, []ScopedConnection{
+	_, storedToken, _ := store.AsActor(systemActor).CreateToken("testuser", "Wildcard read token", nil, true)
+	store.AsActor(systemActor).SetTokenConnectionScope(storedToken.ID, []ScopedConnection{
 		{ConnectionID: ConnectionIDAll, AccessLevel: AccessLevelRead},
-	})
+	}, true)
 
 	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
 	ctx = context.WithValue(ctx, UserIDContextKey, userID)
@@ -2252,8 +2352,8 @@ func TestHasAdminPermissionTokenScopeReturnsFalse(t *testing.T) {
 	store.GrantAdminPermission(groupID, AdminPermissionWildcard)
 
 	// Create token with scope to only manage_connections
-	_, storedToken, _ := store.CreateToken("testuser", "Limited admin token", nil)
-	store.SetTokenAdminScope(storedToken.ID, []string{PermManageConnections})
+	_, storedToken, _ := store.AsActor(systemActor).CreateToken("testuser", "Limited admin token", nil, true)
+	store.AsActor(systemActor).SetTokenAdminScope(storedToken.ID, []string{PermManageConnections}, true)
 
 	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
 	ctx = context.WithValue(ctx, UserIDContextKey, userID)
@@ -2293,8 +2393,8 @@ func TestGetEffectivePrivilegesAdminScopeFiltering(t *testing.T) {
 	store.GrantAdminPermission(groupID, PermManageGroups)
 
 	// Create token with scope to only manage_users
-	_, storedToken, _ := store.CreateToken("testuser", "Limited admin token", nil)
-	store.SetTokenAdminScope(storedToken.ID, []string{PermManageUsers})
+	_, storedToken, _ := store.AsActor(systemActor).CreateToken("testuser", "Limited admin token", nil, true)
+	store.AsActor(systemActor).SetTokenAdminScope(storedToken.ID, []string{PermManageUsers}, true)
 
 	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
 	ctx = context.WithValue(ctx, UserIDContextKey, userID)
@@ -2414,8 +2514,8 @@ func TestHasAdminPermissionTokenScopeDatabaseError(t *testing.T) {
 	store.GrantAdminPermission(groupID, PermManageUsers)
 
 	// Create token with admin scope
-	_, storedToken, _ := store.CreateToken("testuser", "Admin token", nil)
-	store.SetTokenAdminScope(storedToken.ID, []string{PermManageUsers})
+	_, storedToken, _ := store.AsActor(systemActor).CreateToken("testuser", "Admin token", nil, true)
+	store.AsActor(systemActor).SetTokenAdminScope(storedToken.ID, []string{PermManageUsers}, true)
 
 	// Store the token ID before closing
 	tokenID := storedToken.ID
@@ -2497,7 +2597,7 @@ func TestNewRBACCheckerWithSharing_WithLookup(t *testing.T) {
 }
 
 func TestNewRBACCheckerWithSharing_NilStore(t *testing.T) {
-	// Create checker with nil store (should still work, just returns full access)
+	// A nil store still yields a checker, but one that denies everything
 	checker := NewRBACCheckerWithSharing(nil, nil)
 
 	if checker == nil {
@@ -2507,10 +2607,10 @@ func TestNewRBACCheckerWithSharing_NilStore(t *testing.T) {
 		t.Error("Expected authStore to be nil")
 	}
 
-	// Nil store means superuser mode (full access)
-	ctx := context.Background()
-	if !checker.IsSuperuser(ctx) {
-		t.Error("Expected IsSuperuser to return true with nil store")
+	// Nil store denies, even for a context claiming superuser
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, true)
+	if checker.IsSuperuser(ctx) {
+		t.Error("Expected IsSuperuser to return false with nil store")
 	}
 }
 

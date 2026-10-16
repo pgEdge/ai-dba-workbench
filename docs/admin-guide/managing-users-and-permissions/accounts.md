@@ -12,6 +12,15 @@ The Workbench and MCP server support built-in authentication via two methods:
   like a login user, but must use an API token for authentication. The server
   rejects password-based authentication for service accounts.
 
+An account may instead be owned by an OpenID Connect identity provider,
+in which case the provider authenticates the person and the Workbench
+issues the session. A federated account appears in the account listing
+and is administered in the same way as a local one, but it cannot be
+given a working password, because password authentication is refused for
+any account the provider owns. See
+[Single Sign-On](sso.md) for the configuration and its operational
+limits.
+
 Authentication data is stored in a SQLite database (`auth.db`) within the
 `data` directory. By default, the database resides at `./data/auth.db`
 relative to the server binary.
@@ -144,17 +153,23 @@ The user list includes all currently defined user and service accounts:
 Auth store: /var/lib/ai-workbench/data/auth.db
 
 Users:
-=========================================================================================
-Username             Created                   Last Login           Status     Notes
------------------------------------------------------------------------------------------
-Alice                2026-06-10 13:24          Never                Enabled    Developer
-Bob                  2026-06-10 13:31          Never                DISABLED   developer
-Carol                2026-06-10 13:32          Never                Enabled    Management
-Dan                  2026-06-10 13:37          Never                Enabled    sales
-admin                2026-06-09 11:59          2026-06-10 12:27     Enabled    management
-inventory            2026-06-10 13:31          Never                Enabled    Software
-=========================================================================================
+=================================================================================================================
+Username             Created           Last Login        Status               Notes                Authentication
+-----------------------------------------------------------------------------------------------------------------
+Alice                2026-06-10 13:24  Never             Enabled              Developer            https://idp.example.com
+Bob                  2026-06-10 13:31  Never             DISABLED             developer            Local
+Carol                2026-06-10 13:32  Never             Enabled              Management           https://idp.example.com
+Dan                  2026-06-10 13:37  Never             Enabled              sales                Local
+admin                2026-06-09 11:59  2026-06-10 12:27  Enabled              management           Local
+inventory            2026-06-10 13:31  Never             Enabled              Software             Local
+=================================================================================================================
 ```
+
+The `Authentication` column reads `Local` for an account that holds a
+Workbench password, and the identity provider's issuer for an account that
+signs in through single sign-on; see
+[Single Sign-On](sso.md) for how federated accounts are identified in each
+administrative interface.
 
 ### Modifying an Account
 
@@ -174,6 +189,12 @@ you to modify:
 - if the account has `Superuser` privileges.
 
 ![Editing user details](../../images/edit_account.png)
+
+A federated account is marked in the `Type` column with a `Federated` chip
+and the provider's issuer, and its `Edit user` dialog offers no password
+field; the dialog explains instead that the account signs in through the
+provider and that the provider reconciles its group membership and
+superuser flag at every sign-in.
 
 You can also modify these properties at the command line. In the following
 example, the `-update-user` command starts an interactive session that
@@ -210,6 +231,28 @@ whether an account is enabled or disabled:
 ./bin/ai-dba-server -enable-user -username charlie
 ```
 
+The server keeps at least one enabled superuser, apart from the two cases
+below, so that someone can still administer the server through the API and the
+Workbench console. The server refuses any change that would leave no enabled
+superuser, whether the change updates, disables, removes superuser status from
+or deletes the account. The API answers such a request with `409 Conflict`, and
+the `-disable-user`, `-unset-superuser` and `-delete-user` commands fail with
+the same error at the command line. A service account that is an enabled
+superuser counts towards the total, because the service account's tokens can
+still administer the server. Re-enabling a disabled superuser is always
+allowed; to demote or remove the last superuser, first promote or enable
+another account.
+
+The server does not apply this rule in two cases:
+
+- an account lockout after repeated failed sign-ins can disable the last
+  enabled superuser; use `-enable-user` to recover a locked superuser
+  account.
+- a federated sign-in removes superuser status from an account that the
+  identity provider no longer places in the `oidc.superuser_group` group,
+  even when the account is the last enabled superuser; see
+  [Single Sign-On](sso.md) for how the server synchronises that flag.
+
 ### Deleting an Account
 
 You can use the Workbench console or the command line to delete a user or
@@ -244,7 +287,6 @@ The configuration file manages the following authentication options:
 ```yaml
 http:
   auth:
-    enabled: true
     # Rate limiting settings
     rate_limit_window_minutes: 15
     rate_limit_max_attempts: 10
@@ -263,8 +305,12 @@ The following properties control lockout behavior:
   attempts allowed from a single IP address within the rate-limit window
   before that IP is blocked; the default is `10`.
 - The `max_failed_attempts_before_lockout` setting controls the number of
-  failed authentication attempts before locking an account; a value of `0`
-  disables the property.
+  failed authentication attempts before locking an account; the default is
+  `10`, which applies whenever the key is omitted, and an explicit value of
+  `0` disables account lockout; the server treats a negative value as
+  unset and applies the default. The server reads this setting once, at
+  start-up, so a restart is required to apply a change to the setting; a
+  `SIGHUP` reload reports the change and warns that a restart is needed.
 - `max_user_token_days` controls the maximum lifetime in days for user-created
   tokens; a value of `0` allows you to use tokens with unlimited lifetime.
 
@@ -275,3 +321,7 @@ number of failed login attempts:
 # Re-enable a locked account (also resets failed attempts)
 ./bin/ai-dba-server -enable-user -username alice
 ```
+
+The server records every account change in the audit log, naming the
+user, token or command-line operator that made it; for details, see
+[Audit Log](audit-log.md).

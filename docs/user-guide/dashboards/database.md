@@ -12,8 +12,8 @@ the following metrics:
 
 - Database size appears in a human-readable format.
 - Cache hit ratio appears as a percentage.
-- Total transactions show the combined commit and
-  rollback count.
+- Transactions show the current transactions per
+  second, combining commits and rollbacks.
 - Dead tuple ratio appears as a percentage across all
   tables.
 
@@ -23,10 +23,21 @@ display an AI Analysis button (brain icon) that
 provides LLM-powered insights.
 
 Two time-series charts appear below the KPI tiles.
-The Transactions Over Time chart plots commits against
-rollbacks. The Cache Hit Ratio Over Time chart tracks
-the ratio across the selected time range. Each chart
-includes an AI Analysis button.
+The Transactions Over Time chart plots commits per
+second against rollbacks per second, so the line
+reflects the current workload rather than the
+ever-growing counter totals. The Cache Hit Ratio Over
+Time chart tracks the ratio across the selected time
+range. Each chart includes an AI Analysis button.
+
+The cache hit KPI and chart compute the ratio from the
+blocks read and hit within each interval rather than from
+the lifetime counters, so the line moves when the current
+workload changes. An interval with no block access shows
+as a gap in the chart and as '--' in the KPI tile. The
+ratio counts only `shared_buffers` hits; a block read may
+still be served from the operating system page cache, so
+a lower ratio does not by itself indicate slow I/O.
 
 ## Table Leaderboard
 

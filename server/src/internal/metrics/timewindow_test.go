@@ -285,3 +285,39 @@ func TestResolveCustomWindow_ParameterNames(t *testing.T) {
 		t.Errorf("window %+v does not match inputs %v..%v", window, start, end)
 	}
 }
+
+// TestResolveCustomWindowAt checks each rule against a fixed now, so the
+// clamp and the future-start check are exact rather than timing-dependent.
+func TestResolveCustomWindowAt(t *testing.T) {
+	now := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	hour := time.Hour
+	cases := []struct {
+		name       string
+		start, end time.Time
+		wantErr    string
+		wantEnd    time.Time
+	}{
+		{"within range", now.Add(-2 * hour), now.Add(-hour), "", now.Add(-hour)},
+		{"end clamped to now", now.Add(-hour), now.Add(hour), "", now},
+		{"end before start", now.Add(-hour), now.Add(-2 * hour), "ts_end must be after ts_start", time.Time{}},
+		{"start in the future", now.Add(hour), now.Add(2 * hour), "invalid ts_start: must not be in the future", time.Time{}},
+		{"span too long", now.Add(-MaxCustomTimeSpan - hour), now, "span must not exceed 366 days", time.Time{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w, err := ResolveCustomWindowAt(tc.start, tc.end, now, "ts_start", "ts_end")
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("err = %v, want %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !w.Start.Equal(tc.start) || !w.End.Equal(tc.wantEnd) {
+				t.Errorf("window = %v..%v, want %v..%v", w.Start, w.End, tc.start, tc.wantEnd)
+			}
+		})
+	}
+}

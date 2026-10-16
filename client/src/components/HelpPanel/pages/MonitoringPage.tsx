@@ -104,7 +104,7 @@ const MonitoringPage: React.FC<MonitoringPageProps> = ({ aiEnabled }) => (
             />
             <FeatureItem
                 title="Top Queries"
-                description="Leaderboards showing the most resource-intensive queries by total time, calls, mean time, or rows returned; the Database column shows the source database for each query. The Hide monitoring queries toggle filters out workbench monitoring queries by default."
+                description="Leaderboards showing the most resource-intensive queries by total time, calls, mean time, or rows returned; the Database column shows the source database for each query. The panel follows the dashboard time range selector, including a custom window, and aggregates the cumulative pg_stat_statements counters over that window rather than reporting lifetime totals, so a query with no calls inside the window does not appear and changing the range returns the list to the first page. The Hide monitoring queries toggle filters out workbench monitoring queries by default."
             />
         </Box>
 
@@ -166,11 +166,11 @@ const MonitoringPage: React.FC<MonitoringPageProps> = ({ aiEnabled }) => (
         <Box sx={styles.indentedBlock}>
             <FeatureItem
                 title="Time Range Selector"
-                description="Choose from 1 hour, 6 hours, 24 hours, 7 days, 30 days, or Custom. The selected range applies to the time-series charts in the monitoring section; the event timeline has a separate control of its own."
+                description="Choose from 1 hour, 6 hours, 24 hours, 7 days, 30 days, or Custom. The selected range applies to the time-series charts in the monitoring section, and to the Top Queries panel and the query detail overlay it opens; the event timeline has a separate control of its own."
             />
             <FeatureItem
                 title="Custom Time Range"
-                description="The Custom option opens a picker with From and To fields for an arbitrary window, so you can line the charts up with a known incident. The span must not exceed 366 days and the start must be in the past. A custom window is not saved, so a reload returns to the last preset. The query leaderboards and the summary tiles do not follow a custom window."
+                description="The Custom option opens a picker with From and To fields for an arbitrary window, so you can line the charts up with a known incident. The span must not exceed 366 days and the start must be in the past. A custom window is not saved, so a reload returns to the last preset. The Top Queries panel and the query detail overlay follow a custom window, but accept at most 30 days, the longest preset, and report an error for a longer span whilst the charts continue to draw; the table and index leaderboards and the summary tiles do not follow a custom window."
             />
             <FeatureItem
                 title="Drill-Down Navigation"

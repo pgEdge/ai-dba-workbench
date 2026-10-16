@@ -20,6 +20,7 @@ import {
     SQL_PLACEHOLDER_RULES,
 } from '../utils/analysisPrompts';
 import { runAgenticLoop } from '../utils/agenticLoop';
+import { createSqlValidator } from '../utils/sqlValidation';
 import { fetchTimelineEventsForRange } from '../utils/timelineEvents';
 import type { Message } from '../types/llm';
 import { djb2Hash, ANALYSIS_CACHE_TTL_MS } from '../utils/textHelpers';
@@ -217,6 +218,10 @@ Analyze performance, check schema context, validate any SQL suggestions, and pro
                 maxIterations,
                 onActiveTools: setActiveTools,
                 onProgress: setProgressMessage,
+                validateSqlBlocks: createSqlValidator(
+                    input.connectionId,
+                    input.databaseName,
+                ),
             });
 
             setAnalysis(analysisText);

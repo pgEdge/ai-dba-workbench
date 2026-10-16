@@ -79,7 +79,7 @@ const AdministrationPage: React.FC = () => (
 
         <SectionTitle icon={NotificationsIcon}>Notification Channels</SectionTitle>
         <Typography sx={styles.bodyTextMb2}>
-            Configure how alert notifications are delivered. Four channel
+            Configure how alert notifications are delivered. Five channel
             types are available:
         </Typography>
         <Box sx={styles.indentedBlock}>
@@ -94,6 +94,10 @@ const AdministrationPage: React.FC = () => (
             <FeatureItem
                 title="Mattermost Channels"
                 description="Send alerts to Mattermost channels via incoming webhook URLs."
+            />
+            <FeatureItem
+                title="Telegram Channels"
+                description="Send alerts to a Telegram chat, group or channel via a bot."
             />
             <FeatureItem
                 title="Webhook Channels"

@@ -333,3 +333,17 @@ func TestNewSliceVisibilityLister_EmptyAndNil(t *testing.T) {
 		})
 	}
 }
+
+// TestVisibilityListerOwnedGroupsUnsupported checks that a source which
+// cannot list owned cluster groups reports an error, so that the token
+// scope grant checks fail closed.
+func TestVisibilityListerOwnedGroupsUnsupported(t *testing.T) {
+	lister := newVisibilityListerWithSource(&mockConnectionLister{})
+	ids, err := lister.GetOwnedClusterGroupConnectionIDs(context.Background(), "alice")
+	if !errors.Is(err, errOwnedGroupsUnsupported) {
+		t.Errorf("err = %v, want errOwnedGroupsUnsupported", err)
+	}
+	if ids != nil {
+		t.Errorf("ids = %v, want nil", ids)
+	}
+}

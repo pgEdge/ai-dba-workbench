@@ -20,7 +20,7 @@ Each alert rule contains the following fields:
 | `default_threshold` | The threshold value for comparison. |
 | `default_severity` | The alert severity (`critical`, `warning`, `info`). |
 | `default_enabled` | Whether the rule is enabled by default. |
-| `required_extension` | An optional PostgreSQL extension required. |
+| `required_extension` | An optional PostgreSQL extension the rule needs. The alerter reads the newest `pg_extension` snapshot for each connection, skips connections that lack the extension, and leaves any existing alert on such a connection active rather than resolving it. |
 | `is_built_in` | Indicates whether the rule is built-in. |
 
 ## Comparison Operators
@@ -67,6 +67,8 @@ categories:
   maintenance.
 - System rules monitor CPU, memory, and system
   resources.
+- Availability rules monitor the collection itself,
+  reporting probes that fall behind or stop collecting.
 
 ## Replication Rules
 
@@ -116,8 +118,62 @@ monitoring:
 
 The slot retention rules evaluate the maximum retained
 WAL across all replication slots on a server; the
-alerter fires a rule when any single slot retains more
-WAL than the threshold permits.
+alerter fires a rule when any single slot's retained
+WAL reaches the threshold. Both rules read only samples
+collected in the last 15 minutes, so neither rule fires
+on stale data after a collector stops.
+
+## Availability Rules
+
+The availability category includes two built-in rules that
+report on the collection itself rather than on the state of
+a monitored database. Neither rule requires an extension,
+and both are enabled by default at warning severity.
+
+The following table shows the built-in availability rules
+and their default conditions:
+
+| Rule | Metric | Condition |
+|------|--------|-----------|
+| `metric_staleness` | `probe_staleness_ratio` | Greater than 3 |
+| `probe_unavailable` | `probe_available` | Less than 1 |
+
+The `metric_staleness` rule reports a probe that is still
+collecting but whose newest sample is more than three
+collection intervals old.
+
+The `probe_unavailable` rule reports the transition from
+collecting to unavailable. The collector records a probe as
+unavailable on the first probe run after the extension the
+probe reads, the privilege the probe needs, or the
+connection itself goes away. The metric is the availability
+flag: the alerter reports 0 whilst the probe is unavailable
+and 1 whilst the probe collects, so the default condition of
+less than 1 holds for as long as collection stays stopped.
+
+The rule fires only for a probe that has collected at least
+once. A probe whose extension was never installed has never
+collected, so the rule never fires for one and no permanent
+alert is pinned to it. A probe whose extension is installed
+but has nothing to report, such as a Spock probe on a cluster
+with no recent apply exceptions or conflict resolutions,
+remains available, so the rule does not fire for a quiet
+cluster.
+
+The alerter clears a `probe_unavailable` alert when the
+probe collects again. The alerter also clears the alert when
+an operator retires the probe, whether by disabling the
+probe, by no longer monitoring the connection, or by
+removing the availability row, because each of those is a
+deliberate change rather than a fault. A held
+`metric_staleness` alert and a `probe_unavailable` alert can
+be active on the same probe at the same time; the first
+records that the data went stale and the second records why,
+and each clears on its own terms.
+
+Per-connection threshold overrides, blackout windows, and
+the alert cooldown apply to `probe_unavailable` exactly as
+they apply to `metric_staleness`.
 
 ## Hierarchical Overrides
 
@@ -258,9 +314,13 @@ guidelines:
 
 ## Alert Lifecycle
 
-When a threshold is violated, the alerter creates an
-alert with status `active`. The alert remains active
-until one of the following occurs:
+When a threshold has been violated on
+`threshold.trigger_count` consecutive metric samples
+(two by default), the alerter creates an alert with
+status `active`. A sample is one collection by the
+collector, so the evaluator reading the same sample again
+does not count. The alert remains active until one of the
+following occurs:
 
 - The condition resolves and the alerter clears the
   alert automatically.
@@ -278,8 +338,157 @@ The alerter automatically clears threshold alerts when
 the triggering condition returns to normal. The alert
 cleaner worker runs every 30 seconds and re-evaluates
 active alerts. When a metric value no longer violates
-the threshold, the alerter marks the alert as `cleared`
-and records the `cleared_at` timestamp.
+the threshold on `threshold.clear_count` consecutive
+metric samples (three by default), the alerter marks the
+alert as `cleared` and records the `cleared_at` timestamp.
+A sample that violates the threshold again starts the
+count afresh. The
+[alerter configuration](../getting-started/configuration/alerter.md)
+describes both options.
+
+Missing data is not treated as a resolved condition. Where
+a metric reports a value for every monitored connection,
+such as a CPU percentage or a cache hit ratio, a
+connection that stops returning a value has stopped
+reporting rather than recovered, so the alerter leaves the
+alert active and the `metric_staleness` rule reports the
+probe that stopped. Where a metric reports only whilst the
+condition holds, such as an inactive replication slot or a
+blocked session, the absence of a value is the recovery
+signal; each probe collection that returns no value counts
+as one sample towards `threshold.clear_count`, and the
+alerter clears the alert once enough have passed. With the
+default of three and the `pg_replication_slots` probe's
+default interval, an inactive replication slot alert
+clears ten to fifteen minutes after the slot recovers.
+
+The `metric_staleness` rule is cleared on the same basis.
+A probe that has become unavailable, whether because the
+monitored server no longer offers the extension the probe
+reads or because the probe run timed out, keeps a
+staleness alert that has already fired for it; the alerter
+rewrites the alert description to report that collection
+has stopped and to name the reason the collector recorded,
+and leaves the alert title alone so that the alert stays
+recognisable in notification history. The alerter restores
+the evaluator's original wording once the probe collects
+again, so the clear notification and the stored history
+describe the recovery rather than the outage. A probe that
+an operator has disabled clears the alert, because that
+represents a deliberate change rather than a fault; the
+alerter restores the original wording on that path too,
+rebuilding it from the connection and probe configuration,
+so a cleared alert does not report that collection has
+stopped. Where the connection and its probe configuration
+have gone as well, there is nothing left to rebuild the
+wording from and the alert clears as it stands. The
+alerter logs whichever decision it takes at the normal log
+level, once when the decision changes rather than on every
+cleanup cycle.
+
+This hold preserves an alert that is already active; it
+does not raise a new one. The staleness rule itself never
+fires for an unavailable probe, because an unavailable
+probe is the normal steady state on a server that lacks
+the extension a probe reads, and firing on one would leave
+a permanent alert against every such probe. A probe that
+stops collecting before its staleness ratio reaches the
+rule's threshold is instead reported by the
+`probe_unavailable` rule described above. The seeded
+staleness rule shows why the second rule is needed: the
+staleness rule fires on a ratio above 3, and a probe that
+runs every 60 seconds is still at a ratio of about 1.0 at
+the moment the collector records the probe as unavailable.
+
+The alert cleaner checks a `probe_unavailable` alert
+against the same probe availability data the evaluator
+reads, rather than against the staleness ratio, so the two
+probe-scoped rules resolve independently of each other.
+
+## Alerts on a Server You Stop Monitoring
+
+Turning off monitoring for a server closes its alerts.
+On its next cleanup cycle the alerter clears every active
+alert on that server, of every type, and rewrites each
+alert description to record that it was closed because
+monitoring of the server was turned off rather than
+because the condition it reports ended. The alerts then
+age out under the normal retention period.
+
+No clear notifications are sent for those alerts, because
+nothing observed the conditions resolve and an operator
+who has just stopped monitoring a server does not need a
+burst of messages announcing them as fixed. The alerter
+logs each alert it closes this way at the normal log
+level.
+
+Turning monitoring back on does not reopen the closed
+alerts. Any condition that still holds raises a fresh
+alert on the next evaluation cycle, subject to the usual
+re-raise cooldown.
+
+## Anomaly Alert Clearing
+
+The alerter also clears anomaly alerts automatically.
+An anomaly alert has no rule threshold, so the anomaly
+detector re-scores the metric behind each active anomaly
+alert on every tier 1 evaluation, using the same baseline
+and sensitivity that raised the alert. The alerter clears
+the alert and sends the usual clear notification once
+`anomaly.tier1.clear_count` consecutive samples of the
+metric have scored inside the sensitivity band. Only a
+newly collected sample counts: tier 1 evaluates every 60
+seconds by default whilst most probes collect every 300
+to 600 seconds, and an evaluation that re-scores a sample
+already counted neither advances nor restarts the count.
+The default of 3 therefore clears an alert on the third
+in-band sample, about ten minutes after the first for a
+probe that collects every 300 seconds.
+A value under the metric's `min_value` floor in
+`anomaly.tier1.metric_floors` counts as inside the band,
+because the detector never treats such a value as
+anomalous.
+
+Whilst the value stays outside the band, the alerter
+updates the alert's metric value, anomaly score and last
+updated time, and raises the severity when the deviation
+grows; the severity never falls, and the description
+keeps the values at which the alert fired. A cached AI
+analysis is discarded when the metric value changes.
+
+The alerter holds an anomaly alert open on any evaluation
+in which the metric or connection does not report, keeping
+the count, since no sample was missed. Metrics that report
+only whilst their condition holds, such as blocked sessions
+or long-running transactions, are the exception: for these
+a missing value means the condition has passed, so each new
+collection by the metric's probe that reports no value
+counts as an in-band sample, provided the probe is still
+collecting for the connection. The alerter also
+holds the alert open, and restarts its count, on a sample
+outside the band, when the baseline is not usable, or
+whilst a blackout covers the connection or database. The
+count is held in memory, so the count also restarts when the alerter
+restarts or when tier 1 is disabled. The alerter does not
+clear acknowledged anomaly alerts this way, and leaves
+them to the re-evaluation worker. Recovery stops whenever
+anomaly detection is disabled, including when the alerter
+disables it because no enabled tier has a usable LLM
+provider; recovery itself makes no embedding or LLM call.
+
+On upgrade, the alerter closes any active anomaly alert it
+can no longer re-score, without a clear notification: an
+alert on a metric that anomaly detection no longer covers,
+and an alert with no database on a metric measured per
+database, as earlier releases raised for the cache hit
+ratio, deadlock and temporary file metrics. The alert's
+description then begins `Closed without re-evaluation:`
+and gives the reason.
+
+After an anomaly alert clears, the alerter raises no new
+anomaly alert for the same metric, connection and
+database for five minutes, so a value at the edge of the
+band does not raise and clear an alert repeatedly.
 
 ## Blackout Interaction
 
@@ -287,7 +496,8 @@ During an active blackout period, the alerter
 suppresses new alerts for the affected connection or
 database. Existing active alerts are not cleared during
 a blackout; the blackout only prevents new alerts from
-being created.
+being created, and holds an anomaly alert open until the
+blackout ends.
 
 ## Example Rule Configuration
 

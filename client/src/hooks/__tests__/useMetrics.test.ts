@@ -12,6 +12,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, waitFor, act } from '@testing-library/react';
 import { useMetrics, useBaselines } from '../useMetrics';
 import type { MetricQueryParams } from '../../components/Dashboard/types';
+import { MAX_CONNECTION_IDS_PER_REQUEST } from '../../utils/connectionIdBatches';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -214,6 +215,46 @@ describe('useMetrics', () => {
         const url = mockApiGet.mock.calls[0][0];
         expect(url).not.toContain('index_name');
         expect(url).toContain('table_name=orders');
+    });
+
+    it('builds URL with mount_point when mountPoint is set', async () => {
+        mockApiGet.mockResolvedValueOnce(makeMetricSeries());
+
+        const params: MetricQueryParams = {
+            probeName: 'pg_sys_disk_info',
+            timeRange: '24h',
+            connectionId: 5,
+            mountPoint: '/var/lib/postgresql',
+            metrics: ['used_space', 'free_space', 'total_space'],
+        };
+
+        renderHook(() => useMetrics(params));
+
+        await waitFor(() => {
+            expect(mockApiGet).toHaveBeenCalled();
+        });
+
+        const url = mockApiGet.mock.calls[0][0];
+        expect(url).toContain('mount_point=%2Fvar%2Flib%2Fpostgresql');
+    });
+
+    it('omits mount_point when mountPoint is not set', async () => {
+        mockApiGet.mockResolvedValueOnce(makeMetricSeries());
+
+        const params: MetricQueryParams = {
+            probeName: 'pg_sys_disk_info',
+            timeRange: '24h',
+            connectionId: 5,
+        };
+
+        renderHook(() => useMetrics(params));
+
+        await waitFor(() => {
+            expect(mockApiGet).toHaveBeenCalled();
+        });
+
+        const url = mockApiGet.mock.calls[0][0];
+        expect(url).not.toContain('mount_point');
     });
 
     it('builds URL with queryid when queryId is set', async () => {
@@ -641,7 +682,143 @@ describe('useMetrics with a custom time range', () => {
         expect(mockApiGet).toHaveBeenCalledTimes(1);
         expect(result.current.data).toEqual(makeMetricSeries());
         expect(result.current.error).toBeNull();
+
     });
+    // -----------------------------------------------------------------
+    // The envelope returned by the metrics query endpoint
+    // -----------------------------------------------------------------
+
+    describe('envelope', () => {
+        const params: MetricQueryParams = {
+            probeName: 'pg_sys_cpu',
+            timeRange: '7d',
+            connectionId: 1,
+        };
+
+        const envelope = (
+            overrides: Record<string, unknown> = {},
+        ): Record<string, unknown> => ({
+            probe_name: 'pg_sys_cpu',
+            connection_ids: [1],
+            time_range: '7d',
+            time_start: '2026-09-09T10:00:00Z',
+            time_end: '2026-09-16T10:00:00Z',
+            bucket_seconds: 4032,
+            buckets: 150,
+            aggregation: 'avg',
+            series: [
+                {
+                    name: 'cpu',
+                    metric: 'cpu',
+                    unit: '',
+                    data: [
+                        { time: '2026-09-09T10:00:00Z', value: 42.1 },
+                        { time: '2026-09-09T11:07:12Z', value: null },
+                        {
+                            time: '2026-09-09T12:14:24Z',
+                            value: 42.1,
+                            filled: true,
+                        },
+                    ],
+                },
+            ],
+            ...overrides,
+        });
+
+        it('exposes the series and the queried window', async () => {
+            mockApiGet.mockResolvedValueOnce(envelope());
+
+            const { result } = renderHook(() => useMetrics(params));
+
+            await waitFor(() => {
+                expect(result.current.data).not.toBeNull();
+            });
+
+            expect(result.current.data).toHaveLength(1);
+            expect(result.current.data?.[0].data[1].value).toBeNull();
+            expect(result.current.data?.[0].data[2].filled).toBe(true);
+            expect(result.current.window).toEqual({
+                start: '2026-09-09T10:00:00Z',
+                end: '2026-09-16T10:00:00Z',
+                bucketSeconds: 4032,
+            });
+        });
+
+        it('reports no window when the envelope omits one', async () => {
+            mockApiGet.mockResolvedValueOnce(envelope({
+                time_start: undefined,
+                bucket_seconds: 0,
+            }));
+
+            const { result } = renderHook(() => useMetrics(params));
+
+            await waitFor(() => {
+                expect(result.current.data).not.toBeNull();
+            });
+
+            expect(result.current.window).toBeNull();
+        });
+
+        it('treats a null series list as no data', async () => {
+            mockApiGet.mockResolvedValueOnce(envelope({ series: null }));
+
+            const { result } = renderHook(() => useMetrics(params));
+
+            await waitFor(() => {
+                expect(result.current.window).not.toBeNull();
+            });
+
+            expect(result.current.data).toBeNull();
+        });
+
+        it('accepts a bare array from a server without the envelope',
+            async () => {
+                mockApiGet.mockResolvedValueOnce(makeMetricSeries());
+
+                const { result } = renderHook(() => useMetrics(params));
+
+                await waitFor(() => {
+                    expect(result.current.data).not.toBeNull();
+                });
+
+                expect(result.current.window).toBeNull();
+            });
+
+        it('yields no data for an empty response body', async () => {
+            mockApiGet.mockResolvedValueOnce(null);
+
+            const { result } = renderHook(() => useMetrics(params));
+
+            await waitFor(() => {
+                expect(mockApiGet).toHaveBeenCalledTimes(1);
+            });
+
+            expect(result.current.data).toBeNull();
+            expect(result.current.window).toBeNull();
+        });
+
+        it('clears the window when the request fails', async () => {
+            mockApiGet.mockResolvedValueOnce(envelope());
+            const { result, rerender } = renderHook(
+                () => useMetrics(params),
+            );
+
+            await waitFor(() => {
+                expect(result.current.window).not.toBeNull();
+            });
+
+            mockApiGet.mockRejectedValueOnce(new Error('boom'));
+            mockRefreshTrigger = 1;
+            rerender();
+
+            await waitFor(() => {
+                expect(result.current.error).toBe('boom');
+            });
+
+            expect(result.current.window).toBeNull();
+        });
+    });
+
 });
 
 // ---------------------------------------------------------------------------
@@ -788,5 +965,116 @@ describe('useBaselines', () => {
 
         const url = mockApiGet.mock.calls[1][0];
         expect(url).toContain('probe_name=probe2');
+    });
+});
+
+describe('useMetrics connection_ids batching', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockRefreshTrigger = 0;
+        mockTimeRange = { range: '24h' };
+    });
+
+    afterEach(() => {
+        vi.resetAllMocks();
+    });
+
+    const ids = (count: number): number[] =>
+        Array.from({ length: count }, (_, i) => i + 1);
+
+    const requestedIds = (url: string): number[] =>
+        (new URLSearchParams(url.split('?')[1]).get('connection_ids') ?? '')
+            .split(',')
+            .map(Number);
+
+    it('sends one request for a list within the cap', async () => {
+        mockApiGet.mockResolvedValue({ series: makeMetricSeries() });
+
+        const params: MetricQueryParams = {
+            probeName: 'pg_stat_activity',
+            timeRange: '24h',
+            connectionIds: ids(MAX_CONNECTION_IDS_PER_REQUEST),
+        };
+
+        renderHook(() => useMetrics(params));
+
+        await waitFor(() => {
+            expect(mockApiGet).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    it('batches an over-cap list and concatenates the series', async () => {
+        // One series per batch, named after its first connection id, so
+        // the merge order is visible in the result.
+        mockApiGet.mockImplementation((url: string) => Promise.resolve({
+            series: [{ name: `batch-${requestedIds(url)[0]}`, data: [1] }],
+            time_start: '2026-05-01T00:00:00.000Z',
+            time_end: '2026-05-02T00:00:00.000Z',
+            bucket_seconds: 60,
+        }));
+
+        const params: MetricQueryParams = {
+            probeName: 'pg_stat_activity',
+            timeRange: '24h',
+            connectionIds: ids(250),
+        };
+
+        const { result } = renderHook(() => useMetrics(params));
+
+        await waitFor(() => {
+            expect(result.current.data).not.toBeNull();
+        });
+
+        const urls = mockApiGet.mock.calls.map(call => call[0] as string);
+        expect(urls).toHaveLength(3);
+        expect(requestedIds(urls[0])).toEqual(ids(250).slice(0, 100));
+        expect(requestedIds(urls[1])).toEqual(ids(250).slice(100, 200));
+        expect(requestedIds(urls[2])).toEqual(ids(250).slice(200));
+
+        expect(result.current.data?.map(s => s.name)).toEqual([
+            'batch-1', 'batch-101', 'batch-201',
+        ]);
+        // The window is taken from the first batch that reported one.
+        expect(result.current.window?.bucketSeconds).toBe(60);
+    });
+
+    it('reports an error when one batch fails', async () => {
+        mockApiGet.mockImplementation((url: string) =>
+            requestedIds(url)[0] === 101
+                ? Promise.reject(new Error('batch failed'))
+                : Promise.resolve({ series: makeMetricSeries() }),
+        );
+
+        const params: MetricQueryParams = {
+            probeName: 'pg_stat_activity',
+            timeRange: '24h',
+            connectionIds: ids(250),
+        };
+
+        const { result } = renderHook(() => useMetrics(params));
+
+        await waitFor(() => {
+            expect(result.current.error).toBe('batch failed');
+        });
+        expect(result.current.data).toBeNull();
+        expect(result.current.window).toBeNull();
+    });
+
+    it('returns a null series when no batch carried one', async () => {
+        mockApiGet.mockResolvedValue(null);
+
+        const params: MetricQueryParams = {
+            probeName: 'pg_stat_activity',
+            timeRange: '24h',
+            connectionIds: ids(150),
+        };
+
+        const { result } = renderHook(() => useMetrics(params));
+
+        await waitFor(() => {
+            expect(mockApiGet).toHaveBeenCalledTimes(2);
+        });
+        expect(result.current.data).toBeNull();
+        expect(result.current.window).toBeNull();
     });
 });

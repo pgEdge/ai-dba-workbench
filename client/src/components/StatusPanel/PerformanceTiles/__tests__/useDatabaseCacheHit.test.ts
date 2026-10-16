@@ -28,25 +28,44 @@ vi.mock('../../../../contexts/useClusterData', () => ({
 import { useAuth } from '../../../../contexts/useAuth';
 import { apiFetch } from '../../../../utils/apiClient';
 import { useClusterData } from '../../../../contexts/useClusterData';
+import type { AuthContextValue, User } from '../../../../contexts/AuthContext';
+import type { ClusterDataContextValue } from '../../../../contexts/ClusterDataContext';
 
 const mockUseAuth = vi.mocked(useAuth);
 const mockApiFetch = vi.mocked(apiFetch);
 const mockUseClusterData = vi.mocked(useClusterData);
 
+// The hook only reads `user` and `lastRefresh`, but the mocked
+// context hooks must still return the full context shape.
+const authValue = (user: User | null): AuthContextValue => ({
+    user,
+    loading: false,
+    login: vi.fn(),
+    logout: vi.fn(),
+    forceLogout: vi.fn(),
+    adminPermissions: [],
+    hasPermission: vi.fn(() => false),
+    hasAnyAdminAccess: false,
+});
+
+const clusterDataValue = (lastRefresh: Date | null): ClusterDataContextValue => ({
+    clusterData: [],
+    loading: false,
+    error: null,
+    lastRefresh,
+    autoRefreshEnabled: false,
+    setAutoRefreshEnabled: vi.fn(),
+    fetchClusterData: vi.fn(),
+});
+
 describe('useDatabaseCacheHit', () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        mockUseAuth.mockReturnValue({
-            user: { id: 1, username: 'testuser', role: 'admin' },
-            login: vi.fn(),
-            logout: vi.fn(),
-            isLoading: false,
-        });
-        mockUseClusterData.mockReturnValue({
-            lastRefresh: null,
-            triggerRefresh: vi.fn(),
-            clearRefresh: vi.fn(),
-        });
+        mockUseAuth.mockReturnValue(authValue({
+            authenticated: true,
+            username: 'testuser',
+        }));
+        mockUseClusterData.mockReturnValue(clusterDataValue(null));
     });
 
     afterEach(() => {
@@ -63,12 +82,7 @@ describe('useDatabaseCacheHit', () => {
     });
 
     it('returns empty array when user is not logged in', async () => {
-        mockUseAuth.mockReturnValue({
-            user: null,
-            login: vi.fn(),
-            logout: vi.fn(),
-            isLoading: false,
-        });
+        mockUseAuth.mockReturnValue(authValue(null));
 
         const { result } = renderHook(() => useDatabaseCacheHit(123));
 
@@ -124,6 +138,41 @@ describe('useDatabaseCacheHit', () => {
         expect(mockApiFetch).toHaveBeenCalledWith(
             '/api/v1/metrics/database-summaries?connection_id=123&time_range=24h'
         );
+    });
+
+    it('passes null current and null buckets through untouched', async () => {
+        const mockResponse = {
+            databases: [
+                {
+                    database_name: 'idle',
+                    cache_hit_ratio: {
+                        current: null,
+                        time_series: [
+                            { time: '2024-01-01T10:00:00Z', value: 99.3 },
+                            { time: '2024-01-01T11:00:00Z', value: null },
+                        ],
+                    },
+                },
+            ],
+        };
+
+        mockApiFetch.mockResolvedValue({
+            ok: true,
+            json: () => Promise.resolve(mockResponse),
+        } as Response);
+
+        const { result } = renderHook(() => useDatabaseCacheHit(123));
+
+        await waitFor(() => {
+            expect(result.current.loading).toBe(false);
+        });
+
+        expect(result.current.databases).toHaveLength(1);
+        expect(result.current.databases[0].cache_hit_ratio.current).toBeNull();
+        expect(result.current.databases[0].cache_hit_ratio.time_series).toEqual([
+            { time: '2024-01-01T10:00:00Z', value: 99.3 },
+            { time: '2024-01-01T11:00:00Z', value: null },
+        ]);
     });
 
     it('filters out databases with empty time series', async () => {
@@ -284,11 +333,7 @@ describe('useDatabaseCacheHit', () => {
         expect(mockApiFetch).toHaveBeenCalledTimes(1);
 
         // Simulate refresh trigger
-        mockUseClusterData.mockReturnValue({
-            lastRefresh: new Date(),
-            triggerRefresh: vi.fn(),
-            clearRefresh: vi.fn(),
-        });
+        mockUseClusterData.mockReturnValue(clusterDataValue(new Date()));
 
         rerender();
 
@@ -395,11 +440,7 @@ describe('useDatabaseCacheHit', () => {
         });
 
         // Trigger refetch
-        mockUseClusterData.mockReturnValue({
-            lastRefresh: new Date(),
-            triggerRefresh: vi.fn(),
-            clearRefresh: vi.fn(),
-        });
+        mockUseClusterData.mockReturnValue(clusterDataValue(new Date()));
 
         rerender();
 

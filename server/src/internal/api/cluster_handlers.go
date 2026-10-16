@@ -28,6 +28,10 @@ type ClusterHandler struct {
 	datastore   *database.Datastore
 	authStore   *auth.AuthStore
 	rbacChecker *auth.RBACChecker
+
+	// denialAuditor audits this handler's token-scope refusals, and
+	// the ownership and permission refusals on the cluster-group routes.
+	denialAuditor
 }
 
 // NewClusterHandler creates a new cluster handler
@@ -260,6 +264,14 @@ func clusterMembersVisible(members []int, visible map[int]bool) bool {
 		}
 	}
 	return false
+}
+
+// membersHidden reports whether a cluster or group has members but none
+// of them is in the visible set. A container with no members is not
+// hidden by this test, so a write to it falls to the caller's other
+// checks.
+func membersHidden(members []int, visible map[int]bool) bool {
+	return len(members) > 0 && !clusterMembersVisible(members, visible)
 }
 
 // filterGroupsByVisibility delegates to the package-level helper.
@@ -520,10 +532,20 @@ func (h *ClusterHandler) getClusterGroup(w http.ResponseWriter, r *http.Request,
 func (h *ClusterHandler) createClusterGroup(w http.ResponseWriter, r *http.Request) {
 	// Issue #207: gate cluster-group creation on manage_connections.
 	// Check before decoding the body so denied callers cannot probe payload
-	// shape via validation error messages.
+	// shape via validation error messages. The refusal is audited, as
+	// are the other ownership and permission refusals on the
+	// cluster-group routes (issue #589).
 	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections) {
-		RespondError(w, http.StatusForbidden,
+		h.denialRecorder.refuse(w, r,
 			"Permission denied: requires manage_connections permission")
+		return
+	}
+	// A new group holds clusters and group-wide settings that reach
+	// every connection later placed in it, so, as for the other
+	// container writes, a token must cover every connection (issue
+	// #471). The session lookup below refuses an API token today; this
+	// keeps the rule should that change.
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) {
 		return
 	}
 
@@ -592,9 +614,39 @@ func (h *ClusterHandler) updateClusterGroup(w http.ResponseWriter, r *http.Reque
 	// Permission check: manage_connections permission, or owner
 	isOwner := existingGroup.OwnerUsername.Valid && existingGroup.OwnerUsername.String == username
 	if !hasManageConns && !isOwner {
-		RespondError(w, http.StatusForbidden,
+		h.denialRecorder.refuse(w, r,
 			"You do not have permission to update this cluster group")
 		return
+	}
+
+	// A group's definition decides which group-wide blackouts,
+	// overrides and grants reach its members, so a token must cover
+	// every connection to change it (issue #471).
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) {
+		return
+	}
+
+	// A caller who cannot see any of the group's members gets the same
+	// 404 as the GET. A group with no members is left to the owner and
+	// manage_connections check above, so its owner can still rename a
+	// group they have just created (issue #58).
+	visible, allConnections, err := h.resolveVisibleConnections(ctx)
+	if err != nil {
+		log.Printf("[ERROR] Failed to resolve visible connections for cluster group %d: %v", id, err)
+		RespondError(w, http.StatusInternalServerError, "Failed to update cluster group")
+		return
+	}
+	if !allConnections {
+		members, err := h.datastore.GetConnectionIDsForGroup(ctx, id)
+		if err != nil {
+			log.Printf("[ERROR] Failed to check cluster group visibility (id=%d): %v", id, err)
+			RespondError(w, http.StatusInternalServerError, "Failed to update cluster group")
+			return
+		}
+		if membersHidden(members, visible) {
+			RespondError(w, http.StatusNotFound, "Cluster group not found")
+			return
+		}
 	}
 
 	var req ClusterGroupRequest
@@ -655,8 +707,16 @@ func (h *ClusterHandler) deleteClusterGroup(w http.ResponseWriter, r *http.Reque
 	isOwner := existingGroup.OwnerUsername.Valid &&
 		existingGroup.OwnerUsername.String == username
 	if !hasManageConns && !isOwner {
-		RespondError(w, http.StatusForbidden,
+		h.denialRecorder.refuse(w, r,
 			"You do not have permission to delete this cluster group")
+		return
+	}
+
+	// Deleting a group cascades to its clusters and to the group-scope
+	// blackouts, schedules, probe configs, alert thresholds and channel
+	// overrides that reach its members, so a token must cover every
+	// connection to do it (issue #471).
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) {
 		return
 	}
 
@@ -771,8 +831,15 @@ func (h *ClusterHandler) listClustersInGroup(w http.ResponseWriter, r *http.Requ
 func (h *ClusterHandler) createClusterInGroup(w http.ResponseWriter, r *http.Request, groupID int) {
 	// Issue #207: gate cluster creation under a group on manage_connections.
 	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections) {
-		RespondError(w, http.StatusForbidden,
+		h.denialRecorder.refuse(w, r,
 			"Permission denied: requires manage_connections permission")
+		return
+	}
+	// A new cluster in a group inherits that group's blackouts, probe
+	// configurations and overrides, and so does any connection later
+	// moved into it, so a token must cover every connection (issue
+	// #471).
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) {
 		return
 	}
 
@@ -850,6 +917,13 @@ func (h *ClusterHandler) updateCluster(w http.ResponseWriter, r *http.Request, i
 		return
 	}
 
+	// A cluster's definition decides which cluster-wide blackouts,
+	// overrides and grants reach its members, so a token must cover
+	// every connection to change it (issue #471).
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) {
+		return
+	}
+
 	var req ClusterRequest
 	if !DecodeJSONBody(w, r, &req) {
 		return
@@ -914,6 +988,13 @@ func (h *ClusterHandler) deleteCluster(w http.ResponseWriter, r *http.Request, i
 		return
 	}
 
+	// A cluster's definition decides which cluster-wide blackouts,
+	// overrides and grants reach its members, so a token must cover
+	// every connection to change it (issue #471).
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) {
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
@@ -969,6 +1050,13 @@ func (h *ClusterHandler) updateAutoDetectedCluster(w http.ResponseWriter, r *htt
 		return
 	}
 
+	// A cluster's definition decides which cluster-wide blackouts,
+	// overrides and grants reach its members, so a token must cover
+	// every connection to change it (issue #471).
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) {
+		return
+	}
+
 	// Parse request body
 	var req AutoDetectedClusterRequest
 	if !DecodeJSONBody(w, r, &req) {
@@ -1021,6 +1109,13 @@ func (h *ClusterHandler) deleteAutoDetectedCluster(w http.ResponseWriter, r *htt
 	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections) {
 		RespondError(w, http.StatusForbidden,
 			"Permission denied: you do not have permission to delete auto-detected clusters")
+		return
+	}
+
+	// A cluster's definition decides which cluster-wide blackouts,
+	// overrides and grants reach its members, so a token must cover
+	// every connection to change it (issue #471).
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) {
 		return
 	}
 
@@ -1085,8 +1180,15 @@ func computeAutoClusterKey(clusterID string) string {
 func (h *ClusterHandler) updateAutoDetectedGroup(w http.ResponseWriter, r *http.Request, groupID string) {
 	// Check user permissions - requires manage_connections permission
 	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections) {
-		RespondError(w, http.StatusForbidden,
+		h.denialRecorder.refuse(w, r,
 			"Permission denied: you do not have permission to rename auto-detected groups")
+		return
+	}
+
+	// A group's definition decides which group-wide blackouts,
+	// overrides and grants reach its members, so a token must cover
+	// every connection to change it (issue #471).
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) {
 		return
 	}
 
@@ -1197,6 +1299,15 @@ func (h *ClusterHandler) addServerToCluster(w http.ResponseWriter, r *http.Reque
 		RespondError(w, http.StatusBadRequest, "A valid connection_id is required")
 		return
 	}
+	// The role is written to connections.role, so it gets the same
+	// check as PUT /connections/{id}/cluster.
+	if req.Role != nil && !knownConnectionRoles[*req.Role] {
+		RespondError(w, http.StatusBadRequest, "Invalid role")
+		return
+	}
+	if !requireConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder, req.ConnectionID) {
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
@@ -1259,6 +1370,10 @@ func (h *ClusterHandler) handleRemoveServerFromCluster(w http.ResponseWriter, r 
 	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections) {
 		RespondError(w, http.StatusForbidden,
 			"Permission denied: requires manage_connections permission")
+		return
+	}
+
+	if !requireConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder, connectionID) {
 		return
 	}
 
@@ -1361,6 +1476,12 @@ func (h *ClusterHandler) handleCreateCluster(w http.ResponseWriter, r *http.Requ
 			"Permission denied: requires manage_connections permission")
 		return
 	}
+	// As on POST /cluster-groups/{id}/clusters: the new cluster, and
+	// any connection later moved into it, inherits its group's
+	// settings, so a token must cover every connection (issue #471).
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) {
+		return
+	}
 
 	var req ManualClusterRequest
 	if !DecodeJSONBody(w, r, &req) {
@@ -1457,6 +1578,13 @@ func (h *ClusterHandler) setConnectionRelationships(w http.ResponseWriter, r *ht
 
 	var req SetRelationshipsRequest
 	if !DecodeJSONBody(w, r, &req) {
+		return
+	}
+
+	// Setting a source's relationships first deletes every manual
+	// relationship from it, whatever the target, so the token must
+	// cover every connection rather than only those the request names.
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) {
 		return
 	}
 
@@ -1578,6 +1706,12 @@ func (h *ClusterHandler) handleDeleteRelationship(w http.ResponseWriter, r *http
 		return
 	}
 
+	// A relationship addressed by id could join any two connections, so
+	// deleting one needs a token that covers every connection.
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) {
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
@@ -1598,6 +1732,12 @@ func (h *ClusterHandler) clearConnectionRelationships(w http.ResponseWriter, r *
 	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections) {
 		RespondError(w, http.StatusForbidden,
 			"Permission denied: requires manage_connections permission")
+		return
+	}
+
+	// Clearing deletes every manual relationship from the source,
+	// whatever the target, so the token must cover every connection.
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) {
 		return
 	}
 

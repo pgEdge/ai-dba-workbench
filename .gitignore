@@ -2,6 +2,7 @@
 .claude/settings.local.json
 .claude/plans/
 .claude/specs/
+.claude/local-notes/
 .claude/worktrees/
 .claude/*.lock
 .playwright-cli/
@@ -22,6 +23,7 @@ site/
 # Binaries (legacy paths - for local builds in sub-project directories)
 collector/ai-dba-collector
 collector/ai-dba-collector-*
+collector/collector-*
 server/ai-dba-server
 server/ai-dba-server-*
 *.exe

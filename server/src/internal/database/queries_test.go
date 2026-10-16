@@ -584,6 +584,7 @@ func TestNotificationChannelTypeConstants(t *testing.T) {
 	}{
 		{ChannelTypeSlack, "slack"},
 		{ChannelTypeMattermost, "mattermost"},
+		{ChannelTypeTelegram, "telegram"},
 		{ChannelTypeWebhook, "webhook"},
 		{ChannelTypeEmail, "email"},
 	}
@@ -598,7 +599,7 @@ func TestNotificationChannelTypeConstants(t *testing.T) {
 }
 
 func TestValidChannelTypes(t *testing.T) {
-	valid := []string{"slack", "mattermost", "webhook", "email"}
+	valid := []string{"slack", "mattermost", "telegram", "webhook", "email"}
 	for _, ct := range valid {
 		if !ValidChannelTypes[ct] {
 			t.Errorf("expected channel type %q to be valid", ct)
@@ -610,6 +611,55 @@ func TestValidChannelTypes(t *testing.T) {
 		if ValidChannelTypes[ct] {
 			t.Errorf("expected channel type %q to be invalid", ct)
 		}
+	}
+}
+
+// TestNotificationChannelTelegramJSONRedaction asserts the serialization
+// contract for the two telegram fields: the bot token is a bearer
+// credential and must never appear in a marshaled channel, while the
+// chat ID is an address and must.
+func TestNotificationChannelTelegramJSONRedaction(t *testing.T) {
+	token := "987654321:AAHnever-serialize-me"
+	chatID := "@workbench_alerts"
+	ch := NotificationChannel{
+		ID:                  7,
+		ChannelType:         ChannelTypeTelegram,
+		Name:                "tg",
+		TelegramBotToken:    &token,
+		TelegramBotTokenSet: true,
+		TelegramChatID:      &chatID,
+	}
+
+	encoded, err := json.Marshal(ch)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	body := string(encoded)
+
+	if strings.Contains(body, token) {
+		t.Errorf("marshaled channel leaked the bot token: %s", body)
+	}
+	if strings.Contains(body, `"telegram_bot_token"`) {
+		t.Errorf("marshaled channel carries a telegram_bot_token key: %s", body)
+	}
+	if !strings.Contains(body, `"telegram_bot_token_set":true`) {
+		t.Errorf("missing telegram_bot_token_set indicator: %s", body)
+	}
+	if !strings.Contains(body, `"telegram_chat_id":"@workbench_alerts"`) {
+		t.Errorf("chat ID should be returned in clear: %s", body)
+	}
+
+	// A channel with no chat ID omits the field entirely.
+	empty := NotificationChannel{ChannelType: ChannelTypeTelegram, Name: "tg2"}
+	encoded, err = json.Marshal(empty)
+	if err != nil {
+		t.Fatalf("marshal empty: %v", err)
+	}
+	if strings.Contains(string(encoded), "telegram_chat_id") {
+		t.Errorf("empty chat ID should be omitted: %s", encoded)
+	}
+	if !strings.Contains(string(encoded), `"telegram_bot_token_set":false`) {
+		t.Errorf("telegram_bot_token_set should be present and false: %s", encoded)
 	}
 }
 
@@ -2648,9 +2698,6 @@ func TestBuildConnectionString(t *testing.T) {
 				"sslrootcert=%2Fetc%2Fssl%2Frds-ca.pem",
 				"sslcert=%2Fetc%2Fssl%2Fclient.crt",
 				"sslkey=%2Fetc%2Fssl%2Fclient.key",
-				"&sslrootcert=",
-				"&sslcert=",
-				"&sslkey=",
 			},
 		},
 		{
@@ -3083,12 +3130,13 @@ func TestAlertStruct(t *testing.T) {
 	operator := ">"
 	now := time.Now()
 	clearedAt := now.Add(time.Hour)
+	connID := 42
 
 	a := Alert{
 		ID:             1,
 		AlertType:      "threshold",
 		RuleID:         &ruleID,
-		ConnectionID:   42,
+		ConnectionID:   &connID,
 		DatabaseName:   &dbName,
 		MetricName:     &metricName,
 		MetricValue:    &metricValue,
@@ -3106,8 +3154,8 @@ func TestAlertStruct(t *testing.T) {
 	if a.ID != 1 {
 		t.Errorf("expected ID 1, got %d", a.ID)
 	}
-	if a.ConnectionID != 42 {
-		t.Errorf("expected ConnectionID 42, got %d", a.ConnectionID)
+	if a.ConnectionID == nil || *a.ConnectionID != 42 {
+		t.Errorf("expected ConnectionID 42, got %v", a.ConnectionID)
 	}
 	if a.DatabaseName == nil || *a.DatabaseName != "appdb" {
 		t.Errorf("expected DatabaseName 'appdb', got %v", a.DatabaseName)

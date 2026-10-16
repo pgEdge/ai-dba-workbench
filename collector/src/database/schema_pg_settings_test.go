@@ -11,49 +11,24 @@ package database
 
 import (
 	"context"
-	"os"
 	"testing"
-
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // TestMigration_PgSettings tests the pg_settings table creation in the squashed migration
 func TestMigration_PgSettings(t *testing.T) {
-	// Skip if SKIP_DB_TESTS is set
-	if os.Getenv("SKIP_DB_TESTS") != "" {
-		t.Skip("Skipping database test (SKIP_DB_TESTS is set)")
-	}
-
-	// Get test database URL
-	dbURL := os.Getenv("TEST_AI_WORKBENCH_SERVER")
-	if dbURL == "" {
-		t.Skip("TEST_AI_WORKBENCH_SERVER not set")
-	}
-
-	// Connect to database
-	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dbURL)
-	if err != nil {
-		t.Fatalf("Failed to connect to database: %v", err)
-	}
+	// Run in the package's own per-run database rather than the one
+	// TEST_AI_WORKBENCH_SERVER names, and start from the full schema
+	// cleanup the other migration tests use. The database the URL names
+	// is shared with the server and alerter suites, which leave their own
+	// tables behind; an alerter-shaped anomaly_candidates there made the
+	// migration's CREATE TABLE IF NOT EXISTS a no-op and its index on
+	// detected_at fail (issue #486).
+	pool, conn := getTestConnection(t)
 	defer pool.Close()
-
-	conn, err := pool.Acquire(ctx)
-	if err != nil {
-		t.Fatalf("Failed to acquire connection: %v", err)
-	}
 	defer conn.Release()
+	cleanupTestSchema(t, pool)
 
-	// Drop existing tables to start fresh
-	_, err = conn.Exec(ctx, `
-		DROP SCHEMA IF EXISTS metrics CASCADE;
-		DROP TABLE IF EXISTS schema_version CASCADE;
-		DROP TABLE IF EXISTS probe_configs CASCADE;
-		DROP TABLE IF EXISTS connections CASCADE;
-	`)
-	if err != nil {
-		t.Fatalf("Failed to drop existing tables: %v", err)
-	}
+	ctx := context.Background()
 
 	// Create schema manager and run all migrations
 	sm := NewSchemaManager()
@@ -70,7 +45,7 @@ func TestMigration_PgSettings(t *testing.T) {
 	}
 
 	var version int
-	err = conn.QueryRow(ctx, "SELECT MAX(version) FROM schema_version").Scan(&version)
+	err := conn.QueryRow(ctx, "SELECT MAX(version) FROM schema_version").Scan(&version)
 	if err != nil {
 		t.Fatalf("Failed to query schema version: %v", err)
 	}

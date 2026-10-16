@@ -36,7 +36,7 @@ INSERT INTO alert_rules (
     is_built_in
 ) VALUES (
     'High Temporary File Usage',
-    'Alerts when temporary files exceed 100 per interval',
+    'Alerts when temporary files exceed 100 per hour',
     'performance',
     'pg_stat_database.temp_files_delta',
     '>',
@@ -61,7 +61,25 @@ Each rule requires the following fields:
 | `default_threshold` | numeric | The threshold value |
 | `default_severity` | text | The alert severity level |
 | `default_enabled` | boolean | Whether the rule is enabled by default |
+| `required_extension` | text | An optional PostgreSQL extension the rule needs |
 | `is_built_in` | boolean | Set to `false` for custom rules |
+
+### Required Extensions
+
+When a rule sets `required_extension`, the alerter checks the
+newest `metrics.pg_extension` snapshot for each connection before
+evaluating the rule, and skips any connection whose snapshot does
+not list the extension in any database. The `pg_extension` probe
+only writes a new snapshot when the installed set changes, so the
+newest snapshot may be older than the metric values being
+evaluated; no time window is applied to it. A connection with no
+snapshot at all is treated as lacking the extension.
+
+The same check applies when the alerter decides whether an existing
+alert has resolved: an alert on a connection that lacks the
+extension is left active rather than resolved, so uninstalling an
+extension never reports a condition as cleared. Such an alert stays
+active until an operator acknowledges or clears it.
 
 ## Metric Names
 
@@ -73,6 +91,7 @@ The alerter supports the following metric name patterns.
 - `pg_settings.max_connections` - The max_connections setting
   value.
 - `connection_utilization_percent` - Connection usage percentage.
+- `pg_stat_activity.count` - Client backend session count.
 - `pg_stat_activity.blocked_count` - Number of blocked sessions.
 - `pg_stat_activity.idle_in_transaction_seconds` - Idle
   transaction time.
@@ -85,25 +104,47 @@ The alerter supports the following metric name patterns.
 
 ### Replication Metrics
 
-- `pg_stat_replication.replay_lag_seconds` - Replication lag in
-  seconds.
+- `pg_stat_replication.replay_lag_seconds` - Largest replay lag,
+  in seconds, across the standbys in the most recent sample; no
+  value when every standby has caught up.
 - `pg_stat_replication.lag_bytes` - Replication lag in bytes.
+- `pg_stat_replication.standby_disconnected` - Standby with no WAL
+  receiver process.
 - `pg_replication_slots.inactive` - Inactive replication slots.
+- `pg_replication_slots.inactive_count` - Number of inactive
+  replication slots.
+- `pg_replication_slots.retained_bytes` - Largest retained WAL
+  size, taken from the newest sample of each slot.
+- `pg_replication_slots.max_retained_bytes` - Largest retained WAL
+  size, taken from the connection's newest sample.
+- `pg_node_role.subscription_worker_down` - Subscription with an
+  apply worker that is not running.
+
+### Spock Metrics
+
+The Spock metrics count rows that the collector captures from a
+rolling 15-minute window on the monitored server:
+
+- `spock_exception_log.recent_count` - Spock exceptions logged in
+  the window.
+- `spock_resolutions.recent_count` - Spock conflict resolutions
+  recorded in the window.
 
 ### Database Metrics
 
-- `pg_stat_database.cache_hit_ratio` - Buffer cache hit ratio.
-- `pg_stat_database.deadlocks_delta` - New deadlocks per
-  interval.
-- `pg_stat_database.temp_files_delta` - New temporary files per
-  interval.
+- `pg_stat_database.cache_hit_ratio` - Buffer cache hit ratio in
+  the newest interval reading at least 100 blocks per second.
+- `pg_stat_database.deadlocks_delta` - Deadlocks in the last
+  hour.
+- `pg_stat_database.temp_files_delta` - Temporary files created
+  in the last hour.
 
 ### Table Metrics
 
 - `pg_stat_all_tables.dead_tuple_percent` - Dead tuple
-  percentage.
-- `table_bloat_ratio` - Estimated table bloat.
-- `table_last_autovacuum_hours` - Hours since last autovacuum.
+  percentage of tables with at least 10,000 dead tuples.
+- `table_last_autovacuum_hours` - Hours since last autovacuum
+  of a table past its autovacuum trigger for 30 minutes.
 - `age_percent` - Transaction ID age percentage.
 
 ### System Metrics
@@ -117,11 +158,11 @@ The alerter supports the following metric name patterns.
 
 ### Other Metrics
 
-- `pg_stat_wal.failed_count_delta` - Failed archive attempts.
+- `pg_stat_archiver.failed_count_delta` - Failed archive attempts.
 - `pg_stat_checkpointer.checkpoints_req_delta` - Requested
-  checkpoints.
+  checkpoints in the last hour on servers not in recovery.
 - `pg_stat_statements.slow_query_count` - Slow queries per
-  interval.
+  interval, counted once for the whole server.
 
 ## Adding Support for New Metrics
 
@@ -130,59 +171,78 @@ support in the alerter code before creating a rule.
 
 ### Step 1: Add the Metric Query
 
-Edit `internal/database/queries.go` and add a case to the
-`GetLatestMetricValues` function.
+Edit `internal/database/metric_registry.go` and add an entry to
+the `metricRegistry` map. The `latestSQL` field holds the query
+that `GetLatestMetricValues` runs to fetch the current value for
+each connection, and the `scan` field names the column layout the
+query returns: `scanBasic` for `(connection_id, value,
+collected_at)`, `scanWithDB` when a database name column follows
+`connection_id`, and `scanWithDBObject` when an object name column
+follows the database name.
 
-In the following example, a new metric query retrieves values from
-a custom table:
+In the following example, a new registry entry retrieves values
+from a custom table:
 
 ```go
-case "your_new_metric_name":
-    rows, err := d.pool.Query(ctx, `
+"your_new_metric_name": {
+    latestSQL: `
         SELECT connection_id, your_value::float,
             collected_at
         FROM metrics.your_table
         WHERE collected_at > NOW()
             - INTERVAL '5 minutes'
-    `)
-    if err != nil {
-        return nil, fmt.Errorf(
-            "failed to query %s: %w",
-            metricName, err)
-    }
-    defer rows.Close()
-
-    for rows.Next() {
-        var mv MetricValue
-        if err := rows.Scan(
-            &mv.ConnectionID, &mv.Value,
-            &mv.CollectedAt); err != nil {
-            return nil, fmt.Errorf(
-                "failed to scan metric: %w", err)
-        }
-        results = append(results, mv)
-    }
+    `,
+    scan: scanBasic,
+},
 ```
 
-### Step 2: Add Historical Query
+### Step 2: Add the Historical Query
 
-If the metric should support anomaly detection, add a case to the
-`GetHistoricalMetricValues` function.
+Set the `historicalSQL` field on the same registry entry if the
+metric should support anomaly detection. The baseline calculator
+builds the `all`, `hourly` and `daily` baselines from this query,
+and the `historicalScan` field names its column layout:
+`historicalScanBasic` when the database name column is always
+`NULL`, `historicalScanWithDB` when the column carries a database
+name, and `historicalScanWithDBAndSamples` or
+`historicalScanBasicWithSamples` when the query returns
+pre-aggregated rows with a trailing `sample_count` column, with or
+without a database name. The historical query must compute the same
+statistic as the latest query, so add an integration test that
+compares the two on the same samples.
+
+A metric without a historical query is skipped by both baseline
+calculation and anomaly detection; the alerter does not build a
+baseline from the current value in its place. Threshold rules for
+the metric still work. See the
+[Anomaly Detection](anomaly-detection.md) page for the list of
+built-in metrics that are excluded on this basis.
+
+The historical query must join `connections` as shown below.
+Metric rows can outlive the connection that produced them, and
+`metric_baselines.connection_id` references `connections(id)`, so
+a query that reads `metrics.*` alone would have the calculator
+write a baseline for a deleted connection and fail on the foreign
+key.
 
 In the following example, a historical query retrieves data for
 baseline calculations:
 
 ```go
-case "your_new_metric_name":
-    rows, err := d.pool.Query(ctx, `
-        SELECT connection_id, NULL::text,
-            your_value::float, collected_at
-        FROM metrics.your_table
-        WHERE collected_at > NOW()
+"your_new_metric_name": {
+    latestSQL: `...`,
+    historicalSQL: `
+        SELECT m.connection_id, NULL::text AS database_name,
+            m.your_value::float, m.collected_at
+        FROM metrics.your_table m
+        JOIN connections c ON c.id = m.connection_id
+        WHERE m.collected_at > NOW()
             - INTERVAL '1 day' * $1
-        ORDER BY connection_id, collected_at
-    `, lookbackDays)
-    // ... handle rows
+        ORDER BY m.connection_id, m.collected_at
+    `,
+    scan:           scanBasic,
+    historicalScan: historicalScanBasic,
+},
 ```
 
 ### Step 3: Test the Metric
@@ -203,6 +263,177 @@ FROM metrics.your_table
 WHERE collected_at > NOW() - INTERVAL '5 minutes'
 GROUP BY connection_id;
 ```
+
+## Registry Requirements
+
+Every metric in the alerter's registry
+(`internal/database/metric_registry.go`) must satisfy three further
+requirements that govern how the alert cleaner reads its results.
+
+### Freshness Cutoffs
+
+Each `latestSQL` query must bound `collected_at` with a
+`NOW() - INTERVAL` cutoff of at least three probe intervals. Three
+intervals leave room for two consecutive samples inside the window,
+so that a delta metric still has a predecessor, whilst one late
+collection cannot empty the window. A metric whose probe runs every
+300 seconds therefore uses a 15 minute cutoff.
+
+For a metric that clears on absent data the three intervals are a
+hard requirement rather than a guideline, and
+`TestMetricRegistryAbsenceWindowCoversProbeInterval` enforces it
+against the intervals the collector seeds into `probe_configs`. A
+window of one interval holds a single sample, so one collection
+arriving later than the probe's own runtime empties the query, and
+the cleaner reads that as a recovery.
+
+Without a cutoff, the query returns the newest row the table still
+holds, however old that row is. An alert then goes on firing on data
+that is days old after the collector stops, or after the connection
+stops being monitored, until retention purges the partition.
+
+In the following example, the cutoff restricts a latest query to the
+last three samples of a 300 second probe:
+
+```sql
+SELECT connection_id, your_value::float, collected_at
+FROM metrics.your_table
+WHERE collected_at > NOW() - INTERVAL '15 minutes';
+```
+
+A metric may omit the cutoff only where freshness is not meaningful.
+The `pg_settings.max_connections` metric is the one current
+exception, because the settings probe is change-tracked and stores
+nothing whilst the configuration is unchanged, so any maximum age
+predicate would silence the metric on a stable server. The
+`TestMetricRegistryLatestSQLFreshnessCutoff` test in
+`internal/database/audit_defects_test.go` enforces the requirement
+and holds the allowlist of exceptions, so a metric without a cutoff
+must be added to that allowlist with a reason.
+
+### Clearing on Missing Data
+
+The `clearWhenAbsent` field on `metricQueryConfig` tells the alert
+cleaner what a missing row means. The cleaner consults the field
+through `Datastore.MetricClearsWhenAbsent` whenever the latest query
+returns no row for an active alert's connection and database, or no
+rows at all.
+
+Choose the value from the shape of the query:
+
+- Leave the field at its default of `false` when the query emits a
+  row for every healthy connection, as a CPU percentage or a cache
+  hit ratio does. A connection that disappears from the result set
+  has stopped reporting rather than recovered, so the alert stays
+  active until fresh data shows the condition has ended, and the
+  `metric_staleness` rule reports the stalled probe.
+- Set the field to `true` when the query emits a row only whilst the
+  condition holds, as a blocked backend count does, or when the query
+  describes an object that an operator can legitimately drop, such as
+  a replication slot or a standby. A missing row is then the recovery
+  signal, so the cleaner clears the alert.
+
+Every entry that sets `clearWhenAbsent` to `true` carries a comment
+on the registry entry explaining why absence means recovery for that
+metric; add one alongside the field. A metric name that the registry
+does not know returns `false`, so a metric evaluated outside the
+registry never clears on absent data.
+
+### Declaring the Window
+
+Every entry that sets `clearWhenAbsent` to `true` also sets
+`absenceWindow` to the interval its latest query looks back over,
+written as a `time.Duration`: a query carrying a 15 minute cutoff
+declares `15 * time.Minute`. Where a query has more than one cutoff,
+the window is the shortest of them, since that is the bound which
+decides whether the result is empty.
+
+The cleaner reads the field through
+`Datastore.MetricAbsenceWindow`, and
+`TestMetricRegistryAbsenceWindowMatchesSQL` checks the declared value
+against the SQL literal, so the two cannot drift apart. Entries that
+do not clear on absent data leave the field unset.
+
+### Naming the Collector Probe
+
+Every registry entry also sets `probeName` to the collector probe
+that fills the metrics table its latest query reads, such as
+`pg_stat_activity`, `pg_replication_slots` or `pg_stat_database`. The
+`TestMetricRegistryProbeName` test requires the name to match a table
+the query selects from, so an entry whose query reads a table other
+than its metric prefix suggests names that table's probe: the
+`pg_stat_archiver.failed_count_delta` metric reads
+`metrics.pg_stat_wal`, for example.
+
+The cleaner uses the probe name to tell a condition that ended from
+data that stopped arriving. Because every query bounds `collected_at`,
+a stopped collector empties the result set exactly as a recovered
+condition does, so an alert on a `clearWhenAbsent` metric clears only
+when that probe last collected for the alert's connection inside the
+metric's `absenceWindow`. A probe that has stalled, that an operator
+has disabled, or that belongs to a connection which is no longer
+monitored leaves the alert active until somebody clears or
+acknowledges it, which is the safe direction: the alternative is
+reporting a resolution that nobody observed.
+
+The window is the yardstick here, and not the probe's configured
+collection interval, because the two move independently: an operator
+may raise `probe_configs.collection_interval_seconds`, for every
+connection or for one, whilst the window stays where the query's SQL
+puts it. A check counted in intervals would then widen along with the
+interval and stay quiet exactly where ordinary collection starts
+emptying the query. Comparing the probe's last collection against the
+window holds at any interval, and needs to know nothing about how the
+probe is configured. The `metric_staleness` rule still works in
+ratios, because what counts as a late probe does depend on how often
+it is meant to run.
+
+### Rules Evaluated Outside the Registry
+
+Two built-in rules are evaluated by bespoke code in the engine
+rather than through `metricRegistry`, because neither metric comes
+from a metrics table. Both rules are probe-scoped: each alert
+names the probe it was raised for.
+
+The following table shows the two rules and the engine
+functions that evaluate them:
+
+| Rule | Metric | Evaluator |
+|------|--------|-----------|
+| `metric_staleness` | `probe_staleness_ratio` | `evaluateMetricStaleness` |
+| `probe_unavailable` | `probe_available` | `evaluateProbeUnavailable` |
+
+`evaluateMetricStaleness` raises an alert when a probe that is
+still available has not collected for more than the configured
+number of collection intervals, and `evaluateProbeUnavailable`
+raises one when a probe that had collected at least once is no
+longer available.
+
+Both evaluators read `GetProbeStalenessByConnection`, and the view
+behind that call filters on a non-`NULL` `last_collected`, so an
+entry whose availability flag is false belongs to a probe that
+collected before and has stopped. A probe whose extension was never
+installed does not appear in the view at all, which is why
+`evaluateProbeUnavailable` needs no stored record of the previous
+availability; do not add one.
+
+The two rules also need bespoke resolution checks, and the alert
+cleaner tells them apart by metric name. Every alert either
+evaluator raises carries a probe name, so `checkAlertResolved`
+routes an alert whose metric name is `probe_available` to
+`checkProbeUnavailableAlertResolved` and every other probe-scoped
+alert to `checkStalenessAlertResolved`. The two checks resolve on
+different conditions: a `probe_unavailable` alert clears only when
+the probe collects again or when an operator retires the probe,
+whereas a staleness alert is held open whilst its probe is
+unavailable. Routing one through the other's check would judge the
+alert on a condition it was never raised on.
+
+Because neither metric has a registry entry, neither clears on
+absent data, and neither supports anomaly detection. A rule added
+in this style therefore needs its own evaluator, its own resolution
+check, and a branch in `checkAlertResolved` that reaches the new
+check by metric name.
 
 ## Choosing Thresholds
 

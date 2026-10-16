@@ -10,11 +10,14 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 
+	pgllm "github.com/pgEdge/pgedge-go-llm-lib/llm"
 	"github.com/pgedge/ai-workbench/server/internal/api"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/compactor"
@@ -23,6 +26,7 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/database"
 	"github.com/pgedge/ai-workbench/server/internal/llmproxy"
 	"github.com/pgedge/ai-workbench/server/internal/memory"
+	"github.com/pgedge/ai-workbench/server/internal/oidc"
 	"github.com/pgedge/ai-workbench/server/internal/overview"
 )
 
@@ -42,6 +46,13 @@ func registerDatastoreHandler(mux *http.ServeMux, handler routeRegistrar, authWr
 	}
 }
 
+// denialRecorderWired, when set, is called with each handler that
+// SetupHandlers gives the RBAC handler's denial recorder. It is nil in
+// production; tests set it to check that no handler drops out of the
+// list, since a missing one would silently stop its refusals being
+// audited.
+var denialRecorderWired func(handler any)
+
 // HandlerDependencies holds all dependencies needed for HTTP handlers
 type HandlerDependencies struct {
 	AuthStore    *auth.AuthStore
@@ -55,6 +66,20 @@ type HandlerDependencies struct {
 	ToolProvider api.ContextAwareToolProvider
 	AIEnabled    bool
 
+	// OIDCProvider is the discovered identity provider, or nil when
+	// federated login is switched off. OIDCStateKey is the 32-byte key
+	// the login state cookie is sealed with, and is meaningful only
+	// alongside a non-nil provider.
+	OIDCProvider *oidc.Provider
+	OIDCStateKey []byte
+
+	// LiveConfig returns the configuration as of the latest SIGHUP
+	// reload, for the handlers that apply a reload without a restart
+	// (the federated login policy and the login page state). When it is
+	// nil, as in tests that only exercise route registration, those
+	// handlers read Config instead.
+	LiveConfig func() *config.Config
+
 	// RegisterCloser records a cleanup function to be run when the
 	// server shuts down. Handlers that own background goroutines use
 	// it to hand that ownership back to the server. It may be nil in
@@ -66,7 +91,7 @@ type HandlerDependencies struct {
 func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 	return func(mux *http.ServeMux) error {
 		// Helper to wrap handlers with authentication
-		authWrapper := createAuthWrapper(deps.AuthStore)
+		authWrapper := createAuthWrapper(deps.AuthStore, deps.IPExtractor)
 
 		// NOTE: These endpoints are intentionally unauthenticated to allow
 		// API tooling (e.g. RESTish) to discover the API schema without
@@ -78,14 +103,26 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 		if deps.Config != nil && deps.Config.LLM.MaxIterations > 0 {
 			maxIterations = deps.Config.LLM.MaxIterations
 		}
-		mux.HandleFunc("/api/v1/capabilities", handleCapabilities(deps.AIEnabled, maxIterations))
+		// The login page state is derived once here and shared with the
+		// login handler, so that what the capabilities endpoint reports
+		// and what the login endpoint enforces cannot drift apart.
+		//
+		// Local login is the half of that state fixed at start-up, since
+		// the login handler is built with it; the OIDC half follows a
+		// reload, as the federated login handler does.
+		authInfo := authCapabilities(deps)
+		mux.HandleFunc("/api/v1/capabilities",
+			handleCapabilities(deps.AIEnabled, maxIterations, func() authCapabilitiesInfo {
+				return liveAuthCapabilities(deps, authInfo.LocalEnabled)
+			}))
 
 		// Authentication endpoint (does NOT require auth - it IS the login endpoint)
 		// IPExtractor provides secure IP extraction that only trusts X-Forwarded-For
 		// from configured trusted proxies, preventing rate limit bypass via IP spoofing
 		// The TLS enabled flag ensures cookies are marked Secure when using HTTPS
 		tlsEnabled := deps.Config != nil && deps.Config.HTTP.TLS.Enabled
-		authHandler := api.NewAuthHandler(deps.AuthStore, deps.RateLimiter, deps.IPExtractor, tlsEnabled)
+		authHandler := api.NewAuthHandler(deps.AuthStore, deps.RateLimiter, deps.IPExtractor,
+			tlsEnabled, authInfo.LocalEnabled)
 
 		// NewAuthHandler starts a cleanup goroutine for its internal
 		// login rate limiter, which only Close stops. Hand that back
@@ -95,6 +132,35 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 			deps.RegisterCloser(authHandler.Close)
 		}
 		authHandler.RegisterRoutes(mux)
+
+		// Federated login endpoints, registered alongside the local ones
+		// and equally unauthenticated: a user starting a login has no
+		// session, and the callback is how they get one.
+		//
+		// The start endpoint is registered either way. With no provider
+		// there is no login to start, but the login screen still offers
+		// the button whenever it cannot reach the capabilities endpoint,
+		// and following it is a full-page navigation: a 404 from the mux
+		// would leave the user on a browser error page with the login
+		// screen gone, so the disabled route redirects them back to it
+		// instead. The callback is registered only with a provider,
+		// since nothing sends a user there by hand.
+		if deps.OIDCProvider != nil && deps.Config != nil {
+			oidcHandler := api.NewOIDCHandler(deps.AuthStore, deps.OIDCProvider,
+				deps.Config.HTTP.Auth.OIDC, deps.OIDCStateKey, tlsEnabled, deps.IPExtractor)
+			oidcHandler.SetConfigSource(func() config.OIDCConfig {
+				return deps.liveConfig().HTTP.Auth.OIDC
+			})
+			// NewOIDCHandler owns a rate limiter whose cleanup goroutine
+			// only Close stops; hand that back to the server.
+			if deps.RegisterCloser != nil {
+				deps.RegisterCloser(oidcHandler.Close)
+			}
+			oidcHandler.RegisterRoutes(mux)
+			fmt.Fprintf(os.Stderr, "OIDC login endpoints: ENABLED\n")
+		} else {
+			api.RegisterDisabledStartRoute(mux)
+		}
 
 		// Chat history compaction endpoint
 		mux.HandleFunc("/api/v1/chat/compact",
@@ -187,21 +253,7 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 		registerDatastoreHandler(mux, channelOverrideHandler, authWrapper, "Channel override configuration", deps.Datastore)
 
 		// Server info endpoint (for Server Info Dialog)
-		serverInfoLLMConfig := &llmproxy.Config{
-			Provider:               deps.Config.LLM.Provider,
-			Model:                  deps.Config.LLM.Model,
-			AnthropicAPIKey:        deps.Config.LLM.AnthropicAPIKey,
-			AnthropicBaseURL:       deps.Config.LLM.AnthropicBaseURL,
-			OpenAIAPIKey:           deps.Config.LLM.OpenAIAPIKey,
-			OpenAIBaseURL:          deps.Config.LLM.OpenAIBaseURL,
-			GeminiAPIKey:           deps.Config.LLM.GeminiAPIKey,
-			GeminiBaseURL:          deps.Config.LLM.GeminiBaseURL,
-			OllamaURL:              deps.Config.LLM.OllamaURL,
-			MaxTokens:              deps.Config.LLM.MaxTokens,
-			Temperature:            deps.Config.LLM.Temperature,
-			UseCompactDescriptions: deps.Config.LLM.UseCompactDescriptions(),
-			LLMConfig:              &deps.Config.LLM,
-		}
+		serverInfoLLMConfig := newLLMProxyConfig(&deps.Config.LLM)
 		serverInfoHandler := api.NewServerInfoHandler(deps.Datastore, deps.AuthStore, rbacChecker, serverInfoLLMConfig)
 		registerDatastoreHandler(mux, serverInfoHandler, authWrapper, "Server info", deps.Datastore)
 
@@ -243,6 +295,30 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 		// RBAC management endpoints
 		if deps.AuthStore != nil {
 			rbacHandler := api.NewRBACHandler(deps.AuthStore, rbacChecker)
+			rbacHandler.SetConnectionLister(database.NewVisibilityLister(deps.Datastore))
+			// Federation matches groups by name, so the RBAC handler
+			// must know which names the OIDC group map uses before it
+			// lets a bounded token rename a group (issue #471).
+			rbacHandler.SetFederatedGroupMap(deps.Config.HTTP.Auth.OIDC.GroupMap)
+			// Token-scope refusals on the connection, cluster, alert
+			// rule, notification channel, blackout, probe config and
+			// alert, probe and channel override routes, and the
+			// ownership and permission refusals on the cluster-group
+			// routes, are audited through the RBAC handler's coalescing
+			// denial recorder.
+			for _, h := range []interface {
+				SetDenialRecorder(func(*http.Request, string))
+			}{
+				connHandler, clusterHandler, alertRuleHandler,
+				notificationChannelHandler, blackoutHandler,
+				probeConfigHandler, alertOverrideHandler,
+				probeOverrideHandler, channelOverrideHandler,
+			} {
+				h.SetDenialRecorder(rbacHandler.RecordDenial)
+				if denialRecorderWired != nil {
+					denialRecorderWired(h)
+				}
+			}
 			rbacHandler.RegisterRoutes(mux, authWrapper)
 			fmt.Fprintf(os.Stderr, "RBAC management: ENABLED\n")
 		}
@@ -251,16 +327,19 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 	}
 }
 
-// extractToken extracts a bearer or session token from the request.
-// It delegates to auth.ExtractBearerToken and returns the raw token
-// string, a boolean indicating whether extraction succeeded, and an
-// error message suitable for the client when it fails.
-func extractToken(r *http.Request) (string, bool, string) {
-	token := auth.ExtractBearerToken(r)
-	if token == "" {
-		return "", false, "Missing or invalid authentication credentials"
+// clientIP returns the address to attribute a request to. It prefers
+// the trusted-proxy aware extractor, which only trusts forwarding
+// headers from configured proxies, and falls back to the host part of
+// RemoteAddr when no extractor is configured.
+func clientIP(r *http.Request, ipExtractor *auth.IPExtractor) string {
+	if ipExtractor != nil {
+		return ipExtractor.ExtractIP(r)
 	}
-	return token, true, ""
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }
 
 // createAuthWrapper creates a handler wrapper that enforces authentication
@@ -268,7 +347,11 @@ func extractToken(r *http.Request) (string, bool, string) {
 // The actual token/session validation is delegated to auth.AuthenticateRequest,
 // the single shared implementation used by both this middleware and the
 // LLM proxy's Authorize hook.
-func createAuthWrapper(authStore *auth.AuthStore) func(http.HandlerFunc) http.HandlerFunc {
+//
+// On success the client IP is added to the context under
+// auth.IPAddressContextKey, so that auth.ActorFromContext can attribute
+// audited changes to the address the request came from.
+func createAuthWrapper(authStore *auth.AuthStore, ipExtractor *auth.IPExtractor) func(http.HandlerFunc) http.HandlerFunc {
 	return func(handler http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			ctx, err := auth.AuthenticateRequest(r, authStore)
@@ -283,6 +366,8 @@ func createAuthWrapper(authStore *auth.AuthStore) func(http.HandlerFunc) http.Ha
 				return
 			}
 
+			ctx = context.WithValue(ctx, auth.IPAddressContextKey,
+				clientIP(r, ipExtractor))
 			r = r.WithContext(ctx)
 
 			// Proceed with handler
@@ -291,61 +376,33 @@ func createAuthWrapper(authStore *auth.AuthStore) func(http.HandlerFunc) http.Ha
 	}
 }
 
-// createUserInfoHandler creates a handler for the user info endpoint
+// createUserInfoHandler creates a handler for the user info endpoint.
+//
+// The endpoint never answers 401: the web client calls it before it knows
+// whether it holds a session, and uses the "authenticated" flag to decide
+// whether to show the login screen. Credential validation is delegated to
+// auth.AuthenticateRequest so that a caller the rest of the server would
+// accept is a caller this endpoint reports as authenticated.
 func createUserInfoHandler(authStore *auth.AuthStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		token, ok, errMsg := extractToken(r)
-		if !ok {
-			// For auth header format errors, report the issue;
-			// for missing credentials just report unauthenticated.
+		ctx, err := auth.AuthenticateRequest(r, authStore)
+		if err != nil {
 			resp := map[string]any{"authenticated": false}
-			if errMsg == "Invalid Authorization header format" {
-				resp["error"] = errMsg
+			if !errors.Is(err, auth.ErrMissingCredentials) {
+				resp["error"] = "Invalid or expired token"
 			}
 			api.RespondJSON(w, http.StatusOK, resp)
 			return
 		}
 
-		// Try API token first, then fall back to session token
-		var username string
-		var isSuperuser bool
-		var userID int64
-
-		storedToken, tokenErr := authStore.ValidateToken(token)
-		if tokenErr == nil && storedToken != nil {
-			// Valid API token - look up the owner user
-			owner, ownerErr := authStore.GetUserByID(storedToken.OwnerID)
-			if ownerErr != nil || owner == nil {
-				api.RespondJSON(w, http.StatusOK, map[string]any{
-					"authenticated": false,
-					"error":         "Invalid or expired token",
-				})
-				return
-			}
-			username = owner.Username
-			isSuperuser = owner.IsSuperuser
-			userID = owner.ID
-		} else {
-			// Try session token
-			sessionUsername, sessionErr := authStore.ValidateSessionToken(token)
-			if sessionErr != nil {
-				api.RespondJSON(w, http.StatusOK, map[string]any{
-					"authenticated": false,
-					"error":         "Invalid or expired session",
-				})
-				return
-			}
-			username = sessionUsername
-			user, userErr := authStore.GetUser(username)
-			if userErr == nil && user != nil {
-				isSuperuser = user.IsSuperuser
-				userID = user.ID
-			}
-		}
+		// AuthenticateRequest guarantees a non-empty username on success:
+		// a credential whose identity does not resolve is rejected as
+		// ErrInvalidToken and handled above.
+		username := auth.GetUsernameFromContext(ctx)
 
 		// Get admin permissions for the user
-		var adminPermissions []string
-		if userID > 0 {
+		adminPermissions := []string{}
+		if userID := auth.GetUserIDFromContext(ctx); userID > 0 {
 			perms, permErr := authStore.GetUserAdminPermissions(userID)
 			if permErr == nil {
 				for perm := range perms {
@@ -353,9 +410,14 @@ func createUserInfoHandler(authStore *auth.AuthStore) http.HandlerFunc {
 				}
 			}
 		}
-		if adminPermissions == nil {
-			adminPermissions = []string{}
-		}
+
+		// The reported flag is the one a superuser-only gate would
+		// apply, not the raw context flag: a superuser's API token
+		// whose admin scope has been narrowed is refused by
+		// requireSuperuser, and a client that used the raw flag to
+		// decide whether to offer, say, the audit page would offer a
+		// page the server then refuses.
+		isSuperuser := auth.NewRBACChecker(authStore).IsSuperuser(ctx)
 
 		// Return user info as JSON
 		api.RespondJSON(w, http.StatusOK, map[string]any{
@@ -377,8 +439,84 @@ func handleOpenAPISpec(w http.ResponseWriter, r *http.Request) {
 	api.RespondJSON(w, http.StatusOK, spec)
 }
 
-// handleCapabilities returns server capability flags for the client
-func handleCapabilities(aiEnabled bool, maxIterations int) http.HandlerFunc {
+// authCapabilitiesInfo is what the login page needs in order to render
+// itself: whether to show the username and password form, whether to
+// show the federated login button, and what to write on it.
+//
+// It holds these three values and nothing else. The OIDC configuration
+// also carries the client secret, the issuer and the claim mapping, none
+// of which an unauthenticated caller has any business seeing, so this
+// endpoint reports a hand-built struct rather than serializing the
+// configuration.
+type authCapabilitiesInfo struct {
+	LocalEnabled bool   `json:"local_enabled"`
+	OIDCEnabled  bool   `json:"oidc_enabled"`
+	OIDCLabel    string `json:"oidc_label"`
+}
+
+// defaultOIDCButtonLabel is what the federated login button says when
+// the operator did not name their identity provider.
+const defaultOIDCButtonLabel = "Sign in with SSO"
+
+// authCapabilities derives the login page state from the dependencies,
+// so that the handler itself never reaches into the configuration.
+//
+// OIDC counts as enabled only when a provider was actually discovered at
+// start-up as well as switched on in the configuration, since a button
+// pointing at an endpoint that answers 404 is worse than no button.
+func authCapabilities(deps *HandlerDependencies) authCapabilitiesInfo {
+	if deps == nil {
+		return authCapabilitiesInfo{LocalEnabled: true}
+	}
+	return authCapabilitiesFrom(deps.Config, deps.OIDCProvider)
+}
+
+// liveAuthCapabilities is authCapabilities against the configuration as
+// of the latest reload, with local login pinned to localEnabled: the
+// login handler is built once with that value, and the capabilities
+// endpoint must report what the login endpoint enforces.
+func liveAuthCapabilities(deps *HandlerDependencies, localEnabled bool) authCapabilitiesInfo {
+	info := authCapabilitiesFrom(deps.liveConfig(), deps.OIDCProvider)
+	info.LocalEnabled = localEnabled
+	return info
+}
+
+// authCapabilitiesFrom derives the login page state from one
+// configuration and the provider discovered at start-up.
+func authCapabilitiesFrom(cfg *config.Config, provider *oidc.Provider) authCapabilitiesInfo {
+	info := authCapabilitiesInfo{LocalEnabled: true}
+	if cfg == nil {
+		return info
+	}
+
+	info.LocalEnabled = cfg.HTTP.Auth.LocalEnabled()
+	info.OIDCEnabled = cfg.HTTP.Auth.OIDC.IsEnabled() && provider != nil
+	if info.OIDCEnabled {
+		info.OIDCLabel = cfg.HTTP.Auth.OIDC.ButtonLabel
+		if info.OIDCLabel == "" {
+			info.OIDCLabel = defaultOIDCButtonLabel
+		}
+	}
+	return info
+}
+
+// liveConfig returns the configuration as of the latest reload, or the
+// start-up configuration when no live source was wired in.
+func (deps *HandlerDependencies) liveConfig() *config.Config {
+	if deps.LiveConfig != nil {
+		if cfg := deps.LiveConfig(); cfg != nil {
+			return cfg
+		}
+	}
+	return deps.Config
+}
+
+// handleCapabilities returns server capability flags for the client.
+// authInfo is called on every request, so that the login page state it
+// reports follows a configuration reload.
+func handleCapabilities(aiEnabled bool, maxIterations int,
+	authInfo func() authCapabilitiesInfo) http.HandlerFunc {
+
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -387,7 +525,32 @@ func handleCapabilities(aiEnabled bool, maxIterations int) http.HandlerFunc {
 		api.RespondJSON(w, http.StatusOK, map[string]any{
 			"ai_enabled":     aiEnabled,
 			"max_iterations": maxIterations,
+			"auth":           authInfo(),
 		})
+	}
+}
+
+// newLLMProxyConfig builds the llmproxy configuration shared by the chat
+// proxy, the AI overview generator and the server info analysis from the
+// operator's llm settings. Temperature is always resolved through
+// LLMConfig.Temperature so that an explicit 0 reaches the provider and an
+// unset value falls back to the default. Callers add any path-specific
+// fields, such as the memory and auth stores, to the returned value.
+func newLLMProxyConfig(llm *config.LLMConfig) *llmproxy.Config {
+	return &llmproxy.Config{
+		Provider:               llm.Provider,
+		Model:                  llm.Model,
+		AnthropicAPIKey:        llm.AnthropicAPIKey,
+		AnthropicBaseURL:       llm.AnthropicBaseURL,
+		OpenAIAPIKey:           llm.OpenAIAPIKey,
+		OpenAIBaseURL:          llm.OpenAIBaseURL,
+		GeminiAPIKey:           llm.GeminiAPIKey,
+		GeminiBaseURL:          llm.GeminiBaseURL,
+		OllamaURL:              llm.OllamaURL,
+		MaxTokens:              llm.MaxTokens,
+		Temperature:            pgllm.Float(llm.Temperature()),
+		UseCompactDescriptions: llm.UseCompactDescriptions(),
+		LLMConfig:              llm,
 	}
 }
 
@@ -409,24 +572,10 @@ func setupLLMHandlers(mux *http.ServeMux, cfg *config.Config, toolProvider api.C
 	}
 
 	// Create LLM proxy configuration
-	llmConfig := &llmproxy.Config{
-		Provider:               cfg.LLM.Provider,
-		Model:                  cfg.LLM.Model,
-		AnthropicAPIKey:        cfg.LLM.AnthropicAPIKey,
-		AnthropicBaseURL:       cfg.LLM.AnthropicBaseURL,
-		OpenAIAPIKey:           cfg.LLM.OpenAIAPIKey,
-		OpenAIBaseURL:          cfg.LLM.OpenAIBaseURL,
-		GeminiAPIKey:           cfg.LLM.GeminiAPIKey,
-		GeminiBaseURL:          cfg.LLM.GeminiBaseURL,
-		OllamaURL:              cfg.LLM.OllamaURL,
-		MaxTokens:              cfg.LLM.MaxTokens,
-		Temperature:            cfg.LLM.Temperature,
-		UseCompactDescriptions: cfg.LLM.UseCompactDescriptions(),
-		CompactDescriptions:    compactDescs,
-		MemoryStore:            memoryStore,
-		AuthStore:              authStore,
-		LLMConfig:              &cfg.LLM,
-	}
+	llmConfig := newLLMProxyConfig(&cfg.LLM)
+	llmConfig.CompactDescriptions = compactDescs
+	llmConfig.MemoryStore = memoryStore
+	llmConfig.AuthStore = authStore
 
 	// Mount the library LLM proxy under the /api/v1/llm prefix. The proxy
 	// registers providers/models/health (public) and chat/chat/stream/

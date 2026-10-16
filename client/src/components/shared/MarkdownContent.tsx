@@ -19,12 +19,18 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import CopyCodeButton from './CopyCodeButton';
 import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import ReactMarkdown from 'react-markdown';
+import type { Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
 import RunnableCodeBlock from './RunnableCodeBlock';
 import ConnectionSelectorCodeBlock from './ConnectionSelectorCodeBlock';
 import AnalysisSkeleton from './AnalysisSkeleton';
-import { isSqlCodeBlock, extractLanguage } from './sqlDetection';
+import {
+    isSqlCodeBlock,
+    extractLanguage,
+    CONNECTION_ID_COMMENT_RE,
+    stripConnectionIdComment,
+} from './sqlDetection';
 import { createCleanTheme } from './markdownUtils';
 import {
     sxH3,
@@ -72,7 +78,7 @@ const MarkdownContent: React.FC<MarkdownContentProps> = ({
     const theme = useTheme();
 
     // Memoize markdown components to avoid re-creating on each render
-    const components = useMemo(() => ({
+    const components = useMemo<Components>(() => ({
         h1: ({ children }) => (
             <Typography variant="h5" sx={sxH1(theme)}>
                 {children}
@@ -104,7 +110,11 @@ const MarkdownContent: React.FC<MarkdownContentProps> = ({
             </Box>
         ),
         li: ({ children }) => <li>{children}</li>,
-        code: ({ className, children, ...props }) => {
+        code: ({ className, children, ...rest }) => {
+            /* The remaining hast/JSX attributes are forwarded verbatim to
+               the highlighter and the runnable block, both of which accept
+               an untyped passthrough bag. */
+            const props = rest as Record<string, unknown>;
             const language = extractLanguage(className);
             const codeString = String(children).replace(/\n$/, '');
 
@@ -154,11 +164,13 @@ const MarkdownContent: React.FC<MarkdownContentProps> = ({
 
                 // Cluster analysis: parse connection_id comment or show selector
                 if (connectionMap && connectionMap.size > 0) {
-                    const connectionIdMatch = codeString.match(/^--\s*connection_id:\s*(\d+)\s*\n/);
+                    const connectionIdMatch =
+                        CONNECTION_ID_COMMENT_RE.exec(codeString);
                     if (connectionIdMatch) {
                         const targetId = parseInt(connectionIdMatch[1], 10);
                         const targetName = connectionMap.get(targetId) || `Server ${targetId}`;
-                        const strippedCode = codeString.replace(/^--\s*connection_id:\s*\d+\s*\n/, '');
+                        const strippedCode =
+                            stripConnectionIdComment(codeString);
                         return (
                             <RunnableCodeBlock
                                 codeContent={strippedCode}
@@ -239,7 +251,7 @@ const MarkdownContent: React.FC<MarkdownContentProps> = ({
                     {children}
                 </Box>
             ) : (
-                children
+                <>{children}</>
             );
         },
         blockquote: ({ children }) => (

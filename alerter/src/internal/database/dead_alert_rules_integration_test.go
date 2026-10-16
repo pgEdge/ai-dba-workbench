@@ -11,7 +11,6 @@ package database
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
 
@@ -105,6 +104,21 @@ CREATE TABLE metrics.pg_stat_all_tables (
     collected_at TIMESTAMPTZ NOT NULL
 );
 
+CREATE TABLE metrics.pg_node_role (
+    connection_id INTEGER NOT NULL,
+    is_in_recovery BOOLEAN NOT NULL,
+    collected_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE metrics.pg_stat_database (
+    connection_id INTEGER NOT NULL,
+    database_name TEXT NOT NULL,
+    datname TEXT,
+    blks_hit BIGINT,
+    blks_read BIGINT,
+    collected_at TIMESTAMPTZ NOT NULL
+);
+
 CREATE TABLE metrics.pg_sys_cpu_usage_info (
     connection_id INTEGER NOT NULL,
     usermode_normal_process_percent REAL,
@@ -193,13 +207,7 @@ const (
 func newDeadRuleDatastore(t *testing.T) (*Datastore, *pgxpool.Pool, func()) {
 	t.Helper()
 
-	if os.Getenv("SKIP_DB_TESTS") != "" {
-		t.Skip("Skipping database test (SKIP_DB_TESTS is set)")
-	}
-	connStr := os.Getenv("TEST_AI_WORKBENCH_SERVER")
-	if connStr == "" {
-		t.Skip("TEST_AI_WORKBENCH_SERVER not set, skipping dead rule test")
-	}
+	connStr := requireLocalTestDSN(t, "the dead rule test")
 
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, connStr)
@@ -510,7 +518,13 @@ func TestDeadRuleAutovacuumSettingsHonoured(t *testing.T) {
 	defer cleanup()
 
 	dayOld := time.Now().Add(-24 * time.Hour)
-	recent := time.Now().Add(-time.Minute)
+	// The rule needs a table past its trigger in every sample for 30
+	// minutes, so each table is seeded at three points spanning 40.
+	samples := []time.Time{
+		time.Now().Add(-40 * time.Minute),
+		time.Now().Add(-20 * time.Minute),
+		time.Now().Add(-time.Minute),
+	}
 
 	tunedID := insertDeadRuleConnection(t, pool, "tuned-autovacuum")
 	execDeadRuleSeed(t, pool, insertDeadRuleSettingSQL, tunedID,
@@ -519,15 +533,19 @@ func TestDeadRuleAutovacuumSettingsHonoured(t *testing.T) {
 		"autovacuum_vacuum_scale_factor", "0.5", dayOld)
 	// 10000 dead tuples clears the default limit of 50 + 0.2 * 1000 but
 	// stays well under the tuned limit of 100000 + 0.5 * 1000.
-	execDeadRuleSeed(t, pool, insertDeadRuleTableSQL, tunedID, "appdb",
-		"orders", int64(1000), int64(10000), dayOld, recent)
+	for _, at := range samples {
+		execDeadRuleSeed(t, pool, insertDeadRuleTableSQL, tunedID, "appdb",
+			"orders", int64(1000), int64(10000), dayOld, at)
+	}
 
 	// An untuned connection with identical table data still reports,
 	// which proves the tuned connection was excluded by its settings
 	// rather than by the seed data or the window.
 	defaultID := insertDeadRuleConnection(t, pool, "default-autovacuum")
-	execDeadRuleSeed(t, pool, insertDeadRuleTableSQL, defaultID, "appdb",
-		"orders", int64(1000), int64(10000), dayOld, recent)
+	for _, at := range samples {
+		execDeadRuleSeed(t, pool, insertDeadRuleTableSQL, defaultID, "appdb",
+			"orders", int64(1000), int64(10000), dayOld, at)
+	}
 
 	values, err := ds.GetLatestMetricValues(context.Background(),
 		"table_last_autovacuum_hours")

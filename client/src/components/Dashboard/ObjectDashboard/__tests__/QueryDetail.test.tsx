@@ -8,15 +8,15 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import QueryDetail from '../QueryDetail';
 import type { QueryDetailData } from '../types';
+import { formatTimestamp } from '../types';
 import type { UseMetricsReturn } from '../../../../hooks/useMetrics';
-import type { MetricQueryParams, MetricSeries } from '../../types';
-import type { UseQueryOverviewReturn } from '../../../../hooks/useQueryOverview';
+import type { MetricQueryParams, MetricSeries, TimeRange } from '../../types';
+import type { ChartData } from '../../../Chart/types';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -35,12 +35,19 @@ vi.mock('../../../../contexts/useAuth', () => ({
     useAuth: () => ({ user: mockUser }),
 }));
 
+let mockTimeRange: TimeRange = '1h';
+let mockCustomStart: string | undefined;
+let mockCustomEnd: string | undefined;
 vi.mock('../../../../contexts/useDashboard', () => ({
     useDashboard: () => ({
-        timeRange: { range: '1h' },
+        timeRange: {
+            range: mockTimeRange,
+            customStart: mockCustomStart,
+            customEnd: mockCustomEnd,
+        },
         refreshTrigger: 0,
         setTimeRange: vi.fn(),
-        currentOverlay: { connectionName: 'node-1' },
+        currentOverlay: { connectionName: 'Test Server' },
     }),
 }));
 
@@ -49,47 +56,86 @@ vi.mock('../../../../contexts/useAICapabilities', () => ({
     useAICapabilities: () => ({ aiEnabled: mockAiEnabled }),
 }));
 
-// Capture the parameters every useMetrics call receives so the tests can
-// assert that the charts are scoped to the selected query.
-const metricsParams: (MetricQueryParams | null)[] = [];
-let mockMetricsReturn: UseMetricsReturn = {
-    data: null,
-    loading: false,
-    error: null,
-    refetch: vi.fn(),
-};
-vi.mock('../../../../hooks/useMetrics', () => ({
-    useMetrics: (params: MetricQueryParams | null) => {
-        metricsParams.push(params);
-        return mockMetricsReturn;
-    },
-}));
-
-let mockOverviewReturn: UseQueryOverviewReturn = {
+const mockRefreshOverview = vi.fn();
+let mockOverview: {
+    summary: string | null;
+    loading: boolean;
+    error: string | null;
+    generatedAt: Date | null;
+} = {
     summary: null,
     loading: false,
     error: null,
     generatedAt: null,
-    refresh: vi.fn(),
 };
 vi.mock('../../../../hooks/useQueryOverview', () => ({
-    useQueryOverview: () => mockOverviewReturn,
+    useQueryOverview: () => ({
+        ...mockOverview,
+        refresh: mockRefreshOverview,
+    }),
 }));
 
-vi.mock('../../../Chart', () => ({
-    Chart: ({ title }: { title: string }) => (
-        <div data-testid="chart">{title}</div>
-    ),
-}));
+type UseMetricsFn = (params: MetricQueryParams | null) => UseMetricsReturn;
 
-vi.mock('../../../QueryAnalysisDialog', () => ({
-    QueryAnalysisDialog: ({ open }: { open: boolean }) => (
-        open ? <div data-testid="analysis-dialog" /> : null
-    ),
+const mockUseMetrics = vi.fn<UseMetricsFn>();
+vi.mock('../../../../hooks/useMetrics', () => ({
+    useMetrics: (params: MetricQueryParams | null) => mockUseMetrics(params),
 }));
 
 vi.mock('../QueryPlanPanel', () => ({
-    default: () => <div data-testid="plan-panel" />,
+    default: () => <div data-testid="query-plan-panel" />,
+}));
+
+vi.mock('../../../QueryAnalysisDialog', () => ({
+    QueryAnalysisDialog: ({ open, onClose }: {
+        open: boolean;
+        onClose: () => void;
+    }) => (
+        <div
+            data-testid="query-analysis-dialog"
+            data-open={open ? 'true' : 'false'}
+        >
+            <button type="button" onClick={onClose}>Close analysis</button>
+        </div>
+    ),
+}));
+
+vi.mock('../../TimeRangeSelector', () => ({
+    default: () => <div data-testid="time-range-selector" />,
+}));
+
+/*
+ * The Chart mock exposes the chart type and series so the tests can
+ * assert that calls are drawn as a rate line rather than a bar chart
+ * of raw counter values.
+ */
+vi.mock('../../../Chart', () => ({
+    Chart: ({ title, data, type, smooth }: {
+        title: string;
+        data: ChartData;
+        type: string;
+        smooth?: boolean;
+    }) => (
+        <div
+            data-testid="chart"
+            data-title={title}
+            data-type={type}
+            data-smooth={smooth ? 'true' : 'false'}
+        >
+            <span>{title}</span>
+            {data.series.map((s) => (
+                <span
+                    key={s.name}
+                    data-testid="chart-series"
+                    data-chart={title}
+                    data-series={s.name}
+                    data-values={s.data.join(',')}
+                >
+                    {s.name}
+                </span>
+            ))}
+        </div>
+    ),
 }));
 
 vi.mock('../../../../utils/logger', () => ({
@@ -102,40 +148,96 @@ vi.mock('../../../../utils/logger', () => ({
 
 const theme = createTheme();
 
+const CALLS_TITLE = 'Calls Over Time';
+const EXEC_TITLE = 'Execution Time Over Time';
+const EXEC_KEY = 'mean_exec_time,min_exec_time,max_exec_time';
+const QUERY_ID = '12345';
+
+/** Build a mock query row with sensible defaults. */
 const makeQueryRow = (
     overrides: Partial<QueryDetailData> = {},
 ): QueryDetailData => ({
-    queryid: '-1234567890123456789',
-    query: 'SELECT 1',
-    calls: 250,
-    total_exec_time: 5000,
-    mean_exec_time: 20,
-    rows: 500,
-    shared_blks_hit: 90,
-    shared_blks_read: 10,
+    queryid: QUERY_ID,
+    query: 'SELECT * FROM users WHERE id = $1',
+    calls: 500,
+    total_exec_time: 1000,
+    mean_exec_time: 2,
+    min_exec_time: 2.5,
+    max_exec_time: 512,
+    rows: 1000,
+    shared_blks_hit: 900,
+    shared_blks_read: 100,
+    username: 'app_user',
+    client_addr: null,
+    client_hostname: null,
+    client_observed_at: null,
     ...overrides,
 });
 
-/** Series covering both charts on the page. */
-const fullMetricsData = (): MetricSeries[] => {
-    const point = { time: '2026-01-01T00:00:00Z', value: 5 };
-    return [
-        'mean_exec_time',
-        'min_exec_time',
-        'max_exec_time',
-        'calls',
-    ].map(metric => ({
-        name: metric,
-        metric,
-        data: [point],
-    })) as MetricSeries[];
+/** Build a MetricSeries for the given metric and values. */
+const series = (metric: string, values: number[]): MetricSeries => ({
+    name: metric,
+    metric,
+    data: values.map((value, idx) => ({
+        time: `2026-01-01T00:0${idx}:00Z`,
+        value,
+    })),
+}) as MetricSeries;
+
+/** Wrap metric series in a resolved UseMetricsReturn. */
+const ready = (data: MetricSeries[] | null): UseMetricsReturn => ({
+    data,
+    window: null,
+    loading: false,
+    error: null,
+    refetch: vi.fn(),
+});
+
+/** A UseMetricsReturn that is still loading with no data yet. */
+const loadingMetrics = (): UseMetricsReturn => ({
+    data: null,
+    window: null,
+    loading: true,
+    error: null,
+    refetch: vi.fn(),
+});
+
+/** A failed UseMetricsReturn, as an older server would produce. */
+const failed = (message: string): UseMetricsReturn => ({
+    data: null,
+    window: null,
+    loading: false,
+    error: message,
+    refetch: vi.fn(),
+});
+
+/** Route each useMetrics call by the metrics it requests. */
+const routeMetrics = (
+    overrides: Partial<Record<string, UseMetricsReturn>> = {},
+): void => {
+    mockUseMetrics.mockImplementation((params) => {
+        const key = (params?.metrics ?? []).join(',');
+        const override = overrides[key];
+        if (override) { return override; }
+
+        if (key === 'calls_per_sec') {
+            return ready([series('calls_per_sec', [1.5, 3])]);
+        }
+        return ready([
+            series('mean_exec_time', [2, 3]),
+            series('min_exec_time', [1, 1]),
+            series('max_exec_time', [9, 10]),
+        ]);
+    });
 };
 
+/** Create a successful Response-like object. */
 const okResponse = (data: unknown): Partial<Response> => ({
     ok: true,
     json: () => Promise.resolve(data),
 });
 
+/** Create a failed Response-like object. */
 const errorResponse = (
     status: number,
     body: Record<string, string> = {},
@@ -145,31 +247,47 @@ const errorResponse = (
     json: () => Promise.resolve(body),
 });
 
-const renderQueryDetail = (
-    props: Partial<{
-        connectionId: number;
-        databaseName: string;
-        objectName: string;
-    }> = {},
-) => render(
+/** Find the rendered series names for a given chart title. */
+const seriesNamesFor = (title: string): string[] =>
+    screen.getAllByTestId('chart-series')
+        .filter(el => el.getAttribute('data-chart') === title)
+        .map(el => el.getAttribute('data-series') ?? '');
+
+/** Find a rendered chart element by its title. */
+const chartFor = (title: string): HTMLElement | undefined =>
+    screen.getAllByTestId('chart')
+        .find(el => el.getAttribute('data-title') === title);
+
+/** The parameters of the most recent useMetrics call for a metric set. */
+const paramsFor = (key: string): MetricQueryParams | undefined => {
+    const matches = mockUseMetrics.mock.calls
+        .map(([params]) => params)
+        .filter((p): p is MetricQueryParams =>
+            p !== null && (p.metrics ?? []).join(',') === key);
+    return matches[matches.length - 1];
+};
+
+/** Every top-queries request URL seen so far, in call order. */
+const topQueryUrls = (): string[] => mockApiFetch.mock.calls
+    .map(call => call[0] as string)
+    .filter(url => url.includes('top-queries'));
+
+/** The query parameters of the most recent top-queries request. */
+const lastTopQueryParams = (): URLSearchParams => {
+    const urls = topQueryUrls();
+    const last = urls[urls.length - 1] ?? '';
+    return new URLSearchParams(last.split('?')[1] ?? '');
+};
+
+const renderDetail = () => render(
     <ThemeProvider theme={theme}>
         <QueryDetail
-            connectionId={1}
+            connectionId={4}
             databaseName="testdb"
-            objectName="-1234567890123456789"
-            {...props}
+            objectName={QUERY_ID}
         />
     </ThemeProvider>,
 );
-
-/** The parameters of the most recent non-null useMetrics call. */
-const latestParams = (aggregation: string): MetricQueryParams | undefined => {
-    const matches = metricsParams.filter(
-        (p): p is MetricQueryParams => p !== null
-            && p.aggregation === aggregation,
-    );
-    return matches[matches.length - 1];
-};
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -178,384 +296,884 @@ const latestParams = (aggregation: string): MetricQueryParams | undefined => {
 describe('QueryDetail', () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        metricsParams.length = 0;
+        vi.mocked(localStorage.getItem).mockReturnValue(null);
         mockUser = { id: 1, username: 'testuser' };
+        mockTimeRange = '1h';
+        mockCustomStart = undefined;
+        mockCustomEnd = undefined;
         mockAiEnabled = false;
-        mockMetricsReturn = {
-            data: fullMetricsData(),
-            loading: false,
-            error: null,
-            refetch: vi.fn(),
-        };
-        mockOverviewReturn = {
+        mockOverview = {
             summary: null,
             loading: false,
             error: null,
             generatedAt: null,
-            refresh: vi.fn(),
         };
-    });
-
-    it('shows the loading spinner while the initial fetch is pending', () => {
-        mockApiFetch.mockReturnValue(new Promise(() => {}));
-
-        renderQueryDetail();
-
-        expect(
-            screen.getByLabelText('Loading query details'),
-        ).toBeInTheDocument();
-    });
-
-    it('requests the selected query from the top-queries endpoint', async () => {
+        routeMetrics();
         mockApiFetch.mockResolvedValue(okResponse([makeQueryRow()]));
-
-        renderQueryDetail();
-
-        await waitFor(() => {
-            expect(mockApiFetch).toHaveBeenCalledWith(
-                '/api/v1/metrics/top-queries?connection_id=1'
-                + '&queryid=-1234567890123456789&limit=1',
-            );
-        });
     });
 
-    it('scopes both charts to the selected query id', async () => {
-        mockApiFetch.mockResolvedValue(okResponse([makeQueryRow()]));
+    describe('query fetch', () => {
+        it('shows the loading spinner while the initial fetch is pending',
+            () => {
+                mockApiFetch.mockReturnValue(new Promise(() => {}));
 
-        renderQueryDetail();
+                renderDetail();
 
-        await waitFor(() => {
-            expect(latestParams('avg')?.queryId)
-                .toBe('-1234567890123456789');
-        });
+                expect(
+                    screen.getByLabelText('Loading query details'),
+                ).toBeInTheDocument();
+            });
 
-        const execTimeParams = latestParams('avg');
-        expect(execTimeParams?.probeName).toBe('pg_stat_statements');
-        expect(execTimeParams?.databaseName).toBe('testdb');
-        expect(execTimeParams?.metrics).toEqual([
-            'mean_exec_time', 'min_exec_time', 'max_exec_time',
-        ]);
-
-        const callsParams = latestParams('sum');
-        expect(callsParams?.queryId).toBe('-1234567890123456789');
-        expect(callsParams?.metrics).toEqual(['calls']);
-    });
-
-    it('does not query metrics before the query row arrives', () => {
-        mockApiFetch.mockReturnValue(new Promise(() => {}));
-
-        renderQueryDetail();
-
-        expect(metricsParams.every(p => p === null)).toBe(true);
-    });
-
-    it('renders the statistics tiles and both charts', async () => {
-        mockApiFetch.mockResolvedValue(okResponse([makeQueryRow()]));
-
-        renderQueryDetail();
-
-        await waitFor(() => {
-            expect(screen.getByText('250')).toBeInTheDocument();
-        });
-        expect(screen.getByText('Total Calls')).toBeInTheDocument();
-        expect(screen.getByText('Avg Rows/Call')).toBeInTheDocument();
-        expect(
-            screen.getByText('Execution Time Over Time'),
-        ).toBeInTheDocument();
-        expect(screen.getByText('Calls Over Time')).toBeInTheDocument();
-    });
-
-    it('renders placeholder tiles when the query is not found', async () => {
-        mockApiFetch.mockResolvedValue(okResponse([]));
-
-        renderQueryDetail();
-
-        await waitFor(() => {
-            expect(screen.getAllByText('--').length).toBeGreaterThan(0);
-        });
-    });
-
-    it('renders a placeholder for a query with no calls', async () => {
-        mockApiFetch.mockResolvedValue(
-            okResponse([makeQueryRow({ calls: 0 })]),
-        );
-
-        renderQueryDetail();
-
-        await waitFor(() => {
-            expect(screen.getAllByText('--').length).toBeGreaterThan(0);
-        });
-    });
-
-    it('toggles long query text between collapsed and expanded', async () => {
-        const longQuery = `SELECT ${'column_name, '.repeat(20)} FROM t`;
-        mockApiFetch.mockResolvedValue(
-            okResponse([makeQueryRow({ query: longQuery })]),
-        );
-
-        renderQueryDetail();
-
-        const toggle = await screen.findByLabelText('Expand query text');
-        expect(screen.getByText(/\.\.\.$/)).toBeInTheDocument();
-
-        fireEvent.click(toggle);
-        expect(
-            screen.getByLabelText('Collapse query text'),
-        ).toBeInTheDocument();
-
-        fireEvent.keyDown(
-            screen.getByLabelText('Collapse query text'),
-            { key: 'Enter' },
-        );
-        expect(
-            screen.getByLabelText('Expand query text'),
-        ).toBeInTheDocument();
-
-        fireEvent.keyDown(
-            screen.getByLabelText('Expand query text'),
-            { key: ' ' },
-        );
-        expect(
-            screen.getByLabelText('Collapse query text'),
-        ).toBeInTheDocument();
-
-        fireEvent.keyDown(
-            screen.getByLabelText('Collapse query text'),
-            { key: 'Escape' },
-        );
-        expect(
-            screen.getByLabelText('Collapse query text'),
-        ).toBeInTheDocument();
-    });
-
-    it('shows chart loading spinners while metrics load', async () => {
-        mockApiFetch.mockResolvedValue(okResponse([makeQueryRow()]));
-        mockMetricsReturn = {
-            data: null,
-            loading: true,
-            error: null,
-            refetch: vi.fn(),
-        };
-
-        renderQueryDetail();
-
-        await waitFor(() => {
-            expect(screen.getAllByLabelText('Loading chart').length).toBe(2);
-        });
-    });
-
-    it('shows empty-state messages when the charts have no data', async () => {
-        mockApiFetch.mockResolvedValue(okResponse([makeQueryRow()]));
-        mockMetricsReturn = {
-            data: [],
-            loading: false,
-            error: null,
-            refetch: vi.fn(),
-        };
-
-        renderQueryDetail();
-
-        await waitFor(() => {
-            expect(
-                screen.getByText('No execution time data available'),
-            ).toBeInTheDocument();
-        });
-        expect(
-            screen.getByText('No call frequency data available'),
-        ).toBeInTheDocument();
-    });
-
-    it('shows the server error message when the fetch fails', async () => {
-        mockApiFetch.mockResolvedValue(
-            errorResponse(500, { error: 'Internal server error' }),
-        );
-
-        renderQueryDetail();
-
-        await waitFor(() => {
-            expect(
-                screen.getByText('Internal server error'),
-            ).toBeInTheDocument();
-        });
-    });
-
-    it('falls back to a status error message without an error body', async () => {
-        mockApiFetch.mockResolvedValue(errorResponse(503));
-
-        renderQueryDetail();
-
-        await waitFor(() => {
-            expect(
-                screen.getByText(/Failed to fetch query data: 503/),
-            ).toBeInTheDocument();
-        });
-    });
-
-    it('shows an error message when the fetch rejects', async () => {
-        mockApiFetch.mockRejectedValue(new Error('network down'));
-
-        renderQueryDetail();
-
-        await waitFor(() => {
-            expect(screen.getByText('network down')).toBeInTheDocument();
-        });
-    });
-
-    it('does not fetch without an authenticated user', () => {
-        mockUser = null;
-
-        renderQueryDetail();
-
-        expect(mockApiFetch).not.toHaveBeenCalled();
-    });
-
-    describe('with AI enabled', () => {
-        beforeEach(() => {
-            mockAiEnabled = true;
-            mockApiFetch.mockResolvedValue(okResponse([makeQueryRow()]));
-        });
-
-        it('shows the generating placeholder before a summary arrives',
+        it('requests the selected query from the top-queries endpoint',
             async () => {
-                renderQueryDetail();
+                renderDetail();
+
+                await waitFor(() => {
+                    expect(mockApiFetch).toHaveBeenCalledWith(
+                        '/api/v1/metrics/top-queries?connection_id=4'
+                        + `&queryid=${QUERY_ID}&limit=1&time_range=1h`,
+                    );
+                });
+            });
+
+        it.each(['1h', '6h', '24h', '7d', '30d'] as TimeRange[])(
+            'scopes the header statistics to the %s range',
+            async (range) => {
+                mockTimeRange = range;
+
+                renderDetail();
+
+                await waitFor(() => {
+                    expect(lastTopQueryParams().get('time_range'))
+                        .toBe(range);
+                });
+                expect(lastTopQueryParams().get('time_start')).toBeNull();
+                expect(lastTopQueryParams().get('time_end')).toBeNull();
+            });
+
+        it('sends both bounds for a custom range', async () => {
+            mockTimeRange = 'custom';
+            mockCustomStart = '2026-09-01T00:00:00Z';
+            mockCustomEnd = '2026-09-02T00:00:00Z';
+
+            renderDetail();
+
+            await waitFor(() => {
+                expect(lastTopQueryParams().get('time_range'))
+                    .toBe('custom');
+            });
+            expect(lastTopQueryParams().get('time_start'))
+                .toBe('2026-09-01T00:00:00Z');
+            expect(lastTopQueryParams().get('time_end'))
+                .toBe('2026-09-02T00:00:00Z');
+        });
+
+        it('makes no request whilst a custom range lacks a bound',
+            async () => {
+                mockTimeRange = 'custom';
+                mockCustomStart = '2026-09-01T00:00:00Z';
+
+                renderDetail();
+
+                await waitFor(() => {
+                    expect(screen.getByText('Query Text'))
+                        .toBeInTheDocument();
+                });
+                expect(topQueryUrls()).toHaveLength(0);
+            });
+
+        it('refetches when the selected range changes', async () => {
+            const { rerender } = renderDetail();
+
+            await waitFor(() => {
+                expect(topQueryUrls()).toHaveLength(1);
+            });
+
+            mockTimeRange = '24h';
+            rerender(
+                <ThemeProvider theme={theme}>
+                    <QueryDetail
+                        connectionId={4}
+                        databaseName="testdb"
+                        objectName={QUERY_ID}
+                    />
+                </ThemeProvider>,
+            );
+
+            await waitFor(() => {
+                expect(topQueryUrls()).toHaveLength(2);
+            });
+            expect(lastTopQueryParams().get('time_range')).toBe('24h');
+        });
+
+        it('ignores a stale response that resolves after a newer one', async () => {
+            // Hold each range's response open so they can be resolved
+            // out of order, which is what happens when the user moves
+            // the selector from 30d to 1h before the 30d row arrives.
+            const resolvers: Record<string, (rows: QueryDetailData[]) => void> = {};
+            mockApiFetch.mockImplementation((url: string) => {
+                const range = new URLSearchParams(url.split('?')[1] ?? '')
+                    .get('time_range') ?? '';
+                return new Promise(resolve => {
+                    resolvers[range] = (rows: QueryDetailData[]) =>
+                        resolve(okResponse(rows));
+                });
+            });
+
+            mockTimeRange = '30d';
+            const { rerender } = renderDetail();
+            await waitFor(() => {
+                expect(resolvers['30d']).toBeDefined();
+            });
+
+            mockTimeRange = '1h';
+            rerender(
+                <ThemeProvider theme={theme}>
+                    <QueryDetail
+                        connectionId={4}
+                        databaseName="testdb"
+                        objectName={QUERY_ID}
+                    />
+                </ThemeProvider>,
+            );
+            await waitFor(() => {
+                expect(resolvers['1h']).toBeDefined();
+            });
+
+            // The newer request (1h) lands first, then the older one
+            // (30d) arrives late. The late response must be dropped.
+            resolvers['1h']([makeQueryRow({ calls: 7 })]);
+            await waitFor(() => {
+                expect(screen.getByLabelText('Total Calls (Last 1h): 7'))
+                    .toBeInTheDocument();
+            });
+
+            resolvers['30d']([makeQueryRow({ calls: 900000 })]);
+
+            // Give the stale response a chance to be applied before
+            // asserting that it was not.
+            await waitFor(() => {
+                expect(topQueryUrls()).toHaveLength(2);
+            });
+            await act(async () => {
+                await Promise.resolve();
+            });
+            expect(screen.getByLabelText('Total Calls (Last 1h): 7'))
+                .toBeInTheDocument();
+            expect(screen.queryByLabelText(/Total Calls .*: 900/)).toBeNull();
+        });
+
+        it('does not query metrics before the query row arrives', () => {
+            mockApiFetch.mockReturnValue(new Promise(() => {}));
+
+            renderDetail();
+
+            expect(
+                mockUseMetrics.mock.calls.every(([p]) => p === null),
+            ).toBe(true);
+        });
+    });
+
+    describe('calls chart', () => {
+        it('requests the per-second call rate with an average', async () => {
+            renderDetail();
+
+            await waitFor(() => {
+                expect(chartFor(CALLS_TITLE)).toBeDefined();
+            });
+            const callsQuery = paramsFor('calls_per_sec');
+            expect(callsQuery?.metrics).toEqual(['calls_per_sec']);
+            expect(callsQuery?.aggregation).toBe('avg');
+        });
+
+        it('scopes both charts to the selected query id', async () => {
+            renderDetail();
+
+            await waitFor(() => {
+                expect(paramsFor(EXEC_KEY)?.queryId).toBe(QUERY_ID);
+            });
+
+            const execParams = paramsFor(EXEC_KEY);
+            expect(execParams?.probeName).toBe('pg_stat_statements');
+            expect(execParams?.databaseName).toBe('testdb');
+            expect(execParams?.timeRange).toBe('1h');
+            expect(execParams?.metrics).toEqual([
+                'mean_exec_time', 'min_exec_time', 'max_exec_time',
+            ]);
+
+            const callsParams = paramsFor('calls_per_sec');
+            expect(callsParams?.queryId).toBe(QUERY_ID);
+            expect(callsParams?.probeName).toBe('pg_stat_statements');
+            expect(callsParams?.timeRange).toBe('1h');
+        });
+
+        it('scopes both charts to the database the statistics were '
+            + 'collected through', async () => {
+            mockApiFetch.mockResolvedValue(okResponse([
+                makeQueryRow({ sample_database_name: 'alpha' }),
+            ]));
+            renderDetail();
+
+            await waitFor(() => {
+                expect(paramsFor(EXEC_KEY)?.databaseName).toBe('alpha');
+            });
+            expect(paramsFor('calls_per_sec')?.databaseName)
+                .toBe('alpha');
+        });
+
+        it('draws the call rate as a smooth line', async () => {
+            renderDetail();
+
+            await waitFor(() => {
+                expect(chartFor(CALLS_TITLE)).toBeDefined();
+            });
+            expect(seriesNamesFor(CALLS_TITLE)).toEqual(['Calls/s']);
+            expect(chartFor(CALLS_TITLE)?.getAttribute('data-type'))
+                .toBe('line');
+            expect(chartFor(CALLS_TITLE)?.getAttribute('data-smooth'))
+                .toBe('true');
+        });
+
+        it('plots the execution time series alongside it', async () => {
+            renderDetail();
+
+            await waitFor(() => {
+                expect(chartFor(EXEC_TITLE)).toBeDefined();
+            });
+            expect(seriesNamesFor(EXEC_TITLE)).toEqual([
+                'Mean Time (ms)', 'Min Time (ms)', 'Max Time (ms)',
+            ]);
+        });
+
+        it('shows empty messages when the queries return nothing', async () => {
+            mockUseMetrics.mockImplementation(() => ready([]));
+            renderDetail();
+
+            await waitFor(() => {
+                expect(screen.getByText('No call frequency data available'))
+                    .toBeInTheDocument();
+            });
+            expect(screen.getByText('No execution time data available'))
+                .toBeInTheDocument();
+        });
+
+        it('shows chart loading indicators while queries are in flight',
+            async () => {
+                mockUseMetrics.mockImplementation(() => loadingMetrics());
+                renderDetail();
+
+                await waitFor(() => {
+                    expect(screen.getAllByLabelText('Loading chart'))
+                        .toHaveLength(2);
+                });
+            });
+
+        it('reports a query error in place of the empty message', async () => {
+            routeMetrics({
+                calls_per_sec: failed('metric not found in probe'),
+            });
+            renderDetail();
+
+            await waitFor(() => {
+                expect(screen.getByText('metric not found in probe'))
+                    .toBeInTheDocument();
+            });
+            expect(screen.queryByText('No call frequency data available'))
+                .not.toBeInTheDocument();
+        });
+
+        it('reports an execution time query error', async () => {
+            routeMetrics({
+                [EXEC_KEY]: failed('probe unavailable'),
+            });
+            renderDetail();
+
+            await waitFor(() => {
+                expect(screen.getByText('probe unavailable'))
+                    .toBeInTheDocument();
+            });
+        });
+    });
+
+    describe('query statistics', () => {
+        it('renders the KPI tiles from the fetched row', async () => {
+            renderDetail();
+
+            await waitFor(() => {
+                expect(screen.getByText('Total Calls (Last 1h)')).toBeInTheDocument();
+            });
+            expect(screen.getByText('500')).toBeInTheDocument();
+            expect(screen.getByText('Avg Rows/Call')).toBeInTheDocument();
+            expect(screen.getByText('2.0')).toBeInTheDocument();
+        });
+
+        it('reports a failed detail fetch', async () => {
+            mockApiFetch.mockResolvedValue(
+                errorResponse(400, { error: 'query not found' }),
+            );
+            renderDetail();
+
+            await waitFor(() => {
+                expect(screen.getByText('query not found'))
+                    .toBeInTheDocument();
+            });
+        });
+
+        it('falls back to a status error message without an error body',
+            async () => {
+                mockApiFetch.mockResolvedValue(errorResponse(503));
+                renderDetail();
 
                 await waitFor(() => {
                     expect(
-                        screen.getByText('Generating overview...'),
+                        screen.getByText(/Failed to fetch query data: 503/),
                     ).toBeInTheDocument();
                 });
             });
 
-        it('shows skeletons whilst the overview loads', async () => {
-            mockOverviewReturn = {
-                ...mockOverviewReturn,
-                loading: true,
-            };
+        it('shows an error message when the fetch rejects', async () => {
+            mockApiFetch.mockRejectedValue(new Error('network down'));
+            renderDetail();
 
-            renderQueryDetail();
+            await waitFor(() => {
+                expect(screen.getByText('network down'))
+                    .toBeInTheDocument();
+            });
+        });
+
+        it('renders placeholders when no row is returned', async () => {
+            mockApiFetch.mockResolvedValue(okResponse([]));
+            renderDetail();
+
+            await waitFor(() => {
+                expect(screen.getByText('Total Calls (Last 1h)')).toBeInTheDocument();
+            });
+            expect(screen.getAllByText('--').length)
+                .toBeGreaterThanOrEqual(4);
+        });
+
+        it('renders a placeholder for a query with no calls', async () => {
+            mockApiFetch.mockResolvedValue(
+                okResponse([makeQueryRow({ calls: 0 })]),
+            );
+            renderDetail();
+
+            await waitFor(() => {
+                expect(screen.getByText('Total Calls (Last 1h)')).toBeInTheDocument();
+            });
+            expect(screen.getAllByText('--').length).toBeGreaterThan(0);
+        });
+
+        it('skips the fetch when no user is signed in', async () => {
+            mockUser = null;
+            renderDetail();
+
+            await waitFor(() => {
+                expect(screen.getByText('Total Calls (Last 1h)')).toBeInTheDocument();
+            });
+            expect(mockApiFetch).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('windowed statistics', () => {
+        it('qualifies the windowed totals with the selected range', async () => {
+            mockTimeRange = '7d';
+            renderDetail();
+
+            await waitFor(() => {
+                expect(screen.getByLabelText('Total Calls (Last 7d): 500'))
+                    .toBeInTheDocument();
+            });
+            expect(screen.getByLabelText(/^Total Time \(Last 7d\): /))
+                .toBeInTheDocument();
+        });
+
+        it('qualifies the windowed totals for a custom range', async () => {
+            mockTimeRange = 'custom';
+            mockCustomStart = '2026-01-01T00:00:00Z';
+            mockCustomEnd = '2026-01-02T00:00:00Z';
+            renderDetail();
+
+            await waitFor(() => {
+                expect(screen.getByLabelText('Total Calls (Custom Range): 500'))
+                    .toBeInTheDocument();
+            });
+            expect(screen.getByText('Total Time (Custom Range)'))
+                .toBeInTheDocument();
+        });
+
+        it('renders the min and max execution time tiles', async () => {
+            renderDetail();
+
+            await waitFor(() => {
+                expect(screen.getByText('Min Time (All Time)'))
+                    .toBeInTheDocument();
+            });
+            expect(screen.getByText('Max Time (All Time)'))
+                .toBeInTheDocument();
+            expect(screen.getByText('2.5 ms')).toBeInTheDocument();
+            expect(screen.getByText('512.0 ms')).toBeInTheDocument();
+        });
+
+        it('labels the windowed mean without a second average tile',
+            async () => {
+                renderDetail();
+
+                await waitFor(() => {
+                    expect(screen.getByText('Mean Time (Last 1h)'))
+                        .toBeInTheDocument();
+                });
+                expect(screen.getByText('2.0 ms')).toBeInTheDocument();
+                expect(screen.queryByText(/^Avg Time/))
+                    .not.toBeInTheDocument();
+            });
+
+        it('exposes an accessible label for the mean time tile',
+            async () => {
+                renderDetail();
+
+                await waitFor(() => {
+                    expect(
+                        screen.getByLabelText('Mean Time (Last 1h): 2.0 ms'),
+                    ).toBeInTheDocument();
+                });
+            });
+
+        /*
+         * The top-queries endpoint only returns a statement that was
+         * executed in the window, so a window with no data yields no
+         * row at all and the mean reads as a dash rather than a zero,
+         * exactly as its Total Calls and Total Time neighbours do.
+         */
+        it('renders a dash for the mean when the window has no data',
+            async () => {
+                mockApiFetch.mockResolvedValue(okResponse([]));
+                renderDetail();
+
+                await waitFor(() => {
+                    expect(
+                        screen.getByLabelText('Mean Time (Last 1h): --'),
+                    ).toBeInTheDocument();
+                });
+                expect(screen.getByLabelText('Total Calls (Last 1h): --'))
+                    .toBeInTheDocument();
+                expect(screen.getByLabelText('Total Time (Last 1h): --'))
+                    .toBeInTheDocument();
+                expect(screen.queryByLabelText(/Mean Time \(Last 1h\): (0|NaN)/))
+                    .not.toBeInTheDocument();
+            });
+
+        it('keeps the previous mean visible during a refetch', async () => {
+            const { rerender } = renderDetail();
+
+            await waitFor(() => {
+                expect(screen.getByLabelText('Mean Time (Last 1h): 2.0 ms'))
+                    .toBeInTheDocument();
+            });
+
+            mockApiFetch.mockReturnValue(new Promise(() => {}));
+            mockTimeRange = '24h';
+            rerender(
+                <ThemeProvider theme={theme}>
+                    <QueryDetail
+                        connectionId={4}
+                        databaseName="testdb"
+                        objectName={QUERY_ID}
+                    />
+                </ThemeProvider>,
+            );
+
+            await waitFor(() => {
+                expect(topQueryUrls()).toHaveLength(2);
+            });
+            expect(screen.getByLabelText('Mean Time (Last 24h): 2.0 ms'))
+                .toBeInTheDocument();
+        });
+
+        it('shows the database user that ran the statement', async () => {
+            renderDetail();
+
+            await waitFor(() => {
+                expect(screen.getByTestId('query-username'))
+                    .toHaveTextContent('app_user');
+            });
+            expect(screen.getByText('Database User')).toBeInTheDocument();
+        });
+
+        it('shows Unknown when the role could not be resolved', async () => {
+            mockApiFetch.mockResolvedValue(
+                okResponse([makeQueryRow({ username: '' })]),
+            );
+            renderDetail();
+
+            await waitFor(() => {
+                expect(screen.getByTestId('query-username'))
+                    .toHaveTextContent('Unknown');
+            });
+        });
+
+        it('shows Not observed when no client was ever seen', async () => {
+            renderDetail();
+
+            await waitFor(() => {
+                expect(screen.getByTestId('query-client'))
+                    .toHaveTextContent('Not observed');
+            });
+            expect(
+                screen.getByText('Last Observed Client'),
+            ).toBeInTheDocument();
+        });
+
+        it('shows the client address when no hostname resolved', async () => {
+            mockApiFetch.mockResolvedValue(
+                okResponse([makeQueryRow({
+                    client_addr: '192.0.2.10',
+                    client_hostname: null,
+                    client_observed_at: '2026-01-01T00:05:00Z',
+                })]),
+            );
+            renderDetail();
+
+            await waitFor(() => {
+                expect(screen.getByTestId('query-client'))
+                    .toHaveTextContent('192.0.2.10');
+            });
+            expect(screen.getByTestId('query-client'))
+                .not.toHaveTextContent('(');
+        });
+
+        it('shows local for a Unix-domain-socket backend', async () => {
+            mockApiFetch.mockResolvedValue(
+                okResponse([makeQueryRow({
+                    client_addr: 'local',
+                    client_hostname: null,
+                    client_observed_at: '2026-01-01T00:05:00Z',
+                })]),
+            );
+            renderDetail();
+
+            await waitFor(() => {
+                expect(screen.getByTestId('query-client'))
+                    .toHaveTextContent('local');
+            });
+            expect(screen.getByTestId('query-client'))
+                .not.toHaveTextContent('Not observed');
+        });
+
+        it('says Not observed when no snapshot time is recorded, even '
+            + 'with an address', async () => {
+            mockApiFetch.mockResolvedValue(
+                okResponse([makeQueryRow({
+                    client_addr: '192.0.2.10',
+                    client_hostname: 'app-01.example.com',
+                    client_observed_at: null,
+                })]),
+            );
+            renderDetail();
+
+            await waitFor(() => {
+                expect(screen.getByTestId('query-client'))
+                    .toHaveTextContent('Not observed');
+            });
+            expect(screen.getByTestId('query-client'))
+                .not.toHaveTextContent('192.0.2.10');
+        });
+
+        it('shows Unknown when observed without an address', async () => {
+            mockApiFetch.mockResolvedValue(
+                okResponse([makeQueryRow({
+                    client_addr: null,
+                    client_hostname: null,
+                    client_observed_at: '2026-01-01T00:05:00Z',
+                })]),
+            );
+            renderDetail();
+
+            await waitFor(() => {
+                expect(screen.getByTestId('query-client'))
+                    .toHaveTextContent('Unknown');
+            });
+        });
+
+        it('shows hostname and address when both are known', async () => {
+            mockApiFetch.mockResolvedValue(
+                okResponse([makeQueryRow({
+                    client_addr: '192.0.2.10',
+                    client_hostname: 'app-01.example.com',
+                    client_observed_at: '2026-01-01T00:05:00Z',
+                })]),
+            );
+            renderDetail();
+
+            await waitFor(() => {
+                expect(screen.getByTestId('query-client'))
+                    .toHaveTextContent('app-01.example.com (192.0.2.10)');
+            });
+        });
+
+        it('explains the best-effort client match in a tooltip', async () => {
+            const observedAt = '2026-01-01T00:05:00Z';
+            mockApiFetch.mockResolvedValue(
+                okResponse([makeQueryRow({
+                    client_addr: '192.0.2.10',
+                    client_hostname: 'app-01.example.com',
+                    client_observed_at: observedAt,
+                })]),
+            );
+            renderDetail();
+
+            const value = await screen.findByTestId('query-client');
+            await act(async () => {
+                fireEvent.mouseOver(value);
+            });
+
+            const tooltip = await screen.findByRole('tooltip');
+            expect(tooltip).toHaveTextContent(
+                /pg_stat_activity is sampled periodically/,
+            );
+            expect(tooltip).toHaveTextContent(
+                /Other clients may also have run it/,
+            );
+            expect(tooltip).toHaveTextContent(
+                `Last seen ${formatTimestamp(observedAt)}.`,
+            );
+        });
+
+        it('notes the Unix-domain socket in the tooltip for local',
+            async () => {
+                const observedAt = '2026-01-01T00:05:00Z';
+                mockApiFetch.mockResolvedValue(
+                    okResponse([makeQueryRow({
+                        client_addr: 'local',
+                        client_hostname: null,
+                        client_observed_at: observedAt,
+                    })]),
+                );
+                renderDetail();
+
+                const value = await screen.findByTestId('query-client');
+                await act(async () => {
+                    fireEvent.mouseOver(value);
+                });
+
+                const tooltip = await screen.findByRole('tooltip');
+                expect(tooltip).toHaveTextContent(
+                    /connected over a Unix-domain socket/,
+                );
+                expect(tooltip).toHaveTextContent(
+                    `Last seen ${formatTimestamp(observedAt)}.`,
+                );
+            });
+
+        it('says no snapshot has caught the query when unobserved', async () => {
+            renderDetail();
+
+            const value = await screen.findByTestId('query-client');
+            await act(async () => {
+                fireEvent.mouseOver(value);
+            });
+
+            expect(await screen.findByRole('tooltip')).toHaveTextContent(
+                /No pg_stat_activity snapshot has caught this query/,
+            );
+        });
+    });
+
+    describe('query text', () => {
+        const LONG_QUERY = `SELECT ${'column_name, '.repeat(20)}1`;
+
+        it('expands and collapses a long query on click', async () => {
+            mockApiFetch.mockResolvedValue(
+                okResponse([makeQueryRow({ query: LONG_QUERY })]),
+            );
+            renderDetail();
+
+            const toggle = await screen.findByLabelText(
+                'Expand query text'
+            );
+            expect(screen.getByText(/\.\.\.$/)).toBeInTheDocument();
+
+            fireEvent.click(toggle);
+            expect(await screen.findByLabelText('Collapse query text'))
+                .toBeInTheDocument();
+        });
+
+        it('expands a long query from the keyboard', async () => {
+            mockApiFetch.mockResolvedValue(
+                okResponse([makeQueryRow({ query: LONG_QUERY })]),
+            );
+            renderDetail();
+
+            const toggle = await screen.findByLabelText(
+                'Expand query text'
+            );
+            fireEvent.keyDown(toggle, { key: 'Enter' });
+            expect(await screen.findByLabelText('Collapse query text'))
+                .toBeInTheDocument();
+
+            fireEvent.keyDown(
+                screen.getByLabelText('Collapse query text'),
+                { key: ' ' },
+            );
+            expect(await screen.findByLabelText('Expand query text'))
+                .toBeInTheDocument();
+        });
+
+        it('ignores unrelated keys on the query text', async () => {
+            mockApiFetch.mockResolvedValue(
+                okResponse([makeQueryRow({ query: LONG_QUERY })]),
+            );
+            renderDetail();
+
+            const toggle = await screen.findByLabelText(
+                'Expand query text'
+            );
+            fireEvent.keyDown(toggle, { key: 'Escape' });
+            expect(screen.getByLabelText('Expand query text'))
+                .toBeInTheDocument();
+        });
+
+        it('reports a failed fetch with an unreadable body', async () => {
+            mockApiFetch.mockResolvedValue({
+                ok: false,
+                status: 500,
+                json: () => Promise.reject(new Error('not json')),
+            });
+            renderDetail();
+
+            await waitFor(() => {
+                expect(screen.getByText('Failed to fetch query data: 500'))
+                    .toBeInTheDocument();
+            });
+        });
+    });
+
+    describe('AI overview panel', () => {
+        beforeEach(() => {
+            mockAiEnabled = true;
+        });
+
+        it('opens and closes the full analysis dialog', async () => {
+            renderDetail();
+
+            const open = await screen.findByLabelText('Open full analysis');
+            fireEvent.click(open);
+            await waitFor(() => {
+                expect(
+                    screen.getByTestId('query-analysis-dialog')
+                        .getAttribute('data-open'),
+                ).toBe('true');
+            });
+
+            fireEvent.click(screen.getByText('Close analysis'));
+            await waitFor(() => {
+                expect(
+                    screen.getByTestId('query-analysis-dialog')
+                        .getAttribute('data-open'),
+                ).toBe('false');
+            });
+        });
+
+        it('collapses and expands the overview panel', async () => {
+            renderDetail();
+
+            const collapse = await screen.findByLabelText(
+                'Collapse AI Overview'
+            );
+            fireEvent.click(collapse);
+            expect(await screen.findByLabelText('Expand AI Overview'))
+                .toBeInTheDocument();
+
+            fireEvent.click(screen.getByLabelText('Expand AI Overview'));
+            expect(await screen.findByLabelText('Collapse AI Overview'))
+                .toBeInTheDocument();
+        });
+
+        it('shows placeholders whilst the overview is generating', async () => {
+            renderDetail();
+
+            expect(await screen.findByText('Generating overview...'))
+                .toBeInTheDocument();
+        });
+
+        it('shows skeletons whilst the overview is loading', async () => {
+            mockOverview = {
+                summary: null,
+                loading: true,
+                error: null,
+                generatedAt: null,
+            };
+            renderDetail();
 
             await waitFor(() => {
                 expect(screen.getByText('AI Overview')).toBeInTheDocument();
             });
-            expect(
-                screen.queryByText('Generating overview...'),
-            ).not.toBeInTheDocument();
+            expect(screen.queryByText('Generating overview...'))
+                .not.toBeInTheDocument();
         });
 
-        it('renders the summary and its relative timestamp', async () => {
-            mockOverviewReturn = {
-                ...mockOverviewReturn,
-                summary: 'The query looks healthy.',
+        it('refreshes the overview on request', async () => {
+            mockOverview = {
+                summary: 'This query looks healthy.',
+                loading: false,
+                error: null,
                 generatedAt: new Date(),
             };
+            renderDetail();
 
-            renderQueryDetail();
-
-            await waitFor(() => {
-                expect(
-                    screen.getByText('The query looks healthy.'),
-                ).toBeInTheDocument();
-            });
-            expect(
-                screen.getByText('Updated just now'),
-            ).toBeInTheDocument();
+            const refresh = await screen.findByLabelText('Refresh overview');
+            fireEvent.click(refresh);
+            expect(mockRefreshOverview).toHaveBeenCalled();
+            expect(screen.getByText('This query looks healthy.'))
+                .toBeInTheDocument();
+            expect(screen.getByText('Updated just now')).toBeInTheDocument();
         });
 
         it.each([
             [5 * 60 * 1000, 'Updated 5 min ago'],
-            [3 * 60 * 60 * 1000, 'Updated 3 hours ago'],
-            [61 * 60 * 1000, 'Updated 1 hour ago'],
-        ])('formats an overview age of %i ms', async (ageMs, expected) => {
-            mockOverviewReturn = {
-                ...mockOverviewReturn,
-                summary: 'Summary text.',
-                generatedAt: new Date(Date.now() - ageMs),
+            [2 * 60 * 60 * 1000, 'Updated 2 hours ago'],
+            [60 * 60 * 1000, 'Updated 1 hour ago'],
+        ])('reports an overview generated %i ms ago', async (ago, label) => {
+            mockOverview = {
+                summary: 'This query looks healthy.',
+                loading: false,
+                error: null,
+                generatedAt: new Date(Date.now() - ago),
             };
+            renderDetail();
 
-            renderQueryDetail();
-
-            await waitFor(() => {
-                expect(screen.getByText(expected)).toBeInTheDocument();
-            });
+            expect(await screen.findByText(label)).toBeInTheDocument();
         });
 
-        it('formats an overview generated days ago as a date', async () => {
-            const old = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
-            mockOverviewReturn = {
-                ...mockOverviewReturn,
-                summary: 'Summary text.',
-                generatedAt: old,
+        it('falls back to a date for an old overview', async () => {
+            const generatedAt = new Date(Date.now() - 3 * 86400 * 1000);
+            mockOverview = {
+                summary: 'This query looks healthy.',
+                loading: false,
+                error: null,
+                generatedAt,
             };
+            renderDetail();
 
-            renderQueryDetail();
-
-            await waitFor(() => {
-                expect(
-                    screen.getByText(
-                        `Updated ${old.toLocaleDateString()}`,
-                    ),
-                ).toBeInTheDocument();
-            });
-        });
-
-        it('refreshes the overview on demand', async () => {
-            const refresh = vi.fn();
-            mockOverviewReturn = {
-                ...mockOverviewReturn,
-                summary: 'Summary text.',
-                generatedAt: new Date(),
-                refresh,
-            };
-
-            renderQueryDetail();
-
-            const button = await screen.findByLabelText('Refresh overview');
-            fireEvent.click(button);
-
-            expect(refresh).toHaveBeenCalled();
-        });
-
-        it('collapses and expands the overview panel', async () => {
-            renderQueryDetail();
-
-            const collapse = await screen.findByLabelText(
-                'Collapse AI Overview',
-            );
-            fireEvent.click(collapse);
-
-            const expand = await screen.findByLabelText('Expand AI Overview');
-            fireEvent.click(expand);
-
-            expect(
-                await screen.findByLabelText('Collapse AI Overview'),
-            ).toBeInTheDocument();
-        });
-
-        it('opens the full analysis dialog', async () => {
-            renderQueryDetail();
-
-            const button = await screen.findByLabelText('Open full analysis');
-            fireEvent.click(button);
-
-            expect(
-                await screen.findByTestId('analysis-dialog'),
-            ).toBeInTheDocument();
+            expect(await screen.findByText(
+                `Updated ${generatedAt.toLocaleDateString()}`,
+            )).toBeInTheDocument();
         });
 
         it('hides the overview panel when the overview errors', async () => {
-            mockOverviewReturn = {
-                ...mockOverviewReturn,
+            mockOverview = {
+                summary: null,
+                loading: false,
                 error: 'model unavailable',
+                generatedAt: null,
             };
-
-            renderQueryDetail();
+            renderDetail();
 
             await waitFor(() => {
-                expect(screen.getByText('Total Calls')).toBeInTheDocument();
+                expect(screen.getByText('Total Calls (Last 1h)')).toBeInTheDocument();
             });
-            expect(
-                screen.queryByText('AI Overview'),
-            ).not.toBeInTheDocument();
+            expect(screen.queryByText('AI Overview'))
+                .not.toBeInTheDocument();
         });
     });
 });

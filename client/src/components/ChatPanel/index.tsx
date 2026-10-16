@@ -39,6 +39,7 @@ import ConversationHistory from './ConversationHistory';
 import { getDownloadButtonSx } from '../shared/MarkdownExports';
 import { downloadAsMarkdown } from '../../utils/downloadMarkdown';
 import { logger } from '../../utils/logger';
+import useChatAutoScroll from './useChatAutoScroll';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -346,15 +347,14 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
     );
 
     // -----------------------------------------------------------------------
-    // Auto-scroll to bottom on new messages
+    // Scroll to the latest message, or to the start of a long reply
     // -----------------------------------------------------------------------
 
-    useEffect(() => {
-        if (messageListRef.current) {
-            messageListRef.current.scrollTop =
-                messageListRef.current.scrollHeight;
-        }
-    }, [messages]);
+    const handleMessageListScroll = useChatAutoScroll(
+        messageListRef,
+        rawMessages,
+        open,
+    );
 
     // -----------------------------------------------------------------------
     // Refresh conversations when panel opens
@@ -557,6 +557,9 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
                             <Box
                                 ref={messageListRef}
                                 sx={messageListSx}
+                                role="log"
+                                aria-label="Chat messages"
+                                onScroll={handleMessageListScroll}
                             >
                                 {messages.map((msg, idx) => (
                                     <ChatMessage

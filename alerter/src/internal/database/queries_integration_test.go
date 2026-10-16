@@ -12,7 +12,6 @@ package database
 import (
 	"context"
 	"fmt"
-	"os"
 	"testing"
 	"time"
 
@@ -97,10 +96,55 @@ CREATE TABLE metrics.pg_sys_load_avg_info (
     collected_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- mount_point and file_system_type mirror the collector's table so the
+-- pseudo-filesystem exclusion in pg_sys_disk_info.used_percent can be
+-- exercised (GitHub issue #428). mount_point carries a default because
+-- the cases above predate the per-mount dimension and insert a single
+-- unnamed mount; file_system_type is nullable, exactly as in
+-- production, so a row whose type the probe never recorded is part of
+-- the fixture rather than a special case.
 CREATE TABLE metrics.pg_sys_disk_info (
     connection_id INTEGER NOT NULL,
+    mount_point TEXT NOT NULL DEFAULT '/',
+    file_system_type TEXT,
     used_space BIGINT,
     total_space BIGINT,
+    collected_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- The collector stores the LSNs as text; the queries cast them to
+-- pg_lsn. See GitHub issue #490 for this and the three tables below.
+CREATE TABLE metrics.pg_stat_replication (
+    connection_id INTEGER NOT NULL,
+    pid INTEGER NOT NULL,
+    sent_lsn TEXT,
+    replay_lsn TEXT,
+    collected_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE metrics.pg_stat_checkpointer (
+    connection_id INTEGER NOT NULL,
+    num_requested BIGINT,
+    collected_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE metrics.pg_node_role (
+    connection_id INTEGER NOT NULL,
+    is_in_recovery BOOLEAN NOT NULL,
+    collected_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- userid, dbid and toplevel complete the statement identity the
+-- slow_query_count queries difference within.
+CREATE TABLE metrics.pg_stat_statements (
+    connection_id INTEGER NOT NULL,
+    database_name TEXT NOT NULL,
+    userid OID NOT NULL DEFAULT 10,
+    dbid OID NOT NULL DEFAULT 16384,
+    queryid BIGINT NOT NULL,
+    toplevel BOOLEAN NOT NULL DEFAULT TRUE,
+    calls BIGINT,
+    total_exec_time DOUBLE PRECISION,
     collected_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 `
@@ -118,17 +162,27 @@ DROP TABLE IF EXISTS connections CASCADE;
 // the pool.
 func newHistoricalMetricsTestDatastore(t *testing.T) (*Datastore, *pgxpool.Pool, func()) {
 	t.Helper()
+	return newHistoricalMetricsTestDatastoreInTimeZone(t, "")
+}
 
-	if os.Getenv("SKIP_DB_TESTS") != "" {
-		t.Skip("Skipping database test (SKIP_DB_TESTS is set)")
-	}
-	connStr := os.Getenv("TEST_AI_WORKBENCH_SERVER")
-	if connStr == "" {
-		t.Skip("TEST_AI_WORKBENCH_SERVER not set, skipping historical metrics integration test")
-	}
+// newHistoricalMetricsTestDatastoreInTimeZone is newHistoricalMetricsTestDatastore
+// with the session TimeZone pinned to the named zone, so a test can pin
+// behavior that must not depend on the server's timezone GUC. An empty
+// zone leaves the server default in place. See GitHub issue #409.
+func newHistoricalMetricsTestDatastoreInTimeZone(t *testing.T, timeZone string) (*Datastore, *pgxpool.Pool, func()) {
+	t.Helper()
+
+	connStr := requireLocalTestDSN(t, "the historical metrics integration test")
 
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, connStr)
+	poolCfg, err := pgxpool.ParseConfig(connStr)
+	if err != nil {
+		t.Skipf("Could not parse test database DSN: %v", err)
+	}
+	if timeZone != "" {
+		poolCfg.ConnConfig.RuntimeParams["timezone"] = timeZone
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	if err != nil {
 		t.Skipf("Could not connect to test database: %v", err)
 	}
@@ -198,17 +252,6 @@ type metricCase struct {
 func allMetricCases() []metricCase {
 	return []metricCase{
 		{
-			metricName: "pg_settings.max_connections",
-			insert: func(ctx context.Context, pool *pgxpool.Pool, connID int, base time.Time) error {
-				_, err := pool.Exec(ctx, `
-					INSERT INTO metrics.pg_settings
-					    (connection_id, name, setting, collected_at)
-					VALUES ($1, 'max_connections', '200', $2)
-				`, connID, base)
-				return err
-			},
-		},
-		{
 			metricName: "connection_utilization_percent",
 			insert: func(ctx context.Context, pool *pgxpool.Pool, connID int, base time.Time) error {
 				if _, err := pool.Exec(ctx, `
@@ -257,8 +300,8 @@ func allMetricCases() []metricCase {
 			insert: func(ctx context.Context, pool *pgxpool.Pool, connID int, base time.Time) error {
 				_, err := pool.Exec(ctx, `
 					INSERT INTO metrics.pg_stat_activity
-					    (connection_id, state, xact_start, collected_at)
-					VALUES ($1, 'idle in transaction', $2::timestamptz - INTERVAL '30 seconds', $2)
+					    (connection_id, backend_type, state, xact_start, collected_at)
+					VALUES ($1, 'client backend', 'idle in transaction', $2::timestamptz - INTERVAL '30 seconds', $2)
 				`, connID, base)
 				return err
 			},
@@ -268,8 +311,8 @@ func allMetricCases() []metricCase {
 			insert: func(ctx context.Context, pool *pgxpool.Pool, connID int, base time.Time) error {
 				_, err := pool.Exec(ctx, `
 					INSERT INTO metrics.pg_stat_activity
-					    (connection_id, state, query_start, collected_at)
-					VALUES ($1, 'active', $2::timestamptz - INTERVAL '10 seconds', $2)
+					    (connection_id, backend_type, state, query_start, collected_at)
+					VALUES ($1, 'client backend', 'active', $2::timestamptz - INTERVAL '10 seconds', $2)
 				`, connID, base)
 				return err
 			},
@@ -279,8 +322,8 @@ func allMetricCases() []metricCase {
 			insert: func(ctx context.Context, pool *pgxpool.Pool, connID int, base time.Time) error {
 				_, err := pool.Exec(ctx, `
 					INSERT INTO metrics.pg_stat_activity
-					    (connection_id, xact_start, collected_at)
-					VALUES ($1, $2::timestamptz - INTERVAL '45 seconds', $2)
+					    (connection_id, backend_type, xact_start, collected_at)
+					VALUES ($1, 'client backend', $2::timestamptz - INTERVAL '45 seconds', $2)
 				`, connID, base)
 				return err
 			},
@@ -330,8 +373,9 @@ func allMetricCases() []metricCase {
 			},
 		},
 		{
-			// cache_hit_ratio requires two rows per connection for LAG()
-			// plus a delta of at least 10000 blocks to clear the filter.
+			// cache_hit_ratio requires two rows per connection for LAG(),
+			// a delta of at least 10000 blocks and at least 100 block
+			// reads per second (6000 over the minute) to clear the filter.
 			metricName: "pg_stat_database.cache_hit_ratio",
 			insert: func(ctx context.Context, pool *pgxpool.Pool, connID int, base time.Time) error {
 				_, err := pool.Exec(ctx, `
@@ -339,7 +383,7 @@ func allMetricCases() []metricCase {
 					    (connection_id, database_name, datname, blks_hit, blks_read, collected_at)
 					VALUES
 					    ($1, 'appdb', 'appdb', 1000,  100,  $2::timestamptz - INTERVAL '1 minute'),
-					    ($1, 'appdb', 'appdb', 20000, 200,  $2)
+					    ($1, 'appdb', 'appdb', 20000, 10200, $2)
 				`, connID, base)
 				return err
 			},
@@ -373,6 +417,54 @@ func allMetricCases() []metricCase {
 				return err
 			},
 		},
+		{
+			metricName: "pg_stat_activity.max_lock_wait_seconds",
+			insert: func(ctx context.Context, pool *pgxpool.Pool, connID int, base time.Time) error {
+				_, err := pool.Exec(ctx, `
+					INSERT INTO metrics.pg_stat_activity
+					    (connection_id, backend_type, wait_event_type, query_start, collected_at)
+					VALUES ($1, 'client backend', 'Lock', $2::timestamptz - INTERVAL '5 seconds', $2)
+				`, connID, base)
+				return err
+			},
+		},
+		{
+			metricName: "pg_stat_replication.lag_bytes",
+			insert: func(ctx context.Context, pool *pgxpool.Pool, connID int, base time.Time) error {
+				_, err := pool.Exec(ctx, `
+					INSERT INTO metrics.pg_stat_replication
+					    (connection_id, pid, sent_lsn, replay_lsn, collected_at)
+					VALUES ($1, 100, '0/3000000', '0/2000000', $2)
+				`, connID, base)
+				return err
+			},
+		},
+		{
+			metricName: "pg_stat_checkpointer.checkpoints_req_delta",
+			insert: func(ctx context.Context, pool *pgxpool.Pool, connID int, base time.Time) error {
+				_, err := pool.Exec(ctx, `
+					INSERT INTO metrics.pg_stat_checkpointer
+					    (connection_id, num_requested, collected_at)
+					VALUES
+					    ($1, 10, $2::timestamptz - INTERVAL '1 minute'),
+					    ($1, 12, $2)
+				`, connID, base)
+				return err
+			},
+		},
+		{
+			metricName: "pg_stat_statements.slow_query_count",
+			insert: func(ctx context.Context, pool *pgxpool.Pool, connID int, base time.Time) error {
+				_, err := pool.Exec(ctx, `
+					INSERT INTO metrics.pg_stat_statements
+					    (connection_id, database_name, queryid, calls, total_exec_time, collected_at)
+					VALUES
+					    ($1, 'appdb', 1, 10, 1000, $2::timestamptz - INTERVAL '5 minutes'),
+					    ($1, 'appdb', 1, 12, 5000, $2)
+				`, connID, base)
+				return err
+			},
+		},
 	}
 }
 
@@ -389,6 +481,10 @@ func resetMetricsTables(t *testing.T, pool *pgxpool.Pool) {
 		"metrics.pg_sys_memory_info",
 		"metrics.pg_sys_load_avg_info",
 		"metrics.pg_sys_disk_info",
+		"metrics.pg_stat_replication",
+		"metrics.pg_stat_checkpointer",
+		"metrics.pg_node_role",
+		"metrics.pg_stat_statements",
 	}
 	for _, tbl := range tables {
 		if _, err := pool.Exec(context.Background(),

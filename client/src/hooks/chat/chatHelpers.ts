@@ -31,7 +31,7 @@ export function estimateTokenCount(msgs: APIMessage[]): number {
             totalTokens += Math.ceil(msg.content.length / 4);
         } else if (Array.isArray(msg.content)) {
             for (const block of msg.content) {
-                if ('text' in block) {
+                if ('text' in block && block.text !== undefined) {
                     totalTokens += Math.ceil(block.text.length / 4);
                 }
             }

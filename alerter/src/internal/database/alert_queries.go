@@ -15,18 +15,26 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/pgedge/ai-workbench/pkg/rollback"
 )
 
 // scanAlert scans all 21 fields from a query row into an Alert struct.
 // This helper consolidates the duplicated scan pattern across alert queries.
 func scanAlert(scanner interface{ Scan(dest ...any) error }, alert *Alert) error {
-	return scanner.Scan(
-		&alert.ID, &alert.AlertType, &alert.RuleID, &alert.ConnectionID,
+	// connection_id is NULL for a system alert, which Alert represents
+	// as 0; see connectionIDFromNullable.
+	var connectionID *int
+	if err := scanner.Scan(
+		&alert.ID, &alert.AlertType, &alert.RuleID, &connectionID,
 		&alert.DatabaseName, &alert.ObjectName, &alert.ProbeName, &alert.MetricName,
 		&alert.MetricValue, &alert.ThresholdValue, &alert.Operator, &alert.Severity,
 		&alert.Title, &alert.Description, &alert.CorrelationID, &alert.Status,
 		&alert.TriggeredAt, &alert.ClearedAt, &alert.LastUpdated, &alert.AnomalyScore,
-		&alert.AnomalyDetails)
+		&alert.AnomalyDetails); err != nil {
+		return err
+	}
+	alert.ConnectionID = connectionIDFromNullable(connectionID)
+	return nil
 }
 
 // GetActiveThresholdAlert checks if there's an existing active alert for a rule/connection
@@ -236,7 +244,7 @@ func (d *Datastore) CreateAlert(ctx context.Context, alert *Alert) error {
 			anomaly_score, anomaly_details
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
 		RETURNING id
-	`, alert.AlertType, alert.RuleID, alert.ConnectionID, alert.DatabaseName,
+	`, alert.AlertType, alert.RuleID, nullableConnectionID(alert.ConnectionID), alert.DatabaseName,
 		alert.ObjectName, alert.ProbeName, alert.MetricName, alert.MetricValue,
 		alert.ThresholdValue, alert.Operator, alert.Severity, alert.Title,
 		alert.Description, alert.CorrelationID, alert.Status, alert.TriggeredAt,
@@ -318,8 +326,7 @@ func (d *Datastore) ReactivateAlert(ctx context.Context, alertID int64) error {
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	//nolint:errcheck // Rollback is a no-op if the tx was already committed.
-	defer tx.Rollback(ctx)
+	defer rollback.Tx(ctx, tx) //nolint:errcheck // no-op after commit
 
 	result, err := tx.Exec(ctx, `
 		UPDATE alerts
@@ -368,7 +375,7 @@ func (d *Datastore) GetAlertsByCluster(ctx context.Context, connectionID int) ([
 		)
 		  AND connection_id != $1
 		  AND status IN ('active', 'acknowledged')
-		ORDER BY triggered_at DESC
+		ORDER BY triggered_at DESC, id DESC
 	`, connectionID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get alerts by cluster: %w", err)
@@ -401,7 +408,7 @@ func (d *Datastore) GetAlertsByConnection(ctx context.Context, connectionID int)
 		       cleared_at, last_updated, anomaly_score, anomaly_details
 		FROM alerts
 		WHERE connection_id = $1 AND status IN ('active', 'acknowledged')
-		ORDER BY triggered_at DESC
+		ORDER BY triggered_at DESC, id DESC
 	`, connectionID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get alerts by connection: %w", err)
@@ -424,13 +431,30 @@ func (d *Datastore) GetAlertsByConnection(ctx context.Context, connectionID int)
 	return alerts, nil
 }
 
-// UpdateAlertReevaluation increments the re-evaluation count and updates the
-// last re-evaluated timestamp for an alert.
-func (d *Datastore) UpdateAlertReevaluation(ctx context.Context, alertID int64) error {
+// UpdateAlertReevaluation increments the re-evaluation count, updates the
+// last re-evaluated timestamp and records the fingerprint of the prompt
+// inputs behind the decision. A nil fingerprint clears the stored one, so
+// the next due re-evaluation goes to the LLM again.
+func (d *Datastore) UpdateAlertReevaluation(ctx context.Context, alertID int64, fingerprint *string) error {
 	_, err := d.pool.Exec(ctx, `
 		UPDATE alerts
 		SET reevaluation_count = reevaluation_count + 1,
-		    last_reevaluated_at = NOW()
+		    last_reevaluated_at = NOW(),
+		    reevaluation_fingerprint = $2
+		WHERE id = $1
+	`, alertID, fingerprint)
+	return err
+}
+
+// DeferAlertReevaluation updates only the last re-evaluated timestamp of
+// an alert, pushing its next re-evaluation back by one interval. It is
+// used when the prompt inputs match the stored fingerprint and the LLM
+// call is skipped, so the re-evaluation count, which counts LLM
+// decisions, and the fingerprint are left alone.
+func (d *Datastore) DeferAlertReevaluation(ctx context.Context, alertID int64) error {
+	_, err := d.pool.Exec(ctx, `
+		UPDATE alerts
+		SET last_reevaluated_at = NOW()
 		WHERE id = $1
 	`, alertID)
 	return err

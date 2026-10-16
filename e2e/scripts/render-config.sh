@@ -76,6 +76,7 @@ builtins:
     query_metrics: true
     list_connections: true
     query_datastore: true
+    describe_datastore: true
     read_resource: true
     get_alert_rules: true
     get_alert_history: true

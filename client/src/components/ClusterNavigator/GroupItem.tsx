@@ -111,12 +111,12 @@ const getActionButtonsSx = (theme: Theme) => ({
  * GroupItem - Cluster group that can be expanded to show clusters
  * Memoized to prevent unnecessary re-renders during data refresh
  */
-interface UserInfo {
+export interface UserInfo {
     isSuperuser?: boolean;
     username?: string;
 }
 
-interface GroupData {
+export interface GroupData {
     id: string;
     name: string;
     description?: string;
@@ -130,7 +130,7 @@ interface GroupData {
     [key: string]: unknown;
 }
 
-interface GroupItemProps {
+export interface GroupItemProps {
     group: GroupData;
     isExpanded: boolean;
     onToggle: () => void;

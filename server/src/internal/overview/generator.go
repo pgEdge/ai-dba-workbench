@@ -31,9 +31,6 @@ const (
 	// staleDuration is how long an overview is considered fresh.
 	staleDuration = 5 * time.Minute
 
-	// llmMaxTokens caps the summary length for concise output.
-	llmMaxTokens = 512
-
 	// llmTemperature controls response creativity; low for factual output.
 	llmTemperature = 0.3
 
@@ -510,17 +507,20 @@ func (g *Generator) generateSummaryFromPrompt(ctx context.Context, system, data 
 		return "", fmt.Errorf("no LLM provider configured: %w", err)
 	}
 
+	// The request budget is resolved from the operator's llm.max_tokens
+	// through the same helper the client options use, so the request and
+	// the client agree on the budget.
 	resp, err := client.Chat(ctx, pgllm.ChatRequest{
 		Messages:     []pgllm.Message{pgllm.UserText(data)},
 		SystemPrompt: system,
-		MaxTokens:    pgllm.Int(llmMaxTokens),
+		MaxTokens:    pgllm.Int(g.llmConfig.AnalysisMaxTokens()),
 		Temperature:  pgllm.Float(llmTemperature),
 	})
 	if err != nil {
 		return "", fmt.Errorf("LLM chat failed: %w", err)
 	}
 
-	return extractTextFromResponse(resp), nil
+	return extractTextFromResponse(resp)
 }
 
 // createLLMClient builds a pgedge-go-llm-lib client based on the
@@ -539,10 +539,11 @@ func (g *Generator) createLLMClient() (pgllm.Client, error) {
 
 	provider := g.llmConfig.Provider
 
-	// Credential selection, custom-header wiring, and the
-	// timeout-only-when-positive rule live in the shared llmproxy helper
-	// so the overview and server-info analysis paths stay in lock-step.
-	opts := g.llmConfig.BuildClientOptions(llmMaxTokens, llmTemperature)
+	// Credential selection, custom-header wiring, max-token resolution,
+	// and the timeout-only-when-positive rule live in the shared llmproxy
+	// helper so the overview and server-info analysis paths stay in
+	// lock-step.
+	opts := g.llmConfig.BuildClientOptions(llmTemperature)
 
 	client, err := pgllm.NewClient(provider, opts)
 	if err != nil {
@@ -554,9 +555,16 @@ func (g *Generator) createLLMClient() (pgllm.Client, error) {
 
 // extractTextFromResponse walks the LLM response content blocks and
 // concatenates all text content into a single string.
-func extractTextFromResponse(resp *pgllm.ChatResponse) string {
+//
+// A response that carries no text block, or whose text is whitespace
+// only, yields llmproxy.ErrNoTextContent rather than an empty summary.
+// Reasoning models charge their thinking blocks against the same output
+// budget as the answer, so an under-sized budget produces exactly this
+// shape of response; reporting it as an error surfaces the
+// misconfiguration instead of silently caching a blank summary.
+func extractTextFromResponse(resp *pgllm.ChatResponse) (string, error) {
 	if resp == nil {
-		return ""
+		return "", llmproxy.ErrNoTextContent
 	}
 	var parts []string
 	for _, b := range resp.Content {
@@ -564,7 +572,11 @@ func extractTextFromResponse(resp *pgllm.ChatResponse) string {
 			parts = append(parts, b.Text)
 		}
 	}
-	return strings.Join(parts, "")
+	text := strings.Join(parts, "")
+	if strings.TrimSpace(text) == "" {
+		return "", llmproxy.ErrNoTextContent
+	}
+	return text, nil
 }
 
 // buildPrompt constructs the system instruction and user data sent to

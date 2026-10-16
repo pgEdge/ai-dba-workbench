@@ -44,19 +44,12 @@ type Handler struct {
 	datastore   *database.Datastore
 }
 
-// NewHandler creates a new overview handler backed by the given generator.
-// RBAC filtering is disabled when called without an rbacChecker; use
-// NewHandlerWithRBAC to enable scope visibility enforcement.
-func NewHandler(generator *Generator, hub *Hub) *Handler {
-	return &Handler{
-		generator: generator,
-		hub:       hub,
-	}
-}
-
 // NewHandlerWithRBAC creates a new overview handler that enforces scope
-// visibility against the caller's RBAC view. A nil rbacChecker or
-// datastore disables the gate (preserves pre-RBAC behavior for tests).
+// visibility against the caller's RBAC view. The gate is never
+// disabled: a nil rbacChecker gives every caller an empty visible set
+// (issue #561), and a nil datastore leaves the checker able to admit
+// only superusers, wildcard grants and explicitly granted connections,
+// with cluster and group scopes treated as having no members.
 func NewHandlerWithRBAC(generator *Generator, hub *Hub, rbacChecker *auth.RBACChecker, datastore *database.Datastore) *Handler {
 	return &Handler{
 		generator:   generator,
@@ -138,36 +131,34 @@ func (h *Handler) handleOverview(w http.ResponseWriter, r *http.Request) {
 	// only their visible connections instead of the full estate
 	// snapshot.
 	if scopeType == "" && scopeIDStr == "" {
-		if h.rbacChecker != nil && h.datastore != nil {
-			visible, allConns, err := h.resolveVisible(r.Context())
+		visible, allConns, err := h.resolveVisible(r.Context())
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: overview: failed to resolve visible connections: %v\n", err)
+			http.Error(w, "Failed to resolve connection visibility", http.StatusInternalServerError)
+			return
+		}
+		if !allConns {
+			ids := make([]int, 0, len(visible))
+			for id := range visible {
+				ids = append(ids, id)
+			}
+			ids = dedupeAndSort(ids)
+			if len(ids) == 0 {
+				if err := json.NewEncoder(w).Encode(generatingResponse{Status: "empty", Summary: nil}); err != nil {
+					fmt.Fprintf(os.Stderr, "ERROR: overview: failed to encode empty response: %v\n", err)
+				}
+				return
+			}
+			overview, err := h.generator.GetConnectionsSummary(ids, "", refresh)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "ERROR: overview: failed to resolve visible connections: %v\n", err)
-				http.Error(w, "Failed to resolve connection visibility", http.StatusInternalServerError)
+				fmt.Fprintf(os.Stderr, "ERROR: overview: connections summary failed: %v\n", err)
+				http.Error(w, "Failed to generate connections summary", http.StatusInternalServerError)
 				return
 			}
-			if !allConns {
-				ids := make([]int, 0, len(visible))
-				for id := range visible {
-					ids = append(ids, id)
-				}
-				ids = dedupeAndSort(ids)
-				if len(ids) == 0 {
-					if err := json.NewEncoder(w).Encode(generatingResponse{Status: "empty", Summary: nil}); err != nil {
-						fmt.Fprintf(os.Stderr, "ERROR: overview: failed to encode empty response: %v\n", err)
-					}
-					return
-				}
-				overview, err := h.generator.GetConnectionsSummary(ids, "", refresh)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "ERROR: overview: connections summary failed: %v\n", err)
-					http.Error(w, "Failed to generate connections summary", http.StatusInternalServerError)
-					return
-				}
-				if err := json.NewEncoder(w).Encode(overview); err != nil {
-					fmt.Fprintf(os.Stderr, "ERROR: overview: failed to encode connections response: %v\n", err)
-				}
-				return
+			if err := json.NewEncoder(w).Encode(overview); err != nil {
+				fmt.Fprintf(os.Stderr, "ERROR: overview: failed to encode connections response: %v\n", err)
 			}
+			return
 		}
 		if refresh {
 			h.generator.ForceRefresh()
@@ -329,7 +320,7 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 	// When no scope params are given, check RBAC. Restricted callers
 	// receive a scoped SSE feed covering only their visible connections
 	// instead of the full estate-wide stream.
-	if scopeKey == "" && h.rbacChecker != nil && h.datastore != nil {
+	if scopeKey == "" {
 		visible, allConns, err := h.resolveVisible(r.Context())
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "ERROR: overview/sse: failed to resolve visible connections: %v\n", err)
@@ -347,9 +338,12 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 			for i, id := range ids {
 				parts[i] = fmt.Sprintf("%d", id)
 			}
-			if len(ids) > 0 {
-				scopeKey = "connections:" + strings.Join(parts, ",")
-			}
+			// Always leave the estate-wide key: an empty key subscribes
+			// to the full estate feed and is sent the cached estate
+			// overview, so a restricted caller who can see nothing must
+			// get the empty connections key, which nothing generates
+			// for, rather than falling through to "".
+			scopeKey = "connections:" + strings.Join(parts, ",")
 		}
 	}
 
@@ -427,10 +421,10 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 }
 
 // filterConnectionIDs restricts the supplied connection ID list to those
-// visible to the caller. When RBAC is not configured (nil checker or
-// nil datastore) the list is deduplicated and sorted but not filtered.
-// The second return value is false when the function wrote an error
-// response and the caller must return immediately.
+// visible to the caller. A nil checker makes every ID invisible, so
+// the result is empty rather than unfiltered (issue #561). The second
+// return value is false when the function wrote an error response and
+// the caller must return immediately.
 //
 // The output is deduplicated and sorted so that equivalent input lists
 // (same members, different order or duplicates) produce the same
@@ -438,9 +432,6 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 // entries and duplicate connection IDs from reaching the summary
 // generator.
 func (h *Handler) filterConnectionIDs(ctx context.Context, w http.ResponseWriter, ids []int) ([]int, bool) {
-	if h.rbacChecker == nil || h.datastore == nil {
-		return dedupeAndSort(ids), true
-	}
 	visible, allConnections, err := h.resolveVisible(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: overview: failed to resolve visible connections: %v\n", err)
@@ -487,8 +478,8 @@ func dedupeAndSort(ids []int) []int {
 
 // scopeVisible reports whether the caller may see the requested scope
 // and, when they can, returns the intersection of the scope's member
-// connection IDs with the caller's visible set. When RBAC is not
-// configured the check is skipped and (nil, true, true) is returned.
+// connection IDs with the caller's visible set. The check is never
+// skipped: a nil checker sees no scope at all (issue #561).
 // When the caller is a superuser or has a wildcard grant, (nil, true,
 // true) is returned so the caller can use the full-scope snapshot path.
 // On denial the function writes a 404 response and returns ok=false.
@@ -496,9 +487,6 @@ func dedupeAndSort(ids []int) []int {
 // behavior of sibling handlers, 404 is used for scope-denial to avoid
 // leaking the existence of scopes the caller cannot see.
 func (h *Handler) scopeVisible(ctx context.Context, w http.ResponseWriter, scopeType string, scopeID int) (intersect []int, unrestricted bool, ok bool) {
-	if h.rbacChecker == nil || h.datastore == nil {
-		return nil, true, true
-	}
 	visible, allConnections, err := h.resolveVisible(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: overview: failed to resolve visible connections: %v\n", err)
@@ -516,18 +504,10 @@ func (h *Handler) scopeVisible(ctx context.Context, w http.ResponseWriter, scope
 			return nil, false, false
 		}
 		return []int{scopeID}, false, true
-	case "cluster":
-		ids, lookupErr := h.datastore.GetConnectionIDsForCluster(ctx, scopeID)
+	case "cluster", "group":
+		ids, lookupErr := h.scopeMemberIDs(ctx, scopeType, scopeID)
 		if lookupErr != nil {
-			fmt.Fprintf(os.Stderr, "ERROR: overview: failed to check cluster %d visibility: %v\n", scopeID, lookupErr)
-			http.Error(w, "Failed to check scope visibility", http.StatusInternalServerError)
-			return nil, false, false
-		}
-		intersect = intersectVisible(ids, visible)
-	case "group":
-		ids, lookupErr := h.datastore.GetConnectionIDsForGroup(ctx, scopeID)
-		if lookupErr != nil {
-			fmt.Fprintf(os.Stderr, "ERROR: overview: failed to check group %d visibility: %v\n", scopeID, lookupErr)
+			fmt.Fprintf(os.Stderr, "ERROR: overview: failed to check %s %d visibility: %v\n", scopeType, scopeID, lookupErr)
 			http.Error(w, "Failed to check scope visibility", http.StatusInternalServerError)
 			return nil, false, false
 		}
@@ -542,6 +522,19 @@ func (h *Handler) scopeVisible(ctx context.Context, w http.ResponseWriter, scope
 		return nil, false, false
 	}
 	return intersect, false, true
+}
+
+// scopeMemberIDs returns the member connection IDs of a cluster or
+// group scope. Without a datastore there is no membership to read, so
+// the scope has no members and a restricted caller cannot see it.
+func (h *Handler) scopeMemberIDs(ctx context.Context, scopeType string, scopeID int) ([]int, error) {
+	if h.datastore == nil {
+		return nil, nil
+	}
+	if scopeType == "cluster" {
+		return h.datastore.GetConnectionIDsForCluster(ctx, scopeID)
+	}
+	return h.datastore.GetConnectionIDsForGroup(ctx, scopeID)
 }
 
 // intersectVisible returns the subset of members that are also in the
@@ -601,6 +594,8 @@ func (h *Handler) resolveScopeName(ctx context.Context, scopeType string, scopeI
 // resolveVisible returns the caller's visible connection-ID set via the
 // overview handler's RBAC checker. The allConnections flag is true when
 // the caller has unrestricted visibility (superuser or wildcard grant).
+// A nil checker returns an empty set, because RBACChecker's methods
+// deny on a nil receiver.
 func (h *Handler) resolveVisible(ctx context.Context) (map[int]bool, bool, error) {
 	lister := newOverviewVisibilityLister(h.datastore)
 	ids, all, err := h.rbacChecker.VisibleConnectionIDs(ctx, lister)

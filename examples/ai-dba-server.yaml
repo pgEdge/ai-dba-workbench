@@ -60,6 +60,11 @@ http:
   # proxy CIDR ranges to correctly extract client IP addresses from
   # X-Forwarded-For headers. Leave empty when not behind a proxy.
   #
+  # With OIDC login enabled, this list is required behind a proxy: without
+  # it every client shares one OIDC rate-limit allowance, and the login
+  # state cookie cannot use the __Host- prefix, which leaves login CSRF
+  # from a sibling subdomain possible. See the single sign-on guide.
+  #
   # trusted_proxies:
   #   - "10.0.0.0/8"
   #   - "172.16.0.0/12"
@@ -90,11 +95,9 @@ http:
   #   ai-dba-server list-tokens
   #
   auth:
-    # Enable authentication (strongly recommended for production)
-    # Default: true
-    enabled: true
-
     # Account lockout after N failed login attempts (0 = disabled)
+    # Omitting this key keeps the default; a restart is required to
+    # apply a change, because the value is read once at start-up
     # Default: 10
     max_failed_attempts_before_lockout: 10
 
@@ -110,6 +113,80 @@ http:
     # Maximum failed attempts per IP in the time window
     # Default: 10
     rate_limit_max_attempts: 10
+
+    # Local username/password login. At least one of local.enabled and
+    # oidc.enabled must allow logging in, or the server refuses to start.
+    local:
+      # Default: true. Set to false only once OIDC is fully configured
+      # and enabled below, otherwise nobody can log in.
+      enabled: true
+
+    # OpenID Connect federated login. Disabled by default; uncomment and
+    # fill in the fields below to enable it alongside, or instead of,
+    # local login.
+    # oidc:
+    #   enabled: true
+    #
+    #   # The identity provider's issuer URL. Must use https://.
+    #   issuer: "https://idp.example.com"
+    #
+    #   # OAuth 2.0 client ID registered with the identity provider.
+    #   client_id: "workbench"
+    #
+    #   # Client secret, either inline or via a file (client_secret_file
+    #   # takes the file's contents when client_secret is empty; a
+    #   # file-sourced secret is never written back to this file).
+    #   client_secret: ""
+    #   # client_secret_file: /etc/pgedge/oidc-client-secret.txt
+    #
+    #   # Must match a redirect URI registered with the identity provider.
+    #   redirect_url: "https://workbench.example.com/api/v1/auth/oidc/callback"
+    #
+    #   # OAuth 2.0 scopes to request.
+    #   # Default: [openid, email, profile]
+    #   scopes: ["openid", "email", "profile"]
+    #
+    #   # Claim used as the Workbench username.
+    #   # Default: email
+    #   username_claim: "email"
+    #
+    #   # Claim used as the user's display name.
+    #   # Default: name
+    #   display_name_claim: "name"
+    #
+    #   # Claim carrying the user's group memberships.
+    #   # Default: groups
+    #   groups_claim: "groups"
+    #
+    #   # Label shown on the login page's OIDC button.
+    #   # Default: "Sign in with your identity provider"
+    #   button_label: "Sign in with your identity provider"
+    #
+    #   # Automatically create a Workbench account for a new OIDC user on
+    #   # first login.
+    #   # Default: false
+    #   provision_users: false
+    #
+    #   # Restrict login to users whose email domain is in this list.
+    #   # Empty means no domain restriction.
+    #   # allowed_email_domains:
+    #   #   - "example.com"
+    #
+    #   # Membership of this OIDC group (as named in groups_claim) grants
+    #   # the Workbench superuser role.
+    #   # superuser_group: "workbench-admins"
+    #
+    #   # Maps identity-provider group names to Workbench RBAC group names.
+    #   # group_map:
+    #   #   idp-group-name: workbench-group-name
+    #
+    #   # With an https redirect_url, tls.enabled false and no
+    #   # http.trusted_proxies, the login state cookie cannot use the
+    #   # __Host- prefix, so a sibling subdomain able to set cookies can
+    #   # log users in as an attacker (login CSRF). The server refuses to
+    #   # start in that case unless this is true; set trusted_proxies
+    #   # instead wherever possible.
+    #   # allow_unprefixed_state_cookie: false
 
 #=========================================================================
 # CONNECTION SECURITY
@@ -180,9 +257,17 @@ database:
   # Connection Pool Settings
   #-----------------------------------------------------------------------
 
-  # Maximum number of connections in the pool
-  # Default: 4
-  pool_max_conns: 4
+  # Maximum number of connections in the pool. Every API request that
+  # reads the datastore shares this pool, and a single dashboard page
+  # load issues more than twenty metrics requests at once. Allow for the
+  # collector's and alerter's own pools when sizing it against the
+  # datastore's max_connections. The datastore pool is sized at
+  # start-up, so a change to it takes effect on restart, not on a SIGHUP
+  # reload. An explicit value also caps each per-session pool the server
+  # opens to a monitored database, and pools opened after a SIGHUP
+  # reload use the reloaded value.
+  # Default: 20
+  pool_max_conns: 20
 
   # Minimum number of connections in the pool
   # Default: 0
@@ -191,6 +276,14 @@ database:
   # Maximum time a connection can be idle before being closed
   # Default: 30m
   pool_max_conn_idle_time: "30m"
+
+  # Server-side timeout for a single statement on a pool connection.
+  # PostgreSQL cancels the statement itself when it is exceeded, which
+  # releases the pool connection even if the server's own cancel
+  # request never arrives. Accepts any Go duration string; 0 disables
+  # the timeout, which is not recommended.
+  # Default: 30s
+  statement_timeout: "30s"
 
 #=========================================================================
 # EMBEDDING GENERATION
@@ -266,12 +359,14 @@ embedding:
   ollama_url: "http://localhost:11434"
 
 #=========================================================================
-# LLM CONFIGURATION (Web Client Chat Proxy)
+# LLM CONFIGURATION (Chat Proxy and AI Analysis)
 #=========================================================================
 #
 # The server proxies LLM requests for web clients and CLI tools that
-# don't have direct access to LLM APIs. API keys must be configured
-# for the chosen provider.
+# don't have direct access to LLM APIs. These settings also govern the
+# AI Overview and the server-info AI database analysis, which the
+# server generates itself. API keys must be configured for the chosen
+# provider.
 #
 llm:
   # LLM provider: "anthropic", "openai", "gemini", or "ollama"
@@ -279,8 +374,8 @@ llm:
   provider: "anthropic"
 
   # Model name
-  # Default: claude-sonnet-4-5
-  model: "claude-sonnet-4-5"
+  # Default: claude-sonnet-5
+  model: "claude-sonnet-5"
 
   #-----------------------------------------------------------------------
   # Anthropic Configuration
@@ -342,15 +437,24 @@ llm:
   # Generation Parameters
   #-----------------------------------------------------------------------
 
-  # Maximum tokens for LLM response
+  # Maximum number of output tokens for a single LLM response.
   # Default: 4096
+  #
+  # This budget applies to the chat proxy, the AI Overview, and the
+  # server-info AI database analysis. Reasoning models (for example
+  # Qwen3, DeepSeek-R1 distills, or gpt-oss served through llama.cpp)
+  # charge their thinking tokens against this same budget. A small
+  # budget is consumed entirely by the thinking block, so the model
+  # never emits any answer text. Raise this value if a summary or an
+  # analysis comes back empty; a value of 0 or less selects the
+  # default.
   max_tokens: 4096
 
   # Maximum iterations for agentic tool-calling loops
   # Default: 50
   max_iterations: 50
 
-  # Temperature for sampling
+  # Temperature for sampling; 0 requests the most deterministic output
   # Default: 0.7
   temperature: 0.7
 
@@ -467,11 +571,13 @@ builtins:
     query_metrics: true
     list_connections: true
 
-    # Datastore query tool (arbitrary SQL on the datastore)
+    # Datastore query tools (structured queries limited to the
+    # connections the caller can access; SQL is not accepted)
     query_datastore: true
+    describe_datastore: true
 
-    # Resource tools
-    read_resource: true
+    # The read_resource and test_query tools are always
+    # enabled and cannot be turned off here
 
     # Alert tools
     get_alert_rules: true
@@ -515,13 +621,11 @@ builtins:
 #
 
 #-------------------------------------------------------------------------
-# Development Configuration (local development, no TLS, no auth)
+# Development Configuration (local development, no TLS)
 #-------------------------------------------------------------------------
 # http:
 #   address: ":8080"
 #   tls:
-#     enabled: false
-#   auth:
 #     enabled: false
 # database:
 #   host: "localhost"
@@ -548,7 +652,6 @@ builtins:
 #     key_file: "/etc/ai-workbench/certs/server-key.pem"
 #   cors_origin: "https://workbench.example.com"
 #   auth:
-#     enabled: true
 #     max_failed_attempts_before_lockout: 5
 #     max_user_token_days: 90
 # database:
@@ -557,7 +660,7 @@ builtins:
 #   database: "ai_workbench_prod"
 #   user: "ai_workbench"
 #   sslmode: "verify-full"
-#   pool_max_conns: 10
+#   pool_max_conns: 20
 # embedding:
 #   enabled: true
 #   provider: "voyage"
@@ -565,7 +668,7 @@ builtins:
 #   voyage_api_key_file: "/etc/ai-workbench/voyage-api-key"
 # llm:
 #   provider: "anthropic"
-#   model: "claude-sonnet-4-5"
+#   model: "claude-sonnet-5"
 #   anthropic_api_key_file: "/etc/ai-workbench/anthropic-api-key"
 # secret_file: "/etc/ai-workbench/server.secret"
 # data_dir: "/var/lib/ai-workbench/data"

@@ -14,21 +14,47 @@
 
 import type { MetricDataPoint } from '../types';
 
+// TopQueriesSection is shared by the server and database dashboards
+// and now lives one level up, so its row type does too; re-exported
+// here because this module is the server dashboard's type barrel.
+export type { TopQueryRow } from '../types';
+
 /** Props shared by all server dashboard section components */
 export interface ServerSectionProps {
     connectionId: number;
     connectionName?: string;
 }
 
-/** Database summary card data from the performance-summary API */
+/**
+ * Cache hit ratio over the requested range, as sent by the
+ * performance-summary and database-summaries endpoints. The server
+ * computes it from per-interval deltas of the pg_stat_database block
+ * counters, differenced per database before summing. Both `current`
+ * and a bucket `value` are null when no block access happened in that
+ * interval; a null bucket is drawn as a gap rather than as 0%.
+ */
+export interface CacheHitRatioData {
+    current: number | null;
+    time_series: { time: string; value: number | null }[];
+}
+
+/**
+ * The part of a performance-summary response the server dashboard
+ * reads. The endpoint returns one entry per requested connection.
+ */
+export interface ServerCacheHitSummary {
+    connections?: {
+        connection_id: number;
+        cache_hit_ratio?: CacheHitRatioData;
+    }[];
+}
+
+/** Database summary card data from the database-summaries API */
 export interface DatabaseSummary {
     database_name: string;
     size_bytes: number;
     size_pretty: string;
-    cache_hit_ratio: {
-        current: number;
-        time_series: { time: string; value: number }[];
-    };
+    cache_hit_ratio: CacheHitRatioData;
     transaction_rate: number;
     dead_tuple_ratio: number;
     active_connections: number;
@@ -37,19 +63,6 @@ export interface DatabaseSummary {
 /** Performance summary response for a single server */
 export interface ServerPerformanceSummary {
     databases: DatabaseSummary[];
-}
-
-/** Top query row from pg_stat_statements */
-export interface TopQueryRow {
-    query: string;
-    queryid: string;
-    calls: number;
-    total_exec_time: number;
-    mean_exec_time: number;
-    rows: number;
-    shared_blks_hit: number;
-    shared_blks_read: number;
-    database_name: string;
 }
 
 /** The groupings supported by the connection-groups endpoint */
@@ -95,35 +108,55 @@ export const extractSparklineData = (
 
 /**
  * Check whether a metric series contains any non-zero data points.
- * Returns false when all values are zero, which typically indicates
- * the underlying extension is not installed.
+ * Returns false when all values are zero or null, which typically
+ * indicates the underlying extension is not installed.
  */
 export const hasNonZeroData = (
     data: { name: string; metric: string; data: MetricDataPoint[] }[] | null,
     metricName: string,
 ): boolean => {
     const points = extractSparklineData(data, metricName);
-    return points.some(p => p.value !== 0);
+    return points.some(p => p.value !== null && p.value !== 0);
 };
 
 /**
- * Extract the latest value from a metric series.
+ * Extract the latest value from a gauge-style metric series.
+ *
+ * The backend reports a bucket with no reading as `null`, so this
+ * scans backwards for the last non-null point and returns it, a
+ * genuine 0 included. Zeros used to be skipped when the backend filled
+ * empty buckets with 0, but a missing reading is now null, so a
+ * trailing 0 is a real reading and skipping it would show a stale
+ * value. An all-null or empty series yields null.
  */
 export const extractLatestValue = (
     data: { name: string; metric: string; data: MetricDataPoint[] }[] | null,
     metricName: string,
 ): number | null => {
     const points = extractSparklineData(data, metricName);
-    if (points.length === 0) { return null; }
-
-    // Scan backwards to find the last non-zero value. This handles
-    // the common case where the most recent time bucket has no data
-    // yet (empty buckets are filled with 0 by the backend).
     for (let i = points.length - 1; i >= 0; i--) {
-        if (points[i].value !== 0) {
-            return points[i].value;
-        }
+        if (points[i].value !== null) { return points[i].value; }
     }
+    return null;
+};
 
-    return 0;
+/**
+ * Extract the latest value from a rate metric series, such as any
+ * `_per_sec` metric. Like `extractLatestValue` this returns the final
+ * non-null data point whatever its value, because a genuine 0 means
+ * the underlying counter was idle over the bucket and must be shown
+ * as 0. Null buckets (a collector gap, a counter reset or a rate that
+ * cannot be derived) are skipped; an all-null series yields null. It
+ * is kept as a separate name so call sites say which kind of metric
+ * they read.
+ */
+export const extractLatestRate = (
+    data: { name: string; metric: string; data: MetricDataPoint[] }[] | null,
+    metricName: string,
+): number | null => {
+    const points = extractSparklineData(data, metricName);
+    for (let i = points.length - 1; i >= 0; i--) {
+        if (points[i].value !== null) { return points[i].value; }
+    }
+    return null;
 };

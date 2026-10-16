@@ -29,7 +29,7 @@ all:
 test:
 	@echo "Running tests for all sub-projects..."
 	@echo "Testing shared pkg module..."
-	@cd pkg && go test ./...
+	@cd pkg && $(MAKE) test
 	@echo "Testing collector..."
 	@cd collector && $(MAKE) test
 	@echo "Testing server..."
@@ -56,6 +56,8 @@ coverage:
 # Run linting for all sub-projects
 lint:
 	@echo "Running linter for all sub-projects..."
+	@echo "Linting shared pkg module..."
+	@cd pkg && $(MAKE) lint
 	@echo "Linting collector..."
 	@cd collector && $(MAKE) lint
 	@echo "Linting server..."
@@ -70,7 +72,7 @@ lint:
 test-all:
 	@echo "Running all tests for sub-projects..."
 	@echo "Running all tests for shared pkg module..."
-	@cd pkg && go test ./...
+	@cd pkg && $(MAKE) test-all
 	@echo "Running all tests for collector..."
 	@cd collector && $(MAKE) test-all
 	@echo "Running all tests for server..."

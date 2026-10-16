@@ -10,6 +10,8 @@
 package config
 
 import (
+	"errors"
+	"io/fs"
 	"math"
 	"os"
 	"path/filepath"
@@ -42,17 +44,23 @@ func TestNewConfig(t *testing.T) {
 		{"pool max connections", cfg.Pool.MaxConnections, 10},
 		{"pool max idle seconds", cfg.Pool.MaxIdleSeconds, 300},
 		{"threshold evaluation interval", cfg.Threshold.EvaluationIntervalSeconds, 60},
+		{"threshold trigger count", cfg.Threshold.TriggerCount, DefaultThresholdTriggerCount},
+		{"threshold clear count", cfg.Threshold.ClearCount, DefaultThresholdClearCount},
 		{"anomaly enabled", cfg.Anomaly.Enabled, true},
 		{"anomaly tier1 enabled", cfg.Anomaly.Tier1.Enabled, true},
 		{"anomaly tier1 sensitivity", cfg.Anomaly.Tier1.DefaultSensitivity, 3.0},
 		{"anomaly tier2 enabled", cfg.Anomaly.Tier2.Enabled, true},
 		{"anomaly tier3 enabled", cfg.Anomaly.Tier3.Enabled, true},
 		{"baselines refresh interval", cfg.Baselines.RefreshIntervalSeconds, 3600},
+		{"baselines lookback days", cfg.Baselines.LookbackDays, DefaultLookbackDays},
 		{"correlation window", cfg.Correlation.WindowSeconds, 120},
 		{"llm embedding provider", cfg.LLM.EmbeddingProvider, "ollama"},
 		{"llm reasoning provider", cfg.LLM.ReasoningProvider, "ollama"},
+		{"llm max tokens", cfg.LLM.MaxTokens, DefaultLLMMaxTokens},
 		{"gemini embedding model", cfg.LLM.Gemini.EmbeddingModel, "gemini-embedding-001"},
-		{"gemini reasoning model", cfg.LLM.Gemini.ReasoningModel, "gemini-2.5-flash"},
+		{"gemini reasoning model", cfg.LLM.Gemini.ReasoningModel, "gemini-3.8-flash"},
+		{"anthropic reasoning model", cfg.LLM.Anthropic.ReasoningModel, "claude-haiku-4-5"},
+		{"openai reasoning model", cfg.LLM.OpenAI.ReasoningModel, "gpt-6-luna"},
 	}
 
 	for _, tt := range tests {
@@ -103,6 +111,18 @@ func TestNewConfigAnomalyDefaults(t *testing.T) {
 			cfg.Anomaly.Tier1.Warmup.Daily.MinSamples, 3},
 		{"tier1 warmup.daily.min_span_hours",
 			cfg.Anomaly.Tier1.Warmup.Daily.MinSpanHours, 336},
+
+		// Anomaly alert recovery (issue #611).
+		{"tier1 clear_count",
+			cfg.Anomaly.Tier1.ClearCount, 3},
+
+		// Provider health system alert (issue #582).
+		{"provider_health.failure_threshold",
+			cfg.Anomaly.ProviderHealth.FailureThreshold, 3},
+		{"provider_health.failure_rate",
+			cfg.Anomaly.ProviderHealth.FailureRate, 0.3},
+		{"provider_health.failure_rate_window",
+			cfg.Anomaly.ProviderHealth.FailureRateWindow, 20},
 	}
 
 	for _, tt := range tests {
@@ -206,6 +226,38 @@ func TestConfigValidate(t *testing.T) {
 			expectError: true,
 			errorMsg:    "pool.max_connections must be greater than 0",
 		},
+		{
+			name: "threshold trigger count zero",
+			modifyFunc: func(c *Config) {
+				c.Threshold.TriggerCount = 0
+			},
+			expectError: true,
+			errorMsg:    "threshold.trigger_count must be at least 1",
+		},
+		{
+			name: "threshold trigger count negative",
+			modifyFunc: func(c *Config) {
+				c.Threshold.TriggerCount = -1
+			},
+			expectError: true,
+			errorMsg:    "threshold.trigger_count must be at least 1",
+		},
+		{
+			name: "threshold clear count zero",
+			modifyFunc: func(c *Config) {
+				c.Threshold.ClearCount = 0
+			},
+			expectError: true,
+			errorMsg:    "threshold.clear_count must be at least 1",
+		},
+		{
+			name: "threshold counts of one act on a single sample",
+			modifyFunc: func(c *Config) {
+				c.Threshold.TriggerCount = 1
+				c.Threshold.ClearCount = 1
+			},
+			expectError: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -289,6 +341,69 @@ func TestValidateRejectsBadAnomalyConfig(t *testing.T) {
 				c.Anomaly.Tier1.Warmup.All.MinSamples = -1
 			},
 			errorMsg: "anomaly.tier1.warmup thresholds must be >= 0",
+		},
+		{
+			name: "zero tier1 clear_count rejected",
+			modifyFunc: func(c *Config) {
+				c.Anomaly.Tier1.ClearCount = 0
+			},
+			errorMsg: "anomaly.tier1.clear_count must be at least 1",
+		},
+		{
+			name: "negative tier1 clear_count rejected",
+			modifyFunc: func(c *Config) {
+				c.Anomaly.Tier1.ClearCount = -1
+			},
+			errorMsg: "anomaly.tier1.clear_count must be at least 1",
+		},
+		{
+			name: "zero provider failure_threshold rejected",
+			modifyFunc: func(c *Config) {
+				c.Anomaly.ProviderHealth.FailureThreshold = 0
+			},
+			errorMsg: "anomaly.provider_health.failure_threshold must be at least 1",
+		},
+		{
+			name: "negative provider failure_threshold rejected",
+			modifyFunc: func(c *Config) {
+				c.Anomaly.ProviderHealth.FailureThreshold = -2
+			},
+			errorMsg: "anomaly.provider_health.failure_threshold must be at least 1",
+		},
+		{
+			name: "zero provider failure_rate rejected",
+			modifyFunc: func(c *Config) {
+				c.Anomaly.ProviderHealth.FailureRate = 0
+			},
+			errorMsg: "anomaly.provider_health.failure_rate must be greater than 0 and at most 1",
+		},
+		{
+			name: "provider failure_rate above 1 rejected",
+			modifyFunc: func(c *Config) {
+				c.Anomaly.ProviderHealth.FailureRate = 1.01
+			},
+			errorMsg: "anomaly.provider_health.failure_rate must be greater than 0 and at most 1",
+		},
+		{
+			name: "NaN provider failure_rate rejected",
+			modifyFunc: func(c *Config) {
+				c.Anomaly.ProviderHealth.FailureRate = math.NaN()
+			},
+			errorMsg: "anomaly.provider_health.failure_rate must be greater than 0 and at most 1",
+		},
+		{
+			name: "zero provider failure_rate_window rejected",
+			modifyFunc: func(c *Config) {
+				c.Anomaly.ProviderHealth.FailureRateWindow = 0
+			},
+			errorMsg: "anomaly.provider_health.failure_rate_window must be between 1 and 1000",
+		},
+		{
+			name: "provider failure_rate_window above the maximum rejected",
+			modifyFunc: func(c *Config) {
+				c.Anomaly.ProviderHealth.FailureRateWindow = MaxProviderFailureRateWindow + 1
+			},
+			errorMsg: "anomaly.provider_health.failure_rate_window must be between 1 and 1000",
 		},
 	}
 
@@ -500,6 +615,56 @@ func TestLoadAPIKeys(t *testing.T) {
 		}
 	})
 
+	t.Run("unreadable key file does not stop the others", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		keys := map[string]string{
+			"anthropic.key": "sk-ant-test-key\n",
+			"gemini.key":    "gemini-test-key\n",
+			"typesafe.key":  "typesafe-test-key\n",
+		}
+		for name, body := range keys {
+			if err := os.WriteFile(filepath.Join(tmpDir, name), []byte(body), 0600); err != nil {
+				t.Fatalf("failed to create key file: %v", err)
+			}
+		}
+
+		cfg := NewConfig()
+		cfg.LLM.OpenAI.APIKeyFile = filepath.Join(tmpDir, "missing-openai.key")
+		cfg.LLM.Anthropic.APIKeyFile = filepath.Join(tmpDir, "anthropic.key")
+		cfg.LLM.Voyage.APIKeyFile = filepath.Join(tmpDir, "missing-voyage.key")
+		cfg.LLM.Gemini.APIKeyFile = filepath.Join(tmpDir, "gemini.key")
+		cfg.LLM.TypeSafe.APIKeyFile = filepath.Join(tmpDir, "typesafe.key")
+
+		err := cfg.LoadAPIKeys()
+		if err == nil {
+			t.Fatal("expected an error for the missing key files, got nil")
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("error %v does not wrap fs.ErrNotExist", err)
+		}
+		joined, ok := err.(interface{ Unwrap() []error })
+		if !ok || len(joined.Unwrap()) != 2 {
+			t.Fatalf("error %v is not the two failures joined", err)
+		}
+		for _, want := range []string{"failed to read OpenAI API key", "failed to read Voyage API key"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error %q does not contain %q", err, want)
+			}
+		}
+		if got := cfg.GetAnthropicAPIKey(); got != "sk-ant-test-key" {
+			t.Errorf("Anthropic API key = %q", got)
+		}
+		if got := cfg.GetGeminiAPIKey(); got != "gemini-test-key" {
+			t.Errorf("Gemini API key = %q", got)
+		}
+		if got := cfg.GetTypeSafeAPIKey(); got != "typesafe-test-key" {
+			t.Errorf("TypeSafe API key = %q", got)
+		}
+		if cfg.GetOpenAIAPIKey() != "" || cfg.GetVoyageAPIKey() != "" {
+			t.Error("a key was set from a file that could not be read")
+		}
+	})
+
 	t.Run("no key files specified", func(t *testing.T) {
 		cfg := NewConfig()
 
@@ -591,6 +756,59 @@ threshold:
 		}
 	})
 
+	t.Run("threshold hysteresis counts round-trip", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		configFile := filepath.Join(tmpDir, "hysteresis.yaml")
+		yamlContent := `
+threshold:
+  trigger_count: 4
+  clear_count: 1
+`
+		if err := os.WriteFile(configFile, []byte(yamlContent), 0600); err != nil {
+			t.Fatalf("failed to create config file: %v", err)
+		}
+
+		cfg := NewConfig()
+		if err := cfg.LoadFromFile(configFile); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.Threshold.TriggerCount != 4 || cfg.Threshold.ClearCount != 1 {
+			t.Errorf("counts = %d/%d, expected 4/1",
+				cfg.Threshold.TriggerCount, cfg.Threshold.ClearCount)
+		}
+		// The interval was not set, so it keeps its default.
+		if cfg.Threshold.EvaluationIntervalSeconds != 60 {
+			t.Errorf("evaluation_interval = %d, expected the default 60",
+				cfg.Threshold.EvaluationIntervalSeconds)
+		}
+	})
+
+	t.Run("threshold hysteresis counts default when omitted", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		configFile := filepath.Join(tmpDir, "no-hysteresis.yaml")
+		yamlContent := `
+threshold:
+  evaluation_interval_seconds: 90
+`
+		if err := os.WriteFile(configFile, []byte(yamlContent), 0600); err != nil {
+			t.Fatalf("failed to create config file: %v", err)
+		}
+
+		cfg := NewConfig()
+		if err := cfg.LoadFromFile(configFile); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.Threshold.TriggerCount != DefaultThresholdTriggerCount ||
+			cfg.Threshold.ClearCount != DefaultThresholdClearCount {
+			t.Errorf("counts = %d/%d, expected the defaults %d/%d",
+				cfg.Threshold.TriggerCount, cfg.Threshold.ClearCount,
+				DefaultThresholdTriggerCount, DefaultThresholdClearCount)
+		}
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("unexpected validation error: %v", err)
+		}
+	})
+
 	t.Run("gemini embedding model round-trip", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		configFile := filepath.Join(tmpDir, "gemini.yaml")
@@ -617,6 +835,67 @@ llm:
 		if cfg.LLM.Gemini.ReasoningModel != "gemini-2.5-pro" {
 			t.Errorf("gemini reasoning_model = %q, expected %q",
 				cfg.LLM.Gemini.ReasoningModel, "gemini-2.5-pro")
+		}
+	})
+
+	t.Run("llm max_tokens round-trip and fallback", func(t *testing.T) {
+		// llm.max_tokens caps the tier-3 reasoning budget (issue #399).
+		// An explicit positive value must survive the merge; an omitted
+		// or non-positive value must resolve to DefaultLLMMaxTokens so a
+		// reasoning model always has room for both its thinking block and
+		// the verdict.
+		tests := []struct {
+			name string
+			yaml string
+			want int
+		}{
+			{
+				name: "explicit value is honored",
+				yaml: "llm:\n  max_tokens: 16384\n",
+				want: 16384,
+			},
+			{
+				name: "omitted key keeps the default",
+				yaml: "llm:\n  reasoning_provider: ollama\n",
+				want: DefaultLLMMaxTokens,
+			},
+			{
+				name: "explicit zero falls back to the default",
+				yaml: "llm:\n  max_tokens: 0\n",
+				want: DefaultLLMMaxTokens,
+			},
+			{
+				name: "negative value falls back to the default",
+				yaml: "llm:\n  max_tokens: -1\n",
+				want: DefaultLLMMaxTokens,
+			},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				configFile := filepath.Join(t.TempDir(), "llm.yaml")
+				if err := os.WriteFile(configFile, []byte(tt.yaml), 0644); err != nil {
+					t.Fatalf("failed to create config file: %v", err)
+				}
+
+				cfg := NewConfig()
+				if err := cfg.LoadFromFile(configFile); err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				if cfg.LLM.MaxTokens != tt.want {
+					t.Errorf("llm.max_tokens = %d, want %d", cfg.LLM.MaxTokens, tt.want)
+				}
+
+				// A bare Config (no NewConfig defaults) must reach the
+				// same value through LoadFromFile's defaulting pass.
+				bare := &Config{}
+				if err := bare.LoadFromFile(configFile); err != nil {
+					t.Fatalf("unexpected error loading into bare config: %v", err)
+				}
+				if bare.LLM.MaxTokens != tt.want {
+					t.Errorf("bare llm.max_tokens = %d, want %d", bare.LLM.MaxTokens, tt.want)
+				}
+			})
 		}
 	})
 
@@ -669,6 +948,10 @@ func TestExampleConfigsParse(t *testing.T) {
 		"anomaly.tier1.warmup.hourly.min_span_hours",
 		"anomaly.tier1.warmup.daily.min_samples",
 		"anomaly.tier1.warmup.daily.min_span_hours",
+		"anomaly.tier1.clear_count",
+		"anomaly.provider_health.failure_threshold",
+		"anomaly.provider_health.failure_rate",
+		"anomaly.provider_health.failure_rate_window",
 	}
 
 	for _, p := range paths {
@@ -700,9 +983,35 @@ func TestExampleConfigsParse(t *testing.T) {
 				t.Fatalf("failed to parse %s: %v", p, err)
 			}
 
+			if got := cfg.Anomaly.ProviderHealth.FailureThreshold; got != DefaultProviderFailureThreshold {
+				t.Errorf("%s: ProviderHealth.FailureThreshold = %d, want %d",
+					p, got, DefaultProviderFailureThreshold)
+			}
+			if got := cfg.Anomaly.ProviderHealth.FailureRate; got != DefaultProviderFailureRate {
+				t.Errorf("%s: ProviderHealth.FailureRate = %v, want %v",
+					p, got, DefaultProviderFailureRate)
+			}
+			if got := cfg.Anomaly.ProviderHealth.FailureRateWindow; got != DefaultProviderFailureRateWindow {
+				t.Errorf("%s: ProviderHealth.FailureRateWindow = %d, want %d",
+					p, got, DefaultProviderFailureRateWindow)
+			}
+			if got := cfg.Anomaly.Tier1.ClearCount; got != DefaultAnomalyClearCount {
+				t.Errorf("%s: Tier1.ClearCount = %d, want %d",
+					p, got, DefaultAnomalyClearCount)
+			}
 			if cfg.Anomaly.Tier1.MaxZScore != 100.0 {
 				t.Errorf("%s: MaxZScore = %v, want 100.0",
 					p, cfg.Anomaly.Tier1.MaxZScore)
+			}
+			// The walkthrough deliberately runs a one-day lookback
+			// (and shortens its warmup spans to match); the other
+			// files document the default.
+			if !strings.Contains(p, "walkthrough") && cfg.Baselines.LookbackDays != DefaultLookbackDays {
+				t.Errorf("%s: Baselines.LookbackDays = %d, want %d",
+					p, cfg.Baselines.LookbackDays, DefaultLookbackDays)
+			}
+			if got := cfg.UnreachableWarmupPeriods(); len(got) != 0 {
+				t.Errorf("%s: warmup tiers unreachable at its lookback: %v", p, got)
 			}
 			if cfg.Anomaly.Tier1.VarianceFloor.RelativePct != 0.05 {
 				t.Errorf("%s: VarianceFloor.RelativePct = %v, want 0.05",
@@ -724,17 +1033,24 @@ func TestExampleConfigsParse(t *testing.T) {
 				t.Errorf("%s: Warmup.Hourly.MinSamples = %d, want 5",
 					p, cfg.Anomaly.Tier1.Warmup.Hourly.MinSamples)
 			}
-			if cfg.Anomaly.Tier1.Warmup.Hourly.MinSpanHours != 120 {
-				t.Errorf("%s: Warmup.Hourly.MinSpanHours = %d, want 120",
-					p, cfg.Anomaly.Tier1.Warmup.Hourly.MinSpanHours)
-			}
 			if cfg.Anomaly.Tier1.Warmup.Daily.MinSamples != 3 {
 				t.Errorf("%s: Warmup.Daily.MinSamples = %d, want 3",
 					p, cfg.Anomaly.Tier1.Warmup.Daily.MinSamples)
 			}
-			if cfg.Anomaly.Tier1.Warmup.Daily.MinSpanHours != 336 {
-				t.Errorf("%s: Warmup.Daily.MinSpanHours = %d, want 336",
-					p, cfg.Anomaly.Tier1.Warmup.Daily.MinSpanHours)
+			// The walkthrough's one-day lookback cannot carry the
+			// default hourly and daily spans, so it shortens both to
+			// 24 hours; the reachability check above still applies.
+			wantHourlySpan, wantDailySpan := 120, 336
+			if strings.Contains(p, "walkthrough") {
+				wantHourlySpan, wantDailySpan = 24, 24
+			}
+			if cfg.Anomaly.Tier1.Warmup.Hourly.MinSpanHours != wantHourlySpan {
+				t.Errorf("%s: Warmup.Hourly.MinSpanHours = %d, want %d",
+					p, cfg.Anomaly.Tier1.Warmup.Hourly.MinSpanHours, wantHourlySpan)
+			}
+			if cfg.Anomaly.Tier1.Warmup.Daily.MinSpanHours != wantDailySpan {
+				t.Errorf("%s: Warmup.Daily.MinSpanHours = %d, want %d",
+					p, cfg.Anomaly.Tier1.Warmup.Daily.MinSpanHours, wantDailySpan)
 			}
 		})
 	}
@@ -965,4 +1281,62 @@ func TestResolveServerSecret(t *testing.T) {
 			t.Errorf("error = %q, expected it to mention /etc/pgedge/ai-dba-alerter.secret", msg)
 		}
 	})
+}
+
+// TestEffectiveLookbackDays checks the default substitution for a
+// non-positive baselines.lookback_days.
+func TestEffectiveLookbackDays(t *testing.T) {
+	cases := []struct {
+		name string
+		set  int
+		want int
+	}{
+		{"zero uses default", 0, DefaultLookbackDays},
+		{"negative uses default", -3, DefaultLookbackDays},
+		{"positive is kept", 30, 30},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := NewConfig()
+			cfg.Baselines.LookbackDays = tc.set
+			if got := cfg.EffectiveLookbackDays(); got != tc.want {
+				t.Errorf("EffectiveLookbackDays() = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestUnreachableWarmupPeriods checks that a warmup tier whose span is
+// longer than the lookback window is named, that a span equal to the
+// window is not (the calculator refreshes the row within a collection
+// interval of the boundary), and that a zero span is never reported.
+func TestUnreachableWarmupPeriods(t *testing.T) {
+	cases := []struct {
+		name     string
+		lookback int
+		all      int
+		hourly   int
+		daily    int
+		want     []string
+	}{
+		{"shipped defaults", DefaultLookbackDays, 24, 120, 336, nil},
+		{"the old 7-day lookback strands daily", 7, 24, 120, 336, []string{"daily"}},
+		{"span equal to the window is reachable", 14, 24, 120, 336, nil},
+		{"one hour over is not", 14, 24, 120, 337, []string{"daily"}},
+		{"several tiers in preference order", 1, 25, 120, 336, []string{"all", "hourly", "daily"}},
+		{"zero spans are never reported", 0, 0, 0, 0, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := NewConfig()
+			cfg.Baselines.LookbackDays = tc.lookback
+			cfg.Anomaly.Tier1.Warmup.All.MinSpanHours = tc.all
+			cfg.Anomaly.Tier1.Warmup.Hourly.MinSpanHours = tc.hourly
+			cfg.Anomaly.Tier1.Warmup.Daily.MinSpanHours = tc.daily
+			got := cfg.UnreachableWarmupPeriods()
+			if strings.Join(got, ",") != strings.Join(tc.want, ",") {
+				t.Errorf("UnreachableWarmupPeriods() = %v, want %v", got, tc.want)
+			}
+		})
+	}
 }

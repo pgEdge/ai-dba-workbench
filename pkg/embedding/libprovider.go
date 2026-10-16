@@ -13,7 +13,6 @@ package embedding
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/pgEdge/pgedge-go-llm-lib/llm"
 	_ "github.com/pgEdge/pgedge-go-llm-lib/llm/all" // register providers
@@ -28,43 +27,6 @@ var defaultModels = map[string]string{
 	"ollama": "nomic-embed-text",
 }
 
-// supportedEmbeddingModels is a fail-fast allow-list of known-good embedding
-// models per provider. Construction rejects any model not listed here, which
-// guards against silently producing vectors of an unexpected dimension that
-// would be incompatible with the stored knowledge-base vectors. Providers
-// absent from this map (for example Ollama, which discovers models at
-// runtime) are not validated and accept any model name.
-var supportedEmbeddingModels = map[string][]string{
-	"openai": {"text-embedding-3-large", "text-embedding-3-small", "text-embedding-ada-002"},
-	"voyage": {"voyage-3", "voyage-3-lite", "voyage-2", "voyage-2-lite"},
-	"gemini": {"gemini-embedding-001", "gemini-embedding-2", "gemini-embedding-2-preview"},
-}
-
-// providerDisplayNames maps an internal provider key to the human-readable
-// name used verbatim in the unsupported-model error messages.
-var providerDisplayNames = map[string]string{
-	"openai": "OpenAI",
-	"voyage": "Voyage AI",
-	"gemini": "Gemini",
-}
-
-// validateEmbeddingModel enforces the per-provider allow-list. It returns nil
-// for providers that are not in the allow-list (they accept any model) and
-// for models that appear in the provider's supported set.
-func validateEmbeddingModel(provider, model string) error {
-	models, guarded := supportedEmbeddingModels[provider]
-	if !guarded {
-		return nil
-	}
-	for _, m := range models {
-		if m == model {
-			return nil
-		}
-	}
-	return fmt.Errorf("unsupported %s model: %s (supported: %s)",
-		providerDisplayNames[provider], model, strings.Join(models, ", "))
-}
-
 // libProvider adapts an llm.Client to the embedding.Provider interface.
 type libProvider struct {
 	client llm.Client
@@ -77,12 +39,17 @@ func (p *libProvider) Embed(ctx context.Context, text string) ([]float64, error)
 func (p *libProvider) ModelName() string    { return p.client.Model() }
 func (p *libProvider) ProviderName() string { return p.client.Provider() }
 
+// newLibProvider builds an llm.Client for the given provider and wraps it as
+// an embedding.Provider. Model names are not validated here: whatever name the
+// caller supplies is passed straight through, so any model the provider
+// accepts works, including the names used by OpenAI-protocol-compatible local
+// model servers. An empty model falls back to the provider's entry in
+// defaultModels. A model whose embeddings are too wide for the knowledge-base
+// vector column is caught later, at store and query time, by PadTo, which
+// rejects anything wider than MaxDimensions.
 func newLibProvider(provider, apiKey, model, baseURL string) (Provider, error) {
 	if model == "" {
 		model = defaultModels[provider]
-	}
-	if err := validateEmbeddingModel(provider, model); err != nil {
-		return nil, err
 	}
 	client, err := llm.NewClient(provider, llm.Options{
 		APIKey:  apiKey,
@@ -115,8 +82,9 @@ func NewOllamaProvider(baseURL, model string) (Provider, error) {
 	return newLibProvider("ollama", "", model, baseURL)
 }
 
-// NewProvider builds an embedding provider from Config, preserving the
-// validation behaviour of the previous implementation.
+// NewProvider builds an embedding provider from Config. It checks that the
+// provider is one the Workbench knows about and that the credentials it needs
+// are present; the model name itself is not checked.
 func NewProvider(cfg Config) (Provider, error) {
 	switch cfg.Provider {
 	case "openai":

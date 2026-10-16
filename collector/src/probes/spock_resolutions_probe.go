@@ -26,8 +26,9 @@ import (
 // extension loaded without depending on cluster-level configuration.
 //
 // The probe short-circuits cleanly on databases where Spock is not
-// installed: Execute returns (nil, nil) so the scheduler treats the
-// collection as a successful no-op rather than retrying on every cycle.
+// installed: Execute returns ErrExtensionNotInstalled, which the
+// scheduler records as an absent extension rather than logging it as a
+// failure.
 type SpockResolutionsProbe struct {
 	BaseMetricsProbe
 }
@@ -88,17 +89,17 @@ func (p *SpockResolutionsProbe) GetQuery() string {
 
 // Execute runs the rolling-window query against the monitored database
 // after first verifying that the Spock extension is installed. On
-// databases without Spock the call returns (nil, nil) without touching
-// the catalog further; the CheckExtensionExists helper caches the
-// negative result so the existence query only hits the catalog once
-// per connection lifetime.
+// databases without Spock the call returns ErrExtensionNotInstalled
+// without querying spock.resolutions; with Spock installed it returns a
+// non-nil slice, empty when nothing fell inside the window, so that the
+// scheduler records a quiet Spock database as available.
 func (p *SpockResolutionsProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]any, error) {
 	exists, err := CheckExtensionExists(ctx, connectionName, monitoredConn, "spock")
 	if err != nil {
 		return nil, err
 	}
 	if !exists {
-		return nil, nil
+		return nil, ErrExtensionNotInstalled
 	}
 
 	query := WrapQuery(ProbeNameSpockResolutions, p.GetQuery())

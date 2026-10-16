@@ -124,7 +124,7 @@ func TestProbeConfigHandler_UpdateRequiresPermission(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	authStore, err := auth.NewAuthStore(tmpDir, 0, 0)
+	authStore, err := auth.NewAuthStore(tmpDir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
@@ -252,11 +252,11 @@ func TestProbeConfigHandler_ListProbeConfigs_InvalidConnectionID(t *testing.T) {
 }
 
 func TestProbeConfigHandler_UpdateProbeConfig_InvalidJSON(t *testing.T) {
-	rbac := auth.NewRBACChecker(nil)
+	rbac := newTestRBACChecker(t)
 	handler := NewProbeConfigHandler(nil, nil, rbac)
 
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/probe-configs/1",
-		bytes.NewBufferString("invalid json"))
+	req := withSuperuser(httptest.NewRequest(http.MethodPut, "/api/v1/probe-configs/1",
+		bytes.NewBufferString("invalid json")))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 

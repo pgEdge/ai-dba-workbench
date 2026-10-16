@@ -32,18 +32,40 @@ const (
 	// DerivedDeadTupleRatio is the dead-tuple percentage computed from the
 	// n_live_tup and n_dead_tup columns.
 	DerivedDeadTupleRatio
+	// DerivedDelta is the per-bucket increase of a cumulative counter
+	// column: the sum, over the samples falling in the bucket, of the
+	// counter's rise since the preceding sample. It answers "how many
+	// events happened during this bucket", which is what a dashboard bar
+	// chart wants, whereas a raw counter column would plot the
+	// ever-growing cumulative total instead.
+	DerivedDelta
+	// DerivedTimeShare is the share of wall-clock time a cumulative time
+	// counter (milliseconds, KindTimeCounter) advanced by between samples,
+	// on a 0-100 scale: 100 * delta_ms / (elapsed_sec * 1000). It is a rate
+	// with a scale factor and shares the _per_sec CTEs.
+	DerivedTimeShare
+	// DerivedSessionAverage is the average number of sessions that spent
+	// the interval in a state, from a session time counter (milliseconds
+	// summed across sessions, KindSessionTimeCounter): delta_ms /
+	// (elapsed_sec * 1000). It too is a scaled rate.
+	DerivedSessionAverage
 )
 
 // DerivedMetric describes a single computed metric to include in a query.
 type DerivedMetric struct {
 	// OutputName is the metric name returned to the client, e.g.
-	// "seq_scan_per_sec" or "dead_tuple_ratio".
+	// "seq_scan_per_sec", "seq_scan_delta" or "dead_tuple_ratio".
 	OutputName string
-	// BaseColumn is the source counter column for a per-second rate. It is
-	// empty for DerivedDeadTupleRatio.
+	// BaseColumn is the source counter column for a per-second rate or a
+	// per-bucket delta. It is empty for DerivedDeadTupleRatio.
 	BaseColumn string
 	// Kind selects how the metric is computed.
 	Kind DerivedMetricKind
+	// Unit is the unit reported on the resulting MetricSeries: "/s" for a
+	// rate, "%" for a time share or the dead-tuple ratio, "sessions" for
+	// a session average, and "" or "ms" for a delta depending on whether
+	// the base column counts events or milliseconds.
+	Unit string
 }
 
 // MetricFilters holds optional dimension filters for metric queries.
@@ -53,6 +75,10 @@ type MetricFilters struct {
 	SchemaName     string
 	TableName      string
 	IndexName      string
+	// MountPoint restricts results to a single filesystem mount, so that
+	// per-mount probes such as pg_sys_disk_info report one real volume
+	// rather than an average across every mounted filesystem.
+	MountPoint string
 	// QueryID restricts results to a single pg_stat_statements query
 	// identifier. Clients carry identifiers as decimal strings because
 	// they are 64-bit values JavaScript cannot represent exactly; the
@@ -77,10 +103,49 @@ var latestRowInternalColumns = map[string]bool{
 }
 
 // MetricDataPoint represents a single time-value pair in a metric series.
+// Value is nil for a bucket with no value: a gap in the data, a rejected
+// counter interval, or a gauge whose last observation is too old to carry
+// forward. It marshals as JSON null so every series in a response can hold
+// one point per bucket and the client can render the gap as a break.
 type MetricDataPoint struct {
 	Time  time.Time `json:"time"`
-	Value float64   `json:"value"`
+	Value *float64  `json:"value"`
+	// Filled marks a bucket whose value was carried forward from an
+	// earlier observation rather than aggregated from a sample of its
+	// own, so a chart can draw carried-forward stretches distinctly from
+	// observed ones. It is omitted from the JSON when false, which is
+	// every point holding a real sample and every point whose Value is
+	// nil.
+	Filled bool `json:"filled,omitempty"`
 }
+
+// MaxElapsedIntervals bounds the sample spacing a counter-derived metric
+// accepts, in probe collection intervals: an interval between consecutive
+// samples longer than MaxElapsedIntervals times the probe's interval is a
+// collection gap, and its rate or delta is NULL rather than an average
+// over the outage.
+const MaxElapsedIntervals = 3
+
+// MaxCarryIntervals bounds how long a gauge's last observation is carried
+// forward across sample-less buckets, in probe collection intervals. Beyond
+// it the buckets are NULL, so a probe that stopped reporting shows a break
+// rather than a flat line of its final reading.
+const MaxCarryIntervals = 3
+
+// fillPolicy selects how scanSeriesRows treats a bucket with no value.
+type fillPolicy int
+
+const (
+	// fillGauge carries the last observation forward whilst it is at most
+	// MaxCarryIntervals probe intervals old. Raw columns and the dead-tuple
+	// ratio read absolute values, so the last reading is still the best
+	// estimate for a short while.
+	fillGauge fillPolicy = iota
+	// fillNone never carries: a rate, delta, time share or session average
+	// describes one interval only, and repeating it would report events
+	// that did not happen.
+	fillNone
+)
 
 // MetricSeries represents a named series of metric data points.
 type MetricSeries struct {
@@ -141,6 +206,29 @@ type TimeWindow struct {
 	End   time.Time
 }
 
+// MinBucketWidth is the narrowest bucket a metrics query uses. A window
+// divided into more buckets than it holds seconds would otherwise ask
+// PostgreSQL for a sub-second date_bin interval, which reports far more
+// buckets than the collector can ever fill.
+const MinBucketWidth = time.Second
+
+// BucketWidth returns the width of a single bucket for a window divided
+// into buckets parts, floored at MinBucketWidth. It is the one place the
+// width is decided, so the SQL a query builder emits and the
+// bucket_seconds a response reports can never disagree. A bucket count
+// below one is treated as one, since a window is always at least one
+// bucket wide.
+func BucketWidth(timeStart, timeEnd time.Time, buckets int) time.Duration {
+	if buckets < 1 {
+		buckets = 1
+	}
+	width := timeEnd.Sub(timeStart) / time.Duration(buckets)
+	if width < MinBucketWidth {
+		width = MinBucketWidth
+	}
+	return width
+}
+
 // ResolveTimeWindow converts a time range selection into an absolute
 // window. Any timeRange other than "custom" delegates to ParseTimeRange
 // and ignores startISO and endISO; "custom" requires both timestamps in
@@ -187,15 +275,23 @@ func ResolveTimeWindow(timeRange, startISO, endISO string) (TimeWindow, error) {
 // startParam and endParam are the caller's query parameter names, so the
 // error message names the field the client actually sent.
 func ResolveCustomWindow(start, end time.Time, startParam, endParam string) (TimeWindow, error) {
+	return ResolveCustomWindowAt(start, end, time.Now(), startParam, endParam)
+}
+
+// ResolveCustomWindowAt applies the ResolveCustomWindow rules with now
+// standing in for the current time, so a caller that has already fixed
+// the current time (a pure query builder, a test) gets a deterministic
+// result.
+func ResolveCustomWindowAt(start, end, now time.Time, startParam, endParam string) (TimeWindow, error) {
 	start = start.UTC()
 	end = end.UTC()
+	now = now.UTC()
 
 	if !end.After(start) {
 		return TimeWindow{}, fmt.Errorf(
 			"invalid time range: %s must be after %s", endParam, startParam)
 	}
 
-	now := time.Now().UTC()
 	if !start.Before(now) {
 		return TimeWindow{}, fmt.Errorf(
 			"invalid %s: must not be in the future", startParam)
@@ -297,6 +393,16 @@ func IsMetricColumn(name, dataType string) bool {
 	return false
 }
 
+// textStatusColumns lists text-typed probe columns that hold a changing
+// status of an entity rather than part of its identity. A replication
+// slot's wal_status moves between reserved, extended, unreserved and
+// lost whilst the slot itself (keyed by slot_name) stays the same, so
+// keying on it would return a stale row for every status the slot held
+// in the window rather than only its current one.
+var textStatusColumns = map[string]bool{
+	"wal_status": true,
+}
+
 // IsEntityKeyColumn reports whether a probe output column is an
 // entity-key (identity/dimension) column that identifies a distinct
 // monitored entity, as opposed to a metric value or an internal
@@ -314,12 +420,13 @@ func IsMetricColumn(name, dataType string) bool {
 // rendered size and defeat any DISTINCT ON reduction. They are
 // therefore excluded here even though they are text. No genuine
 // identity column in the schema ends in "_pretty", so the exclusion
-// is a pure bug fix that changes nothing for existing probes.
+// is a pure bug fix that changes nothing for existing probes. The
+// columns named in textStatusColumns are excluded for the same reason.
 func IsEntityKeyColumn(name, dataType string) bool {
 	if latestRowInternalColumns[name] {
 		return false
 	}
-	if strings.HasSuffix(name, "_pretty") {
+	if strings.HasSuffix(name, "_pretty") || textStatusColumns[name] {
 		return false
 	}
 	switch dataType {
@@ -404,6 +511,53 @@ func GetProbeMetricColumns(ctx context.Context, pool *pgxpool.Pool, probeName st
 	return metricCols, colTypes, rows.Err()
 }
 
+// GetProbeEntityKeyColumns discovers the columns that identify a distinct
+// monitored entity within one sample of a probe table: the columns of the
+// table's primary key other than connection_id and collected_at, in key
+// order. Every metrics table declares such a key (interface_name for
+// pg_sys_network_info, datname for pg_stat_database, queryid and its
+// companions for pg_stat_statements), and a single-row probe whose key is
+// just (connection_id, collected_at) yields an empty slice. Text-typed
+// value columns such as pg_stat_wal's last_archived_wal are deliberately
+// not treated as entity keys, which is why this reads the constraint
+// rather than reusing EntityKeyColumns.
+func GetProbeEntityKeyColumns(ctx context.Context, pool *pgxpool.Pool, probeName string) ([]string, error) {
+	query := `
+        SELECT kcu.column_name
+        FROM information_schema.table_constraints tc
+        JOIN information_schema.key_column_usage kcu
+            ON kcu.constraint_schema = tc.constraint_schema
+            AND kcu.constraint_name = tc.constraint_name
+        WHERE tc.table_schema = 'metrics'
+            AND tc.table_name = $1
+            AND tc.constraint_type = 'PRIMARY KEY'
+        ORDER BY kcu.ordinal_position
+    `
+
+	rows, err := pool.Query(ctx, query, probeName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var keys []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		if name == "connection_id" || name == "collected_at" {
+			continue
+		}
+		if !IsValidIdentifier(name) {
+			return nil, fmt.Errorf("invalid entity key column %q", name)
+		}
+		keys = append(keys, name)
+	}
+
+	return keys, rows.Err()
+}
+
 // ResolveDatabaseColumn discovers which database-name column exists in a
 // probe table. It prefers "database_name" and falls back to "datname".
 // If neither column exists, it returns an empty string.
@@ -432,8 +586,31 @@ func ResolveDatabaseColumn(ctx context.Context, pool *pgxpool.Pool, probeName st
 	return col, nil
 }
 
+// validAggregations is the closed set of bucket aggregation functions the
+// query builders accept. Every one of them is interpolated into SQL as a
+// bare function name, so nothing outside this set may ever reach a
+// builder; IsValidAggregation is the single gate, and the builders apply
+// it themselves so they are safe whatever the caller validated.
+var validAggregations = map[string]bool{
+	"avg": true, "sum": true, "min": true, "max": true, "last": true,
+}
+
+// ValidAggregations returns the accepted aggregation names in the order
+// the API documents and reports them in.
+func ValidAggregations() []string {
+	return []string{"avg", "sum", "min", "max", "last"}
+}
+
+// IsValidAggregation reports whether agg names a bucket aggregation the
+// query builders accept. The comparison is exact: callers lower-case the
+// request parameter before validating it.
+func IsValidAggregation(agg string) bool {
+	return validAggregations[agg]
+}
+
 // GetAggSelectCols returns aggregated SELECT expressions with quoted
-// identifiers to prevent SQL injection.
+// identifiers to prevent SQL injection. The aggregation must already have
+// passed IsValidAggregation; the builders enforce that.
 func GetAggSelectCols(metricCols []string, aggregation string) []string {
 	var cols []string
 	for _, col := range metricCols {
@@ -477,15 +654,14 @@ func BuildMetricsQuery(
 	aggregation string,
 	filters MetricFilters,
 ) (string, []any, error) {
-	// Calculate bucket width
-	duration := timeEnd.Sub(timeStart)
-	bucketWidth := duration / time.Duration(buckets)
-	if bucketWidth < time.Second {
-		bucketWidth = time.Second
+	if !IsValidAggregation(aggregation) {
+		return "", nil, fmt.Errorf("invalid aggregation %q", aggregation)
 	}
 
+	bucketWidth := BucketWidth(timeStart, timeEnd, buckets)
+
 	whereSQL, queryArgs := metricQueryBase(
-		connectionID, timeStart, timeEnd, bucketWidth, filters)
+		probeName, connectionID, timeStart, timeEnd, bucketWidth, filters)
 
 	query := fmt.Sprintf(`
         WITH data_buckets AS (
@@ -516,49 +692,161 @@ func BuildMetricsQuery(
 	return query, queryArgs, nil
 }
 
+// lookbackBound is the SQL interval expression bounding how far before the
+// window start the rate/delta lookback (metricQueryParts.lookbackWhere) may
+// reach for a predecessor sample. It is expressed in the query's own bucket
+// width ($1) so it needs no extra argument, and it is the larger of:
+//
+//   - Three bucket widths. The stale-predecessor harm scales with the
+//     bucket: a borrowed sample k widths back can inflate the first bucket
+//     to k times a normal one, so k is kept small. One width is too few,
+//     because a probe interval only slightly longer than the bucket would
+//     never resolve and the first bucket would always under-report.
+//   - A 30-minute floor. At the 150-bucket default a 1h window has 24s
+//     buckets, and the coarsest counter probes charted (pg_stat_wal,
+//     pg_stat_checkpointer, pg_sys_network_info) run every 600s, so three
+//     widths alone would never reach their predecessor on the short
+//     windows. On those windows the sample-less buckets already read zero
+//     (the "comb"), so a first bucket carrying up to 30 minutes of
+//     increase is at worst three teeth tall rather than a spike.
+//
+// At the 7d and 30d presets the bucket term dominates (67 minutes and 4.8
+// hours a bucket), so a collector outage of a day or more falls outside
+// the bound and the window starts from zero instead of a spike.
+const lookbackBound = "GREATEST($1::interval * 3, INTERVAL '30 minutes')"
+
+// metricQueryParts holds the decomposed pieces of the shared metric query
+// WHERE clause, so that a caller needing a variant of it (notably the
+// rate/delta lookback below, which replaces the lower time bound) can
+// reassemble the clauses instead of string-editing a finished clause.
+type metricQueryParts struct {
+	// filterClauses holds only the dimension filters (database, schema,
+	// table, index, queryid), each already bound to its $N placeholder.
+	filterClauses []string
+	// args is the full ordered argument list: bucket interval, connection
+	// ID, start time, end time, then one value per filter clause.
+	args []any
+}
+
+// where returns the standard WHERE clause: the connection, both time
+// bounds, and every dimension filter.
+func (p metricQueryParts) where() string {
+	clauses := make([]string, 0, len(p.filterClauses)+3)
+	clauses = append(clauses,
+		"connection_id = $2",
+		"collected_at >= $3",
+		"collected_at <= $4")
+	clauses = append(clauses, p.filterClauses...)
+	return strings.Join(clauses, " AND ")
+}
+
+// lookbackWhere returns the WHERE clause used by the rate/delta sample
+// query. It is the standard clause with the lower time bound widened to
+// also admit the latest sample taken strictly before the window start that
+// matches the same connection and dimension filters.
+//
+// That extra sample exists only to feed the LAG: without it the first
+// in-window sample has no predecessor, so any counter increase between the
+// last pre-window sample and it is lost and the first bucket under-reports
+// (a NULL rate, and a zero delta). The rate_samples CTE therefore drops
+// rows before the window start again after the LAG has been computed, so
+// the borrowed sample never becomes a bucket of its own.
+//
+// COALESCE falls back to the window start when no earlier sample exists
+// within reach, which reduces the clause to the standard lower bound and
+// leaves the behavior of a window with no history exactly as it was: the
+// first in-window sample then has no LAG and contributes a zero delta and
+// no rate.
+//
+// The search for that earlier sample is bounded below by
+// lookbackBound, so a predecessor left behind by a long collection gap is
+// not borrowed. Without the bound, a window opened after the collector had
+// been down for days would attribute every commit of those days to its
+// first bucket, and autoscale would flatten the real buckets onto the axis;
+// the per-second form is damped by dividing by the true elapsed time but
+// still presents a multi-day average as the first bucket's rate. Beyond
+// the bound the first bucket under-reports by one probe interval instead,
+// which is the lesser harm. The bound also confines the MAX scan to at
+// most a couple of partitions of the probe table.
+func (p metricQueryParts) lookbackWhere(probeName string) string {
+	priorClauses := make([]string, 0, len(p.filterClauses)+3)
+	priorClauses = append(priorClauses,
+		"connection_id = $2",
+		"collected_at < $3",
+		"collected_at >= $3 - "+lookbackBound)
+	priorClauses = append(priorClauses, p.filterClauses...)
+
+	lowerBound := fmt.Sprintf(
+		"collected_at >= COALESCE((SELECT MAX(collected_at) "+
+			"FROM metrics.%s WHERE %s), $3)",
+		QuoteIdentifier(probeName), strings.Join(priorClauses, " AND "))
+
+	clauses := make([]string, 0, len(p.filterClauses)+3)
+	clauses = append(clauses,
+		"connection_id = $2",
+		lowerBound,
+		"collected_at <= $4")
+	clauses = append(clauses, p.filterClauses...)
+	return strings.Join(clauses, " AND ")
+}
+
 // metricQueryBase builds the shared WHERE clause and the leading query
 // arguments used by both the raw-column and derived-metric query builders.
 // The returned args are, in order: the bucket interval string, the
 // connection ID, the start time, the end time, and then any filter values.
 // The WHERE clause references $2, $3, $4 and any filter placeholders from $5.
 func metricQueryBase(
+	probeName string,
 	connectionID int,
 	timeStart, timeEnd time.Time,
 	bucketWidth time.Duration,
 	filters MetricFilters,
 ) (string, []any) {
-	queryArgs := []any{
-		fmt.Sprintf("%d seconds", int(bucketWidth.Seconds())),
-		connectionID,
-		timeStart,
-		timeEnd,
+	parts := metricQueryClauses(
+		probeName, connectionID, timeStart, timeEnd, bucketWidth, filters)
+	return parts.where(), parts.args
+}
+
+// metricQueryClauses builds the decomposed WHERE clause pieces and the
+// leading query arguments shared by every metrics query builder. The probe
+// name selects the registry's entity exclusion for the probe, if any, which
+// joins the filter clauses so that the raw, derived and lookback queries all
+// leave the excluded entities out.
+func metricQueryClauses(
+	probeName string,
+	connectionID int,
+	timeStart, timeEnd time.Time,
+	bucketWidth time.Duration,
+	filters MetricFilters,
+) metricQueryParts {
+	parts := metricQueryParts{
+		args: []any{
+			fmt.Sprintf("%d seconds", int(bucketWidth.Seconds())),
+			connectionID,
+			timeStart,
+			timeEnd,
+		},
 	}
 	argNum := 5
 
-	whereClauses := []string{
-		"connection_id = $2",
-		"collected_at >= $3",
-		"collected_at <= $4",
-	}
-
 	if filters.DatabaseName != "" && filters.DatabaseColumn != "" {
-		whereClauses = append(whereClauses,
+		parts.filterClauses = append(parts.filterClauses,
 			fmt.Sprintf("%s = $%d", QuoteIdentifier(filters.DatabaseColumn), argNum))
-		queryArgs = append(queryArgs, filters.DatabaseName)
+		parts.args = append(parts.args, filters.DatabaseName)
 		argNum++
 	}
 
 	if filters.SchemaName != "" {
-		whereClauses = append(whereClauses,
+		parts.filterClauses = append(parts.filterClauses,
 			fmt.Sprintf("schemaname = $%d", argNum))
-		queryArgs = append(queryArgs, filters.SchemaName)
+		parts.args = append(parts.args, filters.SchemaName)
 		argNum++
 	}
 
 	if filters.TableName != "" {
-		whereClauses = append(whereClauses,
+		parts.filterClauses = append(parts.filterClauses,
 			fmt.Sprintf("relname = $%d", argNum))
-		queryArgs = append(queryArgs, filters.TableName)
+		parts.args = append(parts.args, filters.TableName)
 		argNum++
 	}
 
@@ -568,9 +856,21 @@ func metricQueryBase(
 	// execution time, exactly as an unsupported schemaname/relname filter
 	// would. This keeps the validation semantics identical across dimensions.
 	if filters.IndexName != "" {
-		whereClauses = append(whereClauses,
+		parts.filterClauses = append(parts.filterClauses,
 			fmt.Sprintf("indexrelname = $%d", argNum))
-		queryArgs = append(queryArgs, filters.IndexName)
+		parts.args = append(parts.args, filters.IndexName)
+		argNum++
+	}
+
+	// MountPoint filters on mount_point, mirroring the dimension filters
+	// above. Like those, it applies no probe-column-existence check: if the
+	// probe table has no mount_point column the query simply fails at
+	// execution time, keeping the validation semantics identical across
+	// dimensions.
+	if filters.MountPoint != "" {
+		parts.filterClauses = append(parts.filterClauses,
+			fmt.Sprintf("mount_point = $%d", argNum))
+		parts.args = append(parts.args, filters.MountPoint)
 		argNum++
 	}
 
@@ -578,14 +878,41 @@ func metricQueryBase(
 	// as a bigint so the comparison can use the queryid index. Like the
 	// dimension filters above it applies no probe-column-existence check.
 	if filters.QueryID != nil {
-		whereClauses = append(whereClauses,
+		parts.filterClauses = append(parts.filterClauses,
 			fmt.Sprintf("queryid = $%d", argNum))
-		queryArgs = append(queryArgs, *filters.QueryID)
+		parts.args = append(parts.args, *filters.QueryID)
 		// No argNum++ here: QueryID is the last filter. A new filter
-		// added below must add argNum++ above first.
+		// added below must add argNum++ above first. Note that
+		// BuildDerivedMetricsQuery appends one more argument after the
+		// filter values, at position len(parts.args)+1.
 	}
 
-	return strings.Join(whereClauses, " AND "), queryArgs
+	// The registry's exclusion is a fixed fragment with no bound value
+	// (for example interface_name NOT IN ('lo', 'lo0')), so it adds no
+	// argument and leaves the $N layout untouched.
+	if excl := ProbeEntityExclusion(probeName); excl != "" {
+		parts.filterClauses = append(parts.filterClauses, excl)
+	}
+
+	return parts
+}
+
+// rateSampleExpr returns the per-sample value expression for the rate-like
+// derived kinds, in terms of the total_<idx>/prev_<idx> counter pair and
+// elapsed_sec of the rate_samples CTE. A per-second rate divides the
+// counter increase by the elapsed seconds; a time share expresses a
+// millisecond increase as a percentage of the elapsed wall-clock time; a
+// session average expresses a millisecond increase summed across sessions
+// as the number of sessions that would account for it.
+func rateSampleExpr(kind DerivedMetricKind, idx int) string {
+	delta := fmt.Sprintf("(total_%d - prev_%d)::float", idx, idx)
+	switch kind {
+	case DerivedTimeShare:
+		return "100.0 * " + delta + " / (elapsed_sec * 1000.0)"
+	case DerivedSessionAverage:
+		return delta + " / (elapsed_sec * 1000.0)"
+	}
+	return delta + " / elapsed_sec"
 }
 
 // rateAggExpr builds the bucket-level aggregation expression for one
@@ -604,6 +931,17 @@ func rateAggExpr(aggregation string, idx int, outputName string) string {
 	return fmt.Sprintf("%s(rate_%d) AS %s", aggregation, idx, alias)
 }
 
+// deltaAggExpr builds the bucket-level aggregation expression for one
+// per-bucket delta column. The inner per-sample delta is exposed as
+// delta_<idx> in the rate_samples CTE and is already zero for a counter
+// reset or for a sample with no predecessor at all, so SUM is the only
+// meaningful bucket aggregate and the requested aggregation is ignored:
+// averaging or taking the last of a set of increments would under-report
+// the events that actually occurred in the bucket.
+func deltaAggExpr(idx int, outputName string) string {
+	return fmt.Sprintf("SUM(delta_%d) AS %s", idx, QuoteIdentifier(outputName))
+}
+
 // ratioTupleExpr builds the bucket-level aggregation expression for one
 // tuple-count column feeding the dead-tuple ratio. Only "last" needs
 // distinct handling, mirroring rateAggExpr: it picks the latest sample's
@@ -619,38 +957,95 @@ func ratioTupleExpr(aggregation, column string) string {
 }
 
 // BuildDerivedMetricsQuery constructs a time-bucketed SQL query for the
-// derived metrics (per-second rates and the dead-tuple ratio) of a probe.
-// It shares the same bucketing, gap-filling (generate_series), filtering,
-// and argument layout as BuildMetricsQuery, so the caller can scan and apply
-// LOCF identically. Output columns follow the order of the derived slice.
+// derived metrics (per-second rates, per-bucket counter deltas, and the
+// dead-tuple ratio) of a probe. It shares the same bucketing, gap-filling
+// (generate_series), filtering, and argument layout as BuildMetricsQuery, so
+// the caller can scan and apply LOCF identically. Output columns follow the
+// order of the derived slice.
+//
+// Rates and deltas are computed from the same LAG over consecutive samples
+// and therefore share one rate_samples/rate_buckets pair, so both kinds may
+// be requested together for the same or for different base columns.
+//
+// entityCols names the probe's entity-key columns (the primary key less
+// connection_id and collected_at, see GetProbeEntityKeyColumns), such as
+// interface_name for pg_sys_network_info or datname for pg_stat_database.
+// The LAG is partitioned by them, so each entity's counter is differenced
+// against its own previous reading and only the resulting per-entity
+// changes are summed. Summing the counters first and differencing the sum
+// would be wrong whenever the entity set changes between samples: an
+// interface that disappears drops the sum by its lifetime total, which the
+// reset guard turns into a lost sample, and one that appears folds its
+// lifetime total into a single interval. With the partition a vanished
+// entity simply stops contributing and a new one contributes nothing until
+// its second sample. A single-row probe has no entity columns and reduces
+// to the unpartitioned form.
+//
+// The sample query feeding that LAG reaches one sample back beyond the
+// window start (see metricQueryParts.lookbackWhere), so the counter
+// increase between the last sample before the window and the first sample
+// inside it lands in the first bucket rather than being dropped; the
+// borrowed sample is excluded from rate_samples' output and never becomes
+// a bucket. A delta bucket with no sample of its own reads 0 rather than
+// NULL when an accepted sample interval spans it: it saw no counter
+// reading, and its events are counted by the next sample's delta, so
+// carrying the previous bucket's value forward (which the caller's LOCF
+// fill would do for a NULL) would double count them. Where no accepted
+// interval spans the bucket, nothing counts those events anywhere, so the
+// bucket is NULL: before the probe's first sample, after its last, and
+// through a collection outage, where the delta breaks exactly as the rate
+// does. A connection whose probe has never run, is disabled or is failing
+// therefore yields every bucket NULL and the dashboard shows its no-data
+// state instead of a confident flat zero.
+//
+// Two guards apply to every counter-derived sample (issue #402). A sample
+// whose spacing from its predecessor exceeds maxElapsed (the caller passes
+// MaxElapsedIntervals probe intervals) is a collection gap: its rate and
+// its delta are NULL, and a bucket holding only such samples reports NULL
+// rather than 0 through the gap_<i> flag, so the chart shows a break where
+// the collector was down instead of averaging the outage into one bar.
+// And when the registry names a stats_reset marker for the base column
+// (ResetColumnFor) and allCols shows the table has it, the marker is
+// carried alongside each counter and a change in it between consecutive
+// samples invalidates the interval: the rate, time share and session
+// average become NULL and the delta contributes 0, exactly as a negative
+// delta does. A marker absent from allCols (a collector schema predating
+// the column) is dropped silently, so the negative-delta guard alone
+// applies as before.
 func BuildDerivedMetricsQuery(
 	probeName string,
 	derived []DerivedMetric,
+	entityCols []string,
+	allCols []string,
 	connectionID int,
 	timeStart, timeEnd time.Time,
 	buckets int,
 	aggregation string,
 	filters MetricFilters,
+	maxElapsed time.Duration,
 ) (string, []any, error) {
 	if len(derived) == 0 {
 		return "", nil, fmt.Errorf("no derived metrics requested")
 	}
-
-	duration := timeEnd.Sub(timeStart)
-	bucketWidth := duration / time.Duration(buckets)
-	if bucketWidth < time.Second {
-		bucketWidth = time.Second
+	if !IsValidAggregation(aggregation) {
+		return "", nil, fmt.Errorf("invalid aggregation %q", aggregation)
 	}
 
-	whereSQL, queryArgs := metricQueryBase(
-		connectionID, timeStart, timeEnd, bucketWidth, filters)
+	bucketWidth := BucketWidth(timeStart, timeEnd, buckets)
 
-	var perSec []DerivedMetric
+	// counters holds every metric derived from the sample-to-sample change
+	// of a cumulative counter column, whichever kind it is; they share the
+	// rate_samples and rate_buckets CTEs below.
+	var counters []DerivedMetric
 	hasRatio := false
+	hasDelta := false
 	for _, d := range derived {
+		if d.Kind == DerivedDelta {
+			hasDelta = true
+		}
 		switch d.Kind {
-		case DerivedPerSec:
-			perSec = append(perSec, d)
+		case DerivedPerSec, DerivedDelta, DerivedTimeShare, DerivedSessionAverage:
+			counters = append(counters, d)
 		case DerivedDeadTupleRatio:
 			hasRatio = true
 		default:
@@ -659,32 +1054,143 @@ func BuildDerivedMetricsQuery(
 		}
 	}
 
+	parts := metricQueryClauses(
+		probeName, connectionID, timeStart, timeEnd, bucketWidth, filters)
+	whereSQL := parts.where()
+	queryArgs := append([]any{}, parts.args...)
+	// The gap bound is the one argument after the filter values; the
+	// filter placeholders end at len(parts.args), so it takes the next. It
+	// is only bound when a counter-derived metric references it, since
+	// PostgreSQL rejects an argument no placeholder uses.
+	maxElapsedArg := fmt.Sprintf("$%d::float8", len(parts.args)+1)
+	if len(counters) > 0 {
+		queryArgs = append(queryArgs, maxElapsed.Seconds())
+	}
+
+	hasColumn := make(map[string]bool, len(allCols))
+	for _, c := range allCols {
+		hasColumn[c] = true
+	}
+
 	var ctes []string
 	var joins []string
 
-	if len(perSec) > 0 {
+	if len(counters) > 0 {
+		// Every entity-key column is validated against information_schema
+		// by GetProbeEntityKeyColumns and quoted here; nothing caller
+		// supplied reaches this list.
+		var entityKeys []string
+		for _, col := range entityCols {
+			entityKeys = append(entityKeys, QuoteIdentifier(col))
+		}
+		// With entity keys the LAG runs per entity and the inner GROUP BY
+		// keeps one row per entity and sample; without them both collapse
+		// to the single-row form.
+		partition := ""
+		groupBy := "collected_at"
+		if len(entityKeys) > 0 {
+			partition = "PARTITION BY " + strings.Join(entityKeys, ", ") + " "
+			groupBy = "collected_at, " + strings.Join(entityKeys, ", ")
+		}
+
 		var innerCols []string
 		var sampleCols []string
+		var entitySumCols []string
 		var bucketCols []string
-		for i, d := range perSec {
+		// A delta zero-fills a sample-less bucket only when an accepted
+		// interval spans it, which needs each sample's predecessor time
+		// carried up to rate_samples; nothing else reads it.
+		if hasDelta {
+			innerCols = append(innerCols, fmt.Sprintf(
+				"LAG(collected_at) OVER (%sORDER BY collected_at) "+
+					"AS prev_collected_at", partition))
+			sampleCols = append(sampleCols, "prev_collected_at")
+			entitySumCols = append(entitySumCols,
+				"MAX(prev_collected_at) AS prev_collected_at")
+		}
+		for i, d := range counters {
 			qb := QuoteIdentifier(d.BaseColumn)
 			innerCols = append(innerCols,
 				fmt.Sprintf("SUM(%s) AS total_%d", qb, i),
 				fmt.Sprintf(
-					"LAG(SUM(%s)) OVER (ORDER BY collected_at) AS prev_%d",
-					qb, i))
-			// Discard negative deltas (a counter reset from pg_stat_reset()
-			// or a server restart) and non-positive elapsed times (duplicate
-			// or out-of-order samples) so neither yields a bogus rate; such
-			// rows become NULL and are dropped by the bucket aggregate.
+					"LAG(SUM(%s)) OVER (%sORDER BY collected_at) AS prev_%d",
+					qb, partition, i))
+
+			// The reset guard: a stats_reset marker that differs between
+			// a sample and its predecessor means the counter was reset in
+			// between, even when it happens to read higher than before.
+			// IS NOT DISTINCT FROM keeps an interval whose marker is NULL
+			// on both sides (pg_stat_wal on PostgreSQL 13, say) valid.
+			// The marker is only referenced when the table has it, so a
+			// collector schema without the column still works.
+			resetGuard := ""
+			if resetCol := ResetColumnFor(probeName, d.BaseColumn); resetCol != "" &&
+				hasColumn[resetCol] {
+				qr := QuoteIdentifier(resetCol)
+				innerCols = append(innerCols,
+					fmt.Sprintf("MAX(%s) AS reset_%d", qr, i),
+					fmt.Sprintf(
+						"LAG(MAX(%s)) OVER (%sORDER BY collected_at) AS prev_reset_%d",
+						qr, partition, i))
+				resetGuard = fmt.Sprintf(
+					" AND reset_%d IS NOT DISTINCT FROM prev_reset_%d", i, i)
+			}
+
+			if d.Kind == DerivedDelta {
+				// A missing LAG (only the very first sample the probe ever
+				// recorded for this connection and filter set, since the
+				// window borrows one earlier sample) contributes zero, so
+				// the bucket SUM stays defined and the first bucket of a
+				// probe's history reads 0 rather than as a gap. An
+				// interval longer than the gap bound is NULL: the events
+				// in it are unknown and the bucket must not read 0. A
+				// negative delta or a reset-marker change (a counter reset
+				// from pg_stat_reset() or a server restart) contributes
+				// nothing, matching the rate guard below.
+				sampleCols = append(sampleCols, fmt.Sprintf(
+					"CASE WHEN prev_%d IS NULL THEN 0 "+
+						"WHEN elapsed_sec > %s THEN NULL "+
+						"WHEN (total_%d - prev_%d) >= 0%s "+
+						"THEN (total_%d - prev_%d) ELSE 0 "+
+						"END AS delta_%d",
+					i, maxElapsedArg, i, i, resetGuard, i, i, i))
+				entitySumCols = append(entitySumCols,
+					fmt.Sprintf("SUM(delta_%d) AS delta_%d", i, i))
+				bucketCols = append(bucketCols,
+					deltaAggExpr(i, d.OutputName),
+					// True when the bucket holds samples but every one of
+					// them was rejected: the bucket is a gap, not a zero.
+					fmt.Sprintf("COUNT(delta_%d) = 0 AS gap_%d", i, i))
+				continue
+			}
+			// Discard negative deltas and reset-marker changes (a counter
+			// reset from pg_stat_reset() or a server restart), non-positive
+			// elapsed times (duplicate or out-of-order samples) and
+			// intervals longer than the gap bound (a collection outage) so
+			// none yields a bogus rate; such rows become NULL and are
+			// dropped by the bucket aggregate. The time share and session
+			// average are the same rate with a scale factor, so they share
+			// the guard and the rate_i slot.
 			sampleCols = append(sampleCols, fmt.Sprintf(
 				"CASE WHEN (total_%d - prev_%d) >= 0 AND elapsed_sec > 0 "+
-					"THEN (total_%d - prev_%d)::float / elapsed_sec "+
-					"END AS rate_%d", i, i, i, i, i))
+					"AND elapsed_sec <= %s%s "+
+					"THEN %s END AS rate_%d",
+				i, i, maxElapsedArg, resetGuard, rateSampleExpr(d.Kind, i), i))
+			// SUM skips a NULL per-entity rate, so one entity's reset
+			// drops only its own share of that sample's total rate; the
+			// sample is NULL only when every entity was discarded.
+			entitySumCols = append(entitySumCols,
+				fmt.Sprintf("SUM(rate_%d) AS rate_%d", i, i))
 			bucketCols = append(bucketCols,
 				rateAggExpr(aggregation, i, d.OutputName))
 		}
 
+		// The innermost query reads one extra sample from before the window
+		// (see lookbackWhere) purely so the first in-window sample has a LAG
+		// to subtract from; the middle WHERE then drops it again, so it
+		// contributes its counter reading without becoming a bucket. The
+		// per-entity changes are then summed per sample time so the bucket
+		// stage sees one row per sample whatever the entity count.
 		ctes = append(ctes, fmt.Sprintf(`
         rate_samples AS (
             SELECT
@@ -693,19 +1199,30 @@ func BuildDerivedMetricsQuery(
             FROM (
                 SELECT
                     collected_at,
-                    %s,
-                    EXTRACT(EPOCH FROM collected_at
-                        - LAG(collected_at) OVER (ORDER BY collected_at)
-                    ) AS elapsed_sec
-                FROM metrics.%s
-                WHERE %s
-                GROUP BY collected_at
-            ) samples
+                    %s
+                FROM (
+                    SELECT
+                        %s,
+                        %s,
+                        EXTRACT(EPOCH FROM collected_at
+                            - LAG(collected_at) OVER (%sORDER BY collected_at)
+                        ) AS elapsed_sec
+                    FROM metrics.%s
+                    WHERE %s
+                    GROUP BY %s
+                ) samples
+                WHERE collected_at >= $3
+            ) entity_samples
+            GROUP BY collected_at
         )`,
-			strings.Join(sampleCols, ",\n                "),
-			strings.Join(innerCols, ",\n                    "),
+			strings.Join(entitySumCols, ",\n                "),
+			strings.Join(sampleCols, ",\n                    "),
+			groupBy,
+			strings.Join(innerCols, ",\n                        "),
+			partition,
 			QuoteIdentifier(probeName),
-			whereSQL,
+			parts.lookbackWhere(probeName),
+			groupBy,
 		))
 
 		ctes = append(ctes, fmt.Sprintf(`
@@ -750,12 +1267,55 @@ func BuildDerivedMetricsQuery(
 			"LEFT JOIN ratio_buckets ON all_buckets.bucket_time = ratio_buckets.bucket_time")
 	}
 
+	// counterIndex maps a counter-derived output back to its slot in the
+	// rate_samples/rate_buckets CTEs, so the delta select can name its
+	// gap flag.
+	counterIndex := make(map[string]int, len(counters))
+	for i, d := range counters {
+		counterIndex[d.OutputName] = i
+	}
+
 	var selectCols []string
 	for _, d := range derived {
 		switch d.Kind {
-		case DerivedPerSec:
+		case DerivedPerSec, DerivedTimeShare, DerivedSessionAverage:
 			selectCols = append(selectCols,
 				"rate_buckets."+QuoteIdentifier(d.OutputName))
+		case DerivedDelta:
+			// A bucket holding samples reports their summed increments,
+			// unless every one of them was rejected (gap_<i>), which is a
+			// gap rather than a zero.
+			//
+			// A bucket holding no sample reads 0 only when an accepted
+			// interval spans it: see the double-counting note on this
+			// function. Its events are counted by the delta of the next
+			// sample, so reporting them here as well (which the caller's
+			// LOCF fill would do for a NULL) would count them twice. That
+			// reasoning depends on the spanning interval being accepted:
+			// when it was rejected by the gap bound, or when there is no
+			// spanning sample at all (before the probe's first reading,
+			// after its last, or across a collection outage), nothing
+			// counts those events anywhere and the bucket is unknown, not
+			// zero. Such a bucket is NULL, exactly as the rate is, so a
+			// multi-bucket outage draws one break rather than a run of
+			// confident zero bars followed by a single null.
+			//
+			// The span test is the standard half-open overlap: the
+			// interval (prev_collected_at, collected_at] meets the bucket
+			// [bucket_time, bucket_time + width).
+			q := QuoteIdentifier(d.OutputName)
+			i := counterIndex[d.OutputName]
+			selectCols = append(selectCols, fmt.Sprintf(
+				"CASE WHEN rate_buckets.bucket_time IS NOT NULL "+
+					"THEN CASE WHEN COALESCE(rate_buckets.gap_%[1]d, false) "+
+					"THEN NULL ELSE COALESCE(rate_buckets.%[2]s, 0) END "+
+					"WHEN EXISTS (SELECT 1 FROM rate_samples s "+
+					"WHERE s.delta_%[1]d IS NOT NULL "+
+					"AND s.prev_collected_at IS NOT NULL "+
+					"AND s.prev_collected_at < all_buckets.bucket_time + $1::interval "+
+					"AND s.collected_at >= all_buckets.bucket_time) "+
+					"THEN 0 END AS %[2]s",
+				i, q))
 		case DerivedDeadTupleRatio:
 			selectCols = append(selectCols, "ratio_buckets.dead_tuple_ratio")
 		}
@@ -784,15 +1344,103 @@ func BuildDerivedMetricsQuery(
 	return query, queryArgs, nil
 }
 
+// derivedSuffixRule describes one derived-metric name suffix: which kinds
+// of base column it accepts, what it computes and what unit it reports.
+type derivedSuffixRule struct {
+	suffix string
+	kind   DerivedMetricKind
+	// purpose completes "no numeric column X to compute <purpose>".
+	purpose string
+	// wants names the kind a mismatch error contrasts against.
+	wants ColumnKind
+	// accepts reports whether a base column of the given kind is valid.
+	accepts func(ColumnKind) bool
+	// unit returns the reported unit for a base column of the given kind.
+	unit func(ColumnKind) string
+}
+
+// derivedSuffixRules lists the suffix forms in the order they are tried.
+// None is a suffix of another, so the order carries no precedence.
+var derivedSuffixRules = []derivedSuffixRule{
+	{
+		suffix:  "_per_sec",
+		kind:    DerivedPerSec,
+		purpose: "a per-second rate",
+		wants:   KindCounter,
+		accepts: func(k ColumnKind) bool { return k == KindCounter },
+		unit:    func(ColumnKind) string { return "/s" },
+	},
+	{
+		suffix:  "_delta",
+		kind:    DerivedDelta,
+		purpose: "a per-bucket delta",
+		wants:   KindCounter,
+		accepts: func(k ColumnKind) bool {
+			return k == KindCounter || k == KindTimeCounter ||
+				k == KindSessionTimeCounter
+		},
+		unit: func(k ColumnKind) string {
+			if k == KindTimeCounter || k == KindSessionTimeCounter {
+				return "ms"
+			}
+			return ""
+		},
+	},
+	{
+		suffix:  "_pct",
+		kind:    DerivedTimeShare,
+		purpose: "a share of wall-clock time",
+		wants:   KindTimeCounter,
+		accepts: func(k ColumnKind) bool { return k == KindTimeCounter },
+		unit:    func(ColumnKind) string { return "%" },
+	},
+	{
+		suffix:  "_sessions",
+		kind:    DerivedSessionAverage,
+		purpose: "an average session count",
+		wants:   KindSessionTimeCounter,
+		accepts: func(k ColumnKind) bool { return k == KindSessionTimeCounter },
+		unit:    func(ColumnKind) string { return "sessions" },
+	},
+}
+
+// derivedKindError explains why base cannot feed the requested derived
+// metric m, naming the column's registered kind. For a _per_sec request on
+// a time kind it points at the derived name that does make sense, because
+// a millisecond counter divided by seconds is a dimensionless number that
+// only looks like a rate.
+func derivedKindError(
+	m, probeName, base string, got ColumnKind, rule derivedSuffixRule,
+) error {
+	hint := ""
+	if rule.kind == DerivedPerSec {
+		switch got {
+		case KindTimeCounter:
+			hint = fmt.Sprintf("; request %q for the share of wall-clock time",
+				base+"_pct")
+		case KindSessionTimeCounter:
+			hint = fmt.Sprintf("; request %q for the average number of sessions",
+				base+"_sessions")
+		}
+	}
+	return fmt.Errorf(
+		"metric %q not supported for probe %q: %q is a %s, not a %s%s",
+		m, probeName, base, got, rule.wants, hint)
+}
+
 // classifyMetrics splits the requested metric names into raw columns and
 // derived metrics while preserving request order. When no metrics are
 // requested, all discovered numeric columns are treated as raw metrics.
 //
 // A name that matches a real numeric column is a raw metric (a real column
-// always wins, even if it happens to end in "_per_sec"). A name ending in
-// "_per_sec" whose prefix is a real numeric column becomes a per-second
-// rate. The literal name "dead_tuple_ratio" is accepted only when the probe
-// exposes both n_live_tup and n_dead_tup. Anything else is a client error.
+// always wins, even if it happens to end in a derived suffix). Otherwise a
+// name ending in one of the derivedSuffixRules suffixes is a derived metric
+// whose prefix must be a real numeric column of a kind the rule accepts,
+// per the probe's column kind registry (ColumnKindFor): "_per_sec" needs a
+// cumulative counter, "_delta" a counter or either time kind, "_pct" a
+// cumulative time counter and "_sessions" a session time counter. The
+// literal name "dead_tuple_ratio" is accepted only when the probe exposes
+// both n_live_tup and n_dead_tup. Anything else is a client error.
 func classifyMetrics(
 	requestedMetrics []string,
 	metricCols []string,
@@ -827,24 +1475,23 @@ func classifyMetrics(
 		}
 		seen[m] = struct{}{}
 
-		switch {
-		case available[m]:
+		if available[m] {
 			rawCols = append(rawCols, m)
 			outputOrder = append(outputOrder, m)
-		case strings.HasSuffix(m, "_per_sec"):
-			base := strings.TrimSuffix(m, "_per_sec")
-			if !available[base] {
-				return nil, nil, nil, fmt.Errorf(
-					"metric %q not found in probe %q: no numeric column %q "+
-						"to compute a per-second rate", m, probeName, base)
-			}
-			derived = append(derived, DerivedMetric{
-				OutputName: m,
-				BaseColumn: base,
-				Kind:       DerivedPerSec,
-			})
+			continue
+		}
+
+		d, matched, err := classifyDerivedSuffix(m, probeName, available)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		if matched {
+			derived = append(derived, d)
 			outputOrder = append(outputOrder, m)
-		case m == "dead_tuple_ratio":
+			continue
+		}
+
+		if m == "dead_tuple_ratio" {
 			if !available["n_live_tup"] || !available["n_dead_tup"] {
 				return nil, nil, nil, fmt.Errorf(
 					"metric %q not supported for probe %q: requires "+
@@ -853,15 +1500,87 @@ func classifyMetrics(
 			derived = append(derived, DerivedMetric{
 				OutputName: m,
 				Kind:       DerivedDeadTupleRatio,
+				Unit:       "%",
 			})
 			outputOrder = append(outputOrder, m)
-		default:
-			return nil, nil, nil, fmt.Errorf(
-				"metric %q not found in probe %q", m, probeName)
+			continue
 		}
+
+		return nil, nil, nil, fmt.Errorf(
+			"metric %q not found in probe %q", m, probeName)
 	}
 
 	return rawCols, derived, outputOrder, nil
+}
+
+// classifyDerivedSuffix matches m against derivedSuffixRules. It returns
+// matched=false when no rule's suffix applies, and an error when a suffix
+// applies but the base column is missing or of the wrong kind.
+func classifyDerivedSuffix(
+	m, probeName string, available map[string]bool,
+) (DerivedMetric, bool, error) {
+	for _, rule := range derivedSuffixRules {
+		if !strings.HasSuffix(m, rule.suffix) {
+			continue
+		}
+		base := strings.TrimSuffix(m, rule.suffix)
+		if !available[base] {
+			return DerivedMetric{}, true, fmt.Errorf(
+				"metric %q not found in probe %q: no numeric column %q "+
+					"to compute %s", m, probeName, base, rule.purpose)
+		}
+		kind := ColumnKindFor(probeName, base)
+		if !rule.accepts(kind) {
+			return DerivedMetric{}, true,
+				derivedKindError(m, probeName, base, kind, rule)
+		}
+		return DerivedMetric{
+			OutputName: m,
+			BaseColumn: base,
+			Kind:       rule.kind,
+			Unit:       rule.unit(kind),
+		}, true, nil
+	}
+	return DerivedMetric{}, false, nil
+}
+
+// needsEntityKeys reports whether any of the derived metrics is computed
+// from sample-to-sample counter changes and so needs the probe's entity-key
+// columns to partition its LAG.
+func needsEntityKeys(derived []DerivedMetric) bool {
+	for _, d := range derived {
+		switch d.Kind {
+		case DerivedPerSec, DerivedDelta, DerivedTimeShare, DerivedSessionAverage:
+			return true
+		}
+	}
+	return false
+}
+
+// MetricsQueryResult is the response envelope of a bucketed metrics
+// query. It describes the window that was actually queried alongside the
+// data, so a client can anchor a chart axis to the requested range rather
+// than infer it from whichever points came back.
+type MetricsQueryResult struct {
+	ProbeName     string `json:"probe_name"`
+	ConnectionIDs []int  `json:"connection_ids"`
+	// TimeRange echoes the range selection the caller asked for, such as
+	// "1h" or "custom". The query layer does not see the parameter, so
+	// the HTTP boundary sets it.
+	TimeRange string `json:"time_range"`
+	// TimeStart and TimeEnd are the resolved absolute window, so a preset
+	// range and a custom one are described identically.
+	TimeStart time.Time `json:"time_start"`
+	TimeEnd   time.Time `json:"time_end"`
+	// BucketSeconds is the width of one bucket in whole seconds, exactly
+	// as the SQL used it, including the one-second floor.
+	BucketSeconds int `json:"bucket_seconds"`
+	// Buckets is the number of buckets the window was divided into: the
+	// requested count, reduced when the probe's collection interval is
+	// too wide to fill that many.
+	Buckets     int            `json:"buckets"`
+	Aggregation string         `json:"aggregation"`
+	Series      []MetricSeries `json:"series"`
 }
 
 // QueryTimeSeries executes a metrics query and returns the results as
@@ -879,7 +1598,7 @@ func QueryTimeSeries(
 	buckets int,
 	aggregation string,
 	requestedMetrics []string,
-) ([]MetricSeries, error) {
+) (*MetricsQueryResult, error) {
 	if !IsValidIdentifier(probeName) {
 		return nil, fmt.Errorf("invalid probe name %q", probeName)
 	}
@@ -927,11 +1646,54 @@ func QueryTimeSeries(
 		filters.DatabaseColumn = dbCol
 	}
 
+	// Counter-derived metrics difference each entity's readings separately,
+	// so they need the probe's entity-key columns; they also need the full
+	// column set so the builder can tell whether the table carries the
+	// stats_reset marker the registry names. The ratio reads absolute
+	// values and needs neither.
+	var entityCols, allCols []string
+	if needsEntityKeys(derived) {
+		entityCols, err = GetProbeEntityKeyColumns(ctx, pool, probeName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get probe entity keys: %w", err)
+		}
+		allCols, _, err = GetProbeAllColumns(ctx, pool, probeName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get probe columns: %w", err)
+		}
+	}
+
+	// The probe's collection interval sets three things at once: the gap
+	// bound beyond which a counter interval is rejected, how long a gauge
+	// may be carried forward, and the finest bucket worth drawing.
+	//
+	// The first two judge samples that were collected under whatever
+	// configuration was in force at the time, so they use the effective
+	// interval: the configured one widened to the spacing the samples in
+	// the window actually show. Tightening a probe's interval then cannot
+	// retroactively turn its older, wider-spaced history into gaps.
+	//
+	// The bucket clamp stays on the configured interval: a bucket narrower
+	// than the interval cannot hold a sample of its own, so the requested
+	// count is clamped to one bucket per interval (raw and derived queries
+	// share the clamp so their series stay aligned), and widening it on
+	// sparse history would coarsen the whole chart rather than fix a gap.
+	interval, effective, err := ResolveEffectiveInterval(
+		ctx, pool, probeName, connectionIDs, window)
+	if err != nil {
+		return nil, err
+	}
+	maxBuckets := int(timeEnd.Sub(timeStart) / interval)
+	if maxBuckets < 1 {
+		maxBuckets = 1
+	}
+	if buckets > maxBuckets {
+		buckets = maxBuckets
+	}
+	maxElapsed := time.Duration(MaxElapsedIntervals) * effective
+
 	// Collect data across all connections
 	dataMap := make(map[seriesKey][]MetricDataPoint)
-
-	// Track last known value per metric column for LOCF
-	lastKnown := make(map[string]float64)
 
 	for _, connID := range connectionIDs {
 		if len(rawCols) > 0 {
@@ -941,32 +1703,45 @@ func QueryTimeSeries(
 			if err != nil {
 				return nil, fmt.Errorf("failed to build query: %w", err)
 			}
+			fills := make([]fillPolicy, len(rawCols))
+			for i := range fills {
+				fills[i] = fillGauge
+			}
 			if err := scanSeriesRows(ctx, pool, query, queryArgs, rawCols,
-				connID, dataMap, lastKnown); err != nil {
+				fills, effective, connID, dataMap); err != nil {
 				return nil, err
 			}
 		}
 
 		if len(derived) > 0 {
 			query, queryArgs, err := BuildDerivedMetricsQuery(
-				probeName, derived, connID, timeStart, timeEnd,
-				buckets, aggregation, filters)
+				probeName, derived, entityCols, allCols, connID, timeStart,
+				timeEnd, buckets, aggregation, filters, maxElapsed)
 			if err != nil {
 				return nil, fmt.Errorf("failed to build derived query: %w", err)
 			}
 			names := make([]string, len(derived))
+			fills := make([]fillPolicy, len(derived))
 			for i, d := range derived {
 				names[i] = d.OutputName
+				fills[i] = derivedFillPolicy(d.Kind)
 			}
 			if err := scanSeriesRows(ctx, pool, query, queryArgs, names,
-				connID, dataMap, lastKnown); err != nil {
+				fills, effective, connID, dataMap); err != nil {
 				return nil, err
 			}
 		}
 	}
 
+	// Raw columns carry no unit (the client knows its own columns); a
+	// derived metric reports the unit classifyMetrics assigned it.
+	units := make(map[string]string, len(derived))
+	for _, d := range derived {
+		units[d.OutputName] = d.Unit
+	}
+
 	// Build result series in the requested metric order.
-	var result []MetricSeries
+	result := make([]MetricSeries, 0, len(outputOrder)*len(connectionIDs))
 	for _, metric := range outputOrder {
 		for _, connID := range connectionIDs {
 			key := seriesKey{metric: metric, connectionID: connID}
@@ -984,12 +1759,24 @@ func QueryTimeSeries(
 				Name:   name,
 				Metric: metric,
 				Data:   data,
-				Unit:   "",
+				Unit:   units[metric],
 			})
 		}
 	}
 
-	return result, nil
+	// The reported width comes from the same helper, and the same
+	// (possibly clamped) bucket count, that built the SQL, so it is the
+	// width the buckets above actually have.
+	return &MetricsQueryResult{
+		ProbeName:     probeName,
+		ConnectionIDs: connectionIDs,
+		TimeStart:     timeStart,
+		TimeEnd:       timeEnd,
+		BucketSeconds: int(BucketWidth(timeStart, timeEnd, buckets).Seconds()),
+		Buckets:       buckets,
+		Aggregation:   aggregation,
+		Series:        result,
+	}, nil
 }
 
 // seriesKey identifies a metric series by name and connection.
@@ -998,26 +1785,52 @@ type seriesKey struct {
 	connectionID int
 }
 
+// derivedFillPolicy returns the fill policy for a derived metric kind: the
+// dead-tuple ratio is an absolute reading and carries like a gauge; every
+// counter-derived kind describes a single interval and never carries.
+func derivedFillPolicy(kind DerivedMetricKind) fillPolicy {
+	if kind == DerivedDeadTupleRatio {
+		return fillGauge
+	}
+	return fillNone
+}
+
+// lastObservation records the most recent real value of one series and
+// the bucket it was seen in, for the gauge carry-forward.
+type lastObservation struct {
+	value float64
+	at    time.Time
+}
+
 // scanSeriesRows executes a bucketed metrics query whose first selected
 // column is the bucket time followed by one column per name in names, then
-// accumulates the values into dataMap. NULL buckets (LEFT JOIN gaps or
-// discarded derived samples) are filled with Last Observation Carried
-// Forward using lastKnown, keyed per connection and metric name.
+// accumulates the values into dataMap. Every bucket the query returns is
+// emitted for every series, so all series in a response share one set of
+// bucket times. A NULL bucket, or one holding a non-finite sample, is
+// filled according to the series' fill policy in fills (parallel to
+// names): a fillGauge series repeats its last real value whilst that value
+// is at most MaxCarryIntervals probe intervals old, marking the point
+// Filled, and a fillNone series, or a gauge whose last value is older than
+// that, emits a nil Value.
 func scanSeriesRows(
 	ctx context.Context,
 	pool *pgxpool.Pool,
 	query string,
 	queryArgs []any,
 	names []string,
+	fills []fillPolicy,
+	interval time.Duration,
 	connID int,
 	dataMap map[seriesKey][]MetricDataPoint,
-	lastKnown map[string]float64,
 ) error {
 	rows, err := pool.Query(ctx, query, queryArgs...)
 	if err != nil {
 		return fmt.Errorf("failed to query metrics for connection %d: %w", connID, err)
 	}
 	defer rows.Close()
+
+	maxCarry := time.Duration(MaxCarryIntervals) * interval
+	last := make(map[string]lastObservation, len(names))
 
 	for rows.Next() {
 		values := make([]any, len(names)+1)
@@ -1035,22 +1848,18 @@ func scanSeriesRows(
 		}
 
 		for i, name := range names {
-			lkKey := fmt.Sprintf("%d:%s", connID, name)
-			val, ok := toFloat64(values[i+1])
-			if !ok {
-				if prev, exists := lastKnown[lkKey]; exists {
-					val = prev
-				} else {
-					continue
-				}
-			} else {
-				lastKnown[lkKey] = val
+			point := MetricDataPoint{Time: bucketTime}
+			if val, ok := toFloat64(values[i+1]); ok {
+				last[name] = lastObservation{value: val, at: bucketTime}
+				point.Value = &val
+			} else if prev, seen := last[name]; seen &&
+				fills[i] == fillGauge && bucketTime.Sub(prev.at) <= maxCarry {
+				carried := prev.value
+				point.Value = &carried
+				point.Filled = true
 			}
 			key := seriesKey{metric: name, connectionID: connID}
-			dataMap[key] = append(dataMap[key], MetricDataPoint{
-				Time:  bucketTime,
-				Value: val,
-			})
+			dataMap[key] = append(dataMap[key], point)
 		}
 	}
 
@@ -1329,6 +2138,12 @@ func buildLatestRowsQuery(
 	if filters.IndexName != "" {
 		whereClauses = append(whereClauses, fmt.Sprintf("indexrelname = $%d", argNum))
 		args = append(args, filters.IndexName)
+		argNum++
+	}
+
+	if filters.MountPoint != "" {
+		whereClauses = append(whereClauses, fmt.Sprintf("mount_point = $%d", argNum))
+		args = append(args, filters.MountPoint)
 		argNum++
 	}
 

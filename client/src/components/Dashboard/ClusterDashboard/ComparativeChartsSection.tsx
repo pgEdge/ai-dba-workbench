@@ -16,6 +16,13 @@ import CircularProgress from '@mui/material/CircularProgress';
 import { useAuth } from '../../../contexts/useAuth';
 import { apiFetch } from '../../../utils/apiClient';
 import { useClusterData } from '../../../contexts/useClusterData';
+import { useDashboard } from '../../../contexts/useDashboard';
+import {
+    appendTimeRangeParams,
+    isTimeRangeQueryable,
+} from '../../../utils/timeRangeParams';
+import { useRequestSequence } from '../../../hooks/useRequestSequence';
+import { chunkConnectionIds } from '../../../utils/connectionIdBatches';
 import { Chart } from '../../Chart';
 import { CHART_SECTION_SX } from '../styles';
 import { logger } from '../../../utils/logger';
@@ -26,7 +33,8 @@ interface ComparativeChartsSectionProps {
 
 interface ConnectionMetrics {
     connectionName: string;
-    cacheHitRatio: number;
+    /** Percentage, or null when the latest interval saw no block access. */
+    cacheHitRatio: number | null;
     commitsPerSec: number;
     rollbackPercent: number;
     activeConnections: number;
@@ -62,34 +70,80 @@ const ERROR_SX = {
 const ComparativeChartsSection: React.FC<ComparativeChartsSectionProps> = ({ serverIds }) => {
     const { user } = useAuth();
     const { lastRefresh } = useClusterData();
+    // These charts render inside the Monitoring section alongside the
+    // time selector, so they follow the selected window.
+    const { timeRange } = useDashboard();
+    const { range, customStart, customEnd } = timeRange;
     const [metrics, setMetrics] = useState<ConnectionMetrics[]>([]);
     const [loading, setLoading] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
-    const isMountedRef = useRef<boolean>(true);
+    // Orders overlapping fetches so that a response for a superseded
+    // window cannot overwrite the metrics for the current one; see
+    // useRequestSequence for why a mounted flag alone cannot do this.
+    const { beginRequest, supersedeRequest } = useRequestSequence();
     const initialLoadDoneRef = useRef<boolean>(false);
     const serverIdsKey = serverIds.join(',');
 
     const fetchMetrics = useCallback(async (): Promise<void> => {
         if (!user || serverIds.length === 0) { return; }
 
+        /*
+         * A custom range without both bounds is a transient state the
+         * server rejects with a 400, so skip the request entirely and
+         * leave whatever data and error state is already in place.
+         */
+        const selectedWindow = { range, customStart, customEnd };
+        if (!isTimeRangeQueryable(selectedWindow)) {
+            // Abandon any request still in flight for the previous
+            // window, so its response cannot land and be shown as
+            // though it described the newly selected one.
+            supersedeRequest();
+            setLoading(false);
+            return;
+        }
+
+        // A cluster can hold more members than one request may name,
+        // so the ID list is batched to the server's cap and the
+        // per-connection results concatenated. Any failed batch
+        // throws, exactly as a failed single request did.
+        const urls = chunkConnectionIds(serverIds).map(batch => {
+            const params = new URLSearchParams({
+                connection_ids: batch.join(','),
+            });
+            appendTimeRangeParams(params, selectedWindow);
+            return `/api/v1/metrics/performance-summary?${params.toString()}`;
+        });
+
         if (!initialLoadDoneRef.current) {
             setLoading(true);
         }
         setError(null);
 
+        // A response is only applied if the component is still mounted
+        // and no newer request has been started since.
+        const isCurrent = beginRequest();
+
         try {
-            const response = await apiFetch(
-                `/api/v1/metrics/performance-summary?connection_ids=${serverIds.join(',')}&time_range=24h`,
+            const responses = await Promise.all(
+                urls.map(url => apiFetch(url)),
             );
 
-            if (!response.ok) {
-                const errorData = await response.json().catch(() => ({})) as { error?: string };
-                throw new Error(errorData.error || `Failed to fetch data: ${response.status}`);
+            for (const response of responses) {
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({})) as { error?: string };
+                    throw new Error(errorData.error || `Failed to fetch data: ${response.status}`);
+                }
             }
 
-            if (isMountedRef.current) {
-                const data = await response.json();
-                const connections = data.connections || [];
+            // Checked before parsing as well as after, so that a
+            // response for a superseded window is not parsed at all,
+            // and so that a request started during the parse wins.
+            if (isCurrent()) {
+                const data = await Promise.all(responses.map(r => r.json()));
+                const connections: Record<string, unknown>[] = data.flatMap(
+                    (d: { connections?: Record<string, unknown>[] }) =>
+                        d.connections || [],
+                );
 
                 const parsed: ConnectionMetrics[] = connections.map(
                     (conn: Record<string, unknown>) => {
@@ -99,9 +153,12 @@ const ComparativeChartsSection: React.FC<ComparativeChartsSectionProps> = ({ ser
                         return {
                             connectionName: conn.connection_name as string || `Server ${conn.connection_id}`,
                             connectionId: conn.connection_id as number,
+                            // The server already reports a percentage; a
+                            // null current (no block access) stays null so
+                            // the bar is left empty rather than drawn at 0.
                             cacheHitRatio: cache && typeof cache.current === 'number'
-                                ? Math.round(cache.current * 10000) / 100
-                                : 0,
+                                ? Math.round(cache.current * 100) / 100
+                                : null,
                             commitsPerSec: txns && typeof txns.commits_per_sec === 'number'
                                 ? Math.round(txns.commits_per_sec * 100) / 100
                                 : 0,
@@ -116,35 +173,34 @@ const ComparativeChartsSection: React.FC<ComparativeChartsSectionProps> = ({ ser
                     }
                 );
 
-                setMetrics(parsed);
-                initialLoadDoneRef.current = true;
+                if (isCurrent()) {
+                    setMetrics(parsed);
+                    initialLoadDoneRef.current = true;
+                }
             }
         } catch (err) {
             logger.error('Error fetching comparative metrics:', err);
-            if (isMountedRef.current) {
+            if (isCurrent()) {
                 setError((err as Error).message || 'Failed to fetch metrics');
             }
         } finally {
-            if (isMountedRef.current) {
+            if (isCurrent()) {
                 setLoading(false);
             }
         }
-    }, [user, serverIds]);
+    }, [
+        user, serverIds, range, customStart, customEnd,
+        beginRequest, supersedeRequest,
+    ]);
 
     useEffect(() => {
         initialLoadDoneRef.current = false;
     }, [serverIdsKey]);
 
     useEffect(() => {
-        isMountedRef.current = true;
-
         if (user && serverIds.length > 0) {
             void fetchMetrics();
         }
-
-        return () => {
-            isMountedRef.current = false;
-        };
     }, [user, serverIds.length, fetchMetrics, lastRefresh]);
 
     const serverNames = useMemo(

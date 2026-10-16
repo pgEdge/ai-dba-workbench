@@ -12,7 +12,7 @@
 #      build-deb.sh download these tarballs from the release URL, so the
 #      release MUST exist before the RPM/DEB build cells run.
 #   3. Build RPMs (almalinux 9/10, amd64+arm64) and DEBs (jammy / noble /
-#      bullseye / bookworm / trixie, amd64+arm64) via pgedge-builder-action.
+#      bookworm / trixie, amd64+arm64) via pgedge-builder-action.
 #   4. Push RPMs to dnf.pgedge.com and DEBs to apt.pgedge.com (batched
 #      multi-target invocation per family; cross-repo lock is per
 #      (family, repo_type)).
@@ -98,7 +98,7 @@ jobs:
                   # emits cells with pg_version="" (see pgedge-detect-build-matrix README).
                   archs: '["amd64","arm64"]'
                   rpm_images: '["almalinux:9","almalinux:10"]'
-                  deb_images: '["ubuntu:jammy","ubuntu:noble","ubuntu:resolute","debian:bullseye","debian:bookworm","debian:trixie"]'
+                  deb_images: '["ubuntu:jammy","ubuntu:noble","ubuntu:resolute","debian:bookworm","debian:trixie"]'
 
     # =========================================================================
     # Tag parsing → (repo_type, component-version, component-buildnum).  On
@@ -173,7 +173,7 @@ jobs:
               uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
             - name: Set up Node.js 22
-              uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+              uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
               with:
                   node-version: '22'
                   cache: 'npm'
@@ -186,7 +186,7 @@ jobs:
               run: npm run build
 
             - name: Upload client artifact
-              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+              uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
               with:
                   name: ai-dba-client-dist
                   path: client/dist/
@@ -223,7 +223,7 @@ jobs:
                   mkdocs build -v
 
             - name: Upload documentation artifact
-              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+              uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
               with:
                   name: ai-workbench-docs-site
                   path: site/
@@ -250,7 +250,7 @@ jobs:
             - name: Set up Go 1.26
               uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
               with:
-                  go-version: '1.26.2'
+                  go-version: '1.26.8'
                   cache: false
 
             - name: Cache Go modules (server)
@@ -327,21 +327,21 @@ jobs:
                       ai-dba-alerter -C staging examples
 
             - name: Upload server archive
-              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+              uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
               with:
                   name: ai-dba-server-${{ matrix.goos }}-${{ matrix.goarch }}
                   path: ai-dba-server-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
                   retention-days: 1
 
             - name: Upload collector archive
-              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+              uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
               with:
                   name: ai-dba-collector-${{ matrix.goos }}-${{ matrix.goarch }}
                   path: ai-dba-collector-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
                   retention-days: 1
 
             - name: Upload alerter archive
-              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+              uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
               with:
                   name: ai-dba-alerter-${{ matrix.goos }}-${{ matrix.goarch }}
                   path: ai-dba-alerter-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
@@ -365,7 +365,7 @@ jobs:
 
         steps:
             - name: Download all artifacts
-              uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+              uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
               with:
                   path: artifacts
 
@@ -461,13 +461,13 @@ jobs:
                   echo "os_version=${os_version}" >> "$GITHUB_OUTPUT"
 
             - name: Download Go binary tarballs for this arch
-              uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+              uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
               with:
                   pattern: ai-dba-*-linux-${{ matrix.arch }}
                   path: go-artifacts
 
             - name: Download web client dist
-              uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+              uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
               with:
                   name: ai-dba-client-dist
                   path: client-dist
@@ -513,7 +513,7 @@ jobs:
                   pgedge_builder_token: ${{ secrets.PGEDGE_BUILDER_TOKEN }}
 
             - name: Upload RPM cell artifact
-              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+              uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
               with:
                   name: rpm__el-${{ steps.cell.outputs.os_version }}__${{ matrix.arch }}
                   path: output/el${{ steps.cell.outputs.os_version }}-${{ matrix.arch }}/
@@ -553,7 +553,7 @@ jobs:
               uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
             - name: Download all RPM cell artifacts
-              uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+              uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
               with:
                   pattern: rpm__el-*
                   path: rpm-artifacts
@@ -678,13 +678,13 @@ jobs:
                   echo "distro=${distro}" >> "$GITHUB_OUTPUT"
 
             - name: Download Go binary tarballs for this arch
-              uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+              uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
               with:
                   pattern: ai-dba-*-linux-${{ matrix.arch }}
                   path: go-artifacts
 
             - name: Download web client dist
-              uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+              uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
               with:
                   name: ai-dba-client-dist
                   path: client-dist
@@ -729,7 +729,7 @@ jobs:
                   pgedge_builder_token: ${{ secrets.PGEDGE_BUILDER_TOKEN }}
 
             - name: Upload DEB cell artifact
-              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+              uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
               with:
                   name: deb__${{ steps.cell.outputs.distro }}__${{ matrix.arch }}
                   path: output/${{ steps.cell.outputs.distro }}-${{ matrix.arch }}/
@@ -764,7 +764,7 @@ jobs:
               uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
             - name: Download all DEB cell artifacts
-              uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+              uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
               with:
                   pattern: deb__*
                   path: deb-artifacts
@@ -1209,7 +1209,7 @@ jobs:
                   aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
             - name: Upload aggregated manifest as workflow artifact
-              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+              uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
               with:
                   name: aggregated-manifest
                   path: aggregated/manifest.json

@@ -53,7 +53,7 @@ func grantMCPPrivilegeCommand(dataDir, groupName, identifier string) error {
 	}
 
 	// Grant privilege
-	if err := store.GrantMCPPrivilege(group.ID, priv.ID); err != nil {
+	if err := cliStore(store).GrantMCPPrivilege(group.ID, priv.ID); err != nil {
 		return fmt.Errorf("failed to grant privilege: %w", err)
 	}
 
@@ -96,7 +96,7 @@ func revokeMCPPrivilegeCommand(dataDir, groupName, identifier string) error {
 	}
 
 	// Revoke privilege
-	if err := store.RevokeMCPPrivilege(group.ID, priv.ID); err != nil {
+	if err := cliStore(store).RevokeMCPPrivilege(group.ID, priv.ID); err != nil {
 		return fmt.Errorf("failed to revoke privilege: %w", err)
 	}
 
@@ -136,7 +136,7 @@ func grantConnectionPrivilegeCommand(dataDir, groupName string, connectionID int
 	}
 
 	// Grant connection privilege
-	if err := store.GrantConnectionPrivilege(group.ID, connectionID, accessLevel); err != nil {
+	if err := cliStore(store).GrantConnectionPrivilege(group.ID, connectionID, accessLevel); err != nil {
 		return fmt.Errorf("failed to grant connection privilege: %w", err)
 	}
 
@@ -170,7 +170,7 @@ func revokeConnectionPrivilegeCommand(dataDir, groupName string, connectionID in
 	}
 
 	// Revoke connection privilege
-	if err := store.RevokeConnectionPrivilege(group.ID, connectionID); err != nil {
+	if err := cliStore(store).RevokeConnectionPrivilege(group.ID, connectionID); err != nil {
 		return fmt.Errorf("failed to revoke connection privilege: %w", err)
 	}
 
@@ -361,6 +361,7 @@ func registerMCPPrivileges(store *auth.AuthStore) {
 		// Metrics and Monitoring Tools
 		{"list_probes", "tool", "List available metric collection probes", false},
 		{"describe_probe", "tool", "Get detailed information about a specific probe", false},
+		{"describe_datastore", "tool", "List and describe the datastore sources query_datastore can read", false},
 		{"query_metrics", "tool", "Query historical metrics data from the datastore", false},
 
 		// Connection Management Tools
@@ -384,7 +385,7 @@ func registerMCPPrivileges(store *auth.AuthStore) {
 		{"delete_memory", "tool", "Delete stored memory", true},
 
 		// Datastore Query Tool
-		{"query_datastore", "tool", "Query the monitoring datastore", false},
+		{"query_datastore", "tool", "Run structured queries against the monitoring datastore, limited to accessible connections", false},
 
 		// Resources
 		{"pg://system_info", "resource", "PostgreSQL system information resource", false},

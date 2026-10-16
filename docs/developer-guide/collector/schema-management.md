@@ -41,7 +41,9 @@ change and contains the following fields:
   migration in sequential order.
 - `Description` is a human-readable description of
   the migration.
-- `Up` is a function that applies the migration.
+- `Up` is a function of the form `func(pgx.Tx) error`
+  that applies the migration on the transaction opened
+  for it.
 
 ### schema_version Table
 
@@ -52,7 +54,7 @@ have been applied.
 CREATE TABLE schema_version (
     version INTEGER PRIMARY KEY,
     description TEXT NOT NULL,
-    applied_at TIMESTAMP NOT NULL
+    applied_at TIMESTAMPTZ NOT NULL
         DEFAULT CURRENT_TIMESTAMP
 )
 ```
@@ -66,138 +68,100 @@ the following steps:
    called.
 2. A new `SchemaManager` is created with all
    registered migrations.
-3. The `SchemaManager.Migrate()` method queries the
-   current schema version, sorts migrations by version
-   number, applies each pending migration in a
+3. The `SchemaManager.Migrate()` method sorts the
+   migrations by version number, queries the current
+   schema version, applies each pending migration in a
    transaction, records successful migrations in
    `schema_version`, and rolls back on errors.
 
 ## Current Migrations
 
-The following migrations are currently defined in
-the system.
+The migrations are defined in Go rather than in SQL
+files. The `registerMigrations()` method in
+`collector/src/database/schema.go` is the authoritative
+list, and this document does not repeat it, because a
+second copy drifts as soon as someone adds a migration.
 
-### Migration 1: Create schema_version Table
+Each entry is a `Migration` value carrying a `Version`, a
+`Description` and an `Up` function of the form
+`func(pgx.Tx) error` that runs the migration's statements
+on the transaction the `SchemaManager` opens for it.
 
-This migration creates the `schema_version` table
-used to track migrations. The table contains
-`version`, `description`, and `applied_at` columns.
+Migration 1 is the consolidated baseline; the `Up`
+function creates the complete schema, including every
+table, index and constraint, along with the seed data for
+probe configurations and alert rules. Each later migration
+is an incremental change, such as a new column, a new index
+or a corrected alert rule, for an installation that already
+holds the earlier schema. A fresh installation still applies
+every migration in version order, starting from Migration 1;
+the later migrations find their changes already present in
+the baseline, which is why each one must be idempotent.
 
-### Migration 2: Create monitored_connections Table
+Versions are allocated sequentially, so the highest
+`Version` registered in `schema.go` is the schema version
+a current collector converges to. The
+`SchemaManager.LatestVersion()` method returns that value
+at run time, without needing a database connection.
 
-This migration creates the table that stores
-PostgreSQL server connection information.
-
-The migration creates the following objects:
-
-- The `monitored_connections` table stores connection
-  details.
-- A check constraint on `port` ensures values between
-  1 and 65535.
-- A check constraint on `owner_token` requires the
-  token for non-shared connections.
-
-### Migration 3: Create Indexes on monitored_connections
-
-This migration creates indexes to optimize common
-queries.
-
-The migration creates the following indexes:
-
-- `idx_monitored_connections_owner_token` indexes
-  `owner_token` for fast ownership lookups.
-- `idx_monitored_connections_is_monitored` is a
-  partial index on actively monitored connections.
-- `idx_monitored_connections_name` indexes connection
-  name for fast lookups.
-
-### Migration 4: Create probes Table
-
-This migration creates the table that defines
-monitoring probes. The table includes check
-constraints on `collection_interval` and
-`retention_days`, and a unique constraint on `name`.
-
-### Migration 5: Create Indexes on probes
-
-This migration creates indexes to optimize probe
-queries. The migration creates
-`idx_probes_enabled` as a partial index on enabled
-probes and `idx_probes_name` for fast lookups by
-probe name.
-
-### Migration 22: Add connection_id to probe_configs
-
-This migration adds per-server probe configuration
-support by adding a `connection_id` column to the
-`probe_configs` table. The migration creates a
-foreign key constraint to `connections(id)` with
-CASCADE delete and a composite unique index on
-`(name, COALESCE(connection_id, 0))`.
-
-When `connection_id IS NULL`, the configuration
-acts as a global default. When set, the
-configuration overrides the default for that
-specific connection.
-
-### Migration 23: Fix unique constraint for global probe configs
-
-This migration fixes a duplicate key constraint
-issue by replacing the global unique constraint on
-`probe_configs.name` with a partial unique index.
-The migration removes `probe_configs_name_key` and
-creates `probe_configs_name_global_key` as a partial
-unique index on `name WHERE connection_id IS NULL`.
+The `schema_version` table records what has been applied.
+The `Migrate()` method inserts a row holding the version
+number and the description of each migration it commits,
+and reads the highest version back at the next start-up to
+decide which migrations are still pending.
 
 ## Adding New Migrations
 
 To add a new migration, follow the steps below.
 
-1. Edit `schema.go` by adding a new migration to the
-   `registerMigrations()` method.
-2. Increment the version using the next sequential
-   version number.
-3. Provide a clear, concise description of the
-   migration.
-4. Implement the `Up` function that applies the
-   migration.
+1. Edit `collector/src/database/schema.go` by appending a
+   new `Migration` to the `registerMigrations()` method.
+2. Set the version to the next free number, one higher
+   than the last migration registered in the file.
+3. Provide a clear, concise description of the migration;
+   the description is stored in `schema_version`.
+4. Implement the `Up` function, which receives the
+   transaction the migration runs in.
 5. Make the migration idempotent by using
    `IF NOT EXISTS` clauses where possible.
+6. Describe every new object with `COMMENT ON`.
+
+The examples below use `16` as the version number; replace
+it with the next free number at the time you write the
+migration.
 
 ### Example: Adding a New Table
 
-In the following example, the migration creates a
-new metrics table:
+In the following example, the migration creates a new
+table:
 
 ```go
-// Migration 6: Create metrics table
 sm.migrations = append(sm.migrations, Migration{
-    Version:     6,
-    Description: "Create metrics storage table",
-    Up: func(db *sql.DB) error {
-        _, err := db.Exec(`
-            CREATE TABLE IF NOT EXISTS metrics (
+    Version:     16,
+    Description: "Add probe_events table",
+    Up: func(tx pgx.Tx) error {
+        ctx := context.Background()
+
+        _, err := tx.Exec(ctx, `
+            CREATE TABLE IF NOT EXISTS probe_events (
                 id BIGSERIAL PRIMARY KEY,
-                probe_id INTEGER NOT NULL
-                    REFERENCES probes(id)
-                    ON DELETE CASCADE,
                 connection_id INTEGER NOT NULL
-                    REFERENCES
-                    monitored_connections(id)
+                    REFERENCES connections(id)
                     ON DELETE CASCADE,
-                collected_at TIMESTAMP NOT NULL
+                collected_at TIMESTAMPTZ NOT NULL
                     DEFAULT CURRENT_TIMESTAMP,
-                metric_data JSONB NOT NULL,
-                CONSTRAINT chk_metric_data
-                    CHECK (metric_data IS NOT NULL)
-            )
+                event_data JSONB NOT NULL
+            );
+
+            COMMENT ON TABLE probe_events IS
+                'Discrete events reported by a probe.';
         `)
         if err != nil {
             return fmt.Errorf(
-                "failed to create metrics table: %w",
-                err,
+                "failed to create probe_events: %w", err,
             )
         }
+
         return nil
     },
 })
@@ -205,118 +169,86 @@ sm.migrations = append(sm.migrations, Migration{
 
 ### Example: Adding an Index
 
-In the following example, the migration creates an
-index on the `collected_at` column:
+In the following example, the migration creates an index
+on the `collected_at` column:
 
 ```go
-// Migration 7: Create index on metrics
 sm.migrations = append(sm.migrations, Migration{
-    Version:     7,
-    Description: "Create index on metrics.collected_at",
-    Up: func(db *sql.DB) error {
-        _, err := db.Exec(`
+    Version:     16,
+    Description: "Add index on probe_events.collected_at",
+    Up: func(tx pgx.Tx) error {
+        ctx := context.Background()
+
+        _, err := tx.Exec(ctx, `
             CREATE INDEX IF NOT EXISTS
-                idx_metrics_collected_at
-            ON metrics(collected_at DESC)
+                idx_probe_events_collected_at
+                ON probe_events(collected_at DESC);
+
+            COMMENT ON INDEX idx_probe_events_collected_at IS
+                'Supports queries for the most recent events.';
         `)
         if err != nil {
             return fmt.Errorf(
                 "failed to create index: %w", err,
             )
         }
+
         return nil
     },
 })
 ```
 
-### Example: Adding a Foreign Key
+PostgreSQL cannot build an index with
+`CREATE INDEX CONCURRENTLY` inside a transaction, and the
+`SchemaManager` wraps every migration in one, so an index
+added by a migration is built with a plain `CREATE INDEX`
+that blocks writes to the table whilst it runs.
 
-In the following example, the migration adds a
-foreign key constraint:
+### Example: Adding a Constraint
+
+PostgreSQL has no `ADD CONSTRAINT IF NOT EXISTS`, so
+`schema.go` provides the `addConstraintIfMissing` helper,
+which checks `pg_constraint` first and leaves an existing
+constraint untouched. In the following example, the
+migration adds a foreign key:
 
 ```go
-// Migration 8: Add foreign key constraint
-sm.migrations = append(sm.migrations, Migration{
-    Version:     8,
-    Description: "Add foreign key from metrics to probes",
-    Up: func(db *sql.DB) error {
-        var count int
-        err := db.QueryRow(`
-            SELECT COUNT(*)
-            FROM information_schema.table_constraints
-            WHERE constraint_name =
-                'fk_metrics_probe_id'
-            AND table_name = 'metrics'
-        `).Scan(&count)
-        if err != nil {
-            return fmt.Errorf(
-                "failed to check constraint: %w",
-                err,
-            )
-        }
-
-        if count > 0 {
-            return nil
-        }
-
-        _, err = db.Exec(`
-            ALTER TABLE metrics
-            ADD CONSTRAINT fk_metrics_probe_id
-            FOREIGN KEY (probe_id)
-            REFERENCES probes(id)
-            ON DELETE CASCADE
-        `)
-        if err != nil {
-            return fmt.Errorf(
-                "failed to add foreign key: %w",
-                err,
-            )
-        }
-        return nil
-    },
-})
+if err := addConstraintIfMissing(ctx, tx,
+    "probe_events",
+    "fk_probe_events_connection_id",
+    "FOREIGN KEY (connection_id) "+
+        "REFERENCES connections(id) ON DELETE CASCADE",
+); err != nil {
+    return err
+}
 ```
 
 ### Example: Modifying an Existing Column
 
-In the following example, the migration adds a new
-column to an existing table:
+In the following example, the migration adds a new column
+to an existing table:
 
 ```go
-// Migration 9: Add priority column to probes
 sm.migrations = append(sm.migrations, Migration{
-    Version:     9,
-    Description: "Add priority column to probes",
-    Up: func(db *sql.DB) error {
-        var count int
-        err := db.QueryRow(`
-            SELECT COUNT(*)
-            FROM information_schema.columns
-            WHERE table_name = 'probes'
-            AND column_name = 'priority'
-        `).Scan(&count)
-        if err != nil {
-            return fmt.Errorf(
-                "failed to check column: %w", err,
-            )
-        }
+    Version:     16,
+    Description: "Add priority column to probe_configs",
+    Up: func(tx pgx.Tx) error {
+        ctx := context.Background()
 
-        if count > 0 {
-            return nil
-        }
+        _, err := tx.Exec(ctx, `
+            ALTER TABLE probe_configs
+                ADD COLUMN IF NOT EXISTS priority INTEGER
+                NOT NULL DEFAULT 5;
 
-        _, err = db.Exec(`
-            ALTER TABLE probes
-            ADD COLUMN priority INTEGER
-                NOT NULL DEFAULT 5
-            CHECK (priority >= 1
-                AND priority <= 10)
+            COMMENT ON COLUMN probe_configs.priority IS
+                'Relative scheduling priority, 1 to 10.';
         `)
         if err != nil {
             return fmt.Errorf(
-                "failed to add column: %w", err,
+                "failed to add priority column: %w", err,
             )
         }
+
         return nil
     },
 })
@@ -353,7 +285,7 @@ The following guidelines apply to schema design:
   columns, WHERE clause columns, ORDER BY columns,
   and JOIN conditions.
 - Use appropriate data types such as SERIAL for
-  auto-incrementing IDs, TIMESTAMP for dates, and
+  auto-incrementing IDs, TIMESTAMPTZ for timestamps, and
   TEXT for unlimited-length strings.
 - Include `created_at` and `updated_at` audit columns
   to track record modifications.
@@ -374,28 +306,96 @@ make test
 ```
 
 In the following example, the `go test` command runs
-only schema tests:
+only the migration tests:
 
 ```bash
-go test -v -run TestSchema
+go test -v -run TestMigrate
 ```
 
 ### Test Environment
 
-Tests require a PostgreSQL database. In the following
-example, the environment variable configures the test
-database:
+The schema tests need a PostgreSQL server they can create databases on. They do
+not run against the database named in the connection string; instead,
+`TestMain` calls `setupTestDatabase()`, which connects as an administrator,
+creates a database named `ai_workbench_test_<YYYYMMDD_HHMMSS>_<microseconds>`,
+and points the tests that connect through `getTestConnection()` at that
+generated database. One test, `TestMigration_PgSettings`, does not use the
+generated database; the Testing the pg_settings Migration section describes the
+exception.
+
+#### Selecting a Server
+
+The tests that use the generated database read `TEST_AI_WORKBENCH_SERVER` first
+and fall back to `TEST_DB_CONN`, which remains supported for older checkouts.
+Set the preferred variable to either a connection URL or a libpq key-value
+string, because `replaceDatabase()` accepts both forms. In the following
+example, the variable points the tests at the local PostgreSQL server:
 
 ```bash
-export TEST_DB_CONN="host=localhost port=5432 \
-    user=testuser dbname=testdb sslmode=disable"
+export TEST_AI_WORKBENCH_SERVER=postgresql://postgres@127.0.0.1:5432/ai_workbench
 ```
 
-To skip database tests, set the following variable:
+Apart from `TestMigration_PgSettings`, the tests ignore the database name in
+the value, whether given as the URL path or as a `dbname=` field; the helpers
+rewrite the name to `postgres` for the administrative connection and to the
+generated name for the tests. The role in the connection string therefore needs
+the `CREATEDB` privilege, or superuser rights.
+
+If neither variable is set, the helpers fall back to
+`host=localhost port=5432 user=postgres sslmode=disable` rather than
+skipping the tests. Always set `TEST_AI_WORKBENCH_SERVER` explicitly, so
+that the run resolves to the loopback server you intend.
+
+#### Testing the pg_settings Migration
+
+`TestMigration_PgSettings` in `schema_pg_settings_test.go` connects directly to
+the database named in `TEST_AI_WORKBENCH_SERVER`, rather than to the generated
+database. The test ignores `TEST_DB_CONN` and skips itself when
+`TEST_AI_WORKBENCH_SERVER` is unset. Before running the migrations, the test
+drops the `metrics` schema and the `schema_version`, `probe_configs` and
+`connections` tables in that database, so the value must name a disposable
+database on a loopback server, such as the empty `ai_workbench` database in the
+earlier example. Never point `TEST_AI_WORKBENCH_SERVER` at a database whose
+contents you need to keep, because this test destroys its schema on every run.
+
+#### Keeping or Skipping Databases
+
+Two further variables control what the run does with the database. In
+the following example, `TEST_AI_WORKBENCH_KEEP_DB` keeps the generated
+database after the tests finish, which helps when a migration test fails
+and the resulting schema needs inspection:
+
+```bash
+export TEST_AI_WORKBENCH_KEEP_DB=1
+```
+
+`TEST_AI_WORKBENCH_KEEP_DB` also accepts the value `true`. In the
+following example, `SKIP_DB_TESTS` skips the database tests altogether:
 
 ```bash
 export SKIP_DB_TESTS=1
 ```
+
+Leftover `ai_workbench_test_*` databases on a server come from runs that did
+not drop theirs, which happens whenever `TEST_AI_WORKBENCH_KEEP_DB` is set,
+whenever the run is interrupted before it reaches teardown, and whenever
+teardown itself fails, either because it cannot open its administrative
+connection or because `DROP DATABASE` returns an error. A complete run also
+leaves databases behind, because the three tests in `maintenance_test.go` each
+call `setupTestDatabase()` again; each call replaces the generated database for
+the rest of the run, and teardown drops only the last one. Leftover databases
+are safe to drop once you have confirmed that no test run or other client is
+still connected to them.
+
+#### Confirming the Tests Ran
+
+A passing run is not by itself evidence that the tests ran. When
+`setupTestDatabase()` fails for any reason, `TestMain` prints
+`Skipping database tests` and calls `os.Exit(0)`, so the package reports
+success having run nothing; a wrong connection string produces a pass
+rather than an error. Run the tests with `go test -v` and check the
+output for that message, and for the individual test results, whenever a
+connection setting changes.
 
 ### Writing Migration Tests
 
@@ -411,35 +411,31 @@ In the following example, the test verifies that a
 migration creates a table:
 
 ```go
-func TestMigration6Metrics(t *testing.T) {
-    db := getTestConnection(t)
-    if db == nil {
-        return
-    }
-    defer db.Close()
+func TestProbeEventsTable(t *testing.T) {
+    pool, conn := getTestConnection(t)
+    defer pool.Close()
+    defer conn.Release()
 
-    cleanupTestSchema(t, db)
+    cleanupTestSchema(t, pool)
     sm := NewSchemaManager()
-    if err := sm.Migrate(db); err != nil {
+    if err := sm.Migrate(conn); err != nil {
         t.Fatalf("Failed to migrate: %v", err)
     }
 
     var count int
-    err := db.QueryRow(`
+    err := pool.QueryRow(context.Background(), `
         SELECT COUNT(*)
         FROM information_schema.tables
-        WHERE table_name = 'metrics'
+        WHERE table_name = 'probe_events'
     `).Scan(&count)
     if err != nil {
-        t.Fatalf(
-            "Failed to check for table: %v", err,
-        )
+        t.Fatalf("Failed to check for table: %v", err)
     }
     if count != 1 {
-        t.Fatal("metrics table was not created")
+        t.Fatal("probe_events table was not created")
     }
 
-    cleanupTestSchema(t, db)
+    cleanupTestSchema(t, pool)
 }
 ```
 

@@ -20,6 +20,7 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
 	"github.com/pgedge/ai-workbench/server/internal/resources"
 	"golang.org/x/crypto/bcrypt"
+	"gopkg.in/yaml.v3"
 )
 
 // TestNewContextAwareProvider tests provider creation
@@ -67,7 +68,7 @@ func TestContextAwareProvider_List(t *testing.T) {
 		// List tools - should return all tools
 		tools := provider.List()
 
-		// Should have all 18 tools (no filtering)
+		// Should have all 19 tools (no filtering)
 		expectedTools := []string{
 			"read_resource",
 			"generate_embedding",
@@ -78,6 +79,7 @@ func TestContextAwareProvider_List(t *testing.T) {
 			"count_rows",
 			"list_probes",
 			"describe_probe",
+			"describe_datastore",
 			"query_metrics",
 			"list_connections",
 			"get_alert_history",
@@ -114,10 +116,35 @@ func TestContextAwareProvider_Execute_WithAuth(t *testing.T) {
 
 	fallbackClient := database.NewClient(nil)
 	cfg := &config.Config{}
-	resourceReg := resources.NewContextAwareRegistry(clientManager, cfg, nil, nil)
+	// A nil auth store denies every check (issue #477), so give the
+	// provider a real store; the subtests that expect success execute
+	// as a superuser.
+	authStore, cleanup := newRBACTestStore(t)
+	defer cleanup()
+	resourceReg := resources.NewContextAwareRegistry(clientManager, cfg, authStore, nil)
 
 	// Auth enabled - should require token hash
-	provider := NewContextAwareProvider(clientManager, resourceReg, fallbackClient, cfg, nil, nil, nil)
+	provider := NewContextAwareProvider(clientManager, resourceReg, fallbackClient, cfg, authStore, nil, nil)
+
+	// superuserTokenContext returns a superuser context carrying the
+	// given token hash.
+	superuserTokenContext := func(tokenHash string) context.Context {
+		ctx := context.WithValue(context.Background(), auth.TokenHashContextKey, tokenHash)
+		return context.WithValue(ctx, auth.IsSuperuserContextKey, true)
+	}
+
+	// assertNotFound checks that read_resource reached the registry and
+	// reported the URI as unknown, rather than being denied.
+	assertNotFound := func(t *testing.T, response mcp.ToolResponse, uri string) {
+		t.Helper()
+		if len(response.Content) == 0 {
+			t.Fatal("Expected non-empty response content")
+		}
+		want := "Resource not found: " + uri
+		if response.Content[0].Text != want {
+			t.Errorf("Expected %q, got %q", want, response.Content[0].Text)
+		}
+	}
 
 	t.Run("missing token hash returns error", func(t *testing.T) {
 		// Context without token hash
@@ -137,8 +164,7 @@ func TestContextAwareProvider_Execute_WithAuth(t *testing.T) {
 	})
 
 	t.Run("with valid token hash succeeds", func(t *testing.T) {
-		// Context with token hash (no token store needed for stateless tools in auth mode)
-		ctx := context.WithValue(context.Background(), auth.TokenHashContextKey, "test-token-hash")
+		ctx := superuserTokenContext("test-token-hash")
 
 		// Execute read_resource (doesn't require database queries)
 		response, err := provider.Execute(ctx, "read_resource", map[string]any{
@@ -148,11 +174,7 @@ func TestContextAwareProvider_Execute_WithAuth(t *testing.T) {
 			t.Fatalf("Execute failed: %v", err)
 		}
 
-		// read_resource should return a response (may be error for non-existent resource)
-		// Verify we got a response
-		if len(response.Content) == 0 {
-			t.Fatal("Expected non-empty response content")
-		}
+		assertNotFound(t, response, "test://test")
 
 		// Note: In unit tests without database configuration, clients are not created
 		// In production with database config, read_resource would create clients for authenticated tokens
@@ -161,31 +183,34 @@ func TestContextAwareProvider_Execute_WithAuth(t *testing.T) {
 
 	t.Run("multiple tokens get different clients", func(t *testing.T) {
 		// First token
-		ctx1 := context.WithValue(context.Background(), auth.TokenHashContextKey, "token-hash-1")
-		_, err := provider.Execute(ctx1, "read_resource", map[string]any{
+		ctx1 := superuserTokenContext("token-hash-1")
+		response1, err := provider.Execute(ctx1, "read_resource", map[string]any{
 			"uri": "test://test1",
 		})
 		if err != nil {
 			t.Fatalf("Execute failed for token 1: %v", err)
 		}
+		assertNotFound(t, response1, "test://test1")
 
 		// Second token
-		ctx2 := context.WithValue(context.Background(), auth.TokenHashContextKey, "token-hash-2")
-		_, err = provider.Execute(ctx2, "read_resource", map[string]any{
+		ctx2 := superuserTokenContext("token-hash-2")
+		response2, err := provider.Execute(ctx2, "read_resource", map[string]any{
 			"uri": "test://test2",
 		})
 		if err != nil {
 			t.Fatalf("Execute failed for token 2: %v", err)
 		}
+		assertNotFound(t, response2, "test://test2")
 
 		// Third token
-		ctx3 := context.WithValue(context.Background(), auth.TokenHashContextKey, "token-hash-3")
-		_, err = provider.Execute(ctx3, "read_resource", map[string]any{
+		ctx3 := superuserTokenContext("token-hash-3")
+		response3, err := provider.Execute(ctx3, "read_resource", map[string]any{
 			"uri": "test://test3",
 		})
 		if err != nil {
 			t.Fatalf("Execute failed for token 3: %v", err)
 		}
+		assertNotFound(t, response3, "test://test3")
 
 		// Note: In unit tests without database configuration, clients are not created
 		// In production with database config, each token would get its own isolated database client
@@ -200,12 +225,17 @@ func TestContextAwareProvider_Execute_InvalidTool(t *testing.T) {
 
 	fallbackClient := database.NewClient(nil)
 	cfg := &config.Config{}
-	resourceReg := resources.NewContextAwareRegistry(clientManager, cfg, nil, nil)
+	// A nil auth store denies every check (issue #477), so give the
+	// provider a real store and execute as a superuser.
+	authStore, cleanup := newRBACTestStore(t)
+	defer cleanup()
+	resourceReg := resources.NewContextAwareRegistry(clientManager, cfg, authStore, nil)
 
-	provider := NewContextAwareProvider(clientManager, resourceReg, fallbackClient, cfg, nil, nil, nil)
+	provider := NewContextAwareProvider(clientManager, resourceReg, fallbackClient, cfg, authStore, nil, nil)
 
 	// Provide a token hash since auth is always required
 	ctx := context.WithValue(context.Background(), auth.TokenHashContextKey, "test-token-hash")
+	ctx = context.WithValue(ctx, auth.IsSuperuserContextKey, true)
 
 	// Execute non-existent tool
 	response, err := provider.Execute(ctx, "nonexistent_tool", map[string]any{})
@@ -269,7 +299,7 @@ func TestContextAwareProvider_RegisterTools_WithContext(t *testing.T) {
 func TestGetClient_TokenScopeEnforcement(t *testing.T) {
 	// Create a temporary auth store
 	tmpDir := t.TempDir()
-	authStore, err := auth.NewAuthStore(tmpDir, 0, 0)
+	authStore, err := auth.NewAuthStore(tmpDir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("NewAuthStore: %v", err)
 	}
@@ -286,7 +316,7 @@ func TestGetClient_TokenScopeEnforcement(t *testing.T) {
 	}
 
 	// Create a token for the user
-	_, token, err := authStore.CreateToken("testuser", "test-token", nil)
+	_, token, err := authStore.AsActor(auth.SystemActor()).CreateToken("testuser", "test-token", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken: %v", err)
 	}
@@ -299,7 +329,7 @@ func TestGetClient_TokenScopeEnforcement(t *testing.T) {
 
 	t.Run("provider creation with nil authStore creates valid rbacChecker", func(t *testing.T) {
 		// This test verifies that NewContextAwareProvider handles nil authStore
-		// correctly by creating an rbacChecker that grants full access
+		// by creating an rbacChecker that fails closed (issue #477)
 		clientManager := database.NewClientManager(nil)
 		defer clientManager.CloseAll()
 
@@ -315,10 +345,16 @@ func TestGetClient_TokenScopeEnforcement(t *testing.T) {
 			t.Fatal("Expected non-nil rbacChecker even with nil authStore")
 		}
 
-		// With nil authStore, superuser check should return true
+		// With nil authStore the checker denies: a caller the context
+		// does not mark as a superuser is refused, and so is one that
+		// claims superuser.
 		ctx := context.WithValue(context.Background(), auth.TokenHashContextKey, "any-token")
-		if !provider.rbacChecker.IsSuperuser(ctx) {
-			t.Error("Expected IsSuperuser to return true with nil authStore")
+		if provider.rbacChecker.IsSuperuser(ctx) {
+			t.Error("Expected IsSuperuser to be false without the context flag")
+		}
+		superuserCtx := context.WithValue(ctx, auth.IsSuperuserContextKey, true)
+		if provider.rbacChecker.IsSuperuser(superuserCtx) {
+			t.Error("Expected IsSuperuser to return false with nil authStore")
 		}
 	})
 
@@ -369,7 +405,7 @@ func TestGetClient_TokenScopeEnforcement(t *testing.T) {
 // calls get a clean "no connection selected" error.
 func TestGetClient_SessionClearedOnRBACDenial(t *testing.T) {
 	tmpDir := t.TempDir()
-	authStore, err := auth.NewAuthStore(tmpDir, 0, 0)
+	authStore, err := auth.NewAuthStore(tmpDir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("NewAuthStore: %v", err)
 	}
@@ -380,7 +416,7 @@ func TestGetClient_SessionClearedOnRBACDenial(t *testing.T) {
 	if err := authStore.CreateUser("alice", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
-	_, token, err := authStore.CreateToken("alice", "alice-token", nil)
+	_, token, err := authStore.AsActor(auth.SystemActor()).CreateToken("alice", "alice-token", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken: %v", err)
 	}
@@ -432,7 +468,7 @@ func TestGetClient_SessionClearedOnRBACDenial(t *testing.T) {
 // rbacChecker, but this test ensures defensive coding is in place.
 func TestGetClient_NilRBACCheckerInSession(t *testing.T) {
 	tmpDir := t.TempDir()
-	authStore, err := auth.NewAuthStore(tmpDir, 0, 0)
+	authStore, err := auth.NewAuthStore(tmpDir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("NewAuthStore: %v", err)
 	}
@@ -443,7 +479,7 @@ func TestGetClient_NilRBACCheckerInSession(t *testing.T) {
 	if err := authStore.CreateUser("bob", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
-	_, token, err := authStore.CreateToken("bob", "bob-token", nil)
+	_, token, err := authStore.AsActor(auth.SystemActor()).CreateToken("bob", "bob-token", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken: %v", err)
 	}
@@ -495,7 +531,7 @@ func TestGetClient_NilRBACCheckerInSession(t *testing.T) {
 // token scope restriction would bypass RBAC checks at use-time.
 func TestExecute_GetClient_RBACDenialClearsSession(t *testing.T) {
 	tmpDir := t.TempDir()
-	authStore, err := auth.NewAuthStore(tmpDir, 0, 0)
+	authStore, err := auth.NewAuthStore(tmpDir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("NewAuthStore: %v", err)
 	}
@@ -516,7 +552,7 @@ func TestExecute_GetClient_RBACDenialClearsSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetUserID: %v", err)
 	}
-	_, token, err := authStore.CreateToken("alice", "alice-token", nil)
+	_, token, err := authStore.AsActor(auth.SystemActor()).CreateToken("alice", "alice-token", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken: %v", err)
 	}
@@ -597,7 +633,7 @@ func TestExecute_GetClient_RBACDenialClearsSession(t *testing.T) {
 // exercised).
 func TestExecute_GetClient_RBACAllowsAccessProceedsToDatastore(t *testing.T) {
 	tmpDir := t.TempDir()
-	authStore, err := auth.NewAuthStore(tmpDir, 0, 0)
+	authStore, err := auth.NewAuthStore(tmpDir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("NewAuthStore: %v", err)
 	}
@@ -618,7 +654,7 @@ func TestExecute_GetClient_RBACAllowsAccessProceedsToDatastore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetUserID: %v", err)
 	}
-	_, token, err := authStore.CreateToken("bob", "bob-token", nil)
+	_, token, err := authStore.AsActor(auth.SystemActor()).CreateToken("bob", "bob-token", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken: %v", err)
 	}
@@ -705,7 +741,7 @@ func TestExecute_GetClient_RBACAllowsAccessProceedsToDatastore(t *testing.T) {
 // should return a helpful "no connection selected" error.
 func TestExecute_GetClient_NoSession(t *testing.T) {
 	tmpDir := t.TempDir()
-	authStore, err := auth.NewAuthStore(tmpDir, 0, 0)
+	authStore, err := auth.NewAuthStore(tmpDir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("NewAuthStore: %v", err)
 	}
@@ -726,7 +762,7 @@ func TestExecute_GetClient_NoSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetUserID: %v", err)
 	}
-	_, token, err := authStore.CreateToken("carol", "carol-token", nil)
+	_, token, err := authStore.AsActor(auth.SystemActor()).CreateToken("carol", "carol-token", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken: %v", err)
 	}
@@ -771,7 +807,7 @@ func TestExecute_GetClient_NoSession(t *testing.T) {
 // pass, and the code should attempt to use the database override.
 func TestExecute_GetClient_SessionWithDatabaseOverride(t *testing.T) {
 	tmpDir := t.TempDir()
-	authStore, err := auth.NewAuthStore(tmpDir, 0, 0)
+	authStore, err := auth.NewAuthStore(tmpDir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("NewAuthStore: %v", err)
 	}
@@ -792,7 +828,7 @@ func TestExecute_GetClient_SessionWithDatabaseOverride(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetUserID: %v", err)
 	}
-	_, token, err := authStore.CreateToken("dave", "dave-token", nil)
+	_, token, err := authStore.AsActor(auth.SystemActor()).CreateToken("dave", "dave-token", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken: %v", err)
 	}
@@ -888,7 +924,7 @@ func TestExecute_GetClient_SessionWithDatabaseOverride(t *testing.T) {
 // bypasses RBAC checks even when a sharing lookup would deny access.
 func TestExecute_GetClient_SuperuserBypassesRBAC(t *testing.T) {
 	tmpDir := t.TempDir()
-	authStore, err := auth.NewAuthStore(tmpDir, 0, 0)
+	authStore, err := auth.NewAuthStore(tmpDir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("NewAuthStore: %v", err)
 	}
@@ -906,7 +942,7 @@ func TestExecute_GetClient_SuperuserBypassesRBAC(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetUserID: %v", err)
 	}
-	_, token, err := authStore.CreateToken("admin", "admin-token", nil)
+	_, token, err := authStore.AsActor(auth.SystemActor()).CreateToken("admin", "admin-token", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken: %v", err)
 	}
@@ -993,7 +1029,7 @@ func TestExecute_GetClient_SuperuserBypassesRBAC(t *testing.T) {
 // tool would inject a connection_id from an expired/restricted session scope.
 func TestExecute_QueryMetrics_RBACChecksConnectionIDInjection(t *testing.T) {
 	tmpDir := t.TempDir()
-	authStore, err := auth.NewAuthStore(tmpDir, 0, 0)
+	authStore, err := auth.NewAuthStore(tmpDir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("NewAuthStore: %v", err)
 	}
@@ -1013,7 +1049,7 @@ func TestExecute_QueryMetrics_RBACChecksConnectionIDInjection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetUserID: %v", err)
 	}
-	_, token, err := authStore.CreateToken("alice", "alice-token", nil)
+	_, token, err := authStore.AsActor(auth.SystemActor()).CreateToken("alice", "alice-token", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken: %v", err)
 	}
@@ -1083,7 +1119,7 @@ func TestExecute_QueryMetrics_RBACChecksConnectionIDInjection(t *testing.T) {
 // RBAC allows access to the session's connection, the connection_id IS injected.
 func TestExecute_QueryMetrics_RBACAllowsConnectionIDInjection(t *testing.T) {
 	tmpDir := t.TempDir()
-	authStore, err := auth.NewAuthStore(tmpDir, 0, 0)
+	authStore, err := auth.NewAuthStore(tmpDir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("NewAuthStore: %v", err)
 	}
@@ -1103,7 +1139,7 @@ func TestExecute_QueryMetrics_RBACAllowsConnectionIDInjection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetUserID: %v", err)
 	}
-	_, token, err := authStore.CreateToken("bob", "bob-token", nil)
+	_, token, err := authStore.AsActor(auth.SystemActor()).CreateToken("bob", "bob-token", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken: %v", err)
 	}
@@ -1160,7 +1196,7 @@ func TestExecute_QueryMetrics_RBACAllowsConnectionIDInjection(t *testing.T) {
 // when the user is a superuser, connection_id is always injected from the session.
 func TestExecute_QueryMetrics_SuperuserAlwaysInjectsConnectionID(t *testing.T) {
 	tmpDir := t.TempDir()
-	authStore, err := auth.NewAuthStore(tmpDir, 0, 0)
+	authStore, err := auth.NewAuthStore(tmpDir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("NewAuthStore: %v", err)
 	}
@@ -1178,7 +1214,7 @@ func TestExecute_QueryMetrics_SuperuserAlwaysInjectsConnectionID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetUserID: %v", err)
 	}
-	_, token, err := authStore.CreateToken("admin", "admin-token", nil)
+	_, token, err := authStore.AsActor(auth.SystemActor()).CreateToken("admin", "admin-token", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken: %v", err)
 	}
@@ -1240,5 +1276,29 @@ func TestContextAwareProvider_GetClient_NilClientResolver(t *testing.T) {
 	}
 	if err.Error() != "no database connection configured" {
 		t.Errorf("expected exact 'no database connection configured', got: %q", err.Error())
+	}
+}
+
+// TestContextAwareProvider_RegisterDatabaseTools_TestQueryAlwaysRegistered
+// verifies at the registration layer that test_query cannot be switched
+// off from a configuration file, whilst a switchable tool configured the
+// same way is still switched off.
+func TestContextAwareProvider_RegisterDatabaseTools_TestQueryAlwaysRegistered(t *testing.T) {
+	cfg := &config.Config{}
+	raw := "builtins:\n  tools:\n    test_query: false\n    query_database: false\n"
+	if err := yaml.Unmarshal([]byte(raw), cfg); err != nil {
+		t.Fatalf("failed to unmarshal configuration: %v", err)
+	}
+	resourceReg := resources.NewContextAwareRegistry(nil, cfg, nil, nil)
+	provider := NewContextAwareProvider(nil, resourceReg, nil, cfg, nil, nil, nil)
+
+	registry := NewRegistry()
+	provider.registerDatabaseTools(registry, nil)
+
+	if _, ok := registry.Get("test_query"); !ok {
+		t.Error("test_query was not registered with test_query: false configured")
+	}
+	if _, ok := registry.Get("query_database"); ok {
+		t.Error("query_database was registered with query_database: false configured")
 	}
 }

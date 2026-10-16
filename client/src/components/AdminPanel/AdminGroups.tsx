@@ -49,6 +49,7 @@ import {
 } from '@mui/icons-material';
 import DeleteConfirmationDialog from '../DeleteConfirmationDialog';
 import EffectivePermissionsPanel from './EffectivePermissionsPanel';
+import type { EffectivePermissionsPanelProps } from './EffectivePermissionsPanel';
 import { useAuth } from '../../contexts/useAuth';
 import { apiGet, apiPost, apiPut, apiDelete } from '../../utils/apiClient';
 import { SELECT_FIELD_SX } from '../shared/formStyles';
@@ -86,9 +87,9 @@ interface GroupDetail {
 }
 
 interface EffectivePermsData {
-    connection_privileges?: unknown[];
-    admin_permissions?: unknown[];
-    mcp_privileges?: unknown[];
+    connection_privileges?: EffectivePermissionsPanelProps['connectionPrivileges'];
+    admin_permissions?: EffectivePermissionsPanelProps['adminPermissions'];
+    mcp_privileges?: EffectivePermissionsPanelProps['mcpPrivileges'];
 }
 
 interface RbacUser {
@@ -468,7 +469,7 @@ const AdminGroups: React.FC = () => {
                                                                 Add Member
                                                             </Button>
                                                         </Box>
-                                                        {((groupDetail.user_members?.length > 0) || (groupDetail.group_members?.length > 0)) ? (
+                                                        {(((groupDetail.user_members?.length ?? 0) > 0) || ((groupDetail.group_members?.length ?? 0) > 0)) ? (
                                                             <List dense disablePadding>
                                                                 {(groupDetail.user_members ?? []).map((username, i) => (
                                                                     <ListItem key={`user-${i}`} disablePadding sx={{ py: 0.5 }}>

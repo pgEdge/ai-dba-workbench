@@ -37,7 +37,7 @@ type timeSeriesQueryFunc func(
 	buckets int,
 	aggregation string,
 	requestedMetrics []string,
-) ([]metrics.MetricSeries, error)
+) (*metrics.MetricsQueryResult, error)
 
 // MetricsHandler handles REST API endpoints for monitoring dashboard
 // metric queries and baselines.
@@ -101,6 +101,31 @@ func parseQueryIDFilter(w http.ResponseWriter, r *http.Request) (*int64, bool) {
 		return nil, false
 	}
 	return &queryID, true
+}
+
+// parseMetricFilters reads the optional dimension filters shared by the
+// time-series and latest-row variants of GET /api/v1/metrics/query. Keeping
+// the two paths on one parser guarantees a newly added dimension, such as
+// mount_point, reaches both rather than only the one it was written for. It
+// returns false after sending a 400 response for a malformed queryid; the
+// string dimensions cannot fail to parse and are forwarded verbatim for the
+// query layer to bind as arguments.
+func parseMetricFilters(
+	w http.ResponseWriter,
+	r *http.Request,
+) (metrics.MetricFilters, bool) {
+	queryID, ok := parseQueryIDFilter(w, r)
+	if !ok {
+		return metrics.MetricFilters{}, false // error already sent
+	}
+	return metrics.MetricFilters{
+		DatabaseName: ParseQueryString(r, "database_name"),
+		SchemaName:   ParseQueryString(r, "schema_name"),
+		TableName:    ParseQueryString(r, "table_name"),
+		IndexName:    ParseQueryString(r, "index_name"),
+		MountPoint:   ParseQueryString(r, "mount_point"),
+		QueryID:      queryID,
+	}, true
 }
 
 // handleMetricsQuery handles GET /api/v1/metrics/query.
@@ -169,16 +194,9 @@ func (h *MetricsHandler) handleMetricsQuery(
 	}
 
 	// Parse optional filters
-	queryID, ok := parseQueryIDFilter(w, r)
+	filters, ok := parseMetricFilters(w, r)
 	if !ok {
 		return // error already sent
-	}
-	filters := metrics.MetricFilters{
-		DatabaseName: ParseQueryString(r, "database_name"),
-		SchemaName:   ParseQueryString(r, "schema_name"),
-		TableName:    ParseQueryString(r, "table_name"),
-		IndexName:    ParseQueryString(r, "index_name"),
-		QueryID:      queryID,
 	}
 
 	// Parse buckets (default 150)
@@ -198,15 +216,13 @@ func (h *MetricsHandler) handleMetricsQuery(
 	if aggregation == "" {
 		aggregation = "avg"
 	}
-	validAggs := map[string]bool{
-		"avg": true, "sum": true, "min": true, "max": true, "last": true,
-	}
-	if !validAggs[strings.ToLower(aggregation)] {
+	aggregation = strings.ToLower(aggregation)
+	if !metrics.IsValidAggregation(aggregation) {
 		RespondError(w, http.StatusBadRequest,
-			"Invalid aggregation: must be one of avg, sum, min, max, last")
+			"Invalid aggregation: must be one of "+
+				strings.Join(metrics.ValidAggregations(), ", "))
 		return
 	}
-	aggregation = strings.ToLower(aggregation)
 
 	// Parse optional metrics filter
 	var requestedMetrics []string
@@ -234,6 +250,14 @@ func (h *MetricsHandler) handleMetricsQuery(
 	if err != nil {
 		RespondError(w, http.StatusBadRequest, err.Error())
 		return
+	}
+
+	// The query layer resolves the window it was handed but never sees
+	// the range parameter, so the envelope's time_range is echoed here,
+	// exactly as received and carrying the same "1h" default that was
+	// resolved above.
+	if result != nil {
+		result.TimeRange = timeRange
 	}
 
 	RespondJSON(w, http.StatusOK, result)
@@ -283,16 +307,9 @@ func (h *MetricsHandler) handleLatestRows(
 		return
 	}
 
-	queryID, ok := parseQueryIDFilter(w, r)
+	filters, ok := parseMetricFilters(w, r)
 	if !ok {
 		return // error already sent
-	}
-	filters := metrics.MetricFilters{
-		DatabaseName: ParseQueryString(r, "database_name"),
-		SchemaName:   ParseQueryString(r, "schema_name"),
-		TableName:    ParseQueryString(r, "table_name"),
-		IndexName:    ParseQueryString(r, "index_name"),
-		QueryID:      queryID,
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
@@ -387,8 +404,13 @@ func (h *MetricsHandler) parseConnectionIDs(
 	w http.ResponseWriter,
 	r *http.Request,
 ) []int {
-	// Try connection_ids first (comma-separated list)
+	// Try connection_ids first (comma-separated list). The length cap is
+	// applied here so that an oversized list is rejected before the RBAC
+	// filtering and the metrics query do any database work.
 	if ids, ok := ParseQueryIntList(w, r, "connection_ids"); ok {
+		if !CheckConnectionIDCount(w, ids) {
+			return nil // Error already sent by CheckConnectionIDCount
+		}
 		return ids
 	}
 	if r.URL.Query().Get("connection_ids") != "" {

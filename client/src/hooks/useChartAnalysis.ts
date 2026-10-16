@@ -16,6 +16,7 @@ import { stripPreamble, djb2Hash, ANALYSIS_CACHE_TTL_MS } from '../utils/textHel
 import { SQL_CODE_BLOCK_RULES } from '../utils/analysisPrompts';
 import { fetchTimelineEventsForRange } from '../utils/timelineEvents';
 import type { LLMResponse } from '../types/llm';
+import { LLM_CHAT_PATH, buildChatRequestInit } from '../utils/llmChat';
 import { useAnalysisState } from './useAnalysisState';
 import { logger } from '../utils/logger';
 
@@ -118,7 +119,12 @@ function serializeChartData(data: ChartData): string {
     const lines: string[] = [];
 
     for (const series of data.series) {
-        const values = series.data;
+        // Null entries mark buckets with no value (drawn as gaps) and
+        // are left out of the statistics; the table below prints them
+        // as N/A.
+        const values = series.data.filter(
+            (v): v is number => v !== null
+        );
         if (values.length === 0) {
             lines.push(`Series "${series.name}": No data points`);
             continue;
@@ -164,9 +170,10 @@ function serializeChartData(data: ChartData): string {
                 row.push(data.categories[idx]);
             }
             for (const series of data.series) {
+                const cell = series.data[idx];
                 row.push(
-                    series.data[idx] !== undefined
-                        ? String(series.data[idx])
+                    cell !== undefined && cell !== null
+                        ? String(cell)
                         : 'N/A'
                 );
             }
@@ -264,21 +271,13 @@ Provide analysis of trends, anomalies, and actionable recommendations.`;
             setProgressMessage('Analyzing data...');
             setActiveTools(['Analyzing data']);
 
-            const response = await apiFetch('/api/v1/llm/chat', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    messages: [
-                        {
-                            role: 'user',
-                            content: [{ type: 'text', text: userMessage }],
-                        },
-                    ],
-                    system_prompt: systemPrompt,
+            const response = await apiFetch(
+                LLM_CHAT_PATH,
+                buildChatRequestInit({
+                    messages: [{ role: 'user', content: userMessage }],
+                    systemPrompt,
                 }),
-            });
+            );
 
             if (!response.ok) {
                 const errorText = await response.text();

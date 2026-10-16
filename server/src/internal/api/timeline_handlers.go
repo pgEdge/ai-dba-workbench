@@ -124,48 +124,48 @@ func (h *TimelineHandler) handleTimelineEvents(w http.ResponseWriter, r *http.Re
 
 	// RBAC: restrict to visible connections. VisibleConnectionIDs
 	// returns allConnections=true for superusers and wildcard token
-	// scopes; otherwise it returns the explicit set of visible IDs.
-	if h.rbacChecker != nil {
-		lister := database.NewVisibilityLister(h.datastore)
-		accessibleIDs, allConnections, err := h.rbacChecker.VisibleConnectionIDs(r.Context(), lister)
-		if err != nil {
-			log.Printf("[ERROR] Failed to resolve visible connections for timeline: %v", err)
-			RespondError(w, http.StatusInternalServerError, "Failed to fetch timeline events")
+	// scopes; otherwise it returns the explicit set of visible IDs. A
+	// nil checker yields the empty set, so the check is never skipped
+	// (issue #561).
+	lister := database.NewVisibilityLister(h.datastore)
+	accessibleIDs, allConnections, err := h.rbacChecker.VisibleConnectionIDs(r.Context(), lister)
+	if err != nil {
+		log.Printf("[ERROR] Failed to resolve visible connections for timeline: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to fetch timeline events")
+		return
+	}
+	if !allConnections {
+		// Empty visible set -> return an empty result without
+		// hitting the datastore.
+		if len(accessibleIDs) == 0 {
+			RespondJSON(w, http.StatusOK, &database.TimelineResult{Events: []database.TimelineEvent{}, TotalCount: 0})
 			return
 		}
-		if !allConnections {
-			// Empty visible set -> return an empty result without
-			// hitting the datastore.
-			if len(accessibleIDs) == 0 {
+		accessibleSet := make(map[int]bool, len(accessibleIDs))
+		for _, id := range accessibleIDs {
+			accessibleSet[id] = true
+		}
+		if filter.ConnectionID != nil {
+			if !accessibleSet[*filter.ConnectionID] {
 				RespondJSON(w, http.StatusOK, &database.TimelineResult{Events: []database.TimelineEvent{}, TotalCount: 0})
 				return
 			}
-			accessibleSet := make(map[int]bool, len(accessibleIDs))
-			for _, id := range accessibleIDs {
-				accessibleSet[id] = true
-			}
-			if filter.ConnectionID != nil {
-				if !accessibleSet[*filter.ConnectionID] {
-					RespondJSON(w, http.StatusOK, &database.TimelineResult{Events: []database.TimelineEvent{}, TotalCount: 0})
-					return
+		}
+		if len(filter.ConnectionIDs) > 0 {
+			intersected := make([]int, 0, len(filter.ConnectionIDs))
+			for _, id := range filter.ConnectionIDs {
+				if accessibleSet[id] {
+					intersected = append(intersected, id)
 				}
 			}
-			if len(filter.ConnectionIDs) > 0 {
-				intersected := make([]int, 0, len(filter.ConnectionIDs))
-				for _, id := range filter.ConnectionIDs {
-					if accessibleSet[id] {
-						intersected = append(intersected, id)
-					}
-				}
-				if len(intersected) == 0 {
-					RespondJSON(w, http.StatusOK, &database.TimelineResult{Events: []database.TimelineEvent{}, TotalCount: 0})
-					return
-				}
-				filter.ConnectionIDs = intersected
-			} else if filter.ConnectionID == nil {
-				// No user filter -- restrict to visible connections.
-				filter.ConnectionIDs = accessibleIDs
+			if len(intersected) == 0 {
+				RespondJSON(w, http.StatusOK, &database.TimelineResult{Events: []database.TimelineEvent{}, TotalCount: 0})
+				return
 			}
+			filter.ConnectionIDs = intersected
+		} else if filter.ConnectionID == nil {
+			// No user filter -- restrict to visible connections.
+			filter.ConnectionIDs = accessibleIDs
 		}
 	}
 

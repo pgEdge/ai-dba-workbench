@@ -11,6 +11,8 @@ moved.
 | Location | Why it matters |
 |----------|----------------|
 | `server/src/internal/auth/` | Users, groups, tokens, permissions and the RBAC checker, backed by SQLite |
+| `server/src/internal/auth/federation.go` | Federated identity: linking, provisioning, group reconciliation and unlinking |
+| `server/src/internal/oidc/` | OIDC discovery, the authorisation request, ID-token verification, claim extraction and the sealed login-state cookie |
 | `server/src/internal/api/` | HTTP handlers; every mutating handler carries an authorisation gate (see `../golang-expert/rbac-patterns.md`) |
 | `server/src/internal/tools/` | MCP tools, including ones that execute SQL against monitored databases |
 | `server/src/internal/database/` | Datastore queries; identifier interpolation is allow-listed and quoted |
@@ -39,12 +41,658 @@ moved.
 - The exception to the injection rule is deliberate: MCP tools that
   run operator-supplied SQL execute it as written, under the
   monitored connection's own privileges.
+- `BuildConnectionString` builds the URL with `net/url`, and a name
+  with a leading `/` goes in the `dbname` query parameter; since
+  `%00` still decodes to NUL, `ValidateDatabaseName` must run on every
+  override path, because its NUL check is the only guard against
+  startup-packet injection.
 - Monitored-database credentials are encrypted at rest with a
   server-side secret and only decrypted in the collector when a pool
   is opened.
+- Clearing an alert is a security-relevant decision, because a false
+  resolution hides a live problem: the `clearWhenAbsent` flag on each
+  `metricRegistry` entry in
+  `alerter/src/internal/database/metric_registry.go` decides whether a
+  metric that returns no row may clear its alert, and its default must
+  stay `false` (a metric the registry does not know clears nothing).
+  Clearing on absence is additionally gated on probe freshness: the
+  entry's `probeName` must be reporting for the alert's connection, per
+  `GetProbeStalenessByConnection`, before `resolveAbsentMetric` clears,
+  so a stopped collector, a stalled probe or a disabled one leaves the
+  alert active (issue #407).
 - Visibility is per user: connections are scoped to their owner or to
-  groups the user belongs to, and GET handlers return 404 rather than
-  403 for resources the caller cannot see.
+  groups the user belongs to, except that a shared connection no
+  connection-specific grant restricts is visible, and open at
+  `read_write`, to every user, subject to token scope (#592).
+  Connection endpoints mostly do not hide
+  existence: a caller without access to a connection gets 403, and
+  several of them echo the requested connection ID in the message (see
+  `handleTopQueries` and its neighbours in
+  `internal/api/perf_summary_handlers.go`, and `getConnection` in
+  `internal/api/connection_handlers.go`). The exceptions answer 404 for
+  a record the caller cannot see, as for one that does not exist:
+  clusters and cluster groups whose members the caller cannot see, the
+  target cluster of `PUT /api/v1/connections/{id}/cluster` (a missing
+  cluster id answers 404 too, not 500 from the foreign key), and
+  blackouts and blackout schedules outside a token's connection scope.
+  Judge an enumeration concern against the convention of the endpoint
+  in question rather than assuming either model throughout.
+- The MCP tools that go through `resolveAccessibleConnection` in
+  `server/src/internal/tools/connection_access.go` (`get_alert_history`,
+  `get_blackouts`, `get_metric_baselines` and `get_timeline_events`) do
+  hide existence: a missing ID, a forbidden ID and a failed access check
+  get the same "connection not found or not accessible" response, and
+  the suggestions list only `VisibleConnectionIDs` (issue #571).
+- An API token's connection scope is a third constraint, intersected
+  with both of the above. `CanAccessConnection` and
+  `VisibleConnectionIDs` in `server/src/internal/auth/access.go` apply
+  it on every path, ownership and sharing included, and it can only
+  lower an access level, never raise one.
+- `IsConnectionInTokenScope` treats a token with no scope rows as
+  unrestricted, so an unscoped token inherits its owner's access in
+  full.
+- Token scope constrains a superuser too, since issues `#471` and
+  `#482`. Each check intersects the owner's superuser rights with the
+  acting token's scope for the surface being reached, and a superuser
+  holds everything, so the intersection is the scope itself: a token
+  scoped to one admin permission, one connection or one tool may use
+  exactly that, with no group grant on the owning account, and nothing
+  else. A scope kind the token leaves empty, or scopes with the
+  wildcard, is unrestricted on that surface, and a narrowed scope of
+  one kind never narrows another.
+- Creating a cluster (`POST /api/v1/clusters`,
+  `POST /api/v1/cluster-groups/{id}/clusters`), and changing a
+  cluster's definition or relationships, need every connection in the
+  token's scope; adding a server to or removing one from a cluster, or
+  moving it between clusters, needs that connection at `read_write`.
+  The cluster-group create, update and delete routes accept session
+  tokens only (`getUserInfoCompat` answers 401 to an API token), and
+  carry the same all-connections gate in case that ever changes.
+- Grants made with an API token are bounded by the token's effective
+  access, its owner's privileges narrowed by its scope, per connection
+  and level, MCP item and admin permission (ruling of 06-10-2026;
+  `tokenCeiling` in `internal/auth/token_ceiling.go`, checks in
+  `internal/auth/grant_scope.go`, handler helpers in
+  `internal/api/rbac_grant_scope.go`). An unscoped token owned by a
+  non-superuser is bounded by its owner. read can grant only read; a
+  revoke needs read (hidden and missing connections refused
+  identically) and read_write when it removes a connection's last
+  group grant, decided inside the revoke's (or group delete's) own
+  store transaction from a precomputed `LiftGuard`, so a concurrent
+  revoke cannot race past it (`ErrRevokeLiftsRestriction`); group delete and member removal need read on every
+  connection the group confers; an admin grant needs the permission
+  and every connection at read_write, and a permission in
+  `reachEverythingAdminPermissions` needs every MCP item and admin
+  permission too; making a superuser, minting a token for one and
+  changing a group the OIDC `group_map` names need a superuser's token
+  unrestricted in every kind; membership add, password set, re-enable,
+  user delete and token creation need the principal's whole reach
+  within the ceiling; scope set and clear (self included) may grant
+  only within it. Accepted trade-off, by ruling, so do not report it:
+  a read-level token with `manage_permissions` can revoke another
+  group's read_write. Known gaps, which do not widen anyone's reach:
+  revoking a group's MCP privileges or admin permissions, editing or
+  disabling a user, and deleting a token are not ceiling-gated.
+- A token owned by a superuser is bounded by its scope alone, so
+  minting one, setting or clearing its scope, and deleting it, needs a
+  superuser (session, or a superuser's token with an unrestricted admin
+  scope, as `requireSuperuser` checks only that kind), as `updateUser`
+  does for a superuser target. The owner is read inside the store's
+  write transaction, not by the handler (#607):
+  `guardSuperuserOwnedTokenTx` in `auth/token_superuser_owner.go` (and
+  the owner lookup in `createToken`) refuses with
+  `ErrSuperuserTargetForbidden`, and the handlers pass the caller's
+  authority as `superuserOwnerAllowed` (`api/rbac_token_handlers.go`),
+  which also exempts a token acting on itself. In the ceiling, a
+  non-superuser caller holding everything may narrow such a token but
+  never widen or clear it.
+- A token with no rows in a scope kind is unrestricted in it, so every
+  token scope read in the store returns `auth.ErrTokenNotFound` for a
+  token that no longer exists (`requireTokenLocked` in
+  `auth/token_scope.go`), and every check denies on that error. A token
+  that deletes itself mid-request, after the handler's permission check,
+  is therefore refused by the later checks rather than read as
+  unrestricted (6 October review on PR #528).
+- A connection scope may not combine connection 0 (all connections)
+  with any other entry, nor name a connection twice
+  (`ValidateScopedConnections`, store, HTTP and CLI alike); legacy rows
+  that mix them are read with the specific entry taking precedence
+  everywhere, and the ceiling takes the lowest level of any entry.
+  Admin scope names must be known permissions or `*`.
+- The store refuses to demote, disable or delete the last enabled
+  superuser (`ErrLastSuperuser`, 409 over HTTP, counted inside the
+  change's transaction), for sessions, tokens and the CLI alike.
+  Known exceptions, not yet ruled on: the lockout disable in
+  `disableForLockout` and the federated login's `is_superuser` sync in
+  `federation.go` both bypass the guard (raised on PR #528).
+  `query_datastore` no longer runs SQL (#566): it builds each query
+  from the source catalog in `internal/tools/datastore_catalog.go`,
+  limited to the caller's visible connections and to columns that
+  carry no credentials; review any new catalog entry's scope and
+  columns. Metric column names are matched by substring against
+  `secretColumnFragments` (passwords, tokens, connection strings, SSL
+  files). A credential can also sit inside a value (pg_settings'
+  `primary_conninfo` or `archive_command`, pg_hba_file_rules'
+  `ldapbindpasswd=` and `radiussecrets=` options), which no column-name
+  check catches, so `metricRedactions` masks such values, chosen by
+  setting or option name against the broader `secretNamePatterns`, in
+  the inner subquery, where the caller's filters cannot see the real
+  value. Free-text columns (`pg_stat_activity.query`,
+  `pg_stat_statements.query`, Spock exception and resolution
+  statements and row images, `connections.connection_error`,
+  `alerts.description` and `alerts.ai_analysis`) pass, in
+  `query_datastore` only, through `redactedText`: `left(value, 65536)`
+  under a chain of `regexp_replace` calls built from
+  `textRedactions` (URI userinfo, JSON keys, ALTER SYSTEM SET of a
+  `credentialSettings` entry, quoted name and value as in `set_config`,
+  name=value, and name followed by a string constant, with secret names
+  derived from `textSecretNamePatterns`, the column fragments plus API
+  and access key names, without `key$`/`pass$`/`salt`, which over-mask
+  identifiers). A value nested in another literal
+  (`CONNECTION 'password=''x'''`) is matched by `sqlNestedQuoted`, and
+  one in an escape string (`E'password=\'x\''`) by
+  `sqlBackslashQuoted`. Row images are masked as JSON text, where every
+  backslash is doubled and a line break is `\n`, so each escape
+  backslash (`escapeBackslash`) may be doubled and `blank` accepts
+  `\n`; `TestTextRedactionsInJSON` runs every case in that form and
+  requires the secret to be gone even for JSON inputs. White space is
+  the ASCII class `ws`, never `[[:space:]]`, so the engines agree. A
+  name may be followed by white space and at most two comments
+  (`sep`): a block comment must be closed and is bounded to 32 body
+  units, so a run of `/*` cannot make each match scan to the end of
+  the text (the 64 Ki cap bounds the rest; about 1 s worst case in
+  PostgreSQL, under the tools' 10 s `statement_timeout`). An unquoted
+  value after `=` is masked whatever it starts with (`--x`, `/*x*/x`);
+  comments after `=` are allowed only before a quoted value. `PASSWORD`
+  may be followed by `sep` or nothing, and may start a
+  quoted string (`'PASSWORD ''x'''` in a concatenated EXECUTE) when a
+  separator follows it; an unquoted `$n` value is kept only when white
+  space, a comma, a bracket, a semicolon, a double quote or a
+  backslash ends it.
+  `pg_hba_file_rules.error` is masked whole (`WholeColumns`,
+  `MaskWhole`), since PostgreSQL quotes an unparsable option there, and
+  `nonCredentialSettings` exempts `password_encryption` and similar
+  from the pg_settings mask. Each pattern accepts every SQL
+  string constant form (quoted with either escape style, E'', U&'',
+  dollar-quoted, truncated), keeps only capture group 1, and is applied
+  through E'' literals so `standard_conforming_strings` cannot change
+  it; add every bypass input to `textRedactionCases`, which run in both
+  Go and PostgreSQL, plain and as JSON, record forms left unmasked in
+  `textRedactionKnownLimits`, and keep the 1 MiB adversarial inputs
+  fast in both engines and, in PostgreSQL, in both forms
+  (`datastore_text_redaction_test.go`). A dollar-quoted value that
+  itself contains a `$name$` tag leaks its tail, since the patterns
+  cannot use back-references. Row images retyped to text keep their
+  stored type for entity-key selection (`StoredType`). The masking is best effort:
+  query text and row images can still carry sensitive data or a
+  password in an unrecognised form, and read access to a connection
+  grants that visibility, as the user guide states.
+  `GET /api/v1/metrics/latest` returns probe columns without this
+  masking (not yet ruled on). Scope predicates must be applied before
+  any caller
+  predicate can be evaluated: the builder puts the scope and time
+  window in an inner `OFFSET 0` subquery the planner cannot merge, and
+  the caller's filters outside it, because a caller expression that
+  errors on some values (a LIKE pattern ending in an escape, a bad
+  cast) is otherwise an oracle for hidden rows. Errors from a running
+  datastore statement reach the caller only as a general message (the
+  detail is logged). `explain` is refused unless the visible set is
+  All (`checkDatastoreExplain`), because planner row estimates are
+  computed over the whole table and count hidden connections' rows.
+  `describe_datastore` is admitted by a
+  `query_datastore` grant or token scope (`rbacCompanionTools` in
+  `internal/tools/context_aware_provider.go`), one way only.
+  A `read` connection entry
+  allows acknowledging, unacknowledging and saving an analysis of an
+  alert, and managing blackouts and blackout schedules on that server;
+  the user ruled this intended, so do not report it as a finding.
+- `CanAccessConnection` admits a connection's owner at `read_write`
+  even when a group restricts the connection (`connectionAccessRule` in
+  `internal/auth/access.go`), and `updateConnection` and
+  `deleteConnection` admit the owner likewise, so every reach
+  computation must count owned connections, restricted or not.
+- Only a grant naming a connection restricts it; an all-connections
+  grant restricts nothing (#592). `RestrictedConnectionIDs` and
+  `IsConnectionAssignedToAnyGroup` (`internal/auth/privileges.go`) are
+  the single definition of a restricted connection, shared by access,
+  visibility and #528's token ceiling and reach code; never re-derive
+  it elsewhere.
+- The cluster-group update and delete handlers admit a group's owner
+  as the connection handlers admit a connection's owner, so a user's
+  reach also counts every member connection of each cluster group
+  their username owns (`ownedClusterGroupsCovered` in
+  `internal/auth/token_ceiling.go`), failing closed when the groups
+  cannot be listed.
+- The denial-audit coalescing key (`denialKey` in
+  `internal/auth/audit_denials.go`) must never contain a value the
+  caller chooses without limit, such as the request path, a resource
+  id or a non-standard HTTP method, or a client mints a fresh key, and
+  so a fresh audit row, per request. Such values belong in the row's
+  bounded `targets` list instead.
+- A blanket superuser gate is the exception, because it names nothing
+  to intersect against: `RBACChecker.IsSuperuser` returns false for a
+  token whose admin scope has been narrowed, which is what
+  `requireSuperuser` in `internal/api/rbac_handlers.go` uses. The MCP
+  listing filters are not blanket gates: since `#482` they name each
+  item and go through `CanAccessMCPItem`, so a scoped superuser token
+  is listed exactly the items it may call. So
+  `GetEffectivePrivileges` reporting `IsSuperuser: false` alongside a
+  populated `AdminPermissions` map is correct and deliberate, not a
+  contradiction: the token may exercise the permissions it names, but
+  cannot pass a gate that would hand it every permission at once.
+- Everything on these paths fails closed: an unreadable scope denies
+  (and withdraws `IsSuperuser` in the report), and an API-token
+  context carrying no token id denies. Session callers carry no token
+  and are unaffected throughout.
+- `http.auth.local.enabled` is enforced in exactly one place:
+  `handleLogin` in `api/auth_handlers.go`, which refuses before the body
+  is parsed when the flag is false. `AuthStore.AuthenticateUser`
+  deliberately knows nothing about the flag, keeping its single meaning
+  of "does this password verify"; `handleLogin` is its only caller
+  outside the store, which is what makes one enforcement point
+  sufficient. The refusal answers with the same body, status and headers
+  as a wrong password, so it discloses nothing further about a
+  credential, but it is not indistinguishable from one and does not need
+  to be: the flag itself is public, reported as `local_enabled` by the
+  capabilities endpoint.
+- Only a local account may have a password written to it, enforced by
+  `writePasswordHashLocked` in `server/src/internal/auth/store.go`, the
+  single path through which `UpdateUser` and `UpdateUserAtomic` write a
+  hash. The rule is a condition on the `UPDATE` itself
+  (`AND auth_source = 'local'`) followed by a `RowsAffected` check, not
+  a check made beforehand, so the CLI linking the account in another
+  process during the bcrypt computation cannot slip a hash onto a
+  federated account; when no row matches, the store looks up
+  `auth_source` only then to tell a missing user (no error) from a
+  refused write. Without it a hash written onto a federated account
+  lies dormant until `UnlinkFederatedIdentity` with `-restore-password`
+  returns `auth_source` to local and makes it live. The refusal is the
+  only copy of the rule: it is an `*auth.InvalidInputError`, so
+  `updateUser` in `api/rbac_user_handlers.go` answers it with a 400
+  naming the reason, and because that endpoint applies the password,
+  enabled and superuser changes in one transaction, the refusal rolls
+  back the others too (#485).
+- Most `http.auth` settings are read once at start-up and need a
+  restart: `local.enabled`, `max_failed_attempts_before_lockout` and the
+  OIDC settings baked into the provider (issuer, client credentials,
+  redirect URL, scopes, claim names, and switching `enabled` on when the
+  server started with it off). The OIDC login policy is the exception
+  (#484): `OIDCHandler` and the capabilities endpoint read
+  `provision_users`, `allowed_email_domains`, `superuser_group`,
+  `group_map`, `button_label` and `enabled: false` through
+  `HandlerDependencies.LiveConfig` (wired to `ReloadableConfig.Get`) on
+  every request, so SIGHUP applies them. `logOIDCChanges` in
+  `config/reload.go` says which is which, comparing the provider
+  settings with `rc.startup`, and `oidcAccessWarnings` warns on each
+  widening change (provisioning on, a domain added or the list emptied,
+  `superuser_group` set or retargeted, a new `group_map` mapping);
+  `logOIDCChanges` itself warns when `enabled` is switched back on.
+  Removing a group from `group_map` revokes nothing because only mapped
+  Workbench groups are reconciled; clearing `superuser_group` revokes
+  nothing because `ReconcileFederatedGroups` leaves `is_superuser`
+  alone when no superuser group is configured. Separately,
+  `checkALoginMethodSurvives` refuses a reload that switches OIDC off
+  when local login was off at start-up.
+- A federated account is matched on the pair `(issuer, subject)` and
+  NEVER on username. `ExternalSubjectKey` in `auth/federation.go`
+  builds the key and `ResolveFederatedUser` looks the account up by it
+  alone, so an identity provider that reissues a username cannot hand
+  one person another person's account. Any change that reintroduces a
+  username lookup on the login path is a privilege-escalation bug, and
+  this is the single most important invariant in the federated surface.
+- `pkg/crypto`'s `EncryptGCM` and `DecryptGCM` accept any key length
+  `aes.NewCipher` will take (16, 24 or 32 bytes), despite doc comments
+  promising AES-256 and exactly 32 bytes. A short key therefore
+  downgrades the cipher silently rather than failing, so every caller
+  must check the length itself; `internal/oidc/state.go` does, in
+  `SealState` and `OpenState`, against its own `keySize` constant.
+
+- A notification channel's URL is itself a credential (Slack and
+  Mattermost incoming webhooks, a Telegram bot token, a generic webhook
+  endpoint holding a token in its path, query string or userinfo), so
+  no error in a sender wraps with `%w` anything `net/http` or `net/url`
+  produced, and every piece of borrowed text goes through
+  `sanitizeEcho` first. `(*url.Error).Error` renders the *raw input
+  string* rather than a parsed URL and masks no password, so a parse
+  failure is never echoed at all, sanitised or otherwise. `sanitize.go`
+  is duplicated between `alerter/src/internal/notifications` and
+  `server/src/internal/api` and the two copies must stay byte-identical
+  below the copyright header; check with
+  `diff <(tail -n +11 <a>) <(tail -n +11 <b>)`.
+
+## The RBAC Audit Log
+
+Administrative changes to users, tokens, groups and permissions are
+recorded in the `audit_events` table of the SQLite auth store
+(`server/src/internal/auth/audit.go`), with the acting principal, the
+client address, before and after snapshots and a hash chain.
+
+- Each row's hash covers the previous row's hash, its own
+  `hash_version` and every other audited column except `id`. Each row
+  stores the rendering version it was hashed under, and `auditHash`
+  dispatches on it, but a format change is not free: version 2 left
+  every version 1 row unverifiable, and an upgraded database has to be
+  re-chained. A version `auditHash` will not compute is reported as
+  tampering, wrapped in `ErrAuditChainBroken` in `VerifyAuditChain`,
+  because the version is a value in the file and relabelling a row must
+  not put it beyond the verifier. Both renderings length-prefix each
+  field, so text cannot be shifted between two columns without changing
+  the digest.
+- Version 1 is an unkeyed SHA-256. No row this build writes carries
+  it, and `auditHash` refuses to compute it at all, returning
+  `ErrAuditUnkeyedRow`: the only code that still computes it is
+  `verifyLegacyAuditChain`, which reports on a log the re-chain is
+  about to replace. Version 2 is an HMAC-SHA256 under
+  `DeriveAuditKey(serverSecret)`, so a chain cannot be recomputed
+  without the server secret. `NewAuthStore` refuses an empty or
+  under-32-byte key, and every caller, the CLI included, must supply
+  one.
+- Two rules stop the keying being downgraded away, which without them
+  would be the `alg: none` attack: the version is inside the digest, so
+  a version 2 row cannot be relabelled and recomputed as version 1, and
+  `VerifyAuditChain` refuses a version that falls as the chain
+  advances. Behind both, `ensureNoUnkeyedAuditRows` runs on every open
+  and refuses to open a database holding any version 1 row at all.
+- The re-chain is only for a log wholly inherited at upgrade, and both
+  `ensureNoUnkeyedAuditRows` and `auditRechainPlan` test that shape
+  through `checkNoKeyedAuditRows`: any keyed row at all alongside an
+  unkeyed one means unkeyed rows were written into a log that was
+  already keyed, and the refusal names that case and points at a
+  restore rather than at `-rechain-audit-log`. Row order is not
+  consulted, and must not be: `id` is `INTEGER PRIMARY KEY
+  AUTOINCREMENT`, which constrains only the values SQLite assigns, so
+  an explicit `INSERT` at id 0 or -1 sorts below every genuine row and
+  satisfies any test phrased as a prefix (VULN-307). Without the check,
+  an attacker who rewrote the log, relabelled every row version 1 and
+  recomputed the unkeyed chain (which needs no secret) could rely on
+  the start-up refusal to pressure an operator into signing the
+  forgery. `-confirm-rechain` additionally refuses a plan whose
+  `LegacyChainOK` is false, so an unattended run cannot sign a log the
+  command has just reported does not recompute.
+  `verifyLegacyAuditChain` carries the same downgrade check as
+  `VerifyAuditChain`, so `LegacyChainOK` cannot be true for a log with
+  a version 1 row above a keyed one.
+- The approved plan is bound to the rows that get signed.
+  `AuditRechainPlan` carries `Events`, `LowestID` and `HighestID`, and
+  `checkAuditRechainPlanStillHolds` re-reads all three as the first
+  statement inside the rewrite transaction, which holds the write lock,
+  and returns `ErrAuditRechainChanged` if any has moved. `s.mu` is no
+  help here: the adversary is another writer on the same file, and the
+  confirmation prompt can wait indefinitely.
+- The one way past that gate is `RechainAuditLog`, driven by the
+  operator command `-rechain-audit-log`. It opens through the
+  unexported `newAuthStore` with `allowUnkeyedAuditRows`, shows the
+  operator the figures, requires confirmation, and then re-hashes every
+  row as version 2 in one transaction, re-linking each `prev_hash` to
+  the new hash of the row before it and appending an `audit.rechain`
+  event. It drops and re-creates the append-only trigger inside that
+  transaction; SQLite makes DDL transactional, `_txlock=immediate`
+  holds the write lock from BEGIN, and WAL readers see the last
+  committed snapshot, so no other connection ever observes the table
+  without the trigger and a rollback restores both rows and trigger.
+- There is deliberately no boundary machinery between inherited and
+  keyed rows. Three earlier designs kept a signed watermark, and each
+  provided a route to have the server sign a forgery: the last one let
+  the retention purge re-anchor the boundary onto a backdated row.
+  `PurgeAuditEvents` now deletes and records its own event, and writes
+  no hash over a row it did not create. Treat any proposal that has an
+  unattended path re-sign existing rows as that bug returning.
+- `PurgeAuditEvents` deletes a contiguous id-prefix and can express
+  nothing else: it reads `cut = MIN(id) WHERE occurred_at >= ?`, checks
+  the prefix, then runs `DELETE ... WHERE id < cut`. `occurred_at` is
+  attacker-writable. The append-only trigger stops an UPDATE changing
+  an `id`, but `id` is not in the HMAC, so a writer can delete a
+  genuine row and re-insert it at another id and it still verifies; an
+  id-prefix is a log prefix only because `verifyAuditPurgePrefix`
+  requires the rows to link in id order from the recorded head. A
+  row inserted at a chosen id can only move the boundary earlier,
+  never past the oldest row in the window. Deleting by
+  timestamp alone
+  made retention, which runs unattended every five minutes, a
+  suffix-deletion oracle: backdated newest rows were deleted, the chain
+  relinked to the last survivor, and the appended `audit.purge` event
+  raised `MAX(id)` back into agreement with `sqlite_sequence`, which is
+  exactly what `verifyAuditTail` reads. Where no row is inside the
+  window the subquery yields NULL and nothing is deleted, deliberately:
+  an empty log would hand the same oracle back, and a fixed cut-off
+  such as 0 would delete rows inserted at negative ids. Any change that filters
+  the purge on a column a writer of `auth.db` controls reopens this.
+- Verification distinguishes a wrong key from tampering, because the
+  responses differ. A failing row is `ErrAuditKeyMismatch` (CLI exit 3)
+  only if no row outside the history has verified yet (`keyProven`)
+  and `looksLikeKeyChange` sees a linked run of failing rows followed
+  by the end of the log or by rows that ALL verify and link, with
+  `verifyAuditTail` passing. It walks the whole log, deliberately: the
+  re-anchor's history runs to the last failing row anywhere, so a
+  verdict drawn from the leading rows let `-confirm-rechain` launder a
+  later deletion. `classifyUnverifiedRow`, and the purge's
+  `auditPurgeUnverified`, also never report a key mismatch when a
+  verified anchor recording a head exists
+  (`anchorFound`): the verifier returns on the first bad row before the
+  history-digest and head checks, so asking would let one edit just
+  past an anchor's head or history launder a deletion there (both fixed
+  in #502; the A-to-B-to-A secret rotation falls to the interactive
+  path). `scanAuditForReanchor` re-derives the shape
+  (`failsAfterVerified`) and clears `KeyMismatch` if a row was written
+  between the verify and the scan, and `reanchorAuditLogTx` re-runs
+  `verifyAuditTail` under the write lock on a key mismatch; otherwise
+  it is `ErrAuditChainBroken`, and downgrades and unkeyed
+  rows are exit 2 as well. An attacker who rewrites the oldest rows
+  keeping their links therefore gets the key-mismatch wording; exit 3
+  is advice, not proof of innocence.
+- `prev_hash` carries a unique index, so no two events can name the
+  same predecessor and only one event can be the genesis row with an
+  empty `prev_hash`. A forked chain is refused by the schema.
+- A `BEFORE UPDATE` trigger makes rows immutable. It does not cover
+  `DELETE`, which the retention purge needs.
+- `ensureAuditSchema` re-runs the `IF NOT EXISTS` audit DDL on every
+  open regardless of the recorded schema version, and
+  `VerifyAuditChain` first asserts through `verifyAuditSchema` that the
+  unique index and the trigger exist. Without both, a database stamped
+  with the current version could run without either for good: an
+  earlier draft did exactly that, and a store created between the
+  commit that set the version and the one that added the index was
+  never given it.
+- `verifyAuditTail` compares `MAX(id)` with the `sqlite_sequence`
+  entry and reports any disagreement: missing, above or below, and a
+  missing `sqlite_sequence` table as well, each wrapped in
+  `ErrAuditChainBroken` so `-verify-audit-log` exits with the tampering
+  status. `MAX(id)` and the sequence are read by one statement, so a
+  server insert whilst the CLI, which opens its own store, is verifying
+  cannot separate them.
+- The tail anchor (`audit_tail.go`, #544) is two `audit_tail` slots.
+  The primary (id 1) names the newest event by id and hash under an
+  HMAC with its own label; `planAuditTailMove` decides before the
+  insert (the insert moves `sqlite_sequence`), and moves it on only
+  when it names the newest row and verifies under the key in use, or
+  for the first event of a log whose sequence never issued an id.
+  Anything else is left stranded as evidence: moving it on when both
+  it and the newest row failed let a decoy row copying the next row's
+  hash get the anchor re-signed over a truncated tail. A changed
+  secret strands the primary at the last row under the old key, and
+  the current-key slot (id 2) covers the rows after it: started when
+  the primary names the newest row, both fail and slot 2 is absent,
+  then advanced by the same rule. Its HMAC (`auditTailCurrentMAC`) also
+  covers the whole primary row, because without that the decoy works
+  again against a rotated log (save the primary, cut, delete slot 2,
+  point the primary at a decoy, let the server start slot 2, delete
+  the decoy, restore the primary). A second rotation promotes slot 2
+  unchanged into slot 1 at the first event under the third key, so
+  A-B-C reads as exit 3; slot 1 keeps the slot-1 fields promotion
+  overwrote in `bound_event_id`, `bound_event_hash` and `bound_mac`,
+  because the promoted MAC is the slot-2 rendering over them, and
+  `primaryTailVerifiesUnder` checks a promoted slot 1 with that
+  rendering under the previous key. The server sets those columns only
+  by promotion, only on id 1, but a writer can set them too: copying a
+  server-signed slot 2 into slot 1 with its binding made slot 1 verify
+  under the key in use, so a cut behind a decoy verified as exit 0.
+  `auditTailVerifies` therefore never counts a bound slot 1 as
+  verifying under the key in use, since a genuine promoted value was
+  always written under an earlier key. Between a rotation and
+  the first write under the new key, case 4 of `checkRotatedAuditTail`
+  can match slot 2 by id and hash only (security audit VULN-001), so
+  cutting old-key rows, rewriting the sequence and planting slot 2
+  verifies as exit 3, before and after promotion; only
+  `-previous-secret-file` catches it. `proveAuditReanchorTail` checks
+  slot 2 under the previous key while it fails under the current one
+  (before promotion), else slot 1 binding-aware, and
+  `proveAuditReanchorPlan` runs it even when the history proof failed,
+  so the reason names the tail, and re-scans the log in the proof's
+  own transaction, refusing if it differs from what the plan showed.
+  A slot-2 MAC proves only that the server signed the pair, and the
+  server can be led to sign one beside a primary naming a decoy, which
+  promotion then moves into `bound_*` (Ant, PR #565). So a binding,
+  slot 2's view of slot 1 in case 4 or slot 1's `bound_*` in case 3,
+  is checked against the rows: `checkAuditTailBinding` (verify) needs
+  the bound row present, below the anchored id, with the bound hash;
+  `proveAuditTailBinding` (re-anchor) additionally needs it to fail
+  under the previous key, since the server starts slot 2 only over a
+  failing row and the purge never removes it. Verify's exit 2 for a
+  missing bound row is not a guarantee: it checks a binding only when
+  `bound_*` is set and cannot check the promoted MAC, so clearing
+  `bound_*` or repointing it at a row still in the log reads exit 3
+  (`TestClearedBindingIsTheDocumentedLimit`), as does rewriting the
+  bound row's hash and putting the decoy back linked to it
+  (`prev_hash` is unique, so the rewrite is needed;
+  `TestDecoyPutBackLinkedIntoTheChain`), a row altered to fail and
+  then restored, and a further key change with no edit, since case 4
+  checks only slot 2's binding and the next promotion drops slot 1's
+  (`TestFurtherRotationIsTheDocumentedLimit`). Only the re-anchor with
+  the previous key refuses these, via `primaryTailVerifiesUnder`,
+  `proveAuditHistory` or the binding proof.
+  Operators are told to re-anchor with
+  the previous secret after each rotation, before the next. A genuine
+  log spanning three keys never proves unattended: `proveAuditHistory`
+  needs every history row under one previous key. In a rotation-shaped
+  log, `verifyAuditTailAfterKeyChange` requires the primary at the last
+  failing row and slot 2 at the newest row, verifying; a log where
+  every row verifies checks the primary alone. `proveAuditReanchorTail`
+  must verify under `-previous-secret-file` before `-confirm-rechain`
+  proceeds. Rows carry hash version 3; a v3 newest row with no primary
+  is tampering. `seedAuditTail` anchors a v2 log at open only when the
+  sequence agrees and the newest row verifies under the key in use.
+  The re-chain and re-anchor reset both slots (`resetAuditTail`).
+  `ensureAuditSchema` refuses any trigger acting on `audit_tail`
+  (before migrating, whose rename would drop it), migrates the two
+  pre-release definitions (`auditTailLegacyDDLs`) and then requires the
+  normalised definition to equal `auditTailDDL`; failures wrap
+  `ErrAuditChainBroken`, and `verifyAuditSchema` repeats the check, so
+  `-verify-audit-log` exits 2. Starting and promoting slot 2 each log a
+  `[WARN]` to the server log. Any new path that writes `audit_tail`,
+  or any "self-heal" that seeds an anchor when it is found missing,
+  reopens #544.
+- Snapshots never carry `password_hash`, and no token material reaches
+  a row, a log line or a response.
+
+Know the limits before crediting the chain in a report, and say them
+plainly rather than crediting the design with more than it does.
+
+- An attacker holding both `auth.db` and the server secret can forge
+  the log freely, since the key is derived from the same secret the
+  server reads. Only a copy of the events somewhere the server cannot
+  reach defends against that, and there is no anchor outside the file.
+- Tail truncation with `sqlite_sequence` rewritten is caught by the
+  anchor, not the sequence comparison, but only against the current
+  file: restoring an older `audit_tail` row with the rows after it
+  deleted, or an older whole file, passes; deleting every v3 row plus
+  the anchor (sequence rewritten) returns the log to its pre-upgrade v2
+  state; deleting every row since the last rotation plus slot 2
+  (sequence rewritten) returns it to the moment of the rotation, which
+  verifies as exit 3, which `-confirm-rechain` refuses until the server
+  writes its next row (`LaterEventsVerify`) and accepts after; and wiping
+  the log, anchor and sequence row reads as empty. Slot 1 does not
+  change while one key is in use, so a saved slot 2 put back after
+  the rows following the one it names are cut (sequence rewritten)
+  verifies as exit 3, and `-confirm-rechain -previous-secret-file`
+  accepts it, since nothing under the previous key covers slot 2; the
+  binding stops slot 2 being paired with a different slot 1, not a
+  replay of the pair. Likewise a saved slot 1 put back under the
+  previous key, after the rows following it are cut, slot 2 removed
+  and the sequence rewritten, reads exit 3 after one write under the
+  new key, and `-confirm-rechain -previous-secret-file` accepts it
+  (`TestSavedPrimaryAnchorIsTheDocumentedLimit`): the proof cannot
+  tell an earlier copy of either slot from the current one. Exit 3
+  vouches for nothing written
+  under the previous key (VULN-002): verification checks neither those
+  rows nor slot 1, so a cut back to any earlier old-key row reads as
+  exit 3; only `-previous-secret-file` on the re-anchor checks them,
+  and the interactive re-anchor warns "NOT PROVEN" before asking.
+  `-verify-audit-log` deliberately takes no previous secret.
+- Head deletion (#502) is caught against the head the newest purge
+  event recorded (`oldest_retained_hash`); a record-less purge event
+  never overrides an older recorded one, in the verifier
+  (`findAuditAnchor`) or in the purge (`verifyAuditPurgePrefix`). Only
+  on a log whose purge events all predate the record does the weak
+  fallback apply (a missing predecessor passes if any `audit.purge` row
+  survives). With no record, a genesis row (`prev_hash` "") is accepted
+  only at id 1 or as an `audit.purge` row (`auditGenesisAllowed`), so
+  an emptied table plus one new event fails, as does a replayed
+  re-anchor event, since a re-anchor refuses an empty log; emptying all
+  but a genuine row 1, or restoring a copy of it, is tail truncation,
+  which the tail anchor (#544) now catches. The id is not in the hash,
+  so moving the new event to id 1 (delete and reinsert with an explicit
+  id) passes the chain; the tail anchor names the newest row by id, so
+  it catches that too, and comparing a recorded `oldest_retained_id`
+  would add nothing for the same reason. The purge refuses, and retention
+  stalls, on a prefix that does not verify and link from the recorded
+  head, including for benign causes such as a rotated secret, until an
+  operator re-anchors with `-rechain-audit-log`.
+- The re-anchor (`audit_reanchor.go`) appends one keyed `audit.rechain`
+  event and accepts every row through the last failing one as history,
+  bound only by an unkeyed SHA-256 digest and count. History rows lose
+  attribution: anything done to them before the re-anchor is accepted,
+  and only later changes are detectable. An older anchor re-inserted
+  into the log is refused by `checkAuditAnchorLinks` in the purge and
+  by the link check in the verifier; the newest anchor recording a
+  head, which must verify, wins. The key-mismatch shape is forgeable
+  (delete rows 1..j, insert one row whose hash is row j+1's
+  `prev_hash`), so `-confirm-rechain` (`confirmAuditReanchor`)
+  re-anchors unattended only when the shape matches, the history
+  verifies, links and passes the head check under the key from
+  `-previous-secret-file` (`proveAuditHistory`), and some later row
+  verifies under the current key (`LaterEventsVerify`, against a run
+  under the wrong secret). One previous key cannot prove an A-B-A
+  rotation or history containing an earlier re-anchor's history; those
+  need an interactive run. Both prompts, re-anchor and legacy re-hash,
+  require a terminal (`requireAuditTerminal`), so piped stdin cannot
+  answer them. `-previous-secret-file` is refused when the log would be
+  re-hashed, since no key vouches for unkeyed rows: a script that
+  passes it for a keyed log must not have a fabricated v1 log re-hashed
+  in its place.
+  `previous_*` head fields are
+  signed into the event only when the previous anchor verified, and the
+  CLI prints file-sourced hashes only if they are 64 lowercase hex
+  (`auditPlanHash`).
+- Rows deleted and later restored at their original ids from a copy
+  leave no trace; that needs an anchor outside the file.
+- `verifyAuditSchema` refuses any trigger other than
+  `audit_events_no_update` whose table is `audit_events` or whose SQL
+  mentions it, and `recordAudit` fails unless the INSERT wrote exactly
+  one row, which catches only `RAISE(IGNORE)`: SQLite's changes count
+  excludes trigger work, so a trigger deleting the row after insert is
+  caught only by `verifyAuditSchema`.
+  `prev_hash` stored as a BLOB escapes the unique index (BLOB and TEXT
+  compare unequal); the id-order walk still rejects a fork, and no
+  `typeof` check exists yet.
+- A re-chain attests the database exactly as it stood at the moment it
+  ran, and says nothing about anything before it. On an upgraded
+  installation the keyed chain starts at that point.
+- Nothing verifies at start-up. `VerifyAuditLog` has one non-test
+  caller, `verifyAuditLogCommand` under `-verify-audit-log`, so on an
+  installation that never runs it the chain is never checked.
+
+A verification that passes is not evidence that nothing happened.
+
+The audit write is fail-closed everywhere but one place: a mutation
+whose event cannot be recorded is rolled back. The exception is
+`disableForLockout` in `actor_store_users.go`, which commits the
+failed-login lockout first and records `user.disable` afterwards in a
+transaction of its own, logging rather than returning a failure. This
+is deliberate. Sharing one transaction let an audit failure, a full
+disk or a lock held past the busy timeout roll the lockout back and
+hand a password-guessing attacker an account that stayed enabled. Do
+not report the best-effort event as a missing fail-closed path; report
+any *new* audited mutation that copies the pattern.
 
 ## Reporting
 

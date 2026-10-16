@@ -25,6 +25,13 @@ import (
 func (e *Engine) calculateBaselines(ctx context.Context) {
 	e.debugLog("Calculating baselines...")
 
+	// Every row this cycle writes carries a last_calculated at or after
+	// cycleStart, so once a metric has been rebuilt any row of it older
+	// than this was not rewritten and is pruned. Truncating to the
+	// microsecond matches PostgreSQL's timestamptz precision, so a row
+	// written in the same microsecond can never compare as older.
+	cycleStart := time.Now().Truncate(time.Microsecond)
+
 	// Get all active connections
 	connections, err := e.datastore.GetActiveConnections(ctx)
 	if err != nil {
@@ -39,11 +46,17 @@ func (e *Engine) calculateBaselines(ctx context.Context) {
 		return
 	}
 
-	// Get lookback days from config (default to 7 if not set)
 	cfg := e.getConfig()
-	lookbackDays := cfg.Baselines.LookbackDays
-	if lookbackDays <= 0 {
-		lookbackDays = 7
+	lookbackDays := cfg.EffectiveLookbackDays()
+
+	// A warmup tier whose span exceeds the lookback can never be
+	// selected, and selectBaseline would fall through to the next
+	// tier without a word (#408). Say so at normal log level, once per
+	// cycle, so the misconfiguration is visible without debug logging.
+	for _, period := range cfg.UnreachableWarmupPeriods() {
+		e.log("WARNING: anomaly.tier1.warmup.%s.min_span_hours exceeds "+
+			"baselines.lookback_days (%d days); %s baselines can never "+
+			"become warm and will always be skipped", period, lookbackDays, period)
 	}
 
 	// Minimum samples required to create a time-period baseline
@@ -52,22 +65,40 @@ func (e *Engine) calculateBaselines(ctx context.Context) {
 	e.log("Calculating baselines for %d connections, %d rules (lookback: %d days)",
 		len(connections), len(rules), lookbackDays)
 
+	// Rows written for metrics that no longer support baselines (the
+	// fallback path removed in #408 wrote one per connection every
+	// cycle) would otherwise sit in metric_baselines forever, cold and
+	// visible to the server's get_metric_baselines tool.
+	deleted, err := e.datastore.DeleteBaselinesForUnsupportedMetrics(ctx)
+	if err != nil {
+		e.log("ERROR: Failed to delete baselines for unsupported metrics: %v", err)
+	} else if deleted > 0 {
+		e.log("Deleted %d baseline rows for metrics without historical data", deleted)
+	}
+
 	// For each metric, fetch historical data and calculate baselines
 	for _, rule := range rules {
 		if ctx.Err() != nil {
 			return
 		}
 
+		// A metric without a historical query cannot be baselined;
+		// building one from the latest sample instead would produce a
+		// row the warmup gate can never admit.
+		if !database.SupportsBaselines(rule.MetricName) {
+			e.debugLog("Skipping baselines for metric %s: no historical data query", rule.MetricName)
+			continue
+		}
+
 		// Get historical metric values for all connections
 		histValues, err := e.datastore.GetHistoricalMetricValues(ctx, rule.MetricName, lookbackDays)
 		if err != nil {
-			e.debugLog("No historical data for metric %s: %v", rule.MetricName, err)
-			// Fall back to current values for 'all' baseline only
-			e.calculateGlobalBaselinesFallback(ctx, connections, rule.MetricName)
+			e.log("ERROR: Failed to get historical data for metric %s: %v", rule.MetricName, err)
 			continue
 		}
 
 		if len(histValues) == 0 {
+			e.pruneStaleBaselines(ctx, rule.MetricName, cycleStart)
 			continue
 		}
 
@@ -89,7 +120,11 @@ func (e *Engine) calculateBaselines(ctx context.Context) {
 			groupedValues[key] = append(groupedValues[key], hv)
 		}
 
-		// Process each connection/database group
+		// Process each connection/database group, noting whether any
+		// row failed to upsert: a failed row keeps the previous cycle's
+		// last_calculated, so the prune would delete the very row it
+		// failed to refresh.
+		upsertFailed := false
 		for key, values := range groupedValues {
 			if ctx.Err() != nil {
 				return
@@ -109,26 +144,60 @@ func (e *Engine) calculateBaselines(ctx context.Context) {
 			earliest := earliestTimestamp(values)
 
 			// Calculate 'all' baseline (global aggregate)
-			e.calculateAllBaseline(ctx, key.connectionID, dbNamePtr, rule.MetricName, values, earliest)
+			if !e.calculateAllBaseline(ctx, key.connectionID, dbNamePtr, rule.MetricName, values, earliest) {
+				upsertFailed = true
+			}
 
 			// Calculate hourly baselines (by hour of day)
-			e.calculateHourlyBaselines(ctx, key.connectionID, dbNamePtr, rule.MetricName, values, minSamplesForTimePeriod, earliest)
+			if !e.calculateHourlyBaselines(ctx, key.connectionID, dbNamePtr, rule.MetricName, values, minSamplesForTimePeriod, earliest) {
+				upsertFailed = true
+			}
 
 			// Calculate daily baselines (by day of week)
-			e.calculateDailyBaselines(ctx, key.connectionID, dbNamePtr, rule.MetricName, values, minSamplesForTimePeriod, earliest)
+			if !e.calculateDailyBaselines(ctx, key.connectionID, dbNamePtr, rule.MetricName, values, minSamplesForTimePeriod, earliest) {
+				upsertFailed = true
+			}
 		}
+
+		if upsertFailed {
+			e.log("WARNING: Skipping stale baseline prune for metric %s because a baseline upsert failed", rule.MetricName)
+			continue
+		}
+		e.pruneStaleBaselines(ctx, rule.MetricName, cycleStart)
 	}
 
 	e.log("Baseline calculation complete")
+}
+
+// pruneStaleBaselines deletes the metric's baseline rows that the
+// current cycle did not rewrite. An hourly or daily bucket is upserted
+// only while it holds enough samples, and a connection or database is
+// visited only while it has samples in the lookback window, so without
+// this a row that stops qualifying keeps its last statistics for ever
+// and goes on being scored against. That is how baselines built before
+// a historical query was corrected would have outlived the fix (#567).
+// It runs only after the metric's historical query and every one of
+// its upserts have succeeded, so neither a failed query nor a failed
+// write empties a metric's baselines.
+func (e *Engine) pruneStaleBaselines(ctx context.Context, metricName string, cycleStart time.Time) {
+	deleted, err := e.datastore.DeleteStaleMetricBaselines(ctx, metricName, cycleStart)
+	if err != nil {
+		e.log("ERROR: Failed to delete stale baselines for metric %s: %v", metricName, err)
+		return
+	}
+	if deleted > 0 {
+		e.debugLog("Deleted %d stale baseline rows for metric %s", deleted, metricName)
+	}
 }
 
 // calculateAllBaseline calculates the global 'all' baseline for a metric.
 // The earliest parameter is the minimum collected_at timestamp across the
 // raw samples backing this (connection, metric) group; it is persisted on
 // the baseline row so anomaly detection can gate on baseline maturity.
-func (e *Engine) calculateAllBaseline(ctx context.Context, connID int, dbName *string, metricName string, values []database.HistoricalMetricValue, earliest time.Time) {
+// It reports false only when the upsert failed.
+func (e *Engine) calculateAllBaseline(ctx context.Context, connID int, dbName *string, metricName string, values []database.HistoricalMetricValue, earliest time.Time) bool {
 	if len(values) == 0 {
-		return
+		return true
 	}
 
 	// Extract float values
@@ -148,7 +217,7 @@ func (e *Engine) calculateAllBaseline(ctx context.Context, connID int, dbName *s
 		StdDev:           stddev,
 		Min:              minValue(floatValues),
 		Max:              maxValue(floatValues),
-		SampleCount:      int64(len(floatValues)),
+		SampleCount:      totalSamples(values),
 		LastCalculated:   time.Now(),
 		EarliestSampleAt: earliest,
 	}
@@ -156,28 +225,33 @@ func (e *Engine) calculateAllBaseline(ctx context.Context, connID int, dbName *s
 	if err := e.datastore.UpsertMetricBaseline(ctx, baseline); err != nil {
 		e.log("ERROR: Failed to upsert 'all' baseline for %s on connection %d: %v",
 			metricName, connID, err)
+		return false
 	}
+	return true
 }
 
 // calculateHourlyBaselines calculates baselines for each hour of the day
 // (0-23). The earliest parameter is the minimum collected_at timestamp
 // across the raw samples backing this (connection, metric) group; it is
 // shared across every hourly row so all period_type baselines for the
-// same input data agree on baseline age.
-func (e *Engine) calculateHourlyBaselines(ctx context.Context, connID int, dbName *string, metricName string, values []database.HistoricalMetricValue, minSamples int, earliest time.Time) {
+// same input data agree on baseline age. It reports false if any hourly
+// upsert failed.
+func (e *Engine) calculateHourlyBaselines(ctx context.Context, connID int, dbName *string, metricName string, values []database.HistoricalMetricValue, minSamples int, earliest time.Time) bool {
+	ok := true
 	// Group values by hour of day
-	hourlyValues := make(map[int][]float64)
+	hourlyValues := make(map[int][]database.HistoricalMetricValue)
 	for _, v := range values {
-		hour := v.CollectedAt.Hour()
-		hourlyValues[hour] = append(hourlyValues[hour], v.Value)
+		hour, _ := baselinePeriodKeys(v.CollectedAt)
+		hourlyValues[hour] = append(hourlyValues[hour], v)
 	}
 
-	// Calculate baseline for each hour that has enough samples
-	for hour, vals := range hourlyValues {
-		if len(vals) < minSamples {
+	// Calculate baseline for each hour that has enough data points
+	for hour, hourValues := range hourlyValues {
+		if len(hourValues) < minSamples {
 			continue
 		}
 
+		vals := metricValues(hourValues)
 		mean, stddev := calculateStats(vals)
 		hourVal := hour
 
@@ -191,7 +265,7 @@ func (e *Engine) calculateHourlyBaselines(ctx context.Context, connID int, dbNam
 			StdDev:           stddev,
 			Min:              minValue(vals),
 			Max:              maxValue(vals),
-			SampleCount:      int64(len(vals)),
+			SampleCount:      totalSamples(hourValues),
 			LastCalculated:   time.Now(),
 			EarliestSampleAt: earliest,
 		}
@@ -199,30 +273,34 @@ func (e *Engine) calculateHourlyBaselines(ctx context.Context, connID int, dbNam
 		if err := e.datastore.UpsertMetricBaseline(ctx, baseline); err != nil {
 			e.log("ERROR: Failed to upsert hourly baseline for %s hour %d on connection %d: %v",
 				metricName, hour, connID, err)
+			ok = false
 		}
 	}
+	return ok
 }
 
 // calculateDailyBaselines calculates baselines for each day of the week
 // (0=Sunday to 6=Saturday). The earliest parameter is the minimum
 // collected_at timestamp across the raw samples backing this (connection,
 // metric) group; it is shared across every daily row so all period_type
-// baselines for the same input data agree on baseline age.
-func (e *Engine) calculateDailyBaselines(ctx context.Context, connID int, dbName *string, metricName string, values []database.HistoricalMetricValue, minSamples int, earliest time.Time) {
+// baselines for the same input data agree on baseline age. It reports
+// false if any daily upsert failed.
+func (e *Engine) calculateDailyBaselines(ctx context.Context, connID int, dbName *string, metricName string, values []database.HistoricalMetricValue, minSamples int, earliest time.Time) bool {
+	ok := true
 	// Group values by day of week (0=Sunday, 1=Monday, ..., 6=Saturday)
-	dailyValues := make(map[int][]float64)
+	dailyValues := make(map[int][]database.HistoricalMetricValue)
 	for _, v := range values {
-		// Go's time.Weekday() returns 0=Sunday, 1=Monday, etc.
-		dayOfWeek := int(v.CollectedAt.Weekday())
-		dailyValues[dayOfWeek] = append(dailyValues[dayOfWeek], v.Value)
+		_, dayOfWeek := baselinePeriodKeys(v.CollectedAt)
+		dailyValues[dayOfWeek] = append(dailyValues[dayOfWeek], v)
 	}
 
-	// Calculate baseline for each day that has enough samples
-	for day, vals := range dailyValues {
-		if len(vals) < minSamples {
+	// Calculate baseline for each day that has enough data points
+	for day, dayValues := range dailyValues {
+		if len(dayValues) < minSamples {
 			continue
 		}
 
+		vals := metricValues(dayValues)
 		mean, stddev := calculateStats(vals)
 		dayVal := day
 
@@ -236,7 +314,7 @@ func (e *Engine) calculateDailyBaselines(ctx context.Context, connID int, dbName
 			StdDev:           stddev,
 			Min:              minValue(vals),
 			Max:              maxValue(vals),
-			SampleCount:      int64(len(vals)),
+			SampleCount:      totalSamples(dayValues),
 			LastCalculated:   time.Now(),
 			EarliestSampleAt: earliest,
 		}
@@ -244,51 +322,62 @@ func (e *Engine) calculateDailyBaselines(ctx context.Context, connID int, dbName
 		if err := e.datastore.UpsertMetricBaseline(ctx, baseline); err != nil {
 			e.log("ERROR: Failed to upsert daily baseline for %s day %d on connection %d: %v",
 				metricName, day, connID, err)
+			ok = false
 		}
 	}
+	return ok
 }
 
-// calculateGlobalBaselinesFallback calculates only 'all' baselines when historical data
-// is not available. This uses the current metric values as a fallback.
-func (e *Engine) calculateGlobalBaselinesFallback(ctx context.Context, connections []int, metricName string) {
-	// Get current metric values
-	values, err := e.datastore.GetLatestMetricValues(ctx, metricName)
-	if err != nil {
-		return
+// baselinePeriodKeys returns the hour_of_day (0-23) and day_of_week
+// (0=Sunday to 6=Saturday) bucket keys for a timestamp. It is the single
+// definition used both when hourly and daily baselines are written and
+// when selectBaseline looks one up, so the two sides cannot drift.
+//
+// The timestamp is normalised to UTC first. pgx scans timestamptz
+// columns into the process's local zone unless a ScanLocation is
+// configured, and time.Now() is local too, so without this a collector
+// and an alerter in different zones, or one alerter restarted under a
+// different TZ, would bucket the same instant under different keys. The
+// keys are therefore UTC hours and UTC weekdays; a metric's diurnal
+// cycle is still captured, just keyed in UTC.
+func baselinePeriodKeys(t time.Time) (hourOfDay, dayOfWeek int) {
+	u := t.UTC()
+	return u.Hour(), int(u.Weekday())
+}
+
+// metricValues extracts the plain float values from historical samples,
+// in order, for the statistics helpers.
+func metricValues(samples []database.HistoricalMetricValue) []float64 {
+	vals := make([]float64, len(samples))
+	for i, s := range samples {
+		vals[i] = s.Value
 	}
+	return vals
+}
 
-	// Group by connection
-	for _, connID := range connections {
-		var connValues []float64
-		for _, v := range values {
-			if v.ConnectionID == connID {
-				connValues = append(connValues, v.Value)
-			}
-		}
-
-		if len(connValues) == 0 {
+// totalSamples returns the number of raw collector samples behind the
+// given historical rows, which is not the same as the number of rows:
+// the hourly bucketed queries return one row per hour and report how many
+// samples that hour aggregated.
+//
+// Baseline warmup (anomaly.tier1.warmup.*.min_samples) is configured in
+// samples, so counting rows would make the bucketed metrics look far
+// colder than they are; at the default seven day lookback a bucketed
+// metric yields at most 168 rows against a min_samples of 100, and at a
+// lookback of four days or fewer it could never warm at all. A row with
+// an unset (zero or negative) count is read as a single sample, which is
+// what every non-bucketed query and every hand-built value is. See
+// GitHub issue #409.
+func totalSamples(samples []database.HistoricalMetricValue) int64 {
+	var total int64
+	for _, s := range samples {
+		if s.SampleCount > 0 {
+			total += s.SampleCount
 			continue
 		}
-
-		mean, stddev := calculateStats(connValues)
-
-		baseline := &database.MetricBaseline{
-			ConnectionID:   connID,
-			MetricName:     metricName,
-			PeriodType:     "all",
-			Mean:           mean,
-			StdDev:         stddev,
-			Min:            minValue(connValues),
-			Max:            maxValue(connValues),
-			SampleCount:    int64(len(connValues)),
-			LastCalculated: time.Now(),
-		}
-
-		if err := e.datastore.UpsertMetricBaseline(ctx, baseline); err != nil {
-			e.log("ERROR: Failed to upsert fallback baseline for %s on connection %d: %v",
-				metricName, connID, err)
-		}
+		total++
 	}
+	return total
 }
 
 // earliestTimestamp returns the smallest CollectedAt across the given

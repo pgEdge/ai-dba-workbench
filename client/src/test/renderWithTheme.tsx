@@ -70,6 +70,11 @@ const noTransitionsTheme = createTheme({
                 purpleLight: '#B197FC',
                 cyan: '#15AABF',
             },
+            chipText: {
+                success: '#166534',
+                error: '#991B1B',
+                warning: '#92400E',
+            },
             accent: '#15AABF',
             accentHover: '#0C8599',
             accentLight: '#22B8CF',

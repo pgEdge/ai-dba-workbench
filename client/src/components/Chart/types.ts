@@ -8,9 +8,24 @@
  *-------------------------------------------------------------------------
  */
 
+/**
+ * One chart series. A null entry marks a bucket with no value and is
+ * drawn as a gap in line charts (and as an empty slot in bar charts)
+ * rather than as zero.
+ */
 export interface ChartDataSeries {
     name: string;
-    data: number[];
+    /** A `null` entry is a gap: ECharts breaks the line or omits the bar. */
+    data: (number | null)[];
+    /**
+     * Parallel to `data`: true where the value is the last observation
+     * carried forward by the server rather than a sample collected in
+     * that bucket. Carried-forward stretches are drawn distinctly from
+     * observed ones (hollow markers, a shaded band and a tooltip note)
+     * so a synthesised plateau cannot be mistaken for a measured one.
+     * Omit it for data that has no such notion.
+     */
+    filled?: boolean[];
 }
 
 export interface ChartData {

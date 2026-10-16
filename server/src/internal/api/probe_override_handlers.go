@@ -25,6 +25,8 @@ type ProbeOverrideHandler struct {
 	authStore       *auth.AuthStore
 	rbacChecker     *auth.RBACChecker
 	checkPermission func(http.ResponseWriter, *http.Request) bool
+	// denialAuditor audits this handler's token-scope refusals.
+	denialAuditor
 }
 
 // NewProbeOverrideHandler creates a new probe override handler
@@ -34,9 +36,7 @@ func NewProbeOverrideHandler(datastore *database.Datastore, authStore *auth.Auth
 		authStore:   authStore,
 		rbacChecker: rbacChecker,
 	}
-	if rbacChecker != nil {
-		h.checkPermission = RequireAdminPermission(rbacChecker, auth.PermManageProbes, "manage probes")
-	}
+	h.checkPermission = RequireAdminPermission(rbacChecker, auth.PermManageProbes, "manage probes")
 	return h
 }
 
@@ -143,6 +143,9 @@ func (h *ProbeOverrideHandler) upsertOverride(w http.ResponseWriter, r *http.Req
 	if !h.checkPermission(w, r) {
 		return
 	}
+	if !requireTargetInTokenScope(w, r, h.rbacChecker, h.denialRecorder, scope, &scopeID) {
+		return
+	}
 
 	var req database.ProbeOverrideUpdate
 	if !DecodeJSONBody(w, r, &req) {
@@ -162,6 +165,9 @@ func (h *ProbeOverrideHandler) upsertOverride(w http.ResponseWriter, r *http.Req
 // deleteOverride handles DELETE /api/v1/probe-overrides/{scope}/{scopeId}/{probeName}
 func (h *ProbeOverrideHandler) deleteOverride(w http.ResponseWriter, r *http.Request, scope string, scopeID int, probeName string) {
 	if !h.checkPermission(w, r) {
+		return
+	}
+	if !requireTargetInTokenScope(w, r, h.rbacChecker, h.denialRecorder, scope, &scopeID) {
 		return
 	}
 

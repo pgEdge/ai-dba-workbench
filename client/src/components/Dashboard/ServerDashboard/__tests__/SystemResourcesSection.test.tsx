@@ -8,20 +8,21 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import SystemResourcesSection from '../SystemResourcesSection';
 import type { UseMetricsReturn } from '../../../../hooks/useMetrics';
-import type { MetricSeries } from '../../types';
+import type { MetricQueryParams, MetricSeries } from '../../types';
 
 // ---------------------------------------------------------------------------
 // Mocks
 // ---------------------------------------------------------------------------
 
-const mockUseMetrics = vi.fn<[], UseMetricsReturn>();
+type UseMetricsFn = (params: MetricQueryParams | null) => UseMetricsReturn;
+
+const mockUseMetrics = vi.fn<UseMetricsFn>();
 vi.mock('../../../../hooks/useMetrics', () => ({
-    useMetrics: () => mockUseMetrics(),
+    useMetrics: (params: MetricQueryParams | null) => mockUseMetrics(params),
 }));
 
 vi.mock('../../../../contexts/useDashboard', () => ({
@@ -41,11 +42,40 @@ vi.mock('../../../../contexts/useAICapabilities', () => ({
     }),
 }));
 
-// Mock the Chart component to avoid ApexCharts dependencies
+// Mock the Chart component to avoid ApexCharts dependencies. The
+// series names and the analysis description are exposed as attributes
+// so the tests can assert on what the section actually charts.
 vi.mock('../../../Chart', () => ({
-    Chart: ({ title }: { title: string }) => (
-        <div data-testid="chart">{title}</div>
+    Chart: ({ title, data, analysisContext }: {
+        title: string;
+        data: { series: { name: string }[] };
+        analysisContext?: { metricDescription: string };
+    }) => (
+        <div
+            data-testid="chart"
+            data-series={data.series.map(s => s.name).join('|')}
+            data-description={analysisContext?.metricDescription ?? ''}
+        >
+            {title}
+        </div>
     ),
+}));
+
+// The disk mount lookup goes straight through apiGet rather than
+// useMetrics, so it is mocked separately.
+const mockApiGet = vi.fn();
+vi.mock('../../../../utils/apiClient', () => ({
+    apiGet: (url: string, options?: { signal?: AbortSignal }) =>
+        mockApiGet(url, options) as unknown,
+}));
+
+vi.mock('../../../../utils/logger', () => ({
+    logger: {
+        error: vi.fn(),
+        warn: vi.fn(),
+        info: vi.fn(),
+        debug: vi.fn(),
+    },
 }));
 
 // ---------------------------------------------------------------------------
@@ -55,6 +85,7 @@ vi.mock('../../../Chart', () => ({
 /** Build a mock UseMetricsReturn with loading state */
 const loadingMetrics = (): UseMetricsReturn => ({
     data: null,
+    window: null,
     loading: true,
     error: null,
     refetch: vi.fn(),
@@ -63,6 +94,7 @@ const loadingMetrics = (): UseMetricsReturn => ({
 /** Build a mock UseMetricsReturn with empty data (no system_stats) */
 const emptyMetrics = (): UseMetricsReturn => ({
     data: [],
+    window: null,
     loading: false,
     error: null,
     refetch: vi.fn(),
@@ -80,6 +112,7 @@ const zeroMetrics = (): UseMetricsReturn => ({
             ],
         },
     ] as MetricSeries[],
+    window: null,
     loading: false,
     error: null,
     refetch: vi.fn(),
@@ -105,20 +138,139 @@ const realMetrics = (): UseMetricsReturn => ({
             ],
         },
     ] as MetricSeries[],
+    window: null,
     loading: false,
     error: null,
     refetch: vi.fn(),
 });
 
+/** Bucket times shared by every fixture series */
+const T0 = '2024-01-01T00:00:00Z';
+const T1 = '2024-01-01T00:01:00Z';
+
+/** CPU series with real values, which is what hasSystemStats keys off */
+const cpuSeries = (): MetricSeries[] => ([
+    {
+        name: 'idle_mode_percent',
+        metric: 'idle_mode_percent',
+        data: [{ time: T0, value: 85.5 }, { time: T1, value: 90.2 }],
+    },
+    {
+        name: 'usermode_normal_process_percent',
+        metric: 'usermode_normal_process_percent',
+        data: [{ time: T0, value: 10.2 }, { time: T1, value: 8.5 }],
+    },
+] as MetricSeries[]);
+
+/**
+ * Memory series. `available` selects the available_memory shape:
+ * 'absent' omits the series entirely, as an older collector would,
+ * 'null' returns it with only null buckets, and an array supplies
+ * real values.
+ */
+const memorySeries = (
+    available: 'absent' | 'null' | number[],
+): MetricSeries[] => {
+    const series: MetricSeries[] = [
+        {
+            name: 'used_memory',
+            metric: 'used_memory',
+            data: [{ time: T0, value: 4e9 }, { time: T1, value: 5e9 }],
+        },
+        {
+            name: 'total_memory',
+            metric: 'total_memory',
+            data: [{ time: T0, value: 16e9 }, { time: T1, value: 16e9 }],
+        },
+        {
+            name: 'free_memory',
+            metric: 'free_memory',
+            data: [{ time: T0, value: 2e9 }, { time: T1, value: 1e9 }],
+        },
+        {
+            name: 'cache_total',
+            metric: 'cache_total',
+            data: [{ time: T0, value: 9e9 }, { time: T1, value: 1e10 }],
+        },
+    ] as MetricSeries[];
+
+    if (available !== 'absent') {
+        const values = available === 'null' ? [null, null] : available;
+        series.push({
+            name: 'available_memory',
+            metric: 'available_memory',
+            data: [
+                { time: T0, value: values[0] },
+                { time: T1, value: values[1] },
+            ],
+        } as MetricSeries);
+    }
+
+    return series;
+};
+
+/**
+ * Drive useMetrics so memory probes get the memory fixture and every
+ * other probe gets the CPU fixture, which keeps hasSystemStats true.
+ */
+const mockMemory = (available: 'absent' | 'null' | number[]): void => {
+    mockUseMetrics.mockImplementation((params) => ({
+        data: params?.probeName === 'pg_sys_memory_info'
+            ? memorySeries(available)
+            : cpuSeries(),
+        window: null,
+        loading: false,
+        error: null,
+        refetch: vi.fn(),
+    }));
+};
+
+/**
+ * Wording unique to the chart caption. The tile's secondary line also
+ * ends in 'available (est.)', so the caption must never be asserted on
+ * that substring; these two matchers are deliberately disjoint, and
+ * both are case-insensitive so that nothing rests on the caption
+ * capitalising the label and the tile lower-casing it.
+ */
+const CAPTION_TEXT = /estimate of free memory plus reclaimable page cache/i;
+
+/** Wording unique to the memory tile's secondary line */
+const TILE_SECONDARY_TEXT = /^[\d.]+ [KMGT]?B available \(est\.\)$/i;
+
+/** The memory chart node, identified by its title text */
+const memoryChart = (): HTMLElement => screen
+    .getAllByTestId('chart')
+    .find(el => el.textContent === 'Memory Usage Over Time') as HTMLElement;
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+/** Build a pg_sys_disk_info latest row for the mount lookup. */
+const diskRow = (
+    mountPoint: string,
+    usedSpace: number,
+    fileSystemType: string | null = 'ext4',
+) => ({
+    mount_point: mountPoint,
+    file_system_type: fileSystemType,
+    total_space: 1000,
+    used_space: usedSpace,
+    free_space: 1000 - usedSpace,
+});
+
+/** The parameters of every useMetrics call naming the disk probe. */
+const diskCallParams = (): MetricQueryParams[] => mockUseMetrics.mock.calls
+    .map(([params]) => params)
+    .filter((params): params is MetricQueryParams =>
+        params?.probeName === 'pg_sys_disk_info');
 
 describe('SystemResourcesSection', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         vi.mocked(localStorage.getItem).mockReturnValue(null);
         vi.mocked(localStorage.setItem).mockClear();
+        mockApiGet.mockResolvedValue([]);
     });
 
     describe('force collapse behavior', () => {
@@ -374,6 +526,450 @@ describe('SystemResourcesSection', () => {
             expect(screen.getByText('Load Average')).toBeInTheDocument();
             // Three placeholders: Memory, Disk, Load all show '--'.
             expect(screen.getAllByText('--').length).toBeGreaterThanOrEqual(3);
+        });
+    });
+
+    describe('available memory', () => {
+        it('requests available_memory for both the KPI and the chart', async () => {
+            mockMemory([13.3e9, 13.3e9]);
+
+            render(
+                <SystemResourcesSection
+                    connectionId={1}
+                    connectionName="Test Server"
+                />,
+            );
+
+            await waitFor(() => {
+                expect(mockUseMetrics).toHaveBeenCalled();
+            });
+            // The section re-renders as the disk mount selector settles,
+            // so the hook is called more than once per query; compare the
+            // distinct memory queries rather than the call count.
+            const requested = new Set(mockUseMetrics.mock.calls
+                .filter(([params]) => params?.probeName === 'pg_sys_memory_info')
+                .map(([params]) => (params?.metrics ?? []).join(',')));
+            expect(requested.size).toBe(2);
+            requested.forEach(metrics => {
+                expect(metrics.split(',')).toContain('available_memory');
+            });
+        });
+
+        it('charts a fourth Available (est.) series and says so in the analysis context', async () => {
+            mockMemory([13.3e9, 13.3e9]);
+
+            render(
+                <SystemResourcesSection
+                    connectionId={1}
+                    connectionName="Test Server"
+                />,
+            );
+
+            await waitFor(() => {
+                expect(memoryChart()).toBeInTheDocument();
+            });
+            expect(memoryChart()).toHaveAttribute(
+                'data-series',
+                'Used|Free|Cached|Available (est.)',
+            );
+            expect(memoryChart().getAttribute('data-description'))
+                .toMatch(/estimated available/i);
+        });
+
+        it('explains the estimate in a caption beneath the memory chart', async () => {
+            mockMemory([13.3e9, 13.3e9]);
+
+            render(
+                <SystemResourcesSection
+                    connectionId={1}
+                    connectionName="Test Server"
+                />,
+            );
+
+            await waitFor(() => {
+                expect(memoryChart()).toBeInTheDocument();
+            });
+            expect(screen.getByText(CAPTION_TEXT)).toBeInTheDocument();
+        });
+
+        it('shows the available figure as the memory tile secondary line', async () => {
+            mockMemory([13.3e9, 13.3e9]);
+
+            render(
+                <SystemResourcesSection
+                    connectionId={1}
+                    connectionName="Test Server"
+                />,
+            );
+
+            await waitFor(() => {
+                expect(screen.getByText('Memory Usage')).toBeInTheDocument();
+            });
+            expect(screen.getByText('12.4 GB available (est.)'))
+                .toBeInTheDocument();
+            expect(screen.getByText(TILE_SECONDARY_TEXT))
+                .toBeInTheDocument();
+            expect(
+                screen.getByLabelText(/12\.4 GB available \(est\.\)/),
+            ).toBeInTheDocument();
+        });
+
+        it('omits the secondary line when available_memory is all null', async () => {
+            mockMemory('null');
+
+            render(
+                <SystemResourcesSection
+                    connectionId={1}
+                    connectionName="Test Server"
+                />,
+            );
+
+            await waitFor(() => {
+                expect(screen.getByText('Memory Usage')).toBeInTheDocument();
+            });
+            expect(screen.queryByText(TILE_SECONDARY_TEXT))
+                .not.toBeInTheDocument();
+            // No reading means nothing to explain, so no caption either.
+            expect(screen.queryByText(CAPTION_TEXT)).not.toBeInTheDocument();
+            // The series is still charted, as a gap rather than a zero.
+            expect(memoryChart()).toHaveAttribute(
+                'data-series',
+                'Used|Free|Cached|Available (est.)',
+            );
+        });
+
+        it('omits both the secondary line and the caption when the collector sends no available_memory', async () => {
+            mockMemory('absent');
+
+            render(
+                <SystemResourcesSection
+                    connectionId={1}
+                    connectionName="Test Server"
+                />,
+            );
+
+            await waitFor(() => {
+                expect(screen.getByText('Memory Usage')).toBeInTheDocument();
+            });
+            expect(screen.queryByText(TILE_SECONDARY_TEXT))
+                .not.toBeInTheDocument();
+            // The other three series still yield a chart, so the caption
+            // cannot be gated on the chart having data: it would explain
+            // an Available (est.) line that was never drawn.
+            expect(memoryChart()).toBeInTheDocument();
+            expect(screen.queryByText(CAPTION_TEXT)).not.toBeInTheDocument();
+        });
+
+        it('shows neither the secondary line nor the caption without system_stats', async () => {
+            mockUseMetrics.mockReturnValue(emptyMetrics());
+
+            render(
+                <SystemResourcesSection
+                    connectionId={1}
+                    connectionName="Test Server"
+                />,
+            );
+
+            await waitFor(() => {
+                expect(
+                    screen.getByText(/No data available.*system_stats/i),
+                ).toBeInTheDocument();
+            });
+
+            // Expand manually so the tiles and chart panels render.
+            fireEvent.click(
+                screen.getByRole('button', {
+                    name: /expand system resources section/i,
+                }),
+            );
+
+            expect(screen.queryByText(TILE_SECONDARY_TEXT))
+                .not.toBeInTheDocument();
+            expect(screen.queryByText(CAPTION_TEXT)).not.toBeInTheDocument();
+        });
+    });
+
+    describe('network chart', () => {
+        it('requests per-second network metrics', async () => {
+            mockUseMetrics.mockReturnValue(realMetrics());
+
+            render(
+                <SystemResourcesSection
+                    connectionId={1}
+                    connectionName="Test Server"
+                />,
+            );
+
+            await waitFor(() => {
+                expect(mockUseMetrics).toHaveBeenCalled();
+            });
+            const requested = mockUseMetrics.mock.calls
+                .map(([params]) => (params?.metrics ?? []).join(','));
+            expect(requested).toContain('tx_bytes_per_sec,rx_bytes_per_sec');
+        });
+
+        it('reports a network query error in place of the empty message', async () => {
+            mockUseMetrics.mockImplementation((params) => {
+                const key = (params?.metrics ?? []).join(',');
+                if (key === 'tx_bytes_per_sec,rx_bytes_per_sec') {
+                    return {
+                        data: null,
+                        window: null,
+                        loading: false,
+                        error: 'metric not found in probe',
+                        refetch: vi.fn(),
+                    };
+                }
+                return realMetrics();
+            });
+
+            render(
+                <SystemResourcesSection
+                    connectionId={1}
+                    connectionName="Test Server"
+                />,
+            );
+
+            await waitFor(() => {
+                expect(screen.getByText('metric not found in probe'))
+                    .toBeInTheDocument();
+            });
+        });
+    });
+
+    describe('disk mount selection', () => {
+        it('defaults to the fullest real filesystem', async () => {
+            mockUseMetrics.mockReturnValue(realMetrics());
+            mockApiGet.mockResolvedValue([
+                diskRow('/', 100),
+                diskRow('/var/lib/postgresql', 900),
+                diskRow('/dev/shm', 950, 'tmpfs'),
+            ]);
+
+            render(
+                <SystemResourcesSection
+                    connectionId={1}
+                    connectionName="Test Server"
+                />,
+            );
+
+            await waitFor(() => {
+                expect(screen.getByText('Disk Usage (/var/lib/postgresql)'))
+                    .toBeInTheDocument();
+            });
+            expect(
+                screen.getByText('Disk Space Over Time (/var/lib/postgresql)'),
+            ).toBeInTheDocument();
+        });
+
+        it('sends the selected mount with both disk queries', async () => {
+            mockUseMetrics.mockReturnValue(realMetrics());
+            mockApiGet.mockResolvedValue([
+                diskRow('/', 100),
+                diskRow('/data', 900),
+            ]);
+
+            render(
+                <SystemResourcesSection
+                    connectionId={1}
+                    connectionName="Test Server"
+                />,
+            );
+
+            await waitFor(() => {
+                expect(diskCallParams().some(p => p.mountPoint === '/data'))
+                    .toBe(true);
+            });
+
+            const withMount = diskCallParams()
+                .filter(p => p.mountPoint === '/data');
+            // The KPI query asks for the total so the percentage can be
+            // taken against it rather than against used plus free.
+            expect(withMount.some(
+                p => p.metrics?.includes('total_space') === true
+                    && p.buckets === 30,
+            )).toBe(true);
+            expect(withMount.some(p => p.buckets === 150)).toBe(true);
+        });
+
+        it('hides the selector when only one real filesystem exists', async () => {
+            mockUseMetrics.mockReturnValue(realMetrics());
+            mockApiGet.mockResolvedValue([
+                diskRow('/', 400),
+                diskRow('/dev/shm', 950, 'tmpfs'),
+                diskRow('/snap/core', 1000, 'squashfs'),
+            ]);
+
+            render(
+                <SystemResourcesSection
+                    connectionId={1}
+                    connectionName="Test Server"
+                />,
+            );
+
+            await waitFor(() => {
+                expect(screen.getByText('Disk Usage (/)')).toBeInTheDocument();
+            });
+            expect(screen.queryByLabelText('Filesystem'))
+                .not.toBeInTheDocument();
+        });
+
+        it('offers the real filesystems when there are several', async () => {
+            mockUseMetrics.mockReturnValue(realMetrics());
+            mockApiGet.mockResolvedValue([
+                diskRow('/', 100),
+                diskRow('/data', 900),
+            ]);
+
+            render(
+                <SystemResourcesSection
+                    connectionId={1}
+                    connectionName="Test Server"
+                />,
+            );
+
+            const select = await screen.findByLabelText('Filesystem');
+            fireEvent.mouseDown(select);
+
+            const options = await screen.findAllByRole('option');
+            expect(options.map(o => o.textContent)).toEqual(['/data', '/']);
+        });
+
+        it('re-queries the newly selected mount', async () => {
+            mockUseMetrics.mockReturnValue(realMetrics());
+            mockApiGet.mockResolvedValue([
+                diskRow('/', 100),
+                diskRow('/data', 900),
+            ]);
+
+            render(
+                <SystemResourcesSection
+                    connectionId={1}
+                    connectionName="Test Server"
+                />,
+            );
+
+            const select = await screen.findByLabelText('Filesystem');
+            fireEvent.mouseDown(select);
+            fireEvent.click(await screen.findByRole('option', { name: '/' }));
+
+            await waitFor(() => {
+                expect(screen.getByText('Disk Usage (/)')).toBeInTheDocument();
+            });
+            expect(diskCallParams().some(p => p.mountPoint === '/')).toBe(true);
+        });
+
+        it('falls back to an empty state when no real mount is found', async () => {
+            mockUseMetrics.mockReturnValue(realMetrics());
+            mockApiGet.mockResolvedValue([
+                diskRow('/dev/shm', 950, 'tmpfs'),
+                { ...diskRow('/broken', 0), total_space: 0 },
+            ]);
+
+            render(
+                <SystemResourcesSection
+                    connectionId={1}
+                    connectionName="Test Server"
+                />,
+            );
+
+            await waitFor(() => {
+                expect(screen.getByText('Disk Usage')).toBeInTheDocument();
+            });
+            expect(screen.getByText('Disk Space Over Time'))
+                .toBeInTheDocument();
+            expect(screen.queryByLabelText('Filesystem'))
+                .not.toBeInTheDocument();
+
+            // The empty state must say what is actually wrong rather
+            // than blaming an extension that is plainly working.
+            expect(
+                screen.getByText('No real filesystem reported for this server.'),
+            ).toBeInTheDocument();
+
+            // Reverting to the averaged query is exactly the behaviour
+            // issue #428 removes, so no disk query may have fired.
+            expect(diskCallParams()).toHaveLength(0);
+        });
+
+        it('issues no disk query until the mount lookup resolves', async () => {
+            mockUseMetrics.mockReturnValue(realMetrics());
+            let resolveMounts: (rows: unknown) => void = () => {};
+            mockApiGet.mockImplementation(() => new Promise((resolve) => {
+                resolveMounts = resolve;
+            }));
+
+            render(
+                <SystemResourcesSection
+                    connectionId={1}
+                    connectionName="Test Server"
+                />,
+            );
+
+            await waitFor(() => { expect(mockApiGet).toHaveBeenCalled(); });
+
+            // Whilst the lookup is in flight the panel must show the
+            // loading state, not an averaged figure and not an empty
+            // state that would read as a missing extension.
+            expect(diskCallParams()).toHaveLength(0);
+            expect(screen.getAllByLabelText('Loading chart').length)
+                .toBeGreaterThan(0);
+            expect(
+                screen.queryByText('No real filesystem reported for this server.'),
+            ).not.toBeInTheDocument();
+
+            resolveMounts([diskRow('/data', 700)]);
+
+            await waitFor(() => {
+                expect(diskCallParams().some(p => p.mountPoint === '/data'))
+                    .toBe(true);
+            });
+        });
+
+        it('takes the percentage from the reported total', async () => {
+            mockApiGet.mockResolvedValue([diskRow('/data', 800)]);
+            mockUseMetrics.mockImplementation((params) => {
+                if (params?.probeName === 'pg_sys_disk_info'
+                    && params.buckets === 30) {
+                    return {
+                        data: [
+                            {
+                                name: 'used_space',
+                                metric: 'used_space',
+                                data: [{ time: 't', value: 800 }],
+                            },
+                            {
+                                name: 'free_space',
+                                metric: 'free_space',
+                                data: [{ time: 't', value: 100 }],
+                            },
+                            {
+                                name: 'total_space',
+                                metric: 'total_space',
+                                data: [{ time: 't', value: 1000 }],
+                            },
+                        ] as MetricSeries[],
+                        window: null,
+                        loading: false,
+                        error: null,
+                        refetch: vi.fn(),
+                    };
+                }
+                return realMetrics();
+            });
+
+            render(
+                <SystemResourcesSection
+                    connectionId={1}
+                    connectionName="Test Server"
+                />,
+            );
+
+            // 800 / 1000 is 80.0; used over used-plus-free would have
+            // given 88.9 on a filesystem with reserved blocks.
+            await waitFor(() => {
+                expect(screen.getByText('80.0')).toBeInTheDocument();
+            });
         });
     });
 });

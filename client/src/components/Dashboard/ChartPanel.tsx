@@ -24,6 +24,12 @@ interface ChartPanelProps {
     hasData: boolean;
     /** Message to display when no data is available. */
     emptyMessage: string;
+    /**
+     * Error message from the metrics query. When set, it replaces the
+     * empty message so that a failed query is reported rather than
+     * being mistaken for an absence of data.
+     */
+    errorMessage?: string | null;
     /** Height of the chart area in pixels. */
     height: number;
     /** The Chart component to render when data is available. */
@@ -32,7 +38,7 @@ interface ChartPanelProps {
 
 /**
  * ChartPanel wraps chart content with a consistent container that
- * handles loading and empty states. When data is available, the
+ * handles loading, error and empty states. When data is available, the
  * children (typically a Chart component) render directly since the
  * Chart component provides its own Paper wrapper. When loading or
  * empty, the panel renders a matching Paper container with the
@@ -43,6 +49,7 @@ const ChartPanel: React.FC<ChartPanelProps> = ({
     loading,
     hasData,
     emptyMessage,
+    errorMessage,
     height,
     children,
 }) => {
@@ -61,6 +68,10 @@ const ChartPanel: React.FC<ChartPanelProps> = ({
             }}>
                 {loading ? (
                     <CircularProgress size={24} aria-label="Loading chart" />
+                ) : errorMessage ? (
+                    <Typography variant="body2" color="error">
+                        {errorMessage}
+                    </Typography>
                 ) : (
                     <Typography variant="body2" color="text.secondary">
                         {emptyMessage}

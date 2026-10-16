@@ -194,7 +194,7 @@ func TestGetAlertHistoryInvalidStatusIntegration(t *testing.T) {
 	pool, _, cleanup := newToolsTestPool(t)
 	defer cleanup()
 
-	tool := GetAlertHistoryTool(pool, nil, nil)
+	tool := asSuperuser(GetAlertHistoryTool(pool, testRBACChecker(t), nil))
 
 	response, err := tool.Handler(map[string]any{
 		"status": "invalid_status",
@@ -227,7 +227,7 @@ func TestGetAlertRulesInvalidConnectionIDIntegration(t *testing.T) {
 	pool, _, cleanup := newToolsTestPool(t)
 	defer cleanup()
 
-	tool := GetAlertRulesTool(pool, nil)
+	tool := asSuperuser(GetAlertRulesTool(pool, testRBACChecker(t)))
 
 	tests := []struct {
 		name  string
@@ -266,7 +266,7 @@ func TestGetAlertRulesInvalidCategoryIntegration(t *testing.T) {
 	pool, _, cleanup := newToolsTestPool(t)
 	defer cleanup()
 
-	tool := GetAlertRulesTool(pool, nil)
+	tool := asSuperuser(GetAlertRulesTool(pool, testRBACChecker(t)))
 
 	response, err := tool.Handler(map[string]any{
 		"category": "not_a_real_category",
@@ -297,7 +297,7 @@ func TestGetBlackoutsInvalidConnectionIDIntegration(t *testing.T) {
 	pool, _, cleanup := newToolsTestPool(t)
 	defer cleanup()
 
-	tool := GetBlackoutsTool(pool, nil, nil)
+	tool := asSuperuser(GetBlackoutsTool(pool, testRBACChecker(t), nil))
 
 	response, err := tool.Handler(map[string]any{
 		"connection_id": "abc",
@@ -328,7 +328,7 @@ func TestGetMetricBaselinesInvalidConnectionIDIntegration(t *testing.T) {
 	pool, _, cleanup := newToolsTestPool(t)
 	defer cleanup()
 
-	tool := GetMetricBaselinesTool(pool, nil, nil)
+	tool := asSuperuser(GetMetricBaselinesTool(pool, testRBACChecker(t), nil))
 
 	tests := []struct {
 		name  string
@@ -359,86 +359,6 @@ func TestGetMetricBaselinesInvalidConnectionIDIntegration(t *testing.T) {
 			}
 		})
 	}
-}
-
-// ---------------------------------------------------------------------------
-// query_datastore: limit and offset actually applied
-// ---------------------------------------------------------------------------
-
-// TestQueryDatastoreWithLimitAndOffsetIntegration verifies that a
-// well-formed query executes against a real datastore and that the
-// requested limit bounds the returned row count. This is the behavior
-// the nil-pool unit test cannot cover: it stops at the "Datastore not
-// configured" short-circuit and does not prove the limit/offset
-// parameters are actually honored by the handler.
-func TestQueryDatastoreWithLimitAndOffsetIntegration(t *testing.T) {
-	pool, _, cleanup := newToolsTestPool(t)
-	defer cleanup()
-
-	tool := QueryDatastoreTool(pool)
-
-	response, err := tool.Handler(map[string]any{
-		"query":  "SELECT generate_series(1, 20) AS n",
-		"limit":  5,
-		"offset": 0,
-	})
-	if err != nil {
-		t.Fatalf("handler returned unexpected error: %v", err)
-	}
-	if response.IsError {
-		if len(response.Content) == 0 {
-			t.Fatal("expected error message in response content")
-		}
-		t.Fatalf("handler returned error response: %s", response.Content[0].Text)
-	}
-	if len(response.Content) == 0 {
-		t.Fatal("expected non-empty response content")
-	}
-
-	text := response.Content[0].Text
-	// Quick structural assertions: the datastore query header is present
-	// and the output advertises a bounded result. We do not assert the
-	// exact row count because formatPaginatedResults controls formatting.
-	if !strings.Contains(text, "Datastore Query") {
-		t.Errorf("expected 'Datastore Query' header, got: %s", text)
-	}
-	// generate_series produces 20 rows, but limit=5 must cap the returned
-	// rows. Count occurrences of row delimiter (newline after header).
-	// A conservative check: the response must not contain '20' as a
-	// standalone row value (which would indicate the limit was ignored).
-	if strings.Contains(text, "\n20\n") {
-		t.Errorf("limit was not applied; response contains row value 20: %s", text)
-	}
-}
-
-// TestQueryDatastoreRejectsInvalidLimitIntegration verifies that out-of-range
-// limit values are rejected. The handler's parseLimitOffset helper clamps
-// to [1, 1000]; supplying a limit above the max is silently capped, but a
-// zero or negative value should be caught. Since parseLimitOffset treats
-// out-of-range values by falling back to defaults, this test documents
-// the observed behavior: the handler must not panic and must still return
-// a successful response using the default.
-func TestQueryDatastoreRejectsInvalidLimitIntegration(t *testing.T) {
-	pool, _, cleanup := newToolsTestPool(t)
-	defer cleanup()
-
-	tool := QueryDatastoreTool(pool)
-
-	response, err := tool.Handler(map[string]any{
-		"query": "SELECT 1",
-		"limit": -5,
-	})
-	if err != nil {
-		t.Fatalf("handler returned unexpected error: %v", err)
-	}
-	if len(response.Content) == 0 {
-		t.Fatal("expected non-empty response content")
-	}
-	// Either the handler rejects the invalid limit with an error, or it
-	// falls back to the default and returns success; both are acceptable
-	// contracts. What is NOT acceptable is a panic, which this test
-	// implicitly covers by reaching this assertion at all.
-	_ = response
 }
 
 // ---------------------------------------------------------------------------
@@ -534,7 +454,7 @@ func newRBACTestStore(t *testing.T) (*auth.AuthStore, func()) {
 	if err != nil {
 		t.Fatalf("MkdirTemp: %v", err)
 	}
-	store, err := auth.NewAuthStore(tmpDir, 0, 0)
+	store, err := auth.NewAuthStore(tmpDir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		os.RemoveAll(tmpDir)
 		t.Fatalf("NewAuthStore: %v", err)
@@ -633,7 +553,7 @@ func TestListConnectionsNoConnectionsExistIntegration(t *testing.T) {
 	defer cleanup()
 
 	// No connections are inserted - the connections table is empty.
-	tool := ListConnectionsTool(pool, nil, nil)
+	tool := asSuperuser(ListConnectionsTool(pool, testRBACChecker(t), nil))
 
 	resp, err := tool.Handler(map[string]any{})
 	if err != nil {

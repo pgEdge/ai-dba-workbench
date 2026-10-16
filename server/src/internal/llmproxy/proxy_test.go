@@ -103,6 +103,9 @@ func (f *fakeProvider) Rerank(context.Context, pgllm.RerankRequest) (*pgllm.Rera
 func (f *fakeProvider) EmbedMultimodal(context.Context, pgllm.MultimodalEmbedRequest) ([][]float64, error) {
 	return nil, pgllm.ErrNotSupported
 }
+func (f *fakeProvider) Decide(context.Context, pgllm.DecisionRequest) (*pgllm.DecisionResponse, error) {
+	return nil, pgllm.ErrNotSupported
+}
 func (f *fakeProvider) ListModels(context.Context, ...pgllm.ListModelsOption) ([]string, error) {
 	return []string{"claude-test"}, nil
 }
@@ -125,7 +128,7 @@ func newTestAuthStore(t *testing.T) *auth.AuthStore {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	store, err := auth.NewAuthStore(tmpDir, 0, 0)
+	store, err := auth.NewAuthStore(tmpDir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		os.RemoveAll(tmpDir)
 		t.Fatalf("failed to create auth store: %v", err)
@@ -211,7 +214,7 @@ func TestProviderOptions_DefaultsAndHeaders(t *testing.T) {
 	cfg := &Config{
 		Model:       "claude-test",
 		MaxTokens:   2048,
-		Temperature: 0.5,
+		Temperature: pgllm.Float(0.5),
 		LLMConfig:   &config.LLMConfig{TimeoutSeconds: 30},
 	}
 	opts := cfg.providerOptions("anthropic", "key", "http://base")
@@ -232,6 +235,33 @@ func TestProviderOptions_DefaultsAndHeaders(t *testing.T) {
 	}
 	if opts.RequestTimeout.Seconds() != 30 {
 		t.Errorf("expected 30s timeout, got %v", opts.RequestTimeout)
+	}
+}
+
+// TestProviderOptions_Temperature guards issue #551: an explicit
+// temperature of 0 must reach the provider options, whilst a nil
+// temperature leaves the provider default in place.
+func TestProviderOptions_Temperature(t *testing.T) {
+	tests := []struct {
+		name string
+		temp *float64
+		want *float64
+	}{
+		{name: "nil leaves provider default", temp: nil, want: nil},
+		{name: "explicit zero is sent", temp: pgllm.Float(0), want: pgllm.Float(0)},
+		{name: "non-zero is sent", temp: pgllm.Float(0.7), want: pgllm.Float(0.7)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &Config{Model: "m", Temperature: tt.temp}
+			opts := cfg.providerOptions("anthropic", "key", "http://base")
+			switch {
+			case tt.want == nil && opts.Temperature != nil:
+				t.Errorf("expected nil Temperature, got %v", *opts.Temperature)
+			case tt.want != nil && (opts.Temperature == nil || *opts.Temperature != *tt.want):
+				t.Errorf("expected Temperature %v, got %v", *tt.want, opts.Temperature)
+			}
+		})
 	}
 }
 
@@ -865,7 +895,7 @@ func TestIsValidModelName(t *testing.T) {
 	}{
 		// Valid model names: charset and length within bounds, no ".." substring.
 		{"typical gemini name", "gemini-2.5-flash", true},
-		{"typical anthropic name", "claude-3-7-sonnet-20250219", true},
+		{"typical anthropic name", "claude-sonnet-4-6", true},
 		{"colon and slash allowed", "library/model:tag", true},
 		{"single slash vendor/model", "vendor/model", true},
 		{"single dot voyage", "voyage-3.5", true},
@@ -1214,8 +1244,9 @@ func TestProviderOptions_NoLLMConfig(t *testing.T) {
 
 // TestBuildClientOptions_ProviderCredentialSelection verifies that each
 // provider branch selects the matching API key and base URL, that unknown
-// providers select neither, and that the caller-supplied max-tokens and
-// temperature are always applied along with the shared model.
+// providers select neither, and that the configured max-tokens and the
+// caller-supplied temperature are always applied along with the shared
+// model.
 func TestBuildClientOptions_ProviderCredentialSelection(t *testing.T) {
 	cfg := &Config{
 		Model:            "shared-model",
@@ -1243,7 +1274,8 @@ func TestBuildClientOptions_ProviderCredentialSelection(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.provider, func(t *testing.T) {
 			cfg.Provider = tc.provider
-			opts := cfg.BuildClientOptions(1234, 0.25)
+			cfg.MaxTokens = 1234
+			opts := cfg.BuildClientOptions(0.25)
 			if opts.APIKey != tc.wantAPIKey {
 				t.Errorf("APIKey: got %q, want %q", opts.APIKey, tc.wantAPIKey)
 			}
@@ -1276,7 +1308,7 @@ func TestBuildClientOptions_TimeoutAndHeaders(t *testing.T) {
 			AnthropicCustomHeaders: map[string]string{"X-Test": "value"},
 		},
 	}
-	opts := cfg.BuildClientOptions(100, 0.5)
+	opts := cfg.BuildClientOptions(0.5)
 	if opts.RequestTimeout.Seconds() != 45 {
 		t.Errorf("RequestTimeout: got %v, want 45s", opts.RequestTimeout)
 	}
@@ -1287,18 +1319,18 @@ func TestBuildClientOptions_TimeoutAndHeaders(t *testing.T) {
 
 // TestBuildClientOptions_NoLLMConfig verifies the nil-LLMConfig guard: no
 // headers are loaded and no timeout is applied, while the caller-supplied
-// max-tokens and temperature are still set.
+// the fallback max-tokens and the caller's temperature are still set.
 func TestBuildClientOptions_NoLLMConfig(t *testing.T) {
 	cfg := &Config{Provider: "openai", Model: "m", OpenAIAPIKey: "k"}
-	opts := cfg.BuildClientOptions(50, 0.1)
+	opts := cfg.BuildClientOptions(0.1)
 	if opts.CustomHeaders != nil {
 		t.Errorf("expected nil headers with no LLMConfig, got %v", opts.CustomHeaders)
 	}
 	if opts.RequestTimeout != 0 {
 		t.Errorf("expected zero timeout with no LLMConfig, got %v", opts.RequestTimeout)
 	}
-	if opts.MaxTokens == nil || *opts.MaxTokens != 50 {
-		t.Errorf("MaxTokens: got %v, want 50", opts.MaxTokens)
+	if opts.MaxTokens == nil || *opts.MaxTokens != DefaultAnalysisMaxTokens {
+		t.Errorf("MaxTokens: got %v, want %d", opts.MaxTokens, DefaultAnalysisMaxTokens)
 	}
 	if opts.Temperature == nil || *opts.Temperature != 0.1 {
 		t.Errorf("Temperature: got %v, want 0.1", opts.Temperature)
@@ -1319,7 +1351,7 @@ func TestBuildClientOptions_HeaderLoadErrorTreatedAsNoHeaders(t *testing.T) {
 			},
 		},
 	}
-	opts := cfg.BuildClientOptions(10, 0.2)
+	opts := cfg.BuildClientOptions(0.2)
 	if opts.CustomHeaders != nil {
 		t.Errorf("expected nil headers when header loading fails, got %v", opts.CustomHeaders)
 	}
@@ -1338,8 +1370,96 @@ func TestBuildClientOptions_ZeroTimeoutNotApplied(t *testing.T) {
 		AnthropicAPIKey: "k",
 		LLMConfig:       &config.LLMConfig{TimeoutSeconds: 0},
 	}
-	opts := cfg.BuildClientOptions(10, 0.2)
+	opts := cfg.BuildClientOptions(0.2)
 	if opts.RequestTimeout != 0 {
 		t.Errorf("expected zero timeout when TimeoutSeconds=0, got %v", opts.RequestTimeout)
+	}
+}
+
+// -----------------------------------------------------------------------
+// AnalysisMaxTokens — output-token budget resolution for the analysis
+// paths (see issue #399: a hardcoded 512-token cap starved reasoning
+// models of the budget needed to emit a text block).
+// -----------------------------------------------------------------------
+
+// TestAnalysisMaxTokens verifies that a positive configured budget is
+// honored and that an unset, zero, or negative budget falls back to
+// DefaultAnalysisMaxTokens. A nil receiver is also exercised because the
+// overview generator may hold a nil config when AI is disabled.
+func TestAnalysisMaxTokens(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  *Config
+		want int
+	}{
+		{"configured value used", &Config{MaxTokens: 8192}, 8192},
+		{"configured default value used", &Config{MaxTokens: 4096}, 4096},
+		{"small configured value still honored", &Config{MaxTokens: 16}, 16},
+		{"unset falls back", &Config{}, DefaultAnalysisMaxTokens},
+		{"zero falls back", &Config{MaxTokens: 0}, DefaultAnalysisMaxTokens},
+		{"negative falls back", &Config{MaxTokens: -1}, DefaultAnalysisMaxTokens},
+		{"nil config falls back", nil, DefaultAnalysisMaxTokens},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.cfg.AnalysisMaxTokens(); got != tc.want {
+				t.Errorf("AnalysisMaxTokens() = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestAnalysisMaxTokens_DefaultIsGenerousEnoughForReasoning guards the
+// regression in issue #399: the fallback must leave a reasoning model room
+// for both its thinking block and the answer, so it must be far above the
+// old 512-token cap.
+func TestAnalysisMaxTokens_DefaultIsGenerousEnoughForReasoning(t *testing.T) {
+	const oldCap = 512
+	if DefaultAnalysisMaxTokens <= oldCap {
+		t.Fatalf("DefaultAnalysisMaxTokens = %d, want > %d",
+			DefaultAnalysisMaxTokens, oldCap)
+	}
+}
+
+// TestBuildClientOptions_MaxTokensResolution verifies that
+// BuildClientOptions stamps the resolved budget onto the returned Options
+// for both the configured and fallback cases, keeping the two analysis
+// call sites in lock-step.
+func TestBuildClientOptions_MaxTokensResolution(t *testing.T) {
+	tests := []struct {
+		name      string
+		maxTokens int
+		want      int
+	}{
+		{"configured", 2048, 2048},
+		{"unset", 0, DefaultAnalysisMaxTokens},
+		{"negative", -7, DefaultAnalysisMaxTokens},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &Config{
+				Provider:     "openai",
+				Model:        "m",
+				OpenAIAPIKey: "k",
+				MaxTokens:    tc.maxTokens,
+			}
+			opts := cfg.BuildClientOptions(0.3)
+			if opts.MaxTokens == nil || *opts.MaxTokens != tc.want {
+				t.Errorf("MaxTokens: got %v, want %d", opts.MaxTokens, tc.want)
+			}
+		})
+	}
+}
+
+// TestErrNoTextContentMessage verifies that the shared sentinel names the
+// actionable cause so operators see why a summary is missing.
+func TestErrNoTextContentMessage(t *testing.T) {
+	msg := ErrNoTextContent.Error()
+	for _, want := range []string{"no text content", "reasoning tokens", "llm.max_tokens"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("ErrNoTextContent message %q does not mention %q", msg, want)
+		}
 	}
 }

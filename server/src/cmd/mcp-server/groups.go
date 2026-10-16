@@ -28,7 +28,7 @@ func addGroupCommand(dataDir, name, description string) error {
 	defer store.Close()
 
 	// Create group
-	groupID, err := store.CreateGroup(name, description)
+	groupID, err := cliStore(store).CreateGroup(name, description)
 	if err != nil {
 		return fmt.Errorf("failed to create group: %w", err)
 	}
@@ -60,7 +60,7 @@ func deleteGroupCommand(dataDir, name string) error {
 	}
 
 	// Delete group
-	if err := store.DeleteGroup(group.ID); err != nil {
+	if err := cliStore(store).DeleteGroup(group.ID); err != nil {
 		return fmt.Errorf("failed to delete group: %w", err)
 	}
 
@@ -147,7 +147,7 @@ func addMemberCommand(dataDir, groupName, memberUsername, memberGroupName string
 			return fmt.Errorf("user '%s' not found", memberUsername)
 		}
 
-		if err := store.AddUserToGroup(parentGroup.ID, user.ID); err != nil {
+		if err := cliStore(store).AddUserToGroup(parentGroup.ID, user.ID); err != nil {
 			return fmt.Errorf("failed to add user to group: %w", err)
 		}
 
@@ -162,7 +162,7 @@ func addMemberCommand(dataDir, groupName, memberUsername, memberGroupName string
 			return fmt.Errorf("member group '%s' not found", memberGroupName)
 		}
 
-		if err := store.AddGroupToGroup(parentGroup.ID, childGroup.ID); err != nil {
+		if err := cliStore(store).AddGroupToGroup(parentGroup.ID, childGroup.ID); err != nil {
 			return fmt.Errorf("failed to add group to group: %w", err)
 		}
 
@@ -210,7 +210,7 @@ func removeMemberCommand(dataDir, groupName, memberUsername, memberGroupName str
 			return fmt.Errorf("user '%s' not found", memberUsername)
 		}
 
-		if err := store.RemoveUserFromGroup(parentGroup.ID, user.ID); err != nil {
+		if err := cliStore(store).RemoveUserFromGroup(parentGroup.ID, user.ID); err != nil {
 			return fmt.Errorf("failed to remove user from group: %w", err)
 		}
 
@@ -225,7 +225,7 @@ func removeMemberCommand(dataDir, groupName, memberUsername, memberGroupName str
 			return fmt.Errorf("member group '%s' not found", memberGroupName)
 		}
 
-		if err := store.RemoveGroupFromGroup(parentGroup.ID, childGroup.ID); err != nil {
+		if err := cliStore(store).RemoveGroupFromGroup(parentGroup.ID, childGroup.ID); err != nil {
 			return fmt.Errorf("failed to remove group from group: %w", err)
 		}
 
@@ -312,7 +312,7 @@ func setSuperuserCommand(dataDir, username string, isSuperuser bool) error {
 	}
 
 	// Set superuser status
-	if err := store.SetUserSuperuser(username, isSuperuser); err != nil {
+	if err := cliStore(store).SetUserSuperuser(username, isSuperuser); err != nil {
 		return fmt.Errorf("failed to set superuser status: %w", err)
 	}
 

@@ -11,25 +11,101 @@ The table detail view displays the following metrics:
 
 - Table size and total size including indexes and TOAST.
 - Table bloat estimate as a percentage.
-- Sequential scan count versus index scan count.
-- Insert, update, and delete modification counts.
 - Live tuple and dead tuple counts with trend data.
+- The cumulative sequential scan count for the table.
+
+The activity charts plot rates rather than the raw
+cumulative counters, so a rising line shows a busier
+table rather than the simple passage of time:
+
+- The Tuple Operations Over Time chart plots the rows
+  inserted, updated, deleted, and HOT updated per
+  second.
+- The Sequential vs Index Scans Over Time chart plots
+  sequential scans and index scans per second.
+- The Dead Tuple Ratio Over Time chart plots the
+  percentage of tuples that are dead.
 
 ## Index Detail
 
 The index detail view displays the following metrics:
 
 - Index size in a human-readable format.
-- Index scan count with a time-series chart.
-- Tuples read and tuples fetched counts.
+- The cumulative index scan, tuples read, and tuples
+  fetched counts.
+
+The Scan Activity chart plots index scans per second
+across the selected time range.
 
 ## Query Detail
 
-The query detail view displays the following metrics:
+The query detail view displays the following tiles:
 
-- Total and mean execution time.
-- Total rows returned and rows per call.
-- Call count with a time-series chart.
+- The Total Calls tile counts the calls the query made
+  within the selected time range.
+- The Total Time tile sums the execution time of those
+  calls.
+- The Mean Time tile divides that total time by that call
+  count, so the figure also covers the selected range.
+- The Min Time (All Time) and Max Time (All Time) tiles
+  report the fastest and slowest single execution over the
+  lifetime of the query.
+- The Avg Rows/Call tile divides the rows returned within
+  the range by the calls made within the range.
+
+PostgreSQL reports `pg_stat_statements` counters
+cumulatively, so the Workbench derives a windowed figure
+by subtracting consecutive collected samples. That
+subtraction works for a counter that only ever grows, such
+as the call count or the total execution time, but it
+cannot recover the extremes: the minimum and the maximum
+of a window are not the difference between two lifetime
+extremes. The two lifetime tiles carry the "All Time"
+qualifier for that reason, and a maximum far above the
+mean is expected rather than a fault, because one slow
+execution at any point in the life of the query sets that
+figure permanently.
+
+A query that made no calls within the selected range drops
+out of the results, whether the range comes from a preset
+or from a custom window. Narrowing the range whilst the
+overlay is open therefore leaves every tile showing a dash
+rather than a zero, and widening the range again restores
+the figures.
+
+The Calls Over Time chart plots the calls per second
+across the selected time range.
+
+The view also names the database role that ran the
+query, beside the query text under the Database User
+heading. The view displays "Unknown" when the collector
+cannot resolve the role that owns the statement.
+
+Beside that value, the Last Observed Client heading
+names the client last seen running the query. The
+value shows the client address on its own, or
+"hostname (address)" when the monitored server
+resolved a hostname, and a tooltip reports when the
+collector saw the client. The value reads "local" for
+a client that connected over a Unix-domain socket on
+the database host, because such a connection has no
+network address of its own.
+
+The client attribution is best effort, because the
+collector samples `pg_stat_activity` at intervals
+rather than watching every statement. The view can
+therefore name a client only for statements that
+happened to be in flight when a sample was taken, and
+it reports the client observed most recently rather
+than the only client that ever ran the query. The
+view displays "Not observed" when no sample has
+caught the query in flight, which is always the case
+on PostgreSQL releases before 14 and on servers where
+`compute_query_id` is off.
+
+The execution time and call count charts cover only the
+selected query, so the values reconcile with the tiles
+above.
 
 ## Query Plan
 
@@ -155,6 +231,19 @@ SQL code blocks in the report include a Run button that
 executes the query against the correct database server.
 Write statements display a confirmation dialog before
 the system executes the query.
+
+The Workbench validates each generated SQL block as the
+report renders, by planning the statement with `EXPLAIN`
+in a read-only transaction that is rolled back; the check
+never executes anything. A block that fails the check
+shows the error and replaces Run with a Run anyway
+button, a statement that PostgreSQL cannot plan in
+advance stays runnable under a "Not validated" notice,
+and a block that uses `$1`-style parameter placeholders
+is labelled a template and offers no Run button, because
+it needs parameter values before it can run. The
+[AI Alert Analysis](../alerts/ai-analysis.md) document
+describes these states in more detail.
 
 The system caches analysis results for 30 minutes. A
 Download button in the dialog footer saves the report

@@ -149,7 +149,7 @@ func newTimelineTestEnv(t *testing.T) *timelineTestEnv {
 		t.Fatalf("MkdirTemp: %v", err)
 	}
 	t.Cleanup(func() { os.RemoveAll(tmpDir) })
-	store, err := auth.NewAuthStore(tmpDir, 0, 0)
+	store, err := auth.NewAuthStore(tmpDir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("NewAuthStore: %v", err)
 	}
@@ -370,19 +370,22 @@ func TestTimelineHandler_Integration_CustomWindow(t *testing.T) {
 }
 
 // TestTimelineHandler_Integration_NilRBACChecker confirms that a handler
-// built without an RBAC checker skips visibility filtering and queries
-// the datastore directly.
+// built without an RBAC checker shows no events, even to a superuser,
+// rather than skipping visibility filtering (issue #561).
 func TestTimelineHandler_Integration_NilRBACChecker(t *testing.T) {
 	env := newTimelineTestEnv(t)
 
 	handler := NewTimelineHandler(env.datastore, env.authStore, nil)
 
 	rec := httptest.NewRecorder()
-	handler.handleTimelineEvents(rec, timelineRequest(""))
+	handler.handleTimelineEvents(rec, withSuperuser(timelineRequest("")))
 
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d (body %s)", rec.Code, rec.Body.String())
+	}
 	result := decodeTimelineResult(t, rec)
-	if result.TotalCount != 2 {
-		t.Errorf("Expected 2 events with no RBAC checker, got %d", result.TotalCount)
+	if result.TotalCount != 0 {
+		t.Errorf("Expected 0 events with no RBAC checker, got %d", result.TotalCount)
 	}
 }
 

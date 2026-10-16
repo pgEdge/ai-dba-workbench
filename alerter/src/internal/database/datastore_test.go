@@ -10,7 +10,6 @@
 package database
 
 import (
-	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -212,10 +211,7 @@ func TestDatastoreCloseNilPool(t *testing.T) {
 // short-circuits at Close() so it cannot reach the pool-creation code
 // inside NewDatastore.
 func TestNewDatastoreSuccess(t *testing.T) {
-	connStr := os.Getenv("TEST_AI_WORKBENCH_SERVER")
-	if connStr == "" {
-		t.Skip("TEST_AI_WORKBENCH_SERVER not set, skipping NewDatastore success test")
-	}
+	connStr := requireLocalTestDSN(t, "the NewDatastore success test")
 
 	// Parse the connection string into a DatastoreConfig.
 	host, port, db, user, pw := parseTestConnString(connStr)

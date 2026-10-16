@@ -72,7 +72,7 @@ func (p *PgIdentFileMappingsProbe) GetQueryForVersion(pgVersion int) string {
 // Execute runs the probe against a monitored connection
 func (p *PgIdentFileMappingsProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]any, error) {
 	// Check if view exists (PG15+) (cached)
-	available, err := cachedCheck(connectionName, "pg_ident_file_mappings_exists", func() (bool, error) {
+	available, err := cachedCheck(connectionName, monitoredConn, "pg_ident_file_mappings_exists", func() (bool, error) {
 		return CheckViewExists(ctx, monitoredConn, "pg_ident_file_mappings")
 	})
 	if err != nil {

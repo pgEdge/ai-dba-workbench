@@ -39,8 +39,8 @@ features:
 - Tiered anomaly detection uses statistical analysis, embeddings, and LLM
   classification.
 - The Alerter supports blackout scheduling for maintenance windows.
-- The Alerter delivers notifications via email, Slack, Mattermost, and
-  webhooks.
+- The Alerter delivers notifications via email, Slack, Mattermost,
+  Telegram, and webhooks.
 
 ## Presentation Layer
 

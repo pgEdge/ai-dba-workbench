@@ -22,9 +22,6 @@ import (
 	"github.com/pgedge/ai-workbench/pkg/embedding"
 )
 
-// EmbeddingDimension is the standard dimension for embeddings (1536 for OpenAI/Voyage)
-const EmbeddingDimension = 1536
-
 // Common errors
 var (
 	ErrAPIKeyMissing   = errors.New("API key is required but not configured")
@@ -36,21 +33,41 @@ var (
 // EmbeddingProvider generates vector embeddings from text.
 type EmbeddingProvider interface {
 	// GenerateEmbedding generates a vector embedding for the given text.
-	// The returned embedding has EmbeddingDimension (1536) dimensions.
+	// The returned embedding keeps the model's native width; the
+	// datastore zero-pads it to the fixed halfvec column width and
+	// rejects a vector wider than embedding.MaxDimensions.
 	GenerateEmbedding(ctx context.Context, text string) ([]float32, error)
 
 	// ModelName returns the name of the embedding model being used.
 	ModelName() string
 }
 
-// ReasoningProvider classifies anomalies using LLM reasoning.
+// ReasoningProvider classifies anomalies and re-evaluates acknowledged
+// anomaly alerts using LLM reasoning. Each kind of request is sent with
+// its own system prompt, so the model is never told to answer one
+// question in the terms of the other (GitHub issue #627).
 type ReasoningProvider interface {
-	// Classify analyzes the given prompt and returns a classification response.
-	// The response should contain either "alert" or "suppress" along with reasoning.
+	// Classify sends the Tier 3 classification system prompt with prompt
+	// and returns the model's response, which should carry an "alert" or
+	// "suppress" decision along with reasoning.
 	Classify(ctx context.Context, prompt string) (string, error)
+
+	// Reevaluate sends the re-evaluation system prompt with prompt and
+	// returns the model's response, which should carry a "clear" or
+	// "keep" decision along with reasoning.
+	Reevaluate(ctx context.Context, prompt string) (string, error)
 
 	// ModelName returns the name of the reasoning model being used.
 	ModelName() string
+
+	// ProviderName returns the name of the LLM provider that serves the
+	// model, such as "anthropic" or "openai".
+	ProviderName() string
+
+	// ReevaluationSystemPrompt returns the system prompt that Reevaluate
+	// sends with every request, so the re-evaluation fingerprint can tell
+	// when the instructions behind a stored "keep" have changed.
+	ReevaluationSystemPrompt() string
 }
 
 // classificationSystemPrompt is the system prompt for anomaly classification.
@@ -69,26 +86,44 @@ Consider:
 - Are there similar past anomalies that were false positives?
 - What is the potential impact if this is a real issue?`
 
+// reevaluationSystemPrompt is the system prompt for re-evaluating an
+// anomaly alert that a user has acknowledged. Its decision values must
+// match reevaluationDecisionConfig in the engine package.
+const reevaluationSystemPrompt = `You are a database monitoring expert re-evaluating anomaly alerts that a user has acknowledged.
+
+Your task is to decide whether an acknowledged alert can safely be removed (clear) or should remain active (keep), based on the user's feedback, past acknowledgements of similar alerts, and the current context of the server and its cluster.
+
+Respond with a JSON object containing:
+1. "decision": either "clear" or "keep"
+2. "confidence": a number from 0 to 1 indicating your confidence
+3. "reasoning": a brief explanation of your decision
+
+Consider:
+- Did the user mark the alert as a false positive, or explain the anomaly in their note?
+- Have similar alerts been acknowledged in the same way before?
+- Do other alerts on the server or its cluster suggest the problem is real?
+- If you are uncertain, keep the alert.`
+
 // embeddingAdapter wraps pkg/embedding.Provider to implement the alerter's
 // EmbeddingProvider interface. It converts between float64 (pkg/embedding)
-// and float32 (alerter) and handles dimension normalization.
+// and float32 (alerter) and normalizes the vector to unit length.
 type embeddingAdapter struct {
 	provider embedding.Provider
 }
 
 // GenerateEmbedding generates a vector embedding for the given text.
 // It converts the float64 embedding from pkg/embedding to float32 and
-// normalizes the dimensions to EmbeddingDimension if needed.
+// normalizes it to unit length. The vector is returned at the model's
+// native width: it is deliberately not resized here, because truncating
+// a wide embedding silently degrades similarity search, and the
+// datastore's PadTo call is where a vector wider than the halfvec
+// column is rejected with an error.
 func (a *embeddingAdapter) GenerateEmbedding(ctx context.Context, text string) ([]float32, error) {
 	emb64, err := a.provider.Embed(ctx, text)
 	if err != nil {
 		return nil, err
 	}
-	emb32 := vec.Float64ToFloat32(emb64)
-	if len(emb32) != EmbeddingDimension {
-		emb32 = vec.Resize(emb32, EmbeddingDimension)
-	}
-	return vec.Normalize(emb32), nil
+	return vec.Normalize(vec.Float64ToFloat32(emb64)), nil
 }
 
 // ModelName returns the name of the embedding model being used.
@@ -163,10 +198,17 @@ func NewEmbeddingProvider(cfg *config.Config) (EmbeddingProvider, error) {
 
 // NewReasoningProvider creates a reasoning provider based on configuration.
 // Returns nil and no error if reasoning is disabled or provider is not configured.
+//
+// The operator-configured llm.max_tokens is passed to every provider so a
+// reasoning model has room for both its thinking block and the
+// classification verdict; newLibReasoning substitutes
+// DefaultReasoningMaxTokens when the setting is unset or non-positive.
 func NewReasoningProvider(cfg *config.Config) (ReasoningProvider, error) {
 	if cfg == nil {
 		return nil, nil
 	}
+
+	maxTokens := cfg.LLM.MaxTokens
 
 	switch cfg.LLM.ReasoningProvider {
 	case "openai":
@@ -174,28 +216,28 @@ func NewReasoningProvider(cfg *config.Config) (ReasoningProvider, error) {
 		if apiKey == "" && cfg.LLM.OpenAI.BaseURL == "" {
 			return nil, fmt.Errorf("openai: %w", ErrAPIKeyMissing)
 		}
-		return newLibReasoning("openai", apiKey, cfg.LLM.OpenAI.ReasoningModel, cfg.LLM.OpenAI.BaseURL)
+		return newLibReasoning("openai", apiKey, cfg.LLM.OpenAI.ReasoningModel, cfg.LLM.OpenAI.BaseURL, maxTokens)
 
 	case "anthropic":
 		apiKey := cfg.GetAnthropicAPIKey()
 		if apiKey == "" {
 			return nil, fmt.Errorf("anthropic: %w", ErrAPIKeyMissing)
 		}
-		return newLibReasoning("anthropic", apiKey, cfg.LLM.Anthropic.ReasoningModel, cfg.LLM.Anthropic.BaseURL)
+		return newLibReasoning("anthropic", apiKey, cfg.LLM.Anthropic.ReasoningModel, cfg.LLM.Anthropic.BaseURL, maxTokens)
 
 	case "gemini":
 		apiKey := cfg.GetGeminiAPIKey()
 		if apiKey == "" {
 			return nil, fmt.Errorf("gemini: %w", ErrAPIKeyMissing)
 		}
-		return newLibReasoning("gemini", apiKey, cfg.LLM.Gemini.ReasoningModel, cfg.LLM.Gemini.BaseURL)
+		return newLibReasoning("gemini", apiKey, cfg.LLM.Gemini.ReasoningModel, cfg.LLM.Gemini.BaseURL, maxTokens)
 
 	case "ollama":
 		baseURL := cfg.LLM.Ollama.BaseURL
 		if baseURL == "" {
 			baseURL = "http://localhost:11434"
 		}
-		return newLibReasoning("ollama", "", cfg.LLM.Ollama.ReasoningModel, baseURL)
+		return newLibReasoning("ollama", "", cfg.LLM.Ollama.ReasoningModel, baseURL, maxTokens)
 
 	case "", "none", "disabled":
 		return nil, nil

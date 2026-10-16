@@ -11,6 +11,7 @@ package database
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -93,12 +94,26 @@ func (d *Datastore) CreateConnectionAlert(ctx context.Context, connectionID int,
 	return alert, nil
 }
 
-// UpdateConnectionAlertDescription updates the description of a connection alert
-func (d *Datastore) UpdateConnectionAlertDescription(ctx context.Context, alertID int64, description string) error {
+// UpdateAlertDescription rewrites an alert's description and stamps
+// last_updated, leaving every other column alone, and the title in
+// particular, so that anyone following the alert through notification
+// history still sees the same alert rather than what looks like a new
+// one. It applies to any alert, whatever its type; callers that rewrite a
+// description repeatedly should only call it when the text has actually
+// changed, so that an unchanged alert does not have its last_updated
+// bumped on every pass.
+func (d *Datastore) UpdateAlertDescription(ctx context.Context, alertID int64, description string) error {
 	_, err := d.pool.Exec(ctx, `
 		UPDATE alerts SET description = $1, last_updated = NOW() WHERE id = $2
 	`, description, alertID)
 	return err
+}
+
+// UpdateConnectionAlertDescription updates the description of a connection
+// alert. It is a named alias for UpdateAlertDescription, kept because the
+// connection monitor reads better for it.
+func (d *Datastore) UpdateConnectionAlertDescription(ctx context.Context, alertID int64, description string) error {
+	return d.UpdateAlertDescription(ctx, alertID, description)
 }
 
 // GetAlerterSettings retrieves the global alerter settings
@@ -247,29 +262,124 @@ func (d *Datastore) IsBlackoutActive(ctx context.Context, connectionID *int, dbN
 	return count > 0, nil
 }
 
-// DeleteOldAlerts deletes cleared alerts older than the cutoff date
+// DeleteOldAlerts deletes retired alerts older than the cutoff date.
+//
+// The age of a retired alert is COALESCE(cleared_at, triggered_at)
+// because only a cleared alert is given a cleared_at: AcknowledgeAlert
+// sets status = 'acknowledged' and leaves cleared_at NULL, so keying the
+// delete on cleared_at alone reaped no acknowledged alert at all, and an
+// acknowledged alert accumulated for the life of the installation
+// despite the status filter here plainly intending to reap it. Setting
+// cleared_at when an alert is acknowledged would have been the smaller
+// change, but that column means "this alert was cleared" everywhere else
+// it is read: the alert list filters active alerts on cleared_at IS
+// NULL, the timeline emits an alert-cleared event for every row that has
+// one, the re-raise cooldowns measure from it, and the notification
+// templates render it as "Cleared". An acknowledged alert would have
+// begun reporting a clear it never had. Falling back to triggered_at
+// retires it on the same retention period without overloading the
+// column. See GitHub issue #500.
+//
+// The delete runs in batches; see deleteInBatches.
 func (d *Datastore) DeleteOldAlerts(ctx context.Context, cutoff time.Time) (int64, error) {
-	result, err := d.pool.Exec(ctx, `
-		DELETE FROM alerts
-		WHERE status IN ('cleared', 'acknowledged')
-		  AND cleared_at < $1
-	`, cutoff)
+	deleted, err := d.deleteInBatches(ctx, deleteOldAlertsBatchSQL, cutoff, retentionDeleteBatchSize)
 	if err != nil {
-		return 0, err
+		return deleted, fmt.Errorf("failed to delete old alerts: %w", err)
 	}
-	return result.RowsAffected(), nil
+	return deleted, nil
 }
 
-// DeleteOldAnomalyCandidates deletes processed candidates older than the cutoff
+// DeleteOldAnomalyCandidates deletes processed candidates older than the
+// cutoff, and with them, through ON DELETE CASCADE, their rows in
+// anomaly_embeddings. The delete runs in batches; see deleteInBatches.
 func (d *Datastore) DeleteOldAnomalyCandidates(ctx context.Context, cutoff time.Time) (int64, error) {
-	result, err := d.pool.Exec(ctx, `
-		DELETE FROM anomaly_candidates
-		WHERE processed_at IS NOT NULL AND processed_at < $1
-	`, cutoff)
+	deleted, err := d.deleteInBatches(ctx, deleteOldAnomalyCandidatesBatchSQL, cutoff, retentionDeleteBatchSize)
 	if err != nil {
-		return 0, err
+		return deleted, fmt.Errorf("failed to delete old anomaly candidates: %w", err)
 	}
-	return result.RowsAffected(), nil
+	return deleted, nil
+}
+
+// retentionDeleteBatchSize is the most rows one retention DELETE
+// removes. Each anomaly candidate cascades into an anomaly_embeddings
+// row holding a 4000-dimension vector under an HNSW index, so a batch of
+// this size keeps each transaction to seconds at most, rather than the
+// many minutes a whole retention period took as one statement.
+const retentionDeleteBatchSize = 1000
+
+// Both batch statements below share one shape, chosen for two reasons.
+//
+// The ids are gathered by an ARRAY() subquery, which PostgreSQL runs
+// once as an InitPlan, so the delete itself is always a primary key
+// lookup of at most $2 ids. With WHERE id IN (subquery) the planner
+// may instead hash-join the batch against a scan of the whole table,
+// and does so under a generic plan, which estimates LIMIT $2 at a
+// tenth of the rows.
+//
+// FOR UPDATE locks each row as the subquery selects it, and re-checks
+// the predicate against the latest version of a row that a concurrent
+// transaction changed, so an alert re-activated between the subquery
+// and the delete is skipped rather than deleted.
+
+// deleteOldAlertsBatchSQL deletes at most $2 retired alerts older than
+// $1.
+const deleteOldAlertsBatchSQL = `
+	DELETE FROM alerts
+	WHERE id = ANY(ARRAY(
+		SELECT id FROM alerts
+		WHERE status IN ('cleared', 'acknowledged')
+		  AND COALESCE(cleared_at, triggered_at) < $1
+		LIMIT $2
+		FOR UPDATE
+	))
+`
+
+// deleteOldAnomalyCandidatesBatchSQL deletes at most $2 processed
+// candidates older than $1, oldest first. Ordering by processed_at lets
+// idx_anomaly_candidates_processed serve each batch from the start of
+// the range, rather than a sequential scan re-reading the dead rows
+// that earlier batches left behind.
+const deleteOldAnomalyCandidatesBatchSQL = `
+	DELETE FROM anomaly_candidates
+	WHERE id = ANY(ARRAY(
+		SELECT id FROM anomaly_candidates
+		WHERE processed_at IS NOT NULL AND processed_at < $1
+		ORDER BY processed_at
+		LIMIT $2
+		FOR UPDATE
+	))
+`
+
+// deleteInBatches runs query, a single DELETE that removes at most
+// batchSize rows older than cutoff (bound as $1 and $2), until a run
+// deletes nothing, and returns the total deleted.
+//
+// Each run is its own short implicit transaction. Deleting a whole
+// retention period in one statement held a transaction open for as
+// long as the cascade into anomaly_embeddings took, over 23 minutes for
+// a million candidates, and that held back the xmin horizon so vacuum
+// could clean nothing anywhere in the datastore (GitHub issue #615).
+//
+// The context is checked before every batch so that shutdown stops the
+// sweep between batches. Rows already deleted stay deleted and are
+// counted in the total returned alongside the error, and the next
+// sweep carries on from there.
+func (d *Datastore) deleteInBatches(ctx context.Context, query string, cutoff time.Time, batchSize int) (int64, error) {
+	var total int64
+	for {
+		if err := ctx.Err(); err != nil {
+			return total, err
+		}
+		result, err := d.pool.Exec(ctx, query, cutoff, batchSize)
+		if err != nil {
+			return total, err
+		}
+		n := result.RowsAffected()
+		if n == 0 {
+			return total, nil
+		}
+		total += n
+	}
 }
 
 // GetEnabledBlackoutSchedules retrieves all enabled blackout schedules
@@ -348,19 +458,65 @@ func (d *Datastore) GetActiveConnections(ctx context.Context) ([]int, error) {
 	return ids, nil
 }
 
+// GetUnmonitoredConnections returns the id and name of every connection
+// an operator has stopped monitoring, as a map keyed by connection id.
+//
+// The alert cleaner needs the whole set once per pass rather than a
+// lookup per alert, and it needs the name so that the alert it closes can
+// say which server stopped being monitored. A connection that has been
+// deleted outright is absent here, as it is from the connections table;
+// its alerts go with it through the foreign key.
+func (d *Datastore) GetUnmonitoredConnections(ctx context.Context) (map[int]string, error) {
+	rows, err := d.pool.Query(ctx, `
+		SELECT id, name
+		FROM connections
+		WHERE is_monitored = FALSE
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get unmonitored connections: %w", err)
+	}
+	defer rows.Close()
+
+	unmonitored := make(map[int]string)
+	for rows.Next() {
+		var id int
+		var name string
+		if err := rows.Scan(&id, &name); err != nil {
+			return nil, fmt.Errorf("failed to scan unmonitored connection: %w", err)
+		}
+		unmonitored[id] = name
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("row iteration error: %w", err)
+	}
+
+	return unmonitored, nil
+}
+
 // ProbeStaleness is defined in types.go
 
 // GetProbeStalenessByConnection retrieves staleness ratios for all enabled probes
 // on monitored connections. The caller decides which entries exceed the threshold.
+//
+// Unavailable probes are returned rather than filtered out, with their
+// is_available flag and unavailable_reason, so that callers can tell a
+// fault apart from operator action: a probe whose availability has gone
+// false has stopped collecting through no decision of the operator's, and
+// a staleness alert must not clear on that. The remaining predicates stay,
+// including the non-null last_collected the ratio divides by, which
+// UpsertProbeAvailability coalesces so that it never returns to NULL once
+// a probe has collected at all. See GitHub issue #465.
 func (d *Datastore) GetProbeStalenessByConnection(ctx context.Context) ([]ProbeStaleness, error) {
 	rows, err := d.pool.Query(ctx, `
 		SELECT c.id, c.name, pa.probe_name, pc.collection_interval_seconds,
-		       EXTRACT(EPOCH FROM (NOW() - pa.last_collected)) / pc.collection_interval_seconds AS staleness_ratio
+		       EXTRACT(EPOCH FROM (NOW() - pa.last_collected)) / pc.collection_interval_seconds AS staleness_ratio,
+		       EXTRACT(EPOCH FROM (NOW() - pa.last_collected)) AS seconds_since_collected,
+		       pa.is_available, pa.unavailable_reason, pa.last_collected
 		FROM probe_availability pa
 		JOIN probe_configs pc ON pc.name = pa.probe_name AND pc.connection_id IS NULL
 		JOIN connections c ON c.id = pa.connection_id
-		WHERE pa.is_available = TRUE
-		  AND pc.is_enabled = TRUE
+		WHERE pc.is_enabled = TRUE
 		  AND c.is_monitored = TRUE
 		  AND pa.last_collected IS NOT NULL
 	`)
@@ -372,10 +528,13 @@ func (d *Datastore) GetProbeStalenessByConnection(ctx context.Context) ([]ProbeS
 	var results []ProbeStaleness
 	for rows.Next() {
 		var ps ProbeStaleness
+		var sinceCollected float64
 		if err := rows.Scan(&ps.ConnectionID, &ps.ConnectionName, &ps.ProbeName,
-			&ps.CollectionInterval, &ps.StalenessRatio); err != nil {
+			&ps.CollectionInterval, &ps.StalenessRatio, &sinceCollected,
+			&ps.IsAvailable, &ps.UnavailableReason, &ps.LastCollected); err != nil {
 			return nil, fmt.Errorf("failed to scan probe staleness: %w", err)
 		}
+		ps.SinceCollected = time.Duration(sinceCollected * float64(time.Second))
 		results = append(results, ps)
 	}
 
@@ -384,6 +543,34 @@ func (d *Datastore) GetProbeStalenessByConnection(ctx context.Context) ([]ProbeS
 	}
 
 	return results, nil
+}
+
+// GetProbeStalenessContext returns the connection name and the configured
+// collection interval for one probe on one connection. It exists for a
+// caller that must phrase a staleness alert for a probe the staleness
+// view no longer reports: GetProbeStalenessByConnection drops a probe the
+// operator has disabled, a connection they have stopped monitoring and a
+// probe whose availability row has gone, whilst the connection row and
+// the probe's global config survive all three, so this lookup still
+// answers for the cases that clear a held alert. found is false only when
+// the connection itself or the probe's config has actually been deleted.
+// See GitHub issue #465.
+func (d *Datastore) GetProbeStalenessContext(ctx context.Context, connectionID int,
+	probeName string) (connectionName string, collectionInterval int, found bool, err error) {
+	err = d.pool.QueryRow(ctx, `
+		SELECT c.name, pc.collection_interval_seconds
+		FROM connections c
+		JOIN probe_configs pc ON pc.name = $2 AND pc.connection_id IS NULL
+		WHERE c.id = $1
+	`, connectionID, probeName).Scan(&connectionName, &collectionInterval)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", 0, false, nil
+		}
+		return "", 0, false, fmt.Errorf("failed to get probe staleness context: %w", err)
+	}
+
+	return connectionName, collectionInterval, true, nil
 }
 
 // GetAlertRuleByName retrieves an alert rule by its unique name
@@ -406,6 +593,75 @@ func (d *Datastore) GetAlertRuleByName(ctx context.Context, name string) (*Alert
 	return &rule, nil
 }
 
+// GetAlertRuleByID retrieves an alert rule by its primary key. It mirrors
+// GetAlertRuleByName and is used by the resolution check to find the rule's
+// required_extension for an active alert, which only carries the rule id.
+func (d *Datastore) GetAlertRuleByID(ctx context.Context, id int64) (*AlertRule, error) {
+	var rule AlertRule
+	err := d.pool.QueryRow(ctx, `
+		SELECT id, name, description, category, metric_name, default_operator,
+		       default_threshold, default_severity, default_enabled, required_extension,
+		       is_built_in, created_at
+		FROM alert_rules
+		WHERE id = $1
+	`, id).Scan(&rule.ID, &rule.Name, &rule.Description, &rule.Category,
+		&rule.MetricName, &rule.DefaultOperator, &rule.DefaultThreshold,
+		&rule.DefaultSeverity, &rule.DefaultEnabled, &rule.RequiredExtension,
+		&rule.IsBuiltIn, &rule.CreatedAt)
+
+	if err != nil {
+		return nil, err
+	}
+	return &rule, nil
+}
+
+// GetConnectionsWithExtension returns the set of connection IDs whose
+// newest metrics.pg_extension snapshot contains extname in any database.
+//
+// The collector's pg_extension probe is change tracked: it writes a
+// snapshot only when the installed set differs from the last one stored,
+// so the newest snapshot for a connection may be hours or days old and no
+// time window can be applied. The newest snapshot is identified by
+// MAX(collected_at) per connection; a connection with no rows at all
+// (probe disabled, or not yet run) is absent from the result and is
+// therefore treated as lacking the extension. See GitHub issue #409.
+func (d *Datastore) GetConnectionsWithExtension(ctx context.Context, extname string) (map[int]bool, error) {
+	// Tagged internal: this reads metrics.pg_extension on the Workbench's
+	// own datastore once per rule with a required_extension on every
+	// evaluation cycle.
+	rows, err := d.queryInternal(ctx, `
+		WITH newest AS (
+			SELECT connection_id, MAX(collected_at) AS collected_at
+			FROM metrics.pg_extension
+			GROUP BY connection_id
+		)
+		SELECT DISTINCT e.connection_id
+		FROM metrics.pg_extension e
+		JOIN newest n
+		  ON n.connection_id = e.connection_id
+		 AND n.collected_at = e.collected_at
+		WHERE e.extname = $1
+	`, extname)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get connections with extension %s: %w", extname, err)
+	}
+	defer rows.Close()
+
+	result := make(map[int]bool)
+	for rows.Next() {
+		var connID int
+		if err := rows.Scan(&connID); err != nil {
+			return nil, fmt.Errorf("failed to scan connection with extension: %w", err)
+		}
+		result[connID] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("row iteration error: %w", err)
+	}
+
+	return result, nil
+}
+
 // GetClusterPeers returns information about other connections in the same
 // cluster as the given connection, including their latest node role.
 // Returns an empty slice if the connection has no cluster.
@@ -425,7 +681,7 @@ func (d *Datastore) GetClusterPeers(ctx context.Context, connectionID int) ([]*C
 		WHERE c.cluster_id = (SELECT cluster_id FROM connections WHERE id = $1)
 		  AND c.cluster_id IS NOT NULL
 		  AND c.id != $1
-		ORDER BY c.name
+		ORDER BY c.name, c.id
 	`, connectionID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get cluster peers: %w", err)

@@ -105,7 +105,10 @@ steps:
 
 Each probe runs on an independent schedule:
 
-1. The probe executes immediately on startup.
+1. The probe waits out a random startup delay when
+   it is past due or has never run, bounded by
+   `scheduler.startup_jitter_seconds`, and then
+   executes.
 2. A timer triggers based on
    `collection_interval_seconds`.
 3. The probe executes against all monitored

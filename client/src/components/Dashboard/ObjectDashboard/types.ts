@@ -13,6 +13,7 @@
  */
 
 import type { MetricDataPoint, MetricSeries } from '../types';
+import { buildMetricChartData } from '../metricsChart';
 import { formatBytes, formatValue, formatNumber, formatTime } from '../../../utils/formatters';
 
 /** Props shared by all object detail components */
@@ -62,9 +63,43 @@ export interface QueryDetailData {
     calls: number;
     total_exec_time: number;
     mean_exec_time: number;
+    /** Fastest recorded execution, in milliseconds. */
+    min_exec_time: number;
+    /** Slowest recorded execution, in milliseconds. */
+    max_exec_time: number;
     rows: number;
     shared_blks_hit: number;
     shared_blks_read: number;
+    /**
+     * Database role that executed the statement; empty when the
+     * collector could not resolve the role OID to a name.
+     */
+    username: string;
+    /**
+     * Client address seen running the statement in the most recent
+     * pg_stat_activity snapshot that caught it in flight. A backend
+     * connected over a Unix-domain socket is reported as 'local',
+     * since it has no network address; use `client_observed_at`,
+     * rather than this field, to tell whether the query was ever
+     * observed in flight at all.
+     */
+    client_addr: string | null;
+    /** Resolved client hostname, when the server had one. */
+    client_hostname: string | null;
+    /**
+     * RFC 3339 time of the snapshot in which the client was seen;
+     * null if and only if no snapshot ever caught the query in
+     * flight.
+     */
+    client_observed_at: string | null;
+    /**
+     * Database the statement's statistics were collected through,
+     * which is the database_name its pg_stat_statements metric rows
+     * carry. It can differ from the statement's own database, the
+     * one the drill-down was opened for, so the charts filter on
+     * this instead. Absent from servers that predate it.
+     */
+    sample_database_name?: string;
 }
 
 /**
@@ -81,62 +116,34 @@ export const extractSparklineData = (
 };
 
 /**
- * Extract the latest value from a metric series.
+ * Extract the latest value from a gauge-style metric series.
+ *
+ * The backend reports a bucket with no reading as `null`, so this
+ * scans backwards for the last non-null point and returns it, a
+ * genuine 0 included. Zeros used to be skipped when the backend filled
+ * empty buckets with 0, but a missing reading is now null, so a
+ * trailing 0 is a real reading and skipping it would show a stale
+ * value. An all-null or empty series yields null.
  */
 export const extractLatestValue = (
     data: MetricSeries[] | null,
     metricName: string,
 ): number | null => {
     const points = extractSparklineData(data, metricName);
-    if (points.length === 0) { return null; }
-
-    // Scan backwards to find the last non-zero value. This handles
-    // the common case where the most recent time bucket has no data
-    // yet (empty buckets are filled with 0 by the backend).
     for (let i = points.length - 1; i >= 0; i--) {
-        if (points[i].value !== 0) {
-            return points[i].value;
-        }
+        if (points[i].value !== null) { return points[i].value; }
     }
-
-    return 0;
+    return null;
 };
 
 /**
  * Build chart data from metric series for the Chart component.
+ *
+ * Re-exported here so the object-level detail views keep importing it
+ * from their own types module; the behaviour lives in `metricsChart`,
+ * which anchors the x-axis to the queried window.
  */
-export const buildChartData = (
-    series: MetricSeries[] | null,
-    metricNames: string[],
-    displayNames?: string[],
-) => {
-    if (!series) { return null; }
-
-    const matchedSeries = metricNames.map((metric, idx) => {
-        const found = series.find(s => s.metric === metric);
-        return {
-            name: displayNames?.[idx] ?? metric,
-            data: found?.data.map(d => d.value) ?? [],
-            categories: found?.data.map(d => d.time) ?? [],
-        };
-    });
-
-    if (matchedSeries.every(s => s.data.length === 0)) {
-        return null;
-    }
-
-    const categories = matchedSeries.find(
-        s => s.categories.length > 0
-    )?.categories ?? [];
-
-    return {
-        categories,
-        series: matchedSeries.map(s => ({
-            name: s.name,
-            data: s.data,
-        })),
-    };
-};
+export const buildChartData = buildMetricChartData;
 
 export { formatBytes, formatValue, formatNumber, formatTime };
 

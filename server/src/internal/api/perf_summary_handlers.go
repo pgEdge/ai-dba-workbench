@@ -11,20 +11,25 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"math"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pgedge/ai-workbench/pkg/rollback"
 	"github.com/pgedge/ai-workbench/pkg/sqlmarker"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/database"
 	"github.com/pgedge/ai-workbench/server/internal/logging"
+	"github.com/pgedge/ai-workbench/server/internal/metrics"
 )
 
 // probeMarkerAlias is the synthetic column alias that the collector
@@ -75,15 +80,6 @@ const excludeWorkbenchQueriesClause = "AND (pss.query IS NULL OR (" +
 	"strpos(pss.query, '" + probeMarkerAlias + "') = 0 AND " +
 	"strpos(pss.query, '" + sqlmarker.Marker + "') = 0))"
 
-// validTimeRanges maps time_range parameter values to their duration.
-var validTimeRanges = map[string]time.Duration{
-	"1h":  1 * time.Hour,
-	"6h":  6 * time.Hour,
-	"24h": 24 * time.Hour,
-	"7d":  7 * 24 * time.Hour,
-	"30d": 30 * 24 * time.Hour,
-}
-
 // PerfSummaryHandler handles GET /api/v1/metrics/performance-summary
 type PerfSummaryHandler struct {
 	datastore *database.Datastore
@@ -119,15 +115,23 @@ type XIDAgeEntry struct {
 }
 
 // CacheHitRatioData holds cache hit ratio current value and time series.
+// Current is the ratio for the latest bucket in the requested range, and
+// is nil (JSON null) when there is no data or when that bucket saw no
+// block access at all. The bucket width is derived from the range
+// (duration / 60, with a 10 second floor), so Current describes the
+// last minute of a 1h range but the last 12 hours of a 30d range; the
+// same instant can therefore read differently under different ranges.
 type CacheHitRatioData struct {
-	Current    float64              `json:"current"`
+	Current    *float64             `json:"current"`
 	TimeSeries []CacheHitRatioPoint `json:"time_series"`
 }
 
-// CacheHitRatioPoint is a single time-series data point for cache hit ratio.
+// CacheHitRatioPoint is a single time-series data point for cache hit
+// ratio. Value is nil (JSON null) for a bucket in which no blocks were
+// hit or read, so that idle intervals render as a gap rather than 0%.
 type CacheHitRatioPoint struct {
 	Time  time.Time `json:"time"`
-	Value float64   `json:"value"`
+	Value *float64  `json:"value"`
 }
 
 // TransactionData holds transaction throughput data.
@@ -158,9 +162,9 @@ type CheckpointPoint struct {
 
 // PerfAggregate holds aggregate metrics across multiple connections.
 type PerfAggregate struct {
-	CacheHitRatio float64 `json:"cache_hit_ratio"`
-	CommitsPerSec float64 `json:"commits_per_sec"`
-	RollbackPct   float64 `json:"rollback_percent"`
+	CacheHitRatio *float64 `json:"cache_hit_ratio"`
+	CommitsPerSec float64  `json:"commits_per_sec"`
+	RollbackPct   float64  `json:"rollback_percent"`
 }
 
 // DatabaseSummaryResponse is the response for the database summaries endpoint.
@@ -181,28 +185,93 @@ type DatabaseSummary struct {
 
 // TopQueryRow holds a single row from pg_stat_statements.
 type TopQueryRow struct {
-	QueryID        string  `json:"queryid"`
-	DatabaseName   string  `json:"database_name"`
+	QueryID      string `json:"queryid"`
+	DatabaseName string `json:"database_name"`
+	// SampleDatabaseName is the database the pg_stat_statements probe
+	// recorded the statement through, which is the database_name the
+	// metrics.pg_stat_statements rows for it carry. DatabaseName is the
+	// statement's own database, resolved from its dbid, and can name a
+	// database the probe never runs in, so a caller that reads those rows
+	// through /api/v1/metrics/query, as the drill-down charts do, filters
+	// on this instead.
+	SampleDatabaseName string `json:"sample_database_name"`
+	// Username is the database role that ran the query, resolved from
+	// pg_stat_statements.userid. It is an empty string when the role
+	// could not be resolved; see buildTopQueriesSQL for why that can
+	// happen.
+	Username       string  `json:"username"`
 	Query          string  `json:"query"`
 	Calls          int64   `json:"calls"`
 	TotalExecTime  float64 `json:"total_exec_time"`
 	MeanExecTime   float64 `json:"mean_exec_time"`
+	MinExecTime    float64 `json:"min_exec_time"`
+	MaxExecTime    float64 `json:"max_exec_time"`
 	Rows           int64   `json:"rows"`
 	SharedBlksHit  int64   `json:"shared_blks_hit"`
 	SharedBlksRead int64   `json:"shared_blks_read"`
+	// ClientAddr, ClientHostname and ClientObservedAt describe the
+	// client most recently seen running this query, resolved by joining
+	// metrics.pg_stat_activity.query_id to the queryid. The association
+	// is best-effort: pg_stat_activity is a point-in-time view, so a
+	// client is only captured for statements that were in flight when
+	// the collector took a sample, and this is the most recently
+	// observed client rather than the only one that ever ran the query.
+	// ClientObservedAt is null exactly when no sample in the lookup
+	// window carried the queryid for this query's database and role,
+	// which is also the case on servers before PostgreSQL 14 or with
+	// compute_query_id off, and it is the only reliable signal that
+	// the query was never observed in flight. ClientAddr is null in
+	// that same case and never otherwise, because a backend that
+	// arrived over a Unix-domain socket is reported as "local" rather
+	// than as a null address. ClientHostname is additionally null
+	// whenever the client's hostname was not resolved, including
+	// whenever log_hostname is off on the monitored server.
+	ClientAddr       *string    `json:"client_addr"`
+	ClientHostname   *string    `json:"client_hostname"`
+	ClientObservedAt *time.Time `json:"client_observed_at"`
+}
+
+// QueryStatsResponse is the response for the period-scoped query statistics
+// endpoint. AvgExecTime is a pointer so that "no usable data" serializes as
+// JSON null, which the client renders differently from a genuine zero.
+type QueryStatsResponse struct {
+	QueryID       string   `json:"queryid"`
+	AvgExecTime   *float64 `json:"avg_exec_time"`
+	Calls         int64    `json:"calls"`
+	TotalExecTime float64  `json:"total_exec_time"`
 }
 
 // validTopQueryOrderColumns maps each accepted order_by request value to the
 // literal column name that may be interpolated into an ORDER BY clause. The
 // map value, never the request string, is what reaches the SQL text, so the
-// generated statement can only ever contain one of these six constants.
+// generated statement can only ever contain one of these constants.
 var validTopQueryOrderColumns = map[string]string{
 	"total_exec_time":  "total_exec_time",
 	"calls":            "calls",
 	"mean_exec_time":   "mean_exec_time",
+	"min_exec_time":    "min_exec_time",
+	"max_exec_time":    "max_exec_time",
 	"rows":             "rows",
 	"shared_blks_hit":  "shared_blks_hit",
 	"shared_blks_read": "shared_blks_read",
+}
+
+// topQueryOrderByError is the 400 message listing the accepted order_by
+// values. It is derived from validTopQueryOrderColumns so the message can
+// never drift from the whitelist it describes.
+var topQueryOrderByError = "Invalid order_by: must be one of " +
+	strings.Join(sortedKeys(validTopQueryOrderColumns), ", ")
+
+// sortedKeys returns the keys of a string-keyed map in sorted order, so that
+// generated messages are stable rather than following Go's randomized map
+// iteration order.
+func sortedKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // validTopQueryOrderDirections maps each accepted order request value to the
@@ -239,6 +308,8 @@ func (h *PerfSummaryHandler) RegisterRoutes(
 			authWrapper(HandleNotConfigured("Top queries")))
 		mux.HandleFunc("/api/v1/metrics/connection-groups",
 			authWrapper(HandleNotConfigured("Connection groups")))
+		mux.HandleFunc("/api/v1/metrics/query-stats",
+			authWrapper(HandleNotConfigured("Query statistics")))
 		return
 	}
 
@@ -250,6 +321,8 @@ func (h *PerfSummaryHandler) RegisterRoutes(
 		authWrapper(h.handleTopQueries))
 	mux.HandleFunc("/api/v1/metrics/connection-groups",
 		authWrapper(h.handleConnectionGroups))
+	mux.HandleFunc("/api/v1/metrics/query-stats",
+		authWrapper(h.handleQueryStats))
 }
 
 // handlePerfSummary handles GET /api/v1/metrics/performance-summary
@@ -278,27 +351,42 @@ func (h *PerfSummaryHandler) handlePerfSummary(
 		}
 	}
 
-	// Parse time range
+	// Parse time_range (default "1h"). A time_range of "custom" resolves
+	// against the explicit time_start and time_end timestamps, exactly as
+	// /metrics/query and /metrics/connection-groups do; ResolveTimeWindow
+	// is the single source of truth for what counts as a valid window, so
+	// its error message is returned verbatim.
 	timeRange := ParseQueryString(r, "time_range")
 	if timeRange == "" {
 		timeRange = "1h"
 	}
-	duration, ok := validTimeRanges[timeRange]
-	if !ok {
-		RespondError(w, http.StatusBadRequest,
-			"Invalid time_range: must be one of 1h, 6h, 24h, 7d, 30d")
+	window, err := metrics.ResolveTimeWindow(timeRange,
+		ParseQueryString(r, "time_start"),
+		ParseQueryString(r, "time_end"))
+	if err != nil {
+		RespondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	// Calculate bucket interval: duration / 60, minimum 10 seconds
-	bucketSeconds := int(duration.Seconds()) / 60
+	// The shared 366-day cap is far too generous here: this endpoint runs
+	// five sub-queries for every connection in connection_ids inside one
+	// read-only transaction, so the work is linear in both the window and
+	// the size of the estate. See maxAggregationTimeSpan. Presets are
+	// unaffected, because the longest of them is exactly 30 days.
+	if err := checkAggregationTimeSpan(window); err != nil {
+		RespondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// Calculate bucket interval: window / 60, minimum 10 seconds
+	bucketSeconds := int(window.End.Sub(window.Start).Seconds()) / 60
 	if bucketSeconds < 10 {
 		bucketSeconds = 10
 	}
 	bucketInterval := fmt.Sprintf("%d seconds", bucketSeconds)
 
-	now := time.Now().UTC()
-	startTime := now.Add(-duration)
+	now := window.End.UTC()
+	startTime := window.Start.UTC()
 
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
@@ -318,7 +406,7 @@ func (h *PerfSummaryHandler) handlePerfSummary(
 			"Failed to query performance metrics")
 		return
 	}
-	defer tx.Rollback(ctx) //nolint:errcheck // Rollback after commit is a no-op
+	defer rollback.Tx(ctx, tx) //nolint:errcheck // no-op after commit
 
 	response := PerfSummaryResponse{
 		TimeRange:   timeRange,
@@ -349,17 +437,16 @@ func (h *PerfSummaryHandler) handlePerfSummary(
 		// Query 1: XID Age
 		connResp.XIDAgeEntries = h.queryXIDAage(ctx, tx, connID)
 
-		// Query 2: Cache Hit current
-		blksHit, blksRead, ratio := h.queryCacheHitCurrent(ctx, tx, connID)
+		// Query 2: Cache Hit ratio (current value and time series, both
+		// computed from per-interval counter deltas)
+		blksHit, blksRead, ratio, chSeries := h.queryCacheHit(
+			ctx, tx, connID, startTime, now, bucketInterval)
 		connResp.CacheHitRatio.Current = ratio
+		connResp.CacheHitRatio.TimeSeries = chSeries
 		totalBlksHit += blksHit
 		totalBlksRead += blksRead
 
-		// Query 3: Cache Hit time series
-		connResp.CacheHitRatio.TimeSeries = h.queryCacheHitTimeSeries(
-			ctx, tx, connID, startTime, now, bucketInterval)
-
-		// Query 4: Transaction throughput
+		// Query 3: Transaction throughput
 		cps, rbPct, tsSeries := h.queryTransactions(
 			ctx, tx, connID, startTime, now, bucketInterval)
 		connResp.Transactions.CommitsPerSec = cps
@@ -375,12 +462,13 @@ func (h *PerfSummaryHandler) handlePerfSummary(
 			}
 		}
 
-		// Query 5: Checkpoint activity
+		// Query 4: Checkpoint activity
 		connResp.Checkpoints.TimeSeries = h.queryCheckpoints(
 			ctx, tx, connID, startTime, now, bucketInterval)
 
 		// Query 6: Active backend count
-		connResp.ActiveConnections = h.queryConnectionCount(ctx, tx, connID)
+		connResp.ActiveConnections = h.queryConnectionCount(
+			ctx, tx, connID, startTime, now)
 
 		response.Connections = append(response.Connections, connResp)
 	}
@@ -394,11 +482,10 @@ func (h *PerfSummaryHandler) handlePerfSummary(
 	if len(connectionIDs) > 1 {
 		agg := &PerfAggregate{}
 
-		// Weighted average for cache hit ratio
-		totalBlocks := totalBlksHit + totalBlksRead
-		if totalBlocks > 0 {
-			agg.CacheHitRatio = roundTo(totalBlksHit/totalBlocks*100.0, 1)
-		}
+		// Weighted average for cache hit ratio, using each connection's
+		// latest-bucket block deltas as the weights. Nil when every
+		// connection was idle in its latest bucket.
+		agg.CacheHitRatio = aggregateCacheHitRatio(totalBlksHit, totalBlksRead)
 
 		// Sum for commits/sec
 		agg.CommitsPerSec = roundTo(totalCommitsPerSec, 1)
@@ -427,8 +514,13 @@ func (h *PerfSummaryHandler) parseConnectionIDs(
 	w http.ResponseWriter,
 	r *http.Request,
 ) []int {
-	// Try connection_ids first (comma-separated list)
+	// Try connection_ids first (comma-separated list). The length cap is
+	// applied here so that an oversized list is rejected before the RBAC
+	// loop and the connection name lookups do any database work.
 	if ids, ok := ParseQueryIntList(w, r, "connection_ids"); ok {
+		if !CheckConnectionIDCount(w, ids) {
+			return nil // Error already sent by CheckConnectionIDCount
+		}
 		return ids
 	}
 	if r.URL.Query().Get("connection_ids") != "" {
@@ -515,84 +607,146 @@ func (h *PerfSummaryHandler) queryXIDAage(
 	return entries
 }
 
-// queryCacheHitCurrent returns the current cache hit ratio for a connection.
-// Returns blks_hit, blks_read, and the ratio percentage.
-func (h *PerfSummaryHandler) queryCacheHitCurrent(
-	ctx context.Context,
-	tx pgx.Tx,
-	connectionID int,
-) (float64, float64, float64) {
-	var blksHit, blksRead float64
-	err := tx.QueryRow(ctx, `
-        SELECT COALESCE(SUM(blks_hit), 0),
-               COALESCE(SUM(blks_read), 0)
-        FROM metrics.pg_stat_database
-        WHERE connection_id = $1
-          AND collected_at = (
-              SELECT MAX(collected_at)
-              FROM metrics.pg_stat_database
-              WHERE connection_id = $1
-          )
-    `, connectionID).Scan(&blksHit, &blksRead)
-	if err != nil {
-		log.Printf("[DEBUG] No cache hit data for connection %d: %s", connectionID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connectionID is an integer and err is sanitized via logging.SanitizeForLog
-		return 0, 0, 0
-	}
-
+// aggregateCacheHitRatio returns the cache hit ratio percentage, rounded
+// to one decimal place, for the given block hit and read totals. It
+// returns nil when no blocks were accessed, so callers can report "no
+// data" rather than a spurious 0%.
+func aggregateCacheHitRatio(blksHit, blksRead float64) *float64 {
 	total := blksHit + blksRead
-	if total == 0 {
-		return blksHit, blksRead, 0
+	if total <= 0 {
+		return nil
 	}
-	return blksHit, blksRead, roundTo(blksHit/total*100.0, 2)
+	ratio := roundTo(blksHit/total*100.0, 1)
+	return &ratio
 }
 
-// queryCacheHitTimeSeries returns bucketed cache hit ratio over time.
-func (h *PerfSummaryHandler) queryCacheHitTimeSeries(
+// queryCacheHit returns the cache hit ratio for a connection computed from
+// per-interval deltas of the pg_stat_database block counters, bucketed
+// with date_bin. It returns the latest bucket's delta sums for blks_hit
+// and blks_read (used to weight the multi-connection aggregate), the
+// current ratio (the latest bucket's ratio, nil when there are no points
+// or the bucket saw no block access) and the bucketed time series.
+//
+// Deltas are computed per database (LAG partitioned by datname) and only
+// then summed into buckets, so a database created between two samples
+// does not contribute its lifetime counters to that interval and one
+// dropped between samples does not turn the interval's delta negative.
+// A per-database delta that is negative for either counter (a stats
+// reset or a server restart) is discarded, as is each database's first
+// sample in the range, which has no predecessor. Buckets with valid
+// deltas but no block access are still emitted, with a nil ratio, so
+// that client series stay aligned across metrics.
+func (h *PerfSummaryHandler) queryCacheHit(
 	ctx context.Context,
 	tx pgx.Tx,
 	connectionID int,
 	startTime, endTime time.Time,
 	bucketInterval string,
-) []CacheHitRatioPoint {
+) (float64, float64, *float64, []CacheHitRatioPoint) {
 	rows, err := tx.Query(ctx, `
+        WITH deltas AS (
+            SELECT
+                collected_at,
+                blks_hit - LAG(blks_hit) OVER (
+                    PARTITION BY datname ORDER BY collected_at
+                ) AS delta_hit,
+                blks_read - LAG(blks_read) OVER (
+                    PARTITION BY datname ORDER BY collected_at
+                ) AS delta_read
+            FROM metrics.pg_stat_database
+            WHERE connection_id = $3
+              AND collected_at >= $2
+              AND collected_at <= $4
+        ),
+        valid_deltas AS (
+            SELECT collected_at, delta_hit, delta_read
+            FROM deltas
+            WHERE delta_hit IS NOT NULL
+              AND delta_read IS NOT NULL
+              AND delta_hit >= 0
+              AND delta_read >= 0
+        )
         SELECT date_bin($1::interval, collected_at, $2) AS bucket,
-               CASE WHEN (SUM(blks_hit) + SUM(blks_read)) = 0 THEN 0
-                    ELSE SUM(blks_hit)::float /
-                         (SUM(blks_hit) + SUM(blks_read))::float * 100.0
+               SUM(delta_hit)::float AS blks_hit,
+               SUM(delta_read)::float AS blks_read,
+               CASE WHEN SUM(delta_hit + delta_read) = 0 THEN NULL
+                    ELSE SUM(delta_hit)::float /
+                         SUM(delta_hit + delta_read)::float * 100.0
                END AS ratio
-        FROM metrics.pg_stat_database
-        WHERE connection_id = $3
-          AND collected_at >= $2
-          AND collected_at <= $4
+        FROM valid_deltas
         GROUP BY bucket
         ORDER BY bucket
     `, bucketInterval, startTime, connectionID, endTime)
 	if err != nil {
-		log.Printf("[DEBUG] No cache hit time series for connection %d: %s", connectionID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connectionID is an integer and err is sanitized via logging.SanitizeForLog
-		return []CacheHitRatioPoint{}
+		log.Printf("[DEBUG] No cache hit data for connection %d: %s", connectionID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connectionID is an integer and err is sanitized via logging.SanitizeForLog
+		return 0, 0, nil, []CacheHitRatioPoint{}
 	}
 	defer rows.Close()
 
 	var points []CacheHitRatioPoint
+	var latestHit, latestRead float64
 	for rows.Next() {
 		var pt CacheHitRatioPoint
-		if err := rows.Scan(&pt.Time, &pt.Value); err != nil {
-			log.Printf("[DEBUG] Error scanning cache hit time series: %v", err)
-			continue
+		var blksHit, blksRead float64
+		if err := rows.Scan(&pt.Time, &blksHit, &blksRead, &pt.Value); err != nil {
+			// pgx closes the cursor on a scan failure and reports the
+			// error through rows.Err below.
+			break
 		}
-		pt.Value = roundTo(pt.Value, 2)
+		if pt.Value != nil {
+			v := roundTo(*pt.Value, 2)
+			pt.Value = &v
+		}
 		points = append(points, pt)
+		latestHit, latestRead = blksHit, blksRead
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[DEBUG] Error iterating cache hit time series: %v", err)
+		log.Printf("[DEBUG] Error iterating cache hit data: %v", err)
 	}
 	if points == nil {
-		points = []CacheHitRatioPoint{}
+		return 0, 0, nil, []CacheHitRatioPoint{}
 	}
-	return points
+
+	// The latest bucket is the "current" value.
+	return latestHit, latestRead, points[len(points)-1].Value, points
 }
 
-// queryTransactions returns the latest transaction throughput and time series.
+// queryTransactions returns the latest transaction throughput and the
+// bucketed time series, computed from per-interval deltas of the
+// pg_stat_database transaction counters.
+//
+// Deltas are computed per database (LAG partitioned by datname) and only
+// then summed into buckets, so a database created between two samples
+// does not contribute its lifetime commits to that interval, and one
+// dropped between samples does not turn the interval's delta negative
+// and flatten the bucket to zero. A per-database delta that is negative
+// for either counter is discarded, as is each database's first sample in
+// the range, which has no predecessor.
+//
+// An interval whose stats_reset differs from that database's previous
+// sample is discarded as well: a reset that overshoots the previous
+// value within one sample interval yields a positive but meaningless
+// delta that the negative-delta guard cannot catch. Only the affected
+// database's interval is dropped, not the whole sample.
+//
+// Elapsed time is derived from the distinct sample timestamps rather
+// than from the per-database rows, because summing an elapsed value
+// carried on every row would multiply it by the number of databases and
+// collapse commits_per_sec accordingly. A per-database delta is only
+// admitted when its own predecessor row is the sample immediately
+// before it, which the join on both collected_at and
+// previous_collected_at enforces: a database missing from an
+// intermediate sample would otherwise have its delta span two intervals
+// whilst being divided by the elapsed time of only the last one.
+//
+// Correctness here is not free: the PARTITION BY datname window cannot
+// use the collected_at ordering of the partition's index, so a wide
+// range sorts externally. Measured over 864,000 seeded rows, a 30-day
+// window took 1443ms against 272ms for the old whole-cluster
+// differencing (a 35MB external merge sort), and a 24-hour window
+// 44.7ms against 12.3ms. That 5.3x is the price of not reporting a
+// created or dropped database as a spike, so do not trade it back by
+// differencing the summed counters again.
 func (h *PerfSummaryHandler) queryTransactions(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -601,43 +755,75 @@ func (h *PerfSummaryHandler) queryTransactions(
 	bucketInterval string,
 ) (float64, float64, []TransactionPoint) {
 	rows, err := tx.Query(ctx, `
-        WITH deltas AS (
+        WITH sample_elapsed AS (
+            SELECT collected_at,
+                   LAG(collected_at) OVER (ORDER BY collected_at)
+                       AS previous_collected_at,
+                   EXTRACT(EPOCH FROM collected_at - LAG(collected_at) OVER (
+                       ORDER BY collected_at
+                   )) AS elapsed_sec
+            FROM (
+                SELECT DISTINCT collected_at
+                FROM metrics.pg_stat_database
+                WHERE connection_id = $3
+                  AND collected_at >= $2
+                  AND collected_at <= $4
+            ) AS samples
+        ),
+        deltas AS (
             SELECT
                 collected_at,
-                SUM(xact_commit) AS total_commit,
-                SUM(xact_rollback) AS total_rollback,
-                LAG(SUM(xact_commit)) OVER (ORDER BY collected_at) AS prev_commit,
-                LAG(SUM(xact_rollback)) OVER (ORDER BY collected_at) AS prev_rollback,
-                EXTRACT(EPOCH FROM
-                    collected_at - LAG(collected_at) OVER (ORDER BY collected_at)
-                ) AS elapsed_sec
+                LAG(collected_at) OVER w AS previous_collected_at,
+                xact_commit - LAG(xact_commit) OVER w AS delta_commit,
+                xact_rollback - LAG(xact_rollback) OVER w AS delta_rollback,
+                stats_reset IS DISTINCT FROM LAG(stats_reset) OVER w
+                    AS reset_changed
             FROM metrics.pg_stat_database
             WHERE connection_id = $3
               AND collected_at >= $2
               AND collected_at <= $4
-            GROUP BY collected_at
+            WINDOW w AS (PARTITION BY datname ORDER BY collected_at)
         ),
         valid_deltas AS (
-            SELECT
-                collected_at,
-                (total_commit - prev_commit) AS delta_commit,
-                (total_rollback - prev_rollback) AS delta_rollback,
-                elapsed_sec
-            FROM deltas
-            WHERE prev_commit IS NOT NULL
-              AND elapsed_sec > 0
-              AND (total_commit - prev_commit) >= 0
-              AND (total_rollback - prev_rollback) >= 0
+            SELECT d.collected_at, d.delta_commit, d.delta_rollback
+            FROM deltas d
+            JOIN sample_elapsed s
+              ON s.collected_at = d.collected_at
+             AND s.previous_collected_at = d.previous_collected_at
+            WHERE d.delta_commit IS NOT NULL
+              AND d.delta_rollback IS NOT NULL
+              AND d.delta_commit >= 0
+              AND d.delta_rollback >= 0
+              AND NOT d.reset_changed
+              AND s.elapsed_sec > 0
+        ),
+        bucket_deltas AS (
+            SELECT date_bin($1::interval, collected_at, $2) AS bucket,
+                   SUM(delta_commit) AS delta_commit,
+                   SUM(delta_rollback) AS delta_rollback
+            FROM valid_deltas
+            GROUP BY bucket
+        ),
+        bucket_elapsed AS (
+            SELECT date_bin($1::interval, s.collected_at, $2) AS bucket,
+                   SUM(s.elapsed_sec) AS elapsed_sec
+            FROM sample_elapsed s
+            WHERE s.elapsed_sec > 0
+              AND EXISTS (
+                  SELECT 1 FROM valid_deltas v
+                  WHERE v.collected_at = s.collected_at
+              )
+            GROUP BY bucket
         )
-        SELECT date_bin($1::interval, collected_at, $2) AS bucket,
-               SUM(delta_commit) / SUM(elapsed_sec) AS commits_per_sec,
-               CASE WHEN SUM(delta_commit + delta_rollback) = 0 THEN 0
-                    ELSE SUM(delta_rollback)::float /
-                         SUM(delta_commit + delta_rollback)::float * 100.0
+        SELECT d.bucket,
+               d.delta_commit / e.elapsed_sec AS commits_per_sec,
+               CASE WHEN d.delta_commit + d.delta_rollback = 0 THEN 0
+                    ELSE d.delta_rollback::float /
+                         (d.delta_commit + d.delta_rollback)::float * 100.0
                END AS rollback_percent
-        FROM valid_deltas
-        GROUP BY bucket
-        ORDER BY bucket
+        FROM bucket_deltas d
+        JOIN bucket_elapsed e ON e.bucket = d.bucket
+        ORDER BY d.bucket
     `, bucketInterval, startTime, connectionID, endTime)
 	if err != nil {
 		log.Printf("[DEBUG] No transaction data for connection %d: %s", connectionID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connectionID is an integer and err is sanitized via logging.SanitizeForLog
@@ -649,8 +835,9 @@ func (h *PerfSummaryHandler) queryTransactions(
 	for rows.Next() {
 		var pt TransactionPoint
 		if err := rows.Scan(&pt.Time, &pt.CommitsPerSec, &pt.RollbackPercent); err != nil {
-			log.Printf("[DEBUG] Error scanning transaction data: %v", err)
-			continue
+			// pgx closes the cursor on a scan failure and reports the
+			// error through rows.Err below.
+			break
 		}
 		pt.CommitsPerSec = roundTo(pt.CommitsPerSec, 1)
 		pt.RollbackPercent = roundTo(pt.RollbackPercent, 1)
@@ -739,25 +926,36 @@ func (h *PerfSummaryHandler) queryCheckpoints(
 }
 
 // queryConnectionCount returns the number of backends connected to a
-// monitored server at its most recent collection. The count comes from
-// metrics.pg_stat_database.numbackends, summed across every database in
-// that snapshot, which is the same source the per-database summaries use.
+// monitored server at the newest collection inside the requested window.
+// The count comes from metrics.pg_stat_database.numbackends, summed across
+// every database in that snapshot, which is the same source and the same
+// window bounds the per-database summaries use, so the comparative
+// Connection Count chart agrees with them and with the other series
+// alongside it. A window with no samples in it reports zero rather than
+// falling back to the live backend count. The bounds are repeated in the
+// inner and the outer predicate to let the planner prune partitions, as in
+// queryDatabaseStats.
 func (h *PerfSummaryHandler) queryConnectionCount(
 	ctx context.Context,
 	tx pgx.Tx,
 	connectionID int,
+	startTime, endTime time.Time,
 ) int {
 	var count int
 	err := tx.QueryRow(ctx, `
         SELECT COALESCE(SUM(numbackends), 0)
         FROM metrics.pg_stat_database
         WHERE connection_id = $1
+          AND collected_at >= $2
+          AND collected_at <= $3
           AND collected_at = (
               SELECT MAX(collected_at)
               FROM metrics.pg_stat_database
               WHERE connection_id = $1
+                AND collected_at >= $2
+                AND collected_at <= $3
           )
-    `, connectionID).Scan(&count)
+    `, connectionID, startTime, endTime).Scan(&count)
 	if err != nil {
 		log.Printf("[DEBUG] No connection count data for connection %d: %s", connectionID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connectionID is an integer and err is sanitized via logging.SanitizeForLog
 		return 0
@@ -793,25 +991,40 @@ func (h *PerfSummaryHandler) handleDatabaseSummaries(
 		return
 	}
 
+	// Parse time_range (default "24h"). A time_range of "custom" resolves
+	// against the explicit time_start and time_end timestamps, exactly as
+	// /metrics/query does; ResolveTimeWindow is the single source of truth
+	// for what counts as a valid window, so its error message is returned
+	// verbatim.
 	timeRange := ParseQueryString(r, "time_range")
 	if timeRange == "" {
 		timeRange = "24h"
 	}
-	duration, ok := validTimeRanges[timeRange]
-	if !ok {
-		RespondError(w, http.StatusBadRequest,
-			"Invalid time_range: must be one of 1h, 6h, 24h, 7d, 30d")
+	window, err := metrics.ResolveTimeWindow(timeRange,
+		ParseQueryString(r, "time_start"),
+		ParseQueryString(r, "time_end"))
+	if err != nil {
+		RespondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	bucketSeconds := int(duration.Seconds()) / 60
+	// The shared 366-day cap is far too generous for an aggregation whose
+	// cost is linear in the window; see maxAggregationTimeSpan. This
+	// endpoint previously validated time_range against the preset map,
+	// which capped the window at 30 days by construction, so the explicit
+	// check restores that bound now that custom windows are accepted.
+	if err := checkAggregationTimeSpan(window); err != nil {
+		RespondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// Sixty buckets across the window, floored at ten seconds so that a
+	// very short custom window cannot ask for a sub-probe-interval bucket.
+	bucketSeconds := int(window.End.Sub(window.Start).Seconds()) / 60
 	if bucketSeconds < 10 {
 		bucketSeconds = 10
 	}
 	bucketInterval := fmt.Sprintf("%d seconds", bucketSeconds)
-
-	now := time.Now().UTC()
-	startTime := now.Add(-duration)
 
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
@@ -826,25 +1039,14 @@ func (h *PerfSummaryHandler) handleDatabaseSummaries(
 			"Failed to query database summaries")
 		return
 	}
-	defer tx.Rollback(ctx) //nolint:errcheck // Rollback after commit is a no-op
+	defer rollback.Tx(ctx, tx) //nolint:errcheck // no-op after commit
 
 	dbMap := make(map[string]*DatabaseSummary)
-
-	// Query 1: Database sizes from metrics.pg_database
-	h.queryDatabaseSizes(ctx, tx, connID, dbMap)
-
-	// Query 2: Stats from metrics.pg_stat_database
-	h.queryDatabaseStats(ctx, tx, connID, dbMap)
-
-	// Query 3: Dead tuple ratio from metrics.pg_stat_all_tables
-	h.queryDeadTupleRatios(ctx, tx, connID, dbMap)
-
-	// Query 4: Transaction rate (delta between latest two collections)
-	h.queryTransactionRates(ctx, tx, connID, dbMap)
-
-	// Query 5: Cache hit ratio time series per database
-	h.queryDatabaseCacheHitTimeSeries(ctx, tx, connID, startTime, now,
-		bucketInterval, dbMap)
+	if err := h.collectDatabaseSummaries(ctx, tx, connID, window,
+		bucketInterval, dbMap); err != nil {
+		respondDatabaseSummariesError(w, connID, err)
+		return
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		log.Printf("[ERROR] Failed to commit read-only transaction: %v", err)
@@ -863,82 +1065,180 @@ func (h *PerfSummaryHandler) handleDatabaseSummaries(
 	})
 }
 
+// collectDatabaseSummaries runs the five database-summaries sub-queries in
+// order inside tx, populating dbMap, and returns the first failure.
+//
+// Every sub-query is bounded by the resolved window, so a historical custom
+// window reports the estate as it stood at the end of that window rather
+// than mixing today's sizes and counts with a historical cache hit series.
+//
+// The sequence stops at the first error rather than carrying on, because a
+// failed statement aborts the transaction and every later statement would
+// then fail with 25P02 instead of reporting anything useful.
+func (h *PerfSummaryHandler) collectDatabaseSummaries(
+	ctx context.Context,
+	tx pgx.Tx,
+	connectionID int,
+	window metrics.TimeWindow,
+	bucketInterval string,
+	dbMap map[string]*DatabaseSummary,
+) error {
+	start, end := window.Start, window.End
+	steps := []func() error{
+		// Database sizes from metrics.pg_database; the only step that
+		// creates entries.
+		func() error {
+			return h.queryDatabaseSizes(ctx, tx, connectionID, start, end, dbMap)
+		},
+		// Connection counts from metrics.pg_stat_database.
+		func() error {
+			return h.queryDatabaseStats(ctx, tx, connectionID, start, end, dbMap)
+		},
+		// Dead tuple ratios from metrics.pg_stat_all_tables.
+		func() error {
+			return h.queryDeadTupleRatios(ctx, tx, connectionID, start, end, dbMap)
+		},
+		// Transaction rates, the delta between the latest two collections
+		// inside the window.
+		func() error {
+			return h.queryTransactionRates(ctx, tx, connectionID, start, end, dbMap)
+		},
+		// Cache hit ratio time series per database.
+		func() error {
+			return h.queryDatabaseCacheHitTimeSeries(ctx, tx, connectionID,
+				start, end, bucketInterval, dbMap)
+		},
+	}
+	for _, step := range steps {
+		if err := step(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// respondDatabaseSummariesError turns a sub-query failure into a response,
+// following respondTopQueriesError. Only a missing metrics schema is
+// reported as an empty result, so that a workbench whose collector has
+// never run renders no database cards rather than a failure. Every other
+// failure, a statement timeout on a wide custom window included, is logged
+// at [ERROR] and reported as a 500, because returning the summaries with
+// the affected figures silently absent would make a persistent failure look
+// like a database with no data.
+func respondDatabaseSummariesError(w http.ResponseWriter, connID int, err error) {
+	if isUndefinedTableError(err) {
+		log.Printf("[DEBUG] No database summaries data for connection %d: %s", connID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connID is an integer and err is sanitized via logging.SanitizeForLog
+		RespondJSON(w, http.StatusOK, DatabaseSummaryResponse{
+			Databases: []DatabaseSummary{},
+		})
+		return
+	}
+	log.Printf("[ERROR] Failed to query database summaries for connection %d: %s", connID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connID is an integer and err is sanitized via logging.SanitizeForLog
+	RespondError(w, http.StatusInternalServerError,
+		"Failed to query database summaries")
+}
+
 // queryDatabaseSizes populates database size information from pg_database.
+//
+// The snapshot is the newest one inside the requested window, so a
+// historical window reports the sizes as they stood then. The window bounds
+// are repeated in the inner and the outer predicate: the repetition is
+// semantically a no-op given the equality join on collected_at, but
+// metrics.pg_database is partitioned by range on collected_at and without a
+// direct bound on the partition key the planner cannot prune.
 func (h *PerfSummaryHandler) queryDatabaseSizes(
 	ctx context.Context,
 	tx pgx.Tx,
 	connectionID int,
+	startTime, endTime time.Time,
 	dbMap map[string]*DatabaseSummary,
-) {
+) error {
 	rows, err := tx.Query(ctx, `
         SELECT datname, database_size_bytes
         FROM metrics.pg_database
         WHERE connection_id = $1
+          AND collected_at >= $2
+          AND collected_at <= $3
           AND collected_at = (
               SELECT MAX(collected_at)
               FROM metrics.pg_database
               WHERE connection_id = $1
+                AND collected_at >= $2
+                AND collected_at <= $3
           )
           AND datistemplate = false
-    `, connectionID)
+    `, connectionID, startTime, endTime)
 	if err != nil {
-		log.Printf("[DEBUG] No database size data for connection %d: %s", connectionID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connectionID is an integer and err is sanitized via logging.SanitizeForLog
-		return
+		return fmt.Errorf("query database sizes: %w", err)
 	}
 	defer rows.Close()
 
+	// pgx closes the result set on a scan error, so a row that cannot be
+	// scanned ends the iteration rather than being skipped, and the error
+	// is returned. Columns the collector may leave NULL are therefore
+	// scanned through pointers, so that such a row is genuinely skipped;
+	// the same holds for the other database-summaries helpers.
 	for rows.Next() {
-		var name string
-		var sizeBytes int64
+		var name *string
+		var sizeBytes *int64
 		if err := rows.Scan(&name, &sizeBytes); err != nil {
-			log.Printf("[DEBUG] Error scanning database size: %v", err)
+			return fmt.Errorf("scan database size: %w", err)
+		}
+		if name == nil || sizeBytes == nil {
 			continue
 		}
-		dbMap[name] = &DatabaseSummary{
-			DatabaseName: name,
-			SizeBytes:    sizeBytes,
-			SizePretty:   formatBytes(sizeBytes),
+		dbMap[*name] = &DatabaseSummary{
+			DatabaseName: *name,
+			SizeBytes:    *sizeBytes,
+			SizePretty:   formatBytes(*sizeBytes),
 			CacheHitRatio: CacheHitRatioData{
 				TimeSeries: []CacheHitRatioPoint{},
 			},
 		}
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[DEBUG] Error iterating database size rows: %v", err)
+		return fmt.Errorf("query database sizes: %w", err)
 	}
+	return nil
 }
 
-// queryDatabaseStats populates connection count and cache hit ratio from
-// pg_stat_database.
+// queryDatabaseStats populates the connection count from the newest
+// pg_stat_database snapshot inside the requested window. The window bounds
+// are repeated in the inner and the outer predicate to let the planner prune
+// partitions, as in queryDatabaseSizes.
 func (h *PerfSummaryHandler) queryDatabaseStats(
 	ctx context.Context,
 	tx pgx.Tx,
 	connectionID int,
+	startTime, endTime time.Time,
 	dbMap map[string]*DatabaseSummary,
-) {
+) error {
 	rows, err := tx.Query(ctx, `
-        SELECT datname, numbackends,
-               COALESCE(blks_hit, 0), COALESCE(blks_read, 0)
+        SELECT datname, numbackends
         FROM metrics.pg_stat_database
         WHERE connection_id = $1
+          AND collected_at >= $2
+          AND collected_at <= $3
           AND collected_at = (
               SELECT MAX(collected_at)
               FROM metrics.pg_stat_database
               WHERE connection_id = $1
+                AND collected_at >= $2
+                AND collected_at <= $3
           )
-    `, connectionID)
+    `, connectionID, startTime, endTime)
 	if err != nil {
-		log.Printf("[DEBUG] No pg_stat_database data for connection %d: %s", connectionID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connectionID is an integer and err is sanitized via logging.SanitizeForLog
-		return
+		return fmt.Errorf("query database stats: %w", err)
 	}
 	defer rows.Close()
 
 	for rows.Next() {
-		var name string
-		var numBackends int
-		var blksHit, blksRead float64
-		if err := rows.Scan(&name, &numBackends, &blksHit, &blksRead); err != nil {
-			log.Printf("[DEBUG] Error scanning database stats: %v", err)
+		var name *string
+		var numBackends *int
+		if err := rows.Scan(&name, &numBackends); err != nil {
+			return fmt.Errorf("scan database stats: %w", err)
+		}
+		if name == nil || numBackends == nil {
 			continue
 		}
 		// Only queryDatabaseSizes may create entries; the latest
@@ -946,28 +1246,29 @@ func (h *PerfSummaryHandler) queryDatabaseStats(
 		// databases currently exist. Skip rows for databases absent
 		// from that snapshot (e.g. recently dropped databases whose
 		// historical rows still linger in pg_stat_database).
-		db, exists := dbMap[name]
+		db, exists := dbMap[*name]
 		if !exists {
 			continue
 		}
-		db.ActiveConnections = numBackends
-		total := blksHit + blksRead
-		if total > 0 {
-			db.CacheHitRatio.Current = roundTo(blksHit/total*100.0, 2)
-		}
+		db.ActiveConnections = *numBackends
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[DEBUG] Error iterating database stats rows: %v", err)
+		return fmt.Errorf("query database stats: %w", err)
 	}
+	return nil
 }
 
-// queryDeadTupleRatios populates dead tuple ratios from pg_stat_all_tables.
+// queryDeadTupleRatios populates dead tuple ratios from the newest
+// pg_stat_all_tables snapshot inside the requested window. The window bounds
+// are repeated in the inner and the outer predicate to let the planner prune
+// partitions, as in queryDatabaseSizes.
 func (h *PerfSummaryHandler) queryDeadTupleRatios(
 	ctx context.Context,
 	tx pgx.Tx,
 	connectionID int,
+	startTime, endTime time.Time,
 	dbMap map[string]*DatabaseSummary,
-) {
+) error {
 	rows, err := tx.Query(ctx, `
         SELECT database_name,
                CASE WHEN SUM(n_live_tup) + SUM(n_dead_tup) = 0 THEN 0
@@ -976,52 +1277,64 @@ func (h *PerfSummaryHandler) queryDeadTupleRatios(
                END AS dead_tuple_ratio
         FROM metrics.pg_stat_all_tables
         WHERE connection_id = $1
+          AND collected_at >= $2
+          AND collected_at <= $3
           AND collected_at = (
               SELECT MAX(collected_at)
               FROM metrics.pg_stat_all_tables
               WHERE connection_id = $1
+                AND collected_at >= $2
+                AND collected_at <= $3
           )
         GROUP BY database_name
-    `, connectionID)
+    `, connectionID, startTime, endTime)
 	if err != nil {
-		log.Printf("[DEBUG] No dead tuple data for connection %d: %s", connectionID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connectionID is an integer and err is sanitized via logging.SanitizeForLog
-		return
+		return fmt.Errorf("query dead tuple ratios: %w", err)
 	}
 	defer rows.Close()
 
 	for rows.Next() {
-		var name string
-		var ratio float64
+		var name *string
+		var ratio *float64
 		if err := rows.Scan(&name, &ratio); err != nil {
-			log.Printf("[DEBUG] Error scanning dead tuple ratio: %v", err)
+			return fmt.Errorf("scan dead tuple ratio: %w", err)
+		}
+		if name == nil || ratio == nil {
 			continue
 		}
 		// Only queryDatabaseSizes may create entries; skip databases
 		// absent from the latest pg_database snapshot.
-		db, exists := dbMap[name]
+		db, exists := dbMap[*name]
 		if !exists {
 			continue
 		}
-		db.DeadTupleRatio = roundTo(ratio, 2)
+		db.DeadTupleRatio = roundTo(*ratio, 2)
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[DEBUG] Error iterating dead tuple rows: %v", err)
+		return fmt.Errorf("query dead tuple ratios: %w", err)
 	}
+	return nil
 }
 
 // queryTransactionRates computes transaction rate per database as the delta
-// between the latest two collections.
+// between the latest two collections inside the requested window, so a
+// historical window reports the rate as it stood at the end of that window.
+// The window bounds are repeated in both CTEs to let the planner prune
+// partitions, as in queryDatabaseSizes.
 func (h *PerfSummaryHandler) queryTransactionRates(
 	ctx context.Context,
 	tx pgx.Tx,
 	connectionID int,
+	startTime, endTime time.Time,
 	dbMap map[string]*DatabaseSummary,
-) {
+) error {
 	rows, err := tx.Query(ctx, `
         WITH latest_two AS (
             SELECT DISTINCT collected_at
             FROM metrics.pg_stat_database
             WHERE connection_id = $1
+              AND collected_at >= $2
+              AND collected_at <= $3
             ORDER BY collected_at DESC
             LIMIT 2
         ),
@@ -1032,6 +1345,8 @@ func (h *PerfSummaryHandler) queryTransactionRates(
                    xact_rollback
             FROM metrics.pg_stat_database
             WHERE connection_id = $1
+              AND collected_at >= $2
+              AND collected_at <= $3
               AND collected_at IN (SELECT collected_at FROM latest_two)
         )
         SELECT p1.datname,
@@ -1045,19 +1360,20 @@ func (h *PerfSummaryHandler) queryTransactionRates(
           ON p1.datname = p2.datname
          AND p1.collected_at > p2.collected_at
         WHERE (p1.xact_commit - p2.xact_commit) >= 0
-    `, connectionID)
+    `, connectionID, startTime, endTime)
 	if err != nil {
-		log.Printf("[DEBUG] No transaction rate data for connection %d: %s", connectionID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connectionID is an integer and err is sanitized via logging.SanitizeForLog
-		return
+		return fmt.Errorf("query transaction rates: %w", err)
 	}
 	defer rows.Close()
 
 	for rows.Next() {
 		var name string
 		var rate float64
+		// The self-join on datname and the non-negative delta predicate
+		// already exclude NULLs, so a scan failure here is a type
+		// mismatch rather than missing data.
 		if err := rows.Scan(&name, &rate); err != nil {
-			log.Printf("[DEBUG] Error scanning transaction rate: %v", err)
-			continue
+			return fmt.Errorf("scan transaction rate: %w", err)
 		}
 		// Only queryDatabaseSizes may create entries; skip databases
 		// absent from the latest pg_database snapshot.
@@ -1068,12 +1384,18 @@ func (h *PerfSummaryHandler) queryTransactionRates(
 		db.TransactionRate = roundTo(rate, 1)
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[DEBUG] Error iterating transaction rate rows: %v", err)
+		return fmt.Errorf("query transaction rates: %w", err)
 	}
+	return nil
 }
 
-// queryDatabaseCacheHitTimeSeries populates per-database cache hit ratio
-// time series using date_bin bucketing.
+// queryDatabaseCacheHitTimeSeries populates each database's cache hit
+// ratio time series and current value from per-interval deltas of its
+// pg_stat_database block counters, bucketed with date_bin. The rules
+// match queryCacheHit: the first sample of each database has no delta, a
+// sample with a negative delta (stats reset) is discarded, and a bucket
+// with no block access is emitted with a nil ratio. Current is the latest
+// bucket's ratio, nil when there are no points or that bucket was idle.
 func (h *PerfSummaryHandler) queryDatabaseCacheHitTimeSeries(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -1081,52 +1403,78 @@ func (h *PerfSummaryHandler) queryDatabaseCacheHitTimeSeries(
 	startTime, endTime time.Time,
 	bucketInterval string,
 	dbMap map[string]*DatabaseSummary,
-) {
+) error {
 	rows, err := tx.Query(ctx, `
+        WITH deltas AS (
+            SELECT
+                datname,
+                collected_at,
+                blks_hit - LAG(blks_hit) OVER (
+                    PARTITION BY datname ORDER BY collected_at
+                ) AS delta_hit,
+                blks_read - LAG(blks_read) OVER (
+                    PARTITION BY datname ORDER BY collected_at
+                ) AS delta_read
+            FROM metrics.pg_stat_database
+            WHERE connection_id = $3
+              AND collected_at >= $2
+              AND collected_at <= $4
+        ),
+        valid_deltas AS (
+            SELECT datname, collected_at, delta_hit, delta_read
+            FROM deltas
+            WHERE delta_hit IS NOT NULL
+              AND delta_read IS NOT NULL
+              AND delta_hit >= 0
+              AND delta_read >= 0
+        )
         SELECT datname,
                date_bin($1::interval, collected_at, $2) AS bucket,
-               CASE WHEN (SUM(blks_hit) + SUM(blks_read)) = 0 THEN 0
-                    ELSE SUM(blks_hit)::float /
-                         (SUM(blks_hit) + SUM(blks_read))::float * 100.0
+               CASE WHEN SUM(delta_hit + delta_read) = 0 THEN NULL
+                    ELSE SUM(delta_hit)::float /
+                         SUM(delta_hit + delta_read)::float * 100.0
                END AS ratio
-        FROM metrics.pg_stat_database
-        WHERE connection_id = $3
-          AND collected_at >= $2
-          AND collected_at <= $4
+        FROM valid_deltas
         GROUP BY datname, bucket
         ORDER BY datname, bucket
     `, bucketInterval, startTime, connectionID, endTime)
 	if err != nil {
-		log.Printf("[DEBUG] No cache hit time series for connection %d: %s", connectionID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connectionID is an integer and err is sanitized via logging.SanitizeForLog
-		return
+		return fmt.Errorf("query database cache hit time series: %w", err)
 	}
 	defer rows.Close()
 
 	for rows.Next() {
-		var name string
+		var name *string
 		var pt CacheHitRatioPoint
 		if err := rows.Scan(&name, &pt.Time, &pt.Value); err != nil {
-			log.Printf("[DEBUG] Error scanning db cache hit time series: %v",
-				err)
+			return fmt.Errorf("scan database cache hit time series: %w", err)
+		}
+		if name == nil {
 			continue
 		}
-		pt.Value = roundTo(pt.Value, 2)
+		if pt.Value != nil {
+			v := roundTo(*pt.Value, 2)
+			pt.Value = &v
+		}
 		// Only queryDatabaseSizes may create entries. This query scans
 		// the entire requested time range, so it can still see rows for
 		// a database that was dropped partway through the window. Skip
 		// such databases so their historical samples do not resurrect a
 		// ghost card for a database that no longer exists (issue #362).
-		db, exists := dbMap[name]
+		db, exists := dbMap[*name]
 		if !exists {
 			continue
 		}
 		db.CacheHitRatio.TimeSeries = append(
 			db.CacheHitRatio.TimeSeries, pt)
+		// Rows arrive ordered by bucket within each database, so the
+		// last point appended is the latest bucket.
+		db.CacheHitRatio.Current = pt.Value
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[DEBUG] Error iterating db cache hit time series: %v",
-			err)
+		return fmt.Errorf("query database cache hit time series: %w", err)
 	}
+	return nil
 }
 
 // defaultTopQueryOrderBy and defaultTopQueryOrder are the request values
@@ -1183,29 +1531,48 @@ func isAllowedLiteral(whitelist map[string]string, v string) bool {
 // The only values interpolated into the statement text are orderCol and
 // orderDir, which callers must resolve through validTopQueryOrderColumns and
 // validTopQueryOrderDirections respectively, plus the generated placeholder
-// positions. Every caller-supplied value (connID, queryID, databaseName,
-// limit, offset) is bound as a parameter and appears in the returned
-// argument slices, never in the SQL.
+// positions. Every caller-supplied value (connID, the window bounds,
+// queryID, databaseName, limit, offset) is bound as a parameter and appears
+// in the returned argument slices, never in the SQL.
 //
 // filterArgs serves the count statement; pageArgs is filterArgs followed by
 // the limit and offset, so the two statements share identical placeholder
 // numbering for the filters.
 func buildTopQueriesSQL(
 	connID int,
-	queryID, databaseName string,
+	window metrics.TimeWindow,
+	queryID *int64,
+	databaseName string,
 	excludeCollector bool,
 	orderCol, orderDir string,
 	limit, offset int,
 ) (countSQL, pageSQL string, filterArgs, pageArgs []any) {
 	orderCol, orderDir = safeTopQueryOrdering(orderCol, orderDir)
 
-	// Optional queryid filter, applied inside the CTE.
+	// The connection and the window bounds are always present, so they take
+	// the first three placeholders and every optional clause numbers itself
+	// from there.
+	filterArgs = []any{connID, window.Start, window.End}
+
+	// Optional queryid filter, applied inside the sample scan. The
+	// identifier is bound as a bigint rather than compared through a text
+	// cast so that the queryid index remains usable; the handler has
+	// already rejected anything that does not parse as a 64-bit integer.
+	// The same predicate is applied inside last_client as well, against
+	// that CTE's unaliased query_id column and bound to the same
+	// placeholder, so the drill-down (which always passes a queryid) sorts
+	// one queryid's activity rows rather than the whole window. Both
+	// clauses read the identifier from the same position in filterArgs; no
+	// extra parameter is bound.
 	queryIDClause := ""
-	filterArgs = []any{connID}
-	if queryID != "" {
+	lastClientQueryIDClause := ""
+	if queryID != nil {
+		queryIDPos := len(filterArgs) + 1
 		queryIDClause = fmt.Sprintf(
-			"AND pss.queryid::text = $%d", len(filterArgs)+1)
-		filterArgs = append(filterArgs, queryID)
+			"AND pss.queryid = $%d", queryIDPos)
+		lastClientQueryIDClause = fmt.Sprintf(
+			"AND query_id = $%d", queryIDPos)
+		filterArgs = append(filterArgs, *queryID)
 	}
 
 	// Optional clause to exclude the Workbench's own queries, covering
@@ -1216,43 +1583,328 @@ func buildTopQueriesSQL(
 		excludeCollectorClause = excludeWorkbenchQueriesClause
 	}
 
-	// The database filter is applied to the outer select so that it matches
-	// the resolved database name (the COALESCE below), not the raw
-	// pss.database_name column.
+	// The database filter matches the name a statement is reported under:
+	// its dbid's name from db_names, or, for a dbid db_names cannot resolve,
+	// the probing database_name of the copy readings kept. It is applied
+	// in two parts, and neither may move.
+	//
+	// databaseClause, in samples, is the exact test. It runs after the LAG
+	// in deltas, so that each delta counts under the name of the reading
+	// that ends it: an unresolved dbid's fallback name can change between
+	// collections when the set of probing databases does, and filtering
+	// first would then drop the predecessor and lose a delta that the
+	// unfiltered request counts. It cannot run after totals: pg_stat_statements
+	// keeps a separate counter per dbid for one queryid, totals sums them,
+	// and a filter on the summed row would report every database's calls
+	// under the one that was asked for. Nor can the fallback half run
+	// inside readings, before the DISTINCT ON: the probing database_name
+	// differs between the copies of one counter, so filtering the copies
+	// would let each of them match its own probing database and report the
+	// one counter under every one of them (issue #508).
+	//
+	// readingsDatabaseClause, in readings, only discards the dbids that
+	// db_names names as some other database. It tests nothing but dbid,
+	// which is a partition key of the LAG, so it keeps or drops whole
+	// identities and cannot remove a predecessor; it spares the window the
+	// readings of every other monitored database. Both clauses are
+	// written as dbid tests against db_names rather than as a join, and
+	// the statement's name is only joined in deduped, once per queryid,
+	// because a join in readings or samples makes the planner hash-join
+	// over a sequential scan of the window instead of reading
+	// idx_pg_stat_statements_identity_time in order: db_names is a
+	// DISTINCT ON over a UNION ALL, which it estimates at 200 rows however
+	// few databases there are. Both clauses bind the same placeholder.
 	databaseClause := ""
+	readingsDatabaseClause := ""
 	if databaseName != "" {
-		databaseClause = fmt.Sprintf(
-			"WHERE database_name = $%d", len(filterArgs)+1)
+		databasePos := len(filterArgs) + 1
+		databaseClause = fmt.Sprintf(`WHERE d.dbid IN (
+                SELECT datid FROM db_names WHERE datname = $%[1]d)
+               OR (d.sample_database_name = $%[1]d
+                   AND d.dbid NOT IN (SELECT datid FROM db_names))`,
+			databasePos)
+		readingsDatabaseClause = fmt.Sprintf(`AND (pss.dbid IN (
+                    SELECT datid FROM db_names WHERE datname = $%[1]d)
+                   OR pss.dbid NOT IN (SELECT datid FROM db_names))`,
+			databasePos)
 		filterArgs = append(filterArgs, databaseName)
 	}
 
+	// latest is the most recent pg_stat_statements snapshot for the
+	// connection; the db_names, user_names and last_client lookups below
+	// are all anchored to it.
+	//
+	// db_names, described at statementDatabaseLookupSQL, resolves each
+	// statement's dbid to the name of the database it ran in.
+	//
+	// user_names resolves the role OIDs recorded in pg_stat_statements
+	// to names using what pg_stat_activity observed for this connection
+	// in the hour leading up to that snapshot. It is necessarily
+	// best-effort: an OID only appears in pg_stat_activity if the
+	// collector sampled a backend for that role inside that window, so a
+	// role that had no active backend sampled resolves to nothing and the
+	// query is reported with an empty username. It picks the most recently
+	// observed name per OID, so a role renamed within the window resolves
+	// to its current name rather than to whichever of the two names the
+	// planner happened to reach first.
+	//
+	// last_client attributes each queryid to the client most recently
+	// observed running it, through pg_stat_activity.query_id (collected
+	// since schema version 12; NULL before PostgreSQL 14 or with
+	// compute_query_id off, so such servers simply resolve nothing). It is
+	// best-effort in the same way: only statements in flight at sample
+	// time are ever seen.
+	//
+	// The key is the three-way tuple (query_id, datid, usesysid), not the
+	// queryid alone, because pg_stat_statements is itself keyed on
+	// (userid, dbid, queryid, toplevel): one queryid can appear once per
+	// database and role that ran the statement. Keying on the queryid
+	// alone would pick whichever backend was seen most recently across
+	// every database and role, so a caller filtering on one database could
+	// be shown a client that only ever connected to another. DISTINCT ON
+	// runs over the same tuple the join matches on, so last_client holds
+	// at most one row per tuple and the LEFT JOIN still cannot fan deduped
+	// out. The join hangs off latest_sample, which carries the dbid and
+	// userid of each statement's most recent sample in the window.
+	//
+	// A NULL client_addr means the backend arrived over a Unix-domain
+	// socket rather than that the client is unknown, so it is reported as
+	// "local", matching connectionGroupsQueryByClient. client_addr is
+	// therefore non-null for every row last_client observed, and a query
+	// never caught in flight is distinguished solely by a null
+	// client_observed_at.
+	//
+	// The window bound matters: pg_stat_activity has no index on datid,
+	// usesysid or query_id, so DISTINCT ON has to sort every row it reads,
+	// and without the bound that is every activity row in retention for
+	// the connection, twice per page (once each for the count and the
+	// page). Restricting the read to the last hour lets the
+	// (connection_id, collected_at) index return a few thousand rows that
+	// sort in memory instead of an external merge over hundreds of
+	// thousands. The optional queryid predicate is pushed into last_client
+	// for the same reason, since the query drill-down always supplies one.
+	// An index on (connection_id, query_id, collected_at DESC) WHERE
+	// query_id IS NOT NULL may be worth profiling later; note that
+	// metrics.pg_stat_activity is a partitioned parent, and a partitioned
+	// parent cannot take CREATE INDEX CONCURRENTLY in a single statement.
+	// All three lookups stay anchored to the latest snapshot rather than
+	// to the requested window: they are name lookups, not measurements,
+	// and keeping them where they are preserves the performance guard.
+	//
+	// readings, samples, totals and latest_sample turn the cumulative
+	// counters into figures for the requested window, on exactly the same
+	// principle as queryStatsSQLTemplate but for every queryid at once
+	// rather than one. pg_stat_statements exposes lifetime counters, so the
+	// value for a period is the sum of the differences between consecutive
+	// samples and not the reading of any single one. A single collection
+	// can hold several rows for the same queryid, because the view is keyed
+	// on (userid, dbid, queryid, toplevel) and each of those identities is
+	// an independent counter that can be reset on its own; the LAG is
+	// therefore partitioned by (queryid, userid, dbid, toplevel) and the
+	// deltas are summed afterwards. Summing first and differencing second
+	// would let a reset in one identity hide behind growth in its siblings:
+	// the summed delta stays positive, the guard in totals never fires, and
+	// the pre-reset total is silently subtracted from the post-reset one.
+	//
+	// database_name is deliberately not part of that identity. The probe
+	// runs in every database that has the extension installed, and each run
+	// reads the same cluster-wide view, so one counter lands in the table
+	// once per such database at the same collected_at, differing only in
+	// the database_name the probe connected through. Those copies are the
+	// same counter, not sibling identities: partitioning on database_name
+	// as well would difference each copy separately and the sums would then
+	// count every call once per database with the extension. readings
+	// keeps one copy per (queryid, userid, dbid, toplevel, collected_at),
+	// choosing the lowest database_name so that the choice is stable, and
+	// the LAG runs over that, in deltas. readings deliberately does not
+	// join db_names: that join turned the scan into a hash join over a
+	// sequential scan and cost the index order the DISTINCT ON and the LAG
+	// rely on. The statement's own database is resolved from dbid in
+	// deduped instead, once per statement, and the optional database
+	// filter, applied in samples once the deltas are taken, tests dbid
+	// against db_names without joining it.
+	//
+	// A sample pair whose call or time delta is negative is discarded,
+	// because a negative delta means the counters were reset by
+	// pg_stat_reset(), by a server restart or by the statement being
+	// evicted and re-entered, and the pre-reset totals cannot be compared
+	// with the post-reset ones. Dropping only the offending pair costs a
+	// single interval for that identity rather than poisoning the whole
+	// range, which matches the reset handling in
+	// metrics.BuildDerivedMetricsQuery. The row and block counters reset at
+	// the same moment as the call counter, so their deltas are additionally
+	// floored at zero rather than gating the pair, which keeps a surviving
+	// pair's calls and time intact. The first sample of each identity in
+	// the window has no predecessor, so its deltas are NULL and the
+	// comparison in totals drops it.
+	//
+	// The HAVING clause is what makes this a leaderboard for the window:
+	// a statement that was collected but not executed in the window has a
+	// summed call delta of zero and falls out of the result entirely.
+	//
+	// min_exec_time and max_exec_time are lifetime extremes that cannot be
+	// differenced, so they are read from the latest sample in the window
+	// alongside the identifying OIDs and the probing database name. That
+	// ORDER BY prefers a sample with calls in its interval, so a statement
+	// run in several databases is attributed to one that contributed calls
+	// rather than one that sat idle, which filtering by the label would
+	// then fail to find. The trailing dbid and userid only break ties between
+	// identities collected at the same instant, so the choice is stable.
+	// Ordering by either of them therefore
+	// sorts a windowed list on a lifetime value; that is a known wart, kept
+	// because dropping the order keys would be a breaking API change.
+	//
+	// The query text is deliberately not carried through the aggregation.
+	// It is by far the widest column in the table, and a window over
+	// 30 days of five-minute samples reads on the order of a million rows,
+	// so projecting it made every one of those rows about 270 bytes wide
+	// rather than about 85. That is what the samples CTE has to spill to
+	// temporary files, since it is read twice, and it also puts the text
+	// out of reach of any index of sensible size. Resolving it once per
+	// returned row instead, in the page statement below, cut a 30-day page
+	// from 11.5 to 5.8 seconds on a 2.6-million-row fixture: the samples
+	// spill fell from 368MB to 125MB and the scan became an index-only
+	// scan over idx_pg_stat_statements_identity_time, whose key order
+	// (connection_id, queryid, userid, dbid, toplevel, collected_at,
+	// database_name) is the ORDER BY of readings and so serves both the
+	// DISTINCT ON and the identity window without a sort. Note that the
+	// exclude_collector filter matches on the
+	// query text and therefore still forces a heap scan when it is
+	// requested; that path plans exactly as it did before.
+	//
+	// totals and latest_sample are declared MATERIALIZED deliberately.
+	// Neither the planner nor the statistics can see through the samples
+	// CTE, so both come out estimated at a single row; left inlined, the
+	// join between them plans as a nested loop that re-evaluates the
+	// DISTINCT ON over every sample in the window once per statement. On a
+	// 24-hour window of 57,000 samples that turned a 0.25-second statement
+	// into a 5-second one. Materializing costs one pass each and makes the
+	// cost proportional to the window rather than to the window times the
+	// number of distinct statements. samples itself is referenced twice, so
+	// PostgreSQL materializes it without being asked, and readings and
+	// deltas are each referenced once and inlined. The database filter
+	// cannot be pushed below the LAG in deltas, since database_name is not a
+	// partition key, so a filtered request takes its deltas over every
+	// reading in the window, as an unfiltered one does.
 	cte := fmt.Sprintf(`
-        WITH db_names AS (
-            SELECT DISTINCT datid, datname
+        WITH %s,
+        user_names AS (
+            SELECT DISTINCT ON (usesysid) usesysid, usename
             FROM metrics.pg_stat_activity
             WHERE connection_id = $1
-              AND datid IS NOT NULL
-              AND datname IS NOT NULL
+              AND collected_at >= (SELECT collected_at FROM latest)
+                  - INTERVAL '%s'
+              AND usesysid IS NOT NULL
+              AND usename IS NOT NULL
+            ORDER BY usesysid, collected_at DESC
+        ),
+        last_client AS (
+            SELECT DISTINCT ON (query_id, datid, usesysid)
+                query_id, datid, usesysid,
+                COALESCE(host(client_addr), 'local') AS client_addr,
+                client_hostname, collected_at
+            FROM metrics.pg_stat_activity
+            WHERE connection_id = $1
+              AND collected_at >= (SELECT collected_at FROM latest)
+                  - INTERVAL '%s'
+              AND query_id IS NOT NULL
+              %s
+            ORDER BY query_id, datid, usesysid, collected_at DESC
+        ),
+        readings AS (
+            SELECT DISTINCT ON (pss.queryid, pss.userid, pss.dbid,
+                                pss.toplevel, pss.collected_at)
+                pss.queryid, pss.userid, pss.dbid, pss.toplevel,
+                pss.collected_at,
+                pss.database_name AS sample_database_name,
+                pss.calls, pss.total_exec_time, pss.rows,
+                pss.shared_blks_hit, pss.shared_blks_read,
+                pss.min_exec_time, pss.max_exec_time
+            FROM metrics.pg_stat_statements pss
+            WHERE pss.connection_id = $1
+              AND pss.collected_at >= $2
+              AND pss.collected_at <= $3
+              %s
+              %s
+              %s
+            ORDER BY pss.queryid, pss.userid, pss.dbid, pss.toplevel,
+                     pss.collected_at, pss.database_name
+        ),
+        deltas AS (
+            SELECT
+                r.queryid, r.collected_at,
+                r.sample_database_name, r.dbid, r.userid,
+                r.min_exec_time, r.max_exec_time,
+                r.calls - LAG(r.calls) OVER identity AS delta_calls,
+                r.total_exec_time
+                    - LAG(r.total_exec_time) OVER identity AS delta_time,
+                r.rows - LAG(r.rows) OVER identity AS delta_rows,
+                r.shared_blks_hit
+                    - LAG(r.shared_blks_hit) OVER identity AS delta_hit,
+                r.shared_blks_read
+                    - LAG(r.shared_blks_read) OVER identity AS delta_read
+            FROM readings r
+            WINDOW identity AS (
+                PARTITION BY r.queryid, r.userid, r.dbid, r.toplevel
+                ORDER BY r.collected_at
+            )
+        ),
+        samples AS (
+            SELECT d.*
+            FROM deltas d
+            %s
+            ORDER BY d.queryid
+        ),
+        totals AS MATERIALIZED (
+            SELECT
+                queryid,
+                SUM(delta_calls)::bigint AS calls,
+                SUM(delta_time) AS total_exec_time,
+                SUM(GREATEST(delta_rows, 0))::bigint AS rows,
+                SUM(GREATEST(delta_hit, 0))::bigint AS shared_blks_hit,
+                SUM(GREATEST(delta_read, 0))::bigint AS shared_blks_read
+            FROM samples
+            WHERE delta_calls >= 0
+              AND delta_time >= 0
+            GROUP BY queryid
+            HAVING SUM(delta_calls) > 0
+        ),
+        latest_sample AS MATERIALIZED (
+            SELECT DISTINCT ON (queryid)
+                queryid, sample_database_name, dbid, userid,
+                min_exec_time, max_exec_time
+            FROM samples
+            ORDER BY queryid,
+                     COALESCE(delta_calls > 0 AND delta_time >= 0, false) DESC,
+                     collected_at DESC, dbid, userid
         ),
         deduped AS (
-            SELECT DISTINCT ON (pss.queryid)
-                pss.queryid::text,
-                COALESCE(dn.datname, pss.database_name) AS database_name,
-                pss.query, pss.calls, pss.total_exec_time,
-                pss.mean_exec_time, pss.rows,
-                pss.shared_blks_hit, pss.shared_blks_read
-            FROM metrics.pg_stat_statements pss
-            LEFT JOIN db_names dn ON pss.dbid = dn.datid
-            WHERE pss.connection_id = $1
-              AND pss.collected_at = (
-                  SELECT MAX(collected_at)
-                  FROM metrics.pg_stat_statements
-                  WHERE connection_id = $1
-              )
-              %s
-              %s
-            ORDER BY pss.queryid
-        )`, queryIDClause, excludeCollectorClause)
+            SELECT
+                t.queryid::text,
+                t.queryid AS sample_queryid,
+                ls.sample_database_name,
+                COALESCE(dn.datname, ls.sample_database_name) AS database_name,
+                COALESCE(un.usename, '') AS username,
+                t.calls, t.total_exec_time,
+                CASE WHEN t.calls > 0
+                     THEN t.total_exec_time / t.calls
+                     ELSE 0 END AS mean_exec_time,
+                ls.min_exec_time, ls.max_exec_time,
+                t.rows,
+                t.shared_blks_hit, t.shared_blks_read,
+                lc.client_addr, lc.client_hostname,
+                lc.collected_at AS client_observed_at
+            FROM totals t
+            JOIN latest_sample ls ON ls.queryid = t.queryid
+            LEFT JOIN db_names dn ON ls.dbid = dn.datid
+            LEFT JOIN user_names un ON ls.userid = un.usesysid
+            LEFT JOIN last_client lc
+                ON ls.queryid = lc.query_id
+               AND ls.dbid = lc.datid
+               AND ls.userid = lc.usesysid
+        )`, statementDatabaseLookupSQL, nameLookupWindowSQL,
+		nameLookupWindowSQL, lastClientQueryIDClause, queryIDClause,
+		excludeCollectorClause, readingsDatabaseClause, databaseClause)
 
 	// The total is obtained with a separate COUNT(*) over the same CTE
 	// rather than a COUNT(*) OVER () window on the page query. A window
@@ -1260,7 +1912,7 @@ func buildTopQueriesSQL(
 	// unavailable whenever the requested offset runs past the end of the
 	// result set, which is exactly the case a paging client needs the total
 	// for.
-	countSQL = cte + "\n        SELECT COUNT(*) FROM deduped " + databaseClause
+	countSQL = cte + "\n        SELECT COUNT(*) FROM deduped"
 
 	pageArgs = make([]any, 0, len(filterArgs)+2)
 	pageArgs = append(pageArgs, filterArgs...)
@@ -1271,16 +1923,49 @@ func buildTopQueriesSQL(
 	// order rather than a partial one. Without it, rows tying on the
 	// selected column could come back in any order, and successive pages of
 	// the same result set could then repeat a row or skip one entirely. The
-	// CTE dedupes with DISTINCT ON (pss.queryid), so queryid is unique
-	// across the result set and is therefore sufficient on its own; the
-	// cast in the CTE keeps the output column named queryid, which is what
-	// this clause resolves against.
+	// totals CTE groups by queryid, so queryid is unique across the result
+	// set and is therefore sufficient on its own; the cast in the CTE keeps
+	// the output column named queryid, which is what this clause resolves
+	// against.
+	//
+	// The query text is joined on afterwards rather than carried through
+	// the aggregation, for the reason given above the CTE. The lateral runs
+	// once per row of the page, never once per statement in the window,
+	// because it sits outside the LIMIT, and each run is a single-row index
+	// lookup on idx_pg_stat_statements_object, whose leading columns
+	// (connection_id, database_name, queryid) are exactly the equalities
+	// below and whose trailing collected_at DESC supplies the ordering. The
+	// join is LEFT so that a statement whose text was never captured, which
+	// the collector records as NULL, still appears on the page with an
+	// empty query; sample_queryid and sample_database_name carry the raw
+	// values the lookup needs, since the projected database_name may have
+	// been resolved to a different name through db_names.
 	pageSQL = fmt.Sprintf(`%s
-        SELECT * FROM deduped
-        %s
-        ORDER BY %s %s, queryid
-        LIMIT $%d OFFSET $%d
-    `, cte, databaseClause, orderCol, orderDir, limitPos, limitPos+1)
+        SELECT
+            page.queryid, page.database_name,
+            COALESCE(page.sample_database_name, ''), page.username,
+            qtext.query,
+            page.calls, page.total_exec_time, page.mean_exec_time,
+            page.min_exec_time, page.max_exec_time, page.rows,
+            page.shared_blks_hit, page.shared_blks_read,
+            page.client_addr, page.client_hostname, page.client_observed_at
+        FROM (
+            SELECT * FROM deduped
+            ORDER BY %s %s, queryid
+            LIMIT $%d OFFSET $%d
+        ) page
+        LEFT JOIN LATERAL (
+            SELECT pss.query
+            FROM metrics.pg_stat_statements pss
+            WHERE pss.connection_id = $1
+              AND pss.database_name = page.sample_database_name
+              AND pss.queryid = page.sample_queryid
+              AND pss.collected_at >= $2
+              AND pss.collected_at <= $3
+            ORDER BY pss.collected_at DESC
+            LIMIT 1
+        ) qtext ON TRUE
+    `, cte, orderCol, orderDir, limitPos, limitPos+1)
 
 	return countSQL, pageSQL, filterArgs, pageArgs
 }
@@ -1353,9 +2038,7 @@ func (h *PerfSummaryHandler) handleTopQueries(
 	}
 	orderCol, ok := validTopQueryOrderColumns[orderBy]
 	if !ok {
-		RespondError(w, http.StatusBadRequest,
-			"Invalid order_by: must be one of total_exec_time, calls, "+
-				"mean_exec_time, rows, shared_blks_hit, shared_blks_read")
+		RespondError(w, http.StatusBadRequest, topQueryOrderByError)
 		return
 	}
 
@@ -1372,8 +2055,12 @@ func (h *PerfSummaryHandler) handleTopQueries(
 		return
 	}
 
-	// Parse optional queryid filter
-	queryID := ParseQueryString(r, "queryid")
+	// Parse optional queryid filter; a value that is not a 64-bit integer
+	// is rejected with a 400 rather than silently matching nothing.
+	queryID, ok := parseQueryIDFilter(w, r)
+	if !ok {
+		return // error already sent
+	}
 
 	// Parse optional exclude_collector filter
 	excludeCollector := r.URL.Query().Get("exclude_collector") == "true"
@@ -1381,6 +2068,32 @@ func (h *PerfSummaryHandler) handleTopQueries(
 	// Parse optional database_name filter. The value is always bound as a
 	// parameter, never interpolated into the SQL text.
 	databaseName := ParseQueryString(r, "database_name")
+
+	// Parse time_range (default "1h"). A time_range of "custom" resolves
+	// against the explicit time_start and time_end timestamps, exactly as
+	// /metrics/query-stats and performance-summary do; ResolveTimeWindow is
+	// the single source of truth for what counts as a valid window, so its
+	// error message is returned verbatim. The figures reported for the
+	// window are summed counter deltas, so a statement that was collected
+	// but not executed inside it does not appear at all.
+	timeRange := ParseQueryString(r, "time_range")
+	if timeRange == "" {
+		timeRange = "1h"
+	}
+	window, err := metrics.ResolveTimeWindow(timeRange,
+		ParseQueryString(r, "time_start"),
+		ParseQueryString(r, "time_end"))
+	if err != nil {
+		RespondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	// The shared 366-day cap is far too generous for an aggregation whose
+	// cost is linear in the window; see maxAggregationTimeSpan. Presets are
+	// unaffected, because the longest of them is exactly 30 days.
+	if err := checkAggregationTimeSpan(window); err != nil {
+		RespondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
@@ -1395,32 +2108,22 @@ func (h *PerfSummaryHandler) handleTopQueries(
 			"Failed to query top queries")
 		return
 	}
-	// Roll back with a non-cancelable context so a canceled request
-	// context cannot trigger the pgx v5 close-of-closed-channel panic
-	// described in jackc/pgx#2470, which would leak the pooled
-	// connection in an aborted-transaction state. This endpoint takes
-	// several early returns between BEGIN and COMMIT, so the deferred
-	// rollback is well exercised. The other handlers in this file
-	// still pass the request context; converting them belongs in a
-	// deliberate sweep of its own rather than here.
-	defer tx.Rollback(context.Background()) //nolint:errcheck // Rollback is no-op if already committed
+	defer rollback.Tx(ctx, tx) //nolint:errcheck // no-op after commit
 
 	countQuery, query, filterArgs, pageArgs := buildTopQueriesSQL(
-		connID, queryID, databaseName, excludeCollector, orderCol, orderDir,
-		limit, offset)
+		connID, window, queryID, databaseName, excludeCollector, orderCol,
+		orderDir, limit, offset)
 
 	var totalCount int64
 	if err := tx.QueryRow(ctx, countQuery, filterArgs...).Scan(
 		&totalCount); err != nil {
-		log.Printf("[DEBUG] No top queries data for connection %d: %s", connID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connID is an integer and err is sanitized via logging.SanitizeForLog
-		respondEmptyTopQueries(w)
+		respondTopQueriesError(w, connID, err)
 		return
 	}
 
 	rows, err := tx.Query(ctx, query, pageArgs...)
 	if err != nil {
-		log.Printf("[DEBUG] No top queries data for connection %d: %s", connID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connID is an integer and err is sanitized via logging.SanitizeForLog
-		respondEmptyTopQueries(w)
+		respondTopQueriesError(w, connID, err)
 		return
 	}
 	defer rows.Close()
@@ -1434,9 +2137,12 @@ func (h *PerfSummaryHandler) handleTopQueries(
 		// being dropped as an unscannable row.
 		var queryText *string
 		if err := rows.Scan(
-			&row.QueryID, &row.DatabaseName, &queryText, &row.Calls,
-			&row.TotalExecTime, &row.MeanExecTime, &row.Rows,
+			&row.QueryID, &row.DatabaseName, &row.SampleDatabaseName,
+			&row.Username, &queryText,
+			&row.Calls, &row.TotalExecTime, &row.MeanExecTime,
+			&row.MinExecTime, &row.MaxExecTime, &row.Rows,
 			&row.SharedBlksHit, &row.SharedBlksRead,
+			&row.ClientAddr, &row.ClientHostname, &row.ClientObservedAt,
 		); err != nil {
 			log.Printf("[DEBUG] Error scanning top query row: %v", err)
 			continue
@@ -1466,13 +2172,348 @@ func (h *PerfSummaryHandler) handleTopQueries(
 // count for paged collection endpoints.
 const headerTotalCount = "X-Total-Count"
 
+// nameLookupWindowSQL is the interval literal, spliced into
+// buildTopQueriesSQL and statementDatabaseLookupSQL as a constant rather
+// than bound as a parameter, that bounds how far before the latest
+// pg_stat_statements snapshot the db_names, user_names and last_client
+// CTEs look for samples. It is a Go constant with no caller-supplied
+// content, so interpolating it into the statement text is safe.
+const nameLookupWindowSQL = "1 hour"
+
+// statementDatabaseLookupSQL is the pair of CTEs, latest and db_names,
+// that both buildTopQueriesSQL and queryStatsSQLTemplate use to resolve a
+// pg_stat_statements dbid to the name of the database the statement ran
+// in. It is written without the leading WITH so that each statement can
+// place it first in its own CTE list, and it expects the connection ID as
+// $1. It contains no caller-supplied content.
+//
+// The database_name column recorded on a pg_stat_statements row is the
+// database the probe connected through, not the statement's database: the
+// probe runs in every database with the extension and reads the same
+// cluster-wide view each time, so a counter lands once per probing
+// database. The statement's own database is its dbid, which db_names maps
+// to a name from two sources. metrics.pg_stat_database is the primary one:
+// the collector records it in every database it monitors at every
+// collection, so it knows the OID of every monitored database whether or
+// not a backend happened to be caught in it. metrics.pg_stat_activity is
+// read as well because it is sampled server-wide, so it can also name a
+// database the collector never connects to, such as one the monitoring
+// role holds no CONNECT privilege on, provided a backend was seen there.
+// Issue #508 is the case this closes: before it, only pg_stat_activity was
+// consulted, and a statement whose database had no backend sampled in the
+// hour fell back to the probing database_name.
+//
+// Both reads are bounded to the nameLookupWindowSQL leading up to the
+// latest pg_stat_statements snapshot, because neither table has an index on
+// the OID and DISTINCT ON would otherwise sort every row in retention. The
+// upper bound also keeps a name observed after statement collection stopped
+// from renaming the statements already recorded. The
+// most recent observation of an OID wins whichever table it came from, so
+// a database renamed within the window resolves to its current name; the
+// trailing datname only makes a tie at one instant stable.
+//
+// An OID neither source knows still resolves to nothing, and the callers
+// fall back to the probing database_name. They apply that fallback after
+// keeping one copy of each counter per collection, so the counter is
+// reported under a single name rather than under every probing database.
+const statementDatabaseLookupSQL = `latest AS (
+            SELECT MAX(collected_at) AS collected_at
+            FROM metrics.pg_stat_statements
+            WHERE connection_id = $1
+        ),
+        db_names AS (
+            SELECT DISTINCT ON (datid) datid, datname
+            FROM (
+                SELECT datid, datname, collected_at
+                FROM metrics.pg_stat_database
+                WHERE connection_id = $1
+                  AND collected_at >= (SELECT collected_at FROM latest)
+                      - INTERVAL '` + nameLookupWindowSQL + `'
+                  AND collected_at <= (SELECT collected_at FROM latest)
+                  AND datid IS NOT NULL
+                  AND datname IS NOT NULL
+                UNION ALL
+                SELECT datid, datname, collected_at
+                FROM metrics.pg_stat_activity
+                WHERE connection_id = $1
+                  AND collected_at >= (SELECT collected_at FROM latest)
+                      - INTERVAL '` + nameLookupWindowSQL + `'
+                  AND collected_at <= (SELECT collected_at FROM latest)
+                  AND datid IS NOT NULL
+                  AND datname IS NOT NULL
+            ) observed
+            ORDER BY datid, collected_at DESC, datname
+        )`
+
 // respondEmptyTopQueries returns the empty top-queries result used when the
-// underlying metrics tables are missing or the query fails. The endpoint
-// treats missing metrics data as "no rows" rather than an error, so the
-// total count is reported as zero.
+// underlying metrics tables are missing. The endpoint treats an absent
+// metrics schema as "no rows" rather than an error, so the total count is
+// reported as zero.
 func respondEmptyTopQueries(w http.ResponseWriter) {
 	w.Header().Set(headerTotalCount, "0")
 	RespondJSON(w, http.StatusOK, []TopQueryRow{})
+}
+
+// respondTopQueriesError turns a failure from either half of the
+// top-queries aggregation into a response. Only a missing metrics schema
+// is reported as an empty result, matching handleQueryStats: a workbench
+// whose collector has never run should render an empty panel rather than a
+// failure. Every other failure, and a statement timeout on this windowed
+// aggregation is a realistic one, is reported as a 500 and logged at
+// [ERROR], so that an operator can see a timeout storm instead of reading
+// it as a quiet stretch with no query activity.
+func respondTopQueriesError(w http.ResponseWriter, connID int, err error) {
+	if isUndefinedTableError(err) {
+		log.Printf("[DEBUG] No top queries data for connection %d: %s", connID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connID is an integer and err is sanitized via logging.SanitizeForLog
+		respondEmptyTopQueries(w)
+		return
+	}
+	log.Printf("[ERROR] Failed to query top queries for connection %d: %s", connID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connID is an integer and err is sanitized via logging.SanitizeForLog
+	RespondError(w, http.StatusInternalServerError,
+		"Failed to query top queries")
+}
+
+// queryStatsSQLTemplate computes the period-scoped statistics for a single
+// query.
+//
+// pg_stat_statements exposes cumulative counters, so the figures for a time
+// range are the summed deltas between consecutive samples rather than the
+// values of any single sample. One collection can hold several rows for the
+// same queryid (pg_stat_statements keeps one per database, role, and
+// toplevel flag, identified by dbid, userid and toplevel), and each of those
+// identities is an independent counter that can be reset on its own, so the
+// LAG is partitioned by identity and the deltas are summed afterwards. Summing first and differencing second would let a
+// reset in one identity hide behind growth in its siblings: the summed
+// delta stays positive, the guard below never fires, and the pre-reset
+// total is silently subtracted from the post-reset one.
+//
+// Sample pairs whose call or time delta is negative are discarded: a negative
+// delta means the counters were reset by pg_stat_reset() or by a server
+// restart, and the pre-reset totals cannot be compared with the post-reset
+// ones. Dropping only the offending pair costs a single interval for that
+// identity rather than poisoning the whole range, which matches the reset
+// handling in metrics.BuildDerivedMetricsQuery. The first sample of each
+// identity in the range has no predecessor and so contributes nothing,
+// exactly as in the transaction throughput query.
+//
+// The final row reports the summed deltas plus the number of usable pairs, so
+// the caller can distinguish "no usable data at all" from "data, but no calls
+// in this period".
+//
+// The probing database_name is not part of the identity, for the reason
+// given at statementDatabaseLookupSQL: one counter is stored once per
+// database the probe ran in, and differencing each copy separately would
+// count every call once per such database. readings therefore keeps one
+// copy per identity and collection, as buildTopQueriesSQL does, and without
+// joining db_names, which would cost the index order; valid_deltas resolves
+// the statement's own database from dbid instead.
+//
+// The first %s is statementDatabaseLookupSQL. The second is the optional
+// database_name clause built by buildQueryStatsSQL, applied in valid_deltas
+// to the name resolved from dbid, so that the drill-down, which binds the
+// database name the top-queries list reported for the statement, finds the
+// statement's counters whichever database they were probed through (issue
+// #508). It is applied after the LAG, as in buildTopQueriesSQL, so that a
+// fallback name that changes between collections cannot drop a delta. The
+// scan binds connection_id and queryid, the leading columns of
+// idx_pg_stat_statements_identity_time, whose key order is also the ORDER
+// BY of readings.
+const queryStatsSQLTemplate = `
+        WITH %s,
+        readings AS (
+            SELECT DISTINCT ON (pss.userid, pss.dbid, pss.toplevel,
+                                pss.collected_at)
+                pss.userid, pss.dbid, pss.toplevel, pss.collected_at,
+                pss.database_name AS sample_database_name,
+                pss.calls, pss.total_exec_time
+            FROM metrics.pg_stat_statements pss
+            WHERE pss.connection_id = $1
+              AND pss.queryid = $2
+              AND pss.collected_at >= $3
+              AND pss.collected_at <= $4
+            ORDER BY pss.userid, pss.dbid, pss.toplevel, pss.collected_at,
+                     pss.database_name
+        ),
+        samples AS (
+            SELECT
+                dbid,
+                sample_database_name,
+                calls,
+                total_exec_time,
+                LAG(calls) OVER identity AS prev_calls,
+                LAG(total_exec_time) OVER identity AS prev_time
+            FROM readings
+            WINDOW identity AS (
+                PARTITION BY userid, dbid, toplevel
+                ORDER BY collected_at
+            )
+        ),
+        valid_deltas AS (
+            SELECT
+                (calls - prev_calls) AS delta_calls,
+                (total_exec_time - prev_time) AS delta_time
+            FROM samples s
+            LEFT JOIN db_names dn ON s.dbid = dn.datid
+            WHERE prev_calls IS NOT NULL
+              AND (calls - prev_calls) >= 0
+              AND (total_exec_time - prev_time) >= 0
+              %s
+        )
+        SELECT COUNT(*),
+               COALESCE(SUM(delta_calls), 0),
+               COALESCE(SUM(delta_time), 0)
+        FROM valid_deltas
+    `
+
+// buildQueryStatsSQL returns the query-stats statement and its arguments.
+// databaseName, when non-empty, is bound as a fifth parameter; it is never
+// interpolated into the SQL text.
+func buildQueryStatsSQL(
+	connID int,
+	queryID int64,
+	window metrics.TimeWindow,
+	databaseName string,
+) (sql string, args []any) {
+	args = []any{connID, queryID, window.Start, window.End}
+	databaseClause := ""
+	if databaseName != "" {
+		databaseClause = fmt.Sprintf(
+			"AND COALESCE(dn.datname, s.sample_database_name) = $%d",
+			len(args)+1)
+		args = append(args, databaseName)
+	}
+	return fmt.Sprintf(queryStatsSQLTemplate, statementDatabaseLookupSQL,
+		databaseClause), args
+}
+
+// buildQueryStats turns the summed deltas into the response body. avg is
+// reported as null (a nil pointer) when there were no usable sample pairs or
+// no calls at all in the period, so that the client can tell "no data" apart
+// from a genuine zero.
+func buildQueryStats(
+	queryID string,
+	pairs, calls int64,
+	totalTime float64,
+) QueryStatsResponse {
+	resp := QueryStatsResponse{
+		QueryID:       queryID,
+		Calls:         calls,
+		TotalExecTime: roundTo(totalTime, 3),
+	}
+	if pairs > 0 && calls > 0 {
+		avg := roundTo(totalTime/float64(calls), 3)
+		resp.AvgExecTime = &avg
+	}
+	return resp
+}
+
+// handleQueryStats handles GET /api/v1/metrics/query-stats, returning the
+// average execution time of a single query over the selected time range.
+// Unlike the mean_exec_time column of pg_stat_statements, which is a
+// cumulative lifetime average, this figure covers only the requested period.
+func (h *PerfSummaryHandler) handleQueryStats(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	if !RequireGET(w, r) {
+		return
+	}
+
+	connectionIDs := h.parseConnectionIDs(w, r)
+	if connectionIDs == nil {
+		return
+	}
+	if len(connectionIDs) != 1 {
+		RespondError(w, http.StatusBadRequest,
+			"Exactly one connection_id is required")
+		return
+	}
+	connID := connectionIDs[0]
+
+	rbacChecker := auth.NewRBACCheckerWithSharing(h.authStore, h.datastore.GetConnectionSharingInfo)
+	canAccess, _ := rbacChecker.CanAccessConnection(r.Context(), connID)
+	if !canAccess {
+		RespondError(w, http.StatusForbidden,
+			fmt.Sprintf("Permission denied: you do not have access to connection %d", connID))
+		return
+	}
+
+	// The identifier is parsed to an int64 and bound uncast so that the
+	// comparison can use the queryid index; the response echoes it back
+	// as a decimal string because JavaScript cannot hold it exactly.
+	queryID, ok := parseQueryIDFilter(w, r)
+	if !ok {
+		return // error already sent
+	}
+	if queryID == nil {
+		RespondError(w, http.StatusBadRequest, "queryid is required")
+		return
+	}
+	queryIDText := strconv.FormatInt(*queryID, 10)
+
+	// Parse time_range (default "1h"). A time_range of "custom" resolves
+	// against the explicit time_start and time_end timestamps, exactly as
+	// /metrics/query does; ResolveTimeWindow is the single source of truth
+	// for what counts as a valid window, so its error message is returned
+	// verbatim.
+	timeRange := ParseQueryString(r, "time_range")
+	if timeRange == "" {
+		timeRange = "1h"
+	}
+	window, err := metrics.ResolveTimeWindow(timeRange,
+		ParseQueryString(r, "time_start"),
+		ParseQueryString(r, "time_end"))
+	if err != nil {
+		RespondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// Optional database_name filter, always bound as a parameter. It
+	// matches the statement's own database, resolved from its dbid, which
+	// is the name the top-queries list reports for the statement.
+	databaseName := ParseQueryString(r, "database_name")
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	sql, args := buildQueryStatsSQL(connID, *queryID, window, databaseName)
+
+	var pairs, calls int64
+	var totalTime float64
+	err = h.datastore.GetPool().QueryRow(ctx, sql, args...).Scan(
+		&pairs, &calls, &totalTime)
+	if err != nil {
+		// Missing metrics tables are treated as "no data" rather than an
+		// error, matching the top-queries endpoint: a workbench whose
+		// collector has never run should render an empty panel, not a
+		// failure. Any other failure (a statement timeout, a lost
+		// connection) is reported as such, so that the client can show an
+		// error rather than an idle query.
+		if isUndefinedTableError(err) {
+			log.Printf("[DEBUG] No query stats for connection %d: %s", connID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connID is an integer and err is sanitized via logging.SanitizeForLog
+			RespondJSON(w, http.StatusOK, buildQueryStats(queryIDText, 0, 0, 0))
+			return
+		}
+		log.Printf("[ERROR] Failed to query stats for connection %d: %s", connID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connID is an integer and err is sanitized via logging.SanitizeForLog
+		RespondError(w, http.StatusInternalServerError,
+			"Failed to query query statistics")
+		return
+	}
+
+	RespondJSON(w, http.StatusOK,
+		buildQueryStats(queryIDText, pairs, calls, totalTime))
+}
+
+// pgErrCodeUndefinedTable is the SQLSTATE PostgreSQL returns when a
+// statement names a relation that does not exist, which for the metrics
+// endpoints means the collector has never created its schema.
+const pgErrCodeUndefinedTable = "42P01"
+
+// isUndefinedTableError reports whether err is a PostgreSQL undefined_table
+// error, at any depth of wrapping.
+func isUndefinedTableError(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == pgErrCodeUndefinedTable
 }
 
 // roundTo rounds a float64 to the specified number of decimal places.

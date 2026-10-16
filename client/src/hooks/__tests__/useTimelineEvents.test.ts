@@ -43,19 +43,21 @@ function makeTimelineEvents(): TimelineEvent[] {
     return [
         {
             id: 1,
-            event_type: 'alert',
+            event_type: 'alert_fired',
             connection_id: 1,
+            server_name: 'node-1',
             title: 'High CPU alert',
-            description: 'CPU usage exceeded 90%',
+            summary: 'CPU usage exceeded 90%',
             severity: 'warning',
-            timestamp: '2024-01-01T12:00:00Z',
+            occurred_at: '2024-01-01T12:00:00Z',
         },
         {
             id: 2,
             event_type: 'restart',
             connection_id: 1,
+            server_name: 'node-1',
             title: 'Server restart',
-            timestamp: '2024-01-01T11:00:00Z',
+            occurred_at: '2024-01-01T11:00:00Z',
         },
     ];
 }

@@ -8,17 +8,27 @@
  *-------------------------------------------------------------------------
  */
 
+import type { Palette } from '@mui/material/styles';
 import { EVENT_TYPE_CONFIG } from './config';
 import { resolveTimeRangeBounds } from '../../utils/timelineRange';
+import type { TimelineTimeRange } from '../../utils/timelineRange';
+import type {
+    EventCluster,
+    ResolvedEventConfig,
+    TimeMarker,
+    TimelineEvent,
+} from './types';
 
 /**
  * Resolve a dotted path like 'primary.main' from the theme palette
  */
-export const resolveColor = (palette, colorKey: string): string => {
+export const resolveColor = (palette: Palette | undefined, colorKey: string): string => {
     const parts = colorKey.split('.');
-    let value = palette;
+    let value: unknown = palette;
     for (const part of parts) {
-        value = value?.[part];
+        value = typeof value === 'object' && value !== null
+            ? (value as Record<string, unknown>)[part]
+            : undefined;
     }
     return typeof value === 'string' ? value : palette?.primary?.main ?? '#1976d2';
 };
@@ -26,7 +36,10 @@ export const resolveColor = (palette, colorKey: string): string => {
 /**
  * Get event configuration with potential severity override, resolved against theme
  */
-export const getEventConfig = (event, palette) => {
+export const getEventConfig = (
+    event: TimelineEvent,
+    palette?: Palette,
+): ResolvedEventConfig => {
     const config = EVENT_TYPE_CONFIG[event.event_type] || EVENT_TYPE_CONFIG.config_change;
 
     let colorKey = config.colorKey;
@@ -34,9 +47,10 @@ export const getEventConfig = (event, palette) => {
 
     // Handle severity-based color and icon for alerts
     if (event.event_type === 'alert_fired' && config.getSeverityColorKey) {
-        const severity = event.details?.severity;
+        const rawSeverity = event.details?.severity;
+        const severity = typeof rawSeverity === 'string' ? rawSeverity : '';
         colorKey = config.getSeverityColorKey(severity);
-        icon = config.getSeverityIcon(severity);
+        icon = config.getSeverityIcon?.(severity) ?? icon;
     }
 
     return {
@@ -50,11 +64,11 @@ export const getEventConfig = (event, palette) => {
 /**
  * Format timestamp for display
  */
-export const formatEventTime = (timestamp) => {
+export const formatEventTime = (timestamp?: string): string => {
     if (!timestamp) {return '';}
     const date = new Date(timestamp);
     const now = new Date();
-    const diffMs = now - date;
+    const diffMs = now.getTime() - date.getTime();
     const diffMins = Math.floor(diffMs / (1000 * 60));
     const diffHours = Math.floor(diffMins / 60);
     const diffDays = Math.floor(diffHours / 24);
@@ -70,7 +84,7 @@ export const formatEventTime = (timestamp) => {
 /**
  * Format full timestamp for detail view
  */
-export const formatFullTime = (timestamp) => {
+export const formatFullTime = (timestamp?: string): string => {
     if (!timestamp) {return '';}
     const date = new Date(timestamp);
     return date.toLocaleString(undefined, {
@@ -86,7 +100,11 @@ export const formatFullTime = (timestamp) => {
 /**
  * Calculate position of event on timeline as percentage
  */
-export const calculatePosition = (eventTime, startTime, endTime) => {
+export const calculatePosition = (
+    eventTime: string,
+    startTime: Date,
+    endTime: Date,
+): number => {
     const eventTs = new Date(eventTime).getTime();
     const startTs = startTime.getTime();
     const endTs = endTime.getTime();
@@ -103,12 +121,17 @@ export const calculatePosition = (eventTime, startTime, endTime) => {
  * bounds the canvas draws and the bounds the API is queried with cannot
  * drift apart.
  */
-export const getTimeRangeBounds = (timeRange) => resolveTimeRangeBounds(timeRange);
+export const getTimeRangeBounds = (timeRange: TimelineTimeRange) => resolveTimeRangeBounds(timeRange);
 
 /**
  * Cluster nearby events
  */
-export const clusterEvents = (events, startTime, endTime, minDistancePercent = 2) => {
+export const clusterEvents = (
+    events: TimelineEvent[] | null | undefined,
+    startTime: Date,
+    endTime: Date,
+    minDistancePercent = 2,
+): EventCluster[] => {
     if (!events || events.length === 0) {return [];}
 
     // Sort by timestamp
@@ -116,8 +139,8 @@ export const clusterEvents = (events, startTime, endTime, minDistancePercent = 2
         (a, b) => new Date(a.occurred_at).getTime() - new Date(b.occurred_at).getTime()
     );
 
-    const clusters = [];
-    let currentCluster = null;
+    const clusters: EventCluster[] = [];
+    let currentCluster: EventCluster | null = null;
 
     sorted.forEach((event) => {
         const position = calculatePosition(event.occurred_at, startTime, endTime);
@@ -155,8 +178,12 @@ export const clusterEvents = (events, startTime, endTime, minDistancePercent = 2
 /**
  * Generate time axis markers
  */
-export const generateTimeMarkers = (startTime, endTime, count = 5) => {
-    const markers = [];
+export const generateTimeMarkers = (
+    startTime: Date,
+    endTime: Date,
+    count = 5,
+): TimeMarker[] => {
+    const markers: TimeMarker[] = [];
     const range = endTime.getTime() - startTime.getTime();
     const step = range / (count - 1);
 
@@ -164,7 +191,7 @@ export const generateTimeMarkers = (startTime, endTime, count = 5) => {
         const time = new Date(startTime.getTime() + step * i);
         const position = (i / (count - 1)) * 100;
 
-        let label;
+        let label: string;
         if (range <= 60 * 60 * 1000) {
             // 1 hour or less - show time
             label = time.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });

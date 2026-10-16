@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -138,5 +139,76 @@ func TestReloadMissingPasswordFileAbortsReload(t *testing.T) {
 	}
 	if callbackRan {
 		t.Error("onReload callback ran despite failed reload")
+	}
+}
+
+// TestReloadRefusesWithoutAUsableFile covers the two refusals that come
+// before validation: no file to read, and a file that will not parse.
+// Each keeps the previous configuration.
+func TestReloadRefusesWithoutAUsableFile(t *testing.T) {
+	initial := defaultConfig()
+
+	rc := NewReloadableConfig(initial, "", CLIFlags{})
+	if err := rc.Reload(); err == nil || !strings.Contains(err.Error(), "no configuration file path set") {
+		t.Errorf("Reload() with no path = %v, want a refusal", err)
+	}
+
+	path := writeTempConfig(t, "http: [unterminated\n")
+	rc = NewReloadableConfig(initial, path, CLIFlags{ConfigFileSet: true, ConfigFile: path})
+	if err := rc.Reload(); err == nil || !strings.Contains(err.Error(), "failed to load configuration") {
+		t.Errorf("Reload() of malformed YAML = %v, want a load failure", err)
+	}
+	if rc.Get() != initial {
+		t.Error("a refused reload swapped the configuration")
+	}
+}
+
+// TestReloadReportsADatastoreThatWasRemoved checks the reload log when
+// the new file drops the database block the server started with.
+func TestReloadReportsADatastoreThatWasRemoved(t *testing.T) {
+	initial := defaultConfig()
+	initial.Database = &DatabaseConfig{User: "workbench", Host: "localhost", Port: 5432, Database: "workbench"}
+	path := writeTempConfig(t, "http:\n  address: \":8080\"\n")
+	rc := NewReloadableConfig(initial, path, CLIFlags{ConfigFileSet: true, ConfigFile: path})
+
+	var err error
+	out := captureStderr(t, func() { err = rc.Reload() })
+	if err != nil {
+		t.Fatalf("Reload() = %v", err)
+	}
+	for _, want := range []string{"Database: not configured", "Database configuration changed"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected stderr to contain %q, got:\n%s", want, out)
+		}
+	}
+}
+
+// TestReloadReportsNonAuthChanges covers the HTTP, TLS and provider
+// changes logRestartRequiredSettings reports alongside the OIDC ones.
+func TestReloadReportsNonAuthChanges(t *testing.T) {
+	old := defaultConfig()
+	cur := defaultConfig()
+	cur.HTTP.Address = ":9443"
+	cur.HTTP.TLS.Enabled = !old.HTTP.TLS.Enabled
+	cur.HTTP.TLS.CertFile = "/etc/workbench/new-cert.pem"
+	cur.HTTP.TLS.KeyFile = "/etc/workbench/new-key.pem"
+	cur.LLM.Provider = "ollama"
+	cur.LLM.Model = "a-different-model"
+	cur.Embedding.Provider = "voyage"
+
+	rc := &ReloadableConfig{config: old, startup: old}
+	out := captureStderr(t, func() { rc.logRestartRequiredSettings(cur) })
+	for _, want := range []string{
+		"WARNING: http.address changed - requires restart",
+		"WARNING: http.tls.enabled changed - requires restart",
+		"WARNING: http.tls.cert_file changed - requires restart",
+		"WARNING: http.tls.key_file changed - requires restart",
+		"NOTE: llm.provider changed to ollama",
+		"NOTE: llm.model changed to a-different-model",
+		"NOTE: embedding.provider changed to voyage",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected stderr to contain %q, got:\n%s", want, out)
+		}
 	}
 }

@@ -35,14 +35,22 @@ import AdminAlertRules from './AdminAlertRules';
 import AdminEmailChannels from './AdminEmailChannels';
 import AdminSlackChannels from './AdminSlackChannels';
 import AdminMattermostChannels from './AdminMattermostChannels';
+import AdminTelegramChannels from './AdminTelegramChannels';
 import AdminWebhookChannels from './AdminWebhookChannels';
 import AdminMemories from './AdminMemories';
+import AdminAuditLog from './AdminAuditLog';
 import SlideTransition from '../shared/SlideTransition';
 
 interface NavItem {
     id: string;
     label: string;
     permission: string;
+    /**
+     * When true the item is only shown to superusers, whatever
+     * permissions the user otherwise holds. Used for screens the
+     * server itself restricts to superusers, such as the audit log.
+     */
+    superuserOnly?: boolean;
     Component: React.FC;
 }
 
@@ -61,6 +69,7 @@ const NAV_SECTIONS: NavSection[] = [
             { id: 'groups', label: 'Groups', permission: 'manage_groups', Component: AdminGroups },
             { id: 'permissions', label: 'Permissions', permission: 'manage_permissions', Component: AdminPermissions },
             { id: 'token_scopes', label: 'Tokens', permission: 'manage_token_scopes', Component: AdminTokenScopes },
+            { id: 'audit_log', label: 'Audit Log', permission: '', superuserOnly: true, Component: AdminAuditLog },
         ],
     },
     {
@@ -76,6 +85,7 @@ const NAV_SECTIONS: NavSection[] = [
             { id: 'email_channels', label: 'Email Channels', permission: 'manage_notification_channels', Component: AdminEmailChannels },
             { id: 'slack_channels', label: 'Slack Channels', permission: 'manage_notification_channels', Component: AdminSlackChannels },
             { id: 'mattermost_channels', label: 'Mattermost Channels', permission: 'manage_notification_channels', Component: AdminMattermostChannels },
+            { id: 'telegram_channels', label: 'Telegram Channels', permission: 'manage_notification_channels', Component: AdminTelegramChannels },
             { id: 'webhook_channels', label: 'Webhook Channels', permission: 'manage_notification_channels', Component: AdminWebhookChannels },
         ],
     },
@@ -117,6 +127,12 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ open, onClose }) => {
         return allSections.map((section) => ({
             ...section,
             items: section.items.filter((item) => {
+                // Superuser-only items are hidden from everyone else,
+                // whatever other permissions they hold, because the
+                // server refuses the underlying endpoint anyway.
+                if (item.superuserOnly) {
+                    return !!user?.isSuperuser;
+                }
                 // Items with visibleToAll on the section are shown to
                 // every authenticated user (no permission check needed).
                 if (section.visibleToAll) {

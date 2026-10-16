@@ -255,6 +255,10 @@ const TableLeaderboardSection: React.FC<DatabaseSectionProps> = ({
             limit: '10',
             order_by: activeSortOption.orderBy,
             order: activeSortOption.order,
+            // Leave out pg_catalog, information_schema and TOAST
+            // tables, as pg_stat_user_tables does, so catalog objects
+            // cannot crowd user tables out of the top ten (issue #499).
+            exclude_system_schemas: 'true',
         });
         const url = `/api/v1/metrics/latest?${params.toString()}`;
 

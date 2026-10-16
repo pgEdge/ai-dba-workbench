@@ -113,11 +113,9 @@ Returns TSV data with:
 				// RBAC: verify the caller may access this connection before
 				// reading its effective thresholds. Missing and denied cases
 				// share a message to avoid an existence oracle.
-				if rbacChecker != nil {
-					canAccess, _ := rbacChecker.CanAccessConnection(ctx, cid)
-					if !canAccess {
-						return mcp.NewToolError("connection not found or not accessible")
-					}
+				canAccess, _ := rbacChecker.CanAccessConnection(ctx, cid)
+				if !canAccess {
+					return mcp.NewToolError("connection not found or not accessible")
 				}
 				connectionID = &cid
 			}

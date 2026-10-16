@@ -8,7 +8,8 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useMemo } from 'react';
+import type React from 'react';
+import { useState, useMemo } from 'react';
 import {
     Alert,
     Box,
@@ -33,22 +34,23 @@ import {
     ACK_FALSE_POSITIVE_TITLE_SX,
     ACK_FALSE_POSITIVE_DESC_SX,
 } from './styles';
+import type { AcknowledgeDialogProps } from './types';
 
 /**
  * AcknowledgeDialog - Dialog for entering ack reason and false positive flag
  */
-const AcknowledgeDialog = ({ open, alert, alerts, onClose, onConfirm, onConfirmMultiple }) => {
+const AcknowledgeDialog: React.FC<AcknowledgeDialogProps> = ({ open, alert, alerts, onClose, onConfirm, onConfirmMultiple }) => {
     const theme = useTheme();
     const [message, setMessage] = useState('');
     const [falsePositive, setFalsePositive] = useState(false);
 
-    const isGroupAck = alerts && alerts.length > 1;
+    const isGroupAck = !!alerts && alerts.length > 1;
 
     const handleConfirm = () => {
-        if (isGroupAck && onConfirmMultiple) {
+        if (isGroupAck && alerts && onConfirmMultiple) {
             onConfirmMultiple(alerts.map(a => a.id), message, falsePositive);
-        } else {
-            onConfirm(alert?.id, message, falsePositive);
+        } else if (alert) {
+            onConfirm(alert.id, message, falsePositive);
         }
         setMessage('');
         setFalsePositive(false);

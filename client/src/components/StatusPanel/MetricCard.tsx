@@ -8,7 +8,8 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useMemo } from 'react';
+import type React from 'react';
+import { useMemo } from 'react';
 import {
     Box,
     Typography,
@@ -22,11 +23,12 @@ import {
 } from '@mui/icons-material';
 import { METRIC_TREND_CONTAINER_SX } from './styles';
 import { METRIC_LABEL_SX, METRIC_VALUE_BASE_SX } from '../../theme';
+import type { MetricCardProps } from './types';
 
 /**
  * MetricCard - Display a key metric with trend indicator
  */
-const MetricCard = ({ label, value, trend, trendValue, icon: Icon, color }) => {
+const MetricCard: React.FC<MetricCardProps> = ({ label, value, trend, trendValue, icon: Icon, color }) => {
     const theme = useTheme();
     const TrendIcon = trend === 'up' ? TrendingUpIcon : TrendingDownIcon;
     const trendColor = trend === 'up' ? theme.palette.success.main : theme.palette.error.main;

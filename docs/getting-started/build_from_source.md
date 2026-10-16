@@ -389,7 +389,7 @@ Conversation store: PostgreSQL datastore
 LLM HTTP client: timeout=2m0s
 AI Overview: DISABLED (requires datastore and LLM configuration)
 Starting MCP server in HTTP mode on :8080
-LLM Proxy: ENABLED (provider: anthropic, model: claude-sonnet-4-5)
+LLM Proxy: ENABLED (provider: anthropic, model: claude-sonnet-5)
 Knowledgebase: DISABLED
 MCP tool REST bridge: ENABLED
 Conversation history: ENABLED
@@ -477,7 +477,7 @@ Starting alerter engine...
 [alerter] Threshold evaluator started (interval: 1m0s)
 [alerter] Baseline calculator started (interval: 1h0m0s)
 [alerter] Connection error evaluator started (interval: 30s)
-[alerter] Calculating baselines for 0 connections, 28 rules (lookback: 7 days)
+[alerter] Calculating baselines for 0 connections, 28 rules (lookback: 15 days)
 [alerter] Baseline calculation complete
 ```
 

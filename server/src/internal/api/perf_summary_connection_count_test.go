@@ -23,14 +23,15 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/database"
 )
 
-// runConnectionCount executes queryConnectionCount in the same read-only
-// transaction shape handlePerfSummary uses, so the helper is exercised
-// exactly as it is in production.
+// runConnectionCount executes queryConnectionCount over the given window
+// in the same read-only transaction shape handlePerfSummary uses, so the
+// helper is exercised exactly as it is in production.
 func runConnectionCount(
 	t *testing.T,
 	h *PerfSummaryHandler,
 	pool *pgxpool.Pool,
 	connID int,
+	startTime, endTime time.Time,
 ) int {
 	t.Helper()
 
@@ -41,7 +42,7 @@ func runConnectionCount(
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // rollback after read is a no-op
 
-	return h.queryConnectionCount(ctx, tx, connID)
+	return h.queryConnectionCount(ctx, tx, connID, startTime, endTime)
 }
 
 // TestQueryConnectionCount_SumsLatestSnapshot verifies that the comparative
@@ -82,8 +83,74 @@ func TestQueryConnectionCount_SumsLatestSnapshot(t *testing.T) {
         (connection_id, collected_at, datname, numbackends)
         VALUES ($1, $2, 'appdb', 40)`, otherConnID, latest)
 
-	if got := runConnectionCount(t, h, pool, connID); got != 8 {
+	if got := runConnectionCount(
+		t, h, pool, connID, now.Add(-1*time.Hour), now); got != 8 {
 		t.Errorf("queryConnectionCount = %d, want 8", got)
+	}
+}
+
+// TestQueryConnectionCount_HonoursWindow verifies that the count follows
+// the selected time window rather than always reporting the live backend
+// count: a window that ends before the newest snapshot reports the newest
+// snapshot inside it, and a window that predates every sample reports
+// zero, matching the empty Transaction Rate, Cache Hit Ratio and Rollback
+// Rate series the Cluster dashboard draws beside it.
+func TestQueryConnectionCount_HonoursWindow(t *testing.T) {
+	h, pool, cleanup := newDatabaseSummariesTestHandler(t)
+	defer cleanup()
+
+	const connID = 73
+	ctx := context.Background()
+	now := time.Now().UTC()
+	latest := now.Add(-1 * time.Minute)
+	older := now.Add(-90 * time.Minute)
+
+	exec := func(sql string, args ...any) {
+		if _, err := pool.Exec(ctx, sql, args...); err != nil {
+			t.Fatalf("seed exec failed: %v\nSQL: %s", err, sql)
+		}
+	}
+
+	exec(`INSERT INTO metrics.pg_stat_database
+        (connection_id, collected_at, datname, numbackends)
+        VALUES ($1, $2, 'appdb', 15)`, connID, latest)
+	exec(`INSERT INTO metrics.pg_stat_database
+        (connection_id, collected_at, datname, numbackends)
+        VALUES ($1, $2, 'appdb', 4), ($1, $2, 'postgres', 3)`, connID, older)
+
+	tests := []struct {
+		name  string
+		start time.Time
+		end   time.Time
+		want  int
+	}{
+		{
+			name:  "window covering every sample takes the newest",
+			start: now.Add(-3 * time.Hour),
+			end:   now,
+			want:  15,
+		},
+		{
+			name:  "window ending before the newest sample excludes it",
+			start: now.Add(-3 * time.Hour),
+			end:   now.Add(-30 * time.Minute),
+			want:  7,
+		},
+		{
+			name:  "window predating every sample reports zero",
+			start: now.Add(-48 * time.Hour),
+			end:   now.Add(-24 * time.Hour),
+			want:  0,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := runConnectionCount(t, h, pool, connID, tc.start, tc.end)
+			if got != tc.want {
+				t.Errorf("queryConnectionCount = %d, want %d", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -93,7 +160,9 @@ func TestQueryConnectionCount_NoData(t *testing.T) {
 	h, pool, cleanup := newDatabaseSummariesTestHandler(t)
 	defer cleanup()
 
-	if got := runConnectionCount(t, h, pool, 9999); got != 0 {
+	now := time.Now().UTC()
+	if got := runConnectionCount(
+		t, h, pool, 9999, now.Add(-1*time.Hour), now); got != 0 {
 		t.Errorf("queryConnectionCount = %d, want 0", got)
 	}
 }
@@ -110,7 +179,9 @@ func TestQueryConnectionCount_MissingTable(t *testing.T) {
 		t.Fatalf("failed to drop table: %v", err)
 	}
 
-	if got := runConnectionCount(t, h, pool, 71); got != 0 {
+	now := time.Now().UTC()
+	if got := runConnectionCount(
+		t, h, pool, 71, now.Add(-1*time.Hour), now); got != 0 {
 		t.Errorf("queryConnectionCount = %d, want 0", got)
 	}
 }
@@ -141,7 +212,8 @@ CREATE TABLE metrics.pg_stat_database (
     blks_hit       bigint      NOT NULL DEFAULT 0,
     blks_read      bigint      NOT NULL DEFAULT 0,
     xact_commit    bigint      NOT NULL DEFAULT 0,
-    xact_rollback  bigint      NOT NULL DEFAULT 0
+    xact_rollback  bigint      NOT NULL DEFAULT 0,
+    stats_reset    timestamptz
 );
 
 CREATE TABLE metrics.pg_stat_checkpointer (
@@ -189,7 +261,7 @@ func newPerfSummaryTestHandler(
 		t.Fatalf("Failed to create performance summary test schema: %v", err)
 	}
 
-	handler := NewPerfSummaryHandler(database.NewTestDatastore(pool), nil)
+	handler := NewPerfSummaryHandler(database.NewTestDatastore(pool), newTestAuthStore(t))
 	cleanup := func() {
 		_, _ = pool.Exec(context.Background(), perfSummaryTestSchemaTeardown)
 		pool.Close()
@@ -241,9 +313,9 @@ func TestHandlePerfSummary_ReportsActiveConnections(t *testing.T) {
         (connection_id, collected_at, write_time, sync_time)
         VALUES ($1, $2, 100, 10), ($1, $3, 250, 30)`, connA, prev, latest)
 
-	req := httptest.NewRequest(http.MethodGet,
+	req := withSuperuser(httptest.NewRequest(http.MethodGet,
 		"/api/v1/metrics/performance-summary?connection_ids=81,82"+
-			"&time_range=24h", nil)
+			"&time_range=24h", nil))
 	rec := httptest.NewRecorder()
 
 	h.handlePerfSummary(rec, req)
@@ -275,11 +347,13 @@ func TestHandlePerfSummary_ReportsActiveConnections(t *testing.T) {
 		t.Errorf("connection %d active_connections = %d, want 11", connB, got)
 	}
 
-	// The pre-existing metrics must still be populated alongside it:
-	// 1000 hits against 100 reads across both databases is 90.91%.
-	if byID[connA].CacheHitRatio.Current != 90.91 {
-		t.Errorf("cache hit ratio = %v, want 90.91",
-			byID[connA].CacheHitRatio.Current)
+	// The pre-existing metrics must still be populated alongside it. The
+	// ratio is per interval and per database: appdb grew by 500 hits and
+	// 40 reads between the two samples, which is 92.59%, whilst postgres
+	// only appears in the latest sample and so has no delta; its lifetime
+	// counters must not be counted as activity in the interval.
+	if cur := byID[connA].CacheHitRatio.Current; cur == nil || *cur != 92.59 {
+		t.Errorf("cache hit ratio = %v, want 92.59", cur)
 	}
 	if len(byID[connA].XIDAgeEntries) != 1 {
 		t.Errorf("expected 1 XID age entry, got %d",
@@ -313,13 +387,26 @@ func TestHandlePerfSummary_RejectsBadRequests(t *testing.T) {
 			name: "invalid time range",
 			url: "/api/v1/metrics/performance-summary" +
 				"?connection_id=81&time_range=99z",
-			want: "Invalid time_range: must be one of 1h, 6h, 24h, 7d, 30d",
+			want: `invalid time range "99z": must be one of 1h, 6h, 24h, 7d, 30d, custom`,
+		},
+		{
+			name: "custom without bounds",
+			url: "/api/v1/metrics/performance-summary" +
+				"?connection_id=81&time_range=custom",
+			want: `invalid time range "custom": time_start and time_end are both required`,
+		},
+		{
+			name: "custom with an unparsable start",
+			url: "/api/v1/metrics/performance-summary" +
+				"?connection_id=81&time_range=custom" +
+				"&time_start=yesterday&time_end=2026-01-01T01:00:00Z",
+			want: `invalid time_start "yesterday": must be an RFC 3339 timestamp`,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, tc.url, nil)
+			req := withSuperuser(httptest.NewRequest(http.MethodGet, tc.url, nil))
 			rec := httptest.NewRecorder()
 
 			h.handlePerfSummary(rec, req)
@@ -332,5 +419,228 @@ func TestHandlePerfSummary_RejectsBadRequests(t *testing.T) {
 				t.Errorf("unexpected error: %q", resp.Error)
 			}
 		})
+	}
+}
+
+// TestHandlePerfSummary_CustomWindow asserts that time_range=custom with
+// time_start and time_end restricts the cache hit ratio to exactly that
+// window: samples either side of it, carrying a very different ratio,
+// must not appear in the series or the headline, and the echoed
+// time_range is "custom".
+func TestHandlePerfSummary_CustomWindow(t *testing.T) {
+	h, pool, cleanup := newPerfSummaryTestHandler(t)
+	defer cleanup()
+
+	const connID = 83
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Minute)
+	windowStart := now.Add(-3 * time.Hour)
+	windowEnd := now.Add(-2 * time.Hour)
+
+	seed := func(at time.Time, hit, read int64) {
+		if _, err := pool.Exec(ctx, `INSERT INTO metrics.pg_stat_database
+            (connection_id, collected_at, datname, blks_hit, blks_read)
+            VALUES ($1, $2, 'appdb', $3, $4)`, connID, at, hit, read); err != nil {
+			t.Fatalf("seed pg_stat_database: %v", err)
+		}
+	}
+	// Before the window: an interval at 10%.
+	seed(windowStart.Add(-20*time.Minute), 1000, 1000)
+	seed(windowStart.Add(-10*time.Minute), 1100, 1900)
+	// Inside the window: one interval at 90%.
+	seed(windowStart.Add(10*time.Minute), 5000, 5000)
+	seed(windowStart.Add(20*time.Minute), 5900, 5100)
+	// After the window: an interval at 10%.
+	seed(windowEnd.Add(10*time.Minute), 9000, 9000)
+	seed(windowEnd.Add(20*time.Minute), 9100, 9900)
+
+	url := "/api/v1/metrics/performance-summary?connection_id=83" +
+		"&time_range=custom&time_start=" +
+		windowStart.Format(time.RFC3339) +
+		"&time_end=" + windowEnd.Format(time.RFC3339)
+	req := withSuperuser(httptest.NewRequest(http.MethodGet, url, nil))
+	rec := httptest.NewRecorder()
+
+	h.handlePerfSummary(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d (body %q)",
+			http.StatusOK, rec.Code, rec.Body.String())
+	}
+	var resp PerfSummaryResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp.TimeRange != "custom" {
+		t.Errorf("time_range = %q, want custom", resp.TimeRange)
+	}
+	if len(resp.Connections) != 1 {
+		t.Fatalf("expected 1 connection, got %d", len(resp.Connections))
+	}
+	ch := resp.Connections[0].CacheHitRatio
+	// A one hour window has 60 second buckets, so the two in-window
+	// samples yield exactly one delta bucket.
+	if len(ch.TimeSeries) != 1 {
+		t.Fatalf("len(time_series) = %d, want 1: %#v",
+			len(ch.TimeSeries), ch.TimeSeries)
+	}
+	if got := ch.TimeSeries[0].Time; got.Before(windowStart) || !got.Before(windowEnd) {
+		t.Errorf("bucket %v lies outside [%v, %v)", got, windowStart, windowEnd)
+	}
+	if ch.Current == nil || *ch.Current != 90.0 {
+		t.Errorf("current = %v, want 90", fmtFloatPtr(ch.Current))
+	}
+}
+
+// TestHandlePerfSummary_RejectsNonGET covers the method guard.
+func TestHandlePerfSummary_RejectsNonGET(t *testing.T) {
+	h, _, cleanup := newPerfSummaryTestHandler(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodPost,
+		"/api/v1/metrics/performance-summary?connection_id=81", nil)
+	rec := httptest.NewRecorder()
+
+	h.handlePerfSummary(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected status %d, got %d",
+			http.StatusMethodNotAllowed, rec.Code)
+	}
+}
+
+// TestHandlePerfSummary_DefaultsToOneHour checks that an omitted
+// time_range resolves to the 1h preset and is echoed as such.
+func TestHandlePerfSummary_DefaultsToOneHour(t *testing.T) {
+	h, _, cleanup := newPerfSummaryTestHandler(t)
+	defer cleanup()
+
+	req := withSuperuser(httptest.NewRequest(http.MethodGet,
+		"/api/v1/metrics/performance-summary?connection_id=81", nil))
+	rec := httptest.NewRecorder()
+
+	h.handlePerfSummary(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d (body %q)",
+			http.StatusOK, rec.Code, rec.Body.String())
+	}
+	var resp PerfSummaryResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp.TimeRange != "1h" {
+		t.Errorf("time_range = %q, want 1h", resp.TimeRange)
+	}
+}
+
+// TestHandlePerfSummary_ShortCustomWindowUsesBucketFloor drives a five
+// minute custom window, whose one sixtieth is below the ten second
+// floor: two samples 30 seconds apart must then land in separate
+// 10 second buckets rather than being merged by a 5 second bucket
+// rounding to zero.
+func TestHandlePerfSummary_ShortCustomWindowUsesBucketFloor(t *testing.T) {
+	h, pool, cleanup := newPerfSummaryTestHandler(t)
+	defer cleanup()
+
+	const connID = 84
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Minute)
+	windowStart := now.Add(-10 * time.Minute)
+	windowEnd := windowStart.Add(5 * time.Minute)
+
+	for i, hit := range []int64{1000, 1900, 2800} {
+		at := windowStart.Add(time.Duration(i) * 30 * time.Second)
+		if _, err := pool.Exec(ctx, `INSERT INTO metrics.pg_stat_database
+            (connection_id, collected_at, datname, blks_hit, blks_read)
+            VALUES ($1, $2, 'appdb', $3, $4)`, connID, at, hit, int64(100*(i+1))); err != nil {
+			t.Fatalf("seed pg_stat_database: %v", err)
+		}
+	}
+
+	url := "/api/v1/metrics/performance-summary?connection_id=84" +
+		"&time_range=custom&time_start=" +
+		windowStart.Format(time.RFC3339) +
+		"&time_end=" + windowEnd.Format(time.RFC3339)
+	req := withSuperuser(httptest.NewRequest(http.MethodGet, url, nil))
+	rec := httptest.NewRecorder()
+
+	h.handlePerfSummary(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d (body %q)",
+			http.StatusOK, rec.Code, rec.Body.String())
+	}
+	var resp PerfSummaryResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	series := resp.Connections[0].CacheHitRatio.TimeSeries
+	if len(series) != 2 {
+		t.Fatalf("len(time_series) = %d, want 2 (one per 30s delta): %#v",
+			len(series), series)
+	}
+	for i, pt := range series {
+		if pt.Value == nil || *pt.Value != 90.0 {
+			t.Errorf("point %d = %s, want 90", i, fmtFloatPtr(pt.Value))
+		}
+	}
+}
+
+// TestHandlePerfSummary_ConnectionCountFollowsWindow drives the endpoint
+// the Cluster dashboard's comparative charts call and asserts that
+// active_connections follows the selected window like the series charted
+// beside it: a custom window that predates every sample must report zero
+// rather than the live backend count.
+func TestHandlePerfSummary_ConnectionCountFollowsWindow(t *testing.T) {
+	h, pool, cleanup := newPerfSummaryTestHandler(t)
+	defer cleanup()
+
+	const connID = 85
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Minute)
+
+	if _, err := pool.Exec(ctx, `INSERT INTO metrics.pg_stat_database
+        (connection_id, collected_at, datname, numbackends)
+        VALUES ($1, $2, 'appdb', 15)`, connID, now.Add(-5*time.Minute)); err != nil {
+		t.Fatalf("seed pg_stat_database: %v", err)
+	}
+
+	get := func(url string) PerfConnectionResponse {
+		t.Helper()
+		req := withSuperuser(httptest.NewRequest(http.MethodGet, url, nil))
+		rec := httptest.NewRecorder()
+		h.handlePerfSummary(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected status %d, got %d (body %q)",
+				http.StatusOK, rec.Code, rec.Body.String())
+		}
+		var resp PerfSummaryResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+		if len(resp.Connections) != 1 {
+			t.Fatalf("expected 1 connection, got %d", len(resp.Connections))
+		}
+		return resp.Connections[0]
+	}
+
+	if got := get("/api/v1/metrics/performance-summary?connection_id=85" +
+		"&time_range=24h").ActiveConnections; got != 15 {
+		t.Errorf("active_connections over 24h = %d, want 15", got)
+	}
+
+	windowStart := now.Add(-48 * time.Hour)
+	windowEnd := now.Add(-24 * time.Hour)
+	stale := get("/api/v1/metrics/performance-summary?connection_id=85" +
+		"&time_range=custom&time_start=" + windowStart.Format(time.RFC3339) +
+		"&time_end=" + windowEnd.Format(time.RFC3339))
+	if stale.ActiveConnections != 0 {
+		t.Errorf("active_connections over a pre-data window = %d, want 0",
+			stale.ActiveConnections)
+	}
+	if len(stale.Transactions.TimeSeries) != 0 {
+		t.Errorf("expected an empty transaction series alongside it, got %d points",
+			len(stale.Transactions.TimeSeries))
 	}
 }

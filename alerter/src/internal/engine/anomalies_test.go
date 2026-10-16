@@ -12,7 +12,6 @@ package engine
 import (
 	"context"
 	"math"
-	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -247,8 +246,9 @@ func TestEffectiveStdDev(t *testing.T) {
 // detectAnomaliesIntegrationSchema is the minimum schema needed to
 // exercise the Tier 1 detection loop end-to-end: connections (for
 // GetActiveConnections), alert_rules (for GetEnabledAlertRules),
-// metrics.pg_settings (the latest-value source for the
-// pg_settings.max_connections metric), blackouts (consulted by
+// metrics.pg_sys_load_avg_info (the latest-value source for the
+// pg_sys_load_avg_info.load_avg_fifteen_minutes metric), blackouts
+// (consulted by
 // IsBlackoutActive), metric_baselines, and anomaly_candidates (the
 // emit target). Tables that participate in the blackout join must
 // exist as the IsBlackoutActive query references clusters and
@@ -354,6 +354,8 @@ CREATE TABLE anomaly_candidates (
     tier3_result TEXT,
     tier3_pass BOOLEAN,
     tier3_error TEXT,
+    tier3_source TEXT CHECK (tier3_source IN ('decision', 'reasoning')),
+    tier3_model TEXT,
     final_decision TEXT,
     alert_id BIGINT,
     embedding_id BIGINT,
@@ -362,10 +364,9 @@ CREATE TABLE anomaly_candidates (
 
 CREATE SCHEMA metrics;
 
-CREATE TABLE metrics.pg_settings (
+CREATE TABLE metrics.pg_sys_load_avg_info (
     connection_id INTEGER NOT NULL,
-    name TEXT NOT NULL,
-    setting TEXT,
+    load_avg_fifteen_minutes DOUBLE PRECISION,
     collected_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 `
@@ -404,10 +405,10 @@ const (
         RETURNING id
     `
 
-	insertAnomalyPgSettingsSQL = `
-        INSERT INTO metrics.pg_settings
-            (connection_id, name, setting, collected_at)
-        VALUES ($1, 'max_connections', $2, NOW())
+	insertAnomalyLoadAvgSQL = `
+        INSERT INTO metrics.pg_sys_load_avg_info
+            (connection_id, load_avg_fifteen_minutes, collected_at)
+        VALUES ($1, $2::text::float, NOW())
     `
 
 	insertAnomalyBlackoutSQL = `
@@ -441,6 +442,24 @@ const (
     `
 )
 
+// suppressingReasoningProvider is a Tier 3 stub that classifies every
+// candidate as a false positive.
+type suppressingReasoningProvider struct{}
+
+func (suppressingReasoningProvider) Classify(context.Context, string) (string, error) {
+	return `{"decision": "suppress", "confidence": 0.9, "reasoning": "test"}`, nil
+}
+
+func (suppressingReasoningProvider) Reevaluate(context.Context, string) (string, error) {
+	return `{"decision": "keep", "confidence": 0.9, "reasoning": "test"}`, nil
+}
+
+func (suppressingReasoningProvider) ModelName() string    { return "suppressing-reasoner" }
+func (suppressingReasoningProvider) ProviderName() string { return "suppressing" }
+func (suppressingReasoningProvider) ReevaluationSystemPrompt() string {
+	return "suppressing system prompt"
+}
+
 // newDetectAnomaliesEnv builds the integration-test environment used
 // by TestDetectAppliesGatesAndCap. The test is skipped if
 // TEST_AI_WORKBENCH_SERVER is not set or the test database is
@@ -448,20 +467,7 @@ const (
 func newDetectAnomaliesEnv(t *testing.T) (*Engine, *database.Datastore, *pgxpool.Pool, func()) {
 	t.Helper()
 
-	if os.Getenv("SKIP_DB_TESTS") != "" {
-		t.Skip("Skipping database test (SKIP_DB_TESTS is set)")
-	}
-	connStr := os.Getenv("TEST_AI_WORKBENCH_SERVER")
-	if connStr == "" {
-		t.Skip("TEST_AI_WORKBENCH_SERVER not set, skipping detection integration test")
-	}
-
-	// Safety guard: refuse to run destructive DDL on anything other
-	// than the local test database. The integration schema below
-	// drops several tables and the metrics schema; pointing
-	// TEST_AI_WORKBENCH_SERVER at a shared instance must be a hard
-	// fail rather than a silent wipe.
-	assertLocalTestDSN(t, connStr)
+	connStr := requireLocalTestDSN(t, "the detection integration test")
 
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, connStr)
@@ -482,13 +488,15 @@ func newDetectAnomaliesEnv(t *testing.T) (*Engine, *database.Datastore, *pgxpool
 
 	cfg := config.NewConfig()
 	cfg.Anomaly.Tier1.Enabled = true
-	// Disable tier 2/3 so the test scopes strictly to the Tier 1
-	// gated detection loop and does not depend on LLM providers
-	// or embedding tables.
+	// Detection writes no candidates unless a later tier can process
+	// them (issue #581), so Tier 3 runs against a stub that suppresses
+	// everything: the tests stay scoped to the Tier 1 loop, need no
+	// embedding tables and raise no alerts.
 	cfg.Anomaly.Tier2.Enabled = false
-	cfg.Anomaly.Tier3.Enabled = false
+	cfg.Anomaly.Tier3.Enabled = true
 
 	engine := NewEngine(cfg, ds, false)
+	engine.reasoningProvider = suppressingReasoningProvider{}
 
 	cleanup := func() {
 		if _, err := pool.Exec(context.Background(),
@@ -527,14 +535,17 @@ func TestDetectAppliesGatesAndCap(t *testing.T) {
 		t.Fatalf("test expects MaxZScore > 0 from NewConfig defaults, got %v",
 			cfg.Anomaly.Tier1.MaxZScore)
 	}
+	// The cases exercise the global variance floor and the cap, so the
+	// load-average metric's own floors (issue #617) are disabled.
+	disableMetricFloors(cfg, "pg_sys_load_avg_info.load_avg_fifteen_minutes")
 
-	// Seed a single alert rule against pg_settings.max_connections.
-	// The metric is the simplest scanBasic registry entry and its
-	// latest SQL needs only a single recent row in
-	// metrics.pg_settings.
+	// Seed a single alert rule against
+	// pg_sys_load_avg_info.load_avg_fifteen_minutes. The metric is a
+	// simple baselined scanBasic registry entry and its latest SQL needs
+	// only a single recent row in metrics.pg_sys_load_avg_info.
 	if _, err := pool.Exec(ctx, insertAnomalyAlertRuleSQL,
 		"anomaly_detect_test",
-		"pg_settings.max_connections"); err != nil {
+		"pg_sys_load_avg_info.load_avg_fifteen_minutes"); err != nil {
 		t.Fatalf("failed to insert alert rule: %v", err)
 	}
 
@@ -661,8 +672,8 @@ func TestDetectAppliesGatesAndCap(t *testing.T) {
 				t.Fatalf("delete metric_baselines failed: %v", err)
 			}
 			if _, err := pool.Exec(ctx,
-				`DELETE FROM metrics.pg_settings`); err != nil {
-				t.Fatalf("delete metrics.pg_settings failed: %v", err)
+				`DELETE FROM metrics.pg_sys_load_avg_info`); err != nil {
+				t.Fatalf("delete metrics.pg_sys_load_avg_info failed: %v", err)
 			}
 			if _, err := pool.Exec(ctx,
 				`DELETE FROM connections`); err != nil {
@@ -676,14 +687,12 @@ func TestDetectAppliesGatesAndCap(t *testing.T) {
 				t.Fatalf("failed to insert connection: %v", err)
 			}
 
-			// Seed the latest metric value. The pg_settings.max_connections
-			// query reads setting::float from metrics.pg_settings; the
-			// setting column is TEXT so pass the value as a formatted
-			// string.
-			if _, err := pool.Exec(ctx, insertAnomalyPgSettingsSQL,
+			// Seed the latest metric value. The insert casts its text
+			// parameter to float, so pass the value as a formatted string.
+			if _, err := pool.Exec(ctx, insertAnomalyLoadAvgSQL,
 				connID,
 				strconv.FormatFloat(tc.current, 'g', -1, 64)); err != nil {
-				t.Fatalf("failed to insert pg_settings sample: %v", err)
+				t.Fatalf("failed to insert load average sample: %v", err)
 			}
 
 			// Seed the baseline directly via UpsertMetricBaseline so the
@@ -691,7 +700,7 @@ func TestDetectAppliesGatesAndCap(t *testing.T) {
 			// the baseline-build code path.
 			b := &database.MetricBaseline{
 				ConnectionID:     connID,
-				MetricName:       "pg_settings.max_connections",
+				MetricName:       "pg_sys_load_avg_info.load_avg_fifteen_minutes",
 				PeriodType:       tc.periodType,
 				Mean:             tc.mean,
 				StdDev:           tc.stddev,
@@ -716,7 +725,7 @@ func TestDetectAppliesGatesAndCap(t *testing.T) {
 			var observedZ float64
 			err := pool.QueryRow(ctx, selectAnomalyCountAndLatestZSQL,
 				connID,
-				"pg_settings.max_connections").Scan(&count, &observedZ)
+				"pg_sys_load_avg_info.load_avg_fifteen_minutes").Scan(&count, &observedZ)
 			if err != nil {
 				t.Fatalf("failed to count anomaly_candidates: %v", err)
 			}
@@ -753,9 +762,12 @@ func TestDetectAnomaliesBranchCoverage(t *testing.T) {
 
 	if _, err := pool.Exec(ctx, insertAnomalyAlertRuleSQL,
 		"branch_coverage_rule",
-		"pg_settings.max_connections"); err != nil {
+		"pg_sys_load_avg_info.load_avg_fifteen_minutes"); err != nil {
 		t.Fatalf("failed to insert alert rule: %v", err)
 	}
+	// The zero-divisor case needs every floor at zero, including the
+	// metric's own (issue #617).
+	disableMetricFloors(engine.getConfig(), "pg_sys_load_avg_info.load_avg_fifteen_minutes")
 
 	now := time.Now().UTC()
 	matureEarliest := now.Add(-48 * time.Hour)
@@ -773,8 +785,8 @@ func TestDetectAnomaliesBranchCoverage(t *testing.T) {
 			t.Fatalf("delete metric_baselines failed: %v", err)
 		}
 		if _, err := pool.Exec(ctx,
-			`DELETE FROM metrics.pg_settings`); err != nil {
-			t.Fatalf("delete metrics.pg_settings failed: %v", err)
+			`DELETE FROM metrics.pg_sys_load_avg_info`); err != nil {
+			t.Fatalf("delete metrics.pg_sys_load_avg_info failed: %v", err)
 		}
 		if _, err := pool.Exec(ctx,
 			`DELETE FROM blackouts`); err != nil {
@@ -798,10 +810,10 @@ func TestDetectAnomaliesBranchCoverage(t *testing.T) {
 
 	insertSetting := func(t *testing.T, connID int, value float64) {
 		t.Helper()
-		if _, err := pool.Exec(ctx, insertAnomalyPgSettingsSQL,
+		if _, err := pool.Exec(ctx, insertAnomalyLoadAvgSQL,
 			connID,
 			strconv.FormatFloat(value, 'g', -1, 64)); err != nil {
-			t.Fatalf("failed to insert pg_settings sample: %v", err)
+			t.Fatalf("failed to insert load average sample: %v", err)
 		}
 	}
 
@@ -810,7 +822,7 @@ func TestDetectAnomaliesBranchCoverage(t *testing.T) {
 		t.Helper()
 		b := &database.MetricBaseline{
 			ConnectionID:     connID,
-			MetricName:       "pg_settings.max_connections",
+			MetricName:       "pg_sys_load_avg_info.load_avg_fifteen_minutes",
 			PeriodType:       "all",
 			Mean:             mean,
 			StdDev:           stddev,
@@ -956,29 +968,79 @@ func TestDetectAnomaliesBranchCoverage(t *testing.T) {
 		}
 	})
 
-	t.Run("tier2 enabled invokes processTier2And3", func(t *testing.T) {
-		// Cover the post-loop branch that dispatches into
-		// processTier2And3 when Tier 2 or Tier 3 is enabled.
-		// processTier2And3 is well-tested elsewhere; here we
-		// only need the dispatch line itself to execute. With no
-		// embedding provider configured and no candidates pending
-		// the dispatch is a fast no-op.
+	t.Run("no usable tier after tier 1 writes no candidates", func(t *testing.T) {
+		// With no later tier able to process a candidate, detection
+		// is off (issue #581): both tiers disabled, or a tier enabled
+		// without its provider, as a reload can leave it.
+		cfg := engine.getConfig()
+		reasoner := engine.reasoningProvider
+		defer func() {
+			cfg.Anomaly.Tier2.Enabled = false
+			cfg.Anomaly.Tier3.Enabled = true
+			engine.reasoningProvider = reasoner
+		}()
+
+		for _, tc := range []struct {
+			name         string
+			tier2, tier3 bool
+			withReasoner bool
+		}{
+			{name: "both tiers disabled", withReasoner: true},
+			{name: "tier 2 enabled without embedding provider", tier2: true, withReasoner: true},
+			{name: "tier 3 enabled without reasoning provider", tier3: true},
+		} {
+			resetState(t)
+			connID := insertConn(t, "no-usable-tier")
+			insertSetting(t, connID, 999)
+			insertBaseline(t, connID, 10, 0.0001)
+
+			cfg.Anomaly.Tier2.Enabled = tc.tier2
+			cfg.Anomaly.Tier3.Enabled = tc.tier3
+			engine.reasoningProvider = nil
+			if tc.withReasoner {
+				engine.reasoningProvider = reasoner
+			}
+			engine.detectAnomalies(ctx)
+
+			if got := countCandidates(t, connID); got != 0 {
+				t.Errorf("%s: expected 0 candidates, got %d", tc.name, got)
+			}
+		}
+	})
+
+	t.Run("anomaly detection disabled writes no candidates", func(t *testing.T) {
 		resetState(t)
-		connID := insertConn(t, "tier2-enabled")
+		connID := insertConn(t, "anomaly-disabled")
 		insertSetting(t, connID, 999)
 		insertBaseline(t, connID, 10, 0.0001)
 
 		cfg := engine.getConfig()
-		orig2 := cfg.Anomaly.Tier2.Enabled
-		cfg.Anomaly.Tier2.Enabled = true
+		cfg.Anomaly.Enabled = false
 		engine.detectAnomalies(ctx)
-		cfg.Anomaly.Tier2.Enabled = orig2
+		cfg.Anomaly.Enabled = true
 
-		// Sanity: the Tier 1 path still emitted a candidate
-		// because the baseline is warm and the value is well
-		// above the mean.
-		if got := countCandidates(t, connID); got == 0 {
-			t.Error("expected Tier 1 to still emit a candidate")
+		if got := countCandidates(t, connID); got != 0 {
+			t.Errorf("expected 0 candidates when anomaly detection disabled, got %d", got)
+		}
+	})
+
+	t.Run("tier 3 available processes the candidate", func(t *testing.T) {
+		resetState(t)
+		connID := insertConn(t, "tier3-available")
+		insertSetting(t, connID, 999)
+		insertBaseline(t, connID, 10, 0.0001)
+
+		engine.detectAnomalies(ctx)
+
+		var n int
+		if err := pool.QueryRow(ctx, `
+			SELECT count(*) FROM anomaly_candidates
+			WHERE connection_id = $1 AND processed_at IS NOT NULL
+			  AND final_decision = 'suppress'`, connID).Scan(&n); err != nil {
+			t.Fatalf("failed to count processed candidates: %v", err)
+		}
+		if n != 1 {
+			t.Errorf("expected 1 candidate processed by Tier 3, got %d", n)
 		}
 	})
 
@@ -1012,4 +1074,85 @@ func TestDetectAnomaliesBranchCoverage(t *testing.T) {
 			t.Errorf("expected z-score ~10 when cap disabled, got %v", z)
 		}
 	})
+}
+
+// TestDetectionDatastoreErrorBranches drives detectAnomalies and
+// calculateBaselines through the datastore failures the loops tolerate
+// or abort on: a failing blackout lookup is logged and detection
+// proceeds for the connection, a failing alert-rule lookup ends the run
+// before any scoring, and a failing connection lookup ends it before
+// anything else. The tables are dropped in that order; the environment
+// recreates the schema for the next test.
+func TestDetectionDatastoreErrorBranches(t *testing.T) {
+	engine, ds, pool, cleanup := newDetectAnomaliesEnv(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	now := time.Now().UTC()
+	const metric = "pg_sys_load_avg_info.load_avg_fifteen_minutes"
+
+	if _, err := pool.Exec(ctx, insertAnomalyAlertRuleSQL,
+		"datastore_error_rule", metric); err != nil {
+		t.Fatalf("failed to insert alert rule: %v", err)
+	}
+	var connID int
+	if err := pool.QueryRow(ctx, insertAnomalyConnectionSQL,
+		"datastore-errors").Scan(&connID); err != nil {
+		t.Fatalf("failed to insert connection: %v", err)
+	}
+	if _, err := pool.Exec(ctx, insertAnomalyLoadAvgSQL, connID, "500"); err != nil {
+		t.Fatalf("failed to insert load average sample: %v", err)
+	}
+	if err := ds.UpsertMetricBaseline(ctx, &database.MetricBaseline{
+		ConnectionID:     connID,
+		MetricName:       metric,
+		PeriodType:       "all",
+		Mean:             100,
+		StdDev:           1,
+		Min:              99,
+		Max:              101,
+		SampleCount:      500,
+		LastCalculated:   now,
+		EarliestSampleAt: now.Add(-10 * 24 * time.Hour),
+	}); err != nil {
+		t.Fatalf("UpsertMetricBaseline failed: %v", err)
+	}
+
+	countCandidates := func(t *testing.T) int {
+		t.Helper()
+		var n int
+		if err := pool.QueryRow(ctx, selectAnomalyCountByConnSQL, connID).Scan(&n); err != nil {
+			t.Fatalf("failed to count candidates: %v", err)
+		}
+		return n
+	}
+
+	// A failed blackout lookup must not suppress detection.
+	if _, err := pool.Exec(ctx, `DROP TABLE blackouts CASCADE`); err != nil {
+		t.Fatalf("failed to drop blackouts: %v", err)
+	}
+	engine.detectAnomalies(ctx)
+	if got := countCandidates(t); got != 1 {
+		t.Errorf("candidates with blackout lookup failing = %d, want 1", got)
+	}
+
+	// Without alert rules neither loop has anything to do.
+	if _, err := pool.Exec(ctx, `TRUNCATE anomaly_candidates`); err != nil {
+		t.Fatalf("failed to truncate candidates: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `DROP TABLE alert_rules CASCADE`); err != nil {
+		t.Fatalf("failed to drop alert_rules: %v", err)
+	}
+	engine.detectAnomalies(ctx)
+	engine.calculateBaselines(ctx)
+	if got := countCandidates(t); got != 0 {
+		t.Errorf("candidates with alert rules failing = %d, want 0", got)
+	}
+
+	// Without connections both return before touching anything else.
+	if _, err := pool.Exec(ctx, `DROP TABLE connections CASCADE`); err != nil {
+		t.Fatalf("failed to drop connections: %v", err)
+	}
+	engine.detectAnomalies(ctx)
+	engine.calculateBaselines(ctx)
 }

@@ -8,7 +8,6 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
 import { screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import renderWithTheme from '../../../test/renderWithTheme';
@@ -42,11 +41,17 @@ vi.mock('../AdminSlackChannels', () => ({
 vi.mock('../AdminMattermostChannels', () => ({
     default: () => <div data-testid="admin-mattermost-channels">Admin Mattermost Channels Component</div>,
 }));
+vi.mock('../AdminTelegramChannels', () => ({
+    default: () => <div data-testid="admin-telegram-channels">Admin Telegram Channels Component</div>,
+}));
 vi.mock('../AdminWebhookChannels', () => ({
     default: () => <div data-testid="admin-webhook-channels">Admin Webhook Channels Component</div>,
 }));
 vi.mock('../AdminMemories', () => ({
     default: () => <div data-testid="admin-memories">Admin Memories Component</div>,
+}));
+vi.mock('../AdminAuditLog', () => ({
+    default: () => <div data-testid="admin-audit-log">Admin Audit Log Component</div>,
 }));
 
 // Mock context hooks
@@ -56,7 +61,7 @@ const mockUser = {
     isSuperuser: true,
 };
 
-const mockHasPermission = vi.fn(() => true);
+const mockHasPermission = vi.fn<(permission: string) => boolean>(() => true);
 
 vi.mock('../../../contexts/useAuth', () => ({
     useAuth: () => ({
@@ -129,6 +134,12 @@ describe('AdminPanel', () => {
         expect(screen.getByText('Tokens')).toBeInTheDocument();
     });
 
+    it('renders the Audit Log item for a superuser', () => {
+        renderAdminPanel();
+
+        expect(screen.getByText('Audit Log')).toBeInTheDocument();
+    });
+
     it('renders Monitoring section with navigation items', () => {
         renderAdminPanel();
 
@@ -144,7 +155,24 @@ describe('AdminPanel', () => {
         expect(screen.getByText('Email Channels')).toBeInTheDocument();
         expect(screen.getByText('Slack Channels')).toBeInTheDocument();
         expect(screen.getByText('Mattermost Channels')).toBeInTheDocument();
+        expect(screen.getByText('Telegram Channels')).toBeInTheDocument();
         expect(screen.getByText('Webhook Channels')).toBeInTheDocument();
+    });
+
+    it('renders the Telegram channels panel when its nav item is clicked', async () => {
+        renderAdminPanel();
+
+        await waitFor(() => {
+            expect(screen.getByTestId('admin-users')).toBeInTheDocument();
+        });
+
+        fireEvent.click(screen.getByText('Telegram Channels'));
+
+        await waitFor(() => {
+            expect(
+                screen.getByTestId('admin-telegram-channels'),
+            ).toBeInTheDocument();
+        });
     });
 
     it('renders AI section when aiEnabled is true', () => {
@@ -206,10 +234,12 @@ describe('AdminPanel - Permission filtering', () => {
 
     beforeEach(() => {
         vi.clearAllMocks();
+        mockUser.isSuperuser = true;
     });
 
     afterEach(() => {
         vi.restoreAllMocks();
+        mockUser.isSuperuser = true;
     });
 
     it('filters navigation items based on permissions', () => {
@@ -225,5 +255,21 @@ describe('AdminPanel - Permission filtering', () => {
         expect(screen.getByText('Users')).toBeInTheDocument();
         // Groups requires manage_groups permission which is not granted
         expect(screen.queryByText('Groups')).not.toBeInTheDocument();
+    });
+
+    it('hides the Audit Log item from a non-superuser with manage_users', () => {
+        mockUser.isSuperuser = false;
+        // The cast keeps the one-argument implementation assignable to
+        // the zero-argument signature vi.fn() infers for the stub.
+        mockHasPermission.mockImplementation(
+            ((perm: string): boolean => perm === 'manage_users') as () => boolean,
+        );
+
+        renderWithTheme(
+            <AdminPanel open={true} onClose={mockOnClose} />
+        );
+
+        expect(screen.getByText('Users')).toBeInTheDocument();
+        expect(screen.queryByText('Audit Log')).not.toBeInTheDocument();
     });
 });

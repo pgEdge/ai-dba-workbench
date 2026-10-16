@@ -12,12 +12,9 @@ import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } fr
 import { downloadAsMarkdown } from '../downloadMarkdown';
 
 describe('downloadAsMarkdown', () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let mockCreateElement: MockInstance<any[], any>;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let mockAppendChild: MockInstance<any[], any>;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let mockRemoveChild: MockInstance<any[], any>;
+    let mockCreateElement: MockInstance<typeof document.createElement>;
+    let mockAppendChild: MockInstance<typeof document.body.appendChild>;
+    let mockRemoveChild: MockInstance<typeof document.body.removeChild>;
     let mockCreateObjectURL: ReturnType<typeof vi.fn>;
     let mockRevokeObjectURL: ReturnType<typeof vi.fn>;
     let mockLink: HTMLAnchorElement;

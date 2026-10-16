@@ -8,7 +8,6 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import Header from '../Header';
@@ -27,6 +26,7 @@ const renderHeader = (props: Record<string, unknown> = {}) => {
     const defaultProps = {
         onToggleTheme: vi.fn(),
         mode: 'light' as const,
+        helpContext: null,
     };
 
     // Mock the user info endpoint to return authenticated user

@@ -41,6 +41,10 @@ CRITICAL rules for code blocks - the user executes SQL directly from the UI so a
 
 5. When suggesting ALTER SYSTEM or other DDL statements, place them in separate code blocks from diagnostic SELECT queries.
 
+6. SCHEMA GROUNDING: the column list above is a crib sheet for a handful of system catalogs and nothing else. Before emitting any SQL that references a user table, view, index, column, function or role, or any column of a system catalog that is NOT listed above, you MUST first call get_schema_info for the target connection_id and use only the object and column names it returns. Do NOT infer a column name from a metric name, a chart label, a monitoring tool or another database product: names such as total_ram and max_connections are not columns of any PostgreSQL statistics view. If get_schema_info is unavailable or does not return the object, do not guess: emit a diagnostic query against a catalog listed above instead, and say which object could not be confirmed.
+
+7. NEVER use $1, $2 or any other numbered bind-parameter placeholder in a \`\`\`sql code block. The user runs these blocks directly and a placeholder makes the statement unrunnable. Emit the query with literal values substituted in, taken from the context or from a diagnostic query. If you genuinely need to show a parameterised shape rather than a runnable query, fence it as \`\`\`text and label it as a template.
+
 QUERY VALIDATION:
 If a test_query tool is available, you MUST validate every SQL query you generate by calling test_query with the appropriate connection_id before including it in your report. If validation fails, fix the query and re-validate. If you cannot validate a query (e.g., no connection available), clearly mark it as an unvalidated example by adding a SQL comment "-- NOTE: This query has not been validated against the target database" as the first line.`;
 
@@ -50,9 +54,9 @@ If a test_query tool is available, you MUST validate every SQL query you generat
  */
 export const SQL_PLACEHOLDER_RULES = `
 
-6. NEVER use placeholder names like \`schema_name\`, \`table_name\`, \`your_table\`, \`my_table\`, \`your_database\`, or similar invented identifiers in SQL code blocks. Users execute SQL directly from the UI, and placeholders cause runtime errors. Instead:
+8. NEVER use placeholder names like \`schema_name\`, \`table_name\`, \`your_table\`, \`my_table\`, \`your_database\`, or similar invented identifiers in SQL code blocks. Users execute SQL directly from the UI, and placeholders cause runtime errors. Instead:
    - If the server context or tool results provide specific object names, use those exact names in the SQL.
    - If remediation requires acting on specific database objects that are not yet known, first provide a diagnostic query that identifies the affected objects (e.g., tables with high dead tuple ratios), then provide the remediation SQL using the actual names returned by that diagnostic query.
    - If the specific objects cannot be determined, provide ONLY the diagnostic query and explain that the user should run the remediation command on the objects it identifies. Do NOT generate non-executable SQL containing placeholders.
 
-7. NEVER suggest dropping indexes that implement PRIMARY KEY or UNIQUE constraints, even if they show zero scans in pg_stat_user_indexes. These indexes enforce data integrity constraints and cannot be removed without dropping the constraint itself. Low scan counts on constraint indexes are normal and expected; they serve a correctness purpose, not a performance purpose.`;
+9. NEVER suggest dropping indexes that implement PRIMARY KEY or UNIQUE constraints, even if they show zero scans in pg_stat_user_indexes. These indexes enforce data integrity constraints and cannot be removed without dropping the constraint itself. Low scan counts on constraint indexes are normal and expected; they serve a correctness purpose, not a performance purpose.`;

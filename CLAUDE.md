@@ -4,15 +4,10 @@
 
 ## Required Tooling
 
-A `SessionStart` hook in `.claude/settings.json` runs
-`.claude/hooks/check-tooling.sh`, which reports any required plugin skill
-or binary that is missing from the developer's environment. If the session
+A `SessionStart` hook runs `.claude/hooks/check-tooling.sh`. If the session
 context contains a line starting `TOOLING MISSING:`, stop and tell the user
-before doing any other work. As a fallback, before delegating documentation
-or browser work, confirm that `pgedge-skills:pgedge-docs` and
-`playwright-cli` appear in the available skills list; if either is absent,
-stop and report it. Installing tooling is the developer environment's
-concern and is managed centrally; do not document or attempt installs here.
+before doing any other work. Installing tooling is managed centrally; do not
+document or attempt installs here.
 
 ## Primary Agent Role
 
@@ -92,71 +87,47 @@ reports for the primary agent to act on.
 
 Each implementation agent has a knowledge base in `/.claude/<agent-name>/`
 holding repo-specific patterns. When a task changes code that a knowledge
-base describes, the sub-agent must update the affected file in the same
-change, and the primary agent should confirm the entries remain accurate.
-A stale entry is worse than none; delete or correct anything that no longer
-matches the code.
+base describes, the sub-agent updates the affected file in the same change,
+and the primary agent confirms the entries remain accurate.
 
 Sub-agents run in the background and cannot ask the user questions. When a
 requirement is ambiguous, they state their assumptions and report them.
 
 ## Plans and Specs
 
-Store plans in `.claude/plans/` and design specs in `.claude/specs/`, with
-descriptive filenames. Both directories are git-ignored and must never be
-committed.
+Plans go in `.claude/plans/` and design specs in `.claude/specs/`; both are
+git-ignored and must never be committed.
 
 ## Development Worktrees
 
-All development work happens in a dedicated git worktree so that the main
-checkout stays clean and concurrent tasks cannot contaminate one another.
-The default applies to every task unless the developer explicitly asks for
-work in the main checkout; confirm any such override before proceeding.
+Every task that modifies the repository runs in its own git worktree, unless
+the developer explicitly asks for the main checkout; confirm any such
+override before proceeding.
 
-Dispatch implementation sub-agents with worktree isolation where the Agent
-tool supports it (`isolation: "worktree"`). Advisory and research agents do
-not need isolation. Remove the task's worktree with `git worktree remove`
-once the work is merged or abandoned; stale worktrees accumulate quickly.
+Dispatch implementation sub-agents with `isolation: "worktree"`; advisory
+and research agents do not need it. Remove the task's worktree with
+`git worktree remove` once the work is merged or abandoned.
 
 ## Pull Request Workflow
 
-Before pushing a PR branch, check whether the branch is behind `main` and
-rebase if it is. This applies both when opening a pull request and when
-pushing further commits to one, so that history stays linear and CI runs
-against the current `main`.
-
-- Fetch the latest `main` with `git fetch origin main`.
-
-- Compare with `git rev-list --left-right --count origin/main...HEAD`.
-
-- If behind, run `git rebase origin/main` and resolve any conflicts rather
-  than aborting or overwriting; ask the developer only when a conflict
-  cannot be resolved cleanly.
-
-- Push with `git push --force-with-lease`; never use a plain
-  `git push --force`, and never force-push `main` itself.
+Before pushing a PR branch, whether opening a pull request or adding commits
+to one, rebase onto `origin/main` if the branch is behind, so that history
+stays linear and CI runs against the current `main`. Resolve conflicts
+rather than aborting or overwriting, asking the developer only when one
+cannot be resolved cleanly. Push with `git push --force-with-lease`, never a
+plain `git push --force`, and never force-push `main` itself.
 
 ## Task Workflow
 
-1. **Understand** the requirements, clarifying with the user if needed.
-
-2. **Plan** the sub-tasks and the sub-agents each needs.
-
-3. **Delegate** each sub-task; coordinate multiple sub-agents in sequence
-   or in parallel as appropriate. Each implementation sub-agent runs
-   `make test-all` in the sub-project it touched before handing back.
-
-4. **Verify** by running `make test-all` from the repository root once all
-   sub-agents have finished. Reject any code delivery that does not meet
-   the coverage floor in the Tests section.
-
-5. **Review** security-sensitive changes (auth, input handling, queries)
-   with **security-auditor**.
-
-6. **Document** user-facing changes through **documentation-writer**,
-   including `docs/changelog.md`.
-
-7. **Report** a synthesis of the results to the user.
+Understand the requirement, break it into sub-tasks and delegate each to the
+sub-agent above, in parallel where they are independent, then synthesise and
+report. Each implementation sub-agent runs `make test-all` in the
+sub-project it touched before handing back; the primary agent runs
+`make test-all` from the repository root once they have all finished, and
+rejects any delivery below the coverage floor in the Tests section.
+Security-sensitive changes (auth, input handling, queries) go to
+**security-auditor**, and user-facing changes to **documentation-writer**,
+including `docs/changelog.md`.
 
 ## Documentation
 
@@ -239,8 +210,7 @@ Use the `playwright-cli` skill (`.claude/skills/playwright-cli/SKILL.md`)
 for browser testing, screenshots and web interaction, via
 `Bash(playwright-cli:*)`. Never use the Playwright MCP server,
 `npx playwright` or `npm install playwright`. After completing UI changes,
-validate them visually in a browser session; this catches rendering and
-navigation issues that unit tests miss.
+validate them visually in a browser session.
 
 ## Code Style
 
@@ -251,17 +221,7 @@ navigation issues that unit tests miss.
 
 - Use `COMMENT ON` to describe objects in database migrations.
 
-- Include this copyright notice at the top of every source file (not
-  configuration files), adjusting the comment style for the language:
-
-  ```
-  /*-------------------------------------------------------------------------
-   *
-   * pgEdge AI DBA Workbench
-   *
-   * Copyright (c) 2025 - 2026, pgEdge, Inc.
-   * This software is released under The PostgreSQL License
-   *
-   *-------------------------------------------------------------------------
-   */
-  ```
+- Start every source file (not configuration files) with the copyright
+  notice given under "Copyright Header" in
+  `docs/developer-guide/contributing.md`, adjusting the comment style for
+  the language.

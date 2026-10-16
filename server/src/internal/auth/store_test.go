@@ -11,6 +11,7 @@ package auth
 
 import (
 	"bytes"
+	"database/sql"
 	"log"
 	"os"
 	"path/filepath"
@@ -31,7 +32,7 @@ func createTestAuthStoreForStore(t *testing.T) (*AuthStore, func()) {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
 
-	store, err := NewAuthStore(tmpDir, 0, 0)
+	store, err := NewAuthStore(tmpDir, 0, 0, AuditKeyForTesting())
 	if err != nil {
 		os.RemoveAll(tmpDir)
 		t.Fatalf("Failed to create auth store: %v", err)
@@ -58,7 +59,7 @@ func TestNewAuthStore(t *testing.T) {
 		}
 		defer os.RemoveAll(tmpDir)
 
-		store, err := NewAuthStore(tmpDir, 30, 5)
+		store, err := NewAuthStore(tmpDir, 30, 5, AuditKeyForTesting())
 		if err != nil {
 			t.Fatalf("Failed to create auth store: %v", err)
 		}
@@ -77,7 +78,7 @@ func TestNewAuthStore(t *testing.T) {
 		defer os.RemoveAll(tmpDir)
 
 		newDir := tmpDir + "/subdir"
-		store, err := NewAuthStore(newDir, 0, 0)
+		store, err := NewAuthStore(newDir, 0, 0, AuditKeyForTesting())
 		if err != nil {
 			t.Fatalf("Failed to create auth store: %v", err)
 		}
@@ -95,7 +96,7 @@ func TestNewAuthStore(t *testing.T) {
 		}
 		defer os.RemoveAll(tmpDir)
 
-		store, err := NewAuthStore(tmpDir, 0, 0)
+		store, err := NewAuthStore(tmpDir, 0, 0, AuditKeyForTesting())
 		if err != nil {
 			t.Fatalf("Failed to create auth store: %v", err)
 		}
@@ -114,14 +115,14 @@ func TestNewAuthStore(t *testing.T) {
 		defer os.RemoveAll(tmpDir)
 
 		// Create and close the first store to establish the database
-		store1, err := NewAuthStore(tmpDir, 0, 0)
+		store1, err := NewAuthStore(tmpDir, 0, 0, AuditKeyForTesting())
 		if err != nil {
 			t.Fatalf("Failed to create initial auth store: %v", err)
 		}
 		store1.Close()
 
 		// Open the existing database
-		store2, err := NewAuthStore(tmpDir, 0, 0)
+		store2, err := NewAuthStore(tmpDir, 0, 0, AuditKeyForTesting())
 		if err != nil {
 			t.Fatalf("Failed to open existing auth store: %v", err)
 		}
@@ -173,7 +174,7 @@ func TestNewAuthStore_FilePermissions(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
-	store, err := NewAuthStore(tmpDir, 0, 0)
+	store, err := NewAuthStore(tmpDir, 0, 0, AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("NewAuthStore returned error: %v", err)
 	}
@@ -438,7 +439,7 @@ func TestNewAuthStore_UnsafePermissionsAbortStartup(t *testing.T) {
 	t.Cleanup(func() { authDBStat = prevStat })
 
 	tmpDir := t.TempDir()
-	store, err := NewAuthStore(tmpDir, 0, 0)
+	store, err := NewAuthStore(tmpDir, 0, 0, AuditKeyForTesting())
 	if store != nil {
 		// Defensive cleanup so we do not leak a handle if the test
 		// fails to assert correctly; the contract is that store must
@@ -494,7 +495,7 @@ func TestNewAuthStore_UnsafePermissionsAbortStartup(t *testing.T) {
 	authDBChmod = prevChmod
 	authDBStat = prevStat
 
-	store2, err := NewAuthStore(tmpDir, 0, 0)
+	store2, err := NewAuthStore(tmpDir, 0, 0, AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("re-open after aborted NewAuthStore failed (handle may have leaked): %v", err)
 	}
@@ -521,7 +522,7 @@ func TestAuthStorePath(t *testing.T) {
 		}
 		defer os.RemoveAll(tmpDir)
 
-		store, err := NewAuthStore(tmpDir, 0, 0)
+		store, err := NewAuthStore(tmpDir, 0, 0, AuditKeyForTesting())
 		if err != nil {
 			t.Fatalf("Failed to create auth store: %v", err)
 		}
@@ -858,7 +859,7 @@ func TestAuthenticateUserResetsFailedAttempts(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	store, err := NewAuthStore(tmpDir, 0, 5)
+	store, err := NewAuthStore(tmpDir, 0, 5, AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
@@ -897,7 +898,7 @@ func TestAuthenticateUserAccountLockout(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	maxAttempts := 3
-	store, err := NewAuthStore(tmpDir, 0, maxAttempts)
+	store, err := NewAuthStore(tmpDir, 0, maxAttempts, AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
@@ -1054,7 +1055,7 @@ func TestCreateToken(t *testing.T) {
 		t.Fatalf("Failed to create user: %v", err)
 	}
 
-	rawToken, storedToken, err := store.CreateToken("testuser", "Test token", nil)
+	rawToken, storedToken, err := store.AsActor(systemActor).CreateToken("testuser", "Test token", nil, true)
 	if err != nil {
 		t.Fatalf("Failed to create token: %v", err)
 	}
@@ -1081,7 +1082,7 @@ func TestCreateTokenWithExpiry(t *testing.T) {
 	}
 
 	expiry := time.Now().Add(24 * time.Hour)
-	rawToken, storedToken, err := store.CreateToken("testuser", "Test token", &expiry)
+	rawToken, storedToken, err := store.AsActor(systemActor).CreateToken("testuser", "Test token", &expiry, true)
 	if err != nil {
 		t.Fatalf("Failed to create token: %v", err)
 	}
@@ -1110,7 +1111,7 @@ func TestValidateTokenExpired(t *testing.T) {
 	}
 
 	expiry := time.Now().Add(-1 * time.Hour) // Already expired
-	rawToken, _, err := store.CreateToken("testuser", "Test token", &expiry)
+	rawToken, _, err := store.AsActor(systemActor).CreateToken("testuser", "Test token", &expiry, true)
 	if err != nil {
 		t.Fatalf("Failed to create token: %v", err)
 	}
@@ -1135,7 +1136,7 @@ func TestCreateTokenNonExistentUser(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
 
-	_, _, err := store.CreateToken("nonexistent", "Token", nil)
+	_, _, err := store.AsActor(systemActor).CreateToken("nonexistent", "Token", nil, true)
 	if err == nil {
 		t.Error("Expected error for non-existent user")
 	}
@@ -1149,7 +1150,7 @@ func TestCreateTokenWithMaxDays(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	maxDays := 30
-	store, err := NewAuthStore(tmpDir, maxDays, 0)
+	store, err := NewAuthStore(tmpDir, maxDays, 0, AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
@@ -1161,7 +1162,7 @@ func TestCreateTokenWithMaxDays(t *testing.T) {
 	}
 
 	// Non-superuser with nil expiry should get maxDays applied
-	_, storedToken, err := store.CreateToken("testuser", "Token", nil)
+	_, storedToken, err := store.AsActor(systemActor).CreateToken("testuser", "Token", nil, true)
 	if err != nil {
 		t.Fatalf("Failed to create token: %v", err)
 	}
@@ -1190,7 +1191,7 @@ func TestCreateTokenSuperuserNoExpiry(t *testing.T) {
 	}
 
 	// Superuser with nil expiry should get no expiry
-	_, storedToken, err := store.CreateToken("superuser", "Token", nil)
+	_, storedToken, err := store.AsActor(systemActor).CreateToken("superuser", "Token", nil, true)
 	if err != nil {
 		t.Fatalf("Failed to create token: %v", err)
 	}
@@ -1207,7 +1208,7 @@ func TestValidateTokenDisabledOwner(t *testing.T) {
 	if err := store.CreateUser("testuser", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}
-	rawToken, _, err := store.CreateToken("testuser", "Token", nil)
+	rawToken, _, err := store.AsActor(systemActor).CreateToken("testuser", "Token", nil, true)
 	if err != nil {
 		t.Fatalf("Failed to create token: %v", err)
 	}
@@ -1231,10 +1232,10 @@ func TestListUserTokens(t *testing.T) {
 	if err := store.CreateUser("testuser", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}
-	if _, _, err := store.CreateToken("testuser", "Token 1", nil); err != nil {
+	if _, _, err := store.AsActor(systemActor).CreateToken("testuser", "Token 1", nil, true); err != nil {
 		t.Fatalf("Failed to create token: %v", err)
 	}
-	if _, _, err := store.CreateToken("testuser", "Token 2", nil); err != nil {
+	if _, _, err := store.AsActor(systemActor).CreateToken("testuser", "Token 2", nil, true); err != nil {
 		t.Fatalf("Failed to create token: %v", err)
 	}
 
@@ -1245,51 +1246,6 @@ func TestListUserTokens(t *testing.T) {
 
 	if len(tokens) != 2 {
 		t.Errorf("Expected 2 tokens, got %d", len(tokens))
-	}
-}
-
-func TestDeleteUserToken(t *testing.T) {
-	store, cleanup := createTestAuthStoreForStore(t)
-	defer cleanup()
-
-	if err := store.CreateUser("testuser", "Password1234", "", "", ""); err != nil {
-		t.Fatalf("Failed to create user: %v", err)
-	}
-	_, storedToken, err := store.CreateToken("testuser", "Token", nil)
-	if err != nil {
-		t.Fatalf("Failed to create token: %v", err)
-	}
-
-	err = store.DeleteUserToken("testuser", storedToken.ID)
-	if err != nil {
-		t.Fatalf("Failed to delete token: %v", err)
-	}
-
-	tokens, _ := store.ListUserTokens("testuser")
-	if len(tokens) != 0 {
-		t.Errorf("Expected 0 tokens after deletion, got %d", len(tokens))
-	}
-}
-
-func TestDeleteUserTokenNotOwned(t *testing.T) {
-	store, cleanup := createTestAuthStoreForStore(t)
-	defer cleanup()
-
-	if err := store.CreateUser("user1", "Password1234", "", "", ""); err != nil {
-		t.Fatalf("Failed to create user1: %v", err)
-	}
-	if err := store.CreateUser("user2", "Password1234", "", "", ""); err != nil {
-		t.Fatalf("Failed to create user2: %v", err)
-	}
-	_, storedToken, err := store.CreateToken("user1", "Token", nil)
-	if err != nil {
-		t.Fatalf("Failed to create token: %v", err)
-	}
-
-	// Try to delete user1's token as user2
-	err = store.DeleteUserToken("user2", storedToken.ID)
-	if err == nil {
-		t.Error("Expected error when deleting token not owned by user")
 	}
 }
 
@@ -1304,10 +1260,10 @@ func TestListAllTokens(t *testing.T) {
 	if err := store.CreateUser("testuser", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}
-	if _, _, err := store.CreateToken("testuser", "Token 1", nil); err != nil {
+	if _, _, err := store.AsActor(systemActor).CreateToken("testuser", "Token 1", nil, true); err != nil {
 		t.Fatalf("Failed to create token: %v", err)
 	}
-	if _, _, err := store.CreateToken("testuser", "Token 2", nil); err != nil {
+	if _, _, err := store.AsActor(systemActor).CreateToken("testuser", "Token 2", nil, true); err != nil {
 		t.Fatalf("Failed to create token: %v", err)
 	}
 
@@ -1328,13 +1284,13 @@ func TestDeleteTokenByID(t *testing.T) {
 	if err := store.CreateUser("testuser", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}
-	_, storedToken, err := store.CreateToken("testuser", "Token", nil)
+	_, storedToken, err := store.AsActor(systemActor).CreateToken("testuser", "Token", nil, true)
 	if err != nil {
 		t.Fatalf("Failed to create token: %v", err)
 	}
 
 	// Deletion by ID requires the ID as a string
-	_ = store.DeleteToken("1")
+	_ = store.AsActor(systemActor).DeleteToken("1", true)
 	_ = storedToken // Use the variable
 }
 
@@ -1345,14 +1301,14 @@ func TestDeleteTokenByHashPrefix(t *testing.T) {
 	if err := store.CreateUser("testuser", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}
-	_, storedToken, err := store.CreateToken("testuser", "Token", nil)
+	_, storedToken, err := store.AsActor(systemActor).CreateToken("testuser", "Token", nil, true)
 	if err != nil {
 		t.Fatalf("Failed to create token: %v", err)
 	}
 
 	// Use first 8 characters of hash
 	prefix := storedToken.TokenHash[:8]
-	err = store.DeleteToken(prefix)
+	err = store.AsActor(systemActor).DeleteToken(prefix, true)
 	if err != nil {
 		t.Fatalf("Failed to delete token by hash prefix: %v", err)
 	}
@@ -1367,7 +1323,7 @@ func TestDeleteTokenNotFound(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
 
-	err := store.DeleteToken("nonexistent")
+	err := store.AsActor(systemActor).DeleteToken("nonexistent", true)
 	if err == nil {
 		t.Error("Expected error for non-existent token")
 	}
@@ -1387,14 +1343,14 @@ func TestCleanupExpiredTokensStore(t *testing.T) {
 
 	// Create expired token
 	expiredTime := time.Now().Add(-1 * time.Hour)
-	store.CreateToken("testuser", "Expired", &expiredTime)
+	store.AsActor(systemActor).CreateToken("testuser", "Expired", &expiredTime, true)
 
 	// Create valid token
 	validTime := time.Now().Add(24 * time.Hour)
-	store.CreateToken("testuser", "Valid", &validTime)
+	store.AsActor(systemActor).CreateToken("testuser", "Valid", &validTime, true)
 
 	// Create never-expiring token
-	store.CreateToken("testuser", "Never Expires", nil)
+	store.AsActor(systemActor).CreateToken("testuser", "Never Expires", nil, true)
 
 	count, hashes := store.CleanupExpiredTokens()
 	if count != 1 {
@@ -1591,8 +1547,8 @@ func TestTokenCount(t *testing.T) {
 	}
 
 	store.CreateUser("testuser", "Password1234", "", "", "")
-	store.CreateToken("testuser", "Token 1", nil)
-	store.CreateToken("testuser", "Token 2", nil)
+	store.AsActor(systemActor).CreateToken("testuser", "Token 1", nil, true)
+	store.AsActor(systemActor).CreateToken("testuser", "Token 2", nil, true)
 
 	if count := store.TokenCount(); count != 2 {
 		t.Errorf("Expected 2 tokens, got %d", count)
@@ -1604,7 +1560,7 @@ func TestGetCounts(t *testing.T) {
 	defer cleanup()
 
 	store.CreateUser("user1", "Password1234", "", "", "")
-	store.CreateToken("user1", "Token", nil)
+	store.AsActor(systemActor).CreateToken("user1", "Token", nil, true)
 
 	users, tokens := store.GetCounts()
 	if users != 1 {
@@ -1659,7 +1615,7 @@ func TestResetFailedAttemptsStore(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	store, err := NewAuthStore(tmpDir, 0, 5)
+	store, err := NewAuthStore(tmpDir, 0, 5, AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
@@ -1843,6 +1799,7 @@ func TestUpdateUserAtomic_OnlyEnabledStatus(t *testing.T) {
 func TestUpdateUserAtomic_OnlySuperuserStatus(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
+	addSpareSuperuser(t, store)
 
 	err := store.CreateUser("testuser", "Password1234", "", "", "")
 	if err != nil {
@@ -2002,15 +1959,15 @@ func TestDeleteUserCleansUpDependentRows(t *testing.T) {
 
 	// Give alice two tokens (so we exercise deletion of multiple
 	// tokens) and bob one token (to verify his rows survive).
-	_, aliceToken1, err := store.CreateToken("alice", "alice token 1", nil)
+	_, aliceToken1, err := store.AsActor(systemActor).CreateToken("alice", "alice token 1", nil, true)
 	if err != nil {
 		t.Fatalf("Failed to create alice's first token: %v", err)
 	}
-	_, aliceToken2, err := store.CreateToken("alice", "alice token 2", nil)
+	_, aliceToken2, err := store.AsActor(systemActor).CreateToken("alice", "alice token 2", nil, true)
 	if err != nil {
 		t.Fatalf("Failed to create alice's second token: %v", err)
 	}
-	_, bobToken, err := store.CreateToken("bob", "bob token", nil)
+	_, bobToken, err := store.AsActor(systemActor).CreateToken("bob", "bob token", nil, true)
 	if err != nil {
 		t.Fatalf("Failed to create bob's token: %v", err)
 	}
@@ -2026,15 +1983,15 @@ func TestDeleteUserCleansUpDependentRows(t *testing.T) {
 	// Populate per-token scope rows for each of alice's tokens and for
 	// bob's token.
 	for _, tok := range []*StoredToken{aliceToken1, aliceToken2, bobToken} {
-		if err := store.SetTokenConnectionScope(tok.ID, []ScopedConnection{
+		if err := store.AsActor(systemActor).SetTokenConnectionScope(tok.ID, []ScopedConnection{
 			{ConnectionID: 42, AccessLevel: "read_write"},
-		}); err != nil {
+		}, true); err != nil {
 			t.Fatalf("Failed to set connection scope for token %d: %v", tok.ID, err)
 		}
-		if err := store.SetTokenMCPScope(tok.ID, []int64{privID}); err != nil {
+		if err := store.AsActor(systemActor).SetTokenMCPScope(tok.ID, []int64{privID}, true); err != nil {
 			t.Fatalf("Failed to set MCP scope for token %d: %v", tok.ID, err)
 		}
-		if err := store.SetTokenAdminScope(tok.ID, []string{"manage_users"}); err != nil {
+		if err := store.AsActor(systemActor).SetTokenAdminScope(tok.ID, []string{"manage_users"}, true); err != nil {
 			t.Fatalf("Failed to set admin scope for token %d: %v", tok.ID, err)
 		}
 	}
@@ -2167,11 +2124,11 @@ func TestDeleteTokenCleansUpDependentRows(t *testing.T) {
 
 	// Create two tokens; we'll delete the first and verify the
 	// second's dependent rows are untouched.
-	_, target, err := store.CreateToken("alice", "target", nil)
+	_, target, err := store.AsActor(systemActor).CreateToken("alice", "target", nil, true)
 	if err != nil {
 		t.Fatalf("Failed to create target token: %v", err)
 	}
-	_, survivor, err := store.CreateToken("alice", "survivor", nil)
+	_, survivor, err := store.AsActor(systemActor).CreateToken("alice", "survivor", nil, true)
 	if err != nil {
 		t.Fatalf("Failed to create survivor token: %v", err)
 	}
@@ -2185,15 +2142,15 @@ func TestDeleteTokenCleansUpDependentRows(t *testing.T) {
 
 	// Populate dependent rows for both tokens.
 	for _, tok := range []*StoredToken{target, survivor} {
-		if err := store.SetTokenConnectionScope(tok.ID, []ScopedConnection{
+		if err := store.AsActor(systemActor).SetTokenConnectionScope(tok.ID, []ScopedConnection{
 			{ConnectionID: 1, AccessLevel: "read"},
-		}); err != nil {
+		}, true); err != nil {
 			t.Fatalf("Failed to set connection scope: %v", err)
 		}
-		if err := store.SetTokenMCPScope(tok.ID, []int64{privID}); err != nil {
+		if err := store.AsActor(systemActor).SetTokenMCPScope(tok.ID, []int64{privID}, true); err != nil {
 			t.Fatalf("Failed to set MCP scope: %v", err)
 		}
-		if err := store.SetTokenAdminScope(tok.ID, []string{"manage_users"}); err != nil {
+		if err := store.AsActor(systemActor).SetTokenAdminScope(tok.ID, []string{"manage_users"}, true); err != nil {
 			t.Fatalf("Failed to set admin scope: %v", err)
 		}
 		if err := store.SetConnectionSession(tok.TokenHash, 1, nil); err != nil {
@@ -2204,7 +2161,7 @@ func TestDeleteTokenCleansUpDependentRows(t *testing.T) {
 	// Delete the target token by hash prefix. The first 8 characters
 	// of the hash are unique enough for this synthetic fixture.
 	prefix := target.TokenHash[:8]
-	if err := store.DeleteToken(prefix); err != nil {
+	if err := store.AsActor(systemActor).DeleteToken(prefix, true); err != nil {
 		t.Fatalf("Failed to delete token: %v", err)
 	}
 
@@ -2260,75 +2217,348 @@ func TestDeleteTokenCleansUpDependentRows(t *testing.T) {
 		"SELECT COUNT(*) FROM connection_sessions WHERE token_hash = ?", 1, survivor.TokenHash)
 }
 
-// TestDeleteUserTokenCleansUpDependentRows verifies that the owner-
-// scoped DeleteUserToken path removes the same dependent rows as
-// DeleteToken. The only difference between the two paths is the
-// "owned by user" guard, so we still assert the dependents here
-// because the two functions have independent SQL.
-func TestDeleteUserTokenCleansUpDependentRows(t *testing.T) {
+// =============================================================================
+// Schema v4 (federation columns) migration tests
+// =============================================================================
+
+// newTestStoreAtVersion returns an AuthStore whose on-disk users table has
+// been rebuilt to look like schema version 3: neither the auth_source nor
+// the external_subject column exists, and schema_version records 3. It
+// deliberately does not run the v4 migration itself so that callers can
+// invoke store.initSchema() and assert on the migration's effects. Only
+// version 3 is supported; other values fail the test immediately.
+func newTestStoreAtVersion(t *testing.T, version int) *AuthStore {
+	t.Helper()
+	if version != 3 {
+		t.Fatalf("newTestStoreAtVersion: unsupported version %d", version)
+	}
+
+	store, cleanup := createTestAuthStoreForStore(t)
+	t.Cleanup(cleanup)
+
+	// SQLite (as pinned in this project) cannot drop a column, so the
+	// pre-v4 users shape is recreated by building a replacement table
+	// without the two federation columns, copying the existing rows
+	// across, then dropping the original and renaming the replacement
+	// into place.
+	statements := []string{
+		`CREATE TABLE users_v3 (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			username TEXT UNIQUE NOT NULL,
+			password_hash TEXT NOT NULL,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			last_login TIMESTAMP,
+			enabled BOOLEAN DEFAULT TRUE,
+			annotation TEXT DEFAULT '',
+			failed_attempts INTEGER DEFAULT 0,
+			is_superuser BOOLEAN DEFAULT FALSE,
+			display_name TEXT DEFAULT '',
+			email TEXT DEFAULT '',
+			is_service_account BOOLEAN DEFAULT FALSE
+		)`,
+		`INSERT INTO users_v3 (id, username, password_hash, created_at, last_login,
+			enabled, annotation, failed_attempts, is_superuser, display_name, email,
+			is_service_account)
+		 SELECT id, username, password_hash, created_at, last_login, enabled,
+			annotation, failed_attempts, is_superuser, display_name, email,
+			is_service_account
+		 FROM users`,
+		`DROP TABLE users`,
+		`ALTER TABLE users_v3 RENAME TO users`,
+		`CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)`,
+	}
+	for _, stmt := range statements {
+		if _, err := store.db.Exec(stmt); err != nil {
+			t.Fatalf("rebuilding users table at v3: %v", err)
+		}
+	}
+
+	if _, err := store.db.Exec("DELETE FROM schema_version"); err != nil {
+		t.Fatalf("clearing schema_version: %v", err)
+	}
+	if _, err := store.db.Exec(
+		"INSERT INTO schema_version (version) VALUES (?)", version); err != nil {
+		t.Fatalf("setting schema_version: %v", err)
+	}
+
+	if _, err := store.db.Exec(
+		"INSERT INTO users (username, password_hash, enabled) VALUES (?, '', TRUE)",
+		"legacy"); err != nil {
+		t.Fatalf("inserting legacy user: %v", err)
+	}
+
+	return store
+}
+
+func TestMigrateV3ToV4AddsFederationColumns(t *testing.T) {
+	store := newTestStoreAtVersion(t, 3)
+
+	if err := store.initSchema(); err != nil {
+		t.Fatalf("initSchema: %v", err)
+	}
+
+	var version int
+	if err := store.db.QueryRow(
+		"SELECT COALESCE(MAX(version), 0) FROM schema_version").Scan(&version); err != nil {
+		t.Fatalf("schema_version: %v", err)
+	}
+	// The dispatcher runs every later migration too, so the store lands
+	// on the current version rather than on 4.
+	if version != schemaVersion {
+		t.Fatalf("schema version = %d, want %d", version, schemaVersion)
+	}
+
+	var source string
+	var externalSubject sql.NullString
+	if err := store.db.QueryRow(
+		"SELECT auth_source, external_subject FROM users WHERE username = ?", "legacy",
+	).Scan(&source, &externalSubject); err != nil {
+		t.Fatalf("auth_source/external_subject: %v", err)
+	}
+	if source != AuthSourceLocal {
+		t.Fatalf("auth_source = %q, want %q", source, AuthSourceLocal)
+	}
+	if externalSubject.Valid {
+		t.Fatalf("external_subject = %q, want NULL", externalSubject.String)
+	}
+
+	var indexName string
+	if err := store.db.QueryRow(
+		"SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?",
+		"idx_users_external_subject").Scan(&indexName); err != nil {
+		t.Fatalf("idx_users_external_subject: %v", err)
+	}
+
+	// A second initSchema() call must be a no-op: currentVersion is
+	// already current, so migrateV3ToV4 is not invoked again by the
+	// dispatcher. Exercise migrateV3ToV4 directly a second time as well,
+	// to cover its duplicate-column tolerance branch (the crash-recovery
+	// path where a previous run added the columns but failed before
+	// recording the new schema version).
+	if err := store.initSchema(); err != nil {
+		t.Fatalf("second initSchema: %v", err)
+	}
+	if err := store.migrateV3ToV4(); err != nil {
+		t.Fatalf("second migrateV3ToV4: %v", err)
+	}
+}
+
+func TestAuthenticateUserRejectsFederatedAccount(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
 
-	if err := store.CreateUser("alice", "Password1234", "", "", ""); err != nil {
-		t.Fatalf("Failed to create user: %v", err)
+	if err := store.CreateUser("federated", "Sup3r-Str0ng-Pass!", "", "", ""); err != nil {
+		t.Fatalf("CreateUser: %v", err)
 	}
-	_, target, err := store.CreateToken("alice", "target", nil)
-	if err != nil {
-		t.Fatalf("Failed to create token: %v", err)
-	}
-
-	privID, err := store.RegisterMCPPrivilege(
-		"tool.test", MCPPrivilegeTypeTool, "Test tool", false,
-	)
-	if err != nil {
-		t.Fatalf("Failed to register MCP privilege: %v", err)
+	if _, err := store.db.Exec(
+		"UPDATE users SET auth_source = ? WHERE username = ?",
+		AuthSourceOIDC, "federated"); err != nil {
+		t.Fatalf("update auth_source: %v", err)
 	}
 
-	if err := store.SetTokenConnectionScope(target.ID, []ScopedConnection{
-		{ConnectionID: 7, AccessLevel: "read_write"},
-	}); err != nil {
-		t.Fatalf("Failed to set connection scope: %v", err)
+	_, _, err := store.AuthenticateUser("federated", "Sup3r-Str0ng-Pass!")
+	if err == nil {
+		t.Fatal("expected password login to be refused for a federated account")
 	}
-	if err := store.SetTokenMCPScope(target.ID, []int64{privID}); err != nil {
-		t.Fatalf("Failed to set MCP scope: %v", err)
+	const wantErr = "invalid username or password"
+	if err.Error() != wantErr {
+		t.Fatalf("error = %q, want %q", err.Error(), wantErr)
 	}
-	if err := store.SetTokenAdminScope(target.ID, []string{"manage_users"}); err != nil {
-		t.Fatalf("Failed to set admin scope: %v", err)
-	}
-	if err := store.SetConnectionSession(target.TokenHash, 7, nil); err != nil {
-		t.Fatalf("Failed to set connection session: %v", err)
+}
+
+// TestMigrateV3ToV4ReportsFailures covers the migration's error paths,
+// which every existing installation runs through on its first start after
+// upgrading and which the happy-path test above cannot reach. Each case
+// breaks the schema in a way that fails exactly one statement of the
+// migration and checks that the failure is reported rather than
+// swallowed, since a migration that reports success without having
+// recorded its version would run again on every start.
+func TestMigrateV3ToV4ReportsFailures(t *testing.T) {
+	cases := map[string]struct {
+		sabotage string
+		wantErr  string
+	}{
+		"users table missing": {
+			sabotage: "DROP TABLE users",
+			wantErr:  "migrating auth schema to v4",
+		},
+		"schema_version table missing": {
+			sabotage: "DROP TABLE schema_version",
+			wantErr:  "clearing schema version",
+		},
+		"schema_version refuses the new version": {
+			// A CHECK constraint that admits the old version but not the
+			// new one fails only the INSERT, leaving the DELETE working.
+			sabotage: `DROP TABLE schema_version;
+				CREATE TABLE schema_version (version INTEGER PRIMARY KEY CHECK (version < 4));
+				INSERT INTO schema_version (version) VALUES (3)`,
+			wantErr: "recording schema version 4",
+		},
 	}
 
-	if err := store.DeleteUserToken("alice", target.ID); err != nil {
-		t.Fatalf("Failed to delete user token: %v", err)
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			store := newTestStoreAtVersion(t, 3)
+			if _, err := store.db.Exec(tc.sabotage); err != nil {
+				t.Fatalf("sabotaging the schema: %v", err)
+			}
+
+			err := store.migrateV3ToV4()
+			if err == nil {
+				t.Fatal("migrateV3ToV4 reported success against a broken schema")
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("err = %v, want it to mention %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestMigrateV3ToV4IsRunByInitSchemaAndItsFailureStopsStartup checks
+// the dispatcher: a v3 database whose migration fails must make
+// initSchema fail, so that the server does not start against a schema it
+// cannot use.
+func TestMigrateV3ToV4IsRunByInitSchemaAndItsFailureStopsStartup(t *testing.T) {
+	store := newTestStoreAtVersion(t, 3)
+	if _, err := store.db.Exec("DROP TABLE users"); err != nil {
+		t.Fatalf("dropping the users table: %v", err)
+	}
+	if err := store.initSchema(); err == nil {
+		t.Fatal("initSchema reported success although the v3 to v4 migration failed")
+	}
+}
+
+// TestUpdateUserReportsDatabaseFailures covers the write failures in
+// UpdateUser. With the users table renamed, every statement against it
+// fails, and each path must report the failure rather than return
+// success; an invalid password is refused before anything is touched.
+// The audited update snapshots the account before writing, so the
+// failure surfaces from that lookup.
+func TestUpdateUserReportsDatabaseFailures(t *testing.T) {
+	store, cleanup := createTestAuthStoreForStore(t)
+	defer cleanup()
+	store.SetBcryptCostForTesting(t, bcrypt.MinCost)
+
+	if err := store.UpdateUser("anyone", "short", "", "", ""); err == nil {
+		t.Error("an invalid new password was accepted")
 	}
 
-	assertNoRows := func(label, query string, args ...any) {
-		t.Helper()
-		var count int
-		if err := store.db.QueryRow(query, args...).Scan(&count); err != nil {
-			t.Fatalf("Failed to query %s: %v", label, err)
-		}
-		if count != 0 {
-			t.Errorf("Expected 0 orphan rows in %s, got %d", label, count)
-		}
+	if _, err := store.db.Exec("ALTER TABLE users RENAME TO users_gone"); err != nil {
+		t.Fatalf("renaming the users table: %v", err)
 	}
 
-	assertNoRows("tokens", "SELECT COUNT(*) FROM tokens WHERE id = ?", target.ID)
-	assertNoRows(
-		"token_connection_scope",
-		"SELECT COUNT(*) FROM token_connection_scope WHERE token_id = ?", target.ID,
-	)
-	assertNoRows(
-		"token_mcp_scope",
-		"SELECT COUNT(*) FROM token_mcp_scope WHERE token_id = ?", target.ID,
-	)
-	assertNoRows(
-		"token_admin_scope",
-		"SELECT COUNT(*) FROM token_admin_scope WHERE token_id = ?", target.ID,
-	)
-	assertNoRows(
-		"connection_sessions",
-		"SELECT COUNT(*) FROM connection_sessions WHERE token_hash = ?", target.TokenHash,
-	)
+	err := store.UpdateUser("anyone", "", "note", "Name", "name@example.com")
+	if err == nil || !strings.Contains(err.Error(), "failed to look up user") {
+		t.Errorf("metadata write against a missing table: err = %v, want 'failed to look up user'", err)
+	}
+	err = store.UpdateUser("anyone", "An0ther-Str0ng-Pass!", "", "", "")
+	if err == nil || !strings.Contains(err.Error(), "failed to look up user") {
+		t.Errorf("password write against a missing table: err = %v, want 'failed to look up user'", err)
+	}
+}
+
+// TestUpdateUserAtomicReportsDatabaseFailures is the transactional
+// counterpart: every UPDATE and the SELECT that precedes the metadata
+// write must report a failure, the transaction must be rolled back, and
+// an invalid password or a closed database must be refused before any of
+// them run.
+func TestUpdateUserAtomicReportsDatabaseFailures(t *testing.T) {
+	store, cleanup := createTestAuthStoreForStore(t)
+	defer cleanup()
+	store.SetBcryptCostForTesting(t, bcrypt.MinCost)
+
+	short := "short"
+	if err := store.UpdateUserAtomic("anyone", UserUpdate{Password: &short}); err == nil {
+		t.Error("an invalid new password was accepted")
+	}
+
+	// The audited update snapshots the account first, so an absent
+	// account is reported as not found rather than silently skipped.
+	strong := "An0ther-Str0ng-Pass!"
+	err := store.UpdateUserAtomic("nobody", UserUpdate{Password: &strong})
+	if err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Errorf("password for a missing user: err = %v, want not found", err)
+	}
+
+	if _, err := store.db.Exec("ALTER TABLE users RENAME TO users_gone"); err != nil {
+		t.Fatalf("renaming the users table: %v", err)
+	}
+
+	note, enabled, superuser := "note", true, true
+	cases := map[string]struct {
+		update  UserUpdate
+		wantErr string
+	}{
+		"password":   {UserUpdate{Password: &strong}, "failed to look up user"},
+		"metadata":   {UserUpdate{Annotation: &note}, "failed to look up user"},
+		"enabled":    {UserUpdate{Enabled: &enabled}, "failed to look up user"},
+		"superuser":  {UserUpdate{IsSuperuser: &superuser}, "failed to look up user"},
+		"everything": {UserUpdate{Password: &strong, Annotation: &note, Enabled: &enabled}, "failed to look up user"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			err := store.UpdateUserAtomic("anyone", tc.update)
+			if err == nil {
+				t.Fatal("UpdateUserAtomic reported success against a missing table")
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("err = %v, want it to mention %q", err, tc.wantErr)
+			}
+		})
+	}
+
+	// A closed database cannot even begin the transaction.
+	if err := store.db.Close(); err != nil {
+		t.Fatalf("closing the database: %v", err)
+	}
+	err = store.UpdateUserAtomic("anyone", UserUpdate{Enabled: &enabled})
+	if err == nil || !strings.Contains(err.Error(), "failed to begin transaction") {
+		t.Errorf("closed database: err = %v, want 'failed to begin transaction'", err)
+	}
+}
+
+// TestUpdateUserReportsHashAndWriteFailures covers the two failures the
+// missing-table test above cannot reach: bcrypt refusing the configured
+// cost, which fails both update paths before any write, and the metadata
+// UPDATE in UpdateUserAtomic failing after the SELECT that precedes it
+// succeeded, which a trigger arranges.
+func TestUpdateUserReportsHashAndWriteFailures(t *testing.T) {
+	store, cleanup := createTestAuthStoreForStore(t)
+	defer cleanup()
+	store.SetBcryptCostForTesting(t, bcrypt.MinCost)
+
+	if err := store.CreateUser("hashed", "Sup3r-Str0ng-Pass!", "", "", ""); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+
+	// A cost outside bcrypt's range is refused by GenerateFromPassword.
+	store.bcryptCost = bcrypt.MaxCost + 1
+	strong := "An0ther-Str0ng-Pass!"
+	err := store.UpdateUser("hashed", strong, "", "", "")
+	if err == nil || !strings.Contains(err.Error(), "failed to hash password") {
+		t.Errorf("UpdateUser with an unusable cost: err = %v, want 'failed to hash password'", err)
+	}
+	err = store.UpdateUserAtomic("hashed", UserUpdate{Password: &strong})
+	if err == nil || !strings.Contains(err.Error(), "failed to hash password") {
+		t.Errorf("UpdateUserAtomic with an unusable cost: err = %v, want 'failed to hash password'", err)
+	}
+	store.bcryptCost = bcrypt.MinCost
+
+	// The metadata write fails while the read before it succeeds.
+	if _, err := store.db.Exec(`CREATE TRIGGER refuse_annotation BEFORE UPDATE OF annotation ON users
+		BEGIN SELECT RAISE(ABORT, 'annotation writes refused'); END`); err != nil {
+		t.Fatalf("creating the trigger: %v", err)
+	}
+	note := "note"
+	err = store.UpdateUserAtomic("hashed", UserUpdate{Annotation: &note})
+	if err == nil || !strings.Contains(err.Error(), "failed to update user fields") {
+		t.Errorf("metadata write refused by a trigger: err = %v, want 'failed to update user fields'", err)
+	}
+	user, getErr := store.GetUser("hashed")
+	if getErr != nil || user == nil {
+		t.Fatalf("GetUser: %v", getErr)
+	}
+	if user.Annotation != "" {
+		t.Error("the refused annotation write was committed")
+	}
 }

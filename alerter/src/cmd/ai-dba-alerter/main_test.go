@@ -11,6 +11,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/pgedge/ai-workbench/alerter/internal/config"
 	"github.com/pgedge/ai-workbench/pkg/fileutil"
+	"github.com/pgedge/ai-workbench/pkg/flagutil"
 )
 
 // minimalValidYAML is a config payload that satisfies
@@ -111,7 +113,7 @@ func TestReloadConfigOnSignal_ExplicitMissing(t *testing.T) {
 		&buf,
 		"/definitely/not/a/real/path.yaml",
 		true, // explicit
-		reloadFlagOverrides{},
+		flagOverrides{},
 	)
 	if err != nil {
 		t.Fatalf("reloadConfigOnSignal: unexpected error %v", err)
@@ -141,7 +143,7 @@ func TestReloadConfigOnSignal_NoCandidateFile(t *testing.T) {
 		&buf,
 		"", // no previously-resolved path either
 		false,
-		reloadFlagOverrides{},
+		flagOverrides{},
 	)
 	if err != nil {
 		t.Fatalf("reloadConfigOnSignal: unexpected error %v", err)
@@ -168,7 +170,7 @@ func TestReloadConfigOnSignal_HappyPath(t *testing.T) {
 		&buf,
 		cfgPath,
 		true,
-		reloadFlagOverrides{},
+		flagOverrides{},
 	)
 	if err != nil {
 		t.Fatalf("reloadConfigOnSignal: %v", err)
@@ -185,7 +187,7 @@ func TestReloadConfigOnSignal_HappyPath(t *testing.T) {
 }
 
 // TestReloadConfigOnSignal_FlagOverridesApplied verifies that the
-// CLI flag overrides bundled in reloadFlagOverrides are applied
+// CLI flag overrides bundled in flagOverrides are applied
 // to the freshly loaded config so SIGHUP does not silently drop
 // command-line settings.
 func TestReloadConfigOnSignal_FlagOverridesApplied(t *testing.T) {
@@ -200,10 +202,15 @@ func TestReloadConfigOnSignal_FlagOverridesApplied(t *testing.T) {
 		&buf,
 		cfgPath,
 		true,
-		reloadFlagOverrides{
+		flagOverrides{
 			DBHost:    "override-host",
 			DBPort:    9999,
 			DBSSLMode: "require",
+			Passed: flagutil.Set{
+				flagDBHost:    true,
+				flagDBPort:    true,
+				flagDBSSLMode: true,
+			},
 		},
 	)
 	if err != nil {
@@ -243,7 +250,7 @@ func TestReloadConfigOnSignal_InvalidConfig(t *testing.T) {
 		&buf,
 		cfgPath,
 		true,
-		reloadFlagOverrides{},
+		flagOverrides{},
 	)
 	if err == nil {
 		t.Fatal("expected validation error, got nil")
@@ -270,7 +277,7 @@ func TestReloadConfigOnSignal_MalformedYAML(t *testing.T) {
 		&buf,
 		cfgPath,
 		true,
-		reloadFlagOverrides{},
+		flagOverrides{},
 	)
 	if err == nil {
 		t.Fatal("expected YAML parse error, got nil")
@@ -298,7 +305,7 @@ func TestReloadConfigOnSignal_APIKeyWarning(t *testing.T) {
 		&buf,
 		cfgPath,
 		true,
-		reloadFlagOverrides{},
+		flagOverrides{},
 	)
 	if err != nil {
 		t.Fatalf("reloadConfigOnSignal: %v", err)
@@ -308,6 +315,47 @@ func TestReloadConfigOnSignal_APIKeyWarning(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "WARNING") {
 		t.Errorf("log = %q, want it to contain WARNING", buf.String())
+	}
+}
+
+// TestReloadConfigOnSignal_APIKeyWarningPerKey checks that each API
+// key file that cannot be read gets a warning line of its own.
+func TestReloadConfigOnSignal_APIKeyWarningPerKey(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "alerter.yaml")
+	body := minimalValidYAML +
+		"llm:\n  openai:\n    api_key_file: /definitely/not/here\n" +
+		"  typesafe:\n    api_key_file: /definitely/not/there\n"
+	if err := os.WriteFile(cfgPath, []byte(body), 0600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	var buf bytes.Buffer
+	got, err := reloadConfigOnSignal(&buf, cfgPath, true, flagOverrides{})
+	if err != nil {
+		t.Fatalf("reloadConfigOnSignal: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected non-nil config even when api-key files are missing")
+	}
+	var warnings []string
+	for _, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+		if strings.HasPrefix(line, "WARNING: Failed to load API key on reload: ") {
+			warnings = append(warnings, line)
+		}
+	}
+	if len(warnings) != 2 ||
+		!strings.Contains(warnings[0], "OpenAI") || !strings.Contains(warnings[1], "TypeSafe") {
+		t.Errorf("warnings = %q, want one line each for OpenAI and TypeSafe", warnings)
+	}
+}
+
+func TestWarnEach(t *testing.T) {
+	var buf bytes.Buffer
+	warnEach(&buf, "W: ", errors.New("single"))
+	warnEach(&buf, "W: ", errors.Join(errors.New("first"), errors.New("second")))
+	if got, want := buf.String(), "W: single\nW: first\nW: second\n"; got != want {
+		t.Errorf("output = %q, want %q", got, want)
 	}
 }
 
@@ -333,7 +381,7 @@ func TestReloadConfigOnSignal_PasswordFileMissing(t *testing.T) {
 		&buf,
 		cfgPath,
 		true,
-		reloadFlagOverrides{},
+		flagOverrides{},
 	)
 	if err == nil {
 		t.Fatal("expected password-load error, got nil")
@@ -352,7 +400,14 @@ func TestReloadConfigOnSignal_PasswordFileMissing(t *testing.T) {
 func TestApplyFlagOverrides(t *testing.T) {
 	t.Run("all scalar overrides applied", func(t *testing.T) {
 		cfg := config.NewConfig()
-		if err := applyFlagOverrides(cfg, "h", 5433, "db", "user", "", "require"); err != nil {
+		if err := applyFlagOverrides(cfg, flagOverrides{
+			DBHost: "h", DBPort: 5433, DBName: "db", DBUser: "user",
+			DBSSLMode: "require",
+			Passed: flagutil.Set{
+				flagDBHost: true, flagDBPort: true, flagDBName: true,
+				flagDBUser: true, flagDBSSLMode: true,
+			},
+		}); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if cfg.Datastore.Host != "h" || cfg.Datastore.Port != 5433 ||
@@ -365,7 +420,7 @@ func TestApplyFlagOverrides(t *testing.T) {
 	t.Run("no overrides leaves config untouched", func(t *testing.T) {
 		cfg := config.NewConfig()
 		host := cfg.Datastore.Host
-		if err := applyFlagOverrides(cfg, "", 0, "", "", "", ""); err != nil {
+		if err := applyFlagOverrides(cfg, flagOverrides{}); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if cfg.Datastore.Host != host {
@@ -379,7 +434,10 @@ func TestApplyFlagOverrides(t *testing.T) {
 			t.Fatalf("write: %v", err)
 		}
 		cfg := config.NewConfig()
-		if err := applyFlagOverrides(cfg, "", 0, "", "", pwFile, ""); err != nil {
+		if err := applyFlagOverrides(cfg, flagOverrides{
+			DBPasswordFile: pwFile,
+			Passed:         flagutil.Set{flagDBPasswordFile: true},
+		}); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if cfg.Datastore.Password != "flag-password" {
@@ -389,7 +447,10 @@ func TestApplyFlagOverrides(t *testing.T) {
 
 	t.Run("missing password file is an error", func(t *testing.T) {
 		cfg := config.NewConfig()
-		if err := applyFlagOverrides(cfg, "", 0, "", "", "/nonexistent/pw", ""); err == nil {
+		if err := applyFlagOverrides(cfg, flagOverrides{
+			DBPasswordFile: "/nonexistent/pw",
+			Passed:         flagutil.Set{flagDBPasswordFile: true},
+		}); err == nil {
 			t.Error("expected error for missing password file")
 		}
 	})
@@ -400,7 +461,10 @@ func TestApplyFlagOverrides(t *testing.T) {
 			t.Fatalf("write: %v", err)
 		}
 		cfg := config.NewConfig()
-		if err := applyFlagOverrides(cfg, "", 0, "", "", pwFile, ""); err == nil {
+		if err := applyFlagOverrides(cfg, flagOverrides{
+			DBPasswordFile: pwFile,
+			Passed:         flagutil.Set{flagDBPasswordFile: true},
+		}); err == nil {
 			t.Error("expected error for empty password file")
 		}
 	})

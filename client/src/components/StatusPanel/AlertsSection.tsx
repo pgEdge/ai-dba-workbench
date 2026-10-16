@@ -8,7 +8,8 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useMemo } from 'react';
+import type React from 'react';
+import { useState, useMemo } from 'react';
 import {
     Box,
     Typography,
@@ -44,11 +45,12 @@ import {
     ACK_LIST_SX,
 } from './styles';
 import { ICON_16_SX } from '../../theme';
+import type { AlertsSectionProps, TransformedAlert } from './types';
 
 /**
  * AlertsSection - Collapsible alerts list with active/acknowledged separation
  */
-const AlertsSection = ({
+const AlertsSection: React.FC<AlertsSectionProps> = ({
     alerts,
     loading,
     showServer = false,
@@ -58,6 +60,7 @@ const AlertsSection = ({
     onAnalyze,
     onEditOverride,
     onAcknowledgeGroup,
+    canAcknowledgeSystem = false,
 }) => {
     const theme = useTheme();
     const severityColors = getSeverityColors(theme);
@@ -75,7 +78,7 @@ const AlertsSection = ({
     // Convert grouped object to sorted array of [key, alerts] pairs
     const sortedActiveGroups = useMemo(() => {
         return Object.entries(groupedActiveAlerts).sort((a, b) => {
-            const getSeverityWeight = (alerts) => {
+            const getSeverityWeight = (alerts: TransformedAlert[]) => {
                 const s = alerts[0].severity;
                 if (s === 'critical') {return 3;}
                 if (s === 'warning') {return 2;}
@@ -154,7 +157,7 @@ const AlertsSection = ({
 
     // Render either a single AlertItem or a GroupedAlertItem depending on count.
     // groupKey is "title::severity"; extract the display title for GroupedAlertItem.
-    const renderAlertGroup = (groupKey, alertsInGroup) => {
+    const renderAlertGroup = (groupKey: string, alertsInGroup: TransformedAlert[]) => {
         const displayTitle = groupKey.split('::')[0];
         if (alertsInGroup.length === 1) {
             return (
@@ -167,6 +170,7 @@ const AlertsSection = ({
                     isUnacknowledging={isUnacknowledging}
                     onAnalyze={onAnalyze}
                     onEditOverride={onEditOverride}
+                    canAcknowledgeSystem={canAcknowledgeSystem}
                 />
             );
         }
@@ -182,6 +186,7 @@ const AlertsSection = ({
                 onAnalyze={onAnalyze}
                 onEditOverride={onEditOverride}
                 onAcknowledgeGroup={onAcknowledgeGroup}
+                canAcknowledgeSystem={canAcknowledgeSystem}
             />
         );
     };

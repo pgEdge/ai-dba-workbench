@@ -11,9 +11,11 @@ package notifications
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
@@ -65,12 +67,21 @@ func (n *webhookNotifier) Validate(channel *database.NotificationChannel) error 
 		method = "POST"
 	}
 	if method != "GET" && method != "POST" && method != "PUT" && method != "PATCH" {
-		return fmt.Errorf("invalid HTTP method: %s", method)
+		// The method is operator-supplied configuration that reaches
+		// the log and notification_history.error_message from here, so
+		// it is sanitized like any other borrowed text.
+		return fmt.Errorf("invalid HTTP method %q: must be GET, POST, PUT or PATCH",
+			sanitizeConfigEcho(method))
 	}
 	return nil
 }
 
 // Send implements Notifier.Send
+//
+// The endpoint URL may carry a credential in its path or query string,
+// so no error returned from here wraps with %w anything net/http
+// produced, and no text borrowed from the endpoint is echoed raw: both
+// go through the helpers in sanitize.go.
 func (n *webhookNotifier) Send(ctx context.Context, channel *database.NotificationChannel, payload *database.NotificationPayload) error {
 	if err := n.Validate(channel); err != nil {
 		return err
@@ -82,7 +93,22 @@ func (n *webhookNotifier) Send(ctx context.Context, channel *database.Notificati
 	// to a private or internal IP address.
 	if !n.allowInternal {
 		if err := hostvalidation.ValidateURLHost(endpointURL); err != nil {
-			return fmt.Errorf("webhook endpoint blocked (SSRF protection): %w", err)
+			var urlErr *url.Error
+			if errors.As(err, &urlErr) {
+				// (*url.Error).Error renders the RAW input string, not
+				// a parsed URL, so this text is the stored endpoint URL
+				// in whatever shape the operator saved it - possibly
+				// with no scheme for redactURLPath to anchor on, and
+				// possibly with a password in its userinfo. Nothing
+				// borrowed from it may be reported, and nothing useful
+				// would be: the operator learns only that the URL is
+				// malformed either way.
+				return fmt.Errorf("webhook endpoint blocked (SSRF protection): " +
+					"the endpoint URL is malformed")
+			}
+			// Every other failure names the host and nothing else.
+			return fmt.Errorf("webhook endpoint blocked (SSRF protection): %s",
+				sanitizeWebhookEcho(err.Error(), endpointURL))
 		}
 	}
 
@@ -121,7 +147,11 @@ func (n *webhookNotifier) Send(ctx context.Context, channel *database.Notificati
 
 	req, err := http.NewRequestWithContext(ctx, method, endpointURL, reqBody)
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		// With a non-nil context and a method Validate has already
+		// accepted, the only way this fails is url.Parse rejecting the
+		// endpoint URL, and that error quotes the raw stored string
+		// back. Report nothing borrowed from it.
+		return fmt.Errorf("failed to create request: the endpoint URL is malformed")
 	}
 
 	// Set content type for non-GET requests
@@ -158,7 +188,7 @@ func (n *webhookNotifier) Send(ctx context.Context, channel *database.Notificati
 	// Send request
 	resp, err := n.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to send webhook: %w", err)
+		return fmt.Errorf("failed to send webhook: %s", webhookTransportError(err, endpointURL))
 	}
 	defer resp.Body.Close()
 
@@ -166,9 +196,11 @@ func (n *webhookNotifier) Send(ctx context.Context, channel *database.Notificati
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		if readErr != nil {
-			return fmt.Errorf("webhook returned %d (failed to read body: %v)", resp.StatusCode, readErr)
+			return fmt.Errorf("webhook returned %d (failed to read body: %s)",
+				resp.StatusCode, sanitizeWebhookEcho(readErr.Error(), endpointURL))
 		}
-		return fmt.Errorf("webhook returned %d: %s", resp.StatusCode, string(respBody))
+		return fmt.Errorf("webhook returned %d: %s",
+			resp.StatusCode, sanitizeWebhookEcho(string(respBody), endpointURL))
 	}
 
 	return nil

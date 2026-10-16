@@ -8,6 +8,8 @@
  *-------------------------------------------------------------------------
  */
 
+import type { EChartsOption } from 'echarts';
+
 import type { ChartData } from '../types';
 import { buildLegend } from './common';
 
@@ -19,7 +21,7 @@ export function buildPieOptions(
         showLegend?: boolean;
         showTooltip?: boolean;
     }
-): object {
+): EChartsOption {
     const categories = data.categories ?? [];
     const sourceData = data.series[0]?.data ?? [];
 

@@ -8,12 +8,16 @@
 #--------------------------------------------------------------------------
 
 # Stage 1: Build the server binary
-FROM golang:1.26.2 AS builder
+FROM golang:1.26.8 AS builder
 
 WORKDIR /build
 
 # Copy the shared pkg module
 COPY pkg/ /build/pkg/
+
+# The server's go.mod requires the collector module for its tests only, so
+# the module graph needs the collector's go.mod but no collector source
+COPY collector/go.mod collector/go.sum /build/collector/
 
 # Copy server module files and source
 COPY server/src/go.mod server/src/go.sum /build/server/src/

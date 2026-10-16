@@ -13,6 +13,8 @@ import Box from '@mui/material/Box';
 import Paper from '@mui/material/Paper';
 import Typography from '@mui/material/Typography';
 import * as echarts from 'echarts/core';
+import type { EChartsType } from 'echarts/core';
+import type { EChartsOption } from 'echarts';
 import { LineChart, BarChart, PieChart } from 'echarts/charts';
 import {
     TitleComponent,
@@ -39,10 +41,6 @@ import { buildPieOptions } from './options/pie';
 import { ChartToolbar } from './ChartToolbar';
 import { hasCachedAnalysis } from '../../hooks/useChartAnalysis';
 
-interface EChartsInstance {
-    getDataURL: (opts: { type: string; pixelRatio: number; backgroundColor: string }) => string;
-    dispose: () => void;
-}
 
 echarts.use([
     LineChart,
@@ -99,7 +97,7 @@ export function Chart(props: ChartProps) {
         analysisContext,
     } = props;
 
-    const chartRef = useRef<EChartsInstance | null>(null);
+    const chartRef = useRef<EChartsType | null>(null);
     const [liveData, setLiveData] = useState<ChartData | null>(null);
     const [analysisOpen, setAnalysisOpen] = useState(false);
 
@@ -170,38 +168,26 @@ export function Chart(props: ChartProps) {
             fontSize: echartsTheme.xAxis?.axisLabel?.fontSize,
         };
 
-        const injectAxisDefaults = (axis: Record<string, unknown>) => {
-            if (axis.axisLabel && typeof axis.axisLabel === 'object') {
-                axis.axisLabel = { ...axisLabelDefaults, ...(axis.axisLabel as Record<string, unknown>) };
+        const withAxisDefaults = <T extends { axisLabel?: unknown }>(axis: T): T => {
+            if (!axis.axisLabel || typeof axis.axisLabel !== 'object') {
+                return axis;
             }
+            return {
+                ...axis,
+                axisLabel: { ...axisLabelDefaults, ...(axis.axisLabel as Record<string, unknown>) },
+            } as T;
         };
 
         if (options.xAxis && typeof options.xAxis === 'object') {
-            if (Array.isArray(options.xAxis)) {
-                options.xAxis = options.xAxis.map((a: Record<string, unknown>) => {
-                    const copy = { ...a };
-                    injectAxisDefaults(copy);
-                    return copy;
-                });
-            } else {
-                const copy = { ...(options.xAxis as Record<string, unknown>) };
-                injectAxisDefaults(copy);
-                options.xAxis = copy;
-            }
+            options.xAxis = Array.isArray(options.xAxis)
+                ? options.xAxis.map((axis) => withAxisDefaults(axis))
+                : withAxisDefaults(options.xAxis);
         }
 
-        if (options.yAxis) {
-            if (Array.isArray(options.yAxis)) {
-                options.yAxis = options.yAxis.map((a: Record<string, unknown>) => {
-                    const copy = { ...a };
-                    injectAxisDefaults(copy);
-                    return copy;
-                });
-            } else if (typeof options.yAxis === 'object') {
-                const copy = { ...(options.yAxis as Record<string, unknown>) };
-                injectAxisDefaults(copy);
-                options.yAxis = copy;
-            }
+        if (options.yAxis && typeof options.yAxis === 'object') {
+            options.yAxis = Array.isArray(options.yAxis)
+                ? options.yAxis.map((axis) => withAxisDefaults(axis))
+                : withAxisDefaults(options.yAxis);
         }
 
         if (options.legend && typeof options.legend === 'object') {
@@ -248,7 +234,10 @@ export function Chart(props: ChartProps) {
             options = { ...options, color: colorPalette };
         }
         if (echartsOptions) {
-            options = deepMerge(options, echartsOptions);
+            options = deepMerge(
+                options as Record<string, unknown>,
+                echartsOptions as Record<string, unknown>,
+            ) as EChartsOption;
         }
         return options;
     }, [themedOptions, colorPalette, echartsOptions]);
@@ -280,7 +269,7 @@ export function Chart(props: ChartProps) {
     }, [liveUpdate, onDataRefresh, updateInterval, refreshData]);
 
     const handleChartReady = useCallback(
-        (instance: EChartsInstance) => {
+        (instance: EChartsType) => {
             chartRef.current = instance;
             onChartReady?.(instance);
         },

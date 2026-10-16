@@ -25,7 +25,7 @@ func createTestAuthStoreForGroups(t *testing.T) (*AuthStore, func()) {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
 
-	store, err := NewAuthStore(tmpDir, 0, 0)
+	store, err := NewAuthStore(tmpDir, 0, 0, AuditKeyForTesting())
 	if err != nil {
 		os.RemoveAll(tmpDir)
 		t.Fatalf("Failed to create auth store: %v", err)
@@ -548,6 +548,7 @@ func TestGetGroupMembers(t *testing.T) {
 func TestSetUserSuperuser(t *testing.T) {
 	store, cleanup := createTestAuthStoreForGroups(t)
 	defer cleanup()
+	addSpareSuperuser(t, store)
 
 	// Create a user
 	err := store.CreateUser("testuser", "Password1234", "Test user", "", "")

@@ -137,6 +137,33 @@ describe('SQL_CODE_BLOCK_RULES', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Schema grounding and bind parameters (issue #532)
+// ---------------------------------------------------------------------------
+
+describe('SQL_CODE_BLOCK_RULES schema grounding', () => {
+    it('requires get_schema_info before naming user objects', () => {
+        expect(SQL_CODE_BLOCK_RULES).toContain(
+            'you MUST first call get_schema_info for the target connection_id',
+        );
+    });
+
+    it('names the observed hallucinated columns as counter-examples', () => {
+        expect(SQL_CODE_BLOCK_RULES).toContain('total_ram');
+        expect(SQL_CODE_BLOCK_RULES).toContain('max_connections');
+    });
+
+    it('forbids numbered bind-parameter placeholders', () => {
+        expect(SQL_CODE_BLOCK_RULES).toContain(
+            'NEVER use $1, $2 or any other numbered bind-parameter placeholder',
+        );
+    });
+
+    it('offers a non-SQL fence for genuine templates', () => {
+        expect(SQL_CODE_BLOCK_RULES).toContain('label it as a template');
+    });
+});
+
+// ---------------------------------------------------------------------------
 // SQL_PLACEHOLDER_RULES
 // ---------------------------------------------------------------------------
 

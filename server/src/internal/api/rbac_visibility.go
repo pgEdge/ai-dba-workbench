@@ -31,14 +31,10 @@ type rbacVisibilityDatastore interface {
 // visibility (superuser or wildcard grant); callers should then skip
 // filtering entirely. The visible map is nil when allConnections is
 // true.
+//
+// A nil checker yields an empty visible set, never unrestricted
+// visibility: RBACChecker's methods deny on a nil receiver (issue #561).
 func resolveVisibleConnectionSet(ctx context.Context, rbac *auth.RBACChecker, ds *database.Datastore) (map[int]bool, bool, error) {
-	// Defense-in-depth: NewBlackoutHandler and NewClusterHandler both
-	// accept a nil rbacChecker (and are exercised with nil in tests),
-	// so treat a nil checker as unrestricted visibility rather than
-	// panicking on the method call below.
-	if rbac == nil {
-		return nil, true, nil
-	}
 	lister := database.NewVisibilityLister(ds)
 	ids, all, err := rbac.VisibleConnectionIDs(ctx, lister)
 	if err != nil {

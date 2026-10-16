@@ -10,6 +10,7 @@
 package api
 
 import (
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
@@ -57,10 +58,13 @@ func (h *RBACHandler) listUsers(w http.ResponseWriter, r *http.Request) {
 		IsSuperuser      bool   `json:"is_superuser"`
 		IsServiceAccount bool   `json:"is_service_account"`
 		Annotation       string `json:"annotation,omitempty"`
+		AuthSource       string `json:"auth_source"`
+		AuthIssuer       string `json:"auth_issuer,omitempty"`
 	}
 
 	result := make([]userResponse, len(users))
 	for i, u := range users {
+		source, issuer := describeAuthSource(u)
 		result[i] = userResponse{
 			ID:               u.ID,
 			Username:         u.Username,
@@ -70,6 +74,8 @@ func (h *RBACHandler) listUsers(w http.ResponseWriter, r *http.Request) {
 			IsSuperuser:      u.IsSuperuser,
 			IsServiceAccount: u.IsServiceAccount,
 			Annotation:       u.Annotation,
+			AuthSource:       source,
+			AuthIssuer:       issuer,
 		}
 	}
 
@@ -92,6 +98,15 @@ func (h *RBACHandler) createUser(w http.ResponseWriter, r *http.Request) {
 		IsServiceAccount *bool  `json:"is_service_account"`
 	}
 	if !DecodeJSONBody(w, r, &req) {
+		return
+	}
+
+	// manage_users can be granted to a group, but superuser short-circuits
+	// every permission check, so only a superuser may say anything about
+	// superuser status. The field is refused whenever it is present rather
+	// than only when it would change something, which keeps the rule
+	// independent of the target's state at the moment of the check.
+	if req.IsSuperuser != nil && !h.requireSuperuser(w, r) {
 		return
 	}
 
@@ -138,32 +153,45 @@ func (h *RBACHandler) createUser(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// A token may create only a user who reaches no further than the
+	// token itself (issue #471). A superuser reaches everything, so only
+	// a superuser's token with unrestricted scope may create one; any
+	// other new user still reaches the unrestricted connections open to
+	// every user, any connection its name already owns, and the public
+	// MCP items, and those must lie within the token's access.
+	if req.IsSuperuser != nil && *req.IsSuperuser {
+		if !h.requireGrantInTokenScope(w, r,
+			h.rbacChecker.TokenHoldsEverything(r.Context()), refuseSuperuser) {
+			return
+		}
+	} else if !h.requireGrantInTokenScope(w, r,
+		h.rbacChecker.NewUserWithinTokenScope(r.Context(), req.Username,
+			h.connLister), refuseNewUserAccess) {
+		return
+	}
+
 	if isServiceAccount {
-		if err := h.authStore.CreateServiceAccount(req.Username, req.Annotation, req.DisplayName, req.Email); err != nil {
-			log.Printf("[ERROR] Failed to create service account %s: %v", req.Username, err)
-			RespondError(w, http.StatusInternalServerError, "Failed to create service account")
+		if err := h.actorStore(r).CreateServiceAccount(req.Username, req.Annotation, req.DisplayName, req.Email); err != nil {
+			respondUserStoreError(w, err, "Failed to create service account", req.Username)
 			return
 		}
 	} else {
-		if err := h.authStore.CreateUser(req.Username, req.Password, req.Annotation, req.DisplayName, req.Email); err != nil {
-			log.Printf("[ERROR] Failed to create user %s: %v", req.Username, err)
-			RespondError(w, http.StatusInternalServerError, "Failed to create user")
+		if err := h.actorStore(r).CreateUser(req.Username, req.Password, req.Annotation, req.DisplayName, req.Email); err != nil {
+			respondUserStoreError(w, err, "Failed to create user", req.Username)
 			return
 		}
 	}
 
 	if req.Enabled != nil && !*req.Enabled {
-		if err := h.authStore.DisableUser(req.Username); err != nil {
-			log.Printf("[ERROR] Failed to disable user %s: %v", req.Username, err)
-			RespondError(w, http.StatusInternalServerError, "Failed to disable user")
+		if err := h.actorStore(r).DisableUser(req.Username); err != nil {
+			respondUserStoreError(w, err, "Failed to disable user", req.Username)
 			return
 		}
 	}
 
 	if req.IsSuperuser != nil && *req.IsSuperuser {
-		if err := h.authStore.SetUserSuperuser(req.Username, true); err != nil {
-			log.Printf("[ERROR] Failed to set superuser status for %s: %v", req.Username, err)
-			RespondError(w, http.StatusInternalServerError, "Failed to set superuser status")
+		if err := h.actorStore(r).SetUserSuperuser(req.Username, true); err != nil {
+			respondUserStoreError(w, err, "Failed to set superuser status", req.Username)
 			return
 		}
 	}
@@ -190,11 +218,25 @@ func (h *RBACHandler) updateUser(w http.ResponseWriter, r *http.Request, userID 
 		return
 	}
 
+	// See createUser: only a superuser may set or clear superuser status,
+	// on any account including the caller's own.
+	if req.IsSuperuser != nil && !h.requireSuperuser(w, r) {
+		return
+	}
+
 	user, err := h.authStore.GetUserByID(userID)
 	if err != nil || user == nil {
 		RespondError(w, http.StatusNotFound, "User not found")
 		return
 	}
+
+	// Changing a superuser's password, profile or enabled state is as
+	// good as holding the role: a new password lets the caller sign in
+	// as that superuser, and disabling one can lock every administrator
+	// out. Only a superuser may therefore edit a superuser account. The
+	// store makes that check against the row it reads inside the update's
+	// own transaction, so that a target promoted after the read above is
+	// still refused (issue #588); see respondUserWriteError.
 
 	// Validate password against the length and dictionary policy when set
 	if req.Password != nil && *req.Password != "" {
@@ -212,6 +254,22 @@ func (h *RBACHandler) updateUser(w http.ResponseWriter, r *http.Request, userID 
 		}
 	}
 
+	// Only a superuser's token with unrestricted scope may make a
+	// superuser, and a token may not set the password of, or re-enable,
+	// an account that reaches further than the token does, since either
+	// would hand the token's holder that account's access (issue #471).
+	if req.IsSuperuser != nil && *req.IsSuperuser &&
+		!h.requireGrantInTokenScope(w, r,
+			h.rbacChecker.TokenHoldsEverything(r.Context()), refuseSuperuser) {
+		return
+	}
+	takesOver := (req.Password != nil && *req.Password != "") ||
+		(req.Enabled != nil && *req.Enabled)
+	if takesOver && !h.requireGrantInTokenScope(w, r,
+		h.userWithinTokenScope(r.Context(), userID), refuseUserAccess) {
+		return
+	}
+
 	// Use atomic update to ensure all changes succeed or fail together
 	update := auth.UserUpdate{
 		Password:    req.Password,
@@ -222,9 +280,16 @@ func (h *RBACHandler) updateUser(w http.ResponseWriter, r *http.Request, userID 
 		IsSuperuser: req.IsSuperuser,
 	}
 
-	if err := h.authStore.UpdateUserAtomic(user.Username, update); err != nil {
-		log.Printf("[ERROR] Failed to update user %s: %v", user.Username, err)
-		RespondError(w, http.StatusInternalServerError, "Failed to update user")
+	// The store refuses a password write to an account whose identity is
+	// managed elsewhere, and applies the password, enabled and superuser
+	// changes as one transaction, so that refusal rolls back the rest of
+	// the request as well. It reaches the caller as a 400 naming the
+	// reason, which matters for more than the message: an administrator
+	// who fills in the password whilst unticking "enabled" on a federated
+	// user must not read a generic failure as the account being disabled.
+	if err := h.actorStore(r).UpdateUserAtomic(user.Username, update,
+		h.rbacChecker.IsSuperuser(r.Context())); err != nil {
+		h.respondUserWriteError(w, r, err, "Failed to update user", user.Username)
 		return
 	}
 
@@ -244,9 +309,22 @@ func (h *RBACHandler) deleteUser(w http.ResponseWriter, r *http.Request, userID 
 		return
 	}
 
-	if err := h.authStore.DeleteUser(user.Username); err != nil {
-		log.Printf("[ERROR] Failed to delete user %s: %v", user.Username, err)
-		RespondError(w, http.StatusInternalServerError, "Failed to delete user")
+	// See updateUser: only a superuser may delete a superuser account,
+	// which the store checks inside the delete's own transaction.
+
+	// Connection ownership is recorded by username, so a deleted
+	// account's unshared connections pass to whoever next takes the
+	// name. A bounded token may therefore delete only an account that
+	// reaches no further than the token, or delete-and-recreate would
+	// hand it that account's connections (issue #471).
+	if !h.requireGrantInTokenScope(w, r,
+		h.userWithinTokenScope(r.Context(), userID), refuseUserAccess) {
+		return
+	}
+
+	if err := h.actorStore(r).DeleteUser(user.Username,
+		h.rbacChecker.IsSuperuser(r.Context())); err != nil {
+		h.respondUserWriteError(w, r, err, "Failed to delete user", user.Username)
 		return
 	}
 
@@ -310,15 +388,26 @@ func (h *RBACHandler) getUserPrivileges(w http.ResponseWriter, r *http.Request, 
 	type privilegeResponse struct {
 		Username             string         `json:"username"`
 		IsSuperuser          bool           `json:"is_superuser"`
+		AuthSource           string         `json:"auth_source"`
+		AuthIssuer           string         `json:"auth_issuer,omitempty"`
 		Groups               []string       `json:"groups"`
 		MCPPrivileges        []string       `json:"mcp_privileges"`
 		ConnectionPrivileges map[int]string `json:"connection_privileges"`
 		AdminPermissions     []string       `json:"admin_permissions"`
 	}
 
+	// The authentication source belongs in this response as much as in the
+	// user list: a superuser flag or a group membership that keeps reverting
+	// is usually an identity provider reconciling the account on each login,
+	// and an administrator looking at the privileges of one user is exactly
+	// the person who needs to know that.
+	source, issuer := describeAuthSource(user)
+
 	resp := privilegeResponse{
 		Username:    user.Username,
 		IsSuperuser: user.IsSuperuser,
+		AuthSource:  source,
+		AuthIssuer:  issuer,
 	}
 
 	// Get groups
@@ -374,6 +463,76 @@ func (h *RBACHandler) getUserPrivileges(w http.ResponseWriter, r *http.Request, 
 	}
 
 	RespondJSON(w, http.StatusOK, resp)
+}
+
+// authSourceUnknown is what describeAuthSource reports for a row whose stored
+// auth_source is empty, so that the field is never blank in a response.
+const authSourceUnknown = "unknown"
+
+// describeAuthSource reports how a stored account signs in, as the pair of
+// values every user object in this package carries: the authentication source
+// itself, and the issuer of the identity provider that owns the account.
+//
+// Only a stored value of exactly local is reported as local, which is the
+// reading AuthenticateUser applies when it refuses password login to anything
+// else. Every other value is passed through as it is stored, with the issuer
+// when the external subject parses, so that an unexpected source is shown for
+// what it is rather than dressed up as oidc. The one exception is an empty
+// value, which is reported as unknown: the column is NOT NULL DEFAULT 'local',
+// so no supported path writes one, but calling such a row local would tell an
+// administrator that it accepts a password when login refuses it, and calling
+// it oidc would name a provider nothing on the row supports.
+//
+// The issuer is empty for a local account, and also for a federated one whose
+// stored external subject cannot be parsed; a caller renders its own fallback
+// rather than being handed a half-parsed key. The subject is never reported.
+func describeAuthSource(user *auth.StoredUser) (source, issuer string) {
+	source = user.AuthSource
+	if source == auth.AuthSourceLocal {
+		return source, ""
+	}
+	if source == "" {
+		source = authSourceUnknown
+	}
+	return source, auth.IssuerFromExternalSubject(user.ExternalSubject)
+}
+
+// respondUserStoreError answers a failed auth store call made on behalf of
+// the request. A refusal the store marks as invalid input is the caller's
+// to fix, so it is returned as a 400 carrying the store's own message; a
+// refusal to remove the last enabled superuser is a 409; any other error
+// is logged and returned as a 500 with the fixed failure
+// message, so that database detail never reaches the client.
+func respondUserStoreError(w http.ResponseWriter, err error, failure, username string) {
+	var invalid *auth.InvalidInputError
+	if errors.As(err, &invalid) {
+		RespondError(w, http.StatusBadRequest, capitalizeFirst(invalid.Error()))
+		return
+	}
+	// Refusing to remove the last enabled superuser is a conflict with
+	// the server's state, not a fault: it clears once another enabled
+	// superuser exists.
+	if errors.Is(err, auth.ErrLastSuperuser) {
+		RespondError(w, http.StatusConflict, capitalizeFirst(err.Error()))
+		return
+	}
+	log.Printf("[ERROR] %s (user %s): %v", failure, username, err)
+	RespondError(w, http.StatusInternalServerError, failure)
+}
+
+// respondUserWriteError answers a failed update or delete of an existing
+// account. The store's refusal to let a caller who is not a superuser
+// write to a superuser account is answered exactly as requireSuperuser
+// answers, denial audit included; anything else goes to
+// respondUserStoreError.
+func (h *RBACHandler) respondUserWriteError(w http.ResponseWriter,
+	r *http.Request, err error, failure, username string) {
+
+	if errors.Is(err, auth.ErrSuperuserTargetForbidden) {
+		h.denyNotSuperuser(w, r)
+		return
+	}
+	respondUserStoreError(w, err, failure, username)
 }
 
 // capitalizeFirst returns the string with its first character uppercased.

@@ -35,6 +35,19 @@ type TemplateRenderer interface {
 
 	// RenderJSON renders a JSON template and validates the result is valid JSON
 	RenderJSON(templateStr string, payload *database.NotificationPayload, defaultTemplate string) (string, error)
+
+	// RenderHTML renders a template whose output is an HTML fragment,
+	// HTML-escaping every string value in the payload so that markup
+	// characters arriving in alert text cannot break the result. Used
+	// for Telegram message text, which is sent with parse_mode "HTML".
+	RenderHTML(templateStr string, payload *database.NotificationPayload, defaultTemplate string) (string, error)
+
+	// RenderChatJSON renders the JSON envelope of a Slack or Mattermost
+	// incoming webhook. It escapes every string value in the payload
+	// for the given chat markup, then JSON-escapes it, and validates
+	// that the result is valid JSON. The template itself is not
+	// escaped, so links and formatting it contains still work.
+	RenderChatJSON(markup ChatMarkup, templateStr string, payload *database.NotificationPayload, defaultTemplate string) (string, error)
 }
 
 // NotificationManager orchestrates all notification operations

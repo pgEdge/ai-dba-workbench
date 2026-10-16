@@ -100,7 +100,46 @@ interface TooltipParam {
     axisValue: string;
     marker: string;
     seriesName: string;
-    value: number;
+    value: number | null | undefined;
+    /**
+     * The raw data item. A carried-forward point is an object rather
+     * than a bare number, so the tooltip can say the value was not
+     * observed in that bucket.
+     */
+    data?: unknown;
+}
+
+/**
+ * Text shown in the tooltip for a bucket that carries no value: the
+ * server emits `null` for a collector gap, a counter reset or a rate it
+ * cannot derive, and ECharts hands the formatter that null (or nothing
+ * at all for a `'-'` placeholder).
+ */
+const NO_VALUE_LABEL = 'no data';
+
+/**
+ * Suffix shown in the tooltip for a bucket whose value is the last
+ * observation carried forward rather than a sample collected in that
+ * bucket. Carried-forward stretches are also drawn with hollow markers
+ * and a shaded band, so the distinction never rests on colour alone.
+ */
+const CARRIED_FORWARD_LABEL = ' (carried forward)';
+
+/** True when an ECharts data item is a carried-forward point. */
+function isCarriedForward(item: unknown): boolean {
+    return typeof item === 'object' && item !== null
+        && (item as { filled?: unknown }).filled === true;
+}
+
+/**
+ * Type guard for a usable data point value. Null marks a bucket with
+ * no value (the server emits it for a collector gap, a counter reset or
+ * a rate it cannot derive) and is drawn as a gap; undefined entries
+ * from ragged series and non-finite numbers are skipped the same way,
+ * both in the tooltip and when sizing the y-axis.
+ */
+function isFiniteNumber(value: unknown): value is number {
+    return typeof value === 'number' && Number.isFinite(value);
 }
 
 export function buildTooltip(show: boolean): object {
@@ -119,10 +158,21 @@ export function buildTooltip(show: boolean): object {
                 : formatDateTimeFull(d);
 
             const lines = list.map((p) => {
-                const val = typeof p.value === 'number'
-                    ? formatNumericValue(p.value)
-                    : String(p.value);
-                return `${p.marker} ${p.seriesName}: ${val}`;
+                let val: string;
+                if (p.value === null || p.value === undefined) {
+                    val = NO_VALUE_LABEL;
+                } else if (typeof p.value === 'number') {
+                    // NaN and +/-Infinity carry no reading either.
+                    val = isFiniteNumber(p.value)
+                        ? formatNumericValue(p.value)
+                        : NO_VALUE_LABEL;
+                } else {
+                    val = String(p.value);
+                }
+                const note = val !== NO_VALUE_LABEL && isCarriedForward(p.data)
+                    ? CARRIED_FORWARD_LABEL
+                    : '';
+                return `${p.marker} ${p.seriesName}: ${val}${note}`;
             });
 
             return '<strong>' + header + '</strong><br/>'
@@ -202,7 +252,7 @@ export function buildXAxis(categories?: string[]): object {
  * instead of collapsing to a tiny window around a netted zero.
  */
 export function buildYAxis(
-    seriesData?: number[][],
+    seriesData?: (number | null)[][],
     stacked?: boolean,
     zeroAnchored?: boolean,
 ): object {
@@ -245,7 +295,7 @@ export function buildYAxis(
         for (const s of series) {
             if (s.length > maxLen) {maxLen = s.length;}
             for (const value of s) {
-                if (!Number.isFinite(value)) {continue;}
+                if (!isFiniteNumber(value)) {continue;}
                 if (value > 0) {hasPositive = true;}
                 else if (value < 0) {hasNegative = true;}
             }
@@ -256,7 +306,7 @@ export function buildYAxis(
             let finiteAtIndex = false;
             for (const s of series) {
                 const value = s[i];
-                if (!Number.isFinite(value)) {continue;}
+                if (!isFiniteNumber(value)) {continue;}
                 finiteAtIndex = true;
                 if (value > 0) {posSum += value;}
                 else if (value < 0) {negSum += value;}
@@ -273,7 +323,7 @@ export function buildYAxis(
     } else {
         for (const s of series) {
             for (const value of s) {
-                if (!Number.isFinite(value)) {continue;}
+                if (!isFiniteNumber(value)) {continue;}
                 observe(value);
             }
         }
@@ -285,8 +335,12 @@ export function buildYAxis(
         if (zeroAnchored) {
             // The chart's marks fill from the zero baseline, so the
             // padded range must span zero to avoid clipping the fill or
-            // bar at that baseline.
-            axis.min = Math.min(0, flat - padding);
+            // bar at that baseline. A flat zero is the baseline itself:
+            // there is nothing below it to show, and a count or rate
+            // that cannot be negative (an all-zero bar chart of
+            // checkpoints, say) must not draw an axis running to -1, so
+            // it pads upward only.
+            axis.min = flat === 0 ? 0 : Math.min(0, flat - padding);
             axis.max = Math.max(0, flat + padding);
         } else {
             // A plain line has no baseline fill, so a tight window
@@ -308,4 +362,88 @@ export function buildDataZoom(enabled: boolean): object[] {
             end: 100,
         },
     ];
+}
+
+/**
+ * One ECharts data item. A carried-forward point is emitted as an
+ * object so that it can carry the `filled` flag (read back by the
+ * tooltip formatter) alongside a hollow marker that distinguishes it
+ * from an observed sample by shape rather than by colour.
+ */
+export type SeriesDataItem = number | null | {
+    value: number | null;
+    filled: true;
+    symbol: string;
+    symbolSize: number;
+    itemStyle: { opacity: number };
+};
+
+/**
+ * Build a series' ECharts data from its values and, where the source
+ * reports them, its carried-forward flags. Observed points stay bare
+ * numbers (or nulls, which ECharts draws as gaps), so a chart with no
+ * notion of carried-forward data is unchanged.
+ */
+export function buildSeriesData(
+    values: (number | null)[],
+    filled?: boolean[],
+): SeriesDataItem[] {
+    if (!filled) {return values;}
+
+    return values.map((value, i) => {
+        if (!filled[i] || value === null) {return value;}
+        return {
+            value,
+            filled: true as const,
+            symbol: 'emptyCircle',
+            symbolSize: 6,
+            itemStyle: { opacity: 0.55 },
+        };
+    });
+}
+
+interface MarkAreaBound {
+    xAxis: string;
+}
+
+/**
+ * Build the shaded bands that mark stretches of carried-forward data.
+ *
+ * The flags of every series are unioned, because all series in a
+ * metrics response share one set of buckets and overlapping bands would
+ * otherwise compound into an arbitrary shade. Returns undefined when
+ * nothing was carried forward, which leaves the option untouched.
+ */
+export function buildFilledMarkArea(
+    categories: string[] | undefined,
+    series: { filled?: boolean[] }[],
+): object | undefined {
+    const cats = categories ?? [];
+    if (cats.length === 0) {return undefined;}
+
+    const anyFilled = cats.map((_, i) =>
+        series.some(s => s.filled?.[i] === true));
+    if (!anyFilled.some(Boolean)) {return undefined;}
+
+    const bands: [MarkAreaBound, MarkAreaBound][] = [];
+    let runStart = -1;
+    for (let i = 0; i <= anyFilled.length; i++) {
+        if (i < anyFilled.length && anyFilled[i]) {
+            if (runStart < 0) {runStart = i;}
+            continue;
+        }
+        if (runStart >= 0) {
+            bands.push([
+                { xAxis: cats[runStart] },
+                { xAxis: cats[i - 1] },
+            ]);
+            runStart = -1;
+        }
+    }
+
+    return {
+        silent: true,
+        itemStyle: { color: 'rgba(128, 128, 128, 0.14)' },
+        data: bands,
+    };
 }

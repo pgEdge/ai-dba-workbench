@@ -19,14 +19,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { exportChartAsPng } from '../exportPng';
-
-interface ExportableChart {
-    getDataURL: (opts: {
-        type: string;
-        pixelRatio: number;
-        backgroundColor: string;
-    }) => string;
-}
+import type { ExportableChart } from '../exportPng';
 
 describe('exportChartAsPng', () => {
     let appendSpy: ReturnType<typeof vi.spyOn>;

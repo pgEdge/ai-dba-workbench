@@ -22,7 +22,8 @@ import { TimelineHeader, LoadingSkeleton, EmptyState } from './TimelineHeader';
 import TimelineCanvas from './TimelineCanvas';
 import EventDetailPanel from './EventDetailPanel';
 import { getOuterContainerSx } from './styles';
-import type { EventTimelineProps } from './types';
+import type { EventCluster, EventTimelineProps, TimelineEvent } from './types';
+import type { TimelineTimeRange } from '../../utils/timelineRange';
 
 /**
  * EventTimeline - Main component for displaying server events on a timeline
@@ -31,10 +32,10 @@ const EventTimeline: React.FC<EventTimelineProps> = ({ selection }) => {
     const theme = useTheme();
 
     // Internal state
-    const [timeRange, setTimeRange] = useState(getInitialTimeRange);
+    const [timeRange, setTimeRange] = useState<TimelineTimeRange>(getInitialTimeRange);
     const [eventTypes, setEventTypes] = useState(['all']);
     const [expanded, setExpanded] = useState(true);
-    const [selectedEvents, setSelectedEvents] = useState(null);
+    const [selectedEvents, setSelectedEvents] = useState<TimelineEvent[] | null>(null);
 
     /*
      * Persist the time range preference to localStorage, but only for the
@@ -88,7 +89,7 @@ const EventTimeline: React.FC<EventTimelineProps> = ({ selection }) => {
     });
 
     // Handle event click - shows all events in cluster in the detail panel
-    const handleEventClick = useCallback((e, cluster) => {
+    const handleEventClick = useCallback((_e: React.MouseEvent<HTMLElement>, cluster: EventCluster) => {
         setSelectedEvents(cluster.events);
     }, []);
 

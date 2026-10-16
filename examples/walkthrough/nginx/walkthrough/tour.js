@@ -1237,7 +1237,8 @@
                     "Notification channels control where alerts are " +
                     "delivered. Email channels send formatted alert " +
                     "messages to configured recipients. You can also " +
-                    "set up Slack, Mattermost, and webhook channels.",
+                    "set up Slack, Mattermost, Telegram, and webhook " +
+                    "channels.",
                 side: "right",
                 align: "start",
             },

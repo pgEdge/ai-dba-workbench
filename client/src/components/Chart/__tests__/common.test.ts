@@ -25,6 +25,8 @@ import {
     buildXAxis,
     buildYAxis,
     buildDataZoom,
+    buildSeriesData,
+    buildFilledMarkArea,
 } from '../options/common';
 
 const isoMinusHours = (h: number) =>
@@ -202,6 +204,8 @@ describe('buildYAxis range padding', () => {
     });
 
     it('pads a fixed range around a flat zero series', () => {
+        // A plain line has no baseline fill, so the window stays
+        // centred on the flat value to keep the line off the axis edge.
         const yAxis = buildYAxis([
             [0, 0, 0],
         ]) as unknown as YAxisOpts;
@@ -396,10 +400,11 @@ describe('buildYAxis stacked range padding', () => {
         expect(yAxis.max).toBe(0);
     });
 
-    it('pads a fixed range around an all-zero stacked series', () => {
+    it('pads an all-zero stacked series upward from the baseline', () => {
         // Neither sign is present, so the flat zero baseline is observed
-        // and padded to the fixed [-1, 1] window; the zero-anchored
-        // range already straddles the baseline so it is unchanged.
+        // and padded to a fixed [0, 1] window: a stacked chart is
+        // zero-anchored, and an all-zero count (a window with no
+        // checkpoints, say) must not draw an axis running down to -1.
         const yAxis = buildYAxis(
             [
                 [0, 0, 0],
@@ -407,7 +412,7 @@ describe('buildYAxis stacked range padding', () => {
             true,
             true,
         ) as unknown as YAxisOpts;
-        expect(yAxis.min).toBe(-1);
+        expect(yAxis.min).toBe(0);
         expect(yAxis.max).toBe(1);
     });
 });
@@ -445,13 +450,17 @@ describe('buildYAxis zero-anchored range padding', () => {
         expect(yAxis.max).toBe(0);
     });
 
-    it('pads a fixed range straddling zero for a flat zero zero-anchored series', () => {
+    it('pads a flat zero zero-anchored series upward only', () => {
+        // Bars and filled lines grow from the baseline and there is
+        // nothing below a flat zero to show, so the window is [0, 1]
+        // rather than straddling zero; the plain-line case above keeps
+        // its centred [-1, 1] window.
         const yAxis = buildYAxis(
             [[0, 0, 0]],
             false,
             true,
         ) as unknown as YAxisOpts;
-        expect(yAxis.min).toBe(-1);
+        expect(yAxis.min).toBe(0);
         expect(yAxis.max).toBe(1);
     });
 
@@ -553,5 +562,199 @@ describe('buildTooltip formatter', () => {
             },
         ]);
         expect(html).toContain('Status: online');
+    });
+
+    it('labels a null, undefined or non-finite value as no data', () => {
+        const tooltip = buildTooltip(true) as TooltipOpts;
+        const html = tooltip.formatter([
+            {
+                axisValue: '2026-04-20T14:05:06Z',
+                marker: '*',
+                seriesName: 'Gap',
+                value: null,
+            },
+            {
+                axisValue: '2026-04-20T14:05:06Z',
+                marker: '*',
+                seriesName: 'Missing',
+                value: undefined,
+            },
+            {
+                axisValue: '2026-04-20T14:05:06Z',
+                marker: '*',
+                seriesName: 'Bad',
+                value: NaN,
+            },
+            {
+                axisValue: '2026-04-20T14:05:06Z',
+                marker: '*',
+                seriesName: 'Up',
+                value: Infinity,
+            },
+            {
+                axisValue: '2026-04-20T14:05:06Z',
+                marker: '*',
+                seriesName: 'Down',
+                value: -Infinity,
+            },
+            {
+                axisValue: '2026-04-20T14:05:06Z',
+                marker: '*',
+                seriesName: 'CPU',
+                value: 42,
+            },
+        ]);
+        expect(html).toContain('Gap: no data');
+        expect(html).toContain('Missing: no data');
+        expect(html).toContain('Bad: no data');
+        expect(html).toContain('Up: no data');
+        expect(html).toContain('Down: no data');
+        expect(html).toContain('CPU: 42');
+        expect(html).not.toContain('null');
+        expect(html).not.toContain('NaN');
+        expect(html).not.toContain('Infinity');
+        expect(html).not.toContain('undefined');
+    });
+});
+
+describe('buildYAxis null handling', () => {
+    interface YAxisOpts {
+        min?: number;
+        max?: number;
+    }
+
+    it('ignores null gaps when padding a flat plain series', () => {
+        const yAxis = buildYAxis([
+            [null, 50, null, 50],
+        ]) as unknown as YAxisOpts;
+        expect(yAxis.min).toBeCloseTo(45);
+        expect(yAxis.max).toBeCloseTo(55);
+    });
+
+    it('omits min/max when every point is null', () => {
+        const yAxis = buildYAxis([[null, null]]) as unknown as YAxisOpts;
+        expect(yAxis).not.toHaveProperty('min');
+        expect(yAxis).not.toHaveProperty('max');
+    });
+
+    it('skips null points when totalling a stacked series', () => {
+        const yAxis = buildYAxis([
+            [10, null, 10],
+            [null, null, 10],
+        ], true, true) as unknown as YAxisOpts;
+        // Index 1 has no finite value and is skipped; index 0 totals 10
+        // and index 2 totals 20, so the range is left to auto-scale.
+        expect(yAxis).not.toHaveProperty('min');
+        expect(yAxis).not.toHaveProperty('max');
+    });
+
+    it('pads a flat stacked total when nulls interleave', () => {
+        const yAxis = buildYAxis([
+            [10, null, 10],
+            [null, null, null],
+        ], true, true) as unknown as YAxisOpts;
+        expect(yAxis.min).toBe(0);
+        expect(yAxis.max).toBeCloseTo(11);
+    });
+});
+
+describe('buildSeriesData', () => {
+    it('leaves values untouched when no filled flags are given', () => {
+        expect(buildSeriesData([1, null, 3])).toEqual([1, null, 3]);
+    });
+
+    it('wraps carried-forward points so they can be told apart', () => {
+        const data = buildSeriesData([1, 2, 3], [false, true, false]);
+        expect(data[0]).toBe(1);
+        expect(data[2]).toBe(3);
+        expect(data[1]).toEqual({
+            value: 2,
+            filled: true,
+            symbol: 'emptyCircle',
+            symbolSize: 6,
+            itemStyle: { opacity: 0.55 },
+        });
+    });
+
+    it('leaves a gap as a plain null even when flagged', () => {
+        expect(buildSeriesData([null], [true])).toEqual([null]);
+    });
+});
+
+describe('buildFilledMarkArea', () => {
+    const cats = ['a', 'b', 'c', 'd', 'e'];
+
+    it('returns nothing when no bucket was carried forward', () => {
+        expect(buildFilledMarkArea(cats, [
+            { filled: [false, false, false, false, false] },
+            {},
+        ])).toBeUndefined();
+        expect(buildFilledMarkArea(undefined, [])).toBeUndefined();
+        expect(buildFilledMarkArea([], [{ filled: [true] }]))
+            .toBeUndefined();
+    });
+
+    it('bands each contiguous carried-forward stretch', () => {
+        const area = buildFilledMarkArea(cats, [
+            { filled: [true, true, false, false, true] },
+        ]) as { data: { xAxis: string }[][]; silent: boolean };
+
+        expect(area.silent).toBe(true);
+        expect(area.data).toEqual([
+            [{ xAxis: 'a' }, { xAxis: 'b' }],
+            [{ xAxis: 'e' }, { xAxis: 'e' }],
+        ]);
+    });
+
+    it('unions the flags of every series so bands cannot compound', () => {
+        const area = buildFilledMarkArea(cats, [
+            { filled: [true, false, false, false, false] },
+            { filled: [false, true, false, false, false] },
+        ]) as { data: { xAxis: string }[][] };
+
+        expect(area.data).toEqual([[{ xAxis: 'a' }, { xAxis: 'b' }]]);
+    });
+});
+
+describe('buildTooltip with carried-forward points', () => {
+    const format = (params: unknown) => (
+        (buildTooltip(true) as {
+            formatter: (p: unknown) => string;
+        }).formatter(params)
+    );
+
+    it('says so when a value was carried forward', () => {
+        const html = format([{
+            axisValue: '2026-09-16T09:00:00.000Z',
+            marker: 'M',
+            seriesName: 'CPU',
+            value: 42,
+            data: { value: 42, filled: true },
+        }]);
+        expect(html).toContain('CPU: 42 (carried forward)');
+    });
+
+    it('says nothing extra for an observed value', () => {
+        const html = format([{
+            axisValue: '2026-09-16T09:00:00.000Z',
+            marker: 'M',
+            seriesName: 'CPU',
+            value: 42,
+            data: 42,
+        }]);
+        expect(html).toContain('CPU: 42');
+        expect(html).not.toContain('carried forward');
+    });
+
+    it('reports a gap as no data rather than carried forward', () => {
+        const html = format([{
+            axisValue: '2026-09-16T09:00:00.000Z',
+            marker: 'M',
+            seriesName: 'CPU',
+            value: null,
+            data: { value: null, filled: true },
+        }]);
+        expect(html).toContain('CPU: no data');
+        expect(html).not.toContain('carried forward');
     });
 });

@@ -12,6 +12,187 @@ project adheres to
 
 ### Added
 
+- Classify tier 3 anomaly candidates with an optional decision
+  model (#626). The new `llm.decision_provider` option selects
+  `typesafe` (the TypeSafe Jev models, configured in the new
+  `llm.typesafe` section with `api_key_file`, `base_url` and
+  `decision_model`, default `jev-latest`) or `openai` (the
+  OpenAI Decisions API, with the new
+  `llm.openai.decision_model` option, default `gpt-6-luna`);
+  leaving it empty, `none` or `disabled` keeps the existing
+  behaviour. The decision model returns the probability that a
+  candidate is a real issue, and tier 3 suppresses the candidate
+  when one minus that probability reaches the new
+  `anomaly.tier3.decision_suppress_threshold` option (default
+  0.5). Any decision model failure falls back to the reasoning
+  model for that candidate, or raises the alert when no
+  reasoning provider is configured; re-evaluation of
+  acknowledged alerts still uses the reasoning model. A failing
+  decision provider raises its own `Tier 3 decision` provider
+  health system alert. Collector schema migrations 22 and 23
+  add the `tier3_source` and `tier3_model` columns to
+  `anomaly_candidates`, recording which kind of model, and which
+  model, decided each candidate; upgrade the collector before,
+  or together with, the alerter. An alerter upgraded first logs
+  `ERROR: Failed to get anomaly candidates` once each cycle and
+  raises no anomaly alerts, and its queued candidates expire
+  unprocessed after two and a half hours. Changing the decision
+  provider takes an alerter restart. In a
+  [spike](https://github.com/pgEdge/ai-dba-workbench/issues/626#issuecomment-6187170285)
+  on 150 real candidates, the Jev model agreed with the stored
+  reasoning-model decisions 89% of the time, at about a fiftieth
+  of the cost, at October 2026 prices, and a fifteenth of the
+  median latency of Claude Haiku 4.5, so `typesafe` is the
+  recommended provider.
+
+- Add the `describe_datastore` MCP tool, which lists the sources
+  that `query_datastore` can read, with each source's kind, time
+  column and scoping rule, and describes one source's columns
+  (#566). The new `builtins.tools.describe_datastore` option
+  switches the tool off, the tool is a grantable MCP privilege that
+  anyone holding `query_datastore` also has, and Ellie can call the
+  tool.
+
+- Raise a system alert when anomaly detection is degraded by
+  a failing embedding or reasoning provider (#582). The
+  alerter counts consecutive failures for each tier (tier 2
+  embeddings, tier 3 classification and re-evaluation) and
+  provider, treating a tier 3 or re-evaluation response that
+  holds no decision the alerter can parse as a failure
+  (#594), and raises one warning alert for the tier and
+  provider when the count reaches the new
+  `anomaly.provider_health.failure_threshold` option
+  (default 3), or at once when the embedding or reasoning
+  provider fails the new startup health check. The alert
+  names the provider, the model, the failure count and the
+  last error, clears on the next successful call to the
+  provider (from either tier 3 or re-evaluation for the
+  reasoning provider), is not raised again within five
+  minutes of clearing, and goes to the estate default
+  notification channels. System alerts use the new `system` alert type
+  and have no connection, which collector schema migration
+  19 allows; every user and API token with alert access sees
+  them, the REST API reports a `null` `connection_id` for
+  them, and `GET /api/v1/alerts/counts` gains a `system`
+  total. Acknowledging or restoring a system alert requires
+  a superuser or the `manage_alert_rules` admin permission,
+  bounded by an API token's admin scope, and the server
+  refuses to save AI analysis on a system alert with a 400
+  response. The web client lists system alerts on the estate
+  view with an "AI DBA Workbench" source label and a
+  "System" type chip in place of a server name, offers no AI
+  analysis for them, since they concern no monitored
+  connection, and shows their acknowledge and restore
+  actions only to a superuser or a holder of
+  `manage_alert_rules`.
+- Add the `probe_unavailable` built-in alert rule, which
+  reports a probe that had been collecting and has stopped
+  being available. Collector schema migration 16 seeds the
+  rule in the `availability` category on the new
+  `probe_available` metric, comparing with `<` against a
+  threshold of 1 at warning severity, enabled by default and
+  requiring no extension; the metric is the availability flag
+  itself, reported as 0 whilst the probe is unavailable and 1
+  whilst the probe collects. Before this change such a probe
+  raised nothing at all: the collector records the probe as
+  unavailable on the first run after the extension, the
+  privilege or the connection goes, whilst the staleness ratio
+  is still about 1, so no `metric_staleness` alert has fired
+  for the hold added in #465 to preserve, and the staleness
+  evaluator skips unavailable probes deliberately, because a
+  probe whose extension will never be installed would
+  otherwise carry a permanent staleness alert. The new rule
+  fires only for a probe that has collected at least once, so
+  a probe whose extension was never installed never raises
+  one. The alerter clears the alert when the probe collects
+  again, and also when an operator retires the probe by
+  disabling it, by no longer monitoring the connection, or by
+  removing the availability row. A held `metric_staleness`
+  alert and a `probe_unavailable` alert may be active on the
+  same probe at once, one reporting that the data went stale
+  and the other reporting why, and each clears on its own
+  terms. Per-connection threshold overrides, blackouts and the
+  alert cooldown apply to the new rule as they do to
+  `metric_staleness`. (#512)
+
+- Raise the provider health system alert for a provider that
+  fails a steady share of its calls without failing
+  consecutively, such as one that rejects every other
+  request (#593). The new
+  `anomaly.provider_health.failure_rate` (default 0.3) and
+  `anomaly.provider_health.failure_rate_window` (default 20)
+  options raise the alert once that share of the last window
+  of calls has failed, and keep it open until fewer have, so
+  a flaky provider no longer raises and clears the alert in
+  turn; a provider that fails consecutively and then recovers
+  still clears on its first successful call, unless its other
+  recent failures keep it at the limit.
+
+- Add federated login through an OpenID Connect identity
+  provider, configured in the new `http.auth.oidc` section
+  and offered as a second button on the login page. The
+  Workbench discovers the provider at start-up, runs an
+  authorisation code flow with PKCE, matches the account on
+  the issuer and `sub` claim, and can provision an account on
+  first login. Provider groups map onto Workbench groups
+  through `group_map`, and `superuser_group` names one
+  provider group that confers superuser; both are reconciled
+  at each login, and a group the map does not name is left
+  alone. Access may be restricted with
+  `allowed_email_domains`, which matches exact domains and
+  requires the provider to have verified the address.
+  Authorisation is otherwise unchanged, and service-account
+  API tokens remain the mechanism for MCP clients. Local
+  username and password login is unaffected and stays on
+  unless `http.auth.local.enabled` is set to `false`. The new
+  Single Sign-On page in the Administrator's Guide covers the
+  configuration, provider registration and the operational
+  limits, including the need for `http.trusted_proxies`, the
+  username rule the chosen claim has to satisfy, and why a
+  local break-glass administrator should be kept. The server
+  warns at start-up when federated login is enabled without a
+  trusted proxy list, when `superuser_group` is set, and it
+  names the host that `redirect_url` sends authorisation codes
+  to, so that a typo there is caught before the first login
+  fails. The authentication database schema moves to version
+  4 on the first start after upgrading, adding an
+  `auth_source` and an `external_subject` column to `users`;
+  every existing installation runs that migration, and the
+  database cannot afterwards be opened by an older server.
+  (#261)
+
+- Add `-link-oidc-user` and `-unlink-oidc-user` commands to
+  the server, which attach an existing account to an identity
+  provider subject and detach it again. Linking is how an
+  account is reached by a federated login where
+  `http.auth.oidc.provision_users` is left at its default of
+  `false`: the operator reads the issuer and subject from the
+  refused login's server log line, which now quotes both and
+  spells out the command, and links the pre-created account.
+  Moving an account that is already linked requires the
+  `-relink` flag, and a service account cannot be linked at
+  all. Linking leaves the account's existing API tokens
+  working at full privilege, so an operator tightening an
+  account's authentication has to remove them with
+  `-remove-token` themselves. Unlinking returns the account to
+  local authentication, replaces its password hash with an
+  unusable one and revokes its API tokens, so the account is
+  reachable by nothing until a password is set with
+  `-update-user`; `-restore-password`
+  converts the account back to local login instead, keeping
+  both the password it held before it was linked and its
+  tokens. Neither command ends a browser session the running
+  server has already issued, because sessions live in that
+  server's memory and the command runs in its own process, so
+  offboarding means unlinking and then disabling the account
+  with `-disable-user`, which the server honours from the next
+  request onward. Note that linking an existing account hands
+  its mapped group membership, and its superuser flag wherever
+  `superuser_group` is configured, to the identity provider
+  from the next federated login onward,
+  which is why the local break-glass administrator should not
+  be linked. (#261)
+
 - Add a `-group-description` CLI flag that sets a group's
   description when creating it with `-add-group`, matching the
   description support already available in the web console. (#301)
@@ -81,8 +262,769 @@ project adheres to
   count so that a truncated response can be recognised, and it
   honours a custom time range through the same `time_start` and
   `time_end` parameters as the metrics query endpoint. (#346)
+- Add an `llm.max_tokens` setting to the alerter, which caps the
+  output tokens of a reasoning call. The cap applies to tier 3
+  anomaly classification and to acknowledged-alert re-evaluation.
+  The setting defaults to `4096` tokens and replaces a hardcoded
+  500-token limit. A reasoning model could consume that smaller
+  limit entirely on its thinking block, leaving no room for the
+  classification verdict. A value of zero or less selects the
+  default. (#399)
+
+- Add a `_delta` derived metric to the metrics query API
+  (`GET /api/v1/metrics/query`). A metric named `<column>_delta`
+  reports the increase of a cumulative counter within each time
+  bucket, which suits a bar chart of rare events such as checkpoints;
+  a bucket containing no sample reports zero, a connection with no
+  samples in the window returns no data points, and the `aggregation`
+  parameter does not apply. The `_per_sec` and `_delta` forms compute
+  the change of each monitored entity's counter separately before
+  adding them together, so a network interface or database that
+  appears or disappears between samples no longer produces a spike or
+  a stale value, and the sample before the window is only used when
+  it is recent enough not to inflate the first bucket. (#400)
+
+- Add per-query detail to the query drill-down on the object
+  dashboard. The drill-down now shows minimum and maximum
+  execution time as KPI tiles, and adds an average execution
+  time tile scoped to the selected time range and labelled with
+  that range, such as "Avg Time (Last 24h)". The cumulative
+  lifetime average is now labelled "Mean Time (All Time)" so
+  that users can tell the two figures apart. The drill-down also
+  shows the database role that ran the query beside the query
+  text, and displays "Unknown" when the role cannot be resolved.
+  The API gained a `GET /api/v1/metrics/query-stats` endpoint
+  that returns the period-scoped average execution time for a
+  single query, for a preset or a custom time window and
+  optionally restricted to one database, and the `username`,
+  `min_exec_time`, and
+  `max_exec_time` fields on `GET /api/v1/metrics/top-queries`
+  rows. The `queryid` parameter of that endpoint and of the new
+  one must now be a 64-bit integer; any other value is rejected
+  with a `400` instead of matching nothing. (#350)
+
+- Add `_pct` and `_sessions` derived metrics to the metrics query
+  API (`GET /api/v1/metrics/query`). A metric named `<column>_pct`
+  reports the share of wall-clock time that a cumulative millisecond
+  column such as `blk_read_time` advanced by, and `<column>_sessions`
+  reports the average number of sessions in a state from the
+  `session_time`, `active_time` and `idle_in_transaction_time` columns
+  of `pg_stat_database`. Each series in the response now carries a
+  `unit` field (`/s`, `ms`, `%`, `sessions` or empty). The collector
+  records `pg_stat_statements_info.stats_reset` in a new
+  `stats_reset` column of the `pg_stat_statements` probe where the
+  extension is version 1.9 or later, as shipped with PostgreSQL 14;
+  the column is added by collector schema migration 10. (#402)
+
+- Add client attribution to the query drill-down on the object
+  dashboard, which now shows a Last Observed Client value beside
+  the Database User value. The value names the client last seen
+  running the statement, as "hostname (address)" where the
+  monitored server resolved a hostname, and as "local" where
+  that client connected over a Unix-domain socket on the
+  database host. The client is attributed per database and role
+  as well as per query identifier, so a query in one database is
+  never credited to a client that only ever connected to
+  another. The collector's `pg_stat_activity` probe collects the
+  `query_id` column to support this, added to
+  `metrics.pg_stat_activity` by schema migration 12, and the rows
+  returned by
+  `GET /api/v1/metrics/top-queries` gained the nullable
+  `client_addr`, `client_hostname`, and `client_observed_at`
+  fields. The attribution is best effort, because
+  `pg_stat_activity` is sampled periodically: a client is captured
+  only for statements that were in flight when a sample was taken,
+  and the value names the client seen most recently rather than
+  the only one that ran the query; `client_observed_at` is null
+  exactly when no sample ever caught the query in flight, which
+  is the field to test for that case. Nothing is attributed on
+  PostgreSQL releases before 14 or on servers that run with
+  `compute_query_id` off, where the drill-down reads "Not
+  observed", so operators who want the attribution should enable
+  `compute_query_id` on each monitored server. (#384)
+- Add an estimated available memory figure to the memory metrics.
+  The collector schema migration 13 adds an `available_memory`
+  column to `metrics.pg_sys_memory_info`, and the
+  `pg_sys_memory_info` probe populates the column with free memory
+  plus cached memory, storing NULL whenever either input is
+  missing. The Memory Usage chart on the server dashboard plots the
+  figure as a fourth series, "Available (est.)", alongside Used,
+  Free and Cached, and the memory KPI tile keeps the usage
+  percentage as its headline and shows the available figure as a
+  secondary line. The value is an estimate rather than the kernel's
+  `MemAvailable`, which the `system_stats` extension has never
+  exposed; free memory alone reports `MemFree`, which counts only
+  memory that is entirely unused, whilst the estimate also counts
+  reclaimable page cache, and the estimate runs high on a host with
+  a large non-reclaimable slab or a largely dirty page cache. (#429)
+
+- Add Telegram as a notification channel type, alongside the
+  existing email, Slack, Mattermost and webhook channels. A
+  Telegram channel delivers through the Bot API rather than an
+  incoming webhook, so it stores a bot token, encrypted with the
+  server secret and never returned by the API, together with a
+  chat ID that is either a numeric ID or an `@channelusername`.
+  The create and update endpoints accept the `telegram_bot_token`
+  and `telegram_chat_id` fields, a response reports
+  `telegram_bot_token_set` in place of the token, and
+  `POST /api/v1/notification-channels/{id}/test` sends a test
+  message to the configured chat. Notifications are sent with the
+  `sendMessage` method in HTML parse mode, so a Telegram template
+  renders the message text rather than a JSON body. A message beyond
+  Telegram's 4096-character limit is truncated without cutting an HTML
+  entity or an opening tag in half, and a message Telegram refuses to
+  parse is sent once more with no parse mode, so a template with
+  broken markup delivers the alert as plain text rather than losing
+  it. The admin panel gains a Telegram Channels tab, and collector
+  schema migration 14 adds the `telegram_bot_token_encrypted` and
+  `telegram_chat_id` columns to `notification_channels`. (#475)
+- Add an audit log for RBAC changes. Every create, update, delete,
+  enable, disable, grant, revoke and scope change on users, tokens,
+  groups and permissions is recorded in the auth store with the
+  acting user, token or CLI user, the client address, before and
+  after state and a tamper-evident hash chain, and authorisation
+  denials on RBAC endpoints are recorded too. Superusers can read
+  the log from the new Audit Log tab in the admin panel, from
+  `GET /api/v1/rbac/audit`, or with the `-list-audit` server flag;
+  `-verify-audit-log` checks the chain and also reports events
+  deleted from the newest end of the log. Repeated denials are
+  coalesced into one event per minute carrying a
+  `details.repeat_count`, so a client retrying a refused request
+  cannot flood the log; each denial names the object it was
+  aimed at in `details.target`, such as `users/12`, and a token
+  refused moving a connection between clusters is recorded too. Retention is
+  controlled by the new `http.auth.audit_retention_days`
+  setting, which defaults to 90 days, and each purge records an
+  `audit.purge` event naming the cutoff it applied and the
+  number of events it removed. Each event's hash
+  length-prefixes every field it covers, so a value
+  containing a separator character cannot be made to stand for a
+  different pair of columns, and records the version of that encoding
+  in a `hash_version` field, which verification reads so that an event
+  relabelled to an encoding this server will not compute is reported as
+  tampering rather than skipped. `prev_hash` carries a unique index, so no
+  two events can claim the same predecessor and the chain cannot fork;
+  the server re-creates that index and the append-only trigger every
+  time it opens the store, and `-verify-audit-log` refuses to pass a
+  log missing either. An account locked out after repeated failed logins
+  stays locked even when the audit write fails, because that event
+  is recorded after the lockout commits rather than alongside it;
+  every other audited change is still rolled back when its event
+  cannot be written. (#65)
+
+- Add a Top Queries section to the Database Dashboard, listing the
+  slowest statements recorded for the database you are viewing,
+  ordered by total execution time. The section follows the
+  dashboard's time range, pages through the results twenty rows at
+  a time by default, and hides the Workbench's own monitoring
+  queries unless you switch that off. Selecting a row opens the
+  existing query detail overlay. The Server Dashboard's Top
+  Queries section is unchanged, and keeps its database filter.
+  (#369)
+
+- Report how each account authenticates in the API, the server
+  command line and the console, so that an administrator can
+  tell a federated account from a local one without asking the
+  identity provider. The user objects returned by
+  `GET /api/v1/rbac/users` and by the user privileges endpoint
+  carry `auth_source`, which is always present and reads
+  `local` or `oidc`, and `auth_issuer`, which names the
+  identity provider and is omitted for a local account; the
+  provider subject is deliberately never exposed. The
+  `-list-users` command gains an `Authentication` column
+  showing `Local` or the issuer, and the Users page of the
+  Administration console marks a federated account with a
+  `Federated` chip and the issuer in its Type column. The edit
+  dialog for such an account replaces the password field with a
+  notice explaining that the account signs in through the
+  provider, that it must be unlinked before it can sign in
+  locally, and that its group membership and superuser flag are
+  reconciled at every sign-in, which is the usual explanation
+  for a superuser flag that keeps reverting. (#483)
+
+- Add a Replication Slots section to the server dashboard,
+  after WAL and Replication (#347). It lists the server's
+  replication slots from the collector's latest
+  `pg_replication_slots` snapshot with each slot's type,
+  whether a consumer is connected (Active or Inactive), its
+  WAL status (Reserved, Extended, Unreserved or Lost), the
+  WAL it retains and its safe WAL size, with a summary of
+  the active, inactive and at-risk slots. Above the table it
+  names the servers this one replicates from and the
+  standbys and subscribers that replicate from it, as the
+  cluster topology records them. The collector does not
+  record slots that have never reserved WAL, and usually
+  stops recording a slot once it loses its WAL; a dropped or
+  lost slot can still be listed with its last recorded state
+  for up to an hour.
 
 ### Changed
+
+- Build anomaly detection baselines for four more metrics (#490):
+  `pg_stat_replication.lag_bytes`,
+  `pg_stat_checkpointer.checkpoints_req_delta`,
+  `pg_stat_statements.slow_query_count` (per server, #640) and
+  `pg_stat_activity.max_lock_wait_seconds`, which were previously
+  never scored by tier 1. Each historical query computes the same
+  statistic as the metric's latest query: the largest lag across
+  standbys, requested checkpoints counted within each hour and
+  leaving out hours spent in recovery, slow statements counted from
+  per-interval mean execution times, and the longest lock wait in
+  samples where a backend waits on a lock. The live `lag_bytes`
+  value now reads only each server's newest sample, so a standby
+  that disconnects whilst another stays attached drops out of it at
+  the next sample rather than holding it up for five minutes; when
+  the last standby leaves, the probe stores nothing and the previous
+  sample still stands for up to five minutes.
+  The developer guide now gives the reason each of the 11 remaining
+  metrics stays out of anomaly detection.
+
+- Take `query_datastore` structured arguments instead of SQL (#566);
+  this is a breaking change described in full under Security. A
+  client that sent a `sql` or `query` argument must now name a
+  `source` and describe the query with structured parameters.
+
+- Apply the federated login policy under `http.auth.oidc` on a
+  `SIGHUP` configuration reload instead of requiring a restart (#484).
+  `provision_users`, `allowed_email_domains`, `superuser_group`,
+  `group_map` and `button_label` now take effect from the next login,
+  and setting `enabled` to `false` switches federated login off at
+  once, so an operator can stop just-in-time provisioning or narrow
+  who may sign in whilst containing an incident. The reload log
+  reports each of these as applied, and warns when a change widens
+  access, such as switching federated login back on, adding an email
+  domain, retargeting `superuser_group` or adding a `group_map`
+  mapping. A reload that switches federated login off is refused when
+  the server started with local login off, since that would leave no
+  way to sign in. The issuer, client ID, client secret, redirect URL,
+  scopes and claim names still require a restart, as does switching
+  federated login on when the server started with it off, because the
+  identity provider connection is built from them at start-up.
+
+- Add hysteresis to threshold alerts (#614). The alerter now
+  raises a threshold alert only after the threshold has been
+  breached on `threshold.trigger_count` consecutive metric
+  samples (default 2), and clears it only after the metric has
+  been back within the threshold on `threshold.clear_count`
+  consecutive samples (default 3), so a metric hovering near
+  its threshold no longer raises and clears an alert every few
+  minutes. A sample is one collection by the collector, so the
+  evaluator and cleaner reading the same sample again count it
+  once. Setting both options to 1 restores the previous
+  behaviour. The counts are held in memory and start again
+  when the alerter restarts, and they do not apply to the
+  `metric_staleness` and `probe_unavailable` rules or to
+  connection error alerts. The `connection_utilization_percent`
+  metric now reports the time of its sample rather than the
+  time of the query, so that its samples can be counted.
+
+- Retune four built-in alert rules that fired on conditions nobody
+  could act on (#616). `cache_hit_ratio_low` now only judges an
+  interval that read at least 100 blocks per second from outside
+  shared buffers as well as accessing 10,000 blocks, and its defaults
+  drop from a warning below 80 percent to information below 50.
+  `dead_tuple_ratio` only judges tables with at least 10,000 dead
+  tuples, and its default threshold rises from 20 percent, which is
+  autovacuum's own default trigger, to 50. `autovacuum_not_running`
+  only counts a table that has been past its autovacuum trigger in
+  every sample for at least 30 minutes. `checkpoint_warning` skips
+  servers whose most recent recovery state shows them in recovery,
+  on every supported PostgreSQL version. Collector schema migration
+  21 changes each default only while it still holds the old shipped
+  value, so a threshold or severity changed through the API is kept,
+  and leaves per-server, per-cluster and per-group overrides alone.
+  An alert on any of the three gated metrics now clears when the
+  metric stops reporting a row for it, for example when the read rate
+  falls, the table is vacuumed or a primary becomes a standby.
+
+- Raise the default size of the server's datastore connection pool,
+  `database.pool_max_conns`, from 4 to 20 (#478). Every API request
+  that reads the datastore shares that pool, and a single dashboard
+  page load issues more than twenty metrics requests at once, so four
+  connections made a page wait on itself and let a few slow requests
+  hold up the whole API. Twenty, alongside the collector's 25 and the
+  alerter's 10, stays well inside the PostgreSQL default
+  `max_connections` of 100. A configuration that leaves the option
+  unset now gets 20 rather than the connection library's own default;
+  one copied from the earlier example still sets `pool_max_conns: 4`
+  explicitly and keeps four until the line is changed or removed. The
+  datastore pool is sized at start-up, so a configuration reload with
+  `SIGHUP` does not resize it and the server has to be restarted. An
+  explicit `pool_max_conns` also sizes each per-session pool that the
+  server opens to a monitored database, including pools opened after
+  a `SIGHUP` reload, whilst an unset one leaves those pools at the
+  connection library's default; a database configured only through
+  the `-db-*` command-line flags now leaves it unset too, where it
+  previously set four.
+
+- Decide connection access and connection visibility with one rule, so
+  that every listed connection can be opened and every connection that an
+  account can open is listed (#592). An `All Connections` grant no longer
+  restricts every connection: before this change, a single such grant to
+  any group refused every user outside that group every connection,
+  shared connections and the user's own included, whilst the connection
+  lists still offered them. Only a grant that names a connection now
+  restricts it. An `All Connections` grant at `read` therefore no longer
+  caps its members: a shared connection that no grant names stays open at
+  `read_write` to every account, subject only to an API token's own
+  scope, so to keep a group read-only on a connection, grant that
+  connection to the group by name. The owner of a
+  connection always holds `read_write` access to it, whether or not a
+  group restricts it. Holding a grant on one connection no longer hides
+  shared connections that no group restricts, which the account could
+  already open. Revoking an
+  `All Connections` grant never lifts a restriction, so an API token
+  needs only `read` to revoke one, whilst revoking a connection's last
+  specific grant needs `read_write` even when an `All Connections` grant
+  remains. See the
+  [permission model](admin-guide/managing-users-and-permissions/permission_model.md).
+
+- Follow the dashboard time range selector in the database summaries
+  section of the server dashboard, the Transaction Rate tile of the
+  estate dashboard and the comparative charts of the cluster
+  dashboard. All three asked for a fixed twenty-four hours and so
+  ignored the selector sitting on the header of the Monitoring
+  section that holds them. The estate dashboard's other KPI tiles
+  report the estate as it stands now, whatever the selector reads,
+  because none of those figures is drawn from a window. The
+  `/api/v1/metrics/database-summaries` endpoint now resolves
+  its window through the same rules as every other windowed endpoint,
+  accepting `time_range=custom` with `time_start` and `time_end`
+  alongside the existing presets and still defaulting to `24h`. Every
+  figure the endpoint returns is bounded by that window, so a window
+  ending in the past reports the database sizes, connection counts,
+  dead tuple ratios and transaction rates of that moment rather than
+  of the present one; a window ending now is unchanged. The
+  `active_connections` field of
+  `/api/v1/metrics/performance-summary`, which feeds the Connection
+  Count chart of the cluster dashboard, follows the same window as
+  the rest of that response, so a window holding no collected sample
+  reports zero rather than the live backend count, and the chart
+  stays empty alongside the three series beside it. The
+  performance tiles in the status panel deliberately keep a fixed
+  twenty-four hour window, because those tiles render above the
+  Monitoring section and a user reading one cannot see the control
+  that would be changing the figure, and the database filter on the
+  Top Queries panel keeps one too, so that the available choices do
+  not vanish as the window narrows. The dashboard pages in the User's
+  Guide record which panels follow the selector and which do not.
+  (#387)
+
+- Key the RBAC audit log's hash chain. New events are hashed
+  with HMAC-SHA256 under a key derived from the server secret
+  rather than with an unkeyed SHA-256, so rewriting events
+  undetected now needs read access to the secret file as well
+  as write access to `auth.db`. Deleting the newest events and
+  then resetting the SQLite record of the highest identifier
+  issued needed write access alone until the tail record
+  described below (#544). The version each event was
+  hashed under is covered by the hash itself and may never
+  fall as the chain advances, so an event cannot be relabelled
+  into an encoding the verifier will not check. Every server
+  command-line subcommand now requires the server secret, the
+  read-only ones included, because the key is resolved before
+  the store is opened, and they report the paths they searched
+  when they cannot find one. A successful read of
+  `GET /api/v1/rbac/audit` is now noted in the server log,
+  naming the reader, the filters in effect and the number of
+  events returned.
+
+    **Breaking change for the command line.** Every
+    subcommand, `-add-user`, `-add-token`, `-set-superuser`,
+    `-list-audit` and the rest, now fails without the server
+    secret file: the mutating ones write an audit event and
+    cannot extend the chain without the key, and the
+    read-only ones need it too, because the key is resolved
+    before the store is opened. An installation that has
+    never created one will see those commands stop working
+    at this upgrade; create the secret file at
+    `/etc/pgedge/ai-dba-server.secret`, or wherever
+    `secret_file` names, with the same contents the server
+    and collector use, and they work again.
+
+    **Upgrade step for an existing installation.** The server
+    will not open a database holding events hashed under the
+    old unkeyed encoding, because anyone able to write
+    `auth.db` can compute those hashes, which makes an
+    inherited log and a forged one indistinguishable. The
+    refusal names the events and says what to do. Treat such
+    a database as suspect and restore `auth.db` from a
+    known-good copy; only where this is the first start after
+    upgrading, and the file is believed intact, re-hash the
+    inherited events under the server secret:
+
+    ```bash
+    ./bin/ai-dba-server -rechain-audit-log
+    ```
+
+    The command prints the size and span of the log, how much
+    of it is unkeyed and whether it recomputes under its own
+    rules, then asks for confirmation before writing anything;
+    `-confirm-rechain` answers in advance for an unattended
+    run. It re-hashes every event in one transaction and
+    records an `audit.rechain` event at the end of the log.
+    Every stored hash changes as a result, so a hash recorded
+    out of band, or a verification report taken before the
+    re-chain, cannot be reconciled against the log afterwards;
+    keep a copy of the old file if you need to.
+    Be clear about what it asserts: it attests the log exactly
+    as the file holds it at that moment, so it proves nothing
+    about the period before it ran. Verify with
+    `-verify-audit-log` straight afterwards. A database
+    created at this release or later needs no such step.
+
+    The command writes nothing in three cases. It refuses a log
+    holding keyed and unkeyed events together, in whatever
+    order, because an upgraded database holds inherited
+    unkeyed events and nothing else; a log holding both means
+    unkeyed events were written into a log that was already
+    keyed, and re-chaining would sign them. The start-up
+    refusal names that case in its own terms rather than
+    suggesting the re-chain. It refuses an unattended run,
+    under `-confirm-rechain`, of a log that does not recompute
+    under its own unkeyed rules, since the warning that log
+    earns is addressed to an operator who can weigh it; a
+    re-chain of it has to be run interactively. It also
+    abandons the rewrite when the number of events or the
+    range of identifiers has changed between the figures it
+    showed and the transaction that would rewrite them, so
+    events appended whilst the prompt waited are never signed.
+
+    **Retention now deletes by identifier.** The purge finds
+    the oldest event inside the retention window and removes
+    everything below it, so it can only ever remove a run of
+    the oldest events. An event's timestamp is a value in the
+    database and so can be altered by anyone able to write
+    `auth.db`, whereas its identifier is assigned by SQLite in
+    insertion order and no server path writes one; deleting by
+    timestamp alone let a backdated event steer the purge into
+    removing the newest events instead, which relinked the
+    chain and, through the `audit.purge` event the purge
+    appends, restored the agreement between the newest
+    identifier and SQLite's record of the highest one issued
+    that verification reads. On a log the server wrote itself
+    the two orderings agree and the behaviour is unchanged,
+    with one exception worth knowing about: where no event at
+    all falls inside the retention window, as on a server idle
+    for longer than the retention period, the purge now
+    removes nothing rather than emptying the log, and the
+    backlog clears at the first purge to run once an event
+    falls inside the window again.
+
+- Report a mislaid or rotated server secret separately from
+  tampering in `-verify-audit-log`. A log in which nothing
+  verifies is far more often the wrong secret than a rewrite
+  that began at the first event, so it is now reported in
+  those words and exits with status 3, whilst a log that
+  verified as far as one event and then failed, or that holds
+  an event hashed under the old unkeyed encoding, exits with
+  status 2. Any other failure keeps status 1.
+
+- Bind an API token owned by a superuser to the token's own
+  scope. The authorisation check previously short-circuited on
+  the owner's superuser flag before it looked at the scope, so a
+  token minted for one narrow job reached every connection,
+  every MCP tool and every administrative permission in the
+  installation, whatever scope it carried. Each check now
+  intersects the owner's rights with the token's scope for the
+  surface being reached, and because a superuser holds
+  everything, the intersection is the scope itself: a token
+  whose admin scope names one permission is limited to that
+  permission, one whose connection scope names one connection is
+  limited to that connection, and one whose MCP scope names one
+  tool is limited to that tool (and to `test_query`, which every
+  token may call), with no group grant needed on the owning
+  account. A scope kind left unset, or holding the relevant
+  wildcard, stays unrestricted as before, so a token narrowed in
+  one kind is not narrowed in another, and a session login is
+  unaffected throughout, because a session carries no token. The
+  connection scope now also bounds the endpoints that change
+  blackouts, blackout schedules, alert, probe and channel
+  overrides, alert rules, probe configurations, notification
+  channels and clusters, which are gated on an admin
+  permission: a change on one server needs that connection in
+  scope at `read_write` (or at `read`, for a blackout or
+  blackout schedule), as does adding a server to a cluster,
+  removing one or moving a connection between clusters, whilst
+  a change to a cluster, a group or the whole estate, to an
+  alert rule, a global probe configuration or a notification
+  channel, or to a cluster's definition or relationships, needs
+  a scope covering every connection. A write to a blackout or
+  blackout schedule that the token cannot see answers `404 Not
+  Found`, as reading it does, and so does moving a connection
+  into a cluster, or updating a cluster group, whose members the
+  caller cannot see; moving a connection between clusters also
+  refuses a role the server does not recognise with `400 Bad
+  Request`. `PUT /api/v1/rbac/tokens/{id}/scope` refuses an empty list for any
+  scope kind with `400 Bad Request`, because an empty kind means
+  unrestricted; clear the scope with `DELETE` or use the
+  wildcard instead, and the console does the same. The two
+  endpoints reserved for superusers that name no permission, the
+  RBAC audit log at `GET /api/v1/rbac/audit` and a group's admin
+  permissions at `/api/v1/rbac/groups/{id}/permissions`, refuse
+  a token whose admin scope has been narrowed, because a gate
+  that names no permission has nothing to intersect against. A
+  public MCP tool is now bound by the token's MCP scope as well,
+  for a token of any owner, so a token whose MCP scope names
+  specific tools can no longer call `store_memory`,
+  `recall_memories` or `delete_memory` unless the scope names
+  them too (#482). Setting a token's MCP scope to an identifier
+  that is not registered is refused with `400 Bad Request`,
+  where the name used to be dropped silently and a list of
+  unknown names left the token unrestricted. Everything fails
+  closed: a scope that cannot be read, and an API-token request
+  that carries no token identifier, are denied, and the
+  `list_connections` tool returns an error rather than every
+  connection when the caller's visible connections cannot be
+  resolved. Creating a cluster also needs a connection scope
+  that covers every connection, since a connection later moved
+  into it inherits its group's settings, and a cluster group can
+  be created only from a browser session; moving a connection
+  into a cluster that does not exist answers `404 Not Found`, as a hidden cluster
+  does, rather than `500`; and adding a server to a cluster
+  refuses a role the server does not recognise with `400 Bad
+  Request`. Administrative grants and account changes made
+  with a token are bounded by a ceiling: the token's own access,
+  which is its owner's privileges narrowed by its scope, judged
+  one connection and access level, MCP item and admin permission
+  at a time. The connection and MCP scopes limit what a token can
+  reach and the admin scope limits which administrative actions
+  it can perform, but without the ceiling a token holding
+  `manage_permissions` could grant its owner's group, or a
+  confederate's, a server it was deliberately blocked from; with
+  it, no chain of grants can exceed what the token already holds.
+  A token with no access to a connection can grant nothing on it,
+  one with `read` can grant `read`, and one with `read_write` can
+  grant either; revoking needs `read`, so that a token cannot
+  probe for servers it cannot see, and revoking a connection's
+  last group grant, which lifts its group restriction, needs
+  `read_write`. Granting the `All Connections` entry needs every
+  connection at that level, and an MCP privilege needs the token
+  to be able to call it. Granting an admin permission, which
+  only a superuser's token with an unrestricted admin scope may
+  do, needs every connection at `read_write`; granting
+  `manage_users`, `manage_groups`, `manage_permissions`,
+  `manage_token_scopes` or `*` also needs an unrestricted MCP
+  scope, because a member's browser session is not bounded by
+  any token. Adding a member to a group needs the
+  group's whole access, inherited grants included, within the
+  ceiling, as does renaming the group; removing a member, or
+  deleting the group, needs `read` on each connection the group
+  confers, and deleting it needs `read_write` on any connection
+  where it holds the last grant. A token also cannot create a
+  user, set a user's password, re-enable or delete a user, or
+  create a token for an owner, where that user reaches beyond the
+  token, which counts the public MCP items, every shared
+  connection no group restricts, every connection the user owns,
+  restricted or not, and every member of a cluster group the
+  user owns; cannot create or promote a superuser unless it is a
+  superuser's token whose connection scope is unset or holds
+  `All Connections` at `read_write` and whose MCP and admin
+  scopes are unset or hold their wildcards, the
+  same bar that applies to creating, renaming from or to, or
+  deleting a group the OIDC `group_map` names; and cannot change
+  any token's scope, its own included, so that it gains access
+  beyond the acting token's, although it may narrow a scope
+  given `read` on each connection entry it names or drops. A
+  user or group holding any admin permission counts as reaching
+  every connection at `read_write`, and one holding
+  `manage_users`, `manage_groups`, `manage_permissions` or
+  `manage_token_scopes` counts as reaching every MCP item and
+  admin permission, since each lets its holder acquire the
+  rest. As an accepted trade-off, a token
+  with `read` on a connection and `manage_permissions` can revoke
+  another group's `read_write` on it; revoking MCP privileges and
+  admin permissions, changing a user's profile, disabling a user,
+  clearing superuser status and deleting tokens are not bounded
+  by the ceiling. Refused requests are
+  written to the RBAC audit log, including those refused by the
+  cluster, alert rule and notification channel handlers;
+  repeated refusals from one caller are folded into a single
+  row per minute that lists up to 20 of the targets, so that a
+  client cannot flood the log by varying the path or the HTTP
+  method. The `query_datastore` tool, which reached beyond a
+  connection scope by running read-only SQL over the whole
+  datastore, is now limited to the connections the caller can
+  read as well (#566). A `read` entry
+  means read-only access to the monitored server, so it still
+  allows a token to acknowledge, unacknowledge and save an
+  analysis of an alert on that connection, and to manage
+  blackouts and blackout schedules on that server, which is
+  intended; a blackout covering a cluster, a group or the
+  estate needs the all-connections entry. This is a
+  breaking change for existing integrations, because a token
+  that carries an explicit scope, most often one owned by a
+  superuser, will start receiving `403 Forbidden`
+  where it previously succeeded, and there is no configuration
+  option that restores the old behaviour. Review every scoped
+  token before upgrading, starting with those owned by a
+  superuser and any whose MCP scope names specific tools; where
+  one is refused afterwards, either clear the token's scope, add
+  the relevant wildcard to the scope, or narrow what the token
+  is asked to do so that it matches the scope the token holds.
+  (#471)
+
+- Close further gaps in API token scopes and superuser
+  administration. A token connection scope that combines the
+  `All Connections` entry (connection 0) with particular
+  connections, names a connection twice or names a negative
+  connection ID is now refused with `400 Bad Request` by the API
+  and with an error by the `-scope-token-connections` command,
+  leaving the stored scope unchanged, because the access check and
+  the grant ceiling read a mixed scope differently. An admin
+  permission scope that names an unknown admin permission is
+  also refused with `400 Bad Request`. Creating a
+  token for a superuser, and setting or clearing the scope of, or
+  deleting, a token that a superuser owns now needs a superuser's
+  session or a superuser's token with an unrestricted admin
+  permission scope, although a token may still narrow or delete
+  itself; the token grant ceiling also refuses any change that
+  widens a superuser's token unless the acting token holds
+  everything a superuser does. Whether revoking a connection grant
+  or deleting a group removes a connection's last group grant is
+  now decided inside the same transaction as the change, so a
+  concurrent change cannot let a token lift that restriction
+  without `read_write` access. The server also refuses, with
+  `409 Conflict` from the API and an error from the
+  `-disable-user`, `-unset-superuser` and `-delete-user` commands,
+  any change that would leave no enabled superuser; enabled
+  service accounts that are superusers count towards the total.
+  A token that deletes itself part-way through a request now has
+  no access for the rest of that request, rather than reading as
+  unrestricted once its scope rows are gone, and requesting the
+  scope of a token that does not exist answers `404 Not Found`.
+  (#471, #528)
+
+- Change the alerter's default Gemini reasoning model from
+  `gemini-2.5-flash` to `gemini-3.6-flash`. Google no longer offers
+  `gemini-2.5-flash` to new API keys, answering every request with a
+  404 that points at `gemini-3.6-flash`, so a fresh deployment that
+  left `llm.gemini.reasoning_model` unset failed on every reasoning
+  call. This is a behaviour change for existing deployments: one that
+  leaves `reasoning_model` unset now uses `gemini-3.6-flash`, and an
+  operator who needs to stay on `gemini-2.5-flash` should set it
+  explicitly. The example configuration and the walkthrough script
+  are updated to match. (#459)
+
+- Change the alerter's default Anthropic reasoning model from
+  `claude-3-5-haiku-20241022` to `claude-haiku-4-5`. Anthropic has
+  retired `claude-3-5-haiku-20241022`, so a deployment that left
+  `llm.anthropic.reasoning_model` unset failed every Tier 3
+  classification with a 404. Existing configurations that name a
+  retired Claude 3 model must be updated to a current model, or Tier 3
+  classification continues to fail with a 404. The default Gemini
+  reasoning model also moves from `gemini-3.6-flash` to
+  `gemini-3.8-flash`, superseding the change for #459 above. The
+  example configuration and the walkthrough script are updated to
+  match.
+
+- Change the server's default Anthropic model from
+  `claude-sonnet-4-5` to `claude-sonnet-5`, and the alerter's
+  default OpenAI reasoning model from `gpt-4o-mini` to
+  `gpt-6-luna`. A deployment that leaves `llm.model` or
+  `llm.openai.reasoning_model` unset now uses the new model; set
+  either option explicitly to keep the previous one. The example
+  configurations and the walkthrough script are updated to match.
+
+- Move the server, the alerter and the shared embedding package to
+  `pgedge-go-llm-lib` v0.4.0. Models that reject the `temperature`
+  or `max_tokens` parameter, such as Claude Sonnet 5 and OpenAI's
+  GPT-6 models, previously failed every request, and now work when
+  configured explicitly. The library adjusts the request after the
+  first rejection, which costs one extra round trip per client. Those
+  models accept only their own default temperature, so
+  `llm.temperature` has no effect on them.
+
+- Report the queried time window in the `/api/v1/metrics/query`
+  response. The endpoint returned a bare array of series and said
+  nothing about the window behind the series, so charts derived
+  their x-axis from the points that came back and every time range
+  rendered identically on an instance holding little history. The
+  bucketed response is now an object carrying `probe_name`,
+  `connection_ids`, `time_range`, `time_start`, `time_end`,
+  `bucket_seconds`, `buckets` and `aggregation` alongside the
+  `series` array. A bucket that collected no data, and that has no
+  earlier value to carry forward, now reports a null `value`
+  instead of dropping the point, and a point carried forward from
+  an earlier sample is marked `filled`. The latest-rows mode of
+  the same endpoint, which a request selects by passing `limit` or
+  `order_by`, is unchanged. The dashboard charts now anchor their
+  x-axis to the returned window, draw null buckets as gaps, and
+  mark carried-forward stretches distinctly. (#430)
+
+- Enforce an API token's connection scope on connections that
+  belong to no group. Both the access check and the visible
+  connection list previously admitted an ungrouped connection
+  on ownership or the shared flag alone, without consulting
+  the caller's token scope, so for those connections a
+  token's connection scope was dead configuration on every
+  surface. Both paths now intersect the scope, denying an
+  out-of-scope connection and applying the scope's access
+  ceiling otherwise. This is a real change for anyone handing
+  out narrowly scoped tokens: a token that has been reaching
+  an ungrouped connection outside its scope, or reaching one
+  at `read_write` whilst scoped to `read`, will now be
+  refused or capped. Review the scope of every token that
+  touches a connection with no group before upgrading. A token
+  owned by a superuser was left out at the time, because the
+  superuser check returned before the scope was consulted;
+  that bypass is closed separately, so such a token is now
+  held to its connection scope as well. (#261)
+
+- Serve `GET /api/v1/capabilities` without authentication. The
+  endpoint previously required a session or API token, although
+  the login screen has to read it before either exists in order
+  to learn which sign-in methods to offer, so it now joins the
+  public paths alongside login, logout and the health check. It
+  reports the AI feature flag, the iteration limit and the new
+  `auth` block, which carries only `local_enabled`,
+  `oidc_enabled` and the button label; the provider issuer,
+  client secret and claim mapping are never included. (#261)
+
+- Log sessions out when the authentication database cannot be
+  read. A session whose user record failed to load previously
+  produced a context carrying the username with no user ID
+  and no superuser flag, which quietly narrowed what the
+  session could do whilst still authenticating it. Such a
+  session is now rejected outright, so a database blip ends
+  sessions rather than silently changing their privileges.
+  The failure is logged with the database error, and is told
+  apart from a deleted account and from a plainly bad token,
+  so a run of refused requests can be traced to its cause.
+  (#261)
+
+- Require a restart for every change under `http.auth`. The
+  settings in that block, `local.enabled` and the whole `oidc`
+  section included, are read once at start-up and held for the
+  life of the process, so sending `SIGHUP` re-reads the file
+  and reports each changed authentication setting as needing a
+  restart but leaves the running server on the values it
+  started with. An operator narrowing `allowed_email_domains`,
+  removing an entry from `group_map` or switching local login
+  off whilst containing an incident has to restart the server
+  for the change to take effect. (#261)
+
+- Count deadlocks and temporary files per hour in the alerter. The
+  `deadlocks_detected` and `temp_files_created` rules compared the
+  change in `pg_stat_database` between two consecutive samples
+  against their thresholds, so the value they evaluated depended on
+  the probe interval, and a counter reset could produce a negative
+  delta. Both rules now sum the positive changes recorded in the
+  last hour for each database, in line with the checkpoint and
+  archive rules, and report their units as `deadlocks/hour` and
+  `files/hour`. The thresholds themselves are untouched, and so are
+  any operator overrides, but `temp_files_created` now compares its
+  threshold of 100 against a much larger number: at the shipped
+  `pg_stat_database` sampling interval of 300 seconds, twelve
+  samples fall inside the window, so a database that steadily
+  creates 300 temporary files an hour reported about 25 before this
+  release and reports 300 now. That rule will fire on databases
+  where it never fired before. To keep the previous sensitivity,
+  multiply the threshold by 3600 divided by the sampling interval
+  in seconds, which gives a threshold of 1200 at the default
+  interval. The `deadlocks_detected` rule is unaffected, because
+  its threshold of 0 fired on any positive change under the old
+  comparison as well. (#409)
 
 - Extend the `-show-group-privileges` CLI command to also display a
   group's admin permissions, alongside the MCP and connection
@@ -126,7 +1068,731 @@ project adheres to
   entirely. This change affects test infrastructure only and does not
   alter application behavior. (#364)
 
+- Plot rates rather than raw cumulative counters on the dashboard
+  charts that are built on `pg_stat_*` counters, so that a chart
+  reflects the current workload instead of an ever-rising total. The
+  server dashboard now plots commits and rollbacks, blocks hit and
+  read, tuple operations, WAL bytes and records, checkpoint buffers
+  written, and network throughput per second; the database dashboard
+  plots commits and rollbacks per second and reports transactions per
+  second; and the object dashboard plots query calls per second. The
+  Checkpoints chart is now a stacked bar chart of the timed and
+  requested checkpoints in each interval, a Checkpoint Buffers Written
+  chart has been added, and the Checkpoints KPI has become Requested
+  Checkpoints, the percentage of checkpoints in the selected range
+  that were requested rather than timed; a high percentage suggests
+  that `max_wal_size` is too low. A chart whose metric a probe does
+  not collect now shows the error the server returned instead of a
+  generic "No data" message, and a bar or area chart whose values are
+  all zero no longer draws a y-axis running below zero. (#400)
+
+- Make the `value` of a data point in the metrics query response
+  nullable, and emit every time bucket in every series so that all
+  series in a response share the same bucket times. A bucket is
+  `null` when two consecutive samples are more than three collection
+  intervals apart, when a probe's `stats_reset` marker changed between
+  them, or, for a raw column, when the last observed value is more
+  than three collection intervals old; a rate or delta series no
+  longer repeats a stale value into an empty bucket. The requested
+  bucket count is clamped so that no bucket is narrower than the
+  probe's collection interval. The `pg_sys_network_info` probe leaves
+  the `lo` and `lo0` loopback interfaces out of every query. A
+  `_per_sec` request on a column that is not a cumulative counter,
+  such as a gauge or `mean_exec_time`, is now rejected with HTTP 400
+  and a message naming the column's kind, rather than returning a
+  meaningless series. The dashboards draw a `null` bucket as a break
+  in a line or a missing bar. The interval a sample is judged against
+  is the configured one widened to the spacing the samples in the
+  window actually show, so tightening a probe's collection interval
+  no longer reads its older, wider-spaced history as one long gap.
+  A `_delta` bucket with no sample of its own reports zero only where
+  an accepted sample interval spans it: through a collection outage,
+  and before a probe's first sample or after its last, it is `null`
+  like every other derived form, rather than a run of confident zero
+  bars. (#402)
+
+- Gate the shared `pkg` module with its own formatting, linting and
+  test targets. The module is a separate Go module with no Makefile
+  and no CI workflow of its own, and the per-sub-project workflows
+  check only their own `src` directories, so six test files under
+  `pkg/connstring`, `pkg/crypto`, `pkg/datastoreconfig`,
+  `pkg/hostvalidation`, `pkg/logger` and `pkg/worker` had drifted out
+  of `gofmt` shape unnoticed. Those files are now formatted, and two
+  `staticcheck` findings in `pkg/fileutil/fileutil.go` are fixed: the
+  tilde-path guard is simplified, and the error returned for an
+  unsupported tilde path no longer ends in punctuation, so it now
+  reads `unsupported tilde path %q: use ~ or ~/... rather than a
+  ~user/... path`. A new `pkg/Makefile` and a new
+  `.github/workflows/ci-pkg.yml` keep the module gated from now on,
+  and the root `Makefile` delegates its `test`, `lint` and
+  `test-all` targets to the new Makefile; without that gate the same
+  files would simply drift again. Behavior is otherwise unchanged.
+  (#423)
+
+- Scope the top queries leaderboard and the query detail overlay to
+  the dashboard time range. The
+  `GET /api/v1/metrics/top-queries` endpoint had no time dimension
+  and always reported the latest collected sample; it now accepts
+  `time_range`, defaulting to `1h`, along with `time_start` and
+  `time_end` for a custom window, resolved by the same code as
+  `GET /api/v1/metrics/query` so that the rejection messages match
+  every other windowed endpoint. Because `pg_stat_statements`
+  reports its counters cumulatively, the endpoint sums the
+  differences between consecutive samples in the window rather than
+  reading one sample: `calls`, `total_exec_time`, `rows`,
+  `shared_blks_hit` and `shared_blks_read` now cover the window,
+  `mean_exec_time` is derived from those sums, and a sample pair
+  whose counters went backwards is discarded as a
+  `pg_stat_statements_reset()`. The `min_exec_time` and
+  `max_exec_time` fields stay lifetime figures, because a window
+  extreme cannot be recovered by differencing two lifetime extremes,
+  so ordering on either one sorts a windowed list on a lifetime
+  figure. A statement that ran no calls inside the window is left
+  out of the response altogether, which is a change in what the
+  existing presets return and not only in what a custom window
+  returns. On the client, both the leaderboard and the overlay
+  follow the dashboard selector, including a custom window, and
+  changing the range returns the leaderboard to its first page,
+  since a shorter window usually matches fewer rows. The overlay's
+  "Mean Time (All Time)" tile is now labelled "Mean Time", whilst
+  "Min Time (All Time)" and "Max Time (All Time)" keep their labels
+  and their lifetime figures. (#387)
+
+- Add `idx_pg_stat_statements_identity_time` to
+  `metrics.pg_stat_statements` through collector schema migration
+  15. The index keys the statement identity that the
+  `pg_stat_statements` counters are cumulative within, followed by
+  `collected_at` and the probing database name, and includes every
+  counter the windowed
+  aggregation reads, so the top queries query runs as an index-only
+  scan in the order it needs instead of sorting a whole window of
+  samples to disk. The index is not free: it costs roughly 17% more
+  storage on that table and about 56% more write-ahead log volume on
+  the collector's writes. Creating it builds an index on every
+  attached partition and blocks the collector's inserts whilst it
+  runs, which took about 15 seconds for 2.6 million rows on the test
+  fixture. (#387)
+
 ### Fixed
+
+- Load every configured alerter API key file when one of them
+  cannot be read (#626). The alerter previously stopped at the
+  first unreadable file, so a bad OpenAI key file also left the
+  Anthropic, Voyage, Gemini and TypeSafe keys unloaded; it now
+  loads the rest and logs one warning per file that failed.
+
+- Fix the anomaly detection baselines for
+  `pg_stat_database.deadlocks_delta` and
+  `pg_stat_database.temp_files_delta`, which counted one more
+  sample-to-sample increase in each hour than the live value
+  does, because each hour's first sample was compared with the
+  previous hour's last (#639). The baseline sat too high, so a
+  server doing the same work every hour scored as unusually
+  quiet; each hour is now counted on its own, as the live value
+  is.
+
+- Fix the `pg_stat_statements.slow_query_count` alert metric
+  reporting the whole server's count once for every database
+  (#640). `pg_stat_statements` is cluster-wide, and the collector
+  stores its rows once for each database it probes, so every
+  database reported the same figure and the Slow Query Count rule
+  raised one alert per database for a single problem. The metric
+  is now reported once per server, counting each statement once
+  whichever database it ran in; statements from databases the
+  collector does not probe, or that lack the extension, still
+  count. The alerter closes active alerts on the metric that name
+  a database, without sending a clear notification, and raises a
+  single server alert if the condition still holds; acknowledged
+  ones are left for retention to delete, and baselines
+  stored per database are removed by the next baseline cycle.
+
+- Fix the `list_probes` MCP tool, which hid every probe whose name
+  contained a 'p' after its first character (such as
+  `pg_stat_replication`) whilst listing the collector's weekly
+  partitions as though they were probes (#644). The tool filtered
+  partitions by name with a `LIKE` pattern in which `_` matched any
+  character; it now leaves out partitions by checking the system
+  catalogue, so it lists each probe table, including partitioned
+  parents, and no partitions. The row count for a partitioned probe
+  is now the total across all of its partitions, where it would
+  otherwise always have been zero.
+
+- Fix the `pg_stat_replication.replay_lag_seconds` alert metric,
+  which never returned a value because its query read a
+  `replay_lsn_timestamp` column that the collector does not store
+  (#625). The metric now reports, for each connection, the largest
+  `replay_lag` across the standbys in that connection's most recent
+  replication sample, which is the replay lag PostgreSQL itself
+  reports. It reports nothing once PostgreSQL resets `replay_lag` to
+  NULL for an idle standby that has caught up, so an alert on the
+  metric clears rather than lingering. The alert rule reference no
+  longer lists a built-in time-based replication lag rule, because
+  none has ever been seeded; operators can create a custom rule on
+  the metric instead.
+
+- Send alert re-evaluation requests to the LLM with a system
+  prompt that asks whether to clear or keep the alert. The
+  re-evaluation worker sent the tier 3 anomaly system prompt,
+  which asks for an alert or suppress decision, so a model that
+  followed it gave an answer the alerter could not parse; the
+  alerter then kept the alert unless the reasoning happened to
+  contain a phrase such as "should be cleared", and asked the
+  LLM the same question again on the next cycle. The reasoning
+  provider health alert also counted each such answer as a
+  failure. Because the system prompt is part of the
+  re-evaluation fingerprint, each acknowledged anomaly alert is
+  re-evaluated once more after upgrading. (#627)
+
+- Write the suppressed counts of coalesced RBAC denials to the audit
+  log when the server shuts down, and at the five-minute cleanup for
+  a burst of denials that has stopped, rather than only when a later
+  identical denial arrives; until now a burst of refused requests that
+  ended shortly before a restart was never counted. Denial summary
+  events now carry `details.first_seen` and `details.last_seen`, as
+  failure summaries do, and the server writes the closed denial and
+  failure summaries of one cleanup or shutdown in a single
+  transaction. A denial whose own row cannot be written no longer
+  hides the identical denials after it, or drops the repeats it
+  would have reported. (#590)
+
+- Show the start of a long Ask Ellie reply rather than its end
+  (#629). The chat panel scrolled to the bottom whenever a
+  message arrived, so a reply taller than the panel had to be
+  scrolled back up before it could be read. A reply that does
+  not fit now scrolls so that its top sits at the top of the
+  message list; a message the user sends, or a reply that
+  fits, still scrolls to the bottom, and a reply arriving
+  whilst the user has scrolled up to read earlier messages
+  leaves the view where it is.
+
+- Record token-scope refusals of blackout, blackout schedule, probe
+  configuration and alert, probe and channel override changes in the
+  audit log, along with refused cluster-group changes by a user who
+  does not own the group or lacks the `manage_connections`
+  permission. Each is recorded under the action the change would
+  have used, such as `blackout.update` or `cluster_group.delete`,
+  rather than being left out of the log. When every address in an
+  `X-Forwarded-For` header from a trusted proxy is itself a trusted
+  proxy, the server now uses the leftmost entry as the client
+  address only if it parses as an IP address, and the proxy's own
+  address otherwise, so arbitrary header text no longer reaches the
+  audit log, the login rate limiter or the key used to coalesce
+  repeated denials. A forwarded address that carries a port, as
+  some proxies send it, is now read without the port rather than
+  skipped. (#589)
+
+- Fix the `probe_unavailable` alert firing on healthy Spock clusters
+  with no recent apply exceptions or conflict resolutions. The
+  collector could not tell an installed extension with nothing to
+  report from a missing one, so it recorded the `spock_exception_log`
+  and `spock_resolutions` probes on a quiet cluster as unavailable
+  with the reason "extension 'spock' not installed". The Spock
+  probes and the ten `pg_sys_*` probes now report a missing
+  extension explicitly, so a probe whose extension is installed is
+  recorded as available even when the probe collects no rows, and a
+  probe whose extension is absent is still recorded as not
+  installed. When every execution of an extension probe fails, the
+  probe is now recorded as unavailable with the reason "probe
+  execution failed for extension '<name>'" rather than as a missing
+  extension. (#612)
+
+- Clear an active anomaly alert once its metric recovers. The
+  alerter cleared only threshold alerts automatically, so an
+  anomaly alert stayed open after its metric returned to normal
+  until an operator dealt with it. Each tier 1 evaluation now
+  re-scores the metric behind every active anomaly alert against
+  the same baseline tier 1 uses, and clears the alert, sending
+  the usual clear notification, once the number of consecutive
+  samples set by the new `anomaly.tier1.clear_count` option
+  (default 3, minimum 1) have scored back inside the sensitivity
+  band. Only a newly collected sample counts, so evaluations
+  that re-score a sample already counted neither advance nor
+  restart the count. Whilst the value stays out of band, the
+  alert's metric value, anomaly score and last-updated time are
+  refreshed and its severity can rise but never fall; the
+  description keeps the original values. An evaluation in which
+  the metric does not report holds the alert open and keeps the
+  count; an out-of-band sample, an unusable baseline or a
+  blackout holds it open and restarts the count, which is kept
+  in memory and also restarts when the alerter does. For
+  metrics that report only whilst their condition holds, such
+  as blocked sessions, each new collection that reports no
+  value counts as an in-band sample, provided the probe is
+  still collecting for the connection. On upgrade, active
+  anomaly alerts that can no longer be re-scored (those on a
+  metric anomaly detection no longer covers, and those with no
+  database on a per-database metric, as earlier releases raised
+  for the cache hit ratio, deadlock and temporary file metrics)
+  are closed without a clear notification, and their
+  description records why.
+  Acknowledged anomaly alerts are left to re-evaluation, and no
+  new anomaly alert is raised on the same metric, connection and
+  database within five minutes of one clearing. Recovery uses
+  tier 1 only and makes no embedding or LLM call. (#611)
+
+- Stop the alerter's retention sweep from blocking vacuum across
+  the datastore. The sweep deleted every aged anomaly candidate,
+  and with it each candidate's embedding, in a single
+  transaction; on a large installation that ran for over 23
+  minutes and held back the xmin horizon, so vacuum could clean
+  nothing else in the datastore whilst it ran. The alerter now
+  deletes aged anomaly candidates and aged alerts in batches of
+  1,000 rows, each in its own short transaction, and stops
+  between batches when it is shut down. Collector schema
+  migration 20 adds the indexes the batched delete and its
+  cascades need on `anomaly_candidates` (`processed_at`,
+  `embedding_id` and `alert_id`), and drops
+  `idx_anomaly_embeddings_candidate`, which duplicated the
+  unique index on `anomaly_embeddings.candidate_id`. The new
+  indexes are built without `CONCURRENTLY`, so the collector
+  blocks writes to `anomaly_candidates` whilst they build when
+  it first starts after the upgrade. Stop the alerter before
+  upgrading the collector: dropping the duplicate index waits
+  for any retention sweep the old alerter is still running, and
+  blocks every reader of `anomaly_embeddings` until it can
+  proceed. (#615)
+
+- Stop tier 1 anomaly detection raising alerts for values that
+  are unusual for a quiet baseline but trivial in absolute
+  terms, such as 12 temporary files raised as critical against a
+  baseline that had never moved, CPU usage of 17 to 37%, or a
+  single session on an idle server. Each standard metric now has
+  a built-in `min_value`, below which the metric is never
+  anomalous, and a `min_stddev`, the smallest divisor the
+  z-score uses in the metric's units; both can be overridden
+  per metric under the new `anomaly.tier1.metric_floors`
+  option. A value under `min_value` counts as in band when an
+  anomaly alert is cleared, and an alert scored against a
+  baseline with no spread of its own is raised as a warning at
+  most. The alerter logs a warning at startup and on reload for
+  any `metric_floors` entry naming a metric that anomaly
+  detection does not score. (#617)
+
+- Apply the datastore password read from the server's
+  `-db-password-file` flag. The file was read but its contents
+  were then dropped, so the server connected with the
+  configuration file's password, or none; the file's password
+  now overrides the configuration file at start-up and on a
+  `SIGHUP` reload, as `-db-password` does, and `-db-password`
+  still takes precedence when both are given. The datastore
+  password is also now excluded when the server's configuration is
+  serialised to JSON, as the OIDC client secret already was. (#591)
+
+- Fix `GET /api/v1/metrics/latest` returning `NUMERIC` columns,
+  such as the replication slot `retained_bytes`, as unreadable
+  strings like `{123456789 0 false finite true}`; they are now
+  JSON numbers, or `null` when the value is not finite. The
+  endpoint also no longer treats a replication slot's
+  `wal_status` as part of the slot's identity, so a slot whose
+  status changed within the hour is reported once with its
+  current status rather than once for each status. (#347)
+
+- Keep the server's command-line overrides across a `SIGHUP`
+  configuration reload. A reload applied none of the flags given at
+  start-up, so the `-db-*` flags were replaced by the configuration
+  file's database settings, and a server started with `-tls` was
+  validated as though TLS were off. A reload now applies every flag
+  given on the command line, as start-up does. (#506)
+
+- Fix the alerter's re-evaluation worker sending each acknowledged
+  anomaly alert back to the LLM every time it fell due, by default
+  every five minutes, although nothing the prompt shows had changed
+  since the last "keep" answer. When the LLM answers "keep", the
+  alerter now stores a hash of the prompt inputs (the alert's value
+  and baseline, its acknowledgement, past acknowledgements of the
+  metric, the other alerts on the server, the cluster context, the
+  reasoning provider and model and the system prompt, but not the
+  re-evaluation count) in the new `alerts.reevaluation_fingerprint`
+  column, and skips the call whilst the hash is unchanged. A new
+  acknowledgement, a change in the server's other alerts, a new
+  provider or model, or a reworded system prompt sends the alert to
+  the LLM again. A failed call, a response that contains no decision, or one
+  made when part of the context could not be read stores no hash, so
+  the alert is retried when next due. The collector adds the column
+  in schema migration 18, so upgrade the collector before the
+  alerter. (#575)
+
+- Fix a connection created without a description breaking the
+  connection list for every user. The server stored the missing
+  description as `NULL` and then failed to read the row back, so the
+  create request returned an error although the connection had been
+  saved, and every later request to list connections failed until
+  the row was corrected by hand. The server now stores an empty
+  description and reads an existing `NULL` as an empty one, and
+  collector schema migration 17 replaces any `NULL` description with
+  an empty string and makes the column `NOT NULL`. (#540)
+
+- Exclude `pg_settings.max_connections` and
+  `pg_replication_slots.inactive_count` from the alerter's anomaly
+  baselines and anomaly detection. The first is a configuration value
+  that exists for the `high_max_connections` threshold rule, and its
+  baseline was built from a single sample, so it could never pass
+  warm-up; the second is a presence count that is almost always zero,
+  and the `replication_slot_inactive` threshold rule on
+  `pg_replication_slots.inactive` already alerts on the condition it
+  counts. Threshold rules that read either metric are unchanged, the
+  alerter deletes their existing baseline rows on its next baseline
+  cycle, and it suppresses any anomaly candidate for them recorded
+  before the upgrade rather than raising an alert from it. (#576)
+
+- Fix the database summaries reporting a failed query as an empty
+  success. Each sub-query logged its error and returned no rows, so a
+  statement timeout or a broken metrics table produced a blank or
+  partial summary with status 200. The endpoint now returns status 500
+  for any failure other than a missing metrics table, which still
+  returns an empty list. A row holding a NULL database name, size or
+  connection count is now skipped rather than ending the scan early
+  and hiding every database after it. (#519)
+
+- Fix the Table Leaderboard and Index Leaderboard on the database
+  dashboard listing `pg_catalog` and `information_schema` objects,
+  each shown with zero rows or zero reads. Both leaderboards ranked
+  every schema the collector records, and PostgreSQL reports zero
+  counters for a catalog table it holds no statistics for, so on a
+  database where every counter is zero, such as a standby or a
+  server whose statistics were reset, catalog objects filled the top
+  ten. Both leaderboards now leave out the system schemas that
+  PostgreSQL leaves out of `pg_stat_user_tables` and
+  `pg_stat_user_indexes`: `pg_catalog`, `information_schema` and the
+  TOAST schemas. The `/api/v1/metrics/latest` endpoint gains an
+  `exclude_system_schemas` query parameter for this purpose, and its
+  existing `exclude_schemas` parameter is now documented in the API
+  reference. The Vacuum Status section still includes the system
+  schemas. (#499)
+
+- Fix the collector opening more connections to a monitored server
+  than `pool.max_connections_per_server` allows. The limit counted
+  only connections in use, whilst each database on the server had its
+  own pool that kept its connections open for
+  `monitored_max_idle_seconds`, so a server with many databases held
+  an idle connection for each of them. The limit now counts every
+  connection the collector has open to the server, idle or in use,
+  and idle connections to other databases are closed before a new one
+  is opened. Every configuration reload also closed and reopened all
+  of a server's connections even when nothing had changed, because
+  the hash that detects a changed connection was computed over
+  parameters in random order; the hash is now stable. (#539)
+
+- Fix the server ignoring `llm.temperature: 0`. The configuration
+  merge treated a temperature of 0 as unset, so the 0.7 default won
+  and an operator could not ask for deterministic output. An explicit
+  0 is now passed to the provider, whilst an omitted or negative value
+  still falls back to 0.7. (#551)
+
+- Fix the RBAC user endpoints answering a request the auth store
+  refuses on its merits with a 500 and a generic message. The store
+  now marks such refusals, such as a password for an account that
+  signs in through an identity provider, and the create and update
+  user endpoints return them as a 400 carrying the store's own
+  explanation, keeping the 500 for genuine failures. The update
+  endpoint's separate copy of the identity provider password check has
+  gone, so the store is the one place that rule is written. (#485)
+
+- Fix the alerter paying for Tier 2 and Tier 3 anomaly analysis on
+  candidates that could never raise an alert. Every candidate went
+  through an embedding call and an LLM call before the alerter
+  checked for an active blackout, an open anomaly alert on the same
+  metric, connection and database, or re-evaluation and
+  false-positive suppression, so a persistent condition bought both
+  calls on every evaluation cycle only for the result to be
+  discarded. Those checks now run before Tier 2, and a candidate
+  that matches one is marked as processed without either call,
+  linked to the open alert where there is one. The checks run again
+  just before an alert is created, since a blackout or an
+  acknowledgement can arrive during a slow Tier 3 call. (#568)
+
+- Fix the alerter writing an anomaly candidate on every evaluation
+  cycle for a condition that could not raise an alert. Tier 1 stored
+  a candidate for each anomalous value even whilst an open anomaly
+  alert, a database-scoped blackout or a suppression applied, so a
+  persistent condition added a row per metric, connection and
+  database every cycle, each later marked as processed and deleted.
+  Tier 1 now runs the pre-tier checks first and stores no candidate
+  when one applies. (#577)
+
+- Fix anomaly candidates accumulating for ever after a configuration
+  reload that left no tier after Tier 1 able to process them. At startup
+  the alerter already disables anomaly detection when no Tier 2 or Tier
+  3 provider is available, because Tier 1 alone is too noisy to alert
+  on, but a reload did not repeat the check: the running detector kept
+  storing Tier 1 candidates that nothing processed, and the retention
+  cleanup only deletes processed candidates. A reload now applies the
+  startup rule, Tier 1 stores no candidate unless Tier 2 or Tier 3 can
+  process it, a processing run under way when the reload lands stops
+  rather than alerting on the rest of its batch, and a candidate left
+  unprocessed for longer than three times 100 Tier 3 timeouts (two and a
+  half hours by default, and never less than one hour) is marked as
+  processed with no final decision and counted in the log, so the
+  backlog raises no stale alerts and ages out through the normal
+  retention cleanup. (#581)
+
+- Fix the alerter's anomaly baselines for
+  `connection_utilization_percent` and the
+  `pg_stat_activity.blocked_count`, `idle_in_transaction_seconds`,
+  `max_query_duration_seconds` and `max_xact_duration_seconds` metrics
+  counting background processes such as autovacuum workers,
+  walsenders and the checkpointer, whilst the live values counted
+  client backends only. The skewed baselines produced a steady stream
+  of spurious anomaly candidates, each of which could incur paid Tier 2
+  and Tier 3 calls. The baselines now count client backends only, and
+  the `connection_utilization_percent` baseline divides each sample by
+  the `max_connections` value in force when that sample was collected
+  rather than by the current value. Each baseline cycle now also
+  deletes the rows of a metric that it did not rewrite, such as an
+  hourly bucket that no longer has enough samples, so rows built from
+  the old values do not survive the upgrade. (#567)
+
+- Fix the alerter's live `connection_utilization_percent` value
+  dividing the newest activity sample by the newest `max_connections`
+  setting even when that setting was recorded after the sample, for
+  example just after a restart that changed `max_connections`. The live
+  value now uses the setting in force when the sample was collected, as
+  the baseline does, so the two agree for the same snapshot. (#596)
+
+- Fix deleting a connection that has been collecting for a while. The
+  delete removes the connection's whole metrics history through a
+  cascade across every `metrics.*` table, but it ran under the same
+  ten second deadline as a simple lookup and under the datastore
+  pool's 30 second `statement_timeout`, so for a long-lived connection
+  it was cancelled partway, rolled back and failed again on every
+  retry (#480). The delete now has a budget of four minutes, applied
+  both as its deadline and as a transaction-local `statement_timeout`,
+  and it carries on if the browser or a reverse proxy stops waiting
+  for the response. It also no longer blocks the server's other
+  datastore requests whilst it runs, although the collector's and the
+  alerter's writes for the connection being deleted wait for it to
+  finish, which can now take up to the same four minutes.
+
+- Fix alerts staying active for ever on a server an operator has
+  stopped monitoring. The probes of an unmonitored connection leave
+  the staleness view, so every alert on it was judged to have a probe
+  that is not reporting and was held open, whilst retention only
+  reaps a cleared or acknowledged alert, so nothing removed them and
+  nothing said why they were stuck. The alerter's cleanup pass now
+  clears every active alert on a connection whose monitoring has been
+  turned off, whatever the type of the alert, and rewrites its
+  description to record that it was closed because monitoring of the
+  server stopped rather than because the condition ended. No clear
+  notifications are sent for those alerts, since nothing resolved the
+  conditions they report. An alert on a stalled or unavailable probe
+  is still held open as before. Alert retention also reaps
+  acknowledged alerts again: it measured the age of a retired alert
+  by its clear time, which an acknowledged alert never has, so an
+  acknowledged alert was kept for the life of the installation. It
+  now falls back to the time the alert was raised. (#500)
+
+- Fix the top queries list reporting a query under every monitored
+  database when it is filtered by database. The server named a
+  query's database from the backends the collector happened to
+  sample in the previous hour, and when none had been sampled it
+  used the database the statistics were collected through instead;
+  since those statistics are collected once through every database
+  with `pg_stat_statements` installed, a filtered list then showed
+  the same query, with the same calls, under each of them. The name
+  now comes from the per-database statistics the collector records
+  for every database it monitors, so the query appears under the
+  database it actually ran in. A query in a database the collector
+  cannot see still falls back to one of the collecting databases,
+  but only to one, so the filtered and unfiltered lists agree. The
+  query drill-down charts now read their data through the database
+  the statistics were collected in, so they no longer come up empty
+  for a query whose own database lacks the extension, and the
+  `/api/v1/metrics/query-stats` endpoint resolves the database the
+  same way as the list and no longer counts a query's calls once for
+  every database it was collected through. (#508)
+
+- Fix the AI analysis offering a Run button on generated SQL that
+  could not be executed, so that a query naming a hallucinated column,
+  a mistyped catalog reference or a role that does not exist failed
+  only once the user had run it. Every SQL block in an analysis report
+  is now checked as the report renders, through a new read-only
+  endpoint, `POST /api/v1/connections/{id}/query/validate`, that plans
+  each statement with `EXPLAIN` inside a read-only transaction and
+  rolls that transaction back; the endpoint never executes the
+  statement itself. Run is unavailable whilst the check is in flight.
+  A statement PostgreSQL rejects shows the error beneath the block and
+  keeps Run disabled behind a Run anyway button, and a statement
+  outside the kinds the check plans, which are `SELECT`, `WITH`,
+  `INSERT`, `UPDATE`, `DELETE`, `MERGE`, `VALUES`, `TABLE` and
+  `EXPLAIN` without `ANALYZE`, stays runnable under a "Not validated"
+  notice giving the reason; `EXPLAIN ANALYZE`, the DDL statements,
+  `ALTER SYSTEM`, `VACUUM`, `SET`, `SHOW`, `GRANT`, `REINDEX`,
+  `CLUSTER` and `ANALYZE` all fall into that group. A block carrying
+  `$1`-style parameter placeholders is labelled a query template and
+  offers no Run button at all, because such a query cannot run as
+  written. The analysis prompts now require the model to call
+  `get_schema_info` before naming a user object or a catalog column
+  outside the built-in crib sheet, and forbid parameter placeholders
+  in runnable blocks; alert analysis gained the `get_schema_info`
+  tool, which it previously lacked. Where a finished report still
+  contains a statement that fails validation, the analysis runs one
+  repair round, feeding the validation errors back to the model before
+  the report is shown. (#532)
+
+- Fix the `test_query` MCP tool rejecting valid parameterised
+  queries and reporting every statement of a multiple-statement
+  query as invalid. The tool now plans a parameterised query with
+  `EXPLAIN (GENERIC_PLAN)` on PostgreSQL 16 and later, rather than
+  failing it for the missing parameter values, and it rolls the
+  transaction back before retrying each statement individually, so
+  that the per-statement results are no longer produced by an
+  already aborted transaction. (#532)
+
+- Fix the transaction throughput chart on the Performance Summary
+  page counting a database's whole lifetime transaction count into
+  one interval. The commits and rollbacks per second were derived by
+  differencing the cluster-wide sum of the `pg_stat_database`
+  counters, so a database created between two collector samples
+  added its entire counter to that interval as a spike, whilst a
+  database dropped between two samples turned the difference
+  negative and flattened the interval to zero. The counters are now
+  differenced for each database separately and only then summed, and
+  an interval is discarded for a single database when its statistics
+  were reset, when it was missing from the preceding sample, or when
+  the sample has no predecessor in the selected range. Charts over a
+  window in which databases were created or dropped therefore report
+  lower, accurate rates where they previously showed a spike or a
+  gap. (#469)
+
+- Fix the stale migration list in the collector's Schema Management
+  developer guide, which enumerated migrations 1 to 5 with descriptions
+  that no longer matched the code, then jumped to a migration 15 and
+  listed a migration 22 and 23 that do not exist. Migration 1 has been
+  the consolidated baseline that creates the whole schema since the
+  migrations were squashed, not the "create schema_version table" step
+  the page described. The enumeration has been replaced with a
+  description of the migration mechanism and a pointer to
+  `registerMigrations()` in `collector/src/database/schema.go`, which is
+  the authoritative list, so the page no longer goes stale each time a
+  migration is added. The code samples on the page have also been
+  corrected to the `func(pgx.Tx) error` signature the `Up` function
+  actually takes, in place of the `*sql.DB` of an earlier
+  implementation. (#479)
+
+- Correct the Test Environment section of the collector schema
+  management guide, which documented only `TEST_DB_CONN` and described
+  the tests as running against the database named in that value. The
+  schema tests read `TEST_AI_WORKBENCH_SERVER` first, accept either a
+  connection URL or a libpq key-value string, and create a database of
+  their own named `ai_workbench_test_<timestamp>` for the run, so the
+  role in the connection string needs the `CREATEDB` privilege. The
+  section now also records the fallback to
+  `host=localhost port=5432 user=postgres sslmode=disable` when neither
+  variable is set, the previously undocumented
+  `TEST_AI_WORKBENCH_KEEP_DB` flag that keeps the generated database for
+  inspection, the reason leftover `ai_workbench_test_*` databases
+  accumulate, and the fact that a failed setup makes the package exit
+  successfully without running a single test. It also names
+  `TestMigration_PgSettings` as the one test that connects directly to
+  the database in `TEST_AI_WORKBENCH_SERVER` and drops its schema.
+  (#525)
+
+- Fix six of the nineteen `builtins.tools` switches on the server
+  having no effect, because the configuration merge read their
+  values from the configuration file and then discarded them: setting
+  `list_connections`, `get_alert_history`, `get_alert_rules`,
+  `get_metric_baselines`, `query_datastore` or `get_timeline_events`
+  to `false` left the tool enabled. That mattered most for
+  `query_datastore`, which then ran arbitrary read-only SQL against
+  the datastore and could not be switched off at all. Every switch now
+  takes effect. The `get_blackouts` tool, which the documentation and
+  the example configuration both advertised as switchable, had no
+  backing configuration field at all; the tool now has one and
+  behaves like the rest. The `test_query` tool was advertised the
+  same way, and is now permanently enabled alongside `read_resource`
+  instead: the tool only validates SQL without executing the
+  statement, and the server asks Ellie to check every statement
+  through that tool before showing the statement to a user, so an
+  operator who disabled the tool would leave the assistant calling a
+  tool that is not registered. An existing `test_query: true` setting
+  is harmless, but the key is no longer recognised and has been
+  removed from the documented example and from
+  `examples/ai-dba-server.yaml`. (#521)
+
+- Fix the `pg_stat_statements` collector probe discarding the block
+  timing columns on every modern server. The probe chose its query
+  shape by looking for the version-specific columns in
+  `information_schema.columns` with `table_schema = 'pg_catalog'`, but
+  `CREATE EXTENSION` installs the view into the current schema, normally
+  `public`, so both checks failed and the probe fell back to the
+  PostgreSQL 12 query. Rows arrived with `shared_blk_read_time`,
+  `shared_blk_write_time`, `local_blk_read_time` and
+  `local_blk_write_time` stored as NULL and `toplevel` fixed at `TRUE`.
+  The checks now resolve the view through the search path, exactly as
+  the probe's own query does, so a relocated extension is detected in
+  whichever schema it was installed, provided that schema is on the
+  collector role's search path. (#439)
+
+- Correct the documented default for
+  `http.auth.max_failed_attempts_before_lockout`, which the
+  server configuration reference gave as `0`, meaning lockout
+  disabled, in both its option table and its example
+  configuration. The server has always defaulted the setting
+  to `10`, so an operator who configured around the documented
+  value was working from the wrong baseline. The same page
+  also showed an `http.auth.enabled` key that has never
+  existed on the configuration struct and that the loader
+  silently discards; it has been removed from the
+  documentation, from the server README and from the Docker
+  and walkthrough sample configurations. (#261)
+
+- Correct the alerter documentation for the metrics and rules it
+  actually implements. The developer guide's metric name list
+  omitted eight of the 31 metrics in the alerter's metric registry,
+  including the two Spock recent-count metrics and both replication
+  slot retention metrics. The Alert Rule Reference documented a
+  single WAL retention rule against
+  `pg_replication_slots.retained_bytes` with a 1 GB threshold, in
+  place of the two rules the collector actually seeds,
+  `replication_slot_retention_warn` at 1 GiB and
+  `replication_slot_retention_high` at 10 GiB, both reading
+  `pg_replication_slots.max_retained_bytes`. The same page had no
+  entry at all for the built-in `metric_staleness` rule, which now
+  has one describing what the staleness ratio measures and how the
+  alert clears. (#466)
+
+- Fix Ask Ellie failing with `Function call is missing a
+  thought_signature in functionCall parts` on every question that
+  needs a tool call when the LLM provider is Gemini. Google's current
+  Gemini models attach an opaque `thoughtSignature` to each function
+  call and reject the next request with a 400 error unless it is
+  echoed back unchanged, and the pinned `pgedge-go-llm-lib` neither
+  captured nor replayed it. The server and alerter now use library
+  release v0.3.1, which carries the signature on the `tool_use` block
+  through the chat endpoint and back to Gemini, so the existing client
+  loop needs no change. The same release reports tool failures to Gemini
+  instead of letting the model retry the identical call, and hides
+  Gemini models that cannot hold a text conversation from the model
+  list. (#425)
+
+- Fix every cache hit ratio in the web client (the Cache Hit
+  performance tile, the server dashboard's KPI sparkline and
+  per-database cards, the database dashboard's KPI tile and Cache
+  Hit Ratio Over Time chart, and the cluster dashboard's comparative
+  chart) reporting a lifetime average since the last statistics
+  reset, which could not move when a current problem appeared. The
+  ratio is now computed from the change in `blks_hit` and
+  `blks_read` between consecutive samples within each time bucket.
+  Intervals with no block access render as a gap in the chart and
+  '--' for the headline value instead of 0%, samples following a
+  statistics reset are discarded rather than producing a bogus
+  ratio, and the tooltips note that `blks_hit` counts only
+  `shared_buffers` hits, so a lower ratio does not by itself
+  indicate slow I/O. (#401)
+- Add custom time range support to the
+  `/api/v1/metrics/performance-summary` endpoint: `time_range=custom`
+  with `time_start` and `time_end` resolves through the same rules as
+  `/api/v1/metrics/query`, so the server dashboard's Cache Hit Ratio
+  tile follows a custom range like every other panel. (#401)
+- Enforce the `required_extension` field on alert rules. The alerter
+  stored the field but never checked it, so rules that depend on
+  `pg_stat_statements`, `system_stats` or Spock were evaluated against
+  every connection. The alerter now reads the newest
+  `metrics.pg_extension` snapshot for each connection and skips
+  connections that lack the extension. An existing alert on a
+  connection that lacks the extension is left active rather than
+  resolved, so uninstalling an extension no longer reports the
+  underlying condition as cleared. (#409)
 
 - Stop the `test` and `coverage` targets in the server, collector and
   alerter Makefiles running `pkill -9` against every matching process
@@ -172,6 +1838,73 @@ project adheres to
   default threshold of 12. Tuned autovacuum settings are also
   honoured again by `autovacuum_not_running`, which previously
   always assumed the shipped defaults. (#406)
+
+- Fix alerts flapping, latching, or clearing falsely when a metric
+  stops reporting. The alert cleaner treated a latest-metric query
+  that returned no row for an alert's connection and database, or no
+  rows at all, as proof that the condition had resolved, so any gap
+  in collection cleared the alert and the next sample raised it
+  again. The metric registry now records, for each metric, whether a
+  missing row means recovery. Metrics that emit a row for every
+  healthy connection leave their alert active until fresh data shows
+  the condition has ended, and the `metric_staleness` rule reports
+  the probe that stopped; metrics that report only whilst the
+  condition holds, or that describe an object an operator can
+  legitimately drop, such as a replication slot or a standby, still
+  clear on absence, but only when the collector probe behind the
+  metric last collected inside the window that metric's query reads.
+  Every metric bounds the age of the samples it reads, so a stopped
+  collector empties a query exactly as a recovered condition does; the
+  cleaner now checks that window first, and a probe that has stalled,
+  that an operator has disabled, or that belongs to a connection which
+  is no longer monitored leaves the alert active until somebody clears
+  or acknowledges it. The check is made against the metric's own
+  window rather than against a multiple of the probe's collection
+  interval, so raising `collection_interval_seconds`, for every
+  connection or for one, no longer leaves the cleaner quiet whilst
+  ordinary collection empties the query. (#407)
+
+- Fix the `slow_query_count` rule latching until a manual
+  `pg_stat_statements_reset()`. The rule counted the queries whose
+  `mean_exec_time` exceeded 1000 ms, a lifetime average since the
+  last statistics reset that never decays, so a query that ran
+  slowly once kept the count elevated whether or not it ran again.
+  The count now covers only the queries that ran during the most
+  recent probe interval, using an interval mean derived from the
+  change in total execution time divided by the change in call
+  count. The samples in the window are sorted once rather than
+  twice, which cut the query's execution time by roughly a third on
+  a fixture of 24,000 statement samples. (#407)
+
+- Fix the `cache_hit_ratio_low` rule firing and clearing on
+  identical data. The metric returned every delta row in its
+  fifteen minute window with no ordering, and the threshold
+  evaluator fired when any row violated the threshold whilst the
+  alert cleaner stopped at the first row it saw, so one set of
+  samples could produce a fire and a clear in the same cycle, or
+  latch the alert when the oldest interval was the violating one.
+  The metric now reduces to the newest qualifying delta for each
+  connection and database, so both sides read the same value.
+  (#407)
+
+- Add a fifteen minute freshness cutoff to the
+  `pg_replication_slots.inactive_count` and
+  `pg_replication_slots.max_retained_bytes` metrics, which
+  previously had none, so `replication_slot_retention_warn` and
+  `replication_slot_retention_high` no longer keep firing on
+  days-old samples after a collector stops or a connection stops
+  being monitored. The windows on `pg_replication_slots.inactive` and
+  `pg_node_role.subscription_worker_down` widened from five to
+  fifteen minutes, because five minutes equalled the probe interval
+  and a single late collection emptied the window, clearing the
+  critical `replication_slot_inactive` and `subscription_worker_down`
+  alerts. Unit tests now require every metric in the registry to
+  bound `collected_at`, or to be allowlisted with a reason, and
+  require every metric that clears on absent data to look back over
+  at least three of its probe's seeded collection intervals;
+  `pg_settings.max_connections` is the one allowlisted exception,
+  since its change-tracked probe stores nothing whilst the
+  configuration is unchanged. (#407)
 
 - Split the server dashboard "Connections Over Time" chart into a
   Connections chart and a Sessions Established chart. The old chart
@@ -246,6 +1979,31 @@ project adheres to
   accepts a `queryid` filter, and the query detail page passes the
   identifier of the selected query so that both series describe
   that query alone. (#404)
+
+- Fix the collector and the alerter overriding a configuration file
+  value whenever that value happened to match a command-line flag's
+  built-in default, and ignoring a flag that an operator passed
+  explicitly with its default value. Both services decided whether a
+  flag had been supplied by comparing the flag's value against its
+  own default, which cannot tell the two cases apart; for example,
+  a collector configuration file setting `datastore.port: 6000`
+  ignored `-pg-port 5432` on the command line. Both services now
+  detect the flags that were actually present on the command line,
+  so the documented precedence of defaults, then configuration file,
+  then flags holds in every case. (#389)
+
+- Roll every database transaction back on a bounded, non-cancelable
+  context across the server, collector, and alerter, through the
+  shared `pkg/rollback` helper. When a rollback runs on a request
+  context that the client has already cancelled, the pgx v5 driver
+  fails the rollback and closes the connection, so each client that
+  disconnected mid-request cost the pool a connection whilst the pool
+  reconnected. The helper derives a five-second, non-cancelable
+  context from the request context instead, so a disconnect no longer
+  discards the pooled connection, and a rollback to a hung server
+  cannot pin a pool slot indefinitely. A convention test in every Go
+  module rejects direct `Rollback` calls and hand-written `ROLLBACK`
+  SQL. (#381)
 
 - Fix every chat request that included a tool list failing with
   `anthropic (400): tools.0.custom.input_schema: Input does not
@@ -467,7 +2225,195 @@ project adheres to
   upgrading for the toggle to take effect on statements already in the
   view. (#364)
 
+- Fix the AI Overview and the server-info AI database analysis
+  rendering blank with no error. The failure appeared when a local
+  reasoning model served the request. Both paths capped their
+  responses at a hardcoded 512 output tokens and ignored the
+  configured `llm.max_tokens` value. A reasoning model counts its
+  thinking tokens against that budget. The model therefore spent
+  the whole budget before emitting any answer text. Both paths now
+  honour `llm.max_tokens`, which defaults to `4096` tokens and
+  previously governed only the streaming chat proxy. A response
+  that carries no text is now reported rather than cached as an
+  empty result. The `GET /api/v1/server-info/{id}/ai-analysis`
+  endpoint returns `502` with a message that names the likely
+  cause. (#399)
+
+- Fix the collector testing the error from a failed configuration
+  file load with `os.IsNotExist`, which does not unwrap the wrapped
+  error and so never matched, leaving two branches unreachable. Both
+  checks now use `errors.Is`, so a configuration file named with
+  `-config` that does not exist reports "specified config file not
+  found" along with the path rather than a generic load failure, and
+  an auto-discovered configuration file removed between discovery
+  and load falls back to the compiled-in defaults as intended
+  instead of aborting startup. (#421)
+
+- Fix the Disk Space chart and the Disk Usage KPI tile on the server
+  dashboard averaging `used_space` and `free_space` across every
+  mounted filesystem, including pseudo filesystems such as `tmpfs` and
+  `devtmpfs`, so that the figures described no real filesystem. Both
+  now describe a single real filesystem, chosen with a new Filesystem
+  selector above the chart and defaulting to the filesystem closest to
+  full, with the mount point shown in the tile label and the chart
+  title; pseudo filesystems are excluded. The usage percentage is now
+  derived from the filesystem's reported total size rather than from
+  used plus free space, which differ on any filesystem with reserved
+  blocks. The `GET /api/v1/metrics/query` endpoint gained a
+  `mount_point` query parameter, which filters both the time-series
+  and the latest-row responses. The alerter's disk usage threshold
+  metric took the highest usage across all mounts and so was pinned at
+  100% on any host with a squashfs mount, because a squashfs image is
+  by construction fully used; the metric now ignores pseudo
+  filesystems, matching the dashboard. (#428)
+
+- Fix the collector running every past-due probe immediately at
+  startup, with no stagger and no limit on how many ran at once. On a
+  restart, every probe whose interval is shorter than the outage is
+  past due, so concurrency scaled with the number of monitored
+  connections multiplied by their probes; that burst exhausted a
+  modest memory limit, and because the resulting restart put every
+  probe back in the past-due state, the collector never recovered on
+  its own. A probe that is past due or has never run now waits out a
+  random delay, drawn from zero up to the smaller of its collection
+  interval and the new `scheduler.startup_jitter_seconds` setting
+  (60 seconds by default, with 0 disabling the stagger), and its timer
+  is realigned afterwards so the offset also spreads out steady-state
+  collection. Every probe execution now holds a slot in a global
+  semaphore bounded by the new `scheduler.max_concurrent_probes`
+  setting (8 by default), so the memory and connection demand of
+  active probe execution is capped by that setting rather than
+  growing with the number of monitored connections multiplied by
+  their probes; the scheduler still runs one goroutine per
+  connection and probe pair, so that baseline continues to scale
+  with the number of monitored connections. A probe holds its slot
+  until the execution finishes or reaches
+  `pool.monitored_max_wait_seconds`, so the new
+  `scheduler.max_concurrent_probes_per_connection` setting (2 by
+  default, and clamped to `scheduler.max_concurrent_probes`) caps how
+  many of those slots a single monitored connection may hold at once;
+  without the ceiling, one server that accepts connections but answers
+  slowly demands more slots than the cap provides and queues the
+  probes of healthy connections behind its own. (#441)
+
+- Fix anomaly detection ignoring the hourly and daily baselines the
+  alerter had been writing. Baseline selection took the first row
+  returned by a query ordered alphabetically by `period_type`, which
+  was always the global `all` row, so seasonality was never applied
+  and the per-period warmup thresholds were unreachable. The engine
+  now prefers the hourly baseline for the current hour, then the
+  daily baseline for the current weekday, then the global baseline,
+  and uses the first of those that passes its warmup gate; when none
+  is warm, detection is suppressed for that value. Hour and weekday
+  are derived in UTC both when baselines are written and when one is
+  selected. The default `baselines.lookback_days` rises from 7 to 15:
+  a baseline's span can never exceed the lookback, so at 7 days the
+  daily tier's 336 hour warmup span could never be met and the daily
+  step was silently skipped. The alerter now logs a warning on each
+  baseline cycle for any warmup tier whose `min_span_hours` exceeds
+  the lookback. Operators who set `lookback_days` explicitly should
+  raise it to at least 15, or shorten `warmup.daily.min_span_hours`
+  to match. (#408)
+
+- Fix anomaly detection being permanently disabled for the 13 of 31
+  registry metrics that have no historical query. The alerter built a
+  fallback baseline for those metrics from a single current sample,
+  which could never pass the warmup gate, and rewrote it every
+  baseline cycle. The fallback path is removed; such metrics are now
+  skipped by baseline calculation and detection, and leftover
+  baseline rows for them are deleted on each baseline cycle. (#408)
+
+- Fix anomaly detection mixing up databases on multi-database
+  connections. Baseline lookup ignored the database name, the current
+  value was taken from whichever database happened to be listed
+  first, and the anomaly candidate was written without a database
+  name, so alert deduplication collapsed every database on the
+  connection. Baseline lookup, value selection and candidate creation
+  are now all scoped to the database, so per-database metrics such
+  as `cache_hit_ratio`, `deadlocks_delta` and `temp_files_delta` are
+  scored against their own database's baseline and deduplicated per
+  database. Each metric's latest values are also fetched once per
+  rule rather than once per rule per connection. Active anomaly
+  alerts for these three metrics raised before the upgrade carry no
+  database name and so no longer match the per-database
+  deduplication; the first detection after upgrading may add a
+  second alert alongside such a row, which should be cleared by
+  hand as anomaly alerts are not resolved automatically. (#408)
+
+- Fix a probe staleness alert clearing itself at the moment collection
+  on that probe stopped, which left an operator with no active alert
+  for a server that had gone quiet. The alerter's cleanup pass read a
+  staleness view that omits any probe which is unavailable, disabled,
+  attached to a connection that is no longer monitored, or has never
+  collected, and it treated absence from that view as proof that
+  nothing was left to be stale about, so a probe that went unavailable
+  (a monitored server losing an extension, or a probe run timing out)
+  cleared the `metric_staleness` alert silently at debug log level. A
+  probe that has gone unavailable now keeps any staleness alert that
+  has already fired for it, and the alert's description is rewritten
+  to say that collection has stopped and to give the recorded reason;
+  the title is unchanged, so the alert stays recognisable in
+  notification history. The rewritten description reverts to the
+  evaluator's own wording once the probe collects again, and also on
+  the way out when a held alert clears because an operator disabled
+  the probe or because its connection is no longer monitored, so
+  neither the clear notification nor the stored alert history
+  announces the resolution in the words "Collection has stopped ...".
+  On that clearing path the wording is rebuilt from the connection and
+  probe configuration rows the staleness view joins against, so a held
+  alert whose connection has gone altogether, or whose lookup fails,
+  still clears carrying the held text. The line
+  reporting the hold is logged once, when the decision or the recorded
+  reason changes, rather than on each 30 second cleanup cycle. A probe
+  that is absent because an operator disabled it, or because its
+  connection is no longer monitored, still clears the alert, since
+  both are deliberate actions, and both outcomes are now logged at the
+  normal log level rather than at debug level. The staleness evaluator
+  is unchanged and still skips unavailable probes, because an
+  unavailable probe is a normal steady state for a server without the
+  extension a probe needs, and raising a new alert for one would leave
+  a permanent alert on every such probe; a probe that goes unavailable
+  before its staleness alert has fired therefore still raises no
+  alert, which is tracked in issue #512. (#465)
+
+- Make `ai-dba-server -delete-user` ask for confirmation in every case.
+  When the username was typed at the prompt rather than given with
+  `-username`, the command read the confirmation through a second input
+  buffer that never saw it, and deleted the account without asking;
+  it did the same whenever the confirmation could not be read at all.
+  The prompts now share one input buffer, and any answer other than
+  `y` or `yes`, including none, cancels the deletion. The
+  `-update-user` prompts had the same split buffer and now share one
+  too. (#588)
+
 ### Removed
+
+- Remove the hard-coded allow-list of embedding model names, which
+  rejected any model the OpenAI, Voyage AI, or Gemini provider had
+  not been told about, whether the model was newly published by the
+  provider or served under its own name by a local model server. The
+  configured model name is now passed to the provider unchanged, so
+  any model the provider accepts can be used, including models served
+  by an OpenAI-protocol-compatible local server such as llama.cpp or
+  vLLM. The per-provider defaults still apply when the configuration
+  leaves the model empty, and an embedding wider than 4000 dimensions
+  is still rejected with a dimension error when it is stored or used
+  as a query vector. The alerter previously cut every embedding to
+  1536 dimensions before that check could run, silently truncating
+  any wider model; it now keeps the model's native width, matching
+  the server. Anomaly embeddings stored before this change by a model
+  wider than 1536 dimensions remain at the truncated width, so their
+  similarity to new embeddings is lower than it would otherwise be
+  until they age out of the retention window. (#427)
+
+- Retire the `table_bloat_ratio` alert rule, which duplicated the
+  `dead_tuple_ratio` rule with a different denominator and fired on
+  the same tables at a different threshold. The built-in rule is now
+  disabled by default and its metric is no longer collected by the
+  alerter; the rule definition remains so that historical alerts stay
+  attributable, and any of its alerts that were active at upgrade
+  time are cleared. Use `dead_tuple_ratio` to monitor table
+  maintenance. (#409)
 
 - Remove 48 unused functions from the collector, server, and alerter,
   along with the tests that existed only to exercise them. A
@@ -519,7 +2465,448 @@ project adheres to
   constructors directly, passing the same host-validation settings the
   removed helper supplied, so test behaviour is unchanged.
 
+- Remove the period-scoped average execution time tile from the query
+  detail overlay, which was labelled "Avg Time (Last 24h)" or "Avg
+  Time (Custom Range)" according to the selected range. Now that
+  `GET /api/v1/metrics/top-queries` derives `mean_exec_time` over the
+  selected window, the Mean Time tile reports the same figure from
+  the same delta pairs, so the overlay showed one number twice and
+  paid for a second request on every open. The
+  `GET /api/v1/metrics/query-stats` endpoint that fed the tile
+  remains available to API consumers. (#387)
+
 ### Security
+
+- Breaking: make the `query_datastore` MCP tool structured and limit
+  the tool to the connections the caller can read (#566). The tool no
+  longer accepts SQL and rejects a `sql` or `query` argument, so a
+  client must name a `source` and describe the query with `columns`,
+  `connection_ids`, a time range, `filters`, a `shape` (`rows`,
+  `latest` or `aggregate`), `group_by`, `aggregation`, `buckets`,
+  `order_by` and paging instead. The tool previously ran read-only SQL over the whole
+  datastore, so any caller holding the tool privilege, including an
+  API token scoped to one connection, could read every connection's
+  host, username and encrypted credentials and every connection's
+  metrics. Connection-specific rows now cover only the connections
+  the caller can see, further limited to an API token's connection
+  scope, whilst estate-wide configuration rows, such as alert rules,
+  alerter settings and global thresholds, blackouts and probe
+  settings, remain readable; each configuration source exposes an
+  explicit list of columns, and stored connection passwords and
+  certificates are never available. In `pg_settings`, the values of
+  settings that can hold a credential, such as `primary_conninfo`,
+  are shown as `********`, as are the values of options such as
+  `ldapbindpasswd` in `pg_hba_file_rules`, a non-empty
+  `pg_hba_file_rules.error`, and, on a best-effort basis, passwords
+  in recognised forms in query text, Spock statements and row images,
+  connection errors, and alert descriptions and AI analyses, each cut
+  to its first 65,536 characters; such text may still hold other
+  sensitive data, including passwords in forms the masking does not
+  recognise, which read access to a connection makes visible. Other
+  tools and the web client may show this text as stored.
+  Metric sources default to the last hour for every shape, including
+  `latest`, so change-tracked probes need a wide `time_start`;
+  `page_size` defaults to 100 and is capped at 1000, `page` times
+  `page_size` is capped at 100000, and `filters`, `group_by` and
+  `order_by` take at most 20 entries each. Ties in ordering are broken
+  by key columns so pages are stable, and a failure at run time
+  returns a general message. A group grant or token scope that
+  includes `query_datastore` also gives access to `describe_datastore`,
+  but not the reverse. Counter rates and deltas remain the job of
+  `query_metrics`. Every query runs in a read-only transaction with
+  a statement timeout, and `explain` returns the plan from `EXPLAIN`
+  without executing the query; it is available only to callers who
+  can access every connection, because plan row estimates cover the
+  whole table.
+
+- Delete a user with `ai-dba-server -delete-user` only when the
+  confirmation is an explicit `y` or `yes`. The answer was checked
+  only when a whole line could be read, so input that ended without
+  a newline skipped the check and deleted the user: `printf n |`
+  deleted on an explicit "n", as did running the command with stdin
+  redirected from `/dev/null`. The answer is now read even when the
+  input ends without a newline, so `printf y |` still confirms whilst
+  anything else declines, and a read error other than end of input
+  stops the command with an error rather than deleting. (#608)
+
+- Escape alert text for the chat service's markup in Slack and
+  Mattermost notifications. The alerter previously escaped template
+  values only for JSON, so an alert title, description, server name or
+  database name containing `<!channel>` or `<https://example.com|click>`
+  became a channel-wide mention or a disguised link in Slack, and one
+  containing `@channel`, `[text](url)` or emphasis markers took effect
+  in Mattermost. Slack values now have `&`, `<` and `>` replaced with
+  HTML entities; Mattermost values have each Markdown character
+  escaped with a backslash and a zero-width space inserted after each
+  `@`. Only the values are escaped, so the links, mentions and
+  formatting an administrator writes into a custom template still
+  work. The fire, clear and reminder templates are all covered. (#585)
+
+- Stop the `manage_users` permission granting superuser status. The
+  create and update user endpoints accepted `is_superuser` from any
+  caller holding `manage_users`, which a group can be granted, so a
+  member of such a group could make themselves or anyone else a
+  superuser and so gain every permission the group was never given.
+  `POST /api/v1/rbac/users` and `PUT /api/v1/rbac/users/{id}` now
+  refuse a request carrying `is_superuser` with a 403 unless the caller
+  is already a superuser, apply none of its other changes, and record
+  the refusal in the audit log. Editing or deleting an account that is
+  already a superuser now needs a superuser too, since a `manage_users`
+  holder who could reset a superuser's password could sign in as them.
+  (#497)
+
+- Check whether the target of a user update or delete is a superuser
+  inside the change's own transaction. `PUT /api/v1/rbac/users/{id}`
+  and `DELETE /api/v1/rbac/users/{id}` read the account and checked its
+  superuser status before making the change separately, so a
+  `manage_users` holder who was not a superuser could have an edit or
+  delete applied to an account another request had promoted to
+  superuser in between. The auth store now reads the flag under the
+  same write lock as the change and refuses it with a 403, recorded in
+  the audit log as before. (#588)
+
+- Check whether a token's owner is a superuser inside the change's own
+  transaction. `POST /api/v1/rbac/tokens`, `PUT` and `DELETE` on
+  `/api/v1/rbac/tokens/{id}/scope`, and `DELETE /api/v1/rbac/tokens/{id}`
+  read the owner and checked its superuser status before making the
+  change separately, so a caller who was not a superuser could mint,
+  rescope or delete a token whose owner another request had promoted
+  to superuser in between. The auth store now reads the owner under the
+  same write lock as the change and refuses it with a 403, recorded in
+  the audit log as before. A scope update that sets several scope kinds
+  is now written in one transaction, so a failure leaves every kind
+  unchanged rather than only the kinds after it. (#607)
+
+- Make each OIDC login state good for one callback only, and rate limit
+  `GET /api/v1/auth/oidc/start` per client address. The sealed state
+  cookie is stateless and stayed valid for its ten minute lifetime, so
+  one call to the start endpoint gave an anonymous caller a state that
+  replayed against the callback with any number of bogus codes; every
+  replay spent the callback's rate-limit allowance, which without
+  `http.trusted_proxies` is shared by the whole deployment, and sent the
+  client credentials to the provider's token endpoint. The server now
+  remembers a digest of each accepted state for as long as the state
+  could be opened and refuses a second presentation with `400` before
+  the provider is contacted, and the start endpoint allows 240 requests
+  a minute per client address. A completed login now hands back the one
+  unit it spent on each limiter, where it used to clear the callback's
+  allowance entirely. The record is held in memory, so a
+  deployment running several server processes with one server secret
+  refuses a replay only at the process that accepted the state. (#505)
+
+- Document `http.trusted_proxies` as required for a production
+  deployment behind a reverse proxy with OIDC login enabled, and
+  refuse to start with federated login enabled, an `https`
+  `redirect_url`, `http.tls.enabled` false and no
+  `http.trusted_proxies`, unless the new
+  `http.auth.oidc.allow_unprefixed_state_cookie` option is set to
+  `true`. Behind a TLS-terminating proxy the login state cookie can
+  use the `__Host-` name prefix only when `X-Forwarded-Proto` comes
+  from a listed proxy, so on such a deployment it was written under
+  its plain name, and a host able to set cookies for a sibling
+  subdomain could plant its own login state and log a user in to the
+  attacker's account (login CSRF). A `SIGHUP` reload applies the same
+  rule and keeps the previous configuration when it fails. The
+  start-up warning printed when the list is empty names the
+  consequences: every client shares one OIDC rate-limit allowance
+  for the start and callback endpoints, and, unless the server
+  terminates TLS itself, the login CSRF risk. (#506)
+
+    **Upgrade step for an existing installation.** A deployment
+    in the shape above, which started with only a warning before
+    this release, now refuses to start. Set
+    `http.trusted_proxies` to the reverse proxy's address, or,
+    only where no sibling subdomain can set cookies for the
+    parent domain, set
+    `http.auth.oidc.allow_unprefixed_state_cookie` to `true`.
+
+- Stop the alert history, blackout, metric baseline and timeline tools
+  revealing connections the caller cannot see. Asked for an unknown
+  connection ID, the first three listed the IDs and names of up to 20
+  connections regardless of the caller's access, and all four answered a
+  forbidden ID differently from a missing one, so a caller could probe
+  which IDs exist. The tools now check access before looking the
+  connection up, give the same "connection not found or not accessible"
+  answer for a missing ID, a forbidden one and a failed access check, and
+  suggest only connections the caller can see. (#571)
+
+- Treat a missing RBAC checker as denying access rather than granting
+  it. The alert history, blackout, metric baseline, alert rule, metric
+  query, timeline and connection list tools, the timeline and overview
+  endpoints, and the shared connection visibility helper each skipped
+  their access check when handed no checker, and so returned every
+  connection's data; they now return nothing, or a not-found or
+  permission error, and the admin handlers for alert rules, overrides,
+  blackouts, notification channels and probes answer 403 instead of
+  panicking. The production server always builds a checker, so this
+  closes a latent hole rather than a live one. The overview stream
+  also stops subscribing a signed-in user who can see no connections
+  to the estate-wide feed, which had sent them the overview of every
+  connection, and the connection list tool now answers with an error
+  when the caller's visible connections cannot be resolved, where it
+  used to return every connection unfiltered. (#561)
+
+- Report events deleted from the start of the RBAC audit log in
+  `-verify-audit-log`, which previously accepted them because the
+  retention purge legitimately leaves the oldest event pointing at a
+  predecessor that is gone. Each `audit.purge` event now records the
+  event it left as the oldest, in `details.oldest_retained_id` and
+  `details.oldest_retained_hash`, and verification exits with status 2
+  when the oldest event is any other, when it follows a missing
+  predecessor and no purge event survives to account for it, or when it
+  starts a new chain above event 1 with no purge or re-anchor event
+  recording where the log begins, which is what emptying the table and
+  letting the server write one more event leaves. Event identifiers are
+  not hashed, so someone who also moves that event to identifier 1 and
+  lowers its `sqlite_sequence` entry to match still passes. The purge
+  now also verifies the events it is about to delete, requiring them to
+  start where the previous purge left off, to verify under the server
+  secret and to link through to the new oldest event, so that one
+  backdated event inserted into `auth.db` cannot have the next purge
+  record a new starting point over a deletion. A purge that finds
+  anything else deletes nothing and logs `refusing to purge the audit
+  log` at every run until the log is dealt with, so retention stops and
+  `auth.db` grows in the meantime. (#502)
+
+- Recover a stalled audit log retention purge with
+  `-rechain-audit-log`, which on a keyed log that no longer verifies
+  now re-anchors the log instead of re-hashing it. The command shows why
+  verification fails, the oldest event and hash it would accept and any
+  starting point previously recorded, and changes nothing unless the
+  operator types `rechain` at a terminal, refusing input piped from a
+  script. `-confirm-rechain` answers in advance only when the whole log
+  has the shape a changed server secret leaves, the new
+  `-previous-secret-file` names the secret the older events were
+  written under and every event accepted as history verifies under it,
+  and at least one later event verifies under the current secret; the
+  shape alone is something anyone able to write `auth.db` can forge.
+  `-previous-secret-file` proves only a re-anchor's history, so the
+  command refuses it for a log that would be re-hashed, and the
+  re-hash prompt likewise refuses input that is not a terminal. A log
+  emptied of every event is refused rather than re-anchored. The
+  re-anchor deletes, rewrites and re-signs nothing: it appends one signed
+  `audit.rechain` event that records the new starting point and accepts
+  the oldest events, through the last one that fails, as history bound
+  by a digest, so retention can purge them again. History events are no
+  longer attributable to this server, and anything done to them before
+  the re-anchor is accepted with them. An older purge or re-anchor event
+  put back into the log cannot override a newer one. Verification now
+  reports a failure with the shape of a changed secret as a probable
+  wrong or rotated secret, with status 3, rather than as tampering, and
+  both it and the purge's repeating error name `-rechain-audit-log`.
+  (#502)
+
+- Report events deleted from the end of the RBAC audit log in
+  `-verify-audit-log` even when the record of the highest identifier
+  SQLite has issued is rewritten to match, which previously passed. The
+  server now keeps a tail record in a new `audit_tail` table, naming the
+  newest event under a keyed hash derived from the server secret and
+  moved on with each event, and verification exits with status 2 when
+  it names any other event, does not verify, or is missing behind a
+  version 3 event, the hash version new events now carry. An existing
+  log is given a tail record when the store opens, provided nothing is
+  missing from its end and its newest event verifies under the secret
+  in use. The server moves the record on only when it names the newest
+  event and verifies under the secret in use, so a record left naming a
+  deleted event, or pointed at a planted event without the secret,
+  stays as it is until an operator runs `-rechain-audit-log`. After a
+  change of server secret the record stays with the last event written
+  under the old one, where verification accepts it only in a log with
+  the shape of a changed secret and `-confirm-rechain` requires it to
+  verify under `-previous-secret-file`, and a second record covers the
+  events written under the new secret, so deleting them is reported
+  with status 2 as well. A second change of secret before the log is
+  re-anchored moves the second record into the first's place, so such
+  a log still reports status 3, and the server logs a warning whenever
+  it starts or moves the second record. Because the server can be led
+  to sign the second record beside a planted first record, the event
+  the second record was written beside must also still be in the log,
+  and `-previous-secret-file` must find that it fails under the
+  previous secret. Status 3 vouches for nothing
+  written under the previous secret, so re-anchor with
+  `-previous-secret-file` after each change of secret; an interactive
+  re-anchor without that proof now warns that the history is not
+  proven before it asks. The server refuses to open, and verification
+  exits with status 2, when the `audit_tail` table differs from the one
+  the server creates or a trigger acts on it. Running an earlier
+  release against the same `auth.db` afterwards is reported as a
+  version downgrade. (#544)
+
+- Check the definitions of the audit log's schema objects in
+  `-verify-audit-log`, not only their names. The index on the link to
+  the preceding event must be unique, not partial, and on that column
+  alone, and the append-only trigger must match the one the server
+  creates and be the only trigger on the table, so a same-named index
+  on another column, a trigger whose body does nothing, or an extra
+  trigger that discards events is now reported with status 2. The
+  server also refuses to record an event that a trigger skips with
+  `RAISE(IGNORE)`, rather than committing the change with no event.
+  (#501)
+
+- Coalesce repeated `failure` events in the RBAC audit log, as
+  denials already were, so that a caller holding a mutation
+  permission can no longer bury the events that matter by
+  repeating a request that always fails, such as creating a group
+  that already exists. Identical failures, meaning the same
+  actor, address, action, target and error, are counted rather
+  than recorded for sixty seconds after the one that was
+  recorded, and the count appears in `details.repeat_count` on
+  the next such failure or on a summary event of its own, which
+  the server writes at its next periodic cleanup once the burst
+  stops, or at a clean shutdown, including one requested with
+  `SIGTERM` or `SIGINT`, for any window still open. The
+  `error` text of `failure` and `denied` events is now capped at
+  500 bytes, and `-list-audit` escapes control characters in the
+  action column as it already did in the others. (#503)
+
+- Stop the Slack, Mattermost and generic webhook channels putting their
+  endpoint URL into the alerter log, into
+  `notification_history.error_message` and into the server log when a
+  delivery or a test send fails. For Slack and Mattermost the whole
+  webhook URL is the credential, and a generic webhook endpoint may
+  carry one in its path or query string, yet a routine transport
+  failure produced an error that quoted the URL in full. Such errors
+  now name only the operation, the host and the cause. A failing
+  endpoint's response body has its control characters removed, has the
+  channel's own URL path, query string and userinfo removed wherever
+  they appear (with or without a scheme in front), and is capped at 256
+  bytes before it is echoed; the Telegram channel's echoes lose their
+  control characters in the same way. The server now also rejects a
+  webhook `http_method` other than `GET`, `POST`, `PUT` or `PATCH` when
+  a channel is created or updated. (#498)
+
+- Stop an optional database name from adding connection parameters of
+  its own choosing. The database override accepted by
+  `POST /api/v1/connections/{id}/query`, by the MCP tools that take a
+  `database_name` argument, and by a saved MCP session was pasted
+  straight into the connection string, so a name such as
+  `mydb?host=evil.example.com&sslmode=disable` ended the path and
+  appended libpq parameters, sending the connection, and the stored
+  password with it, to a host of the caller's choosing. The connection
+  string is now assembled with the URL builder, which escapes the path
+  and the query by construction; a name that begins with a slash, which
+  the driver would otherwise strip, travels in the `dbname` parameter
+  instead, so it reaches the database it names. A name that cannot name
+  a real database, being empty, longer than 63 bytes, or carrying a NUL
+  or another control character, is refused at all three call sites and
+  when a session's database selection is saved. Stored connections
+  themselves are unchanged, and a caller who could not already reach a
+  connection still cannot. (#530)
+
+- Bound the rows held in memory when a statement runs over the simple
+  query protocol, which is the path taken by an `EXPLAIN` containing a
+  `$1` placeholder. That path could not add a `LIMIT` clause, because it
+  sends the statement text unaltered, and it kept every row the server
+  returned, so a large result could exhaust the server's memory. Rows
+  past the same 500-row limit the ordinary path applies are now read but
+  not kept, and the response reports the result as truncated in the way
+  it already does elsewhere. The rest of the result is still read, so
+  the connection remains usable for the following statements in the
+  request. (#530)
+
+- Classify an `EXPLAIN` statement by the statement it explains, so that
+  `EXPLAIN ANALYZE` over a data-modifying statement goes through the
+  write-access check and the write-confirmation prompt.
+  `POST /api/v1/connections/{id}/query` previously classified any
+  statement whose text began with `EXPLAIN` as read-only without
+  looking at what was being explained, so `EXPLAIN ANALYZE` over a
+  `DELETE` ran without either of those guards and, where the statement
+  also contained something shaped like a `$1` placeholder, outside the
+  read-only transaction that the read path otherwise opens. That
+  defeated a connection scope of `read` on a token whose owner holds
+  `read_write`, and would equally defeat a plain read-only account. The
+  classification now follows the inner statement unless the option list
+  consists entirely of bare, recognised options that only change how the
+  plan is reported, so a quoted or Unicode-escaped spelling of
+  `ANALYZE`, such as `EXPLAIN (U&"\0061nalyze")`, no longer passes as
+  read-only. `SELECT ... INTO`, a row-locking `SELECT ... FOR UPDATE` or
+  `FOR SHARE`, and a `WITH` query containing `MERGE` are now classified
+  as writes as well, matching what a read-only transaction will accept.
+  The test for a `$N` placeholder now ignores one that appears inside a
+  quoted string, a dollar-quoted body or a comment, and understands the
+  `E'...'` and `U&'...'` literal forms, so an `EXPLAIN` over a query
+  containing a literal `$1` is no longer misrouted. The keyword scans
+  behind the classification likewise read code only, skipping quoted
+  strings, dollar-quoted bodies, quoted identifiers and comments, so a
+  keyword inside one no longer marks a read as a write, and a quote or
+  comment marker inside a dollar-quoted body no longer hides a write
+  that follows it. A plain `'...'` literal is read both as a standard
+  string and as the escape string it becomes when
+  `standard_conforming_strings` is off, since a database, a role or an
+  earlier statement in the same request can turn that setting off, and
+  a string literal that continues onto a later line keeps the escapes
+  of the literal it continues. The query connection now starts on the
+  `UTF8` client encoding, and a request, whether read-only or a
+  confirmed write, stops at any statement that changes it, because in
+  encodings such as `SJIS` a multibyte character can end in a byte the
+  classifier would read as a backslash. To make that check possible,
+  the statements of a confirmed write now run on a single connection,
+  so a `BEGIN` and `COMMIT` in the same request take effect together;
+  a request that leaves a transaction open is rolled back and reports
+  an error, rather than listing each statement as a success whilst
+  discarding their work.
+  Statements that do run over the simple query protocol are now held
+  inside the same read-only transaction as the rest of the read path.
+  The fix needs no restart beyond the upgrade itself and no database
+  migration. (#530)
+
+- Fix a configuration file that omits
+  `http.auth.max_failed_attempts_before_lockout` silently disabling
+  account lockout. The setting was a plain integer, so an omitted key
+  arrived at the merge step as `0`, which passed the `>= 0` test and
+  overwrote the default of `10`; every installation whose configuration
+  did not name the key was therefore running with lockout turned off,
+  leaving `POST /api/v1/auth/login`, which is unauthenticated by
+  design, defended against password guessing only by rate limiting
+  keyed on the client address: the failed-attempt allowance is cleared
+  by any successful login, a cap of 20 login requests a minute for the
+  address remains, and neither count is shared between server
+  instances. The setting is now held as a pointer, in the same way as
+  `http.auth.audit_retention_days`, so that an omitted key keeps the
+  default of `10` whilst an explicit `0` still disables lockout
+  deliberately. Restart the server to apply the fix: the threshold is
+  read once at start-up, so a `SIGHUP` reload leaves the running server
+  with the value it started with, and a reload that changes the setting
+  now says so. A server that starts with lockout switched off warns at
+  every start. (#473)
+
+- Stop following HTTP redirects when the alerter delivers a
+  notification. This changes the behaviour of every existing Slack,
+  Mattermost, Telegram and generic webhook channel: a provider that
+  answers a delivery with a 3xx response now fails that delivery,
+  where the redirect was previously followed without comment. Such a
+  delivery is retried on the usual backoff schedule and then recorded
+  as `failed`, with the 3xx status code named in the stored error.
+  The credential these channels use sits in the request URL, because
+  the Slack and Mattermost webhook URLs are secrets in themselves and
+  the Telegram URL carries the bot token in its path. Go copies the
+  previous request's full URL into the `Referer` header of a
+  redirected request, so following a redirect handed the credential to
+  the host named in the `Location` header. A generic webhook channel
+  gains a second protection: the server validates its endpoint host
+  when the channel is saved, and a redirect could previously bounce
+  the request past that check to a private or metadata host. The change is
+  preventive:
+  reaching the behaviour required a hostile or compromised endpoint
+  answering a delivery with a redirect, and no credential is known to
+  have been disclosed. The server's test-send path has always refused
+  redirects, so delivery now matches it. Where an endpoint relies on a
+  redirect, configure its final URL in the channel; email channels are
+  unaffected, because they deliver over SMTP. (#475)
+
+- Set a server-side `statement_timeout` on the server's datastore
+  connection pool, defaulting to 30 seconds and configurable with the
+  new `database.statement_timeout` option. The pool previously relied
+  entirely on the handlers cancelling their own queries, which is a
+  request sent over the connection: if it is lost, or the backend is
+  not at an interruptible point, the query keeps running and keeps
+  holding one of the pool's connections, and with `pool_max_conns`
+  defaulting to 4 a handful of those starve the whole API. The default
+  matches the longest deadline any handler grants a datastore query, so
+  nothing that completed before now fails; the collector owns the
+  schema migrations, including the partitioned-index build that can run
+  for much longer than this, and they run on the collector's own pool,
+  which is unaffected. (#387)
 
 - Ignore a blank password when updating a database connection, so an
   empty or whitespace-only password can no longer overwrite the stored
@@ -527,6 +2914,35 @@ project adheres to
   unchanged" rule server-side as defence-in-depth, rather than relying
   on the web client alone. The create path, which still requires a
   non-empty password, is unaffected. (#332)
+
+- Move the collector, server, and alerter to Go 1.26.8, and update
+  `golang.org/x/text` from v0.33.0 to v0.40.0. Scanning the previous
+  toolchain and dependency set with `govulncheck` v1.6.0 reported ten
+  advisories reachable from Workbench code in the server module, ten in
+  the alerter, seven in `pkg`, and six in the collector. All but one are
+  Go standard library issues fixed in the 1.26.4, 1.26.5, and 1.26.6
+  patch releases, in `crypto/tls`, `crypto/x509`, `encoding/asn1`,
+  `encoding/xml`, `net/http`, `net/textproto`, and `net/url`; the
+  exception is an infinite loop in `golang.org/x/text` normalisation
+  reached through connection-pool setup. After this change `govulncheck`
+  reports no reachable vulnerabilities in any of the four modules. The
+  Go version is raised in the module files, the three service
+  `Dockerfile` builder stages, and the CI and release workflows; the
+  release workflow matters most, because it previously built the
+  published binaries with the affected toolchain. The server, alerter,
+  and collector CI workflows now also run for changes under `pkg/`,
+  matching the Docker workflow, so a change to the shared module can no
+  longer publish service images without first passing their lint, vet,
+  and test jobs.
+
+- Update the web client's ECharts dependency to v6.1.0, which resolves a
+  cross-site scripting advisory, and move the `vitest` development
+  dependencies to v4.1.11, which refreshes the transitive `postcss`,
+  `js-yaml`, `nanoid`, `brace-expansion`, `fflate`, and `vite` packages.
+  Before this change `npm audit` reported eleven findings (six moderate,
+  five high), of which only the ECharts advisory affected the shipped
+  client bundle; the rest sat in the development dependency tree. After
+  it, `npm audit` reports no known vulnerabilities.
 
 ## [1.0.0] - 2026-06-08
 

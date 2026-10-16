@@ -130,8 +130,31 @@ type TokenScope struct {
 	AdminPermissions []string           `json:"admin_permissions,omitempty"`
 }
 
+// InScope reports whether a connection falls inside the token's connection
+// scope, by the same rule AuthStore.IsConnectionInTokenScope applies to
+// the database rows: a scope with no connection rows restricts nothing,
+// and a row for ConnectionIDAll admits every connection.
+func (ts *TokenScope) InScope(connectionID int) bool {
+	if len(ts.Connections) == 0 {
+		return true
+	}
+	for _, sc := range ts.Connections {
+		if sc.ConnectionID == connectionID || sc.ConnectionID == ConnectionIDAll {
+			return true
+		}
+	}
+	return false
+}
+
 // EffectivePrivileges represents the computed privileges for a user/token
 type EffectivePrivileges struct {
+	// TokenScopeError records a failure to read an API token's scope. It
+	// is never serialized; it exists so that a caller which must fail
+	// closed on an unreadable scope, as VisibleConnectionIDs does, can
+	// tell that case from a token with no scope, which GetTokenScope
+	// reports as a nil scope and no error.
+	TokenScopeError error `json:"-"`
+
 	IsSuperuser          bool            `json:"is_superuser"`
 	MCPPrivileges        map[string]bool `json:"mcp_privileges"`        // identifier -> allowed
 	ConnectionPrivileges map[int]string  `json:"connection_privileges"` // connection_id -> access_level

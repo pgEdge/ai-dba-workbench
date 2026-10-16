@@ -30,7 +30,7 @@ import {
 } from './ServerDialog.styles';
 import { getSelectFieldSx } from '../shared/formStyles';
 
-interface SSLSettingsProps {
+export interface SSLSettingsProps {
     formData: ServerFormData;
     isEditMode: boolean;
     isSaving: boolean;

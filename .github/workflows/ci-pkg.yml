@@ -1,0 +1,75 @@
+name: CI - Shared Package
+
+on:
+    push:
+        branches: [ main, master ]
+        paths:
+            - 'pkg/**'
+            - '.github/workflows/ci-pkg.yml'
+    pull_request:
+        branches: [ main, master ]
+        paths:
+            - 'pkg/**'
+            - '.github/workflows/ci-pkg.yml'
+
+jobs:
+    pkg:
+        name: Shared Package (Go ${{ matrix.go-version }})
+        runs-on: ubuntu-latest
+        strategy:
+            matrix:
+                go-version: ['1.26.8']
+            fail-fast: false
+
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+            - name: Set up Go ${{ matrix.go-version }}
+              uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+              with:
+                  go-version: ${{ matrix.go-version }}
+                  cache: false
+
+            - name: Cache Go modules
+              uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+              with:
+                  path: |
+                      ~/go/pkg/mod
+                      ~/.cache/go-build
+                  key: ${{ runner.os }}-go-${{ matrix.go-version }}-pkg-${{ hashFiles('pkg/go.sum') }}
+                  restore-keys: |
+                      ${{ runner.os }}-go-${{ matrix.go-version }}-pkg-
+
+            - name: Verify dependencies
+              working-directory: pkg
+              run: go mod verify
+
+            - name: Download dependencies
+              working-directory: pkg
+              run: go mod download
+
+            - name: Lint shared package code
+              working-directory: pkg
+              run: |
+                  go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+                  echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+                  make lint
+
+            - name: Run go vet
+              working-directory: pkg
+              run: go vet ./...
+
+            - name: Check formatting
+              working-directory: pkg
+              run: |
+                  gofmt -l . > /tmp/gofmt.out
+                  if [ -s /tmp/gofmt.out ]; then
+                    echo "The following files are not formatted:"
+                    cat /tmp/gofmt.out
+                    exit 1
+                  fi
+
+            - name: Run tests
+              working-directory: pkg
+              run: make test

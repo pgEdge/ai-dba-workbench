@@ -20,13 +20,22 @@ export interface XidAgeEntry {
     percent: number;
 }
 
+/**
+ * One bucket of the cache hit ratio series. `value` is null when no
+ * block access happened in the interval, and is drawn as a gap rather
+ * than as 0%.
+ */
 export interface CacheHitTimeSeries {
     time: string;
-    value: number;
+    value: number | null;
 }
 
+/**
+ * Cache hit ratio for one connection or database. `current` is null
+ * when the latest interval saw no block access.
+ */
 export interface CacheHitRatio {
-    current: number;
+    current: number | null;
     time_series: CacheHitTimeSeries[];
 }
 
@@ -62,7 +71,7 @@ export interface ConnectionPerformance {
 }
 
 export interface AggregateData {
-    cache_hit_ratio: number;
+    cache_hit_ratio: number | null;
     commits_per_sec: number;
     rollback_percent: number;
 }

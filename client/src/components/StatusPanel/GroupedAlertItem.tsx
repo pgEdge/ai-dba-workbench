@@ -8,7 +8,8 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useMemo } from 'react';
+import type React from 'react';
+import { useState, useMemo } from 'react';
 import {
     Box,
     Typography,
@@ -29,6 +30,7 @@ import {
     Undo as UnackIcon,
     Psychology as AnalyzeIcon,
     TableChart as TableIcon,
+    Memory as ProviderIcon,
     TuneRounded,
 } from '@mui/icons-material';
 import {
@@ -39,7 +41,6 @@ import {
     CHIP_LABEL_SX,
     CHIP_LABEL_075_SX,
     EXPAND_BUTTON_SX,
-    getAlertTypeColor,
     INSTANCE_TIME_SX,
     INSTANCE_THRESHOLD_SX,
     GROUP_TITLE_SX,
@@ -49,15 +50,20 @@ import {
     ICON_16_SX,
     ICON_14_SX,
     SEVERITY_CHIP_BASE_SX,
-    ALERT_TYPE_CHIP_BASE_SX,
     ALERT_ACK_TEXT_SX,
     ALERT_LAST_UPDATED_SX,
 } from '../../theme';
+import { isSystemAlert } from '../../utils/systemAlerts';
+import { AlertSourceChip, AlertTypeChip } from './AlertChips';
+import type {
+    GroupedAlertInstanceProps,
+    GroupedAlertItemProps,
+} from './types';
 
 /**
  * GroupedAlertInstance - A single instance row within a grouped alert panel
  */
-const GroupedAlertInstance = ({
+const GroupedAlertInstance: React.FC<GroupedAlertInstanceProps> = ({
     alert,
     showServer,
     onAcknowledge,
@@ -65,12 +71,14 @@ const GroupedAlertInstance = ({
     isUnacknowledging,
     onAnalyze,
     onEditOverride,
+    canAcknowledgeSystem = false,
 }) => {
     const theme = useTheme();
     const isAcknowledged = !!alert.acknowledgedAt;
     const ackInFlight = !!isUnacknowledging?.(alert.id);
     const thresholdInfo = formatThresholdInfo(alert);
     const showLastUpdated = hasDistinctLastUpdated(alert);
+    const system = isSystemAlert(alert);
 
     const containerSx = useMemo(() => ({
         display: 'flex',
@@ -86,14 +94,6 @@ const GroupedAlertInstance = ({
             bgcolor: alpha(theme.palette.grey[500], 0.12),
         },
     }), [isAcknowledged, theme]);
-
-    const serverChipSx = useMemo(() => ({
-        height: 16,
-        fontSize: '0.875rem',
-        bgcolor: alpha(theme.palette.grey[500], 0.15),
-        color: 'text.secondary',
-        '& .MuiChip-label': CHIP_LABEL_SX,
-    }), [theme.palette.grey]);
 
     const dbChipSx = useMemo(() => ({
         height: 16,
@@ -115,16 +115,6 @@ const GroupedAlertInstance = ({
             mr: -0.25,
         },
     }), [theme.palette.custom.status]);
-
-    const alertTypeLabel = alert.alertType === 'anomaly' ? 'Anomaly' : 'Threshold';
-    const alertTypeColor = getAlertTypeColor(theme, alert.alertType || 'threshold');
-
-    const alertTypeChipSx = useMemo(() => ({
-        ...ALERT_TYPE_CHIP_BASE_SX,
-        bgcolor: alpha(alertTypeColor, 0.15),
-        color: alertTypeColor,
-        '& .MuiChip-label': CHIP_LABEL_SX,
-    }), [alertTypeColor]);
 
     const analyzeButtonSx = useMemo(() => ({
         p: 0.25,
@@ -165,21 +155,25 @@ const GroupedAlertInstance = ({
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, width: '100%' }}>
                 {/* Context chips */}
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap', flex: 1, minWidth: 0 }}>
-                    {showServer && alert.server && (
-                        <Chip label={alert.server} size="small" sx={serverChipSx} />
-                    )}
+                    <AlertSourceChip
+                        isSystem={system}
+                        server={alert.server}
+                        showServer={showServer}
+                    />
                     {alert.databaseName && (
                         <Chip label={alert.databaseName} size="small" sx={dbChipSx} />
                     )}
                     {alert.objectName && (
                         <Chip
-                            icon={<TableIcon sx={{ fontSize: '0.875rem !important' }} />}
+                            icon={system
+                                ? <ProviderIcon sx={{ fontSize: '0.875rem !important' }} />
+                                : <TableIcon sx={{ fontSize: '0.875rem !important' }} />}
                             label={alert.objectName}
                             size="small"
                             sx={objectChipSx}
                         />
                     )}
-                    <Chip label={alertTypeLabel} size="small" sx={alertTypeChipSx} />
+                    <AlertTypeChip alertType={system ? 'system' : alert.alertType} />
                     {thresholdInfo ? (
                         <Typography sx={INSTANCE_THRESHOLD_SX}>
                             {thresholdInfo}
@@ -204,8 +198,8 @@ const GroupedAlertInstance = ({
                     </Typography>
                 )}
 
-                {/* Analyze button */}
-                {onAnalyze && (
+                {/* Analyze button; system alerts have no connection to analyse */}
+                {onAnalyze && !system && (
                     <Tooltip title={alert.aiAnalysis ? "View cached analysis" : "Analyze with AI"} placement="left">
                         <IconButton
                             size="small"
@@ -237,29 +231,31 @@ const GroupedAlertInstance = ({
                 )}
 
                 {/* Ack/Unack button */}
-                <Tooltip title={isAcknowledged ? 'Restore to active' : 'Acknowledge'} placement="left">
-                    <span>
-                        <IconButton
-                            size="small"
-                            disabled={isAcknowledged && ackInFlight}
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                if (isAcknowledged) {
-                                    onUnacknowledge?.(alert.id);
-                                } else {
-                                    onAcknowledge?.(alert);
-                                }
-                            }}
-                            sx={ackButtonSx}
-                        >
-                            {isAcknowledged ? (
-                                <UnackIcon sx={ICON_14_SX} />
-                            ) : (
-                                <AckIcon sx={ICON_14_SX} />
-                            )}
-                        </IconButton>
-                    </span>
-                </Tooltip>
+                {(!system || canAcknowledgeSystem) && (
+                    <Tooltip title={isAcknowledged ? 'Restore to active' : 'Acknowledge'} placement="left">
+                        <span>
+                            <IconButton
+                                size="small"
+                                disabled={isAcknowledged && ackInFlight}
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (isAcknowledged) {
+                                        onUnacknowledge?.(alert.id);
+                                    } else {
+                                        onAcknowledge?.(alert);
+                                    }
+                                }}
+                                sx={ackButtonSx}
+                            >
+                                {isAcknowledged ? (
+                                    <UnackIcon sx={ICON_14_SX} />
+                                ) : (
+                                    <AckIcon sx={ICON_14_SX} />
+                                )}
+                            </IconButton>
+                        </span>
+                    </Tooltip>
+                )}
             </Box>
 
             {/* Last updated (only when distinct from triggered_at) */}
@@ -289,7 +285,7 @@ const GroupedAlertInstance = ({
 /**
  * GroupedAlertItem - Display a group of alerts with the same title in a single panel
  */
-const GroupedAlertItem = ({
+const GroupedAlertItem: React.FC<GroupedAlertItemProps> = ({
     title,
     alerts,
     showServer = false,
@@ -299,6 +295,7 @@ const GroupedAlertItem = ({
     onAnalyze,
     onEditOverride,
     onAcknowledgeGroup,
+    canAcknowledgeSystem = false,
 }) => {
     const theme = useTheme();
     const severityColors = getSeverityColors(theme);
@@ -348,7 +345,12 @@ const GroupedAlertItem = ({
         '& .MuiChip-label': CHIP_LABEL_SX,
     }), [baseColor]);
 
-    const hasUnacknowledged = alerts.some(a => !a.acknowledgedAt);
+    // The group action covers only the alerts this user may
+    // acknowledge; system alerts need an extra permission.
+    const groupAckable = useMemo(
+        () => alerts.filter(a => !a.acknowledgedAt && (canAcknowledgeSystem || !isSystemAlert(a))),
+        [alerts, canAcknowledgeSystem],
+    );
 
     const groupAckButtonSx = useMemo(() => ({
         p: 0.25,
@@ -372,13 +374,13 @@ const GroupedAlertItem = ({
                     sx={countChipSx}
                 />
                 <Chip label={highestSeverity} size="small" sx={severityChipSx} />
-                {hasUnacknowledged && onAcknowledgeGroup && (
+                {groupAckable.length > 0 && onAcknowledgeGroup && (
                     <Tooltip title="Acknowledge all in group" placement="left">
                         <IconButton
                             size="small"
                             onClick={(e) => {
                                 e.stopPropagation();
-                                onAcknowledgeGroup(alerts.filter(a => !a.acknowledgedAt));
+                                onAcknowledgeGroup(groupAckable);
                             }}
                             sx={groupAckButtonSx}
                         >
@@ -408,6 +410,7 @@ const GroupedAlertItem = ({
                             isUnacknowledging={isUnacknowledging}
                             onAnalyze={onAnalyze}
                             onEditOverride={onEditOverride}
+                            canAcknowledgeSystem={canAcknowledgeSystem}
                         />
                     ))}
                 </Box>

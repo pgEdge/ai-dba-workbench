@@ -76,61 +76,32 @@ When answering questions about database-specific metrics (size, cache hit ratio,
 3. ALWAYS include the database name in your response when reporting database-specific metrics. For example: "The cache hit ratio for the **ecommerce** database is 99.5%."
 4. When querying pg_stat_database or similar per-database views, be aware that each row represents a different database - make sure you're reporting the correct one.
 
-DATASTORE CONFIGURATION SCHEMA:
-The monitoring datastore contains configuration tables you can query with query_datastore.
+DATASTORE:
+The monitoring datastore also holds the workbench's own configuration: connections,
+clusters and groups, alerts and their acknowledgments, alert rules and thresholds,
+blackouts and blackout schedules, probe settings, metric baselines and similar.
 Use these to answer questions about the workbench's own setup and configuration.
+- Call describe_datastore with no arguments to list every source (metric probes and
+  configuration tables) and how each is limited to the connections you can access.
+- Call describe_datastore with a source to see the columns you may use.
+- Then call query_datastore with a structured request: source, columns, filters,
+  connection_ids, time_start/time_end, shape (rows, latest or aggregate), order_by and
+  paging. query_datastore does not accept SQL.
+- Use query_metrics, not query_datastore, for counter rates and deltas over time.
+- A 'system' alert concerns the Workbench itself (for example a failing LLM provider
+  degrading anomaly detection) and has no connection_id.
 
 Blackouts (maintenance windows that suppress alerts):
-- blackouts: One-time blackout periods. Columns: id, scope (estate/group/cluster/server),
-  scope_id, name, reason, start_time, end_time, created_by, created_at.
-  Future one-time blackouts have end_time > NOW(). Past blackouts have end_time <= NOW().
-- blackout_schedules: Recurring scheduled blackouts with cron expressions. Columns: id,
-  scope, scope_id, name, reason, cron_expression, duration_minutes, timezone, enabled,
-  created_by, created_at. Active schedules have enabled = true.
+- blackouts holds one-time blackout periods; blackout_schedules holds recurring
+  schedules with cron expressions.
 IMPORTANT: When users ask about "scheduled blackouts" or "what blackouts are configured",
-ALWAYS query BOTH tables. One-time blackouts are in 'blackouts', recurring schedules are
-in 'blackout_schedules'. Both types suppress alerts during their active windows.
-
-Alert Configuration:
-- alert_rules: Threshold-based alert rules (26 built-in). Columns: id, name, description,
-  category, metric_table, metric_column, condition, default_warning, default_critical,
-  enabled, check_interval_seconds, sustained_seconds
-- alert_thresholds: Per-scope threshold overrides. Columns: id, rule_id, scope
-  (group/cluster/server), scope_id, warning_value, critical_value, enabled
-- alerts: Active and historical alerts. Columns: id, connection_id, alert_type
-  (threshold/anomaly/connection), rule_id, metric_name, severity (warning/critical),
-  current_value, threshold_value, message, status (active/resolved/acknowledged),
-  started_at, resolved_at
-- alert_acknowledgments: Acknowledgments. Columns: id, alert_id, acknowledged_by,
-  acknowledged_at, note
-
-Notification Channels:
-- notification_channels: Configured channels. Columns: id, name, channel_type
-  (slack/mattermost/webhook/email), config (JSON), enabled, created_by
-- email_recipients: Email addresses for email channels. Columns: id, channel_id, email
-- connection_notification_channels: Links connections to channels. Columns:
-  connection_id, channel_id
-
-Monitoring Configuration:
-- probe_configs: Probe collection settings (hierarchical scope). Columns: id,
-  probe_name, scope (global/group/cluster/server), scope_id, enabled,
-  collection_interval_seconds, retention_days
-- alerter_settings: Global alerter configuration (singleton). Columns: id,
-  anomaly_detection_enabled, check_interval_seconds, llm_provider, llm_model
-
-Infrastructure:
-- connections: Monitored database servers. Columns: id, name, host, port, dbname,
-  username, ssl_mode, monitoring_enabled, cluster_id, created_at
-- clusters: Database clusters. Columns: id, name, group_id, created_at
-- cluster_groups: Organizational groups. Columns: id, name, parent_id, created_at
-
-Example queries:
-- All blackout info: Query BOTH blackouts (WHERE end_time > NOW()) AND blackout_schedules (WHERE enabled = true)
-- Future one-time blackouts: SELECT * FROM blackouts WHERE end_time > NOW() ORDER BY start_time
-- Active recurring schedules: SELECT * FROM blackout_schedules WHERE enabled = true
-- Active alerts: SELECT * FROM alerts WHERE status = 'active'
-- Alert rules for a metric: SELECT * FROM alert_rules WHERE metric_table = 'pg_stat_activity'
-- Notification channels: SELECT * FROM notification_channels WHERE enabled = true
+ALWAYS look at BOTH: query both the blackouts and blackout_schedules sources with
+query_datastore, or call get_blackouts with include_schedules. One-time blackouts are in
+'blackouts', recurring schedules are in 'blackout_schedules'. Both types suppress alerts
+during their active windows.
+- Current and future one-time blackouts: query_datastore with source "blackouts" and
+  filters [{"column": "end_time", "op": ">", "value": "now"}]. Time columns take an
+  RFC 3339 timestamp or "now".
 
 RESPONSE GUIDELINES:
 - Be concise and direct
@@ -396,23 +367,149 @@ export const CHAT_TOOLS: ToolDefinition[] = [
         },
     },
     {
-        name: 'query_datastore',
+        name: 'describe_datastore',
         description:
-            'Execute read-only SQL queries against the DATASTORE (monitoring/metrics database). Use this for querying configuration tables like blackouts, blackout_schedules, notification_channels, probe_configs, alert_rules, alert_thresholds, clusters, cluster_groups, and connections. Also use for complex joins across metrics tables.',
+            "List the sources query_datastore can read (metric probes and configuration tables), or, with source, that source's columns. Call this before query_datastore.",
         inputSchema: {
             type: 'object',
             properties: {
-                query: {
+                source: {
                     type: 'string',
                     description:
-                        'SQL query to execute against the datastore (read-only)',
-                },
-                limit: {
-                    type: 'integer',
-                    description: 'Max rows to return (default 100, max 1000)',
+                        'Source to describe. Omit to list every source.',
                 },
             },
-            required: ['query'],
+            required: [],
+        },
+    },
+    {
+        // Source of truth: server/src/internal/tools/query_datastore.go
+        // (queryDatastoreInputSchema). Change both together.
+        name: 'query_datastore',
+        description:
+            'Query one DATASTORE source (a metrics probe, or alerts, blackouts, connections and other configuration) with structured parameters; SQL is not accepted. Call describe_datastore first to list sources and columns. Use query_metrics for counter rates.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                source: {
+                    type: 'string',
+                    description:
+                        'Source to query, as listed by describe_datastore.',
+                },
+                columns: {
+                    type: 'array',
+                    items: { type: 'string' },
+                    description:
+                        'Columns to return. Defaults to every column of the source; with shape aggregate, the columns to aggregate.',
+                },
+                connection_ids: {
+                    type: 'array',
+                    items: { type: 'integer' },
+                    description:
+                        'Limit to these connection IDs. Omit to cover every connection you can access.',
+                },
+                time_start: {
+                    type: 'string',
+                    description:
+                        'Start of the time range: a relative duration such as 1h or 7d counted back from time_end, now, or an RFC 3339 timestamp. Metric sources default to one hour before time_end, for every shape including latest; change-tracked probes (pg_settings, pg_hba_file_rules, pg_ident_file_mappings, pg_server_info, pg_extension) store a row only when something changes, so give them a wide time_start such as 30d.',
+                },
+                time_end: {
+                    type: 'string',
+                    description:
+                        'End of the time range, in the same forms as time_start. Defaults to now for metric sources.',
+                },
+                filters: {
+                    type: 'array',
+                    maxItems: 20,
+                    description: 'Conditions every returned row must meet.',
+                    items: {
+                        type: 'object',
+                        properties: {
+                            column: { type: 'string' },
+                            op: {
+                                type: 'string',
+                                enum: [
+                                    '=', '!=', '<', '<=', '>', '>=', 'in',
+                                    'not in', 'like', 'is null', 'is not null',
+                                ],
+                            },
+                            value: {
+                                type: 'string',
+                                description:
+                                    'The value to compare with, written as a string (for example "app", "42" or "true"), for every operator except in, not in, is null and is not null. A time column takes an RFC 3339 timestamp or now.',
+                            },
+                            values: {
+                                type: 'array',
+                                items: { type: 'string' },
+                                description:
+                                    'The values to match, for in and not in only.',
+                            },
+                        },
+                        required: ['column', 'op'],
+                    },
+                },
+                shape: {
+                    type: 'string',
+                    enum: ['rows', 'latest', 'aggregate'],
+                    description:
+                        'rows (default), latest (most recent row per connection and entity within the time window; metric sources only) or aggregate. The time window applies to every shape.',
+                },
+                group_by: {
+                    type: 'array',
+                    items: { type: 'string' },
+                    maxItems: 20,
+                    description: 'Columns to group by; shape aggregate only.',
+                },
+                aggregation: {
+                    type: 'string',
+                    enum: ['avg', 'sum', 'min', 'max', 'count'],
+                    description: 'Aggregate function; shape aggregate only.',
+                },
+                buckets: {
+                    type: 'integer',
+                    minimum: 1,
+                    maximum: 500,
+                    description:
+                        'Divide the time range into this many buckets; shape aggregate on a source with a time column only.',
+                },
+                order_by: {
+                    type: 'array',
+                    maxItems: 20,
+                    items: {
+                        type: 'object',
+                        properties: {
+                            column: { type: 'string' },
+                            direction: {
+                                type: 'string',
+                                enum: ['asc', 'desc'],
+                            },
+                        },
+                        required: ['column'],
+                    },
+                    description: 'Ordering terms. Ties are broken by the row\'s key columns.',
+                },
+                page: {
+                    type: 'integer',
+                    minimum: 1,
+                    maximum: 100000,
+                    default: 1,
+                    description:
+                        'Page of results to return; page * page_size may be at most 100000.',
+                },
+                page_size: {
+                    type: 'integer',
+                    minimum: 1,
+                    maximum: 1000,
+                    default: 100,
+                    description: 'Rows per page. Keep it small to save tokens.',
+                },
+                explain: {
+                    type: 'boolean',
+                    description:
+                        'Return the query plan (EXPLAIN, not ANALYZE) instead of rows. Only for callers who can access every connection.',
+                },
+            },
+            required: ['source'],
         },
     },
 ];

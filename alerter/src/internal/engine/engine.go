@@ -17,6 +17,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -63,6 +65,20 @@ const (
 	// after re-evaluation clears them based on user feedback. This is longer
 	// than the standard cooldown to respect the user's assessment.
 	ReevaluationSuppressionPeriod = 24 * time.Hour
+
+	// AnomalyCandidateBatchLimit is how many unprocessed candidates one
+	// processTier2And3 pass reads and processes, one after another.
+	AnomalyCandidateBatchLimit = 100
+
+	// StaleCandidateMinAge is the shortest time an anomaly candidate may
+	// wait unprocessed before it is expired without a decision; see
+	// staleCandidateAge.
+	StaleCandidateMinAge = time.Hour
+
+	// StaleCandidateSafetyFactor multiplies the worst-case duration of a
+	// processTier2And3 pass when deriving the stale candidate cut-off;
+	// see staleCandidateAge.
+	StaleCandidateSafetyFactor = 3
 )
 
 // Engine is the main alerter engine that coordinates all background processing
@@ -76,12 +92,37 @@ type Engine struct {
 	embeddingProvider llm.EmbeddingProvider
 	reasoningProvider llm.ReasoningProvider
 
+	// decisionProvider, when set, classifies Tier 3 candidates ahead of
+	// the reasoning provider, which then serves only as its fallback
+	// (GitHub issue #626). Re-evaluation never uses it.
+	decisionProvider llm.DecisionProvider
+
+	// providerHealth raises a system alert when a provider keeps
+	// failing; nil without a datastore. See provider_health.go.
+	providerHealth *providerHealthTracker
+
+	// triggerStreaks counts consecutive breaching samples per rule and
+	// metric key for threshold.trigger_count, and clearStreaks counts
+	// consecutive non-breaching samples per active alert for
+	// threshold.clear_count. Both are held in memory only; see
+	// hysteresis.go.
+	triggerStreaks sampleStreaks[thresholdSampleKey]
+	clearStreaks   sampleStreaks[int64]
+
 	// Notification worker pool using generic WorkerPool abstraction
 	notificationPool *worker.WorkerPool[notificationJob]
 
 	// ctx is the engine-wide context set during Run, used for
 	// background operations such as notification job processing.
 	ctx context.Context
+
+	// anomalyStreaks counts, per active anomaly alert id, the
+	// consecutive distinct samples of its metric that scored back inside
+	// the sensitivity band, with the collected_at of the newest one
+	// counted. It is held in memory only and is replaced by every
+	// completed pass. See anomaly_recovery.go (issue #611).
+	anomalyStreakMu sync.Mutex
+	anomalyStreaks  map[int64]anomalyStreak
 
 	// Synchronization
 	mu sync.RWMutex
@@ -107,7 +148,9 @@ func NewEngine(cfg *config.Config, datastore *database.Datastore, debug bool) *E
 
 	// Initialize LLM providers for Tier 2/3 anomaly detection
 	if cfg != nil {
+		e.warnUnknownMetricFloors(cfg)
 		e.initLLMProviders()
+		e.initProviderHealth()
 	}
 
 	// Create and start notification worker pool only when notifications are enabled.
@@ -150,7 +193,20 @@ func (e *Engine) initLLMProviders() {
 			e.reasoningProvider = provider
 			e.log("Initialized reasoning provider: %s", provider.ModelName())
 		} else {
-			e.log("No reasoning provider configured, Tier 3 will be disabled")
+			e.log("No reasoning provider configured")
+		}
+
+		decider, err := llm.NewDecisionProvider(e.config)
+		if err != nil {
+			e.log("WARNING: Failed to initialize decision provider: %v", err)
+			e.log("Tier 3 will not use a decision model")
+		} else if decider != nil {
+			e.decisionProvider = decider
+			e.log("Initialized decision provider: %s/%s", decider.ProviderName(), decider.ModelName())
+		}
+
+		if e.reasoningProvider == nil && e.decisionProvider == nil {
+			e.log("No reasoning or decision provider available, Tier 3 will be disabled")
 		}
 	}
 
@@ -158,10 +214,31 @@ func (e *Engine) initLLMProviders() {
 	// successfully, disable anomaly detection entirely. Without AI to
 	// filter anomalies, raw statistical detection would generate too
 	// much noise.
-	if e.config.Anomaly.Enabled && e.embeddingProvider == nil && e.reasoningProvider == nil {
+	if e.config.Anomaly.Enabled && e.embeddingProvider == nil &&
+		e.reasoningProvider == nil && e.decisionProvider == nil {
 		e.config.Anomaly.Enabled = false
 		e.log("Anomaly detection auto-disabled: no LLM providers available")
 	}
+}
+
+// anomalyProcessingAvailable reports whether a Tier 1 candidate can be
+// processed by at least one later tier under cfg: Tier 2 enabled with an
+// embedding provider, or Tier 3 enabled with a reasoning or decision
+// provider (see tier3Available). The
+// providers are created once, at startup, for the tiers enabled then, so
+// a reload cannot add one. Without either, raw Tier 1 detection is too
+// noisy to alert on and anomaly detection is treated as disabled.
+func (e *Engine) anomalyProcessingAvailable(cfg *config.Config) bool {
+	return (cfg.Anomaly.Tier2.Enabled && e.embeddingProvider != nil) ||
+		e.tier3Available(cfg)
+}
+
+// tier3Available reports whether Tier 3 can classify a candidate under
+// cfg: it is enabled, and a decision provider, a reasoning provider or
+// both were built at startup.
+func (e *Engine) tier3Available(cfg *config.Config) bool {
+	return cfg.Anomaly.Tier3.Enabled &&
+		(e.reasoningProvider != nil || e.decisionProvider != nil)
 }
 
 // Run starts the engine and runs until the context is canceled
@@ -186,6 +263,16 @@ func (e *Engine) Run(ctx context.Context) error {
 		e.runBaselineCalculator(ctx)
 	}()
 
+	// Provider health check, which also clears provider health alerts
+	// left open for a provider no longer configured
+	if e.providerHealth != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			e.checkProviderHealth(ctx)
+		}()
+	}
+
 	// Anomaly detector (if enabled)
 	if e.config.Anomaly.Enabled {
 		wg.Add(1)
@@ -199,7 +286,7 @@ func (e *Engine) Run(ctx context.Context) error {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				e.runReevaluationWorker(ctx)
+				e.runReevaluationWorker(withProviderTier(ctx, providerTierReevaluation))
 			}()
 		}
 	}
@@ -267,8 +354,48 @@ func (e *Engine) Run(ctx context.Context) error {
 func (e *Engine) ReloadConfig(cfg *config.Config) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+
+	// Apply the startup rule in initLLMProviders to the new config, so a
+	// reload that leaves no usable tier after Tier 1 disables anomaly
+	// detection rather than leaving the detector writing candidates that
+	// nothing can process (issue #581).
+	if cfg != nil && cfg.Anomaly.Enabled && !e.anomalyProcessingAvailable(cfg) {
+		cfg.Anomaly.Enabled = false
+		e.log("Anomaly detection auto-disabled: no LLM provider available for the enabled tiers")
+	}
+
+	if cfg != nil {
+		e.warnUnknownMetricFloors(cfg)
+	}
+
 	e.config = cfg
 	e.log("Configuration reloaded")
+}
+
+// unknownMetricFloorNames returns, sorted, the anomaly.tier1.metric_floors
+// keys that name no metric Tier 1 scores. The configuration package
+// cannot check them itself, since the metric registry lives in the
+// database package, which imports it.
+func unknownMetricFloorNames(cfg *config.Config) []string {
+	var unknown []string
+	for name := range cfg.Anomaly.Tier1.MetricFloors {
+		if !database.SupportsBaselines(name) {
+			unknown = append(unknown, name)
+		}
+	}
+	sort.Strings(unknown)
+	return unknown
+}
+
+// warnUnknownMetricFloors logs any metric_floors entry that can never
+// apply, most likely a mistyped metric name, at startup and on each
+// reload. It warns rather than refusing the configuration, so that a
+// reload is never rejected over an entry that would merely do nothing.
+func (e *Engine) warnUnknownMetricFloors(cfg *config.Config) {
+	if unknown := unknownMetricFloorNames(cfg); len(unknown) > 0 {
+		e.log("WARNING: anomaly.tier1.metric_floors names metrics that anomaly detection does not score, so their floors have no effect: %s",
+			strings.Join(unknown, ", "))
+	}
 }
 
 // getConfig returns the current configuration with proper read locking.

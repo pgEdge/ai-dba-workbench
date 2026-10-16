@@ -8,7 +8,6 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
@@ -43,6 +42,7 @@ vi.mock('../../../../contexts/useDashboard', () => ({
 
 let mockMetricsReturn: UseMetricsReturn = {
     data: null,
+    window: null,
     loading: false,
     error: null,
     refetch: vi.fn(),
@@ -147,6 +147,7 @@ describe('IndexDetail', () => {
         mockUser = { id: 1, username: 'testuser' };
         mockMetricsReturn = {
             data: scanMetricsData(),
+            window: null,
             loading: false,
             error: null,
             refetch: vi.fn(),
@@ -264,6 +265,7 @@ describe('IndexDetail', () => {
         mockApiFetch.mockResolvedValue(okResponse([makeIndexRow()]));
         mockMetricsReturn = {
             data: null,
+            window: null,
             loading: true,
             error: null,
             refetch: vi.fn(),
@@ -280,6 +282,7 @@ describe('IndexDetail', () => {
         mockApiFetch.mockResolvedValue(okResponse([makeIndexRow()]));
         mockMetricsReturn = {
             data: [],
+            window: null,
             loading: false,
             error: null,
             refetch: vi.fn(),

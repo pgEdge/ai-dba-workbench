@@ -96,7 +96,7 @@ func teardownIntegration() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	pool, err := pgxpool.New(ctx, fmt.Sprintf(
-		"host=%s port=%d user=%s password=%s sslmode=disable dbname=postgres",
+		"host=%s port=%d user=%s password=%s sslmode=disable dbname=postgres pool_max_conns=1",
 		integration.host, integration.port, integration.username, integration.rawPassword))
 	if err != nil {
 		return
@@ -114,18 +114,31 @@ func teardownIntegration() {
 // schedulerConfig satisfies scheduler.Config and matches the fields
 // exposed by the production *main.Config wiring.
 type schedulerConfig struct {
-	datastoreMaxWait int
-	monitoredMaxWait int
+	datastoreMaxWait    int
+	monitoredMaxWait    int
+	maxConcurrentProbes int
+	maxProbesPerConn    int
+	startupJitter       int
 }
 
 func (c schedulerConfig) GetDatastorePoolMaxWaitSeconds() int { return c.datastoreMaxWait }
 func (c schedulerConfig) GetMonitoredPoolMaxWaitSeconds() int { return c.monitoredMaxWait }
+func (c schedulerConfig) GetMaxConcurrentProbes() int         { return c.maxConcurrentProbes }
+func (c schedulerConfig) GetMaxConcurrentProbesPerConnection() int {
+	return c.maxProbesPerConn
+}
+func (c schedulerConfig) GetStartupJitterSeconds() int { return c.startupJitter }
 
 // integrationTestConfig builds a schedulerConfig with sane test defaults.
 func integrationTestConfig() schedulerConfig {
+	// Startup jitter is left at zero so the existing timing-sensitive
+	// tests still see the first execution promptly; the jittered path
+	// has dedicated tests of its own.
 	return schedulerConfig{
-		datastoreMaxWait: 10,
-		monitoredMaxWait: 10,
+		datastoreMaxWait:    10,
+		monitoredMaxWait:    10,
+		maxConcurrentProbes: 4,
+		maxProbesPerConn:    2,
 	}
 }
 
@@ -230,7 +243,7 @@ func setupIntegration(t *testing.T) *integrationFixture {
 		defer cancel()
 
 		adminPool, err := pgxpool.New(ctx, fmt.Sprintf(
-			"host=%s port=%d user=%s password=%s sslmode=%s dbname=postgres",
+			"host=%s port=%d user=%s password=%s sslmode=%s dbname=postgres pool_max_conns=1",
 			base.host, base.port, base.username, base.password, base.sslMode))
 		if err != nil {
 			integrationSkip = fmt.Sprintf("connect admin: %v", err)
@@ -242,6 +255,21 @@ func setupIntegration(t *testing.T) *integrationFixture {
 			return
 		}
 
+		// Until the fixture below takes ownership, teardownIntegration
+		// cannot see dbName, so any early return must drop it here or it
+		// leaks (issue #486). Deferred calls run last in, first out, so
+		// this runs before adminPool.Close and cancel.
+		fixtureOwnsDB := false
+		defer func() {
+			if fixtureOwnsDB {
+				return
+			}
+			if _, dropErr := adminPool.Exec(ctx, fmt.Sprintf(
+				"DROP DATABASE IF EXISTS %s WITH (FORCE)", dbName)); dropErr != nil {
+				fmt.Printf("warning: drop %s after setup failure: %v\n", dbName, dropErr)
+			}
+		}()
+
 		// Build a Datastore that points at the new DB. NewDatastore runs
 		// migrations automatically, so the connections / probe_configs
 		// tables exist on return.
@@ -249,12 +277,6 @@ func setupIntegration(t *testing.T) *integrationFixture {
 		dsCfg.database = dbName
 		ds, err := database.NewDatastore(&dsCfg)
 		if err != nil {
-			// Best-effort cleanup of the freshly created DB; the test is
-			// already aborting via integrationSkip, so report-and-continue
-			// is appropriate here.
-			if _, dropErr := adminPool.Exec(ctx, fmt.Sprintf("DROP DATABASE %s WITH (FORCE)", dbName)); dropErr != nil {
-				fmt.Printf("warning: drop %s after NewDatastore failure: %v\n", dbName, dropErr)
-			}
 			integrationSkip = fmt.Sprintf("NewDatastore: %v", err)
 			return
 		}
@@ -264,10 +286,7 @@ func setupIntegration(t *testing.T) *integrationFixture {
 		// without password_encrypted set, the scheduler builds incomplete
 		// connection strings and probe execution fails with SASL auth.
 		// Local trust-auth setups have an empty rawPassword and skip
-		// encryption entirely, leaving password_encrypted NULL. If
-		// encryption fails the integration teardown still drops the
-		// freshly-created database via teardownIntegration, so we don't
-		// need an explicit DROP here.
+		// encryption entirely, leaving password_encrypted NULL.
 		var encryptedPassword string
 		if base.password != "" {
 			enc, encErr := crypto.EncryptPassword(base.password, testServerSecret)
@@ -330,13 +349,10 @@ func setupIntegration(t *testing.T) *integrationFixture {
 		}
 		ds.ReturnConnection(conn2)
 
+		// The pool manager is deliberately left unset: every test gets
+		// its own from setupIntegration, closed when the test ends.
 		integration = &integrationFixture{
-			ds: ds,
-			// Use 1 connection per monitored server and a short idle
-			// time so concurrent tests can't exhaust the postgres
-			// max_connections limit. We have ~30 tests that may each
-			// trigger pool creation against the same server.
-			pool:              database.NewMonitoredConnectionPoolManager(1, 5),
+			ds:                ds,
 			connID:            connID,
 			connName:          "monitored-test",
 			dbName:            dbName,
@@ -346,6 +362,7 @@ func setupIntegration(t *testing.T) *integrationFixture {
 			rawPassword:       base.password,
 			passwordEncrypted: encryptedPassword,
 		}
+		fixtureOwnsDB = true
 	})
 
 	if integrationSkip != "" {
@@ -354,7 +371,24 @@ func setupIntegration(t *testing.T) *integrationFixture {
 	if integration == nil {
 		t.Skip("integration fixture unavailable")
 	}
-	return integration
+
+	// Give every test a pool manager of its own and close it when the
+	// test ends (issue #486). The database-scoped probe paths open one
+	// pool per database on the server, and pgx retires idle connections
+	// only on its minute-long health check, so a manager shared across
+	// the package held a backend open for every database the suite had
+	// touched until the process exited. One connection per pool keeps a
+	// test's footprint to one backend per database. The cleanup runs
+	// after the test's deferred ps.Stop, so no probe goroutine is still
+	// using a pool when it closes.
+	f := *integration
+	f.pool = database.NewMonitoredConnectionPoolManager(1, 5)
+	t.Cleanup(func() {
+		if err := f.pool.Close(); err != nil {
+			t.Logf("close monitored pool manager: %v", err)
+		}
+	})
+	return &f
 }
 
 // makeMonitoredConn returns a database.MonitoredConnection whose
@@ -591,7 +625,7 @@ func TestSchedulerExecuteProbeForServerWide(t *testing.T) {
 	probe := probes.NewPgConnectivityProbe(cfg)
 
 	mc := makeMonitoredConn(f)
-	metrics, connErr, msg := ps.executeProbeForServerWide(context.Background(), probe, mc)
+	metrics, connErr, msg, _ := ps.executeProbeForServerWide(context.Background(), probe, mc)
 	if connErr {
 		t.Errorf("unexpected connection error: %s", msg)
 	}
@@ -614,7 +648,7 @@ func TestSchedulerExecuteProbeForServerWide_CtxCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	mc := makeMonitoredConn(f)
-	metrics, connErr, _ := ps.executeProbeForServerWide(ctx, probe, mc)
+	metrics, connErr, _, _ := ps.executeProbeForServerWide(ctx, probe, mc)
 	if connErr {
 		t.Error("canceled context should not register as connection error")
 	}
@@ -647,7 +681,7 @@ func TestSchedulerExecuteProbeForServerWide_ConnectionFailure(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	_, connErr, msg := ps.executeProbeForServerWide(ctx, probe, bad)
+	_, connErr, msg, _ := ps.executeProbeForServerWide(ctx, probe, bad)
 	if !connErr {
 		t.Error("expected connection error for unreachable host")
 	}
@@ -674,7 +708,7 @@ func TestSchedulerExecuteProbeForAllDatabases(t *testing.T) {
 	// pg_stat_statements may fail because the extension isn't installed
 	// — that's fine. We're exercising the multi-database loop and
 	// ensuring no panic.
-	metrics, dbs, connErr, _ := ps.executeProbeForAllDatabases(ctx, probe, mc)
+	metrics, dbs, connErr, _, _ := ps.executeProbeForAllDatabases(ctx, probe, mc)
 	if connErr {
 		t.Errorf("unexpected connection error during multi-database probe")
 	}
@@ -709,7 +743,7 @@ func TestSchedulerExecuteProbeForAllDatabases_HappyPath(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	metrics, dbs, connErr, _ := ps.executeProbeForAllDatabases(ctx, probe, mc)
+	metrics, dbs, connErr, _, _ := ps.executeProbeForAllDatabases(ctx, probe, mc)
 	if connErr {
 		t.Errorf("unexpected connection error")
 	}
@@ -733,7 +767,7 @@ func TestSchedulerExecuteProbeForAllDatabases_PreCanceled(t *testing.T) {
 	mc := makeMonitoredConn(f)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, _, connErr, _ := ps.executeProbeForAllDatabases(ctx, probe, mc)
+	_, _, connErr, _, _ := ps.executeProbeForAllDatabases(ctx, probe, mc)
 	if connErr {
 		t.Error("canceled-ctx pre-check should return no connection error")
 	}
@@ -763,7 +797,7 @@ func TestSchedulerExecuteProbeForAllDatabases_ConnectionFailure(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	_, _, connErr, msg := ps.executeProbeForAllDatabases(ctx, probe, bad)
+	_, _, connErr, msg, _ := ps.executeProbeForAllDatabases(ctx, probe, bad)
 	if !connErr {
 		t.Error("expected connection error")
 	}
@@ -1209,7 +1243,7 @@ func TestSchedulerExecuteProbeForAllDatabases_CancelMidLoop(t *testing.T) {
 	probe := &cancelAfterFirst{cancel: cancel, dbScoped: true, probeName: "cancel-mid-loop"}
 
 	mc := makeMonitoredConn(f)
-	_, _, _, _ = ps.executeProbeForAllDatabases(ctx, probe, mc)
+	_, _, _, _, _ = ps.executeProbeForAllDatabases(ctx, probe, mc)
 	if probe.called == 0 {
 		t.Error("expected probe.Execute to be called at least once")
 	}
@@ -1227,7 +1261,7 @@ func TestSchedulerExecuteProbeForAllDatabases_ExecuteFails(t *testing.T) {
 	mc := makeMonitoredConn(f)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	metrics, dbs, connErr, _ := ps.executeProbeForAllDatabases(ctx, probe, mc)
+	metrics, dbs, connErr, _, _ := ps.executeProbeForAllDatabases(ctx, probe, mc)
 	if connErr {
 		t.Errorf("unexpected connection error")
 	}
@@ -1360,7 +1394,7 @@ func TestSchedulerExecuteProbeForServerWide_ExecuteCanceled(t *testing.T) {
 	probe := &cancelOnExecute{cancel: cancel, dbScoped: false, probeName: "cancel-on-exec"}
 
 	mc := makeMonitoredConn(f)
-	_, _, _ = ps.executeProbeForServerWide(ctx, probe, mc)
+	_, _, _, _ = ps.executeProbeForServerWide(ctx, probe, mc)
 }
 
 // TestSchedulerExecuteProbeForServerWide_ExecuteFails exercises the
@@ -1374,7 +1408,7 @@ func TestSchedulerExecuteProbeForServerWide_ExecuteFails(t *testing.T) {
 	mc := makeMonitoredConn(f)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	metrics, connErr, _ := ps.executeProbeForServerWide(ctx, probe, mc)
+	metrics, connErr, _, _ := ps.executeProbeForServerWide(ctx, probe, mc)
 	if connErr {
 		t.Error("Execute failure should not register as connection error")
 	}
@@ -1395,20 +1429,24 @@ func TestSchedulerLoadConfigs_GetMonitoredFails(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	adminPool, err := pgxpool.New(ctx, fmt.Sprintf(
-		"host=%s port=%d user=%s password=%s sslmode=disable dbname=postgres",
+		"host=%s port=%d user=%s password=%s sslmode=disable dbname=postgres pool_max_conns=1",
 		f.host, f.port, f.username, f.rawPassword))
 	if err != nil {
 		t.Fatalf("admin pool: %v", err)
 	}
-	defer adminPool.Close()
+	// Registered before the drop below so that it runs after it, since
+	// cleanups run in reverse order. A deferred Close runs before any
+	// cleanup, which left the drop hitting a closed pool and leaked the
+	// database on every run (issue #486).
+	t.Cleanup(adminPool.Close)
 
 	dbName := fmt.Sprintf("ai_workbench_sched_drop_%d", time.Now().UnixNano())
 	if _, err := adminPool.Exec(ctx, fmt.Sprintf("CREATE DATABASE %s", dbName)); err != nil {
 		t.Fatalf("create db: %v", err)
 	}
 	t.Cleanup(func() {
-		// Best-effort cleanup; if the admin pool is gone or the DB is
-		// busy, log rather than fail the test that already passed.
+		// Best-effort cleanup; if the DB cannot be dropped, log rather
+		// than fail the test that already passed.
 		if _, err := adminPool.Exec(context.Background(),
 			fmt.Sprintf("DROP DATABASE IF EXISTS %s WITH (FORCE)", dbName)); err != nil {
 			t.Logf("warning: drop %s on cleanup: %v", dbName, err)
@@ -1476,6 +1514,50 @@ func TestSchedulerLoadConfigs_RemovesStaleProbes(t *testing.T) {
 	ps.probesMutex.RUnlock()
 	if stillThere {
 		t.Errorf("expected stale probes for connection %d to be removed", staleID)
+	}
+}
+
+// TestSchedulerLoadConfigs_RemovesStaleConnSlots confirms the
+// per-connection concurrency semaphores are pruned along with the
+// probes, so a collector that has been running for months does not
+// retain an entry for every connection ever monitored.
+func TestSchedulerLoadConfigs_RemovesStaleConnSlots(t *testing.T) {
+	f := setupIntegration(t)
+	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), testServerSecret)
+	defer ps.Stop()
+
+	staleID := 99_998
+	ps.probesMutex.Lock()
+	ps.probesByConn[staleID] = map[string]probes.MetricsProbe{
+		"stub": probes.NewPgConnectivityProbe(&probes.ProbeConfig{
+			Name: probes.ProbeNamePgConnectivity, CollectionIntervalSeconds: 60,
+		}),
+	}
+	ps.probesMutex.Unlock()
+
+	// Take and give back a permit so the semaphore exists.
+	release, ok := ps.acquireProbeSlot(staleID)
+	if !ok {
+		t.Fatal("failed to acquire a slot for the stale connection")
+	}
+	release()
+
+	ps.connSlotsMutex.Lock()
+	_, created := ps.connSlots[staleID]
+	ps.connSlotsMutex.Unlock()
+	if !created {
+		t.Fatal("expected a per-connection semaphore to be created on first use")
+	}
+
+	if err := ps.loadConfigs(context.Background()); err != nil {
+		t.Fatalf("loadConfigs: %v", err)
+	}
+
+	ps.connSlotsMutex.Lock()
+	_, stillHeld := ps.connSlots[staleID]
+	ps.connSlotsMutex.Unlock()
+	if stillHeld {
+		t.Errorf("expected the per-connection semaphore for %d to be removed", staleID)
 	}
 }
 
@@ -2291,5 +2373,209 @@ func TestSchedulerCalculateInitialDelay_DatastoreClosed(t *testing.T) {
 	delay := ps.calculateInitialDelay(probe, 1, "x", cfg)
 	if delay != 0 {
 		t.Errorf("expected 0 delay when datastore unavailable, got %v", delay)
+	}
+}
+
+// jitterTestConfig returns an integration config with an explicit
+// startup jitter ceiling and concurrency cap.
+func jitterTestConfig(jitterSeconds, maxConcurrent int) schedulerConfig {
+	return schedulerConfig{
+		datastoreMaxWait:    10,
+		monitoredMaxWait:    10,
+		maxConcurrentProbes: maxConcurrent,
+		startupJitter:       jitterSeconds,
+	}
+}
+
+// TestSchedulerScheduleProbeForConnection_StartupJitterShutdown covers
+// the shutdown branch of the startup-jitter wait: a probe with no
+// previous collection would once have executed immediately, and must
+// now be interruptible whilst it waits out its jitter.
+func TestSchedulerScheduleProbeForConnection_StartupJitterShutdown(t *testing.T) {
+	f := setupIntegration(t)
+	ps := NewProbeScheduler(f.ds, f.pool, jitterTestConfig(60, 4), testServerSecret)
+
+	connID := seedTestConnection(t, f, fmt.Sprintf("jitter-shut-%d", time.Now().UnixNano()))
+
+	conn, err := f.ds.GetConnection()
+	if err != nil {
+		t.Fatalf("GetConnection: %v", err)
+	}
+	if _, err := conn.Exec(context.Background(),
+		"UPDATE connections SET is_monitored = TRUE WHERE id = $1", connID); err != nil {
+		f.ds.ReturnConnection(conn)
+		t.Fatalf("UPDATE: %v", err)
+	}
+	f.ds.ReturnConnection(conn)
+
+	// No seeded metric, so calculateInitialDelay returns 0 and the
+	// goroutine takes the jittered path.
+	cfg := &probes.ProbeConfig{
+		Name:                      probes.ProbeNamePgConnectivity,
+		CollectionIntervalSeconds: 3600,
+	}
+	probe := probes.NewPgConnectivityProbe(cfg)
+
+	ps.probesMutex.Lock()
+	ps.probesByConn[connID] = map[string]probes.MetricsProbe{probe.GetName(): probe}
+	ps.probesMutex.Unlock()
+
+	ps.wg.Add(1)
+	done := make(chan struct{})
+	go func() {
+		ps.scheduleProbeForConnection(probe, connID)
+		close(done)
+	}()
+
+	// Close shutdownChan directly so that branch wins the select.
+	time.Sleep(100 * time.Millisecond)
+	close(ps.shutdownChan)
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("scheduleProbeForConnection did not exit during startup jitter")
+	}
+
+	ps.shutdownChan = make(chan struct{})
+	ps.Stop()
+}
+
+// TestSchedulerScheduleProbeForConnection_StartupJitterCanceled covers
+// the context-cancellation branch of the same wait.
+func TestSchedulerScheduleProbeForConnection_StartupJitterCanceled(t *testing.T) {
+	f := setupIntegration(t)
+	ps := NewProbeScheduler(f.ds, f.pool, jitterTestConfig(60, 4), testServerSecret)
+
+	connID := seedTestConnection(t, f, fmt.Sprintf("jitter-cancel-%d", time.Now().UnixNano()))
+
+	conn, err := f.ds.GetConnection()
+	if err != nil {
+		t.Fatalf("GetConnection: %v", err)
+	}
+	if _, err := conn.Exec(context.Background(),
+		"UPDATE connections SET is_monitored = TRUE WHERE id = $1", connID); err != nil {
+		f.ds.ReturnConnection(conn)
+		t.Fatalf("UPDATE: %v", err)
+	}
+	f.ds.ReturnConnection(conn)
+
+	cfg := &probes.ProbeConfig{
+		Name:                      probes.ProbeNamePgConnectivity,
+		CollectionIntervalSeconds: 3600,
+	}
+	probe := probes.NewPgConnectivityProbe(cfg)
+
+	ps.probesMutex.Lock()
+	ps.probesByConn[connID] = map[string]probes.MetricsProbe{probe.GetName(): probe}
+	ps.probesMutex.Unlock()
+
+	ps.wg.Add(1)
+	done := make(chan struct{})
+	go func() {
+		ps.scheduleProbeForConnection(probe, connID)
+		close(done)
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+	ps.cancel()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("scheduleProbeForConnection did not exit on context cancellation")
+	}
+
+	ps.Stop()
+}
+
+// TestSchedulerScheduleProbeForConnection_PastDueJittered confirms a
+// past-due probe still runs, but only after its startup jitter, rather
+// than joining a thundering herd at startup (issue #441).
+func TestSchedulerScheduleProbeForConnection_PastDueJittered(t *testing.T) {
+	f := setupIntegration(t)
+	ps := NewProbeScheduler(f.ds, f.pool, jitterTestConfig(1, 2), testServerSecret)
+
+	connID := seedTestConnection(t, f, fmt.Sprintf("jitter-run-%d", time.Now().UnixNano()))
+
+	conn, err := f.ds.GetConnection()
+	if err != nil {
+		t.Fatalf("GetConnection: %v", err)
+	}
+	pwParam := sql.NullString{String: f.passwordEncrypted, Valid: f.passwordEncrypted != ""}
+	if _, err := conn.Exec(context.Background(),
+		"UPDATE connections SET is_monitored = TRUE, host = $1, port = $2, database_name = $3, username = $4, sslmode = 'disable', password_encrypted = $5 WHERE id = $6",
+		f.host, f.port, f.dbName, f.username, pwParam, connID); err != nil {
+		f.ds.ReturnConnection(conn)
+		t.Fatalf("UPDATE: %v", err)
+	}
+	f.ds.ReturnConnection(conn)
+
+	cfg := &probes.ProbeConfig{
+		Name:                      probes.ProbeNamePgConnectivity,
+		CollectionIntervalSeconds: 3600,
+	}
+	probe := probes.NewPgConnectivityProbe(cfg)
+
+	// Seed an old metric so the probe is past due by hours.
+	twoHoursAgo := time.Now().Add(-2 * time.Hour)
+	conn2, err := f.ds.GetConnection()
+	if err != nil {
+		t.Fatalf("GetConnection 2: %v", err)
+	}
+	if err := probe.EnsurePartition(context.Background(), conn2, twoHoursAgo); err != nil {
+		f.ds.ReturnConnection(conn2)
+		t.Fatalf("EnsurePartition: %v", err)
+	}
+	if err := probe.EnsurePartition(context.Background(), conn2, time.Now()); err != nil {
+		f.ds.ReturnConnection(conn2)
+		t.Fatalf("EnsurePartition now: %v", err)
+	}
+	if _, err := conn2.Exec(context.Background(), `
+		INSERT INTO metrics.pg_connectivity (connection_id, collected_at, response_time_ms)
+		VALUES ($1, $2, 1.0)
+	`, connID, twoHoursAgo); err != nil {
+		f.ds.ReturnConnection(conn2)
+		t.Fatalf("seed metric: %v", err)
+	}
+	f.ds.ReturnConnection(conn2)
+
+	ps.probesMutex.Lock()
+	ps.probesByConn[connID] = map[string]probes.MetricsProbe{probe.GetName(): probe}
+	ps.probesMutex.Unlock()
+
+	started := time.Now()
+	ps.wg.Add(1)
+	go ps.scheduleProbeForConnection(probe, connID)
+
+	// The jitter window is one second, so the fresh row should appear
+	// within a few seconds.
+	deadline := time.Now().Add(10 * time.Second)
+	var collected bool
+	for time.Now().Before(deadline) {
+		conn3, err := f.ds.GetConnection()
+		if err != nil {
+			t.Fatalf("GetConnection 3: %v", err)
+		}
+		var count int
+		err = conn3.QueryRow(context.Background(), `
+			SELECT COUNT(*) FROM metrics.pg_connectivity
+			WHERE connection_id = $1 AND collected_at > $2
+		`, connID, started).Scan(&count)
+		f.ds.ReturnConnection(conn3)
+		if err != nil {
+			t.Fatalf("count metrics: %v", err)
+		}
+		if count > 0 {
+			collected = true
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	ps.Stop()
+
+	if !collected {
+		t.Fatal("past-due probe never executed after its startup jitter")
 	}
 }

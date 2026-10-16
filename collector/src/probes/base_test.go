@@ -660,7 +660,7 @@ func TestCachedCheck(t *testing.T) {
 			return true, nil
 		}
 
-		result, err := cachedCheck("test_conn", "view_exists", checkFn)
+		result, err := cachedCheck("test_conn", nil, "view_exists", checkFn)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -692,7 +692,7 @@ func TestCachedCheck(t *testing.T) {
 			return true, nil
 		}
 
-		result, err := cachedCheck("test_conn2", "cached_view", checkFn)
+		result, err := cachedCheck("test_conn2", nil, "cached_view", checkFn)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -713,7 +713,7 @@ func TestCachedCheck(t *testing.T) {
 			return false, expectedErr
 		}
 
-		result, err := cachedCheck("test_conn3", "error_check", checkFn)
+		result, err := cachedCheck("test_conn3", nil, "error_check", checkFn)
 		if err == nil {
 			t.Fatal("expected error, got nil")
 		}
@@ -742,7 +742,7 @@ func TestCachedCheck(t *testing.T) {
 			return true, nil
 		}
 
-		result, err := cachedCheck("test_conn4", "invalid_type", checkFn)
+		result, err := cachedCheck("test_conn4", nil, "invalid_type", checkFn)
 		if err == nil {
 			t.Fatal("expected error for invalid cached type, got nil")
 		}
@@ -766,7 +766,7 @@ func TestCachedCheck(t *testing.T) {
 		}
 
 		// First call should execute checkFn.
-		result, err := cachedCheck("test_conn5", "false_result", checkFn)
+		result, err := cachedCheck("test_conn5", nil, "false_result", checkFn)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -778,7 +778,7 @@ func TestCachedCheck(t *testing.T) {
 		}
 
 		// Second call should return cached false without calling checkFn.
-		result, err = cachedCheck("test_conn5", "false_result", checkFn)
+		result, err = cachedCheck("test_conn5", nil, "false_result", checkFn)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}

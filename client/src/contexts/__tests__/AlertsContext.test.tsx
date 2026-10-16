@@ -63,6 +63,7 @@ describe('AlertsContext', () => {
                 total: 0,
                 byServer: {},
                 byCluster: {},
+                system: 0,
             });
             expect(result.current.lastFetch).toBeNull();
         });
@@ -106,7 +107,27 @@ describe('AlertsContext', () => {
             expect(result.current.alertCounts.byServer).toEqual({ 1: 2, 2: 3 });
             expect(result.current.alertCounts.byCluster).toEqual({ 'cluster-1': 5 });
             expect(result.current.lastFetch).toBeInstanceOf(Date);
+            expect(result.current.alertCounts.system).toBe(0);
             expect(result.current.loading).toBe(false);
+        });
+
+        it('reads the system alert count, which no server includes', async () => {
+            mockApiGet.mockResolvedValueOnce({
+                total: 3,
+                by_server: { 1: 2 },
+                by_cluster: {},
+                system: 1,
+            });
+
+            const { result } = renderHook(() => useAlerts(), { wrapper });
+
+            await waitFor(() => {
+                expect(result.current.alertCounts.total).toBe(3);
+            });
+
+            expect(result.current.alertCounts.system).toBe(1);
+            expect(result.current.getServerAlertCount(1)).toBe(2);
+            expect(result.current.getTotalAlertCount()).toBe(3);
         });
 
         it('defaults missing fields to 0 / empty objects', async () => {
@@ -122,6 +143,7 @@ describe('AlertsContext', () => {
                 total: 0,
                 byServer: {},
                 byCluster: {},
+                system: 0,
             });
         });
 

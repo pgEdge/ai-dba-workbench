@@ -159,31 +159,47 @@ type MetricBaseline struct {
 
 // AnomalyCandidate represents a candidate anomaly for tier 2/3 processing
 type AnomalyCandidate struct {
-	ID            int64      `json:"id"`
-	ConnectionID  int        `json:"connection_id"`
-	DatabaseName  *string    `json:"database_name,omitempty"`
-	MetricName    string     `json:"metric_name"`
-	MetricValue   float64    `json:"metric_value"`
-	ZScore        float64    `json:"z_score"`
-	DetectedAt    time.Time  `json:"detected_at"`
-	Context       string     `json:"context"`
-	Tier1Pass     bool       `json:"tier1_pass"`
-	Tier2Score    *float64   `json:"tier2_score,omitempty"`
-	Tier2Pass     *bool      `json:"tier2_pass,omitempty"`
-	Tier3Result   *string    `json:"tier3_result,omitempty"`
-	Tier3Pass     *bool      `json:"tier3_pass,omitempty"`
-	Tier3Error    *string    `json:"tier3_error,omitempty"`
+	ID           int64     `json:"id"`
+	ConnectionID int       `json:"connection_id"`
+	DatabaseName *string   `json:"database_name,omitempty"`
+	MetricName   string    `json:"metric_name"`
+	MetricValue  float64   `json:"metric_value"`
+	ZScore       float64   `json:"z_score"`
+	DetectedAt   time.Time `json:"detected_at"`
+	Context      string    `json:"context"`
+	Tier1Pass    bool      `json:"tier1_pass"`
+	Tier2Score   *float64  `json:"tier2_score,omitempty"`
+	Tier2Pass    *bool     `json:"tier2_pass,omitempty"`
+	Tier3Result  *string   `json:"tier3_result,omitempty"`
+	Tier3Pass    *bool     `json:"tier3_pass,omitempty"`
+	Tier3Error   *string   `json:"tier3_error,omitempty"`
+	// Tier3Source is "decision" or "reasoning": the kind of model whose
+	// outcome set Tier3Pass (GitHub issue #626).
+	Tier3Source *string `json:"tier3_source,omitempty"`
+	// Tier3Model is the provider/model that Tier3Source names.
+	Tier3Model    *string    `json:"tier3_model,omitempty"`
 	FinalDecision *string    `json:"final_decision,omitempty"`
 	AlertID       *int64     `json:"alert_id,omitempty"`
 	ProcessedAt   *time.Time `json:"processed_at,omitempty"`
 }
 
-// HistoricalMetricValue represents a metric value with timestamp for baseline calculation
+// HistoricalMetricValue represents a metric value with timestamp for
+// baseline calculation.
+//
+// SampleCount is the number of raw collector samples the row aggregates.
+// It is 1 for every query that returns one row per sample, and larger for
+// the hourly bucketed queries (the pg_stat_database deadlock and
+// temporary file counts) where one row covers a whole hour. Baseline
+// warmup is configured in samples, so calculateAllBaseline sums this
+// field rather than counting rows; a zero or negative value is read as 1
+// so a hand-built value without it still counts as one sample. See
+// GitHub issue #409.
 type HistoricalMetricValue struct {
 	ConnectionID int
 	DatabaseName *string
 	Value        float64
 	CollectedAt  time.Time
+	SampleCount  int64
 }
 
 // MetricValue represents a metric value for a specific connection
@@ -211,6 +227,41 @@ type ProbeStaleness struct {
 	ProbeName          string
 	CollectionInterval int     // seconds
 	StalenessRatio     float64 // elapsed / interval
+
+	// SinceCollected is how long ago the probe last stored a row,
+	// measured from the same NOW() as StalenessRatio. The metric
+	// staleness rule works in ratios, because what counts as late
+	// depends on how often the probe is meant to run, whilst the alert
+	// cleaner works in this elapsed time, because what it needs to know
+	// is whether the probe collected inside the window a metric's query
+	// reads. See GitHub issue #407.
+	SinceCollected time.Duration
+
+	// LastCollected is when the probe last stored a row, as the collector
+	// recorded it. Anomaly recovery and the alert cleaner use it to tell
+	// one collection of an absence-driven metric from the next: an empty
+	// result carries no collected_at of its own, so the probe's timestamp
+	// is what keeps repeated passes over one collection from counting as
+	// several recovered samples towards clear_count. See GitHub issues
+	// #611 and #614.
+	LastCollected time.Time
+
+	// IsAvailable is the probe's availability flag, carried here rather
+	// than filtered out by the query, because the four reasons a probe
+	// can drop out of the staleness view are not interchangeable: a probe
+	// the operator disabled, or a connection they stopped monitoring, is
+	// deliberate and lets a staleness alert clear, whereas availability
+	// going false is a fault and must not. Callers therefore branch on
+	// this rather than reading absence as a single signal. See GitHub
+	// issue #465.
+	IsAvailable bool
+
+	// UnavailableReason is whatever the collector recorded alongside
+	// is_available = FALSE, such as a missing extension or a permissions
+	// failure, and is nil whilst the probe is available. It is reported
+	// to the operator in the alert description, so that an alert held
+	// open by an unavailable probe says why collection stopped.
+	UnavailableReason *string
 }
 
 // AnomalyEmbedding represents a stored embedding for an anomaly candidate
@@ -244,6 +295,11 @@ type AcknowledgedAnomalyAlert struct {
 	// Re-evaluation tracking
 	LastReevaluatedAt *time.Time `json:"last_reevaluated_at,omitempty"`
 	ReevaluationCount int        `json:"reevaluation_count"`
+
+	// ReevaluationFingerprint is the hash of the prompt inputs behind the
+	// last re-evaluation that answered "keep", or nil when there is no
+	// answer to reuse. See GitHub issue #575.
+	ReevaluationFingerprint *string `json:"reevaluation_fingerprint,omitempty"`
 }
 
 // ClusterPeerInfo holds lightweight cluster peer context for LLM prompts

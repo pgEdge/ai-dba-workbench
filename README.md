@@ -51,6 +51,7 @@
     - [Account Management](docs/admin-guide/managing-users-and-permissions/accounts.md)
     - [Group Management](docs/admin-guide/managing-users-and-permissions/groups.md)
     - [Token Management](docs/admin-guide/managing-users-and-permissions/tokens.md)
+    - [Single Sign-On](docs/admin-guide/managing-users-and-permissions/sso.md)
     - [Permission Management](docs/admin-guide/managing-users-and-permissions/permission_mgmt.md)
   - [Enforcing the Password Policy](docs/admin-guide/password.md)
   - [Connection Management](docs/admin-guide/connections.md)

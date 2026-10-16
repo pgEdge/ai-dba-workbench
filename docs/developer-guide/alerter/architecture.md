@@ -117,7 +117,11 @@ Alerts progress through several states during their lifecycle:
 - Cleared alerts indicate the condition has resolved.
 
 The alerter automatically clears threshold alerts when the
-triggering condition returns to normal.
+triggering condition returns to normal. The anomaly detector clears
+an active anomaly alert once Tier 1 scores
+`anomaly.tier1.clear_count` consecutive samples of its metric back
+inside the sensitivity band; the Anomaly Detection document
+describes the recovery check.
 
 ## High-Level Architecture
 
@@ -162,6 +166,22 @@ evaluator performs these steps:
 5. Compare metric values against thresholds.
 6. Create or update alerts for threshold violations.
 
+The evaluator creates a new alert only once the threshold has
+been violated on `threshold.trigger_count` consecutive metric
+samples, where a sample is a distinct `collected_at` value for
+one rule, connection and database. The object name is not part
+of the key, because an alert is keyed on the rule, connection and
+database, and metrics such as `dead_tuple_percent` report the
+worst table in each database, which may change from one sample
+to the next. The counts live in
+memory in `internal/engine/hysteresis.go`; a key that a cycle
+does not judge, because of a blackout, a disabled override or a
+missing row, starts again from zero. An existing alert is
+updated on every cycle regardless of the count. Each metric
+registry query must therefore report the sample's own
+`collected_at` rather than `NOW()`, or every cycle would look
+like a new sample.
+
 ### Baseline Calculator
 
 The baseline calculator refreshes metric baselines at a
@@ -169,11 +189,15 @@ configurable interval, defaulting to one hour. The calculator
 generates three types of baselines:
 
 - Global baselines aggregate all historical data.
-- Hourly baselines capture patterns for each hour of the day.
-- Daily baselines capture patterns for each day of the week.
+- Hourly baselines capture patterns for each UTC hour of the day.
+- Daily baselines capture patterns for each UTC day of the week.
 
 The calculator uses a configurable lookback period, defaulting
-to 7 days, to gather historical data for baseline calculations.
+to 15 days, to gather historical data for baseline calculations.
+Baselines are written per connection and, for per-database
+metrics, per database. Metrics whose registry entry has no
+historical query are skipped, and any leftover baseline rows for
+them are deleted at the start of each cycle.
 
 ### Anomaly Detector
 
@@ -185,9 +209,17 @@ The anomaly detector implements a tiered detection system:
 - Tier 3 uses LLM classification to determine alert or suppress
   decisions.
 
-The detector creates anomaly candidates that progress through
-each tier. The final decision determines whether to create an
-alert or suppress the anomaly as a false positive.
+Tier 1 scores each value against the baseline for the same
+connection and database, preferring the hourly baseline for the
+current UTC hour, then the daily baseline for the current UTC
+weekday, then the global baseline, and taking the first of those
+that has passed its warmup gate. The detector creates anomaly
+candidates that progress through each tier. Before Tier 2, the
+detector skips both paid tiers for a candidate when a blackout,
+an open anomaly alert or a recent suppression would prevent an
+alert from being raised. The final decision
+determines whether to create an alert or suppress the anomaly as
+a false positive.
 
 ### Blackout Scheduler
 
@@ -202,7 +234,31 @@ duration.
 The alert cleaner runs every 30 seconds to check for resolved
 conditions. The cleaner retrieves active threshold alerts and
 re-evaluates the triggering conditions. When a condition no longer
-violates the threshold, the cleaner marks the alert as cleared.
+violates the threshold on `threshold.clear_count` consecutive
+samples, the cleaner marks the alert as cleared. A violating sample
+resets the count, and the count is dropped once the alert is no
+longer active. Missing data for a metric that reports a value for
+every connection neither advances nor resets the count. For a
+metric that reports only whilst its condition holds, each probe
+collection that returns no row counts as one resolved sample, so
+an inactive replication slot alert clears on the third
+`pg_replication_slots` collection after recovery at the default
+`clear_count`.
+
+A metric that returns no value for an alert is a separate case from
+a metric that returns a value below the threshold. The metric
+registry records, for each metric, whether a missing row means the
+condition has ended or that the data has stopped arriving; the
+cleaner clears the alert only in the first case, and then only when the
+collector probe behind the metric last collected inside the window that
+metric's query reads, so a stopped collector cannot look like a
+recovery. The window, rather than a multiple of the probe's configured
+collection interval, is the yardstick, because outside it the query
+returns nothing whatever the monitored server is doing, and because an
+operator may change the interval at any time. The Adding Alert Rules
+document describes the `clearWhenAbsent` field that carries this
+classification, the `probeName` field that names the probe and the
+`absenceWindow` field that records the window.
 
 ### Retention Manager
 
@@ -234,15 +290,22 @@ are violated, the alerter writes alerts to the alerts table.
 ### Anomaly Detection Flow
 
 ```
-Tier 1 --> Candidate --> Tier 2 --> Tier 3 --> Alert or Suppress
-(z-score)   (store)    (embedding)  (LLM)
+Tier 1 --> Candidate --> Checks --> Tier 2 --> Tier 3 --> Alert or Suppress
+(z-score)   (store)     (skip?)   (embedding)  (LLM)
 ```
 
 Tier 1 creates anomaly candidates for values exceeding the
-z-score threshold. These candidates are stored and processed by
-Tier 2, which generates embeddings and searches for similar past
-anomalies. Tier 3 uses LLM classification to make the final
-decision.
+z-score threshold, unless one of the checks below already applies,
+in which case it stores none. The alerter then checks each stored
+candidate for an active blackout, an open anomaly alert on the same
+metric, connection and database, an anomaly alert on the same
+series that cleared within the five-minute cooldown, and
+re-evaluation or false-positive suppression; a candidate that
+matches any check is marked as processed without running Tier 2 or
+Tier 3. The second pass covers a candidate stored before the
+condition began. Other candidates are processed by Tier 2, which
+generates embeddings and searches for similar past anomalies. Tier 3
+uses LLM classification to make the final decision.
 
 ## Database Schema
 
@@ -284,11 +347,16 @@ processing.
 ### Embedding Providers
 
 Embedding providers generate vector representations of anomaly
-context. The alerter supports the following providers:
+context. The alerter supports the following providers, shown with
+the model each one uses by default:
 
-- Ollama with models like `nomic-embed-text`.
+- Ollama with `nomic-embed-text`.
 - OpenAI with `text-embedding-3-small`.
 - Voyage with `voyage-3-lite`.
+
+Any model name the chosen provider recognises can be configured in
+place of the default, including a model served by an
+OpenAI-protocol-compatible local model server.
 
 ### Reasoning Providers
 
@@ -296,8 +364,24 @@ Reasoning providers classify anomalies as real issues or false
 positives. The alerter supports the following providers:
 
 - Ollama with models like `qwen2.5:7b-instruct`.
-- OpenAI with `gpt-4o-mini`.
-- Anthropic with `claude-3-5-haiku`.
+- OpenAI with `gpt-6-luna`.
+- Anthropic with `claude-haiku-4-5`.
+
+### Decision Providers
+
+A decision provider optionally classifies Tier 3 candidates ahead of
+the reasoning provider, returning the probability that an anomaly is
+a real issue rather than generated text. The reasoning provider then
+serves as the fallback for any candidate the decision model fails to
+classify. The alerter supports the following decision providers:
+
+- TypeSafe with `jev-latest`.
+- OpenAI with `gpt-6-luna` through the Decisions API.
+
+Re-evaluation of acknowledged alerts never uses the decision
+provider. See
+[Anomaly Detection](anomaly-detection.md#decision-model) for the
+classification path and its fallback.
 
 ## Configuration Reloading
 

@@ -129,7 +129,7 @@ const getOverlayChipSx = (theme: Theme) => ({
  * DraggableCluster - Wrapper that makes a cluster draggable via drag handle
  * Uses a drag handle approach to avoid blocking click events on child components
  */
-interface DraggableClusterProps {
+export interface DraggableClusterProps {
     cluster: Cluster;
     groupId: string;
     children: React.ReactNode;
@@ -189,7 +189,7 @@ export const DraggableCluster: React.FC<DraggableClusterProps> = ({
 /**
  * DroppableGroup - Wrapper that makes a group a drop target
  */
-interface DroppableGroupProps {
+export interface DroppableGroupProps {
     groupId: string;
     children: React.ReactNode;
     isDark: boolean;
@@ -225,7 +225,7 @@ export const DroppableGroup: React.FC<DroppableGroupProps> = ({
 /**
  * DragOverlayContent - Content shown during drag
  */
-interface DragOverlayContentProps {
+export interface DragOverlayContentProps {
     cluster: Cluster | null;
     isDark: boolean;
 }

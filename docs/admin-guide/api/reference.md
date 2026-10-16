@@ -79,6 +79,8 @@ The API provides endpoints in the following categories.
 |--------|----------|-------------|
 | POST | `/api/v1/auth/login` | Authenticate and obtain a session token. |
 | POST | `/api/v1/auth/logout` | Log out and clear the session cookie. |
+| GET | `/api/v1/auth/oidc/start` | Start a federated (OIDC) login. |
+| GET | `/api/v1/auth/oidc/callback` | Complete a federated (OIDC) login. |
 | GET | `/api/v1/user/info` | Get the current user information. |
 | GET | `/api/v1/capabilities` | Get server capability flags. |
 
@@ -92,6 +94,7 @@ The API provides endpoints in the following categories.
 | PUT | `/api/v1/connections/{id}` | Update a connection. |
 | DELETE | `/api/v1/connections/{id}` | Delete a connection. |
 | GET | `/api/v1/connections/{id}/databases` | List databases for a connection. |
+| POST | `/api/v1/connections/{id}/query/validate` | Validate SQL against a connection without executing it. |
 | GET | `/api/v1/connections/current` | Get the current connection. |
 | POST | `/api/v1/connections/current` | Set the current connection. |
 | DELETE | `/api/v1/connections/current` | Clear the current connection. |
@@ -215,9 +218,10 @@ The API provides endpoints in the following categories.
 | GET | `/api/v1/metrics/query` | Query metrics for preset or custom windows. |
 | GET | `/api/v1/metrics/baselines` | Get metric baseline values. |
 | GET | `/api/v1/metrics/performance-summary` | Get a performance summary. |
-| GET | `/api/v1/metrics/database-summaries` | Get database-level summaries. |
-| GET | `/api/v1/metrics/top-queries` | Get the top queries by resource usage. |
+| GET | `/api/v1/metrics/database-summaries` | Get database-level summaries over a time window. |
+| GET | `/api/v1/metrics/top-queries` | Get the top queries by resource usage over a time window. |
 | GET | `/api/v1/metrics/connection-groups` | Get connection counts grouped by user, client, or database. |
+| GET | `/api/v1/metrics/query-stats` | Get period-scoped statistics for a query. |
 | GET | `/api/v1/metrics/latest` | Get the latest probe snapshot per entity. |
 
 ### Timeline
@@ -298,12 +302,13 @@ end in the future is clamped to the present moment.
 | POST | `/api/v1/rbac/groups/{id}/members` | Add a group member. |
 | DELETE | `/api/v1/rbac/groups/{id}/members/{type}/{memberId}` | Remove a group member. |
 | GET | `/api/v1/rbac/groups/{id}/effective-privileges` | Get group effective privileges. |
-| GET | `/api/v1/rbac/groups/{id}/privileges/mcp` | Get group MCP tool privileges. |
-| PUT | `/api/v1/rbac/groups/{id}/privileges/mcp` | Set group MCP tool privileges. |
-| GET | `/api/v1/rbac/groups/{id}/privileges/connections` | Get group connection privileges. |
-| PUT | `/api/v1/rbac/groups/{id}/privileges/connections` | Set group connection privileges. |
-| GET | `/api/v1/rbac/groups/{id}/permissions` | Get group admin permissions. |
-| PUT | `/api/v1/rbac/groups/{id}/permissions` | Set group admin permissions. |
+| POST | `/api/v1/rbac/groups/{id}/privileges/mcp` | Grant a group an MCP privilege. |
+| DELETE | `/api/v1/rbac/groups/{id}/privileges/mcp?name={privilege}` | Revoke an MCP privilege from a group. |
+| POST | `/api/v1/rbac/groups/{id}/privileges/connections` | Grant a group connection access. |
+| DELETE | `/api/v1/rbac/groups/{id}/privileges/connections/{connection_id}` | Revoke a group's connection access. |
+| GET | `/api/v1/rbac/groups/{id}/permissions` | Get group admin permissions (superuser only). |
+| POST | `/api/v1/rbac/groups/{id}/permissions` | Grant a group an admin permission (superuser only). |
+| DELETE | `/api/v1/rbac/groups/{id}/permissions/{permission}` | Revoke an admin permission from a group (superuser only). |
 | GET | `/api/v1/rbac/tokens` | List all API tokens. |
 | POST | `/api/v1/rbac/tokens` | Create an API token. |
 | DELETE | `/api/v1/rbac/tokens/{id}` | Delete an API token. |
@@ -311,6 +316,7 @@ end in the future is clamped to the present moment.
 | PUT | `/api/v1/rbac/tokens/{id}/scope` | Set a token scope. |
 | DELETE | `/api/v1/rbac/tokens/{id}/scope` | Clear a token scope. |
 | GET | `/api/v1/rbac/privileges/mcp` | List all MCP privilege identifiers. |
+| GET | `/api/v1/rbac/audit` | List RBAC audit events (superuser only). |
 
 ### Utilities
 
@@ -349,6 +355,18 @@ explanatory message when a request breaks one:
 - The start must fall before the present moment.
 - The span must not exceed 366 days.
 
+Three endpoints apply a tighter limit of 30 days on top of
+that, because their cost grows with the window rather than
+being absorbed by a wider bucket:
+`/api/v1/metrics/top-queries`,
+`/api/v1/metrics/performance-summary` and
+`/api/v1/metrics/database-summaries`. A span longer than 30
+days but no longer than 366 days is rejected with
+`invalid time range: span must not exceed 30 days`, and a
+span longer than 366 days with the 366 day message above.
+Thirty days is the longest preset, so no preset is
+affected.
+
 The server clamps an end time in the future to the
 present moment rather than rejecting the request,
 because a picker set to the current day often overshoots
@@ -369,12 +387,147 @@ curl -H "Authorization: Bearer YOUR_TOKEN" \
      "https://localhost:8080/api/v1/metrics/query?$QUERY&$WINDOW"
 ```
 
-Only `/api/v1/metrics/query` supports a custom window.
-The `/api/v1/metrics/performance-summary` and
-`/api/v1/metrics/database-summaries` endpoints accept the
-presets alone, and `/api/v1/metrics/top-queries` has no
-time dimension; that endpoint always reports the latest
-collected sample.
+The `/api/v1/metrics/query`,
+`/api/v1/metrics/connection-groups`,
+`/api/v1/metrics/database-summaries`,
+`/api/v1/metrics/performance-summary`,
+`/api/v1/metrics/query-stats` and
+`/api/v1/metrics/top-queries` endpoints support a custom
+window with the same three parameters and the same rules;
+`performance-summary` derives its bucket width from the
+resolved window, one sixtieth of the span with a ten second
+floor.
+
+The `/api/v1/metrics/database-summaries` endpoint defaults
+to `time_range=24h` when the request names no window, and
+bounds every figure in the response by the resolved window.
+The database size, the connection count, the dead tuple
+ratio and the transaction rate all describe the state at
+the end of the window rather than the present moment, so a
+window that ends in the past reports each database as the
+database stood then. A window that ends at the present
+moment returns the current figures, as before. The endpoint
+returns an empty `databases` array when the metrics schema
+has not been created yet; any other query failure returns
+status 500 rather than a partial or empty list.
+
+The `/api/v1/metrics/query` and
+`/api/v1/metrics/performance-summary` endpoints accept at
+most 100 entries in `connection_ids`, because each one adds
+a further set of queries to the request; a longer list
+returns status 400.
+
+The `/api/v1/metrics/top-queries` endpoint defaults to
+`time_range=1h` when the request names no window.
+PostgreSQL reports the `pg_stat_statements` counters
+cumulatively, so the endpoint sums the differences between
+consecutive samples in the window rather than reading one
+sample. The behaviour that follows from that is:
+
+- The `calls`, `total_exec_time`, `rows`,
+  `shared_blks_hit` and `shared_blks_read` fields report
+  the activity inside the window.
+- The `mean_exec_time` field divides the windowed total
+  execution time by the windowed call count.
+- The `min_exec_time` and `max_exec_time` fields remain
+  lifetime figures for the statement, because a window
+  extreme cannot be recovered by differencing two lifetime
+  extremes. Ordering on either field therefore sorts a
+  windowed list on a lifetime figure.
+- A pair of samples whose counters went backwards is
+  discarded as a `pg_stat_statements_reset()`, so a reset
+  inside the window loses the activity of that one
+  interval rather than producing a negative figure.
+- A statement that the collector sampled but that ran no
+  calls inside the window is left out of the response
+  altogether.
+- A custom window may span at most 30 days, which is the
+  longest preset; the endpoint rejects a longer span with
+  `span must not exceed 30 days`, as described under
+  Metric Time Windows below.
+- On a server with `pg_stat_statements` installed in more
+  than one database, the collector stores each counter
+  once per such database. The endpoint counts each
+  counter once, and a `database_name` filter sums only
+  the counters of the statements that ran in that
+  database.
+
+### Query Response Envelope
+
+The `/api/v1/metrics/query` endpoint returns an object that
+describes the window the server queried alongside the data
+the server found. The bucketed mode described above returns
+this envelope; the latest-rows mode, which a request selects
+by passing `limit` or `order_by`, is unchanged and still
+returns the matching rows.
+
+In the following example, the server answers a six-hour
+preset with a five-minute bucket width:
+
+```json
+{
+  "probe_name": "pg_stat_all_tables",
+  "connection_ids": [1],
+  "time_range": "6h",
+  "time_start": "2026-09-16T06:00:00Z",
+  "time_end": "2026-09-16T12:00:00Z",
+  "bucket_seconds": 300,
+  "buckets": 72,
+  "aggregation": "avg",
+  "series": [
+    {
+      "name": "n_live_tup",
+      "metric": "n_live_tup",
+      "unit": "",
+      "data": [
+        {"time": "2026-09-16T06:00:00Z", "value": null},
+        {"time": "2026-09-16T06:05:00Z", "value": 90},
+        {"time": "2026-09-16T06:10:00Z", "value": 90, "filled": true}
+      ]
+    }
+  ]
+}
+```
+
+The following table describes the fields of the envelope:
+
+| Field | Description |
+|-------|-------------|
+| `probe_name` | The probe the series were read from. |
+| `connection_ids` | The connections the query covered. |
+| `time_range` | The range selection the caller asked for. |
+| `time_start` | The resolved window start, as RFC 3339. |
+| `time_end` | The resolved window end, as RFC 3339. |
+| `bucket_seconds` | The bucket width the query binned by. |
+| `buckets` | The bucket count the query divided the window into. |
+| `aggregation` | The aggregate applied within each bucket. |
+| `series` | One entry per metric, per connection. |
+
+The server divides the window into the number of buckets the
+request asked for, then clamps that count to one bucket per
+probe collection interval, because a bucket narrower than the
+interval cannot hold a sample of its own; `buckets` and
+`bucket_seconds` report the count and the width the query
+actually used. The bucket times include both ends of the
+window, so a series normally holds one point more than
+`buckets` reports.
+
+Every point in a series carries a `time` and a `value`, and a
+point may also carry `filled`:
+
+- A `value` of null marks a bucket that collected no data and
+  had no earlier value to carry forward, so a chart draws a
+  gap rather than a line across the bucket.
+- A `filled` value of true marks a value carried forward from
+  an earlier sample rather than aggregated from a sample of
+  the bucket's own; the field is absent for every other point.
+
+Because the envelope reports the window back to the caller,
+a client can anchor a chart axis to the window the client
+requested rather than to the extent of the data that came
+back. An instance holding a few hours of history therefore
+draws a 30-day request as a mostly empty 30-day axis, rather
+than as the same chart a one-hour request produces.
 
 ## Error Responses
 

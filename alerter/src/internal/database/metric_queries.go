@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -178,6 +179,38 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 	return results, nil
 }
 
+// MetricClearsWhenAbsent reports whether an active alert on metricName
+// should be cleared when the latest query returns no row for the alert's
+// connection and database (or no rows at all). It is false for metrics
+// whose query emits a row for every healthy connection, where a missing
+// row means the data has stopped arriving rather than that the condition
+// has resolved, and false for any metric the registry does not know. See
+// the clearWhenAbsent field on metricQueryConfig and GitHub issue #407.
+func (d *Datastore) MetricClearsWhenAbsent(metricName string) bool {
+	return metricRegistry[metricName].clearWhenAbsent
+}
+
+// MetricProbeName returns the collector probe that fills the metrics table
+// metricName's latest query reads, or the empty string for a metric the
+// registry does not know. The alert cleaner uses it to check that the data
+// feeding a clearWhenAbsent metric is still current before it treats an
+// absent row as a recovery. See the probeName field on metricQueryConfig
+// and GitHub issue #407.
+func (d *Datastore) MetricProbeName(metricName string) string {
+	return metricRegistry[metricName].probeName
+}
+
+// MetricAbsenceWindow returns how far back metricName's latest query
+// looks, or zero for a metric the registry does not know or that does
+// not clear when absent. The alert cleaner treats an absent row as a
+// recovery only when the metric's probe collected inside this window,
+// which is the only interval over which the query can report anything
+// at all. See the absenceWindow field on metricQueryConfig and GitHub
+// issue #407.
+func (d *Datastore) MetricAbsenceWindow(metricName string) time.Duration {
+	return metricRegistry[metricName].absenceWindow
+}
+
 // queryHistoricalMetricValuesBasic executes a historical SQL query that returns rows with
 // (connection_id, database_name, value, collected_at) where database_name is scanned as-is
 // (typically NULL for basic metrics).
@@ -194,6 +227,7 @@ func (d *Datastore) queryHistoricalMetricValuesBasic(ctx context.Context, sql st
 		if err := rows.Scan(&hv.ConnectionID, &hv.DatabaseName, &hv.Value, &hv.CollectedAt); err != nil {
 			return nil, err
 		}
+		hv.SampleCount = 1
 		results = append(results, hv)
 	}
 	if err := rows.Err(); err != nil {
@@ -218,7 +252,47 @@ func (d *Datastore) queryHistoricalMetricValuesWithDB(ctx context.Context, sql s
 		if err := rows.Scan(&hv.ConnectionID, &dbName, &hv.Value, &hv.CollectedAt); err != nil {
 			return nil, err
 		}
+		hv.SampleCount = 1
 		hv.DatabaseName = &dbName
+		results = append(results, hv)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return results, nil
+}
+
+// queryHistoricalMetricValuesWithSamples executes a historical SQL
+// query that returns rows with (connection_id, database_name, value,
+// collected_at, sample_count), where sample_count is the number of raw
+// samples the row aggregates.
+//
+// Bucketed queries return one row per hour rather than one per sample, so
+// the caller cannot infer the sample count from the number of rows; the
+// query reports it instead. See GitHub issue #409.
+//
+// When requireDB is true every row must name a database, as the
+// per-database bucketed queries do, and a NULL database_name is an
+// error; when it is false database_name is scanned as-is, which is NULL
+// for the per-connection bucketed queries (GitHub issue #490).
+func (d *Datastore) queryHistoricalMetricValuesWithSamples(ctx context.Context, sql string, lookbackDays int, requireDB bool) ([]HistoricalMetricValue, error) {
+	rows, err := d.queryInternal(ctx, sql, lookbackDays)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []HistoricalMetricValue
+	for rows.Next() {
+		var hv HistoricalMetricValue
+		if err := rows.Scan(&hv.ConnectionID, &hv.DatabaseName, &hv.Value,
+			&hv.CollectedAt, &hv.SampleCount); err != nil {
+			return nil, err
+		}
+		if requireDB && hv.DatabaseName == nil {
+			return nil, fmt.Errorf("row for connection %d has no database name",
+				hv.ConnectionID)
+		}
 		results = append(results, hv)
 	}
 	if err := rows.Err(); err != nil {
@@ -238,15 +312,9 @@ func (d *Datastore) queryHistoricalMetricValuesWithDB(ctx context.Context, sql s
 // violations on metric_baselines.connection_id. See GitHub issue #56.
 func (d *Datastore) GetHistoricalMetricValues(ctx context.Context, metricName string, lookbackDays int) ([]HistoricalMetricValue, error) {
 	cfg, ok := metricRegistry[metricName]
-	if !ok {
-		// For metrics not explicitly handled, return an error
-		// This allows the caller to fall back to other baseline calculation methods
-		return nil, fmt.Errorf("historical data not implemented for metric %s", metricName)
-	}
-
-	if cfg.historicalSQL == "" {
-		// For metrics not explicitly handled, return an error
-		// This allows the caller to fall back to other baseline calculation methods
+	if !ok || cfg.historicalSQL == "" {
+		// Callers are expected to check SupportsBaselines first; the
+		// error is kept for anything that does not.
 		return nil, fmt.Errorf("historical data not implemented for metric %s", metricName)
 	}
 
@@ -258,6 +326,10 @@ func (d *Datastore) GetHistoricalMetricValues(ctx context.Context, metricName st
 		results, err = d.queryHistoricalMetricValuesBasic(ctx, cfg.historicalSQL, lookbackDays)
 	case historicalScanWithDB:
 		results, err = d.queryHistoricalMetricValuesWithDB(ctx, cfg.historicalSQL, lookbackDays)
+	case historicalScanWithDBAndSamples:
+		results, err = d.queryHistoricalMetricValuesWithSamples(ctx, cfg.historicalSQL, lookbackDays, true)
+	case historicalScanBasicWithSamples:
+		results, err = d.queryHistoricalMetricValuesWithSamples(ctx, cfg.historicalSQL, lookbackDays, false)
 	default:
 		return nil, fmt.Errorf("unknown historical scan type for metric: %s", metricName)
 	}

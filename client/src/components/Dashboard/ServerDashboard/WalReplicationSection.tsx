@@ -15,14 +15,23 @@ import CircularProgress from '@mui/material/CircularProgress';
 import { Sync as SyncIcon } from '@mui/icons-material';
 import { useDashboard } from '../../../contexts/useDashboard';
 import { useMetrics } from '../../../hooks/useMetrics';
-import type { MetricQueryParams, MetricSeries } from '../types';
+import type {
+    MetricDataPoint,
+    MetricQueryParams,
+    MetricSeries,
+    MetricsWindow,
+} from '../types';
+import { buildMetricChartData as buildChartData } from '../metricsChart';
 import { KPI_GRID_SX, CHART_SECTION_SX } from '../styles';
 import KpiTile from '../KpiTile';
 import CollapsibleSection from '../CollapsibleSection';
 import { Chart } from '../../Chart';
 import ChartPanel from '../ChartPanel';
-import { formatBytes, formatLag, formatNumber } from '../../../utils/formatters';
-import { type ServerSectionProps, extractSparklineData, extractLatestValue } from './types';
+import { formatBytes, formatLag, formatValue } from '../../../utils/formatters';
+import {
+    type ServerSectionProps, extractSparklineData, extractLatestValue,
+    extractLatestRate,
+} from './types';
 
 /** Number of data buckets for KPI sparklines */
 const KPI_BUCKETS = 30;
@@ -46,73 +55,21 @@ const getLagStatus = (
 };
 
 /**
- * Build chart data from metric series for the Chart component.
- */
-const buildChartData = (
-    series: MetricSeries[] | null,
-    metricNames: string[],
-    displayNames?: string[],
-) => {
-    if (!series) { return null; }
-
-    const matchedSeries = metricNames.map((metric, idx) => {
-        const found = series.find(s => s.metric === metric);
-        return {
-            name: displayNames?.[idx] ?? metric,
-            data: found?.data.map(d => d.value) ?? [],
-            categories: found?.data.map(d => d.time) ?? [],
-        };
-    });
-
-    if (matchedSeries.every(s => s.data.length === 0)) { return null; }
-
-    const categories = matchedSeries.find(
-        s => s.categories.length > 0
-    )?.categories ?? [];
-
-    return {
-        categories,
-        series: matchedSeries.map(s => ({
-            name: s.name,
-            data: s.data,
-        })),
-    };
-};
-
-/**
  * Build chart data for replication lag where each standby produces
- * its own series, identified by the series name field.
+ * its own series, identified by the series name field. It differs from
+ * `buildChartData` only in requiring a display name per metric, the
+ * names being derived from the standbys rather than fixed.
  */
 const buildReplicationLagChartData = (
     series: MetricSeries[] | null,
     metricNames: string[],
     displayNames: string[],
-) => {
-    if (!series || series.length === 0) { return null; }
-
-    const matchedSeries = metricNames.map((metric, idx) => {
-        const found = series.find(s => s.metric === metric);
-        return {
-            name: displayNames[idx],
-            data: found?.data.map(d => d.value) ?? [],
-            categories: found?.data.map(d => d.time) ?? [],
-        };
-    });
-
-    if (matchedSeries.every(s => s.data.length === 0)) { return null; }
-
-    const categories = matchedSeries.find(
-        s => s.categories.length > 0
-    )?.categories ?? [];
-
-    return {
-        categories,
-        series: matchedSeries.map(s => ({
-            name: s.name,
-            data: s.data,
-        })),
-    };
-};
+    window?: MetricsWindow | null,
+) => (
+    !series || series.length === 0
+        ? null
+        : buildChartData(series, metricNames, displayNames, window)
+);
 
 /**
  * WAL and Replication section displays WAL generation rates,
@@ -131,7 +88,7 @@ const WalReplicationSection: React.FC<ServerSectionProps> = ({
         timeRange: timeRange.range,
         buckets: KPI_BUCKETS,
         aggregation: 'avg',
-        metrics: ['wal_bytes', 'wal_records'],
+        metrics: ['wal_bytes_per_sec', 'wal_records_per_sec'],
     }), [connectionId, timeRange.range]);
 
     const replLagKpiParams = useMemo((): MetricQueryParams => ({
@@ -149,7 +106,7 @@ const WalReplicationSection: React.FC<ServerSectionProps> = ({
         timeRange: timeRange.range,
         buckets: KPI_BUCKETS,
         aggregation: 'avg',
-        metrics: ['num_timed', 'num_requested', 'buffers_written'],
+        metrics: ['num_timed_delta', 'num_requested_delta'],
     }), [connectionId, timeRange.range]);
 
     // Chart queries (150 buckets)
@@ -159,7 +116,7 @@ const WalReplicationSection: React.FC<ServerSectionProps> = ({
         timeRange: timeRange.range,
         buckets: CHART_BUCKETS,
         aggregation: 'avg',
-        metrics: ['wal_bytes', 'wal_records'],
+        metrics: ['wal_bytes_per_sec', 'wal_records_per_sec'],
     }), [connectionId, timeRange.range]);
 
     const replLagChartParams = useMemo((): MetricQueryParams => ({
@@ -171,13 +128,23 @@ const WalReplicationSection: React.FC<ServerSectionProps> = ({
         metrics: ['write_lag', 'flush_lag', 'replay_lag'],
     }), [connectionId, timeRange.range]);
 
+    /*
+     * One query feeds both checkpoint charts, since the counts and the
+     * buffers come from the same probe and differ only in how they are
+     * drawn: the counts stack as per-interval bars, whilst the buffers
+     * are a rate and belong on their own line chart.
+     */
     const checkpointChartParams = useMemo((): MetricQueryParams => ({
         probeName: 'pg_stat_checkpointer',
         connectionId,
         timeRange: timeRange.range,
         buckets: CHART_BUCKETS,
         aggregation: 'avg',
-        metrics: ['num_timed', 'num_requested', 'buffers_written'],
+        metrics: [
+            'num_timed_delta',
+            'num_requested_delta',
+            'buffers_written_per_sec',
+        ],
     }), [connectionId, timeRange.range]);
 
     // Fetch KPI data
@@ -191,30 +158,77 @@ const WalReplicationSection: React.FC<ServerSectionProps> = ({
     const checkpointChart = useMetrics(checkpointChartParams);
 
     // Extract current values
-    const walBytes = extractLatestValue(walKpi.data, 'wal_bytes');
-    const walRecords = extractLatestValue(walKpi.data, 'wal_records');
+    const walBytesRate = extractLatestRate(
+        walKpi.data, 'wal_bytes_per_sec'
+    );
+    const walRecordsRate = extractLatestRate(
+        walKpi.data, 'wal_records_per_sec'
+    );
     const replayLag = extractLatestValue(replLagKpi.data, 'replay_lag');
-    const numTimed = extractLatestValue(
-        checkpointKpi.data, 'num_timed'
+
+    /*
+     * The checkpoint tile reports the share of checkpoints that were
+     * requested rather than timed across the whole window, so both
+     * counters are summed over their buckets rather than sampled at
+     * the latest one.
+     */
+    const timedPoints = useMemo(
+        () => extractSparklineData(checkpointKpi.data, 'num_timed_delta'),
+        [checkpointKpi.data]
     );
-    const numRequested = extractLatestValue(
-        checkpointKpi.data, 'num_requested'
+    const requestedPoints = useMemo(
+        () => extractSparklineData(checkpointKpi.data, 'num_requested_delta'),
+        [checkpointKpi.data]
     );
-    const totalCheckpoints = useMemo(() => {
-        if (numTimed !== null || numRequested !== null) {
-            return (numTimed ?? 0) + (numRequested ?? 0);
+    const requestedShare = useMemo(() => {
+        // Null buckets carry no reading and contribute nothing.
+        const sum = (points: MetricDataPoint[]) =>
+            points.reduce((total, point) => total + (point.value ?? 0), 0);
+        const total = sum(timedPoints) + sum(requestedPoints);
+        if (total <= 0) { return null; }
+        return (sum(requestedPoints) / total) * 100;
+    }, [timedPoints, requestedPoints]);
+
+    /*
+     * The running requested share, so that the sparkline tracks the
+     * figure on the tile rather than a different quantity: each bucket
+     * holds the requested checkpoints seen up to and including that
+     * bucket divided by all checkpoints seen so far, as a percentage,
+     * which makes the final point equal the displayed value. Buckets
+     * before the first checkpoint have nothing to divide by and carry
+     * 0, which the Sparkline draws as a flat lead-in. A null bucket
+     * has no reading and adds nothing to either running total.
+     */
+    const checkpointSparkline = useMemo((): MetricDataPoint[] => {
+        const len = Math.max(timedPoints.length, requestedPoints.length);
+        const points: MetricDataPoint[] = [];
+        let cumulativeRequested = 0;
+        let cumulativeTotal = 0;
+        for (let i = 0; i < len; i++) {
+            const timed = i < timedPoints.length ? timedPoints[i] : null;
+            const requested = i < requestedPoints.length
+                ? requestedPoints[i] : null;
+            cumulativeRequested += requested?.value ?? 0;
+            cumulativeTotal += (timed?.value ?? 0) + (requested?.value ?? 0);
+            points.push({
+                time: (timed ?? requested as MetricDataPoint).time,
+                value: cumulativeTotal > 0
+                    ? (cumulativeRequested / cumulativeTotal) * 100
+                    : 0,
+            });
         }
-        return null;
-    }, [numTimed, numRequested]);
+        return points;
+    }, [timedPoints, requestedPoints]);
 
     // Build chart datasets
     const walChartData = useMemo(
         () => buildChartData(
             walChart.data,
-            ['wal_bytes', 'wal_records'],
-            ['WAL Bytes', 'WAL Records'],
+            ['wal_bytes_per_sec', 'wal_records_per_sec'],
+            ['WAL Bytes/s', 'WAL Records/s'],
+            walChart.window,
         ),
-        [walChart.data]
+        [walChart.data, walChart.window]
     );
 
     const replLagChartData = useMemo(
@@ -222,17 +236,29 @@ const WalReplicationSection: React.FC<ServerSectionProps> = ({
             replLagChart.data,
             ['write_lag', 'flush_lag', 'replay_lag'],
             ['Write Lag', 'Flush Lag', 'Replay Lag'],
+            replLagChart.window,
         ),
-        [replLagChart.data]
+        [replLagChart.data, replLagChart.window]
     );
 
     const checkpointChartData = useMemo(
         () => buildChartData(
             checkpointChart.data,
-            ['num_timed', 'num_requested', 'buffers_written'],
-            ['Timed', 'Requested', 'Buffers Written'],
+            ['num_timed_delta', 'num_requested_delta'],
+            ['Timed', 'Requested'],
+            checkpointChart.window,
         ),
-        [checkpointChart.data]
+        [checkpointChart.data, checkpointChart.window]
+    );
+
+    const checkpointBuffersChartData = useMemo(
+        () => buildChartData(
+            checkpointChart.data,
+            ['buffers_written_per_sec'],
+            ['Buffers Written/s'],
+            checkpointChart.window,
+        ),
+        [checkpointChart.data, checkpointChart.window]
     );
 
     const isKpiLoading = walKpi.loading || replLagKpi.loading
@@ -248,12 +274,13 @@ const WalReplicationSection: React.FC<ServerSectionProps> = ({
             <Box sx={KPI_GRID_SX}>
                 <KpiTile
                     label="WAL Bytes"
-                    value={formatBytes(walBytes)}
+                    value={formatBytes(walBytesRate)}
+                    unit={walBytesRate !== null ? '/s' : undefined}
                     sparklineData={extractSparklineData(
-                        walKpi.data, 'wal_bytes'
+                        walKpi.data, 'wal_bytes_per_sec'
                     )}
                     analysisContext={{
-                        metricDescription: 'WAL bytes generated over time',
+                        metricDescription: 'WAL bytes generated per second over time',
                         connectionId,
                         connectionName,
                         timeRange: timeRange.range,
@@ -261,14 +288,13 @@ const WalReplicationSection: React.FC<ServerSectionProps> = ({
                 />
                 <KpiTile
                     label="WAL Records"
-                    value={walRecords !== null
-                        ? formatNumber(Math.round(walRecords))
-                        : '--'}
+                    value={formatValue(walRecordsRate)}
+                    unit={walRecordsRate !== null ? '/s' : undefined}
                     sparklineData={extractSparklineData(
-                        walKpi.data, 'wal_records'
+                        walKpi.data, 'wal_records_per_sec'
                     )}
                     analysisContext={{
-                        metricDescription: 'WAL record count over time',
+                        metricDescription: 'WAL records generated per second over time',
                         connectionId,
                         connectionName,
                         timeRange: timeRange.range,
@@ -289,15 +315,12 @@ const WalReplicationSection: React.FC<ServerSectionProps> = ({
                     }}
                 />
                 <KpiTile
-                    label="Checkpoints"
-                    value={totalCheckpoints !== null
-                        ? formatNumber(Math.round(totalCheckpoints))
-                        : '--'}
-                    sparklineData={extractSparklineData(
-                        checkpointKpi.data, 'num_timed'
-                    )}
+                    label="Requested Checkpoints"
+                    value={formatValue(requestedShare)}
+                    unit={requestedShare !== null ? '%' : undefined}
+                    sparklineData={checkpointSparkline}
                     analysisContext={{
-                        metricDescription: 'Checkpoint frequency over time',
+                        metricDescription: 'Share of checkpoints that were requested rather than timed; a high share suggests max_wal_size is too low',
                         connectionId,
                         connectionName,
                         timeRange: timeRange.range,
@@ -312,6 +335,7 @@ const WalReplicationSection: React.FC<ServerSectionProps> = ({
                         loading={walChart.loading && !walChartData}
                         hasData={!!walChartData}
                         emptyMessage="No WAL data available"
+                        errorMessage={walChart.error}
                         height={CHART_HEIGHT}
                     >
                         {walChartData && (
@@ -326,7 +350,7 @@ const WalReplicationSection: React.FC<ServerSectionProps> = ({
                                 showTooltip
                                 enableExport={false}
                                 analysisContext={{
-                                    metricDescription: 'Write-ahead log activity including WAL bytes generated',
+                                    metricDescription: 'Write-ahead log activity showing WAL bytes and records generated per second',
                                     connectionId,
                                     connectionName,
                                     timeRange: timeRange.range,
@@ -342,6 +366,7 @@ const WalReplicationSection: React.FC<ServerSectionProps> = ({
                         loading={replLagChart.loading && !replLagChartData}
                         hasData={!!replLagChartData}
                         emptyMessage="No replication data available. Is this server a primary with standbys?"
+                        errorMessage={replLagChart.error}
                         height={CHART_HEIGHT}
                     >
                         {replLagChartData && (
@@ -371,20 +396,52 @@ const WalReplicationSection: React.FC<ServerSectionProps> = ({
                         loading={checkpointChart.loading && !checkpointChartData}
                         hasData={!!checkpointChartData}
                         emptyMessage="No checkpoint data available"
+                        errorMessage={checkpointChart.error}
                         height={CHART_HEIGHT}
                     >
                         {checkpointChartData && (
                             <Chart
-                                type="line"
+                                type="bar"
                                 data={checkpointChartData}
                                 title="Checkpoints Over Time"
+                                height={CHART_HEIGHT}
+                                stacked
+                                showLegend
+                                showTooltip
+                                enableExport={false}
+                                analysisContext={{
+                                    metricDescription: 'Checkpoints completed in each interval, split between timed and requested',
+                                    connectionId,
+                                    connectionName,
+                                    timeRange: timeRange.range,
+                                }}
+                            />
+                        )}
+                    </ChartPanel>
+                </Box>
+
+                <Box>
+                    <ChartPanel
+                        title="Checkpoint Buffers Written"
+                        loading={checkpointChart.loading
+                            && !checkpointBuffersChartData}
+                        hasData={!!checkpointBuffersChartData}
+                        emptyMessage="No checkpoint buffer data available"
+                        errorMessage={checkpointChart.error}
+                        height={CHART_HEIGHT}
+                    >
+                        {checkpointBuffersChartData && (
+                            <Chart
+                                type="line"
+                                data={checkpointBuffersChartData}
+                                title="Checkpoint Buffers Written"
                                 height={CHART_HEIGHT}
                                 smooth
                                 showLegend
                                 showTooltip
                                 enableExport={false}
                                 analysisContext={{
-                                    metricDescription: 'Checkpoint activity showing timed and requested checkpoints',
+                                    metricDescription: 'Buffers written by the checkpointer per second',
                                     connectionId,
                                     connectionName,
                                     timeRange: timeRange.range,

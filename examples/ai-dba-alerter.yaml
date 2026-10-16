@@ -135,6 +135,20 @@ threshold:
   # Default: 60
   evaluation_interval_seconds: 60
 
+  # Consecutive metric samples that must breach a rule's threshold
+  # before an alert is raised. A sample is one collection by the
+  # collector, not one evaluation, so re-reading the same sample does
+  # not count twice. Set to 1 to raise on the first breaching sample.
+  # Must be at least 1.
+  # Default: 2
+  trigger_count: 2
+
+  # Consecutive metric samples that must be back within the threshold
+  # before an active alert is cleared. Set to 1 to clear on the first
+  # sample that no longer breaches. Must be at least 1.
+  # Default: 3
+  clear_count: 3
+
 #=========================================================================
 # ANOMALY DETECTION SETTINGS
 #=========================================================================
@@ -180,6 +194,15 @@ anomaly:
     # Default: 100.0
     max_z_score: 100.0
 
+    # Number of consecutive samples of an active anomaly alert's
+    # metric that must score back inside the sensitivity band before
+    # the alert is cleared automatically. Only a newly collected
+    # sample counts, so Tier 1 passes that re-score a sample already
+    # counted do not add to it. The count is held in memory and
+    # restarts from zero when the alerter restarts.
+    # Default: 3
+    clear_count: 3
+
     # Hybrid variance floor: effective_stddev =
     #   max(raw_stddev, max(|mean|*relative_pct, absolute_floor))
     # Prevents the divisor in the z-score formula from collapsing
@@ -195,6 +218,18 @@ anomaly:
       # absolute_floor to 0 to disable the variance floor.
       # Default: 0.001
       absolute_floor: 0.001
+
+    # Per-metric floors, overriding the built-in defaults field by
+    # field. A value under min_value is never anomalous and counts as
+    # in band when an anomaly alert is cleared; min_stddev is the
+    # smallest z-score divisor in the metric's units. 0 disables a
+    # floor. An alert scored against a baseline with no spread of its
+    # own (a standard deviation at or below absolute_floor) is raised
+    # as a warning at most.
+    # metric_floors:
+    #   pg_sys_cpu_usage_info.processor_time_percent:
+    #     min_value: 50
+    #     min_stddev: 5
 
     # Warmup gate: skip anomaly detection while a baseline has
     # not seen enough samples or enough wall-clock time to be
@@ -222,7 +257,11 @@ anomaly:
         min_span_hours: 120
 
       # Daily baselines: each day-of-week bucket fills once
-      # per week, so 336 hours = two weeks of operation.
+      # per week, so 336 hours = two weeks of operation. A
+      # baseline's span can never exceed baselines.lookback_days
+      # (below), so keep min_span_hours at or under that many
+      # hours or the daily tier is never used; the alerter logs
+      # a warning on each baseline cycle when it is not.
       daily:
         # Default: 3
         min_samples: 3
@@ -262,9 +301,51 @@ anomaly:
     # Default: true
     enabled: true
 
-    # Timeout for LLM API calls in seconds
+    # Timeout for each LLM API call in seconds. A candidate whose
+    # decision model call fails and falls back to the reasoning model
+    # makes two calls, each with this timeout.
     # Default: 30
     timeout_seconds: 30
+
+    # Used only when llm.decision_provider is set. The decision model
+    # returns the probability that the anomaly is a real issue; the
+    # candidate is suppressed when one minus that probability is at
+    # least this value, and alerted otherwise. A higher value
+    # suppresses fewer candidates. Calibration differs by provider, so
+    # tune it for the provider in use. Must be greater than 0 and less
+    # than 1 whilst a decision provider is configured.
+    # Default: 0.5
+    # decision_suppress_threshold: 0.5
+
+  #-------------------------------------------------------------------------
+  # LLM Provider Health
+  #-------------------------------------------------------------------------
+  # The alerter raises a system alert when the Tier 2 embedding, Tier 3
+  # classification or re-evaluation calls to an LLM provider keep
+  # failing, because anomaly detection then degrades without any other
+  # sign. The alert clears on the next successful call, unless the
+  # provider is failing at the failure rate below. A failed health check
+  # at startup (for example, a retired model) raises it at once.
+
+  provider_health:
+    # Consecutive failed calls from one tier to one provider before the
+    # system alert is raised. Must be at least 1.
+    # Default: 3
+    failure_threshold: 3
+
+    # Share of the last failure_rate_window calls from one tier to one
+    # provider that, once failed, raises the alert even when the
+    # failures are not consecutive (for example, alternating errors and
+    # successes). The alert then stays open until fewer than that share
+    # are failing. Must be greater than 0 and at most 1; 1 leaves only
+    # the consecutive count, when the window is at least the threshold.
+    # Default: 0.3
+    failure_rate: 0.3
+
+    # Number of most recent calls the failure rate is measured over.
+    # Must be between 1 and 1000.
+    # Default: 20
+    failure_rate_window: 20
 
 #=========================================================================
 # BASELINE CALCULATION SETTINGS
@@ -279,10 +360,15 @@ baselines:
   # Default: 3600 (1 hour)
   refresh_interval_seconds: 3600
 
-  # Number of days of historical data to use for baseline calculation
-  # Longer lookback periods produce more stable baselines
-  # Default: 7
-  lookback_days: 7
+  # Number of days of historical data to use for baseline calculation.
+  # Longer lookback periods produce more stable baselines but adapt
+  # more slowly to a changed workload. This also caps how old a
+  # baseline's earliest sample can be, so it must be at least
+  # anomaly.tier1.warmup.daily.min_span_hours / 24 (14 at the
+  # defaults) for the daily baselines ever to be used; 15 gives every
+  # weekday two occurrences with a day to spare.
+  # Default: 15
+  lookback_days: 15
 
 #=========================================================================
 # CORRELATION SETTINGS
@@ -323,6 +409,30 @@ llm:
   # Options: ollama, openai, gemini, anthropic
   # Default: ollama
   reasoning_provider: ollama
+
+  # Optional decision model for tier 3 classification. When set, tier 3
+  # asks the decision model first and falls back to the reasoning
+  # provider for any candidate it fails to classify (error, refusal,
+  # timeout or malformed answer). Re-evaluation of acknowledged alerts
+  # always uses the reasoning provider. The decision provider receives
+  # the same anomaly context as the reasoning provider. Changing it
+  # requires a restart; SIGHUP does not rebuild providers.
+  # Options: typesafe, openai, none (empty or disabled also mean none)
+  # Default: none
+  # decision_provider: typesafe
+
+  # Maximum number of output tokens for a tier 3 reasoning call. The
+  # budget applies both to anomaly candidate classification and to
+  # acknowledged-alert re-evaluation.
+  # Default: 4096
+  #
+  # Reasoning models (for example Qwen3, DeepSeek-R1 distills, or
+  # gpt-oss served through llama.cpp) charge their thinking tokens
+  # against this same budget. A small budget is consumed entirely by
+  # the thinking block, so the model never emits the classification
+  # verdict. Raise this value if tier 3 reports empty responses; a
+  # value of 0 or less selects the default.
+  max_tokens: 4096
 
   #-------------------------------------------------------------------------
   # Ollama Settings (local LLM)
@@ -375,8 +485,13 @@ llm:
     embedding_model: text-embedding-3-small
 
     # Model to use for reasoning/classification
-    # Default: gpt-4o-mini
-    reasoning_model: gpt-4o-mini
+    # Default: gpt-6-luna
+    reasoning_model: gpt-6-luna
+
+    # OpenAI Decisions API model, used when decision_provider is openai.
+    # Shares api_key_file and base_url with the models above.
+    # Default: gpt-6-luna
+    # decision_model: gpt-6-luna
 
   #-------------------------------------------------------------------------
   # Anthropic Settings
@@ -391,8 +506,8 @@ llm:
     # base_url: https://api.anthropic.com/v1
 
     # Model to use for reasoning/classification
-    # Default: claude-3-5-haiku-20241022
-    reasoning_model: claude-3-5-haiku-20241022
+    # Default: claude-haiku-4-5
+    reasoning_model: claude-haiku-4-5
 
   #-------------------------------------------------------------------------
   # Google Gemini Settings
@@ -416,8 +531,8 @@ llm:
     # Model to use for reasoning/classification
     # Model availability varies by Gemini API key tier; run
     # ListModels to verify which models a given key can access.
-    # Default: gemini-2.5-flash
-    reasoning_model: gemini-2.5-flash
+    # Default: gemini-3.8-flash
+    reasoning_model: gemini-3.8-flash
 
   #-------------------------------------------------------------------------
   # Voyage Settings (for embeddings only)
@@ -435,12 +550,30 @@ llm:
     # Default: voyage-3-lite
     embedding_model: voyage-3-lite
 
+  #-------------------------------------------------------------------------
+  # TypeSafe Settings (Jev decision models; decision_provider only)
+  #-------------------------------------------------------------------------
+
+  # typesafe:
+  #   # Path to file containing the TypeSafe API key. Required, even
+  #   # when base_url is overridden; the TYPESAFE_API_KEY environment
+  #   # variable is not used.
+  #   api_key_file: /etc/ai-workbench/typesafe-api-key.txt
+  #
+  #   # Base URL for the TypeSafe API
+  #   # Default: https://api.typesafe.ai/v1
+  #   # base_url: https://api.typesafe.ai/v1
+  #
+  #   # Decision model
+  #   # Default: jev-latest
+  #   decision_model: jev-latest
+
 #=========================================================================
 # NOTIFICATION DELIVERY SETTINGS
 #=========================================================================
 #
 # Configure how the alerter delivers notifications through external
-# channels such as email, Slack, Mattermost, and webhooks.
+# channels such as email, Slack, Mattermost, Telegram, and webhooks.
 #
 
 notifications:
@@ -449,8 +582,9 @@ notifications:
   enabled: false
 
   # Path to file containing the server secret for decrypting
-  # notification channel credentials (webhook URLs, SMTP passwords,
-  # and authentication credentials stored by the Server component).
+  # notification channel credentials (webhook URLs, Telegram bot
+  # tokens, SMTP passwords, and authentication credentials stored by
+  # the Server component).
   #
   # This file must contain the same plain text secret used by the
   # Server and Collector components. You can point to the server's
@@ -477,7 +611,8 @@ notifications:
   # Default: [5, 15, 60]
   retry_backoff_minutes: [5, 15, 60]
 
-  # HTTP request timeout for webhooks, Slack, and Mattermost (in seconds)
+  # HTTP request timeout for webhooks, Slack, Mattermost, and
+  # Telegram (in seconds)
   # Default: 30
   http_timeout_seconds: 30
 
@@ -597,13 +732,13 @@ notifications:
 #   reasoning_provider: anthropic
 #   anthropic:
 #     api_key_file: /var/secrets/ai-workbench/anthropic-api-key.txt
-#     reasoning_model: claude-3-5-haiku-20241022
+#     reasoning_model: claude-haiku-4-5
 #   voyage:
 #     api_key_file: /var/secrets/ai-workbench/voyage-api-key.txt
 #     embedding_model: voyage-3-lite
 # baselines:
 #   refresh_interval_seconds: 3600
-#   lookback_days: 7
+#   lookback_days: 15
 # correlation:
 #   window_seconds: 180
 # notifications:

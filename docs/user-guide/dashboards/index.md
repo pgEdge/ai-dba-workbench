@@ -64,7 +64,11 @@ The server enforces the following limits on a custom
 window:
 
 - The start must fall before the present moment.
-- The span must not exceed 366 days.
+- The span must not exceed 366 days. The Top Queries
+  panel and the query detail overlay accept at most 30
+  days, the longest preset, and report `span must not
+  exceed 30 days` for a longer window whilst the charts
+  continue to draw.
 - An end time in the future is clamped to the present
   moment rather than rejected.
 
@@ -82,23 +86,53 @@ so a browser reload returns to the last preset.
 
 The time-series charts follow the dashboard time range,
 including the two charts on the query detail overlay. The
-headline statistics on that overlay report the latest
-collected sample instead.
+statistics on that overlay follow the selector as well,
+except for the two lifetime tiles described in the Object
+Dashboard document.
+
+The Top Queries panel on the server dashboard follows the
+selector, and so does the query detail overlay that the
+panel opens. Both report the activity within the selected
+window rather than the lifetime totals of each statement,
+so a statement that ran no calls inside the window drops
+off the list entirely. Changing the range returns the
+panel to the first page, because a shorter window usually
+returns fewer rows.
 
 The event timeline follows its own independent range,
 which the dashboard selector never changes. The timeline
 supports a custom window through that separate control.
 
-The query leaderboards and the performance and database
-summary tiles do not follow the selector. The
-leaderboards report the latest collected sample, and the
-summary tiles always cover the last twenty-four hours.
+The table and index leaderboards on the database
+dashboard do not follow the selector; both report the
+latest collected sample.
+
+The database summary cards on the server dashboard and
+the comparative charts on the cluster dashboard follow
+the selector, as does the Transaction Rate tile on the
+estate dashboard. Each of those panels sits inside the
+Monitoring section, with the selector on the section
+header in plain view. The other estate KPI tiles report
+the estate as it stands now, whatever the selector reads.
+
+The performance tiles in the status panel always cover the
+last twenty-four hours, whatever the selector reads. Those
+tiles render above the Monitoring section rather than
+inside it, so a user reading a tile cannot see the control
+that would be changing the figure; the fixed window is a
+deliberate choice rather than an oversight.
+
+The database filter on the Top Queries panel lists the
+databases seen over a fixed twenty-four hours as well,
+even though the panel itself follows the selector. The
+choices in that filter therefore stay put as the user
+narrows the window.
 
 ## Event Timeline
 
 The event timeline displays notable events across the
-selected servers. The timeline appears above the
-performance summary tiles in the monitoring section.
+selected servers. The timeline appears in the status
+panel, above the performance tiles.
 
 The timeline header carries its own range control,
 offering the same five presets and a Custom option that

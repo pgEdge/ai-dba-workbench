@@ -13,6 +13,11 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import AIOverview from '../AIOverview';
+import type {
+    ClusterSelection,
+    EstateSelection,
+    ServerSelection,
+} from '../../types/selection';
 import * as apiClientModule from '../../utils/apiClient';
 import { logger } from '../../utils/logger';
 import { clearAnalysisCache } from '../../hooks/useServerAnalysis';
@@ -49,6 +54,42 @@ vi.mock('../../hooks/useServerAnalysis', () => ({
 }));
 
 const theme = createTheme();
+
+/** Estate-wide selection fixture. */
+const estateSelection: EstateSelection = {
+    type: 'estate',
+    name: 'Estate',
+    status: 'online',
+    groups: [],
+};
+
+/** Build a server selection fixture with the given connection id. */
+const makeServerSelection = (id: number): ServerSelection => ({
+    type: 'server',
+    id,
+    name: `server-${id}`,
+    status: 'online',
+    description: '',
+    host: `server-${id}.example.com`,
+    port: 5432,
+    role: 'primary',
+    version: '18.0',
+    database: 'postgres',
+    username: 'postgres',
+    os: 'Linux',
+    platform: 'x86_64',
+});
+
+/** Cluster selection fixture used by the scoped SSE tests. */
+const clusterSelection: ClusterSelection = {
+    type: 'cluster',
+    id: 'cluster-1',
+    name: 'Production',
+    status: 'online',
+    description: '',
+    servers: [],
+    serverIds: [1, 3, 5],
+};
 
 /**
  * Helper to render the AIOverview component wrapped in a ThemeProvider.
@@ -236,7 +277,7 @@ describe('AIOverview Component', () => {
 
         it('passes /api/v1/overview to SSE hook when selection type is estate', () => {
             renderWithTheme(
-                <AIOverview selection={{ type: 'estate' }} />
+                <AIOverview selection={estateSelection} />
             );
 
             expect(mockUseOverviewSSE).toHaveBeenCalledWith('/api/v1/overview');
@@ -244,7 +285,7 @@ describe('AIOverview Component', () => {
 
         it('passes scope_type=server and scope_id to SSE hook when selection is a server', () => {
             renderWithTheme(
-                <AIOverview selection={{ type: 'server', id: 5 }} />
+                <AIOverview selection={makeServerSelection(5)} />
             );
 
             expect(mockUseOverviewSSE).toHaveBeenCalledWith(
@@ -254,14 +295,7 @@ describe('AIOverview Component', () => {
 
         it('passes connection_ids and scope_name to SSE hook when selection is a cluster', () => {
             renderWithTheme(
-                <AIOverview
-                    selection={{
-                        type: 'cluster',
-                        id: 'cluster-1',
-                        name: 'Production',
-                        serverIds: [1, 3, 5],
-                    }}
-                />
+                <AIOverview selection={clusterSelection} />
             );
 
             expect(mockUseOverviewSSE).toHaveBeenCalledWith(
@@ -281,7 +315,7 @@ describe('AIOverview Component', () => {
 
             rerender(
                 <ThemeProvider theme={theme}>
-                    <AIOverview selection={{ type: 'server', id: 7 }} />
+                    <AIOverview selection={makeServerSelection(7)} />
                 </ThemeProvider>
             );
 

@@ -27,6 +27,7 @@ type NotificationChannelType string
 const (
 	ChannelTypeSlack      NotificationChannelType = "slack"
 	ChannelTypeMattermost NotificationChannelType = "mattermost"
+	ChannelTypeTelegram   NotificationChannelType = "telegram"
 	ChannelTypeWebhook    NotificationChannelType = "webhook"
 	ChannelTypeEmail      NotificationChannelType = "email"
 )
@@ -35,6 +36,7 @@ const (
 var ValidChannelTypes = map[string]bool{
 	string(ChannelTypeSlack):      true,
 	string(ChannelTypeMattermost): true,
+	string(ChannelTypeTelegram):   true,
 	string(ChannelTypeWebhook):    true,
 	string(ChannelTypeEmail):      true,
 }
@@ -47,13 +49,17 @@ var (
 
 // NotificationChannel represents a notification channel configuration.
 //
-// Secret fields (WebhookURL, AuthCredentials, SMTPUsername, SMTPPassword)
-// are intentionally NOT serialized to JSON. They are still loaded into
-// the struct from the database for internal callers (e.g. the test
-// endpoint that delivers a probe message), but the API must never echo
-// them back to clients. Companion boolean fields with the suffix `Set`
-// expose whether each secret is configured so that the UI can render an
-// indicator without ever seeing the secret value.
+// Secret fields (WebhookURL, AuthCredentials, SMTPUsername, SMTPPassword,
+// TelegramBotToken) are intentionally NOT serialized to JSON. They are
+// still loaded into the struct from the database for internal callers
+// (e.g. the test endpoint that delivers a probe message), but the API
+// must never echo them back to clients. Companion boolean fields with
+// the suffix `Set` expose whether each secret is configured so that the
+// UI can render an indicator without ever seeing the secret value.
+//
+// TelegramChatID is deliberately NOT in that list: it addresses the
+// destination chat rather than authenticating to it, so it is returned
+// in clear for the UI to display. The bot token is the credential.
 //
 // Custom webhook Headers are also redacted: the values commonly carry
 // bearer tokens or API keys (`Authorization`, `X-API-Key`, etc.), so
@@ -97,6 +103,15 @@ type NotificationChannel struct {
 	SMTPUseTLS      bool    `json:"smtp_use_tls"`
 	FromAddress     *string `json:"from_address,omitempty"`
 	FromName        *string `json:"from_name,omitempty"`
+
+	// Telegram specific. The bot token is a bearer credential that is
+	// embedded in the Bot API request path, so it is never serialized;
+	// TelegramBotTokenSet advertises only that one is configured. The
+	// chat ID is an address, not a secret, and is returned in clear so
+	// the UI can display which chat a channel posts to.
+	TelegramBotToken    *string `json:"-"`
+	TelegramBotTokenSet bool    `json:"telegram_bot_token_set"`
+	TelegramChatID      *string `json:"telegram_chat_id,omitempty"`
 
 	// Templates
 	TemplateAlertFire  *string `json:"template_alert_fire,omitempty"`
@@ -177,10 +192,12 @@ func (d *Datastore) decryptNotificationChannelSecrets(c *NotificationChannel) {
 	c.WebhookURL = d.decryptNotificationSecret(c.WebhookURL)
 	c.AuthCredentials = d.decryptNotificationSecret(c.AuthCredentials)
 	c.SMTPPassword = d.decryptNotificationSecret(c.SMTPPassword)
+	c.TelegramBotToken = d.decryptNotificationSecret(c.TelegramBotToken)
 	c.WebhookURLSet = isSecretSet(c.WebhookURL)
 	c.AuthCredentialsSet = isSecretSet(c.AuthCredentials)
 	c.SMTPUsernameSet = isSecretSet(c.SMTPUsername)
 	c.SMTPPasswordSet = isSecretSet(c.SMTPPassword)
+	c.TelegramBotTokenSet = isSecretSet(c.TelegramBotToken)
 	c.HeaderNames = sortedHeaderNames(c.Headers)
 }
 
@@ -219,7 +236,8 @@ func (d *Datastore) ListNotificationChannels(ctx context.Context) ([]*Notificati
                name, description, webhook_url_encrypted, endpoint_url, http_method,
                headers_json, auth_type, auth_credentials_encrypted, smtp_host,
                smtp_port, smtp_username, smtp_password_encrypted, smtp_use_tls,
-               from_address, from_name, template_alert_fire, template_alert_clear,
+               from_address, from_name, telegram_bot_token_encrypted,
+               telegram_chat_id, template_alert_fire, template_alert_clear,
                template_reminder, reminder_enabled, reminder_interval_hours,
                is_estate_default, created_at, updated_at
         FROM notification_channels
@@ -271,7 +289,8 @@ func (d *Datastore) GetNotificationChannel(ctx context.Context, id int64) (*Noti
                name, description, webhook_url_encrypted, endpoint_url, http_method,
                headers_json, auth_type, auth_credentials_encrypted, smtp_host,
                smtp_port, smtp_username, smtp_password_encrypted, smtp_use_tls,
-               from_address, from_name, template_alert_fire, template_alert_clear,
+               from_address, from_name, telegram_bot_token_encrypted,
+               telegram_chat_id, template_alert_fire, template_alert_clear,
                template_reminder, reminder_enabled, reminder_interval_hours,
                is_estate_default, created_at, updated_at
         FROM notification_channels
@@ -326,6 +345,10 @@ func (d *Datastore) CreateNotificationChannel(ctx context.Context, channel *Noti
 	if err != nil {
 		return fmt.Errorf("failed to encrypt SMTP password: %w", err)
 	}
+	telegramToken, err := d.encryptNotificationSecret(channel.TelegramBotToken)
+	if err != nil {
+		return fmt.Errorf("failed to encrypt Telegram bot token: %w", err)
+	}
 
 	err = d.pool.QueryRow(ctx, `
         INSERT INTO notification_channels (
@@ -333,17 +356,20 @@ func (d *Datastore) CreateNotificationChannel(ctx context.Context, channel *Noti
             description, webhook_url_encrypted, endpoint_url, http_method,
             headers_json, auth_type, auth_credentials_encrypted, smtp_host,
             smtp_port, smtp_username, smtp_password_encrypted, smtp_use_tls,
-            from_address, from_name, template_alert_fire, template_alert_clear,
+            from_address, from_name, telegram_bot_token_encrypted,
+            telegram_chat_id, template_alert_fire, template_alert_clear,
             template_reminder, reminder_enabled, reminder_interval_hours,
             is_estate_default, created_at, updated_at
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-                  $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)
+                  $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26,
+                  $27, $28, $29)
         RETURNING id, created_at, updated_at
     `, channel.OwnerUsername, channel.OwnerToken, channel.Enabled,
 		channel.ChannelType, channel.Name, channel.Description, webhookURL,
 		channel.EndpointURL, channel.HTTPMethod, headersJSON, channel.AuthType,
 		authCreds, channel.SMTPHost, channel.SMTPPort, channel.SMTPUsername,
 		smtpPass, channel.SMTPUseTLS, channel.FromAddress, channel.FromName,
+		telegramToken, channel.TelegramChatID,
 		channel.TemplateAlertFire, channel.TemplateAlertClear, channel.TemplateReminder,
 		channel.ReminderEnabled, channel.ReminderIntervalHours, channel.IsEstateDefault,
 		channel.CreatedAt, channel.UpdatedAt).Scan(&channel.ID, &channel.CreatedAt, &channel.UpdatedAt)
@@ -376,6 +402,10 @@ func (d *Datastore) UpdateNotificationChannel(ctx context.Context, channel *Noti
 	if err != nil {
 		return fmt.Errorf("failed to encrypt SMTP password: %w", err)
 	}
+	telegramToken, err := d.encryptNotificationSecret(channel.TelegramBotToken)
+	if err != nil {
+		return fmt.Errorf("failed to encrypt Telegram bot token: %w", err)
+	}
 
 	err = d.pool.QueryRow(ctx, `
         UPDATE notification_channels
@@ -386,9 +416,10 @@ func (d *Datastore) UpdateNotificationChannel(ctx context.Context, channel *Noti
             auth_credentials_encrypted = $13, smtp_host = $14, smtp_port = $15,
             smtp_username = $16, smtp_password_encrypted = $17,
             smtp_use_tls = $18, from_address = $19, from_name = $20,
-            template_alert_fire = $21, template_alert_clear = $22,
-            template_reminder = $23, reminder_enabled = $24,
-            reminder_interval_hours = $25, is_estate_default = $26,
+            telegram_bot_token_encrypted = $21, telegram_chat_id = $22,
+            template_alert_fire = $23, template_alert_clear = $24,
+            template_reminder = $25, reminder_enabled = $26,
+            reminder_interval_hours = $27, is_estate_default = $28,
             updated_at = CURRENT_TIMESTAMP
         WHERE id = $1
         RETURNING updated_at
@@ -397,7 +428,8 @@ func (d *Datastore) UpdateNotificationChannel(ctx context.Context, channel *Noti
 		webhookURL, channel.EndpointURL, channel.HTTPMethod, headersJSON,
 		channel.AuthType, authCreds, channel.SMTPHost, channel.SMTPPort,
 		channel.SMTPUsername, smtpPass, channel.SMTPUseTLS,
-		channel.FromAddress, channel.FromName, channel.TemplateAlertFire,
+		channel.FromAddress, channel.FromName,
+		telegramToken, channel.TelegramChatID, channel.TemplateAlertFire,
 		channel.TemplateAlertClear, channel.TemplateReminder, channel.ReminderEnabled,
 		channel.ReminderIntervalHours, channel.IsEstateDefault).Scan(&channel.UpdatedAt)
 	if err != nil {
@@ -537,7 +569,8 @@ func scanNotificationChannel(rows pgx.Rows) (*NotificationChannel, error) {
 		&c.WebhookURL, &c.EndpointURL, &c.HTTPMethod, &headersJSON,
 		&c.AuthType, &c.AuthCredentials, &c.SMTPHost, &c.SMTPPort,
 		&c.SMTPUsername, &c.SMTPPassword, &c.SMTPUseTLS,
-		&c.FromAddress, &c.FromName, &c.TemplateAlertFire,
+		&c.FromAddress, &c.FromName, &c.TelegramBotToken, &c.TelegramChatID,
+		&c.TemplateAlertFire,
 		&c.TemplateAlertClear, &c.TemplateReminder, &c.ReminderEnabled,
 		&c.ReminderIntervalHours, &c.IsEstateDefault, &c.CreatedAt, &c.UpdatedAt)
 	if err != nil {
@@ -563,7 +596,8 @@ func scanNotificationChannelRow(row pgx.Row) (*NotificationChannel, error) {
 		&c.WebhookURL, &c.EndpointURL, &c.HTTPMethod, &headersJSON,
 		&c.AuthType, &c.AuthCredentials, &c.SMTPHost, &c.SMTPPort,
 		&c.SMTPUsername, &c.SMTPPassword, &c.SMTPUseTLS,
-		&c.FromAddress, &c.FromName, &c.TemplateAlertFire,
+		&c.FromAddress, &c.FromName, &c.TelegramBotToken, &c.TelegramChatID,
+		&c.TemplateAlertFire,
 		&c.TemplateAlertClear, &c.TemplateReminder, &c.ReminderEnabled,
 		&c.ReminderIntervalHours, &c.IsEstateDefault, &c.CreatedAt, &c.UpdatedAt)
 	if err != nil {

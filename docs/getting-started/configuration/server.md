@@ -73,11 +73,21 @@ http:
 
   # Authentication Configuration
   auth:
-    enabled: true
-    max_failed_attempts_before_lockout: 0
+    max_failed_attempts_before_lockout: 10
     max_user_token_days: 0
     rate_limit_window_minutes: 15
     rate_limit_max_attempts: 10
+    # Local username and password login
+    local:
+      enabled: true
+    # Federated (OpenID Connect) login
+    # oidc:
+    #   enabled: true
+    #   issuer: "https://idp.example.com"
+    #   client_id: "pgedge-workbench"
+    #   client_secret_file: "/etc/pgedge/oidc-client-secret.txt"
+    #   redirect_url: "https://workbench.example.com/api/v1/auth/oidc/callback"
+    audit_retention_days: 90
 
 #=====================================================
 # CONNECTION SECURITY
@@ -101,9 +111,10 @@ database:
   # password: ""
   # password_file: "/etc/pgedge/password.txt"
   sslmode: "prefer"
-  pool_max_conns: 4
+  pool_max_conns: 20
   pool_min_conns: 0
   pool_max_conn_idle_time: "30m"
+  statement_timeout: "30s"
 
 #=====================================================
 # EMBEDDING GENERATION
@@ -118,11 +129,11 @@ embedding:
   # gemini_api_key_file: "~/.gemini-api-key"
 
 #=====================================================
-# LLM CONFIGURATION (Web Client Chat Proxy)
+# LLM CONFIGURATION (Chat Proxy and AI Analysis)
 #=====================================================
 llm:
   provider: "anthropic"
-  model: "claude-sonnet-4-5"
+  model: "claude-sonnet-5"
   # anthropic_api_key_file: "~/.anthropic-api-key"
   # openai_api_key_file: "~/.openai-api-key"
   # gemini_api_key_file: "~/.gemini-api-key"
@@ -158,7 +169,6 @@ builtins:
     similarity_search: true
     execute_explain: true
     count_rows: true
-    test_query: true
     list_probes: true
     describe_probe: true
     query_metrics: true
@@ -169,6 +179,7 @@ builtins:
     get_blackouts: true
     get_timeline_events: true
     query_datastore: true
+    describe_datastore: true
     generate_embedding: true
     search_knowledgebase: true
     store_memory: true
@@ -216,7 +227,7 @@ builtins:
 | `-db-name string` | Database name |
 | `-db-user string` | Database user |
 | `-db-password string` | Database password |
-| `-db-password-file string` | Path to DB password file |
+| `-db-password-file string` | Path to DB password file, read at start-up only; overrides the configured password |
 | `-db-sslmode string` | SSL mode |
 
 ### Token Management Options
@@ -292,6 +303,36 @@ builtins:
 | `-scope-connections string` | Connection ID list |
 | `-scope-tools string` | Tool name list |
 
+### Audit Log Options
+
+The audit log records every change to users,
+groups, tokens and privileges; the
+[Audit Log](../../admin-guide/managing-users-and-permissions/audit-log.md)
+document describes the events and how to read
+them. The following table describes the flags
+that read and verify the log, along with
+`-rechain-audit-log`, which either re-hashes an
+inherited log or re-anchors one that no longer
+verifies; a re-anchor leaves the existing events
+as they are and appends an anchor event:
+
+| Flag | Description |
+|------|-------------|
+| `-list-audit` | List RBAC audit log events |
+| `-verify-audit-log` | Verify the audit log hash chain |
+| `-rechain-audit-log` | Re-hash an inherited audit log, or re-anchor one that no longer verifies |
+| `-confirm-rechain` | Confirm `-rechain-audit-log` without an interactive prompt |
+| `-previous-secret-file string` | Secret file the older audit events were written under, needed by `-confirm-rechain` to re-anchor them |
+| `-audit-actor string` | Filter events by actor name |
+| `-audit-action string` | Filter events by action |
+| `-audit-target-type string` | Filter events by target type |
+| `-audit-target-id int` | Filter events by target ID |
+| `-audit-outcome string` | Filter events by outcome |
+| `-audit-since string` | Earliest event time to show |
+| `-audit-until string` | Latest event time to show |
+| `-audit-limit int` | Maximum events to show (default: 50) |
+| `-json` | Emit output as one JSON object per line |
+
 ## Configuration Sections
 
 ### HTTP Server (`http`)
@@ -303,12 +344,58 @@ builtins:
 | `tls.cert_file` | string | | Certificate file |
 | `tls.key_file` | string | | Private key file |
 | `tls.chain_file` | string | | Certificate chain |
-| `trusted_proxies` | list | `[]` | Trusted proxy CIDRs |
+| `trusted_proxies` | list | `[]` | Trusted proxy CIDRs; required behind a reverse proxy when OIDC login is enabled |
 | `cors_origin` | string | `""` | Allowed CORS origin |
-| `auth.max_failed_attempts_before_lockout` | int | `0` | Lock after N failures |
+| `hsts_enabled` | bool | `false` | Send the Strict-Transport-Security header |
+| `auth.max_failed_attempts_before_lockout` | int | `10` | Lock after N failures (`0` disables); restart required |
 | `auth.max_user_token_days` | int | `0` | Max token lifetime |
 | `auth.rate_limit_window_minutes` | int | `15` | Rate limit window |
 | `auth.rate_limit_max_attempts` | int | `10` | Max attempts per window |
+| `auth.local.enabled` | bool | `true` | Enable username and password login |
+| `auth.oidc.enabled` | bool | `false` | Enable federated login |
+| `auth.oidc.issuer` | string | | Identity provider issuer URL |
+| `auth.oidc.client_id` | string | | OAuth 2.0 client identifier |
+| `auth.oidc.client_secret` | string | | Inline client secret |
+| `auth.oidc.client_secret_file` | string | | File holding the client secret |
+| `auth.oidc.redirect_url` | string | | Callback URL registered at the provider |
+| `auth.oidc.scopes` | list | `[openid, email, profile]` | Scopes requested at the provider |
+| `auth.oidc.username_claim` | string | `email` | Claim used as the username |
+| `auth.oidc.display_name_claim` | string | `name` | Claim used as the display name |
+| `auth.oidc.groups_claim` | string | `groups` | Claim carrying group membership |
+| `auth.oidc.button_label` | string | `Sign in with your identity provider` | Federated login button label |
+| `auth.oidc.provision_users` | bool | `false` | Create an account on first login |
+| `auth.oidc.allowed_email_domains` | list | `[]` | Permitted verified email domains |
+| `auth.oidc.superuser_group` | string | | Provider group granting superuser |
+| `auth.oidc.group_map` | map | `{}` | Provider group to Workbench group map |
+| `auth.oidc.allow_unprefixed_state_cookie` | bool | `false` | Accept an unprefixed login state cookie behind a proxy |
+
+#### Authentication (`auth`)
+
+The `auth` section governs both login methods. Local
+username and password login is on unless
+`auth.local.enabled` is set to `false`, and federated
+login is off unless `auth.oidc.enabled` is set to
+`true`. The server refuses to start when neither
+method is available.
+
+Every `auth.oidc.*` option is ignored while federated
+login is disabled. The
+[Single Sign-On guide](../../admin-guide/managing-users-and-permissions/sso.md)
+describes each option in full, along with registering
+the Workbench at an identity provider and mapping
+provider groups onto Workbench groups.
+
+The server also refuses to start with federated login
+enabled, an `https` `auth.oidc.redirect_url`,
+`tls.enabled` set to `false` and an empty
+`trusted_proxies` list. On that deployment the login
+state cookie cannot use the `__Host-` name prefix, so a
+sibling subdomain that can set cookies can log users in
+as an attacker. Set `trusted_proxies` to the reverse
+proxy's address, or set
+`auth.oidc.allow_unprefixed_state_cookie` to `true` to
+accept the risk.
+| `auth.audit_retention_days` | int | `90` | Days to keep RBAC audit events (0 keeps forever) |
 
 #### CORS Origin (`cors_origin`)
 
@@ -340,7 +427,8 @@ http:
   address: ":8443"
   cors_origin: "https://workbench.example.com"
   auth:
-    enabled: true
+    local:
+      enabled: true
 ```
 
 ### Connection Security (`connection_security`)
@@ -365,18 +453,59 @@ protection for user-created database connections.
 | `password` | string | | Database password |
 | `password_file` | string | | DB password file (if `password` empty) |
 | `sslmode` | string | `prefer` | SSL mode |
-| `pool_max_conns` | int | `4` | Max pool connections |
+| `pool_max_conns` | int | `20` | Max pool connections |
 | `pool_min_conns` | int | `0` | Min pool connections |
 | `pool_max_conn_idle_time` | string | `30m` | Max idle time |
+| `statement_timeout` | string | `30s` | Server-side statement timeout |
+
+The `statement_timeout` option bounds how long a single statement may
+run on a datastore pool connection before PostgreSQL cancels it. The
+server already cancels its own queries once the request that asked for
+them has given up, but that cancellation is a request sent over the
+same connection, so a lost cancel, or a backend that is not at a point
+where it can be interrupted, leaves the query running and holding one
+of the few pool connections; the server-side timeout is what actually
+frees the connection. The default of `30s` matches the longest deadline
+the server grants a datastore query, so it rejects nothing that would
+otherwise have completed. The value accepts any Go duration string,
+such as `45s` or `1m30s`; `0` disables the timeout, which is not
+recommended because a single runaway query can then starve the pool.
+
+The `pool_max_conns` option sets the size of the datastore connection
+pool that every API request shares. A single dashboard page load
+issues more than twenty metrics requests at once, so a small pool makes
+a page wait on itself and lets a few slow requests hold up the rest of
+the API. The default of `20` leaves room for a second user; together
+with the collector's default of 25 and the alerter's default of 10, it
+uses 55 of the 97 connections that the PostgreSQL default
+`max_connections` of 100 makes available to ordinary users. Raise the
+datastore's `max_connections` before raising any of the three pools
+past that total. The datastore pool is sized when the server starts,
+so a change takes effect on restart rather than on a `SIGHUP` reload.
+When the option is set explicitly, the same value also caps each
+per-session pool that the server opens to a monitored database, and a
+per-session pool opened after a `SIGHUP` reload uses the reloaded
+value; when the option is unset, including when the database is
+configured only through the `-db-*` command-line flags, those pools
+use the connection library's default.
 
 ### Embedding (`embedding`)
 
 The `provider` option accepts `voyage`, `openai`, `gemini`, or
-`ollama`. The Gemini provider supports `gemini-embedding-001` (the
-default, 3072 dimensions), `gemini-embedding-2`, and
-`gemini-embedding-2-preview` (also 3072 dimensions). Model
-availability varies by Gemini API key tier; run ListModels to verify
-which embedding models a given key can access.
+`ollama`. The `model` option accepts any model name the chosen
+provider recognises; the server passes the name through rather than
+checking a fixed list, so a new provider model works as soon as the
+provider publishes the model. Leaving `model` empty selects the
+default model for the provider. Google publishes
+`gemini-embedding-001` (the default, 3072 dimensions) and
+`gemini-embedding-2` (also 3072 dimensions); model availability varies
+by Gemini API key tier, so run ListModels to verify which embedding
+models a given key can access.
+
+Because the model name is not restricted, an OpenAI-protocol-compatible
+local model server such as llama.cpp or vLLM can supply embeddings:
+set `provider` to `openai`, point `openai_base_url` at that server,
+and set `model` to the name the server provides.
 
 The configured `model` must not produce vectors with more than 4000
 dimensions. The server stores chat memory embeddings as `halfvec(4000)`
@@ -417,22 +546,86 @@ does not require an API key. For Anthropic, OpenAI,
 and Gemini, the corresponding API key file must
 contain a valid key.
 
+The settings in this section govern every AI feature
+the server drives. The features include the Ask Ellie
+chat proxy, the AI Overview, and the server-info AI
+database analysis.
+
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `provider` | string | `anthropic` | LLM provider |
-| `model` | string | `claude-sonnet-4-5` | Model name |
+| `model` | string | `claude-sonnet-5` | Model name |
 | `anthropic_api_key_file` | string | | Anthropic key path |
 | `openai_api_key_file` | string | | OpenAI key path |
 | `gemini_api_key_file` | string | | Gemini key path |
 | `ollama_url` | string | `http://localhost:11434` | Ollama URL |
-| `max_tokens` | int | `4096` | Max response tokens |
-| `temperature` | float | `0.7` | Sampling temperature |
+| `max_tokens` | int | `4096` | Max output tokens per response |
+| `temperature` | float | `0.7` | Sampling temperature; `0` is honoured |
 | `max_iterations` | int | `50` | Max tool-call iterations |
 | `compact_tool_descriptions` | string | `auto` | Tool description mode |
 | `timeout_seconds` | int | `120` | LLM HTTP request timeout |
 | `anthropic_base_url` | string | `https://api.anthropic.com/v1` | Anthropic base URL |
 | `openai_base_url` | string | `https://api.openai.com/v1` | OpenAI base URL |
 | `gemini_base_url` | string | `https://generativelanguage.googleapis.com` | Gemini base URL |
+
+#### Sampling Temperature (`temperature`)
+
+Some models accept only their own default temperature;
+these include `claude-sonnet-5`, the default model, and
+OpenAI's GPT-6 models. When a model rejects the
+configured `temperature`, the server resends the request
+without the setting and omits the setting from later
+requests. The model's own default then applies, so the
+`temperature` option has no effect, and the server does
+not log the change.
+
+#### Output Token Budget (`max_tokens`)
+
+The `max_tokens` option caps the number of output
+tokens a model may generate for a single response.
+The budget applies to the following AI features:
+
+- The Ask Ellie chat proxy sends the budget with every
+  chat request that the proxy forwards to a provider.
+- The AI Overview applies the budget to the estate
+  summary and to each scoped summary.
+- The server-info AI database analysis applies the
+  budget to the per-database descriptions.
+
+The default value is `4096` tokens; a value less than
+or equal to zero falls back to the default. Earlier
+releases capped the AI Overview and the server-info
+analysis at 512 tokens and ignored the configured
+value on both paths.
+
+A reasoning model counts its internal thinking tokens
+against this same budget. A budget that suits a
+conventional model can therefore leave no room for the
+answer itself. The model then returns a response that
+contains no text, and the affected panel has nothing
+to render. Raise `max_tokens` when a summary or an
+analysis comes back empty; alternatively, select a
+model that emits less reasoning.
+
+The server reports an empty response instead of
+discarding the response silently. A scoped AI Overview
+request fails with an error, and the estate summary
+records the failure in the server log. The
+`GET /api/v1/server-info/{id}/ai-analysis` endpoint
+returns `502` with a message that names the likely
+cause.
+
+In the following example, the `llm` section raises the
+budget for a reasoning model that a local llama.cpp
+server hosts:
+
+```yaml
+llm:
+  provider: "openai"
+  model: "qwen3-8b"
+  openai_base_url: "http://localhost:8080/v1"
+  max_tokens: 8192
+```
 
 #### Request Timeout (`timeout_seconds`)
 
@@ -487,7 +680,7 @@ verbose tool descriptions:
 ```yaml
 llm:
   provider: "anthropic"
-  model: "claude-sonnet-4-5"
+  model: "claude-sonnet-5"
   anthropic_api_key_file: "~/.anthropic-api-key"
   compact_tool_descriptions: "false"
 ```
@@ -522,6 +715,11 @@ llm:
   openai_base_url: "http://localhost:8080/v1"
 ```
 
+A local server that hosts a reasoning model usually
+needs a larger output budget than the default. For
+details, see
+[Output Token Budget](#output-token-budget-max_tokens).
+
 ### Knowledgebase (`knowledgebase`)
 
 The `pgedge-ai-kb` packages install one knowledgebase database
@@ -543,11 +741,11 @@ The built-in `database_path` default still points at the legacy
 `pgedge-ai-kb` packages, so the server reads the installed file.
 
 The `embedding_provider` option accepts `voyage`, `openai`, `gemini`,
-or `ollama`. The Gemini provider supports `gemini-embedding-001` (the
-default, 3072 dimensions), `gemini-embedding-2`, and
-`gemini-embedding-2-preview` (also 3072 dimensions). Model
-availability varies by Gemini API key tier; run ListModels to verify
-which embedding models a given key can access.
+or `ollama`, and `embedding_model` accepts any model name the chosen
+provider recognises. Google publishes `gemini-embedding-001` (the
+default, 3072 dimensions) and `gemini-embedding-2` (also 3072
+dimensions); model availability varies by Gemini API key tier, so run
+ListModels to verify which embedding models a given key can access.
 
 When Gemini provides the knowledgebase embeddings, the configured
 `embedding_model` must match the model that the KB Builder used to
@@ -611,6 +809,14 @@ details.
 The builtins section enables or disables individual
 tools and resources.
 
+Two tools are always enabled and cannot be turned off
+through the `builtins.tools` section. The `test_query`
+tool validates SQL without executing the query, and
+the server asks Ellie to check every statement through
+that tool before presenting the statement to a user.
+The `read_resource` tool backs resource listing, so
+resources become unreachable without the tool.
+
 ```yaml
 builtins:
   tools:
@@ -619,7 +825,6 @@ builtins:
     similarity_search: true
     execute_explain: true
     count_rows: true
-    test_query: true
     list_probes: true
     describe_probe: true
     query_metrics: true
@@ -630,6 +835,7 @@ builtins:
     get_blackouts: true
     get_timeline_events: true
     query_datastore: true
+    describe_datastore: true
     generate_embedding: true
     search_knowledgebase: true
     store_memory: true
@@ -638,6 +844,27 @@ builtins:
   resources:
     system_info: true
     connection_info: true
+```
+
+#### Datastore Query Tools
+
+The `query_datastore` tool runs structured queries against the datastore, and
+the `describe_datastore` tool lists the sources that `query_datastore` can
+read and describes their columns. Both tools default to `true`. The
+`query_datastore` tool does not accept SQL, and the tool limits
+connection-specific rows to the connections the caller can access, whilst
+estate-wide configuration rows remain readable; the
+[MCP Tools and Resources](../../user-guide/mcp-tools.md#querying-the-datastore)
+page describes the tool's parameters.
+
+In the following example, the configuration disables both datastore query
+tools:
+
+```yaml
+builtins:
+  tools:
+    query_datastore: false
+    describe_datastore: false
 ```
 
 #### Memory Tools
@@ -729,7 +956,8 @@ http:
   tls:
     enabled: false
   auth:
-    enabled: true
+    local:
+      enabled: true
 connection_security:
   allow_internal_networks: true
 database:
@@ -761,7 +989,8 @@ http:
     - "172.16.0.0/12"
   cors_origin: "https://workbench.example.com"
   auth:
-    enabled: true
+    local:
+      enabled: true
     max_failed_attempts_before_lockout: 5
     max_user_token_days: 90
 connection_security:
@@ -776,7 +1005,7 @@ database:
   database: "ai_workbench_prod"
   user: "ai_workbench"
   sslmode: "verify-full"
-  pool_max_conns: 10
+  pool_max_conns: 20
 embedding:
   enabled: true
   provider: "voyage"
@@ -784,7 +1013,7 @@ embedding:
   voyage_api_key_file: "/etc/ai-workbench/voyage-key"
 llm:
   provider: "anthropic"
-  model: "claude-sonnet-4-5"
+  model: "claude-sonnet-5"
   anthropic_api_key_file: "/etc/ai-workbench/ant-key"
 secret_file: "/etc/ai-workbench/server.secret"
 data_dir: "/var/lib/ai-workbench/data"
@@ -864,6 +1093,22 @@ memory:
 export PGEDGE_MEMORY_ENABLED=false
 ```
 
+### `PGEDGE_AUDIT_RETENTION_DAYS`
+
+The `PGEDGE_AUDIT_RETENTION_DAYS` variable controls
+how many days of RBAC audit events the server keeps.
+The server reads this variable at startup and applies
+the value as an override to the
+`http.auth.audit_retention_days` configuration
+option. A value of `0` keeps audit events forever.
+
+In the following example, the variable keeps a year
+of audit events:
+
+```bash
+export PGEDGE_AUDIT_RETENTION_DAYS=365
+```
+
 ## Configuration Reload
 
 The server supports runtime configuration reload via
@@ -878,6 +1123,19 @@ A `SIGHUP` signal reloads the following settings:
 - Database connection settings.
 - LLM proxy settings.
 - Knowledgebase settings.
+- The federated login policy under `http.auth.oidc`, as
+  described in
+  [Single Sign-On](../../admin-guide/managing-users-and-permissions/sso.md).
 
-Authentication settings and HTTP server settings
-require a full restart.
+A database setting given on the command line at start-up,
+such as `-db-host`, keeps priority over the configuration
+file on every reload, as it does at start-up.
+
+The other authentication settings and the HTTP server
+settings require a full restart. A reload keeps the value the
+server started with and warns about each of the
+settings whose change it detects, among them
+`http.auth.max_failed_attempts_before_lockout`, which
+the authentication store reads once at start-up, so
+account lockout stays as configured at the last
+restart until the server is restarted again.

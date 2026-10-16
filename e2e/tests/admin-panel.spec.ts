@@ -24,6 +24,7 @@ const ADMIN_ITEMS = [
     'email_channels',
     'slack_channels',
     'mattermost_channels',
+    'telegram_channels',
     'webhook_channels',
 ] as const;
 

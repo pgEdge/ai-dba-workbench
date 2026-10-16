@@ -172,7 +172,8 @@ every tool in the table:
 | Datastore | `describe_probe` | Retrieves column details for a specific metrics probe. |
 | Datastore | `query_metrics` | Queries historical metrics with time-based aggregation. |
 | Datastore | `list_connections` | Lists available monitored database connections. |
-| Datastore | `query_datastore` | Executes read-only SQL queries against the datastore. |
+| Datastore | `query_datastore` | Runs a structured query against one datastore source; connection-specific rows are limited to the connections the caller can access. |
+| Datastore | `describe_datastore` | Lists the sources `query_datastore` can read, or describes one source's columns. |
 | Alert | `get_alert_history` | Queries alerts for monitored connections. |
 | Alert | `get_alert_rules` | Queries alert rules and their effective thresholds. |
 | Alert | `get_metric_baselines` | Queries statistical baselines for anomaly detection. |
@@ -184,6 +185,11 @@ every tool in the table:
 | Utility | `generate_embedding` | Generates text embeddings from input text. |
 | Utility | `search_knowledgebase` | Searches the pgEdge documentation knowledge base. |
 | Utility | `read_resource` | Reads MCP resources via the tool interface for backward compatibility with older clients. |
+
+A group grant of `query_datastore` also gives the group access to
+`describe_datastore`. The rule works one way only: `describe_datastore` keeps
+its own non-public privilege, so granting only `describe_datastore` does not
+allow `query_datastore`.
 
 To grant an MCP permission, select the `+ Grant` icon across from the `MCP
 Permissions` heading. When the `Grant MCP permission` popup opens:
@@ -269,3 +275,6 @@ To review the privileges already assigned to a group, use the
 `-show-group-privileges` command described in
 [Group Management](groups.md#managing-group-membership).
 
+The server records every privilege and permission grant or revocation in
+the audit log, naming the user, token or command-line operator that made
+it; for details, see [Audit Log](audit-log.md).

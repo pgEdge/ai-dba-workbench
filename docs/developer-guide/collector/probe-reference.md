@@ -36,13 +36,27 @@ backend processes.
   wait events
 - Use Cases: Connection monitoring, identifying
   long-running queries, detecting locks
+- Version Notes: PostgreSQL 14+ supplies `query_id`;
+  earlier versions store a null in that column
 
 **Columns Collected**: datid, datname, pid,
 leader_pid, usesysid, usename, application_name,
 client_addr, client_hostname, client_port,
 backend_start, xact_start, query_start,
 state_change, wait_event_type, wait_event, state,
-backend_xid, backend_xmin, query, backend_type
+backend_xid, backend_xmin, query, query_id,
+backend_type
+
+The `query_id` column carries the identifier of the
+statement the backend was running when the probe
+sampled the view, and schema migration 12 adds the
+column to `metrics.pg_stat_activity`. The value joins
+an activity sample to `metrics.pg_stat_statements`,
+which is how the server attributes a client address
+to a query. PostgreSQL stores a null whenever the
+backend is idle, and the column is null for every row
+collected from a server running PostgreSQL 13 or
+earlier, or running with `compute_query_id` off.
 
 ### pg_stat_checkpointer
 
@@ -586,8 +600,12 @@ This probe captures rows added to `spock.exception_log`
 within a rolling 15-minute source-side window. The
 probe targets Spock v5 or later; the probe checks for
 the `spock` extension through `CheckExtensionExists`
-against `pg_extension` and returns a successful no-op
-on databases without Spock installed.
+against `pg_extension` and returns
+`ErrExtensionNotInstalled` on databases without Spock
+installed. On a database with Spock installed but no
+rows inside the window, the probe returns an empty
+result, and the collector records the probe as
+available.
 
 - Source View: `spock.exception_log`
 - Default Interval: 60 seconds
@@ -651,8 +669,12 @@ This probe captures rows added to `spock.resolutions`
 within a rolling 15-minute source-side window. The
 probe targets Spock v5 or later; the probe checks for
 the `spock` extension through `CheckExtensionExists`
-against `pg_extension` and returns a successful no-op
-on databases without Spock installed.
+against `pg_extension` and returns
+`ErrExtensionNotInstalled` on databases without Spock
+installed. On a database with Spock installed but no
+rows inside the window, the probe returns an empty
+result, and the collector records the probe as
+available.
 
 - Source View: `spock.resolutions`
 - Default Interval: 60 seconds
@@ -713,7 +735,10 @@ remote_timestamp, remote_lsn
 
 These probes collect operating system metrics through
 the `system_stats` PostgreSQL extension. The probes
-require the extension on the monitored server.
+require the extension on the monitored server, and
+return `ErrExtensionNotInstalled` when the extension is
+absent so that the collector records the probe as
+unavailable with an extension-not-installed reason.
 
 ### pg_sys_os_info
 
@@ -755,9 +780,42 @@ This probe monitors system memory usage.
 - Source: `pg_sys_memory_info()` function
 - Default Interval: 300 seconds (5 minutes)
 - Default Retention: 7 days
-- Key Metrics: Total, used, free, cached memory
+- Key Metrics: Total, used, free, cached memory, and an
+  estimated available memory figure
 - Use Cases: Memory utilization monitoring, capacity
   planning
+
+The probe also stores `available_memory`, a `BIGINT`
+column added by schema migration 13. The collector
+derives the value as `free_memory + cache_total` rather
+than reading a column of that name from the monitored
+server, and stores NULL whenever either input is
+missing, NULL, or not an integer, because zero is itself
+a meaningful reading.
+
+The derived column exists because `free_memory` reports
+`MemFree` from `/proc/meminfo`, which counts only memory
+that is entirely unused. The figure a DBA wants when
+sizing `shared_buffers` or `work_mem` is the kernel's
+`MemAvailable`, an estimate of how much memory a new
+workload could claim without swapping, because that
+figure also counts reclaimable page cache and slab; on a
+busy PostgreSQL host the two differ by most of the
+machine's memory.
+
+The collector cannot collect `MemAvailable` today, since
+the collector reads host metrics only through the
+`system_stats` extension over SQL, and
+`pg_sys_memory_info()` returns the same twelve columns
+in versions 1.0 through 4.0. None of those columns
+carries `MemAvailable`, and the only availability-like
+column, `avail_page_file`, reports a Windows page file
+figure. The `free_memory + cache_total` approximation is
+what tooling used before `MemAvailable` existed, and the
+approximation overestimates availability on a host with
+a large non-reclaimable slab or a largely dirty page
+cache, so `available_memory` is an estimate and every
+presentation of the value must say so.
 
 ### pg_sys_io_analysis_info
 

@@ -10,9 +10,14 @@
 package config
 
 import (
+	"encoding/json"
+	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -20,6 +25,17 @@ import (
 	"github.com/pgedge/ai-workbench/pkg/fileutil"
 	"gopkg.in/yaml.v3"
 )
+
+// writeTempConfig writes content to a config.yaml file inside a fresh
+// t.TempDir() and returns its path.
+func writeTempConfig(t *testing.T, content string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("failed to write temp config: %v", err)
+	}
+	return path
+}
 
 func TestDefaultConfig(t *testing.T) {
 	cfg := defaultConfig()
@@ -42,11 +58,17 @@ func TestDefaultConfig(t *testing.T) {
 	}
 
 	// Test LLM defaults (LLM proxy is always enabled, no Enabled field)
+	if cfg.LLM.Provider != "anthropic" {
+		t.Errorf("Expected default LLM provider 'anthropic', got %s", cfg.LLM.Provider)
+	}
+	if cfg.LLM.Model != "claude-sonnet-5" {
+		t.Errorf("Expected default LLM model 'claude-sonnet-5', got %s", cfg.LLM.Model)
+	}
 	if cfg.LLM.MaxTokens != 4096 {
 		t.Errorf("Expected default max tokens 4096, got %d", cfg.LLM.MaxTokens)
 	}
-	if cfg.LLM.Temperature != 0.7 {
-		t.Errorf("Expected default temperature 0.7, got %f", cfg.LLM.Temperature)
+	if got := cfg.LLM.Temperature(); got != 0.7 {
+		t.Errorf("Expected default temperature 0.7, got %f", got)
 	}
 	if cfg.LLM.TimeoutSeconds != 120 {
 		t.Errorf("Expected default LLM timeout 120 seconds, got %d", cfg.LLM.TimeoutSeconds)
@@ -250,6 +272,31 @@ func TestToolsConfig_IsToolEnabled(t *testing.T) {
 				t.Errorf("IsToolEnabled(%q): expected %v, got %v", tt.toolName, tt.expected, result)
 			}
 		})
+	}
+}
+
+// TestToolsConfig_DescribeDatastoreFlag checks that describe_datastore
+// defaults to enabled and that the YAML key turns it off.
+func TestToolsConfig_DescribeDatastoreFlag(t *testing.T) {
+	var defaults ToolsConfig
+	if !defaults.IsToolEnabled("describe_datastore") {
+		t.Error("describe_datastore should default to enabled")
+	}
+	for _, tc := range []struct {
+		yaml string
+		want bool
+	}{
+		{"describe_datastore: false\n", false},
+		{"describe_datastore: true\n", true},
+		{"query_datastore: false\n", true},
+	} {
+		var cfg ToolsConfig
+		if err := yaml.Unmarshal([]byte(tc.yaml), &cfg); err != nil {
+			t.Fatalf("unmarshal %q: %v", tc.yaml, err)
+		}
+		if got := cfg.IsToolEnabled("describe_datastore"); got != tc.want {
+			t.Errorf("%q: describe_datastore enabled = %v, want %v", tc.yaml, got, tc.want)
+		}
 	}
 }
 
@@ -631,7 +678,7 @@ func TestGetDefaultSecretPath(t *testing.T) {
 	t.Setenv("AppData", base)
 	fileutil.SetSystemConfigDirForTest(t, filepath.Join(base, "absent-etc-pgedge"))
 
-	result := GetDefaultSecretPath("/usr/local/bin/pgedge-postgres-mcp")
+	result := GetDefaultSecretPath()
 	if result != "" {
 		t.Errorf("expected empty path, got %q", result)
 	}
@@ -658,7 +705,7 @@ func TestGetDefaultSecretPath_UserDirHit(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	if got := GetDefaultSecretPath(""); got != expected {
+	if got := GetDefaultSecretPath(); got != expected {
 		t.Errorf("GetDefaultSecretPath = %q, want %q", got, expected)
 	}
 }
@@ -759,6 +806,54 @@ func TestApplyCLIFlags(t *testing.T) {
 	}
 	if cfg.Database.User != "cliuser" {
 		t.Errorf("expected user 'cliuser', got %q", cfg.Database.User)
+	}
+}
+
+// TestApplyCLIFlagsEveryFlag sets every flag applyCLIFlags handles and
+// checks that each one lands, including the defaults of the database
+// block the flags create (issue #478 raised its pool size).
+func TestApplyCLIFlagsEveryFlag(t *testing.T) {
+	cfg := defaultConfig()
+	applyCLIFlags(cfg, CLIFlags{
+		HTTPAddrSet: true, HTTPAddr: ":7071",
+		TLSEnabledSet: true, TLSEnabled: true,
+		TLSCertSet: true, TLSCertFile: "/tls/cert.pem",
+		TLSKeySet: true, TLSKeyFile: "/tls/key.pem",
+		TLSChainSet: true, TLSChainFile: "/tls/chain.pem",
+		DBHostSet: true, DBHost: "db.example.com",
+		DBPortSet: true, DBPort: 5433,
+		DBNameSet: true, DBName: "workbench",
+		DBUserSet: true, DBUser: "cliuser",
+		DBPassSet: true, DBPassword: "clipass",
+		DBSSLSet: true, DBSSLMode: "require",
+		SecretFileSet: true, SecretFile: "/secret/file",
+		TraceFileSet: true, TraceFile: "/trace/file",
+	})
+
+	want := DatabaseConfig{
+		Host:                "db.example.com",
+		Port:                5433,
+		Database:            "workbench",
+		User:                "cliuser",
+		Password:            "clipass",
+		SSLMode:             "require",
+		PoolMaxConnIdleTime: "30m",
+		StatementTimeout:    "30s",
+	}
+	if cfg.Database == nil || !reflect.DeepEqual(*cfg.Database, want) {
+		t.Fatalf("database = %+v, want %+v", cfg.Database, want)
+	}
+	if DefaultPoolMaxConns != 20 {
+		t.Errorf("DefaultPoolMaxConns = %d, want 20 as documented", DefaultPoolMaxConns)
+	}
+
+	tls := cfg.HTTP.TLS
+	if cfg.HTTP.Address != ":7071" || !tls.Enabled || tls.CertFile != "/tls/cert.pem" ||
+		tls.KeyFile != "/tls/key.pem" || tls.ChainFile != "/tls/chain.pem" {
+		t.Errorf("HTTP settings not applied: %+v", cfg.HTTP)
+	}
+	if cfg.SecretFile != "/secret/file" || cfg.TraceFile != "/trace/file" {
+		t.Errorf("SecretFile = %q, TraceFile = %q", cfg.SecretFile, cfg.TraceFile)
 	}
 }
 
@@ -1433,5 +1528,1282 @@ func TestMarshalDoesNotLeakResolvedPassword(t *testing.T) {
 	// The password key must be present but empty for the file-sourced case.
 	if !strings.Contains(out, "password: \"\"") {
 		t.Errorf("expected an empty password field in marshaled output, got:\n%s", out)
+	}
+}
+
+// TestJSONMarshalOmitsDatabasePassword pins the json:"-" tag on
+// DatabaseConfig.Password: a password held in the exported field, whether
+// inline or applied from -db-password / -db-password-file, must never
+// appear in JSON-serialized configuration, directly or via Config.
+func TestJSONMarshalOmitsDatabasePassword(t *testing.T) {
+	const secret = "json-must-not-see-this"
+	db := &DatabaseConfig{
+		User:     "postgres",
+		Host:     "localhost",
+		Database: "testdb",
+		Password: secret,
+	}
+
+	for name, v := range map[string]any{
+		"DatabaseConfig": db,
+		"Config":         &Config{Database: db},
+	} {
+		data, err := json.Marshal(v)
+		if err != nil {
+			t.Fatalf("%s: json.Marshal: %v", name, err)
+		}
+		if strings.Contains(string(data), secret) {
+			t.Errorf("%s: JSON output leaked the password: %s", name, data)
+		}
+		if strings.Contains(string(data), `"Password"`) {
+			t.Errorf("%s: JSON output has a Password key: %s", name, data)
+		}
+		// Sanity: the marshal really did serialize the struct.
+		if !strings.Contains(string(data), "testdb") {
+			t.Errorf("%s: JSON output missing other fields: %s", name, data)
+		}
+	}
+}
+
+func TestLocalAuthDefaultsToEnabled(t *testing.T) {
+	cfg := defaultConfig()
+	if !cfg.HTTP.Auth.LocalEnabled() {
+		t.Fatal("local authentication should default to enabled")
+	}
+}
+
+func TestLocalAuthCanBeDisabledExplicitly(t *testing.T) {
+	path := writeTempConfig(t, `
+http:
+  trusted_proxies: ["10.0.0.0/8"]
+  auth:
+    local:
+      enabled: false
+    oidc:
+      enabled: true
+      issuer: https://idp.example.com
+      client_id: workbench
+      client_secret: s3cret
+      redirect_url: https://workbench.example.com/api/v1/auth/oidc/callback
+`)
+	cfg, err := LoadConfig(path, CLIFlags{})
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.HTTP.Auth.LocalEnabled() {
+		t.Fatal("local authentication should be disabled")
+	}
+}
+
+func TestOIDCDefaultClaimNames(t *testing.T) {
+	cfg := defaultConfig()
+	if cfg.HTTP.Auth.OIDC.UsernameClaim != "email" {
+		t.Fatalf("username_claim = %q, want email", cfg.HTTP.Auth.OIDC.UsernameClaim)
+	}
+	if cfg.HTTP.Auth.OIDC.GroupsClaim != "groups" {
+		t.Fatalf("groups_claim = %q, want groups", cfg.HTTP.Auth.OIDC.GroupsClaim)
+	}
+	want := []string{"openid", "email", "profile"}
+	if !reflect.DeepEqual(cfg.HTTP.Auth.OIDC.Scopes, want) {
+		t.Fatalf("scopes = %v, want %v", cfg.HTTP.Auth.OIDC.Scopes, want)
+	}
+}
+
+// TestOIDCClientSecretReadFromFile deviates from the literal task brief,
+// which checked cfg.HTTP.Auth.OIDC.ClientSecret directly. This
+// implementation follows the DatabaseConfig.resolvedPassword pattern: a
+// secret resolved from client_secret_file is stored in the unexported
+// resolvedClientSecret field (never the exported, yaml-tagged
+// ClientSecret field) so it cannot leak back out if the config is ever
+// marshaled. The effective secret is read via EffectiveClientSecret.
+// See TestMarshalDoesNotLeakOIDCClientSecret for the regression this
+// protects against.
+func TestOIDCClientSecretReadFromFile(t *testing.T) {
+	secretPath := filepath.Join(t.TempDir(), "oidc-secret")
+	if err := os.WriteFile(secretPath, []byte("file-secret\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	path := writeTempConfig(t, fmt.Sprintf(`
+http:
+  trusted_proxies: ["10.0.0.0/8"]
+  auth:
+    oidc:
+      enabled: true
+      issuer: https://idp.example.com
+      client_id: workbench
+      client_secret_file: %s
+      redirect_url: https://workbench.example.com/api/v1/auth/oidc/callback
+`, secretPath))
+	cfg, err := LoadConfig(path, CLIFlags{})
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.HTTP.Auth.OIDC.EffectiveClientSecret() != "file-secret" {
+		t.Fatalf("effective client secret = %q, want %q", cfg.HTTP.Auth.OIDC.EffectiveClientSecret(), "file-secret")
+	}
+	if cfg.HTTP.Auth.OIDC.ClientSecret != "" {
+		t.Fatalf("ClientSecret should remain empty for a file-sourced secret, got %q", cfg.HTTP.Auth.OIDC.ClientSecret)
+	}
+}
+
+// TestMarshalDoesNotLeakOIDCClientSecret is the OIDC counterpart of
+// TestMarshalDoesNotLeakResolvedPassword: a client secret sourced from
+// client_secret_file must never appear when the config is marshaled
+// (the path SaveConfig would use), because resolvedClientSecret is
+// unexported and tagged yaml:"-".
+func TestMarshalDoesNotLeakOIDCClientSecret(t *testing.T) {
+	secretPath := filepath.Join(t.TempDir(), "oidc-secret")
+	const secret = "must-not-leak-to-disk"
+	if err := os.WriteFile(secretPath, []byte(secret+"\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	path := writeTempConfig(t, fmt.Sprintf(`
+http:
+  trusted_proxies: ["10.0.0.0/8"]
+  auth:
+    oidc:
+      enabled: true
+      issuer: https://idp.example.com
+      client_id: workbench
+      client_secret_file: %s
+      redirect_url: https://workbench.example.com/api/v1/auth/oidc/callback
+`, secretPath))
+	cfg, err := LoadConfig(path, CLIFlags{})
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.HTTP.Auth.OIDC.EffectiveClientSecret() != secret {
+		t.Fatalf("EffectiveClientSecret() = %q, want %q", cfg.HTTP.Auth.OIDC.EffectiveClientSecret(), secret)
+	}
+
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("yaml.Marshal: %v", err)
+	}
+	out := string(data)
+	if strings.Contains(out, secret) {
+		t.Fatalf("marshaled config leaked the file-sourced OIDC client secret:\n%s", out)
+	}
+}
+
+// TestOIDCClientSecretFileMissingFails covers the read-failure return in
+// loadAPIKeysFromFiles: a client_secret_file that does not exist must
+// fail LoadConfig rather than silently leaving the client secret empty.
+func TestOIDCClientSecretFileMissingFails(t *testing.T) {
+	path := writeTempConfig(t, `
+http:
+  auth:
+    oidc:
+      enabled: true
+      issuer: https://idp.example.com
+      client_id: workbench
+      client_secret_file: /nonexistent/oidc-secret
+      redirect_url: https://workbench.example.com/api/v1/auth/oidc/callback
+`)
+	if _, err := LoadConfig(path, CLIFlags{}); err == nil {
+		t.Fatal("expected LoadConfig to fail for a missing client_secret_file")
+	}
+}
+
+// TestOIDCClientSecretFileEmptyFails covers the same return for a
+// client_secret_file that exists but is empty; fileutil.ReadSecretFile
+// itself rejects an empty/whitespace-only file.
+func TestOIDCClientSecretFileEmptyFails(t *testing.T) {
+	secretPath := filepath.Join(t.TempDir(), "oidc-secret")
+	if err := os.WriteFile(secretPath, []byte(""), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	path := writeTempConfig(t, fmt.Sprintf(`
+http:
+  auth:
+    oidc:
+      enabled: true
+      issuer: https://idp.example.com
+      client_id: workbench
+      client_secret_file: %s
+      redirect_url: https://workbench.example.com/api/v1/auth/oidc/callback
+`, secretPath))
+	if _, err := LoadConfig(path, CLIFlags{}); err == nil {
+		t.Fatal("expected LoadConfig to fail for an empty client_secret_file")
+	}
+}
+
+func TestValidateConfigRejectsIncompleteOIDC(t *testing.T) {
+	cases := map[string]OIDCConfig{
+		"no issuer":         {Enabled: boolPtr(true), ClientID: "w", ClientSecret: "s", RedirectURL: "https://w.example.com/cb"},
+		"no client id":      {Enabled: boolPtr(true), Issuer: "https://i.example.com", ClientSecret: "s", RedirectURL: "https://w.example.com/cb"},
+		"no secret":         {Enabled: boolPtr(true), Issuer: "https://i.example.com", ClientID: "w", RedirectURL: "https://w.example.com/cb"},
+		"no redirect":       {Enabled: boolPtr(true), Issuer: "https://i.example.com", ClientID: "w", ClientSecret: "s"},
+		"plaintext issuer":  {Enabled: boolPtr(true), Issuer: "http://i.example.com", ClientID: "w", ClientSecret: "s", RedirectURL: "https://w.example.com/cb"},
+		"relative redirect": {Enabled: boolPtr(true), Issuer: "https://i.example.com", ClientID: "w", ClientSecret: "s", RedirectURL: "/callback"},
+	}
+	for name, oidc := range cases {
+		t.Run(name, func(t *testing.T) {
+			cfg := defaultConfig()
+			cfg.HTTP.Auth.OIDC = oidc
+			if err := validateConfig(cfg); err == nil {
+				t.Fatal("expected validation to fail")
+			}
+		})
+	}
+}
+
+func TestValidateConfigAcceptsCompleteOIDC(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.HTTP.TrustedProxies = []string{"10.0.0.0/8"}
+	cfg.HTTP.Auth.OIDC = OIDCConfig{
+		Enabled:      boolPtr(true),
+		Issuer:       "https://idp.example.com",
+		ClientID:     "workbench",
+		ClientSecret: "s3cret",
+		RedirectURL:  "https://workbench.example.com/api/v1/auth/oidc/callback",
+	}
+	if err := validateConfig(cfg); err != nil {
+		t.Fatalf("expected a complete OIDC configuration to validate, got: %v", err)
+	}
+}
+
+func TestValidateConfigRejectsNoAuthenticationMethod(t *testing.T) {
+	cfg := defaultConfig()
+	disabled := false
+	cfg.HTTP.Auth.Local.Enabled = &disabled
+	if err := validateConfig(cfg); err == nil {
+		t.Fatal("expected validation to refuse a configuration with no way to log in")
+	}
+}
+
+// TestValidateConfigAllowsBareConfigWithNoAuthBlock guards the interaction
+// between the "no login method available" check and the local-login
+// default: a config file with no http.auth block at all must still
+// validate, because local login defaults to enabled.
+func TestValidateConfigAllowsBareConfigWithNoAuthBlock(t *testing.T) {
+	cfg := defaultConfig()
+	if err := validateConfig(cfg); err != nil {
+		t.Fatalf("expected the default configuration to validate, got: %v", err)
+	}
+}
+
+// TestValidateConfigAllowsOIDCOnly guards the other side of the "no
+// login method" interaction: disabling local login is fine as long as
+// OIDC is fully configured and enabled.
+func TestValidateConfigAllowsOIDCOnly(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.HTTP.TrustedProxies = []string{"10.0.0.0/8"}
+	disabled := false
+	cfg.HTTP.Auth.Local.Enabled = &disabled
+	cfg.HTTP.Auth.OIDC = OIDCConfig{
+		Enabled:      boolPtr(true),
+		Issuer:       "https://idp.example.com",
+		ClientID:     "workbench",
+		ClientSecret: "s3cret",
+		RedirectURL:  "https://workbench.example.com/api/v1/auth/oidc/callback",
+	}
+	if err := validateConfig(cfg); err != nil {
+		t.Fatalf("expected local-disabled + OIDC-enabled to validate, got: %v", err)
+	}
+}
+
+// TestMergeConfigOIDCFields verifies mergeConfig picks up every new OIDC
+// field from a file-sourced config, matching the guarded-assignment idiom
+// used throughout mergeConfig.
+func TestMergeConfigOIDCFields(t *testing.T) {
+	provisionUsers := true
+	dest := defaultConfig()
+	src := &Config{
+		HTTP: HTTPConfig{
+			Auth: AuthConfig{
+				OIDC: OIDCConfig{
+					Enabled:             boolPtr(true),
+					Issuer:              "https://idp.example.com",
+					ClientID:            "workbench",
+					ClientSecret:        "s3cret",
+					ClientSecretFile:    "/etc/secrets/oidc",
+					RedirectURL:         "https://workbench.example.com/api/v1/auth/oidc/callback",
+					Scopes:              []string{"openid"},
+					UsernameClaim:       "preferred_username",
+					DisplayNameClaim:    "display_name",
+					GroupsClaim:         "roles",
+					ButtonLabel:         "Sign in with Example IdP",
+					ProvisionUsers:      &provisionUsers,
+					AllowedEmailDomains: []string{"example.com"},
+					SuperuserGroup:      "admins",
+					GroupMap:            map[string]string{"admins": "superuser"},
+				},
+			},
+		},
+	}
+
+	mergeConfig(dest, src)
+
+	got := dest.HTTP.Auth.OIDC
+	want := src.HTTP.Auth.OIDC
+	if got.IsEnabled() != want.IsEnabled() ||
+		got.Issuer != want.Issuer ||
+		got.ClientID != want.ClientID ||
+		got.ClientSecret != want.ClientSecret ||
+		got.ClientSecretFile != want.ClientSecretFile ||
+		got.RedirectURL != want.RedirectURL ||
+		!reflect.DeepEqual(got.Scopes, want.Scopes) ||
+		got.UsernameClaim != want.UsernameClaim ||
+		got.DisplayNameClaim != want.DisplayNameClaim ||
+		got.GroupsClaim != want.GroupsClaim ||
+		got.ButtonLabel != want.ButtonLabel ||
+		got.ProvisionUsersEnabled() != want.ProvisionUsersEnabled() ||
+		!reflect.DeepEqual(got.AllowedEmailDomains, want.AllowedEmailDomains) ||
+		got.SuperuserGroup != want.SuperuserGroup ||
+		!reflect.DeepEqual(got.GroupMap, want.GroupMap) {
+		t.Fatalf("mergeConfig did not merge all OIDC fields: got %+v, want %+v", got, want)
+	}
+}
+
+// TestMergeConfigOIDCFieldsPreservesDefaultsWhenSourceEmpty is the other
+// direction of TestMergeConfigOIDCFields: a source config with no OIDC
+// block at all must leave the defaultConfig() OIDC defaults (scopes,
+// username claim, button label) untouched, the same way
+// TestLocalAuthEnabledMergesOnlyWhenSet checks for Local.Enabled.
+func TestMergeConfigOIDCFieldsPreservesDefaultsWhenSourceEmpty(t *testing.T) {
+	dest := defaultConfig()
+	wantScopes := append([]string(nil), dest.HTTP.Auth.OIDC.Scopes...)
+	wantUsernameClaim := dest.HTTP.Auth.OIDC.UsernameClaim
+	wantButtonLabel := dest.HTTP.Auth.OIDC.ButtonLabel
+
+	src := &Config{}
+	mergeConfig(dest, src)
+
+	if !reflect.DeepEqual(dest.HTTP.Auth.OIDC.Scopes, wantScopes) {
+		t.Fatalf("Scopes = %v, want default %v", dest.HTTP.Auth.OIDC.Scopes, wantScopes)
+	}
+	if dest.HTTP.Auth.OIDC.UsernameClaim != wantUsernameClaim {
+		t.Fatalf("UsernameClaim = %q, want default %q", dest.HTTP.Auth.OIDC.UsernameClaim, wantUsernameClaim)
+	}
+	if dest.HTTP.Auth.OIDC.ButtonLabel != wantButtonLabel {
+		t.Fatalf("ButtonLabel = %q, want default %q", dest.HTTP.Auth.OIDC.ButtonLabel, wantButtonLabel)
+	}
+}
+
+// TestLocalAuthEnabledMergesOnlyWhenSet verifies mergeConfig only
+// overrides Local.Enabled when the source pointer is non-nil, and leaves
+// dest untouched (still nil, i.e. defaulting to true) otherwise.
+func TestLocalAuthEnabledMergesOnlyWhenSet(t *testing.T) {
+	dest := defaultConfig()
+	src := &Config{}
+
+	mergeConfig(dest, src)
+
+	if dest.HTTP.Auth.Local.Enabled != nil {
+		t.Fatalf("expected Local.Enabled to remain nil when src has no override, got %v", *dest.HTTP.Auth.Local.Enabled)
+	}
+	if !dest.HTTP.Auth.LocalEnabled() {
+		t.Fatal("local authentication should still default to enabled")
+	}
+}
+
+// TestReloadWarnsOnOIDCChanges exercises logRestartRequiredSettings with
+// every changed OIDC field, mirroring how it already covers http.tls, so
+// a panic or an unguarded field access would be caught here.
+func TestReloadWarnsOnOIDCChanges(t *testing.T) {
+	provisionUsersReload := true
+	oldCfg := defaultConfig()
+	newCfg := defaultConfig()
+	newCfg.HTTP.Auth.OIDC.Enabled = boolPtr(true)
+	newCfg.HTTP.Auth.OIDC.Issuer = "https://idp.example.com"
+	newCfg.HTTP.Auth.OIDC.ClientID = "workbench"
+	newCfg.HTTP.Auth.OIDC.ClientSecret = "s3cret"
+	newCfg.HTTP.Auth.OIDC.RedirectURL = "https://workbench.example.com/api/v1/auth/oidc/callback"
+	newCfg.HTTP.Auth.OIDC.UsernameClaim = "preferred_username"
+	newCfg.HTTP.Auth.OIDC.DisplayNameClaim = "display_name"
+	newCfg.HTTP.Auth.OIDC.GroupsClaim = "roles"
+	newCfg.HTTP.Auth.OIDC.Scopes = []string{"openid"}
+	newCfg.HTTP.Auth.OIDC.ProvisionUsers = &provisionUsersReload
+	newCfg.HTTP.Auth.OIDC.AllowedEmailDomains = []string{"example.com"}
+	newCfg.HTTP.Auth.OIDC.SuperuserGroup = "admins"
+	newCfg.HTTP.Auth.OIDC.GroupMap = map[string]string{"idp-admins": "admins"}
+	newCfg.HTTP.Auth.OIDC.ButtonLabel = "Sign in with Acme"
+	localDisabled := false
+	newCfg.HTTP.Auth.Local.Enabled = &localDisabled
+
+	rc := NewReloadableConfig(oldCfg, "", CLIFlags{})
+
+	out := captureStderr(t, func() {
+		rc.logRestartRequiredSettings(newCfg)
+	})
+
+	// The provider is built at start-up from these, so only a restart
+	// applies them; switching OIDC on is among them here because the
+	// server started with it off and so discovered no provider. Local
+	// login is fixed when the login handler is built.
+	wantWarnings := []string{
+		"WARNING: http.auth.oidc.enabled changed - requires restart",
+		"WARNING: http.auth.oidc.issuer changed - requires restart",
+		"WARNING: http.auth.oidc.client_id changed - requires restart",
+		"WARNING: http.auth.oidc.client_secret changed - requires restart",
+		"WARNING: http.auth.oidc.redirect_url changed - requires restart",
+		"WARNING: http.auth.oidc.username_claim changed - requires restart",
+		"WARNING: http.auth.oidc.display_name_claim changed - requires restart",
+		"WARNING: http.auth.oidc.groups_claim changed - requires restart",
+		"WARNING: http.auth.oidc.scopes changed - requires restart",
+		"WARNING: http.auth.local.enabled changed - requires restart",
+	}
+	// The login policy is read through the live configuration on every
+	// request (issue #484), so a reload applies it and must say so.
+	wantNotes := []string{
+		"NOTE: http.auth.oidc.provision_users changed - applied",
+		"NOTE: http.auth.oidc.allowed_email_domains changed - applied",
+		"NOTE: http.auth.oidc.superuser_group changed - applied",
+		"NOTE: http.auth.oidc.group_map changed - applied",
+		"NOTE: http.auth.oidc.button_label changed - applied",
+	}
+	for _, want := range append(wantWarnings, wantNotes...) {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected stderr to contain %q, got:\n%s", want, out)
+		}
+	}
+	for _, setting := range []string{"provision_users", "allowed_email_domains",
+		"superuser_group", "group_map", "button_label"} {
+		if strings.Contains(out, "http.auth.oidc."+setting+" changed - requires restart") {
+			t.Errorf("%s applies on reload but was reported as requiring a restart:\n%s",
+				setting, out)
+		}
+	}
+}
+
+// captureStderr redirects os.Stderr for the duration of fn and returns
+// everything written to it, so a test can assert on the exact log lines
+// logRestartRequiredSettings produces rather than merely that it did not
+// panic.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	original := os.Stderr
+	os.Stderr = w
+	defer func() { os.Stderr = original }()
+
+	fn()
+
+	if err := w.Close(); err != nil {
+		t.Fatalf("closing pipe writer: %v", err)
+	}
+	data, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("reading captured stderr: %v", err)
+	}
+	return string(data)
+}
+
+// TestOIDCEnabledMergesExplicitFalse is the reason OIDCConfig.Enabled is
+// a pointer: a later configuration source saying "enabled: false" must
+// switch federated login off, which a plain bool merged with the
+// guarded-assignment idiom could never do, since false is its zero value
+// and so reads as "not set".
+func TestOIDCEnabledMergesExplicitFalse(t *testing.T) {
+	dest := defaultConfig()
+	dest.HTTP.Auth.OIDC.Enabled = boolPtr(true)
+
+	mergeConfig(dest, &Config{})
+	if !dest.HTTP.Auth.OIDC.IsEnabled() {
+		t.Fatal("a source with no OIDC block switched federated login off")
+	}
+
+	src := &Config{}
+	src.HTTP.Auth.OIDC.Enabled = boolPtr(false)
+	mergeConfig(dest, src)
+	if dest.HTTP.Auth.OIDC.IsEnabled() {
+		t.Fatal("an explicit enabled: false in a later source did not switch federated login off")
+	}
+
+	if (OIDCConfig{}).IsEnabled() {
+		t.Error("IsEnabled must default to false when the field is unset")
+	}
+	if got := BoolPtr(true); got == nil || !*got {
+		t.Error("BoolPtr(true) must point at true")
+	}
+	if got := BoolPtr(false); got == nil || *got {
+		t.Error("BoolPtr(false) must point at false")
+	}
+}
+
+// TestLLMTemperatureFromYAML guards issue #551: an explicit
+// llm.temperature of 0 must survive the merge onto the defaults rather
+// than being mistaken for "not set" and replaced by 0.7.
+func TestLLMTemperatureFromYAML(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+		want float64
+	}{
+		{name: "unset uses default", yaml: "llm:\n    max_tokens: 100\n", want: 0.7},
+		{name: "explicit zero is kept", yaml: "llm:\n    temperature: 0\n", want: 0},
+		{name: "explicit non-zero", yaml: "llm:\n    temperature: 0.25\n", want: 0.25},
+		{name: "negative falls back to default", yaml: "llm:\n    temperature: -1\n", want: 0.7},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			configPath := filepath.Join(t.TempDir(), "config.yaml")
+			if err := os.WriteFile(configPath, []byte(tt.yaml), 0644); err != nil {
+				t.Fatalf("failed to write config file: %v", err)
+			}
+			cfg, err := LoadConfig(configPath, CLIFlags{ConfigFileSet: true, ConfigFile: configPath})
+			if err != nil {
+				t.Fatalf("failed to load config: %v", err)
+			}
+			if got := cfg.LLM.Temperature(); got != tt.want {
+				t.Errorf("Temperature() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLLMTemperatureNilReceiver(t *testing.T) {
+	var c *LLMConfig
+	if got := c.Temperature(); got != DefaultLLMTemperature {
+		t.Errorf("nil receiver Temperature() = %v, want %v", got, DefaultLLMTemperature)
+	}
+	if got := (&LLMConfig{}).Temperature(); got != DefaultLLMTemperature {
+		t.Errorf("unset Temperature() = %v, want %v", got, DefaultLLMTemperature)
+	}
+}
+
+func TestAuditRetentionDaysDefault(t *testing.T) {
+	cfg := defaultConfig()
+	if got := cfg.HTTP.Auth.AuditRetentionDays(); got != 90 {
+		t.Errorf("expected default audit retention of 90 days, got %d", got)
+	}
+}
+
+func TestAuditRetentionDaysYAMLOverride(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+
+	configContent := `
+http:
+    auth:
+        audit_retention_days: 30
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	cfg, err := LoadConfig(configPath, CLIFlags{ConfigFileSet: true, ConfigFile: configPath})
+	if err != nil {
+		t.Fatalf("failed to load config: %v", err)
+	}
+	if got := cfg.HTTP.Auth.AuditRetentionDays(); got != 30 {
+		t.Errorf("expected audit retention of 30 days from YAML, got %d", got)
+	}
+}
+
+func TestAuditRetentionDaysYAMLZeroKeepsForever(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+
+	configContent := `
+http:
+    auth:
+        audit_retention_days: 0
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	cfg, err := LoadConfig(configPath, CLIFlags{ConfigFileSet: true, ConfigFile: configPath})
+	if err != nil {
+		t.Fatalf("failed to load config: %v", err)
+	}
+	if got := cfg.HTTP.Auth.AuditRetentionDays(); got != 0 {
+		t.Errorf("expected explicit audit_retention_days: 0 to be kept as 0, got %d", got)
+	}
+}
+
+func TestAuditRetentionDaysEnvVarOverride(t *testing.T) {
+	origVal, origSet := os.LookupEnv("PGEDGE_AUDIT_RETENTION_DAYS")
+	defer func() {
+		if origSet {
+			os.Setenv("PGEDGE_AUDIT_RETENTION_DAYS", origVal)
+		} else {
+			os.Unsetenv("PGEDGE_AUDIT_RETENTION_DAYS")
+		}
+	}()
+
+	os.Setenv("PGEDGE_AUDIT_RETENTION_DAYS", "45")
+	cfg, err := LoadConfig("", CLIFlags{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := cfg.HTTP.Auth.AuditRetentionDays(); got != 45 {
+		t.Errorf("expected audit retention of 45 days from env var, got %d", got)
+	}
+
+	// An explicit 0 via env var must also keep events forever.
+	os.Setenv("PGEDGE_AUDIT_RETENTION_DAYS", "0")
+	cfg, err = LoadConfig("", CLIFlags{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := cfg.HTTP.Auth.AuditRetentionDays(); got != 0 {
+		t.Errorf("expected audit retention of 0 from env var, got %d", got)
+	}
+
+	// Invalid values are ignored, leaving the default in place.
+	os.Setenv("PGEDGE_AUDIT_RETENTION_DAYS", "not-a-number")
+	cfg, err = LoadConfig("", CLIFlags{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := cfg.HTTP.Auth.AuditRetentionDays(); got != 90 {
+		t.Errorf("expected default audit retention when env var is invalid, got %d", got)
+	}
+
+	// A negative retention period is as invalid as a non-numeric one.
+	os.Setenv("PGEDGE_AUDIT_RETENTION_DAYS", "-1")
+	cfg, err = LoadConfig("", CLIFlags{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := cfg.HTTP.Auth.AuditRetentionDays(); got != 90 {
+		t.Errorf("expected default audit retention when env var is negative, got %d", got)
+	}
+}
+
+func TestAuditRetentionDaysNegativeDefaultsTo90(t *testing.T) {
+	a := AuthConfig{AuditRetentionDaysPtr: intPtr(-7)}
+	if got := a.AuditRetentionDays(); got != 90 {
+		t.Errorf("expected 90 when AuditRetentionDaysPtr is negative, got %d", got)
+	}
+}
+
+func TestAuditRetentionDaysNilPointerDefaultsTo90(t *testing.T) {
+	var a AuthConfig
+	if got := a.AuditRetentionDays(); got != 90 {
+		t.Errorf("expected 90 when AuditRetentionDaysPtr is nil, got %d", got)
+	}
+}
+
+// TestMaxFailedAttemptsBeforeLockoutDefault checks that a config built
+// from the defaults alone locks an account after ten failed attempts.
+func TestMaxFailedAttemptsBeforeLockoutDefault(t *testing.T) {
+	cfg := defaultConfig()
+	if got := cfg.HTTP.Auth.MaxFailedAttemptsBeforeLockout(); got != 10 {
+		t.Errorf("expected default lockout threshold of 10, got %d", got)
+	}
+}
+
+// TestMaxFailedAttemptsBeforeLockoutOmittedKeepsDefault is the
+// regression test for issue #473: a config file that omits the key
+// must not overwrite the default of 10 with a zero value, which would
+// silently disable account lockout.
+func TestMaxFailedAttemptsBeforeLockoutOmittedKeepsDefault(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+
+	configContent := `
+http:
+    address: ":9999"
+    auth:
+        rate_limit_max_attempts: 5
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	cfg, err := LoadConfig(configPath, CLIFlags{ConfigFileSet: true, ConfigFile: configPath})
+	if err != nil {
+		t.Fatalf("failed to load config: %v", err)
+	}
+	if cfg.HTTP.Auth.MaxFailedAttemptsBeforeLockoutPtr == nil {
+		t.Fatal("expected an omitted key to leave the default pointer in place")
+	}
+	if got := cfg.HTTP.Auth.MaxFailedAttemptsBeforeLockout(); got != 10 {
+		t.Errorf("expected an omitted key to keep the default of 10, got %d", got)
+	}
+}
+
+// TestMaxFailedAttemptsBeforeLockoutMergeDoesNotClobber checks that
+// merging a source config that never named the key leaves the
+// destination default in place.
+func TestMaxFailedAttemptsBeforeLockoutMergeDoesNotClobber(t *testing.T) {
+	dest := defaultConfig()
+	src := &Config{}
+	mergeConfig(dest, src)
+	if got := dest.HTTP.Auth.MaxFailedAttemptsBeforeLockout(); got != 10 {
+		t.Errorf("expected merging an empty config to keep 10, got %d", got)
+	}
+
+	src.HTTP.Auth.MaxFailedAttemptsBeforeLockoutPtr = intPtr(0)
+	mergeConfig(dest, src)
+	if got := dest.HTTP.Auth.MaxFailedAttemptsBeforeLockout(); got != 0 {
+		t.Errorf("expected an explicit 0 to disable lockout, got %d", got)
+	}
+}
+
+// TestMaxFailedAttemptsBeforeLockoutYAMLOverride checks that a value
+// given in the config file replaces the default.
+func TestMaxFailedAttemptsBeforeLockoutYAMLOverride(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+
+	configContent := `
+http:
+    auth:
+        max_failed_attempts_before_lockout: 3
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	cfg, err := LoadConfig(configPath, CLIFlags{ConfigFileSet: true, ConfigFile: configPath})
+	if err != nil {
+		t.Fatalf("failed to load config: %v", err)
+	}
+	if got := cfg.HTTP.Auth.MaxFailedAttemptsBeforeLockout(); got != 3 {
+		t.Errorf("expected a lockout threshold of 3 from YAML, got %d", got)
+	}
+}
+
+// TestMaxFailedAttemptsBeforeLockoutYAMLZeroDisables checks that an
+// explicit zero is taken as a deliberate request to disable account
+// lockout rather than being treated as an omitted key.
+func TestMaxFailedAttemptsBeforeLockoutYAMLZeroDisables(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+
+	configContent := `
+http:
+    auth:
+        max_failed_attempts_before_lockout: 0
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	cfg, err := LoadConfig(configPath, CLIFlags{ConfigFileSet: true, ConfigFile: configPath})
+	if err != nil {
+		t.Fatalf("failed to load config: %v", err)
+	}
+	if got := cfg.HTTP.Auth.MaxFailedAttemptsBeforeLockout(); got != 0 {
+		t.Errorf("expected an explicit 0 to disable lockout, got %d", got)
+	}
+}
+
+// TestMaxFailedAttemptsBeforeLockoutNegativeDefaultsTo10 checks that a
+// negative attempt count, which cannot mean anything sensible, falls
+// back to the default.
+func TestMaxFailedAttemptsBeforeLockoutNegativeDefaultsTo10(t *testing.T) {
+	a := AuthConfig{MaxFailedAttemptsBeforeLockoutPtr: intPtr(-3)}
+	if got := a.MaxFailedAttemptsBeforeLockout(); got != 10 {
+		t.Errorf("expected 10 when the pointer is negative, got %d", got)
+	}
+}
+
+// TestMaxFailedAttemptsBeforeLockoutNilPointerDefaultsTo10 checks that
+// the accessor applies the default when the setting was never set.
+func TestMaxFailedAttemptsBeforeLockoutNilPointerDefaultsTo10(t *testing.T) {
+	var a AuthConfig
+	if got := a.MaxFailedAttemptsBeforeLockout(); got != 10 {
+		t.Errorf("expected 10 when the pointer is nil, got %d", got)
+	}
+}
+
+// TestReloadWarnsOnLockoutThresholdChange covers the restart warning
+// for the account lockout threshold. NewAuthStore reads the effective
+// value once at start-up and the store keeps its own copy, so a SIGHUP
+// that changes it applies nothing; without this warning an operator
+// switching lockout on, or tightening it during an attack, is told the
+// reload succeeded whilst every login goes on being counted against the
+// value the server started with.
+func TestReloadWarnsOnLockoutThresholdChange(t *testing.T) {
+	const warning = "WARNING: http.auth.max_failed_attempts_before_lockout changed - requires restart"
+
+	tests := map[string]struct {
+		oldRaw   *int
+		newRaw   *int
+		wantWarn bool
+	}{
+		"enabling lockout warns": {
+			oldRaw:   intPtr(0),
+			newRaw:   intPtr(10),
+			wantWarn: true,
+		},
+		"disabling lockout warns": {
+			oldRaw:   intPtr(10),
+			newRaw:   intPtr(0),
+			wantWarn: true,
+		},
+		"tightening the threshold warns": {
+			oldRaw:   intPtr(10),
+			newRaw:   intPtr(3),
+			wantWarn: true,
+		},
+		"an unchanged threshold is silent": {
+			oldRaw:   intPtr(5),
+			newRaw:   intPtr(5),
+			wantWarn: false,
+		},
+		// The comparison is of effective values, so omitting the key
+		// and spelling out the default are the same configuration and
+		// must not produce a warning an operator would chase.
+		"omitting the key matches the spelled-out default": {
+			oldRaw:   nil,
+			newRaw:   intPtr(10),
+			wantWarn: false,
+		},
+		"a negative value matches the default it falls back to": {
+			oldRaw:   intPtr(10),
+			newRaw:   intPtr(-1),
+			wantWarn: false,
+		},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			oldCfg := defaultConfig()
+			oldCfg.HTTP.Auth.MaxFailedAttemptsBeforeLockoutPtr = tc.oldRaw
+			newCfg := defaultConfig()
+			newCfg.HTTP.Auth.MaxFailedAttemptsBeforeLockoutPtr = tc.newRaw
+
+			rc := &ReloadableConfig{config: oldCfg}
+			out := captureStderr(t, func() {
+				rc.logRestartRequiredSettings(newCfg)
+			})
+
+			if got := strings.Contains(out, warning); got != tc.wantWarn {
+				t.Errorf("warning present = %v, want %v; output:\n%s",
+					got, tc.wantWarn, out)
+			}
+		})
+	}
+}
+
+// TestMergeConfigOverridesEveryField populates every field mergeConfig
+// knows about and checks that each one reaches the destination, so
+// that the per-field guards are all exercised rather than only the
+// handful a typical config file sets.
+func TestMergeConfigOverridesEveryField(t *testing.T) {
+	dest := defaultConfig()
+	src := &Config{
+		HTTP: HTTPConfig{
+			Address: ":9443",
+			TLS: TLSConfig{
+				Enabled:   true,
+				CertFile:  "/tmp/cert.pem",
+				KeyFile:   "/tmp/key.pem",
+				ChainFile: "/tmp/chain.pem",
+			},
+			TrustedProxies: []string{"192.0.2.0/24"},
+			CORSOrigin:     "https://app.example.com",
+			HSTSEnabled:    true,
+			Auth: AuthConfig{
+				MaxUserTokenDays:       30,
+				RateLimitWindowMinutes: 5,
+				RateLimitMaxAttempts:   3,
+			},
+		},
+		Embedding: EmbeddingConfig{
+			Enabled:          true,
+			Provider:         "voyage",
+			Model:            "voyage-3",
+			VoyageAPIKey:     "vk",
+			VoyageAPIKeyFile: "/tmp/vk",
+			OpenAIAPIKey:     "ok",
+			OpenAIAPIKeyFile: "/tmp/ok",
+			VoyageBaseURL:    "https://voyage.example.com",
+			OpenAIBaseURL:    "https://openai.example.com",
+			GeminiAPIKey:     "gk",
+			GeminiAPIKeyFile: "/tmp/gk",
+			GeminiBaseURL:    "https://gemini.example.com",
+			OllamaURL:        "https://ollama.example.com",
+		},
+		LLM: LLMConfig{
+			Provider:                "anthropic",
+			Model:                   "test-model",
+			AnthropicAPIKey:         "ak",
+			AnthropicAPIKeyFile:     "/tmp/ak",
+			AnthropicBaseURL:        "https://anthropic.example.com",
+			OpenAIAPIKey:            "ok",
+			OpenAIAPIKeyFile:        "/tmp/ok",
+			OpenAIBaseURL:           "https://openai.example.com",
+			GeminiAPIKey:            "gk",
+			GeminiAPIKeyFile:        "/tmp/gk",
+			GeminiBaseURL:           "https://gemini.example.com",
+			OllamaURL:               "https://ollama.example.com",
+			MaxTokens:               1234,
+			MaxIterations:           7,
+			TemperaturePtr:          float64Ptr(0.5),
+			TimeoutSeconds:          99,
+			CompactToolDescriptions: "always",
+		},
+		Knowledgebase: KnowledgebaseConfig{
+			Enabled:                   true,
+			DatabasePath:              "/tmp/kb.db",
+			EmbeddingProvider:         "openai",
+			EmbeddingModel:            "text-embedding-3-small",
+			EmbeddingVoyageAPIKey:     "vk",
+			EmbeddingVoyageAPIKeyFile: "/tmp/vk",
+			EmbeddingOpenAIAPIKey:     "ok",
+			EmbeddingOpenAIAPIKeyFile: "/tmp/ok",
+			EmbeddingVoyageBaseURL:    "https://voyage.example.com",
+			EmbeddingOpenAIBaseURL:    "https://openai.example.com",
+			EmbeddingGeminiAPIKey:     "gk",
+			EmbeddingGeminiAPIKeyFile: "/tmp/gk",
+			EmbeddingGeminiBaseURL:    "https://gemini.example.com",
+			EmbeddingOllamaURL:        "https://ollama.example.com",
+		},
+		Memory:                MemoryConfig{Enabled: BoolPtr(false)},
+		SecretFile:            "/tmp/secret",
+		CustomDefinitionsPath: "/tmp/defs",
+		DataDir:               "/tmp/data",
+		TraceFile:             "/tmp/trace.log",
+		ConnectionSecurity: ConnectionSecurityConfig{
+			AllowInternalNetworks: true,
+			AllowedHosts:          []string{"db.example.com"},
+			BlockedHosts:          []string{"169.254.169.254"},
+		},
+		Builtins: BuiltinsConfig{
+			Tools: ToolsConfig{
+				QueryDatabase:       BoolPtr(false),
+				GetSchemaInfo:       BoolPtr(false),
+				SimilaritySearch:    BoolPtr(false),
+				ExecuteExplain:      BoolPtr(false),
+				GenerateEmbedding:   BoolPtr(false),
+				SearchKnowledgebase: BoolPtr(false),
+				CountRows:           BoolPtr(false),
+				ListProbes:          BoolPtr(false),
+				DescribeProbe:       BoolPtr(false),
+				QueryMetrics:        BoolPtr(false),
+				StoreMemory:         BoolPtr(false),
+				RecallMemories:      BoolPtr(false),
+				DeleteMemory:        BoolPtr(false),
+			},
+			Resources: ResourcesConfig{
+				SystemInfo:     BoolPtr(false),
+				ConnectionInfo: BoolPtr(false),
+			},
+		},
+	}
+
+	mergeConfig(dest, src)
+
+	checks := []struct {
+		name string
+		got  interface{}
+		want interface{}
+	}{
+		{"address", dest.HTTP.Address, ":9443"},
+		{"tls enabled", dest.HTTP.TLS.Enabled, true},
+		{"tls cert", dest.HTTP.TLS.CertFile, "/tmp/cert.pem"},
+		{"tls key", dest.HTTP.TLS.KeyFile, "/tmp/key.pem"},
+		{"tls chain", dest.HTTP.TLS.ChainFile, "/tmp/chain.pem"},
+		{"cors origin", dest.HTTP.CORSOrigin, "https://app.example.com"},
+		{"hsts", dest.HTTP.HSTSEnabled, true},
+		{"max user token days", dest.HTTP.Auth.MaxUserTokenDays, 30},
+		{"rate limit window", dest.HTTP.Auth.RateLimitWindowMinutes, 5},
+		{"rate limit attempts", dest.HTTP.Auth.RateLimitMaxAttempts, 3},
+		{"embedding provider", dest.Embedding.Provider, "voyage"},
+		{"embedding model", dest.Embedding.Model, "voyage-3"},
+		{"embedding voyage key", dest.Embedding.VoyageAPIKey, "vk"},
+		{"embedding voyage key file", dest.Embedding.VoyageAPIKeyFile, "/tmp/vk"},
+		{"embedding openai key", dest.Embedding.OpenAIAPIKey, "ok"},
+		{"embedding openai key file", dest.Embedding.OpenAIAPIKeyFile, "/tmp/ok"},
+		{"embedding voyage url", dest.Embedding.VoyageBaseURL, "https://voyage.example.com"},
+		{"embedding openai url", dest.Embedding.OpenAIBaseURL, "https://openai.example.com"},
+		{"embedding gemini key", dest.Embedding.GeminiAPIKey, "gk"},
+		{"embedding gemini key file", dest.Embedding.GeminiAPIKeyFile, "/tmp/gk"},
+		{"embedding gemini url", dest.Embedding.GeminiBaseURL, "https://gemini.example.com"},
+		{"embedding ollama url", dest.Embedding.OllamaURL, "https://ollama.example.com"},
+		{"llm provider", dest.LLM.Provider, "anthropic"},
+		{"llm model", dest.LLM.Model, "test-model"},
+		{"llm anthropic key", dest.LLM.AnthropicAPIKey, "ak"},
+		{"llm anthropic key file", dest.LLM.AnthropicAPIKeyFile, "/tmp/ak"},
+		{"llm anthropic url", dest.LLM.AnthropicBaseURL, "https://anthropic.example.com"},
+		{"llm openai key", dest.LLM.OpenAIAPIKey, "ok"},
+		{"llm openai key file", dest.LLM.OpenAIAPIKeyFile, "/tmp/ok"},
+		{"llm openai url", dest.LLM.OpenAIBaseURL, "https://openai.example.com"},
+		{"llm gemini key", dest.LLM.GeminiAPIKey, "gk"},
+		{"llm gemini key file", dest.LLM.GeminiAPIKeyFile, "/tmp/gk"},
+		{"llm gemini url", dest.LLM.GeminiBaseURL, "https://gemini.example.com"},
+		{"llm ollama url", dest.LLM.OllamaURL, "https://ollama.example.com"},
+		{"llm max tokens", dest.LLM.MaxTokens, 1234},
+		{"llm max iterations", dest.LLM.MaxIterations, 7},
+		{"llm timeout", dest.LLM.TimeoutSeconds, 99},
+		{"llm compact tool descriptions", dest.LLM.CompactToolDescriptions, "always"},
+		{"kb path", dest.Knowledgebase.DatabasePath, "/tmp/kb.db"},
+		{"kb provider", dest.Knowledgebase.EmbeddingProvider, "openai"},
+		{"kb model", dest.Knowledgebase.EmbeddingModel, "text-embedding-3-small"},
+		{"kb voyage key", dest.Knowledgebase.EmbeddingVoyageAPIKey, "vk"},
+		{"kb voyage key file", dest.Knowledgebase.EmbeddingVoyageAPIKeyFile, "/tmp/vk"},
+		{"kb openai key", dest.Knowledgebase.EmbeddingOpenAIAPIKey, "ok"},
+		{"kb openai key file", dest.Knowledgebase.EmbeddingOpenAIAPIKeyFile, "/tmp/ok"},
+		{"kb voyage url", dest.Knowledgebase.EmbeddingVoyageBaseURL, "https://voyage.example.com"},
+		{"kb openai url", dest.Knowledgebase.EmbeddingOpenAIBaseURL, "https://openai.example.com"},
+		{"kb gemini key", dest.Knowledgebase.EmbeddingGeminiAPIKey, "gk"},
+		{"kb gemini key file", dest.Knowledgebase.EmbeddingGeminiAPIKeyFile, "/tmp/gk"},
+		{"kb gemini url", dest.Knowledgebase.EmbeddingGeminiBaseURL, "https://gemini.example.com"},
+		{"kb ollama url", dest.Knowledgebase.EmbeddingOllamaURL, "https://ollama.example.com"},
+		{"secret file", dest.SecretFile, "/tmp/secret"},
+		{"custom definitions", dest.CustomDefinitionsPath, "/tmp/defs"},
+		{"data dir", dest.DataDir, "/tmp/data"},
+		{"trace file", dest.TraceFile, "/tmp/trace.log"},
+		{"allow internal networks", dest.ConnectionSecurity.AllowInternalNetworks, true},
+	}
+	for _, c := range checks {
+		if c.got != c.want {
+			t.Errorf("%s: got %v, want %v", c.name, c.got, c.want)
+		}
+	}
+
+	if got := dest.LLM.Temperature(); got != 0.5 {
+		t.Errorf("llm temperature: got %v, want 0.5", got)
+	}
+	if len(dest.HTTP.TrustedProxies) != 1 || dest.HTTP.TrustedProxies[0] != "192.0.2.0/24" {
+		t.Errorf("trusted proxies: got %v", dest.HTTP.TrustedProxies)
+	}
+	if len(dest.ConnectionSecurity.AllowedHosts) != 1 {
+		t.Errorf("allowed hosts: got %v", dest.ConnectionSecurity.AllowedHosts)
+	}
+	if len(dest.ConnectionSecurity.BlockedHosts) != 1 {
+		t.Errorf("blocked hosts: got %v", dest.ConnectionSecurity.BlockedHosts)
+	}
+	if dest.Memory.Enabled == nil || *dest.Memory.Enabled {
+		t.Error("memory enabled: expected an explicit false to be carried over")
+	}
+
+	boolPtrs := map[string]*bool{
+		"query_database":       dest.Builtins.Tools.QueryDatabase,
+		"get_schema_info":      dest.Builtins.Tools.GetSchemaInfo,
+		"similarity_search":    dest.Builtins.Tools.SimilaritySearch,
+		"execute_explain":      dest.Builtins.Tools.ExecuteExplain,
+		"generate_embedding":   dest.Builtins.Tools.GenerateEmbedding,
+		"search_knowledgebase": dest.Builtins.Tools.SearchKnowledgebase,
+		"count_rows":           dest.Builtins.Tools.CountRows,
+		"list_probes":          dest.Builtins.Tools.ListProbes,
+		"describe_probe":       dest.Builtins.Tools.DescribeProbe,
+		"query_metrics":        dest.Builtins.Tools.QueryMetrics,
+		"store_memory":         dest.Builtins.Tools.StoreMemory,
+		"recall_memories":      dest.Builtins.Tools.RecallMemories,
+		"delete_memory":        dest.Builtins.Tools.DeleteMemory,
+		"system_info":          dest.Builtins.Resources.SystemInfo,
+		"connection_info":      dest.Builtins.Resources.ConnectionInfo,
+	}
+	for name, ptr := range boolPtrs {
+		if ptr == nil || *ptr {
+			t.Errorf("builtin %s: expected an explicit false to be carried over", name)
+		}
+	}
+}
+
+// TestLoadConfigSecretFile covers the early, partial read of
+// secret_file that the command line depends on, including the cases
+// where there is nothing to read: each of those must come back as an
+// empty path so the caller falls through to the default search order,
+// and only an unreadable or malformed file is an error.
+func TestLoadConfigSecretFile(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	write := func(name, content string) string {
+		path := filepath.Join(tmpDir, name)
+		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+			t.Fatalf("failed to write test file: %v", err)
+		}
+		return path
+	}
+
+	tests := []struct {
+		name        string
+		path        string
+		expected    string
+		expectError bool
+	}{
+		{
+			name: "config with secret_file",
+			path: write("with_secret.yaml", `
+http:
+    address: ":8080"
+secret_file: /etc/pgedge/custom.secret
+`),
+			expected: "/etc/pgedge/custom.secret",
+		},
+		{
+			name: "config without secret_file",
+			path: write("without_secret.yaml", `
+http:
+    address: ":8080"
+`),
+			expected: "",
+		},
+		{
+			name:     "non-existent file",
+			path:     filepath.Join(tmpDir, "nonexistent.yaml"),
+			expected: "",
+		},
+		{
+			name:     "empty path",
+			path:     "",
+			expected: "",
+		},
+		{
+			name:     "empty file",
+			path:     write("empty_secret.yaml", ""),
+			expected: "",
+		},
+		{
+			name:        "invalid YAML",
+			path:        write("invalid_secret.yaml", "this: is: not: valid: yaml: {{{{\n"),
+			expectError: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := LoadConfigSecretFile(tc.path)
+			if tc.expectError {
+				if err == nil {
+					t.Fatalf("expected an error, got %q", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.expected {
+				t.Errorf("LoadConfigSecretFile = %q, want %q", got, tc.expected)
+			}
+		})
+	}
+}
+
+// TestLoadConfigSecretFileUnreadable checks that a file that exists but
+// cannot be read is reported rather than treated as absent: falling
+// through to the default search order there would look for the secret
+// somewhere the operator did not put it.
+func TestLoadConfigSecretFileUnreadable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// Windows maps only the owner-write bit, so a mode of 0000
+		// still leaves the file readable, and os.Geteuid returns
+		// -1 there rather than 0, so the check below cannot skip.
+		t.Skip("mode 0000 does not prevent a read on Windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root can read a 0000 file")
+	}
+
+	path := filepath.Join(t.TempDir(), "unreadable.yaml")
+	if err := os.WriteFile(path, []byte("secret_file: /x\n"), 0000); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	if _, err := LoadConfigSecretFile(path); err == nil {
+		t.Error("expected an unreadable config file to be reported")
+	}
+}
+
+// TestMergeConfigMergesEveryToolsField is the structural guard against a
+// tool being added to ToolsConfig without a matching merge block in
+// mergeConfig, which is how six tools (including query_datastore) came to
+// be silently unconfigurable. It walks ToolsConfig by reflection, sets
+// every *bool on the source to false, and requires mergeConfig to carry
+// all of them across, naming any field that did not make the trip.
+func TestMergeConfigMergesEveryToolsField(t *testing.T) {
+	src := &Config{}
+	srcTools := reflect.ValueOf(&src.Builtins.Tools).Elem()
+	toolsType := srcTools.Type()
+
+	boolPtrType := reflect.TypeOf((*bool)(nil))
+	for i := 0; i < toolsType.NumField(); i++ {
+		if toolsType.Field(i).Type != boolPtrType {
+			t.Fatalf("ToolsConfig.%s is %s, expected *bool; extend this test to cover it",
+				toolsType.Field(i).Name, toolsType.Field(i).Type)
+		}
+		srcTools.Field(i).Set(reflect.ValueOf(boolPtr(false)))
+	}
+
+	dest := &Config{}
+	mergeConfig(dest, src)
+
+	destTools := reflect.ValueOf(&dest.Builtins.Tools).Elem()
+	var unmerged []string
+	for i := 0; i < toolsType.NumField(); i++ {
+		name := toolsType.Field(i).Name
+		got, ok := destTools.Field(i).Interface().(*bool)
+		if !ok || got == nil {
+			unmerged = append(unmerged, name+" (nil)")
+			continue
+		}
+		if *got {
+			unmerged = append(unmerged, name+" (true)")
+		}
+	}
+	if len(unmerged) > 0 {
+		t.Fatalf("mergeConfig did not merge these ToolsConfig fields: %s; "+
+			"add a merge block for each in mergeConfig", strings.Join(unmerged, ", "))
+	}
+}
+
+// TestToolsConfig_IsToolEnabledHonoursEveryField is the companion guard to
+// TestMergeConfigMergesEveryToolsField: every *bool on ToolsConfig must
+// have an IsToolEnabled case keyed on its yaml tag, so that a newly added
+// tool cannot fall through to the default-true branch and stay enabled
+// however the administrator configures it.
+func TestToolsConfig_IsToolEnabledHonoursEveryField(t *testing.T) {
+	toolsType := reflect.TypeOf(ToolsConfig{})
+	for i := 0; i < toolsType.NumField(); i++ {
+		field := toolsType.Field(i)
+		toolName := strings.Split(field.Tag.Get("yaml"), ",")[0]
+		if toolName == "" {
+			t.Fatalf("ToolsConfig.%s has no yaml tag", field.Name)
+		}
+
+		t.Run(toolName, func(t *testing.T) {
+			var cfg ToolsConfig
+			if !cfg.IsToolEnabled(toolName) {
+				t.Fatalf("IsToolEnabled(%q) = false with no value set, want true", toolName)
+			}
+
+			value := reflect.ValueOf(&cfg).Elem().Field(i)
+			value.Set(reflect.ValueOf(boolPtr(false)))
+			if cfg.IsToolEnabled(toolName) {
+				t.Fatalf("IsToolEnabled(%q) = true with %s set to false; "+
+					"add a case for %q to IsToolEnabled", toolName, field.Name, toolName)
+			}
+
+			value.Set(reflect.ValueOf(boolPtr(true)))
+			if !cfg.IsToolEnabled(toolName) {
+				t.Fatalf("IsToolEnabled(%q) = false with %s set to true", toolName, field.Name)
+			}
+		})
+	}
+}
+
+// TestToolsConfig_IsToolEnabledBlackoutsAndRequiredTestQuery pins the two
+// tools the documentation and the example configuration advertised whilst
+// IsToolEnabled had no case for either: get_blackouts is switchable and must
+// respect a false value, whereas test_query is required and must stay enabled
+// however it is configured, including through a configuration file.
+func TestToolsConfig_IsToolEnabledBlackoutsAndRequiredTestQuery(t *testing.T) {
+	cfg := ToolsConfig{GetBlackouts: boolPtr(false)}
+	if cfg.IsToolEnabled("get_blackouts") {
+		t.Error("IsToolEnabled(\"get_blackouts\") = true, want false")
+	}
+
+	if !cfg.IsToolEnabled("test_query") {
+		t.Error("IsToolEnabled(\"test_query\") = false, want true: test_query is required")
+	}
+
+	// A YAML round-trip guards against someone reintroducing a
+	// test_query field on ToolsConfig: an operator switching it off in the
+	// configuration file must not be able to disable the tool.
+	var fromFile Config
+	yamlSrc := "builtins:\n  tools:\n    test_query: false\n    get_blackouts: false\n"
+	if err := yaml.Unmarshal([]byte(yamlSrc), &fromFile); err != nil {
+		t.Fatalf("yaml.Unmarshal() error = %v", err)
+	}
+	if !fromFile.Builtins.Tools.IsToolEnabled("test_query") {
+		t.Error("IsToolEnabled(\"test_query\") = false after test_query: false in YAML, " +
+			"want true: test_query must not be configurable")
+	}
+	if fromFile.Builtins.Tools.IsToolEnabled("get_blackouts") {
+		t.Error("IsToolEnabled(\"get_blackouts\") = true after get_blackouts: false in YAML, want false")
 	}
 }

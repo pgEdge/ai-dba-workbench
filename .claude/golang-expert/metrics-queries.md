@@ -21,6 +21,28 @@ stripping the joins out, because it costs nothing and the cascade is the
 only thing standing between a stale metric row and a foreign key
 violation downstream.
 
+## Deleting a Connection
+
+Because of that cascade, `DELETE FROM connections` removes the
+connection's whole retention history and can take minutes, so it does
+not run under the budgets ordinary datastore calls get (issue #480).
+`database.ConnectionDeleteTimeout` (four minutes, kept under the HTTP
+server's 300 second `WriteTimeout`) is both the handler deadline, built
+by `connectionDeleteContext` in `api/connection_handlers.go` with
+`context.WithoutCancel` so that a client giving up does not roll the
+delete back, and a transaction-local `statement_timeout` that
+`DeleteConnection` sets with `set_config(..., true)` to override the
+pool-wide one. `DeleteConnection` deliberately does not take `d.mu`:
+holding the write lock through the cascade would stall every other
+datastore call. `TestDeleteConnection_OverridesPoolStatementTimeout`,
+`TestDeleteConnection_SurvivesRequestCancellation` and
+`TestDeleteConnection_DoesNotBlockDatastoreReaders` lock these
+properties in. If deletes outgrow four minutes, the next step is an
+asynchronous delete (hide the connection at once, reclaim its rows in
+the background), not a longer timeout; detaching partitions does not
+help directly, because the weekly partitions hold every connection's
+rows.
+
 ## Filter Orphans at Query Time
 
 Any query that reads from `metrics.*` and then feeds the result into a
@@ -67,6 +89,98 @@ performs the JOIN. The regression test at
 that every branch filters orphans. When adding a new metric branch,
 extend both.
 
+## Per-Entity Counter Deltas (server)
+
+The same rule applies to the api package, and
+`queryCacheHit`, `queryDatabaseCacheHitTimeSeries` and
+`queryTransactions` in
+`server/src/internal/api/perf_summary_handlers.go` are its reference
+implementations (issues #401 and #469). `metrics.pg_stat_database`
+stores one row per database per sample, so a cumulative counter such as
+`blks_hit` must be differenced per database before anything is summed:
+a `deltas` CTE
+takes `blks_hit - LAG(blks_hit) OVER (PARTITION BY datname ORDER BY
+collected_at)`, a `valid_deltas` CTE drops rows where either delta is
+NULL (the database's first sample in the window) or negative (a stats
+reset or restart), and only then does the outer query `SUM` the deltas
+into `date_bin` buckets. Differencing an already aggregated value, as in
+`LAG(SUM(blks_hit)) OVER (ORDER BY collected_at)`, is wrong for two
+reasons that both show up in practice: a database created between two
+samples adds its whole lifetime counter to that interval, and a database
+dropped between two samples drives the delta negative so the interval is
+discarded. The per-database tests in `perf_summary_cache_hit_test.go`
+(`TestQueryCacheHit_NewDatabaseExcludedFromInterval`,
+`TestQueryCacheHit_DroppedDatabaseKeepsInterval` and
+`TestQueryCacheHit_ResetInOneDatabaseKeepsOther`) pin each case; the
+last one is the only case where filtering per row and filtering per
+bucket differ.
+
+`queryTransactions` follows the same shape with two additions of its
+own (issue #469). It also discards an interval whose `stats_reset`
+`IS DISTINCT FROM` that database's previous sample, because a reset that
+overshoots the old value inside one sample interval yields a positive
+delta the negative-delta guard cannot see; `IS DISTINCT FROM` rather
+than `<>` so a NULL-on-both-sides pair stays valid, matching the
+`IS NOT DISTINCT FROM` reset guard that `BuildDerivedMetricsQuery`
+builds in `internal/metrics/query.go`. And because it reports
+a rate, elapsed time has to come from the distinct sample timestamps
+(a `sample_elapsed` CTE over `SELECT DISTINCT collected_at`, LAG over
+that, joined back to the bucket) rather than from a value carried on
+every per-database row, which summing would multiply by the number of
+databases and divide `commits_per_sec` down accordingly. That join is on
+both `collected_at` and `previous_collected_at`, because a database
+missing from an intermediate sample has its own previous row two samples
+back: its delta would span two intervals whilst the bucket is credited
+with the elapsed time of only the last one, so the interval is dropped
+for that database alone. The gap-bound
+rejection of a long collection outage is deliberately not here; it needs
+the probe interval and belongs to #402. The cases are pinned in
+`perf_summary_transactions_test.go`.
+
+Per-database differencing is measurably slower, and deliberately so.
+`PARTITION BY datname` cannot use the collected_at ordering of the
+partition's index, so a wide range sorts externally: over 864,000
+seeded rows a 30-day window took 1443ms against 272ms for the old
+whole-cluster differencing (a 35MB external merge sort), and a
+24-hour window 44.7ms against 12.3ms. Do not treat that 5.3x as a
+regression to optimise by differencing summed counters again; the
+same note sits beside `queryTransactions` in
+`internal/api/perf_summary_handlers.go`.
+
+Two consequences for callers. A bucket whose deltas are all valid but
+sum to zero block accesses is emitted with a NULL ratio rather than 0%,
+so the JSON `current`, `time_series[].value` and
+`aggregate.cache_hit_ratio` are all nullable (`*float64` in Go and
+`nullable: true` in the OpenAPI schemas `CacheHitRatioData`,
+`CacheHitRatioPoint` and `PerfAggregate`). And the bucket width is
+`duration / 60` with a 10 second floor, so `current` is the last minute
+of a 1h range but the last 12 hours of a 30d range; say so in any
+comment or documentation that describes it.
+
+`BuildDerivedMetricsQuery` in `internal/metrics/query.go` and the
+alerter's `queryStatsSQL` still
+difference an aggregated value; #449 is reworking
+`BuildDerivedMetricsQuery` to partition by entity, so do not patch it
+piecemeal. Until then the web client must not derive a server-wide
+ratio from `blks_hit_per_sec`/`blks_read_per_sec` requested without a
+`database_name`; the server dashboard reads `cache_hit_ratio` from
+`/api/v1/metrics/performance-summary` instead, passing `time_start` and
+`time_end` for a custom range.
+
+### Testing the error branches
+
+pgx prepares statements by default, so a missing table fails inside
+`tx.Query` and reaches the early return, whilst an execution-time
+failure surfaces through `rows.Err()` after `rows.Next()` returns false.
+To drive the latter deterministically, rename the fixture table and put
+a view of the same name over it whose `blks_read` column divides by
+`(blks_read - blks_read)`, which the planner cannot fold
+(`installFailingCacheHitView`). A `rows.Scan` failure is not reachable
+in `queryCacheHit` with real rows, because every output column is an
+explicit `::float` cast or a `date_bin` over a bounded `timestamptz`;
+the per-database sibling scans `datname` into a `string`, so a NULL
+`datname` fixture row drives its scan-error branch.
+
 ## Schema References
 
 Metrics tables live under the `metrics` schema
@@ -97,6 +211,35 @@ decomposed into small, separately testable helpers:
   into flat maps, normalising each value through `normalizeLatestValue`
   (RFC3339 for `time.Time`, `sanitizeFloat` dropping NaN/Inf to JSON
   null, `pgtype.Numeric`/`pgtype.Interval` collapsed to seconds/float).
+
+### The /metrics/latest snapshot endpoint and its schema filters
+
+`GET /api/v1/metrics/latest` (`server/src/internal/api/latest_handlers.go`)
+is a separate latest-row path that the database dashboard's leaderboards
+and Vacuum Status section use. It runs `DISTINCT ON` over the probe's
+entity key columns (`metrics.EntityKeyColumns`) within the last hour, then
+filters, sorts and limits in an outer query with `COUNT(*) OVER()` for the
+total. `database_name` is optional. Schema filters live in the outer
+`WHERE`, carried by `latestSchemaFilter`, and apply only to probes with a
+`schemaname` entity key column; for any other probe they are dropped
+silently rather than producing invalid SQL:
+
+- `exclude_schemas` is a comma-separated list, each name validated with
+  `IsValidIdentifier` and bound as a placeholder.
+- `exclude_system_schemas=true` appends the constant
+  `systemSchemaPredicate`, the same predicate PostgreSQL uses to derive
+  `pg_stat_user_tables` from `pg_stat_all_tables`: `pg_catalog` and
+  `information_schema` by name, and every `pg_toast*` schema by regex.
+  `pg_temp_N` schemas stay in, as they do in `pg_stat_user_tables`.
+
+The flag is opt-in. The Table and Index Leaderboards send it (issue #499:
+catalog relations report zero counters, and on a standby or after a
+statistics reset every table ties at zero, so catalogs filled the top
+ten); Vacuum Status does not, because catalog bloat matters there.
+`latest_handlers_db_test.go` holds the DB-backed tests, each using its
+own fixture probe table and clearing `tableColumnCache` and
+`tableDBColCache` for it, because both caches hold column metadata for
+five minutes.
 
 ### Identifier safety and the Codacy suppression
 
@@ -136,27 +279,375 @@ order, into three results: raw column names, a `[]DerivedMetric`, and the
 combined output order. The routing rules are deliberate and order-sensitive:
 
 - A name matching a real numeric column is always a raw metric; a real
-  column wins even when it ends in `_per_sec`.
-- A name ending in `_per_sec` whose prefix is a real numeric column becomes
-  a `DerivedPerSec` rate (delta of the counter over elapsed seconds).
+  column wins even when it ends in a derived suffix.
+- A name ending in one of the `derivedSuffixRules` suffixes is a derived
+  metric whose prefix must be a real numeric column of a kind the rule
+  accepts (see the column kind registry below): `_per_sec` is a
+  `DerivedPerSec` rate and needs a `KindCounter`; `_delta` is a
+  `DerivedDelta`, the per-bucket increase, and accepts a counter or either
+  time kind; `_pct` is a `DerivedTimeShare`, the share of wall-clock time a
+  millisecond counter advanced by (`100 * delta_ms / (elapsed_sec *
+  1000)`), and needs a `KindTimeCounter`; `_sessions` is a
+  `DerivedSessionAverage`, the average number of sessions in a state
+  (`delta_ms / (elapsed_sec * 1000)`), and needs a
+  `KindSessionTimeCounter`. A kind mismatch is a client error that names
+  the column's kind (`"n_dead_tup" is a gauge, not a cumulative counter`),
+  and a `_per_sec` request on a time kind points at the `_pct` or
+  `_sessions` name that does make sense; a millisecond counter divided by
+  seconds is a dimensionless number that only looks like a rate.
 - The literal `dead_tuple_ratio` is accepted only when the probe exposes
   both `n_live_tup` and `n_dead_tup`; it is a 0-100 percentage.
 - A repeated name is silently de-duplicated; anything else is a client
   error.
 
+Each `DerivedMetric` carries a `Unit` (`"/s"`, `"%"`, `"sessions"`, and
+`""` or `"ms"` for a delta depending on whether the base column counts
+events or milliseconds) which `QueryTimeSeries` copies onto
+`MetricSeries.Unit`; raw columns report `""`, because the client knows its
+own columns.
+
+### The column kind registry
+
+`server/src/internal/metrics/column_kinds.go` holds `probeRegistry`, a
+static map from probe name to `probeRegistryEntry`: the `kinds` of its
+counter-like columns (`ColumnKind`: `KindCounter`, `KindTimeCounter`,
+`KindSessionTimeCounter`, `KindWatermark`, `KindRatio`; anything unlisted,
+and any column of an unlisted probe, is `KindGauge`), a `resetColumn` func
+naming the `stats_reset` marker that guards a given column (`""` when the
+probe has none; `pg_stat_wal` and `pg_stat_checkpointer` split between two
+markers because each was consolidated from two PostgreSQL views), and an
+`excludeEntities` WHERE fragment (`pg_sys_network_info` drops the loopback
+interface). The exported readers are `ColumnKindFor`, `ResetColumnFor` and
+`ProbeEntityExclusion`. Watermarks and ratios are listed even though they
+are never differenced, purely so the error message can say why.
+
+The registry names columns by string, so a typo would silently make a
+counter a gauge. `TestProbeRegistryMatchesCollectorDDL` reads the
+collector's `schema.go` (relative to the package, skipping if absent) and
+checks both directions. Outwards, it fails on any registered column,
+reset column or exclusion column that the `CREATE TABLE` or a later `ADD
+COLUMN` does not declare, and on any probe without a `CREATE TABLE`.
+Inwards (`unregisteredColumnProblems`), every numeric column of a
+registered probe must be either classified in the entry or listed in the
+test's `knownGaugeColumns`, so a counter column added to the collector
+cannot quietly default to a gauge and be found by a user hitting the 400
+on its `_per_sec`; `connection_id` is excluded everywhere, and only the
+integer, numeric and floating-point types are considered, since a text,
+boolean, timestamp or OID column can never be a counter. The same test
+pins the metrics tables that have no registry entry at all in
+`unregisteredProbeTables`, so a new probe table forces the same decision.
+When a probe gains a counter column, add it to the registry in the same
+change or `_per_sec` on it is refused.
+
+The bucket aggregation is a closed set (`avg`, `sum`, `min`, `max`,
+`last`) held in `query.go` as `validAggregations`, read by
+`IsValidAggregation` and `ValidAggregations`. It is interpolated into SQL
+as a bare function name, so both `BuildMetricsQuery` and
+`BuildDerivedMetricsQuery` refuse anything outside the set themselves
+rather than trusting a caller to have validated first; the HTTP handler
+and the `query_metrics` MCP tool call the same validator, so there is one
+list. A test may no longer force a query to fail at execution by passing a
+nonsense aggregation, as it once did: use a pre-resolved
+`MetricFilters.DatabaseColumn` naming a column the table does not have.
+
+Integration fixtures create tables under their own names
+(`pg_stat_all_tables_ts_test` and so on), which are not registered probes,
+so each `setup*Fixture` calls `registerProbeKindsForTest(t, probe, entry)`
+from `column_kinds_test.go`. The hook installs the entry under a
+`sync.RWMutex` and restores or removes it in `t.Cleanup`;
+`countersForTest(cols...)` builds the common all-counters entry. Without
+the registration every fixture column is a gauge and the fixture's
+`_per_sec` requests fail.
+
 `BuildDerivedMetricsQuery` builds the derived SQL. It shares the bucketing,
 gap-filling (`generate_series`), filtering, and `$N` argument layout of
-`BuildMetricsQuery`, so the caller scans and applies LOCF identically for
-raw and derived series. Per-second base columns must stay validated against
-the discovered column set and `QuoteIdentifier`-wrapped; never interpolate a
-caller-supplied metric name that has not passed `classifyMetrics`. Negative
-counter deltas (resets/restarts) and non-positive elapsed times are dropped
-to NULL so they never yield a bogus rate.
+`BuildMetricsQuery`, so the caller scans raw and derived series with the
+same `scanSeriesRows`; it additionally takes the probe's entity-key
+columns (see below), the probe's full column list from
+`GetProbeAllColumns` (so it can tell whether a registered reset marker is
+actually present), and a `maxElapsed` gap bound, which it binds as one
+extra trailing argument after the filter values (only when a
+counter-derived metric is requested; a ratio-only query binds nothing,
+because PostgreSQL rejects an argument no placeholder uses). Per-second
+base columns must stay validated against the discovered column set and
+`QuoteIdentifier`-wrapped; never interpolate a caller-supplied metric name
+that has not passed `classifyMetrics`. The per-sample guards are described
+under "Reset guard, gap rejection, bucket clamp and fill policy" below.
 
-Both the raw and derived branches feed the shared `scanSeriesRows` helper,
-which scans a bucket-time-plus-N-values result set, applies LOCF per
-connection and metric name via `lastKnown`, and treats a NULL bucket or a
-non-finite sample as a gap.
+`DerivedPerSec`, `DerivedTimeShare`, `DerivedSessionAverage` and
+`DerivedDelta` share one `rate_samples`/`rate_buckets` CTE pair, since all
+derive from the same `LAG` over consecutive samples, so a request may mix
+them freely for the same or different base columns: each counter gets a
+`total_i`/`prev_i` pair, then either a `rate_i` or a `delta_i` sample
+column. The time share and session average are the per-second rate with a
+scale factor (`rateSampleExpr` picks the numerator), so they share its
+guards, its `rateAggExpr` bucket aggregation and its NULL behaviour. Two
+rules are specific to deltas and must not be "tidied away":
+
+- The bucket aggregate is always `SUM(delta_i)`; the `aggregation` request
+  parameter is deliberately ignored, because averaging or taking the last of
+  a set of increments under-reports the events in the bucket. A reset or the
+  first sample of the window yields 0 rather than NULL, so the bucket SUM
+  stays defined whenever the bucket holds any accepted sample; only an
+  interval rejected by the gap bound is NULL (see below).
+- The final SELECT decides a delta bucket in two branches. A bucket the
+  LEFT JOIN matched (`rate_buckets.bucket_time IS NOT NULL`) reports
+  `COALESCE(rate_buckets.<output>, 0)`, unless `rate_buckets.gap_i`
+  (computed as `COUNT(delta_i) = 0`) says every one of its samples was
+  rejected by the gap bound, which is a gap (NULL) rather than a zero
+  because the events in a rejected interval are unknown. A bucket holding
+  no sample reads 0 only when an accepted sample interval spans it,
+  tested as `EXISTS (SELECT 1 FROM rate_samples s WHERE s.delta_i IS NOT
+  NULL AND s.prev_collected_at IS NOT NULL AND s.prev_collected_at <
+  all_buckets.bucket_time + $1::interval AND s.collected_at >=
+  all_buckets.bucket_time)`, the standard half-open overlap between the
+  interval `(prev_collected_at, collected_at]` and the bucket. That is
+  what the double-counting argument actually licenses: a sample-less
+  bucket saw no counter reading, and its events are counted by the next
+  sample's delta, so reporting them here as well would count them twice.
+  Where no accepted interval spans the bucket the argument does not
+  apply, because nothing counts those events anywhere, and the bucket is
+  NULL: before the probe's first sample, after its last, and through a
+  collection outage, where `_delta` now breaks exactly as `_per_sec`
+  does instead of drawing a run of confident zero bars. It follows that a
+  connection whose probe never ran, is disabled or is failing yields all
+  NULLs and the client shows its no-data state.
+- `prev_collected_at` exists only to serve that span test, so it is added
+  to the three `rate_samples` levels (a partitioned `LAG(collected_at)`
+  innermost, passed through the middle query, `MAX(prev_collected_at)` in
+  the outer one) only when a `_delta` is requested; a rate-only query's
+  SQL is unchanged.
+
+### The LAG is partitioned by the probe's entity keys
+
+`rate_samples` is three queries deep. The innermost groups the probe rows
+by `collected_at` plus the probe's entity-key columns and computes
+`SUM(col)`, `LAG(SUM(col)) OVER (PARTITION BY <entity keys> ORDER BY
+collected_at)` and the elapsed seconds, so each entity's counter is
+differenced against its own previous reading; the middle query turns
+those into per-entity `rate_i`/`delta_i` values and drops the borrowed
+pre-window row; the outer query sums the per-entity values per
+`collected_at`, so `rate_buckets` still sees one row per sample whatever
+the entity count. Summing the counters first and differencing the sum
+(the previous shape) was wrong whenever the entity set changed between
+samples: on `pg_sys_network_info`, keyed per `interface_name`, an
+interface being torn down dropped the sum by its lifetime total, the
+negative-delta guard nulled the sample and the then-uniform
+carry-forward republished the previous
+throughput, whilst an interface coming up folded its whole lifetime
+counter into one interval and spiked the axis. With the partition a
+vanished entity simply stops contributing and a new one contributes
+nothing until its second sample. A per-entity rate that is NULL (that
+entity reset) drops out of the per-sample `SUM`, so the total rate loses
+only that entity's share.
+
+The entity keys come from `GetProbeEntityKeyColumns`: the columns of the
+probe table's primary key other than `connection_id` and `collected_at`,
+in key order (`interface_name`; `datname`; `database_name, queryid,
+userid, dbid, toplevel`; nothing for a single-row probe such as
+`pg_stat_wal`, which then reduces to the unpartitioned form). Every
+`metrics.*` table declares such a key. Do not substitute
+`EntityKeyColumns`/`IsEntityKeyColumn` here: those treat every text
+column as identity, and `pg_stat_wal.last_archived_wal` or
+`pg_sys_network_info.ip_address` would fragment the partition so that
+every sample became a first sample. `QueryTimeSeries` discovers the keys
+only when `needsEntityKeys` reports a counter-derived metric in the
+request; the ratio reads absolute values and ignores them. The keys are
+validated with `IsValidIdentifier` and `QuoteIdentifier`-wrapped; they
+are identifiers from `information_schema`, never bound values, so the
+`$N` layout is unchanged. Fixture tables for the derived path must
+therefore declare a primary key when they mean to exercise the
+partition; the existing table-probe fixtures declare none and run
+unpartitioned.
+
+### The rate/delta sample query reaches one sample before the window
+
+The `rate_samples` CTE differences consecutive samples with `LAG`, so the
+first sample inside the window has no predecessor and any counter increase
+between the last sample before the window start and it would be lost: a
+`NULL` rate and a zero delta, and a first bucket that under-reports. The
+inner sample query therefore widens its lower bound with
+`metricQueryParts.lookbackWhere`, which replaces `collected_at >= $3` with
+`collected_at >= COALESCE((SELECT MAX(collected_at) FROM metrics.<probe>
+WHERE connection_id = $2 AND collected_at < $3 AND collected_at >= $3 -
+<lookbackBound> AND <same dimension filters>), $3)`, and the CTE's middle
+`WHERE collected_at >= $3` then drops the borrowed sample again so it never
+becomes a bucket of its own. The `COALESCE` fallback means a window with
+no earlier sample within reach behaves exactly as it did before the
+lookback existed. The collector stamps every entity of one probe run
+with the same `collected_at`, which is why one borrowed timestamp serves
+every partition.
+
+The search is bounded below by the `lookbackBound` constant,
+`GREATEST($1::interval * 3, INTERVAL '30 minutes')`: the larger of three
+bucket widths and a 30-minute floor, expressed in the query's own bucket
+argument so it adds nothing to the argument list. The bound exists
+because a predecessor left behind by a long collection gap inflates the
+first bucket: a collector down for three days followed by a 1h window on
+`xact_commit_delta` reported three days of commits in the first bucket
+and autoscale flattened every real bucket, and the `_per_sec` form,
+though damped by dividing by the true elapsed time, presented a
+three-day average as the first bucket's rate. The multiplier is small
+because a borrowed sample k widths back can inflate the first bucket to
+k times a normal one, but one width is too few (a probe interval only
+slightly longer than the bucket would never resolve). The floor covers
+the 1h preset, where 150 buckets are 24s wide and the coarsest charted
+counter probes (`pg_stat_wal`, `pg_stat_checkpointer`,
+`pg_sys_network_info`) run every 600s; on those windows the sample-less
+buckets already read zero, so a first bucket carrying up to 30 minutes
+of increase is at most a few teeth tall. At the 7d and 30d presets the
+bucket term dominates (3.4 and 14.4 hours), so an outage of a day or
+more falls outside the bound and the window starts from zero. Beyond the
+bound the first bucket under-reports by one probe interval, which is the
+lesser harm. Change the constant only together with its justification
+comment in `query.go` and `TestLookbackBound`.
+
+Since #402 the gap bound (three probe intervals, next section) decides
+whether a borrowed predecessor actually counts: the lookback bound only
+limits how far the `MAX(collected_at)` scan reaches, and a predecessor it
+finds is still rejected as a gap when it is more than three probe
+intervals before the first in-window sample. Because the bucket clamp
+keeps every bucket at least one probe interval wide, "three bucket
+widths" is never shorter than "three probe intervals", so a predecessor
+beyond the bucket term of `lookbackBound` would have been rejected
+anyway; the 30-minute floor still matters only in that it lets a
+predecessor be found on a short window, after which the gap rule has the
+final say. The two cases render differently: a predecessor out of the
+lookback's reach leaves the first sample with no `LAG`, so its delta is 0
+and its rate NULL, whereas a borrowed-but-rejected predecessor makes the
+first bucket a gap (NULL delta and NULL rate).
+
+Three things must stay true. The lookback subquery repeats the same
+dimension filters as the outer clause, or the LAG would subtract another
+entity's counter. It reuses the existing `$1`/`$2`/`$3` placeholders and
+adds no arguments, so the `$N` layout stays shared with
+`BuildMetricsQuery`. And neither the raw-column path nor the
+`dead_tuple_ratio` CTE looks back at all: both read absolute values rather
+than differences, so an out-of-window row would simply be wrong.
+
+`metricQueryBase` now delegates to `metricQueryClauses`, which returns a
+`metricQueryParts` holding the dimension filter clauses and the argument
+list separately; `where()` reassembles the standard clause and
+`lookbackWhere()` the widened one. Add a new dimension filter in
+`metricQueryClauses` and both of those clauses pick it up, so the
+bucketed, rate and delta builders all scope alike; the latest-row path is
+the exception, because `buildLatestRowsQuery` assembles its own WHERE
+clause from the same `MetricFilters` value and needs the clause adding
+there too, or the filter scopes the chart but not the KPI tile behind it.
+
+Two ordering rules govern `metricQueryClauses`. Every clause increments
+`argNum` except the last one, and the `QueryID` clause is deliberately
+last and deliberately omits the increment, with a comment saying so; a new
+filter therefore goes above it and carries its own `argNum++`, leaving
+that comment attached to whichever clause is genuinely last. And the
+dimension filters apply no probe-column-existence check: `SchemaName`,
+`TableName`, `IndexName` and `MountPoint` (issue #428, `mount_point`, so
+the Disk Space chart can scope to one real filesystem rather than
+averaging every mounted one) all fail at execution time against a probe
+lacking the column, which keeps the validation semantics identical across
+dimensions.
+
+### Reset guard, gap rejection, bucket clamp and fill policy
+
+Issue #402 added four rules that `QueryTimeSeries` applies to every
+request. They all hang off the probe's collection interval, resolved once
+per request by `ResolveProbeInterval` (`probe_interval.go`): the
+server-scope `probe_configs` rows for the requested connections, with the
+global row standing in for any connection without one, then
+`DefaultProbeInterval` (300 s, the collector's own fallback); the largest
+interval wins because one bucket width serves every series in the
+response.
+
+That row says how the collector runs now, whilst the stored samples were
+taken under whatever configuration was in force when they were collected,
+so `ResolveEffectiveInterval` pairs it with `ObserveSampleSpacing` and
+returns both the configured interval and an effective one, the larger of
+the two. `ObserveSampleSpacing` measures the samples in the window
+themselves: per connection the smallest positive gap between consecutive
+distinct `collected_at` values, and across connections the largest of
+those, or zero when no connection has two samples. The smallest gap is
+deliberate, because a genuine outage is one wide interval among tighter
+ones and leaves the minimum alone, so the effective interval only widens
+when every sample in the window is spaced more widely than the
+configuration claims. The guards that judge samples (the counter gap
+bound and the gauge carry) use the effective interval, so tightening a
+probe's interval cannot retroactively blank the history collected at the
+old, wider one; the bucket clamp keeps using the configured interval,
+since widening it on sparse history would coarsen the whole chart rather
+than fix a gap.
+
+The table is the collector's, so the metrics package tests create a
+minimal `probe_configs` with `setProbeIntervalForTest`
+(`probe_interval_db_test.go`) when the test database lacks the collector
+schema, and every fixture registers its probe at 60 s (or per connection
+for the lookback fixture) so minute-spaced samples keep their exact
+bucket assertions; without a row a fixture would resolve to 300 s and a
+1h window would clamp to twelve 300 s buckets. A server-scope row needs
+its connection to exist, because another package's fixture creates
+`probe_configs` with a foreign key on `connection_id` and leaves the table
+behind, so `ensureConnectionForTest` adds the referenced row first. It
+never creates the `connections` table: other packages create their own
+with a plain `CREATE TABLE`, and with no such table there is no foreign
+key to satisfy either.
+
+- Reset guard: for each counter-derived metric whose
+  `ResetColumnFor(probe, col)` is non-empty and whose marker column is in
+  the `allCols` list, the innermost sample query adds `MAX(reset) AS
+  reset_i` and `LAG(MAX(reset)) OVER (<partition> ORDER BY collected_at)
+  AS prev_reset_i`, and the per-sample CASE adds `reset_i IS NOT DISTINCT
+  FROM prev_reset_i`, so a `stats_reset` change between consecutive
+  samples invalidates the interval even when the counter happens to read
+  higher; `IS NOT DISTINCT FROM` keeps an interval whose marker is NULL on
+  both sides valid. `_per_sec`, `_pct` and `_sessions` become NULL, and
+  `_delta` contributes 0, exactly as for a negative delta. An absent
+  marker column (a collector schema predating migration 10) is dropped
+  silently and the negative-delta guard alone applies;
+  `MinCollectorSchemaVersion` was deliberately not bumped.
+- Gap rejection: `MaxElapsedIntervals = 3`; `QueryTimeSeries` passes
+  `maxElapsed = 3 * effective interval` and the builder binds it as the
+  trailing argument. The rate CASE is `CASE WHEN (total_i - prev_i) >= 0
+  AND elapsed_sec > 0 AND elapsed_sec <= $N::float8 [AND reset_i IS NOT
+  DISTINCT FROM prev_reset_i] THEN <expr> END`; the delta CASE is `CASE
+  WHEN prev_i IS NULL THEN 0 WHEN elapsed_sec > $N::float8 THEN NULL WHEN
+  (total_i - prev_i) >= 0 [AND reset guard] THEN (total_i - prev_i) ELSE
+  0 END`. A first-ever sample (no `LAG`) still contributes 0, so the
+  start of a probe's history reads as zero events, not as a gap; only a
+  known-too-long interval is NULL. The bucket-level `gap_i` flag turns an
+  all-rejected bucket into a NULL bucket (see the delta rules above).
+- Loopback exclusion: `metricQueryClauses` takes the probe name and
+  appends `ProbeEntityExclusion(probe)` (a fixed fragment with no bound
+  value, so the `$N` layout is unchanged) to the filter clauses, which
+  `where()` and `lookbackWhere()` both emit, so the raw query, the derived
+  sample query and its lookback subquery all leave `lo`/`lo0` out of
+  `pg_sys_network_info`.
+- Bucket clamp: after resolving the interval, `maxBuckets = max(1,
+  window / configured interval)` and `buckets = min(buckets, maxBuckets)`,
+  applied to raw and derived queries alike so series stay aligned. A
+  bucket narrower than the interval cannot hold a sample of its own and
+  only produced the "comb" of zero and carried buckets. `generate_series`
+  is inclusive of the window end, so a clamped 1h window on a 300 s probe
+  returns 13 points (12 buckets plus the end), as before the clamp for any
+  bucket count.
+- Fill policy and null points: `MetricDataPoint.Value` is a
+  `*float64` (JSON `"value": null`). `scanSeriesRows` takes a
+  `[]fillPolicy` parallel to `names` plus the interval: `fillGauge` (raw
+  columns and `dead_tuple_ratio`, via `derivedFillPolicy`) repeats the
+  last real value whilst `bucketTime - lastSeenTime <= MaxCarryIntervals
+  * effective interval` (`MaxCarryIntervals = 3`) and emits nil beyond
+  that; `fillNone` (`_per_sec`, `_delta`, `_pct`, `_sessions`) never
+  repeats. A carried point is marked `Filled: true` (JSON
+  `"filled": true`, `omitempty`, so it is absent on observed and null
+  points), which is how a chart tells a carried stretch from an observed
+  one; `fillNone` never sets it.
+  Every bucket is emitted for every series, nulls included, so all series
+  in a response have identical length and bucket times; a series whose
+  query matched no rows is all nulls rather than empty, and the client
+  treats an all-null series as no data. There is no shared `lastKnown`
+  map any more: the carry state is local to one `scanSeriesRows` call,
+  which is fine because raw and derived names never overlap.
+
+`scanSeriesRows` scans a bucket-time-plus-N-values result set and treats a
+NULL bucket or a non-finite sample identically under the fill policy.
 
 ### NaN/Inf handling: finiteFloat, not resolveMetricValue
 
@@ -164,8 +655,9 @@ Non-finite samples (NaN, +/-Inf) must be treated as gaps, never plotted,
 because `encoding/json` cannot marshal them and one bad value would blank
 the whole response. This guard lives in `toFloat64` via the `finiteFloat`
 helper: `toFloat64` returns `(0, false)` for a non-finite float64/float32/
-`pgtype.Numeric`, and `scanSeriesRows` then treats `!ok` as a gap (LOCF
-carry-forward, or skip when there is no prior value). An earlier design
+`pgtype.Numeric`, and `scanSeriesRows` then treats `!ok` as a gap (a
+gauge carry-forward within the carry bound, otherwise a null point). An
+earlier design
 (#339) guarded NaN/Inf in a `resolveMetricValue` helper inside the scan
 loop; that was retired in favour of guarding inside `toFloat64`, because the
 `toFloat64` guard is broader and benefits every caller, including the
@@ -179,15 +671,70 @@ remain.
 
 The derived path and `scanSeriesRows` are covered by
 `server/src/internal/metrics/query_timeseries_db_test.go` (same gating
-convention as `query_db_test.go`). Its fixture inserts minute-spaced samples
-with counters rising 60 per minute (a clean 1.0/sec rate) and constant
-live/dead tuple counts (a steady 10% ratio), then exercises raw, `_per_sec`,
-`dead_tuple_ratio`, and mixed requests end-to-end. The two `scanSeriesRows`
-error returns in `QueryTimeSeries` are driven deterministically by passing
-an aggregation that names no SQL function, which makes the built query fail
-at execution; `scanSeriesRows`'s own `pool.Query` and `rows.Scan` error
-branches are driven by a cancelled context and a destination-count mismatch
-respectively.
+convention as `query_db_test.go`; every fixture registers its counter kinds
+through `registerProbeKindsForTest`). Its fixture inserts minute-spaced
+samples with counters rising 60 per minute (a clean 1.0/sec rate) and
+constant live/dead tuple counts (a steady 10% ratio), then exercises raw,
+`_per_sec`, `dead_tuple_ratio`, and mixed requests end-to-end. Both
+fixtures return the minute-truncated base time their offsets hang off, so a
+test can build a window with `windowSince(base, minutes)` that lines up
+exactly with the samples instead of re-reading the clock; the lookback
+tests use a window that opens on the second sample, leaving the first just
+outside it, and assert the first bucket carries the increase since that
+outside sample, plus a companion case whose window opens on the earliest
+sample of all and so has a null first rate bucket. A second fixture in the
+same file covers `_delta` with a deliberately awkward progression: a first
+sample with no `LAG`, a minute carrying no sample at all (a two-interval
+spacing, inside the gap bound), and a counter reset, asserting the exact
+non-zero per-bucket deltas, the 0 fill inside the spanned bucket, the
+nulls over the hour before the first sample and after the last, and that
+the reset contributes nothing; it registers a `stats_reset` marker its
+table does not have, to exercise the silent drop. A third,
+`setupNetworkFixture`, is shaped like `pg_sys_network_info` with its real
+primary key, the real probe's
+loopback exclusion and a `lo` row on every sample, and an interface set
+that changes under the window (one interface resets and is then torn
+down, another appears carrying a large lifetime counter); it asserts the
+exact per-minute totals for both `_delta` and `_per_sec`, that the raw
+path ignores `lo` too, that a connection with no rows and a window with
+no samples each yield all-null series, and that a window opening on the
+probe's very first sample fills that sample's bucket with 0 and leaves
+the bucket after it null, nothing having spanned it. A fourth,
+`setupLookbackFixture`, holds one scenario per connection for the
+lookback bound: a reset straddling the window
+boundary, a predecessor beyond the 30-minute floor (not borrowed, first
+delta 0) and one inside it but beyond three 60 s intervals (borrowed and
+rejected, first bucket a gap), and, on hourly connections, a predecessor
+beyond and one inside three 1-hour buckets. A fifth, `setupTimeShareFixture`, is
+shaped like `pg_stat_database`'s time columns with `blk_read_time`
+registered as a time counter and `active_time` as a session time counter,
+each rising 30000 ms per minute, so `blk_read_time_pct` is exactly 50 and
+`active_time_sessions` exactly 0.5; it also asserts the `Unit` on each
+series and the kind-mismatch errors end to end. A sixth,
+`setupGuardFixture` in `query_guards_db_test.go`, carries a real
+`stats_reset` column and one scenario per connection for #402: a marker
+change with a rising counter (null rate, zero delta), a four-minute gap
+followed by a two-minute one (rejected, then accepted), a gauge that
+stops reporting (carried for three buckets, then null), and a connection
+with a 300 s server-scope interval for the bucket clamp (13 points on a
+1h window with 150 requested). Its last case is the regression for the
+effective interval: it reads the rate and delta of the minute-spaced
+connection, tightens the global `probe_configs` row to 10 s with the
+samples untouched, and asserts the same points come back, where before
+`ResolveEffectiveInterval` the series went blank. The pointer-valued
+points have helpers: `pointAt` fails on a null, `assertNullAt` demands
+one, `nonNull`, `sumValues` and `assertAllNull` cover the rest. Asserting
+exact values at exact bucket times needs the window anchored on the
+minute (`windowSince`), not on `time.Now()`, or the bucket boundaries
+drift off the samples.
+Minute-spaced samples always land in distinct 60-second buckets whatever
+the window origin is, which is what makes those exact assertions safe. The
+two `scanSeriesRows` error returns in `QueryTimeSeries` are driven
+deterministically by a `MetricFilters.DatabaseColumn` naming a column the
+probe table does not have, which builds valid SQL that fails at
+execution; `scanSeriesRows`'s own
+`pool.Query` and `rows.Scan` error branches are driven by a cancelled
+context and a destination-count mismatch respectively.
 
 ## Alerter Metric Lookup Errors
 
@@ -202,27 +749,248 @@ distinguishes three failure modes, and callers must keep them apart:
 - Any other error - the query itself failed.
 
 When `GetLatestMetricValues` returns an error, `checkAlertResolved`
-(`alerter/src/internal/engine/cleanup.go`) clears an alert only for
-`ErrNoMetricData`; it still clears on its other, non-error paths, when
-the metric reports no value for the alert's connection or database, or
-when the current value no longer violates the threshold. An
-unsupported metric or a failed query
-says nothing about whether the alerting condition still holds, so the
-alert is left active and logged. Treating those errors as a resolution
-was the root cause of issue #405, in which `metric_staleness` alerts were
-cleared by the cleaner and immediately re-raised by the evaluator, once
-per cycle, for as long as a probe stayed stale.
+(`alerter/src/internal/engine/cleanup.go`) never clears on
+`ErrMetricNotSupported` or a query failure: neither says anything about
+whether the alerting condition still holds, so the alert is left active
+and logged. Treating those errors as a resolution was the root cause of
+issue #405, in which `metric_staleness` alerts were cleared by the
+cleaner and immediately re-raised by the evaluator, once per cycle, for
+as long as a probe stayed stale.
+
+Missing data is not a resolution either (issue #407). Both the
+`ErrNoMetricData` path and the "no row for this connection and database"
+path go through `resolveAbsentMetric`, which clears the alert only when
+the registry entry sets `clearWhenAbsent` (read through
+`Datastore.MetricClearsWhenAbsent`); otherwise it logs at debug level and
+leaves the alert active until fresh data shows the condition has ended,
+with the `metric_staleness` rule reporting the stalled probe. The flag is
+true only where a healthy connection legitimately produces no row: the
+query emits a row only while the condition holds
+(`pg_stat_replication.standby_disconnected`,
+`pg_node_role.subscription_worker_down`, the five `pg_stat_activity.*`
+metrics other than `count`, `table_last_autovacuum_hours`, the two Spock
+`recent_count` metrics, `pg_replication_slots.inactive`), the subject
+can be dropped (the other three `pg_replication_slots.*` metrics and the
+two `pg_stat_replication` lag metrics), or the query gates which
+subjects it judges, so a subject that stops passing the gate has stopped
+being a problem (`pg_stat_database.cache_hit_ratio`,
+`pg_stat_all_tables.dead_tuple_percent` and
+`pg_stat_checkpointer.checkpoints_req_delta`, #616; see the gating
+bullet below). Everything else emits a row for
+every healthy connection, so a vanished row means the collector or probe
+has stopped, and the flag stays false; each true entry carries a comment
+saying why, and `TestMetricClearsWhenAbsent` pins representative cases.
+Before the flag existed, any metric whose window could empty (a 5 minute
+window on a 300 second probe, say) cleared and re-fired on every late
+collection. `pg_replication_slots.inactive` and
+`pg_node_role.subscription_worker_down` were both exactly that shape and
+now use 15 minute windows.
+
+`clearWhenAbsent` alone is not enough, because every one of those queries
+bounds `collected_at`, so a stopped collector empties them exactly as a
+recovered condition does. Each registry entry therefore also carries
+`probeName`, the collector probe that fills the metrics table its latest
+query reads (`pg_stat_activity`, `pg_replication_slots`,
+`pg_stat_database` and so on; `pg_stat_archiver.failed_count_delta` reads
+`metrics.pg_stat_wal`, `age_percent` reads `metrics.pg_database`, and
+`table_last_autovacuum_hours` reads `metrics.pg_stat_all_tables`),
+exposed through `Datastore.MetricProbeName`, and every `clearWhenAbsent`
+entry carries `absenceWindow`, the interval its latest query looks back
+over as a `time.Duration`, exposed through
+`Datastore.MetricAbsenceWindow`. `resolveAbsentMetric` reads
+`GetProbeStalenessByConnection` and hands the classification to the pure
+`classifyAbsentMetric`: the alert clears only when that probe is listed
+for the alert's connection and its `SinceCollected` is at or inside the
+metric's `absenceWindow`.
+
+Gate on the window, never on the probe's configured collection interval.
+The gate was `StalenessRatio <= probeFreshnessRatioLimit` (3 intervals),
+which lined up with the 15 minute windows only at the collector's 300
+second default: an operator raising
+`probe_configs.collection_interval_seconds`, which
+`docs/admin-guide/probes.md` invites, widened the gate whilst the window
+stayed where the SQL put it, so ordinary collection emptied the query and
+the cleaner cleared a condition nobody had seen end. A per-connection
+override never reached the ratio at all, because
+`GetProbeStalenessByConnection` joins `probe_configs ... AND
+pc.connection_id IS NULL` (still true, and still correct for
+`metric_staleness`, which is a ratio question). Comparing the probe's
+last collection against the metric's own window holds at any interval.
+The query reports `SinceCollected` alongside `StalenessRatio` for this;
+`probeFreshnessRatioLimit` is gone.
+
+A stalled probe, an unavailable probe, a probe missing from the view (the
+query filters on `is_enabled`, `is_monitored` and a non-NULL
+`last_collected`, so a disabled or unmonitored one disappears entirely,
+whilst an unavailable one is returned with `IsAvailable` false since
+issue #465), an entry with no `probeName` or no `absenceWindow`, or a
+failed staleness read all leave the alert active and log at operator
+level rather than debug. The trade-off is deliberate: disabling a probe
+keeps the alert until someone clears or acknowledges it, which beats
+announcing a resolution nobody observed. Unmonitoring a connection is the
+exception, and is handled before the absence gate is ever reached:
+`cleanResolvedAlerts` resolves the unmonitored connections once per pass
+through `Datastore.GetUnmonitoredConnections` and
+`clearAlertForUnmonitoredConnection` clears every active alert on one,
+whatever its type, rewriting the description to say monitoring was turned
+off and queueing no clear notification (issue #500). A failed read of
+that set leaves the alerts active, as a failed staleness read does.
+`TestMetricRegistryProbeName` requires every entry to name a probe its
+latest SQL actually reads, `TestMetricRegistryAbsenceWindowMatchesSQL`
+requires the declared window to equal the shortest `collected_at` cutoff
+in that SQL, `TestMetricRegistryAbsenceWindowCoversProbeInterval`
+requires it to span at least three of the probe's seeded intervals (the
+map of seeded intervals is itself checked against the collector's
+`schema.go` by `TestSeededProbeIntervalsMatchCollector`), and
+`TestClassifyAbsentMetric` pins the five verdicts, including the
+unavailable probe whose `last_collected` still sits inside the window,
+which must stay `absentMetricProbeNotReporting` now that the row reaches
+the gate at all.
+
+Probe availability is carried rather than filtered, so the three ways a
+probe can leave the staleness view are no longer one signal (issue #465).
+`GetProbeStalenessByConnection` selects `pa.is_available` and
+`pa.unavailable_reason` into `ProbeStaleness.IsAvailable` and
+`UnavailableReason`, and the four readers each treat them differently:
+`evaluateMetricStaleness` skips unavailable entries entirely, because
+`is_available = FALSE` is a normal steady state for a probe whose
+extension is absent and firing on it would pin a permanent staleness
+alert to every such probe; `evaluateProbeUnavailable` (issue #512) is
+handed the same entries and raises the `probe_unavailable` rule on
+exactly those the staleness evaluator skips, relying on
+`last_collected` being sticky and `IS NOT NULL`-filtered so that an
+entry with `IsAvailable == false` is by construction a probe that
+collected before and has stopped; `classifyAbsentMetric` returns
+`absentMetricProbeNotReporting` for them whatever their `SinceCollected`,
+preserving the issue #407 gate exactly; and
+`checkStalenessAlertResolved` holds the alert active and rewrites only
+the alert's description through `Datastore.UpdateAlertDescription`,
+leaving the title alone so the alert reads as the same one across
+notification history. Both the rewrite and the operator-level line
+naming the probe, connection and `unavailable_reason` are skipped when
+the text already matches, since the cleaner runs every cycle and would
+otherwise bump `last_updated` and log a line every thirty seconds; an
+operator gets one line when collection stops and another only if the
+reason changes. Absence from the view now means only deliberate operator
+action (probe disabled, connection unmonitored, row gone) and still
+clears, but at operator level rather than debug.
+`UpdateConnectionAlertDescription` delegates to
+`UpdateAlertDescription`; the SQL is unchanged.
+
+The hold is undone on both ways out, because otherwise the clear
+notification and the stored history would announce the resolution in the
+words of the hold. Every held description opens with
+`unavailableProbeDescriptionPrefix` ("Collection has stopped: "), which
+is the only record that the cleaner wrote it, and
+`restoreStalenessAlertDescription` replaces a description carrying that
+prefix with the evaluator's own wording. The wording comes from
+`stalenessAlertDescription` and `stalenessMinutes` in `thresholds.go`,
+shared with `evaluateMetricStaleness` so the two cannot drift, and is
+rebuilt from `Alert.MetricValue`, the ratio the alert was raised or last
+updated on, falling back to the ratio the caller passes when the alert
+carries no value. A description the evaluator wrote is left alone, so
+the write happens once rather than on every pass.
+
+The probe collecting again is one way out, and `checkStalenessAlertResolved`
+restores the wording there from the view entry, before the threshold is
+checked and the alert possibly cleared. The other is the probe leaving
+the view whilst the alert is still held, which clears it, and
+`restoreHeldDescriptionBeforeClear` restores the wording there instead.
+That path has no view entry to read, so it takes the connection name and
+the collection interval from `Datastore.GetProbeStalenessContext`, a
+lookup of the `connections` and global `probe_configs` rows the view
+joins against: both survive a disabled probe, an unmonitored connection
+and a deleted availability row, which are exactly the three ways the
+probe can leave the view. When the lookup finds nothing, because the
+connection or the probe config has actually been deleted, or fails, the
+alert clears carrying the held wording, on the same reasoning the hold
+uses for a failed write: retiring the alert matters more than its text,
+and unlike the hold there is no next pass to retry in.
+
+`TestStalenessAlertHeldWhenProbeGoesUnavailable`,
+`TestStalenessEvaluatorSkipsUnavailableProbes`,
+`TestStalenessAlertClearLoggedAtNormalLevel`,
+`TestStalenessAlertHeldLoggedOnce`,
+`TestStalenessAlertDescriptionRestoredWhenProbeRecovers`,
+`TestStalenessAlertDescriptionRestoreFailureKeepsAlert`,
+`TestHeldStalenessAlertClearsWithoutTheHeldWording`,
+`TestHeldStalenessAlertClearsWhenItsConnectionHasGone` and
+`TestRestoreHeldDescriptionBeforeClearSurvivesALookupFailure`
+(`alerter/src/internal/engine/staleness_unavailable_probe_integration_test.go`)
+pin these behaviours, with `TestGetProbeStalenessContext`,
+`TestGetProbeStalenessContextMissingRows` and
+`TestGetProbeStalenessContextQueryError`
+(`alerter/src/internal/database/queries_full_integration_test.go`)
+covering the lookup itself.
+
+`cleanResolvedAlerts` resolves the probe staleness snapshot at most once
+per pass, lazily, through `probeStalenessSnapshot`; both
+`checkStalenessAlertResolved` and `resolveAbsentMetric` read it from
+there rather than querying per alert. The entries are measured against
+the datastore's `NOW()` at the read, so a frozen `SinceCollected` or
+`StalenessRatio` understates how late the probe is for every alert
+judged after that, by however long the pass has run; a probe 4m58s late
+at the read is 5m08s late ten seconds on, outside a 5 minute window
+rather than inside it. The snapshot records `readAt` before the read and
+every judgement adds `age()` to the entry (`classifyAbsentMetric` takes
+the age as a parameter, `currentStalenessRatio` brings the ratio
+forward), so the effective window is the metric's own and not
+`absenceWindow + passDuration`. `TestClassifyAbsentMetric`,
+`TestCleaner_AbsentMetricJudgedAfterSnapshotAgesStaysActive` and
+`TestStalenessAlertJudgedAfterSnapshotAgesStaysActive` each advance the
+snapshot's clock between the read and the judgement, which is the case
+the happy path never reaches.
+
+Before the metric is queried, the cleaner applies the same
+`required_extension` gate the evaluator does. `cleanResolvedAlerts` calls
+`resolveExtensionGates` once per pass: it walks the active threshold
+alerts, loads each distinct rule with `GetAlertRuleByID` and, for each
+distinct `required_extension`, asks `GetConnectionsWithExtension`
+(`alerter/src/internal/database/queries.go`) which connections list that
+extension in their newest `metrics.pg_extension` snapshot. The resulting
+rule id to connection set map is passed into `checkAlertResolved`, where
+a nil set means the rule is ungated; a connection outside the set leaves
+the alert active and logs at debug level, because the alerter can no
+longer see the condition rather than knowing it has resolved, so an
+operator who uninstalls the extension keeps the alert until they
+acknowledge or clear it. A failed rule or extension lookup is logged and
+leaves the rule ungated. Resolving per rule rather than per alert keeps a
+pass at one rule lookup per distinct rule and one extension lookup per
+distinct extension however many alerts are open. The evaluator applies
+the same gate the other way round: `evaluateRuleForAllConnections`
+resolves the set once per rule through `connectionsWithRequiredExtension`
+and skips any connection not in it, and a lookup error evaluates without the gate so a datastore
+fault cannot silence every gated rule. The `pg_extension` probe is change
+tracked and stores one snapshot per connection, all databases sharing a
+`collected_at`, so the query keys on `MAX(collected_at)` per connection
+with no time window; a connection with no rows at all is treated as
+lacking the extension on both paths. See GitHub issue #409.
 
 Probe-scoped alerts (those with a non-NULL `probe_name`) never reach the
-registry path at all: `checkAlertResolved` routes them to
-`checkStalenessAlertResolved`, which re-reads
+registry path at all: `checkAlertResolved` routes them by metric name,
+since both probe-scoped rules carry a probe name and neither metric has
+a registry entry. A `probe_available` alert goes to
+`checkProbeUnavailableAlertResolved`, and everything else probe-scoped
+to `checkStalenessAlertResolved`, which re-reads
 `GetProbeStalenessByConnection` and clears the alert when the probe's
 staleness ratio no longer violates the stored threshold, or when the
-probe stops being reported. Their evaluator,
-`evaluateMetricStaleness` (`alerter/src/internal/engine/thresholds.go`),
-keys both the active-alert lookup and the cooldown check by probe via
+probe stops being reported. `checkProbeUnavailableAlertResolved` reads
+the same snapshot and has three outcomes: available again clears with
+value 1, still unavailable leaves the alert active and logs at debug
+level, and absence from the view is deliberate operator action, so it
+clears and logs at operator level as issue #509 established. A held
+`metric_staleness` alert and a `probe_unavailable` alert may legitimately
+both be open on one probe, so neither check may assume it owns the probe.
+
+Their evaluators, `evaluateMetricStaleness` and
+`evaluateProbeUnavailable` (`alerter/src/internal/engine/thresholds.go`),
+are both driven by `evaluateProbeScopedRules`, which reads
+`GetProbeStalenessByConnection` once per evaluation pass and hands the
+same entries to each: neither evaluator queries the view itself, and a
+failed read is logged once and skips both passes. They key both the
+active-alert lookup and the cooldown check by probe via
 `GetActiveThresholdAlertForProbe` and `GetRecentlyClearedAlertForProbe`,
-so several stale probes on one connection raise one alert each.
+so several affected probes on one connection raise one alert each.
 
 ## Alerter Metric Registry (alerter)
 
@@ -230,8 +998,8 @@ so several stale probes on one connection raise one alert each.
 metric name to the SQL that produces its value. A query error there is
 swallowed by `evaluateRuleForAllConnections` in
 `alerter/src/internal/engine/thresholds.go`, which logs at debug level and
-moves on, so a broken metric looks exactly like an idle one. Four rules
-that follow from that, all learned the hard way in #406:
+moves on, so a broken metric looks exactly like an idle one. The rules
+that follow from that, most learned the hard way in #406 and #407:
 
 - The metric name is not the table name. `pg_stat_archiver.*` metrics read
   `metrics.pg_stat_wal`, because the collector consolidates the archiver
@@ -239,6 +1007,18 @@ that follow from that, all learned the hard way in #406:
   table and never creates a `metrics.pg_stat_archiver`. Check the CREATE
   TABLE statements in `collector/src/database/schema.go` before writing a
   FROM clause; there is one `metrics.*` table per probe and no views.
+  Hand-written test schemas cannot catch a column the collector never
+  stores: `pg_stat_replication.replay_lag_seconds` read a nonexistent
+  `replay_lsn_timestamp` until #625. Its test,
+  `metric_registry_replay_lag_integration_test.go`, builds the table by
+  extracting the collector's own CREATE TABLE from `schema.go`; copy
+  that for a new entry on a table whose columns you are not certain of.
+
+- When a metric must clear once the newest sample stops reporting a
+  value (PostgreSQL resets `replay_lag` to NULL after an idle standby
+  catches up), pick each connection's newest `collected_at` before
+  filtering the NULLs out, never after, or an older sample's value
+  stands in for the newer NULL and the alert never clears.
 
 - Never put a max-age predicate on `metrics.pg_settings`. The probe is
   change-tracked (`collector/src/probes/pg_settings_probe.go`) and skips
@@ -251,12 +1031,148 @@ that follow from that, all learned the hard way in #406:
 
 - Counter deltas are windowed, and the window must comfortably exceed the
   probe interval. Summing positive per-sample deltas over an hour is the
-  pattern to copy (see the archiver and checkpointer entries): it survives
-  a stats reset, it reports 0 rather than dropping the connection when
-  only one sample lands in the window, and it gives the rule an absolute
-  per-hour count rather than a per-probe-interval figure. Rules whose
-  value is a rate should say so in `metric_unit`, for example
-  `checkpoints/hour`.
+  pattern to copy (see the archiver, checkpointer, `deadlocks_delta` and
+  `temp_files_delta` entries): it survives a stats reset, it reports 0
+  rather than dropping the connection when only one sample lands in the
+  window, and it gives the rule an absolute per-hour count rather than a
+  per-probe-interval figure. Rules whose value is a rate should say so in
+  `metric_unit`, for example `checkpoints/hour`. Where such an entry also
+  has a `historicalSQL`, partition the `LAG` by connection (and database,
+  where the metric has one) and the UTC hour bucket, then group by that
+  bucket, so each bucket's first sample has no predecessor, exactly as
+  the latest query's `LAG` starts inside its one-hour window. A `LAG`
+  over the whole lookback gives every bucket one more delta than the
+  live value (six against five at the checkpointer's 600 second
+  interval, twelve against eleven at `pg_stat_database`'s 300), biasing
+  the baseline upward so a steady server scores low (#490 for
+  `checkpoints_req_delta`, #639 for `deadlocks_delta` and
+  `temp_files_delta`);
+  `metric_registry_hourly_deltas_integration_test.go` pins the interval
+  independence, reset, single-sample, bucket, session timezone and
+  sample count behaviour, and its `HistoricalMatchesLatest` test compares
+  each bucket with the latest query run as of the end of that hour, for
+  two connections with two databases each. Three details of the
+  historical query are easy to get wrong. Filter inside the aggregate,
+  `SUM(GREATEST(x - prev_x, 0)) FILTER (WHERE prev_x IS NOT NULL)`, as
+  the latest query does: a `WHERE prev_x IS NOT NULL` ahead of the
+  `GROUP BY` drops the whole bucket, so a newly onboarded connection
+  with one sample contributes no baseline row at all instead of a zero.
+  Truncate on the UTC value,
+  `date_trunc('hour', collected_at AT TIME ZONE 'UTC') AT TIME ZONE
+  'UTC'`: nothing pins the alerter's pool to UTC, the collector writes
+  UTC, and a server whose `TimeZone` GUC carries a fractional offset
+  would otherwise cut buckets at half past. Report how many raw samples
+  each bucket covers, through the `historicalScanWithDBAndSamples` scan
+  type (or `historicalScanBasicWithSamples` when the metric has no
+  database dimension, as `checkpoints_req_delta` does; both go through
+  `queryHistoricalMetricValuesWithSamples`, which rejects a NULL
+  database only for the former) and `HistoricalMetricValue.SampleCount`,
+  because
+  `calculateAllBaseline` persists the sum of that field as the
+  baseline's `sample_count` and `anomaly.tier1.warmup.*.min_samples` is
+  counted in samples: one row per hour would leave these baselines short
+  of the default `all` threshold of 100 at the shipped fifteen day
+  lookback, and unable to warm at all at a lookback of four days or
+  fewer. No counter delta entry reports a per-probe-interval count any
+  more (#409); the per-interval derivations that remain are a ratio and
+  a mean rather than a count, and read the newest interval on purpose
+  (`cache_hit_ratio` and `slow_query_count`, #407). `table_bloat_ratio`
+  was removed from the registry in the same change as the hourly sums:
+  its rule row survives, disabled, so historical alerts stay
+  attributable, and re-enabling it logs "No data for metric" at debug.
+
+- Every `latestSQL` bounds `collected_at` with a `NOW() - INTERVAL`
+  cutoff, or is named on the allowlist in
+  `TestMetricRegistryLatestSQLFreshnessCutoff` with a reason
+  (`pg_settings.max_connections` is the only entry, for the change-tracked
+  reason above). Without a cutoff a metric keeps reporting the newest row
+  the table still holds, so an alert raised before the collector stopped
+  fires on days-old data until retention purges the partition; #407 found
+  `pg_replication_slots.inactive_count` and `.max_retained_bytes` doing
+  exactly that. Repeat the cutoff in every CTE that reads the partitioned
+  table, not just the `latest` one, so the planner can prune.
+
+- The window must be at least three probe intervals, which
+  `TestMetricRegistryAbsenceWindowCoversProbeInterval` enforces for every
+  `clearWhenAbsent` entry against the collector's seeded intervals, and
+  the query must reduce to one row per connection (and database) that
+  both the evaluator and the cleaner read identically.
+  `pg_replication_slots.inactive` and
+  `pg_node_role.subscription_worker_down` each used a 5 minute window on
+  a 300 second probe and flapped on every late collection;
+  `pg_stat_database.cache_hit_ratio` returned every delta row in its
+  window with no `ORDER BY`, so the evaluator (any row violating) and the
+  cleaner (first row) disagreed on the same data. The fix is
+  `DISTINCT ON (connection_id, database_name) ... ORDER BY collected_at
+  DESC` over the deltas; `pg_stat_statements.slow_query_count` follows
+  the per-identity shape described under "Cumulative Counter Deltas per
+  Identity" below, differencing `total_exec_time` and `calls` within
+  `(connection_id, queryid, userid, dbid, toplevel)` and counting with
+  `COUNT(*) FILTER` so a server with statements but no slow ones reports
+  0 rather than vanishing. Since #640 it is server-wide (`scanBasic`,
+  historical rows with a NULL database): a `samples` CTE first keeps one
+  copy of each counter per `collected_at` with `DISTINCT ON` (lowest
+  probing `database_name` wins, as in `buildTopQueriesSQL`), because the
+  probe stores the cluster-wide view once per database it probes, and
+  grouping by that probing name reported the whole server's count in
+  every database. A `dbid` filter in the probe was rejected: the probe
+  only runs where the extension is installed and the role may connect,
+  so it would drop every other database's statements. It takes the
+  difference with `LEAD` over an identity window ordered
+  `collected_at DESC`, which the `ROW_NUMBER` that picks the newest
+  sample shares, and whose sort the `DISTINCT ON` order already
+  satisfies, so the rows are sorted once (checked with `EXPLAIN`): the
+  ascending-`LAG` plus descending-`ROW_NUMBER` form sorted the window
+  twice and measured about a third slower on 24,000 rows.
+
+- A `latestSQL` must report the sample's own `collected_at`, never
+  `NOW()`. Threshold hysteresis (`threshold.trigger_count` and
+  `clear_count`, #614, `alerter/src/internal/engine/hysteresis.go`)
+  counts distinct `collected_at` values per rule, connection and
+  database (not object: the alert is keyed without it, and worst-object
+  metrics such as `dead_tuple_percent` change object between samples),
+  so a query reporting `NOW()` makes every evaluator and
+  cleaner pass look like a new sample and defeats the counts.
+  `connection_utilization_percent` did exactly that until #614; its
+  `active_counts` CTE now groups by `collected_at` and
+  `TestConnectionUtilizationPercent_ReportsSampleTime` pins it. A
+  `clearWhenAbsent` metric has no row to read the time from, so the
+  cleaner counts its absence by the probe's
+  `ProbeStaleness.LastCollected` instead.
+
+- A `historicalSQL` must apply every non-time row filter its
+  `latestSQL` applies (it keeps its own lookback window rather than
+  copying the `latestSQL` freshness cutoff), because Tier 1 scores the
+  live value against a baseline built from the historical rows, and a
+  baseline computed over a different row set is a different statistic.
+  Every `pg_stat_activity` entry filters
+  `backend_type = 'client backend'` in both queries; the historical
+  queries of `connection_utilization_percent`, `blocked_count`,
+  `idle_in_transaction_seconds`, `max_query_duration_seconds` and
+  `max_xact_duration_seconds` once omitted it, so baselines counted the
+  checkpointer, walwriter, autovacuum workers and walsenders, and
+  `connection_utilization_percent` scored a negative anomaly on every
+  cycle (#567). Any denominator must also be the value in force when
+  each sample was taken: that entry's historical `max_conns` CTE builds
+  `[valid_from, valid_to)` ranges over the `pg_settings` snapshots with
+  `LAG`/`LEAD`, the first range open below so samples written before
+  the settings probe's first snapshot are kept. Its `latestSQL` applies
+  the same rule to the newest sample through a `JOIN LATERAL` (newest
+  `pg_settings` row at or before the sample, else the earliest), rather
+  than the newest row outright, which disagreed with the baseline when a
+  settings snapshot landed after the newest activity sample (#596).
+  `metric_registry_activity_integration_test.go` loads one snapshot of
+  client and background rows per metric and asserts both queries agree
+  on it; add a case there when an activity entry gains a historical
+  query.
+
+- A gate that decides which subjects a rule judges goes in the SQL, and
+  a gated entry must be `clearWhenAbsent`, or an alert raised before the
+  subject stopped qualifying latches for ever (#616). The comments on
+  each gated entry in `metric_registry.go` explain its gate. The gate
+  tests live in `default_rule_gates_integration_test.go` on the
+  `deadRuleSchema` fixture; a new `clearWhenAbsent` entry's probe must
+  also be in `seededProbeIntervals` in `audit_defects_test.go`.
 
 - `system_stats` columns are platform-specific. `processor_time_percent`,
   `user_time_percent`, `privileged_time_percent` and
@@ -265,11 +1181,370 @@ that follow from that, all learned the hard way in #406:
   shared `cpuBusyPercentExpr` rather than coalescing a platform-specific
   column to zero, which reads as an idle host.
 
+- A MAX across the mounts of `metrics.pg_sys_disk_info` has to exclude
+  pseudo filesystems. `pg_sys_disk_info.used_percent` takes the fullest
+  mount, which is the right threshold semantics, but a squashfs image is
+  by construction 100% used, so on any host with a snap installed the
+  metric was pinned at 100% and the disk alert fired permanently (#428).
+  The `pseudoFilesystemExclusion` constant in `metric_registry.go` holds
+  the predicate and both the `latestSQL` and the `historicalSQL` embed
+  it, so the two cannot drift. It is
+  `COALESCE(file_system_type, '') NOT IN (...)` and the COALESCE is
+  load-bearing: the column is nullable and a bare `NOT IN` against NULL
+  yields NULL rather than true, which would drop every mount whose type
+  the probe did not record.
+  `metric_registry_disk_mounts_integration_test.go` pins the exclusion,
+  the NULL-type retention and the fragment's presence in both queries;
+  the shared fixture in `queries_integration_test.go` therefore carries
+  `mount_point` (defaulted, since the older cases insert one unnamed
+  mount) and a nullable `file_system_type`.
+
 Changing a seeded rule's threshold or unit needs a collector migration as
 well as the registry edit, because migration 1 only seeds a fresh install.
 Migration 8 is the worked example: it rewrites descriptions and units
 unconditionally, but only rewrites a threshold that still carries the old
-shipped default, so operator tuning survives the upgrade.
+shipped default, so operator tuning survives the upgrade. Migration 11
+follows the same shape for `deadlocks_detected` and `temp_files_created`
+(hourly units, thresholds untouched) and shows how to retire a built-in
+rule: the row is kept with `default_enabled = FALSE` and a description
+starting `Retired:`, and its `active` and `acknowledged` alerts are set to
+`status = 'cleared', cleared_at = NOW()`, matching the alerter's
+`ClearAlert`. Migration 21 (#616) changes a severity as well as
+thresholds, and guards each column separately (`SET default_threshold =
+50 ... AND default_threshold = 80` in one statement, `SET
+default_severity = 'info' ... AND default_severity = 'warning'` in
+another), so a tuned threshold does not stop the severity moving; it
+never touches `alert_thresholds`, whose rows are operator overrides.
+Each such migration has a `migration_vN_test.go` covering registration,
+the fresh-install seed values and the upgrade path, and migration 21's
+also checks that tuned values and an `alert_thresholds` row survive.
+
+## Alerter Baselines and Anomaly Detection (alerter)
+
+The baseline calculator (`alerter/src/internal/engine/baselines.go`) and
+the tier-1 detector (`anomalies.go`) were reworked in #408, and four
+conventions from that change hold across both:
+
+- Only metrics with a `historicalSQL` are baselined or scored.
+  `database.SupportsBaselines(name)` (`baseline_support.go`) is the one
+  test for that, and it is false for names outside the registry too, so
+  `metric_staleness` is excluded without a special case.
+  `calculateBaselines` and `detectAnomalies` both skip on it; there is no
+  fallback path that builds a baseline from the latest sample, because
+  such a row (one sample, zero stddev, NULL `earliest_sample_at`) can
+  never pass `isBaselineWarm`. `DeleteBaselinesForUnsupportedMetrics`
+  runs once per `calculateBaselines` cycle, binding
+  `BaselineSupportedMetrics()` as a `text[]` and deleting
+  `metric_name <> ALL($1)`, so rows the old fallback wrote disappear.
+  `TestAuditC7HistoricalSQLCoverage` pins by name the eleven registry
+  entries that have no historical query, and any entry gaining one must
+  be removed from that list. All eleven are excluded on purpose, with
+  the reason for each in the Supported Metrics section of
+  `docs/developer-guide/alerter/anomaly-detection.md` (#490), so adding
+  one is a design decision, not a gap to fill.
+  `pg_settings.max_connections` (a configuration value that exists for
+  the `high_max_connections` threshold rule) and
+  `pg_replication_slots.inactive_count` (a presence count that is almost
+  always zero) are also pinned by
+  `baseline_exclusions_integration_test.go` (#576).
+
+- A historical query must compute the statistic its `latestSQL` computes,
+  one row per sample (or per hour bucket for counter sums), and each one
+  added since #567 has an integration test comparing the two on the same
+  samples (`metric_registry_equivalence_integration_test.go` for the
+  four #490 added; most read the historical rows once, then delete the
+  newest sample after each latest-query check so the next becomes
+  newest). Each test includes a second connection whose values differ,
+  so dropping `connection_id` from a window partition fails it. The
+  #490 shapes: `lag_bytes` takes `MAX` across standby pids per
+  `(connection_id, collected_at)`, and its latest query reads only each
+  connection's newest sample (the #625 pattern), so a departed standby
+  drops out at the next sample while another stays attached (when the
+  last one leaves the probe stores nothing, so the previous sample
+  stays newest for up to five minutes, as for `replay_lag_seconds`),
+  and a newest sample holding only NULL-LSN rows (a demoted primary's
+  WAL receiver) reports no row; `max_lock_wait_seconds` emits only
+  samples with a client backend waiting on a lock, as the latest query
+  does (no zero-fill, the `blocked_count` precedent);
+  `checkpoints_req_delta`
+  partitions its `LAG` by connection and UTC hour bucket, so each
+  bucket has as many deltas as the live one-hour value (as
+  `deadlocks_delta` and `temp_files_delta` also do since #639, adding
+  the database to the partition), and judges recovery per bucket by
+  the newest `pg_node_role` row in that hour (no role row keeps the
+  bucket, as the latest query does); and `slow_query_count` rebuilds
+  each interval mean with `LAG` over the same identity window and the
+  same one-copy-per-counter `samples` CTE (#640, whose test stores the
+  counters under three probing names and expects them counted once), pools
+  identities per queryid before the mean, as the latest query does, and
+  only pairs samples less than 15 minutes apart, since the latest
+  query's window can never see a longer interval. To run a latest query
+  as of a past instant, `newClockedDatastore(t, pool)` in that file
+  returns a `Datastore` whose `search_path` resolves `NOW()` to
+  `test_clock.now()`; the latest query has no upper bound, so insert
+  samples up to the instant before evaluating it. Removing a historical
+  query needs no migration, because the sweep deletes the metric's old
+  baseline rows on the next cycle, and `processTier2And3` suppresses,
+  without running Tier 2 or 3, any pending candidate whose metric fails
+  `SupportsBaselines`. The engine's detection tests use
+  `pg_sys_load_avg_info.load_avg_fifteen_minutes` as their baselined
+  metric.
+
+- `GetMetricBaselines(ctx, connID, metric, dbName *string)` is scoped to
+  one database with the same NULL-aware predicate as
+  `GetActiveAnomalyAlert`: `(database_name = $3 OR ($3 IS NULL AND
+  database_name IS NULL))`. Its `ORDER BY period_type, day_of_week,
+  hour_of_day` only makes the result deterministic; nothing may read
+  `baselines[0]` as a preference. The server's `get_metric_baselines`
+  tool is a separate implementation over the pool and is unaffected.
+
+- Selection is in Go. `selectBaseline` prefers the `hourly` row for the
+  current hour, then the `daily` row for the current weekday, then
+  `all`, and returns the first candidate that is warm; a cold candidate
+  falls through rather than blocking a warmer, less specific one. Its
+  second result is the most preferred cold row that was passed over,
+  whether or not something was chosen, and `scoreAnomalyValue`
+  debug-logs it in both cases (suppression, or a fall-through to a
+  less specific tier).
+
+- A tier is only reachable if its `min_span_hours` is at most
+  `lookback_days * 24`. Every `historicalSQL` filters `collected_at >
+  NOW() - INTERVAL '1 day' * $1` and `UpsertMetricBaseline` rewrites
+  `earliest_sample_at` on every refresh, so a baseline's span never
+  exceeds the lookback. At the original 7-day default the daily tier's
+  336-hour span was unreachable and the documented three-step order was
+  silently two steps (PR #489 review). `DefaultLookbackDays` is now 15,
+  `Config.EffectiveLookbackDays` substitutes it for a non-positive
+  setting, and `Config.UnreachableWarmupPeriods` names any tier whose
+  span exceeds the window; `calculateBaselines` logs a `WARNING` for
+  each on every cycle. `TestShippedWarmupTiersReachable` and
+  `TestExampleConfigsParse` pin the shipped defaults and all three
+  example YAML files to a reachable configuration, and
+  `TestSelectBaseline` derives its warm `earliest_sample_at` from the
+  shipped lookback so it cannot pass against a row the calculator
+  cannot write. The walkthrough config keeps `lookback_days: 1` and
+  shortens its hourly and daily spans to 24 to match.
+
+- Hour and weekday keys come from `baselinePeriodKeys`, used both when
+  hourly and daily rows are written and when `selectBaseline` matches
+  them, and it normalises to UTC first. pgx scans `timestamptz` into the
+  process's local zone unless `ScanLocation` is set, and `time.Now()` is
+  local too, so without the shared helper an alerter in a non-UTC zone
+  would write rows under one key and look them up under another.
+
+- Rows the cycle does not rewrite are pruned (#567, PR #569 review).
+  `calculateBaselines` captures `cycleStart` (truncated to the
+  microsecond) and, after each metric's historical query succeeds,
+  calls `pruneStaleBaselines`, which runs
+  `DeleteStaleMetricBaselines(metric, cycleStart)` to delete that
+  metric's rows with `last_calculated < cycleStart`. This covers
+  buckets that drop below `minSamplesForTimePeriod`, groups with no
+  samples left in the lookback, and metrics whose query returns
+  nothing. A failed historical query skips the prune, and so does any
+  failed upsert for the metric (the `calculate*Baseline` helpers return
+  false), since a row that failed to upsert keeps its old
+  `last_calculated` and would otherwise be deleted. Upserts must keep
+  setting `LastCalculated` to `time.Now()`, or the prune deletes fresh
+  rows.
+  `engine/baselines_stale_integration_test.go` pins it.
+
+`detectAnomalies` loops metrics on the outside so `GetLatestMetricValues`
+runs once per metric (`anomalyMetrics` lists each baselineable rule
+metric once, then any metric only an active anomaly alert still covers),
+resolves the blacked-out connection set once per run, and scores every
+latest value for a connection (one per database for `scanWithDB`
+metrics) against the baselines for that value's
+`DatabaseName`, setting `candidate.DatabaseName` so the active-alert
+deduplication in `anomalyAlertSkipReason` is per database as well.
+`baselineableValues` drops object-scoped values, since `metric_baselines`
+has no object column. The audit tests
+(`engine/audit_defects_test.go`, `database/audit_defects_test.go`, C6,
+C7 and C10) assert this behaviour end to end, and
+`engine/baseline_selection_test.go` covers the selector and the key
+helper.
+
+Tier 2 (an embedding call) and Tier 3 (an LLM call) are billed per
+candidate, so `processTier2And3` runs `anomalyAlertSkipReason` before
+either (#568), after first suppressing any candidate whose metric fails
+`SupportsBaselines` (#576). It holds every check whose outcome does not
+depend on the tier results, in this order: blackout, open (`active` or
+`acknowledged`) anomaly alert for the same metric, connection and
+database (which sets `candidate.AlertID` to it), an anomaly alert on the
+same series cleared within `AlertCooldownPeriod`
+(`GetRecentlyClearedAnomalyAlert`, #611), re-evaluation suppression,
+false-positive suppression. A lookup error counts as "does not apply".
+A skipped candidate gets no tier fields and no embedding;
+`determineFinalDecision` records `alert` for it (Tier 1 only), the value a candidate discarded
+after the tiers is left with, because `final_decision` is constrained to
+`alert`/`suppress`/`pending` and `FindSimilarAnomalies` is its only
+reader. `createAnomalyAlert` calls the same helper again, since state can
+change during a Tier 3 call of up to its timeout. Any new check of this
+kind belongs in the helper, not after the tiers. The false-positive check
+is only reachable when the open-alert lookup fails, because a
+false-positive alert is `acknowledged` and so already open;
+`TestProcessTier2And3SkipsPaidTiers` forces that failure to cover it.
+
+`recordAnomalyCandidate` (called by `detectAnomalyForValue` and by the
+`detectAnomalies` loop after `scoreAnomalyValue`) runs the same helper
+before `CreateAnomalyCandidate` and writes no row when it returns a reason
+(#577), since such a row would only be marked processed with no tier
+run and later deleted. The check in `processTier2And3` stays, for
+candidates created before the condition began. With the alert tables
+missing every alert lookup errors and the candidate is still written,
+which is why the Tier 1 tests in `anomalies_test.go` need no alerts
+table; `TestDetectAnomaliesSkipsCandidatesThatCannotAlert` covers each
+check.
+
+`processTier2And3` reads the config at the top of each loop iteration
+and returns when `!cfg.Anomaly.Enabled ||
+!e.anomalyProcessingAvailable(cfg)`, because a reload mid-pass that
+disables Tier 2 and Tier 3 would otherwise send the rest of the batch
+to `determineFinalDecision` with no tier result, which defaults to
+`alert` (#581). `TestProcessTier2And3StopsWhenReloadDisablesTiers`
+fires the reload from inside the first Tier 3 call. The
+`SupportsBaselines` suppression runs before this check, so a stale
+candidate for an excluded metric is suppressed even after a reload.
+Tests that need a candidate to reach Tier 3 must use a baselined
+metric such as `pg_sys_load_avg_info.load_avg_fifteen_minutes`.
+
+### Tier 3 decision model (#626)
+
+Tier 3 runs when `Engine.tier3Available(cfg)`: Tier 3 enabled and a
+reasoning provider, a decision provider (`llm.decision_provider`) or both
+built at startup. Re-evaluation still requires the reasoning provider.
+`runTier3` (`engine/anomalies.go`) asks the decision model first
+(`classifyWithDecision` in `engine/tier3_decision.go`), giving it
+`buildClassificationContext`, which is the reasoning prompt without
+`classificationResponseInstructions`; `buildClassificationPrompt` must
+stay context plus instructions, byte for byte, which
+`TestClassificationPromptSplit` pins. On a decision failure it falls
+back to `classifyWithReasoning`, or fails safe to `alert` when there is
+no reasoning provider. Each call gets its own `tier3Timeout`, which
+`staleCandidateAge` absorbs through its safety factor. Every Tier 3
+outcome sets `anomaly_candidates.tier3_source` (`decision` or
+`reasoning`, CHECK constraint added NOT VALID by collector migration 22
+and validated by migration 23) and
+`tier3_model` (`provider/model`); the hand-written `anomaly_candidates`
+schemas in `database/queries_full_integration_test.go` and
+`engine/anomalies_test.go` carry both columns, so a new column there
+needs adding in the same three places. The decision provider is health
+tracked as its own tier, `tier3_decision`, which shares no outcomes with
+the reasoning tiers.
+
+### Anomaly alert recovery (#611)
+
+`cleanResolvedAlerts` only handles threshold alerts (`clearResolvedAlert`
+dereferences `Operator` and `ThresholdValue`, both nil on an anomaly
+alert), so anomaly alerts are cleared by the Tier 1 pass itself
+(`engine/anomaly_recovery.go`). Each `detectAnomalies` run loads
+`ListActiveAnomalyAlerts` (status `active` only) into an
+`anomalyRecoveryPass` keyed by metric, connection and NULL-aware
+database, and every scored value on a covered series goes through
+`recoverAnomalyAlerts` before `recordAnomalyCandidate`:
+
+- out of band: `RefreshAnomalyAlert` writes `metric_value`,
+  `anomaly_score`, `last_updated` and an escalate-only severity
+  (`escalatedSeverity` over `anomalyScore.severity`, the
+  `cappedAnomalySeverity` helper `createAnomalyAlert` also uses), with
+  no notification;
+- in band: the streak (`anomalyStreak{count, lastSample}`) advances
+  only when the value's `MetricValue.CollectedAt` is after
+  `lastSample`, so passes that re-score one sample count it once; at
+  `anomaly.tier1.clear_count` (default 3) `ClearActiveAnomalyAlert`
+  clears it and `queueNotification` sends `AlertClear`. This relies on
+  every registry `latestSQL` returning the sample's own `collected_at`,
+  never `NOW()` (`TestMetricRegistryLatestSQLReportsSampleTime`).
+
+Both writes are gated on `status = 'active'` and report whether a row
+changed, so an alert acknowledged mid-pass is left alone and gets no
+notification. Acknowledged alerts are never refreshed because
+`reevaluationFingerprint` hashes their value, z-score and severity, and
+a refresh would buy a new Tier 3 call. The streaks (`Engine.anomalyStreaks`)
+are in memory: `loadAnomalyRecovery` copies the current ones for still
+active alerts into `pass.next`, and `finishAnomalyRecovery` installs
+`pass.next` at the end of a completed run. An alert the run never
+reaches (absent metric, inactive connection) therefore keeps its streak;
+an out-of-band sample, cold baseline, zero divisor, database blackout or
+failed blackout check resets it via `resetSeries`/`resetAlert`, and a
+connection-wide blackout via `resetConnection` in `detectAnomalies`. A
+reset zeroes the count but keeps `lastSample`, so a sample already
+counted is never counted again. A failed clear keeps
+the streak, and the next in-band pass retries even on the same sample. A
+failed alert list (`nil` pass) or an early return keeps the old streaks;
+Tier 1 being disabled resets them. Recovery runs even when
+`anomalyProcessingAvailable` is false, but no candidate is recorded then,
+nor for a metric only an alert covers. `ReloadConfig` and startup still
+set `Anomaly.Enabled = false` when no tier after Tier 1 is usable, which
+stops recovery too. `anomaly_recovery_integration_test.go` covers each
+case; `installStalenessNotificationCapture` observes the notification.
+
+Absence-driven metrics (`clearWhenAbsent`) recover on a missing row:
+after each metric's connection loop `detectAnomalies` calls
+`recoverAbsentAnomalyAlerts`, which, for every alert key not in that
+metric's values on an `evaluable` connection (active and not blacked
+out), runs `classifyAbsentMetric` against `pass.staleness`
+(`probeStalenessSnapshot`, read once per pass) and counts an in-band
+sample via `countInBandSample`, keyed on the probe's
+`ProbeStaleness.LastCollected` (`probeLastCollected`). Anything but
+`absentMetricClear`, or a failed staleness read, holds and keeps the
+streak; a database blackout or failed blackout check resets it. Because
+of this, `detectAnomalies` must not skip a metric on `ErrNoMetricData`.
+
+`loadAnomalyRecovery` retires alerts that can never be re-scored
+(`unreachableAnomalyReason`: the metric fails `SupportsBaselines`, or
+`database.MetricIsPerDatabase` but the alert has a NULL database) via
+`retireUnreachableAnomalyAlert`: `ClearActiveAnomalyAlert`, no
+notification, and the description prefixed with
+`unreachableAnomalyDescriptionPrefix` (not re-prefixed on a retry).
+`anomaly_recovery_absent_integration_test.go` covers both. Since #640
+the reason also covers the opposite mismatch,
+`database.MetricIsServerWide` (registered and `scanBasic`; not simply
+`!MetricIsPerDatabase`, which is true for unregistered names) with an
+alert that names a database. The threshold cleaner has the same case:
+`checkAlertResolved` sends such an alert to `retireDatabaseScopedAlert`
+before the extension and absence gates (description prefixed with
+`databaseScopedClearDescriptionPrefix`, `ClearAlert`, no notification),
+since no latest value can match it and a non-`clearWhenAbsent` metric
+would otherwise hold it active for ever
+(`server_wide_alerts_integration_test.go`, including a trigger that
+rejects only a `description` change, so a failed rewrite must still
+clear). Only active alerts are retired, since the cleaner reads
+`GetActiveAlerts`; an acknowledged per-database alert stays
+acknowledged until retention deletes it, which the changelog states.
+Per-database baselines of a
+metric that became server-wide need no migration: the stale-baseline
+sweep (`DeleteStaleMetricBaselines`) deletes them on the next cycle.
+
+### Per-metric floors and the severity cap (#617)
+
+`config/metric_floors.go` holds `defaultMetricFloors`, one
+`MetricFloor{MinValue, MinStdDev}` per baselineable metric, and
+`Tier1Config.MetricFloor(name)` overlays the optional
+`anomaly.tier1.metric_floors` override field by field (pointer fields,
+so an explicit 0 disables a floor). `scoreAnomalyValue` returns an
+`anomalyScore`, not a bare z-score:
+
+- `value < MinValue` returns `{scored: true, belowFloor: true}` before
+  any baseline lookup, so it raises no candidate and counts as in band
+  for recovery even on a cold baseline; `anomalyScore.inBand` is the one
+  in-band test, and detection and recovery both use it.
+- the divisor is `max(effectiveStdDev(global floor), MinStdDev)`, and
+  `stddevFloored` is set only for a flat baseline (`StdDev <=
+  variance_floor.absolute_floor`), never because the relative floor or
+  `MinStdDev` won, since that capped real-spread baselines (#619 review).
+- `cappedAnomalySeverity` turns `critical` into `warning` when
+  `stddevFloored` is set. `recordAnomalyCandidate` writes
+  `effective_stddev` and `stddev_floored` into the candidate `Context`,
+  and `createAnomalyAlert` reads the flag back with
+  `candidateStdDevFloored` (false for older contexts), so raising and
+  refreshing an alert apply the same cap.
+- `unknownMetricFloorNames` (engine, since `config` cannot import the
+  registry) lists `metric_floors` keys failing `SupportsBaselines`;
+  `NewEngine` and `ReloadConfig` log them as a warning, not an error.
+
+Engine tests that exercise the global variance floor on the load-average
+test metric must call `disableMetricFloors`, since its default floors
+(`MinValue` 1, `MinStdDev` 0.5) otherwise mask the case under test.
 
 ## Time-Window Resolution (server)
 
@@ -295,7 +1570,38 @@ window is resolved exactly once, at the HTTP boundary. The types live in
   string, and does no window validation of its own. The
   `timeSeriesQueryFunc` seam in
   `server/src/internal/api/metrics_handlers.go` mirrors that signature,
-  so test fakes must accept a `metrics.TimeWindow`.
+  so test fakes must accept a `metrics.TimeWindow` and return a
+  `*metrics.MetricsQueryResult`.
+
+### The metrics/query response envelope (#430)
+
+`QueryTimeSeries` returns `*MetricsQueryResult`, not a bare
+`[]MetricSeries`, and `GET /api/v1/metrics/query` serves it as the JSON
+object `{probe_name, connection_ids, time_range, time_start, time_end,
+bucket_seconds, buckets, aggregation, series}`. The window fields let a
+chart anchor its axis to the range that was requested rather than to
+whichever points came back, which on a young instance is what made every
+range render identically.
+
+- `time_start`/`time_end` are the resolved absolute window, so a preset
+  and a custom range are described identically.
+- `time_range` is the range parameter as received, defaulted to `1h`.
+  The query layer never sees it, so `handleMetricsQuery` sets it on the
+  returned struct after the query; a fake query function may leave it
+  empty.
+- `bucket_seconds` is `BucketWidth(timeStart, timeEnd, buckets)` in whole
+  seconds, computed from the bucket count *after* the interval clamp, and
+  `buckets` is that clamped count.
+- `BucketWidth(timeStart, timeEnd time.Time, buckets int) time.Duration`
+  in `query.go` is the one place the width is decided: span / buckets,
+  floored at `MinBucketWidth` (one second), with a bucket count below one
+  treated as one. `BuildMetricsQuery`, `BuildDerivedMetricsQuery` and the
+  envelope all call it, so the reported width is always the width the SQL
+  binned by. Never re-inline the division.
+
+The latest-row mode (`handleLatestRows`, reached when `limit` or
+`order_by` is present) is a different response shape and is deliberately
+untouched by this envelope.
 
 The custom-path validation order matters, because the error message is
 returned to API clients verbatim: missing timestamp, unparsable
@@ -306,6 +1612,51 @@ The span cap (`MaxCustomTimeSpan`, 366 days) is a resource-exhaustion
 guard, not a nicety: `BuildMetricsQuery` derives the bucket width from
 the span, so an unbounded window turns one request into an arbitrarily
 large scan.
+
+That shared cap is calibrated for `/metrics/query`, where the bucket
+width absorbs a longer span; it is far too generous for an endpoint
+whose cost is linear in the window. `/metrics/top-queries`,
+`/metrics/performance-summary` and `/metrics/database-summaries`
+therefore apply a tighter `maxAggregationTimeSpan` of 30 days, through
+the shared `checkAggregationTimeSpan` in
+`server/src/internal/api/time_span.go`, immediately after
+`ResolveTimeWindow` returns and before any SQL is built. The only
+backstop behind them is the datastore pool's `statement_timeout`
+(`database.DefaultDatastoreStatementTimeout`, 30 seconds unless the
+`database.statement_timeout` setting says otherwise), which the cap is
+meant to keep an ordinary request well inside: top-queries runs its
+whole CTE twice per request, once for the count and once for the page,
+and performance-summary runs five sub-queries for every connection in
+`connection_ids` inside one read-only transaction, so its cost is
+linear in the estate as well as in the window. Thirty days is the
+longest preset in `ValidTimeRanges` and the window shape
+`idx_pg_stat_statements_identity_time` (collector migration 15) was
+benchmarked against, so raising it means re-measuring, in particular the
+`exclude_collector=true` path that cannot use the index-only scan. Add
+such a cap per endpoint rather than by tightening `MaxCustomTimeSpan`,
+which the other endpoints legitimately need at 366 days.
+
+Because the resolver's own 366-day check fires first, a span longer
+than 366 days still gets the resolver's `span must not exceed 366 days`
+wording; anything between 30 and 366 days gets
+`invalid time range: span must not exceed 30 days` from
+`checkAggregationTimeSpan`. Tests that pin the boundary need to pick
+their span accordingly.
+
+The window is one multiplier on the cost of these requests; the length
+of `connection_ids` is the other. `maxConnectionIDsPerRequest` (100) and
+`CheckConnectionIDCount` live in `server/src/internal/api/request_helpers.go`,
+and both `parseConnectionIDs` helpers (`MetricsHandler` in
+`metrics_handlers.go`, `PerfSummaryHandler` in `perf_summary_handlers.go`)
+apply the cap on the `connection_ids` branch, so the `400` lands before
+the RBAC loop, the `GetConnection` name lookups and the read-only
+transaction do any work. That placement is the point: the fan-out on
+`/metrics/performance-summary` is five sub-queries, a name lookup and an
+RBAC check per ID, all under one 30 second deadline against a pool that
+defaults to twenty connections (`config.DefaultPoolMaxConns`). The single `connection_id` path is
+unaffected, and `handleConnectionGroups` already requires exactly one ID.
+Keep the cap in the parse helper rather than in each handler, and
+re-measure the fan-out before raising it.
 
 The rules are shared, not metrics-only. `GET /api/v1/timeline/events`
 takes absolute `start_time` and `end_time` values; `resolveTimelineWindow`
@@ -318,12 +1669,256 @@ message is identical on both endpoints. Do not re-implement any of these
 checks inline in a handler; the `api` package already depends on
 `metrics`, so there is no cycle.
 
-`GET /api/v1/metrics/query` and `GET /api/v1/metrics/connection-groups`
-accept `time_range=custom` alongside `time_start` and `time_end`, and
-map any resolution error to `400`. The performance-summary and
-database-summary handlers in `perf_summary_handlers.go` still use the
-inline `validTimeRanges` map and accept presets only; consolidating
-those is deliberately deferred.
+`GET /api/v1/metrics/query`, `GET /api/v1/metrics/connection-groups`,
+`GET /api/v1/metrics/database-summaries`,
+`GET /api/v1/metrics/performance-summary`,
+`GET /api/v1/metrics/query-stats` and
+`GET /api/v1/metrics/top-queries` accept `time_range=custom` alongside
+`time_start` and `time_end`, resolve the window through
+`ResolveTimeWindow` and map any resolution error to `400`;
+`performance-summary` and `database-summaries` both derive their bucket
+width from the resolved window (span / 60, 10 second floor). No handler
+keeps a private preset table any more: the `validTimeRanges` map that
+`database-summaries` used was deleted with issue #387, so
+`ResolveTimeWindow` is the only place that decides what a valid window
+is, and the 400 wording is the resolver's own on every endpoint except
+where `checkAggregationTimeSpan` adds the 30-day cap described above.
+
+Every handler that accepts a `queryid` parameter (`/metrics/query`,
+`/metrics/top-queries` and `/metrics/query-stats`; `/metrics/latest`
+takes none)
+parses it with `parseQueryIDFilter` in `metrics_handlers.go`, which
+returns a `*int64` and answers `400` to anything that is not a 64-bit
+integer. The value is bound uncast as `queryid = $N`, never through a
+`queryid::text` cast. Responses still carry the identifier as a decimal
+string, because JavaScript cannot represent it exactly.
+
+Whether the `(connection_id, database_name, queryid, collected_at)`
+object index actually serves a queryid lookup depends on the predicate
+also naming `database_name`, the index's second column. Before
+PostgreSQL 18, which added B-tree skip scans, a predicate on
+`connection_id` and `queryid` alone falls back to a bitmap scan of
+`idx_pg_stat_statements_conn_time` over every row of the connection in
+the window. `/metrics/query` always carries the database name;
+`/metrics/query-stats` takes an optional `database_name`
+parameter, which the drill-down always sends, and `buildQueryStatsSQL`
+applies it to the statement's resolved database (see below), so the
+scan binds only `connection_id` and `queryid` and reads the identity
+index, whose leading columns those are.
+`/metrics/top-queries` reads the identity index described below for the
+aggregation itself, and the object index for the per-row query-text
+lateral on its page statement.
+
+## The Three Indexes on metrics.pg_stat_statements (collector)
+
+The table carries its primary key plus three secondary indexes, and each
+one exists for a different access pattern. Do not add a fourth without
+measuring, and do not drop any of these:
+
+- `idx_pg_stat_statements_conn_time (connection_id, collected_at DESC)`
+  serves everything that wants the newest samples for a connection,
+  including the `latest` CTE that anchors the name lookups.
+- `idx_pg_stat_statements_object (connection_id, database_name, queryid,
+  collected_at DESC)` serves per-statement lookups that bind a
+  database name, such as `/metrics/query`, and the query-text lookup on
+  the top-queries page statement. It cannot be replaced by the identity
+  index below: that index puts `queryid` ahead of `database_name`, so it cannot
+  return one statement's samples in `collected_at` order.
+- `idx_pg_stat_statements_identity_time (connection_id, queryid, userid,
+  dbid, toplevel, collected_at, database_name) INCLUDE (calls,
+  total_exec_time, rows, shared_blks_hit, shared_blks_read,
+  min_exec_time, max_exec_time)` is migration #15, added for issue #387.
+  Its key order is exactly the `ORDER BY` of the `readings` CTE in
+  `buildTopQueriesSQL` (identity columns, then `collected_at`, then the
+  probing `database_name` as the tiebreaker), and, after the leading
+  `queryid` equality, of the one in `queryStatsSQLTemplate`; it serves
+  both the `DISTINCT ON` and the identity window, so the aggregation
+  reads the rows already sorted, with a Merge Append combining the
+  partitions; the INCLUDE list makes the scan index-only.
+
+The index costs roughly 17% of the table's size, about 39% on insert
+time and 56% on WAL volume for a collector-sized batch, measured on a
+2.6-million-row fixture. Both figures roughly double if the query text
+is added to the INCLUDE list, which is why it is not there.
+
+## Cumulative Counter Deltas per Identity (server)
+
+`pg_stat_statements` keeps one row per `(userid, dbid, toplevel)` for a
+queryid, which the collector stores once per probing `database_name`,
+and each row is an independent cumulative counter that
+`pg_stat_reset()` or a restart can zero on its own. Any
+query that turns those counters into per-period deltas must difference
+within each identity (`LAG` over an ascending window, or `LEAD` over a
+descending one where another window function needs that ordering
+anyway), drop the negative deltas, and only then sum across
+identities. Summing first hides a reset in one identity behind growth in
+its siblings, so the guard never fires and the pre-reset total is
+subtracted from the post-reset one. `queryStatsSQLTemplate` in
+`perf_summary_handlers.go` is the reference implementation, and
+`TestQueryStats_PerIdentityReset` is the regression test; any new
+counter-delta query over `metrics.pg_stat_statements` should follow the
+same shape.
+
+Since issue #387 `buildTopQueriesSQL` applies the same pattern to every
+`queryid` at once, with one refinement that the review of PR #481
+forced. `database_name` is **not** part of the identity there: the probe
+runs in every database with the extension and each run reads the same
+cluster-wide view, so one counter lands once per such database at the
+same `collected_at`, differing only in the probing `database_name`. Its
+`readings` CTE therefore keeps one copy per
+`(queryid, userid, dbid, toplevel, collected_at)` with `DISTINCT ON`
+(lowest `database_name` wins, for a stable choice) and carries that
+probing name as `sample_database_name`; `deltas` `LAG`s over
+`(queryid, userid, dbid, toplevel)`, `samples` applies the optional
+database filter, `totals` drops the pairs whose
+call or time delta is negative, floors the row and block deltas at
+zero, sums per `queryid` and keeps only statements with calls in the
+window, `latest_sample` supplies the OIDs, the probing name and the
+two lifetime columns `min_exec_time` and `max_exec_time`, which cannot
+be differenced, preferring a sample with calls in its interval so an
+idle `dbid` never labels the row (`TestTopQueries_LabelSkipsIdleIdentity`),
+and `deduped` resolves `database_name` from `dbid` through `db_names`. `mean_exec_time` is derived as
+`SUM(delta_time) / SUM(delta_calls)`. A statement present in the
+snapshot but not executed in the window therefore does not appear at
+all, which is a deliberate behaviour change from the pre-#387 endpoint.
+
+Two consequences follow, each pinned by a test. Partitioning on
+`database_name` as well would count every call once per database with
+the extension (`TestTopQueries_OneCounterStoredUnderSeveralDatabases`,
+which stores one counter under two names and expects it summed once);
+and the database filter has to select which counters are summed rather
+than filter the summed row, because `totals` sums every `dbid` of a
+`queryid` (`TestTopQueries_DatabaseFilterSumsOneDatabase`, 1,200 calls
+in one database and 12 in another). `queryStatsSQLTemplate` has the
+same `readings` shape for its single `queryid`, and its identity is
+`(userid, dbid, toplevel)` too.
+
+### Resolving dbid to a database name (#508)
+
+`statementDatabaseLookupSQL` holds the `latest` and `db_names` CTEs that
+both statements put first. `db_names` takes the most recent
+`(datid, datname)` per OID from `metrics.pg_stat_database` and
+`metrics.pg_stat_activity` together (`UNION ALL`, then `DISTINCT ON
+(datid) ... ORDER BY datid, collected_at DESC, datname`), each bounded to
+the `nameLookupWindowSQL` up to and including the latest
+`pg_stat_statements` snapshot; the upper bound stops a name observed
+after statement collection stopped from renaming recorded statements.
+`pg_stat_database` is the primary source, but note it is database-scoped
+(`WHERE datname = current_database()`), so it holds one row per
+*monitored* database per collection, not one per database in the
+cluster. `pg_stat_activity` is sampled server-wide, which is why it stays
+as a second source: it can name a database the monitoring role has no
+`CONNECT` on.
+
+An OID neither source names falls back to the probing `database_name`,
+and because that differs between the copies of one counter, the database
+filter must run after the `DISTINCT ON` in `readings`, never inside it.
+Filtering the copies lets each one match its own probing database, so a
+filtered view reports the counter under every probing database; that was
+issue #508. It must also run after the `LAG`: the fallback name changes
+between collections when the set of probing databases does, and
+filtering first drops the predecessor and loses a delta the unfiltered
+view counts. The filter therefore lives after the window (in `samples`,
+over `deltas`, in `buildTopQueriesSQL`; `AND COALESCE(dn.datname,
+s.sample_database_name) = $5` in `valid_deltas` in
+`queryStatsSQLTemplate`). `buildTopQueriesSQL` also adds a pre-filter in
+`readings` that tests only `dbid` (resolved to the requested name, or
+unresolved), which is safe below the `LAG` because `dbid` is a partition
+key.
+
+Never join `db_names` in `readings`, or anywhere upstream of the
+aggregation: its `UNION ALL` estimates about 200 rows, and the join
+turns the index-only scan on `idx_pg_stat_statements_identity_time` into
+a hash join over a sequential scan with a large external sort (PR #554).
+Test `dbid` against `db_names` with `IN`/`NOT IN` subqueries instead,
+join it only in `deduped` (once per statement), and keep the
+`ORDER BY d.queryid` in `samples`, which lets `latest_sample` use an
+incremental sort. `/metrics/query-stats` resolves and filters the same
+way as the list, so it finds a statement by the name the list reported.
+`/metrics/query` filters on the probing `database_name`, which is why
+the list also returns `sample_database_name` and the drill-down charts
+bind that. Tests: `perf_summary_dbid_resolution_test.go`.
+
+`totals` and `latest_sample` must stay `MATERIALIZED`. The planner
+cannot see through the `samples` CTE, estimates both at one row, and
+otherwise joins them with a nested loop that re-runs the `DISTINCT ON`
+once per statement; on a 24-hour window of 57,000 samples that cost five
+seconds instead of a quarter of one.
+
+The query text must stay out of `samples`. It is the widest column in
+the table, `samples` is read twice and so is spilled to a tuplestore,
+and carrying the text made each of the million-odd rows of a 30-day
+window about 270 bytes rather than about 85: the spill was 368 MB
+instead of 125 MB, and no index of a sensible size could cover the scan.
+The page statement resolves it instead with a lateral lookup outside the
+`LIMIT`, so it runs once per row returned, keyed on the raw
+`database_name` recorded on the sample rather than the name resolved
+through `db_names`. The join is `LEFT`, because the column is nullable.
+
+On a 2.6-million-row, 30-day fixture the identity index plus the
+narrower `samples` took the page statement from 11.5 s to 5.5 s and the
+count statement from 10.9 s to 5.0 s, with the external merge sort gone
+entirely; 7 days went from 2.0 s to 1.5 s and 24 hours from 296 ms to
+178 ms. One caveat: `exclude_collector=true` matches on the query text,
+which both forces a heap scan and collapses the row estimate, so that
+path still plans as it did before. Shortening the window is the remedy,
+not another index.
+
+## Bounded Activity Lookups (server)
+
+`buildTopQueriesSQL` resolves `userid` OIDs to names through
+`DISTINCT ON (...) ... ORDER BY oid, collected_at DESC` over
+`metrics.pg_stat_activity`, which has no index on `usesysid`, and
+`dbid` OIDs the same way over that table plus `metrics.pg_stat_database`
+(see above). Without a `collected_at` bound that sort covers every
+row in retention for the connection, and it runs twice per
+page (count and page statements). The CTEs stay anchored to
+the latest `pg_stat_statements` snapshot rather than to the requested
+window, because they are a name lookup and not a measurement, and read
+only the preceding
+`nameLookupWindowSQL` (one hour) of activity samples; on a fixture of
+500,000 activity rows that took the page from 1.6 s and a 29 MB
+external sort to 8 ms in memory. Any new lookup over
+`pg_stat_activity` needs the same bound.
+
+The third CTE in the same statement, `last_client`, follows that rule:
+it takes `DISTINCT ON (query_id, datid, usesysid)` over the same window,
+ordered by `collected_at DESC`, and is `LEFT JOIN`ed on all three of
+`latest_sample`'s `queryid`, `dbid` and `userid` (the identity of each
+statement's most recent sample in the window) to fill the `client_addr`
+(via `host(client_addr)`, the repo's convention for rendering `inet`),
+`client_hostname` and `client_observed_at` columns of `TopQueryRow`.
+
+The three-way key is not optional. `pg_stat_statements` is keyed on
+`(userid, dbid, queryid, toplevel)`, so one `queryid` can appear once per
+database and role that ran the statement; keying `last_client` on the
+identifier alone picks whichever backend was seen most recently across
+every database and role, and a caller filtering on one database can then
+be shown a client that only ever connected to another. `DISTINCT ON`
+runs over the same tuple the join matches on, so the CTE holds at most
+one row per tuple and the join cannot fan out `deduped` or the count.
+
+`metrics.pg_stat_activity.query_id` is collected from schema version 12
+(issue #384) and is NULL before PostgreSQL 14, with `compute_query_id`
+off, and on idle backends, so the join resolves nothing on such servers.
+Because `pg_stat_activity` is sampled, the attribution is the most
+recently observed client, not the only one; keep any UI wording to
+"last observed client". `client_addr` is rendered
+`COALESCE(host(client_addr), 'local')`, so it is non-null for every
+observed row and a statement never caught in flight is signaled solely
+by a null `client_observed_at`; both the `TopQueryRow` doc comment and
+the OpenAPI descriptions say so, and any UI logic must test
+`client_observed_at` rather than the address.
+
+The optional `queryid` filter is applied inside `last_client` as well as
+inside `deduped`, bound to the same placeholder rather than to a second
+parameter, because the query drill-down always supplies one and would
+otherwise sort the whole one-hour window twice per request to retrieve a
+single row. `metrics.pg_stat_activity` carries no index on `query_id`;
+an index on `(connection_id, query_id, collected_at DESC) WHERE query_id
+IS NOT NULL` may be worth profiling, bearing in mind that the table is a
+partitioned parent and a partitioned parent cannot take `CREATE INDEX
+CONCURRENTLY` in a single statement.
 
 ## Latest-Snapshot Aggregations (server)
 
@@ -362,6 +1957,45 @@ buffer counts were the same either way (`shared hit=13`), because runtime
 pruning already stopped the executor from touching the irrelevant
 partitions; the win is in plan size and per-execution node setup, and it
 grows with the partition count.
+
+### Every sub-query of a summary endpoint shares one window
+
+`GET /api/v1/metrics/database-summaries`
+(`handleDatabaseSummaries` in `perf_summary_handlers.go`) fans one window
+out across five sub-queries, and since issue #387 all five are bounded by
+it. Four pin to a snapshot (`queryDatabaseSizes`, `queryDatabaseStats`
+and `queryDeadTupleRatios` each select
+`collected_at = (SELECT MAX(collected_at) ... )`, whilst
+`queryTransactionRates` takes a `latest_two` CTE) and one,
+`queryDatabaseCacheHitTimeSeries`, is a bucketed series. Leaving the
+snapshot pins unbounded would have made a historical custom window return
+today's sizes, connection counts and dead tuple ratios beside a
+historical cache-hit chart, which reads as a bug rather than as a
+deliberate mixture. Bounding them instead means a historical window
+reports the estate as it stood at the end of that window, and the
+present-day answer is unchanged because the newest snapshot is inside any
+window ending now.
+
+Each of those sub-queries repeats the window bounds in both the inner and
+the outer predicate, for the partition-pruning reason set out above; a
+window with no samples yields an empty response rather than an error, the
+same "no data" behaviour the sibling endpoints have.
+`perf_summary_database_summaries_test.go` pins the behaviour with a
+fixture holding two eras of samples whose every metric differs, so a
+window that selects one era cannot silently report the other's figures.
+
+`GET /api/v1/metrics/performance-summary` follows the same rule, with one
+deliberate exception. `queryCacheHit`, `queryTransactions`,
+`queryCheckpoints` and `queryConnectionCount` are all bounded by the
+resolved window, `queryConnectionCount` with the same repeated-bounds
+snapshot pin the database summaries use, because the Cluster dashboard
+charts its result beside three windowed series and an unbounded count
+showed the live backend total against a window that held no samples at
+all. `queryXIDAage` (the name carries a typo in the source) stays
+unbounded: it feeds only the status-panel tiles, which keep a fixed
+twenty-four hour window by design, so binding it to the selector would be
+the bug rather than the fix. Adding a sub-query to this handler means
+deciding which of the two it is.
 
 ### Bound group cardinality
 
@@ -458,14 +2092,33 @@ careful, because the inconsistency reads as intentional. Much of
 `perf_summary_handlers.go` still logs raw errors with `%v` and is due a
 separate sweep.
 
-### Query errors are "no data", not 500s
+### Only a missing table is "no data"; other query errors are 500s
 
-The metrics endpoints deliberately answer 200 with an empty payload when
-their query fails, because the common cause is a probe that has never
-run against the connection, and a dashboard panel showing "no data"
-beats one showing an error. Follow `handleTopQueries` and
-`handleConnectionGroups`: log the error at DEBUG through
-`logging.SanitizeForLog` and return the empty shape.
+A metrics endpoint answers 200 with its empty shape only when the query
+fails with `42P01` (`isUndefinedTableError`), which is a workbench whose
+collector has never created its schema; log that at DEBUG. Every other
+failure, a statement timeout on a wide window above all, logs at
+`[ERROR]` through `logging.SanitizeForLog` and returns a 500 with a
+generic message, because an empty success hides a persistent failure as
+a quiet database. `handleQueryStats`, `handleTopQueries`
+(`respondTopQueriesError`) and `handleDatabaseSummaries`
+(`respondDatabaseSummariesError`, issue #519) follow this;
+`handleConnectionGroups` and the performance-summary helpers
+(`queryCacheHit`, `queryTransactions` and the rest) still log at DEBUG
+and return empty.
+
+Where one handler runs several statements in one transaction, as
+`collectDatabaseSummaries` does, stop at the first error: a failed
+statement aborts the transaction, so every later one fails with `25P02`,
+and a `42P01` from any of them means the schema is absent, so answer the
+whole request with the empty shape rather than a partial one.
+
+Treat `rows.Err()` as a failure too, since an execution-time error such
+as a statement timeout arrives there rather than from `Query`. pgx v5
+also closes the result set on a `rows.Scan` error, so `continue` after a
+scan error does not skip the row: it ends the loop, and the rows after it
+are lost. Scan nullable columns through pointers and skip NULL rows
+explicitly, and return a genuine scan error (a type mismatch).
 
 ### Package-level test-database interference
 
@@ -489,6 +2142,48 @@ run.
   probe-scoped alert lookups.
 - #406: Five built-in alert rules that could never fire; fixed in the
   alerter metric registry plus collector migration 8.
+- #616: Default rules too strict to be useful; read-rate, dead-tuple,
+  sustained-trigger and recovery gates in the registry, the three gated
+  entries made `clearWhenAbsent`, collector migration 21.
+- #402: Column kind registry (`column_kinds.go`) gating `_per_sec` and
+  `_delta` by kind; `_pct` (`DerivedTimeShare`) and `_sessions`
+  (`DerivedSessionAverage`) added; `DerivedMetric.Unit` reported on each
+  series. Also the `stats_reset` guard, the three-interval gap bound
+  (`MaxElapsedIntervals`), `ResolveProbeInterval` and the bucket clamp,
+  the loopback exclusion in `metricQueryClauses`, and the per-series fill
+  policy with nullable points (`MetricDataPoint.Value *float64`,
+  `MaxCarryIntervals`) replacing uniform LOCF.
+- #430: The `/api/v1/metrics/query` response envelope
+  (`MetricsQueryResult`) carrying the resolved window and
+  `bucket_seconds`, the exported `BucketWidth` helper, and the `filled`
+  flag on carried-forward points.
+- #428: Pseudo filesystems excluded from
+  `pg_sys_disk_info.used_percent`, so a squashfs mount no longer pins the
+  disk metric at 100%.
+- #408: Baseline selection prefers the current hour's and weekday's
+  rows; metrics without `historicalSQL` excluded via `SupportsBaselines`
+  and the latest-sample fallback removed; `GetMetricBaselines` and
+  detection scoped by database; period keys normalised to UTC.
+- #407: Missing metric data treated as resolution; introduced the
+  `clearWhenAbsent` registry flag, the `probeName` field, the
+  `absenceWindow` field and the window gate on clearing (which replaced
+  the interval-ratio gate and `probeFreshnessRatioLimit`), the
+  freshness-cutoff and window audits, the once-per-pass
+  `probeStalenessSnapshot`, and the latest-sample reductions for
+  `cache_hit_ratio` and `slow_query_count`.
+- #640: `slow_query_count` made server-wide, counting each statement
+  once across the copies stored per probing database;
+  `MetricIsServerWide` and the retirement of alerts naming a database on
+  such a metric.
+- #409: `deadlocks_delta` and `temp_files_delta` moved to hourly sums,
+  `required_extension` enforced in evaluation and resolution,
+  `table_bloat_ratio` retired from the registry; collector migration 11.
+- #384: Last observed client attributed to a query on the top-queries
+  endpoint; the `last_client` `DISTINCT ON` CTE keyed on `(query_id,
+  datid, usesysid)`, fed by `metrics.pg_stat_activity.query_id` which
+  collector migration 12 adds.
+- #400: `_delta` (`DerivedDelta`) added alongside `_per_sec` so dashboard
+  charts plot per-bucket counter increases instead of cumulative totals.
 - #342: Derived metrics (`_per_sec` rates and `dead_tuple_ratio`) added to
   `QueryTimeSeries` to fix blank Activity Charts; retired #339's
   `resolveMetricValue` in favour of the `finiteFloat` guard in `toFloat64`.
@@ -498,3 +2193,23 @@ run.
 
 - #346: `GET /api/v1/metrics/connection-groups`, the reference
   latest-snapshot aggregation over `metrics.pg_stat_activity`.
+- #401: Cache hit ratios computed from per-database counter deltas in
+  `queryCacheHit` and `queryDatabaseCacheHitTimeSeries`; nullable
+  ratio fields.
+- #512: The `probe_unavailable` built-in rule (collector migration 16),
+  its evaluator `evaluateProbeUnavailable` and its resolution check
+  `checkProbeUnavailableAlertResolved`; no new state, because
+  `probe_availability.last_collected` is sticky.
+- #519: `database-summaries` sub-query failures reported as a 500
+  (`collectDatabaseSummaries`, `respondDatabaseSummariesError`), with
+  `42P01` kept as an empty success and NULL-tolerant scans in the five
+  helpers.
+- #567: The `pg_stat_activity` historical queries gained the latest
+  queries' `backend_type = 'client backend'` filter, and
+  `connection_utilization_percent`'s historical denominator became the
+  `max_connections` in force at each sample; #596 gave the latest query
+  the same denominator.
+- #639: The `deadlocks_delta` and `temp_files_delta` historical `LAG`
+  partitioned by connection, database and UTC hour bucket, as #490 did
+  for `checkpoints_req_delta`, so baseline buckets no longer carry one
+  more delta than the live value.

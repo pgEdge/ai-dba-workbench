@@ -16,13 +16,16 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/pkg/crypto"
+	"github.com/pgedge/ai-workbench/pkg/rollback"
 	"github.com/pgedge/ai-workbench/server/internal/config"
 )
 
@@ -173,10 +176,16 @@ type ConnectionUpdateParams struct {
 // id, name, description, host, hostaddr, port, database_name, username,
 // password_encrypted, sslmode, sslcert, sslkey, sslrootcert,
 // owner_username, owner_token, is_monitored, is_shared, membership_source
+//
+// description is scanned through a sql.NullString because the column
+// was nullable before collector schema migration #17, so a row written
+// by an older server may still hold NULL; a NULL reads back as the
+// empty string rather than failing the whole scan.
 func scanFullConnection(scanner interface{ Scan(...any) error }) (*MonitoredConnection, error) {
 	var conn MonitoredConnection
+	var description sql.NullString
 	err := scanner.Scan(
-		&conn.ID, &conn.Name, &conn.Description, &conn.Host, &conn.HostAddr, &conn.Port,
+		&conn.ID, &conn.Name, &description, &conn.Host, &conn.HostAddr, &conn.Port,
 		&conn.DatabaseName, &conn.Username, &conn.PasswordEncrypted,
 		&conn.SSLMode, &conn.SSLCert, &conn.SSLKey, &conn.SSLRootCert,
 		&conn.OwnerUsername, &conn.OwnerToken, &conn.IsMonitored, &conn.IsShared,
@@ -185,6 +194,7 @@ func scanFullConnection(scanner interface{ Scan(...any) error }) (*MonitoredConn
 	if err != nil {
 		return nil, err
 	}
+	conn.Description = description.String
 	return &conn, nil
 }
 
@@ -194,13 +204,71 @@ func scanFullConnection(scanner interface{ Scan(...any) error }) (*MonitoredConn
 // by GetAllConnections where the closure is invoked once per scanned
 // row. The row must contain columns in this order: id, name, description,
 // host, port, database_name, is_monitored, is_shared, owner_username,
-// cluster_id, membership_source.
+// cluster_id, membership_source. A NULL description reads back as the
+// empty string, for the reason given on scanFullConnection.
 func scanConnectionListItem(conn *ConnectionListItem, scanner interface{ Scan(...any) error }) error {
-	return scanner.Scan(
-		&conn.ID, &conn.Name, &conn.Description, &conn.Host, &conn.Port,
+	var description sql.NullString
+	if err := scanner.Scan(
+		&conn.ID, &conn.Name, &description, &conn.Host, &conn.Port,
 		&conn.DatabaseName, &conn.IsMonitored, &conn.IsShared, &conn.OwnerUsername,
 		&conn.ClusterID, &conn.MembershipSource,
-	)
+	); err != nil {
+		return err
+	}
+	conn.Description = description.String
+	return nil
+}
+
+// DefaultDatastoreStatementTimeout is the server-side statement timeout
+// applied to every connection in the datastore pool when the
+// configuration does not name one. It matches the longest context
+// deadline any handler grants a datastore query (30 seconds in the
+// performance summary handlers), so no query that completes today
+// starts failing; what it adds is a bound that survives a lost cancel
+// request, which a client-side context cancellation does not. Without
+// it a runaway query keeps holding one of the pool's connections
+// (config.DefaultPoolMaxConns unless configured) long after the HTTP
+// request is gone.
+const DefaultDatastoreStatementTimeout = 30 * time.Second
+
+// ConnectionDeleteTimeout is the budget for deleting a connection. The
+// DELETE cascades through every metrics.* table and removes the
+// connection's whole retention history, which DefaultDatastoreStatementTimeout
+// and the ten seconds the other connection handlers allow cannot cover
+// for a connection that has been collecting for days (issue #480). The
+// longest budget the server grants any request is the HTTP server's 300
+// second WriteTimeout (internal/mcp/http_server.go), which exists for LLM
+// agentic loops; four minutes is the most the delete can take and still
+// leave time to write its response within that limit. DeleteConnection
+// applies it as a transaction-local statement_timeout, overriding the
+// pool-wide one, and deleteConnection uses it as the request deadline.
+const ConnectionDeleteTimeout = 4 * time.Minute
+
+// resolveStatementTimeout turns the configured statement_timeout into
+// the value to send as a startup runtime parameter. An empty string
+// selects DefaultDatastoreStatementTimeout. The result is always a
+// plain integer count of milliseconds, which is the unit Postgres
+// assumes for a bare statement_timeout number, so neither the Go
+// duration syntax nor a locale-dependent unit suffix ever reaches the
+// server. A zero duration disables the timeout (Postgres treats 0 as
+// "no limit"); a negative duration is rejected because Postgres would
+// reject it at connection time, and failing here names the offending
+// configuration key instead.
+func resolveStatementTimeout(value string) (string, error) {
+	timeout := DefaultDatastoreStatementTimeout
+	if value != "" {
+		parsed, err := time.ParseDuration(value)
+		if err != nil {
+			return "", fmt.Errorf("invalid statement_timeout: %w", err)
+		}
+		timeout = parsed
+	}
+
+	if timeout < 0 {
+		return "", fmt.Errorf("invalid statement_timeout: %s is negative", value)
+	}
+
+	return strconv.FormatInt(timeout.Milliseconds(), 10), nil
 }
 
 // NewDatastore creates a new datastore connection
@@ -223,7 +291,20 @@ func NewDatastore(cfg *config.DatabaseConfig, serverSecret string) (*Datastore, 
 	}
 	poolConfig.ConnConfig.RuntimeParams["application_name"] = "pgEdge AI DBA Workbench - Server"
 
-	// Apply pool settings with bounds checking to prevent overflow
+	// Bound every statement server-side. See
+	// DefaultDatastoreStatementTimeout for why the handlers' own
+	// context deadlines are not enough on their own.
+	statementTimeout, err := resolveStatementTimeout(cfg.StatementTimeout)
+	if err != nil {
+		return nil, err
+	}
+	poolConfig.ConnConfig.RuntimeParams["statement_timeout"] = statementTimeout
+
+	// Apply pool settings with bounds checking to prevent overflow. An
+	// unset pool_max_conns selects config.DefaultPoolMaxConns rather
+	// than pgxpool's own default of max(4, NumCPU), which is far too
+	// small for the API's dashboard fan-out (issue #478).
+	poolConfig.MaxConns = config.DefaultPoolMaxConns
 	if cfg.PoolMaxConns > 0 && cfg.PoolMaxConns <= math.MaxInt32 {
 		poolConfig.MaxConns = int32(cfg.PoolMaxConns) //nolint:gosec // G115: bounds checked above
 	}
@@ -393,12 +474,15 @@ func (d *Datastore) CreateConnection(ctx context.Context, params ConnectionCreat
 		encryptedPassword = &encrypted
 	}
 
+	// An omitted description arrives as a nil pointer, which pgx binds
+	// as NULL; naming the column in the INSERT stops its DEFAULT ''
+	// from applying, so COALESCE supplies the empty string instead.
 	query := `
         INSERT INTO connections (
             name, description, host, hostaddr, port, database_name, username,
             password_encrypted, sslmode, sslcert, sslkey, sslrootcert,
             owner_username, is_shared, is_monitored
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+        ) VALUES ($1, COALESCE($2, ''), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
         RETURNING id, name, description, host, hostaddr, port, database_name, username,
                   password_encrypted, sslmode, sslcert, sslkey, sslrootcert,
                   owner_username, owner_token, is_monitored, is_shared,
@@ -427,19 +511,31 @@ func (d *Datastore) CreateConnection(ctx context.Context, params ConnectionCreat
 // otherwise persist forever once their last connection is removed
 // because auto-detection only inserts new rows for unseen
 // auto_cluster_key values.
+//
+// The transaction runs under a local statement_timeout of
+// ConnectionDeleteTimeout, overriding the pool-wide timeout, because
+// the cascade through metrics.* can legitimately take minutes. For the
+// same reason it does not take d.mu: the mutex guards no Go state here
+// (d.pool never changes after construction), and holding its write
+// lock for the length of the cascade would stall every other datastore
+// call in the API behind it. Consistency with concurrent writers rests
+// on the transaction, as it must anyway, since the collector writes to
+// the same tables without the mutex.
 func (d *Datastore) DeleteConnection(ctx context.Context, id int) error {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to begin delete connection transaction: %w", err)
 	}
-	// Roll back with a non-cancelable context so a canceled request
-	// context cannot trigger the pgx v5 close-of-closed-channel panic
-	// described in jackc/pgx#2470, which would leak the pooled
-	// connection in an aborted-transaction state.
-	defer tx.Rollback(context.Background()) //nolint:errcheck // Rollback is no-op if already committed
+	defer rollback.Tx(ctx, tx) //nolint:errcheck // no-op after commit
+
+	// set_config with is_local = true is the function form of SET
+	// LOCAL, which takes the value as a bind parameter.
+	if _, err := tx.Exec(ctx,
+		`SELECT set_config('statement_timeout', $1, true)`,
+		strconv.FormatInt(ConnectionDeleteTimeout.Milliseconds(), 10),
+	); err != nil {
+		return fmt.Errorf("failed to set delete connection statement timeout: %w", err)
+	}
 
 	// Delete the connection row and capture its cluster_id in one
 	// statement. Doing both atomically avoids a TOCTOU window in
@@ -607,7 +703,16 @@ func (d *Datastore) UpdateConnectionFull(ctx context.Context, id int, params Con
 	return conn, nil
 }
 
-// BuildConnectionString creates a PostgreSQL connection string from a MonitoredConnection
+// BuildConnectionString creates a PostgreSQL connection string from a
+// MonitoredConnection.
+//
+// The URL is assembled with net/url rather than by concatenation, so
+// every component is escaped by construction. That matters most for the
+// database name, which a caller may override: interpolating it directly
+// let a name such as "mydb?host=evil.example.com&sslmode=disable" open
+// the libpq query string and redirect the connection, sending the
+// stored password to a host of the caller's choosing. url.URL escapes
+// the '?' into the path, where pgx reads it back as part of the name.
 func (d *Datastore) BuildConnectionString(conn *MonitoredConnection, password string, databaseOverride string) string {
 	// Use override database if specified, otherwise use connection's default
 	database := conn.DatabaseName
@@ -627,14 +732,12 @@ func (d *Datastore) BuildConnectionString(conn *MonitoredConnection, password st
 	// When no password is present, emit the username only (no ':' and no
 	// empty password component) so pgx can still fall back to the .pgpass
 	// file, preserving the previous behavior.
-	var userinfo string
+	var userinfo *url.Userinfo
 	if password != "" {
-		userinfo = url.UserPassword(conn.Username, password).String()
+		userinfo = url.UserPassword(conn.Username, password)
 	} else {
-		userinfo = url.User(conn.Username).String()
+		userinfo = url.User(conn.Username)
 	}
-
-	connStr := fmt.Sprintf("postgres://%s", userinfo)
 
 	// Use hostaddr if available, otherwise host
 	host := conn.Host
@@ -642,38 +745,43 @@ func (d *Datastore) BuildConnectionString(conn *MonitoredConnection, password st
 		host = conn.HostAddr.String
 	}
 
-	connStr += fmt.Sprintf("@%s:%d/%s", host, conn.Port, database)
+	// net.JoinHostPort brackets an IPv6 literal, so strip any brackets
+	// the stored value already carries rather than nesting them.
+	host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
 
 	// Collect query parameters so per-connection SSL settings flow
 	// through to the pgx driver (e.g., verify-full with a custom CA).
-	// Use "?" for the first parameter and "&" for subsequent ones.
-	sep := "?"
-	appendParam := func(key, value string) {
-		connStr += sep + key + "=" + url.QueryEscape(value)
-		sep = "&"
+	params := url.Values{}
+	addParam := func(key string, value sql.NullString) {
+		if value.Valid && value.String != "" {
+			params.Set(key, value.String)
+		}
+	}
+	addParam("sslmode", conn.SSLMode)
+	addParam("sslrootcert", conn.SSLRootCert)
+	addParam("sslcert", conn.SSLCert)
+	addParam("sslkey", conn.SSLKey)
+
+	// pgx strips every leading '/' from the URL path, so a name that
+	// itself begins with '/' (which PostgreSQL allows) would connect to
+	// a different database. Such a name travels in the dbname query
+	// parameter instead, which pgx applies after the path; every other
+	// name keeps the conventional path form.
+	path := "/" + database
+	if strings.HasPrefix(database, "/") {
+		path = "/"
+		params.Set("dbname", database)
 	}
 
-	// Add SSL mode
-	if conn.SSLMode.Valid && conn.SSLMode.String != "" {
-		appendParam("sslmode", conn.SSLMode.String)
+	dsn := url.URL{
+		Scheme:   "postgres",
+		User:     userinfo,
+		Host:     net.JoinHostPort(host, strconv.Itoa(conn.Port)),
+		Path:     path,
+		RawQuery: params.Encode(),
 	}
 
-	// Add SSL root certificate path (CA bundle used to verify the server)
-	if conn.SSLRootCert.Valid && conn.SSLRootCert.String != "" {
-		appendParam("sslrootcert", conn.SSLRootCert.String)
-	}
-
-	// Add SSL client certificate path (mutual TLS)
-	if conn.SSLCert.Valid && conn.SSLCert.String != "" {
-		appendParam("sslcert", conn.SSLCert.String)
-	}
-
-	// Add SSL client key path (mutual TLS)
-	if conn.SSLKey.Valid && conn.SSLKey.String != "" {
-		appendParam("sslkey", conn.SSLKey.String)
-	}
-
-	return connStr
+	return dsn.String()
 }
 
 // ListDatabases returns a list of databases on a monitored server

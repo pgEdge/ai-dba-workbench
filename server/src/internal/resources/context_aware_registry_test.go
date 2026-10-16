@@ -106,6 +106,23 @@ func TestContextAwareRegistry_List(t *testing.T) {
 	})
 }
 
+// newSuperuserReadRegistry builds a registry on a real auth store and
+// returns it with a superuser context. A nil auth store denies every
+// check (issue #477), so tests that exercise Read beyond the RBAC gate
+// need both.
+func newSuperuserReadRegistry(t *testing.T, cm *database.ClientManager, cfg *conf.Config) (*ContextAwareRegistry, context.Context) {
+	t.Helper()
+	authStore, err := auth.NewAuthStore(t.TempDir(), 0, 0, auth.AuditKeyForTesting())
+	if err != nil {
+		t.Fatalf("NewAuthStore: %v", err)
+	}
+	t.Cleanup(func() { authStore.Close() })
+
+	registry := NewContextAwareRegistry(cm, cfg, authStore, nil)
+	ctx := context.WithValue(context.Background(), auth.IsSuperuserContextKey, true)
+	return registry, ctx
+}
+
 func TestContextAwareRegistry_Read_DisabledResource(t *testing.T) {
 	cm := database.NewClientManager(nil)
 	defer cm.CloseAll()
@@ -118,10 +135,10 @@ func TestContextAwareRegistry_Read_DisabledResource(t *testing.T) {
 		},
 	}
 
-	registry := NewContextAwareRegistry(cm, cfg, nil, nil)
+	registry, ctx := newSuperuserReadRegistry(t, cm, cfg)
 
 	// Reading disabled resource should return error content
-	content, err := registry.Read(context.Background(), URISystemInfo)
+	content, err := registry.Read(ctx, URISystemInfo)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -130,8 +147,9 @@ func TestContextAwareRegistry_Read_DisabledResource(t *testing.T) {
 	if len(content.Contents) == 0 {
 		t.Fatal("expected content")
 	}
-	if content.Contents[0].Text == "" {
-		t.Error("expected error message in content")
+	want := "Resource '" + URISystemInfo + "' is not available"
+	if content.Contents[0].Text != want {
+		t.Errorf("expected %q, got %q", want, content.Contents[0].Text)
 	}
 }
 
@@ -147,10 +165,10 @@ func TestContextAwareRegistry_Read_NotFound(t *testing.T) {
 		},
 	}
 
-	registry := NewContextAwareRegistry(cm, cfg, nil, nil)
+	registry, ctx := newSuperuserReadRegistry(t, cm, cfg)
 
 	// Reading non-existent resource should return not found content
-	content, err := registry.Read(context.Background(), "pg://nonexistent")
+	content, err := registry.Read(ctx, "pg://nonexistent")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -176,11 +194,11 @@ func TestContextAwareRegistry_Read_AuthRequired(t *testing.T) {
 		},
 	}
 
-	// Auth enabled but no token in context
-	registry := NewContextAwareRegistry(cm, cfg, nil, nil)
+	// Superuser passes the RBAC gate, but there is no token in context
+	registry, ctx := newSuperuserReadRegistry(t, cm, cfg)
 
 	// Reading without token should return error
-	content, err := registry.Read(context.Background(), URISystemInfo)
+	content, err := registry.Read(ctx, URISystemInfo)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -189,8 +207,9 @@ func TestContextAwareRegistry_Read_AuthRequired(t *testing.T) {
 	if len(content.Contents) == 0 {
 		t.Fatal("expected content")
 	}
-	if content.Contents[0].Text == "" {
-		t.Error("expected error message")
+	want := "Error: no authentication token found in request context"
+	if content.Contents[0].Text != want {
+		t.Errorf("expected %q, got %q", want, content.Contents[0].Text)
 	}
 }
 
@@ -206,20 +225,24 @@ func TestContextAwareRegistry_Read_WithToken(t *testing.T) {
 		},
 	}
 
-	registry := NewContextAwareRegistry(cm, cfg, nil, nil)
+	registry, ctx := newSuperuserReadRegistry(t, cm, cfg)
 
 	// Add token to context
-	ctx := context.WithValue(context.Background(), auth.TokenHashContextKey, "test-token-hash")
+	ctx = context.WithValue(ctx, auth.TokenHashContextKey, "test-token-hash")
 
-	// Reading with token - will fail because no DB connection, but exercises the code path
+	// Reading with token gets past the token check and fails resolving
+	// a client, because no database connection is configured
 	content, err := registry.Read(ctx, URISystemInfo)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Should have content (either success or error about DB connection)
 	if len(content.Contents) == 0 {
 		t.Fatal("expected content")
+	}
+	want := "Error: no database connection configured for this token: no database configured"
+	if content.Contents[0].Text != want {
+		t.Errorf("expected %q, got %q", want, content.Contents[0].Text)
 	}
 }
 
@@ -303,7 +326,7 @@ func TestContextAwareRegistry_DefaultNilConfig(t *testing.T) {
 func TestGetClient_TokenScopeEnforcement(t *testing.T) {
 	// Create a temporary auth store
 	tmpDir := t.TempDir()
-	authStore, err := auth.NewAuthStore(tmpDir, 0, 0)
+	authStore, err := auth.NewAuthStore(tmpDir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("NewAuthStore: %v", err)
 	}
@@ -320,7 +343,7 @@ func TestGetClient_TokenScopeEnforcement(t *testing.T) {
 	}
 
 	// Create a token for the user
-	_, token, err := authStore.CreateToken("testuser", "test-token", nil)
+	_, token, err := authStore.AsActor(auth.SystemActor()).CreateToken("testuser", "test-token", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken: %v", err)
 	}
@@ -346,10 +369,16 @@ func TestGetClient_TokenScopeEnforcement(t *testing.T) {
 			t.Fatal("Expected non-nil rbacChecker even with nil authStore")
 		}
 
-		// With nil authStore, superuser check should return true
+		// With nil authStore the checker fails closed (issue #477): a
+		// caller the context does not mark as a superuser is refused,
+		// and so is one that claims superuser.
 		ctx := context.WithValue(context.Background(), auth.TokenHashContextKey, "any-token")
-		if !registry.rbacChecker.IsSuperuser(ctx) {
-			t.Error("Expected IsSuperuser to return true with nil authStore")
+		if registry.rbacChecker.IsSuperuser(ctx) {
+			t.Error("Expected IsSuperuser to be false without the context flag")
+		}
+		superuserCtx := context.WithValue(ctx, auth.IsSuperuserContextKey, true)
+		if registry.rbacChecker.IsSuperuser(superuserCtx) {
+			t.Error("Expected IsSuperuser to return false with nil authStore")
 		}
 	})
 
@@ -400,7 +429,7 @@ func TestGetClient_TokenScopeEnforcement(t *testing.T) {
 // calls get a clean "no connection selected" error.
 func TestGetClient_SessionClearedOnRBACDenial(t *testing.T) {
 	tmpDir := t.TempDir()
-	authStore, err := auth.NewAuthStore(tmpDir, 0, 0)
+	authStore, err := auth.NewAuthStore(tmpDir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("NewAuthStore: %v", err)
 	}
@@ -411,7 +440,7 @@ func TestGetClient_SessionClearedOnRBACDenial(t *testing.T) {
 	if err := authStore.CreateUser("alice", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
-	_, token, err := authStore.CreateToken("alice", "alice-token", nil)
+	_, token, err := authStore.AsActor(auth.SystemActor()).CreateToken("alice", "alice-token", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken: %v", err)
 	}
@@ -458,7 +487,7 @@ func TestGetClient_SessionClearedOnRBACDenial(t *testing.T) {
 // token scope restriction would bypass RBAC checks at use-time.
 func TestGetClient_RBACDenialClearsSession(t *testing.T) {
 	tmpDir := t.TempDir()
-	authStore, err := auth.NewAuthStore(tmpDir, 0, 0)
+	authStore, err := auth.NewAuthStore(tmpDir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("NewAuthStore: %v", err)
 	}
@@ -473,7 +502,7 @@ func TestGetClient_RBACDenialClearsSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetUserID: %v", err)
 	}
-	_, token, err := authStore.CreateToken("alice", "alice-token", nil)
+	_, token, err := authStore.AsActor(auth.SystemActor()).CreateToken("alice", "alice-token", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken: %v", err)
 	}
@@ -539,7 +568,7 @@ func TestGetClient_RBACDenialClearsSession(t *testing.T) {
 // getClient() code path when RBAC allows access.
 func TestGetClient_RBACAllowsAccessProceedsToDatastore(t *testing.T) {
 	tmpDir := t.TempDir()
-	authStore, err := auth.NewAuthStore(tmpDir, 0, 0)
+	authStore, err := auth.NewAuthStore(tmpDir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("NewAuthStore: %v", err)
 	}
@@ -554,7 +583,7 @@ func TestGetClient_RBACAllowsAccessProceedsToDatastore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetUserID: %v", err)
 	}
-	_, token, err := authStore.CreateToken("bob", "bob-token", nil)
+	_, token, err := authStore.AsActor(auth.SystemActor()).CreateToken("bob", "bob-token", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken: %v", err)
 	}
@@ -625,7 +654,7 @@ func TestGetClient_RBACAllowsAccessProceedsToDatastore(t *testing.T) {
 // bypasses RBAC checks even when a sharing lookup would deny access.
 func TestGetClient_SuperuserBypassesRBAC(t *testing.T) {
 	tmpDir := t.TempDir()
-	authStore, err := auth.NewAuthStore(tmpDir, 0, 0)
+	authStore, err := auth.NewAuthStore(tmpDir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("NewAuthStore: %v", err)
 	}
@@ -643,7 +672,7 @@ func TestGetClient_SuperuserBypassesRBAC(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetUserID: %v", err)
 	}
-	_, token, err := authStore.CreateToken("admin", "admin-token", nil)
+	_, token, err := authStore.AsActor(auth.SystemActor()).CreateToken("admin", "admin-token", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken: %v", err)
 	}

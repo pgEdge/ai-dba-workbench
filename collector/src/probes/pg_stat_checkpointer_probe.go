@@ -40,7 +40,7 @@ func (p *PgStatCheckpointerProbe) GetQuery() string {
 // Execute runs the probe against a monitored connection
 func (p *PgStatCheckpointerProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]any, error) {
 	// Check if the pg_stat_checkpointer view exists (PG 17+) (cached)
-	checkpointerExists, err := cachedCheck(connectionName, "pg_stat_checkpointer_exists", func() (bool, error) {
+	checkpointerExists, err := cachedCheck(connectionName, monitoredConn, "pg_stat_checkpointer_exists", func() (bool, error) {
 		return CheckViewExists(ctx, monitoredConn, "pg_stat_checkpointer")
 	})
 	if err != nil {

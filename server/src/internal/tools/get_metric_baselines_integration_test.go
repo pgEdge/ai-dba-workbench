@@ -93,7 +93,7 @@ func TestGetMetricBaselinesSingleShorthandMatchIntegration(t *testing.T) {
 	connID := seedBaselineConnection(t, pool, "single-conn", true, "")
 	seedBaseline(t, pool, connID, "pg_stat_database.cache_hit_ratio")
 
-	tool := GetMetricBaselinesTool(pool, nil, nil)
+	tool := asSuperuser(GetMetricBaselinesTool(pool, testRBACChecker(t), nil))
 
 	cases := []struct {
 		name   string
@@ -136,7 +136,7 @@ func TestGetMetricBaselinesSingleLiteralEscapeIntegration(t *testing.T) {
 	seedBaseline(t, pool, connID, "pg_stat_database.cache_hit_ratio")
 	seedBaseline(t, pool, connID, "pg_stat_database.tup_returned")
 
-	tool := GetMetricBaselinesTool(pool, nil, nil)
+	tool := asSuperuser(GetMetricBaselinesTool(pool, testRBACChecker(t), nil))
 
 	// A literal "%" must not match anything (no stored name contains a
 	// literal percent sign). If escaping failed, "%" would match every row.
@@ -167,7 +167,7 @@ func TestGetMetricBaselinesSingleLiteralUnderscoreIntegration(t *testing.T) {
 	// "aXb" would match the wildcard pattern "a_b" if '_' were not escaped.
 	seedBaseline(t, pool, connID, "schema.aXb")
 
-	tool := GetMetricBaselinesTool(pool, nil, nil)
+	tool := asSuperuser(GetMetricBaselinesTool(pool, testRBACChecker(t), nil))
 
 	body := mustSuccess(t, tool, map[string]any{
 		"connection_id": connID,
@@ -195,7 +195,7 @@ func TestGetMetricBaselinesSingleEmptyWithFilterIntegration(t *testing.T) {
 	connID := seedBaselineConnection(t, pool, "empty-filter-conn", true, "")
 	seedBaseline(t, pool, connID, "pg_stat_database.cache_hit_ratio")
 
-	tool := GetMetricBaselinesTool(pool, nil, nil)
+	tool := asSuperuser(GetMetricBaselinesTool(pool, testRBACChecker(t), nil))
 
 	body := mustSuccess(t, tool, map[string]any{
 		"connection_id": connID,
@@ -221,7 +221,7 @@ func TestGetMetricBaselinesSingleEmptyNoFilterIntegration(t *testing.T) {
 	connID := seedBaselineConnection(t, pool, "empty-nofilter-conn", true, "")
 	// No baselines seeded.
 
-	tool := GetMetricBaselinesTool(pool, nil, nil)
+	tool := asSuperuser(GetMetricBaselinesTool(pool, testRBACChecker(t), nil))
 
 	body := mustSuccess(t, tool, map[string]any{
 		"connection_id": connID,
@@ -250,7 +250,7 @@ func TestGetMetricBaselinesMultiShorthandMatchIntegration(t *testing.T) {
 	seedBaseline(t, pool, connA, "pg_stat_database.cache_hit_ratio")
 	seedBaseline(t, pool, connB, "pg_stat_bgwriter.checkpoints_timed")
 
-	tool := GetMetricBaselinesTool(pool, nil, nil)
+	tool := asSuperuser(GetMetricBaselinesTool(pool, testRBACChecker(t), nil))
 
 	body := mustSuccess(t, tool, map[string]any{
 		"metric_name": "CACHE_HIT",
@@ -277,7 +277,7 @@ func TestGetMetricBaselinesMultiEmptyWithFilterIntegration(t *testing.T) {
 	seedBaseline(t, pool, connA, "pg_stat_database.cache_hit_ratio")
 	seedBaseline(t, pool, connB, "pg_stat_bgwriter.checkpoints_timed")
 
-	tool := GetMetricBaselinesTool(pool, nil, nil)
+	tool := asSuperuser(GetMetricBaselinesTool(pool, testRBACChecker(t), nil))
 
 	body := mustSuccess(t, tool, map[string]any{
 		"metric_name": "no_such_metric",
@@ -300,7 +300,7 @@ func TestGetMetricBaselinesMultiEmptyNoFilterIntegration(t *testing.T) {
 	// A connection with no baselines.
 	seedBaselineConnection(t, pool, "multi-bare", true, "")
 
-	tool := GetMetricBaselinesTool(pool, nil, nil)
+	tool := asSuperuser(GetMetricBaselinesTool(pool, testRBACChecker(t), nil))
 
 	body := mustSuccess(t, tool, map[string]any{})
 	if !strings.Contains(body, "No metric baselines found across accessible connections") {
@@ -357,8 +357,9 @@ func TestGetMetricBaselinesMultiRBACScopedHelperIntegration(t *testing.T) {
 }
 
 // TestGetMetricBaselinesSingleRBACDeniedIntegration verifies that a
-// non-superuser denied access to a specific connection_id receives an
-// "Access denied" error (exercises the single-connection RBAC branch).
+// non-superuser denied access to a specific connection_id receives the
+// "not found or not accessible" error (exercises the single-connection
+// RBAC branch).
 func TestGetMetricBaselinesSingleRBACDeniedIntegration(t *testing.T) {
 	pool, ds, cleanup := newToolsTestPool(t)
 	defer cleanup()
@@ -395,8 +396,8 @@ func TestGetMetricBaselinesSingleRBACDeniedIntegration(t *testing.T) {
 	if len(resp.Content) == 0 {
 		t.Fatal("expected error content")
 	}
-	if !strings.Contains(resp.Content[0].Text, "Access denied") {
-		t.Errorf("expected 'Access denied' message, got: %s", resp.Content[0].Text)
+	if !strings.Contains(resp.Content[0].Text, "not found or not accessible") {
+		t.Errorf("expected 'not found or not accessible' message, got: %s", resp.Content[0].Text)
 	}
 }
 
@@ -428,16 +429,16 @@ func TestAvailableMetricNamesQueryErrorIntegration(t *testing.T) {
 }
 
 // TestGetMetricBaselinesInvalidConnectionExistsIntegration verifies that an
-// integer connection_id that does not exist yields the "does not exist"
-// message listing valid IDs (exercises the connection-existence check with a
-// real pool).
+// integer connection_id that does not exist yields the "not found or not
+// accessible" message listing the caller's visible connections (exercises
+// the connection-existence check with a real pool).
 func TestGetMetricBaselinesInvalidConnectionExistsIntegration(t *testing.T) {
 	pool, _, cleanup := newToolsTestPool(t)
 	defer cleanup()
 
 	seedBaselineConnection(t, pool, "exists-conn", true, "")
 
-	tool := GetMetricBaselinesTool(pool, nil, nil)
+	tool := asSuperuser(GetMetricBaselinesTool(pool, testRBACChecker(t), nil))
 
 	resp, err := tool.Handler(map[string]any{
 		"connection_id": 999999,
@@ -451,7 +452,8 @@ func TestGetMetricBaselinesInvalidConnectionExistsIntegration(t *testing.T) {
 	if len(resp.Content) == 0 {
 		t.Fatal("expected error content")
 	}
-	if !strings.Contains(resp.Content[0].Text, "does not exist") {
-		t.Errorf("expected 'does not exist' message, got: %s", resp.Content[0].Text)
+	if !strings.Contains(resp.Content[0].Text, "not found or not accessible") ||
+		!strings.Contains(resp.Content[0].Text, "exists-conn") {
+		t.Errorf("expected 'not found or not accessible' listing exists-conn, got: %s", resp.Content[0].Text)
 	}
 }

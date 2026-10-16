@@ -265,3 +265,9 @@ command confirms the deletion:
 ```console
 Group 'dba-team' deleted successfully
 ```
+
+The server records every group and membership change in the audit log,
+naming the user, token or command-line operator that made it. The
+`-list-audit` command prints the recorded events and the
+`-verify-audit-log` command checks the log's hash chain; for details of
+both, see [Audit Log](audit-log.md).

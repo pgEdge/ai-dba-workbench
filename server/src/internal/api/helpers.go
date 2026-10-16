@@ -52,7 +52,8 @@ func HandleNotConfigured(service string) http.HandlerFunc {
 
 // RequireAdminPermission returns a function that checks whether the caller
 // has the specified admin permission. If the check fails it sends a 403
-// response and returns false; otherwise it returns true.
+// response and returns false; otherwise it returns true. A nil rbac
+// denies every caller (issue #561).
 func RequireAdminPermission(rbac *auth.RBACChecker, permission string, description string) func(http.ResponseWriter, *http.Request) bool {
 	return func(w http.ResponseWriter, r *http.Request) bool {
 		if !rbac.HasAdminPermission(r.Context(), permission) {

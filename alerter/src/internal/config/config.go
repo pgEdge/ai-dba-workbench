@@ -11,6 +11,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -19,6 +20,19 @@ import (
 	"github.com/pgedge/ai-workbench/pkg/fileutil"
 	"gopkg.in/yaml.v3"
 )
+
+// DefaultLLMMaxTokens is the default output-token budget for tier-3
+// reasoning calls (llm.max_tokens).
+//
+// The previous hardcoded 500-token budget was sized for a classification
+// verdict alone. Reasoning models served through an OpenAI-compatible
+// endpoint (llama.cpp hosting Qwen3, DeepSeek-R1 distills, gpt-oss, and
+// similar) charge their thinking tokens against the same budget, so 500
+// tokens are routinely consumed in full by the thinking block and the
+// model never emits the verdict. 4096 leaves several thousand tokens of
+// thinking room ahead of the small JSON verdict, and matches the server's
+// llm.max_tokens default so operators see one number across the estate.
+const DefaultLLMMaxTokens = 4096
 
 // Config holds all configuration options for the alerter
 type Config struct {
@@ -53,9 +67,33 @@ type PoolConfig struct {
 	MaxIdleSeconds int `yaml:"max_idle_seconds"`
 }
 
+// DefaultThresholdTriggerCount is the default number of consecutive
+// breaching metric samples a threshold rule needs before it raises an
+// alert (threshold.trigger_count).
+const DefaultThresholdTriggerCount = 2
+
+// DefaultThresholdClearCount is the default number of consecutive
+// non-breaching metric samples an active threshold alert needs before
+// it clears (threshold.clear_count).
+const DefaultThresholdClearCount = 3
+
 // ThresholdConfig holds threshold engine settings
 type ThresholdConfig struct {
 	EvaluationIntervalSeconds int `yaml:"evaluation_interval_seconds"`
+
+	// TriggerCount is the number of consecutive metric samples that
+	// must breach a rule's threshold before an alert is raised. Samples
+	// are distinct collected_at values for one rule, connection and
+	// database, not evaluation cycles, so re-reading a sample the probe
+	// has not yet replaced does not advance the count. 1 raises on the
+	// first breaching sample. Must be at least 1. See GitHub issue #614.
+	TriggerCount int `yaml:"trigger_count"`
+
+	// ClearCount is the number of consecutive metric samples that must
+	// be within a rule's threshold before an active alert clears,
+	// counted in the same way as TriggerCount. 1 clears on the first
+	// such sample. Must be at least 1.
+	ClearCount int `yaml:"clear_count"`
 }
 
 // AnomalyConfig holds anomaly detection settings
@@ -65,6 +103,55 @@ type AnomalyConfig struct {
 	Tier2        Tier2Config        `yaml:"tier2"`
 	Tier3        Tier3Config        `yaml:"tier3"`
 	Reevaluation ReevaluationConfig `yaml:"reevaluation"`
+
+	// ProviderHealth controls the system alert raised when the
+	// embedding or reasoning provider keeps failing.
+	ProviderHealth ProviderHealthConfig `yaml:"provider_health"`
+}
+
+// DefaultProviderFailureThreshold is the default number of consecutive
+// failed calls to an LLM provider, from one tier, before the alerter
+// raises a system alert about it.
+const DefaultProviderFailureThreshold = 3
+
+// DefaultProviderFailureRate is the default share of an LLM provider's
+// recent calls, from one tier, that must fail for the alerter to raise
+// the system alert about it whatever the consecutive count. See GitHub
+// issue #593.
+const DefaultProviderFailureRate = 0.3
+
+// DefaultProviderFailureRateWindow is the default number of recent calls
+// over which the failure rate is measured.
+const DefaultProviderFailureRateWindow = 20
+
+// MaxProviderFailureRateWindow bounds failure_rate_window, since the
+// alerter keeps the outcome of that many calls for each tier and
+// provider.
+const MaxProviderFailureRateWindow = 1000
+
+// ProviderHealthConfig holds the settings for the system alert the
+// alerter raises when the Tier 2 embedding, Tier 3 classification or
+// re-evaluation calls to an LLM provider keep failing. See GitHub issue
+// #582.
+type ProviderHealthConfig struct {
+	// FailureThreshold is the number of consecutive failed calls from
+	// one tier to one provider that opens the alert. The first
+	// successful call clears it unless FailureRate keeps it open. A
+	// failed startup health check opens
+	// the alert at once, whatever the threshold. Must be at least 1.
+	FailureThreshold int `yaml:"failure_threshold"`
+
+	// FailureRate is the share of the last FailureRateWindow calls
+	// from one tier to one provider that, once failed, opens the alert
+	// even when the failures are not consecutive. The alert then stays
+	// open until fewer than that share are failing. Must be greater
+	// than 0 and at most 1.
+	FailureRate float64 `yaml:"failure_rate"`
+
+	// FailureRateWindow is the number of most recent calls the failure
+	// rate is measured over. Must be between 1 and
+	// MaxProviderFailureRateWindow.
+	FailureRateWindow int `yaml:"failure_rate_window"`
 }
 
 // Tier1Config holds Tier 1 statistical detection settings
@@ -85,7 +172,25 @@ type Tier1Config struct {
 	// have not seen enough samples or wall-clock time to be
 	// trustworthy.
 	Warmup WarmupConfig `yaml:"warmup"`
+
+	// ClearCount is the number of consecutive distinct samples of
+	// an active anomaly alert's metric that must score back inside
+	// the sensitivity band before the alert is cleared. Tier 1
+	// passes that re-score a sample already counted do not add to
+	// it. Must be at least 1. See GitHub issue #611.
+	ClearCount int `yaml:"clear_count"`
+
+	// MetricFloors overrides the built-in per-metric floors, keyed by
+	// metric name; read the resolved floors with MetricFloor. See
+	// metric_floors.go and GitHub issue #617.
+	MetricFloors map[string]MetricFloorConfig `yaml:"metric_floors"`
 }
+
+// DefaultAnomalyClearCount is the default for anomaly.tier1.clear_count:
+// an anomaly alert clears on its third consecutive in-band sample, which
+// for a probe collecting every 300 seconds is about ten minutes after the
+// first.
+const DefaultAnomalyClearCount = 3
 
 // VarianceFloorConfig parameterises the hybrid variance floor.
 // effective_stddev = max(raw_stddev,
@@ -124,7 +229,23 @@ type Tier2Config struct {
 type Tier3Config struct {
 	Enabled        bool `yaml:"enabled"`
 	TimeoutSeconds int  `yaml:"timeout_seconds"`
+
+	// DecisionSuppressThreshold applies when llm.decision_provider is
+	// set. The decision model answers "is this anomaly a real issue
+	// that requires attention?" with the probability of yes, and Tier 3
+	// suppresses the candidate when the probability of no, one minus
+	// that, is at least this value; otherwise it raises the alert.
+	// Raising it suppresses fewer candidates. Must be greater than 0
+	// and less than 1 whilst a decision provider is configured.
+	// Default: DefaultDecisionSuppressThreshold. See GitHub issue #626.
+	DecisionSuppressThreshold float64 `yaml:"decision_suppress_threshold"`
 }
+
+// DefaultDecisionSuppressThreshold is the default for
+// anomaly.tier3.decision_suppress_threshold: a candidate is suppressed
+// when the decision model thinks it more likely than not to be a false
+// positive.
+const DefaultDecisionSuppressThreshold = 0.5
 
 // ReevaluationConfig holds re-evaluation settings for acknowledged anomaly alerts
 type ReevaluationConfig struct {
@@ -134,10 +255,59 @@ type ReevaluationConfig struct {
 	MaxPerCycle     int  `yaml:"max_per_cycle"`
 }
 
-// BaselineConfig holds baseline calculation settings
+// BaselineConfig holds baseline calculation settings.
+//
+// LookbackDays bounds every baseline's earliest_sample_at: the
+// historical queries only read samples inside the window, and the
+// calculator overwrites earliest_sample_at on each refresh, so no
+// baseline can ever report a span longer than the lookback. A warmup
+// tier whose MinSpanHours exceeds LookbackDays*24 is therefore
+// unreachable; see UnreachableWarmupPeriods. The default of 15 days
+// gives every weekday at least two occurrences and clears the daily
+// tier's default 336 hour span with a day to spare.
 type BaselineConfig struct {
 	RefreshIntervalSeconds int `yaml:"refresh_interval_seconds"`
 	LookbackDays           int `yaml:"lookback_days"`
+}
+
+// DefaultLookbackDays is the lookback applied when
+// baselines.lookback_days is unset or not positive.
+const DefaultLookbackDays = 15
+
+// EffectiveLookbackDays returns the lookback the baseline calculator
+// uses, substituting DefaultLookbackDays for a non-positive setting.
+func (c *Config) EffectiveLookbackDays() int {
+	if c.Baselines.LookbackDays <= 0 {
+		return DefaultLookbackDays
+	}
+	return c.Baselines.LookbackDays
+}
+
+// UnreachableWarmupPeriods lists the warmup period types ("all",
+// "hourly", "daily") whose min_span_hours exceeds the lookback window
+// in hours. A baseline row of such a type can never pass isBaselineWarm
+// because its earliest_sample_at is never older than the lookback, so
+// the selector silently falls through to the next tier. Callers log the
+// result rather than rejecting the configuration, because the shipped
+// example files once carried exactly this combination.
+func (c *Config) UnreachableWarmupPeriods() []string {
+	lookbackHours := c.EffectiveLookbackDays() * 24
+	w := c.Anomaly.Tier1.Warmup
+	tiers := []struct {
+		name string
+		cfg  PerPeriodWarmupConfig
+	}{
+		{"all", w.All},
+		{"hourly", w.Hourly},
+		{"daily", w.Daily},
+	}
+	var out []string
+	for _, t := range tiers {
+		if t.cfg.MinSpanHours > lookbackHours {
+			out = append(out, t.name)
+		}
+	}
+	return out
 }
 
 // CorrelationConfig holds correlation detection settings
@@ -147,13 +317,42 @@ type CorrelationConfig struct {
 
 // LLMConfig holds LLM provider settings
 type LLMConfig struct {
-	EmbeddingProvider string          `yaml:"embedding_provider"`
-	ReasoningProvider string          `yaml:"reasoning_provider"`
-	Ollama            OllamaConfig    `yaml:"ollama"`
-	OpenAI            OpenAIConfig    `yaml:"openai"`
-	Anthropic         AnthropicConfig `yaml:"anthropic"`
-	Voyage            VoyageConfig    `yaml:"voyage"`
-	Gemini            GeminiConfig    `yaml:"gemini"`
+	EmbeddingProvider string `yaml:"embedding_provider"`
+	ReasoningProvider string `yaml:"reasoning_provider"`
+
+	// DecisionProvider selects an optional decision model for Tier 3
+	// classification: "typesafe" or "openai". Empty, "none" or
+	// "disabled" leaves Tier 3 on the reasoning provider alone. When it
+	// is set, Tier 3 asks the decision model first and falls back to
+	// the reasoning provider for any candidate the decision model fails
+	// to classify. Re-evaluation always uses the reasoning provider.
+	// See GitHub issue #626.
+	DecisionProvider string `yaml:"decision_provider"`
+
+	// MaxTokens caps the output tokens of a tier-3 reasoning call.
+	// Reasoning models charge their thinking blocks against this same
+	// budget, so a small value leaves no room for the classification
+	// verdict itself. A value of 0 or less selects
+	// llm.DefaultReasoningMaxTokens. Default: 4096.
+	MaxTokens int `yaml:"max_tokens"`
+
+	Ollama    OllamaConfig    `yaml:"ollama"`
+	OpenAI    OpenAIConfig    `yaml:"openai"`
+	Anthropic AnthropicConfig `yaml:"anthropic"`
+	Voyage    VoyageConfig    `yaml:"voyage"`
+	Gemini    GeminiConfig    `yaml:"gemini"`
+	TypeSafe  TypeSafeConfig  `yaml:"typesafe"`
+}
+
+// DecisionProviderEnabled reports whether llm.decision_provider selects a
+// decision provider rather than leaving it off.
+func (l *LLMConfig) DecisionProviderEnabled() bool {
+	switch l.DecisionProvider {
+	case "", "none", "disabled":
+		return false
+	default:
+		return true
+	}
 }
 
 // NotificationsConfig holds notification settings
@@ -243,7 +442,11 @@ type OpenAIConfig struct {
 	BaseURL        string `yaml:"base_url"`
 	EmbeddingModel string `yaml:"embedding_model"`
 	ReasoningModel string `yaml:"reasoning_model"`
-	apiKey         string
+
+	// DecisionModel is the model of OpenAI's Decisions API used when
+	// llm.decision_provider is "openai".
+	DecisionModel string `yaml:"decision_model"`
+	apiKey        string
 }
 
 // AnthropicConfig holds Anthropic provider settings
@@ -271,6 +474,15 @@ type GeminiConfig struct {
 	apiKey         string
 }
 
+// TypeSafeConfig holds the settings of the TypeSafe provider, which serves
+// the Jev decision models and is used only as llm.decision_provider.
+type TypeSafeConfig struct {
+	APIKeyFile    string `yaml:"api_key_file"`
+	BaseURL       string `yaml:"base_url"`
+	DecisionModel string `yaml:"decision_model"`
+	apiKey        string
+}
+
 // NewConfig creates a new Config with default values
 func NewConfig() *Config {
 	return &Config{
@@ -287,6 +499,8 @@ func NewConfig() *Config {
 		},
 		Threshold: ThresholdConfig{
 			EvaluationIntervalSeconds: 60,
+			TriggerCount:              DefaultThresholdTriggerCount,
+			ClearCount:                DefaultThresholdClearCount,
 		},
 		Anomaly: AnomalyConfig{
 			Enabled: true,
@@ -295,6 +509,7 @@ func NewConfig() *Config {
 				DefaultSensitivity:        3.0,
 				EvaluationIntervalSeconds: 60,
 				MaxZScore:                 100.0,
+				ClearCount:                DefaultAnomalyClearCount,
 				VarianceFloor: VarianceFloorConfig{
 					RelativePct:   0.05,
 					AbsoluteFloor: 0.001,
@@ -320,8 +535,9 @@ func NewConfig() *Config {
 				SimilarityThreshold:  0.3,
 			},
 			Tier3: Tier3Config{
-				Enabled:        true,
-				TimeoutSeconds: 30,
+				Enabled:                   true,
+				TimeoutSeconds:            30,
+				DecisionSuppressThreshold: DefaultDecisionSuppressThreshold,
 			},
 			Reevaluation: ReevaluationConfig{
 				Enabled:         true,
@@ -329,10 +545,15 @@ func NewConfig() *Config {
 				TimeoutSeconds:  30,
 				MaxPerCycle:     10,
 			},
+			ProviderHealth: ProviderHealthConfig{
+				FailureThreshold:  DefaultProviderFailureThreshold,
+				FailureRate:       DefaultProviderFailureRate,
+				FailureRateWindow: DefaultProviderFailureRateWindow,
+			},
 		},
 		Baselines: BaselineConfig{
 			RefreshIntervalSeconds: 3600,
-			LookbackDays:           7,
+			LookbackDays:           DefaultLookbackDays,
 		},
 		Correlation: CorrelationConfig{
 			WindowSeconds: 120,
@@ -340,6 +561,7 @@ func NewConfig() *Config {
 		LLM: LLMConfig{
 			EmbeddingProvider: "ollama",
 			ReasoningProvider: "ollama",
+			MaxTokens:         DefaultLLMMaxTokens,
 			Ollama: OllamaConfig{
 				BaseURL:        "http://localhost:11434",
 				EmbeddingModel: "nomic-embed-text",
@@ -347,17 +569,21 @@ func NewConfig() *Config {
 			},
 			OpenAI: OpenAIConfig{
 				EmbeddingModel: "text-embedding-3-small",
-				ReasoningModel: "gpt-4o-mini",
+				ReasoningModel: "gpt-6-luna",
+				DecisionModel:  "gpt-6-luna",
 			},
 			Anthropic: AnthropicConfig{
-				ReasoningModel: "claude-3-5-haiku-20241022",
+				ReasoningModel: "claude-haiku-4-5",
 			},
 			Voyage: VoyageConfig{
 				EmbeddingModel: "voyage-3-lite",
 			},
 			Gemini: GeminiConfig{
 				EmbeddingModel: "gemini-embedding-001",
-				ReasoningModel: "gemini-2.5-flash",
+				ReasoningModel: "gemini-3.8-flash",
+			},
+			TypeSafe: TypeSafeConfig{
+				DecisionModel: "jev-latest",
 			},
 		},
 	}
@@ -374,8 +600,9 @@ func (c *Config) LoadFromFile(filename string) error {
 		return fmt.Errorf("failed to parse YAML config: %w", err)
 	}
 
-	// Apply defaults for notification settings
+	// Apply defaults for notification and LLM settings
 	c.SetNotificationDefaults()
+	c.SetLLMDefaults()
 
 	return nil
 }
@@ -397,41 +624,36 @@ func (c *Config) LoadPassword() error {
 	return nil
 }
 
-// LoadAPIKeys loads API keys from their respective files
+// LoadAPIKeys loads API keys from their respective files. It attempts
+// every configured key file, so that one unreadable file does not leave
+// the other providers without their keys, keeps each key it reads, and
+// returns the failures joined with errors.Join, or nil when there are
+// none.
 func (c *Config) LoadAPIKeys() error {
-	if c.LLM.OpenAI.APIKeyFile != "" {
-		key, err := fileutil.ReadSecretFile(c.LLM.OpenAI.APIKeyFile)
-		if err != nil {
-			return fmt.Errorf("failed to read OpenAI API key: %w", err)
-		}
-		c.LLM.OpenAI.apiKey = key
+	keys := []struct {
+		provider string
+		file     string
+		key      *string
+	}{
+		{"OpenAI", c.LLM.OpenAI.APIKeyFile, &c.LLM.OpenAI.apiKey},
+		{"Anthropic", c.LLM.Anthropic.APIKeyFile, &c.LLM.Anthropic.apiKey},
+		{"Voyage", c.LLM.Voyage.APIKeyFile, &c.LLM.Voyage.apiKey},
+		{"Gemini", c.LLM.Gemini.APIKeyFile, &c.LLM.Gemini.apiKey},
+		{"TypeSafe", c.LLM.TypeSafe.APIKeyFile, &c.LLM.TypeSafe.apiKey},
 	}
-
-	if c.LLM.Anthropic.APIKeyFile != "" {
-		key, err := fileutil.ReadSecretFile(c.LLM.Anthropic.APIKeyFile)
-		if err != nil {
-			return fmt.Errorf("failed to read Anthropic API key: %w", err)
+	var errs []error
+	for _, k := range keys {
+		if k.file == "" {
+			continue
 		}
-		c.LLM.Anthropic.apiKey = key
-	}
-
-	if c.LLM.Voyage.APIKeyFile != "" {
-		key, err := fileutil.ReadSecretFile(c.LLM.Voyage.APIKeyFile)
+		key, err := fileutil.ReadSecretFile(k.file)
 		if err != nil {
-			return fmt.Errorf("failed to read Voyage API key: %w", err)
+			errs = append(errs, fmt.Errorf("failed to read %s API key: %w", k.provider, err))
+			continue
 		}
-		c.LLM.Voyage.apiKey = key
+		*k.key = key
 	}
-
-	if c.LLM.Gemini.APIKeyFile != "" {
-		key, err := fileutil.ReadSecretFile(c.LLM.Gemini.APIKeyFile)
-		if err != nil {
-			return fmt.Errorf("failed to read Gemini API key: %w", err)
-		}
-		c.LLM.Gemini.apiKey = key
-	}
-
-	return nil
+	return errors.Join(errs...)
 }
 
 // GetOpenAIAPIKey returns the loaded OpenAI API key
@@ -454,6 +676,11 @@ func (c *Config) GetGeminiAPIKey() string {
 	return c.LLM.Gemini.apiKey
 }
 
+// GetTypeSafeAPIKey returns the loaded TypeSafe API key
+func (c *Config) GetTypeSafeAPIKey() string {
+	return c.LLM.TypeSafe.apiKey
+}
+
 // Validate checks if the configuration is valid
 func (c *Config) Validate() error {
 	if c.Datastore.Host == "" {
@@ -470,6 +697,12 @@ func (c *Config) Validate() error {
 	}
 	if c.Pool.MaxConnections <= 0 {
 		return fmt.Errorf("pool.max_connections must be greater than 0")
+	}
+	if c.Threshold.TriggerCount < 1 {
+		return fmt.Errorf("threshold.trigger_count must be at least 1")
+	}
+	if c.Threshold.ClearCount < 1 {
+		return fmt.Errorf("threshold.clear_count must be at least 1")
 	}
 	if c.Anomaly.Tier1.MaxZScore < 0 ||
 		math.IsNaN(c.Anomaly.Tier1.MaxZScore) ||
@@ -497,6 +730,40 @@ func (c *Config) Validate() error {
 		c.Anomaly.Tier1.Warmup.Daily.MinSpanHours < 0 {
 		return fmt.Errorf("anomaly.tier1.warmup thresholds must be >= 0")
 	}
+	if c.Anomaly.Tier1.ClearCount < 1 {
+		return fmt.Errorf("anomaly.tier1.clear_count must be at least 1")
+	}
+	if err := validateMetricFloors(c.Anomaly.Tier1.MetricFloors); err != nil {
+		return err
+	}
+	if c.Anomaly.ProviderHealth.FailureThreshold < 1 {
+		return fmt.Errorf("anomaly.provider_health.failure_threshold must be at least 1")
+	}
+	if rate := c.Anomaly.ProviderHealth.FailureRate; math.IsNaN(rate) || rate <= 0 || rate > 1 {
+		return fmt.Errorf("anomaly.provider_health.failure_rate must be greater than 0 and at most 1")
+	}
+	if window := c.Anomaly.ProviderHealth.FailureRateWindow; window < 1 ||
+		window > MaxProviderFailureRateWindow {
+		return fmt.Errorf("anomaly.provider_health.failure_rate_window must be between 1 and %d",
+			MaxProviderFailureRateWindow)
+	}
+	return c.validateDecisionProvider()
+}
+
+// validateDecisionProvider checks llm.decision_provider and, when one is
+// selected, anomaly.tier3.decision_suppress_threshold.
+func (c *Config) validateDecisionProvider() error {
+	switch c.LLM.DecisionProvider {
+	case "", "none", "disabled":
+		return nil
+	case "typesafe", "openai":
+	default:
+		return fmt.Errorf("llm.decision_provider must be typesafe, openai, none, disabled or empty, not %q",
+			c.LLM.DecisionProvider)
+	}
+	if t := c.Anomaly.Tier3.DecisionSuppressThreshold; math.IsNaN(t) || t <= 0 || t >= 1 {
+		return fmt.Errorf("anomaly.tier3.decision_suppress_threshold must be greater than 0 and less than 1")
+	}
 	return nil
 }
 
@@ -512,6 +779,16 @@ func GetDefaultConfigPath(binaryPath string) string {
 // ConfigFileExists checks if a config file exists at the given path
 func ConfigFileExists(path string) bool {
 	return fileutil.FileExists(path)
+}
+
+// SetLLMDefaults sets default values for LLM config that a YAML file may
+// have left unset. NewConfig already seeds these defaults, but a caller
+// that loads into a bare Config (or a YAML file that sets llm.max_tokens
+// to 0) must still end up with a usable budget.
+func (c *Config) SetLLMDefaults() {
+	if c.LLM.MaxTokens <= 0 {
+		c.LLM.MaxTokens = DefaultLLMMaxTokens
+	}
 }
 
 // SetNotificationDefaults sets default values for notification config

@@ -25,6 +25,8 @@ type ChannelOverrideHandler struct {
 	authStore       *auth.AuthStore
 	rbacChecker     *auth.RBACChecker
 	checkPermission func(http.ResponseWriter, *http.Request) bool
+	// denialAuditor audits this handler's token-scope refusals.
+	denialAuditor
 }
 
 // NewChannelOverrideHandler creates a new channel override handler
@@ -34,9 +36,7 @@ func NewChannelOverrideHandler(datastore *database.Datastore, authStore *auth.Au
 		authStore:   authStore,
 		rbacChecker: rbacChecker,
 	}
-	if rbacChecker != nil {
-		h.checkPermission = RequireAdminPermission(rbacChecker, auth.PermManageNotificationChannels, "manage notification channels")
-	}
+	h.checkPermission = RequireAdminPermission(rbacChecker, auth.PermManageNotificationChannels, "manage notification channels")
 	return h
 }
 
@@ -143,6 +143,9 @@ func (h *ChannelOverrideHandler) upsertOverride(w http.ResponseWriter, r *http.R
 	if !h.checkPermission(w, r) {
 		return
 	}
+	if !requireTargetInTokenScope(w, r, h.rbacChecker, h.denialRecorder, scope, &scopeID) {
+		return
+	}
 
 	var req database.ChannelOverrideUpdate
 	if !DecodeJSONBody(w, r, &req) {
@@ -162,6 +165,9 @@ func (h *ChannelOverrideHandler) upsertOverride(w http.ResponseWriter, r *http.R
 // deleteOverride handles DELETE /api/v1/channel-overrides/{scope}/{scopeId}/{channelId}
 func (h *ChannelOverrideHandler) deleteOverride(w http.ResponseWriter, r *http.Request, scope string, scopeID int, channelID int64) {
 	if !h.checkPermission(w, r) {
+		return
+	}
+	if !requireTargetInTokenScope(w, r, h.rbacChecker, h.denialRecorder, scope, &scopeID) {
 		return
 	}
 

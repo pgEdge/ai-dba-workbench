@@ -63,57 +63,98 @@ func (p *PgStatStatementsProbe) GetQuery() string {
             temp_blks_read,
             temp_blks_written,
             blk_read_time,
-            blk_write_time
+            blk_write_time,
+            NULL::timestamptz AS stats_reset
         FROM pg_stat_statements
         ORDER BY total_exec_time DESC
         LIMIT %d
     `, PgStatStatementsQueryLimit)
 }
 
-// checkHasSharedBlkTime checks if pg_stat_statements has shared_blk_read_time column (PG 17+)
-func (p *PgStatStatementsProbe) checkHasSharedBlkTime(ctx context.Context, conn *pgxpool.Conn) (bool, error) {
+// checkHasColumn reports whether the pg_stat_statements view that the
+// probe's own queries will reach through the search path exposes the
+// named column. The extension is installed into the current schema at
+// CREATE EXTENSION time, normally public, and is often relocated on
+// managed services, so the view is resolved with pg_table_is_visible
+// rather than by assuming a schema: filtering information_schema on
+// table_schema = 'pg_catalog' matched nothing on an ordinary install and
+// silently dropped every probe onto the PostgreSQL 12 query shape (#439).
+func (p *PgStatStatementsProbe) checkHasColumn(ctx context.Context, conn *pgxpool.Conn, column string) (bool, error) {
 	var hasColumn bool
 	err := conn.QueryRow(ctx, `
         SELECT EXISTS (
             SELECT 1
-            FROM information_schema.columns
-            WHERE table_schema = 'pg_catalog'
-              AND table_name = 'pg_stat_statements'
-              AND column_name = 'shared_blk_read_time'
+            FROM pg_catalog.pg_attribute a
+            JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
+            WHERE c.relname = 'pg_stat_statements'
+              AND c.relkind = 'v'
+              AND pg_catalog.pg_table_is_visible(c.oid)
+              AND a.attname = $1
+              AND a.attnum > 0
+              AND NOT a.attisdropped
         )
-    `).Scan(&hasColumn)
+    `, column).Scan(&hasColumn)
 
 	if err != nil {
-		return false, fmt.Errorf("failed to check for shared_blk_read_time column: %w", err)
+		return false, fmt.Errorf("failed to check for %s column: %w", column, err)
 	}
 
 	return hasColumn, nil
 }
 
-// checkHasBlkReadTime checks if pg_stat_statements has blk_read_time column (PG 13-16)
+// checkHasSharedBlkTime checks if pg_stat_statements has the
+// shared_blk_read_time column (PostgreSQL 17 and later).
+func (p *PgStatStatementsProbe) checkHasSharedBlkTime(ctx context.Context, conn *pgxpool.Conn) (bool, error) {
+	return p.checkHasColumn(ctx, conn, "shared_blk_read_time")
+}
+
+// checkHasBlkReadTime checks if pg_stat_statements has the blk_read_time
+// column (PostgreSQL 13 to 16).
 func (p *PgStatStatementsProbe) checkHasBlkReadTime(ctx context.Context, conn *pgxpool.Conn) (bool, error) {
-	var hasColumn bool
+	return p.checkHasColumn(ctx, conn, "blk_read_time")
+}
+
+// checkHasStatsInfoView reports whether the pg_stat_statements_info view
+// is visible on the monitored connection's search path. The view arrived
+// with pg_stat_statements 1.9 (PostgreSQL 14), but the extension version
+// is what matters, not the server version, so the catalog is consulted
+// directly. Visibility rather than a fixed schema is checked because the
+// extension may be installed in any schema and the probe query names the
+// view unqualified.
+func (p *PgStatStatementsProbe) checkHasStatsInfoView(ctx context.Context, conn *pgxpool.Conn) (bool, error) {
+	var hasView bool
 	err := conn.QueryRow(ctx, `
         SELECT EXISTS (
             SELECT 1
-            FROM information_schema.columns
-            WHERE table_schema = 'pg_catalog'
-              AND table_name = 'pg_stat_statements'
-              AND column_name = 'blk_read_time'
+            FROM pg_catalog.pg_class c
+            WHERE c.relname = 'pg_stat_statements_info'
+              AND c.relkind = 'v'
+              AND pg_catalog.pg_table_is_visible(c.oid)
         )
-    `).Scan(&hasColumn)
+    `).Scan(&hasView)
 
 	if err != nil {
-		return false, fmt.Errorf("failed to check for blk_read_time column: %w", err)
+		return false, fmt.Errorf("failed to check for pg_stat_statements_info view: %w", err)
 	}
 
-	return hasColumn, nil
+	return hasView, nil
+}
+
+// statsResetSelect returns the SELECT-list expression that yields the
+// stats_reset column: the live value from pg_stat_statements_info where
+// the view exists, otherwise a typed NULL so every query variant has the
+// same shape.
+func statsResetSelect(hasStatsInfo bool) string {
+	if hasStatsInfo {
+		return "(SELECT stats_reset FROM pg_stat_statements_info) AS stats_reset"
+	}
+	return "NULL::timestamptz AS stats_reset"
 }
 
 // Execute runs the probe against a monitored connection
 func (p *PgStatStatementsProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]any, error) {
 	// Check if extension is available (cached)
-	available, err := cachedCheck(connectionName, "pg_stat_statements_ext", func() (bool, error) {
+	available, err := cachedCheck(connectionName, monitoredConn, "pg_stat_statements_ext", func() (bool, error) {
 		return CheckExtensionExists(ctx, connectionName, monitoredConn, "pg_stat_statements")
 	})
 	if err != nil {
@@ -121,12 +162,14 @@ func (p *PgStatStatementsProbe) Execute(ctx context.Context, connectionName stri
 	}
 
 	if !available {
-		// Extension not available, return empty metrics (not an error)
-		return []map[string]any{}, nil
+		// The extension is not installed in this database. Report that
+		// explicitly so the scheduler can distinguish it from an
+		// installed extension that simply has no rows to report.
+		return nil, ErrExtensionNotInstalled
 	}
 
 	// Check if we have the new shared_blk_read_time column (PG 17+) (cached)
-	hasSharedBlkTime, err := cachedCheck(connectionName, "pg_stat_statements_shared_blk_time", func() (bool, error) {
+	hasSharedBlkTime, err := cachedCheck(connectionName, monitoredConn, "pg_stat_statements_shared_blk_time", func() (bool, error) {
 		return p.checkHasSharedBlkTime(ctx, monitoredConn)
 	})
 	if err != nil {
@@ -136,13 +179,23 @@ func (p *PgStatStatementsProbe) Execute(ctx context.Context, connectionName stri
 	// Check if we have the blk_read_time column (PG 13-16) (cached)
 	hasBlkReadTime := false
 	if !hasSharedBlkTime {
-		hasBlkReadTime, err = cachedCheck(connectionName, "pg_stat_statements_blk_read_time", func() (bool, error) {
+		hasBlkReadTime, err = cachedCheck(connectionName, monitoredConn, "pg_stat_statements_blk_read_time", func() (bool, error) {
 			return p.checkHasBlkReadTime(ctx, monitoredConn)
 		})
 		if err != nil {
 			return nil, err
 		}
 	}
+
+	// Check if the pg_stat_statements_info view exists (extension 1.9+,
+	// PostgreSQL 14+) so stats_reset can be captured (cached)
+	hasStatsInfo, err := cachedCheck(connectionName, monitoredConn, "pg_stat_statements_info_view", func() (bool, error) {
+		return p.checkHasStatsInfoView(ctx, monitoredConn)
+	})
+	if err != nil {
+		return nil, err
+	}
+	statsResetExpr := statsResetSelect(hasStatsInfo)
 
 	var query string
 	if hasSharedBlkTime {
@@ -174,11 +227,12 @@ func (p *PgStatStatementsProbe) Execute(ctx context.Context, connectionName stri
                 shared_blk_read_time,
                 shared_blk_write_time,
                 local_blk_read_time,
-                local_blk_write_time
+                local_blk_write_time,
+                %s
             FROM pg_stat_statements
             ORDER BY total_exec_time DESC
             LIMIT %d
-        `, PgStatStatementsQueryLimit)
+        `, statsResetExpr, PgStatStatementsQueryLimit)
 	} else if hasBlkReadTime {
 		// PostgreSQL 13-16 with old timing column names
 		// Map old columns to new names for consistent storage
@@ -209,11 +263,12 @@ func (p *PgStatStatementsProbe) Execute(ctx context.Context, connectionName stri
                 blk_read_time AS shared_blk_read_time,
                 blk_write_time AS shared_blk_write_time,
                 NULL::double precision AS local_blk_read_time,
-                NULL::double precision AS local_blk_write_time
+                NULL::double precision AS local_blk_write_time,
+                %s
             FROM pg_stat_statements
             ORDER BY total_exec_time DESC
             LIMIT %d
-        `, PgStatStatementsQueryLimit)
+        `, statsResetExpr, PgStatStatementsQueryLimit)
 	} else {
 		// PostgreSQL 12 and earlier without timing columns or toplevel
 		// Use NULL for timing columns and TRUE for toplevel (not available in PG <13)
@@ -244,11 +299,12 @@ func (p *PgStatStatementsProbe) Execute(ctx context.Context, connectionName stri
                 NULL::double precision AS shared_blk_read_time,
                 NULL::double precision AS shared_blk_write_time,
                 NULL::double precision AS local_blk_read_time,
-                NULL::double precision AS local_blk_write_time
+                NULL::double precision AS local_blk_write_time,
+                %s
             FROM pg_stat_statements
             ORDER BY total_exec_time DESC
             LIMIT %d
-        `, PgStatStatementsQueryLimit)
+        `, statsResetExpr, PgStatStatementsQueryLimit)
 	}
 
 	wrappedQuery := WrapQuery(ProbeNamePgStatStatements, query)
@@ -258,6 +314,10 @@ func (p *PgStatStatementsProbe) Execute(ctx context.Context, connectionName stri
 	}
 	defer rows.Close()
 
+	// ScanRowsToMaps returns a non-nil slice even with no rows: an
+	// installed extension with no rows to report is a different thing
+	// from an absent one, which returns ErrExtensionNotInstalled, and
+	// the scheduler records the two differently.
 	return utils.ScanRowsToMaps(rows)
 }
 
@@ -283,6 +343,7 @@ func (p *PgStatStatementsProbe) Store(ctx context.Context, datastoreConn *pgxpoo
 		"temp_blks_read", "temp_blks_written",
 		"shared_blk_read_time", "shared_blk_write_time",
 		"local_blk_read_time", "local_blk_write_time",
+		"stats_reset",
 	}
 
 	// Build values array, filtering out rows with NULL queryid and deduplicating
@@ -362,6 +423,7 @@ func (p *PgStatStatementsProbe) Store(ctx context.Context, datastoreConn *pgxpoo
 			metric["shared_blk_write_time"],
 			metric["local_blk_read_time"],
 			metric["local_blk_write_time"],
+			metric["stats_reset"],
 		}
 		values = append(values, row)
 	}

@@ -8,7 +8,6 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
 import { screen } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import ChatMessage, { type ChatMessageData } from '../ChatMessage';

@@ -8,7 +8,6 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
 import {
     render,
     screen,
@@ -56,6 +55,17 @@ const renderPanel = () =>
             <AdminTokenScopes />
         </ThemeProvider>
     );
+
+/*
+ * Several tests here drive the whole create-token flow through userEvent
+ * before they reach the behaviour under test, and take two to three
+ * seconds each on an idle machine. Under the full suite's parallel load
+ * that comfortably exceeds Vitest's five-second default, which made the
+ * copy-to-clipboard test fail for reasons unrelated to whatever the
+ * developer was working on (#422). The generous ceiling applies to this
+ * file only; a genuine hang still fails.
+ */
+vi.setConfig({ testTimeout: 20_000 });
 
 const CREATED_TOKEN = 'pgedge_test_token_abcdef1234567890';
 
@@ -180,11 +190,11 @@ const clickCopyAndAwaitCopiedState = async (
         fireEvent.click(copyButton);
     });
 
+    // The component reverts to the copy icon two seconds after a
+    // successful write, so assert the call and the copied state in one
+    // pass rather than letting a second polling cycle race that timer.
     await waitFor(() => {
         expect(writeTextMock).toHaveBeenCalledWith(CREATED_TOKEN);
-    });
-
-    await waitFor(() => {
         expect(screen.getByTestId('CheckIcon')).toBeInTheDocument();
     });
 };
@@ -645,7 +655,7 @@ describe('AdminTokenScopes - unified error fallback', () => {
             is_service_account: false,
             is_superuser: false,
             expires_at: null,
-            scope: { scoped: false },
+            scope: { scoped: true, admin_permissions: ['manage_users'] },
         };
         mockApiGet.mockImplementation((url: string) => {
             if (url === '/api/v1/rbac/tokens') {
@@ -1466,7 +1476,9 @@ describe('AdminTokenScopes - additional coverage', () => {
             is_service_account: false,
             is_superuser: false,
             expires_at: null,
-            scope: { scoped: false },
+            // Scoped, so that saving it unchanged still writes the scope;
+            // an unscoped token with nothing selected makes no call.
+            scope: { scoped: true, admin_permissions: ['manage_users'] },
         };
         mockApiGet.mockImplementation((url: string) => {
             if (url === '/api/v1/rbac/tokens') {
@@ -1902,13 +1914,13 @@ describe('AdminTokenScopes - additional coverage', () => {
         const originalSetTimeout = window.setTimeout;
         const setTimeoutSpy = vi
             .spyOn(window, 'setTimeout')
-            .mockImplementation((fn: TimerHandler, ms?: number) => {
+            .mockImplementation(((fn: TimerHandler, ms?: number) => {
                 if (ms === 2000 && typeof fn === 'function') {
                     capturedCallback = fn as () => void;
                     return 12345 as unknown as ReturnType<typeof setTimeout>;
                 }
                 return originalSetTimeout(fn, ms);
-            });
+            }) as typeof window.setTimeout);
 
         try {
             const writeText = vi.fn().mockResolvedValue(undefined);

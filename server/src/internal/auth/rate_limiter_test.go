@@ -229,3 +229,117 @@ func TestRateLimiter_ConcurrentAccess(t *testing.T) {
 
 	// Should not panic or deadlock
 }
+
+// TestRateLimiter_CheckAndRecord covers the combined operation: it spends
+// allowance while any is left, refuses once none is, and never records
+// a refused attempt.
+func TestRateLimiter_CheckAndRecord(t *testing.T) {
+	rl := NewRateLimiter(1, 3)
+	defer rl.Stop()
+
+	for attempt := 1; attempt <= 3; attempt++ {
+		if !rl.CheckAndRecord("192.0.2.1") {
+			t.Fatalf("attempt %d was refused before the allowance ran out", attempt)
+		}
+	}
+	if rl.CheckAndRecord("192.0.2.1") {
+		t.Fatal("a fourth attempt was allowed against a ceiling of three")
+	}
+	if got := rl.GetRemainingAttempts("192.0.2.1"); got != 0 {
+		t.Errorf("remaining attempts = %d, want 0", got)
+	}
+	if len(rl.attempts["192.0.2.1"]) != 3 {
+		t.Errorf("recorded %d attempts, want 3: a refused attempt must not be recorded",
+			len(rl.attempts["192.0.2.1"]))
+	}
+
+	// Another address has its own allowance.
+	if !rl.CheckAndRecord("192.0.2.2") {
+		t.Error("a different address was refused by the first one's attempts")
+	}
+}
+
+// TestRateLimiter_CheckAndRecordDoesNotOvershootConcurrently is the
+// reason the operation exists: separate IsAllowed and RecordFailedAttempt
+// calls let every request in flight pass the check before any of them
+// recorded, so the ceiling could be exceeded by the concurrency. Under
+// one lock, exactly maxAttempts of the concurrent calls may succeed.
+func TestRateLimiter_CheckAndRecordDoesNotOvershootConcurrently(t *testing.T) {
+	const ceiling = 25
+	rl := NewRateLimiter(1, ceiling)
+	defer rl.Stop()
+
+	results := make(chan bool, 200)
+	for range 200 {
+		go func() { results <- rl.CheckAndRecord("192.0.2.3") }()
+	}
+	allowed := 0
+	for range 200 {
+		if <-results {
+			allowed++
+		}
+	}
+	if allowed != ceiling {
+		t.Errorf("%d concurrent attempts were allowed, want exactly %d", allowed, ceiling)
+	}
+}
+
+// TestRateLimiter_CheckAndRecordIgnoresExpiredAttempts confirms the
+// window applies: attempts older than the window do not count against
+// the ceiling.
+func TestRateLimiter_CheckAndRecordIgnoresExpiredAttempts(t *testing.T) {
+	rl := newRateLimiterForTest(50*time.Millisecond, time.Hour, 1)
+	defer rl.Stop()
+
+	if !rl.CheckAndRecord("192.0.2.4") {
+		t.Fatal("the first attempt was refused")
+	}
+	if rl.CheckAndRecord("192.0.2.4") {
+		t.Fatal("a second attempt inside the window was allowed against a ceiling of one")
+	}
+	time.Sleep(60 * time.Millisecond)
+	if !rl.CheckAndRecord("192.0.2.4") {
+		t.Error("an attempt after the window expired was refused")
+	}
+}
+
+// TestRateLimiter_RefundReturnsOneUnit pins that a refund hands back only
+// the most recent attempt, not the whole allowance, and that refunding an
+// address with nothing recorded is harmless.
+func TestRateLimiter_RefundReturnsOneUnit(t *testing.T) {
+	rl := NewRateLimiter(1, 3)
+	defer rl.Stop()
+	const ip = "192.0.2.40"
+
+	rl.Refund(ip)
+	if got := rl.GetRemainingAttempts(ip); got != 3 {
+		t.Fatalf("refunding an unknown address left %d remaining, want 3", got)
+	}
+
+	for range 3 {
+		if !rl.CheckAndRecord(ip) {
+			t.Fatal("an attempt within the allowance was refused")
+		}
+	}
+	if rl.CheckAndRecord(ip) {
+		t.Fatal("an attempt beyond the allowance was accepted")
+	}
+
+	rl.Refund(ip)
+	if got := rl.GetRemainingAttempts(ip); got != 1 {
+		t.Errorf("remaining after one refund = %d, want 1", got)
+	}
+	if !rl.CheckAndRecord(ip) {
+		t.Fatal("the refunded unit could not be spent")
+	}
+	if rl.CheckAndRecord(ip) {
+		t.Fatal("a refund returned more than one unit")
+	}
+
+	for range 3 {
+		rl.Refund(ip)
+	}
+	if got := rl.GetRemainingAttempts(ip); got != 3 {
+		t.Errorf("remaining after refunding everything = %d, want 3", got)
+	}
+}

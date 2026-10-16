@@ -217,8 +217,9 @@ function stripLeadingNoise(query: string): string {
             continue;
         }
         if (text.startsWith('--')) {
-            const newline = text.indexOf('\n');
-            text = newline === -1 ? '' : text.slice(newline + 1);
+            // PostgreSQL ends a line comment at \r as well as \n.
+            const lineEnd = text.search(/[\r\n]/);
+            text = lineEnd === -1 ? '' : text.slice(lineEnd + 1);
             continue;
         }
         if (text.startsWith('/*')) {

@@ -30,10 +30,19 @@ import { useDashboard } from '../../../contexts/useDashboard';
 import { useMetrics } from '../../../hooks/useMetrics';
 import { useQueryOverview } from '../../../hooks/useQueryOverview';
 import { logger } from '../../../utils/logger';
+import {
+    appendTimeRangeParams,
+    isTimeRangeQueryable,
+} from '../../../utils/timeRangeParams';
+import {
+    SERVER_INFO_LABEL_BASE_SX,
+    SERVER_INFO_VALUE_BASE_SX,
+} from '../../../theme/tokens';
 import type { MetricQueryParams } from '../types';
 import { KPI_GRID_SX, CHART_SECTION_SX, spinKeyframes } from '../styles';
 import KpiTile from '../KpiTile';
 import CollapsibleSection from '../CollapsibleSection';
+import ChartPanel from '../ChartPanel';
 import TimeRangeSelector from '../TimeRangeSelector';
 import { Chart } from '../../Chart';
 import { QueryAnalysisDialog } from '../../QueryAnalysisDialog';
@@ -44,6 +53,7 @@ import {
     buildChartData,
     formatNumber,
     formatTime,
+    formatTimestamp,
     formatValue,
 } from './types';
 
@@ -105,6 +115,57 @@ function formatRelativeTime(date: Date): string {
 }
 
 /**
+ * Address the server reports for a backend connected over a
+ * Unix-domain socket, which has no network address of its own.
+ */
+const LOCAL_SOCKET_ADDR = 'local';
+
+/**
+ * Describe the client last seen running a statement. The observation
+ * timestamp is null when no pg_stat_activity snapshot has ever caught
+ * the query in flight, which is the only reliable signal that no
+ * client was observed: the address itself is reported as 'local' for
+ * a Unix-domain-socket backend. A hostname is shown alongside the
+ * address when resolved.
+ */
+function formatObservedClient(
+    addr: string | null,
+    hostname: string | null,
+    observedAt: string | null,
+): string {
+    if (observedAt === null) {
+        return 'Not observed';
+    }
+    if (!addr) {
+        return 'Unknown';
+    }
+    return hostname ? `${hostname} (${addr})` : addr;
+}
+
+/**
+ * Tooltip text warning that the client association is best-effort.
+ */
+function observedClientTooltip(
+    addr: string | null,
+    observedAt: string | null,
+): string {
+    const base = 'pg_stat_activity is sampled periodically, so this is '
+        + 'the client seen running the query in the most recent '
+        + 'snapshot that caught it in flight. Other clients may also '
+        + 'have run it.';
+    if (observedAt === null) {
+        return 'No pg_stat_activity snapshot has caught this query in '
+            + 'flight yet. ' + base;
+    }
+    const when = formatTimestamp(observedAt);
+    const local = addr === LOCAL_SOCKET_ADDR
+        ? ' The client connected over a Unix-domain socket on the '
+            + 'database host, so it has no network address.'
+        : '';
+    return `${base}${local} Last seen ${when}.`;
+}
+
+/**
  * Clean and format a query string for display.
  */
 const cleanQuery = (query: string): string => {
@@ -123,6 +184,9 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
 }) => {
     const { user } = useAuth();
     const { timeRange, refreshTrigger, currentOverlay } = useDashboard();
+    const selectedRange = timeRange.range;
+    const customStart = timeRange.customStart;
+    const customEnd = timeRange.customEnd;
     const { aiEnabled } = useAICapabilities();
     const theme = useTheme();
     const isDark = theme.palette.mode === 'dark';
@@ -138,6 +202,12 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
     const [insightsCollapsed, setInsightsCollapsed] =
         useState<boolean>(false);
     const isMountedRef = useRef<boolean>(true);
+    // Each fetch takes a sequence number so that a response from an
+    // earlier request is dropped once a later one has started. The
+    // effect cleanup alone cannot do this: it clears isMountedRef, but
+    // the next run sets it straight back, so a slow 30d response could
+    // still land after a quick 1h one and overwrite it.
+    const requestIdRef = useRef<number>(0);
     const initialLoadDoneRef = useRef<boolean>(false);
 
     // AI query overview (brief plain-text summary)
@@ -164,15 +234,34 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
 
     const connectionName = currentOverlay?.connectionName;
 
+    // Qualifier for the tiles that follow the time range selector, so
+    // that they read as windowed beside the lifetime min and max.
+    const windowLabel = selectedRange === 'custom'
+        ? 'Custom Range'
+        : `Last ${selectedRange}`;
+
     // objectName may be queryid or query text
     const fetchQueryData = useCallback(async (): Promise<void> => {
         if (!user) { return; }
+
+        /*
+         * A custom range without both bounds is a transient state the
+         * server rejects with a 400, so skip the request entirely and
+         * leave whatever data and error state is already in place.
+         */
+        const selectedWindow = {
+            range: selectedRange, customStart, customEnd,
+        };
+        if (!isTimeRangeQueryable(selectedWindow)) {
+            return;
+        }
 
         const params = new URLSearchParams({
             connection_id: connectionId.toString(),
             queryid: objectName,
             limit: '1',
         });
+        appendTimeRangeParams(params, selectedWindow);
 
         const url = `/api/v1/metrics/top-queries?${params.toString()}`;
 
@@ -180,6 +269,12 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
             setLoading(true);
         }
         setError(null);
+
+        const requestId = ++requestIdRef.current;
+        // A response is only applied if the component is still mounted
+        // and no newer request has been started since.
+        const isCurrent = (): boolean =>
+            isMountedRef.current && requestIdRef.current === requestId;
 
         try {
             const response = await apiFetch(url);
@@ -195,8 +290,9 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
                 );
             }
 
-            if (isMountedRef.current) {
-                const result = await response.json() as QueryDetailData[];
+            const result = await response.json() as QueryDetailData[];
+
+            if (isCurrent()) {
                 setQueryData(
                     result.length > 0 ? result[0] : null
                 );
@@ -204,7 +300,7 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
             }
         } catch (err) {
             logger.error('Error fetching query detail:', err);
-            if (isMountedRef.current) {
+            if (isCurrent()) {
                 setError(
                     (err as Error).message
                     || 'Failed to fetch query data'
@@ -212,11 +308,14 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
                 setQueryData(null);
             }
         } finally {
-            if (isMountedRef.current) {
+            if (isCurrent()) {
                 setLoading(false);
             }
         }
-    }, [user, connectionId, objectName]);
+    }, [
+        user, connectionId, objectName,
+        selectedRange, customStart, customEnd,
+    ]);
 
     useEffect(() => {
         initialLoadDoneRef.current = false;
@@ -234,6 +333,13 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
         };
     }, [user, fetchQueryData, refreshTrigger]);
 
+    // The charts read the statement's pg_stat_statements metric rows,
+    // which are keyed by the database the statistics were collected
+    // through rather than by the statement's own database, so they
+    // filter on the former whenever the server reports it.
+    const chartDatabaseName =
+        queryData?.sample_database_name || databaseName;
+
     // Chart query - execution time over time
     const execTimeChartParams = useMemo(
         (): MetricQueryParams | null => {
@@ -241,7 +347,7 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
             return {
                 probeName: 'pg_stat_statements',
                 connectionId,
-                databaseName,
+                databaseName: chartDatabaseName,
                 queryId: queryData.queryid,
                 timeRange: timeRange.range,
                 buckets: CHART_BUCKETS,
@@ -254,7 +360,7 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
             };
         },
         [
-            connectionId, databaseName, timeRange.range,
+            connectionId, chartDatabaseName, timeRange.range,
             queryData?.queryid,
         ]
     );
@@ -266,16 +372,16 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
             return {
                 probeName: 'pg_stat_statements',
                 connectionId,
-                databaseName,
+                databaseName: chartDatabaseName,
                 queryId: queryData.queryid,
                 timeRange: timeRange.range,
                 buckets: CHART_BUCKETS,
-                aggregation: 'sum',
-                metrics: ['calls'],
+                aggregation: 'avg',
+                metrics: ['calls_per_sec'],
             };
         },
         [
-            connectionId, databaseName, timeRange.range,
+            connectionId, chartDatabaseName, timeRange.range,
             queryData?.queryid,
         ]
     );
@@ -288,17 +394,19 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
             execTimeChart.data,
             ['mean_exec_time', 'min_exec_time', 'max_exec_time'],
             ['Mean Time (ms)', 'Min Time (ms)', 'Max Time (ms)'],
+            execTimeChart.window,
         ),
-        [execTimeChart.data]
+        [execTimeChart.data, execTimeChart.window]
     );
 
     const callsChartData = useMemo(
         () => buildChartData(
             callsChart.data,
-            ['calls'],
-            ['Calls'],
+            ['calls_per_sec'],
+            ['Calls/s'],
+            callsChart.window,
         ),
-        [callsChart.data]
+        [callsChart.data, callsChart.window]
     );
 
     const handleToggleExpand = useCallback((): void => {
@@ -312,6 +420,22 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
     const displayQuery = expanded || !isLong
         ? queryText
         : `${cleanedQuery.substring(0, COLLAPSED_QUERY_LENGTH)}...`;
+
+    // The collector reports an empty username when the role OID
+    // could not be resolved; say so rather than showing a blank.
+    const databaseUser = queryData?.username
+        ? queryData.username
+        : 'Unknown';
+
+    const observedClient = formatObservedClient(
+        queryData?.client_addr ?? null,
+        queryData?.client_hostname ?? null,
+        queryData?.client_observed_at ?? null,
+    );
+    const observedClientTitle = observedClientTooltip(
+        queryData?.client_addr ?? null,
+        queryData?.client_observed_at ?? null,
+    );
 
     // Compute rows per call
     const rowsPerCall = useMemo(() => {
@@ -346,18 +470,61 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
     return (
         <Box>
             <Box sx={{ mb: 2 }}>
-                <Typography
-                    sx={{
-                        fontWeight: 600,
-                        fontSize: '0.875rem',
-                        color: 'text.secondary',
-                        textTransform: 'uppercase',
-                        letterSpacing: '0.05em',
-                        mb: 0.5,
-                    }}
-                >
-                    Query Text
-                </Typography>
+                <Box sx={{
+                    display: 'flex',
+                    alignItems: 'baseline',
+                    flexWrap: 'wrap',
+                    gap: 1,
+                    mb: 0.5,
+                }}>
+                    <Typography
+                        sx={{
+                            fontWeight: 600,
+                            fontSize: '0.875rem',
+                            color: 'text.secondary',
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.05em',
+                        }}
+                    >
+                        Query Text
+                    </Typography>
+                    <Box sx={{ flexGrow: 1 }} />
+                    <Typography
+                        component="span"
+                        sx={{
+                            ...SERVER_INFO_LABEL_BASE_SX,
+                            color: 'text.secondary',
+                        }}
+                    >
+                        Database User
+                    </Typography>
+                    <Typography
+                        component="span"
+                        sx={SERVER_INFO_VALUE_BASE_SX}
+                        data-testid="query-username"
+                    >
+                        {databaseUser}
+                    </Typography>
+                    <Typography
+                        component="span"
+                        sx={{
+                            ...SERVER_INFO_LABEL_BASE_SX,
+                            color: 'text.secondary',
+                        }}
+                    >
+                        Last Observed Client
+                    </Typography>
+                    <Tooltip title={observedClientTitle}>
+                        <Typography
+                            component="span"
+                            tabIndex={0}
+                            sx={SERVER_INFO_VALUE_BASE_SX}
+                            data-testid="query-client"
+                        >
+                            {observedClient}
+                        </Typography>
+                    </Tooltip>
+                </Box>
                 <Typography sx={QUERY_TEXT_SX}>
                     {displayQuery}
                 </Typography>
@@ -615,15 +782,26 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
                 title="Query Statistics"
                 defaultExpanded
             >
+                {/*
+                  * Calls, total time and mean time are aggregated
+                  * over the selected range by the top-queries
+                  * endpoint, which only returns a statement that was
+                  * executed in the window, so a window with no data
+                  * leaves every tile showing a dash rather than a
+                  * misleading zero. Min and max cannot be
+                  * delta-aggregated, so pg_stat_statements reports
+                  * them for the life of the statement; the labels
+                  * say which window each tile covers.
+                  */}
                 <Box sx={KPI_GRID_SX}>
                     <KpiTile
-                        label="Total Calls"
+                        label={`Total Calls (${windowLabel})`}
                         value={queryData
                             ? formatNumber(queryData.calls)
                             : '--'}
                     />
                     <KpiTile
-                        label="Total Time"
+                        label={`Total Time (${windowLabel})`}
                         value={queryData
                             ? formatTime(
                                 queryData.total_exec_time
@@ -631,10 +809,26 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
                             : '--'}
                     />
                     <KpiTile
-                        label="Mean Time"
+                        label={`Mean Time (${windowLabel})`}
                         value={queryData
                             ? formatTime(
                                 queryData.mean_exec_time
+                            )
+                            : '--'}
+                    />
+                    <KpiTile
+                        label="Min Time (All Time)"
+                        value={queryData
+                            ? formatTime(
+                                queryData.min_exec_time
+                            )
+                            : '--'}
+                    />
+                    <KpiTile
+                        label="Max Time (All Time)"
+                        value={queryData
+                            ? formatTime(
+                                queryData.max_exec_time
                             )
                             : '--'}
                     />
@@ -654,17 +848,16 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
             >
                 <Box sx={CHART_SECTION_SX}>
                     <Box>
-                        {execTimeChart.loading
-                            && !execTimeChartData ? (
-                                <Box sx={{
-                                    display: 'flex',
-                                    justifyContent: 'center',
-                                    alignItems: 'center',
-                                    height: CHART_HEIGHT,
-                                }}>
-                                    <CircularProgress size={24} aria-label="Loading chart" />
-                                </Box>
-                            ) : execTimeChartData ? (
+                        <ChartPanel
+                            title="Execution Time Over Time"
+                            loading={execTimeChart.loading
+                                && !execTimeChartData}
+                            hasData={!!execTimeChartData}
+                            emptyMessage="No execution time data available"
+                            errorMessage={execTimeChart.error}
+                            height={CHART_HEIGHT}
+                        >
+                            {execTimeChartData && (
                                 <Chart
                                     type="line"
                                     data={execTimeChartData}
@@ -683,59 +876,38 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
                                         timeRange: timeRange.range,
                                     }}
                                 />
-                            ) : (
-                                <Typography
-                                    variant="body2"
-                                    color="text.secondary"
-                                    sx={{
-                                        textAlign: 'center',
-                                        py: 4,
-                                    }}
-                                >
-                                    No execution time data available
-                                </Typography>
                             )}
+                        </ChartPanel>
                     </Box>
 
                     <Box>
-                        {callsChart.loading
-                            && !callsChartData ? (
-                                <Box sx={{
-                                    display: 'flex',
-                                    justifyContent: 'center',
-                                    alignItems: 'center',
-                                    height: CHART_HEIGHT,
-                                }}>
-                                    <CircularProgress size={24} aria-label="Loading chart" />
-                                </Box>
-                            ) : callsChartData ? (
+                        <ChartPanel
+                            title="Calls Over Time"
+                            loading={callsChart.loading && !callsChartData}
+                            hasData={!!callsChartData}
+                            emptyMessage="No call frequency data available"
+                            errorMessage={callsChart.error}
+                            height={CHART_HEIGHT}
+                        >
+                            {callsChartData && (
                                 <Chart
-                                    type="bar"
+                                    type="line"
                                     data={callsChartData}
                                     title="Calls Over Time"
                                     height={CHART_HEIGHT}
+                                    smooth
                                     showLegend
                                     showTooltip
                                     enableExport={false}
                                     analysisContext={{
-                                        metricDescription: 'Query call frequency over time',
+                                        metricDescription: 'Query calls per second over time',
                                         connectionId,
                                         databaseName,
                                         timeRange: timeRange.range,
                                     }}
                                 />
-                            ) : (
-                                <Typography
-                                    variant="body2"
-                                    color="text.secondary"
-                                    sx={{
-                                        textAlign: 'center',
-                                        py: 4,
-                                    }}
-                                >
-                                    No call frequency data available
-                                </Typography>
                             )}
+                        </ChartPanel>
                     </Box>
                 </Box>
             </CollapsibleSection>

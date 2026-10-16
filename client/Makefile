@@ -7,7 +7,7 @@
 #
 #-------------------------------------------------------------------------
 
-.PHONY: all build test test-all coverage lint format clean help
+.PHONY: all build test test-all coverage lint typecheck format clean help
 
 # Default target - build the client
 all: build
@@ -22,8 +22,8 @@ test:
 	@echo "Running tests..."
 	npm run test
 
-# Run all tests (test + lint)
-test-all: test lint
+# Run all tests (test + typecheck + lint)
+test-all: test typecheck lint
 
 # Run tests with coverage
 coverage:
@@ -34,6 +34,11 @@ coverage:
 lint:
 	@echo "Running ESLint..."
 	npm run lint
+
+# Type-check with the TypeScript compiler (no emit)
+typecheck:
+	@echo "Running TypeScript type check..."
+	npm run typecheck
 
 # Format code with Prettier
 format:
@@ -54,9 +59,10 @@ help:
 	@echo "  all              - Build the client (default)"
 	@echo "  build            - Build the client"
 	@echo "  test             - Run tests"
-	@echo "  test-all         - Run all tests and lint"
+	@echo "  test-all         - Run all tests, type check and lint"
 	@echo "  coverage         - Run tests with coverage"
 	@echo "  lint             - Run ESLint"
+	@echo "  typecheck        - Type check with tsc --noEmit"
 	@echo "  format           - Format code with Prettier"
 	@echo "  clean            - Clean build artifacts"
 	@echo "  help             - Show this help message"

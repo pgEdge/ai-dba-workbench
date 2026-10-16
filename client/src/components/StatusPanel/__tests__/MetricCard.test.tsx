@@ -17,30 +17,21 @@
  * verify that the trend block is hidden when no trend is provided.
  */
 
-import type React from 'react';
 import { describe, it, expect } from 'vitest';
 import { screen } from '@testing-library/react';
 import {
     Memory as MemoryIcon,
 } from '@mui/icons-material';
 import MetricCard from '../MetricCard';
+import type { MetricCardProps } from '../types';
 import { renderWithTheme } from '../../../test/renderWithTheme';
-
-interface MetricCardProps {
-    label: string;
-    value: React.ReactNode;
-    trend?: 'up' | 'down';
-    trendValue?: React.ReactNode;
-    icon?: React.ElementType;
-    color?: string;
-}
 
 const renderCard = (props: Partial<MetricCardProps>) =>
     renderWithTheme(
         <MetricCard
             label="CPU"
             value="42%"
-            {...(props as MetricCardProps)}
+            {...props}
         />,
     );
 

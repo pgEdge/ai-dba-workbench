@@ -9,6 +9,8 @@
  */
 package database
 
+import "time"
+
 // scanType identifies how to scan metric query results
 type scanType int
 
@@ -24,6 +26,21 @@ type historicalScanType int
 const (
 	historicalScanBasic  historicalScanType = iota // (connection_id, database_name, value, collected_at) where database_name is NULL
 	historicalScanWithDB                           // (connection_id, database_name, value, collected_at) where database_name is a string
+
+	// historicalScanWithDBAndSamples is historicalScanWithDB plus a
+	// trailing sample_count column: (connection_id, database_name, value,
+	// collected_at, sample_count). It is for queries whose rows aggregate
+	// several raw samples into one bucket, so the count of underlying
+	// samples can no longer be inferred from the number of rows. See
+	// GitHub issue #409.
+	historicalScanWithDBAndSamples
+
+	// historicalScanBasicWithSamples is the per-connection counterpart
+	// of historicalScanWithDBAndSamples: (connection_id, database_name,
+	// value, collected_at, sample_count) where database_name is NULL.
+	// It is for bucketed queries over metrics that have no database
+	// dimension. See GitHub issue #490.
+	historicalScanBasicWithSamples
 )
 
 // metricQueryConfig holds SQL and scan type for a metric
@@ -32,6 +49,57 @@ type metricQueryConfig struct {
 	historicalSQL  string
 	scan           scanType
 	historicalScan historicalScanType
+
+	// clearWhenAbsent tells the alert cleaner what a missing row means.
+	//
+	// Some latest queries emit a row for every healthy connection (a CPU
+	// percentage, a per-hour checkpoint count, a cache hit ratio) so a
+	// connection that vanishes from the result set has stopped reporting,
+	// not recovered; the cleaner must leave its alert active and let the
+	// metric_staleness rule say why. Other queries emit a row only while
+	// the condition holds (a disconnected standby, a blocked backend, an
+	// inactive slot), or describe an object that can legitimately be
+	// dropped (a replication slot, a standby); for those a missing row is
+	// the recovery signal and the cleaner must clear the alert. Set this
+	// to true only for the second kind, and say why on the entry. See
+	// GitHub issue #407.
+	clearWhenAbsent bool
+
+	// probeName is the collector probe that fills the metrics table the
+	// latest query reads (pg_stat_activity, pg_replication_slots,
+	// pg_stat_database and so on). Every entry names one, and it must
+	// match a table the query selects from, which the registry audit
+	// test checks.
+	//
+	// The alert cleaner uses it to tell "the condition ended" from "the
+	// data stopped arriving" for the clearWhenAbsent entries: those
+	// queries all bound collected_at, so once collection stops they go
+	// empty and a genuine condition would otherwise be reported as
+	// resolved. The cleaner therefore only believes an absent row when
+	// this probe is currently reporting for the alert's connection. See
+	// GitHub issue #407.
+	probeName string
+
+	// absenceWindow is how far back the latest query looks: the interval
+	// in its collected_at cutoff, and for a query with more than one
+	// cutoff the shortest of them, because that is the bound that
+	// decides whether the result is empty.
+	//
+	// Every clearWhenAbsent entry sets it, and the registry audit test
+	// checks the value against the SQL literal so the two cannot drift.
+	// The alert cleaner compares it against how long ago the probe last
+	// collected: an absent row only means recovery when the probe stored
+	// something inside the window the query reads, because outside it
+	// the query returns nothing whatever the server is doing.
+	//
+	// Gating on the window rather than on a multiple of the configured
+	// collection interval is what makes the check hold at any interval.
+	// An operator may raise probe_configs.collection_interval_seconds,
+	// globally or for one connection, and a gate counted in intervals
+	// then widens whilst the window stays where it is, leaving the
+	// cleaner quiet exactly where ordinary collection starts emptying
+	// the query. See GitHub issue #407.
+	absenceWindow time.Duration
 }
 
 // cpuBusyPercentExpr is the SQL expression that derives a portable CPU
@@ -57,6 +125,29 @@ const cpuBusyPercentExpr = `
 	        + COALESCE(servicing_softirq_percent, 0)
 	), 0), 100)::float`
 
+// pseudoFilesystemExclusion is the SQL predicate that keeps a
+// metrics.pg_sys_disk_info row only when the mount is a real volume.
+// Kernel-backed and image-backed filesystems are never something a DBA
+// provisions or can free space on, and a squashfs image is by
+// construction 100% used, so on any host with a snap installed the MAX
+// across mounts pinned pg_sys_disk_info.used_percent at 100% and the
+// disk alert fired permanently.
+//
+// The COALESCE is load-bearing: file_system_type is nullable, and a
+// bare NOT IN comparison against NULL yields NULL rather than true,
+// which would silently drop every row whose type the probe did not
+// record. The fragment is declared once and embedded in both the latest
+// and the historical query so the two cannot drift apart; the column
+// name is left unqualified so it can be embedded in either. See GitHub
+// issue #428.
+const pseudoFilesystemExclusion = `COALESCE(file_system_type, '') NOT IN (
+			      'tmpfs', 'devtmpfs', 'devfs', 'proc', 'sysfs', 'cgroup',
+			      'cgroup2', 'overlay', 'squashfs', 'ramfs', 'debugfs',
+			      'tracefs', 'securityfs', 'pstore', 'autofs', 'mqueue',
+			      'hugetlbfs', 'configfs', 'fusectl', 'binfmt_misc',
+			      'efivarfs', 'nsfs', 'bpf'
+			  )`
+
 // metricRegistry maps metric names to their query configurations.
 // Each entry contains the SQL for latest and historical queries, along with
 // the scan type that determines how to parse the result rows.
@@ -66,9 +157,16 @@ var metricRegistry = map[string]metricQueryConfig{
 	// receives one snapshot at onboarding and nothing afterwards. Any
 	// max-age predicate on collected_at therefore kills the metric within
 	// the hour; the latest query takes the newest row per connection with
-	// no time filter, matching what the historical variant already did.
-	// See GitHub issue #406.
+	// no time filter. See GitHub issue #406.
+	//
+	// The entry deliberately has no historical query, so SupportsBaselines
+	// is false and the metric is excluded from baselines and anomaly
+	// detection. max_connections is a configuration value that serves the
+	// high_max_connections threshold rule; it has no workload behavior to
+	// baseline, and the change-tracked probe would supply almost no
+	// samples anyway. See GitHub issue #576.
 	"pg_settings.max_connections": {
+		probeName: "pg_settings",
 		latestSQL: `
 			SELECT DISTINCT ON (connection_id)
 			       connection_id, setting::float as value, collected_at
@@ -76,29 +174,39 @@ var metricRegistry = map[string]metricQueryConfig{
 			WHERE name = 'max_connections'
 			ORDER BY connection_id, collected_at DESC
 		`,
-		historicalSQL: `
-			SELECT DISTINCT ON (ps.connection_id)
-			       ps.connection_id, NULL::text as database_name,
-			       ps.setting::float as value, ps.collected_at
-			FROM metrics.pg_settings ps
-			JOIN connections c ON c.id = ps.connection_id
-			WHERE ps.name = 'max_connections'
-			  AND ps.collected_at > NOW() - INTERVAL '1 day' * $1
-			ORDER BY ps.connection_id, ps.collected_at DESC
-		`,
-		scan:           scanBasic,
-		historicalScan: historicalScanBasic,
+		scan: scanBasic,
 	},
 
-	// The max_conns CTE reads the newest pg_settings row per connection
-	// rather than requiring one written within the last hour, for the same
-	// reason as pg_settings.max_connections above. Freshness of the metric
-	// still comes from metrics.pg_stat_activity, which the 5 minute window
-	// on active_counts bounds. See GitHub issue #406.
+	// Neither query requires a pg_settings row written within the last
+	// hour, for the same reason as pg_settings.max_connections above.
+	// Freshness of the metric still comes from metrics.pg_stat_activity,
+	// which the 5 minute window on active_counts bounds. See GitHub issue
+	// #406.
+	//
+	// Both queries count client backends only. The historical query once
+	// counted every row, background processes included, so baselines sat
+	// above anything a live sample could reach and every evaluation scored
+	// a negative anomaly (GitHub issue #567).
+	//
+	// Both queries divide each sample by the max_connections in force when
+	// it was collected: the newest pg_settings row at or before the
+	// sample, or the earliest row when the sample predates every
+	// pg_settings write, as happens at onboarding. The latest query once
+	// took the newest pg_settings row outright, so a settings sample
+	// written after the newest activity sample (just after a restart that
+	// changed max_connections) made it disagree with the baseline for the
+	// same snapshot (GitHub issue #596).
+	//
+	// The latest query reports the pg_stat_activity sample's own
+	// collected_at rather than NOW(), so that anomaly recovery (GitHub
+	// issue #611) and the threshold engine's trigger_count and clear_count
+	// (GitHub issue #614) can tell a new sample from one they have already
+	// counted; NOW() would make every evaluation look like a new sample.
 	"connection_utilization_percent": {
+		probeName: "pg_stat_activity",
 		latestSQL: `
 			WITH active_counts AS (
-				SELECT connection_id, COUNT(*) as active
+				SELECT connection_id, collected_at, COUNT(*) as active
 				FROM metrics.pg_stat_activity
 				WHERE backend_type = 'client backend'
 				  AND (connection_id, collected_at) IN (
@@ -107,20 +215,25 @@ var metricRegistry = map[string]metricQueryConfig{
 				      WHERE collected_at > NOW() - INTERVAL '5 minutes'
 				      GROUP BY connection_id
 				  )
-				GROUP BY connection_id
-			),
-			max_conns AS (
-				SELECT DISTINCT ON (connection_id)
-				       connection_id, setting::float as max_connections
-				FROM metrics.pg_settings
-				WHERE name = 'max_connections'
-				ORDER BY connection_id, collected_at DESC
+				GROUP BY connection_id, collected_at
 			)
 			SELECT a.connection_id,
 			       (a.active / NULLIF(m.max_connections, 0)) * 100 as value,
-			       NOW() as collected_at
+			       a.collected_at
 			FROM active_counts a
-			JOIN max_conns m ON a.connection_id = m.connection_id
+			JOIN LATERAL (
+				-- Rows at or before the sample sort first, newest first;
+				-- failing those, the earliest row.
+				SELECT ps.setting::float as max_connections
+				FROM metrics.pg_settings ps
+				WHERE ps.connection_id = a.connection_id
+				  AND ps.name = 'max_connections'
+				ORDER BY ps.collected_at > a.collected_at,
+				         CASE WHEN ps.collected_at <= a.collected_at
+				              THEN ps.collected_at END DESC,
+				         ps.collected_at
+				LIMIT 1
+			) m ON true
 		`,
 		historicalSQL: `
 			WITH activity_counts AS (
@@ -128,20 +241,30 @@ var metricRegistry = map[string]metricQueryConfig{
 				FROM metrics.pg_stat_activity psa
 				JOIN connections c ON c.id = psa.connection_id
 				WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1
+				  AND psa.backend_type = 'client backend'
 				GROUP BY psa.connection_id, psa.collected_at
 			),
 			max_conns AS (
-				SELECT DISTINCT ON (ps.connection_id) ps.connection_id, ps.setting::float as max_connections
+				SELECT ps.connection_id,
+				       ps.setting::float as max_connections,
+				       CASE WHEN LAG(ps.collected_at) OVER w IS NULL
+				            THEN '-infinity'::timestamptz
+				            ELSE ps.collected_at END as valid_from,
+				       COALESCE(LEAD(ps.collected_at) OVER w,
+				                'infinity'::timestamptz) as valid_to
 				FROM metrics.pg_settings ps
 				JOIN connections c ON c.id = ps.connection_id
 				WHERE ps.name = 'max_connections'
-				ORDER BY ps.connection_id, ps.collected_at DESC
+				WINDOW w AS (PARTITION BY ps.connection_id ORDER BY ps.collected_at)
 			)
 			SELECT a.connection_id, NULL::text as database_name,
 			       (a.active / NULLIF(m.max_connections, 0)) * 100 as value,
 			       a.collected_at
 			FROM activity_counts a
-			JOIN max_conns m ON a.connection_id = m.connection_id
+			JOIN max_conns m
+			  ON a.connection_id = m.connection_id
+			 AND a.collected_at >= m.valid_from
+			 AND a.collected_at < m.valid_to
 			ORDER BY a.connection_id, a.collected_at
 		`,
 		scan:           scanBasic,
@@ -149,6 +272,7 @@ var metricRegistry = map[string]metricQueryConfig{
 	},
 
 	"pg_stat_activity.count": {
+		probeName: "pg_stat_activity",
 		latestSQL: `
 			SELECT connection_id,
 			       COUNT(*)::float as value,
@@ -177,46 +301,110 @@ var metricRegistry = map[string]metricQueryConfig{
 		historicalScan: historicalScanBasic,
 	},
 
+	// pg_stat_replication.replay_lag_seconds is the largest replay_lag,
+	// in seconds, across the standbys in each connection's newest
+	// pg_stat_replication sample: one row per connection, which the
+	// threshold hysteresis keys on (GitHub issue #620). replay_lag is
+	// PostgreSQL's own measure of how long recent WAL took to be
+	// replayed on the standby and acknowledged, so it is what an
+	// operator compares with replication lag in other tools.
+	//
+	// The newest sample is chosen before replay_lag is filtered, never
+	// after. PostgreSQL resets the lag columns to NULL a short while
+	// after an idle standby has fully caught up, and an older sample
+	// with a lag value must not stand in for a newer one without. A
+	// sample in which every standby reports NULL therefore yields no
+	// row, as do the WAL receiver rows stored on a standby, whose
+	// replay_lag is always NULL, and a connection with no sample in the
+	// window. Each of those is the recovery signal, so the entry is
+	// clearWhenAbsent.
+	//
+	// When the last standby disconnects the probe stores nothing, so the
+	// sample taken before it left stays the newest one, and an alert on
+	// its lag stays active, until that sample ages out of the five minute
+	// window. See GitHub issues #407 and #625.
 	"pg_stat_replication.replay_lag_seconds": {
+		probeName: "pg_stat_replication",
 		latestSQL: `
-			SELECT connection_id,
-			       EXTRACT(EPOCH FROM (NOW() - replay_lsn_timestamp))::float as value,
-			       collected_at
-			FROM metrics.pg_stat_replication
-			WHERE collected_at > NOW() - INTERVAL '5 minutes'
-			  AND replay_lsn_timestamp IS NOT NULL
-		`,
-		historicalSQL:  "",
-		scan:           scanBasic,
-		historicalScan: historicalScanBasic,
-	},
-
-	"pg_stat_replication.lag_bytes": {
-		latestSQL: `
-			WITH recent_replication AS (
-				SELECT connection_id,
-				       sent_lsn,
-				       replay_lsn,
-				       collected_at,
-				       ROW_NUMBER() OVER (PARTITION BY connection_id, pid ORDER BY collected_at DESC) as rn
+			WITH newest_sample AS (
+				SELECT connection_id, MAX(collected_at) AS collected_at
 				FROM metrics.pg_stat_replication
 				WHERE collected_at > NOW() - INTERVAL '5 minutes'
-				  AND sent_lsn IS NOT NULL
-				  AND replay_lsn IS NOT NULL
+				GROUP BY connection_id
 			)
-			SELECT connection_id,
-			       COALESCE(MAX((sent_lsn::pg_lsn - replay_lsn::pg_lsn)::float), 0) as value,
-			       MAX(collected_at) as collected_at
-			FROM recent_replication
-			WHERE rn = 1
-			GROUP BY connection_id
+			SELECT r.connection_id,
+			       MAX(EXTRACT(EPOCH FROM r.replay_lag))::float as value,
+			       r.collected_at
+			FROM metrics.pg_stat_replication r
+			JOIN newest_sample n
+			  ON n.connection_id = r.connection_id
+			 AND n.collected_at = r.collected_at
+			WHERE r.replay_lag IS NOT NULL
+			GROUP BY r.connection_id, r.collected_at
 		`,
-		historicalSQL:  "",
+		historicalSQL:   "",
+		scan:            scanBasic,
+		historicalScan:  historicalScanBasic,
+		clearWhenAbsent: true,
+		absenceWindow:   5 * time.Minute,
+	},
+
+	// The value is the largest lag in bytes across the connection's
+	// standbys. The latest query reads the connection's newest sample
+	// and reports the maximum across its rows; the historical query
+	// reports the same maximum for every sample, grouping on
+	// (connection_id, collected_at) because the probe stamps every
+	// standby's row from one run with the same collected_at. Both skip
+	// rows whose sent_lsn or replay_lsn is NULL. The latest query picks
+	// the newest sample before that filter, as replay_lag_seconds does
+	// (GitHub issue #625): taking each pid's newest non-NULL row instead
+	// kept a departed standby's lag in the live value for the whole
+	// window. A primary with no standby has no row in either query, so
+	// the baseline describes lag only while a standby is attached, which
+	// is the only time the latest query has a value to score. See GitHub
+	// issue #490.
+	"pg_stat_replication.lag_bytes": {
+		probeName: "pg_stat_replication",
+		latestSQL: `
+			WITH newest_sample AS (
+				SELECT connection_id, MAX(collected_at) AS collected_at
+				FROM metrics.pg_stat_replication
+				WHERE collected_at > NOW() - INTERVAL '5 minutes'
+				GROUP BY connection_id
+			)
+			SELECT r.connection_id,
+			       MAX((r.sent_lsn::pg_lsn - r.replay_lsn::pg_lsn)::float) as value,
+			       r.collected_at
+			FROM metrics.pg_stat_replication r
+			JOIN newest_sample n
+			  ON n.connection_id = r.connection_id
+			 AND n.collected_at = r.collected_at
+			WHERE r.sent_lsn IS NOT NULL
+			  AND r.replay_lsn IS NOT NULL
+			GROUP BY r.connection_id, r.collected_at
+		`,
+		historicalSQL: `
+			SELECT r.connection_id, NULL::text as database_name,
+			       MAX((r.sent_lsn::pg_lsn - r.replay_lsn::pg_lsn)::float) as value,
+			       r.collected_at
+			FROM metrics.pg_stat_replication r
+			JOIN connections c ON c.id = r.connection_id
+			WHERE r.collected_at > NOW() - INTERVAL '1 day' * $1
+			  AND r.sent_lsn IS NOT NULL
+			  AND r.replay_lsn IS NOT NULL
+			GROUP BY r.connection_id, r.collected_at
+			ORDER BY r.connection_id, r.collected_at
+		`,
 		scan:           scanBasic,
 		historicalScan: historicalScanBasic,
+		// Same reasoning as replay_lag_seconds: no row means no standby,
+		// so the lag alert clears. See GitHub issue #407.
+		clearWhenAbsent: true,
+		absenceWindow:   5 * time.Minute,
 	},
 
 	"pg_replication_slots.retained_bytes": {
+		probeName: "pg_replication_slots",
 		latestSQL: `
 			WITH recent_slots AS (
 				SELECT connection_id,
@@ -241,13 +429,26 @@ var metricRegistry = map[string]metricQueryConfig{
 		historicalSQL:  "",
 		scan:           scanBasic,
 		historicalScan: historicalScanBasic,
+		// Dropping every replication slot is the operator's usual remedy
+		// for runaway WAL retention, and it leaves the probe with nothing
+		// to store, so a missing row is the recovery signal. See GitHub
+		// issue #407.
+		clearWhenAbsent: true,
+		absenceWindow:   15 * time.Minute,
 	},
 
 	// pg_replication_slots.inactive emits a single row per connection with
 	// value=1 whenever the most recent sample for at least one replication
-	// slot recorded in the last five minutes has active=false. No row is
+	// slot recorded in the last fifteen minutes has active=false. No row is
 	// emitted for connections whose slots are all currently active, which
-	// clears the matching `==` alert as soon as every slot recovers.
+	// clears the matching `==` alert as soon as every slot recovers; that
+	// is why the entry is clearWhenAbsent.
+	//
+	// The window is three times the probe's 300 second interval. It was
+	// five minutes, exactly one interval, so a single late collection
+	// emptied it, the cleaner read the empty result as recovery, and the
+	// critical replication_slot_inactive alert cleared and re-fired on the
+	// next sample. See GitHub issue #407.
 	//
 	// The latest-sample-per-slot reduction is essential: without it, a slot
 	// that was inactive at t-4m but active at t-1m would still match the
@@ -265,12 +466,13 @@ var metricRegistry = map[string]metricQueryConfig{
 	// the source pg_replication_slots.active column directly, so the query
 	// can decide inactivity from a single table.
 	"pg_replication_slots.inactive": {
+		probeName: "pg_replication_slots",
 		latestSQL: `
 			WITH latest_per_slot AS (
 				SELECT DISTINCT ON (connection_id, slot_name)
 				       connection_id, slot_name, active, collected_at
 				FROM metrics.pg_replication_slots
-				WHERE collected_at > NOW() - INTERVAL '5 minutes'
+				WHERE collected_at > NOW() - INTERVAL '15 minutes'
 				ORDER BY connection_id, slot_name, collected_at DESC
 			)
 			SELECT connection_id,
@@ -280,9 +482,11 @@ var metricRegistry = map[string]metricQueryConfig{
 			WHERE active = false
 			GROUP BY connection_id
 		`,
-		historicalSQL:  "",
-		scan:           scanBasic,
-		historicalScan: historicalScanBasic,
+		historicalSQL:   "",
+		scan:            scanBasic,
+		historicalScan:  historicalScanBasic,
+		clearWhenAbsent: true,
+		absenceWindow:   15 * time.Minute,
 	},
 
 	// pg_replication_slots.inactive_count counts replication slots that
@@ -290,11 +494,29 @@ var metricRegistry = map[string]metricQueryConfig{
 	// for each connection. The COUNT(*) FILTER aggregate yields zero when
 	// every slot is active (the alert clears) and the inactive count when
 	// any slot has dropped its WAL receiver.
+	//
+	// The latest CTE only considers samples from the last fifteen minutes
+	// (three 300 second probe intervals). Without the cutoff the newest
+	// sample was whatever the table still held, so once the collector
+	// stopped, or the connection stopped being monitored, the alert kept
+	// firing on days-old data until retention purged the partition. A
+	// connection whose slots have all been dropped stores no rows, so the
+	// entry is clearWhenAbsent. See GitHub issue #407.
+	//
+	// The entry deliberately has no historical query, so SupportsBaselines
+	// is false and the metric is excluded from baselines and anomaly
+	// detection. It is a presence count that is almost always zero, like
+	// pg_replication_slots.inactive, and the condition it counts is already
+	// alerted on by the replication_slot_inactive rule on that metric. No
+	// seeded rule reads inactive_count itself; the latest query stays for
+	// user-defined rules. See GitHub issue #576.
 	"pg_replication_slots.inactive_count": {
+		probeName: "pg_replication_slots",
 		latestSQL: `
 			WITH latest AS (
 				SELECT connection_id, MAX(collected_at) AS collected_at
 				  FROM metrics.pg_replication_slots
+				 WHERE collected_at > NOW() - INTERVAL '15 minutes'
 				 GROUP BY connection_id
 			)
 			SELECT s.connection_id,
@@ -304,21 +526,12 @@ var metricRegistry = map[string]metricQueryConfig{
 			  JOIN latest l
 			    ON s.connection_id = l.connection_id
 			   AND s.collected_at  = l.collected_at
+			 WHERE s.collected_at > NOW() - INTERVAL '15 minutes'
 			 GROUP BY s.connection_id, l.collected_at
 		`,
-		historicalSQL: `
-			SELECT s.connection_id,
-			       NULL::text AS database_name,
-			       COUNT(*) FILTER (WHERE NOT s.active)::float AS value,
-			       s.collected_at
-			  FROM metrics.pg_replication_slots s
-			  JOIN connections c ON c.id = s.connection_id
-			 WHERE s.collected_at > NOW() - INTERVAL '1 day' * $1
-			 GROUP BY s.connection_id, s.collected_at
-			 ORDER BY s.connection_id, s.collected_at
-		`,
-		scan:           scanBasic,
-		historicalScan: historicalScanBasic,
+		scan:            scanBasic,
+		clearWhenAbsent: true,
+		absenceWindow:   15 * time.Minute,
 	},
 
 	// pg_replication_slots.max_retained_bytes returns the maximum
@@ -327,11 +540,17 @@ var metricRegistry = map[string]metricQueryConfig{
 	// to handle WAL retention values larger than int64; the cast to float
 	// is safe for the threshold ranges the operator-facing alert rules
 	// configure (1 GiB warning, 10 GiB critical).
+	//
+	// The fifteen minute cutoff on the latest CTE and the clearWhenAbsent
+	// flag are there for the reasons given on inactive_count above. See
+	// GitHub issue #407.
 	"pg_replication_slots.max_retained_bytes": {
+		probeName: "pg_replication_slots",
 		latestSQL: `
 			WITH latest AS (
 				SELECT connection_id, MAX(collected_at) AS collected_at
 				  FROM metrics.pg_replication_slots
+				 WHERE collected_at > NOW() - INTERVAL '15 minutes'
 				 GROUP BY connection_id
 			)
 			SELECT s.connection_id,
@@ -341,6 +560,7 @@ var metricRegistry = map[string]metricQueryConfig{
 			  JOIN latest l
 			    ON s.connection_id = l.connection_id
 			   AND s.collected_at  = l.collected_at
+			 WHERE s.collected_at > NOW() - INTERVAL '15 minutes'
 			 GROUP BY s.connection_id, l.collected_at
 		`,
 		historicalSQL: `
@@ -354,8 +574,10 @@ var metricRegistry = map[string]metricQueryConfig{
 			 GROUP BY s.connection_id, s.collected_at
 			 ORDER BY s.connection_id, s.collected_at
 		`,
-		scan:           scanBasic,
-		historicalScan: historicalScanBasic,
+		scan:            scanBasic,
+		historicalScan:  historicalScanBasic,
+		clearWhenAbsent: true,
+		absenceWindow:   15 * time.Minute,
 	},
 
 	// spock_exception_log.recent_count counts rows in the latest
@@ -374,6 +596,7 @@ var metricRegistry = map[string]metricQueryConfig{
 	// missed cycle without flapping but short enough that the alert clears
 	// promptly when source rows age out of the rolling window.
 	"spock_exception_log.recent_count": {
+		probeName: "spock_exception_log",
 		latestSQL: `
 			WITH latest AS (
 				SELECT connection_id, MAX(collected_at) AS collected_at
@@ -403,6 +626,11 @@ var metricRegistry = map[string]metricQueryConfig{
 		`,
 		scan:           scanBasic,
 		historicalScan: historicalScanBasic,
+		// The probe short-circuits Store on an empty result, so a connection
+		// with no recent exceptions has no fresh sample and the query emits no
+		// row: absence is how the alert clears. See GitHub issue #407.
+		clearWhenAbsent: true,
+		absenceWindow:   5 * time.Minute,
 	},
 
 	// spock_resolutions.recent_count mirrors spock_exception_log.recent_count
@@ -415,6 +643,7 @@ var metricRegistry = map[string]metricQueryConfig{
 	// non-empty sample cannot keep an otherwise-resolved alert active after
 	// the source-side rolling window has drained.
 	"spock_resolutions.recent_count": {
+		probeName: "spock_resolutions",
 		latestSQL: `
 			WITH latest AS (
 				SELECT connection_id, MAX(collected_at) AS collected_at
@@ -444,9 +673,15 @@ var metricRegistry = map[string]metricQueryConfig{
 		`,
 		scan:           scanBasic,
 		historicalScan: historicalScanBasic,
+		// As for spock_exception_log.recent_count: no fresh sample means no
+		// recent resolutions, so absence clears the alert. See GitHub issue
+		// #407.
+		clearWhenAbsent: true,
+		absenceWindow:   5 * time.Minute,
 	},
 
 	"pg_stat_replication.standby_disconnected": {
+		probeName: "pg_stat_replication",
 		latestSQL: `
 			WITH recent_standby AS (
 				SELECT connection_id,
@@ -467,9 +702,15 @@ var metricRegistry = map[string]metricQueryConfig{
 		historicalSQL:  "",
 		scan:           scanBasic,
 		historicalScan: historicalScanBasic,
+		// The query emits a row only while receiver_status is NULL, so a
+		// reconnected standby produces no row and the alert must clear on
+		// absence. See GitHub issue #407.
+		clearWhenAbsent: true,
+		absenceWindow:   5 * time.Minute,
 	},
 
 	"pg_node_role.subscription_worker_down": {
+		probeName: "pg_node_role",
 		latestSQL: `
 			WITH recent_node_role AS (
 				SELECT connection_id,
@@ -478,7 +719,7 @@ var metricRegistry = map[string]metricQueryConfig{
 				       collected_at,
 				       ROW_NUMBER() OVER (PARTITION BY connection_id ORDER BY collected_at DESC) as rn
 				FROM metrics.pg_node_role
-				WHERE collected_at > NOW() - INTERVAL '5 minutes'
+				WHERE collected_at > NOW() - INTERVAL '15 minutes'
 				  AND subscription_count > 0
 			)
 			SELECT connection_id,
@@ -491,9 +732,17 @@ var metricRegistry = map[string]metricQueryConfig{
 		historicalSQL:  "",
 		scan:           scanBasic,
 		historicalScan: historicalScanBasic,
+		// The query emits a row only while a subscription worker is down, so
+		// absence is the recovery signal. The window is three times the
+		// probe's 300 second interval; at the five minutes it used to be
+		// it held a single sample, so one late collection emptied it and
+		// the cleaner read that as recovery. See GitHub issue #407.
+		clearWhenAbsent: true,
+		absenceWindow:   15 * time.Minute,
 	},
 
 	"pg_stat_activity.blocked_count": {
+		probeName: "pg_stat_activity",
 		latestSQL: `
 			SELECT connection_id,
 			       COUNT(*)::float as value,
@@ -516,14 +765,21 @@ var metricRegistry = map[string]metricQueryConfig{
 			JOIN connections c ON c.id = psa.connection_id
 			WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1
 			  AND psa.wait_event_type = 'Lock'
+			  AND psa.backend_type = 'client backend'
 			GROUP BY psa.connection_id, psa.collected_at
 			ORDER BY psa.connection_id, psa.collected_at
 		`,
 		scan:           scanBasic,
 		historicalScan: historicalScanBasic,
+		// The COUNT runs over lock waiters only, so a connection with no
+		// blocked backends emits no row; absence means nothing is blocked. See
+		// GitHub issue #407.
+		clearWhenAbsent: true,
+		absenceWindow:   5 * time.Minute,
 	},
 
 	"pg_stat_activity.idle_in_transaction_seconds": {
+		probeName: "pg_stat_activity",
 		latestSQL: `
 			SELECT connection_id,
 			       COALESCE(MAX(EXTRACT(EPOCH FROM (collected_at - xact_start))), 0)::float as value,
@@ -549,14 +805,30 @@ var metricRegistry = map[string]metricQueryConfig{
 			WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1
 			  AND psa.state = 'idle in transaction'
 			  AND psa.xact_start IS NOT NULL
+			  AND psa.backend_type = 'client backend'
 			GROUP BY psa.connection_id, psa.collected_at
 			ORDER BY psa.connection_id, psa.collected_at
 		`,
 		scan:           scanBasic,
 		historicalScan: historicalScanBasic,
+		// Rows exist only while some backend is idle in transaction, so a
+		// connection with none emits no row and the alert clears on absence.
+		// See GitHub issue #407.
+		clearWhenAbsent: true,
+		absenceWindow:   5 * time.Minute,
 	},
 
+	// The latest query emits a row only while some client backend waits
+	// on a lock, and the historical query emits a row for exactly the
+	// same samples with the same value, so the baseline describes the
+	// lock waits this server typically sees, as the blocked_count and
+	// idle_in_transaction_seconds baselines describe the samples in
+	// which they are present. Filling the other samples with 0 would
+	// make a wait typical of the server score as an outlier against a
+	// baseline the latest query can never produce. See GitHub issue
+	// #490.
 	"pg_stat_activity.max_lock_wait_seconds": {
+		probeName: "pg_stat_activity",
 		latestSQL: `
 			SELECT connection_id,
 			       COALESCE(MAX(EXTRACT(EPOCH FROM (collected_at - query_start))), 0)::float as value,
@@ -573,12 +845,29 @@ var metricRegistry = map[string]metricQueryConfig{
 			  )
 			GROUP BY connection_id, collected_at
 		`,
-		historicalSQL:  "",
+		historicalSQL: `
+			SELECT psa.connection_id, NULL::text as database_name,
+			       MAX(EXTRACT(EPOCH FROM (psa.collected_at - psa.query_start)))::float as value,
+			       psa.collected_at
+			FROM metrics.pg_stat_activity psa
+			JOIN connections c ON c.id = psa.connection_id
+			WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1
+			  AND psa.wait_event_type = 'Lock'
+			  AND psa.query_start IS NOT NULL
+			  AND psa.backend_type = 'client backend'
+			GROUP BY psa.connection_id, psa.collected_at
+			ORDER BY psa.connection_id, psa.collected_at
+		`,
 		scan:           scanBasic,
 		historicalScan: historicalScanBasic,
+		// Rows exist only while some backend waits on a lock, so absence means
+		// nothing is waiting and the alert clears. See GitHub issue #407.
+		clearWhenAbsent: true,
+		absenceWindow:   5 * time.Minute,
 	},
 
 	"pg_stat_activity.max_query_duration_seconds": {
+		probeName: "pg_stat_activity",
 		latestSQL: `
 			SELECT connection_id,
 			       COALESCE(MAX(EXTRACT(EPOCH FROM (collected_at - query_start))), 0)::float as value,
@@ -604,14 +893,21 @@ var metricRegistry = map[string]metricQueryConfig{
 			WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1
 			  AND psa.state = 'active'
 			  AND psa.query_start IS NOT NULL
+			  AND psa.backend_type = 'client backend'
 			GROUP BY psa.connection_id, psa.collected_at
 			ORDER BY psa.connection_id, psa.collected_at
 		`,
 		scan:           scanBasic,
 		historicalScan: historicalScanBasic,
+		// Rows exist only while some client backend is running a query, so an
+		// idle server emits no row; the long-running query has finished and
+		// the alert clears on absence. See GitHub issue #407.
+		clearWhenAbsent: true,
+		absenceWindow:   5 * time.Minute,
 	},
 
 	"pg_stat_activity.max_xact_duration_seconds": {
+		probeName: "pg_stat_activity",
 		latestSQL: `
 			SELECT connection_id,
 			       COALESCE(MAX(EXTRACT(EPOCH FROM (collected_at - xact_start))), 0)::float as value,
@@ -635,14 +931,36 @@ var metricRegistry = map[string]metricQueryConfig{
 			JOIN connections c ON c.id = psa.connection_id
 			WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1
 			  AND psa.xact_start IS NOT NULL
+			  AND psa.backend_type = 'client backend'
 			GROUP BY psa.connection_id, psa.collected_at
 			ORDER BY psa.connection_id, psa.collected_at
 		`,
 		scan:           scanBasic,
 		historicalScan: historicalScanBasic,
+		// Rows exist only while some client backend has an open transaction,
+		// so absence means the long transaction has ended and the alert clears.
+		// See GitHub issue #407.
+		clearWhenAbsent: true,
+		absenceWindow:   5 * time.Minute,
 	},
 
+	// Only tables with at least 10000 dead tuples are considered, on top
+	// of the older floor of 1000 tuples in all. A percentage on its own
+	// fired on small tables where a few thousand dead rows cost nothing
+	// and autovacuum would reach them on its next pass anyway, and the
+	// shipped threshold of 20 percent was exactly autovacuum's default
+	// trigger, so the rule fired whenever autovacuum was about to do its
+	// job. See GitHub issue #616.
+	//
+	// Both floors apply to each table's newest sample, after the
+	// ROW_NUMBER, so a table that autovacuum has just cleaned drops out at
+	// once instead of reporting an older sample from the window. A
+	// database with no table over the floors emits no row, and that
+	// absence is the recovery signal: after a vacuum most databases have
+	// no qualifying table at all, so without clearWhenAbsent an alert
+	// raised before the vacuum would stay active for ever.
 	"pg_stat_all_tables.dead_tuple_percent": {
+		probeName: "pg_stat_all_tables",
 		latestSQL: `
 			WITH recent_tables AS (
 				SELECT connection_id,
@@ -658,7 +976,6 @@ var metricRegistry = map[string]metricQueryConfig{
 				       ) as rn
 				FROM metrics.pg_stat_all_tables
 				WHERE collected_at > NOW() - INTERVAL '15 minutes'
-				  AND (n_live_tup + n_dead_tup) >= 1000
 			),
 			calculated AS (
 				SELECT connection_id,
@@ -669,6 +986,8 @@ var metricRegistry = map[string]metricQueryConfig{
 				       collected_at
 				FROM recent_tables
 				WHERE rn = 1
+				  AND (n_live_tup + n_dead_tup) >= 1000
+				  AND n_dead_tup >= 10000
 			),
 			ranked AS (
 				SELECT *,
@@ -686,9 +1005,11 @@ var metricRegistry = map[string]metricQueryConfig{
 			FROM ranked
 			WHERE rank = 1
 		`,
-		historicalSQL:  "",
-		scan:           scanWithDBObject,
-		historicalScan: historicalScanBasic,
+		historicalSQL:   "",
+		scan:            scanWithDBObject,
+		historicalScan:  historicalScanBasic,
+		clearWhenAbsent: true,
+		absenceWindow:   15 * time.Minute,
 	},
 
 	// The archiver counters live on metrics.pg_stat_wal, which the
@@ -703,6 +1024,7 @@ var metricRegistry = map[string]metricQueryConfig{
 	// and connections with a single sample in the window report 0 rather
 	// than dropping out of the result set entirely. See GitHub issue #406.
 	"pg_stat_archiver.failed_count_delta": {
+		probeName: "pg_stat_wal",
 		latestSQL: `
 			WITH archiver_data AS (
 				SELECT connection_id,
@@ -737,7 +1059,47 @@ var metricRegistry = map[string]metricQueryConfig{
 	// absolute count; negative deltas from a stats reset contribute zero,
 	// and a connection with a single sample reports 0 instead of vanishing
 	// from the result set. See GitHub issue #406.
+	//
+	// Servers in recovery are excluded. A standby replays the primary's
+	// WAL, so its requested checkpoint (restartpoint) activity follows
+	// the primary's write volume and every standby used to repeat the
+	// primary's alert, which nobody can act on at the standby. See
+	// GitHub issue #616. The collector fills metrics.pg_stat_checkpointer
+	// from pg_stat_checkpointer on PostgreSQL 17 and later, and from
+	// pg_stat_bgwriter before that with checkpoints_req aliased to
+	// num_requested, so both sources land in this one table and the
+	// exclusion, which works per connection, covers both.
+	//
+	// The recovery state is the newest metrics.pg_node_role sample in the
+	// same hour; the pg_node_role probe records pg_is_in_recovery() every
+	// 300 seconds by default. A connection with no such sample, because
+	// that probe is disabled or has not run yet, is still evaluated, as
+	// every connection was before. A standby emits no row, so the entry
+	// clears when absent: otherwise a primary demoted to a standby with an
+	// alert open would keep that alert for ever. On a primary absence
+	// cannot stand for missing data, because one checkpointer sample in
+	// the hour is enough to report a row, and the cleaner only trusts an
+	// absence while the probe has collected inside the hour.
+	//
+	// The historical query feeds baselines with the same per-hour figure
+	// in UTC hour buckets. Its LAG is partitioned by connection and
+	// bucket, so each bucket's first sample has no predecessor, exactly
+	// as the latest query's LAG starts inside its one hour window: taking
+	// the delta over the whole lookback instead gave every bucket one more
+	// delta than the live value (six against five at the probe's 600
+	// second interval), and a perfectly steady server scored z = -3.33.
+	// The filter sits inside the aggregate so a bucket whose only sample
+	// has no predecessor reports 0, and each row
+	// carries the number of raw samples it aggregates. It applies the
+	// recovery exclusion per bucket, judging each hour by the newest
+	// pg_node_role sample inside it, which is what the latest query would
+	// have judged at the end of that hour; an hour with no role sample is
+	// kept, as the latest query keeps a connection with none. Without the
+	// exclusion a standby's restartpoint activity would land in baselines
+	// that the latest query never scores against, the mismatch GitHub
+	// issue #567 describes. See GitHub issue #490.
 	"pg_stat_checkpointer.checkpoints_req_delta": {
+		probeName: "pg_stat_checkpointer",
 		latestSQL: `
 			WITH checkpointer_data AS (
 				SELECT connection_id,
@@ -746,22 +1108,117 @@ var metricRegistry = map[string]metricQueryConfig{
 				       LAG(num_requested) OVER (PARTITION BY connection_id ORDER BY collected_at) as prev_num_requested
 				FROM metrics.pg_stat_checkpointer
 				WHERE collected_at > NOW() - INTERVAL '1 hour'
+			),
+			latest_role AS (
+				SELECT DISTINCT ON (connection_id)
+				       connection_id,
+				       is_in_recovery
+				FROM metrics.pg_node_role
+				WHERE collected_at > NOW() - INTERVAL '1 hour'
+				ORDER BY connection_id, collected_at DESC
 			)
-			SELECT connection_id,
+			SELECT cd.connection_id,
 			       COALESCE(
-			           SUM(GREATEST(num_requested - prev_num_requested, 0))
-			               FILTER (WHERE prev_num_requested IS NOT NULL),
+			           SUM(GREATEST(cd.num_requested - cd.prev_num_requested, 0))
+			               FILTER (WHERE cd.prev_num_requested IS NOT NULL),
 			           0)::float as value,
-			       MAX(collected_at) as collected_at
-			FROM checkpointer_data
-			GROUP BY connection_id
+			       MAX(cd.collected_at) as collected_at
+			FROM checkpointer_data cd
+			WHERE NOT EXISTS (
+			    SELECT 1
+			    FROM latest_role r
+			    WHERE r.connection_id = cd.connection_id
+			      AND r.is_in_recovery
+			)
+			GROUP BY cd.connection_id
 		`,
-		historicalSQL:  "",
-		scan:           scanBasic,
-		historicalScan: historicalScanBasic,
+		historicalSQL: `
+			WITH checkpointer_data AS (
+				SELECT m.connection_id,
+				       m.num_requested,
+				       m.collected_at,
+				       date_trunc('hour', m.collected_at AT TIME ZONE 'UTC') as bucket,
+				       LAG(m.num_requested) OVER (
+				           PARTITION BY m.connection_id,
+				                        date_trunc('hour', m.collected_at AT TIME ZONE 'UTC')
+				           ORDER BY m.collected_at
+				       ) as prev_num_requested
+				FROM metrics.pg_stat_checkpointer m
+				JOIN connections c ON c.id = m.connection_id
+				WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1
+			),
+			bucket_role AS (
+				SELECT DISTINCT ON (connection_id, date_trunc('hour', collected_at AT TIME ZONE 'UTC'))
+				       connection_id,
+				       date_trunc('hour', collected_at AT TIME ZONE 'UTC') as bucket,
+				       is_in_recovery
+				FROM metrics.pg_node_role
+				WHERE collected_at > NOW() - INTERVAL '1 day' * $1
+				ORDER BY connection_id,
+				         date_trunc('hour', collected_at AT TIME ZONE 'UTC'),
+				         collected_at DESC
+			)
+			SELECT cd.connection_id,
+			       NULL::text as database_name,
+			       COALESCE(
+			           SUM(GREATEST(cd.num_requested - cd.prev_num_requested, 0))
+			               FILTER (WHERE cd.prev_num_requested IS NOT NULL),
+			           0)::float as value,
+			       cd.bucket AT TIME ZONE 'UTC' as collected_at,
+			       COUNT(*) as sample_count
+			FROM checkpointer_data cd
+			WHERE NOT EXISTS (
+			    SELECT 1
+			    FROM bucket_role r
+			    WHERE r.connection_id = cd.connection_id
+			      AND r.bucket = cd.bucket
+			      AND r.is_in_recovery
+			)
+			GROUP BY cd.connection_id, cd.bucket
+			ORDER BY cd.connection_id, collected_at
+		`,
+		scan:            scanBasic,
+		historicalScan:  historicalScanBasicWithSamples,
+		clearWhenAbsent: true,
+		absenceWindow:   time.Hour,
 	},
 
+	// The latest query reduces to the newest qualifying delta (at least
+	// 10000 blocks moved) per connection and database. It used to return
+	// every delta row in the fifteen minute window, about three per
+	// database at the 300 second probe interval, with no ORDER BY. The
+	// evaluator fires when any row violates whilst the cleaner stops at
+	// the first row for the alert, so the same data could fire and clear
+	// the alert in one cycle (violation in the newest interval) or latch
+	// it (violation in the oldest). DISTINCT ON ... ORDER BY collected_at
+	// DESC makes both sides read one value, the most recent. See GitHub
+	// issue #407.
+	//
+	// An interval only qualifies if it also read at least 100 blocks per
+	// second from outside shared buffers (blks_read over the time between
+	// the two samples). A ratio alone fired on idle databases, where a
+	// handful of reads out of a few thousand accesses gives a terrible
+	// ratio that costs nothing. 100 blocks per second is about 800 KiB/s
+	// at the default 8 KiB block size; blks_read also counts reads the
+	// operating system's page cache served, so even in the worst case,
+	// where every one reached storage, it is about 100 IOPS, a trivial
+	// load for any current disk. Below that rate a low ratio has no
+	// material I/O cost to act on. At the 300 second probe interval it
+	// means at least 30000 reads, three times the 10000 block floor on
+	// total accesses, which stays as a guard for very short intervals.
+	// See GitHub issue #616.
+	//
+	// The newest interval that passes both gates decides the value, as it
+	// did with the block floor alone, so one quiet interval on a busy
+	// database does not drop it. A database with no qualifying interval in
+	// the 15 minute window emits no row, and the entry clears when absent:
+	// once the read rate falls, nothing about the cache is costing
+	// anything and the alert should go, whereas without clearWhenAbsent
+	// it stayed active until the next busy interval, which on a quiet
+	// database might never come. The cleaner's probe freshness gate still
+	// holds the alert when the collector stops collecting.
 	"pg_stat_database.cache_hit_ratio": {
+		probeName: "pg_stat_database",
 		latestSQL: `
 			WITH db_blocks AS (
 				SELECT connection_id,
@@ -776,7 +1233,11 @@ var metricRegistry = map[string]metricQueryConfig{
 				       LAG(blks_read) OVER (
 				           PARTITION BY connection_id, database_name
 				           ORDER BY collected_at
-				       ) as prev_blks_read
+				       ) as prev_blks_read,
+				       LAG(collected_at) OVER (
+				           PARTITION BY connection_id, database_name
+				           ORDER BY collected_at
+				       ) as prev_collected_at
 				FROM metrics.pg_stat_database
 				WHERE collected_at > NOW() - INTERVAL '15 minutes'
 				  AND datname IS NOT NULL
@@ -790,9 +1251,13 @@ var metricRegistry = map[string]metricQueryConfig{
 				       collected_at
 				FROM db_blocks
 				WHERE prev_blks_hit IS NOT NULL
+				  AND collected_at > prev_collected_at
 				  AND (blks_hit - prev_blks_hit + blks_read - prev_blks_read) >= 10000
+				  AND (blks_read - prev_blks_read) >=
+				      100 * EXTRACT(EPOCH FROM (collected_at - prev_collected_at))
 			)
-			SELECT connection_id,
+			SELECT DISTINCT ON (connection_id, database_name)
+			       connection_id,
 			       database_name,
 			       CASE
 			           WHEN (delta_hit + delta_read) > 0
@@ -801,6 +1266,7 @@ var metricRegistry = map[string]metricQueryConfig{
 			       END as value,
 			       collected_at
 			FROM deltas
+			ORDER BY connection_id, database_name, collected_at DESC
 		`,
 		historicalSQL: `
 			WITH db_blocks AS (
@@ -816,7 +1282,11 @@ var metricRegistry = map[string]metricQueryConfig{
 				       LAG(m.blks_read) OVER (
 				           PARTITION BY m.connection_id, m.database_name
 				           ORDER BY m.collected_at
-				       ) as prev_blks_read
+				       ) as prev_blks_read,
+				       LAG(m.collected_at) OVER (
+				           PARTITION BY m.connection_id, m.database_name
+				           ORDER BY m.collected_at
+				       ) as prev_collected_at
 				FROM metrics.pg_stat_database m
 				JOIN connections c ON c.id = m.connection_id
 				WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1
@@ -831,7 +1301,10 @@ var metricRegistry = map[string]metricQueryConfig{
 				       collected_at
 				FROM db_blocks
 				WHERE prev_blks_hit IS NOT NULL
+				  AND collected_at > prev_collected_at
 				  AND (blks_hit - prev_blks_hit + blks_read - prev_blks_read) >= 10000
+				  AND (blks_read - prev_blks_read) >=
+				      100 * EXTRACT(EPOCH FROM (collected_at - prev_collected_at))
 			)
 			SELECT connection_id,
 			       database_name,
@@ -844,11 +1317,40 @@ var metricRegistry = map[string]metricQueryConfig{
 			FROM deltas
 			ORDER BY connection_id, database_name, collected_at
 		`,
-		scan:           scanWithDB,
-		historicalScan: historicalScanWithDB,
+		scan:            scanWithDB,
+		historicalScan:  historicalScanWithDB,
+		clearWhenAbsent: true,
+		absenceWindow:   15 * time.Minute,
 	},
 
+	// The value is the number of deadlocks detected in the last hour, per
+	// connection and database. The previous query took the largest
+	// increase between two consecutive samples inside a 15 minute window,
+	// so the figure depended on the probe interval and a connection with a
+	// single sample in the window returned no row at all.
+	//
+	// Summing positive per-sample deltas over an hour gives an absolute
+	// count that does not change when the probe interval does; negative
+	// deltas from a stats reset contribute zero, and a connection with a
+	// single sample reports 0 instead of vanishing from the result set.
+	// The historical query feeds baselines with the same per-hour figure,
+	// one row per connection, database and hour bucket. Its LAG is
+	// partitioned by connection, database and bucket for the reason given
+	// for checkpoints_req_delta above; differencing across the whole
+	// lookback gave every bucket one more delta than the live value
+	// (twelve against eleven at the probe's 300 second interval), biasing
+	// the baseline upward so a steady server scored low (GitHub issue
+	// #639). Both queries filter inside the aggregate rather than in a
+	// WHERE clause, so a bucket whose only sample has no predecessor
+	// reports 0 instead of disappearing, which matters for a newly
+	// onboarded connection. The buckets are cut with date_trunc on the
+	// UTC value of collected_at because the collector stores UTC and the
+	// alerter's session TimeZone is whatever the server GUC says. Each
+	// row also carries the number of raw samples it aggregates, so
+	// baseline warmup still counts samples rather than buckets. See
+	// GitHub issue #409.
 	"pg_stat_database.deadlocks_delta": {
+		probeName: "pg_stat_database",
 		latestSQL: `
 			WITH db_deadlocks AS (
 				SELECT connection_id,
@@ -860,23 +1362,27 @@ var metricRegistry = map[string]metricQueryConfig{
 				           ORDER BY collected_at
 				       ) as prev_deadlocks
 				FROM metrics.pg_stat_database
-				WHERE collected_at > NOW() - INTERVAL '15 minutes'
+				WHERE collected_at > NOW() - INTERVAL '1 hour'
 				  AND datname IS NOT NULL
 				  AND datname NOT LIKE 'template%'
 			)
 			SELECT connection_id,
 			       database_name,
-			       COALESCE(MAX(deadlocks - COALESCE(prev_deadlocks, deadlocks)), 0)::float as value,
+			       COALESCE(
+			           SUM(GREATEST(deadlocks - prev_deadlocks, 0))
+			               FILTER (WHERE prev_deadlocks IS NOT NULL),
+			           0)::float as value,
 			       MAX(collected_at) as collected_at
 			FROM db_deadlocks
-			WHERE prev_deadlocks IS NOT NULL
 			GROUP BY connection_id, database_name
 		`,
 		historicalSQL: `
 			WITH db_deadlocks AS (
-				SELECT m.connection_id, m.database_name, m.deadlocks, m.collected_at,
+				SELECT m.connection_id, m.database_name, m.deadlocks,
+				       date_trunc('hour', m.collected_at AT TIME ZONE 'UTC') as bucket,
 				       LAG(m.deadlocks) OVER (
-				           PARTITION BY m.connection_id, m.database_name
+				           PARTITION BY m.connection_id, m.database_name,
+				                        date_trunc('hour', m.collected_at AT TIME ZONE 'UTC')
 				           ORDER BY m.collected_at
 				       ) as prev_deadlocks
 				FROM metrics.pg_stat_database m
@@ -885,18 +1391,31 @@ var metricRegistry = map[string]metricQueryConfig{
 				  AND m.datname IS NOT NULL
 				  AND m.datname NOT LIKE 'template%'
 			)
-			SELECT connection_id, database_name,
-			       (deadlocks - COALESCE(prev_deadlocks, deadlocks))::float as value,
-			       collected_at
+			SELECT connection_id,
+			       database_name,
+			       COALESCE(
+			           SUM(GREATEST(deadlocks - prev_deadlocks, 0))
+			               FILTER (WHERE prev_deadlocks IS NOT NULL),
+			           0)::float as value,
+			       bucket AT TIME ZONE 'UTC' as collected_at,
+			       COUNT(*) as sample_count
 			FROM db_deadlocks
-			WHERE prev_deadlocks IS NOT NULL
+			GROUP BY connection_id, database_name, bucket
 			ORDER BY connection_id, database_name, collected_at
 		`,
 		scan:           scanWithDB,
-		historicalScan: historicalScanWithDB,
+		historicalScan: historicalScanWithDBAndSamples,
 	},
 
+	// The value is the number of temporary files created in the last
+	// hour, per connection and database. Same shape and reasoning as the
+	// deadlocks entry above, including the hourly historical buckets, the
+	// LAG partitioned by bucket, the UTC truncation and the per-bucket
+	// sample count: the per-sample MAX() over 15 minutes depended on the
+	// probe interval and dropped single-sample connections. See GitHub
+	// issue #409.
 	"pg_stat_database.temp_files_delta": {
+		probeName: "pg_stat_database",
 		latestSQL: `
 			WITH db_temp_files AS (
 				SELECT connection_id,
@@ -908,23 +1427,27 @@ var metricRegistry = map[string]metricQueryConfig{
 				           ORDER BY collected_at
 				       ) as prev_temp_files
 				FROM metrics.pg_stat_database
-				WHERE collected_at > NOW() - INTERVAL '15 minutes'
+				WHERE collected_at > NOW() - INTERVAL '1 hour'
 				  AND datname IS NOT NULL
 				  AND datname NOT LIKE 'template%'
 			)
 			SELECT connection_id,
 			       database_name,
-			       COALESCE(MAX(temp_files - COALESCE(prev_temp_files, temp_files)), 0)::float as value,
+			       COALESCE(
+			           SUM(GREATEST(temp_files - prev_temp_files, 0))
+			               FILTER (WHERE prev_temp_files IS NOT NULL),
+			           0)::float as value,
 			       MAX(collected_at) as collected_at
 			FROM db_temp_files
-			WHERE prev_temp_files IS NOT NULL
 			GROUP BY connection_id, database_name
 		`,
 		historicalSQL: `
 			WITH db_temp_files AS (
-				SELECT m.connection_id, m.database_name, m.temp_files, m.collected_at,
+				SELECT m.connection_id, m.database_name, m.temp_files,
+				       date_trunc('hour', m.collected_at AT TIME ZONE 'UTC') as bucket,
 				       LAG(m.temp_files) OVER (
-				           PARTITION BY m.connection_id, m.database_name
+				           PARTITION BY m.connection_id, m.database_name,
+				                        date_trunc('hour', m.collected_at AT TIME ZONE 'UTC')
 				           ORDER BY m.collected_at
 				       ) as prev_temp_files
 				FROM metrics.pg_stat_database m
@@ -933,43 +1456,201 @@ var metricRegistry = map[string]metricQueryConfig{
 				  AND m.datname IS NOT NULL
 				  AND m.datname NOT LIKE 'template%'
 			)
-			SELECT connection_id, database_name,
-			       (temp_files - COALESCE(prev_temp_files, temp_files))::float as value,
-			       collected_at
+			SELECT connection_id,
+			       database_name,
+			       COALESCE(
+			           SUM(GREATEST(temp_files - prev_temp_files, 0))
+			               FILTER (WHERE prev_temp_files IS NOT NULL),
+			           0)::float as value,
+			       bucket AT TIME ZONE 'UTC' as collected_at,
+			       COUNT(*) as sample_count
 			FROM db_temp_files
-			WHERE prev_temp_files IS NOT NULL
+			GROUP BY connection_id, database_name, bucket
 			ORDER BY connection_id, database_name, collected_at
 		`,
 		scan:           scanWithDB,
-		historicalScan: historicalScanWithDB,
+		historicalScan: historicalScanWithDBAndSamples,
 	},
 
+	// The value is the number of queryids whose mean execution time over
+	// the most recent probe interval exceeded 1000 ms, counted once for
+	// the whole server. The query used to test
+	// pg_stat_statements.mean_exec_time, which is a lifetime average
+	// since the last pg_stat_statements_reset(): a query that ran slowly
+	// once kept the count elevated for ever, whether or not it ran again,
+	// and the alert cleared only on a manual stats reset or eviction.
+	//
+	// The metric is server-wide because pg_stat_statements is. The view
+	// reads one shared hash table for the whole cluster, so the collector
+	// stores the same counters once for every database it probes that has
+	// the extension installed, differing only in the database_name it
+	// connected through; the statement's own database is its dbid. The
+	// count used to be grouped by that probing name, so every such
+	// database reported the cluster's figure and an alert on it fired
+	// once per database. The probe cannot simply filter on its own dbid
+	// instead, because it only runs where the extension is installed and
+	// where the monitoring role may connect: the extension is commonly
+	// installed in one database alone, and the statements of every other
+	// database would then never be collected at all. See GitHub issue
+	// #640.
+	//
+	// samples therefore keeps one copy of each counter per collection,
+	// the one stored under the lowest database_name so that the choice is
+	// stable, as the server's Top Queries aggregation does. Its sort
+	// order is a prefix-compatible match for the identity window, so the
+	// planner sorts the rows once for both.
+	//
+	// The interval mean is delta(total_exec_time) / delta(calls) between
+	// the newest sample in the fifteen minute window (three samples at the
+	// 300 second probe interval) and the sample before it. The LEAD runs
+	// within each statement identity (queryid plus userid, dbid and
+	// toplevel), because each identity is its own counter that a reset
+	// can zero independently and differencing across them subtracts one
+	// identity's counter from another's. The ROW_NUMBER shares the
+	// identity window, so the whole window is sorted once: ordering
+	// descending and reading the predecessor with LEAD rather than
+	// ordering ascending and reading it with LAG costs one WindowAgg and
+	// one sort instead of two. An identity whose calls did not increase
+	// contributes nothing, which skips statements that never ran in the
+	// interval and statements whose counters were reset (calls fell),
+	// and a queryid with no executing identity has a NULL mean that the
+	// FILTER does not count. COUNT(*) FILTER over every queryid seen in
+	// the newest samples means a server with statements but no slow ones
+	// reports 0 rather than disappearing from the result set. See GitHub
+	// issue #407.
+	//
+	// The historical query rebuilds the same figure for every sample from
+	// the same one copy per counter: each identity's sample is paired with
+	// that identity's previous sample by LAG, the interval means are taken
+	// per queryid, and the slow ones are counted per connection and
+	// collected_at. The pair only counts when the previous sample is less
+	// than fifteen minutes older, which is the bound the latest query's
+	// window puts on the pair it can see, so an interval spanning a
+	// collection gap feeds the baseline exactly when it could have
+	// produced a live value. It scans up to the probe's seven day
+	// retention of the table in one window sort, which is acceptable for
+	// a query that runs once per baseline cycle. See GitHub issue #490.
 	"pg_stat_statements.slow_query_count": {
+		probeName: "pg_stat_statements",
 		latestSQL: `
-			WITH recent_statements AS (
-				SELECT connection_id,
-				       database_name,
+			WITH samples AS (
+				SELECT DISTINCT ON (connection_id, queryid, userid, dbid,
+				                    toplevel, collected_at)
+				       connection_id,
 				       queryid,
-				       mean_exec_time,
-				       collected_at,
-				       ROW_NUMBER() OVER (
-				           PARTITION BY connection_id, database_name, queryid
-				           ORDER BY collected_at DESC
-				       ) as rn
+				       userid,
+				       dbid,
+				       toplevel,
+				       calls,
+				       total_exec_time,
+				       collected_at
 				FROM metrics.pg_stat_statements
 				WHERE collected_at > NOW() - INTERVAL '15 minutes'
+				ORDER BY connection_id, queryid, userid, dbid, toplevel,
+				         collected_at DESC, database_name
+			),
+			ranked AS (
+				SELECT connection_id,
+				       queryid,
+				       calls,
+				       total_exec_time,
+				       collected_at,
+				       ROW_NUMBER() OVER identity as rn,
+				       LEAD(calls) OVER identity as prev_calls,
+				       LEAD(total_exec_time) OVER identity as prev_total_exec_time
+				FROM samples
+				WINDOW identity AS (
+				    PARTITION BY connection_id, queryid, userid, dbid, toplevel
+				    ORDER BY collected_at DESC
+				)
+			),
+			newest AS (
+				SELECT connection_id,
+				       queryid,
+				       collected_at,
+				       CASE WHEN calls > prev_calls
+				            THEN calls - prev_calls END as delta_calls,
+				       CASE WHEN calls > prev_calls
+				            THEN total_exec_time - prev_total_exec_time END as delta_exec_time
+				FROM ranked
+				WHERE rn = 1
+			),
+			per_query AS (
+				SELECT connection_id,
+				       queryid,
+				       SUM(delta_exec_time) / NULLIF(SUM(delta_calls), 0) as interval_mean_ms,
+				       MAX(collected_at) as collected_at
+				FROM newest
+				GROUP BY connection_id, queryid
 			)
 			SELECT connection_id,
-			       database_name,
-			       COUNT(*)::float as value,
+			       COUNT(*) FILTER (WHERE interval_mean_ms > 1000)::float as value,
 			       MAX(collected_at) as collected_at
-			FROM recent_statements
-			WHERE rn = 1
-			  AND mean_exec_time > 1000
-			GROUP BY connection_id, database_name
+			FROM per_query
+			GROUP BY connection_id
 		`,
-		historicalSQL:  "",
-		scan:           scanWithDB,
+		historicalSQL: `
+			WITH samples AS (
+				SELECT DISTINCT ON (s.connection_id, s.queryid, s.userid,
+				                    s.dbid, s.toplevel, s.collected_at)
+				       s.connection_id,
+				       s.queryid,
+				       s.userid,
+				       s.dbid,
+				       s.toplevel,
+				       s.calls,
+				       s.total_exec_time,
+				       s.collected_at
+				FROM metrics.pg_stat_statements s
+				JOIN connections c ON c.id = s.connection_id
+				WHERE s.collected_at > NOW() - INTERVAL '1 day' * $1
+				ORDER BY s.connection_id, s.queryid, s.userid, s.dbid,
+				         s.toplevel, s.collected_at, s.database_name
+			),
+			paired AS (
+				SELECT connection_id,
+				       queryid,
+				       calls,
+				       total_exec_time,
+				       collected_at,
+				       LAG(calls) OVER identity as prev_calls,
+				       LAG(total_exec_time) OVER identity as prev_total_exec_time,
+				       LAG(collected_at) OVER identity as prev_collected_at
+				FROM samples
+				WINDOW identity AS (
+				    PARTITION BY connection_id, queryid, userid, dbid, toplevel
+				    ORDER BY collected_at
+				)
+			),
+			deltas AS (
+				SELECT connection_id,
+				       queryid,
+				       collected_at,
+				       CASE WHEN calls > prev_calls
+				             AND prev_collected_at > collected_at - INTERVAL '15 minutes'
+				            THEN calls - prev_calls END as delta_calls,
+				       CASE WHEN calls > prev_calls
+				             AND prev_collected_at > collected_at - INTERVAL '15 minutes'
+				            THEN total_exec_time - prev_total_exec_time END as delta_exec_time
+				FROM paired
+			),
+			per_query AS (
+				SELECT connection_id,
+				       queryid,
+				       collected_at,
+				       SUM(delta_exec_time) / NULLIF(SUM(delta_calls), 0) as interval_mean_ms
+				FROM deltas
+				GROUP BY connection_id, queryid, collected_at
+			)
+			SELECT connection_id,
+			       NULL::text as database_name,
+			       COUNT(*) FILTER (WHERE interval_mean_ms > 1000)::float as value,
+			       collected_at
+			FROM per_query
+			GROUP BY connection_id, collected_at
+			ORDER BY connection_id, collected_at
+		`,
+		scan:           scanBasic,
 		historicalScan: historicalScanBasic,
 	},
 
@@ -982,6 +1663,7 @@ var metricRegistry = map[string]metricQueryConfig{
 	// busy buckets. The result is clamped to 0-100 so a partial row cannot
 	// produce a nonsensical percentage. See GitHub issue #406.
 	"pg_sys_cpu_usage_info.processor_time_percent": {
+		probeName: "pg_sys_cpu_usage_info",
 		latestSQL: `
 			SELECT connection_id,
 			       ` + cpuBusyPercentExpr + ` as value,
@@ -1007,6 +1689,7 @@ var metricRegistry = map[string]metricQueryConfig{
 	},
 
 	"pg_sys_disk_info.used_percent": {
+		probeName: "pg_sys_disk_info",
 		latestSQL: `
 			WITH recent_disk AS (
 				SELECT connection_id,
@@ -1021,6 +1704,7 @@ var metricRegistry = map[string]metricQueryConfig{
 				FROM metrics.pg_sys_disk_info
 				WHERE collected_at > NOW() - INTERVAL '15 minutes'
 				  AND total_space > 0
+				  AND ` + pseudoFilesystemExclusion + `
 			)
 			SELECT connection_id,
 			       MAX((used_space::float / total_space) * 100)::float as value,
@@ -1037,6 +1721,7 @@ var metricRegistry = map[string]metricQueryConfig{
 				JOIN connections c ON c.id = m.connection_id
 				WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1
 				  AND m.total_space > 0
+				  AND ` + pseudoFilesystemExclusion + `
 				GROUP BY m.connection_id, m.collected_at
 			)
 			SELECT connection_id, NULL::text as database_name,
@@ -1049,6 +1734,7 @@ var metricRegistry = map[string]metricQueryConfig{
 	},
 
 	"pg_sys_load_avg_info.load_avg_fifteen_minutes": {
+		probeName: "pg_sys_load_avg_info",
 		latestSQL: `
 			SELECT connection_id,
 			       COALESCE(load_avg_fifteen_minutes, 0)::float as value,
@@ -1075,6 +1761,7 @@ var metricRegistry = map[string]metricQueryConfig{
 	},
 
 	"pg_sys_memory_info.used_percent": {
+		probeName: "pg_sys_memory_info",
 		latestSQL: `
 			SELECT connection_id,
 			       CASE
@@ -1128,6 +1815,7 @@ var metricRegistry = map[string]metricQueryConfig{
 	// which the pg_database probe collects every 300 seconds. See GitHub
 	// issue #406.
 	"age_percent": {
+		probeName: "pg_database",
 		latestSQL: `
 			WITH latest_ages AS (
 				SELECT DISTINCT ON (connection_id, datname)
@@ -1151,56 +1839,6 @@ var metricRegistry = map[string]metricQueryConfig{
 		historicalScan: historicalScanBasic,
 	},
 
-	"table_bloat_ratio": {
-		latestSQL: `
-			WITH recent_tables AS (
-				SELECT connection_id,
-				       database_name,
-				       schemaname,
-				       relname,
-				       n_live_tup,
-				       n_dead_tup,
-				       collected_at,
-				       ROW_NUMBER() OVER (
-				           PARTITION BY connection_id, database_name, schemaname, relname
-				           ORDER BY collected_at DESC
-				       ) as rn
-				FROM metrics.pg_stat_all_tables
-				WHERE collected_at > NOW() - INTERVAL '15 minutes'
-				  AND n_live_tup >= 1000
-				  AND schemaname NOT IN ('pg_catalog', 'pg_toast', 'information_schema')
-			),
-			calculated AS (
-				SELECT connection_id,
-				       database_name,
-				       schemaname,
-				       relname,
-				       (n_dead_tup::float / NULLIF(n_live_tup, 0)) * 100 as bloat_ratio,
-				       collected_at
-				FROM recent_tables
-				WHERE rn = 1
-			),
-			ranked AS (
-				SELECT *,
-				       ROW_NUMBER() OVER (
-				           PARTITION BY connection_id, database_name
-				           ORDER BY bloat_ratio DESC
-				       ) as rank
-				FROM calculated
-			)
-			SELECT connection_id,
-			       database_name,
-			       schemaname || '.' || relname as object_name,
-			       bloat_ratio::float as value,
-			       collected_at
-			FROM ranked
-			WHERE rank = 1
-		`,
-		historicalSQL:  "",
-		scan:           scanWithDBObject,
-		historicalScan: historicalScanBasic,
-	},
-
 	// The autovacuum settings are read from the newest pg_settings row per
 	// connection and setting name rather than from a one-hour window. The
 	// window meant the LEFT JOIN found nothing on any server whose
@@ -1208,9 +1846,37 @@ var metricRegistry = map[string]metricQueryConfig{
 	// and 0.2 applied and tuned autovacuum_vacuum_threshold and
 	// autovacuum_vacuum_scale_factor values were ignored. See GitHub issue
 	// #406.
+	//
+	// A table only counts once it has been past its autovacuum trigger
+	// (n_dead_tup over threshold + scale_factor * n_live_tup) in every
+	// sample for at least the last 30 minutes. Judging the newest sample
+	// alone fired whenever a busy table crossed its trigger in the few
+	// minutes before autovacuum's next naptime pass picked it up, which is
+	// autovacuum working as designed rather than not running. See GitHub
+	// issue #616.
+	//
+	// The query reads an hour of samples, twelve at the 300 second
+	// pg_stat_all_tables interval, so the 30 minute mark is covered for
+	// any probe interval up to 30 minutes. Per table it then requires:
+	//
+	//   - a sample in the last 15 minutes, so dropped or no longer
+	//     collected tables fall out;
+	//   - every sample after the mark (NOW() - 30 minutes) to be past the
+	//     trigger (past_since_mark);
+	//   - the newest sample at or before the mark to be past the trigger
+	//     as well (past_at_mark). Without it a table first seen past the
+	//     trigger ten minutes ago, or one whose history only starts inside
+	//     the last 30 minutes, would pass on a short run of samples. A
+	//     table with no sample at or before the mark has no evidence that
+	//     the condition has lasted 30 minutes, so it is not counted yet.
+	//
+	// Every sample is judged against the connection's current autovacuum
+	// settings, which is the trigger autovacuum itself applies now. The
+	// value is still the hours since the newest sample's last_autovacuum.
 	"table_last_autovacuum_hours": {
+		probeName: "pg_stat_all_tables",
 		latestSQL: `
-			WITH recent_tables AS (
+			WITH table_samples AS (
 				SELECT connection_id,
 				       database_name,
 				       schemaname,
@@ -1218,13 +1884,9 @@ var metricRegistry = map[string]metricQueryConfig{
 				       n_live_tup,
 				       n_dead_tup,
 				       last_autovacuum,
-				       collected_at,
-				       ROW_NUMBER() OVER (
-				           PARTITION BY connection_id, database_name, schemaname, relname
-				           ORDER BY collected_at DESC
-				       ) as rn
+				       collected_at
 				FROM metrics.pg_stat_all_tables
-				WHERE collected_at > NOW() - INTERVAL '15 minutes'
+				WHERE collected_at > NOW() - INTERVAL '1 hour'
 				  AND schemaname NOT IN ('pg_catalog', 'pg_toast', 'information_schema')
 			),
 			latest_av_settings AS (
@@ -1243,19 +1905,42 @@ var metricRegistry = map[string]metricQueryConfig{
 				FROM latest_av_settings
 				GROUP BY connection_id
 			),
-			exceeding AS (
+			judged AS (
 				SELECT t.connection_id,
 				       t.database_name,
 				       t.schemaname,
 				       t.relname,
-				       t.n_dead_tup,
-				       COALESCE(s.av_threshold, 50) + COALESCE(s.av_scale_factor, 0.2) * t.n_live_tup as calc_threshold,
-				       EXTRACT(EPOCH FROM (NOW() - COALESCE(t.last_autovacuum, '1970-01-01'::timestamptz))) / 3600 as hours_since_vacuum,
-				       t.collected_at
-				FROM recent_tables t
+				       t.last_autovacuum,
+				       t.collected_at,
+				       t.n_dead_tup > (COALESCE(s.av_threshold, 50) + COALESCE(s.av_scale_factor, 0.2) * t.n_live_tup) as past_trigger
+				FROM table_samples t
 				LEFT JOIN av_settings s ON t.connection_id = s.connection_id
-				WHERE t.rn = 1
-				  AND t.n_dead_tup > (COALESCE(s.av_threshold, 50) + COALESCE(s.av_scale_factor, 0.2) * t.n_live_tup)
+			),
+			sustained AS (
+				SELECT connection_id,
+				       database_name,
+				       schemaname,
+				       relname,
+				       MAX(collected_at) as collected_at,
+				       (array_agg(last_autovacuum ORDER BY collected_at DESC))[1] as last_autovacuum,
+				       bool_and(past_trigger) FILTER (
+				           WHERE collected_at > NOW() - INTERVAL '30 minutes') as past_since_mark,
+				       (array_agg(past_trigger ORDER BY collected_at DESC) FILTER (
+				           WHERE collected_at <= NOW() - INTERVAL '30 minutes'))[1] as past_at_mark
+				FROM judged
+				GROUP BY connection_id, database_name, schemaname, relname
+			),
+			exceeding AS (
+				SELECT connection_id,
+				       database_name,
+				       schemaname,
+				       relname,
+				       EXTRACT(EPOCH FROM (NOW() - COALESCE(last_autovacuum, '1970-01-01'::timestamptz))) / 3600 as hours_since_vacuum,
+				       collected_at
+				FROM sustained
+				WHERE collected_at > NOW() - INTERVAL '15 minutes'
+				  AND past_since_mark
+				  AND past_at_mark
 			),
 			ranked AS (
 				SELECT *,
@@ -1276,5 +1961,11 @@ var metricRegistry = map[string]metricQueryConfig{
 		historicalSQL:  "",
 		scan:           scanWithDBObject,
 		historicalScan: historicalScanBasic,
+		// The exceeding CTE keeps only tables whose dead tuples have stayed
+		// over the autovacuum threshold, so once autovacuum has caught up the
+		// database emits no row; absence is the recovery signal. See GitHub
+		// issue #407.
+		clearWhenAbsent: true,
+		absenceWindow:   15 * time.Minute,
 	},
 }

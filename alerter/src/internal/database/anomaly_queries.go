@@ -13,6 +13,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
 
 	embeddingpkg "github.com/pgedge/ai-workbench/pkg/embedding"
 )
@@ -25,7 +26,8 @@ func scanAcknowledgedAnomalyAlert(scanner interface{ Scan(dest ...any) error }, 
 		&a.ID, &a.ConnectionID, &a.Title, &a.Severity, &a.MetricName,
 		&a.MetricValue, &a.ZScore, &a.AnomalyDetails, &a.TriggeredAt,
 		&a.AckMessage, &a.FalsePositive, &a.AcknowledgedBy,
-		&a.AcknowledgedAt, &a.LastReevaluatedAt, &a.ReevaluationCount)
+		&a.AcknowledgedAt, &a.LastReevaluatedAt, &a.ReevaluationCount,
+		&a.ReevaluationFingerprint)
 }
 
 // float32SliceToVectorString converts a []float32 to a PostgreSQL vector string format
@@ -66,8 +68,8 @@ func (d *Datastore) GetUnprocessedAnomalyCandidates(ctx context.Context, limit i
 	rows, err := d.pool.Query(ctx, `
 		SELECT id, connection_id, database_name, metric_name, metric_value,
 		       z_score, detected_at, context, tier1_pass, tier2_score, tier2_pass,
-		       tier3_result, tier3_pass, tier3_error, final_decision, alert_id,
-		       processed_at
+		       tier3_result, tier3_pass, tier3_error, tier3_source, tier3_model,
+		       final_decision, alert_id, processed_at
 		FROM anomaly_candidates
 		WHERE processed_at IS NULL AND tier1_pass = true
 		ORDER BY detected_at ASC
@@ -84,7 +86,8 @@ func (d *Datastore) GetUnprocessedAnomalyCandidates(ctx context.Context, limit i
 		err := rows.Scan(&c.ID, &c.ConnectionID, &c.DatabaseName, &c.MetricName,
 			&c.MetricValue, &c.ZScore, &c.DetectedAt, &c.Context, &c.Tier1Pass,
 			&c.Tier2Score, &c.Tier2Pass, &c.Tier3Result, &c.Tier3Pass,
-			&c.Tier3Error, &c.FinalDecision, &c.AlertID, &c.ProcessedAt)
+			&c.Tier3Error, &c.Tier3Source, &c.Tier3Model, &c.FinalDecision,
+			&c.AlertID, &c.ProcessedAt)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan anomaly candidate: %w", err)
 		}
@@ -98,15 +101,34 @@ func (d *Datastore) GetUnprocessedAnomalyCandidates(ctx context.Context, limit i
 	return candidates, nil
 }
 
+// ExpireUnprocessedAnomalyCandidates marks every candidate detected before
+// the cutoff and still unprocessed as processed now, with no final
+// decision, so it never raises an alert and DeleteOldAnomalyCandidates
+// ages it out. The predicate matches idx_anomaly_candidates_unprocessed.
+func (d *Datastore) ExpireUnprocessedAnomalyCandidates(ctx context.Context, cutoff time.Time) (int64, error) {
+	result, err := d.pool.Exec(ctx, `
+		UPDATE anomaly_candidates
+		SET processed_at = now(), final_decision = NULL
+		WHERE processed_at IS NULL AND tier1_pass = true
+		  AND detected_at < $1
+	`, cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("failed to expire unprocessed candidates: %w", err)
+	}
+	return result.RowsAffected(), nil
+}
+
 // UpdateAnomalyCandidate updates a candidate with tier 2/3 results
 func (d *Datastore) UpdateAnomalyCandidate(ctx context.Context, c *AnomalyCandidate) error {
 	_, err := d.pool.Exec(ctx, `
 		UPDATE anomaly_candidates
 		SET tier2_score = $2, tier2_pass = $3, tier3_result = $4, tier3_pass = $5,
-		    tier3_error = $6, final_decision = $7, alert_id = $8, processed_at = $9
+		    tier3_error = $6, final_decision = $7, alert_id = $8, processed_at = $9,
+		    tier3_source = $10, tier3_model = $11
 		WHERE id = $1
 	`, c.ID, c.Tier2Score, c.Tier2Pass, c.Tier3Result, c.Tier3Pass,
-		c.Tier3Error, c.FinalDecision, c.AlertID, c.ProcessedAt)
+		c.Tier3Error, c.FinalDecision, c.AlertID, c.ProcessedAt,
+		c.Tier3Source, c.Tier3Model)
 	return err
 }
 
@@ -210,14 +232,15 @@ func (d *Datastore) GetAnomalyCandidateByID(ctx context.Context, id int64) (*Ano
 	err := d.pool.QueryRow(ctx, `
 		SELECT id, connection_id, database_name, metric_name, metric_value,
 		       z_score, detected_at, context, tier1_pass, tier2_score, tier2_pass,
-		       tier3_result, tier3_pass, tier3_error, final_decision, alert_id,
-		       processed_at
+		       tier3_result, tier3_pass, tier3_error, tier3_source, tier3_model,
+		       final_decision, alert_id, processed_at
 		FROM anomaly_candidates
 		WHERE id = $1
 	`, id).Scan(&c.ID, &c.ConnectionID, &c.DatabaseName, &c.MetricName,
 		&c.MetricValue, &c.ZScore, &c.DetectedAt, &c.Context, &c.Tier1Pass,
 		&c.Tier2Score, &c.Tier2Pass, &c.Tier3Result, &c.Tier3Pass,
-		&c.Tier3Error, &c.FinalDecision, &c.AlertID, &c.ProcessedAt)
+		&c.Tier3Error, &c.Tier3Source, &c.Tier3Model, &c.FinalDecision,
+		&c.AlertID, &c.ProcessedAt)
 
 	if err != nil {
 		return nil, err
@@ -225,18 +248,32 @@ func (d *Datastore) GetAnomalyCandidateByID(ctx context.Context, id int64) (*Ano
 	return &c, nil
 }
 
-// GetMetricBaselines retrieves baselines for a metric on a connection.
+// GetMetricBaselines retrieves the baselines for a metric on a connection,
+// scoped to one database. A nil dbName matches only rows whose
+// database_name is NULL, which is what connection-wide metrics write;
+// per-database metrics write one row set per database and must be read
+// back with that database's name, otherwise the caller receives every
+// database's rows with no way to tell which applies. The NULL-aware
+// predicate mirrors GetActiveAnomalyAlert.
+//
+// The ORDER BY exists only so the result is deterministic across calls;
+// it carries no preference between period types. Choosing which row to
+// score against is the engine's job (see selectBaseline), because the
+// right row depends on the current hour and weekday, which the query
+// does not know.
+//
 // A NULL earliest_sample_at column maps to a Go zero time on the
 // returned MetricBaseline, which callers can test with .IsZero().
-func (d *Datastore) GetMetricBaselines(ctx context.Context, connectionID int, metricName string) ([]*MetricBaseline, error) {
+func (d *Datastore) GetMetricBaselines(ctx context.Context, connectionID int, metricName string, dbName *string) ([]*MetricBaseline, error) {
 	rows, err := d.pool.Query(ctx, `
 		SELECT id, connection_id, database_name, metric_name, period_type,
 		       day_of_week, hour_of_day, mean, stddev, min, max,
 		       sample_count, last_calculated, earliest_sample_at
 		FROM metric_baselines
 		WHERE connection_id = $1 AND metric_name = $2
+		  AND (database_name = $3 OR ($3 IS NULL AND database_name IS NULL))
 		ORDER BY period_type, day_of_week, hour_of_day
-	`, connectionID, metricName)
+	`, connectionID, metricName, dbName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get metric baselines: %w", err)
 	}
@@ -263,6 +300,44 @@ func (d *Datastore) GetMetricBaselines(ctx context.Context, connectionID int, me
 	}
 
 	return baselines, nil
+}
+
+// DeleteBaselinesForUnsupportedMetrics removes every metric_baselines
+// row whose metric is not in BaselineSupportedMetrics and returns the
+// number deleted. Before #408 the engine wrote a permanently cold
+// fallback row for each metric without a historical query; those rows
+// are never refreshed now, so this sweep clears them and keeps the
+// server's get_metric_baselines tool from reporting them. The list is
+// bound as a text[] parameter rather than interpolated.
+func (d *Datastore) DeleteBaselinesForUnsupportedMetrics(ctx context.Context) (int64, error) {
+	tag, err := d.pool.Exec(ctx, `
+		DELETE FROM metric_baselines
+		WHERE metric_name <> ALL($1::text[])
+	`, BaselineSupportedMetrics())
+	if err != nil {
+		return 0, fmt.Errorf("failed to delete baselines for unsupported metrics: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
+// DeleteStaleMetricBaselines removes every metric_baselines row for
+// metricName whose last_calculated is before calculatedBefore, and
+// returns the number deleted. The baseline calculator passes the time
+// its cycle started, once it has rebuilt the metric, so the rows that
+// go are the ones the cycle did not rewrite: an hourly or daily bucket
+// that no longer has enough samples, or a connection or database with
+// no samples left in the lookback window. Without this such a row
+// would keep its old statistics for ever, which is how baselines built
+// before a historical query was corrected outlived the fix (#567).
+func (d *Datastore) DeleteStaleMetricBaselines(ctx context.Context, metricName string, calculatedBefore time.Time) (int64, error) {
+	tag, err := d.pool.Exec(ctx, `
+		DELETE FROM metric_baselines
+		WHERE metric_name = $1 AND last_calculated < $2
+	`, metricName, calculatedBefore)
+	if err != nil {
+		return 0, fmt.Errorf("failed to delete stale baselines for %s: %w", metricName, err)
+	}
+	return tag.RowsAffected(), nil
 }
 
 // UpsertMetricBaseline inserts or updates a metric baseline. A zero
@@ -296,13 +371,14 @@ func (d *Datastore) GetAcknowledgedAnomalyAlerts(ctx context.Context, intervalSe
 		SELECT a.id, a.connection_id, a.title, a.severity, a.metric_name,
 		       a.metric_value, a.anomaly_score, a.anomaly_details, a.triggered_at,
 		       ack.message, ack.false_positive, ack.acknowledged_by,
-		       ack.acknowledged_at, a.last_reevaluated_at, a.reevaluation_count
+		       ack.acknowledged_at, a.last_reevaluated_at, a.reevaluation_count,
+		       a.reevaluation_fingerprint
 		FROM alerts a
 		LEFT JOIN LATERAL (
 		    SELECT message, false_positive, acknowledged_by, acknowledged_at
 		    FROM alert_acknowledgments
 		    WHERE alert_id = a.id
-		    ORDER BY acknowledged_at DESC
+		    ORDER BY acknowledged_at DESC, id DESC
 		    LIMIT 1
 		) ack ON true
 		WHERE a.status = 'acknowledged' AND a.alert_type = 'anomaly'
@@ -340,12 +416,13 @@ func (d *Datastore) GetAcknowledgmentHistoryForMetric(ctx context.Context, metri
 		SELECT a.id, a.connection_id, a.title, a.severity, a.metric_name,
 		       a.metric_value, a.anomaly_score, a.anomaly_details, a.triggered_at,
 		       ack.message, ack.false_positive, ack.acknowledged_by,
-		       ack.acknowledged_at, a.last_reevaluated_at, a.reevaluation_count
+		       ack.acknowledged_at, a.last_reevaluated_at, a.reevaluation_count,
+		       a.reevaluation_fingerprint
 		FROM alerts a
 		JOIN alert_acknowledgments ack ON ack.alert_id = a.id
 		WHERE a.metric_name = $1 AND a.connection_id = $2
 		  AND a.id != $3 AND a.alert_type = 'anomaly'
-		ORDER BY ack.acknowledged_at DESC
+		ORDER BY ack.acknowledged_at DESC, ack.id DESC
 		LIMIT $4
 	`, metricName, connectionID, excludeAlertID, limit)
 	if err != nil {

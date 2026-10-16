@@ -10,8 +10,13 @@
 package main
 
 import (
+	"flag"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/pgedge/ai-workbench/server/internal/config"
 )
 
 func TestResolveDataDir(t *testing.T) {
@@ -146,6 +151,9 @@ func TestHasUserCommand(t *testing.T) {
 		{"enable user", Flags{EnableUserCmd: true}, true},
 		{"disable user", Flags{DisableUserCmd: true}, true},
 		{"add service account", Flags{AddServiceAccountCmd: true}, true},
+		{"link oidc user", Flags{LinkOIDCUserCmd: true}, true},
+		{"restore password alone is not a command", Flags{RestorePassword: true}, false},
+		{"unlink oidc user", Flags{UnlinkOIDCUserCmd: true}, true},
 	}
 
 	for _, tt := range tests {
@@ -234,6 +242,28 @@ func TestHasTokenScopeCommand(t *testing.T) {
 	}
 }
 
+func TestHasAuditCommand(t *testing.T) {
+	tests := []struct {
+		name     string
+		flags    Flags
+		expected bool
+	}{
+		{"no commands", Flags{}, false},
+		{"list audit", Flags{ListAuditCmd: true}, true},
+		{"verify audit log", Flags{VerifyAuditCmd: true}, true},
+		{"audit filter without a command", Flags{AuditActor: "dave"}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.flags.HasAuditCommand()
+			if result != tt.expected {
+				t.Errorf("expected %v, got %v", tt.expected, result)
+			}
+		})
+	}
+}
+
 func TestHasCLICommand(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -246,6 +276,7 @@ func TestHasCLICommand(t *testing.T) {
 		{"group command", Flags{AddGroupCmd: true}, true},
 		{"privilege command", Flags{GrantPrivilegeCmd: true}, true},
 		{"token scope command", Flags{ScopeTokenConnCmd: true}, true},
+		{"audit command", Flags{ListAuditCmd: true}, true},
 	}
 
 	for _, tt := range tests {
@@ -258,34 +289,347 @@ func TestHasCLICommand(t *testing.T) {
 	}
 }
 
+// parseTestFlags runs ParseFlags over args with a fresh flag set, so a
+// test can exercise the real parsing and "explicitly set" tracking that
+// main uses without colliding with the test binary's own flags.
+func parseTestFlags(t *testing.T, args ...string) *Flags {
+	t.Helper()
+	oldCommandLine, oldArgs := flag.CommandLine, os.Args
+	t.Cleanup(func() { flag.CommandLine, os.Args = oldCommandLine, oldArgs })
+	flag.CommandLine = flag.NewFlagSet("ai-dba-server", flag.ContinueOnError)
+	os.Args = append([]string{"ai-dba-server"}, args...)
+	return ParseFlags("/nonexistent/ai-dba-server.yaml")
+}
+
+// TestToReloadCLIFlags checks that a reload carries every flag given on
+// the command line, with its "set" marker, and nothing that was not
+// given, so a reload rebuilds the configuration the way start-up did.
 func TestToReloadCLIFlags(t *testing.T) {
-	f := &Flags{
-		DBHost:     "testhost",
-		DBPort:     5433,
-		DBName:     "testdb",
-		DBUser:     "testuser",
-		DBPassword: "testpass",
-		DBSSLMode:  "require",
+	f := parseTestFlags(t,
+		"-config", "/etc/test.yaml", "-addr", ":9090", "-trace-file", "trace.log",
+		"-tls", "-cert", "server.crt", "-key", "server.key", "-chain", "chain.pem",
+		"-db-host", "testhost", "-db-port", "5433", "-db-name", "testdb",
+		"-db-user", "testuser", "-db-password", "testpass", "-db-sslmode", "require")
+
+	got := f.ToReloadCLIFlags()
+	want := config.CLIFlags{
+		ConfigFileSet: true, ConfigFile: "/etc/test.yaml",
+		HTTPAddrSet: true, HTTPAddr: ":9090",
+		TraceFileSet: true, TraceFile: "trace.log",
+		TLSEnabledSet: true, TLSEnabled: true,
+		TLSCertSet: true, TLSCertFile: "server.crt",
+		TLSKeySet: true, TLSKeyFile: "server.key",
+		TLSChainSet: true, TLSChainFile: "chain.pem",
+		DBHostSet: true, DBHost: "testhost",
+		DBPortSet: true, DBPort: 5433,
+		DBNameSet: true, DBName: "testdb",
+		DBUserSet: true, DBUser: "testuser",
+		DBPassSet: true, DBPassword: "testpass",
+		DBSSLSet: true, DBSSLMode: "require",
+	}
+	if got != want {
+		t.Errorf("ToReloadCLIFlags() = %+v, want %+v", got, want)
+	}
+	if got != f.ToCLIFlags() {
+		t.Error("ToReloadCLIFlags() differs from the start-up ToCLIFlags()")
 	}
 
-	result := f.ToReloadCLIFlags()
+	if none := parseTestFlags(t).ToReloadCLIFlags(); none != (config.CLIFlags{}) {
+		t.Errorf("ToReloadCLIFlags() with no flags = %+v, want nothing set", none)
+	}
+}
 
-	if result.DBHost != "testhost" {
-		t.Errorf("expected DBHost 'testhost', got %q", result.DBHost)
+// TestReloadKeepsCommandLineTLS covers the SIGHUP regression review found
+// in issue #506: with TLS enabled by -tls rather than in the file, OIDC
+// enabled, an https redirect_url and no trusted_proxies, start-up passes
+// because the server terminates TLS itself, and reloading the unchanged
+// file must pass too rather than being refused as though TLS were off.
+func TestReloadKeepsCommandLineTLS(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ai-dba-server.yaml")
+	if err := os.WriteFile(path, []byte(`
+http:
+  auth:
+    oidc:
+      enabled: true
+      issuer: https://idp.example.com
+      client_id: workbench
+      client_secret: s3cret
+      redirect_url: https://workbench.example.com/api/v1/auth/oidc/callback
+`), 0o600); err != nil {
+		t.Fatalf("writing the config file: %v", err)
 	}
-	if result.DBPort != 5433 {
-		t.Errorf("expected DBPort 5433, got %d", result.DBPort)
+
+	f := parseTestFlags(t, "-config", path, "-tls", "-cert", "server.crt", "-key", "server.key")
+	initial, err := config.LoadConfig(path, f.ToCLIFlags())
+	if err != nil {
+		t.Fatalf("LoadConfig at start-up: %v", err)
 	}
-	if result.DBName != "testdb" {
-		t.Errorf("expected DBName 'testdb', got %q", result.DBName)
+	if !initial.HTTP.TLS.Enabled {
+		t.Fatal("-tls did not enable TLS at start-up")
 	}
-	if result.DBUser != "testuser" {
-		t.Errorf("expected DBUser 'testuser', got %q", result.DBUser)
+
+	rc := config.NewReloadableConfig(initial, path, f.ToReloadCLIFlags())
+	if err := rc.Reload(); err != nil {
+		t.Fatalf("Reload() of the unchanged file = %v, want success", err)
 	}
-	if result.DBPassword != "testpass" {
-		t.Errorf("expected DBPassword 'testpass', got %q", result.DBPassword)
+	reloaded := rc.Get()
+	if !reloaded.HTTP.TLS.Enabled || reloaded.HTTP.TLS.CertFile != "server.crt" ||
+		reloaded.HTTP.TLS.KeyFile != "server.key" {
+		t.Errorf("reloaded TLS = %+v, want the command-line settings kept", reloaded.HTTP.TLS)
 	}
-	if result.DBSSLMode != "require" {
-		t.Errorf("expected DBSSLMode 'require', got %q", result.DBSSLMode)
+}
+
+// TestToCLIFlagsCarriesServerFlags covers the flags ToCLIFlags maps
+// besides TLS and the database: the configuration file, the listen
+// address and the trace file.
+func TestToCLIFlagsCarriesServerFlags(t *testing.T) {
+	f := parseTestFlags(t, "-config", "/etc/test.yaml", "-addr", ":9090", "-trace-file", "trace.log")
+
+	got := f.ToCLIFlags()
+	want := config.CLIFlags{
+		ConfigFileSet: true, ConfigFile: "/etc/test.yaml",
+		HTTPAddrSet: true, HTTPAddr: ":9090",
+		TraceFileSet: true, TraceFile: "trace.log",
+	}
+	if got != want {
+		t.Errorf("ToCLIFlags() = %+v, want %+v", got, want)
+	}
+}
+
+// writeSecret writes a password file readable only by its owner.
+func writeSecret(t *testing.T, contents string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "secret")
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+		t.Fatalf("writing the password file: %v", err)
+	}
+	return path
+}
+
+// TestResolvePasswords covers each source ResolvePasswords reads the
+// database and user passwords from, and the error for an unreadable
+// password file.
+func TestResolvePasswords(t *testing.T) {
+	dbFile := writeSecret(t, "db-secret\n")
+	userFile := writeSecret(t, "user-secret\n")
+	missing := filepath.Join(t.TempDir(), "missing")
+
+	cases := map[string]struct {
+		args     []string
+		wantDB   string
+		wantUser string
+		wantErr  string
+	}{
+		"nothing given": {},
+		"password files": {
+			args:     []string{"-db-password-file", dbFile, "-password-file", userFile},
+			wantDB:   "db-secret",
+			wantUser: "user-secret",
+		},
+		"command-line passwords": {
+			args:     []string{"-db-password", "db-flag", "-password", "user-flag"},
+			wantDB:   "db-flag",
+			wantUser: "user-flag",
+		},
+		"unreadable database password file": {
+			args:    []string{"-db-password-file", missing},
+			wantErr: "resolving database password",
+		},
+		"unreadable user password file": {
+			args:    []string{"-password-file", missing},
+			wantErr: "resolving user password",
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := parseTestFlags(t, tc.args...)
+			var err error
+			captureStderr(t, func() { err = f.ResolvePasswords() })
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("ResolvePasswords() = %v, want an error containing %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ResolvePasswords() = %v", err)
+			}
+			if f.DBPassword != tc.wantDB || f.UserPassword != tc.wantUser {
+				t.Errorf("passwords = (%q, %q), want (%q, %q)",
+					f.DBPassword, f.UserPassword, tc.wantDB, tc.wantUser)
+			}
+		})
+	}
+}
+
+// TestDBPasswordFileReachesConfig covers issue #591: a datastore
+// password read from -db-password-file must be applied over the
+// configuration file at start-up and kept by a SIGHUP reload, exactly as
+// a -db-password value is, whilst -db-password still wins when both are
+// given.
+func TestDBPasswordFileReachesConfig(t *testing.T) {
+	dbFile := writeSecret(t, "not-a-real-file-password\n")
+
+	cases := map[string]struct {
+		configPassword string
+		args           []string
+		want           string
+	}{
+		"file with no password in the configuration": {
+			args: []string{"-db-password-file", dbFile},
+			want: "not-a-real-file-password",
+		},
+		"file overrides the configuration's password": {
+			configPassword: "not-a-real-config-password",
+			args:           []string{"-db-password-file", dbFile},
+			want:           "not-a-real-file-password",
+		},
+		"command-line password wins over the file": {
+			args: []string{"-db-password", "not-a-real-flag-password", "-db-password-file", dbFile},
+			want: "not-a-real-flag-password",
+		},
+		"no password flag keeps the configuration's password": {
+			configPassword: "not-a-real-config-password",
+			want:           "not-a-real-config-password",
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			yaml := "database:\n  host: db.example.com\n  user: workbench\n"
+			if tc.configPassword != "" {
+				yaml += "  password: " + tc.configPassword + "\n"
+			}
+			path := filepath.Join(t.TempDir(), "ai-dba-server.yaml")
+			if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
+				t.Fatalf("writing the config file: %v", err)
+			}
+
+			f := parseTestFlags(t, append([]string{"-config", path}, tc.args...)...)
+			var err error
+			captureStderr(t, func() { err = f.ResolvePasswords() })
+			if err != nil {
+				t.Fatalf("ResolvePasswords() = %v", err)
+			}
+
+			initial, err := config.LoadConfig(path, f.ToCLIFlags())
+			if err != nil {
+				t.Fatalf("LoadConfig at start-up: %v", err)
+			}
+			if initial.Database == nil || initial.Database.Password != tc.want {
+				t.Fatalf("start-up database = %+v, want password %q", initial.Database, tc.want)
+			}
+
+			rc := config.NewReloadableConfig(initial, path, f.ToReloadCLIFlags())
+			if err := rc.Reload(); err != nil {
+				t.Fatalf("Reload() = %v", err)
+			}
+			if got := rc.Get().Database.Password; got != tc.want {
+				t.Errorf("reloaded password = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestDBPasswordFileUnresolved checks that -db-password-file alone does
+// not mark the password set before ResolvePasswords has read the file,
+// so an early ToCLIFlags call cannot replace the configuration's
+// password with an empty one.
+func TestDBPasswordFileUnresolved(t *testing.T) {
+	f := parseTestFlags(t, "-db-password-file", writeSecret(t, "not-a-real-password\n"))
+	if got := f.ToCLIFlags(); got.DBPassSet || got.DBPassword != "" {
+		t.Errorf("ToCLIFlags() before ResolvePasswords = %+v, want no password set", got)
+	}
+}
+
+// TestGetDefaultPaths checks the default paths are derived from the
+// running executable.
+func TestGetDefaultPaths(t *testing.T) {
+	execPath, configPath, secretPath, err := GetDefaultPaths()
+	if err != nil {
+		t.Fatalf("GetDefaultPaths() = %v", err)
+	}
+	wantExec, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable() = %v", err)
+	}
+	if execPath != wantExec {
+		t.Errorf("execPath = %q, want %q", execPath, wantExec)
+	}
+	if configPath != config.GetDefaultConfigPath(wantExec) {
+		t.Errorf("configPath = %q, want %q", configPath, config.GetDefaultConfigPath(wantExec))
+	}
+	if secretPath != config.GetDefaultSecretPath() {
+		t.Errorf("secretPath = %q, want %q", secretPath, config.GetDefaultSecretPath())
+	}
+}
+
+// parseArgs runs ParseFlags on args with a fresh flag set standing in
+// for the process's own, restored when the test ends.
+func parseArgs(t *testing.T, args ...string) *Flags {
+	t.Helper()
+
+	savedSet, savedArgs := flag.CommandLine, os.Args
+	t.Cleanup(func() { flag.CommandLine, os.Args = savedSet, savedArgs })
+	flag.CommandLine = flag.NewFlagSet("ai-dba-server", flag.ContinueOnError)
+	os.Args = append([]string{"ai-dba-server"}, args...)
+
+	return ParseFlags("/etc/example/ai-dba-server.yaml")
+}
+
+// TestParseFlagsDefaults checks the values a bare invocation gets.
+func TestParseFlagsDefaults(t *testing.T) {
+	f := parseArgs(t)
+
+	if f.ConfigFile != "/etc/example/ai-dba-server.yaml" ||
+		f.AccessLevel != "read" || f.AuditLimit != 50 ||
+		f.PreviousSecretFile != "" || f.ConfirmRechain {
+		t.Errorf("unexpected defaults: %+v", f)
+	}
+	if got := f.ToCLIFlags(); got != (config.CLIFlags{}) {
+		t.Errorf("expected no flag to be marked set, got %+v", got)
+	}
+}
+
+// TestParseFlagsAuditRechain checks the flags the re-anchor reads.
+func TestParseFlagsAuditRechain(t *testing.T) {
+	f := parseArgs(t, "-rechain-audit-log", "-confirm-rechain",
+		"-previous-secret-file", "/etc/example/old.secret")
+
+	if !f.RechainAuditCmd || !f.ConfirmRechain ||
+		f.PreviousSecretFile != "/etc/example/old.secret" ||
+		!f.HasAuditCommand() {
+		t.Errorf("unexpected flags: %+v", f)
+	}
+}
+
+// TestToCLIFlags checks that each flag the configuration can override
+// is marked set, with its value, only when given.
+func TestToCLIFlags(t *testing.T) {
+	f := parseArgs(t, "-config", "/etc/example/other.yaml",
+		"-addr", "192.0.2.1:8080", "-tls", "-cert", "c.pem", "-key", "k.pem",
+		"-chain", "ch.pem", "-db-host", "db.example.com", "-db-port", "5433",
+		"-db-name", "workbench", "-db-user", "tester",
+		"-db-password", "not-a-real-password", "-db-sslmode", "require",
+		"-trace-file", "trace.log", "-debug")
+
+	want := config.CLIFlags{
+		ConfigFileSet: true, ConfigFile: "/etc/example/other.yaml",
+		HTTPAddrSet: true, HTTPAddr: "192.0.2.1:8080",
+		TLSEnabledSet: true, TLSEnabled: true,
+		TLSCertSet: true, TLSCertFile: "c.pem",
+		TLSKeySet: true, TLSKeyFile: "k.pem",
+		TLSChainSet: true, TLSChainFile: "ch.pem",
+		DBHostSet: true, DBHost: "db.example.com",
+		DBPortSet: true, DBPort: 5433,
+		DBNameSet: true, DBName: "workbench",
+		DBUserSet: true, DBUser: "tester",
+		DBPassSet: true, DBPassword: "not-a-real-password",
+		DBSSLSet: true, DBSSLMode: "require",
+		TraceFileSet: true, TraceFile: "trace.log",
+	}
+	if got := f.ToCLIFlags(); got != want {
+		t.Errorf("ToCLIFlags() =\n%+v\nwant\n%+v", got, want)
 	}
 }

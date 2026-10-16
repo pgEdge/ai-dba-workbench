@@ -14,7 +14,15 @@ import AdminMessagingChannels, { type MessagingChannelConfig } from './AdminMess
 const MATTERMOST_CONFIG: MessagingChannelConfig = {
     channelType: 'mattermost',
     platformName: 'Mattermost',
-    webhookUrlLabel: 'Webhook URL',
+    fields: [
+        {
+            key: 'webhook_url',
+            label: 'Webhook URL',
+            setFlag: 'webhook_url_set',
+            secret: true,
+            required: true,
+        },
+    ],
 };
 
 const AdminMattermostChannels: React.FC = () => (

@@ -21,12 +21,13 @@ import {
     DoNotDisturb as DoNotDisturbIcon,
     DoNotDisturbOff as DoNotDisturbOffIcon,
 } from '@mui/icons-material';
-import type { FilterChipEntry } from './types';
+import type { EventTypeConfigEntry, FilterChipEntry } from './types';
+import type { TimeRangePreset } from '../../utils/timelineRange';
 
 /**
  * Event type configuration with icons and theme-based color keys
  */
-export const EVENT_TYPE_CONFIG = {
+export const EVENT_TYPE_CONFIG: Record<string, EventTypeConfigEntry> = {
     config_change: {
         icon: SettingsIcon,
         colorKey: 'primary.main',
@@ -51,10 +52,10 @@ export const EVENT_TYPE_CONFIG = {
         icon: WarningIcon,
         colorKey: 'error.main',
         label: 'Alert',
-        getSeverityColorKey: (severity) => {
+        getSeverityColorKey: (severity: string) => {
             return severity === 'critical' ? 'error.main' : 'warning.main';
         },
-        getSeverityIcon: (severity) => {
+        getSeverityIcon: (severity: string) => {
             return severity === 'critical' ? ErrorIcon : WarningIcon;
         },
     },
@@ -104,7 +105,7 @@ export const FILTER_CHIPS: Record<string, FilterChipEntry> = {
 };
 
 // Time range options
-export const TIME_RANGE_OPTIONS = [
+export const TIME_RANGE_OPTIONS: { value: TimeRangePreset; label: string }[] = [
     { value: '1h', label: '1h' },
     { value: '6h', label: '6h' },
     { value: '24h', label: '24h' },
@@ -115,11 +116,15 @@ export const TIME_RANGE_OPTIONS = [
 // localStorage key for persisting time range preference
 export const TIME_RANGE_STORAGE_KEY = 'timeline-time-range';
 
+/** Narrow a stored string to one of the offered rolling presets. */
+const isTimeRangePreset = (value: string): value is TimeRangePreset =>
+    TIME_RANGE_OPTIONS.some((opt) => opt.value === value);
+
 // Get initial time range from localStorage or use default
-export const getInitialTimeRange = () => {
+export const getInitialTimeRange = (): TimeRangePreset => {
     try {
         const stored = localStorage.getItem(TIME_RANGE_STORAGE_KEY);
-        if (stored && TIME_RANGE_OPTIONS.some((opt) => opt.value === stored)) {
+        if (stored && isTimeRangePreset(stored)) {
             return stored;
         }
     } catch {

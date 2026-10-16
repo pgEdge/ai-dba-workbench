@@ -28,6 +28,7 @@ import {
     Storage as ServerIcon,
 } from '@mui/icons-material';
 import { useBlackouts } from '../contexts/useBlackouts';
+import type { Blackout } from '../contexts/BlackoutContext';
 import MoonIcon from './shared/BlackoutIcon';
 import type { Selection } from '../types/selection';
 import { ICON_14_SX } from '../theme';
@@ -90,7 +91,12 @@ const formatTimeRemaining = (endTime: string): string => {
 /**
  * ActiveBlackoutBanner - Prominent amber banner for active blackouts
  */
-const ActiveBlackoutBanner = ({ blackout, onStop }) => {
+interface ActiveBlackoutBannerProps {
+    blackout: Blackout;
+    onStop: (id: number) => Promise<void>;
+}
+
+const ActiveBlackoutBanner = ({ blackout, onStop }: ActiveBlackoutBannerProps) => {
     const theme = useTheme();
     const amberColor = theme.palette.warning.main;
     const ScopeIcon = getScopeIcon(blackout.scope);
@@ -174,7 +180,7 @@ const ActiveBlackoutBanner = ({ blackout, onStop }) => {
                 variant="outlined"
                 size="small"
                 startIcon={<StopIcon sx={ICON_14_SX} />}
-                onClick={() => onStop(blackout.id)}
+                onClick={() => { void onStop(blackout.id); }}
                 sx={stopButtonSx}
             >
                 Stop

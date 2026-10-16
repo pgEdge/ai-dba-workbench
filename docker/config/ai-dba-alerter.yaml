@@ -21,6 +21,15 @@ anomaly:
     # Default: 100.0
     max_z_score: 100.0
 
+    # Number of consecutive samples of an active anomaly alert's
+    # metric that must score back inside the sensitivity band before
+    # the alert is cleared automatically. Only a newly collected
+    # sample counts, so Tier 1 passes that re-score a sample already
+    # counted do not add to it. The count is held in memory and
+    # restarts from zero when the alerter restarts.
+    # Default: 3
+    clear_count: 3
+
     # Hybrid variance floor: effective_stddev =
     #   max(raw_stddev, max(|mean|*relative_pct, absolute_floor))
     # Prevents the divisor in the z-score formula from collapsing
@@ -63,7 +72,11 @@ anomaly:
         min_span_hours: 120
 
       # Daily baselines: each day-of-week bucket fills once
-      # per week, so 336 hours = two weeks of operation.
+      # per week, so 336 hours = two weeks of operation. A
+      # baseline's span can never exceed baselines.lookback_days
+      # (default 15), so keep min_span_hours at or under that
+      # many hours or the daily tier is never used; the alerter
+      # logs a warning on each baseline cycle when it is not.
       daily:
         # Default: 3
         min_samples: 3
@@ -73,5 +86,22 @@ anomaly:
     enabled: false
   tier3:
     enabled: false
+  provider_health:
+    failure_threshold: 3
+    failure_rate: 0.3
+    failure_rate_window: 20
 
 secret_file: /etc/pgedge/ai-dba.secret
+
+# Optional Tier 3 decision model (see the alerter configuration docs).
+# The decision model is asked first, and the reasoning provider, when
+# configured, is the fallback. To use it, set enabled: true in the
+# existing anomaly.tier3 block above (optionally adding
+# decision_suppress_threshold: 0.5 there; do not add a second anomaly
+# key), then uncomment the llm section below.
+#
+# llm:
+#   decision_provider: typesafe
+#   typesafe:
+#     api_key_file: /etc/pgedge/typesafe-api-key.txt
+#     decision_model: jev-latest

@@ -71,6 +71,32 @@ func (rl *RateLimiter) IsAllowed(ipAddress string) bool {
 	return validAttempts < rl.maxAttempts
 }
 
+// CheckAndRecord spends one unit of an IP address's allowance if any is
+// left, reporting whether it was. The check and the record happen under
+// one write lock, so concurrent callers cannot all pass an IsAllowed
+// check and then all record, overshooting the ceiling by the number of
+// requests in flight. Callers that want the request counted only once
+// they are about to do the expensive thing, such as calling out to an
+// identity provider, call this immediately before that call.
+func (rl *RateLimiter) CheckAndRecord(ipAddress string) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	cutoff := time.Now().Add(-rl.windowDuration)
+	validAttempts := 0
+	for _, timestamp := range rl.attempts[ipAddress] {
+		if timestamp.After(cutoff) {
+			validAttempts++
+		}
+	}
+	if validAttempts >= rl.maxAttempts {
+		return false
+	}
+
+	rl.attempts[ipAddress] = append(rl.attempts[ipAddress], time.Now())
+	return true
+}
+
 // RecordFailedAttempt records a failed authentication attempt for an IP address
 func (rl *RateLimiter) RecordFailedAttempt(ipAddress string) {
 	rl.mu.Lock()
@@ -82,6 +108,26 @@ func (rl *RateLimiter) RecordFailedAttempt(ipAddress string) {
 		rl.attempts[ipAddress] = []time.Time{now}
 	} else {
 		rl.attempts[ipAddress] = append(rl.attempts[ipAddress], now)
+	}
+}
+
+// Refund hands back one unit of an IP address's allowance by removing
+// its most recent recorded attempt. A successful login calls this rather
+// than Reset so that it returns only what it spent: Reset would clear
+// every attempt for the address, letting anyone who can complete one
+// login refill the whole allowance as often as they liked.
+func (rl *RateLimiter) Refund(ipAddress string) {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	attempts := rl.attempts[ipAddress]
+	switch len(attempts) {
+	case 0:
+		return
+	case 1:
+		delete(rl.attempts, ipAddress)
+	default:
+		rl.attempts[ipAddress] = attempts[:len(attempts)-1]
 	}
 }
 

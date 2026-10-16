@@ -100,7 +100,7 @@ func TestWebhookNotifier_Validate(t *testing.T) {
 				HTTPMethod:  "DELETE",
 			},
 			wantErr: true,
-			errMsg:  "invalid HTTP method: DELETE",
+			errMsg:  `invalid HTTP method "DELETE": must be GET, POST, PUT or PATCH`,
 		},
 		{
 			name: "invalid HTTP method - lowercase",
@@ -109,7 +109,18 @@ func TestWebhookNotifier_Validate(t *testing.T) {
 				HTTPMethod:  "post", // Case sensitive
 			},
 			wantErr: true,
-			errMsg:  "invalid HTTP method: post",
+			errMsg:  `invalid HTTP method "post": must be GET, POST, PUT or PATCH`,
+		},
+		{
+			// The method is operator-supplied and reaches the log and
+			// notification_history, so it must not carry a line break.
+			name: "invalid HTTP method - control characters",
+			channel: &database.NotificationChannel{
+				EndpointURL: strPtr("https://api.example.com/webhook"),
+				HTTPMethod:  "POST\n[ERROR] forged",
+			},
+			wantErr: true,
+			errMsg:  `invalid HTTP method "POST[ERROR] forged": must be GET, POST, PUT or PATCH`,
 		},
 	}
 

@@ -23,11 +23,14 @@ A high connection utilization indicates the database may
 run out of available connections. Consider increasing
 `max_connections` or implementing connection pooling.
 
-The rule divides the most recent session count by the
-newest recorded `max_connections` value. The settings
-probe only stores a snapshot when the configuration
-changes, so the newest snapshot may be days or weeks old
-on a stable server.
+The rule divides the most recent client session count by
+the `max_connections` value in force when that count was
+collected, which is the newest settings snapshot at or
+before it. When the count predates every settings
+snapshot, as just after a connection is added, the rule
+uses the earliest snapshot instead. The settings probe
+only stores a snapshot when the configuration changes, so
+that snapshot may be days or weeks old on a stable server.
 
 ### High Max Connections
 
@@ -146,22 +149,47 @@ extension.
 A high slow query count indicates performance problems
 that should be investigated.
 
+The alerter counts the queries whose mean execution time
+over the most recent probe interval exceeded 1000 ms. It
+derives that mean from the change in total execution time
+divided by the change in call count between the two most
+recent samples, so a query counts only whilst it is
+actually running slowly. A query that ran slowly once no
+longer keeps the count elevated after the query stops
+running.
+
+The count covers the whole server, so the rule raises at
+most one alert per server. Each statement is counted once,
+whichever database it ran in, including databases where
+the extension is not installed.
+
 ## Replication Rules
 
-### High Replication Lag (Time)
+### Replication Lag in Seconds (Custom Rule)
 
-This rule alerts when replication replay is behind the
-primary.
+The alerter does not seed a built-in rule for replication
+lag measured in time; the High Replication Lag (Bytes)
+rule below covers replication lag by default. To alert
+on time-based lag, create a custom rule on the
+`pg_stat_replication.replay_lag_seconds` metric, for
+example with the `>` operator and a threshold of 30
+seconds.
 
-| Property | Value |
-|----------|-------|
-| Metric | `pg_stat_replication.replay_lag_seconds` |
-| Operator | `>` |
-| Default Threshold | 30 |
-| Default Severity | warning |
+The metric reports, for each primary, the largest
+`replay_lag` across its standbys in the most recent
+replication sample. PostgreSQL measures `replay_lag` as
+the time between the primary flushing recent WAL and
+learning that a standby has replayed it, so the value
+approximates how long recent transactions take to become
+visible on the standby.
 
-Replication lag can indicate network issues, replica
-resource constraints, or write-heavy workloads.
+PostgreSQL resets `replay_lag` to NULL a short while
+after an idle standby has fully caught up. The metric
+reports no value in that case, and an alert on the
+metric then clears. When the last standby disconnects,
+the metric keeps reporting the lag from the last sample
+that included a standby for up to five minutes, and then
+reports no value.
 
 ### High Replication Lag (Bytes)
 
@@ -194,21 +222,52 @@ Inactive replication slots prevent WAL cleanup and can
 cause disk exhaustion. Drop unused slots or reconnect
 the subscriber.
 
-### High Replication Slot WAL Retention
+The alerter reads the most recent sample for each slot
+recorded in the last 15 minutes, so a single late
+collection does not clear the alert.
 
-This rule alerts when a replication slot retains more
-WAL data than the threshold.
+### Replication Slot WAL Retention Warning
+
+This rule alerts when a replication slot's retained WAL
+reaches the warning threshold.
 
 | Property | Value |
 |----------|-------|
-| Metric | `pg_replication_slots.retained_bytes` |
-| Operator | `>` |
-| Default Threshold | 1073741824 (1 GB) |
+| Rule Name | `replication_slot_retention_warn` |
+| Metric | `pg_replication_slots.max_retained_bytes` |
+| Operator | `>=` |
+| Default Threshold | 1073741824 (1 GiB) |
 | Default Severity | warning |
 
-Large WAL retention by a replication slot can lead to
-disk exhaustion. Investigate the subscriber connection
-or consider dropping unused slots.
+Large WAL retention by a replication slot can lead to disk
+exhaustion. Investigate the subscriber connection or
+consider dropping unused slots.
+
+The rule evaluates the maximum retained WAL across all
+slots on a server, so the alert fires when any single
+slot's retained WAL reaches the threshold. The alerter
+reads only samples collected in the last 15 minutes, so the
+rule does not fire on stale data after a collector stops.
+
+### Critical Replication Slot WAL Retention
+
+This rule alerts when a replication slot retains enough WAL
+to threaten the server.
+
+| Property | Value |
+|----------|-------|
+| Rule Name | `replication_slot_retention_high` |
+| Metric | `pg_replication_slots.max_retained_bytes` |
+| Operator | `>=` |
+| Default Threshold | 10737418240 (10 GiB) |
+| Default Severity | critical |
+
+This rule reads the same metric and the same 15-minute
+window as the warning rule, and differs only in threshold
+and severity. Retention at this level usually means a
+subscriber has been disconnected for some time; reconnect
+the subscriber or drop the slot before the WAL volume fills
+the file system.
 
 ### Standby Disconnected
 
@@ -288,18 +347,30 @@ dead tuples.
 |----------|-------|
 | Metric | `pg_stat_all_tables.dead_tuple_percent` |
 | Operator | `>` |
-| Default Threshold | 10 |
+| Default Threshold | 50 |
 | Default Severity | warning |
 
 Dead tuples indicate vacuum is not keeping up with
 updates. Check vacuum settings and consider running
-manual vacuum. The alerter excludes tables with fewer
-than 1,000 total tuples from evaluation to reduce noise
-from small catalog and system tables.
+manual vacuum.
 
-### High Table Bloat
+The alerter only evaluates tables with at least 10,000
+dead tuples and at least 1,000 tuples in total, judged on
+each table's most recent sample. A high percentage on a
+smaller table costs little, and autovacuum normally
+reaches the table on its next pass. The default threshold
+of 50 percent sits well above autovacuum's own default
+trigger of 20 percent, so the rule fires when vacuum has
+fallen behind rather than when it is about to run.
 
-This rule alerts when table bloat exceeds the threshold.
+When autovacuum cleans the table, the table drops below
+the 10,000 dead tuple floor and the alert clears.
+
+### High Table Bloat (Retired)
+
+This rule is retired and disabled by default. The
+alerter no longer collects the `table_bloat_ratio`
+metric, so enabling the rule produces no alerts.
 
 | Property | Value |
 |----------|-------|
@@ -308,9 +379,13 @@ This rule alerts when table bloat exceeds the threshold.
 | Default Threshold | 50 |
 | Default Severity | warning |
 
-Table bloat reduces query performance and wastes
-storage. Consider running `VACUUM FULL` during a
-maintenance window.
+The rule duplicated the High Dead Tuple Percentage rule
+with a different denominator, so the two rules fired on
+the same tables at different thresholds. The rule
+definition remains in the datastore so that historical
+alerts stay attributable, and any alerts that were active
+at upgrade time are cleared. Use the High Dead Tuple
+Percentage rule to monitor table maintenance.
 
 ### Stale Autovacuum
 
@@ -321,11 +396,27 @@ recently.
 |----------|-------|
 | Metric | `table_last_autovacuum_hours` |
 | Operator | `>` |
-| Default Threshold | 168 (7 days) |
+| Default Threshold | 1 |
 | Default Severity | warning |
 
-Tables that have not been vacuumed may have accumulated
-dead tuples or outdated statistics.
+The value is the number of hours since autovacuum last
+processed a table that is past its autovacuum trigger,
+which is `autovacuum_vacuum_threshold` plus
+`autovacuum_vacuum_scale_factor` times the live tuple
+count, using the server's current settings.
+
+A table only counts once it has been past its trigger in
+every sample collected over at least the last 30 minutes.
+The alerter reads an hour of table statistics, requires
+the most recent sample at or before the 30 minute mark to
+be past the trigger, and requires every later sample to
+be past it as well. A table that crosses its trigger
+shortly before autovacuum's next pass therefore does not
+raise an alert; a table that stays past its trigger for
+half an hour without being vacuumed suggests autovacuum
+is blocked or cannot keep up.
+
+The alert clears when autovacuum processes the table.
 
 ### High Transaction ID Age
 
@@ -368,21 +459,35 @@ below the threshold.
 |----------|-------|
 | Metric | `pg_stat_database.cache_hit_ratio` |
 | Operator | `<` |
-| Default Threshold | 90 |
-| Default Severity | warning |
+| Default Threshold | 50 |
+| Default Severity | info |
 
 A low cache hit ratio indicates the database needs more
 memory for `shared_buffers`; the working set may also be
 too large. The alerter calculates the ratio from the
 change in block reads between collection intervals. This
 delta-based approach reflects recent performance rather
-than cumulative counters. The alerter excludes databases
-with fewer than 10,000 total block operations in an
-interval to avoid noise from idle databases.
+than cumulative counters.
+
+An interval only counts when the database accessed at
+least 10,000 blocks and read at least 100 blocks per
+second from outside shared buffers. At the default 8 KiB
+block size, 100 blocks per second is about 800 KiB per
+second; some of those reads are served by the operating
+system's page cache, so even in the worst case the load
+is about 100 I/O operations per second. Below that rate a
+poor ratio has no material cost, so idle and lightly used
+databases do not raise alerts.
+
+Both the threshold evaluator and the alert cleaner read
+the most recent interval that passes both checks, so the
+two always compare the same value. When no interval in
+the last 15 minutes passes them, the alert clears.
 
 ### Deadlocks Detected
 
-This rule alerts when deadlocks occur.
+This rule alerts when deadlocks have occurred in the
+last hour.
 
 | Property | Value |
 |----------|-------|
@@ -390,6 +495,15 @@ This rule alerts when deadlocks occur.
 | Operator | `>` |
 | Default Threshold | 0 |
 | Default Severity | warning |
+| Unit | deadlocks/hour |
+
+The value counts the deadlocks recorded for each database
+in the last hour, so the result does not depend on how
+often the collector samples `pg_stat_database`. A reset
+of the database statistics contributes no deadlocks. The
+hourly window does not change when this rule fires: with
+a threshold of 0, any deadlock at all raised an alert
+under the previous comparison too.
 
 Deadlocks indicate lock ordering problems in the
 application. Review the application logic to prevent
@@ -397,15 +511,34 @@ deadlocks.
 
 ### High Temporary File Usage
 
-This rule alerts when temporary file creation exceeds
-the threshold.
+This rule alerts when the number of temporary files
+created in the last hour exceeds the threshold.
 
 | Property | Value |
 |----------|-------|
 | Metric | `pg_stat_database.temp_files_delta` |
 | Operator | `>` |
-| Default Threshold | 10 |
+| Default Threshold | 100 |
 | Default Severity | warning |
+| Unit | files/hour |
+
+The value counts the temporary files created for each
+database in the last hour, so the result does not depend
+on how often the collector samples `pg_stat_database`. A
+reset of the database statistics contributes no files.
+
+The hourly window makes this rule considerably more
+sensitive than it was. The rule previously compared the
+threshold against the change between two consecutive
+samples, and at the default sampling interval of 300
+seconds twelve samples fall inside an hour. A database
+that steadily creates 300 temporary files an hour
+reported about 25 under the old comparison and reports
+300 now, so the rule fires on databases where it did not
+fire before. To keep the previous sensitivity, multiply
+the threshold by 3600 divided by the sampling interval
+in seconds; at the default interval, that gives a
+threshold of 1200.
 
 Temporary files are created when `work_mem` is
 insufficient for sort and hash operations. Consider
@@ -504,9 +637,69 @@ the last hour, so the default threshold corresponds to an
 average of one requested checkpoint every five minutes.
 Timed checkpoints are not counted.
 
+The rule only evaluates servers that are not in recovery.
+A standby's requested restartpoints follow the write
+volume of its primary, so the alert belongs on the
+primary. The alerter uses the most recent recovery state
+the collector recorded in the last hour; a server with no
+recorded state is evaluated. This applies to every
+supported PostgreSQL version, because the collector reads
+`pg_stat_bgwriter` on PostgreSQL 16 and earlier and
+`pg_stat_checkpointer` on PostgreSQL 17 and later, and
+stores both in the same metric. When a primary becomes a
+standby, any open alert for it clears.
+
 Frequent requested checkpoints indicate
 `checkpoint_segments` or `max_wal_size` may be too low
 for the workload.
+
+## Availability Rules
+
+Availability rules report on the health of metric
+collection itself rather than on the state of a monitored
+server.
+
+### Stale Metrics
+
+This rule alerts when a probe has stopped collecting
+metrics and the dashboards are showing outdated data.
+
+| Property | Value |
+|----------|-------|
+| Rule Name | `metric_staleness` |
+| Metric | `probe_staleness_ratio` |
+| Operator | `>` |
+| Default Threshold | 3 |
+| Default Severity | warning |
+
+The staleness ratio is the time since the probe last
+collected, divided by the collection interval configured
+for that probe. A ratio of 3 therefore means the probe is
+three collection intervals late, which on a probe that runs
+every 60 seconds is three minutes without data. Because the
+ratio is relative to the interval, the same threshold suits
+a probe that runs every minute and one that runs every ten
+minutes.
+
+The rule is scoped to a probe rather than to a metric, and
+the alerter raises one alert for each stale probe on each
+monitored connection. The alerter evaluates the rule
+directly from the recorded probe collection times, so the
+rule needs no entry in the metric registry and no
+PostgreSQL extension.
+
+The alert clears once the probe collects again and the
+ratio falls back to the threshold or below, and it also
+clears when an operator disables the probe or stops
+monitoring the connection, because both are deliberate
+changes rather than faults. A probe that has become
+unavailable is the exception: the alert stays active, and
+its description changes to report that collection has
+stopped and why, until the probe collects again. The
+alerter never raises this alert for a probe that is already
+unavailable, since an unavailable probe is the normal
+steady state on a server that lacks the extension the probe
+reads.
 
 ## Customizing Rules
 

@@ -18,6 +18,12 @@ import (
 
 // ScanRowsToMaps scans all rows from a result set and returns them as a slice of maps.
 // Each map represents one row with column names as keys.
+//
+// A result set with no rows yields an empty, non-nil slice; only an error
+// yields nil. Probes rely on this: the scheduler reads a nil result without
+// an error as "nothing learned", but an empty slice as "the query ran and
+// there was nothing to collect", which for an extension probe means the
+// extension is installed (see classifyProbeResult in the scheduler).
 func ScanRowsToMaps(rows pgx.Rows) ([]map[string]any, error) {
 	// Get column descriptions
 	fieldDescs := rows.FieldDescriptions()
@@ -26,8 +32,8 @@ func ScanRowsToMaps(rows pgx.Rows) ([]map[string]any, error) {
 		columns[i] = string(fd.Name)
 	}
 
-	// Prepare result set
-	var results []map[string]any
+	// Prepare result set; non-nil even when there are no rows
+	results := []map[string]any{}
 
 	for rows.Next() {
 		// Scan the row values

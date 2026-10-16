@@ -31,7 +31,7 @@ func TestAddGroupCommand(t *testing.T) {
 			t.Fatalf("addGroupCommand returned error: %v", err)
 		}
 
-		store, err := auth.NewAuthStore(tmpDir, 0, 0)
+		store, err := auth.NewAuthStore(tmpDir, 0, 0, auth.AuditKeyForTesting())
 		if err != nil {
 			t.Fatalf("failed to open auth store: %v", err)
 		}
@@ -61,7 +61,7 @@ func TestAddGroupCommand(t *testing.T) {
 			t.Fatalf("addGroupCommand returned error: %v", err)
 		}
 
-		store, err := auth.NewAuthStore(tmpDir, 0, 0)
+		store, err := auth.NewAuthStore(tmpDir, 0, 0, auth.AuditKeyForTesting())
 		if err != nil {
 			t.Fatalf("failed to open auth store: %v", err)
 		}

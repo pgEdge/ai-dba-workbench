@@ -154,8 +154,10 @@ approach identifies anomalies that match known problematic patterns.
 ### Tier 3: LLM Classification
 
 Tier 3 uses large language models to classify complex anomalies. The tier
-supports Ollama (local), OpenAI, Anthropic, and Voyage providers. This
-approach provides the most sophisticated analysis for difficult cases.
+supports Ollama (local), OpenAI, Anthropic and Gemini reasoning models,
+and can optionally ask a TypeSafe or OpenAI decision model first, falling
+back to the reasoning model when the decision model fails. This approach
+provides the most sophisticated analysis for difficult cases.
 
 ## Documentation
 

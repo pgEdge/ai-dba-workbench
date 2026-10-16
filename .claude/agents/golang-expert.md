@@ -18,13 +18,21 @@ Before implementing or advising, consult `.claude/golang-expert/`:
   including filtering rows orphaned by a deleted connection
 - `partitioning.md` - The UTC invariant governing weekly partition
   names and range boundaries under the `metrics` schema
+- `probe-scheduling.md` - The collector scheduler's startup jitter,
+  ticker realignment and probe concurrency cap, and the config that
+  drives them
 - `rbac-patterns.md` - The three canonical authorization-gate models
   for HTTP handlers, and the tests that lock them in
 - `testing-strategy.md` - Repo-specific Go testing conventions, Makefile
   targets and CI shape
+- `transaction-rollback.md` - Why every pgx rollback goes through
+  `pkg/rollback` (bounded, non-cancelable context), and the per-module
+  scanner test that enforces it
 
 When a change alters code that one of these files describes, update the
-file in the same change; delete any entry that no longer matches the code.
+file in the same change, and delete any entry that no longer matches the
+code: a stale entry is worse than none, because it sends the next task down
+a path the code no longer supports.
 
 ## Implementation Standards
 

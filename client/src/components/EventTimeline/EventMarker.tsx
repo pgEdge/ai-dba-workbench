@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useMemo, memo } from 'react';
+import { useMemo, memo } from 'react';
 import {
     Box,
     Typography,
@@ -20,6 +20,7 @@ import {
     EventNote as EventNoteIcon,
 } from '@mui/icons-material';
 import { getEventConfig, formatEventTime } from './utils';
+import type { EventMarkerProps } from './types';
 import {
     tooltipPaddingSx,
     tooltipClusterTitleSx,
@@ -34,7 +35,7 @@ import {
 /**
  * EventMarker - Single event or cluster marker on the timeline
  */
-const EventMarker = memo(({ cluster, showServer, onClick }) => {
+const EventMarker = memo(({ cluster, showServer, onClick }: EventMarkerProps) => {
     const theme = useTheme();
     const isDark = theme.palette.mode === 'dark';
     const isCluster = cluster.events.length > 1;
@@ -114,7 +115,9 @@ const EventMarker = memo(({ cluster, showServer, onClick }) => {
                             {showServer && primaryEvent.server_name && (
                                 <Typography sx={tooltipSingleServerSx}>
                                     {primaryEvent.server_name}
-                                    {primaryEvent.details?.database_name && ` / ${primaryEvent.details.database_name}`}
+                                    {primaryEvent.details?.database_name
+                                        ? ` / ${String(primaryEvent.details.database_name)}`
+                                        : null}
                                 </Typography>
                             )}
                         </>

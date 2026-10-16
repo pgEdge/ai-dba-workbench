@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import {
     runAgenticLoop,
     type AgenticLoopParams,
@@ -120,21 +120,34 @@ function createToolCallResponse(
  * Create a mock fetch function that returns different responses
  * based on the URL.
  */
+/*
+ * The chat modules read only `ok`, `json()` and `text()` from the fetch
+ * result, so the stubs below are partial `Response` objects. Widening
+ * happens once, here, rather than at every call site.
+ */
+function stubResponse(parts: {
+    ok: boolean;
+    json: () => Promise<unknown>;
+    text: () => Promise<string>;
+}): Response {
+    return parts as unknown as Response;
+}
+
 function createMockFetch(
     llmResponses: LLMResponse[],
     toolResponses = new Map<string, ToolCallResponse>(),
-): FetchFunction {
+): Mock<FetchFunction> {
     let llmCallIndex = 0;
 
-    return vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+    return vi.fn<FetchFunction>().mockImplementation(async (url: string, init?: RequestInit) => {
         if (url === '/api/v1/llm/chat') {
             const response = llmResponses[llmCallIndex] ?? createTextResponse('');
             llmCallIndex++;
-            return {
+            return stubResponse({
                 ok: true,
                 json: () => Promise.resolve(response),
                 text: () => Promise.resolve(''),
-            };
+            });
         }
 
         if (url === '/api/v1/mcp/tools/call') {
@@ -142,18 +155,18 @@ function createMockFetch(
             const toolResponse =
                 toolResponses.get(body.name) ??
                 createToolCallResponse('Tool result');
-            return {
+            return stubResponse({
                 ok: true,
                 json: () => Promise.resolve(toolResponse),
                 text: () => Promise.resolve(''),
-            };
+            });
         }
 
-        return {
+        return stubResponse({
             ok: false,
             json: () => Promise.reject(new Error('Unknown endpoint')),
             text: () => Promise.resolve('Unknown endpoint'),
-        };
+        });
     });
 }
 
@@ -816,6 +829,51 @@ describe('chatAgenticLoop', () => {
                 const body = JSON.parse(toolCall[1]?.body as string);
                 expect(body.name).toBe('query_database');
                 expect(body.arguments).toEqual({ query: 'SELECT 1' });
+            });
+
+            it('replays the provider signature on a tool_use block unchanged', async () => {
+                // Gemini's thinking models attach an opaque signature to each
+                // function call and reject the next request with a 400 unless
+                // it is echoed back verbatim (#425). The loop must pass the
+                // response block through intact rather than rebuilding it.
+                const signature = 'opaque-thought-signature-abc123';
+                const toolName = 'query_database';
+                const firstResponse: LLMResponse = {
+                    content: [
+                        {
+                            type: 'tool_use',
+                            tool_use: {
+                                id: 'sig-tool-1',
+                                name: toolName,
+                                input: { query: 'SELECT 1' },
+                                signature,
+                            },
+                        },
+                    ],
+                };
+                const mockFetch = createMockFetch(
+                    [firstResponse, createTextResponse('Done.')],
+                    new Map([[toolName, createToolCallResponse('1')]]),
+                );
+                const params = createLoopParams({
+                    apiMessages: [{ role: 'user', content: 'Ping' }],
+                    fetchFn: mockFetch,
+                });
+
+                const result = await runAgenticLoop(params);
+                expect(result.finalMessage.content).toBe('Done.');
+
+                const llmCalls = (mockFetch as ReturnType<typeof vi.fn>).mock.calls
+                    .filter(c => c[0] === '/api/v1/llm/chat');
+                expect(llmCalls).toHaveLength(2);
+                const body = JSON.parse(llmCalls[1][1]?.body as string);
+                const assistantMsg = body.messages.find(
+                    (m: { role: string }) => m.role === 'assistant',
+                );
+                const toolUseBlock = (
+                    assistantMsg.content as Array<{ type: string; tool_use?: { signature?: string } }>
+                ).find(b => b.type === 'tool_use');
+                expect(toolUseBlock?.tool_use?.signature).toBe(signature);
             });
 
             it('second LLM request carries tool_result text + nested tool_use on round-trip', async () => {

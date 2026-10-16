@@ -11,6 +11,8 @@ pool:
 
 threshold:
     evaluation_interval_seconds: 60
+    trigger_count: 2
+    clear_count: 3
 
 anomaly:
     enabled: true
@@ -25,6 +27,15 @@ anomaly:
         # cap entirely.
         # Default: 100.0
         max_z_score: 100.0
+
+        # Number of consecutive samples of an active anomaly alert's
+        # metric that must score back inside the sensitivity band before
+        # the alert is cleared automatically. Only a newly collected
+        # sample counts, so Tier 1 passes that re-score a sample already
+        # counted do not add to it. The count is held in memory and
+        # restarts from zero when the alerter restarts.
+        # Default: 3
+        clear_count: 3
 
         # Hybrid variance floor: effective_stddev =
         #   max(raw_stddev, max(|mean|*relative_pct, absolute_floor))
@@ -58,26 +69,31 @@ anomaly:
                 # Default: 24
                 min_span_hours: 24
 
-            # Hourly baselines: each hour-of-day bucket fills once
-            # per day, so 120 hours of span = at least five days of
-            # operation.
+            # The walkthrough keeps a one-day baseline lookback
+            # (below), and a baseline's span can never exceed the
+            # lookback, so the hourly and daily spans are cut to
+            # 24 hours here; at the shipped 120 and 336 those tiers
+            # could never be used and the alerter would warn on
+            # every baseline cycle.
             hourly:
                 # Default: 5
                 min_samples: 5
                 # Default: 120
-                min_span_hours: 120
+                min_span_hours: 24
 
-            # Daily baselines: each day-of-week bucket fills once
-            # per week, so 336 hours = two weeks of operation.
             daily:
                 # Default: 3
                 min_samples: 3
                 # Default: 336
-                min_span_hours: 336
+                min_span_hours: 24
     tier2:
         enabled: false
     tier3:
         enabled: false
+    provider_health:
+        failure_threshold: 3
+        failure_rate: 0.3
+        failure_rate_window: 20
 
 baselines:
     refresh_interval_seconds: 3600
@@ -87,3 +103,16 @@ correlation:
     window_seconds: 120
 
 secret_file: /etc/pgedge/secret/ai-dba.secret
+
+# Optional Tier 3 decision model (see the alerter configuration docs).
+# The decision model is asked first, and the reasoning provider, when
+# configured, is the fallback. To use it, set enabled: true in the
+# existing anomaly.tier3 block above (optionally adding
+# decision_suppress_threshold: 0.5 there; do not add a second anomaly
+# key), then uncomment the llm section below.
+#
+# llm:
+#   decision_provider: typesafe
+#   typesafe:
+#     api_key_file: /etc/pgedge/typesafe-api-key.txt
+#     decision_model: jev-latest

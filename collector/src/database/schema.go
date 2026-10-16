@@ -21,6 +21,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/pkg/logger"
+	"github.com/pgedge/ai-workbench/pkg/rollback"
 )
 
 // Migration represents a database schema migration
@@ -721,6 +722,18 @@ func (sm *SchemaManager) registerMigrations() {
 				-- #4 drops it; fresh installs skip the creation.
 				CREATE INDEX IF NOT EXISTS idx_pg_stat_statements_object
 					ON metrics.pg_stat_statements(connection_id, database_name, queryid, collected_at DESC);
+				-- Serves the windowed delta aggregation behind
+				-- /api/v1/metrics/top-queries; migration #15 adds it to
+				-- installations created before it existed and carries the
+				-- reasoning behind the column order.
+				CREATE INDEX IF NOT EXISTS idx_pg_stat_statements_identity_time
+					ON metrics.pg_stat_statements(connection_id, queryid, userid, dbid,
+						toplevel, collected_at, database_name)
+					INCLUDE (calls, total_exec_time, rows, shared_blks_hit,
+						shared_blks_read, min_exec_time, max_exec_time);
+
+				COMMENT ON INDEX metrics.idx_pg_stat_statements_identity_time IS
+					'Covers the windowed delta aggregation behind /api/v1/metrics/top-queries. The key columns are the statement identity that pg_stat_statements counters are cumulative within (queryid, userid, dbid, toplevel), then collected_at, then database_name: that is the order the aggregation needs both to keep one copy of a counter sampled through several databases and to LAG over each identity, so it reads the rows already sorted instead of sorting them. The INCLUDE columns are every counter the aggregation reads, which makes the scan index-only; the query text is deliberately excluded because it would roughly triple the size of the index.';
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to create pg_stat_statements table: %w", err)
@@ -2279,7 +2292,7 @@ func (sm *SchemaManager) registerMigrations() {
 					owner_username VARCHAR(255),
 					owner_token VARCHAR(255),
 					enabled BOOLEAN NOT NULL DEFAULT TRUE,
-					channel_type TEXT NOT NULL CHECK (channel_type IN ('slack', 'mattermost', 'webhook', 'email')),
+					channel_type TEXT NOT NULL CHECK (channel_type IN ('slack', 'mattermost', 'telegram', 'webhook', 'email')),
 					name TEXT NOT NULL,
 					description TEXT,
 					webhook_url_encrypted TEXT,
@@ -2295,6 +2308,8 @@ func (sm *SchemaManager) registerMigrations() {
 					smtp_use_tls BOOLEAN DEFAULT TRUE,
 					from_address TEXT,
 					from_name TEXT,
+					telegram_bot_token_encrypted TEXT,
+					telegram_chat_id TEXT,
 					template_alert_fire TEXT,
 					template_alert_clear TEXT,
 					template_reminder TEXT,
@@ -2310,9 +2325,13 @@ func (sm *SchemaManager) registerMigrations() {
 				);
 
 				COMMENT ON TABLE notification_channels IS
-					'Notification channels for delivering alerts (Slack, Mattermost, webhook, email)';
+					'Notification channels for delivering alerts (Slack, Mattermost, Telegram, webhook, email)';
 				COMMENT ON COLUMN notification_channels.is_estate_default IS
 					'When true, this channel is enabled by default for all servers in the estate';
+				COMMENT ON COLUMN notification_channels.telegram_bot_token_encrypted IS
+					'Telegram Bot API token, encrypted with the server secret. Used to build the sendMessage URL https://api.telegram.org/bot<token>/sendMessage; it is a bearer credential and must never be logged or returned to a client.';
+				COMMENT ON COLUMN notification_channels.telegram_chat_id IS
+					'Telegram chat the alerter posts to. Stored as text because the Bot API accepts either a numeric chat ID or an @channelusername.';
 
 				CREATE INDEX IF NOT EXISTS idx_notification_channels_enabled ON notification_channels(enabled) WHERE enabled = TRUE;
 				CREATE INDEX IF NOT EXISTS idx_notification_channels_owner_username ON notification_channels(owner_username);
@@ -2716,16 +2735,16 @@ func (sm *SchemaManager) registerMigrations() {
 					('lock_wait_time', 'Lock wait time exceeds threshold', 'locks', 'pg_stat_activity.max_lock_wait_seconds', 'seconds', '>', 30, 'warning', TRUE, NULL, TRUE),
 
 					-- WAL and Checkpoint alerts
-					('checkpoint_warning', 'Requested checkpoints in the last hour exceed the threshold; frequent requested checkpoints usually mean max_wal_size is too small', 'wal', 'pg_stat_checkpointer.checkpoints_req_delta', 'checkpoints/hour', '>', 12, 'warning', TRUE, NULL, TRUE),
+					('checkpoint_warning', 'Requested checkpoints in the last hour exceed the threshold on a server that is not in recovery; frequent requested checkpoints usually mean max_wal_size is too small', 'wal', 'pg_stat_checkpointer.checkpoints_req_delta', 'checkpoints/hour', '>', 12, 'warning', TRUE, NULL, TRUE),
 					('wal_archive_failed', 'WAL archiving failures detected in the last hour', 'wal', 'pg_stat_archiver.failed_count_delta', 'failures/hour', '>', 0, 'critical', TRUE, NULL, TRUE),
 
 					-- Vacuum alerts
-					('autovacuum_not_running', 'Table has dead tuples exceeding the autovacuum threshold but has not been vacuumed; indicates autovacuum may be blocked or unable to keep up', 'maintenance', 'table_last_autovacuum_hours', 'hours', '>', 1, 'warning', TRUE, NULL, TRUE),
-					('dead_tuple_ratio', 'Dead tuple ratio too high', 'maintenance', 'pg_stat_all_tables.dead_tuple_percent', 'percent', '>', 20, 'warning', TRUE, NULL, TRUE),
+					('autovacuum_not_running', 'Table has had dead tuples over its autovacuum threshold in every sample for at least 30 minutes but has not been vacuumed; indicates autovacuum may be blocked or unable to keep up', 'maintenance', 'table_last_autovacuum_hours', 'hours', '>', 1, 'warning', TRUE, NULL, TRUE),
+					('dead_tuple_ratio', 'Dead tuple ratio too high on a table with at least 10000 dead tuples', 'maintenance', 'pg_stat_all_tables.dead_tuple_percent', 'percent', '>', 50, 'warning', TRUE, NULL, TRUE),
 
 					-- Statement alerts
 					('slow_query_count', 'High number of slow queries', 'queries', 'pg_stat_statements.slow_query_count', 'queries', '>', 10, 'warning', TRUE, 'pg_stat_statements', TRUE),
-					('cache_hit_ratio_low', 'Buffer cache hit ratio below threshold', 'queries', 'pg_stat_database.cache_hit_ratio', 'percent', '<', 80, 'warning', TRUE, NULL, TRUE),
+					('cache_hit_ratio_low', 'Buffer cache hit ratio below threshold in a database reading at least 100 blocks per second from outside shared buffers', 'queries', 'pg_stat_database.cache_hit_ratio', 'percent', '<', 50, 'info', TRUE, NULL, TRUE),
 
 					-- Error alerts
 					('temp_files_created', 'Temporary files being created', 'performance', 'pg_stat_database.temp_files_delta', 'files', '>', 100, 'warning', TRUE, NULL, TRUE),
@@ -3187,6 +3206,692 @@ func (sm *SchemaManager) registerMigrations() {
 		},
 	})
 
+	// Migration #10: Record pg_stat_statements_info.stats_reset alongside
+	// each pg_stat_statements sample so the server's rate derivation can
+	// tell a genuine counter reset from ordinary growth. See GitHub issue
+	// #402. As with migration 7, the column lands on the partitioned
+	// parent and PostgreSQL 14-18 propagate ADD COLUMN to existing and
+	// future partitions automatically, so no per-partition DDL is needed.
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     10,
+		Description: "Add stats_reset column to pg_stat_statements metrics",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			_, err := tx.Exec(ctx, `
+				ALTER TABLE metrics.pg_stat_statements
+					ADD COLUMN IF NOT EXISTS stats_reset TIMESTAMPTZ;
+
+				COMMENT ON COLUMN metrics.pg_stat_statements.stats_reset IS
+					'Value of pg_stat_statements_info.stats_reset on the monitored server at collection time: when the extension''s statistics were last reset with pg_stat_statements_reset(). NULL where the pg_stat_statements_info view is unavailable (pg_stat_statements before 1.9, shipped with PostgreSQL 14). A change in this value between two consecutive samples tells the server''s rate derivation that the cumulative counters were reset, so the pair must not be treated as a delta.';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to add stats_reset column to pg_stat_statements metrics: %w", err)
+			}
+
+			return nil
+		},
+	})
+
+	// Migration #11 finishes the fixed-window realignment that #8 began.
+	// See GitHub issue #409.
+	//
+	// deadlocks_detected and temp_files_created previously reported the
+	// increase seen between two consecutive samples, so their meaning
+	// changed with the probe interval. The alerter now sums positive
+	// per-sample deltas over a one hour window, and the descriptions and
+	// units state that. Thresholds are untouched: more than zero
+	// deadlocks and more than 100 temporary files per hour keep their
+	// meaning under the new window, and any operator tuning survives.
+	//
+	// table_bloat_ratio duplicated dead_tuple_ratio with a different
+	// denominator and its registry entry is removed. The rule row stays
+	// so historical alerts remain attributable, but it is disabled and
+	// its open alerts are cleared the same way the alerter resolves one.
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     11,
+		Description: "Report deadlocks and temporary files per hour and retire table_bloat_ratio",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			_, err := tx.Exec(ctx, `
+				UPDATE alert_rules
+				SET description = 'Deadlocks detected in the last hour',
+				    metric_unit = 'deadlocks/hour'
+				WHERE name = 'deadlocks_detected'
+				  AND is_built_in;
+
+				UPDATE alert_rules
+				SET description = 'Temporary files created in the last hour exceed the threshold; usually means work_mem is too small for sort and hash operations',
+				    metric_unit = 'files/hour'
+				WHERE name = 'temp_files_created'
+				  AND is_built_in;
+
+				UPDATE alert_rules
+				SET default_enabled = FALSE,
+				    description = 'Retired: duplicated dead_tuple_ratio with a different denominator. Kept so historical alerts remain attributable.'
+				WHERE name = 'table_bloat_ratio'
+				  AND is_built_in;
+
+				UPDATE alerts
+				SET status = 'cleared',
+				    cleared_at = NOW()
+				WHERE status IN ('active', 'acknowledged')
+				  AND rule_id = (SELECT id FROM alert_rules WHERE name = 'table_bloat_ratio');
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to realign deadlock and temporary file alert rules and retire table_bloat_ratio: %w", err)
+			}
+
+			return nil
+		},
+	})
+
+	// Migration #12: Add query_id to the activity metrics so an activity
+	// sample can be joined to metrics.pg_stat_statements.queryid, which is
+	// what lets the server attribute a client address to a query (GitHub
+	// issue #384). The column lands on the partitioned parent table;
+	// PostgreSQL 14-18 propagate ADD COLUMN to existing and future
+	// partitions automatically, so no per-partition DDL is needed.
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     12,
+		Description: "Add query_id column to activity metrics",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			_, err := tx.Exec(ctx, `
+				ALTER TABLE metrics.pg_stat_activity
+					ADD COLUMN IF NOT EXISTS query_id BIGINT;
+
+				COMMENT ON COLUMN metrics.pg_stat_activity.query_id IS
+					'pg_stat_activity.query_id of the statement the backend was running when sampled. NULL on servers before PostgreSQL 14, where the column does not exist, where compute_query_id is off, and for idle backends. It is the join key to metrics.pg_stat_statements.queryid, and because pg_stat_activity is a point-in-time view the association is best-effort: only statements in flight at sample time are captured.';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to add query_id column to activity metrics: %w", err)
+			}
+
+			return nil
+		},
+	})
+
+	// Migration #13: Store an estimated available memory figure alongside
+	// each pg_sys_memory_info sample. See GitHub issue #429.
+	//
+	// The system_stats extension does not expose the kernel's
+	// MemAvailable: pg_sys_memory_info() returns the same twelve columns
+	// in versions 1.0 through 4.0, and the only availability-ish column,
+	// avail_page_file, is a Windows page file figure. The collector
+	// reaches the monitored host only over SQL through that extension, so
+	// /proc/meminfo is out of reach and the kernel figure cannot be
+	// obtained today. The collector therefore estimates the value as
+	// free_memory + cache_total and stores it, rather than computing it
+	// in the client, so that when system_stats later gains MemAvailable
+	// the probe can swap its source while the column, its retention and
+	// the chart drawn from it all stay as they are.
+	//
+	// As with migrations 7 and 10, the column lands on the partitioned
+	// parent and PostgreSQL 14-18 propagate ADD COLUMN to existing and
+	// future partitions automatically, so no per-partition DDL is needed.
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     13,
+		Description: "Add estimated available_memory column to pg_sys_memory_info metrics",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			_, err := tx.Exec(ctx, `
+				ALTER TABLE metrics.pg_sys_memory_info
+					ADD COLUMN IF NOT EXISTS available_memory BIGINT;
+
+				COMMENT ON COLUMN metrics.pg_sys_memory_info.available_memory IS
+					'Estimated memory available for new workloads without swapping, in bytes: the sum of free_memory and cache_total at collection time. This is an estimate, not the kernel''s MemAvailable, because the system_stats extension does not expose that figure and the collector reads the monitored host only over SQL. It overestimates availability where non-reclaimable slab is large or where much of the page cache is dirty, since neither can be reclaimed on demand. NULL where either input was missing or was not an integer value.';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to add available_memory column to pg_sys_memory_info metrics: %w", err)
+			}
+
+			return nil
+		},
+	})
+
+	// Migration #14: add Telegram as a notification channel type. See
+	// GitHub issue #475.
+	//
+	// Telegram delivers through the Bot API rather than an incoming
+	// webhook URL, so a channel needs two pieces of configuration: a bot
+	// token (a bearer credential, stored encrypted like every other
+	// channel secret) and the chat to post into.
+	//
+	// The channel_type CHECK has to be widened to accept 'telegram'. A
+	// CHECK constraint cannot be altered in place, so it is dropped and
+	// re-added. addConstraintIfMissing is deliberately not used here: it
+	// only adds a constraint that is absent and will leave an existing,
+	// narrower definition in place, which is exactly the case this
+	// migration has to fix. The original constraint was declared inline
+	// on the column, so PostgreSQL auto-named it
+	// notification_channels_channel_type_check; the widened one is added
+	// under an explicit name so future migrations need not guess. Both
+	// names are dropped IF EXISTS first, which makes the statement
+	// idempotent whichever of the two an install currently carries.
+	//
+	// Widening a CHECK is strictly more permissive: every row that
+	// satisfied the old predicate satisfies the new one. The migration
+	// runs inside a transaction that holds ACCESS EXCLUSIVE on the table
+	// from the first ALTER onwards, so no concurrent session can insert
+	// a row in the window between the DROP and the ADD, and the ADD's
+	// validation scan cannot fail on pre-existing data.
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     14,
+		Description: "Add Telegram notification channel support",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			_, err := tx.Exec(ctx, `
+				ALTER TABLE notification_channels
+					ADD COLUMN IF NOT EXISTS telegram_bot_token_encrypted TEXT;
+
+				ALTER TABLE notification_channels
+					ADD COLUMN IF NOT EXISTS telegram_chat_id TEXT;
+
+				COMMENT ON COLUMN notification_channels.telegram_bot_token_encrypted IS
+					'Telegram Bot API token, encrypted with the server secret. Used to build the sendMessage URL https://api.telegram.org/bot<token>/sendMessage; it is a bearer credential and must never be logged or returned to a client.';
+
+				COMMENT ON COLUMN notification_channels.telegram_chat_id IS
+					'Telegram chat the alerter posts to. Stored as text because the Bot API accepts either a numeric chat ID or an @channelusername.';
+
+				COMMENT ON TABLE notification_channels IS
+					'Notification channels for delivering alerts (Slack, Mattermost, Telegram, webhook, email)';
+
+				ALTER TABLE notification_channels
+					DROP CONSTRAINT IF EXISTS notification_channels_channel_type_check;
+
+				ALTER TABLE notification_channels
+					DROP CONSTRAINT IF EXISTS chk_notification_channels_channel_type;
+
+				ALTER TABLE notification_channels
+					ADD CONSTRAINT chk_notification_channels_channel_type
+					CHECK (channel_type IN ('slack', 'mattermost', 'telegram', 'webhook', 'email'));
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to add Telegram notification channel support: %w", err)
+			}
+
+			return nil
+		},
+	})
+
+	// Migration #15: Add the covering index that the windowed top-queries
+	// aggregation reads. See GitHub issue #387.
+	//
+	// /api/v1/metrics/top-queries now differences the cumulative
+	// pg_stat_statements counters across a requested window, with a LAG
+	// partitioned by the statement identity (queryid, userid, dbid,
+	// toplevel) and ordered by collected_at, after first keeping one copy
+	// per identity and collected_at of a counter the probe sampled through
+	// several databases. Neither existing index offers that order:
+	// idx_pg_stat_statements_conn_time leads with collected_at after the
+	// connection, and both the primary key and idx_pg_stat_statements_object
+	// put database_name ahead of queryid and collected_at ahead of the rest
+	// of the identity. The aggregation therefore had to sort every row in
+	// the window, which on a 30-day window of 1.3 million samples spilled
+	// several hundred megabytes to temporary files.
+	//
+	// The key columns are the connection, then the identity in the order
+	// the window declares it, then collected_at, then database_name, which
+	// is what lets the planner satisfy the whole ORDER BY of the sample scan
+	// from the index: connection_id is an equality, the identity columns
+	// give the partitioning, collected_at gives the ordering within each
+	// partition, and the trailing database_name makes the copy the DISTINCT
+	// ON keeps a stable choice. Because the table is partitioned by
+	// collected_at, the per-partition scans are combined with a Merge
+	// Append, which preserves that order across partitions.
+	//
+	// The INCLUDE list is every counter the aggregation reads. Without it
+	// the scan has to visit the heap for each of those million-odd rows in
+	// index order, which is random access over the whole window and
+	// measured slower than the sort it replaced. The query text is left
+	// out: it is the widest column in the table by a wide margin, and
+	// including it took the index from about 305MB to about 889MB against
+	// a 1756MB table on the test fixture. The server resolves the text
+	// separately, once per row of the page it returns, through
+	// idx_pg_stat_statements_object.
+	//
+	// On that fixture the index took a 30-day page from 11.5 to 5.5
+	// seconds, and cost about 39% on insert time and 56% on WAL volume for
+	// a realistic collector batch.
+	//
+	// A plain CREATE INDEX is used rather than CREATE INDEX CONCURRENTLY,
+	// which cannot run inside a transaction and so cannot be used by this
+	// migration framework at all. Creating an index on a partitioned parent
+	// builds one on every attached partition, so on an installation with a
+	// long retention this takes a while and blocks the collector's inserts
+	// while it runs: about 15 seconds for 2.6 million rows on the test
+	// fixture. IF NOT EXISTS keeps the migration idempotent and makes it a
+	// no-op on installations created after the index joined the
+	// consolidated schema.
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     15,
+		Description: "Add covering index for the windowed top-queries aggregation",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			_, err := tx.Exec(ctx, `
+				CREATE INDEX IF NOT EXISTS idx_pg_stat_statements_identity_time
+					ON metrics.pg_stat_statements(connection_id, queryid, userid, dbid,
+						toplevel, collected_at, database_name)
+					INCLUDE (calls, total_exec_time, rows, shared_blks_hit,
+						shared_blks_read, min_exec_time, max_exec_time);
+
+				COMMENT ON INDEX metrics.idx_pg_stat_statements_identity_time IS
+					'Covers the windowed delta aggregation behind /api/v1/metrics/top-queries. The key columns are the statement identity that pg_stat_statements counters are cumulative within (queryid, userid, dbid, toplevel), then collected_at, then database_name: that is the order the aggregation needs both to keep one copy of a counter sampled through several databases and to LAG over each identity, so it reads the rows already sorted instead of sorting them. The INCLUDE columns are every counter the aggregation reads, which makes the scan index-only; the query text is deliberately excluded because it would roughly triple the size of the index.';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to create idx_pg_stat_statements_identity_time: %w", err)
+			}
+
+			return nil
+		},
+	})
+
+	// Migration #16: Seed the probe_unavailable built-in alert rule. See
+	// GitHub issue #512.
+	//
+	// metric_staleness cannot report a probe that has stopped collecting
+	// because the alerter's staleness evaluator skips probes whose
+	// availability flag is false, and it must: a probe whose extension
+	// will never be installed sits at is_available = FALSE for ever and
+	// would otherwise pin a permanent staleness alert to every such probe
+	// on every connection. The probe an operator actually cares about,
+	// the one that was collecting yesterday and is not collecting today,
+	// was skipped along with those, so nothing reported it at all.
+	//
+	// The new rule reports exactly that transition. Its metric is the
+	// availability flag, which the alerter supplies as 0 for an
+	// unavailable probe and 1 for one that is collecting, so the seeded
+	// "< 1" is violated for as long as the probe stays unavailable;
+	// metric_unit is NULL because the value is a flag rather than a
+	// quantity, matching replication_slot_inactive and the other boolean
+	// rules. required_extension is NULL because the rule applies to every
+	// probe on every deployment.
+	//
+	// ON CONFLICT (name) DO NOTHING preserves an operator's edits on an
+	// installation that already carries a rule of this name, in the same
+	// way as the seeds in migrations #1 and #3.
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     16,
+		Description: "Seed the probe_unavailable built-in alert rule",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			_, err := tx.Exec(ctx, `
+				INSERT INTO alert_rules (name, description, category, metric_name, metric_unit, default_operator, default_threshold, default_severity, default_enabled, required_extension, is_built_in)
+				VALUES
+					('probe_unavailable', 'A probe that was collecting has stopped being available; metric collection for it has stopped', 'availability', 'probe_available', NULL, '<', 1, 'warning', TRUE, NULL, TRUE)
+				ON CONFLICT (name) DO NOTHING;
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to seed the probe_unavailable alert rule: %w", err)
+			}
+
+			return nil
+		},
+	})
+
+	// Migration #17: make connections.description NOT NULL.
+	//
+	// The column was declared TEXT DEFAULT '' but left nullable, and
+	// the server's INSERT names the column explicitly, so a connection
+	// created without a description stored NULL rather than the
+	// default. The server scans the column into a plain string, so one
+	// such row made every connection list request fail for every user
+	// (GitHub issue #540). The server now writes '' and reads NULL as
+	// '', but existing rows are backfilled here and the constraint is
+	// added so that no other writer can reintroduce a NULL.
+	//
+	// Every statement is idempotent: the UPDATE touches only NULL rows,
+	// and re-applying SET NOT NULL or SET DEFAULT is a no-op. The table
+	// is locked before the backfill so that an older server still
+	// running cannot insert a NULL between the UPDATE and SET NOT NULL
+	// and fail the migration; the connections table holds one row per
+	// monitored server, so the lock is held only briefly.
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     17,
+		Description: "Backfill and require connections.description",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			_, err := tx.Exec(ctx, `
+				LOCK TABLE connections IN ACCESS EXCLUSIVE MODE;
+
+				UPDATE connections SET description = '' WHERE description IS NULL;
+
+				ALTER TABLE connections
+					ALTER COLUMN description SET DEFAULT '',
+					ALTER COLUMN description SET NOT NULL;
+
+				COMMENT ON COLUMN connections.description IS
+					'User-provided description; the empty string when none was given';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to make connections.description NOT NULL: %w", err)
+			}
+
+			return nil
+		},
+	})
+
+	// Migration #18: Record what the alerter's last "keep" re-evaluation
+	// of an acknowledged anomaly alert was based on. See GitHub issue
+	// #575.
+	//
+	// The alerter sent each acknowledged anomaly alert back to the LLM
+	// every time it fell due, although the prompt's inputs rarely change
+	// between runs, so most of those paid calls repeated a question that
+	// had already been answered. It now stores a hash of the prompt
+	// inputs when the LLM answers "keep", and skips the call while the
+	// hash is unchanged. NULL means there is no answer to reuse, which is
+	// the right state for every existing alert, so no backfill is needed.
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     18,
+		Description: "Add reevaluation_fingerprint column to alerts",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			_, err := tx.Exec(ctx, `
+				ALTER TABLE alerts
+					ADD COLUMN IF NOT EXISTS reevaluation_fingerprint TEXT;
+
+				COMMENT ON COLUMN alerts.reevaluation_fingerprint IS
+					'Hex SHA-256 of the prompt inputs behind the last LLM re-evaluation of this acknowledged anomaly alert that answered keep: the alert details, its acknowledgement, past acknowledgements of the metric, the other alerts on the server and the cluster context, but not the re-evaluation count. The alerter skips the LLM call while the hash is unchanged. NULL when there is no answer to reuse, including after a failed call or one made without the full context, so the alert goes to the LLM again when next due.';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to add alerts.reevaluation_fingerprint: %w", err)
+			}
+
+			return nil
+		},
+	})
+
+	// Migration #19: Allow system alerts that belong to no monitored
+	// connection. See GitHub issue #582.
+	//
+	// The alerter raises a 'system' alert when an embedding or reasoning
+	// provider keeps failing, because anomaly detection then degrades
+	// silently. Such an alert concerns the alerter itself rather than a
+	// monitored server, so connection_id becomes nullable, NULL exactly
+	// when alert_type is 'system'. The foreign key and its ON DELETE
+	// CASCADE are kept for every other alert.
+	//
+	// The original alert_type CHECK was declared inline and so carries a
+	// generated name; the DO block drops every single-column CHECK on
+	// alert_type whatever it is called, and a named one replaces it. The
+	// partial unique index is the database-side guarantee that at most
+	// one open system alert exists per tier and provider, whose key the
+	// alerter stores in metric_name. Every statement is idempotent.
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     19,
+		Description: "Allow system alerts with no connection",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			_, err := tx.Exec(ctx, `
+				DO $$
+				DECLARE
+					con RECORD;
+				BEGIN
+					FOR con IN
+						SELECT c.conname
+						FROM pg_constraint c
+						JOIN pg_attribute a
+						  ON a.attrelid = c.conrelid
+						 AND a.attnum = ANY (c.conkey)
+						WHERE c.conrelid = 'alerts'::regclass
+						  AND c.contype = 'c'
+						  AND a.attname = 'alert_type'
+						  AND cardinality(c.conkey) = 1
+					LOOP
+						EXECUTE format('ALTER TABLE alerts DROP CONSTRAINT %I', con.conname);
+					END LOOP;
+				END
+				$$;
+
+				ALTER TABLE alerts
+					ADD CONSTRAINT alerts_alert_type_check
+					CHECK (alert_type IN ('threshold', 'anomaly', 'connection', 'system'));
+
+				ALTER TABLE alerts ALTER COLUMN connection_id DROP NOT NULL;
+
+				ALTER TABLE alerts DROP CONSTRAINT IF EXISTS alerts_system_connection_check;
+				ALTER TABLE alerts
+					ADD CONSTRAINT alerts_system_connection_check
+					CHECK ((alert_type = 'system') = (connection_id IS NULL));
+
+				CREATE UNIQUE INDEX IF NOT EXISTS idx_alerts_system_open
+					ON alerts(metric_name)
+					WHERE alert_type = 'system' AND status <> 'cleared';
+
+				COMMENT ON TABLE alerts IS
+					'Active and historical alerts from threshold, anomaly and connection detection, plus system alerts about the alerter itself';
+				COMMENT ON COLUMN alerts.alert_type IS
+					'threshold, anomaly or connection for alerts about a monitored server; system for alerts about the alerter itself, such as a failing LLM provider';
+				COMMENT ON COLUMN alerts.connection_id IS
+					'Monitored connection the alert concerns; NULL exactly when alert_type is system';
+				COMMENT ON INDEX idx_alerts_system_open IS
+					'At most one open (active or acknowledged) system alert per key, which the alerter stores in metric_name';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to allow system alerts in alerts: %w", err)
+			}
+
+			return nil
+		},
+	})
+
+	// Migration #20: Index anomaly_candidates for the alerter's batched
+	// retention delete, and drop a duplicate anomaly_embeddings index.
+	// See GitHub issue #615.
+	//
+	// The alerter now deletes aged candidates a batch at a time, oldest
+	// first by processed_at; idx_anomaly_candidates_processed lets each
+	// batch start from the oldest row instead of scanning the table.
+	//
+	// Each candidate deleted cascades into anomaly_embeddings, and each
+	// embedding deleted fires the ON DELETE SET NULL action of
+	// fk_anomaly_candidates_embedding, which looks up anomaly_candidates
+	// by embedding_id. Likewise each alert the retention sweep deletes
+	// looks up anomaly_candidates by alert_id. Neither column was
+	// indexed, so every one of those lookups was a sequential scan of
+	// anomaly_candidates. Both indexes are partial on IS NOT NULL: the
+	// lookups compare with =, which implies it, and most candidates
+	// never have an alert.
+	//
+	// idx_anomaly_embeddings_candidate duplicated the index behind
+	// UNIQUE(candidate_id), anomaly_embeddings_candidate_id_key, and was
+	// pure write and vacuum overhead on a table that can run to tens of
+	// gigabytes. The table exists only where pgvector is installed,
+	// hence IF EXISTS. The drop comes last because it takes an ACCESS
+	// EXCLUSIVE lock on anomaly_embeddings that is held until the
+	// migration commits, so running it first would block every reader
+	// of that table whilst the indexes above build.
+	//
+	// Plain CREATE INDEX is used, as in migration #4, because CREATE
+	// INDEX CONCURRENTLY cannot run inside the migration transaction; it
+	// blocks writes to anomaly_candidates only whilst the indexes build.
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     20,
+		Description: "Index anomaly_candidates for batched retention and drop duplicate anomaly_embeddings index",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			_, err := tx.Exec(ctx, `
+				CREATE INDEX IF NOT EXISTS idx_anomaly_candidates_processed
+					ON anomaly_candidates (processed_at)
+					WHERE processed_at IS NOT NULL;
+				CREATE INDEX IF NOT EXISTS idx_anomaly_candidates_embedding
+					ON anomaly_candidates (embedding_id)
+					WHERE embedding_id IS NOT NULL;
+				CREATE INDEX IF NOT EXISTS idx_anomaly_candidates_alert
+					ON anomaly_candidates (alert_id)
+					WHERE alert_id IS NOT NULL;
+
+				COMMENT ON INDEX idx_anomaly_candidates_processed IS
+					'Serves the alerter retention sweep, which deletes processed candidates in batches, oldest processed_at first';
+				COMMENT ON INDEX idx_anomaly_candidates_embedding IS
+					'Serves the ON DELETE SET NULL lookup of fk_anomaly_candidates_embedding when anomaly_embeddings rows are deleted';
+				COMMENT ON INDEX idx_anomaly_candidates_alert IS
+					'Serves the ON DELETE SET NULL lookup of the alert_id foreign key when alerts are deleted';
+
+				DROP INDEX IF EXISTS public.idx_anomaly_embeddings_candidate;
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to index anomaly_candidates for retention: %w", err)
+			}
+
+			return nil
+		},
+	})
+
+	// Migration #21 retunes four built-in alert rules that fired on
+	// conditions nobody could act on. See GitHub issue #616.
+	//
+	// The alerter's metric queries gained gates in the same change:
+	// cache_hit_ratio only reports intervals reading at least 100 blocks
+	// per second, dead_tuple_percent only tables with at least 10000 dead
+	// tuples, table_last_autovacuum_hours only tables past their trigger
+	// for 30 minutes, and checkpoints_req_delta skips servers in recovery.
+	// Two rules also get new defaults: cache_hit_ratio_low drops from a
+	// warning below 80 percent to information below 50, and
+	// dead_tuple_ratio rises from 20 percent, which is autovacuum's own
+	// default trigger, to 50.
+	//
+	// Each default is rewritten only while it still holds the old shipped
+	// value, column by column, so a threshold or severity an operator has
+	// tuned through the API survives, and a tuned threshold does not stop
+	// the severity from moving. alert_thresholds rows are per-scope
+	// operator overrides and are left alone. Descriptions are not
+	// editable through the API, so they are rewritten unconditionally to
+	// state the new gates. Fresh installs get the same values from the
+	// seed in migration #1, which makes this migration a no-op there.
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     21,
+		Description: "Retune cache hit, dead tuple, autovacuum and checkpoint alert rule defaults",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			_, err := tx.Exec(ctx, `
+				UPDATE alert_rules
+				SET default_threshold = 50
+				WHERE name = 'cache_hit_ratio_low'
+				  AND is_built_in
+				  AND default_threshold = 80;
+
+				UPDATE alert_rules
+				SET default_severity = 'info'
+				WHERE name = 'cache_hit_ratio_low'
+				  AND is_built_in
+				  AND default_severity = 'warning';
+
+				UPDATE alert_rules
+				SET default_threshold = 50
+				WHERE name = 'dead_tuple_ratio'
+				  AND is_built_in
+				  AND default_threshold = 20;
+
+				UPDATE alert_rules
+				SET description = 'Buffer cache hit ratio below threshold in a database reading at least 100 blocks per second from outside shared buffers'
+				WHERE name = 'cache_hit_ratio_low'
+				  AND is_built_in;
+
+				UPDATE alert_rules
+				SET description = 'Dead tuple ratio too high on a table with at least 10000 dead tuples'
+				WHERE name = 'dead_tuple_ratio'
+				  AND is_built_in;
+
+				UPDATE alert_rules
+				SET description = 'Table has had dead tuples over its autovacuum threshold in every sample for at least 30 minutes but has not been vacuumed; indicates autovacuum may be blocked or unable to keep up'
+				WHERE name = 'autovacuum_not_running'
+				  AND is_built_in;
+
+				UPDATE alert_rules
+				SET description = 'Requested checkpoints in the last hour exceed the threshold on a server that is not in recovery; frequent requested checkpoints usually mean max_wal_size is too small'
+				WHERE name = 'checkpoint_warning'
+				  AND is_built_in;
+
+				COMMENT ON COLUMN alert_rules.default_threshold IS
+					'Threshold the rule fires against wherever no alert_thresholds row overrides it; built-in defaults are only changed by migrations while they still hold the previous shipped value';
+				COMMENT ON COLUMN alert_rules.default_severity IS
+					'Severity (info, warning or critical) of alerts the rule raises wherever no alert_thresholds row overrides it';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to retune built-in alert rule defaults: %w", err)
+			}
+
+			return nil
+		},
+	})
+
+	// Migration #22 records which kind of model produced each Tier 3
+	// verdict. The alerter can now classify candidates with a decision
+	// model, falling back to the reasoning model when the decision model
+	// fails, so tier3_result alone no longer says where a verdict came
+	// from. See GitHub issue #626.
+	//
+	// Both columns are nullable and added without a default, which is a
+	// metadata-only change; rows classified before the upgrade, and
+	// rows Tier 3 has not reached, keep NULL. The tier3_source CHECK is
+	// added NOT VALID and validated by migration 23.
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     22,
+		Description: "Record the source and model of Tier 3 anomaly classifications",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			_, err := tx.Exec(ctx, `
+				ALTER TABLE anomaly_candidates
+					ADD COLUMN IF NOT EXISTS tier3_source TEXT,
+					ADD COLUMN IF NOT EXISTS tier3_model TEXT;
+
+				COMMENT ON COLUMN anomaly_candidates.tier3_source IS
+					'Kind of model whose outcome set tier3_pass: decision for a decision model, reasoning for the reasoning model; when classification failed and the candidate was raised by default, the last kind tried. NULL if Tier 3 has not classified the candidate';
+				COMMENT ON COLUMN anomaly_candidates.tier3_model IS
+					'Provider and model, as provider/model, that tier3_source names';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to add Tier 3 source columns to anomaly_candidates: %w", err)
+			}
+
+			// A CHECK added in the same statement as its column makes
+			// PostgreSQL scan the whole table under the ACCESS EXCLUSIVE
+			// lock that ADD COLUMN takes, and that lock is held until
+			// the migration commits. Adding it NOT VALID skips the scan
+			// whilst still checking every new row; migration 23
+			// validates it in its own transaction, which needs only a
+			// SHARE UPDATE EXCLUSIVE lock and so does not block writers.
+			return addConstraintIfMissing(ctx, tx,
+				"anomaly_candidates",
+				"anomaly_candidates_tier3_source_check",
+				"CHECK (tier3_source IN ('decision', 'reasoning')) NOT VALID")
+		},
+	})
+
+	// Migration 23: Validate the tier3_source CHECK that migration 22
+	// added NOT VALID. It runs in a transaction of its own so that the
+	// scan holds only a SHARE UPDATE EXCLUSIVE lock, under which the
+	// alerter can keep writing Tier 3 verdicts. Validating a constraint
+	// that is already valid does nothing, so a re-run is harmless.
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     23,
+		Description: "Validate the Tier 3 source check on anomaly_candidates",
+		Up: func(tx pgx.Tx) error {
+			_, err := tx.Exec(context.Background(), `
+				ALTER TABLE anomaly_candidates
+					VALIDATE CONSTRAINT anomaly_candidates_tier3_source_check;
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to validate the Tier 3 source check on anomaly_candidates: %w", err)
+			}
+			return nil
+		},
+	})
 }
 
 // Migrate applies all pending migrations
@@ -3225,7 +3930,7 @@ func (sm *SchemaManager) Migrate(conn *pgxpool.Conn) error {
 
 		// Apply the migration
 		if err := migration.Up(tx); err != nil {
-			if rbErr := tx.Rollback(ctx); rbErr != nil {
+			if rbErr := rollback.Tx(ctx, tx); rbErr != nil {
 				logger.Errorf("Failed to rollback transaction: %v", rbErr)
 			}
 			return fmt.Errorf("failed to apply migration %d: %w", migration.Version, err)
@@ -3238,7 +3943,7 @@ func (sm *SchemaManager) Migrate(conn *pgxpool.Conn) error {
             ON CONFLICT (version) DO NOTHING
         `, migration.Version, migration.Description)
 		if err != nil {
-			if rbErr := tx.Rollback(ctx); rbErr != nil {
+			if rbErr := rollback.Tx(ctx, tx); rbErr != nil {
 				logger.Errorf("Failed to rollback transaction: %v", rbErr)
 			}
 			return fmt.Errorf("failed to record migration %d: %w", migration.Version, err)
@@ -3347,8 +4052,7 @@ func runSavepointed(
 	}
 
 	if bodyErr := body(); bodyErr != nil {
-		if _, rbErr := tx.Exec(ctx,
-			"ROLLBACK TO SAVEPOINT "+name); rbErr != nil {
+		if rbErr := rollback.ToSavepoint(ctx, tx, name); rbErr != nil {
 			return errors.Join(
 				fmt.Errorf("savepoint %s body failed: %w", name, bodyErr),
 				fmt.Errorf("rollback to %s failed: %w", name, rbErr),
@@ -3392,11 +4096,14 @@ func runSavepointed(
 func runPgVectorSetup(ctx context.Context, tx pgx.Tx) error {
 	return runSavepointed(ctx, tx, "pgvector_setup", func() error {
 		// CREATE EXTENSION IF NOT EXISTS, CREATE TABLE IF NOT
-		// EXISTS, the comment, and both indexes are issued in a
+		// EXISTS, the comment, and the HNSW index are issued in a
 		// single Exec so failures roll back atomically inside the
 		// SAVEPOINT. The error from any one of them propagates
 		// unchanged; the SAVEPOINT wrapper records the failure and
-		// the caller logs at Info level.
+		// the caller logs at Info level. candidate_id needs no index
+		// of its own: UNIQUE(candidate_id) already creates one, and
+		// migration #20 drops the duplicate that older installs
+		// were given (GitHub issue #615).
 		if _, err := tx.Exec(ctx, `
 			CREATE EXTENSION IF NOT EXISTS vector;
 
@@ -3412,8 +4119,6 @@ func runPgVectorSetup(ctx context.Context, tx pgx.Tx) error {
 			COMMENT ON TABLE public.anomaly_embeddings IS
 				'Embeddings for anomaly candidates used in Tier 2 similarity matching';
 
-			CREATE INDEX IF NOT EXISTS idx_anomaly_embeddings_candidate
-				ON public.anomaly_embeddings(candidate_id);
 			CREATE INDEX IF NOT EXISTS idx_anomaly_embeddings_vector
 				ON public.anomaly_embeddings USING hnsw (embedding halfvec_cosine_ops);
 		`); err != nil {

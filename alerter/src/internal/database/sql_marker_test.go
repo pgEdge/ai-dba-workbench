@@ -17,7 +17,6 @@ package database
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -169,13 +168,7 @@ func TestMetricRegistrySQLIsTaggable(t *testing.T) {
 func markerTestDatastore(t *testing.T) *Datastore {
 	t.Helper()
 
-	if os.Getenv("SKIP_DB_TESTS") != "" {
-		t.Skip("Skipping database test (SKIP_DB_TESTS is set)")
-	}
-	connStr := os.Getenv("TEST_AI_WORKBENCH_SERVER")
-	if connStr == "" {
-		t.Skip("TEST_AI_WORKBENCH_SERVER not set; skipping")
-	}
+	connStr := requireLocalTestDSN(t, "the SQL marker integration test")
 
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, connStr)
@@ -411,6 +404,43 @@ func TestMetricScanHelpers(t *testing.T) {
 			t.Error("expected a scan error for mistyped columns")
 		}
 	})
+
+	t.Run("queryHistoricalMetricValuesWithSamples", func(t *testing.T) {
+		got, err := ds.queryHistoricalMetricValuesWithSamples(ctx,
+			"SELECT 7::int, 'appdb'::text, 1.5::float8, now(), 3::bigint "+
+				"WHERE $1::int > 0", 7, true)
+		if err != nil {
+			t.Fatalf("error = %v", err)
+		}
+		if len(got) != 1 || got[0].DatabaseName == nil ||
+			*got[0].DatabaseName != "appdb" || got[0].SampleCount != 3 {
+			t.Fatalf("unexpected result: %+v", got)
+		}
+
+		noDB := "SELECT 7::int, NULL::text, 1.5::float8, now(), 3::bigint " +
+			"WHERE $1::int > 0"
+		got, err = ds.queryHistoricalMetricValuesWithSamples(ctx, noDB, 7, false)
+		if err != nil {
+			t.Fatalf("error = %v", err)
+		}
+		if len(got) != 1 || got[0].DatabaseName != nil {
+			t.Fatalf("unexpected result: %+v", got)
+		}
+		if _, err := ds.queryHistoricalMetricValuesWithSamples(
+			ctx, noDB, 7, true); err == nil {
+			t.Error("expected an error for a per-database row with no database")
+		}
+
+		if _, err := ds.queryHistoricalMetricValuesWithSamples(
+			ctx, "SELECT nonsense($1", 7, false); err == nil {
+			t.Error("expected a query error for invalid SQL")
+		}
+		if _, err := ds.queryHistoricalMetricValuesWithSamples(ctx,
+			"SELECT 'x'::text, 'y'::text, 'z'::text, 'w'::text, 'v'::text "+
+				"WHERE $1::int > 0", 7, false); err == nil {
+			t.Error("expected a scan error for mistyped columns")
+		}
+	})
 }
 
 // TestGetClusterPeers_ScanError covers the scan-error branch of
@@ -427,7 +457,7 @@ func TestGetClusterPeers_ScanError(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	connStr := os.Getenv("TEST_AI_WORKBENCH_SERVER")
+	connStr := requireLocalTestDSN(t, "the cluster peers scan error test")
 	schema := fmt.Sprintf("marker_scan_%d", time.Now().UnixNano())
 	schemaIdent := pgx.Identifier{schema}.Sanitize()
 

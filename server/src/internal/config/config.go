@@ -69,7 +69,11 @@ type BuiltinsConfig struct {
 
 // ToolsConfig holds configuration for enabling/disabling built-in tools
 // All tools are enabled by default
-// Note: read_resource tool is always enabled as it's used to list resources
+// Note: the read_resource tool is always enabled as it's used to list
+// resources, and test_query is always enabled because it only validates
+// SQL without returning data and the chat assistant is instructed to
+// validate every statement through it before showing it to the user;
+// neither has a field here.
 type ToolsConfig struct {
 	QueryDatabase       *bool `yaml:"query_database"`       // Execute SQL queries (default: true)
 	GetSchemaInfo       *bool `yaml:"get_schema_info"`      // Get detailed schema information (default: true)
@@ -84,8 +88,10 @@ type ToolsConfig struct {
 	ListConnections     *bool `yaml:"list_connections"`     // List available connections (default: true)
 	GetAlertHistory     *bool `yaml:"get_alert_history"`    // Query historic alerts (default: true)
 	GetAlertRules       *bool `yaml:"get_alert_rules"`      // Query alert rules and thresholds (default: true)
+	GetBlackouts        *bool `yaml:"get_blackouts"`        // Query alert blackout windows and schedules (default: true)
 	GetMetricBaselines  *bool `yaml:"get_metric_baselines"` // Query metric baselines for anomaly context (default: true)
-	QueryDatastore      *bool `yaml:"query_datastore"`      // Execute read-only SQL against the datastore (default: true)
+	QueryDatastore      *bool `yaml:"query_datastore"`      // Structured, connection-scoped datastore queries (default: true)
+	DescribeDatastore   *bool `yaml:"describe_datastore"`   // List and describe query_datastore sources (default: true)
 	GetTimelineEvents   *bool `yaml:"get_timeline_events"`  // Query the incident-investigation timeline (default: true)
 	StoreMemory         *bool `yaml:"store_memory"`         // Store chat memories for future recall (default: true)
 	RecallMemories      *bool `yaml:"recall_memories"`      // Recall stored chat memories by similarity (default: true)
@@ -122,6 +128,11 @@ func (c *ToolsConfig) IsToolEnabled(toolName string) bool {
 		return c.SearchKnowledgebase == nil || *c.SearchKnowledgebase
 	case "count_rows":
 		return c.CountRows == nil || *c.CountRows
+	case "test_query":
+		// Always enabled: it only validates SQL and never returns data, and
+		// the chat assistant validates every statement through it, so
+		// disabling it would leave the assistant calling an unregistered tool.
+		return true
 	case "list_probes":
 		return c.ListProbes == nil || *c.ListProbes
 	case "describe_probe":
@@ -134,10 +145,14 @@ func (c *ToolsConfig) IsToolEnabled(toolName string) bool {
 		return c.GetAlertHistory == nil || *c.GetAlertHistory
 	case "get_alert_rules":
 		return c.GetAlertRules == nil || *c.GetAlertRules
+	case "get_blackouts":
+		return c.GetBlackouts == nil || *c.GetBlackouts
 	case "get_metric_baselines":
 		return c.GetMetricBaselines == nil || *c.GetMetricBaselines
 	case "query_datastore":
 		return c.QueryDatastore == nil || *c.QueryDatastore
+	case "describe_datastore":
+		return c.DescribeDatastore == nil || *c.DescribeDatastore
 	case "get_timeline_events":
 		return c.GetTimelineEvents == nil || *c.GetTimelineEvents
 	case "store_memory":
@@ -182,10 +197,195 @@ type HTTPConfig struct {
 
 // AuthConfig holds authentication settings
 type AuthConfig struct {
-	MaxUserTokenDays               int `yaml:"max_user_token_days"`                // Maximum lifetime for user-created tokens in days (0 = unlimited)
-	MaxFailedAttemptsBeforeLockout int `yaml:"max_failed_attempts_before_lockout"` // Number of failed login attempts before account lockout (0 = disabled)
-	RateLimitWindowMinutes         int `yaml:"rate_limit_window_minutes"`          // Time window in minutes for rate limiting (default: 15)
-	RateLimitMaxAttempts           int `yaml:"rate_limit_max_attempts"`            // Maximum failed attempts per IP in the time window (default: 10)
+	MaxUserTokenDays       int `yaml:"max_user_token_days"`       // Maximum lifetime for user-created tokens in days (0 = unlimited)
+	RateLimitWindowMinutes int `yaml:"rate_limit_window_minutes"` // Time window in minutes for rate limiting (default: 15)
+	RateLimitMaxAttempts   int `yaml:"rate_limit_max_attempts"`   // Maximum failed attempts per IP in the time window (default: 10)
+
+	// AuditRetentionDaysPtr is the raw configured value for how many
+	// days of RBAC audit events to keep; nil means the setting was
+	// omitted from both the config file and the environment. An
+	// explicit 0 disables the purge and keeps audit events forever.
+	// Use AuditRetentionDays() to read the effective value, which
+	// applies the 90-day default when this is nil.
+	AuditRetentionDaysPtr *int `yaml:"audit_retention_days"`
+
+	// MaxFailedAttemptsBeforeLockoutPtr is the raw configured number of
+	// failed login attempts before an account is locked out; nil means
+	// the setting was omitted from the config file. An explicit 0
+	// disables account lockout altogether, and a negative value falls
+	// back to the default. Use MaxFailedAttemptsBeforeLockout() to read
+	// the effective value, which applies the default of 10 when this is
+	// nil or negative.
+	MaxFailedAttemptsBeforeLockoutPtr *int `yaml:"max_failed_attempts_before_lockout"`
+
+	// Local holds settings for local username/password authentication.
+	Local LocalAuthConfig `yaml:"local"`
+
+	// OIDC holds settings for OpenID Connect federated login.
+	OIDC OIDCConfig `yaml:"oidc"`
+}
+
+// LocalAuthConfig holds settings for local username/password authentication.
+type LocalAuthConfig struct {
+	// Enabled is a pointer so that an explicit "false" in the configuration
+	// file overrides the default of true; mergeConfig cannot distinguish an
+	// explicit false from an unset field, and a plain bool would make it
+	// impossible to turn local login off. A nil pointer means "not set in
+	// this config source"; read the effective value via
+	// AuthConfig.LocalEnabled rather than this field directly.
+	Enabled *bool `yaml:"enabled" json:"enabled"`
+}
+
+// OIDCStartPath and OIDCCallbackPath are the two HTTP endpoints of a
+// federated login. They live here, rather than beside the handlers in
+// internal/api, because validation has to check redirect_url against the
+// callback path and internal/api already imports this package; the
+// handlers refer to these constants rather than spelling the paths
+// again.
+const (
+	OIDCStartPath    = "/api/v1/auth/oidc/start"
+	OIDCCallbackPath = "/api/v1/auth/oidc/callback"
+)
+
+// OIDCConfig holds settings for OpenID Connect federated login. Every
+// field except the two noted below is safe to hand to a handler that
+// reports login-page state (e.g. "is OIDC on, what does the button say")
+// via json.Marshal; the explicit json tags below are deliberate so that a
+// later task can serialize this struct (or an embedding AuthConfig)
+// directly instead of hand-building a DTO and forgetting a field.
+type OIDCConfig struct {
+	// Enabled is a pointer for the same reason Local.Enabled and
+	// ProvisionUsers are: mergeConfig cannot tell an explicit "false"
+	// from an unset field, so a plain bool could be switched on by one
+	// configuration source and never switched off again by a later one.
+	// A nil pointer means "not set in this config source"; read the
+	// effective value through OIDCConfig.IsEnabled rather than this
+	// field.
+	Enabled  *bool  `yaml:"enabled" json:"enabled"`
+	Issuer   string `yaml:"issuer" json:"issuer"`
+	ClientID string `yaml:"client_id" json:"client_id"`
+
+	// ClientSecret holds a client secret supplied inline in the
+	// configuration file. It may legitimately round-trip if the config is
+	// ever marshaled again, the same way DatabaseConfig.Password does: the
+	// operator already chose to put the plaintext value in a file on disk.
+	// A secret resolved from ClientSecretFile is NOT stored here; see
+	// resolvedClientSecret and EffectiveClientSecret. json:"-" on both
+	// fields below is required, not just yaml:"-" on the resolved one:
+	// without it, json.Marshal of this struct (or of the embedding
+	// AuthConfig) would emit an inline secret in plaintext to any
+	// consumer, such as a future handler that reports auth state to the
+	// login page. DatabaseConfig.Password is tagged json:"-" for the
+	// same reason.
+	ClientSecret     string `yaml:"client_secret" json:"-"`
+	ClientSecretFile string `yaml:"client_secret_file" json:"-"`
+
+	// resolvedClientSecret holds a secret read from ClientSecretFile. It
+	// is deliberately unexported and tagged yaml:"-" / json:"-", mirroring
+	// DatabaseConfig.resolvedPassword, so that a file-sourced secret never
+	// round-trips into a serialized config; writing it inline would defeat
+	// the purpose of client_secret_file. Read the effective secret via
+	// EffectiveClientSecret.
+	resolvedClientSecret string `yaml:"-" json:"-"`
+
+	RedirectURL      string   `yaml:"redirect_url" json:"redirect_url"`
+	Scopes           []string `yaml:"scopes" json:"scopes"`
+	UsernameClaim    string   `yaml:"username_claim" json:"username_claim"`
+	DisplayNameClaim string   `yaml:"display_name_claim" json:"display_name_claim"`
+	GroupsClaim      string   `yaml:"groups_claim" json:"groups_claim"`
+	ButtonLabel      string   `yaml:"button_label" json:"button_label"`
+	// ProvisionUsers is a pointer for the same reason Local.Enabled is:
+	// mergeConfig cannot tell an explicit "false" from an unset field,
+	// so a plain bool could be switched on by one configuration source
+	// and never switched off again by a later one. It is the most
+	// consequential OIDC setting an operator has, since it decides
+	// whether an unknown identity gets an account, so one that silently
+	// ignores being turned off is not acceptable. A nil pointer means
+	// "not set in this config source"; read the effective value through
+	// OIDCConfig.ProvisionUsersEnabled rather than this field.
+	ProvisionUsers      *bool             `yaml:"provision_users" json:"provision_users"`
+	AllowedEmailDomains []string          `yaml:"allowed_email_domains" json:"allowed_email_domains"`
+	SuperuserGroup      string            `yaml:"superuser_group" json:"superuser_group"`
+	GroupMap            map[string]string `yaml:"group_map" json:"group_map"`
+
+	// AllowUnprefixedStateCookie acknowledges that, behind a
+	// TLS-terminating reverse proxy with no http.trusted_proxies, the
+	// login state cookie cannot use the "__Host-" name prefix, and so a
+	// sibling subdomain able to set cookies can plant its own login state
+	// and log a victim in as the attacker (login CSRF). Validation refuses
+	// that configuration unless this is true; see
+	// validateOIDCStateCookiePrefix. It is a pointer for the same reason
+	// ProvisionUsers is; read it through UnprefixedStateCookieAllowed.
+	AllowUnprefixedStateCookie *bool `yaml:"allow_unprefixed_state_cookie" json:"allow_unprefixed_state_cookie"`
+}
+
+// EffectiveClientSecret returns the OIDC client secret to use. An inline
+// ClientSecret takes precedence; otherwise the value resolved from
+// ClientSecretFile (by loadAPIKeysFromFiles) is returned. The result is
+// empty when no client secret was configured at all.
+func (o OIDCConfig) EffectiveClientSecret() string {
+	if o.ClientSecret != "" {
+		return o.ClientSecret
+	}
+	return o.resolvedClientSecret
+}
+
+// IsEnabled returns the effective value of Enabled, defaulting to false
+// when the pointer is nil (omitted from every config source): federated
+// login is opt-in.
+func (o OIDCConfig) IsEnabled() bool {
+	return o.Enabled != nil && *o.Enabled
+}
+
+// ProvisionUsersEnabled returns the effective value of ProvisionUsers,
+// defaulting to false when the pointer is nil (omitted from every config
+// source). False is the safe default: an operator who has said nothing
+// about provisioning has not asked the Workbench to create accounts for
+// identities it has never seen.
+func (o OIDCConfig) ProvisionUsersEnabled() bool {
+	return o.ProvisionUsers != nil && *o.ProvisionUsers
+}
+
+// UnprefixedStateCookieAllowed returns the effective value of
+// AllowUnprefixedStateCookie, defaulting to false when the pointer is
+// nil: an operator who has said nothing has not accepted the login CSRF
+// exposure the setting acknowledges.
+func (o OIDCConfig) UnprefixedStateCookieAllowed() bool {
+	return o.AllowUnprefixedStateCookie != nil && *o.AllowUnprefixedStateCookie
+}
+
+// LocalEnabled returns the effective value of Local.Enabled, defaulting to
+// true when the pointer is nil (omitted from every config source) so that
+// local username/password login remains available unless an operator
+// explicitly disables it.
+func (a AuthConfig) LocalEnabled() bool {
+	if a.Local.Enabled == nil {
+		return true
+	}
+	return *a.Local.Enabled
+}
+
+// AuditRetentionDays returns the effective number of days to keep
+// RBAC audit events, defaulting to 90 when the setting was not
+// configured or was given a negative value, which no retention period
+// can mean. An explicit 0 means audit events are kept forever.
+func (a AuthConfig) AuditRetentionDays() int {
+	if a.AuditRetentionDaysPtr == nil || *a.AuditRetentionDaysPtr < 0 {
+		return 90
+	}
+	return *a.AuditRetentionDaysPtr
+}
+
+// MaxFailedAttemptsBeforeLockout returns the effective number of
+// failed login attempts before an account is locked out, defaulting to
+// 10 when the setting was not configured or was given a negative
+// value, which no attempt count can mean. An explicit 0 disables
+// account lockout.
+func (a AuthConfig) MaxFailedAttemptsBeforeLockout() int {
+	if a.MaxFailedAttemptsBeforeLockoutPtr == nil || *a.MaxFailedAttemptsBeforeLockoutPtr < 0 {
+		return 10
+	}
+	return *a.MaxFailedAttemptsBeforeLockoutPtr
 }
 
 // TLSConfig holds TLS/HTTPS settings
@@ -196,13 +396,30 @@ type TLSConfig struct {
 	ChainFile string `yaml:"chain_file"`
 }
 
+// DefaultPoolMaxConns is the size of the server's datastore pool when
+// pool_max_conns is not set. Every API endpoint that reads the datastore
+// draws from this one pool, and a single server dashboard page load
+// issues more than twenty metrics requests at once, so the previous
+// default of four queued a page behind itself and let a few slow requests
+// starve the whole API (issue #478). Twenty lets one dashboard load run
+// largely in parallel with room for a second user, whilst keeping the
+// server, the collector (25 by default) and the alerter (10 by default)
+// to 55 of the 97 connections that PostgreSQL's default max_connections
+// of 100 leaves once superuser_reserved_connections is taken out.
+const DefaultPoolMaxConns = 20
+
 // DatabaseConfig holds database connection settings
 type DatabaseConfig struct {
-	Host         string `yaml:"host"`          // Database host (default: localhost)
-	Port         int    `yaml:"port"`          // Database port (default: 5432)
-	Database     string `yaml:"database"`      // Database name (default: postgres)
-	User         string `yaml:"user"`          // Database user (required)
-	Password     string `yaml:"password"`      // Database password (optional; falls back to password_file then pgx .pgpass when unset)
+	Host     string `yaml:"host"`     // Database host (default: localhost)
+	Port     int    `yaml:"port"`     // Database port (default: 5432)
+	Database string `yaml:"database"` // Database name (default: postgres)
+	User     string `yaml:"user"`     // Database user (required)
+	// Password is the database password (optional; falls back to
+	// password_file then pgx .pgpass when unset). It may hold an inline
+	// YAML value or one applied from -db-password or -db-password-file,
+	// so it is tagged json:"-" to keep it out of any JSON-serialized
+	// configuration. The yaml tag is unchanged.
+	Password     string `yaml:"password" json:"-"`
 	PasswordFile string `yaml:"password_file"` // Path to a file containing the database password (used only if Password is empty)
 	SSLMode      string `yaml:"sslmode"`       // SSL mode: disable, require, verify-ca, verify-full (default: prefer)
 
@@ -214,9 +431,19 @@ type DatabaseConfig struct {
 	resolvedPassword string `yaml:"-" json:"-"`
 
 	// Connection pool settings
-	PoolMaxConns        int    `yaml:"pool_max_conns"`          // Maximum number of connections (default: 4)
+	PoolMaxConns        int    `yaml:"pool_max_conns"`          // Maximum number of connections (default: DefaultPoolMaxConns)
 	PoolMinConns        int    `yaml:"pool_min_conns"`          // Minimum number of connections (default: 0)
 	PoolMaxConnIdleTime string `yaml:"pool_max_conn_idle_time"` // Max time a connection can be idle before being closed (default: 30m)
+
+	// StatementTimeout bounds how long a single statement may run on a
+	// datastore pool connection before Postgres cancels it server-side
+	// (default: 30s). The HTTP handlers already cancel their queries
+	// client-side, but a lost cancel, or a backend that is not at an
+	// interruptible point, leaves the query running and holding one of
+	// the pool's few slots; the server-side timeout is what actually
+	// frees the slot. Accepts any Go duration string; "0" disables the
+	// timeout, which is not recommended.
+	StatementTimeout string `yaml:"statement_timeout"`
 }
 
 // ConnectionSecurityConfig holds settings for user-created database connections (SSRF protection)
@@ -347,23 +574,28 @@ type EmbeddingConfig struct {
 // LLMConfig holds LLM configuration for web client chat proxy
 // LLM proxy is always enabled - API keys must be configured for the chosen provider
 type LLMConfig struct {
-	Provider                string  `yaml:"provider"`                  // "anthropic", "openai", "gemini", or "ollama"
-	Model                   string  `yaml:"model"`                     // Provider-specific model name
-	AnthropicAPIKey         string  `yaml:"-"`                         // API key for Anthropic (loaded from file, not config)
-	AnthropicAPIKeyFile     string  `yaml:"anthropic_api_key_file"`    // Path to file containing Anthropic API key
-	AnthropicBaseURL        string  `yaml:"anthropic_base_url"`        // Base URL for Anthropic API (default: https://api.anthropic.com/v1)
-	OpenAIAPIKey            string  `yaml:"-"`                         // API key for OpenAI (loaded from file, not config)
-	OpenAIAPIKeyFile        string  `yaml:"openai_api_key_file"`       // Path to file containing OpenAI API key
-	OpenAIBaseURL           string  `yaml:"openai_base_url"`           // Base URL for OpenAI API (default: https://api.openai.com/v1)
-	GeminiAPIKey            string  `yaml:"-"`                         // API key for Google Gemini (loaded from file, not config)
-	GeminiAPIKeyFile        string  `yaml:"gemini_api_key_file"`       // Path to file containing Gemini API key
-	GeminiBaseURL           string  `yaml:"gemini_base_url"`           // Base URL for Gemini API (default: https://generativelanguage.googleapis.com)
-	OllamaURL               string  `yaml:"ollama_url"`                // URL for Ollama service (default: http://localhost:11434)
-	MaxTokens               int     `yaml:"max_tokens"`                // Maximum tokens for LLM response (default: 4096)
-	MaxIterations           int     `yaml:"max_iterations"`            // Maximum agentic loop iterations (default: 50)
-	Temperature             float64 `yaml:"temperature"`               // Temperature for LLM sampling (default: 0.7)
-	TimeoutSeconds          int     `yaml:"timeout_seconds"`           // HTTP client timeout for LLM requests in seconds (default: 120)
-	CompactToolDescriptions string  `yaml:"compact_tool_descriptions"` // "auto" (default), "true", or "false"
+	Provider            string `yaml:"provider"`               // "anthropic", "openai", "gemini", or "ollama"
+	Model               string `yaml:"model"`                  // Provider-specific model name
+	AnthropicAPIKey     string `yaml:"-"`                      // API key for Anthropic (loaded from file, not config)
+	AnthropicAPIKeyFile string `yaml:"anthropic_api_key_file"` // Path to file containing Anthropic API key
+	AnthropicBaseURL    string `yaml:"anthropic_base_url"`     // Base URL for Anthropic API (default: https://api.anthropic.com/v1)
+	OpenAIAPIKey        string `yaml:"-"`                      // API key for OpenAI (loaded from file, not config)
+	OpenAIAPIKeyFile    string `yaml:"openai_api_key_file"`    // Path to file containing OpenAI API key
+	OpenAIBaseURL       string `yaml:"openai_base_url"`        // Base URL for OpenAI API (default: https://api.openai.com/v1)
+	GeminiAPIKey        string `yaml:"-"`                      // API key for Google Gemini (loaded from file, not config)
+	GeminiAPIKeyFile    string `yaml:"gemini_api_key_file"`    // Path to file containing Gemini API key
+	GeminiBaseURL       string `yaml:"gemini_base_url"`        // Base URL for Gemini API (default: https://generativelanguage.googleapis.com)
+	OllamaURL           string `yaml:"ollama_url"`             // URL for Ollama service (default: http://localhost:11434)
+	MaxTokens           int    `yaml:"max_tokens"`             // Maximum tokens for LLM response (default: 4096)
+	MaxIterations       int    `yaml:"max_iterations"`         // Maximum agentic loop iterations (default: 50)
+	// TemperaturePtr is the raw configured sampling temperature; nil
+	// means the setting was omitted from the config file. An explicit 0
+	// is kept and requests deterministic output. Use Temperature()
+	// to read the effective value, which applies the 0.7 default when
+	// this is nil or negative.
+	TemperaturePtr          *float64 `yaml:"temperature"`
+	TimeoutSeconds          int      `yaml:"timeout_seconds"`           // HTTP client timeout for LLM requests in seconds (default: 120)
+	CompactToolDescriptions string   `yaml:"compact_tool_descriptions"` // "auto" (default), "true", or "false"
 	// Custom headers for LLM requests
 	CustomHeaders          map[string]string `yaml:"custom_headers"`           // Global headers applied to all providers
 	CustomHeadersFiles     map[string]string `yaml:"custom_headers_files"`     // File paths for loading secret header values
@@ -371,6 +603,21 @@ type LLMConfig struct {
 	OpenAICustomHeaders    map[string]string `yaml:"openai_custom_headers"`    // Custom headers for OpenAI requests
 	GeminiCustomHeaders    map[string]string `yaml:"gemini_custom_headers"`    // Custom headers for Gemini requests
 	OllamaCustomHeaders    map[string]string `yaml:"ollama_custom_headers"`    // Custom headers for Ollama requests
+}
+
+// DefaultLLMTemperature is the sampling temperature used when
+// llm.temperature is not configured.
+const DefaultLLMTemperature = 0.7
+
+// Temperature returns the effective LLM sampling temperature,
+// defaulting to DefaultLLMTemperature when the setting was not
+// configured or was given a negative value, which no provider accepts.
+// An explicit 0 is returned as-is. A nil receiver yields the default.
+func (c *LLMConfig) Temperature() float64 {
+	if c == nil || c.TemperaturePtr == nil || *c.TemperaturePtr < 0 {
+		return DefaultLLMTemperature
+	}
+	return *c.TemperaturePtr
 }
 
 // UseCompactDescriptions resolves the compact_tool_descriptions setting
@@ -489,9 +736,27 @@ func (m MemoryConfig) IsEnabled() bool {
 	return *m.Enabled
 }
 
-// boolPtr returns a pointer to the given bool value.
-func boolPtr(b bool) *bool {
+// BoolPtr returns a pointer to the given bool value. It exists for the
+// pointer-typed Enabled fields, which distinguish "not set" from an
+// explicit false, so that callers building a configuration in code (tests
+// in other packages, mostly) do not each declare a throwaway variable.
+func BoolPtr(b bool) *bool {
 	return &b
+}
+
+// boolPtr is the package-local spelling of BoolPtr.
+func boolPtr(b bool) *bool {
+	return BoolPtr(b)
+}
+
+// intPtr returns a pointer to the given int value.
+func intPtr(i int) *int {
+	return &i
+}
+
+// float64Ptr returns a pointer to the given float64 value.
+func float64Ptr(f float64) *float64 {
+	return &f
 }
 
 // LoadConfig loads configuration with proper priority:
@@ -571,6 +836,14 @@ type CLIFlags struct {
 	DBSSLSet   bool
 
 	// Secret file flags
+	// SecretFile is applied by applyCLIFlags but is not currently wired
+	// to any command-line flag. It must stay that way, or be wired to
+	// the command line as well, because the audit chain is keyed by the
+	// secret this names: main resolves it for CLI commands through
+	// LoadConfigSecretFile, which reads the configuration file alone,
+	// so a flag the server alone accepted would have the two key their
+	// rows from different secrets and break the chain silently.
+	// TestSecretFileResolutionMatches locks the two paths together.
 	SecretFile    string
 	SecretFileSet bool
 
@@ -591,10 +864,20 @@ func defaultConfig() *Config {
 				ChainFile: "",
 			},
 			Auth: AuthConfig{
-				MaxUserTokenDays:               0,  // Unlimited by default
-				MaxFailedAttemptsBeforeLockout: 10, // Lock account after 10 failed attempts
-				RateLimitWindowMinutes:         15, // 15 minute window for rate limiting
-				RateLimitMaxAttempts:           10, // 10 attempts per IP per window
+				MaxUserTokenDays:       0,  // Unlimited by default
+				RateLimitWindowMinutes: 15, // 15 minute window for rate limiting
+				RateLimitMaxAttempts:   10, // 10 attempts per IP per window
+				// Local.Enabled is left nil so LocalEnabled() defaults to true.
+				OIDC: OIDCConfig{
+					Scopes:           []string{"openid", "email", "profile"},
+					UsernameClaim:    "email",
+					DisplayNameClaim: "name",
+					GroupsClaim:      "groups",
+					ButtonLabel:      "Sign in with your identity provider",
+				},
+				AuditRetentionDaysPtr: intPtr(90), // Keep audit events for 90 days by default
+				// Lock an account after 10 failed login attempts by default.
+				MaxFailedAttemptsBeforeLockoutPtr: intPtr(10),
 			},
 		},
 		Database: nil, // No database configured by default
@@ -607,15 +890,15 @@ func defaultConfig() *Config {
 		},
 		LLM: LLMConfig{
 			Provider:        "anthropic",              // Default provider
-			Model:           "claude-sonnet-4-5",      // Default Anthropic model
+			Model:           "claude-sonnet-5",        // Default Anthropic model
 			AnthropicAPIKey: "",                       // Must be provided if using Anthropic
 			OpenAIAPIKey:    "",                       // Must be provided if using OpenAI
 			GeminiAPIKey:    "",                       // Must be provided if using Gemini
 			OllamaURL:       "http://localhost:11434", // Default Ollama URL
 			MaxTokens:       4096,                     // Default max tokens
 			MaxIterations:   50,                       // Default max agentic loop iterations
-			Temperature:     0.7,                      // Default temperature
-			TimeoutSeconds:  120,                      // Default HTTP client timeout in seconds
+			TemperaturePtr:  float64Ptr(DefaultLLMTemperature),
+			TimeoutSeconds:  120, // Default HTTP client timeout in seconds
 		},
 		Knowledgebase: KnowledgebaseConfig{
 			Enabled:               false,                                     // Disabled by default (opt-in)
@@ -688,14 +971,74 @@ func mergeConfig(dest, src *Config) {
 	if src.HTTP.Auth.MaxUserTokenDays > 0 {
 		dest.HTTP.Auth.MaxUserTokenDays = src.HTTP.Auth.MaxUserTokenDays
 	}
-	if src.HTTP.Auth.MaxFailedAttemptsBeforeLockout >= 0 {
-		dest.HTTP.Auth.MaxFailedAttemptsBeforeLockout = src.HTTP.Auth.MaxFailedAttemptsBeforeLockout
+	if src.HTTP.Auth.MaxFailedAttemptsBeforeLockoutPtr != nil {
+		dest.HTTP.Auth.MaxFailedAttemptsBeforeLockoutPtr = src.HTTP.Auth.MaxFailedAttemptsBeforeLockoutPtr
 	}
 	if src.HTTP.Auth.RateLimitWindowMinutes > 0 {
 		dest.HTTP.Auth.RateLimitWindowMinutes = src.HTTP.Auth.RateLimitWindowMinutes
 	}
 	if src.HTTP.Auth.RateLimitMaxAttempts > 0 {
 		dest.HTTP.Auth.RateLimitMaxAttempts = src.HTTP.Auth.RateLimitMaxAttempts
+	}
+	if src.HTTP.Auth.AuditRetentionDaysPtr != nil {
+		dest.HTTP.Auth.AuditRetentionDaysPtr = src.HTTP.Auth.AuditRetentionDaysPtr
+	}
+
+	// Local login - only override when explicitly set in the source
+	// config; a nil pointer means "not present in this source" (see
+	// LocalAuthConfig.Enabled).
+	if src.HTTP.Auth.Local.Enabled != nil {
+		dest.HTTP.Auth.Local.Enabled = src.HTTP.Auth.Local.Enabled
+	}
+
+	// OIDC - each field merges independently when non-zero/non-empty
+	if src.HTTP.Auth.OIDC.Enabled != nil {
+		dest.HTTP.Auth.OIDC.Enabled = src.HTTP.Auth.OIDC.Enabled
+	}
+	if src.HTTP.Auth.OIDC.Issuer != "" {
+		dest.HTTP.Auth.OIDC.Issuer = src.HTTP.Auth.OIDC.Issuer
+	}
+	if src.HTTP.Auth.OIDC.ClientID != "" {
+		dest.HTTP.Auth.OIDC.ClientID = src.HTTP.Auth.OIDC.ClientID
+	}
+	if src.HTTP.Auth.OIDC.ClientSecret != "" {
+		dest.HTTP.Auth.OIDC.ClientSecret = src.HTTP.Auth.OIDC.ClientSecret
+	}
+	if src.HTTP.Auth.OIDC.ClientSecretFile != "" {
+		dest.HTTP.Auth.OIDC.ClientSecretFile = src.HTTP.Auth.OIDC.ClientSecretFile
+	}
+	if src.HTTP.Auth.OIDC.RedirectURL != "" {
+		dest.HTTP.Auth.OIDC.RedirectURL = src.HTTP.Auth.OIDC.RedirectURL
+	}
+	if len(src.HTTP.Auth.OIDC.Scopes) > 0 {
+		dest.HTTP.Auth.OIDC.Scopes = src.HTTP.Auth.OIDC.Scopes
+	}
+	if src.HTTP.Auth.OIDC.UsernameClaim != "" {
+		dest.HTTP.Auth.OIDC.UsernameClaim = src.HTTP.Auth.OIDC.UsernameClaim
+	}
+	if src.HTTP.Auth.OIDC.DisplayNameClaim != "" {
+		dest.HTTP.Auth.OIDC.DisplayNameClaim = src.HTTP.Auth.OIDC.DisplayNameClaim
+	}
+	if src.HTTP.Auth.OIDC.GroupsClaim != "" {
+		dest.HTTP.Auth.OIDC.GroupsClaim = src.HTTP.Auth.OIDC.GroupsClaim
+	}
+	if src.HTTP.Auth.OIDC.ButtonLabel != "" {
+		dest.HTTP.Auth.OIDC.ButtonLabel = src.HTTP.Auth.OIDC.ButtonLabel
+	}
+	if src.HTTP.Auth.OIDC.ProvisionUsers != nil {
+		dest.HTTP.Auth.OIDC.ProvisionUsers = src.HTTP.Auth.OIDC.ProvisionUsers
+	}
+	if len(src.HTTP.Auth.OIDC.AllowedEmailDomains) > 0 {
+		dest.HTTP.Auth.OIDC.AllowedEmailDomains = src.HTTP.Auth.OIDC.AllowedEmailDomains
+	}
+	if src.HTTP.Auth.OIDC.SuperuserGroup != "" {
+		dest.HTTP.Auth.OIDC.SuperuserGroup = src.HTTP.Auth.OIDC.SuperuserGroup
+	}
+	if len(src.HTTP.Auth.OIDC.GroupMap) > 0 {
+		dest.HTTP.Auth.OIDC.GroupMap = src.HTTP.Auth.OIDC.GroupMap
+	}
+	if src.HTTP.Auth.OIDC.AllowUnprefixedStateCookie != nil {
+		dest.HTTP.Auth.OIDC.AllowUnprefixedStateCookie = src.HTTP.Auth.OIDC.AllowUnprefixedStateCookie
 	}
 
 	// Database - if source has database defined, use it
@@ -787,8 +1130,8 @@ func mergeConfig(dest, src *Config) {
 	if src.LLM.MaxIterations != 0 {
 		dest.LLM.MaxIterations = src.LLM.MaxIterations
 	}
-	if src.LLM.Temperature != 0 {
-		dest.LLM.Temperature = src.LLM.Temperature
+	if src.LLM.TemperaturePtr != nil {
+		dest.LLM.TemperaturePtr = src.LLM.TemperaturePtr
 	}
 	if src.LLM.TimeoutSeconds != 0 {
 		dest.LLM.TimeoutSeconds = src.LLM.TimeoutSeconds
@@ -909,6 +1252,30 @@ func mergeConfig(dest, src *Config) {
 	if src.Builtins.Tools.QueryMetrics != nil {
 		dest.Builtins.Tools.QueryMetrics = src.Builtins.Tools.QueryMetrics
 	}
+	if src.Builtins.Tools.ListConnections != nil {
+		dest.Builtins.Tools.ListConnections = src.Builtins.Tools.ListConnections
+	}
+	if src.Builtins.Tools.GetAlertHistory != nil {
+		dest.Builtins.Tools.GetAlertHistory = src.Builtins.Tools.GetAlertHistory
+	}
+	if src.Builtins.Tools.GetAlertRules != nil {
+		dest.Builtins.Tools.GetAlertRules = src.Builtins.Tools.GetAlertRules
+	}
+	if src.Builtins.Tools.GetBlackouts != nil {
+		dest.Builtins.Tools.GetBlackouts = src.Builtins.Tools.GetBlackouts
+	}
+	if src.Builtins.Tools.GetMetricBaselines != nil {
+		dest.Builtins.Tools.GetMetricBaselines = src.Builtins.Tools.GetMetricBaselines
+	}
+	if src.Builtins.Tools.QueryDatastore != nil {
+		dest.Builtins.Tools.QueryDatastore = src.Builtins.Tools.QueryDatastore
+	}
+	if src.Builtins.Tools.DescribeDatastore != nil {
+		dest.Builtins.Tools.DescribeDatastore = src.Builtins.Tools.DescribeDatastore
+	}
+	if src.Builtins.Tools.GetTimelineEvents != nil {
+		dest.Builtins.Tools.GetTimelineEvents = src.Builtins.Tools.GetTimelineEvents
+	}
 	if src.Builtins.Tools.StoreMemory != nil {
 		dest.Builtins.Tools.StoreMemory = src.Builtins.Tools.StoreMemory
 	}
@@ -1004,6 +1371,21 @@ func loadAPIKeysFromFiles(cfg *Config) error {
 		cfg.Knowledgebase.EmbeddingGeminiAPIKey = key
 	}
 
+	// OIDC client secret. Unlike the API keys above, the resolved value is
+	// stored in the unexported resolvedClientSecret field rather than the
+	// exported ClientSecret field: ClientSecret carries yaml:"client_secret"
+	// and legitimately round-trips an inline secret, so writing the
+	// file-sourced value into it would let a file-sourced secret leak back
+	// out in plaintext if the config is ever marshaled. Read the resolved
+	// value via OIDCConfig.EffectiveClientSecret.
+	if cfg.HTTP.Auth.OIDC.ClientSecret == "" && cfg.HTTP.Auth.OIDC.ClientSecretFile != "" {
+		secret, err := fileutil.ReadSecretFile(cfg.HTTP.Auth.OIDC.ClientSecretFile)
+		if err != nil {
+			return fmt.Errorf("failed to read OIDC client secret: %w", err)
+		}
+		cfg.HTTP.Auth.OIDC.resolvedClientSecret = secret
+	}
+
 	return nil
 }
 
@@ -1013,6 +1395,13 @@ func applyEnvOverrides(cfg *Config) {
 	if val := os.Getenv("PGEDGE_MEMORY_ENABLED"); val != "" {
 		if b, err := strconv.ParseBool(val); err == nil {
 			cfg.Memory.Enabled = boolPtr(b)
+		}
+	}
+	if val := os.Getenv("PGEDGE_AUDIT_RETENTION_DAYS"); val != "" {
+		// A negative retention period is as meaningless as a
+		// non-numeric one, so both leave the configured value alone.
+		if n, err := strconv.Atoi(val); err == nil && n >= 0 {
+			cfg.HTTP.Auth.AuditRetentionDaysPtr = intPtr(n)
 		}
 	}
 }
@@ -1041,14 +1430,18 @@ func applyCLIFlags(cfg *Config, flags CLIFlags) {
 	// Database CLI flags
 	// Create a default database if none exists and any DB flag is set
 	if cfg.Database == nil && (flags.DBHostSet || flags.DBPortSet || flags.DBNameSet || flags.DBUserSet || flags.DBPassSet || flags.DBSSLSet) {
+		// PoolMaxConns stays unset, as it does when the YAML omits it:
+		// NewDatastore then sizes the datastore pool at DefaultPoolMaxConns,
+		// and per-session pools to monitored databases keep the connection
+		// library's default.
 		cfg.Database = &DatabaseConfig{
 			Host:                "localhost",
 			Port:                5432,
 			Database:            "postgres",
 			SSLMode:             "prefer",
-			PoolMaxConns:        4,
 			PoolMinConns:        0,
 			PoolMaxConnIdleTime: "30m",
+			StatementTimeout:    "30s",
 		}
 	}
 
@@ -1101,7 +1494,147 @@ func validateConfig(cfg *Config) error {
 		return fmt.Errorf("database user is required (set via -db-user flag or config file)")
 	}
 
+	// OIDC configuration validation
+	if cfg.HTTP.Auth.OIDC.IsEnabled() {
+		oidc := cfg.HTTP.Auth.OIDC
+		if oidc.Issuer == "" {
+			return fmt.Errorf("http.auth.oidc.issuer is required when OIDC is enabled")
+		}
+		issuerURL, err := url.Parse(oidc.Issuer)
+		if err != nil || issuerURL.Scheme != "https" || issuerURL.Host == "" {
+			return fmt.Errorf("http.auth.oidc.issuer must be a valid https:// URL")
+		}
+		if oidc.ClientID == "" {
+			return fmt.Errorf("http.auth.oidc.client_id is required when OIDC is enabled")
+		}
+		if oidc.EffectiveClientSecret() == "" {
+			return fmt.Errorf("http.auth.oidc.client_secret or http.auth.oidc.client_secret_file is required when OIDC is enabled")
+		}
+		if oidc.RedirectURL == "" {
+			return fmt.Errorf("http.auth.oidc.redirect_url is required when OIDC is enabled")
+		}
+		if err := validateOIDCRedirectURL(oidc.RedirectURL); err != nil {
+			return err
+		}
+		if err := validateOIDCStateCookiePrefix(cfg); err != nil {
+			return err
+		}
+	}
+
+	// Refuse a configuration that leaves no way to log into the Workbench
+	// at all. A bare configuration with no http.auth block still passes:
+	// local login defaults to enabled (see AuthConfig.LocalEnabled).
+	if !cfg.HTTP.Auth.LocalEnabled() && !cfg.HTTP.Auth.OIDC.IsEnabled() {
+		return fmt.Errorf("no authentication method is available: enable http.auth.local or http.auth.oidc")
+	}
+
 	return nil
+}
+
+// validateOIDCRedirectURL checks that redirect_url is the address of
+// this Workbench's own callback endpoint, and refuses anything else.
+//
+// This is a stricter check than "some absolute URL" for a blunt reason:
+// the value is handed to the identity provider as the place to deliver
+// the authorization code, so a typo or a hostile edit sends every user's
+// code somewhere else, and the only thing standing in the way would be
+// the provider's own list of registered redirect URLs, which is to say
+// we would be relying on somebody else to catch our misconfiguration.
+//
+// The rules: an absolute URL with a host; https, unless the host is
+// loopback, which is how local development runs without a certificate;
+// a path ending in OIDCCallbackPath; and no query string or fragment,
+// both of which the provider is entitled to mangle when it appends its
+// own parameters.
+//
+// The path is checked as a suffix rather than for equality, because a
+// reverse proxy mounting the Workbench under a prefix is an ordinary
+// arrangement: the browser sees
+// https://example.com/workbench/api/v1/auth/oidc/callback whilst this
+// server routes /api/v1/auth/oidc/callback, and refusing to start on
+// that would be a bug rather than a safety measure. The suffix still
+// carries the property worth having, which is that the URL names our
+// callback and not some unrelated endpoint.
+func validateOIDCRedirectURL(raw string) error {
+	parsed, err := url.Parse(raw)
+	if err != nil || !parsed.IsAbs() || parsed.Host == "" {
+		return fmt.Errorf("http.auth.oidc.redirect_url must be a valid absolute URL")
+	}
+
+	scheme := strings.ToLower(parsed.Scheme)
+	loopbackHTTP := scheme == "http" && isLoopbackHost(parsed.Hostname())
+	if scheme != "https" && !loopbackHTTP {
+		return fmt.Errorf(
+			"http.auth.oidc.redirect_url must use https (http is permitted only for a loopback host)")
+	}
+
+	if !strings.HasSuffix(parsed.Path, OIDCCallbackPath) {
+		// The message names the expected suffix and quotes what was
+		// actually configured, so an operator can see the difference
+		// rather than guess at it.
+		return fmt.Errorf(
+			"http.auth.oidc.redirect_url path must end with %q (a reverse proxy prefix before "+
+				"it is fine), but it is %q", OIDCCallbackPath, parsed.Path)
+	}
+
+	if parsed.RawQuery != "" || parsed.Fragment != "" {
+		return fmt.Errorf("http.auth.oidc.redirect_url must carry no query string or fragment")
+	}
+
+	return nil
+}
+
+// validateOIDCStateCookiePrefix refuses a federated login configuration
+// whose login state cookie would be written without the "__Host-" name
+// prefix on a deployment served over HTTPS, unless the operator has
+// accepted that with http.auth.oidc.allow_unprefixed_state_cookie.
+//
+// The prefix is what stops a sibling subdomain that can set cookies for
+// the parent domain from overwriting the state cookie. Without it, an
+// attacker there can start a login of their own, plant their sealed
+// state over the victim's, and send the victim to the callback with the
+// attacker's code and state, so that the victim ends up logged in as the
+// attacker. The server writes the prefixed name only for a request it
+// knows arrived over HTTPS: with tls.enabled, or with X-Forwarded-Proto
+// from an address on http.trusted_proxies (requestIsProvablySecure in
+// internal/api). With neither, every login behind a proxy uses the plain
+// name.
+//
+// The rule applies only when redirect_url is https. validateOIDCRedirectURL
+// permits http solely for a loopback host, which is local development
+// with no proxy in front; the browser cannot hold a "__Host-" cookie over
+// plain HTTP whatever this server is told, so refusing would demand an
+// opt-out that protects nothing. An https redirect_url on a server that
+// does not terminate TLS itself means a TLS-terminating proxy is in
+// front, which is exactly the deployment the prefix is lost on.
+func validateOIDCStateCookiePrefix(cfg *Config) error {
+	oidc := cfg.HTTP.Auth.OIDC
+	if cfg.HTTP.TLS.Enabled || len(cfg.HTTP.TrustedProxies) > 0 || oidc.UnprefixedStateCookieAllowed() {
+		return nil
+	}
+	parsed, err := url.Parse(oidc.RedirectURL)
+	if err != nil || !strings.EqualFold(parsed.Scheme, "https") {
+		return nil
+	}
+	return fmt.Errorf(
+		"http.trusted_proxies is empty and http.tls.enabled is false, so behind the " +
+			"reverse proxy that serves redirect_url over https the OIDC login state cookie " +
+			"cannot use the __Host- prefix, which lets a sibling subdomain log users in as " +
+			"an attacker (login CSRF): set http.trusted_proxies to the proxy's address, or " +
+			"set http.auth.oidc.allow_unprefixed_state_cookie: true to accept the risk")
+}
+
+// isLoopbackHost reports whether host is the local machine by a name or
+// address a developer would actually type. The literal names are matched
+// as well as the addresses, because "localhost" does not parse as an IP.
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
 }
 
 // GetDefaultConfigPath returns the path to an existing default
@@ -1147,12 +1680,55 @@ func LoadConfigDataDir(configPath string) (string, error) {
 	return cfg.DataDir, nil
 }
 
+// configSecretFile is a minimal struct for extracting just the
+// secret_file setting from a config file.
+type configSecretFile struct {
+	SecretFile string `yaml:"secret_file"`
+}
+
+// LoadConfigSecretFile extracts just the secret_file field from a
+// config file, for the same reason LoadConfigDataDir exists: the
+// command line needs it before the full configuration is loaded,
+// because every command it runs writes an audit row whose hash is
+// keyed by the secret that setting names. It returns an empty string
+// when the file does not exist, is empty, or sets no secret_file, in
+// which case the caller falls back to the default search order.
+func LoadConfigSecretFile(configPath string) (string, error) {
+	if configPath == "" {
+		return "", nil
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("failed to read config file: %w", err)
+	}
+
+	if len(data) == 0 {
+		return "", nil
+	}
+
+	var cfg configSecretFile
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return "", fmt.Errorf("failed to parse config file: %w", err)
+	}
+
+	return cfg.SecretFile, nil
+}
+
 // GetDefaultSecretPath returns the path to an existing default
 // server secret file, or "" if none was found. Search order
 // matches GetDefaultConfigPath: per-user config directory first,
 // then /etc/pgedge/.
-func GetDefaultSecretPath(binaryPath string) string {
-	return fileutil.GetDefaultConfigPath(binaryPath, "ai-dba-server.secret")
+//
+// It takes no executable path. fileutil.GetDefaultConfigPath ignores
+// the one it accepts, deliberately, so that a file sitting next to the
+// binary is never picked up in preference to the installed one; passing
+// a value here only suggested it mattered.
+func GetDefaultSecretPath() string {
+	return fileutil.GetDefaultConfigPath("", "ai-dba-server.secret")
 }
 
 // ConfigFileExists checks if a config file exists at the given path

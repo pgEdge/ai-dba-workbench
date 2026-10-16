@@ -10,34 +10,194 @@ The system resources section displays the following
 metrics:
 
 - CPU usage percentage with a time-series chart.
-- Memory usage percentage with a time-series chart.
+- Memory usage percentage with a time-series chart,
+  and an estimated available memory figure beneath the
+  percentage.
 - Disk usage percentage with a time-series chart.
 - Load average values with a time-series chart.
-- Network I/O throughput with a time-series chart.
+- Network I/O throughput as bytes transmitted and
+  received per second, with a time-series chart.
+
+The memory chart plots four series: used, free, cached,
+and Available (est.). The available series is an
+estimate of how much memory a new workload could claim,
+calculated as free memory plus cached memory, because
+the kernel's own `MemAvailable` figure is not available
+to the collector. The estimate runs high on a host with
+a large non-reclaimable slab or a largely dirty page
+cache, so read the series as a guide when sizing
+`shared_buffers` or `work_mem` rather than as an exact
+figure.
 
 ## PostgreSQL Overview
 
 The PostgreSQL overview section displays server-level
-database metrics:
+database metrics. The charts built on cumulative
+PostgreSQL counters plot rates rather than the raw
+counter totals, so a rising line shows a busier server
+rather than the simple passage of time.
 
-- Active connections relative to the maximum allowed.
-- Transactions per second with a time-series chart.
-- Cache hit ratio as a percentage with trend data.
-- Temporary files created with a time-series chart.
+The section displays the following KPI tiles:
+
+- The Backends tile shows the active connections
+  relative to the maximum allowed.
+- The Commits tile shows the current commits per
+  second.
+- The Cache Hit Ratio tile shows the ratio as a
+  percentage with trend data.
+- The Temp Bytes tile shows the bytes spilled to
+  temporary files across the selected time range, with
+  a sparkline of the bytes spilled in each interval.
+
+The section displays the following time-series charts:
+
+- The Connections (Monitored Database) chart plots the
+  backends connected to each monitored database.
+- The Sessions Established (Monitored Database) chart
+  plots the sessions opened against each monitored
+  database.
+- The Transactions chart plots commits and rollbacks
+  per second.
+- The Block I/O chart plots blocks hit and blocks read
+  per second.
+- The Tuple Operations chart plots the rows fetched,
+  inserted, updated, and deleted per second.
+
+The cache hit ratio is computed from the blocks read and
+hit during each sample interval, so a current problem is
+visible immediately rather than being diluted by history
+since the last statistics reset. An interval with no block
+access shows as a gap in the sparkline and as '--' for the
+headline value. The ratio counts only `shared_buffers`
+hits; a block read may still be served from the operating
+system page cache, so a lower ratio does not by itself
+indicate slow I/O.
 
 ## WAL and Replication
 
 The WAL and replication section shows write-ahead log
-activity and replication status for the server. The
-section includes WAL generation rates and replication
-slot details.
+activity, checkpoint behaviour, and replication status
+for the server.
+
+The section displays the following KPI tiles:
+
+- The WAL Bytes tile shows the current WAL bytes
+  written per second.
+- The WAL Records tile shows the current WAL records
+  written per second.
+- The Replication Lag tile shows the current lag for
+  the server's replicas.
+- The Requested Checkpoints tile shows the percentage
+  of the checkpoints in the selected time range that
+  PostgreSQL requested rather than scheduled. A high
+  percentage suggests that `max_wal_size` is too low.
+
+The section displays the following charts:
+
+- The WAL Activity Over Time chart plots the WAL bytes
+  and WAL records written per second.
+- The Replication Lag Over Time chart plots the write,
+  flush, and replay lag.
+- The Checkpoints Over Time chart is a stacked bar
+  chart of the timed and requested checkpoints
+  completed in each interval.
+- The Checkpoint Buffers Written chart plots the
+  buffers that checkpoints wrote per second.
+
+## Replication Slots
+
+The replication slots section lists the replication
+slots on the server, from the most recent snapshot the
+collector took in the last hour. The section does not
+follow the dashboard time range selector; it always
+shows the latest snapshot of each slot.
+
+When the cluster topology records replication between
+this server and others, whether the collector detected
+it or an administrator set it, the section first names
+them:
+
+- The Upstream line lists the servers this server
+  streams from, subscribes to, or replicates with.
+- The Downstream line lists the standbys that stream
+  from this server and the subscribers that subscribe
+  to it; these are usually the consumers of its slots.
+
+A summary line counts the slots, the active and
+inactive slots, and the slots whose WAL is at risk. The
+table shows the following columns for each slot:
+
+- The Slot column shows the slot name.
+- The Type column shows whether the slot is physical
+  or logical.
+- The Status column shows Active when a consumer is
+  connected to the slot and Inactive when none is, or
+  Unknown when the snapshot does not say. An inactive
+  slot can stop PostgreSQL from removing WAL until its
+  consumer returns, so it is shown as a warning; the WAL
+  Status column shows whether the WAL is still kept.
+- The WAL Status column shows how safe the slot's WAL
+  is. Reserved (green) means the WAL is within
+  `max_wal_size`; Extended (amber) means it exceeds
+  `max_wal_size` but is still kept; Unreserved (red)
+  means the WAL will be removed at the next checkpoint
+  unless the consumer catches up; and Lost (red) means
+  the WAL has gone and the slot can no longer be used.
+  Servers older than PostgreSQL 13 do not report a WAL
+  status, so the column shows Not reported.
+- The Retained WAL column shows how much WAL the slot
+  is holding back.
+- The Safe WAL Size column shows how much more WAL can
+  be written before the slot is at risk of losing WAL.
+  It shows Unlimited when `max_slot_wal_keep_size` is
+  `-1`, which means the slot can retain WAL until the
+  disk fills. It shows Exceeded when the slot already
+  retains more WAL than `max_slot_wal_keep_size`
+  allows, which is usually the case for an Unreserved
+  slot. A Lost slot has no safe WAL size, and servers
+  older than PostgreSQL 13 do not report one, so the
+  column shows `--` for both.
+
+The section lists up to 100 slots by name, and notes the
+total when a server has more. The collector records a
+slot only while PostgreSQL reports a `restart_lsn` for
+it, so a slot that has never reserved WAL does not
+appear. A slot that loses its WAL usually stops being
+recorded as well; for example, a physical slot
+invalidated by `max_slot_wal_keep_size` loses its
+`restart_lsn` at once. Some lost slots keep their
+`restart_lsn` and stay in the list with the Lost status;
+on PostgreSQL 18, a physical slot invalidated because it
+stayed idle for longer than
+`idle_replication_slot_timeout` is one such case.
+
+Each row is the slot's latest snapshot from the last
+hour, so a row can outlive its slot by up to an hour. A
+slot that has been dropped, or that has stopped being
+recorded because it lost its WAL, keeps showing its last
+recorded state during that time, with nothing to mark
+the row as out of date. A slot that became lost after
+its last snapshot can therefore still read Extended or
+Unreserved for a while.
 
 ## Database Summaries
 
 The database summaries section lists all databases on
 the server with high-level metrics for each database.
-Users can click a database entry to navigate to the
-[database dashboard](database.md).
+The cache hit ratio on each card is a per-interval value
+and shows '--' when the database had no block access in
+the latest interval. Users can click a database entry to
+navigate to the [database dashboard](database.md).
+
+The section follows the dashboard time range selector.
+Each card reports the databases as they stood at the end
+of the selected window, so a window that ends in the past
+shows the sizes, connection counts and dead tuple ratios
+of that moment rather than the present ones. The
+performance tiles in the status panel keep their own fixed
+twenty-four hour window, as the
+[Dashboards](index.md#views-that-honour-the-selector)
+page explains.
 
 ## Connections
 
@@ -100,6 +260,20 @@ The top queries section ranks queries by resource
 consumption. The section displays execution time, call
 count, rows returned, and source database for the most
 active queries.
+
+The section follows the dashboard time range selector, so
+the figures describe the activity inside the selected
+window rather than the lifetime totals of each statement.
+A query that ran no calls inside the window does not
+appear, and changing the range returns the section to its
+first page. The [object dashboard](object.md) page explains
+how the Workbench derives a windowed figure from the
+cumulative `pg_stat_statements` counters.
+
+The database filter above the list is the one exception.
+The filter lists the databases seen over a fixed
+twenty-four hours, so the available choices do not vanish
+as the user narrows the selected window.
 
 The Database column resolves each query's source
 database from the `dbid` field in

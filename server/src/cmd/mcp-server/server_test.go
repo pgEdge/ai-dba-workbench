@@ -11,15 +11,19 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	_ "modernc.org/sqlite"
 
 	"github.com/pgedge/ai-workbench/pkg/fileutil"
+	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/config"
 	"github.com/pgedge/ai-workbench/server/internal/database"
 )
@@ -43,7 +47,7 @@ func TestLoadServerSecret_ExplicitFile(t *testing.T) {
 	}
 	s := newServerWithSecretFile(path)
 
-	got, err := s.loadServerSecret("/ignored/exec/path")
+	got, err := s.loadServerSecret()
 	if err != nil {
 		t.Fatalf("loadServerSecret: %v", err)
 	}
@@ -80,7 +84,7 @@ func TestLoadServerSecret_DefaultUserDir(t *testing.T) {
 	}
 
 	s := newServerWithSecretFile("")
-	got, err := s.loadServerSecret("/ignored/exec/path")
+	got, err := s.loadServerSecret()
 	if err != nil {
 		t.Fatalf("loadServerSecret: %v", err)
 	}
@@ -103,7 +107,7 @@ func TestLoadServerSecret_NoneFound(t *testing.T) {
 	fileutil.SetSystemConfigDirForTest(t, filepath.Join(base, "absent-etc-pgedge"))
 
 	s := newServerWithSecretFile("")
-	_, err := s.loadServerSecret("/ignored/exec/path")
+	_, err := s.loadServerSecret()
 	if err == nil {
 		t.Fatal("expected error when no secret file is reachable")
 	}
@@ -125,7 +129,7 @@ func TestLoadServerSecret_EmptyFile(t *testing.T) {
 	}
 	s := newServerWithSecretFile(path)
 
-	_, err := s.loadServerSecret("/ignored/exec/path")
+	_, err := s.loadServerSecret()
 	if err == nil {
 		t.Fatal("expected error when secret file is empty")
 	}
@@ -203,7 +207,7 @@ func TestVerifySchemaHealth_DelegatesToDatastore(t *testing.T) {
 func TestLoadServerSecret_ExplicitMissing(t *testing.T) {
 	s := newServerWithSecretFile("/definitely/not/a/real/path.secret")
 
-	_, err := s.loadServerSecret("/ignored/exec/path")
+	_, err := s.loadServerSecret()
 	if err == nil {
 		t.Fatal("expected error for missing explicit secret file")
 	}
@@ -308,5 +312,173 @@ func TestLogStartupInfo_KnowledgebaseDisabled(t *testing.T) {
 	}
 	if !strings.Contains(out, "Debug logging: ENABLED") {
 		t.Errorf("expected debug line, got %q", out)
+	}
+}
+
+// seedAuditEvent appends one keyed audit event backdated to
+// occurredAt, written and signed as the store would have written it
+// then, so that the retention purge accepts it and can remove it.
+func seedAuditEvent(t *testing.T, store *auth.AuthStore, occurredAt time.Time) {
+	t.Helper()
+
+	if err := auth.SeedAuditEventForTesting(store, occurredAt); err != nil {
+		t.Fatalf("failed to seed audit event: %v", err)
+	}
+}
+
+// countAuditEvents returns the total number of audit_events rows
+// currently stored, via the exported ListAuditEvents query.
+func countAuditEvents(t *testing.T, store *auth.AuthStore) int {
+	t.Helper()
+
+	_, total, err := store.ListAuditEvents(auth.AuditFilter{})
+	if err != nil {
+		t.Fatalf("failed to list audit events: %v", err)
+	}
+	return total
+}
+
+func TestPurgeAuditEventsZeroDaysKeepsForever(t *testing.T) {
+	dir := t.TempDir()
+	store, err := auth.NewAuthStore(dir, 0, 10, auth.AuditKeyForTesting())
+	if err != nil {
+		t.Fatalf("failed to create auth store: %v", err)
+	}
+	defer store.Close()
+
+	seedAuditEvent(t, store, time.Now().Add(-48*time.Hour))
+	seedAuditEvent(t, store, time.Now())
+
+	zero := 0
+	s := &Server{
+		cfg: &config.Config{
+			HTTP: config.HTTPConfig{
+				Auth: config.AuthConfig{AuditRetentionDaysPtr: &zero},
+			},
+		},
+		authStore: store,
+	}
+
+	s.purgeAuditEvents()
+
+	if got := countAuditEvents(t, store); got != 2 {
+		t.Errorf("expected both audit events to remain with retention 0, got %d", got)
+	}
+}
+
+func TestPurgeAuditEventsRemovesOldEvents(t *testing.T) {
+	dir := t.TempDir()
+	store, err := auth.NewAuthStore(dir, 0, 10, auth.AuditKeyForTesting())
+	if err != nil {
+		t.Fatalf("failed to create auth store: %v", err)
+	}
+	defer store.Close()
+
+	seedAuditEvent(t, store, time.Now().Add(-48*time.Hour))
+	seedAuditEvent(t, store, time.Now())
+
+	one := 1
+	s := &Server{
+		cfg: &config.Config{
+			HTTP: config.HTTPConfig{
+				Auth: config.AuthConfig{AuditRetentionDaysPtr: &one},
+			},
+		},
+		authStore: store,
+	}
+
+	s.purgeAuditEvents()
+
+	// The retained event plus the audit.purge event the purge records.
+	if got := countAuditEvents(t, store); got != 2 {
+		t.Errorf("expected two audit events to remain after purge, got %d", got)
+	}
+}
+
+func TestPurgeAuditEventsNoAuthStore(t *testing.T) {
+	// Must not panic when there is no auth store wired up.
+	s := &Server{cfg: &config.Config{}}
+	s.purgeAuditEvents()
+}
+
+func TestPurgeAuditEventsLogsError(t *testing.T) {
+	dir := t.TempDir()
+	store, err := auth.NewAuthStore(dir, 0, 10, auth.AuditKeyForTesting())
+	if err != nil {
+		t.Fatalf("failed to create auth store: %v", err)
+	}
+	// Close the store up front so PurgeAuditEvents fails against the
+	// now-closed database, exercising purgeAuditEvents' error path.
+	if err := store.Close(); err != nil {
+		t.Fatalf("failed to close auth store: %v", err)
+	}
+
+	one := 1
+	s := &Server{
+		cfg: &config.Config{
+			HTTP: config.HTTPConfig{
+				Auth: config.AuthConfig{AuditRetentionDaysPtr: &one},
+			},
+		},
+		authStore: store,
+	}
+
+	// Must not panic; the error is only logged.
+	s.purgeAuditEvents()
+}
+
+func TestRunCleanupTickRemovesExpiredTokens(t *testing.T) {
+	store, _ := newWrapperTestStore(t)
+
+	db, err := sql.Open("sqlite", store.Path())
+	if err != nil {
+		t.Fatalf("failed to open auth db: %v", err)
+	}
+	defer db.Close()
+
+	res, err := db.Exec(`INSERT INTO tokens (token_hash, owner_id, expires_at)
+		SELECT 'expired-token-hash', id, ? FROM users WHERE username = 'wrapper'`,
+		time.Now().Add(-time.Hour))
+	if err != nil {
+		t.Fatalf("failed to seed an expired token: %v", err)
+	}
+	if n, err := res.RowsAffected(); err != nil || n != 1 {
+		t.Fatalf("seeded %d expired token(s) (err %v), want 1", n, err)
+	}
+
+	zero := 0
+	s := &Server{
+		cfg: &config.Config{
+			HTTP: config.HTTPConfig{
+				Auth: config.AuthConfig{AuditRetentionDaysPtr: &zero},
+			},
+		},
+		authStore:     store,
+		clientManager: database.NewClientManager(nil),
+	}
+
+	// A burst of failures whose window has closed must be written by
+	// the tick's sweep, which is its only production path for a burst
+	// that simply stops.
+	repeatGroupCreateFailure(t, store, "duplicate-group", 3)
+	repeatAuditDenial(t, store, 4)
+	auth.AgeCoalescedAuditForTesting(store, time.Hour)
+
+	s.runCleanupTick()
+
+	if got := groupCreateRepeatCounts(t, store); len(got) != 2 || got[1] != 2 {
+		t.Errorf("group.create failure repeat counts = %v, want [0 2]", got)
+	}
+	if got := auditDenialRepeatCounts(t, store); len(got) != 2 || got[1] != 3 {
+		t.Errorf("audit.read denial repeat counts = %v, want [0 3]", got)
+	}
+
+	var remaining int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM tokens
+		WHERE token_hash = 'expired-token-hash'`).Scan(&remaining); err != nil {
+		t.Fatalf("failed to count tokens: %v", err)
+	}
+	if remaining != 0 {
+		t.Errorf("expired token still present after the cleanup tick")
 	}
 }

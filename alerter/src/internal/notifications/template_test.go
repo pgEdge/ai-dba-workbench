@@ -10,6 +10,7 @@
 package notifications
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -773,5 +774,413 @@ func TestTemplateRenderer_Render_AllPayloadFields(t *testing.T) {
 	}
 	if !strings.Contains(result, "DB:maindb") {
 		t.Error("Result should contain DatabaseName")
+	}
+}
+
+// telegramRenderPayload returns a payload with every optional field
+// populated, for exercising the Telegram default templates.
+func telegramRenderPayload() *database.NotificationPayload {
+	metric := "connections_used"
+	metricValue := 195.0
+	threshold := 180.0
+	operator := ">"
+	dbName := "orders"
+	triggeredAt := time.Date(2026, 3, 1, 9, 0, 0, 0, time.UTC)
+
+	return &database.NotificationPayload{
+		AlertID:          42,
+		AlertType:        "metric",
+		AlertTitle:       "Connection limit",
+		AlertDescription: "Too many connections",
+		Severity:         "critical",
+		Status:           "active",
+		TriggeredAt:      triggeredAt,
+		MetricName:       &metric,
+		MetricValue:      &metricValue,
+		ThresholdValue:   &threshold,
+		Operator:         &operator,
+		ConnectionID:     1,
+		ServerName:       "prod-db-1",
+		ServerHost:       "db1.example.com",
+		ServerPort:       5432,
+		DatabaseName:     &dbName,
+		NotificationType: string(database.NotificationTypeAlertFire),
+		ReminderCount:    3,
+		Timestamp:        triggeredAt,
+	}
+}
+
+func TestTemplateRenderer_RenderHTML_EscapesPayloadButNotTemplate(t *testing.T) {
+	renderer := NewTemplateRenderer()
+
+	payload := telegramRenderPayload()
+	payload.AlertTitle = `idx_a<b & "c"`
+	payload.AlertDescription = "5 > 3 && true"
+
+	result, err := renderer.RenderHTML(
+		`<b>{{.AlertTitle}}</b>: <i>{{.AlertDescription}}</i>`, payload, "")
+	if err != nil {
+		t.Fatalf("RenderHTML() unexpected error: %v", err)
+	}
+
+	want := `<b>idx_a&lt;b &amp; &#34;c&#34;</b>: <i>5 &gt; 3 &amp;&amp; true</i>`
+	if result != want {
+		t.Errorf("RenderHTML() = %q, want %q", result, want)
+	}
+}
+
+func TestTemplateRenderer_RenderHTML_UsesDefaultWhenTemplateEmpty(t *testing.T) {
+	renderer := NewTemplateRenderer()
+
+	result, err := renderer.RenderHTML("", telegramRenderPayload(),
+		`<b>{{.AlertTitle}}</b>`)
+	if err != nil {
+		t.Fatalf("RenderHTML() unexpected error: %v", err)
+	}
+	if result != "<b>Connection limit</b>" {
+		t.Errorf("RenderHTML() = %q, want the default template's output", result)
+	}
+}
+
+func TestTemplateRenderer_RenderHTML_NoTemplate(t *testing.T) {
+	renderer := NewTemplateRenderer()
+
+	_, err := renderer.RenderHTML("", telegramRenderPayload(), "")
+	if err == nil {
+		t.Fatal("RenderHTML() expected an error when no template is provided")
+	}
+	if !strings.Contains(err.Error(), "no template provided") {
+		t.Errorf("RenderHTML() error = %q, want it to mention the missing template",
+			err.Error())
+	}
+}
+
+func TestTemplateRenderer_RenderHTML_CompileError(t *testing.T) {
+	renderer := NewTemplateRenderer()
+
+	_, err := renderer.RenderHTML("{{.AlertTitle", telegramRenderPayload(), "")
+	if err == nil {
+		t.Fatal("RenderHTML() expected a compile error")
+	}
+	if !strings.Contains(err.Error(), "failed to compile template") {
+		t.Errorf("RenderHTML() error = %q, want a compile failure", err.Error())
+	}
+}
+
+func TestTemplateRenderer_RenderHTML_ExecuteError(t *testing.T) {
+	renderer := NewTemplateRenderer()
+
+	// Calling a method that does not exist on a string compiles but
+	// fails at execution time.
+	_, err := renderer.RenderHTML("{{.AlertTitle.NoSuchMethod}}",
+		telegramRenderPayload(), "")
+	if err == nil {
+		t.Fatal("RenderHTML() expected an execute error")
+	}
+	if !strings.Contains(err.Error(), "failed to execute template") {
+		t.Errorf("RenderHTML() error = %q, want an execute failure", err.Error())
+	}
+}
+
+// TestTemplateRenderer_RenderHTML_LeavesNonStringsAlone confirms numbers
+// and times pass through unescaped, so arithmetic and Format calls in a
+// template still work.
+func TestTemplateRenderer_RenderHTML_LeavesNonStringsAlone(t *testing.T) {
+	renderer := NewTemplateRenderer()
+
+	result, err := renderer.RenderHTML(
+		`{{.AlertID}}|{{.ServerPort}}|{{.MetricValue}}|{{.TriggeredAt.Format "2006-01-02"}}`,
+		telegramRenderPayload(), "")
+	if err != nil {
+		t.Fatalf("RenderHTML() unexpected error: %v", err)
+	}
+	if result != "42|5432|195|2026-03-01" {
+		t.Errorf("RenderHTML() = %q, want %q", result, "42|5432|195|2026-03-01")
+	}
+}
+
+func TestHTMLEscapeStringValues(t *testing.T) {
+	data := map[string]any{
+		"plain":   "nothing special",
+		"markup":  `a<b>c&d"e'f`,
+		"number":  42,
+		"float":   1.5,
+		"boolean": true,
+		"time":    time.Date(2026, 3, 1, 9, 0, 0, 0, time.UTC),
+	}
+
+	htmlEscapeStringValues(data)
+
+	if data["plain"] != "nothing special" {
+		t.Errorf("plain = %v, want it unchanged", data["plain"])
+	}
+	if data["markup"] != "a&lt;b&gt;c&amp;d&#34;e&#39;f" {
+		t.Errorf("markup = %v, want the escaped form", data["markup"])
+	}
+	if data["number"] != 42 {
+		t.Errorf("number = %v, want 42", data["number"])
+	}
+	if data["float"] != 1.5 {
+		t.Errorf("float = %v, want 1.5", data["float"])
+	}
+	if data["boolean"] != true {
+		t.Errorf("boolean = %v, want true", data["boolean"])
+	}
+	if _, ok := data["time"].(time.Time); !ok {
+		t.Errorf("time = %T, want it left as a time.Time", data["time"])
+	}
+}
+
+// TestHTMLEscapeStringValues_RecursesIntoContainers is the regression
+// test for H-003. The helper used to skip every non-string value, which
+// was safe only by accident: nothing the payload produces today is a
+// container. A field of affected relations, a map of labels or a slice
+// of LLM-generated detail would have gone into a parse_mode: HTML
+// message unescaped.
+func TestHTMLEscapeStringValues_RecursesIntoContainers(t *testing.T) {
+	const raw = `a<b>c&d"e'f`
+	const escaped = "a&lt;b&gt;c&amp;d&#34;e&#39;f"
+
+	strSlice := []string{raw}
+	strMap := map[string]string{"k": raw}
+	anySlice := []any{raw, 7, []string{raw}}
+	anyMap := map[string]any{"inner": raw, "deeper": map[string]any{"k": raw}}
+
+	data := map[string]any{
+		"strings": strSlice,
+		"strmap":  strMap,
+		"anys":    anySlice,
+		"anymap":  anyMap,
+	}
+
+	htmlEscapeStringValues(data)
+
+	got, ok := data["strings"].([]string)
+	if !ok || len(got) != 1 || got[0] != escaped {
+		t.Errorf("[]string = %v, want %q escaped", data["strings"], raw)
+	}
+	gotMap, ok := data["strmap"].(map[string]string)
+	if !ok || gotMap["k"] != escaped {
+		t.Errorf("map[string]string = %v, want %q escaped", data["strmap"], raw)
+	}
+	gotAny, ok := data["anys"].([]any)
+	if !ok || len(gotAny) != 3 {
+		t.Fatalf("[]any = %v, want three elements", data["anys"])
+	}
+	if gotAny[0] != escaped {
+		t.Errorf("[]any[0] = %v, want it escaped", gotAny[0])
+	}
+	if gotAny[1] != 7 {
+		t.Errorf("[]any[1] = %v, want the number untouched", gotAny[1])
+	}
+	if nested, ok := gotAny[2].([]string); !ok || nested[0] != escaped {
+		t.Errorf("[]any[2] = %v, want the nested slice escaped", gotAny[2])
+	}
+	gotAnyMap, ok := data["anymap"].(map[string]any)
+	if !ok || gotAnyMap["inner"] != escaped {
+		t.Errorf("map[string]any = %v, want it escaped", data["anymap"])
+	}
+	if deeper, ok := gotAnyMap["deeper"].(map[string]any); !ok || deeper["k"] != escaped {
+		t.Errorf("nested map = %v, want it escaped", gotAnyMap["deeper"])
+	}
+
+	// The caller's containers are shared with the payload, which the
+	// same alert fans out to every other channel, so escaping must
+	// copy rather than mutate them.
+	if strSlice[0] != raw {
+		t.Error("the caller's []string was escaped in place")
+	}
+	if strMap["k"] != raw {
+		t.Error("the caller's map[string]string was escaped in place")
+	}
+	if anySlice[0] != raw {
+		t.Error("the caller's []any was escaped in place")
+	}
+	if anyMap["inner"] != raw {
+		t.Error("the caller's map[string]any was escaped in place")
+	}
+}
+
+// TestNotificationPayloadFieldTypesAreEscapable is a tripwire rather
+// than a behavior test, and it is the other half of the H-003 fix.
+// htmlEscapeStringValues now handles the container types a template
+// data map can hold, but enhancePayload copies every payload field
+// across by hand, so a field of some type nobody considered could be
+// added without anyone revisiting escaping at all. This fails as soon
+// as NotificationPayload grows an exported field outside the set of
+// types that provably cannot carry markup, which forces whoever adds it
+// to come and check.
+func TestNotificationPayloadFieldTypesAreEscapable(t *testing.T) {
+	// Strings are escaped; numbers, booleans and times render through
+	// fmt and cannot produce markup.
+	escapable := map[string]bool{
+		"string":     true,
+		"*string":    true,
+		"bool":       true,
+		"*bool":      true,
+		"int":        true,
+		"*int":       true,
+		"int64":      true,
+		"*int64":     true,
+		"float64":    true,
+		"*float64":   true,
+		"time.Time":  true,
+		"*time.Time": true,
+	}
+
+	typ := reflect.TypeOf(database.NotificationPayload{})
+	for i := 0; i < typ.NumField(); i++ {
+		field := typ.Field(i)
+		if !field.IsExported() {
+			continue
+		}
+		if !escapable[field.Type.String()] {
+			t.Errorf("NotificationPayload.%s is a %s, which htmlEscapeStringValues "+
+				"has not been shown to escape. Add it to htmlEscapeValue (and to "+
+				"this list) before sending it through a parse_mode: HTML message.",
+				field.Name, field.Type)
+		}
+	}
+}
+
+// TestTelegramDefaultTemplatesAreNotMatchedByIsHTMLTemplate guards the
+// trap the Telegram design avoids. isHTMLTemplate only recognizes
+// templates that start with an HTML document or block prefix, and the
+// Telegram defaults start with an emoji or an action. If one ever began
+// with <div>, <html> or <body>, Render would route it through
+// html/template and escape the literal markup, and someone might then be
+// tempted to use Render in place of RenderHTML.
+func TestTelegramDefaultTemplatesAreNotMatchedByIsHTMLTemplate(t *testing.T) {
+	templates := map[string]string{
+		"alert fire":  DefaultTelegramAlertFireTemplate,
+		"alert clear": DefaultTelegramAlertClearTemplate,
+		"reminder":    DefaultTelegramReminderTemplate,
+	}
+
+	for name, tmpl := range templates {
+		t.Run(name, func(t *testing.T) {
+			if isHTMLTemplate(tmpl) {
+				t.Errorf("the Telegram %s template is matched by isHTMLTemplate; "+
+					"it must not start with an HTML block prefix", name)
+			}
+		})
+	}
+}
+
+// TestTelegramDefaultTemplates_RenderWithinLimits renders each default
+// with the real renderer and checks the output is usable Telegram HTML:
+// under the length limit, non-empty, and carrying the fields the Slack
+// defaults carry.
+func TestTelegramDefaultTemplates_RenderWithinLimits(t *testing.T) {
+	renderer := NewTemplateRenderer()
+	cleared := time.Date(2026, 3, 1, 10, 30, 0, 0, time.UTC)
+
+	tests := []struct {
+		name           string
+		template       string
+		clearedAt      *time.Time
+		wantSubstrings []string
+	}{
+		{
+			name:     "alert fire",
+			template: DefaultTelegramAlertFireTemplate,
+			wantSubstrings: []string{
+				"🔴 <b>Alert: Connection limit</b>",
+				"<b>Server:</b> prod-db-1 (<code>db1.example.com:5432</code>)",
+				"<b>Severity:</b> critical",
+				"<code>orders</code>",
+				"<code>connections_used</code>",
+				"threshold &gt; 180",
+				"Too many connections",
+			},
+		},
+		{
+			name:      "alert clear",
+			template:  DefaultTelegramAlertClearTemplate,
+			clearedAt: &cleared,
+			wantSubstrings: []string{
+				"✅ <b>Resolved: Connection limit</b>",
+				"<b>Duration:</b> 1h 30m",
+				"<b>Cleared:</b> 2026-03-01 10:30:00 UTC",
+			},
+		},
+		{
+			name:     "reminder",
+			template: DefaultTelegramReminderTemplate,
+			wantSubstrings: []string{
+				"⏰ <b>Reminder: Connection limit</b> is still active",
+				"<b>Reminder:</b> #3",
+				"<b>Active since:</b> 2026-03-01 09:00:00 UTC",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			payload := telegramRenderPayload()
+			payload.ClearedAt = tt.clearedAt
+
+			result, err := renderer.RenderHTML("", payload, tt.template)
+			if err != nil {
+				t.Fatalf("RenderHTML() unexpected error: %v", err)
+			}
+			if result == "" {
+				t.Fatal("RenderHTML() produced empty output")
+			}
+			if n := len([]rune(result)); n > telegramMaxMessageRunes {
+				t.Errorf("rendered %d runes, over Telegram's %d limit", n,
+					telegramMaxMessageRunes)
+			}
+			for _, want := range tt.wantSubstrings {
+				if !strings.Contains(result, want) {
+					t.Errorf("rendered output is missing %q\ngot:\n%s", want, result)
+				}
+			}
+		})
+	}
+}
+
+// TestTelegramDefaultTemplates_OmitOptionalFields checks the conditional
+// blocks so a payload with no database or metric renders cleanly.
+func TestTelegramDefaultTemplates_OmitOptionalFields(t *testing.T) {
+	renderer := NewTemplateRenderer()
+
+	payload := &database.NotificationPayload{
+		AlertID:          7,
+		AlertTitle:       "Replication lag",
+		AlertDescription: "Lag is high",
+		Severity:         "warning",
+		Status:           "active",
+		TriggeredAt:      time.Date(2026, 3, 1, 9, 0, 0, 0, time.UTC),
+		ConnectionID:     1,
+		ServerName:       "prod-db-1",
+		ServerHost:       "db1.example.com",
+		ServerPort:       5432,
+		NotificationType: string(database.NotificationTypeAlertFire),
+		ReminderCount:    1,
+	}
+
+	for name, tmpl := range map[string]string{
+		"alert fire":  DefaultTelegramAlertFireTemplate,
+		"alert clear": DefaultTelegramAlertClearTemplate,
+		"reminder":    DefaultTelegramReminderTemplate,
+	} {
+		t.Run(name, func(t *testing.T) {
+			result, err := renderer.RenderHTML("", payload, tmpl)
+			if err != nil {
+				t.Fatalf("RenderHTML() unexpected error: %v", err)
+			}
+			if strings.Contains(result, "<b>Database:</b>") {
+				t.Errorf("database block rendered for a payload with no database:\n%s",
+					result)
+			}
+			if strings.Contains(result, "<b>Metric:</b>") {
+				t.Errorf("metric block rendered for a payload with no metric:\n%s",
+					result)
+			}
+			if !strings.Contains(result, "Replication lag") {
+				t.Errorf("rendered output is missing the alert title:\n%s", result)
+			}
+		})
 	}
 }

@@ -159,6 +159,62 @@ describe('buildLineOptions', () => {
     });
 });
 
+describe('null gaps', () => {
+    it('passes null entries through to the line series untouched', () => {
+        const gapped: ChartData = {
+            categories: ['a', 'b', 'c'],
+            series: [{ name: 'v', data: [95, null, 97] }],
+        };
+        const result = buildLineOptions(gapped, {}) as any;
+        expect(result.series[0].data).toEqual([95, null, 97]);
+    });
+
+    it('ignores null entries when sizing a flat plain line', () => {
+        const gapped: ChartData = {
+            categories: ['a', 'b', 'c'],
+            series: [{ name: 'v', data: [100, null, 100] }],
+        };
+        const result = buildLineOptions(gapped, {}) as any;
+        expect(result.yAxis.min).toBeCloseTo(90);
+        expect(result.yAxis.max).toBeCloseTo(110);
+    });
+
+    it('ignores null entries when sizing a flat stacked line', () => {
+        const gapped: ChartData = {
+            categories: ['a', 'b', 'c'],
+            series: [
+                { name: 'v', data: [100, null, 100] },
+                { name: 'w', data: [null, null, null] },
+            ],
+        };
+        const result = buildLineOptions(gapped, { stacked: true }) as any;
+        expect(result.yAxis.min).toBe(0);
+        expect(result.yAxis.max).toBeCloseTo(110);
+    });
+
+    it('leaves auto-scaling alone for an all-null series', () => {
+        const empty: ChartData = {
+            categories: ['a', 'b'],
+            series: [{ name: 'v', data: [null, null] }],
+        };
+        const result = buildLineOptions(empty, {}) as any;
+        expect(result.yAxis.min).toBeUndefined();
+        expect(result.yAxis.max).toBeUndefined();
+    });
+
+    it('treats a null pie slice as zero', () => {
+        const gapped: ChartData = {
+            categories: ['a', 'b'],
+            series: [{ name: 'v', data: [null, 5] }],
+        };
+        const result = buildPieOptions(gapped, {}) as any;
+        expect(result.series[0].data).toEqual([
+            { name: 'a', value: 0 },
+            { name: 'b', value: 5 },
+        ]);
+    });
+});
+
 describe('buildBarOptions', () => {
     it('returns object with the expected structure', () => {
         const result = buildBarOptions(sampleData, {}) as any;
@@ -211,6 +267,22 @@ describe('buildBarOptions', () => {
         result.series.forEach((s: any) => {
             expect(s.barMaxWidth).toBe(50);
         });
+    });
+
+    it('keeps an all-zero stacked bar chart on or above the baseline', () => {
+        // Regression: the Checkpoints Over Time chart over a window with
+        // no checkpoints holds two all-zero series, and the y-axis ran
+        // to -1 for a count that cannot be negative.
+        const zeros: ChartData = {
+            categories: ['a', 'b', 'c'],
+            series: [
+                { name: 'timed', data: [0, 0, 0] },
+                { name: 'requested', data: [0, 0, 0] },
+            ],
+        };
+        const result = buildBarOptions(zeros, { stacked: true }) as any;
+        expect(result.yAxis.min).toBe(0);
+        expect(result.yAxis.max).toBe(1);
     });
 
     it('anchors a flat unstacked bar chart to the zero baseline', () => {
@@ -283,5 +355,54 @@ describe('buildPieOptions', () => {
     it('does not include percentage in label formatter by default', () => {
         const result = buildPieOptions(sampleData, {}) as any;
         expect(result.series[0].label.formatter).not.toContain('{d}%');
+    });
+});
+
+describe('carried-forward stretches', () => {
+    const filledData: ChartData = {
+        categories: ['Jan', 'Feb', 'Mar'],
+        series: [
+            { name: 'Sales', data: [1, 1, 3], filled: [false, true, false] },
+            { name: 'Profit', data: [4, 5, 6], filled: [false, false, false] },
+        ],
+    };
+
+    it('marks the carried-forward point of a line series', () => {
+        const result = buildLineOptions(filledData, {}) as any;
+        expect(result.series[0].data[0]).toBe(1);
+        expect(result.series[0].data[1]).toMatchObject({
+            value: 1,
+            filled: true,
+            symbol: 'emptyCircle',
+        });
+    });
+
+    it('shades the stretch once, from the first series only', () => {
+        const result = buildLineOptions(filledData, {}) as any;
+        expect(result.series[0].markArea.data).toEqual([
+            [{ xAxis: 'Feb' }, { xAxis: 'Feb' }],
+        ]);
+        expect(result.series[1].markArea).toBeUndefined();
+    });
+
+    it('leaves a chart with no carried-forward data unshaded', () => {
+        const result = buildLineOptions(sampleData, {}) as any;
+        expect(result.series[0].markArea).toBeUndefined();
+        expect(result.series[0].data).toEqual([100, 200, 300]);
+    });
+
+    it('marks carried-forward bars the same way', () => {
+        const result = buildBarOptions(filledData, {}) as any;
+        expect(result.series[0].data[1]).toMatchObject({ filled: true });
+        expect(result.series[1].data).toEqual([4, 5, 6]);
+    });
+
+    it('still sizes the y-axis from the raw values', () => {
+        const result = buildLineOptions({
+            categories: ['Jan', 'Feb'],
+            series: [{ name: 'Flat', data: [5, 5], filled: [false, true] }],
+        }, {}) as any;
+        expect(result.yAxis.min).toBeCloseTo(4.5);
+        expect(result.yAxis.max).toBeCloseTo(5.5);
     });
 });

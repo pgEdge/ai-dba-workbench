@@ -22,6 +22,7 @@ import (
 
 	"github.com/pgedge/ai-workbench/collector/src/database"
 	"github.com/pgedge/ai-workbench/pkg/fileutil"
+	"github.com/pgedge/ai-workbench/pkg/flagutil"
 )
 
 // saveAndClearFlags resets the package-level flag pointers and returns a
@@ -66,14 +67,87 @@ func saveAndClearFlags(t *testing.T) func() {
 func TestLoadConfiguration_ExplicitConfigMissing(t *testing.T) {
 	defer saveAndClearFlags(t)()
 
-	*configFile = "/nonexistent/path/to/config.yaml"
+	// Use a path inside a fresh temp dir so the test cannot be
+	// affected by a real file of the same name on the host.
+	missing := filepath.Join(t.TempDir(), "config.yaml")
+	*configFile = missing
 
-	cfg, err := loadConfiguration()
+	cfg, err := loadConfiguration(nil)
 	if err == nil {
 		t.Fatal("expected error when explicit config file does not exist")
 	}
 	if cfg != nil {
 		t.Errorf("expected nil config on error, got %+v", cfg)
+	}
+	// LoadFromFile wraps the os error, so this branch is only
+	// reachable if loadConfiguration unwraps it (issue #421).
+	want := "specified config file not found: " + missing
+	if err.Error() != want {
+		t.Errorf("err = %q, want %q", err.Error(), want)
+	}
+}
+
+// TestLoadConfiguration_AutoDiscoveredVanished exercises the race
+// where an auto-discovered config file is removed between the
+// discovery helper's stat and LoadFromFile's read. The collector
+// must fall back to compiled-in defaults without error, exactly as
+// it does when no candidate file exists at all. The seam
+// discoverDefaultConfigPath lets the test delete the file after
+// discovery has found it, which is the only deterministic way to
+// reach this branch (issue #421).
+func TestLoadConfiguration_AutoDiscoveredVanished(t *testing.T) {
+	defer saveAndClearFlags(t)()
+
+	base := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", base)
+	t.Setenv("HOME", base)
+	t.Setenv("AppData", base)
+	fileutil.SetSystemConfigDirForTest(t, filepath.Join(base, "absent-etc-pgedge"))
+
+	userDir, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatalf("os.UserConfigDir: %v", err)
+	}
+	pgedgeDir := filepath.Join(userDir, "pgedge")
+	if err := os.MkdirAll(pgedgeDir, 0700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	// A secret file is still required after the fallback, exactly as
+	// when no config file is present at all.
+	secretPath := filepath.Join(pgedgeDir, "ai-dba-collector.secret")
+	if err := os.WriteFile(secretPath, []byte("vanished-config-secret"), 0600); err != nil {
+		t.Fatalf("write secret: %v", err)
+	}
+	cfgPath := filepath.Join(pgedgeDir, "ai-dba-collector.yaml")
+	if err := os.WriteFile(cfgPath, []byte("datastore:\n  host: vanishing-host\n"), 0600); err != nil {
+		t.Fatalf("write cfg: %v", err)
+	}
+
+	origDiscover := discoverDefaultConfigPath
+	t.Cleanup(func() { discoverDefaultConfigPath = origDiscover })
+	discovered := ""
+	discoverDefaultConfigPath = func(binaryPath string) string {
+		discovered = GetDefaultConfigPath(binaryPath)
+		if err := os.Remove(discovered); err != nil {
+			t.Fatalf("remove discovered config: %v", err)
+		}
+		return discovered
+	}
+
+	cfg, err := loadConfiguration(nil)
+	if err != nil {
+		t.Fatalf("loadConfiguration: %v, want fallback to defaults", err)
+	}
+	if discovered != cfgPath {
+		t.Errorf("discovered = %q, want %q", discovered, cfgPath)
+	}
+	// The file was never read, so its contents must not have
+	// leaked into the returned configuration.
+	if cfg.Datastore.Host == "vanishing-host" {
+		t.Errorf("Host = %q; vanished file should not have been loaded", cfg.Datastore.Host)
+	}
+	if want := NewConfig().Datastore.Host; cfg.Datastore.Host != want {
+		t.Errorf("Host = %q, want default %q", cfg.Datastore.Host, want)
 	}
 }
 
@@ -87,7 +161,7 @@ func TestLoadConfiguration_ExplicitConfigMalformed(t *testing.T) {
 	}
 
 	*configFile = configPath
-	_, err := loadConfiguration()
+	_, err := loadConfiguration(nil)
 	if err == nil {
 		t.Fatal("expected error for malformed YAML")
 	}
@@ -105,7 +179,9 @@ func TestLoadConfiguration_PasswordFileMissing(t *testing.T) {
 	*configFile = configPath
 	*pgPasswordFile = "/definitely/missing/password-file"
 
-	_, err := loadConfiguration()
+	// -pg-password-file is marked as passed, so the override applies
+	// and loadConfiguration then fails to read the named file.
+	_, err := loadConfiguration(flagutil.Set{flagPGPasswordFile: true})
 	if err == nil {
 		t.Fatal("expected error because password file is missing")
 	}
@@ -129,14 +205,14 @@ func TestLoadConfiguration_SecretFileMissing(t *testing.T) {
 	}
 
 	*configFile = configPath
-	_, err := loadConfiguration()
+	_, err := loadConfiguration(nil)
 	if err == nil {
 		t.Fatal("expected error because server secret file is missing")
 	}
 }
 
 // TestLoadConfiguration_Success exercises the full happy path of
-// loadConfiguration(): it writes a config file, a password file, and a
+// loadConfiguration: it writes a config file, a password file, and a
 // secret file all within the temp directory and explicitly references
 // them in the config YAML.
 func TestLoadConfiguration_Success(t *testing.T) {
@@ -166,7 +242,7 @@ func TestLoadConfiguration_Success(t *testing.T) {
 
 	*configFile = configPath
 
-	cfg, err := loadConfiguration()
+	cfg, err := loadConfiguration(nil)
 	if err != nil {
 		t.Fatalf("loadConfiguration error: %v", err)
 	}
@@ -198,7 +274,7 @@ func TestLoadConfiguration_NoConfigFileUsesDefaults(t *testing.T) {
 
 	// loadConfiguration must surface an error from LoadSecret since
 	// there is no secret file available in either default location.
-	_, err := loadConfiguration()
+	_, err := loadConfiguration(nil)
 	if err == nil {
 		t.Fatal("expected error because no secret file exists on default paths")
 	}
@@ -224,7 +300,7 @@ func TestLoadConfiguration_ExplicitConfigPermissionError(t *testing.T) {
 	}
 
 	*configFile = cfgPath
-	_, err := loadConfiguration()
+	_, err := loadConfiguration(nil)
 	if err == nil {
 		t.Fatal("expected error when explicit config path is unreadable")
 	}
@@ -264,7 +340,7 @@ func TestLoadConfiguration_AutoDiscoveredUnreadable(t *testing.T) {
 		t.Fatalf("Mkdir: %v", err)
 	}
 
-	_, err = loadConfiguration()
+	_, err = loadConfiguration(nil)
 	if err == nil {
 		t.Fatal("expected error from non-IsNotExist auto-discovery branch")
 	}
@@ -309,7 +385,7 @@ func TestLoadConfiguration_DefaultConfigFromUserDir(t *testing.T) {
 		t.Fatalf("write cfg: %v", err)
 	}
 
-	cfg, err := loadConfiguration()
+	cfg, err := loadConfiguration(nil)
 	if err != nil {
 		t.Fatalf("loadConfiguration: %v", err)
 	}

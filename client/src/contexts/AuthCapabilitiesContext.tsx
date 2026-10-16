@@ -1,0 +1,252 @@
+/*-------------------------------------------------------------------------
+ *
+ * pgEdge AI DBA Workbench
+ *
+ * Copyright (c) 2025 - 2026, pgEdge, Inc.
+ * This software is released under The PostgreSQL License
+ *
+ *-------------------------------------------------------------------------
+ */
+
+import type React from 'react';
+import { createContext, useState, useEffect, useMemo } from 'react';
+import { apiGet, ApiError } from '../utils/apiClient';
+
+/**
+ * AuthCapabilities describes the sign-in methods the server offers, so
+ * that the login screen renders only the ones that will actually work.
+ */
+export interface AuthCapabilities {
+    localEnabled: boolean;
+    oidcEnabled: boolean;
+    oidcLabel: string;
+}
+
+export type AuthCapabilitiesValue = AuthCapabilities & { loading: boolean };
+
+/*
+ * What a server that answered, but sent no `auth` block, offers: it
+ * predates this feature, so local login is all it has. This is
+ * knowledge rather than a guess, which is why it differs from the
+ * fallback below.
+ */
+const LEGACY_AUTH_CAPABILITIES: AuthCapabilities = {
+    localEnabled: true,
+    oidcEnabled: false,
+    oidcLabel: '',
+};
+
+/*
+ * What to assume when the server did not answer at all. Here we know
+ * nothing, so both affordances are offered and the operator's choice
+ * decides which one works.
+ *
+ * Guessing wrong is not free: the provider button is a full-page
+ * navigation, so following one on a deployment with OIDC switched off
+ * would cost the login screen itself. The server registers the start
+ * endpoint in every configuration for exactly this reason, and answers
+ * that case with a redirect back to /?login_error=provider, so the
+ * user lands on the login screen with a message rather than on a
+ * browser error page. That is what makes this the recoverable side of
+ * the trade; hiding the only method that would have worked is the
+ * unrecoverable side, a dead end with nothing on screen to explain it.
+ *
+ * The label is left empty so that the button falls back to the same
+ * generic wording the server itself uses.
+ */
+const UNKNOWN_AUTH_CAPABILITIES: AuthCapabilities = {
+    localEnabled: true,
+    oidcEnabled: true,
+    oidcLabel: '',
+};
+
+/*
+ * How long to wait for one attempt at the capabilities. `apiGet` sets
+ * no timeout of its own, so without this a request that never settles
+ * (a proxy holding the connection open, a half-open socket) would
+ * leave the login screen waiting forever.
+ *
+ * A healthy server answers this endpoint, which serves three fields
+ * from memory, in tens of milliseconds, so four seconds is already
+ * two orders of magnitude of slack and a stall is the likelier
+ * explanation than slowness.
+ */
+const CAPABILITIES_TIMEOUT_MS = 4000;
+
+/*
+ * One retry, so that a single transient stall does not decide what the
+ * login screen offers. The worst case stays inside eight seconds,
+ * which is short enough that the spinner still reads as waiting rather
+ * than as broken; a longer single timeout would cover the same stall
+ * less well whilst making every failure slower.
+ */
+const CAPABILITIES_RETRIES = 1;
+
+const AuthCapabilitiesContext = createContext<AuthCapabilitiesValue | null>(null);
+
+interface AuthCapabilitiesResponse {
+    local_enabled?: boolean;
+    oidc_enabled?: boolean;
+    oidc_label?: string;
+}
+
+interface CapabilitiesResponse {
+    auth?: AuthCapabilitiesResponse;
+}
+
+/*
+ * The statuses that say the endpoint is not there, as opposed to not
+ * reachable. A server predating this feature answers 404, and a 410
+ * would mean the same thing more emphatically.
+ *
+ * The list is short on purpose. The endpoint itself only ever answers
+ * 200 or 405, so everything else in the 4xx range comes from something
+ * in between: a 408 is literally the timeout case, and a 429 or a 403
+ * from an intermediary says nothing about what the server offers.
+ * Treating those as "no OIDC here" would hide a working provider
+ * button on a deployment where it is the only way in.
+ */
+const ENDPOINT_ABSENT_STATUSES = new Set([404, 410]);
+
+/**
+ * Whether a rejection says the endpoint is absent, which is an answer
+ * about the deployment, as opposed to a network failure, a timeout, a
+ * 5xx or an intermediary's refusal, which say only that nothing got
+ * through.
+ */
+const isEndpointAbsent = (error: unknown): boolean =>
+    error instanceof ApiError && ENDPOINT_ABSENT_STATUSES.has(error.statusCode);
+
+/**
+ * Map the server's `auth` block onto the client shape, defaulting every
+ * missing field so that an older server still yields a usable screen.
+ */
+const mapAuthCapabilities = (
+    auth: AuthCapabilitiesResponse | undefined,
+): AuthCapabilities => {
+    if (!auth) {
+        return LEGACY_AUTH_CAPABILITIES;
+    }
+    return {
+        localEnabled: auth.local_enabled !== false,
+        oidcEnabled: auth.oidc_enabled === true,
+        oidcLabel: typeof auth.oidc_label === 'string' ? auth.oidc_label : '',
+    };
+};
+
+export const AuthCapabilitiesProvider = ({
+    children,
+}: {
+    children: React.ReactNode;
+}): React.ReactElement => {
+    const [capabilities, setCapabilities] = useState<AuthCapabilities>(
+        LEGACY_AUTH_CAPABILITIES,
+    );
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        let cancelled = false;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        let controller: AbortController | undefined;
+
+        const finish = (value: AuthCapabilities) => {
+            if (cancelled) {
+                return;
+            }
+            setCapabilities(value);
+            setLoading(false);
+        };
+
+        /*
+         * One attempt: race the request against a timer, so that the
+         * attempt ends on time whether or not the request honours the
+         * abort, and abort it either way so that a late answer cannot
+         * swap the form out from under whoever is already typing.
+         */
+        const attempt = async (): Promise<CapabilitiesResponse> => {
+            controller = new AbortController();
+            const aborter = controller;
+
+            const request = apiGet<CapabilitiesResponse>(
+                '/api/v1/capabilities',
+                {
+                    signal: aborter.signal,
+                    /*
+                     * This probe is not evidence about the session's
+                     * connection: it runs before anyone has signed in
+                     * and it times out on its own. Counted, its two
+                     * attempts would spend most of the three-failure
+                     * budget at page load and could latch the
+                     * disconnected flag, after which the connection-lost
+                     * overlay would never fire again all session.
+                     */
+                    skipHealthTracking: true,
+                },
+            );
+            // The race abandons the request on a timeout, so absorb a
+            // later rejection rather than leaving it unhandled.
+            request.catch(() => undefined);
+
+            const expiry = new Promise<never>((_, reject) => {
+                timer = setTimeout(() => {
+                    aborter.abort();
+                    reject(new Error('capabilities request timed out'));
+                }, CAPABILITIES_TIMEOUT_MS);
+            });
+
+            try {
+                return await Promise.race([request, expiry]);
+            } finally {
+                clearTimeout(timer);
+            }
+        };
+
+        const fetchCapabilities = async () => {
+            for (let left = CAPABILITIES_RETRIES; left >= 0; left -= 1) {
+                try {
+                    const data = await attempt();
+                    finish(mapAuthCapabilities(data.auth));
+                    return;
+                } catch (error) {
+                    if (cancelled) {
+                        return;
+                    }
+                    /*
+                     * A 404 is an answer, not a silence: a server old
+                     * enough to lack this endpoint answers one, which
+                     * says the same thing as a missing `auth` block.
+                     * Retrying it would only produce the same 404, and
+                     * treating it as unknown would offer a provider
+                     * button that goes nowhere.
+                     */
+                    if (isEndpointAbsent(error)) {
+                        finish(LEGACY_AUTH_CAPABILITIES);
+                        return;
+                    }
+                }
+            }
+            finish(UNKNOWN_AUTH_CAPABILITIES);
+        };
+
+        void fetchCapabilities();
+
+        return () => {
+            cancelled = true;
+            clearTimeout(timer);
+            controller?.abort();
+        };
+    }, []);
+
+    const value = useMemo(
+        () => ({ ...capabilities, loading }),
+        [capabilities, loading],
+    );
+
+    return (
+        <AuthCapabilitiesContext.Provider value={value}>
+            {children}
+        </AuthCapabilitiesContext.Provider>
+    );
+};
+
+export default AuthCapabilitiesContext;

@@ -15,16 +15,22 @@ import CircularProgress from '@mui/material/CircularProgress';
 import { Storage as StorageIcon } from '@mui/icons-material';
 import { useDashboard } from '../../../contexts/useDashboard';
 import { useMetrics } from '../../../hooks/useMetrics';
-import type { MetricDataPoint, MetricQueryParams, MetricSeries } from '../types';
+import { useServerCacheHit } from '../../../hooks/useServerCacheHit';
+import type { MetricQueryParams } from '../types';
+import { buildMetricChartData as buildChartData } from '../metricsChart';
 import { KPI_GRID_SX, CHART_SECTION_SX } from '../styles';
 import KpiTile from '../KpiTile';
 import CollapsibleSection from '../CollapsibleSection';
 import { Chart } from '../../Chart';
 import ChartPanel from '../ChartPanel';
+import { CACHE_HIT_CAVEAT, latestCacheHitRatio } from '../cacheHitRatio';
 import { apiGet } from '../../../utils/apiClient';
 import { logger } from '../../../utils/logger';
-import { formatBytes, formatValue, formatNumber, formatCompactNumber } from '../../../utils/formatters';
-import { type ServerSectionProps, extractSparklineData, extractLatestValue } from './types';
+import { formatBytes, formatValue, formatNumber } from '../../../utils/formatters';
+import {
+    type ServerSectionProps, extractSparklineData, extractLatestValue,
+    extractLatestRate,
+} from './types';
 
 /** Number of data buckets for KPI sparklines */
 const KPI_BUCKETS = 30;
@@ -43,39 +49,10 @@ const CHART_HEIGHT = 250;
 const CONNECTIONS_CHART_TITLE = 'Connections (Monitored Database)';
 const SESSIONS_CHART_TITLE = 'Sessions Established (Monitored Database)';
 
-/**
- * Build chart data from metric series for the Chart component.
- */
-const buildChartData = (
-    series: MetricSeries[] | null,
-    metricNames: string[],
-    displayNames?: string[],
-) => {
-    if (!series) { return null; }
-
-    const matchedSeries = metricNames.map((metric, idx) => {
-        const found = series.find(s => s.metric === metric);
-        return {
-            name: displayNames?.[idx] ?? metric,
-            data: found?.data.map(d => d.value) ?? [],
-            categories: found?.data.map(d => d.time) ?? [],
-        };
-    });
-
-    if (matchedSeries.every(s => s.data.length === 0)) { return null; }
-
-    const categories = matchedSeries.find(
-        s => s.categories.length > 0
-    )?.categories ?? [];
-
-    return {
-        categories,
-        series: matchedSeries.map(s => ({
-            name: s.name,
-            data: s.data,
-        })),
-    };
-};
+/** Analysis description for the cache hit ratio KPI. */
+const CACHE_HIT_DESCRIPTION =
+    'Buffer cache hit ratio per interval (null buckets had no block '
+    + `access). ${CACHE_HIT_CAVEAT}`;
 
 /** Shape of the latest pg_server_info row used for max_connections. */
 interface ServerInfoRow {
@@ -147,7 +124,7 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
     connectionId,
     connectionName,
 }) => {
-    const { timeRange } = useDashboard();
+    const { timeRange, refreshTrigger } = useDashboard();
 
     // KPI queries (30 buckets) - all from pg_stat_database
     const connectionsKpiParams = useMemo((): MetricQueryParams => ({
@@ -165,16 +142,7 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
         timeRange: timeRange.range,
         buckets: KPI_BUCKETS,
         aggregation: 'avg',
-        metrics: ['xact_commit', 'xact_rollback'],
-    }), [connectionId, timeRange.range]);
-
-    const cacheKpiParams = useMemo((): MetricQueryParams => ({
-        probeName: 'pg_stat_database',
-        connectionId,
-        timeRange: timeRange.range,
-        buckets: KPI_BUCKETS,
-        aggregation: 'avg',
-        metrics: ['blks_hit', 'blks_read'],
+        metrics: ['xact_commit_per_sec'],
     }), [connectionId, timeRange.range]);
 
     const tempKpiParams = useMemo((): MetricQueryParams => ({
@@ -183,7 +151,7 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
         timeRange: timeRange.range,
         buckets: KPI_BUCKETS,
         aggregation: 'avg',
-        metrics: ['temp_bytes'],
+        metrics: ['temp_bytes_delta'],
     }), [connectionId, timeRange.range]);
 
     // Chart queries (150 buckets)
@@ -202,7 +170,7 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
         timeRange: timeRange.range,
         buckets: CHART_BUCKETS,
         aggregation: 'avg',
-        metrics: ['xact_commit', 'xact_rollback'],
+        metrics: ['xact_commit_per_sec', 'xact_rollback_per_sec'],
     }), [connectionId, timeRange.range]);
 
     const blockIoChartParams = useMemo((): MetricQueryParams => ({
@@ -211,7 +179,7 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
         timeRange: timeRange.range,
         buckets: CHART_BUCKETS,
         aggregation: 'avg',
-        metrics: ['blks_hit', 'blks_read'],
+        metrics: ['blks_hit_per_sec', 'blks_read_per_sec'],
     }), [connectionId, timeRange.range]);
 
     const tupleChartParams = useMemo((): MetricQueryParams => ({
@@ -221,17 +189,24 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
         buckets: CHART_BUCKETS,
         aggregation: 'avg',
         metrics: [
-            'tup_fetched',
-            'tup_inserted',
-            'tup_updated',
-            'tup_deleted',
+            'tup_fetched_per_sec',
+            'tup_inserted_per_sec',
+            'tup_updated_per_sec',
+            'tup_deleted_per_sec',
         ],
     }), [connectionId, timeRange.range]);
 
     // Fetch KPI data
     const connectionsKpi = useMetrics(connectionsKpiParams);
     const txnKpi = useMetrics(txnKpiParams);
-    const cacheKpi = useMetrics(cacheKpiParams);
+    // The server-wide cache hit ratio comes from the performance
+    // summary, where the server differences the block counters per
+    // database before summing them and computes the ratio from the
+    // summed deltas (issue #401). Building it client-side from two
+    // separate blks_*_per_sec series would divide one already-averaged
+    // rate by another, so the ratio is taken from the endpoint that
+    // computes it in one pass.
+    const cacheKpi = useServerCacheHit(connectionId, timeRange, refreshTrigger);
     const tempKpi = useMetrics(tempKpiParams);
 
     // Fetch chart data
@@ -245,43 +220,29 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
     const numBackends = extractLatestValue(
         connectionsKpi.data, 'numbackends'
     );
-    const xactCommit = extractLatestValue(
-        txnKpi.data, 'xact_commit'
+    const xactCommitRate = extractLatestRate(
+        txnKpi.data, 'xact_commit_per_sec'
     );
-    const blksHit = extractLatestValue(
-        cacheKpi.data, 'blks_hit'
+    // Idle buckets are null (gaps) and the headline is the latest
+    // bucket that has a ratio.
+    const cacheHitRatioSparkline = cacheKpi.points;
+    const cacheHitRatio = useMemo(
+        () => latestCacheHitRatio(cacheHitRatioSparkline),
+        [cacheHitRatioSparkline]
     );
-    const blksRead = extractLatestValue(
-        cacheKpi.data, 'blks_read'
-    );
-    const cacheHitRatio = useMemo(() => {
-        if (blksHit !== null && blksRead !== null) {
-            const total = blksHit + blksRead;
-            if (total > 0) { return (blksHit / total) * 100; }
-        }
-        return null;
-    }, [blksHit, blksRead]);
-    const cacheHitRatioSparkline = useMemo(() => {
-        const hitData = extractSparklineData(cacheKpi.data, 'blks_hit');
-        const readData = extractSparklineData(cacheKpi.data, 'blks_read');
-        if (hitData.length === 0 && readData.length === 0) { return []; }
-        const len = Math.max(hitData.length, readData.length);
-        const result: MetricDataPoint[] = [];
-        for (let i = 0; i < len; i++) {
-            const hit = i < hitData.length ? hitData[i].value : 0;
-            const read = i < readData.length ? readData[i].value : 0;
-            const total = hit + read;
-            result.push({
-                time: (i < hitData.length
-                    ? hitData[i] : readData[i]).time,
-                value: total > 0 ? (hit / total) * 100 : 0,
-            });
-        }
-        return result;
-    }, [cacheKpi.data]);
-    const tempBytes = extractLatestValue(
-        tempKpi.data, 'temp_bytes'
-    );
+    /*
+     * temp_bytes_delta reports the bytes spilled to temporary files in
+     * each bucket, so the figure for the selected window is the sum of
+     * the buckets rather than the latest one. Null buckets carry no
+     * reading and contribute nothing; a window with no readings at all
+     * has no total.
+     */
+    const tempBytesTotal = useMemo(() => {
+        const points = extractSparklineData(tempKpi.data, 'temp_bytes_delta');
+        const known = points.filter(point => point.value !== null);
+        if (known.length === 0) { return null; }
+        return known.reduce((total, point) => total + (point.value ?? 0), 0);
+    }, [tempKpi.data]);
 
     // Build chart datasets. Backends and sessions are deliberately kept
     // apart: numbackends is a gauge bounded by max_connections, whilst
@@ -292,6 +253,7 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
             connectionChart.data,
             ['numbackends'],
             ['Backends'],
+            connectionChart.window,
         );
         if (!base || maxConnections === null) { return base; }
         return {
@@ -300,51 +262,57 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
                 ...base.series,
                 {
                     name: 'Max Connections',
-                    data: base.categories.map(() => maxConnections),
+                    data: (base.categories ?? []).map(
+                        () => maxConnections,
+                    ),
                 },
             ],
         };
-    }, [connectionChart.data, maxConnections]);
+    }, [connectionChart.data, connectionChart.window, maxConnections]);
 
     const sessionChartData = useMemo(
         () => buildChartData(
             connectionChart.data,
             ['sessions'],
             ['Cumulative Sessions'],
+            connectionChart.window,
         ),
-        [connectionChart.data]
+        [connectionChart.data, connectionChart.window]
     );
 
     const txnChartData = useMemo(
         () => buildChartData(
             txnChart.data,
-            ['xact_commit', 'xact_rollback'],
-            ['Commits', 'Rollbacks'],
+            ['xact_commit_per_sec', 'xact_rollback_per_sec'],
+            ['Commits/s', 'Rollbacks/s'],
+            txnChart.window,
         ),
-        [txnChart.data]
+        [txnChart.data, txnChart.window]
     );
 
     const blockIoChartData = useMemo(
         () => buildChartData(
             blockIoChart.data,
-            ['blks_hit', 'blks_read'],
-            ['Blocks Hit', 'Blocks Read'],
+            ['blks_hit_per_sec', 'blks_read_per_sec'],
+            ['Blocks Hit/s', 'Blocks Read/s'],
+            blockIoChart.window,
         ),
-        [blockIoChart.data]
+        [blockIoChart.data, blockIoChart.window]
     );
 
     const tupleChartData = useMemo(
         () => buildChartData(
             tupleChart.data,
             [
-                'tup_fetched',
-                'tup_inserted',
-                'tup_updated',
-                'tup_deleted',
+                'tup_fetched_per_sec',
+                'tup_inserted_per_sec',
+                'tup_updated_per_sec',
+                'tup_deleted_per_sec',
             ],
-            ['Fetched', 'Inserted', 'Updated', 'Deleted'],
+            ['Fetched/s', 'Inserted/s', 'Updated/s', 'Deleted/s'],
+            tupleChart.window,
         ),
-        [tupleChart.data]
+        [tupleChart.data, tupleChart.window]
     );
 
     const isKpiLoading = connectionsKpi.loading || txnKpi.loading
@@ -375,14 +343,13 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
                 />
                 <KpiTile
                     label="Commits"
-                    value={xactCommit !== null
-                        ? formatCompactNumber(Math.round(xactCommit))
-                        : '--'}
+                    value={formatValue(xactCommitRate)}
+                    unit={xactCommitRate !== null ? '/s' : undefined}
                     sparklineData={extractSparklineData(
-                        txnKpi.data, 'xact_commit'
+                        txnKpi.data, 'xact_commit_per_sec'
                     )}
                     analysisContext={{
-                        metricDescription: 'Transaction commit rate over time',
+                        metricDescription: 'Transaction commits per second over time',
                         connectionId,
                         connectionName,
                         timeRange: timeRange.range,
@@ -396,7 +363,7 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
                     unit={cacheHitRatio !== null ? '%' : undefined}
                     sparklineData={cacheHitRatioSparkline}
                     analysisContext={{
-                        metricDescription: 'Buffer cache hit ratio over time',
+                        metricDescription: CACHE_HIT_DESCRIPTION,
                         connectionId,
                         connectionName,
                         timeRange: timeRange.range,
@@ -404,12 +371,12 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
                 />
                 <KpiTile
                     label="Temp Bytes"
-                    value={formatBytes(tempBytes)}
+                    value={formatBytes(tempBytesTotal)}
                     sparklineData={extractSparklineData(
-                        tempKpi.data, 'temp_bytes'
+                        tempKpi.data, 'temp_bytes_delta'
                     )}
                     analysisContext={{
-                        metricDescription: 'Temporary bytes written over time',
+                        metricDescription: 'Temporary file bytes written per interval',
                         connectionId,
                         connectionName,
                         timeRange: timeRange.range,
@@ -424,6 +391,7 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
                         loading={connectionChart.loading && !connectionChartData}
                         hasData={!!connectionChartData}
                         emptyMessage="No connection data available"
+                        errorMessage={connectionChart.error}
                         height={CHART_HEIGHT}
                     >
                         {connectionChartData && (
@@ -453,6 +421,7 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
                         loading={connectionChart.loading && !sessionChartData}
                         hasData={!!sessionChartData}
                         emptyMessage="No session data available"
+                        errorMessage={connectionChart.error}
                         height={CHART_HEIGHT}
                     >
                         {sessionChartData && (
@@ -482,6 +451,7 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
                         loading={txnChart.loading && !txnChartData}
                         hasData={!!txnChartData}
                         emptyMessage="No transaction data available"
+                        errorMessage={txnChart.error}
                         height={CHART_HEIGHT}
                     >
                         {txnChartData && (
@@ -495,7 +465,7 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
                                 showTooltip
                                 enableExport={false}
                                 analysisContext={{
-                                    metricDescription: 'Transaction commit and rollback rates',
+                                    metricDescription: 'Transaction commits and rollbacks per second',
                                     connectionId,
                                     connectionName,
                                     timeRange: timeRange.range,
@@ -511,6 +481,7 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
                         loading={blockIoChart.loading && !blockIoChartData}
                         hasData={!!blockIoChartData}
                         emptyMessage="No block I/O data available"
+                        errorMessage={blockIoChart.error}
                         height={CHART_HEIGHT}
                     >
                         {blockIoChartData && (
@@ -524,7 +495,7 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
                                 showTooltip
                                 enableExport={false}
                                 analysisContext={{
-                                    metricDescription: 'Block I/O showing cache hits vs disk reads',
+                                    metricDescription: 'Block I/O per second showing cache hits vs disk reads',
                                     connectionId,
                                     connectionName,
                                     timeRange: timeRange.range,
@@ -540,6 +511,7 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
                         loading={tupleChart.loading && !tupleChartData}
                         hasData={!!tupleChartData}
                         emptyMessage="No tuple operation data available"
+                        errorMessage={tupleChart.error}
                         height={CHART_HEIGHT}
                     >
                         {tupleChartData && (
@@ -553,7 +525,7 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
                                 showTooltip
                                 enableExport={false}
                                 analysisContext={{
-                                    metricDescription: 'Tuple operations showing rows fetched, inserted, updated, and deleted',
+                                    metricDescription: 'Tuple operations per second showing rows fetched, inserted, updated, and deleted',
                                     connectionId,
                                     connectionName,
                                     timeRange: timeRange.range,

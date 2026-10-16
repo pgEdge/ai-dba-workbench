@@ -2245,7 +2245,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 			},
 			Post: &OpenAPIOperation{
 				Summary:     "Create a cluster",
-				Description: "Creates a new cluster, optionally assigned to a group. Requires manage_connections permission.",
+				Description: "Creates a new cluster, optionally assigned to a group. Requires manage_connections permission. A group the caller cannot see is answered with 404, as a missing one is.",
 				OperationID: "createCluster",
 				Tags:        []string{"Clusters"},
 				Security:    bearerAuth,
@@ -2255,6 +2255,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
 					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission, or the API token's connection scope does not cover every connection"),
+					"404": jsonResponse("ErrorResponse", "Group not found, or not visible to the caller"),
 				},
 			},
 		},
@@ -2275,7 +2276,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 			},
 			Put: &OpenAPIOperation{
 				Summary:     "Update a cluster",
-				Description: "Updates cluster name, description, or group assignment. Requires manage_connections permission.",
+				Description: "Updates cluster name, description, or group assignment. Requires manage_connections permission. A group the caller cannot see is answered with 404, as a missing one is.",
 				OperationID: "updateCluster",
 				Tags:        []string{"Clusters"},
 				Security:    bearerAuth,
@@ -2286,7 +2287,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
 					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission, or the API token's connection scope does not cover the target"),
-					"404": jsonResponse("ErrorResponse", "Cluster not found"),
+					"404": jsonResponse("ErrorResponse", "Cluster not found, or group not found or not visible to the caller"),
 				},
 			},
 			Delete: &OpenAPIOperation{
@@ -2428,7 +2429,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 			},
 			Post: &OpenAPIOperation{
 				Summary:     "Create a cluster in a group",
-				Description: "Creates a new cluster within a group. Requires manage_connections permission.",
+				Description: "Creates a new cluster within a group. Requires manage_connections permission. A group the caller cannot see is answered with 404, as a missing one is.",
 				OperationID: "createClusterInGroup",
 				Tags:        []string{"Cluster Groups"},
 				Security:    bearerAuth,
@@ -2439,6 +2440,8 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
 					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission, or the API token's connection scope does not cover every connection"),
+					"404": jsonResponse("ErrorResponse", "Group not found, or not visible to the caller"),
+					"500": jsonResponse("ErrorResponse", "Failed to create cluster"),
 				},
 			},
 		},

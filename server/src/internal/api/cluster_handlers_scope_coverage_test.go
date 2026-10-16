@@ -352,6 +352,7 @@ func (f *clusterCovFixture) run(t *testing.T, cases []clusterCovCase) {
 // that no SQL is built at run time.
 var clusterCovQueries = map[string]string{
 	"cluster name":      "SELECT name FROM clusters WHERE id = $1",
+	"cluster group":     "SELECT group_id::text FROM clusters WHERE id = $1",
 	"cluster dismissed": "SELECT dismissed::text FROM clusters WHERE id = $1",
 	"cluster exists":    "SELECT EXISTS (SELECT 1 FROM clusters WHERE id = $1)::text",
 	"cluster by key":    "SELECT name FROM clusters WHERE auto_cluster_key = $1",

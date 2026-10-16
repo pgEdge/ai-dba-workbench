@@ -887,6 +887,10 @@ func (h *ClusterHandler) createClusterInGroup(w http.ResponseWriter, r *http.Req
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
+	if !h.requireVisibleTargetGroup(ctx, w, r, groupID, "Failed to create cluster") {
+		return
+	}
+
 	cluster, err := h.datastore.CreateCluster(ctx, groupID, req.Name, req.Description)
 	if err != nil {
 		log.Printf("[ERROR] Failed to create cluster %s in group %d: %v", req.Name, groupID, err)
@@ -991,6 +995,10 @@ func (h *ClusterHandler) updateCluster(w http.ResponseWriter, r *http.Request, i
 			RespondError(w, http.StatusNotFound, "Cluster not found")
 			return
 		}
+	}
+
+	if req.GroupID != nil && !h.requireVisibleTargetGroup(ctx, w, r, *req.GroupID, "Failed to update cluster") {
+		return
 	}
 
 	cluster, err := h.datastore.UpdateClusterPartial(ctx, id, req.GroupID, req.Name, req.Description, req.ReplicationType)
@@ -1515,6 +1523,10 @@ func (h *ClusterHandler) handleCreateCluster(w http.ResponseWriter, r *http.Requ
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
+
+	if req.GroupID != nil && !h.requireVisibleTargetGroup(ctx, w, r, *req.GroupID, "Failed to create cluster") {
+		return
+	}
 
 	clusterID, err := h.datastore.CreateManualCluster(ctx, req.Name, req.Description, req.ReplicationType, req.GroupID)
 	if err != nil {

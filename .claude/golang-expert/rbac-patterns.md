@@ -265,6 +265,24 @@ cluster's owner and should not be granted mutation rights.
 If a future schema change adds `owner_username` to the `clusters`
 table, migrate these two handlers to Variant 2.
 
+## Cluster Writes Check What They Point At (Issue #673)
+
+The admin gate is not enough on writes that place a cluster; the
+caller must also see the target, and a hidden object answers exactly
+as a missing one. The helpers live in
+`server/src/internal/api/cluster_write_visibility.go`:
+
+- `requireVisibleTargetGroup` runs before a cluster is created in, or
+  moved into, a group (`createClusterInGroup`, `handleCreateCluster`,
+  `updateCluster`). A missing or hidden group is 404 "Cluster group not
+  found", and both paths run the same queries. An empty group is
+  visible only to its owner (session username) and to callers who see
+  every connection, so a restricted token never sees one.
+
+Unrestricted callers skip all of this apart from the group lookup.
+The relationship routes are covered under "When To Gate" (issue #678).
+Tests: `cluster_write_visibility_test.go`.
+
 ## System Alerts Have No Connection (Issue #582)
 
 Alerts with `alert_type = 'system'` carry a NULL `connection_id`

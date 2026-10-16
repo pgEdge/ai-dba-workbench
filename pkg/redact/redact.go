@@ -149,6 +149,8 @@ const (
 // server's RedactedText cut a value before masking it, so that the
 // time a crafted value can take to mask is bounded (about a second at
 // most in PostgreSQL). Text longer than this is returned cut short.
+// TextUncut and SettledUncut do not cut: Go's regular expression engine
+// runs in time linear in the input, so the bound is not needed there.
 const MaxTextLength = 65536
 
 // textRedactions are the usual places a password appears in SQL text,
@@ -275,29 +277,37 @@ var compiledRedactions = func() []compiledRedaction {
 // MaxTextLength characters is cut to that length first, as PostgreSQL's
 // left() cuts it.
 func Text(s string) string {
-	s = truncate(s, MaxTextLength)
+	return TextUncut(truncate(s, MaxTextLength))
+}
+
+// TextUncut returns s masked as Text masks it, but without cutting it to
+// MaxTextLength first, so text after that point is kept and masked
+// too. A caller that writes masked text back over stored text uses it,
+// so that the rewrite never loses the end of a long value.
+func TextUncut(s string) string {
 	for _, r := range compiledRedactions {
 		s = r.re.ReplaceAllString(s, r.replacement)
 	}
 	return s
 }
 
-// maxSettlePasses bounds how many times Settled applies Text. Every
-// redacttest case settles within two passes, and of 50,000 fuzzed
-// inputs one needed three; TestSettled pins both.
+// maxSettlePasses bounds how many times SettledUncut applies
+// TextUncut. Every redacttest case settles within two passes, and of
+// 50,000 fuzzed inputs one needed three; TestSettledUncut pins both.
 const maxSettlePasses = 3
 
-// Settled returns s masked with Text and then masked again until the
-// text stops changing, for at most maxSettlePasses passes. Text is not
-// idempotent: masking a masked value can mask further, for example the
-// closing quote after a masked conninfo password
+// SettledUncut returns s masked with TextUncut and then masked again
+// until the text stops changing, for at most maxSettlePasses passes.
+// Masking is not idempotent: masking a masked value can mask further,
+// for example the closing quote after a masked conninfo password
 // (CONNECTION E'host=h password=********' loses its last quote). A
-// caller that stores masked text and masks it again on a later pass
-// uses Settled, so that the second pass finds nothing to rewrite.
-func Settled(s string) string {
-	s = Text(s)
+// caller that rewrites stored text in place, and masks it again on a
+// later pass, uses SettledUncut, so that the later pass finds nothing
+// to rewrite and the end of a long value is never lost.
+func SettledUncut(s string) string {
+	s = TextUncut(s)
 	for i := 1; i < maxSettlePasses; i++ {
-		next := Text(s)
+		next := TextUncut(s)
 		if next == s {
 			break
 		}

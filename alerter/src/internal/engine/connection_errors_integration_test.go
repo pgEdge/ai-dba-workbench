@@ -170,7 +170,8 @@ func TestEvaluateConnectionErrors_MasksCredentials(t *testing.T) {
 // TestEvaluateConnectionErrors_MasksOpenAlerts checks that an
 // acknowledged alert, and an alert on a connection in a blackout, that
 // still hold the raw text are masked too, whilst a cleared alert is left
-// alone. See GitHub issue #679.
+// alone, and that a description longer than redact.MaxTextLength keeps
+// its end. See GitHub issue #679.
 func TestEvaluateConnectionErrors_MasksOpenAlerts(t *testing.T) {
 	engine, _, pool, cleanup := newEngineSpockTestEnv(t)
 	defer cleanup()
@@ -188,33 +189,43 @@ func TestEvaluateConnectionErrors_MasksOpenAlerts(t *testing.T) {
 		t.Fatalf("failed to insert blackout: %v", err)
 	}
 
+	tail := strings.Repeat("é", redact.MaxTextLength)
 	alertIDs := map[string]int64{}
 	for name, a := range map[string]struct {
-		connID int
-		status string
+		connID      int
+		status      string
+		description string
 	}{
-		"acknowledged": {ackID, "acknowledged"},
-		"blackout":     {blackoutID, "active"},
-		"cleared":      {ackID, "cleared"},
+		"acknowledged": {ackID, "acknowledged", raw},
+		"blackout":     {blackoutID, "active", raw},
+		"cleared":      {ackID, "cleared", raw},
+		"long":         {blackoutID, "acknowledged", raw + tail + raw},
 	} {
 		var id int64
 		if err := pool.QueryRow(ctx, `
 			INSERT INTO alerts (alert_type, connection_id, severity, title, description, status, triggered_at)
 			VALUES ('connection', $1, 'critical', 'Connection error', $2, $3, NOW()) RETURNING id`,
-			a.connID, raw, a.status).Scan(&id); err != nil {
+			a.connID, a.description, a.status).Scan(&id); err != nil {
 			t.Fatalf("failed to insert %s alert: %v", name, err)
 		}
 		alertIDs[name] = id
 	}
 
 	engine.evaluateConnectionErrors(ctx)
-	for name, want := range map[string]string{"acknowledged": masked, "blackout": masked, "cleared": raw} {
+	for name, want := range map[string]string{
+		"acknowledged": masked, "blackout": masked, "cleared": raw, "long": masked + tail + masked,
+	} {
 		var got string
 		if err := pool.QueryRow(ctx, `SELECT description FROM alerts WHERE id = $1`,
 			alertIDs[name]).Scan(&got); err != nil {
 			t.Fatalf("failed to read %s alert: %v", name, err)
 		}
 		if got != want {
+			if name == "long" {
+				t.Errorf("long alert: description has %d characters, want %d with both passwords masked",
+					len([]rune(got)), len([]rune(want)))
+				continue
+			}
 			t.Errorf("%s alert: description = %q, want %q", name, got, want)
 		}
 	}

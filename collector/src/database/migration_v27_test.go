@@ -15,6 +15,8 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/pgedge/ai-workbench/pkg/redact"
 )
 
 // The v27 migration masks passwords in the descriptions of connection
@@ -111,8 +113,10 @@ func insertV27Alert(t *testing.T, pool *pgxpool.Pool, connID int, alertType, sta
 }
 
 // TestMigrationV27_MasksConnectionAlerts checks that every connection
-// alert holding a password is masked, whatever its status, and that
-// other alerts and masked text are left alone.
+// alert holding a password is masked, whatever its status, that other
+// alerts and masked text are left alone, and that a description longer
+// than redact.MaxTextLength is neither cut short nor left unmasked past
+// that point.
 func TestMigrationV27_MasksConnectionAlerts(t *testing.T) {
 	pool, cleanup := migrateV27TestSchema(t)
 	defer cleanup()
@@ -137,6 +141,11 @@ func TestMigrationV27_MasksConnectionAlerts(t *testing.T) {
 	want[insertV27Alert(t, pool, connID, "connection", "cleared", "connection refused")] = "connection refused"
 	want[insertV27Alert(t, pool, connID, "threshold", "cleared", raw)] = raw
 
+	tail := strings.Repeat("é", redact.MaxTextLength)
+	long := "connection refused: " + tail
+	want[insertV27Alert(t, pool, connID, "connection", "cleared", long)] = long
+	want[insertV27Alert(t, pool, connID, "connection", "active", raw+tail+raw)] = masked + tail + masked
+
 	if err := runMigrationV27(t, pool, ""); err != nil {
 		t.Fatalf("migration 27 failed: %v", err)
 	}
@@ -146,6 +155,11 @@ func TestMigrationV27_MasksConnectionAlerts(t *testing.T) {
 			t.Fatalf("failed to read alert %d: %v", id, err)
 		}
 		if got != w {
+			if len(w) > 200 {
+				t.Errorf("alert %d: description has %d characters, want %d with both passwords masked",
+					id, len([]rune(got)), len([]rune(w)))
+				continue
+			}
 			t.Errorf("alert %d: description = %q, want %q", id, got, w)
 		}
 	}

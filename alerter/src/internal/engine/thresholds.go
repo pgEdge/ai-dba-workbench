@@ -666,9 +666,11 @@ func stalenessAlertDescription(probeName, connectionName string,
 // alert that has not been cleared, and holds text the server's rules
 // mask, with the masked text, skipping the alerts in owned, whose
 // description evaluateConnectionErrors has just set from the connection
-// error. It masks with redact.Settled, because redact.Text can mask its
-// own output further and the next pass would otherwise rewrite the
-// alert again. A failure is logged and left for the next pass.
+// error. It masks with redact.SettledUncut, because redact.Text can
+// mask its own output further and the next pass would otherwise rewrite
+// the alert again, and because a stored description longer than
+// redact.MaxTextLength must keep its end. A failure is logged and left
+// for the next pass.
 func (e *Engine) maskOpenConnectionAlerts(ctx context.Context, owned map[int64]bool) {
 	alerts, err := e.datastore.GetOpenConnectionAlertDescriptions(ctx)
 	if err != nil {
@@ -679,7 +681,7 @@ func (e *Engine) maskOpenConnectionAlerts(ctx context.Context, owned map[int64]b
 		if owned[a.ID] {
 			continue
 		}
-		masked := redact.Settled(a.Description)
+		masked := redact.SettledUncut(a.Description)
 		if masked == a.Description {
 			continue
 		}

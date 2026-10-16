@@ -281,12 +281,16 @@ moved.
   evaluation loop, each pass also rewrites every other open (active or
   acknowledged) connection alert holding maskable text, blackouts
   included; it skips the alerts the loop raised or compared, and masks
-  with `redact.Settled`, which reapplies `Text` until the text stops
-  changing, for at most three passes, because `Text` is not idempotent
-  (a second pass can take the quote after a masked value into the next
-  value; `TestSettled` pins the cases) and the two stages would
-  otherwise rewrite the same alert on every pass. Collector migration 27 masks the stored
-  descriptions of all connection alerts once. The server masks `alerts.description`
+  with `redact.SettledUncut`, which reapplies the patterns until the
+  text stops changing, for at most three passes, because `Text` is not
+  idempotent (a second pass can take the quote after a masked value
+  into the next value; `TestSettledUncut` pins the cases) and the two
+  stages would otherwise rewrite the same alert on every pass. Collector
+  migration 27 masks the stored descriptions of all connection alerts
+  once, with `SettledUncut` too. Unlike `Text`, `TextUncut` and
+  `SettledUncut` do not cut the value to `MaxTextLength` (Go's engine is
+  linear), so a rewrite in place never loses the end of a long
+  description; use them, never `Text`, for any in-place rewrite. The server masks `alerts.description`
   and `alerts.ai_analysis` with `RedactedText` in `GET /api/v1/alerts`,
   and the description in the timeline fired and cleared summaries
   (`get_alert_history` reads the description but does not return it).

@@ -93,7 +93,7 @@ func TestKnownLimits(t *testing.T) {
 
 // notIdempotent names the cases whose masked text Text masks further on
 // a second pass, almost always by taking the closing quote after a
-// masked value into the next unquoted value. Settled exists for them.
+// masked value into the next unquoted value. SettledUncut exists for them.
 var notIdempotent = map[string]bool{
 	"named argument":                                    true,
 	"doubled quote conninfo":                            true,
@@ -110,10 +110,10 @@ var notIdempotent = map[string]bool{
 	"backslash quoted with a lone escaped backslash":    true,
 }
 
-// TestSettled pins which cases Text does not leave as it found them on a
-// second pass, and checks that Settled masks every case, and the one
+// TestSettledUncut pins which cases Text does not leave as it found them
+// on a second pass, and checks that SettledUncut masks every case, and the one
 // fuzzed input found to need a third pass, to text Text leaves alone.
-func TestSettled(t *testing.T) {
+func TestSettledUncut(t *testing.T) {
 	seen := 0
 	for _, tc := range redacttest.Cases {
 		once := redact.Text(tc.In)
@@ -123,9 +123,9 @@ func TestSettled(t *testing.T) {
 		if notIdempotent[tc.Name] {
 			seen++
 		}
-		settled := redact.Settled(tc.In)
+		settled := redact.SettledUncut(tc.In)
 		if redact.Text(settled) != settled || redacttest.SecretLeft(settled) {
-			t.Errorf("%s: Settled gave %q", tc.Name, settled)
+			t.Errorf("%s: SettledUncut gave %q", tc.Name, settled)
 		}
 	}
 	if seen != len(notIdempotent) {
@@ -138,7 +138,7 @@ func TestSettled(t *testing.T) {
 	if redact.Text(twice) == twice {
 		t.Error("the third-pass input settles in two passes")
 	}
-	if settled := redact.Settled(third); redact.Text(settled) != settled {
+	if settled := redact.SettledUncut(third); redact.Text(settled) != settled {
 		t.Errorf("the third-pass input did not settle: %q", settled)
 	}
 }
@@ -163,6 +163,30 @@ func TestTextTruncates(t *testing.T) {
 	// More bytes than MaxTextLength but fewer characters is kept whole.
 	if wide := strings.Repeat("é", redact.MaxTextLength-1); redact.Text(wide) != wide {
 		t.Error("text under MaxTextLength characters was cut")
+	}
+}
+
+// TestUncutKeepsLongText checks TextUncut and SettledUncut mask a value
+// longer than MaxTextLength without cutting it, both before and after
+// that point, and match Text on shorter values.
+func TestUncutKeepsLongText(t *testing.T) {
+	tail := strings.Repeat("é", redact.MaxTextLength)
+	plain := "could not connect: " + tail
+	if redact.TextUncut(plain) != plain || redact.SettledUncut(plain) != plain {
+		t.Error("a long value with nothing to mask was changed")
+	}
+	in := "password=example-secret " + tail + " password=example-secret"
+	want := "password=******** " + tail + " password=********"
+	for name, f := range map[string]func(string) string{"TextUncut": redact.TextUncut, "SettledUncut": redact.SettledUncut} {
+		if got := f(in); got != want {
+			t.Errorf("%s: got %d characters, want %d, masked at both ends", name,
+				utf8.RuneCountInString(got), utf8.RuneCountInString(want))
+		}
+	}
+	for _, tc := range redacttest.Cases {
+		if redact.TextUncut(tc.In) != redact.Text(tc.In) {
+			t.Errorf("%s: TextUncut differs from Text on a short value", tc.Name)
+		}
 	}
 }
 

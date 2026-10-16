@@ -39,8 +39,8 @@ call written in field-selection notation, such as
 `execute_explain` tool refuses to run `EXPLAIN ANALYZE` on such
 a query, but returns the plan when `analyze` is false. The
 `test_query` tool refuses such a query when an `ANALYZE` or
-other `EXPLAIN` option precedes it, and the `count_rows` and
-`query_datastore` tools refuse such a query in every case.
+other `EXPLAIN` option precedes it, and the `count_rows` tool
+refuses such a call in its `where` clause in every case.
 
 ## Datastore Tools
 

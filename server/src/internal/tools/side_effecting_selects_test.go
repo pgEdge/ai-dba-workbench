@@ -15,8 +15,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/database"
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
@@ -264,32 +262,6 @@ func TestValidateWhereClause_SideEffectingFunctions(t *testing.T) {
 		if err := validateWhereClause(clause); err != nil {
 			t.Errorf("validateWhereClause(%q) = %v, want nil", clause, err)
 		}
-	}
-}
-
-// TestQueryDatastore_RefusesSideEffectingFunctions verifies that
-// query_datastore refuses a side-effecting call in every spelling. The
-// pool is never connected: pgxpool opens connections lazily and the
-// refusal comes first.
-func TestQueryDatastore_RefusesSideEffectingFunctions(t *testing.T) {
-	pool, err := pgxpool.New(context.Background(),
-		"postgres://nobody@127.0.0.1:1/unused")
-	if err != nil {
-		t.Fatalf("pgxpool.New: %v", err)
-	}
-	defer pool.Close()
-
-	tool := QueryDatastoreTool(pool)
-	for _, tt := range sideEffectingSpellings {
-		t.Run(tt.name, func(t *testing.T) {
-			resp, err := tool.Handler(map[string]any{"query": tt.query})
-			if err != nil {
-				t.Fatalf("Handler returned a Go error: %v", err)
-			}
-			if !resp.IsError || !strings.Contains(responseText(resp), "side effects") {
-				t.Errorf("Handler(%q) = %+v, want the side-effects refusal", tt.query, resp)
-			}
-		})
 	}
 }
 

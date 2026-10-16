@@ -79,7 +79,8 @@ already knows the session's string reading; it fails closed.
 - `test_query`: refuses when the statement, or any statement in it,
   does not start with a keyword EXPLAIN only plans (`explainOnlyPlans`),
   as a second guard behind `PlainExplainPrefix`.
-- `count_rows` (`validateWhereClause`) and `query_datastore`: refuse.
+- `count_rows` (`validateWhereClause`): refuses. `query_datastore`
+  takes no SQL since #566, so it needs no check.
 
 Any new path that classifies user SQL by its first keyword must also
 call the side-effect check.

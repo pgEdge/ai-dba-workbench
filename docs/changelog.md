@@ -2616,8 +2616,8 @@ project adheres to
   access; `execute_explain` refuses to `EXPLAIN ANALYZE` it, although
   the plan is still available with `analyze` set to false;
   `test_query` refuses one prefixed with `ANALYZE` or other `EXPLAIN`
-  options, which previously ran it; and `count_rows` (in its `WHERE`
-  clause) and `query_datastore` refuse it outright. `test_query` and
+  options, which previously ran it; and `count_rows` refuses it
+  outright in its `WHERE` clause. `test_query` and
   the query validation endpoint now plan with a fixed `EXPLAIN` option
   list, so a statement starting with `ANALYZE` or `VERBOSE` is a
   syntax error rather than being run, and a `--` comment ending in a

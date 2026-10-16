@@ -233,12 +233,13 @@ func datastoreQueryErrorFormatter(source string) queryErrorFormatter {
 }
 
 // datastoreConnectionsExist reports whether every connection in ids
-// exists.
+// exists and is not marked deleted (issue #669).
 func datastoreConnectionsExist(ctx context.Context, pool *pgxpool.Pool, ids []int) (bool, error) {
 	var missing bool
 	err := pool.QueryRow(ctx,
 		`SELECT EXISTS (SELECT 1 FROM unnest($1::int[]) AS want(id)
-		                WHERE NOT EXISTS (SELECT 1 FROM public.connections c WHERE c.id = want.id))`,
+		                WHERE NOT EXISTS (SELECT 1 FROM public.connections c
+		                                  WHERE c.id = want.id AND c.deleted_at IS NULL))`,
 		ids).Scan(&missing)
 	if err != nil {
 		return false, err

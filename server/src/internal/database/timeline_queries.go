@@ -803,7 +803,7 @@ func buildAlertFiredQuery(whereClause string) string {
                 'probe_name', a.probe_name
             )::TEXT AS details
         FROM alerts a
-        JOIN connections c ON a.connection_id = c.id
+        JOIN connections c ON a.connection_id = c.id AND c.deleted_at IS NULL
         LEFT JOIN alert_rules r ON a.rule_id = r.id
         %s
     `, EventTypeAlertFired, metrics.RedactedText("a.description"), tableWhere)
@@ -859,7 +859,7 @@ func buildAlertClearedQuery(whereClause string) string {
                 'duration_seconds', EXTRACT(EPOCH FROM (a.cleared_at - a.triggered_at))
             )::TEXT AS details
         FROM alerts a
-        JOIN connections c ON a.connection_id = c.id
+        JOIN connections c ON a.connection_id = c.id AND c.deleted_at IS NULL
         %s
     `, EventTypeAlertCleared, alertClearedDurationSQL, metrics.RedactedText("a.description"), tableWhere)
 }
@@ -956,7 +956,7 @@ func buildAlertAcknowledgedQuery(whereClause string) string {
             )::TEXT AS details
         FROM alert_acknowledgments ack
         JOIN alerts a ON ack.alert_id = a.id
-        JOIN connections c ON a.connection_id = c.id
+        JOIN connections c ON a.connection_id = c.id AND c.deleted_at IS NULL
         %s
     `, EventTypeAlertAcknowledged, tableWhere)
 }

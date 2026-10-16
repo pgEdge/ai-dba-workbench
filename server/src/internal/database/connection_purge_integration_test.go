@@ -534,3 +534,100 @@ func TestDeletedConnectionHiddenFromReaders(t *testing.T) {
 		t.Errorf("GetConnection(live): %v", err)
 	}
 }
+
+// TestPurgeConnection_SweepsLateRowsWithoutForeignKey covers rows the
+// collector writes after a table's batch loop has finished but before
+// the connection row goes. The cascade catches the table with a foreign
+// key; the table without one would keep its rows for good, as the id
+// is no longer marked once the row is gone, so the purge sweeps it once
+// more after the row is removed.
+func TestPurgeConnection_SweepsLateRowsWithoutForeignKey(t *testing.T) {
+	ds, pool, cleanup := newConnPurgeTestDatastore(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	victim := seedPurgeConnection(t, pool, "victim", 4)
+	keeper := seedPurgeConnection(t, pool, "keeper", 3)
+	if err := ds.DeleteConnection(ctx, victim); err != nil {
+		t.Fatalf("DeleteConnection: %v", err)
+	}
+
+	lateWrite := func(ctx context.Context) error {
+		if _, err := pool.Exec(ctx, `INSERT INTO metrics.purge_test_nofk
+            (connection_id, n) SELECT $1, g FROM generate_series(500, 506) g`,
+			victim); err != nil {
+			return err
+		}
+		_, err := pool.Exec(ctx, `INSERT INTO metrics.purge_test_part
+            (connection_id, n) VALUES ($1, 50), ($1, 150)`, victim)
+		return err
+	}
+	if err := ds.purgeConnection(ctx, victim, 2, lateWrite); err != nil {
+		t.Fatalf("purgeConnection: %v", err)
+	}
+
+	for _, table := range []string{"metrics.purge_test_nofk", "metrics.purge_test_part"} {
+		if got := countPurgeRows(t, pool, table, victim); got != 0 {
+			t.Errorf("%s rows written late = %d, want 0", table, got)
+		}
+	}
+	if got := countPurgeRows(t, pool, "metrics.purge_test_nofk", keeper); got != 3 {
+		t.Errorf("keeper no-foreign-key rows = %d, want 3", got)
+	}
+}
+
+// TestPurgeConnection_HookAndFinalSweepFailures covers the two failure
+// points around the row removal: a failing hook leaves the connection
+// marked for the next pass, and a failing final sweep is reported after
+// the row is gone.
+func TestPurgeConnection_HookAndFinalSweepFailures(t *testing.T) {
+	ds, pool, cleanup := newConnPurgeTestDatastore(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	victim := seedPurgeConnection(t, pool, "victim", 2)
+	if err := ds.DeleteConnection(ctx, victim); err != nil {
+		t.Fatalf("DeleteConnection: %v", err)
+	}
+
+	hookErr := errors.New("hook failed")
+	err := ds.purgeConnection(ctx, victim, 10, func(context.Context) error {
+		return hookErr
+	})
+	if !errors.Is(err, hookErr) {
+		t.Fatalf("purgeConnection with a failing hook = %v, want %v", err, hookErr)
+	}
+	ids, err := ds.ListDeletedConnectionIDs(ctx)
+	if err != nil {
+		t.Fatalf("ListDeletedConnectionIDs: %v", err)
+	}
+	if !slices.Equal(ids, []int{victim}) {
+		t.Fatalf("marked connections after a failed hook = %v, want [%d]", ids, victim)
+	}
+
+	// Renaming the table makes the final sweep fail, as the purge still
+	// holds the name it listed before the row went.
+	breakSweep := func(ctx context.Context) error {
+		_, err := pool.Exec(ctx,
+			`ALTER TABLE metrics.purge_test_nofk RENAME TO purge_test_nofk_moved`)
+		return err
+	}
+	err = ds.purgeConnection(ctx, victim, 10, breakSweep)
+	// Drop the moved table before the deferred teardown closes the pool.
+	if _, dropErr := pool.Exec(ctx,
+		`DROP TABLE IF EXISTS metrics.purge_test_nofk_moved`); dropErr != nil {
+		t.Errorf("drop the moved table: %v", dropErr)
+	}
+	if err == nil || !strings.Contains(err.Error(), "purge_test_nofk") {
+		t.Fatalf("purgeConnection with a failing final sweep = %v, want a purge_test_nofk error", err)
+	}
+	var rows int
+	if err := pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM connections WHERE id = $1`, victim,
+	).Scan(&rows); err != nil {
+		t.Fatalf("count connection rows: %v", err)
+	}
+	if rows != 0 {
+		t.Fatalf("connection rows after the final sweep failed = %d, want 0", rows)
+	}
+}

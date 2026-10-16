@@ -11,6 +11,7 @@ package database
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -149,5 +150,101 @@ func TestMaxConnectionsLatest_NewestSnapshot(t *testing.T) {
 	}
 	if len(found) != 1 || found[0].Value != 600 {
 		t.Errorf("latest max_connections = %+v, want one row with value 600", found)
+	}
+}
+
+// TestGetLatestMetricValues_SkipsDeletedConnections verifies that a
+// connection marked deleted but not yet purged (issue #669) is never
+// handed to the engine, even by a latest query with no time window and
+// no join to connections, while a live connection still is.
+func TestGetLatestMetricValues_SkipsDeletedConnections(t *testing.T) {
+	ds, pool, cleanup := newAuditDefectsDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	liveID := insertAuditConnection(t, pool, "latest-live")
+	goneID := insertAuditConnection(t, pool, "latest-deleted")
+
+	for _, id := range []int{liveID, goneID} {
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO metrics.pg_settings
+			    (connection_id, name, setting, collected_at)
+			VALUES ($1, 'max_connections', '100', NOW())
+		`, id); err != nil {
+			t.Fatalf("failed to insert pg_settings row: %v", err)
+		}
+	}
+	if _, err := pool.Exec(ctx,
+		`UPDATE connections SET deleted_at = NOW() WHERE id = $1`, goneID); err != nil {
+		t.Fatalf("failed to mark connection deleted: %v", err)
+	}
+
+	values, err := ds.GetLatestMetricValues(ctx, "pg_settings.max_connections")
+	if err != nil {
+		t.Fatalf("GetLatestMetricValues failed: %v", err)
+	}
+	sawLive := false
+	for _, v := range values {
+		if v.ConnectionID == goneID {
+			t.Errorf("deleted connection %d returned: %+v", goneID, v)
+		}
+		if v.ConnectionID == liveID {
+			sawLive = true
+		}
+	}
+	if !sawLive {
+		t.Errorf("live connection %d missing from %+v", liveID, values)
+	}
+
+	// With every connection marked deleted, the metric has no data.
+	if _, err := pool.Exec(ctx,
+		`UPDATE connections SET deleted_at = NOW() WHERE id = $1`, liveID); err != nil {
+		t.Fatalf("failed to mark connection deleted: %v", err)
+	}
+	_, err = ds.GetLatestMetricValues(ctx, "pg_settings.max_connections")
+	if !errors.Is(err, ErrNoMetricData) {
+		t.Errorf("err = %v, want ErrNoMetricData", err)
+	}
+
+	// A failing deleted-connection lookup is reported, not ignored.
+	if _, err := pool.Exec(ctx,
+		`ALTER TABLE connections RENAME COLUMN deleted_at TO deleted_at_moved`); err != nil {
+		t.Fatalf("failed to rename deleted_at: %v", err)
+	}
+	_, err = ds.GetLatestMetricValues(ctx, "pg_settings.max_connections")
+	if _, rerr := pool.Exec(ctx,
+		`ALTER TABLE connections RENAME COLUMN deleted_at_moved TO deleted_at`); rerr != nil {
+		t.Fatalf("failed to restore deleted_at: %v", rerr)
+	}
+	if err == nil || !strings.Contains(err.Error(), "deleted connections") {
+		t.Errorf("err = %v, want a deleted-connections lookup failure", err)
+	}
+
+	values = []MetricValue{{ConnectionID: liveID}}
+
+	// A lookup that cannot start, here on a canceled context, fails.
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := ds.dropDeletedConnections(canceled, values); err == nil ||
+		!strings.Contains(err.Error(), "failed to list deleted connections") {
+		t.Errorf("err = %v, want a list failure", err)
+	}
+
+	// An id that does not scan as an integer fails rather than being
+	// skipped, so a value is never kept on a partial deleted set.
+	if _, err := pool.Exec(ctx, `
+		ALTER TABLE connections RENAME TO connections_moved;
+		CREATE VIEW connections AS
+		    SELECT 'not-an-id'::text AS id, now() AS deleted_at`); err != nil {
+		t.Fatalf("failed to replace connections with a view: %v", err)
+	}
+	_, err = ds.dropDeletedConnections(ctx, values)
+	if _, rerr := pool.Exec(ctx, `
+		DROP VIEW connections;
+		ALTER TABLE connections_moved RENAME TO connections`); rerr != nil {
+		t.Fatalf("failed to restore connections: %v", rerr)
+	}
+	if err == nil || !strings.Contains(err.Error(), "failed to scan deleted connection") {
+		t.Errorf("err = %v, want a scan failure", err)
 	}
 }

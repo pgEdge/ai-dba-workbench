@@ -325,6 +325,9 @@ func TestFailureLimit(t *testing.T) {
 		// A share so small that the product rounds up to nothing
 		// still needs one failure.
 		{1e-12, 1, 1},
+		// A zero rate would allow no failures at all; the floor of one
+		// still applies.
+		{0, 20, 1},
 	}
 	for _, tt := range tests {
 		if got := failureLimit(tt.rate, tt.window); got != tt.want {

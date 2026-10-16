@@ -40,13 +40,19 @@ through a long retention history could outlast any request budget.
    the delete handler sends. `PurgeConnection` deletes the
    connection's rows from each leaf partition under `metrics` in
    committed batches of `DefaultConnectionPurgeBatchSize` (ctid
-   batches, never one big transaction), then removes the row. It is
+   batches, never one big transaction), then removes the row. A leaf
+   with no foreign key to `connections` is swept once more after the
+   row is gone, because an in-flight collector write can land there
+   after its batch loop and nothing would cascade it. It is
    restart-safe, because the marked row is the work queue.
 
 Every reader must therefore filter `deleted_at IS NULL`: the server's
 connection, cluster, topology, estate and tool queries, the collector's
 connection loading, and the alerter's queries and metric registry all
-do. A marked connection's metric rows still exist until the purge
+do. The alerter's latest queries mostly read `metrics.*` without a
+join, so `GetLatestMetricValues` drops the values of marked
+connections after the query (`dropDeletedConnections`) rather than
+each registry entry filtering for itself. A marked connection's metric rows still exist until the purge
 reaches them, which is one more reason to keep the orphan joins below
 and to join on `c.deleted_at IS NULL` where the connection must be
 live.

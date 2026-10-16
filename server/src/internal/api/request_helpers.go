@@ -51,6 +51,9 @@ var errNoAuthenticatedCaller = errors.New("missing authentication credentials")
 // they treat its owner's session. It used to re-validate the bearer
 // header as a session token, which refused every API token with 401
 // (issue #668).
+//
+// The bool is the owner's raw is_superuser flag, unnarrowed by any token
+// scope, so never use it to bypass a check; ask rbacChecker.IsSuperuser.
 func getUserInfoCompat(r *http.Request) (string, bool, error) {
 	username := auth.GetUsernameFromContext(r.Context())
 	if username == "" {

@@ -27,10 +27,13 @@ import (
 // transaction, so the caller sees the connection gone at once. The
 // ConnectionPurger below then removes the connection's metrics history
 // in bounded batches, one autocommitted DELETE at a time, and finally
-// deletes the row itself, which cascades whatever the collector wrote
-// in the meantime. All the state the purge needs is in deleted_at, so
-// a server restart part way through resumes where the last one left
-// off.
+// deletes the row itself. That DELETE cascades whatever the collector
+// wrote in the meantime to the metrics tables with a foreign key to
+// connections; the tables without one get a last sweep after the row
+// is gone, because nothing else would ever find their stragglers once
+// the id is no longer marked. All the state the purge needs is in
+// deleted_at, so a server restart part way through resumes where the
+// last one left off.
 
 const (
 	// DefaultConnectionPurgeBatchSize is the number of metrics rows the
@@ -74,9 +77,18 @@ const connectionMarkedQuery = `
 // partitioned metrics table, and any unpartitioned one. Partitioned
 // parents (relkind 'p') hold no rows and are skipped. Discovering the
 // tables, rather than listing the foreign keys, also reaches the
-// metrics tables that have no foreign key to connections at all.
+// metrics tables that have no foreign key to connections at all; the
+// second column reports whether the table has one (a foreign key on a
+// partitioned table is cloned onto each partition, so checking the
+// leaf itself is enough).
 const metricsLeafTablesQuery = `
-    SELECT c.relname
+    SELECT c.relname,
+           EXISTS (
+               SELECT 1 FROM pg_constraint con
+               WHERE con.conrelid = c.oid
+                 AND con.contype = 'f'
+                 AND con.confrelid = 'connections'::regclass
+           )
     FROM pg_class c
     JOIN pg_namespace n ON n.oid = c.relnamespace
     JOIN pg_attribute a ON a.attrelid = c.oid
@@ -161,6 +173,20 @@ func (d *Datastore) ListDeletedConnectionIDs(ctx context.Context) ([]int, error)
 // its own short transaction, so the purge never holds one long
 // transaction, and an interrupted purge resumes from what is left.
 func (d *Datastore) PurgeConnection(ctx context.Context, id int, batchSize int) error {
+	return d.purgeConnection(ctx, id, batchSize, nil)
+}
+
+// metricsTable is one metrics leaf table the purge works through.
+type metricsTable struct {
+	name  string
+	hasFK bool
+}
+
+// purgeConnection is PurgeConnection with a hook that runs between the
+// batch loop and the removal of the row, so tests can write in that
+// window. Production passes nil.
+func (d *Datastore) purgeConnection(ctx context.Context, id int, batchSize int,
+	beforeRemove func(context.Context) error) error {
 	if batchSize <= 0 {
 		return fmt.Errorf("purge batch size must be positive, got %d", batchSize)
 	}
@@ -177,20 +203,45 @@ func (d *Datastore) PurgeConnection(ctx context.Context, id int, batchSize int) 
 	if err != nil {
 		return fmt.Errorf("failed to list metrics tables: %w", err)
 	}
-	tables, err := scanAll(rows, func(r pgx.Rows, name *string) error {
-		return r.Scan(name)
+	tables, err := scanAll(rows, func(r pgx.Rows, t *metricsTable) error {
+		return r.Scan(&t.name, &t.hasFK)
 	})
 	if err != nil {
 		return fmt.Errorf("failed to read metrics tables: %w", err)
 	}
 
 	for _, table := range tables {
-		if err := d.purgeMetricsTable(ctx, table, id, batchSize); err != nil {
+		if err := d.purgeMetricsTable(ctx, table.name, id, batchSize); err != nil {
 			return err
 		}
 	}
 
-	return d.removeDeletedConnection(ctx, id)
+	if beforeRemove != nil {
+		if err := beforeRemove(ctx); err != nil {
+			return err
+		}
+	}
+
+	if err := d.removeDeletedConnection(ctx, id); err != nil {
+		return err
+	}
+
+	// A table without a foreign key can have gained rows since its batch
+	// loop finished, and the DELETE above does not cascade to it. Sweep
+	// those tables once more now the row is gone: from here on the id is
+	// no longer marked, so no later pass would find them. A failure is
+	// returned so it is logged, but the stragglers it leaves are then
+	// orphaned, which the metrics readers tolerate by joining on
+	// connections.
+	for _, table := range tables {
+		if table.hasFK {
+			continue
+		}
+		if err := d.purgeMetricsTable(ctx, table.name, id, batchSize); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // purgeMetricsTable deletes connection id's rows from one metrics
@@ -218,8 +269,9 @@ func (d *Datastore) purgeMetricsTable(ctx context.Context, table string, id int,
 
 // removeDeletedConnection deletes the marked connection row once its
 // metrics are gone. The DELETE still cascades, catching any row the
-// collector or alerter wrote after the mark, and sets
-// notification_history.connection_id to NULL. It runs under the same
+// collector or alerter wrote after the mark to a table with a foreign
+// key to connections (purgeConnection sweeps the others afterwards),
+// and sets notification_history.connection_id to NULL. It runs under the same
 // local statement_timeout as the mark step, as a backstop in case the
 // cascade has more to do than expected.
 func (d *Datastore) removeDeletedConnection(ctx context.Context, id int) error {

@@ -231,7 +231,7 @@ func (d *Datastore) GetAlerts(ctx context.Context, filter AlertListFilter) (*Ale
 		       ack.acknowledged_at, ack.acknowledged_by, ack.message, ack.false_positive,
 		       %s, a.ai_analysis_metric_value
 		FROM alerts a
-		LEFT JOIN connections c ON a.connection_id = c.id
+		LEFT JOIN connections c ON a.connection_id = c.id AND c.deleted_at IS NULL
 		LEFT JOIN alert_rules r ON a.rule_id = r.id
 		LEFT JOIN LATERAL (
 			SELECT acknowledged_at, acknowledged_by, message, false_positive

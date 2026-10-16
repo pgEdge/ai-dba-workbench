@@ -632,6 +632,9 @@ func serverConditions(q *datastoreQuery, src datastoreSource, req datastoreReque
 	if scope != "" {
 		inner = append(inner, scope)
 	}
+	if src.LiveColumn != "" {
+		inner = append(inner, qualified(datastoreTableAlias, src.LiveColumn)+" IS NULL")
+	}
 
 	window, err := resolveDatastoreWindow(src, req, now)
 	if err != nil {

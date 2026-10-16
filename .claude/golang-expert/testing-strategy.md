@@ -232,14 +232,17 @@ resolution itself restores `resolveCLIAuditKey` for its own scope.
 
 ## Handler Tests: Bearer Plus Context
 
-Authenticated handlers in `server/src/internal/api` use two independent
-surfaces: `getUserInfoCompat` validates the bearer token from the
-`Authorization` header, and `rbacChecker.HasAdminPermission` reads the
-user from the request context that middleware normally populates.
-Handler-level tests bypass the middleware, so set both with the
-existing helpers: `withBearer` (`cluster_handlers_test.go`) and
-`withUser` or `withSuperuser` (`rbac_handlers_test.go`). Setting only
-one produces 401s or 403s that look like permission bugs.
+Authenticated handlers in `server/src/internal/api` read the caller
+from the request context that `auth.AuthenticateRequest` populates:
+`getUserInfoCompat` for the username (since #668 it no longer
+re-validates the `Authorization` header) and `rbacChecker` for
+permissions. Handler-level tests bypass the middleware, so use
+`withAuth(t, store, req, token)` (`cluster_handlers_test.go`), which
+sets the bearer header and authenticates it as the middleware does;
+apply `withUser` or `withSuperuser` (`rbac_handlers_test.go`) after it,
+because authentication overwrites their keys. A bare `withBearer`
+leaves the context empty and produces 401s that look like permission
+bugs.
 `setupUserWithPermission` in `rbac_integration_test.go` creates a user
 holding a named permission. The gate-ordering tests for mutating
 handlers are described in `rbac-patterns.md`.

@@ -73,6 +73,8 @@ var catalogOmittedColumns = map[string][]string{
 	// Secrets; see TestConfigurationSourcesExposeNoSecrets.
 	"connections": {
 		"password_encrypted", "sslcert", "sslkey", "sslrootcert", "owner_token",
+		// The source's LiveColumn: every row it returns has it NULL.
+		"deleted_at",
 	},
 	// embedding_id refers to anomaly_embeddings, which query_datastore
 	// never exposes.
@@ -201,6 +203,16 @@ func TestConfigurationSourcesMatchCollectorSchema(t *testing.T) {
 			if dataType != c.DataType {
 				t.Errorf("source %q: column %s.%s is %q in the collector schema, but the catalog declares %q",
 					src.Name, src.Table, c.Name, dataType, c.DataType)
+			}
+		}
+
+		if src.LiveColumn != "" {
+			if dataType, ok := actual[src.LiveColumn]; !ok {
+				t.Errorf("source %q: LiveColumn %s.%s does not exist in the collector schema",
+					src.Name, src.Table, src.LiveColumn)
+			} else if dataType != typeTimestamptz {
+				t.Errorf("source %q: LiveColumn %s.%s is %q, want a timestamp",
+					src.Name, src.Table, src.LiveColumn, dataType)
 			}
 		}
 

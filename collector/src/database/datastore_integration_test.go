@@ -447,6 +447,27 @@ func TestSetConnectionError(t *testing.T) {
 	if got.Valid {
 		t.Errorf("expected NULL connection_error, got %q", got.String)
 	}
+
+	// A connection the server has marked deleted (issue #669) is left
+	// alone: a probe that was already running must not touch it.
+	var updatedAt time.Time
+	if err := conn.QueryRow(ctx, `UPDATE connections SET deleted_at = NOW()
+		WHERE id = $1 RETURNING updated_at`, id).Scan(&updatedAt); err != nil {
+		t.Fatalf("mark deleted error = %v", err)
+	}
+	if err := SetConnectionError(ctx, conn, id, &msg); err != nil {
+		t.Fatalf("SetConnectionError(deleted) error = %v", err)
+	}
+	var after time.Time
+	if err := conn.QueryRow(ctx,
+		"SELECT connection_error, updated_at FROM connections WHERE id=$1",
+		id).Scan(&got, &after); err != nil {
+		t.Fatalf("readback error = %v", err)
+	}
+	if got.Valid || !after.Equal(updatedAt) {
+		t.Errorf("deleted connection was updated: error %v, updated_at %v -> %v",
+			got, updatedAt, after)
+	}
 }
 
 func TestNewDatastore_BadSchemaInit(t *testing.T) {

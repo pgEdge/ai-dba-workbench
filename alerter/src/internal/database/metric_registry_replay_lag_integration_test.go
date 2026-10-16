@@ -75,6 +75,13 @@ func newReplayLagTestDatastore(t *testing.T) (*Datastore, *pgxpool.Pool, func())
 	// exactly as the collector source holds it.
 	for _, stmt := range []string{
 		`DROP SCHEMA IF EXISTS metrics CASCADE`,
+		`DROP TABLE IF EXISTS connections CASCADE`,
+		// GetLatestMetricValues drops connections marked deleted, so
+		// it needs a connections table to read.
+		`CREATE TABLE connections (
+		    id SERIAL PRIMARY KEY,
+		    deleted_at TIMESTAMPTZ
+		)`,
 		`CREATE SCHEMA metrics`,
 		ddl,
 		`CREATE TABLE metrics.pg_stat_replication_default
@@ -87,9 +94,13 @@ func newReplayLagTestDatastore(t *testing.T) (*Datastore, *pgxpool.Pool, func())
 	}
 
 	cleanup := func() {
-		if _, err := pool.Exec(context.Background(),
-			`DROP SCHEMA IF EXISTS metrics CASCADE`); err != nil {
-			t.Logf("replay lag teardown failed: %v", err)
+		for _, stmt := range []string{
+			`DROP SCHEMA IF EXISTS metrics CASCADE`,
+			`DROP TABLE IF EXISTS connections CASCADE`,
+		} {
+			if _, err := pool.Exec(context.Background(), stmt); err != nil {
+				t.Logf("replay lag teardown failed: %v", err)
+			}
 		}
 		pool.Close()
 	}

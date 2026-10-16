@@ -407,6 +407,30 @@ func TestQueryDatastoreScopesEveryRuleIntegration(t *testing.T) {
 	})
 }
 
+// TestQueryDatastoreHidesDeletedConnectionsIntegration verifies that a
+// connection marked deleted but not yet purged (issue #669) is gone even
+// for a caller who may read every connection: it is not listed, and
+// naming it is refused as a missing connection would be.
+func TestQueryDatastoreHidesDeletedConnectionsIntegration(t *testing.T) {
+	f := newDatastoreFixture(t)
+	tool := f.tool()
+	admin := superuserContext()
+
+	if _, err := f.pool.Exec(context.Background(),
+		`UPDATE connections SET deleted_at = now() WHERE id = $1`, f.hidden); err != nil {
+		t.Fatalf("mark connection deleted: %v", err)
+	}
+
+	rows := mustQuery(t, tool, admin, map[string]any{"source": "connections", "columns": []any{"name"}})
+	assertColumn(t, rows, "name", "visible-conn")
+
+	text, isErr := call(t, tool, admin, map[string]any{
+		"source": "ds_probe", "connection_ids": []any{float64(f.hidden)}})
+	if !isErr || !strings.Contains(text, "connection not found or not accessible.") {
+		t.Fatalf("expected the generic denial for a deleted connection, got: %s", text)
+	}
+}
+
 func TestQueryDatastoreEmptyVisibleSetIntegration(t *testing.T) {
 	f := newDatastoreFixture(t)
 	if _, err := f.pool.Exec(context.Background(), "UPDATE connections SET is_shared = FALSE, owner_username = 'someone-else'"); err != nil {

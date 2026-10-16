@@ -835,10 +835,14 @@ has the columns each `metrics.ProbeRedactions` rule names.
 `TestConfigurationSourcesMatchCollectorSchema` checks every catalog
 table, column and type against the collector's real schema, and fails
 on a collector column of a catalogued table that is neither catalogued
-nor listed in `catalogOmittedColumns`. The scope and time window go in an inner
-`(SELECT ... WHERE <scope> OFFSET 0) t` (`scopedFrom`), and the
-caller's filters, shape, ordering and paging apply outside it, so no
-caller predicate is evaluated against a row the caller may not see;
+nor listed in `catalogOmittedColumns`. A source's `LiveColumn`
+(`connections.deleted_at`) adds `<col> IS NULL` to the server's own
+conditions for every caller, a visible set of All included, and
+`datastoreConnectionsExist` treats a marked connection as missing
+(#669). The scope and time window go in
+an inner `(SELECT ... WHERE <scope> OFFSET 0) t` (`scopedFrom`), and
+the caller's filters, shape, ordering and paging apply outside it, so
+no caller predicate is evaluated against a row the caller may not see;
 the time window stays inside so partition pruning and the
 `(connection_id, collected_at)` index still apply. Errors from a
 running statement go through `datastoreQueryErrorFormatter` (general

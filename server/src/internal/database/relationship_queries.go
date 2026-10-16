@@ -147,8 +147,8 @@ func (d *Datastore) GetClusterRelationships(ctx context.Context, clusterID int) 
                sc.name AS source_name, tc.name AS target_name,
                r.relationship_type, r.is_auto_detected
         FROM cluster_node_relationships r
-        JOIN connections sc ON sc.id = r.source_connection_id
-        JOIN connections tc ON tc.id = r.target_connection_id
+        JOIN connections sc ON sc.id = r.source_connection_id AND sc.deleted_at IS NULL
+        JOIN connections tc ON tc.id = r.target_connection_id AND tc.deleted_at IS NULL
         WHERE r.cluster_id = $1
         ORDER BY r.source_connection_id, r.target_connection_id
     `

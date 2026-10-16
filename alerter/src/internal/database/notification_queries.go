@@ -382,7 +382,7 @@ func (d *Datastore) GetConnectionInfo(ctx context.Context, connectionID int) (na
 	err = d.pool.QueryRow(ctx, `
         SELECT name, host, port
         FROM connections
-        WHERE id = $1
+        WHERE id = $1 AND deleted_at IS NULL
     `, connectionID).Scan(&name, &host, &port)
 
 	if err != nil {

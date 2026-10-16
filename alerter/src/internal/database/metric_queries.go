@@ -172,11 +172,60 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 		return nil, fmt.Errorf("failed to get %s values: %w", metricName, err)
 	}
 
+	results, err = d.dropDeletedConnections(ctx, results)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get %s values: %w", metricName, err)
+	}
+
 	if len(results) == 0 {
 		return nil, fmt.Errorf("%w: %s", ErrNoMetricData, metricName)
 	}
 
 	return results, nil
+}
+
+// deletedConnectionIDsQuery lists the connections marked deleted whose
+// metrics the server has not purged yet (issue #669).
+const deletedConnectionIDsQuery = `SELECT id FROM connections WHERE deleted_at IS NOT NULL`
+
+// dropDeletedConnections removes the values of connections marked
+// deleted. Several latestSQL queries read metrics.* without joining
+// connections, and some have no time window, so without this a deleted
+// connection's last sample could keep raising alerts until the purge
+// reaches it. Filtering here covers every caller and every registry
+// entry at once.
+func (d *Datastore) dropDeletedConnections(ctx context.Context, values []MetricValue) ([]MetricValue, error) {
+	if len(values) == 0 {
+		return values, nil
+	}
+	rows, err := d.pool.Query(ctx, deletedConnectionIDsQuery)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list deleted connections: %w", err)
+	}
+	defer rows.Close()
+
+	deleted := make(map[int]struct{})
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("failed to scan deleted connection: %w", err)
+		}
+		deleted[id] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to read deleted connections: %w", err)
+	}
+	if len(deleted) == 0 {
+		return values, nil
+	}
+
+	kept := values[:0]
+	for _, v := range values {
+		if _, gone := deleted[v.ConnectionID]; !gone {
+			kept = append(kept, v)
+		}
+	}
+	return kept, nil
 }
 
 // MetricClearsWhenAbsent reports whether an active alert on metricName

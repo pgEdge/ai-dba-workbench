@@ -16,6 +16,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pgedge/ai-workbench/server/internal/database"
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
 )
 
@@ -151,11 +152,12 @@ func TestExecuteExplain_Database(t *testing.T) {
 	})
 }
 
-// TestQueryDatabase_LegacyConnectionPath covers query_database without a
-// connection_id, where the query text may name a connection string, and
-// shows that the side-effect check sees the query left once that is
-// removed.
-func TestQueryDatabase_LegacyConnectionPath(t *testing.T) {
+// TestQueryDatabase_SelectedConnectionPath covers query_database
+// without a connection_id, where it runs on the caller's selected
+// connection. A connection string in the query text is passed to the
+// server as SQL rather than connected to (issue #662), and the
+// side-effect check sees the whole query text.
+func TestQueryDatabase_SelectedConnectionPath(t *testing.T) {
 	env := newResolverTestEnv(t)
 	ctx := superuserContext()
 	dsn := os.Getenv("TEST_AI_WORKBENCH_SERVER")
@@ -166,7 +168,23 @@ func TestQueryDatabase_LegacyConnectionPath(t *testing.T) {
 	if errResp != nil {
 		t.Fatalf("Resolve: %s", toolResponseText(errResp))
 	}
-	tool := QueryDatabaseTool(resolved.Client, env.resolver)
+	client := resolved.Client
+	tool := QueryDatabaseTool(client, env.resolver)
+	selected := client.GetDefaultConnection()
+	connections := len(client.ListConnections())
+
+	// assertUnchanged checks that a call neither opened a connection nor
+	// changed the selected one.
+	assertUnchanged := func(t *testing.T) {
+		t.Helper()
+		if got := len(client.ListConnections()); got != connections {
+			t.Errorf("connections = %d, want %d", got, connections)
+		}
+		if got := client.GetDefaultConnection(); got != selected {
+			t.Errorf("selected connection changed to %q",
+				database.SanitizeConnStr(got))
+		}
+	}
 
 	t.Run("non-string query", func(t *testing.T) {
 		resp := callTool(t, tool, ctx, map[string]any{"query": 1})
@@ -177,8 +195,9 @@ func TestQueryDatabase_LegacyConnectionPath(t *testing.T) {
 
 	t.Run("empty query", func(t *testing.T) {
 		resp := callTool(t, tool, ctx, map[string]any{"query": ""})
-		if resp.IsError || !strings.Contains(responseText(resp), "No query to run") {
-			t.Fatalf("got %+v, want the no-query answer", resp)
+		if !resp.IsError ||
+			!strings.Contains(responseText(resp), "Missing or invalid 'query'") {
+			t.Fatalf("got %+v, want the missing-query error", resp)
 		}
 	})
 
@@ -186,50 +205,56 @@ func TestQueryDatabase_LegacyConnectionPath(t *testing.T) {
 		resp := callTool(t, tool, ctx, map[string]any{
 			"query": "SELECT 'issue646' AS marker at " + dsn,
 		})
-		if resp.IsError || !strings.Contains(responseText(resp), "issue646") {
-			t.Fatalf("got %+v, want the query result", resp)
+		if !resp.IsError || !strings.Contains(responseText(resp), "syntax error") {
+			t.Fatalf("got %+v, want the server's syntax error", resp)
 		}
+		assertUnchanged(t)
 	})
 
 	t.Run("side-effecting query at a connection string", func(t *testing.T) {
 		resp := callTool(t, tool, ctx, map[string]any{
 			"query": `SELECT "pg_terminate_backend"(0) at ` + dsn,
 		})
-		if !resp.IsError || responseText(resp) !=
-			"Write operations require an explicit connection_id parameter" {
-			t.Fatalf("got %+v, want the explicit connection_id refusal", resp)
+		if !resp.IsError || responseText(resp) != queryDatabaseReadOnlyError {
+			t.Fatalf("got %+v, want the read-only refusal", resp)
 		}
+		assertUnchanged(t)
 	})
 
 	t.Run("set the default connection", func(t *testing.T) {
 		resp := callTool(t, tool, ctx, map[string]any{
 			"query": "set default database to " + dsn,
 		})
-		if resp.IsError || !strings.Contains(responseText(resp),
-			"Successfully set default database connection") {
-			t.Fatalf("got %+v, want the default set", resp)
+		if !resp.IsError || responseText(resp) != queryDatabaseReadOnlyError {
+			t.Fatalf("got %+v, want the read-only refusal", resp)
 		}
+		assertUnchanged(t)
 	})
 
-	// Nothing listens on loopback port 1, so both commands fail at once.
+	// Nothing listens on loopback port 1, so a connection attempt would
+	// fail at once; none is made.
 	unreachable := "postgresql://nobody@127.0.0.1:1/unused"
 
 	t.Run("query at an unreachable connection string", func(t *testing.T) {
 		resp := callTool(t, tool, ctx, map[string]any{
 			"query": "SELECT 1 at " + unreachable,
 		})
-		if !resp.IsError || !strings.Contains(responseText(resp), "Failed to connect") {
-			t.Fatalf("got %+v, want the connection failure", resp)
+		text := responseText(resp)
+		if !resp.IsError || strings.Contains(text, "Failed to connect") ||
+			!strings.Contains(text, "syntax error") {
+			t.Fatalf("got %+v, want the server's syntax error", resp)
 		}
+		assertUnchanged(t)
 	})
 
 	t.Run("set an unreachable default connection", func(t *testing.T) {
 		resp := callTool(t, tool, ctx, map[string]any{
 			"query": "set default database to " + unreachable,
 		})
-		if !resp.IsError || !strings.Contains(responseText(resp), "Failed to set default") {
-			t.Fatalf("got %+v, want the failure", resp)
+		if !resp.IsError || responseText(resp) != queryDatabaseReadOnlyError {
+			t.Fatalf("got %+v, want the read-only refusal", resp)
 		}
+		assertUnchanged(t)
 	})
 
 	t.Run("no context in the arguments", func(t *testing.T) {

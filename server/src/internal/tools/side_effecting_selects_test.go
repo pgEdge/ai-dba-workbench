@@ -276,7 +276,8 @@ func TestValidateWhereClause_SideEffectingFunctions(t *testing.T) {
 
 // TestQueryDatabase_SideEffectingSelects runs query_database against the
 // test database and pins what each kind of caller sees for a SELECT that
-// calls a side-effecting function (issue #646).
+// calls a side-effecting function (issue #646): query_database is
+// read-only (issue #663), so every caller gets the read-only refusal.
 func TestQueryDatabase_SideEffectingSelects(t *testing.T) {
 	env := newResolverTestEnv(t)
 	ctx := context.Background()
@@ -335,9 +336,8 @@ func TestQueryDatabase_SideEffectingSelects(t *testing.T) {
 				"connection_id": float64(env.connID),
 				"query":         tt.query,
 			})
-			if !resp.IsError || responseText(resp) !=
-				"Write operations require read_write access to this connection" {
-				t.Errorf("query %q: got %+v, want the read_write refusal", tt.query, resp)
+			if !resp.IsError || responseText(resp) != queryDatabaseReadOnlyError {
+				t.Errorf("query %q: got %+v, want the read-only refusal", tt.query, resp)
 			}
 		})
 	}
@@ -345,36 +345,34 @@ func TestQueryDatabase_SideEffectingSelects(t *testing.T) {
 	superCtx := context.WithValue(ctx, auth.IsSuperuserContextKey, true)
 	superTool := QueryDatabaseTool(nil, env.resolver)
 
-	t.Run("read_write caller passes the gate", func(t *testing.T) {
-		// The session pool defaults to read-only transactions, so this
-		// shows only that the statement took the write path past the
-		// read_write gate; set_config itself runs in either kind.
-		resp := run(t, superTool, superCtx, map[string]any{
-			"connection_id": float64(env.connID),
-			"query":         "SELECT set_config('application_name', 'issue646', true)",
-		})
-		if resp.IsError {
-			t.Fatalf("set_config refused: %s", responseText(resp))
-		}
-		if !strings.Contains(responseText(resp), "issue646") {
-			t.Errorf("unexpected result %q", responseText(resp))
+	t.Run("superuser refused too", func(t *testing.T) {
+		// query_database is read-only for every caller (issue #663), so
+		// a superuser, who holds read_write on every connection, gets
+		// the same refusal as a reader.
+		for _, tt := range sideEffectingSpellings {
+			resp := run(t, superTool, superCtx, map[string]any{
+				"connection_id": float64(env.connID),
+				"query":         tt.query,
+			})
+			if !resp.IsError || responseText(resp) != queryDatabaseReadOnlyError {
+				t.Errorf("query %q: got %+v, want the read-only refusal", tt.query, resp)
+			}
 		}
 	})
 
-	t.Run("no connection_id is refused", func(t *testing.T) {
+	t.Run("selected connection refused too", func(t *testing.T) {
 		resolved, errResp := env.resolver.Resolve(superCtx, map[string]any{
 			"connection_id": float64(env.connID),
 		}, nil)
 		if errResp != nil {
 			t.Fatalf("Resolve: %s", toolResponseText(errResp))
 		}
-		legacyTool := QueryDatabaseTool(resolved.Client, env.resolver)
-		resp := run(t, legacyTool, superCtx, map[string]any{
+		selectedTool := QueryDatabaseTool(resolved.Client, env.resolver)
+		resp := run(t, selectedTool, superCtx, map[string]any{
 			"query": `SELECT "pg_terminate_backend"(0)`,
 		})
-		if !resp.IsError || responseText(resp) !=
-			"Write operations require an explicit connection_id parameter" {
-			t.Errorf("got %+v, want the explicit connection_id refusal", resp)
+		if !resp.IsError || responseText(resp) != queryDatabaseReadOnlyError {
+			t.Errorf("got %+v, want the read-only refusal", resp)
 		}
 	})
 
@@ -402,11 +400,11 @@ func TestQueryDatabase_SideEffectingSelects(t *testing.T) {
 	})
 }
 
-// TestQueryDatabase_LegacyPathNotReady verifies that query_database,
-// called without a connection_id, reports the database as not ready
-// rather than classifying or running the statement when the default
-// connection has no metadata loaded.
-func TestQueryDatabase_LegacyPathNotReady(t *testing.T) {
+// TestQueryDatabase_SideEffectRefusedBeforeResolving verifies that
+// query_database refuses a side-effecting SELECT before it resolves a
+// connection: the client here has no connection selected, and the
+// read-only refusal still comes first.
+func TestQueryDatabase_SideEffectRefusedBeforeResolving(t *testing.T) {
 	tool := QueryDatabaseTool(database.NewClient(nil), nil)
 	resp, err := tool.Handler(map[string]any{
 		"query": "SELECT (0).pg_terminate_backend",
@@ -414,7 +412,7 @@ func TestQueryDatabase_LegacyPathNotReady(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Handler returned a Go error: %v", err)
 	}
-	if !resp.IsError || responseText(resp) != mcp.DatabaseNotReadyError {
-		t.Errorf("got %+v, want the database-not-ready error", resp)
+	if !resp.IsError || responseText(resp) != queryDatabaseReadOnlyError {
+		t.Errorf("got %+v, want the read-only refusal", resp)
 	}
 }

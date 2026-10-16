@@ -504,6 +504,29 @@ func TestConnectionCoverage_UpdateConnection(t *testing.T) {
 	}
 }
 
+// TestConnectionCoverage_UpdateRacesDelete covers an update whose
+// connection is deleted after the handler's lookup: a BEFORE UPDATE
+// trigger that skips the row stands in for the concurrent mark, so the
+// UPDATE returns no row and the handler answers 404, not 500.
+func TestConnectionCoverage_UpdateRacesDelete(t *testing.T) {
+	h := newConnCoverageHarness(t)
+	h.exec(`CREATE FUNCTION cov_skip_update() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN RETURN NULL; END $$`)
+	h.exec(`CREATE TRIGGER cov_skip_update BEFORE UPDATE ON connections
+        FOR EACH ROW EXECUTE FUNCTION cov_skip_update()`)
+	t.Cleanup(func() {
+		ctx := context.Background()
+		_, _ = h.pool.Exec(ctx, `DROP TRIGGER IF EXISTS cov_skip_update ON connections`) //nolint:errcheck // best-effort cleanup
+		_, _ = h.pool.Exec(ctx, `DROP FUNCTION IF EXISTS cov_skip_update()`)             //nolint:errcheck // best-effort cleanup
+	})
+
+	name := "race-renamed"
+	rec := h.serve(h.request(http.MethodPut, "/api/v1/connections/8100",
+		ConnectionFullUpdateRequest{Name: &name}, &h.owner))
+	assertStatus(t, rec, http.StatusNotFound)
+	assertErrorMessage(t, rec, "Connection not found")
+}
+
 func TestConnectionCoverage_ListDatabases(t *testing.T) {
 	h := newConnCoverageHarness(t)
 	su := h.superuser()

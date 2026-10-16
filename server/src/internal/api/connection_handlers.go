@@ -555,6 +555,11 @@ func (h *ConnectionHandler) updateConnection(w http.ResponseWriter, r *http.Requ
 
 	conn, err = h.datastore.UpdateConnectionFull(ctx, id, params)
 	if err != nil {
+		// The connection was deleted after the lookup above.
+		if errors.Is(err, database.ErrConnectionNotFound) {
+			RespondError(w, http.StatusNotFound, "Connection not found")
+			return
+		}
 		log.Printf("[ERROR] Failed to update connection (id=%d): %v", id, err)
 		RespondError(w, http.StatusInternalServerError,
 			"Failed to update connection")

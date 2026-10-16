@@ -721,6 +721,11 @@ func (d *Datastore) UpdateConnectionFull(ctx context.Context, id int, params Con
 
 	conn, err := scanFullConnection(d.pool.QueryRow(ctx, query, args...))
 	if err != nil {
+		// No row means the connection does not exist or was marked for
+		// deletion after the caller looked it up (issue #669).
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrConnectionNotFound
+		}
 		return nil, fmt.Errorf("failed to update connection: %w", err)
 	}
 

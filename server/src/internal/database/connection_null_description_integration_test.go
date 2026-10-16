@@ -213,6 +213,36 @@ func TestConnectionReadsTolerateNullDescription(t *testing.T) {
 	}
 }
 
+// TestUpdateConnectionFullMarkedConnection verifies that updating a
+// connection marked for deletion (issue #669) reports
+// ErrConnectionNotFound, so the handler answers 404 rather than 500
+// when the mark lands between its lookup and the update.
+func TestUpdateConnectionFullMarkedConnection(t *testing.T) {
+	ds, pool, cleanup := newNullDescriptionTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	var id int
+	if err := pool.QueryRow(ctx, insertNullDescriptionSQL, "marked-update").Scan(&id); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE connections SET deleted_at = now() WHERE id = $1`, id); err != nil {
+		t.Fatalf("mark connection: %v", err)
+	}
+
+	host := "db3.example.com"
+	if _, err := ds.UpdateConnectionFull(ctx, id, ConnectionUpdateParams{Host: &host}); !errors.Is(err, ErrConnectionNotFound) {
+		t.Fatalf("UpdateConnectionFull on a marked connection = %v, want ErrConnectionNotFound", err)
+	}
+	var got string
+	if err := pool.QueryRow(ctx, `SELECT host FROM connections WHERE id = $1`, id).Scan(&got); err != nil {
+		t.Fatalf("read host: %v", err)
+	}
+	if got == host {
+		t.Error("the marked connection's host was updated")
+	}
+}
+
 // failingScanner is a row whose Scan always fails, used to drive the scan
 // helpers' error returns.
 type failingScanner struct{ err error }

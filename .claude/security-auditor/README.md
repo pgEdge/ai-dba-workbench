@@ -282,10 +282,10 @@ moved.
   acknowledged) connection alert holding maskable text, blackouts
   included; it skips the alerts the loop raised or compared, and masks
   with `redact.Settled`, which reapplies `Text` until the text stops
-  changing, because `Text` is not idempotent (a second pass can take
-  the quote after a masked value into the next value; `TestSettled`
-  pins the cases) and the two stages would otherwise rewrite the same
-  alert on every pass. Collector migration 24 masks the stored
+  changing, for at most three passes, because `Text` is not idempotent
+  (a second pass can take the quote after a masked value into the next
+  value; `TestSettled` pins the cases) and the two stages would
+  otherwise rewrite the same alert on every pass. Collector migration 24 masks the stored
   descriptions of all connection alerts once. The server masks `alerts.description`
   and `alerts.ai_analysis` with `RedactedText` in `GET /api/v1/alerts`,
   and the description in the timeline fired and cleared summaries

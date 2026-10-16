@@ -278,6 +278,56 @@ func TestClearNodeRelationships_DeleteFailureReturnsError(t *testing.T) {
 	}
 }
 
+// TestNodeRelationships_CommitFailureReturnsError covers the failed
+// COMMIT branch of SetNodeRelationships and ClearNodeRelationships: a
+// deferred constraint trigger that raises on DELETE fails the commit,
+// and the deleted row survives.
+func TestNodeRelationships_CommitFailureReturnsError(t *testing.T) {
+	ds, pool, cleanup := newSyncAutoDetectedTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	clusterID := insertSyncTestCluster(t, pool, "node-rels-commit")
+	source := insertSyncTestConnection(t, pool, "commit-source")
+	target := insertSyncTestConnection(t, pool, "commit-target")
+
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO cluster_node_relationships
+			(cluster_id, source_connection_id, target_connection_id,
+			 relationship_type, is_auto_detected)
+		VALUES ($1, $2, $3, 'streams_from', FALSE)
+	`, clusterID, source, target); err != nil {
+		t.Fatalf("Failed to seed relationship: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		CREATE FUNCTION fail_relationship_delete() RETURNS trigger
+		LANGUAGE plpgsql AS $$
+		BEGIN
+			RAISE EXCEPTION 'injected commit failure';
+		END $$;
+		CREATE CONSTRAINT TRIGGER fail_relationship_delete
+			AFTER DELETE ON cluster_node_relationships
+			DEFERRABLE INITIALLY DEFERRED
+			FOR EACH ROW EXECUTE FUNCTION fail_relationship_delete();
+	`); err != nil {
+		t.Fatalf("Failed to create the failing trigger: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(),
+			`DROP FUNCTION IF EXISTS fail_relationship_delete() CASCADE`)
+	})
+
+	if err := ds.SetNodeRelationships(ctx, clusterID, source, nil, nil); err == nil {
+		t.Error("SetNodeRelationships with a failing commit returned nil; want error")
+	}
+	if err := ds.ClearNodeRelationships(ctx, clusterID, source, nil); err == nil {
+		t.Error("ClearNodeRelationships with a failing commit returned nil; want error")
+	}
+	if got := countRelationships(t, pool, clusterID, false); got != 1 {
+		t.Errorf("manual rows = %d, want the original 1", got)
+	}
+}
+
 // TestClearNodeRelationships_ClosedPoolReturnsError covers the
 // begin-transaction failure branch.
 func TestClearNodeRelationships_ClosedPoolReturnsError(t *testing.T) {

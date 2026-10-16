@@ -21,8 +21,10 @@ import (
 // hierarchy tables exercised by the dismiss-then-rediscover path. It
 // mirrors the shape used in production (collector/src/database/schema.go),
 // limited to columns referenced by UpsertAutoDetectedCluster, DeleteCluster,
-// GetCluster, and ListClustersForAutocomplete.
+// GetCluster, and ListClustersForAutocomplete, plus the relationship table
+// AssignConnectionToCluster prunes when it moves a connection.
 const clusterDismissTestSchema = `
+DROP TABLE IF EXISTS cluster_node_relationships CASCADE;
 DROP TABLE IF EXISTS connections CASCADE;
 DROP TABLE IF EXISTS clusters CASCADE;
 DROP TABLE IF EXISTS cluster_groups CASCADE;
@@ -61,9 +63,21 @@ CREATE TABLE connections (
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE cluster_node_relationships (
+    id SERIAL PRIMARY KEY,
+    cluster_id INTEGER NOT NULL REFERENCES clusters(id) ON DELETE CASCADE,
+    source_connection_id INTEGER NOT NULL
+        REFERENCES connections(id) ON DELETE CASCADE,
+    target_connection_id INTEGER NOT NULL
+        REFERENCES connections(id) ON DELETE CASCADE,
+    relationship_type VARCHAR(50) NOT NULL,
+    is_auto_detected BOOLEAN NOT NULL DEFAULT FALSE
+);
 `
 
 const clusterDismissTestTeardown = `
+DROP TABLE IF EXISTS cluster_node_relationships CASCADE;
 DROP TABLE IF EXISTS connections CASCADE;
 DROP TABLE IF EXISTS clusters CASCADE;
 DROP TABLE IF EXISTS cluster_groups CASCADE;

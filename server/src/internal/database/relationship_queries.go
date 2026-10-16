@@ -412,6 +412,12 @@ func (d *Datastore) AddServerToCluster(ctx context.Context, clusterID int, conne
 		return ErrConnectionNotFound
 	}
 
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to add server to cluster: %w", err)
+	}
+	defer rollback.Tx(ctx, tx) //nolint:errcheck // no-op after commit
+
 	query := `
         UPDATE connections
         SET cluster_id = $2, role = $3, membership_source = 'manual',
@@ -419,8 +425,18 @@ func (d *Datastore) AddServerToCluster(ctx context.Context, clusterID int, conne
         WHERE id = $1 AND deleted_at IS NULL
     `
 
-	_, err = d.pool.Exec(ctx, query, connectionID, clusterID, role)
+	_, err = tx.Exec(ctx, query, connectionID, clusterID, role)
 	if err != nil {
+		return fmt.Errorf("failed to add server to cluster: %w", err)
+	}
+
+	// Adding a member of another cluster moves it, so its rows in the
+	// old cluster go in the same transaction (issue #707).
+	if err := dropRelationshipsOutsideCluster(ctx, tx, connectionID, &clusterID); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("failed to add server to cluster: %w", err)
 	}
 

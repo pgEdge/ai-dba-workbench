@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/pgedge/ai-workbench/pkg/logger"
+	"github.com/pgedge/ai-workbench/pkg/redact"
 )
 
 // getAllConnectionsWithRoles queries all connections with their role data
@@ -121,6 +122,12 @@ func (d *Datastore) getAllConnectionsWithRoles(ctx context.Context) ([]connectio
 			&conn.ClusterID,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan connection: %w", err)
+		}
+		// The driver's error text can hold a connection string and its
+		// password; mask it before it reaches any topology response
+		// (issue #683).
+		if conn.ConnectionError.Valid {
+			conn.ConnectionError.String = redact.Text(conn.ConnectionError.String)
 		}
 		connections = append(connections, conn)
 	}
@@ -599,7 +606,8 @@ func (d *Datastore) getPersistedClusterMembers(ctx context.Context, autoDetected
 			s.SpockNodeName = spockNodeName.String
 		}
 		if connError.Valid {
-			s.ConnectionError = connError.String
+			// Masked as in getAllConnectionsWithRoles.
+			s.ConnectionError = redact.Text(connError.String)
 		}
 
 		result[autoClusterKey] = append(result[autoClusterKey], s)

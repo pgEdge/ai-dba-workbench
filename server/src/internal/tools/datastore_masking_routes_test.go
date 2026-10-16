@@ -11,6 +11,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -20,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pgedge/ai-workbench/server/internal/api"
+	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/database"
 	"github.com/pgedge/ai-workbench/server/internal/metrics"
 )
@@ -422,4 +424,100 @@ var quoteShiftStatements = []struct{ query, secret string }{
 	{`ALTER SYSTEM SET restore_command = 'PGPASSWORD=\''PSSLEAKsecret17 cp %f %p'`, "PSSLEAKsecret17"},
 	{`ALTER SYSTEM SET primary_conninfo = 'host=h user=rep password=\''PSSLEAKsecret18'`, "PSSLEAKsecret18"},
 	{`ALTER ROLE app PASSWORD '\''WFLEAKsecret19'`, "WFLEAKsecret19"},
+}
+
+// connectionErrorSecret is a driver error that quotes a connection
+// string and its password, as connections.connection_error can.
+const connectionErrorSecret = `failed to connect to postgresql://app:example-secret@192.0.2.1/db: ` +
+	`host=192.0.2.1 user=app password=example-secret dbname=db`
+
+// connectionErrorMembers are the connections the connection_error test
+// seeds, one in each place a topology or hierarchy query reads the
+// column from.
+var connectionErrorMembers = []string{"manual-member", "persisted-member", "ungrouped"}
+
+// TestMaskedConnectionErrorOnEveryRouteIntegration checks that the
+// connection_error text, which can quote a password, is masked by
+// list_connections, GET /api/v1/clusters (both the auto-detected and
+// the persisted members of the topology) and the datastore's cluster
+// hierarchy (issue #683). It runs on the collector's real schema, since
+// the topology queries read most of it.
+func TestMaskedConnectionErrorOnEveryRouteIntegration(t *testing.T) {
+	pool := newCollectorSchemaPool(t)
+	ctx := context.Background()
+	ds := database.NewTestDatastore(pool)
+	store, storeCleanup := newRBACRegressionTestStore(t)
+	t.Cleanup(storeCleanup)
+	checker := auth.NewRBACCheckerForDatastore(store, ds)
+
+	var groupID, manualID, autoID int
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO cluster_groups (name) VALUES ('masking-group') RETURNING id`).Scan(&groupID); err != nil {
+		t.Fatalf("seed group: %v", err)
+	}
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO clusters (group_id, name) VALUES ($1, 'manual-cluster') RETURNING id`,
+		groupID).Scan(&manualID); err != nil {
+		t.Fatalf("seed manual cluster: %v", err)
+	}
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO clusters (group_id, name, auto_cluster_key) VALUES ($1, 'auto-cluster', 'spock:masking')
+            RETURNING id`, groupID).Scan(&autoID); err != nil {
+		t.Fatalf("seed auto cluster: %v", err)
+	}
+	// A manual cluster member, a member of an auto-detected cluster that
+	// detection no longer finds it in, and a connection in no cluster.
+	clusterOf := map[string]*int{"manual-member": &manualID, "persisted-member": &autoID, "ungrouped": nil}
+	for _, name := range connectionErrorMembers {
+		if _, err := pool.Exec(ctx, `INSERT INTO connections
+            (name, host, port, database_name, username, owner_username, is_shared, is_monitored,
+             cluster_id, membership_source, connection_error)
+            VALUES ($1, '192.0.2.1', 5432, 'db', 'app', 'admin', TRUE, TRUE, $2, 'manual', $3)`,
+			name, clusterOf[name], connectionErrorSecret); err != nil {
+			t.Fatalf("seed connection %s: %v", name, err)
+		}
+	}
+
+	outputs := map[string]string{}
+	text, isErr := call(t, ListConnectionsTool(pool, checker, database.NewVisibilityLister(ds)),
+		superuserContext(), map[string]any{})
+	if isErr {
+		t.Fatalf("list_connections: %s", text)
+	}
+	outputs["list_connections"] = text
+
+	mux := http.NewServeMux()
+	noAuth := func(h http.HandlerFunc) http.HandlerFunc { return h }
+	api.NewClusterHandler(ds, store, checker).RegisterRoutes(mux, noAuth)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/clusters", nil).WithContext(superuserContext())
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/v1/clusters returned %d: %s", rec.Code, rec.Body.String())
+	}
+	outputs["GET /api/v1/clusters"] = rec.Body.String()
+
+	hierarchy, err := ds.GetClusterHierarchy(ctx)
+	if err != nil {
+		t.Fatalf("GetClusterHierarchy: %v", err)
+	}
+	body, err := json.Marshal(hierarchy)
+	if err != nil {
+		t.Fatalf("marshal hierarchy: %v", err)
+	}
+	outputs["GetClusterHierarchy"] = string(body)
+
+	for route, out := range outputs {
+		if strings.Contains(out, "example-secret") {
+			t.Errorf("%s returned a credential:\n%s", route, out)
+		}
+		for _, name := range connectionErrorMembers {
+			if !strings.Contains(out, name) {
+				t.Errorf("%s should list %s:\n%s", route, name, out)
+			}
+		}
+		if got := strings.Count(out, metrics.RedactedValue); got < len(connectionErrorMembers) {
+			t.Errorf("%s should show the masked value for every connection, found %d:\n%s", route, got, out)
+		}
+	}
 }

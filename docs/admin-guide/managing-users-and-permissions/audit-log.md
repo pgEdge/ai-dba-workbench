@@ -146,7 +146,10 @@ or `alert_override.delete`. A request to change a cluster group that
 the caller does not own, or to create a group, or a cluster within a
 group, without the `manage_connections` permission, is recorded under
 `cluster_group.create`, `cluster_group.update` or
-`cluster_group.delete`. A blackout or schedule
+`cluster_group.delete`. A request to replace or clear a connection's
+cluster relationships that would delete a manual relationship to a
+connection the caller cannot see is recorded under `cluster.update`,
+with the cluster as its target. A blackout or schedule
 on a connection the token cannot see, or an override on a server,
 cluster or group the caller cannot see, is refused as though it did
 not exist, and that refusal is not recorded.

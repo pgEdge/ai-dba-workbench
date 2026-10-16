@@ -15,8 +15,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/database"
 )
 
@@ -116,11 +121,11 @@ func TestIssue678_SetRelationships(t *testing.T) {
 			path: "/api/v1/clusters/1/connections/5/relationships",
 			body: toSix, status: http.StatusInternalServerError,
 			msg: "Failed to validate relationships"},
-		{name: "existing relationships read fails", h: f.failing(t, 2),
+		{name: "rewrite fails", h: f.failing(t, 4),
 			caller: f.admin, method: http.MethodPut,
 			path: "/api/v1/clusters/1/connections/5/relationships",
 			body: toSix, status: http.StatusInternalServerError,
-			msg: "Failed to validate relationships"},
+			msg: "Failed to set relationships"},
 		{name: "stale row in a hidden cluster is not disclosed",
 			caller: f.admin, method: http.MethodPut,
 			path: "/api/v1/clusters/3/connections/6/relationships",
@@ -185,11 +190,11 @@ func TestIssue678_ClearRelationships(t *testing.T) {
 			path:   "/api/v1/clusters/1/connections/5/relationships",
 			status: http.StatusInternalServerError,
 			msg:    "Failed to validate relationships"},
-		{name: "existing relationships read fails", h: f.failing(t, 2),
+		{name: "clear fails", h: f.failing(t, 2),
 			caller: f.admin, method: http.MethodDelete,
 			path:   "/api/v1/clusters/1/connections/5/relationships",
 			status: http.StatusInternalServerError,
-			msg:    "Failed to validate relationships"},
+			msg:    "Failed to clear relationships"},
 		{name: "stale row in a hidden cluster is not touched",
 			caller: f.admin, method: http.MethodDelete,
 			path:   "/api/v1/clusters/3/connections/6/relationships",
@@ -327,4 +332,147 @@ func TestFilterRelationshipsByVisibility_Issue678(t *testing.T) {
 	if got := filterRelationshipsByVisibility(nil, map[int]bool{}); got == nil || len(got) != 0 {
 		t.Errorf("filterRelationshipsByVisibility(nil) = %#v, want empty non-nil", got)
 	}
+}
+
+// TestIssue678_HiddenRelationshipRefusalIsAudited checks that the 403 a
+// restricted rewrite or clear receives, because it would delete a manual
+// relationship to a hidden connection, is written to the audit log as a
+// cluster.update denial, as the token-scope refusal on the same routes
+// is.
+func TestIssue678_HiddenRelationshipRefusalIsAudited(t *testing.T) {
+	for _, tc := range []struct {
+		name, method, body string
+	}{
+		{"rewrite", http.MethodPut,
+			`{"relationships":[{"target_connection_id":5,"relationship_type":"streams_from"}]}`},
+		{"clear", http.MethodDelete, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newClusterCovFixture(t)
+			seedIssue678Relationships(t, f)
+			f.handler.SetDenialRecorder(NewRBACHandler(f.store,
+				auth.NewRBACChecker(f.store)).RecordDenial)
+
+			rec := clusterCovServe(f.handler, f.admin, tc.method,
+				"/api/v1/clusters/1/connections/6/relationships", tc.body)
+			assertError(t, rec, http.StatusForbidden, hiddenRelationshipRefusal)
+			assertDenialRecorded(t, f.store, "cluster.update",
+				hiddenRelationshipRefusal)
+			f.expectValue(t, "relationship", 2, "true")
+		})
+	}
+}
+
+// racingClusterHandler returns a ClusterHandler sharing the fixture's
+// auth store whose datastore runs write, once, as it acquires its at'th
+// connection, so that a test can land a concurrent write between any
+// two of a request's statements. fired reports whether write ran.
+func (f *clusterCovFixture) racingClusterHandler(t *testing.T, at int64,
+	write func()) (h *ClusterHandler, fired *atomic.Bool) {
+
+	t.Helper()
+	cfg, err := pgxpool.ParseConfig(f.connStr)
+	if err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+	cfg.MaxConns = 2
+	var acquired atomic.Int64
+	fired = &atomic.Bool{}
+	cfg.PrepareConn = func(context.Context, *pgx.Conn) (bool, error) {
+		if acquired.Add(1) == at {
+			write()
+			fired.Store(true)
+		}
+		return true, nil
+	}
+	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("NewWithConfig: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	return NewClusterHandler(database.NewTestDatastore(pool), f.store,
+		auth.NewRBACChecker(f.store)), fired
+}
+
+// TestIssue678_ConcurrentHiddenRowSurvives covers a manual relationship
+// to a hidden connection that someone who can see it writes whilst a
+// restricted rewrite or clear is in flight. Whichever statement the
+// write lands before, the request either refuses with 403 or completes
+// without deleting the hidden row, because the delete checks the
+// targets of the rows it actually removes.
+func TestIssue678_ConcurrentHiddenRowSurvives(t *testing.T) {
+	f := newClusterCovFixture(t)
+	const toFive = `{"relationships":[{"target_connection_id":5,` +
+		`"relationship_type":"streams_from"}]}`
+
+	insertHidden := func() {
+		if _, err := f.pool.Exec(context.Background(), `
+            INSERT INTO cluster_node_relationships
+                (id, cluster_id, source_connection_id, target_connection_id,
+                 relationship_type)
+            VALUES (2, 1, 6, 7, 'streams_from')`); err != nil {
+			t.Errorf("Failed to insert the concurrent row: %v", err)
+		}
+	}
+	removeHidden := func() {
+		if _, err := f.pool.Exec(context.Background(),
+			`DELETE FROM cluster_node_relationships WHERE id = 2`); err != nil {
+			t.Fatalf("Failed to remove the concurrent row: %v", err)
+		}
+	}
+
+	for _, req := range []struct{ name, method, body string }{
+		{"rewrite", http.MethodPut, toFive},
+		{"clear", http.MethodDelete, ""},
+	} {
+		for at := int64(1); ; at++ {
+			removeHidden()
+			h, fired := f.racingClusterHandler(t, at, insertHidden)
+			rec := clusterCovServe(h, f.admin, req.method,
+				"/api/v1/clusters/1/connections/6/relationships", req.body)
+			if !fired.Load() {
+				// The request used fewer acquisitions than at, so a
+				// write has landed before every one of its statements.
+				if at < 3 {
+					t.Fatalf("%s: only %d acquisitions", req.name, at-1)
+				}
+				break
+			}
+			if rec.Code != http.StatusForbidden && rec.Code/100 != 2 {
+				t.Errorf("%s, write at %d: status %d: %s", req.name, at,
+					rec.Code, rec.Body.String())
+			}
+			if got := f.readBack(t, "relationship", 2); got != "true" {
+				t.Errorf("%s, write at %d (status %d): the hidden row was deleted",
+					req.name, at, rec.Code)
+			}
+		}
+	}
+}
+
+// TestIssue678_AutoDetectedHiddenRowDoesNotBlock checks that an
+// auto-detected relationship to a hidden connection does not refuse a
+// restricted rewrite or clear, which delete only manual rows, and that
+// the auto-detected row survives both.
+func TestIssue678_AutoDetectedHiddenRowDoesNotBlock(t *testing.T) {
+	f := newClusterCovFixture(t)
+	if _, err := f.pool.Exec(context.Background(), `
+        INSERT INTO cluster_node_relationships
+            (id, cluster_id, source_connection_id, target_connection_id,
+             relationship_type, is_auto_detected)
+        VALUES (2, 1, 6, 7, 'streams_from', TRUE)`); err != nil {
+		t.Fatalf("Failed to seed relationship: %v", err)
+	}
+
+	f.run(t, []clusterCovCase{
+		{name: "rewrite", caller: f.admin, method: http.MethodPut,
+			path: "/api/v1/clusters/1/connections/6/relationships",
+			body: `{"relationships":[{"target_connection_id":5,` +
+				`"relationship_type":"streams_from"}]}`,
+			status: http.StatusOK},
+		{name: "clear", caller: f.admin, method: http.MethodDelete,
+			path:   "/api/v1/clusters/1/connections/6/relationships",
+			status: http.StatusNoContent},
+	})
+	f.expectValue(t, "relationship", 2, "true")
 }

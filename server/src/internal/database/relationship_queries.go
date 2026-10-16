@@ -171,25 +171,60 @@ func (d *Datastore) GetClusterRelationships(ctx context.Context, clusterID int) 
 	return relationships, nil
 }
 
+// ErrHiddenRelationship is returned by SetNodeRelationships and
+// ClearNodeRelationships when the source has a manual relationship whose
+// target is outside the permitted set; nothing is changed.
+var ErrHiddenRelationship = errors.New("relationship to a connection outside the permitted set")
+
+// deleteManualRelationships deletes the source's manual relationships in
+// the cluster within tx. When permitted is non-nil and the target of any
+// deleted row is not in it, it returns ErrHiddenRelationship and the
+// caller must roll back. The targets come from the DELETE's own
+// RETURNING list, so the check covers exactly the rows deleted,
+// including one written concurrently after the caller's own checks.
+func deleteManualRelationships(ctx context.Context, tx pgx.Tx, clusterID, sourceConnectionID int, permitted map[int]bool) error {
+	rows, err := tx.Query(ctx,
+		`DELETE FROM cluster_node_relationships
+         WHERE cluster_id = $1 AND source_connection_id = $2 AND is_auto_detected = FALSE
+         RETURNING target_connection_id`,
+		clusterID, sourceConnectionID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to delete existing manual relationships: %w", err)
+	}
+	targets, err := scanAll(rows, func(r pgx.Rows, target *int) error {
+		return r.Scan(target)
+	})
+	if err != nil {
+		return fmt.Errorf("failed to delete existing manual relationships: %w", err)
+	}
+	if permitted == nil {
+		return nil
+	}
+	for _, target := range targets {
+		if !permitted[target] {
+			return ErrHiddenRelationship
+		}
+	}
+	return nil
+}
+
 // SetNodeRelationships replaces manual (non-auto-detected) relationships
 // for a given source node in a cluster. This runs in a transaction:
 // first deleting existing manual rows for the source, then inserting
-// the new ones with is_auto_detected = FALSE.
-func (d *Datastore) SetNodeRelationships(ctx context.Context, clusterID int, sourceConnectionID int, relationships []RelationshipInput) error {
+// the new ones with is_auto_detected = FALSE. A nil permitted set allows
+// any target; otherwise, when a deleted row targets a connection outside
+// permitted, the transaction is rolled back and ErrHiddenRelationship is
+// returned.
+func (d *Datastore) SetNodeRelationships(ctx context.Context, clusterID int, sourceConnectionID int, relationships []RelationshipInput, permitted map[int]bool) error {
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer rollback.Tx(ctx, tx) //nolint:errcheck // no-op after commit
 
-	// Delete existing manual relationships for this source in this cluster
-	_, err = tx.Exec(ctx,
-		`DELETE FROM cluster_node_relationships
-         WHERE cluster_id = $1 AND source_connection_id = $2 AND is_auto_detected = FALSE`,
-		clusterID, sourceConnectionID,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to delete existing manual relationships: %w", err)
+	if err := deleteManualRelationships(ctx, tx, clusterID, sourceConnectionID, permitted); err != nil {
+		return err
 	}
 
 	// Insert new relationships
@@ -322,14 +357,22 @@ func (d *Datastore) RemoveNodeRelationship(ctx context.Context, relationshipID i
 }
 
 // ClearNodeRelationships deletes all manual (is_auto_detected = FALSE)
-// relationships for a source node in a cluster.
-func (d *Datastore) ClearNodeRelationships(ctx context.Context, clusterID int, sourceConnectionID int) error {
-	_, err := d.pool.Exec(ctx,
-		`DELETE FROM cluster_node_relationships
-         WHERE cluster_id = $1 AND source_connection_id = $2 AND is_auto_detected = FALSE`,
-		clusterID, sourceConnectionID,
-	)
+// relationships for a source node in a cluster. A nil permitted set
+// allows any target; otherwise, when a manual row targets a connection
+// outside permitted, nothing is deleted and ErrHiddenRelationship is
+// returned.
+func (d *Datastore) ClearNodeRelationships(ctx context.Context, clusterID int, sourceConnectionID int, permitted map[int]bool) error {
+	tx, err := d.pool.Begin(ctx)
 	if err != nil {
+		return fmt.Errorf("failed to clear manual relationships: %w", err)
+	}
+	defer rollback.Tx(ctx, tx) //nolint:errcheck // no-op after commit
+
+	if err := deleteManualRelationships(ctx, tx, clusterID, sourceConnectionID, permitted); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("failed to clear manual relationships: %w", err)
 	}
 

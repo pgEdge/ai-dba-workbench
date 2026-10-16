@@ -2668,9 +2668,12 @@ project adheres to
   `manage_connections` permission, and a caller without unrestricted
   visibility must now also see the source connection, every requested
   target, and the target of any manual relationship that a rewrite or
-  clear would delete; deleting a relationship by id needs both of its
-  connections to be visible and the relationship to belong to the
-  addressed cluster. Saving a `replicates_with` relationship no longer
+  clear would delete. That last check is made by the delete itself, so
+  a relationship to a hidden connection written whilst the request is
+  in flight is not lost, and its refusal is recorded in the audit log
+  as a `cluster.update` denial. Deleting a relationship by id needs
+  both of its connections to be visible and the relationship to belong
+  to the addressed cluster. Saving a `replicates_with` relationship no longer
   discards the target connection's other manual relationships when it
   adds the reverse row. `GET /api/v1/connections/{id}/cluster` likewise
   now omits relationships to connections the caller cannot see, and

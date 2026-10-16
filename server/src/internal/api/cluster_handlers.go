@@ -1605,17 +1605,26 @@ func filterRelationshipsByVisibility(rels []database.NodeRelationship, visible m
 	return out
 }
 
-// sourceRelationshipsVisible reports whether a restricted caller may
-// rewrite or clear the manual relationships of a source connection. The
-// source must be visible, and so must the target of every manual
-// relationship the source already has, since a rewrite or clear deletes
-// all of them. A nil visible map means unrestricted visibility.
+// hiddenRelationshipRefusal answers a rewrite or clear that would delete
+// a manual relationship to a connection the caller cannot see. It is a
+// fixed string, so the audit coalescer's key stays bounded.
+const hiddenRelationshipRefusal = "Permission denied: the connection has relationships to connections you cannot access"
+
+// visibleSourceInCluster reports whether a restricted caller may rewrite
+// or clear the manual relationships of a source connection: the source
+// must be visible and a member of the addressed cluster. A nil visible
+// map means unrestricted visibility. The targets of the rows a rewrite
+// or clear deletes are checked by the delete itself (see
+// refuseHiddenRelationship), so a row written concurrently is covered.
 //
 // It writes the response and returns false when the caller may not
 // proceed: 404 for a hidden source, so that the source's existence is
-// not disclosed, 400 for a source outside the cluster, and 403 when a
-// relationship to a hidden connection would be deleted.
-func (h *ClusterHandler) sourceRelationshipsVisible(ctx context.Context, w http.ResponseWriter, clusterID, sourceID int, visible map[int]bool) bool {
+// not disclosed, and 400 for a source outside the cluster. Membership
+// is checked first because a connection that moved clusters keeps its
+// rows in the old cluster, which may have no visible member, and a 403
+// there would confirm a hidden relationship in a cluster the caller
+// cannot see.
+func (h *ClusterHandler) visibleSourceInCluster(ctx context.Context, w http.ResponseWriter, clusterID, sourceID int, visible map[int]bool) bool {
 	if visible == nil {
 		return true
 	}
@@ -1623,10 +1632,6 @@ func (h *ClusterHandler) sourceRelationshipsVisible(ctx context.Context, w http.
 		RespondError(w, http.StatusNotFound, "Connection not found")
 		return false
 	}
-	// Check membership before reading the existing rows: a connection
-	// that moved clusters keeps its rows in the old cluster, which may
-	// have no visible member, and answering 403 there would confirm a
-	// hidden relationship in a cluster the caller cannot see.
 	inCluster, err := h.datastore.IsConnectionInCluster(ctx, clusterID, sourceID)
 	if err != nil {
 		log.Printf("[ERROR] Failed to check source cluster membership (cluster=%d, conn=%d): %v", clusterID, sourceID, err)
@@ -1637,20 +1642,18 @@ func (h *ClusterHandler) sourceRelationshipsVisible(ctx context.Context, w http.
 		RespondError(w, http.StatusBadRequest, "Source connection does not belong to this cluster")
 		return false
 	}
-	existing, err := h.datastore.GetClusterRelationships(ctx, clusterID)
-	if err != nil {
-		log.Printf("[ERROR] Failed to read existing relationships (cluster=%d, conn=%d): %v", clusterID, sourceID, err)
-		RespondError(w, http.StatusInternalServerError, "Failed to validate relationships")
+	return true
+}
+
+// refuseHiddenRelationship answers 403, auditing the refusal, and
+// returns true when err reports that a rewrite or clear was rolled back
+// because it would have deleted a manual relationship to a connection
+// outside the caller's visible set.
+func (h *ClusterHandler) refuseHiddenRelationship(w http.ResponseWriter, r *http.Request, err error) bool {
+	if !errors.Is(err, database.ErrHiddenRelationship) {
 		return false
 	}
-	for _, rel := range existing {
-		if rel.SourceConnectionID == sourceID && !rel.IsAutoDetected &&
-			!visible[rel.TargetConnectionID] {
-			RespondError(w, http.StatusForbidden,
-				"Permission denied: the connection has relationships to connections you cannot access")
-			return false
-		}
-	}
+	h.denialRecorder.refuse(w, r, hiddenRelationshipRefusal)
 	return true
 }
 
@@ -1708,11 +1711,12 @@ func (h *ClusterHandler) setConnectionRelationships(w http.ResponseWriter, r *ht
 	defer cancel()
 
 	// Issue #678: the admin permission is not enough on its own; a
-	// restricted caller must also see the source and every connection
-	// whose relationship the rewrite would delete. This runs before the
-	// body is decoded so a hidden source discloses nothing.
+	// restricted caller must also see the source, and, checked by
+	// SetNodeRelationships below, every connection whose relationship
+	// the rewrite would delete. This runs before the body is decoded so
+	// a hidden source discloses nothing.
 	visible, ok := h.restrictedVisibleSet(ctx, w, clusterID, "Failed to validate relationships")
-	if !ok || !h.sourceRelationshipsVisible(ctx, w, clusterID, connID, visible) {
+	if !ok || !h.visibleSourceInCluster(ctx, w, clusterID, connID, visible) {
 		return
 	}
 
@@ -1772,7 +1776,10 @@ func (h *ClusterHandler) setConnectionRelationships(w http.ResponseWriter, r *ht
 	}
 
 	// Set the relationships for the source connection
-	if err := h.datastore.SetNodeRelationships(ctx, clusterID, connID, req.Relationships); err != nil {
+	if err := h.datastore.SetNodeRelationships(ctx, clusterID, connID, req.Relationships, visible); err != nil {
+		if h.refuseHiddenRelationship(w, r, err) {
+			return
+		}
 		log.Printf("[ERROR] Failed to set relationships (cluster=%d, conn=%d): %v", clusterID, connID, err)
 		RespondError(w, http.StatusInternalServerError, "Failed to set relationships")
 		return
@@ -1915,14 +1922,18 @@ func (h *ClusterHandler) clearConnectionRelationships(w http.ResponseWriter, r *
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	// Issue #678: a restricted caller must see the source and every
-	// target whose manual relationship the clear would delete.
+	// Issue #678: a restricted caller must see the source and, checked
+	// by ClearNodeRelationships, every target whose manual relationship
+	// the clear would delete.
 	visible, ok := h.restrictedVisibleSet(ctx, w, clusterID, "Failed to clear relationships")
-	if !ok || !h.sourceRelationshipsVisible(ctx, w, clusterID, connID, visible) {
+	if !ok || !h.visibleSourceInCluster(ctx, w, clusterID, connID, visible) {
 		return
 	}
 
-	if err := h.datastore.ClearNodeRelationships(ctx, clusterID, connID); err != nil {
+	if err := h.datastore.ClearNodeRelationships(ctx, clusterID, connID, visible); err != nil {
+		if h.refuseHiddenRelationship(w, r, err) {
+			return
+		}
 		log.Printf("[ERROR] Failed to clear relationships (cluster=%d, conn=%d): %v", clusterID, connID, err)
 		RespondError(w, http.StatusInternalServerError, "Failed to clear relationships")
 		return

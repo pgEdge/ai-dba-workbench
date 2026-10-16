@@ -40,11 +40,21 @@ A Variant 1 gate is not a visibility check: a restricted caller holding
 relationship routes (issue #678) are the reference. After the admin
 gate and the token-scope gate, and before `DecodeJSONBody`,
 `restrictedVisibleSet` resolves the visible set (nil means
-unrestricted) and `sourceRelationshipsVisible` answers 404 for a hidden
-source, 400 for a source outside the addressed cluster (checked before
-the existing rows, since a moved connection keeps stale rows in its old
-cluster), and 403 when a rewrite or clear would delete a manual
-relationship to a hidden target. A hidden requested target gets the
+unrestricted) and `visibleSourceInCluster` answers 404 for a hidden
+source and 400 for a source outside the addressed cluster (checked
+before any existing row is considered, since a moved connection keeps
+stale rows in its old cluster). The visible set is then passed to
+`SetNodeRelationships` / `ClearNodeRelationships` as `permitted`; the
+delete checks the targets in its own `RETURNING` list and rolls back
+with `database.ErrHiddenRelationship` if one is hidden, so a hidden row
+written concurrently cannot be lost (a pre-check followed by a separate
+delete would race). `refuseHiddenRelationship` turns that error into a
+403 through `h.denialRecorder.refuse`, so it is audited as
+`cluster.update clusters/{id}` like the token-scope refusal on the same
+routes; any new refusal on an audited handler must go through `refuse`,
+not `RespondError`. Auto-detected rows are never deleted, so they never
+cause the 403 (`TestIssue678_AutoDetectedHiddenRowDoesNotBlock`). A
+hidden requested target gets the
 same 400 as a non-member, a delete by id answers 404 unless the row is
 in the addressed cluster with both ends visible, and every response
 listing relationships goes through `filterRelationshipsByVisibility`

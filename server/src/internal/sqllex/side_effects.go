@@ -408,70 +408,113 @@ var withListClosers = map[string]bool{
 // an ORDER BY after a parenthesised main query, is never skipped.
 func namesThatAreNotCalls(tokens []callToken) []bool {
 	notCalls := make([]bool, len(tokens))
-	lists := []withListState{noWithList}
-	depth := 0
+	w := withListTracker{lists: []withListState{noWithList}}
 	for k, tok := range tokens {
-		var prev callToken
+		prev := callToken{kind: semicolonToken}
 		if k > 0 {
 			prev = tokens[k-1]
-		} else {
-			prev = callToken{kind: semicolonToken}
 		}
-		state := lists[depth]
 		switch tok.kind {
 		case nameToken:
-			switch {
-			case state == expectCTEName && tok.isKeyword("recursive") &&
-				prev.isKeyword("with"):
-			case state == expectCTEName:
-				notCalls[k] = true
-				lists[depth] = inCTE
-			case state == inCTE && !tok.quoted && withListClosers[tok.text]:
-				lists[depth] = noWithList
-			case tok.isKeyword("with") && (prev.kind == openParenToken ||
-				prev.kind == semicolonToken ||
-				(prev.kind == nameToken && !prev.quoted &&
-					withListOpeners[prev.text])):
-				lists[depth] = expectCTEName
-			}
-			if prev.isKeyword("as") {
-				notCalls[k] = true
-			}
+			notCalls[k] = w.name(prev, tok) || prev.isKeyword("as")
 		case openParenToken:
-			// Inside a definition, only a column list after the name or a
-			// body after AS or MATERIALIZED opens a parenthesis.
-			opensDefinition := prev.isKeyword("as") ||
-				prev.isKeyword("materialized") ||
-				(prev.kind == nameToken && notCalls[k-1])
-			if state == expectCTEName || (state == inCTE && !opensDefinition) {
-				lists[depth] = noWithList
-			}
-			depth++
-			if depth == len(lists) {
-				lists = append(lists, noWithList)
-			}
-			lists[depth] = noWithList
+			w.openParen(prev, k > 0 && notCalls[k-1])
 		case closeParenToken:
-			lists[depth] = noWithList
-			if depth > 0 {
-				depth--
-			}
+			w.closeParen()
 		case commaToken:
-			if state == inCTE {
-				lists[depth] = expectCTEName
-			} else {
-				lists[depth] = noWithList
-			}
+			w.comma()
 		case semicolonToken:
-			for d := range lists {
-				lists[d] = noWithList
-			}
-			depth = 0
+			w.semicolon()
 		default:
-			lists[depth] = noWithList
+			w.set(noWithList)
 		}
 	}
 	return notCalls
+}
+
+// withListTracker follows namesThatAreNotCalls through nested
+// parentheses, holding the WITH list state at each depth.
+type withListTracker struct {
+	lists []withListState
+	depth int
+}
+
+func (w *withListTracker) state() withListState { return w.lists[w.depth] }
+
+func (w *withListTracker) set(s withListState) { w.lists[w.depth] = s }
+
+// name updates the state for a name token and reports whether the name
+// is a common table expression's.
+func (w *withListTracker) name(prev, tok callToken) bool {
+	state := w.state()
+	switch {
+	case state == expectCTEName && tok.isKeyword("recursive") &&
+		prev.isKeyword("with"):
+	case state == expectCTEName:
+		w.set(inCTE)
+		return true
+	case state == inCTE && !tok.quoted && withListClosers[tok.text]:
+		w.set(noWithList)
+	case tok.isKeyword("with") && opensWithList(prev):
+		w.set(expectCTEName)
+	}
+	return false
+}
+
+// opensWithList reports whether a WITH after prev starts a list of
+// common table expressions.
+func opensWithList(prev callToken) bool {
+	switch prev.kind {
+	case openParenToken, semicolonToken:
+		return true
+	case nameToken:
+		return !prev.quoted && withListOpeners[prev.text]
+	default:
+		return false
+	}
+}
+
+// openParen updates the state for an opening parenthesis; prevNotCall
+// is whether the name before it is one namesThatAreNotCalls skipped.
+func (w *withListTracker) openParen(prev callToken, prevNotCall bool) {
+	// Inside a definition, only a column list after the name or a body
+	// after AS or MATERIALIZED opens a parenthesis.
+	opensDefinition := prev.isKeyword("as") ||
+		prev.isKeyword("materialized") ||
+		(prev.kind == nameToken && prevNotCall)
+	state := w.state()
+	if state == expectCTEName || (state == inCTE && !opensDefinition) {
+		w.set(noWithList)
+	}
+	w.depth++
+	if w.depth == len(w.lists) {
+		w.lists = append(w.lists, noWithList)
+	}
+	w.set(noWithList)
+}
+
+func (w *withListTracker) closeParen() {
+	w.set(noWithList)
+	if w.depth > 0 {
+		w.depth--
+	}
+}
+
+// comma moves from one common table expression to the next name, and
+// ends anything else.
+func (w *withListTracker) comma() {
+	if w.state() == inCTE {
+		w.set(expectCTEName)
+	} else {
+		w.set(noWithList)
+	}
+}
+
+func (w *withListTracker) semicolon() {
+	for d := range w.lists {
+		w.lists[d] = noWithList
+	}
+	w.depth = 0
 }
 
 // tokenizeForCalls splits sql into the tokens CallsSideEffectingFunction

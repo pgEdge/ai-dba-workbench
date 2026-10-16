@@ -4078,7 +4078,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 			},
 			Patch: &OpenAPIOperation{
 				Summary:     "Update memory pin status",
-				Description: "Updates the pinned status of a memory",
+				Description: "Updates the pinned status of the caller's own memory, or of a system-scoped memory when the caller holds the store_system_memory permission",
 				OperationID: "updateMemoryPinned",
 				Tags:        []string{"Memory"},
 				Security:    bearerAuth,
@@ -4114,7 +4114,8 @@ func buildPaths() map[string]OpenAPIPathItem {
 						},
 					},
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"404": jsonResponse("ErrorResponse", "Memory not found"),
+					"403": jsonResponse("ErrorResponse", "Permission denied: a system-scoped memory requires the store_system_memory permission"),
+					"404": jsonResponse("ErrorResponse", "Memory not found or not accessible"),
 				},
 			},
 		},

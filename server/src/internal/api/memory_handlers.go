@@ -26,10 +26,11 @@ type MemoryHandler struct {
 	authStore   *auth.AuthStore
 	rbacChecker *auth.RBACChecker
 	// denialAuditor audits this handler's store_system_memory
-	// refusals (issue #648).
+	// refusals (issues #648 and #704), as memory.update or memory.delete
+	// on memories/<id>.
 	denialAuditor
-	// checkSystemMemory gates deleting a system-scoped memory on the
-	// store_system_memory permission.
+	// checkSystemMemory gates deleting, pinning or unpinning a
+	// system-scoped memory on the store_system_memory permission.
 	checkSystemMemory func(http.ResponseWriter, *http.Request) bool
 }
 
@@ -136,42 +137,34 @@ func (h *MemoryHandler) deleteMemory(
 
 	// Fetch the memory to check its scope
 	mem, err := h.memoryStore.GetByID(r.Context(), id)
-	if err != nil {
-		if errors.Is(err, memory.ErrNotFound) {
-			RespondError(w, http.StatusNotFound, "Memory not found")
-			return
-		}
+	if err != nil && !errors.Is(err, memory.ErrNotFound) {
 		log.Printf("[ERROR] Failed to fetch memory %d: %v", id, err)
 		RespondError(w, http.StatusInternalServerError, "Failed to fetch memory")
 		return
 	}
 
-	if mem.Scope == "system" {
-		// System-scoped memories require the store_system_memory permission
+	switch {
+	case mem == nil:
+		err = memory.ErrNotFound
+	case mem.Scope == "system":
+		// System-scoped memories require the store_system_memory
+		// permission, and are then deleted without an ownership check.
 		if !h.checkSystemMemory(w, r) {
 			return
 		}
-		// Admin-level deletion without ownership check
-		if err := h.memoryStore.DeleteByID(r.Context(), id); err != nil {
-			if errors.Is(err, memory.ErrNotFound) {
-				RespondError(w, http.StatusNotFound, "Memory not found")
-				return
-			}
-			log.Printf("[ERROR] Failed to delete memory %d: %v", id, err)
-			RespondError(w, http.StatusInternalServerError, "Failed to delete memory")
-			return
-		}
-	} else {
+		err = h.memoryStore.DeleteByID(r.Context(), id)
+	default:
 		// User-scoped memory: must be owned by the caller
-		if err := h.memoryStore.Delete(r.Context(), id, username); err != nil {
-			if errors.Is(err, memory.ErrNotFound) {
-				RespondError(w, http.StatusNotFound, "Memory not found")
-				return
-			}
-			log.Printf("[ERROR] Failed to delete memory %d: %v", id, err)
-			RespondError(w, http.StatusInternalServerError, "Failed to delete memory")
+		err = h.memoryStore.Delete(r.Context(), id, username)
+	}
+	if err != nil {
+		if errors.Is(err, memory.ErrNotFound) {
+			RespondError(w, http.StatusNotFound, "Memory not found")
 			return
 		}
+		log.Printf("[ERROR] Failed to delete memory %d: %v", id, err)
+		RespondError(w, http.StatusInternalServerError, "Failed to delete memory")
+		return
 	}
 
 	RespondJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
@@ -199,7 +192,31 @@ func (h *MemoryHandler) updateMemoryPinned(
 		return
 	}
 
-	if err := h.memoryStore.UpdatePinned(r.Context(), id, username, req.Pinned); err != nil {
+	// Fetch the memory to check its scope and owner. Another user's
+	// memory is answered exactly as a missing one, so that the route
+	// cannot be used to find which IDs exist.
+	mem, err := h.memoryStore.GetByID(r.Context(), id)
+	if err != nil && !errors.Is(err, memory.ErrNotFound) {
+		log.Printf("[ERROR] Failed to fetch memory %d: %v", id, err)
+		RespondError(w, http.StatusInternalServerError, "Failed to update memory")
+		return
+	}
+
+	switch {
+	case mem != nil && mem.Scope == "system":
+		// Pinned memories are injected into every user's assistant
+		// context, so pinning or unpinning a system memory needs the
+		// same permission as storing one (issue #704).
+		if !h.checkSystemMemory(w, r) {
+			return
+		}
+		err = h.memoryStore.UpdateSystemPinned(r.Context(), id, req.Pinned)
+	case mem != nil && mem.Username == username:
+		err = h.memoryStore.UpdatePinned(r.Context(), id, username, req.Pinned)
+	default:
+		err = memory.ErrNotFound
+	}
+	if err != nil {
 		if errors.Is(err, memory.ErrNotFound) {
 			RespondError(w, http.StatusNotFound, "Memory not found or not accessible")
 			return

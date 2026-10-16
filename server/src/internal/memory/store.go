@@ -372,17 +372,37 @@ func (s *Store) DeleteByID(ctx context.Context, id int64) error {
 	return nil
 }
 
-// UpdatePinned sets the pinned status of a memory. The memory must belong
-// to the given username or be system-scoped. Returns ErrNotFound when no
-// matching row exists.
+// UpdatePinned sets the pinned status of a user-scoped memory owned by
+// the given username. A system-scoped memory is never matched, so that
+// a caller cannot change what every user's assistant is told without
+// the store_system_memory permission (issue #704); see
+// UpdateSystemPinned. Returns ErrNotFound when no matching row exists.
 func (s *Store) UpdatePinned(ctx context.Context, id int64, username string, pinned bool) error {
-	tag, err := s.pool.Exec(ctx,
+	return s.updatePinned(ctx,
 		`UPDATE chat_memories
          SET pinned = $1, updated_at = NOW()
-         WHERE id = $2
-           AND (username = $3 OR scope = 'system')`,
+         WHERE id = $2 AND username = $3 AND scope = 'user'`,
 		pinned, id, username,
 	)
+}
+
+// UpdateSystemPinned sets the pinned status of a system-scoped memory
+// without an ownership check. The caller must verify that the user
+// holds the store_system_memory permission. Returns ErrNotFound when
+// no system-scoped memory has the given ID.
+func (s *Store) UpdateSystemPinned(ctx context.Context, id int64, pinned bool) error {
+	return s.updatePinned(ctx,
+		`UPDATE chat_memories
+         SET pinned = $1, updated_at = NOW()
+         WHERE id = $2 AND scope = 'system'`,
+		pinned, id,
+	)
+}
+
+// updatePinned runs a pinned-status update and maps a statement that
+// matched no row to ErrNotFound.
+func (s *Store) updatePinned(ctx context.Context, query string, args ...any) error {
+	tag, err := s.pool.Exec(ctx, query, args...)
 	if err != nil {
 		return fmt.Errorf("failed to update pinned status: %w", err)
 	}

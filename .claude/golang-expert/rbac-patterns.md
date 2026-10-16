@@ -1108,6 +1108,20 @@ none for a hidden target.
 though the client reads it on every load; the coalescer bounds it. The
 tests are in `access_denial_targets_test.go`.
 
+MCP tools record refusals through `tools.DenialRecorder`
+(`internal/tools/denial_recorder.go`), built by
+`NewDenialRecorder(p.authStore)` in `registerDatastoreTools`
+(`context_aware_provider.go`); it calls `RecordCoalescedDenial` with
+`auth.ActorFromContext(ctx)`, and `record.refuse(ctx, action, target,
+reason)` writes the row and returns the tool error. A nil recorder
+(no auth store) refuses without recording. `store_memory` records
+`memory.create` on `memories` with reason `Permission denied: requires
+store_system_memory permission` (issue #674). Action and target must
+be constants, never tool arguments. `denial_recorder_test.go` pins
+the tool, the real audit row, and the provider wiring
+(`TestProviderWiresStoreMemoryDenialRecorder`, which fails if the
+provider passes a nil recorder).
+
 Mutations in these handlers go through `h.actorStore(r)` rather than
 `h.authStore`, so the audit row names the acting user or token:
 `actorStore` wraps `auth.ActorFromContext(r.Context())`, which reads

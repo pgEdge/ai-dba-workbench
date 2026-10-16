@@ -410,36 +410,6 @@ func TestManagedTxCommitMarksCommittedIntegration(t *testing.T) {
 	}
 }
 
-// TestManagedTxBeginTxCommitMarksCommittedIntegration mirrors the
-// read-only path for BeginTx, verifying that Commit() on a read-write
-// managed transaction also sets committed = true.
-func TestManagedTxBeginTxCommitMarksCommittedIntegration(t *testing.T) {
-	pool, _, cleanup := newToolsTestPool(t)
-	defer cleanup()
-
-	ctx := context.Background()
-
-	mt, errResp, txCleanup := BeginTx(ctx, pool)
-	if errResp != nil {
-		t.Fatalf("BeginTx returned error response: %v", errResp)
-	}
-	defer txCleanup()
-
-	if mt == nil {
-		t.Fatal("expected non-nil ManagedTx")
-	}
-	if mt.committed {
-		t.Error("expected committed to be false before Commit()")
-	}
-
-	if err := mt.Commit(); err != nil {
-		t.Fatalf("Commit() returned unexpected error: %v", err)
-	}
-	if !mt.committed {
-		t.Error("expected committed to be true after successful Commit()")
-	}
-}
-
 // ---------------------------------------------------------------------------
 // list_connections: RBAC filtering message distinction
 // ---------------------------------------------------------------------------

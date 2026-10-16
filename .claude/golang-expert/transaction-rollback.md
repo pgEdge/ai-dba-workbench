@@ -130,7 +130,7 @@ statement completes and then records the context the `ROLLBACK` runs
 on: `server/src/internal/database/rollback_context_integration_test.go`
 drives `UnacknowledgeAlert`, and
 `server/src/internal/tools/transaction_rollback_integration_test.go`
-drives `BeginReadOnlyTx` and `BeginTx`. Both assert the rollback
+drives `BeginReadOnlyTx`. Both assert the rollback
 context is not cancelled, carries a deadline within `rollback.Timeout`
 of the call, and that the pooled backend PID is unchanged afterwards.
 

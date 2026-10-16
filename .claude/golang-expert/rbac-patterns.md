@@ -280,8 +280,8 @@ never wrap the check in `if rbacChecker != nil { ... }`, which turns a
 missing checker into unrestricted access; handler constructors assign
 `checkPermission = RequireAdminPermission(...)` unconditionally. Any
 new method on `RBACChecker` needs the same nil-receiver guard. The
-exceptions are `store_memory.go` and `query_database.go`, which test
-for nil explicitly and deny. In the tools package, tests that need to
+exception is `store_memory.go`, which tests for nil explicitly and
+denies. In the tools package, tests that need to
 get past the check use `asSuperuser(Tool(..., testRBACChecker(t), ...))`
 from `rbac_helpers_test.go`; nil-checker denial tests are in
 `nil_rbac_test.go`.

@@ -265,9 +265,9 @@ func TestExecuteQueryIntegration(t *testing.T) {
 	ctx := context.Background()
 	series := "SELECT g AS n FROM generate_series(1, $1::int) AS g"
 
-	qr, errResp := executeQuery(ctx, pool, series+" LIMIT 4", 3, false, "", false, 5)
+	qr, errResp := executeReadOnlyQuery(ctx, pool, series+" LIMIT 4", 3, false, "", 5)
 	if errResp != nil {
-		t.Fatalf("read-write query failed: %+v", errResp)
+		t.Fatalf("query failed: %+v", errResp)
 	}
 	if !qr.WasTruncated || len(qr.Rows) != 3 || qr.ColumnNames[0] != "n" {
 		t.Errorf("expected three rows and truncation, got %+v", qr)

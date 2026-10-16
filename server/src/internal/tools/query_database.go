@@ -14,13 +14,20 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/database"
 	"github.com/pgedge/ai-workbench/server/internal/logging"
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
 )
 
-// QueryDatabaseTool creates the query_database tool
+// queryDatabaseReadOnlyError is returned for any statement that
+// isSelectQuery does not classify as a read.
+const queryDatabaseReadOnlyError = "query_database is read-only: it does not run statements " +
+	"that modify the database or server state, such as INSERT, UPDATE, DELETE or DDL. " +
+	"Use a SELECT, WITH, SHOW, VALUES, TABLE or EXPLAIN statement instead."
+
+// QueryDatabaseTool creates the query_database tool. The tool is
+// read-only: write statements are refused before any connection is
+// resolved, and reads run in a read-only transaction.
 func QueryDatabaseTool(dbClient *database.Client, resolver *ConnectionResolver) Tool {
 	return Tool{
 		Definition: mcp.Tool{
@@ -65,8 +72,8 @@ DO NOT use for:
 
 <important>
 - SELECT queries run in READ-ONLY transactions for safety
-- Write operations (INSERT, UPDATE, DELETE, DDL) require read_write access to the connection
-- A SELECT that calls a side-effecting function (for example pg_terminate_backend, pg_cancel_backend, pg_reload_conf, set_config or nextval) is a write operation
+- This tool is read-only: write operations (INSERT, UPDATE, DELETE, DDL) are refused, whatever access you hold on the connection
+- A SELECT that calls a side-effecting function (for example pg_terminate_backend, pg_cancel_backend, pg_reload_conf, set_config or nextval) counts as a write operation and is refused
 - Results are limited to prevent excessive token usage
 - Results are returned in TSV (tab-separated values) format for efficiency
 </important>
@@ -79,7 +86,7 @@ To avoid rate limits (30,000 input tokens/minute):
 - Use get_schema_info(schema_name="specific") to reduce metadata size
 - If rate limited, wait 60 seconds before retrying
 </rate_limit_awareness>`,
-			CompactDescription: `Execute SQL queries against a monitored database. SELECT queries run read-only; write operations require read_write access. Specify connection_id to target a database; use list_connections to discover IDs. Returns results in TSV format.`,
+			CompactDescription: `Execute SQL queries against a monitored database. Read-only: SELECT queries run in a read-only transaction and write operations are refused. Specify connection_id to target a database; use list_connections to discover IDs. Returns results in TSV format.`,
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]any{
@@ -93,7 +100,7 @@ To avoid rate limits (30,000 input tokens/minute):
 					},
 					"query": map[string]any{
 						"type":        "string",
-						"description": "SQL query to execute against the database. SELECT queries run in read-only transactions; write operations require read_write access.",
+						"description": "SQL query to execute against the database. SELECT queries run in read-only transactions; write operations are refused.",
 					},
 					"limit": map[string]any{
 						"type":        "integer",
@@ -124,127 +131,43 @@ To avoid rate limits (30,000 input tokens/minute):
 				ctx = context.Background()
 			}
 
-			// Check if connection_id was explicitly provided
-			ca := parseConnectionArgs(args)
-
-			var connStr string
-			var connectionMessage string
-			var resolvedClient *database.Client
-			var sqlQuery string
-			var connID int
-
-			if ca.HasConnID {
-				// Explicit connection_id: use resolver, skip ParseQueryForConnection
-				resolved, errResp := resolver.Resolve(ctx, args, dbClient)
-				if errResp != nil {
-					return *errResp, nil
-				}
-				connStr = resolved.ConnStr
-				resolvedClient = resolved.Client
-				connID = resolved.ConnID
-
-				sqlQuery = strings.TrimSpace(query)
-
-				// Check if metadata is loaded for the target connection
-				if !resolvedClient.IsMetadataLoadedFor(connStr) {
-					return mcp.NewToolError(mcp.DatabaseNotReadyError)
-				}
-			} else {
-				// No connection_id: use legacy ParseQueryForConnection path
-				queryCtx := database.ParseQueryForConnection(query)
-
-				// Determine which connection to use
-				connStr = dbClient.GetDefaultConnection()
-				resolvedClient = dbClient
-
-				// Handle connection string changes
-				if queryCtx.ConnectionString != "" {
-					if queryCtx.SetAsDefault {
-						err := dbClient.SetDefaultConnection(queryCtx.ConnectionString)
-						if err != nil {
-							return mcp.NewToolError(fmt.Sprintf("Failed to set default connection to %s: %v", database.SanitizeConnStr(queryCtx.ConnectionString), err))
-						}
-
-						return mcp.NewToolSuccess(fmt.Sprintf("Successfully set default database connection to:\n%s\n\nMetadata loaded: %d tables/views available.",
-							database.SanitizeConnStr(queryCtx.ConnectionString),
-							len(dbClient.GetMetadata())))
-					} else {
-						err := dbClient.ConnectTo(queryCtx.ConnectionString)
-						if err != nil {
-							return mcp.NewToolError(fmt.Sprintf("Failed to connect to %s: %v", database.SanitizeConnStr(queryCtx.ConnectionString), err))
-						}
-
-						if !dbClient.IsMetadataLoadedFor(queryCtx.ConnectionString) {
-							err = dbClient.LoadMetadataFor(queryCtx.ConnectionString)
-							if err != nil {
-								return mcp.NewToolError(fmt.Sprintf("Failed to load metadata from %s: %v", database.SanitizeConnStr(queryCtx.ConnectionString), err))
-							}
-						}
-
-						connStr = queryCtx.ConnectionString
-						connectionMessage = fmt.Sprintf("Using connection: %s\n\n", database.SanitizeConnStr(connStr))
-					}
-				}
-
-				// If the cleaned query is empty (e.g., just a connection command), we're done
-				if strings.TrimSpace(queryCtx.CleanedQuery) == "" {
-					return mcp.NewToolSuccess("Connection command executed successfully. No query to run.")
-				}
-
-				// Check if metadata is loaded for the target connection
-				if !resolvedClient.IsMetadataLoadedFor(connStr) {
-					return mcp.NewToolError(mcp.DatabaseNotReadyError)
-				}
-
-				sqlQuery = strings.TrimSpace(queryCtx.CleanedQuery)
+			sqlQuery := strings.TrimSpace(query)
+			if sqlQuery == "" {
+				return mcp.NewToolError("Missing or invalid 'query' parameter")
 			}
 
-			readOnly := isSelectQuery(sqlQuery)
+			// query_database is read-only by design (issue #663): refuse
+			// anything isSelectQuery does not classify as a read before
+			// resolving or opening a connection, whatever access the
+			// caller holds on the target.
+			if !isSelectQuery(sqlQuery) {
+				return mcp.NewToolError(queryDatabaseReadOnlyError)
+			}
 
-			// For write queries, verify the user has read_write access.
-			if !readOnly {
-				if !ca.HasConnID {
-					return mcp.NewToolError(
-						"Write operations require an explicit connection_id parameter")
-				}
-				if resolver == nil || resolver.rbacChecker == nil {
-					return mcp.NewToolError(
-						"Write operations are unavailable: authorization service not configured")
-				}
-				rbac := resolver.rbacChecker
-				canAccess, accessLevel := rbac.CanAccessConnection(ctx, connID)
-				if !canAccess {
-					return mcp.NewToolError(fmt.Sprintf(
-						"Access denied: you do not have permission to access connection ID %d", connID))
-				}
-				if accessLevel != auth.AccessLevelReadWrite {
-					return mcp.NewToolError(
-						"Write operations require read_write access to this connection")
-				}
+			// The target is the explicit connection_id, resolved with its
+			// RBAC check, or else the caller's selected connection. The
+			// query text never chooses the target (issue #662).
+			resolved, errResp := resolver.Resolve(ctx, args, dbClient)
+			if errResp != nil {
+				return *errResp, nil
+			}
+			connStr := resolved.ConnStr
+
+			// Check if metadata is loaded for the target connection
+			if !resolved.Client.IsMetadataLoadedFor(connStr) {
+				return mcp.NewToolError(mcp.DatabaseNotReadyError)
 			}
 
 			limit, offset := parseLimitOffset(args)
 			sqlQuery, hadExistingLimit, _ := injectLimitOffset(sqlQuery, limit, offset)
 
-			dbPool := resolvedClient.GetPoolFor(connStr)
-			if dbPool == nil {
-				return mcp.NewToolError(fmt.Sprintf("Connection pool not found for: %s", database.SanitizeConnStr(connStr)))
-			}
-
-			qr, errResp := executeQuery(ctx, dbPool, sqlQuery, limit, hadExistingLimit, connectionMessage, readOnly)
+			qr, errResp := executeReadOnlyQuery(ctx, resolved.Pool, sqlQuery, limit, hadExistingLimit, "")
 			if errResp != nil {
 				return *errResp, nil
 			}
 
 			var sb strings.Builder
-
-			// Always show current database context (unless already shown via connection message)
-			if connectionMessage == "" {
-				sanitizedConn := database.SanitizeConnStr(connStr)
-				fmt.Fprintf(&sb, "Database: %s\n\n", sanitizedConn)
-			} else {
-				sb.WriteString(connectionMessage)
-			}
+			fmt.Fprintf(&sb, "Database: %s\n\n", database.SanitizeConnStr(connStr))
 
 			formatPaginatedResults(&sb, qr, sqlQuery, limit, offset, " or count_rows for total")
 
@@ -255,7 +178,6 @@ To avoid rate limits (30,000 input tokens/minute):
 				"offset", offset,
 				"was_truncated", qr.WasTruncated,
 				"estimated_tokens", len(qr.ResultsTSV)/4,
-				"read_only", readOnly,
 			)
 
 			return mcp.NewToolSuccess(sb.String())

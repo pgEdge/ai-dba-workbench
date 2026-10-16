@@ -488,7 +488,7 @@ To avoid rate limits when calling this tool:
 				}
 
 				emptyMsg.WriteString("5. Switch to a different database if needed:\n")
-				emptyMsg.WriteString("   → query_database(query=\"set default database to postgres://user@host/other_db\")\n")
+				emptyMsg.WriteString("   → get_schema_info(connection_id=<id from list_connections>, database_name=\"other_db\")\n")
 				emptyMsg.WriteString("</next_steps>\n")
 
 				return mcp.NewToolSuccess(emptyMsg.String())

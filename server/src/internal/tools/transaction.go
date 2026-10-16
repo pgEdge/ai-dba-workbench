@@ -20,8 +20,8 @@ import (
 )
 
 // ManagedTx wraps a pgx.Tx with a commit helper that tracks whether
-// the transaction has been committed. Both BeginReadOnlyTx and BeginTx
-// return a *ManagedTx.
+// the transaction has been committed. BeginReadOnlyTx returns a
+// *ManagedTx.
 type ManagedTx struct {
 	Tx        pgx.Tx
 	ctx       context.Context
@@ -91,39 +91,4 @@ func BeginReadOnlyTx(ctx context.Context, pool *pgxpool.Pool) (rot *ManagedTx, e
 	}
 
 	return rot, nil, cleanup
-}
-
-// BeginTx starts a read-write transaction on the given pool with the
-// same panic recovery, cleanup, and statement timeout as
-// BeginReadOnlyTx, but without SET TRANSACTION READ ONLY. Use this
-// for DML/DDL statements when the caller has verified that the user
-// holds read_write access to the connection.
-func BeginTx(ctx context.Context, pool *pgxpool.Pool) (mt *ManagedTx, errResp *mcp.ToolResponse, cleanup func()) {
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		resp, _ := mcp.NewToolError(fmt.Sprintf("Failed to begin transaction: %v", err)) //nolint:errcheck // NewToolError always succeeds
-		return nil, &resp, func() {}
-	}
-
-	mt = &ManagedTx{Tx: tx, ctx: ctx}
-
-	cleanup = func() {
-		if r := recover(); r != nil {
-			_ = rollback.Tx(ctx, tx) //nolint:errcheck // best effort cleanup on panic
-			panic(r)
-		}
-		if !mt.committed {
-			_ = rollback.Tx(ctx, tx) //nolint:errcheck // see pkg/rollback
-		}
-	}
-
-	// Defense-in-depth: limit query execution time
-	_, err = tx.Exec(ctx, "SET LOCAL statement_timeout = '10s'")
-	if err != nil {
-		_ = rollback.Tx(ctx, tx)                                                             //nolint:errcheck // cleanup on setup failure
-		resp, _ := mcp.NewToolError(fmt.Sprintf("Failed to set statement timeout: %v", err)) //nolint:errcheck // NewToolError always succeeds
-		return nil, &resp, func() {}
-	}
-
-	return mt, nil, cleanup
 }

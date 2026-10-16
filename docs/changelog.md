@@ -2477,6 +2477,17 @@ project adheres to
 
 ### Security
 
+- Check that the caller can see the target cluster group when
+  creating a cluster with `POST /api/v1/cluster-groups/{id}/clusters`
+  or `POST /api/v1/clusters`, or moving one with
+  `PUT /api/v1/clusters/{id}`, including auto-detected clusters
+  (#673). A `manage_connections` holder
+  could previously place a cluster in a group they could not see; a
+  hidden group is now answered with the same 404 as a missing one,
+  and a missing group id returns 404 rather than 500. A group with no
+  member connections stays available to its owner, so a newly
+  created group can still be filled.
+
 - Breaking: make the `query_datastore` MCP tool structured and limit
   the tool to the connections the caller can read (#566). The tool no
   longer accepts SQL and rejects a `sql` or `query` argument, so a

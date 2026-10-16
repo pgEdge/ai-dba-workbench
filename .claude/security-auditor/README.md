@@ -73,7 +73,9 @@ moved.
   a record the caller cannot see, as for one that does not exist:
   clusters and cluster groups whose members the caller cannot see, the
   target cluster of `PUT /api/v1/connections/{id}/cluster` (a missing
-  cluster id answers 404 too, not 500 from the foreign key), and
+  cluster id answers 404 too, not 500 from the foreign key), the
+  target group of a cluster create or move (`requireVisibleTargetGroup`,
+  #673; an empty group is writable by its owner only), and
   blackouts and blackout schedules outside a token's connection scope.
   Judge an enumeration concern against the convention of the endpoint
   in question rather than assuming either model throughout.

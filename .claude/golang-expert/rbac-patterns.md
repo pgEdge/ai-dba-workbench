@@ -181,6 +181,15 @@ cluster's owner and should not be granted mutation rights.
 If a future schema change adds `owner_username` to the `clusters`
 table, migrate these two handlers to Variant 2.
 
+A write that places a cluster in a group (`createClusterInGroup`,
+`handleCreateCluster` with `group_id`, `updateCluster` and
+`updateAutoDetectedCluster` with `group_id`) must also call `requireVisibleTargetGroup`
+(`internal/api/cluster_target_group.go`) before the datastore write
+(issue #673). It answers a hidden group with the same 404 as a missing
+one, loads visibility and members before the group so both run the
+same queries, and lets the owner of an empty group fill it. Tests are
+in `cluster_target_group_test.go`.
+
 ## System Alerts Have No Connection (Issue #582)
 
 Alerts with `alert_type = 'system'` carry a NULL `connection_id`

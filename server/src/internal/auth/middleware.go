@@ -85,8 +85,9 @@ func GetTokenHashFromContext(ctx context.Context) string {
 	return ""
 }
 
-// GetUsernameFromContext retrieves the session username from the request context
-// Returns empty string if no username is found (e.g., API token or unauthenticated request)
+// GetUsernameFromContext retrieves the authenticated username from the request
+// context: the session user, or for an API token the token owner's username.
+// Returns empty string if no username is found (e.g., unauthenticated request)
 func GetUsernameFromContext(ctx context.Context) string {
 	if username, ok := ctx.Value(UsernameContextKey).(string); ok {
 		return username

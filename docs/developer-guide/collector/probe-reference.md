@@ -992,7 +992,7 @@ placeholders such as `$1`, which `pg_stat_statements`
 leaves in place of constants, are never changed, and
 comments are not inspected.
 
-Collector schema migration 25 applies the same
+Collector schema migration 26 applies the same
 redaction to statement text stored by earlier
 versions. The server redacts the text again when it
 returns probe rows from `GET /api/v1/metrics/latest`

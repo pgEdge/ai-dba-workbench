@@ -2692,7 +2692,7 @@ project adheres to
   `archive_cleanup_command`, `restore_command` and
   `recovery_end_command`, any of which can embed a secret such as
   `PGPASSWORD=...`, and any extension setting named like a secret.
-  Collector schema migration 24 redacts the rows already stored, and
+  Collector schema migration 25 redacts the rows already stored, and
   the server redacts the timeline and latest-row values again for a
   datastore the collector has not yet migrated; the structured
   `query_datastore` tool masks the same settings, using the same
@@ -2716,7 +2716,7 @@ project adheres to
   named like a secret, quoted or not, and a connection URI that
   PostgreSQL's truncation of long statement text cut off before its
   host.
-  Collector schema migration 25 redacts the text already stored; it
+  Collector schema migration 26 redacts the text already stored; it
   rewrites only rows that mention a password or similar secret, but
   still reads the whole of each table, so it can take a while on a
   large datastore. The server redacts the text again when it returns

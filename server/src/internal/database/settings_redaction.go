@@ -16,7 +16,7 @@ import (
 )
 
 // The collector redacts credential-bearing settings such as
-// primary_conninfo before storing them, and its schema migration 24
+// primary_conninfo before storing them, and its schema migration 25
 // rewrites rows stored earlier (GitHub issue #643). The functions here
 // redact the same values again as they leave the server, which covers a
 // datastore the upgraded collector has not migrated yet.

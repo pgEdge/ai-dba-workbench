@@ -3986,7 +3986,7 @@ func (sm *SchemaManager) registerMigrations() {
 		},
 	})
 
-	// Migration #25 removes passwords from statement text that was stored
+	// Migration #26 removes passwords from statement text that was stored
 	// before the probes started redacting it. See GitHub issue #643.
 	//
 	// PostgreSQL keeps utility statements such as ALTER ROLE ... PASSWORD
@@ -3998,7 +3998,7 @@ func (sm *SchemaManager) registerMigrations() {
 	// match a cheap ILIKE pre-filter are read and rewritten; the tables
 	// are still scanned once per column.
 	sm.migrations = append(sm.migrations, Migration{
-		Version:     25,
+		Version:     26,
 		Description: "Redact passwords in stored statement text",
 		Up: func(tx pgx.Tx) error {
 			ctx := context.Background()

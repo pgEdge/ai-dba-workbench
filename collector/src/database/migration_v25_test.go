@@ -18,43 +18,43 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// The v24 migration redacts credentials in pg_settings rows stored
+// The v25 migration redacts credentials in pg_settings rows stored
 // before the probe redacted them, as described in GitHub issue #643.
 // These tests seed rows as an older collector would have stored them,
 // rerun the migration, and check what is left.
 
-// migrationV24 returns the registered version 24 migration.
-func migrationV24(t *testing.T) Migration {
+// migrationV25 returns the registered version 25 migration.
+func migrationV25(t *testing.T) Migration {
 	t.Helper()
 	for _, m := range NewSchemaManager().migrations {
-		if m.Version == 24 {
+		if m.Version == 25 {
 			return m
 		}
 	}
-	t.Fatal("migration version 24 is not registered")
+	t.Fatal("migration version 25 is not registered")
 	return Migration{}
 }
 
-// TestMigrationV24_Registered verifies the migration is wired into the
+// TestMigrationV25_Registered verifies the migration is wired into the
 // schema manager and will be reached by an upgrade.
-func TestMigrationV24_Registered(t *testing.T) {
-	if got := NewSchemaManager().LatestVersion(); got < 24 {
-		t.Errorf("LatestVersion() = %d, want at least 24", got)
+func TestMigrationV25_Registered(t *testing.T) {
+	if got := NewSchemaManager().LatestVersion(); got < 25 {
+		t.Errorf("LatestVersion() = %d, want at least 25", got)
 	}
-	if desc := migrationV24(t).Description; desc == "" {
-		t.Error("migration 24 has an empty description")
+	if desc := migrationV25(t).Description; desc == "" {
+		t.Error("migration 25 has an empty description")
 	}
 }
 
-// v24Row is one seeded pg_settings row.
-type v24Row struct {
+// v25Row is one seeded pg_settings row.
+type v25Row struct {
 	name, setting, resetVal string
 	bootVal                 *string
 }
 
-// seedV24Settings creates a connection and a partition, then stores rows
+// seedV25Settings creates a connection and a partition, then stores rows
 // for two snapshots with the values an unredacting collector stored.
-func seedV24Settings(t *testing.T, pool *pgxpool.Pool, rows []v24Row) {
+func seedV25Settings(t *testing.T, pool *pgxpool.Pool, rows []v25Row) {
 	t.Helper()
 	ctx := context.Background()
 
@@ -62,14 +62,14 @@ func seedV24Settings(t *testing.T, pool *pgxpool.Pool, rows []v24Row) {
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO connections
 			(owner_username, name, host, port, database_name, username)
-		VALUES ('v24-user', 'v24-standby', '192.0.2.10', 5432, 'postgres', 'postgres')
+		VALUES ('v25-user', 'v25-standby', '192.0.2.10', 5432, 'postgres', 'postgres')
 		RETURNING id
 	`).Scan(&connID); err != nil {
 		t.Fatalf("failed to seed connection: %v", err)
 	}
 
 	if _, err := pool.Exec(ctx, `
-		CREATE TABLE metrics.pg_settings_v24test
+		CREATE TABLE metrics.pg_settings_v25test
 			PARTITION OF metrics.pg_settings
 			FOR VALUES FROM ('2020-01-06 00:00:00+00') TO ('2020-01-13 00:00:00+00')
 	`); err != nil {
@@ -89,8 +89,8 @@ func seedV24Settings(t *testing.T, pool *pgxpool.Pool, rows []v24Row) {
 	}
 }
 
-// runMigrationV24 applies the migration in a committed transaction.
-func runMigrationV24(t *testing.T, pool *pgxpool.Pool) {
+// runMigrationV25 applies the migration in a committed transaction.
+func runMigrationV25(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 	ctx := context.Background()
 	tx, err := pool.Begin(ctx)
@@ -103,27 +103,27 @@ func runMigrationV24(t *testing.T, pool *pgxpool.Pool) {
 			t.Logf("rollback failed: %v", err)
 		}
 	}()
-	if err := migrationV24(t).Up(tx); err != nil {
-		t.Fatalf("migration 24 failed: %v", err)
+	if err := migrationV25(t).Up(tx); err != nil {
+		t.Fatalf("migration 25 failed: %v", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
-		t.Fatalf("failed to commit migration 24: %v", err)
+		t.Fatalf("failed to commit migration 25: %v", err)
 	}
 }
 
 func strPtr(s string) *string { return &s }
 
-// TestMigrationV24_RedactsStoredValues seeds credential-bearing rows in
+// TestMigrationV25_RedactsStoredValues seeds credential-bearing rows in
 // every value column, reruns the migration, and checks each column of
 // each row.
-func TestMigrationV24_RedactsStoredValues(t *testing.T) {
+func TestMigrationV25_RedactsStoredValues(t *testing.T) {
 	pool, cleanup := migrateV21TestSchema(t)
 	defer cleanup()
 	if pool == nil {
 		return
 	}
 
-	seedV24Settings(t, pool, []v24Row{
+	seedV25Settings(t, pool, []v25Row{
 		{
 			name:     "primary_conninfo",
 			setting:  "host=192.0.2.1 user=replicator password=s3cret",
@@ -150,7 +150,7 @@ func TestMigrationV24_RedactsStoredValues(t *testing.T) {
 		},
 	})
 
-	runMigrationV24(t, pool)
+	runMigrationV25(t, pool)
 
 	want := map[string][3]*string{
 		"primary_conninfo": {
@@ -201,7 +201,7 @@ func TestMigrationV24_RedactsStoredValues(t *testing.T) {
 	}
 
 	// A second run finds nothing left to change.
-	runMigrationV24(t, pool)
+	runMigrationV25(t, pool)
 
 	for _, column := range columns {
 		var comment *string
@@ -233,10 +233,10 @@ func fmtStrPtr(s *string) string {
 	return "'" + *s + "'"
 }
 
-// runMigrationV24Broken applies the migration after breaking the schema
+// runMigrationV25Broken applies the migration after breaking the schema
 // with setup, inside a transaction that is rolled back, and returns the
 // migration's error.
-func runMigrationV24Broken(t *testing.T, pool *pgxpool.Pool, setup string) error {
+func runMigrationV25Broken(t *testing.T, pool *pgxpool.Pool, setup string) error {
 	t.Helper()
 	ctx := context.Background()
 	tx, err := pool.Begin(ctx)
@@ -251,19 +251,19 @@ func runMigrationV24Broken(t *testing.T, pool *pgxpool.Pool, setup string) error
 	if _, err := tx.Exec(ctx, setup); err != nil {
 		t.Fatalf("failed to prepare schema: %v", err)
 	}
-	return migrationV24(t).Up(tx)
+	return migrationV25(t).Up(tx)
 }
 
-// TestMigrationV24_ReportsFailures drives each error path of the
+// TestMigrationV25_ReportsFailures drives each error path of the
 // migration by breaking the schema inside a rolled-back transaction.
-func TestMigrationV24_ReportsFailures(t *testing.T) {
+func TestMigrationV25_ReportsFailures(t *testing.T) {
 	pool, cleanup := migrateV21TestSchema(t)
 	defer cleanup()
 	if pool == nil {
 		return
 	}
 
-	seedV24Settings(t, pool, []v24Row{{
+	seedV25Settings(t, pool, []v25Row{{
 		name:     "primary_conninfo",
 		setting:  "host=192.0.2.1 password=s3cret",
 		resetVal: "host=192.0.2.1 password=s3cret",
@@ -286,10 +286,10 @@ func TestMigrationV24_ReportsFailures(t *testing.T) {
 		{
 			name: "update rejected",
 			setup: `
-				CREATE FUNCTION pg_temp.v24_reject() RETURNS trigger
+				CREATE FUNCTION pg_temp.v25_reject() RETURNS trigger
 				LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'rejected'; END $$;
-				CREATE TRIGGER v24_reject BEFORE UPDATE ON metrics.pg_settings_v24test
-				FOR EACH ROW EXECUTE FUNCTION pg_temp.v24_reject();`,
+				CREATE TRIGGER v25_reject BEFORE UPDATE ON metrics.pg_settings_v25test
+				FOR EACH ROW EXECUTE FUNCTION pg_temp.v25_reject();`,
 			want: "failed to redact a value of primary_conninfo",
 		},
 		{
@@ -303,12 +303,12 @@ func TestMigrationV24_ReportsFailures(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := runMigrationV24Broken(t, pool, tt.setup)
+			err := runMigrationV25Broken(t, pool, tt.setup)
 			if err == nil {
-				t.Fatal("migration 24 succeeded on a broken schema")
+				t.Fatal("migration 25 succeeded on a broken schema")
 			}
 			if !strings.Contains(err.Error(), tt.want) {
-				t.Errorf("migration 24 error = %q, want it to contain %q",
+				t.Errorf("migration 25 error = %q, want it to contain %q",
 					err.Error(), tt.want)
 			}
 		})

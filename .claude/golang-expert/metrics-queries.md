@@ -218,7 +218,7 @@ decomposed into small, separately testable helpers:
   `pg_stat_activity`/`pg_stat_statements` (`query`) and
   `spock_exception_log` (`ddl_statement`, `error_message`) it runs
   `pkg/sqlredact.RedactQuery` over the statement text. The collector
-  already redacts at collection time and migrations 24 (settings) and 25
+  already redacts at collection time and migrations 25 (settings) and 26
   (statement text) scrub older rows; this is the read-side backstop.
   `/api/v1/metrics/latest` (`queryLatestSnapshot`) calls
   `RedactProbeRows` too, top-queries uses `metrics.RedactStatementText`,
@@ -227,7 +227,7 @@ decomposed into small, separately testable helpers:
   returns stored settings values or statement text must redact the same
   way; when adding a probe that stores statement text, add its columns to
   `statementTextColumns` there and to `statementTextUpdates` in the
-  collector's migration 25 equivalent (a new migration). The list of
+  collector's migration 26 equivalent (a new migration). The list of
   credential settings lives only in `pkg/pgsettings`
   (`CredentialSettings`, `NonCredentialSettings`, `RedactsWholeValue`);
   `pkg/sqlredact` and `query_datastore`'s SQL masking in

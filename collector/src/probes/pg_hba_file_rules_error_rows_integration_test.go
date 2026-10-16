@@ -181,9 +181,11 @@ func TestPgHbaFileRulesProbe_MigrationMatchesProbeIntegration(t *testing.T) {
 		}
 	}
 
-	// Re-run migration 24 as an upgrade would.
+	// Re-run migration 24 as an upgrade would. Migrate applies only the
+	// versions above the highest one recorded, so every later version is
+	// forgotten too; those migrations are also safe to re-run.
 	if _, err := datastoreConn.Exec(ctx,
-		"DELETE FROM schema_version WHERE version = 24"); err != nil {
+		"DELETE FROM schema_version WHERE version >= 24"); err != nil {
 		t.Fatalf("forget migration 24: %v", err)
 	}
 	if err := database.NewSchemaManager().Migrate(datastoreConn); err != nil {

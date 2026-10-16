@@ -67,7 +67,7 @@ stored as it is. Because the probe compares redacted
 values, a change to the password alone does not store
 a new snapshot.
 
-Collector schema migration 24 applies the same
+Collector schema migration 25 applies the same
 redaction to rows stored by earlier versions, and the
 server redacts these values again when it returns
 them in timeline configuration change events, from

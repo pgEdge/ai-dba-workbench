@@ -2648,8 +2648,9 @@ project adheres to
   the audited 403, and the owner of a group with no member connections
   can still rename it. An API token whose connection scope does not
   cover every connection is now refused before the lookup, so its 403
-  is the same whether or not the group exists. Every
-  `/api/v1/cluster-groups/{id}` endpoint now also runs the same
+  is the same whether or not the group exists. The get, update and
+  delete endpoints for `/api/v1/cluster-groups/{id}`, and `GET
+  /api/v1/cluster-groups/{id}/clusters`, now also run the same
   database queries for a missing group as for one the caller cannot
   see. `PUT /api/v1/conversations/{id}` likewise answered another
   user's conversation with 403, and now answers 404 as the get, rename

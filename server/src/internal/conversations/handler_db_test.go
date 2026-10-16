@@ -87,6 +87,11 @@ func newConversationUpdateFixture(t *testing.T, users ...string) (*Handler, *Sto
 	cfg.MaxConns = 1
 	cfg.MaxConnLifetime = time.Hour
 	cfg.MaxConnIdleTime = time.Hour
+	// Search only the session's temporary schema (pg_catalog is still
+	// searched implicitly), so the store's unqualified name can never
+	// fall through to a permanent conversations table, even after a
+	// test drops the temporary one to provoke a failure.
+	cfg.ConnConfig.RuntimeParams["search_path"] = "pg_temp"
 	// Every session the pool opens, including any replacement for a
 	// connection that dies, gets its own temporary table before the
 	// store can use it, so an unqualified write can never reach a

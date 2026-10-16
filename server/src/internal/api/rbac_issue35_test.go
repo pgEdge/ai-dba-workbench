@@ -512,6 +512,8 @@ func TestConnectionHandler_GetCurrentConnection_NonOwnerUnshared_403(t *testing.
 
 	checker := mockSharingChecker(t, store, rbacUnsharedConnID, "alice", false)
 	handler := NewConnectionHandlerWithSecurity(nil, store, checker, false, nil, nil)
+	capture := &targetCapture{}
+	handler.SetDenialRecorder(capture.record)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections/current", nil)
 	req = withUser(req, bobID)
@@ -522,6 +524,14 @@ func TestConnectionHandler_GetCurrentConnection_NonOwnerUnshared_403(t *testing.
 	handler.getCurrentConnection(rec, req, tokenHash)
 
 	requireStatus(t, rec, http.StatusForbidden)
+
+	// A stale selection is refused on every read, and audited like any
+	// other connection-access refusal (issue #675).
+	want := recordedDenial{deniedActionConnectionRead,
+		connectionDenialTarget(rbacUnsharedConnID), connectionAccessDenied}
+	if len(capture.denials) != 1 || capture.denials[0] != want {
+		t.Errorf("Expected %v, got %v", want, capture.denials)
+	}
 }
 
 func TestConnectionHandler_GetCurrentConnection_Owner_NotDenied(t *testing.T) {

@@ -2606,6 +2606,16 @@ project adheres to
   RADIUS secret that appeared in a monitored server's
   `pg_hba.conf`.
 
+- Record a `denied` audit event when a request is refused because the
+  caller has no access to the connection it names (#675). Refused
+  reads of a connection's details, metrics, performance summaries and
+  server information, refused queries, and refused alert
+  acknowledgements and analysis updates previously answered 403
+  without leaving any trace in the audit log, so a caller probing for
+  connections it could not see went unnoticed. The events are
+  coalesced like other denials, so probing many connections in a loop
+  writes one event per minute rather than one per request.
+
 - Breaking: make the `query_datastore` MCP tool structured and limit
   the tool to the connections the caller can read (#566). The tool no
   longer accepts SQL and rejects a `sql` or `query` argument, so a

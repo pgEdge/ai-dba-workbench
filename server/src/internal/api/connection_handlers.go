@@ -41,7 +41,7 @@ type ConnectionHandler struct {
 	// refusal here is audited the same way as one on an RBAC route.
 	// When nil, refusals are not audited (for example, when the server
 	// runs without an auth store).
-	denialRecorder func(*http.Request, string)
+	denialRecorder denialRecorder
 
 	// purgeNudge starts the background purge of a deleted connection's
 	// metrics; see SetPurgeNudge. It may be nil.
@@ -438,7 +438,7 @@ func (h *ConnectionHandler) getConnection(w http.ResponseWriter, r *http.Request
 	// ownership, sharing, group grants, and token scope; it also covers
 	// the superuser bypass.
 	if canAccess, _ := h.rbacChecker.CanAccessConnection(r.Context(), id); !canAccess {
-		RespondError(w, http.StatusForbidden, "Access denied")
+		h.denialRecorder.refuseConnection(w, r, deniedActionConnectionRead, id, "Access denied")
 		return
 	}
 
@@ -687,7 +687,8 @@ func connectionDeleteContext(parent context.Context) (context.Context, context.C
 func (h *ConnectionHandler) listDatabases(w http.ResponseWriter, r *http.Request, connectionID int) {
 	// Check RBAC access to this connection.
 	if canAccess, _ := h.rbacChecker.CanAccessConnection(r.Context(), connectionID); !canAccess {
-		RespondError(w, http.StatusForbidden, "Access denied")
+		h.denialRecorder.refuseConnection(w, r, deniedActionConnectionRead,
+			connectionID, "Access denied")
 		return
 	}
 
@@ -744,9 +745,13 @@ func (h *ConnectionHandler) getCurrentConnection(w http.ResponseWriter, r *http.
 
 	// Verify the caller may access the session's connection. A session
 	// may outlive a revoked grant or ownership change, so re-check on
-	// every read rather than trusting the stored selection.
+	// every read rather than trusting the stored selection. The client
+	// reads this route whenever it loads, so a revoked grant is refused
+	// on each visit; the coalescer folds those into one row a minute
+	// (issue #675).
 	if canAccess, _ := h.rbacChecker.CanAccessConnection(r.Context(), session.ConnectionID); !canAccess {
-		RespondError(w, http.StatusForbidden, "Access denied")
+		h.denialRecorder.refuseConnection(w, r, deniedActionConnectionRead,
+			session.ConnectionID, "Access denied")
 		return
 	}
 
@@ -798,7 +803,8 @@ func (h *ConnectionHandler) setCurrentConnection(w http.ResponseWriter, r *http.
 	// Check RBAC access before persisting the session; otherwise a
 	// caller could pin their session to a connection they cannot use.
 	if canAccess, _ := h.rbacChecker.CanAccessConnection(r.Context(), req.ConnectionID); !canAccess {
-		RespondError(w, http.StatusForbidden, "Access denied")
+		h.denialRecorder.refuseConnection(w, r, deniedActionConnectionCurrentUpdate,
+			req.ConnectionID, "Access denied")
 		return
 	}
 
@@ -843,7 +849,8 @@ func (h *ConnectionHandler) clearCurrentConnection(w http.ResponseWriter, r *htt
 func (h *ConnectionHandler) getConnectionContext(w http.ResponseWriter, r *http.Request, connectionID int) {
 	// Check RBAC access to this connection.
 	if canAccess, _ := h.rbacChecker.CanAccessConnection(r.Context(), connectionID); !canAccess {
-		RespondError(w, http.StatusForbidden, "Access denied")
+		h.denialRecorder.refuseConnection(w, r, deniedActionConnectionRead,
+			connectionID, "Access denied")
 		return
 	}
 
@@ -902,7 +909,8 @@ type connectionClusterResponse struct {
 func (h *ConnectionHandler) handleGetConnectionCluster(w http.ResponseWriter, r *http.Request, connectionID int) {
 	// Check RBAC access to this connection.
 	if canAccess, _ := h.rbacChecker.CanAccessConnection(r.Context(), connectionID); !canAccess {
-		RespondError(w, http.StatusForbidden, "Access denied")
+		h.denialRecorder.refuseConnection(w, r, deniedActionConnectionRead,
+			connectionID, "Access denied")
 		return
 	}
 
@@ -953,7 +961,8 @@ func (h *ConnectionHandler) handleGetConnectionCluster(w http.ResponseWriter, r 
 func (h *ConnectionHandler) handleUpdateConnectionCluster(w http.ResponseWriter, r *http.Request, connectionID int) {
 	// Check RBAC access to this connection.
 	if canAccess, _ := h.rbacChecker.CanAccessConnection(r.Context(), connectionID); !canAccess {
-		RespondError(w, http.StatusForbidden, "Access denied")
+		h.denialRecorder.refuseConnection(w, r, deniedActionConnectionClusterUpdate,
+			connectionID, "Access denied")
 		return
 	}
 
@@ -969,10 +978,8 @@ func (h *ConnectionHandler) handleUpdateConnectionCluster(w http.ResponseWriter,
 	// probe payload shape via validation error messages.
 	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections) {
 		const reason = "Permission denied: requires manage_connections permission"
-		if h.denialRecorder != nil {
-			h.denialRecorder(r, reason)
-		}
-		RespondError(w, http.StatusForbidden, reason)
+		h.denialRecorder.refuseTarget(w, r, deniedActionConnectionClusterUpdate,
+			connectionDenialTarget(connectionID), reason, reason)
 		return
 	}
 	// Re-homing a connection changes it, so a read-only entry in the

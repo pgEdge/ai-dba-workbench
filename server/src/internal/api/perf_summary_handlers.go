@@ -89,6 +89,9 @@ type PerfSummaryHandler struct {
 	// owned by whom. When nil the handler asks the datastore, as in
 	// production; tests whose fixtures hold no connections substitute one.
 	sharingLookupFn auth.ConnectionSharingLookupFunc
+
+	// denialAuditor audits this handler's connection-access refusals.
+	denialAuditor
 }
 
 // accessChecker returns the RBAC checker for one request. Its sharing
@@ -357,7 +360,7 @@ func (h *PerfSummaryHandler) handlePerfSummary(
 	for _, connID := range connectionIDs {
 		canAccess, _ := rbacChecker.CanAccessConnection(r.Context(), connID)
 		if !canAccess {
-			RespondError(w, http.StatusForbidden,
+			h.denialRecorder.refuseConnection(w, r, deniedActionMetricsRead, connID,
 				fmt.Sprintf("Permission denied: you do not have access to connection %d", connID))
 			return
 		}
@@ -998,7 +1001,7 @@ func (h *PerfSummaryHandler) handleDatabaseSummaries(
 	rbacChecker := h.accessChecker()
 	canAccess, _ := rbacChecker.CanAccessConnection(r.Context(), connID)
 	if !canAccess {
-		RespondError(w, http.StatusForbidden,
+		h.denialRecorder.refuseConnection(w, r, deniedActionMetricsRead, connID,
 			fmt.Sprintf("Permission denied: you do not have access to connection %d", connID))
 		return
 	}
@@ -2007,7 +2010,7 @@ func (h *PerfSummaryHandler) handleTopQueries(
 	rbacChecker := h.accessChecker()
 	canAccess, _ := rbacChecker.CanAccessConnection(r.Context(), connID)
 	if !canAccess {
-		RespondError(w, http.StatusForbidden,
+		h.denialRecorder.refuseConnection(w, r, deniedActionMetricsRead, connID,
 			fmt.Sprintf("Permission denied: you do not have access to connection %d", connID))
 		return
 	}
@@ -2449,7 +2452,7 @@ func (h *PerfSummaryHandler) handleQueryStats(
 	rbacChecker := h.accessChecker()
 	canAccess, _ := rbacChecker.CanAccessConnection(r.Context(), connID)
 	if !canAccess {
-		RespondError(w, http.StatusForbidden,
+		h.denialRecorder.refuseConnection(w, r, deniedActionMetricsRead, connID,
 			fmt.Sprintf("Permission denied: you do not have access to connection %d", connID))
 		return
 	}

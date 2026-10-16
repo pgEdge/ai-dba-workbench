@@ -46,6 +46,9 @@ type AlertHandler struct {
 	rbacChecker     *auth.RBACChecker
 	alertResolver   alertConnectionResolver
 	unacknowledgeFn alertUnacknowledger
+
+	// denialAuditor audits this handler's connection-access refusals.
+	denialAuditor
 }
 
 // NewAlertHandler creates a new alert handler
@@ -337,7 +340,8 @@ func (h *AlertHandler) acknowledgeAlert(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if !h.canActOnAlert(r.Context(), connID) {
-		RespondError(w, http.StatusForbidden, "Access denied")
+		h.denialRecorder.refuseTarget(w, r, deniedActionAlertAcknowledge,
+			alertDenialTarget(req.AlertID), alertAccessDenied, "Access denied")
 		return
 	}
 
@@ -394,7 +398,8 @@ func (h *AlertHandler) unacknowledgeAlert(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if !h.canActOnAlert(r.Context(), connID) {
-		RespondError(w, http.StatusForbidden, "Access denied")
+		h.denialRecorder.refuseTarget(w, r, deniedActionAlertUnacknowledge,
+			alertDenialTarget(alertID), alertAccessDenied, "Access denied")
 		return
 	}
 
@@ -477,14 +482,16 @@ func (h *AlertHandler) handleSaveAnalysis(w http.ResponseWriter, r *http.Request
 	// still gets 403 first, as for any alert beyond their reach.
 	if connID == nil {
 		if !h.rbacChecker.CanSeeSystemAlerts(r.Context()) {
-			RespondError(w, http.StatusForbidden, "Access denied")
+			h.denialRecorder.refuseTarget(w, r, deniedActionAlertAnalysisUpdate,
+				alertDenialTarget(req.AlertID), alertAccessDenied, "Access denied")
 			return
 		}
 		RespondError(w, http.StatusBadRequest, "AI analysis cannot be saved on a system alert")
 		return
 	}
 	if !h.canActOnAlert(r.Context(), connID) {
-		RespondError(w, http.StatusForbidden, "Access denied")
+		h.denialRecorder.refuseTarget(w, r, deniedActionAlertAnalysisUpdate,
+			alertDenialTarget(req.AlertID), alertAccessDenied, "Access denied")
 		return
 	}
 

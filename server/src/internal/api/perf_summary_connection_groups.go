@@ -250,7 +250,7 @@ func (h *PerfSummaryHandler) handleConnectionGroups(
 	rbacChecker := h.accessChecker()
 	canAccess, _ := rbacChecker.CanAccessConnection(r.Context(), connID)
 	if !canAccess {
-		RespondError(w, http.StatusForbidden,
+		h.denialRecorder.refuseConnection(w, r, deniedActionMetricsRead, connID,
 			fmt.Sprintf("Permission denied: you do not have access to connection %d", connID))
 		return
 	}

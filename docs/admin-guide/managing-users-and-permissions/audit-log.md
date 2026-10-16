@@ -128,9 +128,9 @@ appear only on denials: `audit.read`, for a refused read of the audit
 log itself, and `token.scope.set`, for a refused scope update, because a
 single endpoint covers all three scope types. A token refused a cluster
 move of a connection that its connection scope names only at `read` is
-recorded as `connection.cluster.update`; a connection the token cannot
-see at all is refused as though it did not exist, and that refusal is not
-recorded. A refused request that matches no known route records `rbac.`
+recorded as `connection.cluster.update`, as is a cluster move of a
+connection the caller cannot see at all. A refused request that matches
+no known route records `rbac.`
 followed by the lower-case HTTP method, so that the denial is kept rather
 than dropped, and any method outside the standard HTTP set records
 `rbac.other`.
@@ -146,7 +146,22 @@ group, without the `manage_connections` permission, is recorded under
 `cluster_group.create`, `cluster_group.update` or
 `cluster_group.delete`. A blackout or schedule
 on a connection the token cannot see is refused as though it did not
-exist, and, as with connections, that refusal is not recorded.
+exist, and that refusal is not recorded.
+
+A request to read or act on a connection that the caller has no access
+to is recorded as well, under `connection.read` for the connection's
+details, databases, context or cluster, `connection.current.update` for
+selecting it as the current connection, `connection.query`,
+`connection.query.validate` or `connection.query.write` for running or
+validating a query on it, `metrics.read` for its metrics, baselines and
+performance summaries, and `server_info.read` for its server
+information. A request to acknowledge an alert, to clear its
+acknowledgement or to save its analysis, when the alert belongs to a
+connection the caller cannot access, is recorded as
+`alert.acknowledge`, `alert.unacknowledge` or `alert.analysis.update`,
+with the alert as the target. A current connection selected before the
+caller lost access to it is refused, and recorded as `connection.read`,
+each time the client reads it.
 
 Each denial names the object the request was aimed at in
 `details.target`, as the kind of object followed by its numeric

@@ -70,6 +70,9 @@ type ServerInfoHandler struct {
 	rbacChecker *auth.RBACChecker
 	llmConfig   *llmproxy.Config
 
+	// denialAuditor audits this handler's connection-access refusals.
+	denialAuditor
+
 	cacheMu sync.RWMutex
 	cache   map[int]*aiCacheEntry
 }
@@ -229,8 +232,8 @@ func (h *ServerInfoHandler) handleServerInfo(w http.ResponseWriter, r *http.Requ
 	// Check RBAC access to this connection
 	canAccess, _ := h.rbacChecker.CanAccessConnection(r.Context(), connectionID)
 	if !canAccess {
-		RespondError(w, http.StatusForbidden,
-			"Permission denied: you do not have access to this connection")
+		h.denialRecorder.refuseConnection(w, r, deniedActionServerInfoRead,
+			connectionID, connectionAccessDenied)
 		return
 	}
 
@@ -305,8 +308,8 @@ func (h *ServerInfoHandler) handleServerInfoAI(w http.ResponseWriter, r *http.Re
 	// Check RBAC access to this connection
 	canAccess, _ := h.rbacChecker.CanAccessConnection(r.Context(), connectionID)
 	if !canAccess {
-		RespondError(w, http.StatusForbidden,
-			"Permission denied: you do not have access to this connection")
+		h.denialRecorder.refuseConnection(w, r, deniedActionServerInfoRead,
+			connectionID, connectionAccessDenied)
 		return
 	}
 

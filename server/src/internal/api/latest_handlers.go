@@ -36,6 +36,9 @@ type LatestSnapshotHandler struct {
 	// owned by whom. When nil the handler asks the datastore, as in
 	// production; a test whose datastore cannot answer substitutes one.
 	sharingLookupFn auth.ConnectionSharingLookupFunc
+
+	// denialAuditor audits this handler's connection-access refusals.
+	denialAuditor
 }
 
 // accessChecker returns the RBAC checker for one request. It carries a
@@ -137,7 +140,7 @@ func (h *LatestSnapshotHandler) handleLatestSnapshot(
 	rbacChecker := h.accessChecker()
 	canAccess, _ := rbacChecker.CanAccessConnection(r.Context(), connectionID)
 	if !canAccess {
-		RespondError(w, http.StatusForbidden,
+		h.denialRecorder.refuseConnection(w, r, deniedActionMetricsRead, connectionID,
 			fmt.Sprintf("Permission denied: you do not have access to connection %d", connectionID))
 		return
 	}

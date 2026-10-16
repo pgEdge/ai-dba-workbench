@@ -229,15 +229,20 @@ func TestSetupHandlersWiresDenialRecorders(t *testing.T) {
 	})
 
 	want := []string{
+		"*api.AlertHandler",
 		"*api.AlertOverrideHandler",
 		"*api.AlertRuleHandler",
 		"*api.BlackoutHandler",
 		"*api.ChannelOverrideHandler",
 		"*api.ClusterHandler",
 		"*api.ConnectionHandler",
+		"*api.LatestSnapshotHandler",
+		"*api.MetricsHandler",
 		"*api.NotificationChannelHandler",
+		"*api.PerfSummaryHandler",
 		"*api.ProbeConfigHandler",
 		"*api.ProbeOverrideHandler",
+		"*api.ServerInfoHandler",
 	}
 	sort.Strings(wired)
 	if !slices.Equal(wired, want) {

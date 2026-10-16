@@ -33,12 +33,12 @@ import (
 // checker over pool.
 func nilRBACTools(pool *pgxpool.Pool) map[string]Tool {
 	return map[string]Tool{
-		"get_alert_history":    GetAlertHistoryTool(pool, nil, nil),
-		"get_alert_rules":      GetAlertRulesTool(pool, nil),
-		"get_blackouts":        GetBlackoutsTool(pool, nil, nil),
-		"get_metric_baselines": GetMetricBaselinesTool(pool, nil, nil),
-		"query_metrics":        QueryMetricsTool(pool, nil),
-		"get_timeline_events":  GetTimelineEventsTool(database.NewTestDatastore(pool), nil, nil),
+		"get_alert_history":    GetAlertHistoryTool(pool, nil, nil, nil),
+		"get_alert_rules":      GetAlertRulesTool(pool, nil, nil),
+		"get_blackouts":        GetBlackoutsTool(pool, nil, nil, nil),
+		"get_metric_baselines": GetMetricBaselinesTool(pool, nil, nil, nil),
+		"query_metrics":        QueryMetricsTool(pool, nil, nil),
+		"get_timeline_events":  GetTimelineEventsTool(database.NewTestDatastore(pool), nil, nil, nil),
 	}
 }
 
@@ -100,11 +100,11 @@ func TestTools_NilRBAC_ExistingConnectionDenied(t *testing.T) {
 	connID := seedBaselineConnection(t, pool, "denied-conn", true, "")
 
 	for name, tool := range map[string]Tool{
-		"get_alert_history":    GetAlertHistoryTool(pool, nil, nil),
-		"get_blackouts":        GetBlackoutsTool(pool, nil, nil),
-		"get_metric_baselines": GetMetricBaselinesTool(pool, nil, nil),
-		"get_timeline_events":  GetTimelineEventsTool(database.NewTestDatastore(pool), nil, nil),
-		"query_metrics":        QueryMetricsTool(pool, nil),
+		"get_alert_history":    GetAlertHistoryTool(pool, nil, nil, nil),
+		"get_blackouts":        GetBlackoutsTool(pool, nil, nil, nil),
+		"get_metric_baselines": GetMetricBaselinesTool(pool, nil, nil, nil),
+		"get_timeline_events":  GetTimelineEventsTool(database.NewTestDatastore(pool), nil, nil, nil),
+		"query_metrics":        QueryMetricsTool(pool, nil, nil),
 	} {
 		t.Run(name, func(t *testing.T) {
 			args := map[string]any{"connection_id": float64(connID)}

@@ -118,7 +118,7 @@ func StoreMemoryTool(memoryStore *memory.Store, cfg *config.Config,
 			// Check RBAC permission for system-scoped memories
 			if scope == "system" {
 				if rbacChecker == nil || !rbacChecker.HasAdminPermission(ctx, auth.PermStoreSystemMemory) {
-					return record.refuse(ctx, "memory.create", "memories",
+					return record.refuse(ctx, deniedActionMemoryCreate, memoriesTarget,
 						systemMemoryDenied)
 				}
 			}

@@ -106,7 +106,7 @@ func toolResponseText(resp *mcp.ToolResponse) string {
 // the resolver has no datastore or checker, so reaching either would
 // panic.
 func TestResolveExplicit_InvalidDatabaseNameFirst(t *testing.T) {
-	r := NewConnectionResolver(nil, nil, nil)
+	r := NewConnectionResolver(nil, nil, nil, nil)
 	tests := []struct {
 		name   string
 		dbName string
@@ -117,7 +117,7 @@ func TestResolveExplicit_InvalidDatabaseNameFirst(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			resolved, resp := r.Resolve(context.Background(), map[string]any{
+			resolved, resp := r.Resolve(context.Background(), deniedActionConnectionQuery, map[string]any{
 				"connection_id": float64(1),
 				"database_name": tt.dbName,
 			}, nil)
@@ -137,10 +137,10 @@ func TestResolveExplicit_InvalidDatabaseNameFirst(t *testing.T) {
 // token context without a token ID is denied by the checker before it
 // touches its store.
 func TestResolveExplicit_RBACDenied(t *testing.T) {
-	r := NewConnectionResolver(nil, nil, auth.NewRBACChecker(&auth.AuthStore{}))
+	r := NewConnectionResolver(nil, nil, auth.NewRBACChecker(&auth.AuthStore{}), nil)
 	ctx := context.WithValue(context.Background(), auth.IsAPITokenContextKey, true)
 
-	resolved, resp := r.Resolve(ctx, map[string]any{
+	resolved, resp := r.Resolve(ctx, deniedActionConnectionQuery, map[string]any{
 		"connection_id": float64(1),
 	}, nil)
 	if resolved != nil || resp == nil || !resp.IsError {
@@ -231,7 +231,7 @@ func newResolverTestEnv(t *testing.T) *resolverTestEnv {
 	return &resolverTestEnv{
 		resolver: NewConnectionResolver(cm,
 			database.NewTestDatastoreWithSecret(pool, resolverTestSecret),
-			auth.NewRBACChecker(authStore)),
+			auth.NewRBACChecker(authStore), nil),
 		pool:     pool,
 		clients:  cm,
 		connID:   connID,
@@ -261,7 +261,7 @@ func TestResolveExplicit_Database(t *testing.T) {
 		auth.IsSuperuserContextKey, true)
 
 	t.Run("unknown connection", func(t *testing.T) {
-		resolved, resp := env.resolver.Resolve(ctx, map[string]any{
+		resolved, resp := env.resolver.Resolve(ctx, deniedActionConnectionQuery, map[string]any{
 			"connection_id": float64(env.connID + 1000),
 		}, nil)
 		if resolved != nil || resp == nil || !resp.IsError {
@@ -273,7 +273,7 @@ func TestResolveExplicit_Database(t *testing.T) {
 	})
 
 	t.Run("stored database", func(t *testing.T) {
-		resolved, resp := env.resolver.Resolve(ctx, map[string]any{
+		resolved, resp := env.resolver.Resolve(ctx, deniedActionConnectionQuery, map[string]any{
 			"connection_id": float64(env.connID),
 		}, nil)
 		if resp != nil {
@@ -290,7 +290,7 @@ func TestResolveExplicit_Database(t *testing.T) {
 
 	t.Run("cached client without a pool", func(t *testing.T) {
 		args := map[string]any{"connection_id": float64(env.connID)}
-		resolved, resp := env.resolver.Resolve(ctx, args, nil)
+		resolved, resp := env.resolver.Resolve(ctx, deniedActionConnectionQuery, args, nil)
 		if resp != nil {
 			t.Fatalf("unexpected error: %s", toolResponseText(resp))
 		}
@@ -305,7 +305,7 @@ func TestResolveExplicit_Database(t *testing.T) {
 			t.Fatalf("SetClient failed: %v", err)
 		}
 
-		resolved, resp = env.resolver.Resolve(ctx, args, nil)
+		resolved, resp = env.resolver.Resolve(ctx, deniedActionConnectionQuery, args, nil)
 		if resolved != nil || resp == nil || !resp.IsError {
 			t.Fatalf("expected an error response, got %v, %v", resolved, resp)
 		}
@@ -318,7 +318,7 @@ func TestResolveExplicit_Database(t *testing.T) {
 	})
 
 	t.Run("missing override database", func(t *testing.T) {
-		resolved, resp := env.resolver.Resolve(ctx, map[string]any{
+		resolved, resp := env.resolver.Resolve(ctx, deniedActionConnectionQuery, map[string]any{
 			"connection_id": float64(env.connID),
 			"database_name": "ai_workbench_resolver_no_such_db",
 		}, nil)
@@ -338,7 +338,7 @@ func TestResolveExplicit_Database(t *testing.T) {
 			_, _ = env.pool.Exec(context.Background(), dropHostileDatabase)
 		})
 
-		resolved, resp := env.resolver.Resolve(ctx, map[string]any{
+		resolved, resp := env.resolver.Resolve(ctx, deniedActionConnectionQuery, map[string]any{
 			"connection_id": float64(env.connID),
 			"database_name": hostileDatabaseName,
 		}, nil)

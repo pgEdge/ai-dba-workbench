@@ -25,8 +25,9 @@ import (
 // QueryMetricsTool creates the query_metrics tool for querying collected metrics.
 // The rbacChecker is consulted before any datastore read so that callers cannot
 // query metrics for connections they are not permitted to see. A nil checker
-// denies every connection (issue #561).
-func QueryMetricsTool(pool *pgxpool.Pool, rbacChecker *auth.RBACChecker) Tool {
+// denies every connection (issue #561). A denied connection is audited
+// through record as metrics.read (issue #706).
+func QueryMetricsTool(pool *pgxpool.Pool, rbacChecker *auth.RBACChecker, record DenialRecorder) Tool {
 	return Tool{
 		Definition: mcp.Tool{
 			Name: "query_metrics",
@@ -181,6 +182,8 @@ To manage response sizes:
 			// or names the caller cannot see.
 			canAccess, _ := rbacChecker.CanAccessConnection(ctx, connectionID)
 			if !canAccess {
+				record.deny(ctx, deniedActionMetricsRead,
+					connectionDenialTarget(connectionID), connectionAccessDenied)
 				return mcp.NewToolError("connection not found or not accessible")
 			}
 

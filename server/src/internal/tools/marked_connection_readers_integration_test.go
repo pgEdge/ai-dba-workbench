@@ -145,8 +145,8 @@ func TestMarkedConnectionHiddenFromToolsIntegration(t *testing.T) {
 	// so only the lookup's deleted_at test refuses the marked connection;
 	// visibleConnectionSuggestions then lists only the live one.
 	for name, tool := range map[string]Tool{
-		"get_alert_history":    GetAlertHistoryTool(f.pool, rbac, lister),
-		"get_metric_baselines": GetMetricBaselinesTool(f.pool, rbac, lister),
+		"get_alert_history":    GetAlertHistoryTool(f.pool, rbac, lister, nil),
+		"get_metric_baselines": GetMetricBaselinesTool(f.pool, rbac, lister, nil),
 	} {
 		t.Run(name+" names the marked connection", func(t *testing.T) {
 			text, isErr := toolText(t, asSuperuser(tool), map[string]any{"connection_id": float64(f.gone)})
@@ -160,21 +160,21 @@ func TestMarkedConnectionHiddenFromToolsIntegration(t *testing.T) {
 	}
 
 	t.Run("get_alert_history across connections", func(t *testing.T) {
-		text, isErr := toolText(t, asSuperuser(GetAlertHistoryTool(f.pool, rbac, lister)), map[string]any{"status": "all"})
+		text, isErr := toolText(t, asSuperuser(GetAlertHistoryTool(f.pool, rbac, lister, nil)), map[string]any{"status": "all"})
 		if isErr || !strings.Contains(text, "live-conn alert") || strings.Contains(text, "gone-conn") {
 			t.Errorf("get_alert_history = %q (error %v)", text, isErr)
 		}
 	})
 
 	t.Run("get_metric_baselines across connections", func(t *testing.T) {
-		text, isErr := toolText(t, asSuperuser(GetMetricBaselinesTool(f.pool, rbac, lister)), map[string]any{})
+		text, isErr := toolText(t, asSuperuser(GetMetricBaselinesTool(f.pool, rbac, lister, nil)), map[string]any{})
 		if isErr || !strings.Contains(text, "live-conn") || strings.Contains(text, "gone-conn") {
 			t.Errorf("get_metric_baselines = %q (error %v)", text, isErr)
 		}
 	})
 
 	t.Run("query_metrics names the marked connection", func(t *testing.T) {
-		text, isErr := toolText(t, asSuperuser(QueryMetricsTool(f.pool, rbac)), map[string]any{
+		text, isErr := toolText(t, asSuperuser(QueryMetricsTool(f.pool, rbac, nil)), map[string]any{
 			"connection_id": float64(f.gone), "probe_name": "pg_connectivity"})
 		if !isErr || !strings.Contains(text, "connection not found or not accessible") {
 			t.Errorf("query_metrics = %q (error %v)", text, isErr)

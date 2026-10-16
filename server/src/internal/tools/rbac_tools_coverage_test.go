@@ -162,21 +162,21 @@ func runToolCases(t *testing.T, tool Tool, cases []toolCase) {
 }
 
 func TestGetAlertHistoryTool_Coverage(t *testing.T) {
-	runToolCases(t, GetAlertHistoryTool(nil, testRBACChecker(t), nil), []toolCase{
+	runToolCases(t, GetAlertHistoryTool(nil, testRBACChecker(t), nil, nil), []toolCase{
 		{name: "nil pool", wantErr: true, want: "Datastore not configured"},
 	})
 
 	pool := newCoverageToolsPool(t)
 
 	// With no connections at all the error names none.
-	runToolCases(t, GetAlertHistoryTool(pool, testRBACChecker(t), nil), []toolCase{
+	runToolCases(t, GetAlertHistoryTool(pool, testRBACChecker(t), nil, nil), []toolCase{
 		{name: "unknown connection, none exist", args: map[string]any{"connection_id": float64(999)},
 			wantErr: true, want: "connection not found or not accessible. Use list_connections to see the connections you can access."},
 	})
 
 	connID := seedBaselineConnection(t, pool, "alerts-conn", true, "")
 	checker := testRBACChecker(t)
-	tool := GetAlertHistoryTool(pool, checker, sharedLister(connID))
+	tool := GetAlertHistoryTool(pool, checker, sharedLister(connID), nil)
 	restricted := restrictedUserContext()
 	runToolCases(t, tool, []toolCase{
 		{name: "no context", raw: true, wantErr: true, want: "Failed to query alerts"},
@@ -209,11 +209,11 @@ func TestGetAlertHistoryTool_Coverage(t *testing.T) {
 			wantErr: true, want: "Invalid 'offset'"},
 	})
 
-	runToolCases(t, GetAlertHistoryTool(pool, checker, failingLister()), []toolCase{
+	runToolCases(t, GetAlertHistoryTool(pool, checker, failingLister(), nil), []toolCase{
 		{name: "visibility failure", args: map[string]any{"__context": restricted},
 			wantErr: true, want: "Failed to resolve accessible connections"},
 	})
-	runToolCases(t, GetAlertHistoryTool(pool, privateChecker(t), sharedLister()), []toolCase{
+	runToolCases(t, GetAlertHistoryTool(pool, privateChecker(t), sharedLister(), nil), []toolCase{
 		// A signed-in user who sees no connection may still see system
 		// alerts (GitHub issue #582), so the query runs rather than
 		// short-circuiting; this pool has no alerts table.
@@ -227,20 +227,20 @@ func TestGetAlertHistoryTool_Coverage(t *testing.T) {
 }
 
 func TestGetBlackoutsTool_Coverage(t *testing.T) {
-	runToolCases(t, GetBlackoutsTool(nil, testRBACChecker(t), nil), []toolCase{
+	runToolCases(t, GetBlackoutsTool(nil, testRBACChecker(t), nil, nil), []toolCase{
 		{name: "nil pool", wantErr: true, want: "Datastore not configured"},
 	})
 
 	pool := newCoverageToolsPool(t)
 
-	runToolCases(t, GetBlackoutsTool(pool, testRBACChecker(t), nil), []toolCase{
+	runToolCases(t, GetBlackoutsTool(pool, testRBACChecker(t), nil, nil), []toolCase{
 		{name: "unknown connection, none exist", args: map[string]any{"connection_id": float64(999)},
 			wantErr: true, want: "connection not found or not accessible. Use list_connections to see the connections you can access."},
 	})
 
 	connID := seedBaselineConnection(t, pool, "blackouts-conn", true, "")
 	checker := testRBACChecker(t)
-	tool := GetBlackoutsTool(pool, checker, sharedLister(connID))
+	tool := GetBlackoutsTool(pool, checker, sharedLister(connID), nil)
 	runToolCases(t, tool, []toolCase{
 		{name: "no context", raw: true, wantErr: true, want: "Failed to query blackouts"},
 		{name: "invalid connection_id", args: map[string]any{"connection_id": "x"},
@@ -258,11 +258,11 @@ func TestGetBlackoutsTool_Coverage(t *testing.T) {
 			wantErr: true, want: "Failed to query blackouts"},
 	})
 
-	runToolCases(t, GetBlackoutsTool(pool, checker, failingLister()), []toolCase{
+	runToolCases(t, GetBlackoutsTool(pool, checker, failingLister(), nil), []toolCase{
 		{name: "visibility failure", args: map[string]any{"__context": restrictedUserContext()},
 			wantErr: true, want: "Failed to resolve accessible connections"},
 	})
-	runToolCases(t, GetBlackoutsTool(pool, privateChecker(t), sharedLister()), []toolCase{
+	runToolCases(t, GetBlackoutsTool(pool, privateChecker(t), sharedLister(), nil), []toolCase{
 		{name: "no visible connections", args: map[string]any{"__context": restrictedUserContext()},
 			want: "You do not have access to any connections"},
 		{name: "private connection denied", args: map[string]any{
@@ -272,7 +272,7 @@ func TestGetBlackoutsTool_Coverage(t *testing.T) {
 }
 
 func TestGetAlertRulesTool_Coverage(t *testing.T) {
-	runToolCases(t, GetAlertRulesTool(nil, testRBACChecker(t)), []toolCase{
+	runToolCases(t, GetAlertRulesTool(nil, testRBACChecker(t), nil), []toolCase{
 		{name: "nil pool", wantErr: true, want: "Datastore not configured"},
 	})
 
@@ -298,7 +298,7 @@ func TestGetAlertRulesTool_Coverage(t *testing.T) {
 		t.Fatalf("failed to seed alert threshold: %v", err)
 	}
 
-	runToolCases(t, GetAlertRulesTool(pool, privateChecker(t)), []toolCase{
+	runToolCases(t, GetAlertRulesTool(pool, privateChecker(t), nil), []toolCase{
 		{name: "no context denies a connection", raw: true, args: map[string]any{"connection_id": float64(7)},
 			wantErr: true, want: "connection not found or not accessible"},
 		{name: "restricted caller denied", args: map[string]any{
@@ -322,13 +322,13 @@ func TestGetAlertRulesTool_Coverage(t *testing.T) {
 func TestGetAlertRulesTool_QueryFailure(t *testing.T) {
 	pool, _, cleanup := newToolsTestPool(t)
 	defer cleanup()
-	runToolCases(t, GetAlertRulesTool(pool, testRBACChecker(t)), []toolCase{
+	runToolCases(t, GetAlertRulesTool(pool, testRBACChecker(t), nil), []toolCase{
 		{name: "query failure", wantErr: true, want: "Failed to query alert rules"},
 	})
 }
 
 func TestQueryMetricsTool_Coverage(t *testing.T) {
-	runToolCases(t, QueryMetricsTool(nil, testRBACChecker(t)), []toolCase{
+	runToolCases(t, QueryMetricsTool(nil, testRBACChecker(t), nil), []toolCase{
 		{name: "nil pool", wantErr: true, want: "Datastore not configured"},
 	})
 
@@ -349,7 +349,7 @@ func TestQueryMetricsTool_Coverage(t *testing.T) {
 		}
 		return args
 	}
-	runToolCases(t, QueryMetricsTool(pool, privateChecker(t)), []toolCase{
+	runToolCases(t, QueryMetricsTool(pool, privateChecker(t), nil), []toolCase{
 		{name: "missing probe_name", wantErr: true, want: "Missing or invalid 'probe_name'"},
 		{name: "invalid probe_name", args: map[string]any{"probe_name": "bad-name"},
 			wantErr: true, want: "Invalid probe name"},

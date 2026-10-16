@@ -69,6 +69,11 @@ type ClientResolver struct {
 	// May be nil if RBAC is not enabled.
 	Access AccessChecker
 
+	// Denied, when set, is called with the selected connection's ID
+	// when Access refuses it, so that the caller can audit the refusal
+	// (issue #706). May be nil.
+	Denied func(ctx context.Context, connectionID int)
+
 	// ConnInfo provides connection details and builds connection strings.
 	// May be nil if session-based connections are not available.
 	ConnInfo ConnectionInfoProvider
@@ -132,6 +137,9 @@ func (r *ClientResolver) ResolveClient(ctx context.Context) (*Client, error) {
 			if r.Access != nil {
 				canAccess, _ := r.Access.CanAccessConnection(ctx, session.ConnectionID)
 				if !canAccess {
+					if r.Denied != nil {
+						r.Denied(ctx, session.ConnectionID)
+					}
 					// Clear the stale session so subsequent calls get
 					// a clean "no connection selected" error.
 					//nolint:errcheck // Best effort cleanup; we return the access denied error regardless

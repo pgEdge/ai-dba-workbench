@@ -952,7 +952,22 @@ probes apply two rules to the tokens:
   MAPPING`, `CREATE SERVER` and `ALTER SERVER`, and any
   column, option or setting whose name contains
   `password`, `passwd`, `passphrase`, `secret`,
-  `token`, `credential` or `private_key`.
+  `token`, `credential` or `private_key`, together
+  with the settings whose value the `pg_settings`
+  probe replaces in full, such as `restore_command`
+  and `archive_command`. The same applies when the
+  name is itself a string constant followed by a
+  comma, as in `set_config('myext.password', '...',
+  false)`. After a separator such as `=` or `TO`, a
+  double-quoted identifier is replaced too, and in a
+  `SET` command
+  (including `SET LOCAL` and `ALTER ROLE ... SET`) an
+  unquoted value is replaced up to the next
+  semicolon, unless it is `DEFAULT` or a parameter
+  placeholder. `password_encryption`,
+  `md5_password_warnings` and the `password_required`
+  user mapping option hold no secret and keep their
+  values.
 - Any other string constant that mentions a password,
   or is a `postgres://` or `postgresql://` URI, is
   parsed as a libpq connection string and has each
@@ -960,7 +975,10 @@ probes apply two rules to the tokens:
   the rest; this covers the `CONNECTION` string of
   `CREATE SUBSCRIPTION` and `ALTER SUBSCRIPTION`, and
   connection strings passed to functions such as
-  `dblink_connect`.
+  `dblink_connect`. PostgreSQL truncates long
+  statement text, so a URI cut off before the `@` or
+  `/` that ends its user information and host is
+  replaced, with the rest of the text, in full.
 
 The redaction errs towards removing too much when the
 meaning is unclear: a secret held in a string

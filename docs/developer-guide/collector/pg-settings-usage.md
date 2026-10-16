@@ -45,13 +45,22 @@ and `boot_val` columns before storing them:
   parses both the keyword/value and the URI forms, and
   stores `********` in place of a value it cannot
   parse.
-- `ssl_passphrase_command` is replaced with
-  `********` in full, since the command commonly
-  embeds the passphrase.
+- `ssl_passphrase_command`, `archive_command`,
+  `archive_cleanup_command`, `restore_command` and
+  `recovery_end_command` are replaced with `********`
+  in full, since a command can embed a passphrase or
+  an inline secret such as `PGPASSWORD=...` and has no
+  structure to parse.
 - An extension setting (one with a dot in its name)
   whose name contains `password`, `passwd`,
   `passphrase`, `secret`, `token`, `credential` or
   `private_key` is replaced with `********` in full.
+
+`password_encryption`, `md5_password_warnings` and
+`ssl_passphrase_command_supports_reload` hold no
+secret and are stored as they are. The
+`query_datastore` tool masks the same settings, using
+the list the collector uses.
 
 An empty value, meaning the setting is unset, is
 stored as it is. Because the probe compares redacted

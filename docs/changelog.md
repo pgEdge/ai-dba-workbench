@@ -2687,14 +2687,20 @@ project adheres to
   probe now replaces each `password` and `sslpassword` value in
   `primary_conninfo` with `********` in the `setting`, `reset_val`
   and `boot_val` columns, parsing both the keyword/value and URI
-  forms and keeping the rest of the string, and replaces the whole of
-  `ssl_passphrase_command` and of any extension setting named like a
-  secret. Collector schema migration 24 redacts the rows already
-  stored, and the server redacts the timeline and latest-row values
-  again for a datastore the collector has not yet migrated. Raw
-  `query_datastore` SQL reads the stored rows directly and so is only
-  covered once the migration has run. A change to the password alone
-  is no longer recorded as a configuration change. (#643)
+  forms and keeping the rest of the string. It replaces in full
+  `ssl_passphrase_command`, `archive_command`,
+  `archive_cleanup_command`, `restore_command` and
+  `recovery_end_command`, any of which can embed a secret such as
+  `PGPASSWORD=...`, and any extension setting named like a secret.
+  Collector schema migration 24 redacts the rows already stored, and
+  the server redacts the timeline and latest-row values again for a
+  datastore the collector has not yet migrated; the structured
+  `query_datastore` tool masks the same settings, using the same
+  list. A change to the password alone is no longer recorded as a
+  configuration change. Redaction cannot recall a password that has
+  already been read from the datastore, so rotate any password that
+  these settings or the statement text below held whilst an earlier
+  version was collecting. (#643)
 
 - Redact passwords in collected statement text. PostgreSQL keeps the
   text of statements such as `ALTER ROLE ... PASSWORD`, `CREATE USER
@@ -2705,7 +2711,11 @@ project adheres to
   `ddl_statement` or `error_message`. The probes now split the text
   into SQL tokens and replace string constants that hold a password,
   or the password inside a connection string, with `********`,
-  leaving `pg_stat_statements` placeholders such as `$1` alone.
+  leaving `pg_stat_statements` placeholders such as `$1` alone. This
+  includes the value given to `set_config` or `SET` for a setting
+  named like a secret, quoted or not, and a connection URI that
+  PostgreSQL's truncation of long statement text cut off before its
+  host.
   Collector schema migration 25 redacts the text already stored; it
   rewrites only rows that mention a password or similar secret, but
   still reads the whole of each table, so it can take a while on a

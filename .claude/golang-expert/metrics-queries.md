@@ -227,7 +227,13 @@ decomposed into small, separately testable helpers:
   returns stored settings values or statement text must redact the same
   way; when adding a probe that stores statement text, add its columns to
   `statementTextColumns` there and to `statementTextUpdates` in the
-  collector's migration 25 equivalent (a new migration).
+  collector's migration 25 equivalent (a new migration). The list of
+  credential settings lives only in `pkg/pgsettings`
+  (`CredentialSettings`, `NonCredentialSettings`, `RedactsWholeValue`);
+  `pkg/sqlredact` and `query_datastore`'s SQL masking in
+  `server/src/internal/tools/datastore_catalog.go` build from it, so add
+  a setting there rather than to a copy. Each redacting probe has an
+  `Execute` test in `collector/src/probes/redaction_wiring_test.go`.
 
 ### The /metrics/latest snapshot endpoint and its schema filters
 

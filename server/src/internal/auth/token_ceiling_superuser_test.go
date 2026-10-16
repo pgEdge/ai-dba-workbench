@@ -104,10 +104,10 @@ func TestTokenScopeChangeSuperuserOwnedTarget(t *testing.T) {
 			o := f.everythingOwner(t)
 			target := f.superuserToken(t)
 
-			got, err := f.checker.TokenScopeChangeWithinCeiling(o.ctx(),
+			got, err := f.checker.tokenScopeChangeWithinCeiling(o.ctx(),
 				target, tt.change)
 			if err != nil {
-				t.Fatalf("TokenScopeChangeWithinCeiling failed: %v", err)
+				t.Fatalf("tokenScopeChangeWithinCeiling failed: %v", err)
 			}
 			if got != tt.want {
 				t.Errorf("got %v, want %v", got, tt.want)
@@ -128,12 +128,12 @@ func TestTokenScopeChangeNonSuperuserTargetStillWidens(t *testing.T) {
 		t.Fatalf("SetTokenAdminScope failed: %v", err)
 	}
 
-	got, err := f.checker.TokenScopeChangeWithinCeiling(o.ctx(), target,
+	got, err := f.checker.tokenScopeChangeWithinCeiling(o.ctx(), target,
 		TokenScopeChange{AdminPermissions: []string{AdminPermissionWildcard}})
 	if err != nil || !got {
 		t.Errorf("Expected the widening to be allowed, got %v, %v", got, err)
 	}
-	got, err = f.checker.TokenScopeClearWithinCeiling(o.ctx(), target, nil)
+	got, err = f.checker.tokenScopeClearWithinCeiling(o.ctx(), target, nil)
 	if err != nil || !got {
 		t.Errorf("Expected the clear to be allowed, got %v, %v", got, err)
 	}
@@ -148,9 +148,9 @@ func TestTokenScopeClearSuperuserOwnedTarget(t *testing.T) {
 	o := f.everythingOwner(t)
 	target := f.superuserToken(t)
 
-	got, err := f.checker.TokenScopeClearWithinCeiling(o.ctx(), target, nil)
+	got, err := f.checker.tokenScopeClearWithinCeiling(o.ctx(), target, nil)
 	if err != nil {
-		t.Fatalf("TokenScopeClearWithinCeiling failed: %v", err)
+		t.Fatalf("tokenScopeClearWithinCeiling failed: %v", err)
 	}
 	if got {
 		t.Error("A token that is not a superuser's must not clear a " +
@@ -160,7 +160,7 @@ func TestTokenScopeClearSuperuserOwnedTarget(t *testing.T) {
 	if err := f.store.AsActor(systemActor).ClearTokenScope(f.tokenID, true, AnyTokenOwner(), nil); err != nil {
 		t.Fatalf("ClearTokenScope failed: %v", err)
 	}
-	got, err = f.checker.TokenScopeClearWithinCeiling(f.tokenCtx(), target, nil)
+	got, err = f.checker.tokenScopeClearWithinCeiling(f.tokenCtx(), target, nil)
 	if err != nil || !got {
 		t.Errorf("Expected an unscoped superuser token to clear it, got %v, %v",
 			got, err)
@@ -177,7 +177,7 @@ func TestTokenScopeChangeOwnerUnreadable(t *testing.T) {
 	target := f.targetToken(t)
 	mustExec(t, f.store, "ALTER TABLE users RENAME TO users_gone")
 
-	_, err := f.checker.TokenScopeChangeWithinCeiling(o.ctx(), target,
+	_, err := f.checker.tokenScopeChangeWithinCeiling(o.ctx(), target,
 		TokenScopeChange{AdminPermissions: []string{PermManageUsers}})
 	if !errors.Is(err, ErrTokenScopeUnreadable) {
 		t.Errorf("Expected ErrTokenScopeUnreadable, got %v", err)

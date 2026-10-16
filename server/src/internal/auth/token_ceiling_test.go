@@ -602,10 +602,10 @@ func TestTokenScopeChangeConnections(t *testing.T) {
 					t.Fatalf("SetTokenConnectionScope failed: %v", err)
 				}
 			}
-			got, err := f.checker.TokenScopeChangeWithinCeiling(f.tokenCtx(),
+			got, err := f.checker.tokenScopeChangeWithinCeiling(f.tokenCtx(),
 				target, TokenScopeChange{Connections: tt.change})
 			if err != nil {
-				t.Fatalf("TokenScopeChangeWithinCeiling failed: %v", err)
+				t.Fatalf("tokenScopeChangeWithinCeiling failed: %v", err)
 			}
 			if got != tt.want {
 				t.Errorf("got %v, want %v", got, tt.want)
@@ -665,10 +665,10 @@ func TestTokenScopeChangeNamedKinds(t *testing.T) {
 					t.Fatalf("SetTokenAdminScope failed: %v", err)
 				}
 			}
-			got, err := f.checker.TokenScopeChangeWithinCeiling(f.tokenCtx(),
+			got, err := f.checker.tokenScopeChangeWithinCeiling(f.tokenCtx(),
 				target, tt.change)
 			if err != nil {
-				t.Fatalf("TokenScopeChangeWithinCeiling failed: %v", err)
+				t.Fatalf("tokenScopeChangeWithinCeiling failed: %v", err)
 			}
 			if got != tt.want {
 				t.Errorf("got %v, want %v", got, tt.want)
@@ -683,14 +683,14 @@ func TestTokenScopeChangeSelf(t *testing.T) {
 	f, cleanup := newGrantScopeFixture(t)
 	defer cleanup()
 	ctx := f.tokenCtx()
-	narrow, err := f.checker.TokenScopeChangeWithinCeiling(ctx, f.tokenID,
+	narrow, err := f.checker.tokenScopeChangeWithinCeiling(ctx, f.tokenID,
 		TokenScopeChange{Connections: []ScopedConnection{{ConnectionID: 7,
 			AccessLevel: AccessLevelRead}}})
 	if err != nil || !narrow {
 		t.Errorf("Narrowing its own scope should be allowed, got %v (%v)",
 			narrow, err)
 	}
-	widen, err := f.checker.TokenScopeChangeWithinCeiling(ctx, f.tokenID,
+	widen, err := f.checker.tokenScopeChangeWithinCeiling(ctx, f.tokenID,
 		TokenScopeChange{Connections: []ScopedConnection{{ConnectionID: 7,
 			AccessLevel: AccessLevelReadWrite}}})
 	if err != nil || widen {
@@ -702,7 +702,7 @@ func TestTokenScopeChangeSelf(t *testing.T) {
 	if err := f.store.SetUserSuperuser("svc-actor", true); err != nil {
 		t.Fatalf("SetUserSuperuser failed: %v", err)
 	}
-	clear, err := f.checker.TokenScopeClearWithinCeiling(ctx, f.tokenID,
+	clear, err := f.checker.tokenScopeClearWithinCeiling(ctx, f.tokenID,
 		f.lister)
 	if err != nil || clear {
 		t.Errorf("Clearing its own scope should be refused, got %v (%v)",
@@ -726,14 +726,14 @@ func TestTokenScopeChangeOrphanedMCPRows(t *testing.T) {
 	mustExec(t, f.store,
 		"DELETE FROM mcp_privilege_identifiers WHERE identifier = 'gone'")
 
-	got, err := f.checker.TokenScopeChangeWithinCeiling(f.tokenCtx(), target,
+	got, err := f.checker.tokenScopeChangeWithinCeiling(f.tokenCtx(), target,
 		TokenScopeChange{MCPPrivileges: []string{"other"}})
 	if err != nil || got {
 		t.Errorf("An uncovered item should be refused, got %v (%v)", got, err)
 	}
 	// The target's owner holds no MCP item, so clearing hands it
 	// nothing and is allowed.
-	got, err = f.checker.TokenScopeClearWithinCeiling(f.tokenCtx(), target,
+	got, err = f.checker.tokenScopeClearWithinCeiling(f.tokenCtx(), target,
 		f.lister)
 	if err != nil || !got {
 		t.Errorf("Clearing should be allowed, got %v (%v)", got, err)
@@ -746,23 +746,23 @@ func TestTokenScopeChangeOrphanedMCPRows(t *testing.T) {
 func TestTokenScopeChangeMissingAndUnreadable(t *testing.T) {
 	f, cleanup := newGrantScopeFixture(t)
 	defer cleanup()
-	got, err := f.checker.TokenScopeChangeWithinCeiling(f.tokenCtx(), 9999,
+	got, err := f.checker.tokenScopeChangeWithinCeiling(f.tokenCtx(), 9999,
 		TokenScopeChange{})
 	if err != nil || got {
 		t.Errorf("A missing token should be refused, got %v (%v)", got, err)
 	}
-	got, err = f.checker.TokenScopeClearWithinCeiling(f.tokenCtx(), 9999,
+	got, err = f.checker.tokenScopeClearWithinCeiling(f.tokenCtx(), 9999,
 		f.lister)
 	if err != nil || got {
 		t.Errorf("A missing token should be refused, got %v (%v)", got, err)
 	}
 	for _, check := range []func() (bool, error){
 		func() (bool, error) {
-			return f.checker.TokenScopeChangeWithinCeiling(sessionCtx(), 9999,
+			return f.checker.tokenScopeChangeWithinCeiling(sessionCtx(), 9999,
 				TokenScopeChange{})
 		},
 		func() (bool, error) {
-			return f.checker.TokenScopeClearWithinCeiling(sessionCtx(), 9999,
+			return f.checker.tokenScopeClearWithinCeiling(sessionCtx(), 9999,
 				nil)
 		},
 	} {
@@ -778,12 +778,12 @@ func TestTokenScopeChangeMissingAndUnreadable(t *testing.T) {
 			defer cleanup()
 			target := f.targetToken(t)
 			dropAuthTable(t, f.store.db, table)
-			ok, err := f.checker.TokenScopeChangeWithinCeiling(f.tokenCtx(),
+			ok, err := f.checker.tokenScopeChangeWithinCeiling(f.tokenCtx(),
 				target, TokenScopeChange{})
 			if ok || !errors.Is(err, ErrTokenScopeUnreadable) {
 				t.Errorf("got %v (%v), want ErrTokenScopeUnreadable", ok, err)
 			}
-			ok, err = f.checker.TokenScopeClearWithinCeiling(f.tokenCtx(),
+			ok, err = f.checker.tokenScopeClearWithinCeiling(f.tokenCtx(),
 				target, f.lister)
 			if ok || !errors.Is(err, ErrTokenScopeUnreadable) {
 				t.Errorf("clear: got %v (%v), want ErrTokenScopeUnreadable",
@@ -853,10 +853,10 @@ func TestTokenScopeClearWithinCeiling(t *testing.T) {
 					t.Fatalf("SetTokenAdminScope failed: %v", err)
 				}
 			}
-			got, err := f.checker.TokenScopeClearWithinCeiling(f.tokenCtx(),
+			got, err := f.checker.tokenScopeClearWithinCeiling(f.tokenCtx(),
 				target, f.lister)
 			if err != nil {
-				t.Fatalf("TokenScopeClearWithinCeiling failed: %v", err)
+				t.Fatalf("tokenScopeClearWithinCeiling failed: %v", err)
 			}
 			if got != tt.want {
 				t.Errorf("got %v, want %v", got, tt.want)
@@ -872,7 +872,7 @@ func TestTokenScopeClearOwnerReachUnreadable(t *testing.T) {
 	defer cleanup()
 	target := f.targetToken(t)
 	dropAuthTable(t, f.store.db, "group_mcp_privileges")
-	got, err := f.checker.TokenScopeClearWithinCeiling(f.tokenCtx(), target,
+	got, err := f.checker.tokenScopeClearWithinCeiling(f.tokenCtx(), target,
 		f.lister)
 	if got || !errors.Is(err, ErrTokenScopeUnreadable) {
 		t.Errorf("got %v (%v), want ErrTokenScopeUnreadable", got, err)

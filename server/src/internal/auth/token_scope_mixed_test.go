@@ -338,10 +338,10 @@ func TestScopeChangeOverLegacyMixedScope(t *testing.T) {
 			target := f.targetToken(t)
 			insertLegacyConnectionScope(t, f.store, target, tt.stored)
 
-			got, err := f.checker.TokenScopeChangeWithinCeiling(actor.ctx(),
+			got, err := f.checker.tokenScopeChangeWithinCeiling(actor.ctx(),
 				target, TokenScopeChange{Connections: tt.change})
 			if err != nil {
-				t.Fatalf("TokenScopeChangeWithinCeiling failed: %v", err)
+				t.Fatalf("tokenScopeChangeWithinCeiling failed: %v", err)
 			}
 			if got != tt.want {
 				t.Errorf("Expected %v, got %v", tt.want, got)

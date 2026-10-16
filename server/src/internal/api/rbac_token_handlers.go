@@ -393,7 +393,7 @@ func (h *RBACHandler) tokenOwnerGuard(r *http.Request) auth.TokenOwnerGuard {
 // widening its scope hands that role out, and narrowing or deleting it
 // can lock an administrator out. A token acting on itself is allowed,
 // since it may already narrow or delete itself and
-// TokenScopeChangeWithinCeiling stops it widening itself.
+// JudgeTokenScopeChange stops it widening itself.
 func (h *RBACHandler) superuserOwnerAllowed(r *http.Request,
 	tokenID int64) bool {
 

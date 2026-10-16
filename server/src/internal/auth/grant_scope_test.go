@@ -314,9 +314,9 @@ func TestGrantScopeChecksRefuseWithoutStore(t *testing.T) {
 				"ConnectionInScope":   rc.ConnectionInTokenScope(ctx, 1),
 				"AllConnectionsScope": rc.AllConnectionsInTokenScope(ctx),
 			}
-			checks["ScopeChange"], _ = rc.TokenScopeChangeWithinCeiling(ctx, 1,
+			checks["ScopeChange"], _ = rc.tokenScopeChangeWithinCeiling(ctx, 1,
 				TokenScopeChange{})
-			checks["ScopeClear"], _ = rc.TokenScopeClearWithinCeiling(ctx, 1, lister)
+			checks["ScopeClear"], _ = rc.tokenScopeClearWithinCeiling(ctx, 1, lister)
 			for check, got := range checks {
 				if got {
 					t.Errorf("%s admitted the caller without a store", check)
@@ -344,11 +344,11 @@ func TestGrantScopeChecksRefuseIncompleteToken(t *testing.T) {
 		f.checker.CanDeleteGroup(ctx, f.groupID) {
 		t.Error("A token context without an id should be out of scope")
 	}
-	if ok, err := f.checker.TokenScopeChangeWithinCeiling(ctx, f.tokenID,
+	if ok, err := f.checker.tokenScopeChangeWithinCeiling(ctx, f.tokenID,
 		TokenScopeChange{}); ok || err != nil {
 		t.Errorf("A scope change should be refused, got %v (%v)", ok, err)
 	}
-	if ok, err := f.checker.TokenScopeClearWithinCeiling(ctx, f.tokenID,
+	if ok, err := f.checker.tokenScopeClearWithinCeiling(ctx, f.tokenID,
 		f.lister); ok || err != nil {
 		t.Errorf("A scope clear should be refused, got %v (%v)", ok, err)
 	}
@@ -953,9 +953,9 @@ func TestTokenScopeChecksNilChecker(t *testing.T) {
 					"alice", nil),
 				"GroupWithinTokenScope": checker.GroupWithinTokenScope(ctx, 1),
 			}
-			checks["TokenScopeChangeWithinCeiling"], _ = checker.TokenScopeChangeWithinCeiling(
+			checks["TokenScopeChangeWithinCeiling"], _ = checker.tokenScopeChangeWithinCeiling(
 				ctx, 1, TokenScopeChange{})
-			checks["TokenScopeClearWithinCeiling"], _ = checker.TokenScopeClearWithinCeiling(
+			checks["TokenScopeClearWithinCeiling"], _ = checker.tokenScopeClearWithinCeiling(
 				ctx, 1, nil)
 			for check, allowed := range checks {
 				if allowed {

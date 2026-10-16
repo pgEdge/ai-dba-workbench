@@ -701,27 +701,21 @@ func namesChangeCovered(entries []string, wildcard string,
 	return true
 }
 
-// TokenScopeChangeWithinCeiling reports whether the acting caller may
-// change the scope of token tokenID as given, the acting token's own
-// scope included. Only the kinds the change supplies are judged: what
-// it grants beyond the token's current scope must lie within the acting
+// JudgeTokenScopeChange reports whether the acting caller may change
+// the scope of token tokenID as given, the acting token's own scope
+// included. Only the kinds the change supplies are judged: what it
+// grants beyond the token's current scope must lie within the acting
 // token's ceiling, and what it narrows needs read on each connection
 // concerned (see connectionsChangeCovered). A token that does not exist
 // is refused; err is ErrTokenScopeUnreadable when the stored scope
 // cannot be read.
-func (rc *RBACChecker) TokenScopeChangeWithinCeiling(ctx context.Context,
-	tokenID int64, change TokenScopeChange) (bool, error) {
-
-	allowed, _, err := rc.JudgeTokenScopeChange(ctx, tokenID, change)
-	return allowed, err
-}
-
-// JudgeTokenScopeChange is TokenScopeChangeWithinCeiling that also
-// returns the stored scope it judged the change against, for the write
-// to pass to ActorStore.SetTokenScope, which refuses it with
+//
+// It also returns the stored scope it judged the change against, for
+// the write to pass to ActorStore.SetTokenScope, which refuses it with
 // ErrTokenScopeChanged should the scope have changed since. The
 // snapshot is nil for a session, which has no ceiling, and whenever the
-// change is refused.
+// change is refused. There is deliberately no variant without the
+// snapshot, so that no write can skip that check.
 func (rc *RBACChecker) JudgeTokenScopeChange(ctx context.Context,
 	tokenID int64, change TokenScopeChange) (bool, *TokenScopeSnapshot,
 	error) {
@@ -768,22 +762,14 @@ func (c *tokenCeiling) changeWithinCeiling(stored *storedTokenScope,
 			stored.admin, stored.adminRestricted, c.coversAdmin)
 }
 
-// TokenScopeClearWithinCeiling reports whether the acting caller may
-// clear the scope of token tokenID, which leaves it with its owner's
-// whole access. Each kind the token is restricted in today must then
-// have the owner's whole reach in that kind within the acting token's
-// ceiling, and each connection entry dropped needs read, as any
-// narrowing does. Errors are as for TokenScopeChangeWithinCeiling.
-func (rc *RBACChecker) TokenScopeClearWithinCeiling(ctx context.Context,
-	tokenID int64, lister ConnectionVisibilityLister) (bool, error) {
-
-	allowed, _, err := rc.JudgeTokenScopeClear(ctx, tokenID, lister)
-	return allowed, err
-}
-
-// JudgeTokenScopeClear is TokenScopeClearWithinCeiling that also
-// returns the stored scope it judged the clear against, for the write
-// to pass to ActorStore.ClearTokenScope; see JudgeTokenScopeChange.
+// JudgeTokenScopeClear reports whether the acting caller may clear the
+// scope of token tokenID, which leaves it with its owner's whole
+// access. Each kind the token is restricted in today must then have the
+// owner's whole reach in that kind within the acting token's ceiling,
+// and each connection entry dropped needs read, as any narrowing does.
+// Errors are as for JudgeTokenScopeChange, and it likewise returns the
+// stored scope it judged the clear against, for the write to pass to
+// ActorStore.ClearTokenScope.
 func (rc *RBACChecker) JudgeTokenScopeClear(ctx context.Context,
 	tokenID int64, lister ConnectionVisibilityLister) (bool,
 	*TokenScopeSnapshot, error) {
@@ -815,7 +801,7 @@ func (c *tokenCeiling) clearWithinCeiling(stored *storedTokenScope,
 	owner *principalReach, lister ConnectionVisibilityLister) bool {
 
 	// Clearing any restriction of a superuser's token widens it towards
-	// superuser access, as in TokenScopeChangeWithinCeiling.
+	// superuser access, as in JudgeTokenScopeChange.
 	if owner.superuser && !c.holdsSuperuser() &&
 		(stored.connsRestricted || stored.mcpRestricted ||
 			stored.adminRestricted) {

@@ -123,9 +123,9 @@ func TestSettledUncut(t *testing.T) {
 		if notIdempotent[tc.Name] {
 			seen++
 		}
-		settled := redact.SettledUncut(tc.In)
-		if redact.Text(settled) != settled || redacttest.SecretLeft(settled) {
-			t.Errorf("%s: SettledUncut gave %q", tc.Name, settled)
+		settled, ok := redact.SettledUncut(tc.In)
+		if !ok || redact.Text(settled) != settled || redacttest.SecretLeft(settled) {
+			t.Errorf("%s: SettledUncut gave %q, settled %v", tc.Name, settled, ok)
 		}
 	}
 	if seen != len(notIdempotent) {
@@ -138,8 +138,28 @@ func TestSettledUncut(t *testing.T) {
 	if redact.Text(twice) == twice {
 		t.Error("the third-pass input settles in two passes")
 	}
-	if settled := redact.SettledUncut(third); redact.Text(settled) != settled {
-		t.Errorf("the third-pass input did not settle: %q", settled)
+	if settled, ok := redact.SettledUncut(third); redact.Text(settled) != settled || !ok {
+		t.Errorf("the third-pass input did not settle: %q, settled %v", settled, ok)
+	}
+
+}
+
+// TestMaskStoredText checks stored text is masked as SettledUncut masks
+// it, and text longer than MaxRewriteLength bytes is replaced whole
+// without being masked.
+func TestMaskStoredText(t *testing.T) {
+	in := "could not connect: password=example-secret"
+	want, _ := redact.SettledUncut(in)
+	if got, ok := redact.MaskStoredText(in); got != want || !ok {
+		t.Errorf("short text: got %q, settled %v", got, ok)
+	}
+	long := strings.Repeat("x", redact.MaxRewriteLength+1)
+	start := time.Now()
+	if got, ok := redact.MaskStoredText(long); got != redact.RedactedValue || !ok {
+		t.Errorf("text over MaxRewriteLength bytes: got %.40q, settled %v", got, ok)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("text over MaxRewriteLength bytes was masked, taking %s", elapsed)
 	}
 }
 
@@ -166,18 +186,27 @@ func TestTextTruncates(t *testing.T) {
 	}
 }
 
+// uncutMaskers are the maskers that do not cut their input short.
+var uncutMaskers = map[string]func(string) string{
+	"TextUncut": redact.TextUncut,
+	"SettledUncut": func(s string) string {
+		masked, _ := redact.SettledUncut(s)
+		return masked
+	},
+}
+
 // TestUncutKeepsLongText checks TextUncut and SettledUncut mask a value
 // longer than MaxTextLength without cutting it, both before and after
 // that point, and match Text on shorter values.
 func TestUncutKeepsLongText(t *testing.T) {
 	tail := strings.Repeat("é", redact.MaxTextLength)
 	plain := "could not connect: " + tail
-	if redact.TextUncut(plain) != plain || redact.SettledUncut(plain) != plain {
+	if settled, _ := redact.SettledUncut(plain); redact.TextUncut(plain) != plain || settled != plain {
 		t.Error("a long value with nothing to mask was changed")
 	}
 	in := "password=example-secret " + tail + " password=example-secret"
 	want := "password=******** " + tail + " password=********"
-	for name, f := range map[string]func(string) string{"TextUncut": redact.TextUncut, "SettledUncut": redact.SettledUncut} {
+	for name, f := range uncutMaskers {
 		if got := f(in); got != want {
 			t.Errorf("%s: got %d characters, want %d, masked at both ends", name,
 				utf8.RuneCountInString(got), utf8.RuneCountInString(want))
@@ -202,6 +231,27 @@ func TestTextAdversarial(t *testing.T) {
 		if elapsed := time.Since(start); elapsed > 10*time.Second {
 			t.Errorf("%s took %s", name, elapsed)
 		}
+	}
+}
+
+// TestUncutAdversarial masks inputs built to make a regular expression
+// engine backtrack with the maskers that do not cut them short, at
+// adversarialUncutSize bytes: 4 MiB, four times what MaskStoredText
+// gives them, or 64 KiB under the race detector, which makes Go's
+// engine about fifteen times slower. The engine is linear in the
+// input, so each finishes within the bound.
+func TestUncutAdversarial(t *testing.T) {
+	for name, in := range redacttest.AdversarialInputs(adversarialUncutSize) {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			for masker, f := range uncutMaskers {
+				start := time.Now()
+				f(in)
+				if elapsed := time.Since(start); elapsed > 2*time.Minute {
+					t.Errorf("%s took %s", masker, elapsed)
+				}
+			}
+		})
 	}
 }
 

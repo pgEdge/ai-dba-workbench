@@ -145,6 +145,10 @@ func TestMigrationV27_MasksConnectionAlerts(t *testing.T) {
 	long := "connection refused: " + tail
 	want[insertV27Alert(t, pool, connID, "connection", "cleared", long)] = long
 	want[insertV27Alert(t, pool, connID, "connection", "active", raw+tail+raw)] = masked + tail + masked
+	// A description longer than redact.MaxRewriteLength bytes is replaced
+	// whole rather than masked, even with nothing in it to mask.
+	oversized := strings.Repeat("x", redact.MaxRewriteLength+1)
+	want[insertV27Alert(t, pool, connID, "connection", "cleared", oversized)] = redact.RedactedValue
 
 	if err := runMigrationV27(t, pool, ""); err != nil {
 		t.Fatalf("migration 27 failed: %v", err)

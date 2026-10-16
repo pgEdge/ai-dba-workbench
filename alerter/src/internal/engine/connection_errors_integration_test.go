@@ -11,6 +11,7 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -200,6 +201,7 @@ func TestEvaluateConnectionErrors_MasksOpenAlerts(t *testing.T) {
 		"blackout":     {blackoutID, "active", raw},
 		"cleared":      {ackID, "cleared", raw},
 		"long":         {blackoutID, "acknowledged", raw + tail + raw},
+		"oversized":    {blackoutID, "acknowledged", raw + strings.Repeat("x", redact.MaxRewriteLength)},
 	} {
 		var id int64
 		if err := pool.QueryRow(ctx, `
@@ -214,6 +216,7 @@ func TestEvaluateConnectionErrors_MasksOpenAlerts(t *testing.T) {
 	engine.evaluateConnectionErrors(ctx)
 	for name, want := range map[string]string{
 		"acknowledged": masked, "blackout": masked, "cleared": raw, "long": masked + tail + masked,
+		"oversized": redact.RedactedValue,
 	} {
 		var got string
 		if err := pool.QueryRow(ctx, `SELECT description FROM alerts WHERE id = $1`,
@@ -251,6 +254,39 @@ func TestEvaluateConnectionErrors_MasksOpenAlerts(t *testing.T) {
 	}
 	if !strings.Contains(logged, "Failed to mask connection alert") {
 		t.Errorf("a refused rewrite should be logged: %q", logged)
+	}
+}
+
+// TestMaskOpenConnectionAlerts_LogsUnsettled checks a description whose
+// masking has not settled is logged, and still written. No known input
+// fails to settle, so the masker is replaced with one that never does.
+func TestMaskOpenConnectionAlerts_LogsUnsettled(t *testing.T) {
+	engine, _, pool, cleanup := newEngineSpockTestEnv(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	raw := `could not connect: password=example-secret dbname=db`
+	masked := `could not connect: password=******** dbname=db`
+	connID := insertMonitoredConnection(t, pool, "conn-error-unsettled", &raw)
+	var id int64
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO alerts (alert_type, connection_id, severity, title, description, status, triggered_at)
+		VALUES ('connection', $1, 'critical', 'Connection error', $2, 'acknowledged', NOW()) RETURNING id`,
+		connID, raw).Scan(&id); err != nil {
+		t.Fatalf("failed to insert alert: %v", err)
+	}
+
+	saved := maskStoredText
+	t.Cleanup(func() { maskStoredText = saved })
+	maskStoredText = func(string) (string, bool) { return masked, false }
+	logged := captureStderr(t, func() { engine.maskOpenConnectionAlerts(ctx, nil) })
+	if want := fmt.Sprintf("Masking connection alert %d did not settle", id); !strings.Contains(logged, want) {
+		t.Errorf("an unsettled description should be logged: %q", logged)
+	}
+	var got string
+	if err := pool.QueryRow(ctx, `SELECT description FROM alerts WHERE id = $1`, id).Scan(&got); err != nil ||
+		got != masked {
+		t.Errorf("an unsettled description should still be written: %q (%v)", got, err)
 	}
 }
 

@@ -662,15 +662,22 @@ func stalenessAlertDescription(probeName, connectionName string,
 		probeName, connectionName, elapsedMinutes, thresholdMinutes)
 }
 
+// maskStoredText masks a stored alert description. It is a variable so
+// a test can give maskOpenConnectionAlerts a description that does not
+// settle, which no known input does.
+var maskStoredText = redact.MaskStoredText
+
 // maskOpenConnectionAlerts rewrites the description of every connection
 // alert that has not been cleared, and holds text the server's rules
 // mask, with the masked text, skipping the alerts in owned, whose
 // description evaluateConnectionErrors has just set from the connection
-// error. It masks with redact.SettledUncut, because redact.Text can
+// error. It masks with redact.MaskStoredText, because redact.Text can
 // mask its own output further and the next pass would otherwise rewrite
 // the alert again, and because a stored description longer than
-// redact.MaxTextLength must keep its end. A failure is logged and left
-// for the next pass.
+// redact.MaxTextLength must keep its end; a description longer than
+// redact.MaxRewriteLength bytes is replaced whole. A description that
+// masking has not settled, which the next pass would rewrite again, is
+// logged. A failure is logged and left for the next pass.
 func (e *Engine) maskOpenConnectionAlerts(ctx context.Context, owned map[int64]bool) {
 	alerts, err := e.datastore.GetOpenConnectionAlertDescriptions(ctx)
 	if err != nil {
@@ -681,9 +688,12 @@ func (e *Engine) maskOpenConnectionAlerts(ctx context.Context, owned map[int64]b
 		if owned[a.ID] {
 			continue
 		}
-		masked := redact.SettledUncut(a.Description)
+		masked, settled := maskStoredText(a.Description)
 		if masked == a.Description {
 			continue
+		}
+		if !settled {
+			e.log("WARNING: Masking connection alert %d did not settle; the next pass will mask it again", a.ID)
 		}
 		if err := e.datastore.UpdateAlertDescription(ctx, a.ID, masked); err != nil {
 			e.log("ERROR: Failed to mask connection alert %d: %v", a.ID, err)

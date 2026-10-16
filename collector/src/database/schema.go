@@ -4182,9 +4182,11 @@ func queryStrings(ctx context.Context, tx pgx.Tx, sql string, args ...any) ([]st
 
 // maskConnectionAlertDescriptions rewrites the description of every
 // connection alert that holds text the server's rules mask with the
-// masked text. It masks with redact.SettledUncut, which does not cut a
-// long description short, and leaves the text as the alerter's later
-// passes leave it, so they find nothing further to rewrite.
+// masked text. It masks with redact.MaskStoredText, which does not cut
+// a long description short, and leaves the text as the alerter's later
+// passes leave it, so they find nothing further to rewrite; a
+// description longer than redact.MaxRewriteLength bytes is replaced
+// whole, so no one description can hold up the migration.
 func maskConnectionAlertDescriptions(ctx context.Context, tx pgx.Tx) error {
 	rows, err := tx.Query(ctx, `
 		SELECT id, description FROM alerts
@@ -4205,7 +4207,7 @@ func maskConnectionAlertDescriptions(ctx context.Context, tx pgx.Tx) error {
 			rows.Close()
 			return fmt.Errorf("failed to read connection alerts: %w", err)
 		}
-		if m := redact.SettledUncut(c.description); m != c.description {
+		if m, _ := redact.MaskStoredText(c.description); m != c.description {
 			changes = append(changes, change{c.id, m})
 		}
 	}

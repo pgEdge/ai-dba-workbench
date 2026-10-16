@@ -150,8 +150,16 @@ const (
 // time a crafted value can take to mask is bounded (about a second at
 // most in PostgreSQL). Text longer than this is returned cut short.
 // TextUncut and SettledUncut do not cut: Go's regular expression engine
-// runs in time linear in the input, so the bound is not needed there.
+// runs in time linear in the input, so their time is bounded by the
+// length of what they are given, which MaskStoredText limits to
+// MaxRewriteLength.
 const MaxTextLength = 65536
+
+// MaxRewriteLength is the length, in bytes, of the longest text
+// MaskStoredText masks with the patterns. Longer text is replaced whole
+// by RedactedValue rather than masked, so the time one stored value can
+// take a migration or an alerter pass is bounded.
+const MaxRewriteLength = 1 << 20
 
 // textRedactions are the usual places a password appears in SQL text,
 // connection strings, shell commands and row data. They are applied in
@@ -303,17 +311,31 @@ const maxSettlePasses = 3
 // (CONNECTION E'host=h password=********' loses its last quote). A
 // caller that rewrites stored text in place, and masks it again on a
 // later pass, uses SettledUncut, so that the later pass finds nothing
-// to rewrite and the end of a long value is never lost.
-func SettledUncut(s string) string {
+// to rewrite and the end of a long value is never lost. settled is
+// false when masking the result again would still change it, so a later
+// pass would rewrite it again; that takes one more pass, run only when
+// the last one changed the text.
+func SettledUncut(s string) (masked string, settled bool) {
 	s = TextUncut(s)
 	for i := 1; i < maxSettlePasses; i++ {
 		next := TextUncut(s)
 		if next == s {
-			break
+			return s, true
 		}
 		s = next
 	}
-	return s
+	return s, TextUncut(s) == s
+}
+
+// MaskStoredText returns stored text masked for writing back in its
+// place: as SettledUncut masks it, or, for text longer than
+// MaxRewriteLength bytes, replaced whole by RedactedValue. settled is
+// SettledUncut's, and true for text replaced whole.
+func MaskStoredText(s string) (masked string, settled bool) {
+	if len(s) > MaxRewriteLength {
+		return RedactedValue, true
+	}
+	return SettledUncut(s)
 }
 
 // truncate returns s cut to at most n characters (runes).

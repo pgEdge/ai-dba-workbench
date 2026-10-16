@@ -695,34 +695,12 @@ func (s *Server) cleanupExpiredConnections(hashes []string) {
 
 // Run starts the HTTP server and blocks until shutdown
 func (s *Server) Run(flags *Flags, configPath string) error {
-	// Create HTTP server configuration
-	httpConfig := &mcp.HTTPConfig{
-		Addr:           s.cfg.HTTP.Address,
-		TLSEnable:      s.cfg.HTTP.TLS.Enabled,
-		CertFile:       s.cfg.HTTP.TLS.CertFile,
-		KeyFile:        s.cfg.HTTP.TLS.KeyFile,
-		ChainFile:      s.cfg.HTTP.TLS.ChainFile,
-		AuthStore:      s.authStore,
-		Debug:          s.debug,
-		TrustedProxies: s.cfg.HTTP.TrustedProxies,
-		CORSOrigin:     s.cfg.HTTP.CORSOrigin,
-		HSTSEnabled:    s.cfg.HTTP.HSTSEnabled,
-	}
-
-	// Create secure IP extractor for rate limiting
-	// This ensures X-Forwarded-For headers are only trusted from configured proxies
-	ipExtractor := auth.NewIPExtractor(s.cfg.HTTP.TrustedProxies)
-
 	// The reloadable configuration is created before the handlers so
 	// that those which apply a reload live can read through it; the
 	// SIGHUP listener below is what drives it.
 	reloadableCfg := config.NewReloadableConfig(s.cfg, configPath, flags.ToReloadCLIFlags())
 
-	// Setup HTTP handlers
-	httpConfig.SetupHandlers = SetupHandlers(s.handlerDependencies(ipExtractor, reloadableCfg))
-
-	// End the open overview SSE streams when the drain starts.
-	httpConfig.OnShutdown = s.overviewStreamCloser()
+	httpConfig := s.newHTTPConfig(reloadableCfg)
 
 	// Log startup information
 	s.logStartupInfo()
@@ -736,6 +714,32 @@ func (s *Server) Run(flags *Flags, configPath string) error {
 
 	// Run the server
 	return s.serveHTTP(httpConfig, shutdown)
+}
+
+// newHTTPConfig builds the HTTP server configuration Run serves,
+// including the handlers and the hook that ends the open overview SSE
+// streams when the drain starts. It is separate from Run so that tests
+// can check the wiring without starting a listener.
+func (s *Server) newHTTPConfig(reloadableCfg *config.ReloadableConfig) *mcp.HTTPConfig {
+	// Create secure IP extractor for rate limiting
+	// This ensures X-Forwarded-For headers are only trusted from configured proxies
+	ipExtractor := auth.NewIPExtractor(s.cfg.HTTP.TrustedProxies)
+
+	return &mcp.HTTPConfig{
+		Addr:           s.cfg.HTTP.Address,
+		TLSEnable:      s.cfg.HTTP.TLS.Enabled,
+		CertFile:       s.cfg.HTTP.TLS.CertFile,
+		KeyFile:        s.cfg.HTTP.TLS.KeyFile,
+		ChainFile:      s.cfg.HTTP.TLS.ChainFile,
+		AuthStore:      s.authStore,
+		Debug:          s.debug,
+		TrustedProxies: s.cfg.HTTP.TrustedProxies,
+		CORSOrigin:     s.cfg.HTTP.CORSOrigin,
+		HSTSEnabled:    s.cfg.HTTP.HSTSEnabled,
+		SetupHandlers:  SetupHandlers(s.handlerDependencies(ipExtractor, reloadableCfg)),
+		// End the open overview SSE streams when the drain starts.
+		OnShutdown: s.overviewStreamCloser(),
+	}
 }
 
 // serveHTTP runs the HTTP server until it stops, and returns only once

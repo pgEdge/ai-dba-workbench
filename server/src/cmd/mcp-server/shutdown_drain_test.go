@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
+	"github.com/pgedge/ai-workbench/server/internal/config"
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
 	"github.com/pgedge/ai-workbench/server/internal/overview"
 )
@@ -414,6 +415,53 @@ func TestOverviewStreamCloserWithoutAHub(t *testing.T) {
 	s := &Server{}
 	if s.overviewStreamCloser() != nil {
 		t.Error("overviewStreamCloser returned a function without a hub")
+	}
+}
+
+// TestNewHTTPConfigInstallsTheOverviewStreamCloser checks the wiring
+// Run serves: the configuration's shutdown hook ends every open
+// overview stream, so that an open AI Overview panel cannot hold the
+// drain to the grace period.
+func TestNewHTTPConfigInstallsTheOverviewStreamCloser(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.HTTP.Address = "127.0.0.1:0"
+	s := &Server{cfg: cfg, overviewHub: overview.NewHub()}
+
+	httpConfig := s.newHTTPConfig(config.NewReloadableConfig(cfg, "", config.CLIFlags{}))
+
+	if httpConfig.Addr != cfg.HTTP.Address {
+		t.Errorf("Addr = %q; want %q", httpConfig.Addr, cfg.HTTP.Address)
+	}
+	if httpConfig.SetupHandlers == nil {
+		t.Error("newHTTPConfig did not set the handlers")
+	}
+	if httpConfig.OnShutdown == nil {
+		t.Fatal("newHTTPConfig did not install a shutdown hook")
+	}
+
+	sub := s.overviewHub.Subscribe("")
+	httpConfig.OnShutdown()
+
+	select {
+	case _, ok := <-sub.C:
+		if ok {
+			t.Error("the shutdown hook sent an update instead of ending the stream")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the shutdown hook did not end the open overview stream")
+	}
+}
+
+// TestNewHTTPConfigWithoutAHub covers a server whose overview generator
+// is not running: there are no streams to end, so there is no hook.
+func TestNewHTTPConfigWithoutAHub(t *testing.T) {
+	cfg := &config.Config{}
+	s := &Server{cfg: cfg}
+
+	httpConfig := s.newHTTPConfig(config.NewReloadableConfig(cfg, "", config.CLIFlags{}))
+
+	if httpConfig.OnShutdown != nil {
+		t.Error("newHTTPConfig installed a shutdown hook without a hub")
 	}
 }
 

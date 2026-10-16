@@ -248,14 +248,20 @@ func TestHandleHTTPRequestBodyErrors(t *testing.T) {
 // request with debug logging and tracing enabled, and checks that the
 // trace file records both. Tracing is process-wide and cannot be
 // turned off again, so this enables it for the rest of the package's
-// tests, which do not depend on it.
+// tests, which do not depend on it. The trace file is set up once in
+// TestMain, so a repeated run appends to it; only the lines this run
+// adds are counted.
 func TestHandleHTTPRequestDebugAndTracing(t *testing.T) {
-	traceFile := filepath.Join(t.TempDir(), "trace.jsonl")
 	if err := tracing.Initialize(traceFile); err != nil {
 		t.Fatalf("failed to initialize tracing: %v", err)
 	}
 	if !tracing.IsEnabled() {
 		t.Skip("tracing was already initialized without a file in this process")
+	}
+
+	before, err := os.ReadFile(traceFile)
+	if err != nil {
+		t.Fatalf("failed to read the trace file: %v", err)
 	}
 
 	server := NewServer(&mockToolProvider{})
@@ -272,8 +278,9 @@ func TestHandleHTTPRequestDebugAndTracing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to read the trace file: %v", err)
 	}
-	if got := strings.Count(string(data), "\n"); got < 4 {
-		t.Errorf("trace file has %d entries, want a request and a response for each call:\n%s", got, data)
+	added := data[len(before):]
+	if got := strings.Count(string(added), "\n"); got < 4 {
+		t.Errorf("this run added %d trace entries, want a request and a response for each call:\n%s", got, added)
 	}
 }
 

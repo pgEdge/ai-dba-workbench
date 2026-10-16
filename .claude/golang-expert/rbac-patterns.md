@@ -919,8 +919,10 @@ the last in-flight handler has recorded (issue #650). Do not let the
 run path return before `waitForDrain`. `http.Server.Shutdown` cancels
 no request, so a handler that waits for its client, such as the
 overview SSE stream, must be ended through `mcp.HTTPConfig.OnShutdown`
-(`Run` sets it to `overviewHub.CloseAll` through
-`overviewStreamCloser`), or every drain runs the full grace period.
+(`Server.newHTTPConfig`, which builds the config `Run` serves, sets it
+to `overviewHub.CloseAll` through `overviewStreamCloser`, and
+`TestNewHTTPConfigInstallsTheOverviewStreamCloser` locks that in), or
+every drain runs the full grace period.
 The SIGTERM handler's closer flushes too, but only as a fallback when
 main has not returned within `shutdownCleanupGrace` of the drain or a
 further signal arrives; whichever flush runs second finds nothing to

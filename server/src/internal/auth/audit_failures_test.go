@@ -336,9 +336,10 @@ func TestFailureKeyBoundsAddress(t *testing.T) {
 	long := strings.Repeat("a", 4096)
 	key := failureKeyOf(Actor{IP: long}, "user.delete", "user", nil, "",
 		"boom")
-	if len(key.actorIP) != maxAuditIPLen {
-		t.Errorf("Expected the address capped at %d bytes, got %d",
-			maxAuditIPLen, len(key.actorIP))
+	// Compare against the literal so that loosening the cap fails here.
+	if len(key.actorIP) != 64 {
+		t.Errorf("Expected the address capped at 64 bytes, got %d",
+			len(key.actorIP))
 	}
 	if ev := key.event(nil); ev.ActorIP != key.actorIP {
 		t.Errorf("Expected the event to carry the capped address, got %d bytes",

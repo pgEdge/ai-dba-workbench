@@ -1289,23 +1289,16 @@ func writeAckHistory(sb *strings.Builder, ackHistory []*database.AcknowledgedAno
 	}
 }
 
-// writeAckEntry appends one acknowledgement: its note, any false
-// positive marker, who acknowledged it and when, and the original alert.
+// writeAckEntry appends one acknowledgement as named fields (its note,
+// false positive flag, who acknowledged it and when), then the original
+// alert. Named fields, as in buildReevaluationPrompt, keep a quoted note
+// from reading like a marker or attribution that follows it.
 func writeAckEntry(sb *strings.Builder, ack *database.AcknowledgedAnomalyAlert) {
-	if ack.AckMessage != nil && *ack.AckMessage != "" {
-		fmt.Fprintf(sb, "- Note: %s", promptValue(*ack.AckMessage))
-	} else {
-		sb.WriteString("- (no message)")
-	}
-	if ack.FalsePositive {
-		sb.WriteString(" [MARKED AS FALSE POSITIVE]")
-	}
-	if ack.AcknowledgedBy != nil {
-		fmt.Fprintf(sb, " (by %s", promptValue(*ack.AcknowledgedBy))
-		if ack.AcknowledgedAt != nil {
-			fmt.Fprintf(sb, " at %s", ack.AcknowledgedAt.Format(time.RFC3339))
-		}
-		sb.WriteString(")")
+	msg, ackBy := ackNoteAndUser(ack)
+	fmt.Fprintf(sb, "- message=%s, false_positive=%t, acknowledged_by=%s",
+		msg, ack.FalsePositive, ackBy)
+	if ack.AcknowledgedAt != nil {
+		fmt.Fprintf(sb, ", acknowledged_at=%s", ack.AcknowledgedAt.Format(time.RFC3339))
 	}
 	sb.WriteString("\n")
 	if ack.MetricValue != nil {

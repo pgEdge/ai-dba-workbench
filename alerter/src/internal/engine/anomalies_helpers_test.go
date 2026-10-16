@@ -651,7 +651,7 @@ func TestBuildClassificationPromptWithAllInputs(t *testing.T) {
 		// Ack history
 		"Past User Feedback",
 		"Known maintenance window",
-		"FALSE POSITIVE",
+		"false_positive=true",
 		"admin",
 
 		// Cluster context

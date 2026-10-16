@@ -10,7 +10,11 @@
 
 package engine
 
-import "strconv"
+import (
+	"strconv"
+
+	"github.com/pgedge/ai-workbench/alerter/internal/database"
+)
 
 // promptDataNotice tells the model how to read the values promptValue
 // renders. It follows the opening line of each Tier 3 and re-evaluation
@@ -25,9 +29,23 @@ const promptDataNotice = "Values shown in double quotes are escaped text taken f
 // non-printable rune are escaped: control characters, including the line
 // breaks \n, \r, NEL, U+2028 and U+2029, and format characters such as
 // bidirectional overrides. The value therefore stays on its own line
-// inside its quotes, and cannot start a Markdown header or otherwise pass
-// for prompt text (GitHub issue #682). Every such value in a prompt goes
-// through here.
+// inside its quotes and cannot start a Markdown header (GitHub issue
+// #682). Every such value in a prompt goes through here.
 func promptValue(s string) string {
 	return strconv.Quote(s)
+}
+
+// ackNoteAndUser renders an acknowledgement's note and user name for a
+// prompt. The placeholders "(none)" and "unknown" stay unquoted, so that
+// they cannot be mistaken for a note or user name that reads the same.
+func ackNoteAndUser(ack *database.AcknowledgedAnomalyAlert) (msg, ackBy string) {
+	msg = "(none)"
+	if ack.AckMessage != nil && *ack.AckMessage != "" {
+		msg = promptValue(*ack.AckMessage)
+	}
+	ackBy = "unknown"
+	if ack.AcknowledgedBy != nil {
+		ackBy = promptValue(*ack.AcknowledgedBy)
+	}
+	return msg, ackBy
 }

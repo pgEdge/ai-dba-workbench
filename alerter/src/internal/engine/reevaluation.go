@@ -315,16 +315,7 @@ func (e *Engine) buildReevaluationPrompt(
 	if len(historicalAcks) > 0 {
 		fmt.Fprintf(&sb, "Found %d past acknowledgements for the same metric on this server:\n", len(historicalAcks))
 		for _, ha := range historicalAcks {
-			// The placeholders stay unquoted, so that they cannot be
-			// mistaken for a note or user name that reads the same.
-			msg := "(none)"
-			if ha.AckMessage != nil && *ha.AckMessage != "" {
-				msg = promptValue(*ha.AckMessage)
-			}
-			ackBy := "unknown"
-			if ha.AcknowledgedBy != nil {
-				ackBy = promptValue(*ha.AcknowledgedBy)
-			}
+			msg, ackBy := ackNoteAndUser(ha)
 			fmt.Fprintf(&sb, "- Alert %d: message=%s, false_positive=%t, acknowledged_by=%s\n",
 				ha.ID, msg, ha.FalsePositive, ackBy)
 		}

@@ -88,13 +88,19 @@ func seedV25Statements(t *testing.T, pool *pgxpool.Pool) {
 		t.Fatalf("failed to seed connection: %v", err)
 	}
 
-	for _, table := range []string{"pg_stat_activity", "pg_stat_statements", "spock_exception_log"} {
-		if _, err := pool.Exec(ctx, `
-			CREATE TABLE metrics.`+table+`_v25test
-				PARTITION OF metrics.`+table+`
-				FOR VALUES FROM ('2020-01-06 00:00:00+00') TO ('2020-01-13 00:00:00+00')
-		`); err != nil {
-			t.Fatalf("failed to create %s partition: %v", table, err)
+	for _, stmt := range []string{
+		`CREATE TABLE metrics.pg_stat_activity_v25test
+			PARTITION OF metrics.pg_stat_activity
+			FOR VALUES FROM ('2020-01-06 00:00:00+00') TO ('2020-01-13 00:00:00+00')`,
+		`CREATE TABLE metrics.pg_stat_statements_v25test
+			PARTITION OF metrics.pg_stat_statements
+			FOR VALUES FROM ('2020-01-06 00:00:00+00') TO ('2020-01-13 00:00:00+00')`,
+		`CREATE TABLE metrics.spock_exception_log_v25test
+			PARTITION OF metrics.spock_exception_log
+			FOR VALUES FROM ('2020-01-06 00:00:00+00') TO ('2020-01-13 00:00:00+00')`,
+	} {
+		if _, err := pool.Exec(ctx, stmt); err != nil {
+			t.Fatalf("failed to create partition: %v\nSQL: %s", err, stmt)
 		}
 	}
 

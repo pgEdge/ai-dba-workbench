@@ -721,6 +721,9 @@ func (s *Server) Run(flags *Flags, configPath string) error {
 	// Setup HTTP handlers
 	httpConfig.SetupHandlers = SetupHandlers(s.handlerDependencies(ipExtractor, reloadableCfg))
 
+	// End the open overview SSE streams when the drain starts.
+	httpConfig.OnShutdown = s.overviewStreamCloser()
+
 	// Log startup information
 	s.logStartupInfo()
 
@@ -744,6 +747,19 @@ func (s *Server) serveHTTP(httpConfig *mcp.HTTPConfig, h *shutdownHandle) error 
 	err := s.mcpServer.RunHTTP(httpConfig)
 	h.waitForDrain()
 	return err
+}
+
+// overviewStreamCloser returns the function that ends every open
+// overview SSE stream, or nil when the overview generator is not
+// running. An SSE handler returns only when its client leaves or its
+// subscription closes, and http.Server.Shutdown cancels neither, so
+// without this one open AI Overview panel holds every shutdown to the
+// full grace period.
+func (s *Server) overviewStreamCloser() func() {
+	if s.overviewHub == nil {
+		return nil
+	}
+	return s.overviewHub.CloseAll
 }
 
 // handlerDependencies builds the HTTP handlers' dependencies. The

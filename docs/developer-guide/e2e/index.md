@@ -167,8 +167,9 @@ the default instrumentation set.
 The server installs a SIGTERM and SIGINT handler in
 `cmd/mcp-server` that drains the HTTP server and lets `main`
 return normally, which writes the counter data; if the cleanup
-in `main` has not finished two seconds after the drain, the
-handler calls `coverage.WriteCountersDir` itself and exits. The
+in `main` has not finished two seconds after the drain, or a
+further signal arrives, the handler calls
+`coverage.WriteCountersDir` itself and exits. The
 handler is necessary because Go's cover runtime writes counter
 data on normal exit but not on signal termination; the
 stack-tear-down script sends SIGTERM, so without the handler

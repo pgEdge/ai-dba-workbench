@@ -24,6 +24,7 @@ import (
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
+	"github.com/pgedge/ai-workbench/server/internal/overview"
 )
 
 // freeLoopbackAddr returns a loopback address with a port that was
@@ -404,5 +405,87 @@ func TestRunBoundedWaitsForACleanupThatFinishes(t *testing.T) {
 	}
 	if logger.Len() != 0 {
 		t.Errorf("expected no log output; got:\n%s", logger.String())
+	}
+}
+
+// TestOverviewStreamCloserWithoutAHub covers a server whose overview
+// generator is not running: there are no streams to end.
+func TestOverviewStreamCloserWithoutAHub(t *testing.T) {
+	s := &Server{}
+	if s.overviewStreamCloser() != nil {
+		t.Error("overviewStreamCloser returned a function without a hub")
+	}
+}
+
+// TestServeHTTPEndsOpenOverviewStreamsWhenTheDrainStarts checks that an
+// open overview SSE stream, which returns only when its client leaves
+// or its subscription closes, does not hold the shutdown to the grace
+// period: the hook Run installs closes the subscription as soon as the
+// drain starts.
+func TestServeHTTPEndsOpenOverviewStreamsWhenTheDrainStarts(t *testing.T) {
+	mcpServer := mcp.NewServer(&shutdownTestToolStub{})
+	s := &Server{mcpServer: mcpServer, overviewHub: overview.NewHub()}
+	const grace = 30 * time.Second
+	h := installShutdownHandler(testShutdownDeps(mcpServer, grace))
+	t.Cleanup(func() { signalStop(h) })
+
+	subscribed := make(chan struct{})
+	addr := freeLoopbackAddr(t)
+	cfg := &mcp.HTTPConfig{
+		Addr:       addr,
+		OnShutdown: s.overviewStreamCloser(),
+		SetupHandlers: func(mux *http.ServeMux) error {
+			// Waits on its subscription as handleSSE does.
+			mux.HandleFunc("/stream", func(w http.ResponseWriter, r *http.Request) {
+				sub := s.overviewHub.Subscribe("")
+				defer s.overviewHub.Unsubscribe(sub)
+				w.WriteHeader(http.StatusOK)
+				w.(http.Flusher).Flush()
+				close(subscribed)
+				for {
+					select {
+					case <-r.Context().Done():
+						return
+					case _, ok := <-sub.C:
+						if !ok {
+							return
+						}
+					}
+				}
+			})
+			return nil
+		},
+	}
+	served := make(chan error, 1)
+	go func() {
+		served <- s.serveHTTP(cfg, h)
+	}()
+	waitForHealth(t, addr)
+
+	client := &http.Client{Timeout: time.Minute}
+	resp, err := client.Get("http://" + addr + "/stream")
+	if err != nil {
+		t.Fatalf("failed to open the stream: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	<-subscribed
+
+	start := time.Now()
+	h.sigCh <- syscall.SIGTERM
+
+	select {
+	case err := <-served:
+		if err != nil {
+			t.Fatalf("serveHTTP returned %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("serveHTTP was still waiting 10s after the signal")
+	}
+	if elapsed := time.Since(start); elapsed >= 2*time.Second {
+		t.Errorf("shutdown with an open stream took %v; the stream "+
+			"should have ended when the drain started", elapsed)
+	}
+	if n := s.overviewHub.Count(); n != 0 {
+		t.Errorf("%d overview subscribers remain after the drain", n)
 	}
 }

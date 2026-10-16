@@ -1325,9 +1325,11 @@ project adheres to
   counts and exits on `SIGTERM` or `SIGINT` (#650). The server returned
   as soon as the drain began, so a denial or failed login recorded by a
   request still in progress could miss the final summary and go
-  uncounted. A second signal cuts the wait short, and the server now
-  also stops cleanly if the signal arrives before it has started
-  listening.
+  uncounted. Open AI Overview streams are closed as soon as the drain
+  starts, so a connected browser does not hold the shutdown for the
+  full grace period. A second signal cuts the wait short, and the
+  server now also stops cleanly if the signal arrives before it has
+  started listening.
 
 - Fix the `probe_unavailable` alert firing on healthy Spock clusters
   with no recent apply exceptions or conflict resolutions. The

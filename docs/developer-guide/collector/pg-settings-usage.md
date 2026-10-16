@@ -397,7 +397,7 @@ command changes the interval to 30 minutes:
 UPDATE probe_configs
 SET collection_interval_seconds = 1800
 WHERE name = 'pg_settings'
-  AND connection_id IS NULL;
+  AND scope = 'global';
 ```
 
 Changes take effect within 5 minutes through
@@ -511,7 +511,7 @@ following:
    SELECT is_enabled
    FROM probe_configs
    WHERE name = 'pg_settings'
-     AND connection_id IS NULL;
+     AND scope = 'global';
    ```
 
 2. Check the Collector logs for errors related to

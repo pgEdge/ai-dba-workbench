@@ -179,7 +179,10 @@ CREATE TABLE probe_configs (
     name TEXT NOT NULL,
     connection_id INTEGER,
     is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
-    collection_interval_seconds INTEGER NOT NULL DEFAULT 60
+    collection_interval_seconds INTEGER NOT NULL DEFAULT 60,
+    scope TEXT NOT NULL DEFAULT 'global',
+    group_id INTEGER,
+    cluster_id INTEGER
 );
 
 CREATE SCHEMA metrics;

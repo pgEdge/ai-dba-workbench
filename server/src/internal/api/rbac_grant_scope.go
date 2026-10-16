@@ -93,22 +93,28 @@ func (h *RBACHandler) ownerWithinTokenScope(ctx context.Context,
 // recording the denial, when the stored scope cannot be read to judge
 // it. With clearAll set the change lifts every restriction, as DELETE on
 // the scope does.
+//
+// When it allows the change it returns the stored scope it judged the
+// change against, for the write to pass to the store, which refuses the
+// write if the scope has changed since (see auth.ErrTokenScopeChanged);
+// nil means no ceiling judged it, as for a session.
 func (h *RBACHandler) requireTokenScopeChange(w http.ResponseWriter,
 	r *http.Request, tokenID int64, change auth.TokenScopeChange,
-	clearAll bool) bool {
+	clearAll bool) (*auth.TokenScopeSnapshot, bool) {
 
 	ctx := r.Context()
 	if h.rbacChecker.TokenHoldsEverything(ctx) {
-		return true
+		return nil, true
 	}
 	var allowed bool
+	var judged *auth.TokenScopeSnapshot
 	var err error
 	if clearAll {
-		allowed, err = h.rbacChecker.TokenScopeClearWithinCeiling(ctx, tokenID,
-			h.connLister)
+		allowed, judged, err = h.rbacChecker.JudgeTokenScopeClear(ctx,
+			tokenID, h.connLister)
 	} else {
-		allowed, err = h.rbacChecker.TokenScopeChangeWithinCeiling(ctx, tokenID,
-			change)
+		allowed, judged, err = h.rbacChecker.JudgeTokenScopeChange(ctx,
+			tokenID, change)
 	}
 	if err != nil {
 		log.Printf("[ERROR] Failed to read scope for token %d: %v", tokenID, err)
@@ -117,9 +123,12 @@ func (h *RBACHandler) requireTokenScopeChange(w http.ResponseWriter,
 		const reason = "Failed to get token scope"
 		h.recordDenial(r, reason)
 		RespondError(w, http.StatusInternalServerError, reason)
-		return false
+		return nil, false
 	}
-	return h.requireGrantInTokenScope(w, r, allowed, refuseTokenScope)
+	if !h.requireGrantInTokenScope(w, r, allowed, refuseTokenScope) {
+		return nil, false
+	}
+	return judged, true
 }
 
 // requireRenameInTokenScope refuses a group rename by a token when the

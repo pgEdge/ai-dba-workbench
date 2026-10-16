@@ -35,6 +35,13 @@ type ProbeConfig struct {
 	RetentionDays             int       `json:"retention_days"`
 	CreatedAt                 time.Time `json:"created_at"`
 	UpdatedAt                 time.Time `json:"updated_at"`
+
+	// ClusterID and GroupID name the cluster or group a cluster- or
+	// group-scoped config applies to. Only GetProbeConfig fills them;
+	// they decide who may see the config and are not part of the
+	// response body.
+	ClusterID *int `json:"-"`
+	GroupID   *int `json:"-"`
 }
 
 // ProbeConfigUpdate represents a partial update to a probe config
@@ -135,7 +142,9 @@ var validSeverities = map[string]bool{
 }
 
 // GetProbeConfigs returns probe configs filtered by connection ID.
-// If connectionID is nil, returns global defaults (WHERE connection_id IS NULL).
+// If connectionID is nil, returns the global defaults only; cluster- and
+// group-scoped overrides also have no connection_id, but they belong to
+// the probe override routes and are not listed here (issue #647).
 func (d *Datastore) GetProbeConfigs(ctx context.Context, connectionID *int) ([]ProbeConfig, error) {
 	var rows pgx.Rows
 	var err error
@@ -144,7 +153,7 @@ func (d *Datastore) GetProbeConfigs(ctx context.Context, connectionID *int) ([]P
 		rows, err = d.pool.Query(ctx,
 			`SELECT id, connection_id, is_enabled, name, description,
                     collection_interval_seconds, retention_days, created_at, updated_at
-             FROM probe_configs WHERE connection_id IS NULL
+             FROM probe_configs WHERE scope = 'global'
              ORDER BY name`)
 	} else {
 		rows, err = d.pool.Query(ctx,
@@ -178,10 +187,12 @@ func (d *Datastore) GetProbeConfig(ctx context.Context, id int64) (*ProbeConfig,
 	var c ProbeConfig
 	err := d.pool.QueryRow(ctx,
 		`SELECT id, connection_id, is_enabled, name, description,
-                collection_interval_seconds, retention_days, created_at, updated_at
+                collection_interval_seconds, retention_days, created_at, updated_at,
+                cluster_id, group_id
          FROM probe_configs WHERE id = $1`, id).
 		Scan(&c.ID, &c.ConnectionID, &c.IsEnabled, &c.Name, &c.Description,
-			&c.CollectionIntervalSeconds, &c.RetentionDays, &c.CreatedAt, &c.UpdatedAt)
+			&c.CollectionIntervalSeconds, &c.RetentionDays, &c.CreatedAt, &c.UpdatedAt,
+			&c.ClusterID, &c.GroupID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrProbeConfigNotFound

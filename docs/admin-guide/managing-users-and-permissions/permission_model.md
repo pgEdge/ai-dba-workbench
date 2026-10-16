@@ -232,7 +232,7 @@ The Workbench defines the following ten ADMIN permissions:
 | `manage_groups` | Allows creating, editing, and deleting groups and their memberships. |
 | `manage_permissions` | Allows granting and revoking privileges on groups. |
 | `manage_users` | Allows creating, editing, and deleting user accounts and service accounts. |
-| `manage_token_scopes` | Allows viewing and modifying token scope restrictions. |
+| `manage_token_scopes` | Allows viewing every token, narrowing or deleting any token a superuser does not own, and creating or widening the scope of the holder's own tokens. |
 | `manage_blackouts` | Allows creating, editing, and deleting maintenance blackout windows. |
 | `manage_probes` | Allows configuring probe frequency, retention, and enabled state. |
 | `manage_alert_rules` | Allows configuring alert rule defaults and per-connection overrides. |

@@ -74,6 +74,12 @@ export interface CreateTokenDialogProps {
     onOwnerChange: (user: User | null) => void;
     /** The list of available users. */
     users: User[];
+    /**
+     * Whether the owner is fixed to the current user, as it is for a
+     * caller who is not a superuser: only a superuser may create a
+     * token for another user.
+     */
+    ownerLocked?: boolean;
     /** The selected expiry duration. */
     expiry: string;
     /** Handler for expiry changes. */
@@ -120,6 +126,7 @@ const CreateTokenDialog: React.FC<CreateTokenDialogProps> = ({
     owner,
     onOwnerChange,
     users,
+    ownerLocked = false,
     expiry,
     onExpiryChange,
     availableConnections,
@@ -177,7 +184,7 @@ const CreateTokenDialog: React.FC<CreateTokenDialogProps> = ({
                     sx={SELECT_FIELD_SX}
                 />
                 <Autocomplete<User>
-                    options={users}
+                    options={ownerLocked && owner ? [owner] : users}
                     getOptionLabel={(option) => option.username || ''}
                     isOptionEqualToValue={(option, value) =>
                         option.id === value.id
@@ -190,6 +197,13 @@ const CreateTokenDialog: React.FC<CreateTokenDialogProps> = ({
                             label="Owner"
                             margin="dense"
                             required
+                            helperText={
+                                ownerLocked
+                                    ? 'Tokens you create are owned by you; ' +
+                                      'only a superuser can create a ' +
+                                      'token for another user'
+                                    : undefined
+                            }
                             InputLabelProps={{
                                 ...params.InputLabelProps,
                                 shrink: true,
@@ -197,7 +211,7 @@ const CreateTokenDialog: React.FC<CreateTokenDialogProps> = ({
                             sx={SELECT_FIELD_SX}
                         />
                     )}
-                    disabled={loading}
+                    disabled={loading || ownerLocked}
                 />
                 <TextField
                     fullWidth

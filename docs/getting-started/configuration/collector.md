@@ -444,7 +444,7 @@ Probe settings use a three-level fallback hierarchy:
 1. Connection-specific settings in `probe_configs` where
    `connection_id` matches the monitored connection.
 2. Global default settings in `probe_configs` where
-   `connection_id IS NULL`.
+   `scope = 'global'`.
 3. Hardcoded default values defined in the collector source code.
 
 ### Automatic Configuration
@@ -485,7 +485,7 @@ retention period:
 UPDATE probe_configs
 SET retention_days = 60
 WHERE name = 'pg_stat_database'
-  AND connection_id IS NULL;
+  AND scope = 'global';
 ```
 
 ### Automatic Reload

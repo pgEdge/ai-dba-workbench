@@ -93,7 +93,16 @@ CREATE TABLE probe_configs (
     connection_id INTEGER,
     is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
     name TEXT NOT NULL,
-    collection_interval_seconds INTEGER NOT NULL DEFAULT 60
+    collection_interval_seconds INTEGER NOT NULL DEFAULT 60,
+    scope TEXT NOT NULL DEFAULT 'global',
+    group_id INTEGER,
+    cluster_id INTEGER,
+    CONSTRAINT probe_configs_scope_ids_check CHECK (
+        (scope = 'global' AND connection_id IS NULL AND group_id IS NULL AND cluster_id IS NULL)
+        OR (scope = 'group' AND group_id IS NOT NULL AND connection_id IS NULL AND cluster_id IS NULL)
+        OR (scope = 'cluster' AND cluster_id IS NOT NULL AND connection_id IS NULL AND group_id IS NULL)
+        OR (scope = 'server' AND connection_id IS NOT NULL AND group_id IS NULL AND cluster_id IS NULL)
+    )
 );
 
 CREATE TABLE probe_availability (
@@ -960,6 +969,79 @@ func TestGetProbeStalenessByConnection(t *testing.T) {
 	// it. See GitHub issues #611 and #614.
 	if age := time.Since(results[0].LastCollected); age < 115*time.Second || age > 150*time.Second {
 		t.Errorf("LastCollected is %s ago, want about 120s", age)
+	}
+}
+
+// seedProbeScopeOverrides adds a cluster and a group override for one
+// probe beside its global config. Both carry a NULL connection_id, which
+// is what the staleness queries used to match a global config on.
+func seedProbeScopeOverrides(t *testing.T, pool *pgxpool.Pool, probe string) {
+	t.Helper()
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO probe_configs
+			(name, collection_interval_seconds, is_enabled, scope, cluster_id, group_id)
+		VALUES ($1, 3600, TRUE, 'cluster', 1, NULL),
+		       ($1, 7200, TRUE, 'group', NULL, 1)
+	`, probe); err != nil {
+		t.Fatalf("failed to seed probe overrides: %v", err)
+	}
+}
+
+// TestGetProbeStalenessByConnectionIgnoresScopeOverrides pins that the
+// staleness ratio divides by the global interval alone: cluster and
+// group overrides must neither add rows nor supply the interval. See
+// GitHub issue #647.
+func TestGetProbeStalenessByConnectionIgnoresScopeOverrides(t *testing.T) {
+	ds, pool, cleanup := newFullTestDatastore(t)
+	defer cleanup()
+
+	seedProbeStalenessRow(t, pool, "override-conn", 60)
+	seedProbeScopeOverrides(t, pool, "probe_x")
+
+	results, err := ds.GetProbeStalenessByConnection(context.Background())
+	if err != nil {
+		t.Fatalf("GetProbeStalenessByConnection: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("results = %d, want 1; cluster and group overrides must not "+
+			"add rows", len(results))
+	}
+	if results[0].CollectionInterval != 60 {
+		t.Errorf("collection interval = %d, want the global 60",
+			results[0].CollectionInterval)
+	}
+	if results[0].StalenessRatio < 1.5 {
+		t.Errorf("ratio = %v, want >= 1.5 against the global interval",
+			results[0].StalenessRatio)
+	}
+}
+
+// TestGetProbeStalenessContextIgnoresScopeOverrides is the same check for
+// the single-probe lookup, which would otherwise answer with whichever
+// matching row came first, override or global. See GitHub issue #647.
+func TestGetProbeStalenessContextIgnoresScopeOverrides(t *testing.T) {
+	ds, pool, cleanup := newFullTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	connID := insertTestConnection(t, pool, "override-context-conn")
+	seedProbeScopeOverrides(t, pool, "probe_ctx")
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO probe_configs (name, collection_interval_seconds, is_enabled, connection_id)
+		VALUES ('probe_ctx', 90, TRUE, NULL)
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	_, interval, found, err := ds.GetProbeStalenessContext(ctx, connID, "probe_ctx")
+	if err != nil {
+		t.Fatalf("GetProbeStalenessContext: %v", err)
+	}
+	if !found {
+		t.Fatal("found = false, want the global config")
+	}
+	if interval != 90 {
+		t.Errorf("collection interval = %d, want the global 90", interval)
 	}
 }
 

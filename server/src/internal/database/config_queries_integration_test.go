@@ -379,6 +379,55 @@ func TestGetProbeConfigByID(t *testing.T) {
 	}
 }
 
+// TestProbeConfigsClusterAndGroupScope checks that the unfiltered
+// GetProbeConfigs lists only the global defaults, although cluster- and
+// group-scoped overrides also have no connection_id, and that
+// GetProbeConfig reports the cluster or group a config applies to so the
+// API can check its visibility (issue #647).
+func TestProbeConfigsClusterAndGroupScope(t *testing.T) {
+	ds, pool, fx, cleanup := newConfigQueriesTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	globalID, _ := seedProbeConfigs(t, pool, fx.ConnID)
+	var clusterCfg, groupCfg int
+	if err := pool.QueryRow(ctx, `
+        INSERT INTO probe_configs (name, description, scope, cluster_id)
+        VALUES ('pg_stat_activity', 'c', 'cluster', $1) RETURNING id`,
+		fx.ClusterID).Scan(&clusterCfg); err != nil {
+		t.Fatalf("seed cluster probe: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `
+        INSERT INTO probe_configs (name, description, scope, group_id)
+        VALUES ('pg_stat_activity', 'g', 'group', $1) RETURNING id`,
+		fx.GroupID).Scan(&groupCfg); err != nil {
+		t.Fatalf("seed group probe: %v", err)
+	}
+
+	globals, err := ds.GetProbeConfigs(ctx, nil)
+	if err != nil {
+		t.Fatalf("global: %v", err)
+	}
+	if len(globals) != 1 || globals[0].ID != globalID {
+		t.Errorf("global list = %+v, want only id %d", globals, globalID)
+	}
+
+	got, err := ds.GetProbeConfig(ctx, int64(clusterCfg))
+	if err != nil {
+		t.Fatalf("get cluster config: %v", err)
+	}
+	if got.ClusterID == nil || *got.ClusterID != fx.ClusterID || got.GroupID != nil || got.ConnectionID != nil {
+		t.Errorf("cluster config targets = conn %v cluster %v group %v", got.ConnectionID, got.ClusterID, got.GroupID)
+	}
+	got, err = ds.GetProbeConfig(ctx, int64(groupCfg))
+	if err != nil {
+		t.Fatalf("get group config: %v", err)
+	}
+	if got.GroupID == nil || *got.GroupID != fx.GroupID || got.ClusterID != nil || got.ConnectionID != nil {
+		t.Errorf("group config targets = conn %v cluster %v group %v", got.ConnectionID, got.ClusterID, got.GroupID)
+	}
+}
+
 // TestUpdateProbeConfig exercises validation, partial-merge and not-found
 // branches of UpdateProbeConfig.
 func TestUpdateProbeConfig(t *testing.T) {

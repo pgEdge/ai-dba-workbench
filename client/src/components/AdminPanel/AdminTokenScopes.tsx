@@ -16,6 +16,7 @@ import { Add as AddIcon } from '@mui/icons-material';
 import DeleteConfirmationDialog from '../DeleteConfirmationDialog';
 import { apiGet, apiPost, apiPut, apiDelete } from '../../utils/apiClient';
 import { copyToClipboard } from '../../utils/clipboard';
+import { useAuth } from '../../contexts/useAuth';
 import { loadingContainerSx, pageHeadingSx, getContainedButtonSx } from './styles';
 import { extractErrorMessage } from './_shared';
 import {
@@ -32,6 +33,8 @@ import {
     ALL_CONNECTIONS_LABEL,
     filterMcpPrivileges,
     filterAdminPermissions,
+    narrowScopeChoices,
+    narrowOnlyLiftError,
 } from './tokens';
 import type {
     Token,
@@ -45,6 +48,7 @@ import type {
     TokenScopeConnection,
     CreateTokenResponse,
     UserPrivilegesResponse,
+    ScopeChoices,
 } from './tokens';
 
 /** The body of PUT /api/v1/rbac/tokens/{id}/scope. */
@@ -113,6 +117,13 @@ const unshownScopeError = (categories: string[]): string =>
 
 const AdminTokenScopes: React.FC = () => {
     const theme = useTheme();
+    // Only a superuser may create a token for another user, or widen or
+    // clear another user's token; anyone else may only narrow or delete
+    // it (issue #522), and only a superuser may change a superuser's
+    // token at all.
+    const { user: currentUser, adminPermissions: currentAdminPermissions } =
+        useAuth();
+    const isSuperuser = !!currentUser?.isSuperuser;
     const [tokens, setTokens] = useState<Token[]>([]);
     const [connections, setConnections] = useState<Connection[]>([]);
     const [mcpPrivileges, setMcpPrivileges] = useState<McpPrivilege[]>([]);
@@ -165,6 +176,14 @@ const AdminTokenScopes: React.FC = () => {
     const [deleteOpen, setDeleteOpen] = useState(false);
     const [deleteToken, setDeleteToken] = useState<Token | null>(null);
     const [deleteLoading, setDeleteLoading] = useState(false);
+
+    // The owner of the token being edited when the current user may only
+    // narrow it, or null when they may change it freely.
+    const editNarrowOnlyOwner =
+        editToken && !isSuperuser &&
+        editToken.username !== currentUser?.username
+            ? editToken.username || `user ${editToken.user_id ?? '?'}`
+            : null;
 
     const getMcpPrivilegeName = useCallback((id: number) => {
         if (isMcpWildcardId(id)) {
@@ -222,6 +241,21 @@ const AdminTokenScopes: React.FC = () => {
             setOwnerMcpPrivileges([]);
             setOwnerAdminPermissions([]);
             setOwnerIsSuperuser(false);
+            return;
+        }
+
+        if (owner.id <= 0) {
+            // The current user, when the user list (which needs
+            // manage_users, as the privileges lookup does) could not be
+            // read: offer every connection and MCP privilege, as when
+            // the lookup fails, but only the admin permissions the
+            // session already reports for the user.
+            setOwnerIsSuperuser(false);
+            setOwnerConnections(connections);
+            setOwnerMcpPrivileges(mcpPrivileges);
+            setOwnerAdminPermissions(
+                filterAdminPermissions(currentAdminPermissions),
+            );
             return;
         }
 
@@ -347,6 +381,15 @@ const AdminTokenScopes: React.FC = () => {
         setOwnerAdminPermissions([]);
         setOwnerIsSuperuser(false);
         setCreateOpen(true);
+        if (!isSuperuser && currentUser) {
+            // The server refuses a token for anyone else, so the owner
+            // is fixed to the current user; an id of 0 stands for one
+            // missing from the user list.
+            void handleOwnerChange(
+                users.find((u) => u.username === currentUser.username) ??
+                    { id: 0, username: currentUser.username },
+            );
+        }
     };
 
     // Edit scope
@@ -485,6 +528,12 @@ const AdminTokenScopes: React.FC = () => {
         }
 
         const clearAll = Object.keys(body).length === 0;
+        if (editNarrowOnlyOwner && lifted.length > 0) {
+            // Lifting a restriction, alone or by clearing the whole
+            // scope, widens the token, which the server refuses here.
+            setEditError(narrowOnlyLiftError(editNarrowOnlyOwner, lifted));
+            return;
+        }
         if (!clearAll && lifted.length > 0) {
             setEditError(liftOneCategoryError(lifted));
             return;
@@ -592,6 +641,21 @@ const AdminTokenScopes: React.FC = () => {
 
     const containedButtonSx = getContainedButtonSx(theme);
 
+    // What the edit dialog may offer: the owner's privileges, cut down
+    // to narrowing choices when the token is someone else's.
+    const ownerEditChoices: ScopeChoices = {
+        connections: editAvailableConnections,
+        connectionLevels: editOwnerConnectionLevels,
+        ownerIsSuperuser: editOwnerIsSuperuser,
+        mcpPrivileges: editAvailableMcpPrivileges,
+        adminPermissions: editAvailableAdminPermissions,
+        allowAllMcp: true,
+        allowAllAdmin: true,
+    };
+    const editChoices = editNarrowOnlyOwner
+        ? narrowScopeChoices(editToken?.scope, ownerEditChoices)
+        : ownerEditChoices;
+
     return (
         <Box>
             <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
@@ -626,6 +690,7 @@ const AdminTokenScopes: React.FC = () => {
                 onEdit={handleOpenEdit}
                 onDelete={handleOpenDelete}
                 getMcpPrivilegeName={getMcpPrivilegeName}
+                canModifySuperuserTokens={isSuperuser}
             />
 
             <ApiUsageExample />
@@ -641,6 +706,7 @@ const AdminTokenScopes: React.FC = () => {
                 owner={createOwner}
                 onOwnerChange={handleOwnerChange}
                 users={users}
+                ownerLocked={!isSuperuser}
                 expiry={createExpiry}
                 onExpiryChange={setCreateExpiry}
                 availableConnections={ownerConnections}
@@ -672,15 +738,18 @@ const AdminTokenScopes: React.FC = () => {
                 loading={editLoading}
                 error={editError}
                 token={editToken}
-                availableConnections={editAvailableConnections}
+                narrowOnlyOwner={editNarrowOnlyOwner}
+                allowAllMcp={editChoices.allowAllMcp}
+                allowAllAdmin={editChoices.allowAllAdmin}
+                availableConnections={editChoices.connections}
                 scopedConnections={editConnections}
                 onScopedConnectionsChange={setEditConnections}
-                ownerConnectionLevels={editOwnerConnectionLevels}
-                ownerIsSuperuser={editOwnerIsSuperuser}
-                availableMcpPrivileges={editAvailableMcpPrivileges}
+                ownerConnectionLevels={editChoices.connectionLevels}
+                ownerIsSuperuser={editChoices.ownerIsSuperuser}
+                availableMcpPrivileges={editChoices.mcpPrivileges}
                 selectedMcpPrivileges={editMcpPrivileges}
                 onMcpPrivilegesChange={setEditMcpPrivileges}
-                availableAdminPermissions={editAvailableAdminPermissions}
+                availableAdminPermissions={editChoices.adminPermissions}
                 selectedAdminPermissions={editAdminPermissions}
                 onAdminPermissionsChange={setEditAdminPermissions}
             />

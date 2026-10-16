@@ -2552,6 +2552,48 @@ project adheres to
   upgrading, every acknowledged alert with a stored "keep" verdict
   is sent back to the reasoning model once, the next time it falls
   due. (#682)
+- Stop `manage_token_scopes` working as a route to superuser. A holder
+  could previously create a token for any user and widen or clear the
+  scope of any token that a superuser did not own, and so act with
+  another user's whole access. A caller who is not a superuser, whether
+  a browser session or a token, can now create a token only for
+  themselves, and can widen or clear the scope only of their own tokens;
+  any holder can still narrow or delete any token, but a scope change to
+  someone else's token must narrow it in every scope type. The refusal
+  is `403 Forbidden` and is recorded in the RBAC audit log. A token
+  caller remains bound by its own access when changing a sibling token
+  with the same owner. A scope change naming an unknown MCP privilege
+  is now refused with `400 Bad Request` whoever the caller, rather than
+  sometimes with `403 Forbidden`. A token caller's scope change is
+  refused with `409 Conflict` if the target token's scope changes
+  between the server checking the change and writing it, and the owner
+  of a new token is checked again as the token is written. In the web
+  client, a user who is not a superuser now sees the token owner fixed
+  to themselves, is offered only narrowing choices when editing
+  someone else's token, and no longer sees edit or delete actions on a
+  superuser's token. (#522)
+
+- Check connection visibility on the probe configuration read
+  endpoints. `GET /api/v1/probe-configs?connection_id=N` and
+  `GET /api/v1/probe-configs/{id}` returned a connection's probe
+  settings to any signed-in user, including one with no grants. The
+  list now answers 404 for a connection the caller cannot see, and
+  the single-item endpoint answers 404 for a configuration whose
+  server, cluster or group the caller cannot see, in both cases
+  exactly as for one that does not exist; an API token sees only the
+  connections in its scope. Global defaults stay visible to every
+  caller. `PUT /api/v1/probe-configs/{id}` applies the same check
+  before reading the request body, so a user with `manage_probes`
+  can no longer read or confirm a configuration they cannot see. The
+  unfiltered list now returns only the global defaults, as
+  documented; it previously also returned the cluster and group
+  overrides, whatever cluster or group they belonged to. The alerter
+  made the same mistake when computing probe staleness: a cluster or
+  group override duplicated each staleness row, and could supply the
+  interval for a stalled probe's alert in place of the global
+  default. The SQL examples in the probe and collector documentation
+  that change global defaults also matched cluster and group
+  overrides, and now select only the global row. (#647)
 
 - Delete a user with `ai-dba-server -delete-user` only when the
   confirmation is an explicit `y` or `yes`. The answer was checked

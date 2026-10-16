@@ -169,7 +169,7 @@ global defaults:
 SELECT name, collection_interval_seconds,
        retention_days, is_enabled
 FROM probe_configs
-WHERE connection_id IS NULL
+WHERE scope = 'global'
 ORDER BY name;
 ```
 
@@ -215,7 +215,7 @@ default interval for the `pg_stat_activity` probe:
 UPDATE probe_configs
 SET collection_interval_seconds = 60
 WHERE name = 'pg_stat_activity'
-  AND connection_id IS NULL;
+  AND scope = 'global';
 ```
 
 In the following example, the query overrides the
@@ -254,7 +254,7 @@ default retention for the `pg_stat_activity` probe:
 UPDATE probe_configs
 SET retention_days = 30
 WHERE name = 'pg_stat_activity'
-  AND connection_id IS NULL;
+  AND scope = 'global';
 ```
 
 In the following example, the query overrides the
@@ -279,7 +279,7 @@ globally:
 UPDATE probe_configs
 SET is_enabled = FALSE
 WHERE name = 'pg_stat_statements'
-  AND connection_id IS NULL;
+  AND scope = 'global';
 ```
 
 In the following example, the query disables a probe
@@ -370,7 +370,7 @@ probe configuration:
 ```sql
 SELECT is_enabled FROM probe_configs
 WHERE name = 'probe_name'
-  AND connection_id IS NULL;
+  AND scope = 'global';
 ```
 
 If the probe is enabled, check the collector logs for
@@ -389,6 +389,17 @@ sampling strategies for high-frequency data.
 The probe configuration REST API provides endpoints
 for managing probe settings. All write operations
 require the `manage_probes` permission.
+
+Any signed-in user can read the global defaults. A
+configuration for a server, cluster or group is
+returned only when the caller can see that server, or
+a server in that cluster or group; otherwise the
+endpoint responds with 404, as for a configuration
+that does not exist. An API token sees only the
+servers in its connection scope. Updating a
+configuration follows the same rule, so a user with
+the `manage_probes` permission who cannot see the
+configuration also receives a 404.
 
 The following table lists the available endpoints:
 

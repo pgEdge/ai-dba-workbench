@@ -293,7 +293,9 @@ func TestUpdateProbeConfigRespectsTokenScope(t *testing.T) {
 		{"server config narrowed", 2, "narrowed", disable, false, http.StatusOK},
 		{"server config wildcard", 2, "wildcard", disable, false, http.StatusOK},
 		{"server config read-only", 2, "readOnly", disable, false, http.StatusForbidden},
-		{"other server config narrowed", 3, "narrowed", disable, false, http.StatusForbidden},
+		// The narrowed token cannot see the other server, so its config
+		// answers as missing rather than confirming it exists (#647).
+		{"other server config narrowed", 3, "narrowed", disable, false, http.StatusNotFound},
 		{"global config narrowed", 1, "narrowed", disable, false, http.StatusForbidden},
 		{"global config read-only", 1, "readOnly", disable, false, http.StatusForbidden},
 		{"global config unscoped", 1, "unscoped", disable, false, http.StatusOK},
@@ -326,6 +328,36 @@ func TestUpdateProbeConfigRespectsTokenScope(t *testing.T) {
 			if tc.want == http.StatusOK && probeConfigEnabled(t, g.pool, tc.id) {
 				t.Errorf("Expected probe config %d to be disabled", tc.id)
 			}
+		})
+	}
+}
+
+// TestRequireProbeConfigInTokenScopeLookup covers the token scope gate's
+// own lookup. Through PUT the visibility check now answers a missing
+// config or a failed lookup first (#647), so the gate is driven directly
+// to keep its defensive branches pinned.
+func TestRequireProbeConfigInTokenScopeLookup(t *testing.T) {
+	cases := []struct {
+		name string
+		id   int64
+		drop bool
+		want int
+	}{
+		{"missing config", 999, false, http.StatusNotFound},
+		{"lookup fails", 2, true, http.StatusInternalServerError},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			g := newEstateGates(t)
+			if tc.drop {
+				mustExec(t, g.pool, estateGatesDropAll)
+			}
+			rec := httptest.NewRecorder()
+			if g.probeConfig.requireProbeConfigInTokenScope(rec, newScopeRequest(
+				g.callers["narrowed"], http.MethodPut, ""), tc.id) {
+				t.Fatal("gate passed, want a refusal")
+			}
+			expectStatus(t, rec, tc.want)
 		})
 	}
 }

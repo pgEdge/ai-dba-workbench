@@ -84,6 +84,31 @@ so a token can never give a user, a group or another token more than it holds
 itself. The [Bounding What a Token Can Grant](#bounding-what-a-token-can-grant)
 section explains the design and lists every request the bound covers.
 
+Holding the `manage_token_scopes` permission lets a user manage their own
+tokens and keep everyone else's in check, but not act through another user's
+tokens. A caller who is not a superuser, whether a browser session or a token,
+can create a token only for themselves, and can widen or clear the scope only
+of a token they own; for a token, the owner is the token's own owner, so a
+token's siblings count as its own. Any holder of `manage_token_scopes` can
+narrow the scope of, or delete, any token, but a scope change to a token that
+belongs to someone else must narrow it. A change narrows a token only when
+every connection entry it names is at or below the access level the token
+already allows on that connection, and every MCP privilege and admin
+permission it names is one the token already holds; adding a wildcard to a
+restricted scope type, or clearing the scope, widens the token. The server
+refuses any other change with `403 Forbidden`, records the refusal in the RBAC
+audit log, and leaves the token unchanged. A superuser is not bound by this
+rule, and the token ceiling described below still applies to a token caller,
+siblings included, so a narrowed token cannot mint or widen a sibling beyond
+itself.
+
+The server checks a token caller's scope change against the target token's
+scope as it stands when the request arrives. If another request changes that
+scope before the change is written, the server writes nothing and answers
+`409 Conflict`, so that a change cannot restore access that an administrator
+removed in the meantime; the caller can retry the request, which the server
+then judges against the scope as it now stands.
+
 A token that a superuser owns carries the superuser role, so the server
 guards such tokens more closely. Creating a token for a superuser, and
 setting the scope of, clearing the scope of, or deleting a token that a
@@ -114,7 +139,8 @@ The MCP privilege scope applies to public MCP tools as well, so a token whose
 MCP scope names specific tools can call only those tools, apart from
 `test_query`, which validates a query without running it and is available to
 every token. The server refuses an MCP scope that names an identifier it does
-not recognise.
+not recognise, or an admin permission scope that names an unknown permission,
+with `400 Bad Request`.
 
 !!! note
 
@@ -134,7 +160,8 @@ Provide the following information in the `Create token` dialog:
 
 - The `Name` field sets the token annotation; use up to 255 characters.
 - Use the `Owner` drop-down to select the user who owns the token; the token's
-  effective access cannot exceed the owner's access.
+  effective access cannot exceed the owner's access. Only a superuser can
+  create a token for another user; anyone else must select their own account.
 - The `Expiry` drop-down sets the token lifetime; the choices are 30 days,
   90 days, 1 year, or Never, defaulting to 90 days.
 - The `Add Connection` drop-down adds a database connection to the token's
@@ -411,8 +438,9 @@ else:
 - `manage_groups` lets a holder join any group.
 - `manage_permissions` lets a holder grant any MCP item or admin permission to
   a group the holder belongs to.
-- `manage_token_scopes` lets a holder widen the scope of any token that a
-  superuser does not own.
+- `manage_token_scopes` lets a holder create tokens and change token scopes;
+  the server keeps counting it among the permissions that lead to everything
+  else, as it did when a holder could widen any token.
 
 A member of the group who signs in with a browser session is not bounded by
 any token. Without the stricter rule, a token restricted in its MCP privilege

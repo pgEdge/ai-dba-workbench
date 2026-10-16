@@ -309,7 +309,7 @@ func TestClearTokenScope(t *testing.T) {
 	store.AsActor(systemActor).SetTokenMCPScopeByNames(storedToken.ID, []string{"tool_a"}, true)
 
 	// Clear all scope
-	err := store.AsActor(systemActor).ClearTokenScope(storedToken.ID, true)
+	err := store.AsActor(systemActor).ClearTokenScope(storedToken.ID, true, AnyTokenOwner(), nil)
 	if err != nil {
 		t.Fatalf("Failed to clear token scope: %v", err)
 	}
@@ -581,7 +581,7 @@ func TestHasTokenScope(t *testing.T) {
 	}
 
 	// Clear and add MCP scope
-	store.AsActor(systemActor).ClearTokenScope(storedToken.ID, true)
+	store.AsActor(systemActor).ClearTokenScope(storedToken.ID, true, AnyTokenOwner(), nil)
 	store.RegisterMCPPrivilege("tool_a", MCPPrivilegeTypeTool, "Tool A", false)
 	store.AsActor(systemActor).SetTokenMCPScopeByNames(storedToken.ID, []string{"tool_a"}, true)
 

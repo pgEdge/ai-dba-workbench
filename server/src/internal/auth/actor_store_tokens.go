@@ -229,12 +229,27 @@ func tokenScopesTx(tx *sql.Tx, tokenID int64) (tokenScopes, error) {
 // is false it refuses, with ErrSuperuserTargetForbidden, to mint a token
 // for an owner who is a superuser when the transaction reads the owner,
 // so every caller must say whether the principal it acts for is one.
+//
+// It applies no owner rule, so it is for the CLI and for callers that
+// may mint a token for anyone; a write acting for a principal uses
+// CreateTokenFor.
 func (a *ActorStore) CreateToken(ownerUsername, annotation string,
 	requestedExpiry *time.Time, callerIsSuperuser bool) (string,
 	*StoredToken, error) {
 
+	return a.CreateTokenFor(ownerUsername, annotation, requestedExpiry,
+		callerIsSuperuser, AnyTokenOwner())
+}
+
+// CreateTokenFor is CreateToken that also refuses, with ErrTokenNotOwned,
+// an owner other than the user owner acts for, judged on the owner row
+// the insert's own transaction reads (issue #522).
+func (a *ActorStore) CreateTokenFor(ownerUsername, annotation string,
+	requestedExpiry *time.Time, callerIsSuperuser bool,
+	owner TokenOwnerGuard) (string, *StoredToken, error) {
+
 	return a.s.createToken(a.actor, ownerUsername, annotation,
-		requestedExpiry, callerIsSuperuser)
+		requestedExpiry, callerIsSuperuser, owner)
 }
 
 // The methods below change or delete an existing token. Each takes
@@ -254,12 +269,24 @@ func (a *ActorStore) DeleteToken(identifier string,
 
 // SetTokenScope writes every scope kind the change supplies in one
 // transaction, attributing the change to this store's actor; see
-// AuthStore.setTokenScope.
+// AuthStore.setTokenScope. owner says whom the write acts for: a change
+// to a token it does not own must narrow the token, or is refused with
+// ErrTokenNotOwned (issue #522). judged is the scope a ceiling check
+// approved the change against, from RBACChecker.JudgeTokenScopeChange,
+// or nil when no check judged it; the write is refused with
+// ErrTokenScopeChanged if the token's scope is no longer that one.
 func (a *ActorStore) SetTokenScope(tokenID int64, change TokenScopeChange,
-	superuserOwnerAllowed bool) error {
+	superuserOwnerAllowed bool, owner TokenOwnerGuard,
+	judged *TokenScopeSnapshot) error {
 
-	return a.s.setTokenScope(a.actor, tokenID, change, superuserOwnerAllowed)
+	return a.s.setTokenScope(a.actor, tokenID, change, superuserOwnerAllowed,
+		owner, judged)
 }
+
+// The single-kind setters below apply neither the owner rule nor a
+// judged snapshot: they exist for the CLI, whose operator holds the
+// database itself. An HTTP handler, or anything else acting for a
+// principal, must use SetTokenScope instead.
 
 // SetTokenConnectionScope sets a token's connection scope, attributing
 // the change to this store's actor.
@@ -298,9 +325,14 @@ func (a *ActorStore) SetTokenAdminScope(tokenID int64, permissions []string,
 }
 
 // ClearTokenScope removes all of a token's scope restrictions,
-// attributing the change to this store's actor.
+// attributing the change to this store's actor. Clearing widens the
+// token, so it is refused with ErrTokenNotOwned unless owner owns the
+// token (issue #522). judged is as for SetTokenScope, from
+// RBACChecker.JudgeTokenScopeClear.
 func (a *ActorStore) ClearTokenScope(tokenID int64,
-	superuserOwnerAllowed bool) error {
+	superuserOwnerAllowed bool, owner TokenOwnerGuard,
+	judged *TokenScopeSnapshot) error {
 
-	return a.s.clearTokenScope(a.actor, tokenID, superuserOwnerAllowed)
+	return a.s.clearTokenScope(a.actor, tokenID, superuserOwnerAllowed, owner,
+		judged)
 }

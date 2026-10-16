@@ -268,3 +268,151 @@ export const connectionScopeProblem = (
     }
     return null;
 };
+
+// ---------------------------------------------------------------------
+// Narrowing another owner's token
+// ---------------------------------------------------------------------
+
+// A caller who is not a superuser may widen or clear only the tokens it
+// owns; a change to another owner's token must narrow it in every scope
+// category (issue #522, guardTokenOwnerTx in
+// server/src/internal/auth/token_owner_guard.go). These helpers offer
+// only the choices such a change can make, so that the editor does not
+// build a scope the server would refuse.
+
+/** The choices the scope editor offers for a token. */
+export interface ScopeChoices {
+    /** Connections that may be added to the scope. */
+    connections: Connection[];
+    /**
+     * Map of connection ID to the highest access level that may be
+     * chosen; an entry for connection 0 allows the "all connections"
+     * entry.
+     */
+    connectionLevels: Record<number, string>;
+    /** Whether every connection may be granted read/write. */
+    ownerIsSuperuser: boolean;
+    /** MCP privileges that may be chosen. */
+    mcpPrivileges: McpPrivilege[];
+    /** Admin permissions that may be chosen. */
+    adminPermissions: AdminPermissionEntry[];
+    /** Whether the "all MCP privileges" option is offered. */
+    allowAllMcp: boolean;
+    /** Whether the "all admin permissions" option is offered. */
+    allowAllAdmin: boolean;
+}
+
+const LEVEL_RANK: Record<string, number> = { read: 1, read_write: 2 };
+
+/** The lower of two access levels, as the server ranks them. */
+const lowerLevel = (a: string, b: string): string =>
+    (LEVEL_RANK[a] ?? 0) <= (LEVEL_RANK[b] ?? 0) ? a : b;
+
+/**
+ * The level a held connection entry may be set to: no more than the
+ * token holds, nor more than the owner holds where that is known.
+ */
+const cappedLevel = (
+    choices: ScopeChoices,
+    id: number,
+    held: string,
+): string => {
+    if (choices.ownerIsSuperuser) {
+        return held;
+    }
+    const owner = choices.connectionLevels[id] ??
+        choices.connectionLevels[ALL_CONNECTIONS_ID];
+    return owner ? lowerLevel(owner, held) : held;
+};
+
+/**
+ * Narrows the connection choices to the entries a token restricted in
+ * connections already holds, each at no more than its stored level.
+ */
+const narrowConnectionChoices = (
+    storedConns: TokenScopeConnection[],
+    choices: ScopeChoices,
+): Pick<ScopeChoices, 'connections' | 'connectionLevels' | 'ownerIsSuperuser'> => {
+    const stored = new Map<number, string>();
+    storedConns.forEach((sc) => {
+        stored.set(sc.connection_id, sc.access_level);
+    });
+    const storedAll = stored.get(ALL_CONNECTIONS_ID);
+
+    const levels: Record<number, string> = {};
+    const connections = choices.connections.filter((c) => {
+        // The server reads a connection's level from its own entry,
+        // else from the "all connections" entry.
+        const held = stored.get(c.id) ?? storedAll;
+        if (held === undefined) {
+            return false;
+        }
+        levels[c.id] = cappedLevel(choices, c.id, held);
+        return true;
+    });
+    if (storedAll !== undefined) {
+        // The server judges the "all connections" entry against the
+        // lowest level any stored entry holds.
+        const held = Array.from(stored.values()).reduce(lowerLevel);
+        levels[ALL_CONNECTIONS_ID] = cappedLevel(choices,
+            ALL_CONNECTIONS_ID, held);
+    }
+    return {
+        connections,
+        connectionLevels: levels,
+        ownerIsSuperuser: false,
+    };
+};
+
+/**
+ * Cuts the choices the owner's privileges allow down to those that
+ * narrow a token's stored scope. A category the token is not restricted
+ * in can be narrowed in any way, so its choices are left alone; in a
+ * restricted one, only entries the token already holds are offered, at
+ * no more than the level it holds them at, and the wildcard is withheld.
+ */
+export const narrowScopeChoices = (
+    scope: TokenScope | undefined,
+    choices: ScopeChoices,
+): ScopeChoices => {
+    let narrowed: ScopeChoices = { ...choices };
+
+    const storedConns = scope?.connections ?? [];
+    if (storedConns.length > 0) {
+        narrowed = {
+            ...narrowed,
+            ...narrowConnectionChoices(storedConns, choices),
+        };
+    }
+
+    const storedMcp = scope?.mcp_privileges ?? [];
+    if (storedMcp.length > 0 && !storedMcp.some(isMcpWildcardId)) {
+        narrowed.mcpPrivileges = choices.mcpPrivileges.filter(
+            (p) => storedMcp.includes(p.id),
+        );
+        narrowed.allowAllMcp = false;
+    }
+
+    const storedAdmin = scope?.admin_permissions ?? [];
+    if (storedAdmin.length > 0 && !storedAdmin.includes('*')) {
+        narrowed.adminPermissions = choices.adminPermissions.filter(
+            (p) => storedAdmin.includes(p.id),
+        );
+        narrowed.allowAllAdmin = false;
+    }
+
+    return narrowed;
+};
+
+/**
+ * Explains why a change to another owner's token cannot be saved: it
+ * would lift a restriction the token has, which only the owner or a
+ * superuser may do.
+ */
+export const narrowOnlyLiftError = (
+    owner: string,
+    categories: string[],
+): string =>
+    `This token belongs to ${owner}, so you can only narrow its scope: ` +
+    `the ${categories.join(' and ')} restriction cannot be removed. ` +
+    'Only the owner or a superuser can widen or clear it.';

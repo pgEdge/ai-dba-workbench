@@ -274,6 +274,29 @@ so tests compare the missing and forbidden responses byte for byte
 (`connection_access_test.go`). `query_metrics`, `get_alert_rules` and
 the connection resolver use the same wording without suggestions.
 
+REST reads of a record tied to a server, cluster or group reuse
+`scopeVisibleToCaller` (`internal/api/rbac_visibility.go`) with the
+record's own not-found message, so a hidden target answers 404 exactly
+as a missing one; it applies the token scope through
+`VisibleConnectionIDs`. A route addressed by connection ID calls it
+before the query (probe override lists, `?connection_id=` on
+`/api/v1/probe-configs`); a route addressed by record ID loads the
+record first and then checks its target (`getProbeConfig`, via
+`probeConfigVisibilityTarget`, issue #647). An admin-gated write on such
+a record runs the same check after the permission gate and before the
+token-scope gate and the body decode, so neither a 403 nor the echoed
+record confirms a hidden one exists (`updateProbeConfig`, via
+`requireProbeConfigVisible`). Only `updateProbeConfig` does this so
+far: the probe, alert and channel override writes (`upsertOverride`,
+`deleteOverride`) check the admin permission and the token scope but
+not visibility, so a permission holder with no grant can still write
+a hidden target's override and gets 400 rather than 404 for a missing
+one; do not assume every write is covered. Estate-wide (global) rows
+stay readable by every caller. An unrestricted superuser session gets
+200 with an empty list for a missing connection ID, since nothing is
+hidden from it. `probe_config_visibility_test.go` holds the
+caller-by-scope matrix to extend.
+
 ### Denial test (no Postgres required)
 
 ```go
@@ -552,24 +575,27 @@ exceeded "this token's access" (fixed so the denial audit coalesces).
   Ant's 05-10-2026 chain refused.
 - Membership add (`GroupWithinTokenScope`, ancestors included), user
   takeover (`UserWithinTokenScope`: password set, re-enable, delete,
-  `createToken` for that owner), new users
+  `createToken` for that owner; since #522 a caller who is not a
+  superuser reaches it only for its own owner), new users
   (`NewUserWithinTokenScope`): the principal's whole reach must fit.
 - Superuser create or promote, a token for a superuser owner, and
   create, rename or delete of a group named in the OIDC `group_map`:
   `TokenHoldsEverything`, a superuser's token unrestricted in every
-  kind (this also closed #522).
-- Token scope set (`TokenScopeChangeWithinCeiling`, self included):
+  kind.
+- Token scope set (`JudgeTokenScopeChange`, self included):
   only kinds present are judged; an entry the target does not already
   allow must be covered; narrowing an unrestricted kind is free; a
   connection entry kept, narrowed or dropped needs read on it.
-  Clear (`TokenScopeClearWithinCeiling`): for each kind the target is
+  Clear (`JudgeTokenScopeClear`): for each kind the target is
   restricted in, the owner's reach in that kind must fit. When the
   target's owner is a superuser, the target is bounded by its scope
   alone, so any widening (or any clear of a restricted target) also
   needs `holdsSuperuser()`: a session, or a superuser's token
   unrestricted in every kind. Both return `ErrTokenScopeUnreadable`
   (500 in the handler) when the stored scope, the target's owner or the
-  owner's reach cannot be read.
+  owner's reach cannot be read. There is no exported verdict-only
+  variant, so no handler can skip the snapshot; tests use the
+  unexported helpers in `token_ceiling_judge_helpers_test.go`.
 - Superuser-owned tokens: minting a token for a superuser owner, and
   setting, clearing or deleting a token whose owner is a superuser,
   need a superuser, for sessions and tokens alike. The owner is read in
@@ -593,13 +619,71 @@ exceeded "this token's access" (fixed so the denial audit coalesces).
   the unguarded owner-scoped `DeleteUserToken` returns on either store
   (deleted in #607; delete through `DeleteToken`). The
   ceiling checks still run first in the handler, so a token caller
-  widening or clearing a superuser's token, or minting for a superuser,
-  gets the ceiling's 403. `setTokenScope` writes all
+  widening or clearing a superuser's token gets the ceiling's 403, and
+  any caller who is not a superuser minting for a superuser gets
+  `refuseTokenForOtherOwner` (#522) before either check. `setTokenScope` writes all
   its kinds through one `ActorStore.SetTokenScope` transaction (one
   audit event per kind; any failure leaves every kind unchanged).
   Pinned by `internal/api/rbac_token_superuser_owner_test.go` and
   `internal/auth/token_superuser_owner_test.go` (owner promoted after
   the read, a concurrent promotion, atomicity).
+- Token ownership (#522): a caller who is not a superuser
+  (`RBACChecker.IsSuperuser`, so a superuser's token with any kind
+  narrowed counts as not one) may create a token only for the user it
+  acts as, and may widen or clear only tokens that user owns; to any
+  other token it may only narrow the scope, or delete it. `createToken`
+  calls `requireOwnTokenOwner` straight after the empty-owner check,
+  before the ceiling; another owner, or an unknown one, gets
+  `refuseTokenForOtherOwner` (403, recorded denial), and a failed
+  `GetUser` 500. The insert then goes through
+  `ActorStore.CreateTokenFor(..., tokenOwnerGuard(r))`, which refuses
+  with `ErrTokenNotOwned` (mapped to `refuseTokenForOtherOwner`) an
+  owner id, read in the insert's tx, other than the guard's user, so a
+  user recreated under the name in between gets nothing.
+  `ActorStore.CreateToken` is the unguarded wrapper (`AnyTokenOwner()`)
+  for the CLI and tests. Scope writes pass `tokenOwnerGuard(r)` (an
+  `auth.TokenOwnerGuard`: `AnyTokenOwner()` for a superuser and the
+  CLI, else `TokensOwnedBy(userID)`; the zero value owns nothing) to
+  `ActorStore.SetTokenScope` and `ClearTokenScope`, whose transaction
+  runs `guardTokenOwnerTx` (`token_owner_guard.go`) after the superuser
+  owner guard: it reads the owner and the stored scope in the tx (a
+  concurrent narrowing cannot be undone), refuses a clear, and refuses
+  a set for which `storedTokenScope.widens` is true, with
+  `auth.ErrTokenNotOwned`. `widens` is "narrow" exactly: every
+  connection entry at or below the stored level for it, every named
+  entry already held in a restricted kind, no wildcard over a
+  restricted kind, and no empty kind over a restricted one; omitted
+  kinds and unrestricted kinds never widen. `respondTokenWriteError`
+  maps `ErrTokenNotOwned` to `refuseTokenNotOwned` (403), and
+  `failAudit` skips it, so a refusal leaves only the coalesced denial
+  row. The ceiling reads the scope outside the write's tx, so
+  `requireTokenScopeChange` returns the `*auth.TokenScopeSnapshot` it
+  judged (`RBACChecker.JudgeTokenScopeChange` / `JudgeTokenScopeClear`;
+  nil for a session or `TokenHoldsEverything`) and the handler passes it
+  as the last argument of `SetTokenScope` / `ClearTokenScope`;
+  `guardJudgedTokenScopeTx` (`token_scope_snapshot.go`, last guard in
+  `beginGuardedTokenScopeChange`) re-reads the raw rows (connection id
+  and level, MCP identifier ids orphans included, admin permissions)
+  and refuses any difference with `ErrTokenScopeChanged`:
+  `refuseTokenScopeChanged`, 409, recorded denial, no failure row.
+  `tokenWriteChecked` (package var in `rbac_token_handlers.go`, nil in
+  the server) runs between the checks and the write so tests can race
+  them; tests that set it must not be parallel. Residuals, both read
+  outside the tx and neither an escalation: the owner's reach that
+  `JudgeTokenScopeClear` compares against, and the acting token's own
+  scope (the ceiling), so a token narrowed mid-request can still give a
+  sibling what it held when judged, which it could have copied there
+  beforehand anyway. The single-kind setters (`SetTokenConnectionScope` and friends)
+  are CLI-only and unguarded by owner; do not call them from a handler.
+  The ceiling still runs first for token callers, siblings with the
+  same owner included, so a narrowed token cannot mint or widen a
+  sibling beyond itself. Delete stays open to any holder of
+  `manage_token_scopes` (bar the superuser-owned rule below), and
+  `listTokens` still lists every token, since any holder may narrow or
+  revoke any of them. Pinned by `internal/api/rbac_token_ownership_test.go`,
+  `internal/api/rbac_token_write_race_test.go`,
+  `internal/auth/token_owner_guard_test.go` and
+  `internal/auth/token_scope_snapshot_test.go`.
 - Connection scope shape: `auth.ValidateScopedConnections` (store, HTTP
   and CLI alike) refuses a duplicate connection ID, a negative ID, an
   unknown level, and connection 0 (all connections) combined with any
@@ -612,7 +696,12 @@ exceeded "this token's access" (fixed so the denial audit coalesces).
   over a legacy `{0: read_write, 5: read}` raises connection 5 and needs
   every connection at read_write (`TestScopeChangeOverLegacyMixedScope`).
   Admin scope names must be known permissions or `*`
-  (`ValidateAdminPermissions`, `ErrUnknownAdminPermission`, 400).
+  (`ValidateAdminPermissions`, `ErrUnknownAdminPermission`, 400), and
+  MCP scope names registered identifiers or `*`
+  (`requireKnownMCPPrivileges` in the scope PUT, before the ceiling and
+  owner checks so an unknown name is a 400 rather than a 403 widening;
+  the store's `ErrUnknownMCPPrivilege` still catches one deleted in
+  between).
 - A user's reach counts group grants, public MCP items, every
   unrestricted connection the user can see, every connection their
   username owns (restricted or not, because `CanAccessConnection`,
@@ -626,8 +715,9 @@ exceeded "this token's access" (fixed so the denial audit coalesces).
   item and admin permission, so `principalReach.reachesEverything`
   makes a holder count as reaching everything in those kinds.
 - An empty MCP name list is not proof of an unrestricted MCP scope:
-  `GetTokenMCPScope` joins away orphaned rows, so `actorMCPScope` and
-  `loadStoredTokenScope` ask `AuthStore.HasTokenMCPScope`.
+  `GetTokenMCPScope` joins away orphaned rows, so `actorMCPScope` asks
+  `AuthStore.HasTokenMCPScope`, and `loadStoredTokenScope` (like
+  `storedTokenScopeTx`) counts the raw IDs `GetTokenScope` returns.
 - Every check fails closed on a nil checker, a nil store or a token
   context without an id.
 - Every token scope read in `auth/token_scope.go` first calls

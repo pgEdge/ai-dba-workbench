@@ -7510,7 +7510,7 @@
     "/probe-configs": {
       "get": {
         "summary": "List probe configurations",
-        "description": "Returns probe configurations, optionally filtered by connection ID",
+        "description": "Returns the global probe configurations, or with connection_id the configurations for that connection. A connection the caller cannot see answers 404, as a missing one does.",
         "operationId": "listProbeConfigs",
         "tags": [
           "Probe Configuration"
@@ -7539,8 +7539,28 @@
               }
             }
           },
+          "400": {
+            "description": "Invalid connection_id parameter",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Connection not found or not visible to the caller",
             "content": {
               "application/json": {
                 "schema": {
@@ -7560,7 +7580,7 @@
     "/probe-configs/{id}": {
       "get": {
         "summary": "Get probe configuration",
-        "description": "Returns a specific probe configuration by ID",
+        "description": "Returns a specific probe configuration by ID. A configuration scoped to a connection, cluster or group the caller cannot see answers 404, as a missing one does.",
         "operationId": "getProbeConfig",
         "tags": [
           "Probe Configuration"
@@ -7587,6 +7607,16 @@
               }
             }
           },
+          "400": {
+            "description": "Invalid probe config ID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Unauthorized",
             "content": {
@@ -7598,7 +7628,7 @@
             }
           },
           "404": {
-            "description": "Probe config not found",
+            "description": "Probe config not found or not visible to the caller",
             "content": {
               "application/json": {
                 "schema": {
@@ -7616,7 +7646,7 @@
       },
       "put": {
         "summary": "Update probe configuration",
-        "description": "Updates a probe configuration. Requires manage_probes permission.",
+        "description": "Updates a probe configuration. Requires manage_probes permission. A configuration scoped to a connection, cluster or group the caller cannot see answers 404, as a missing one does, before the request body is read.",
         "operationId": "updateProbeConfig",
         "tags": [
           "Probe Configuration"
@@ -7685,7 +7715,7 @@
             }
           },
           "404": {
-            "description": "Probe config not found",
+            "description": "Probe config not found or not visible to the caller",
             "content": {
               "application/json": {
                 "schema": {
@@ -9232,7 +9262,7 @@
     "/rbac/tokens": {
       "get": {
         "summary": "List all tokens",
-        "description": "Returns all API tokens with scope information. Requires manage_token_scopes permission.",
+        "description": "Returns all API tokens with scope information. Requires manage_token_scopes permission; every holder sees every token, since any holder may narrow or delete any token.",
         "operationId": "listTokens",
         "tags": [
           "RBAC Tokens"
@@ -9285,7 +9315,7 @@
       },
       "post": {
         "summary": "Create token",
-        "description": "Creates a new API token for the specified user. The raw token is returned only once.",
+        "description": "Creates a new API token for the specified user. The raw token is returned only once. A caller who is not a superuser may create a token only for the user it acts as: a session's user, or an API token's owner.",
         "operationId": "createToken",
         "tags": [
           "RBAC Tokens"
@@ -9333,7 +9363,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_token_scopes permission, or the new token owner's access exceeds the API token's access (its owner's privileges narrowed by its scope); a token for a superuser needs a superuser's token unrestricted in every scope kind, or a superuser's session",
+            "description": "Requires manage_token_scopes permission; a caller who is not a superuser naming any owner but itself, or an owner that does not exist, is refused; or the new token owner's access exceeds the API token's access (its owner's privileges narrowed by its scope); a token for a superuser needs a superuser's token unrestricted in every scope kind, or a superuser's session",
             "content": {
               "application/json": {
                 "schema": {
@@ -9343,7 +9373,7 @@
             }
           },
           "500": {
-            "description": "Failed to create token, including when the owner could not be read",
+            "description": "Failed to create token, including when the owner could not be read; \"Failed to get user\" when the owner could not be looked up for a caller who is not a superuser",
             "content": {
               "application/json": {
                 "schema": {
@@ -9500,7 +9530,7 @@
       },
       "put": {
         "summary": "Set token scope",
-        "description": "Sets scope restrictions for a token including connections, MCP privileges, and admin permissions. Each kind that is present replaces that kind's restriction, and a kind that is omitted or null is left unchanged. A kind with no entries is unrestricted, so an empty array would lift the restriction rather than deny everything; it is refused with 400, and DELETE is the way to clear a token's scope. An API token may change only within its own access, its own scope included: it may narrow its own scope but not widen it.",
+        "description": "Sets scope restrictions for a token including connections, MCP privileges, and admin permissions. Each kind that is present replaces that kind's restriction, and a kind that is omitted or null is left unchanged. A kind with no entries is unrestricted, so an empty array would lift the restriction rather than deny everything; it is refused with 400, and DELETE is the way to clear a token's scope. An API token may change only within its own access, its own scope included: it may narrow its own scope but not widen it. A caller who is not a superuser may widen only tokens owned by the user it acts as; a change to any other token must narrow it in every kind: each connection entry at or below the level the token already allows on that connection, and each MCP privilege and admin permission one the token already holds.",
         "operationId": "setTokenScope",
         "tags": [
           "RBAC Tokens"
@@ -9532,7 +9562,7 @@
             "description": "Scope updated"
           },
           "400": {
-            "description": "Invalid request, including an empty array for any scope kind; a connection scope that names a connection twice, has a negative connection ID or an unknown access level, or combines connection_id 0 (all connections) with any other entry; or an admin permission that is not a known permission name or \"*\"",
+            "description": "Invalid request, including an empty array for any scope kind; a connection scope that names a connection twice, has a negative connection ID or an unknown access level, or combines connection_id 0 (all connections) with any other entry; or an admin permission that is not a known permission name or \"*\"; or an MCP privilege that is not a registered identifier or \"*\"",
             "content": {
               "application/json": {
                 "schema": {
@@ -9552,7 +9582,17 @@
             }
           },
           "403": {
-            "description": "Requires manage_token_scopes permission, or the change grants access that exceeds the API token's access (its owner's privileges narrowed by its scope). Only the kinds present are judged: an entry the target token does not already allow must be within the caller's access, narrowing a kind that was unrestricted grants nothing, and keeping, narrowing or dropping a connection entry needs read access to that connection. The same rule applies to a token's own scope. A token owned by a superuser may be changed only by a superuser's session, or a superuser's token with an unrestricted admin scope, other than by that token itself, and an API token may widen such a token only when it is a superuser's token unrestricted in every scope kind",
+            "description": "Requires manage_token_scopes permission, or the change grants access that exceeds the API token's access (its owner's privileges narrowed by its scope). Only the kinds present are judged: an entry the target token does not already allow must be within the caller's access, narrowing a kind that was unrestricted grants nothing, and keeping, narrowing or dropping a connection entry needs read access to that connection. The same rule applies to a token's own scope. A token owned by a superuser may be changed only by a superuser's session, or a superuser's token with an unrestricted admin scope, other than by that token itself, and an API token may widen such a token only when it is a superuser's token unrestricted in every scope kind. A caller who is not a superuser is refused a change that widens a token owned by another user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "For an API token caller, the target token's scope changed between the check of the change against the caller's access and the write; nothing was written, and the request may be retried",
             "content": {
               "application/json": {
                 "schema": {
@@ -9580,7 +9620,7 @@
       },
       "delete": {
         "summary": "Clear token scope",
-        "description": "Removes all scope restrictions from a token. An API token may clear a scope only when the target's owner's access lies within its own, its own scope included.",
+        "description": "Removes all scope restrictions from a token. Clearing widens the token, so a caller who is not a superuser may clear only tokens owned by the user it acts as. An API token may clear a scope only when the target's owner's access lies within its own, its own scope included.",
         "operationId": "clearTokenScope",
         "tags": [
           "RBAC Tokens"
@@ -9611,7 +9651,17 @@
             }
           },
           "403": {
-            "description": "Requires manage_token_scopes permission, or, for each kind the target token is restricted in, its owner's access in that kind exceeds the API token's access (its owner's privileges narrowed by its scope), or a connection entry the clear drops is one the caller cannot read. The same rule applies to a token's own scope. A token owned by a superuser may be cleared only by a superuser's session, or a superuser's token with an unrestricted admin scope, other than by that token itself, and by an API token only when it is a superuser's token unrestricted in every scope kind",
+            "description": "Requires manage_token_scopes permission, or, for each kind the target token is restricted in, its owner's access in that kind exceeds the API token's access (its owner's privileges narrowed by its scope), or a connection entry the clear drops is one the caller cannot read. The same rule applies to a token's own scope. A token owned by a superuser may be cleared only by a superuser's session, or a superuser's token with an unrestricted admin scope, other than by that token itself, and by an API token only when it is a superuser's token unrestricted in every scope kind. A caller who is not a superuser is refused the clear of a token owned by another user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "For an API token caller, the target token's scope changed between the check of the clear against the caller's access and the write; nothing was cleared, and the request may be retried",
             "content": {
               "application/json": {
                 "schema": {

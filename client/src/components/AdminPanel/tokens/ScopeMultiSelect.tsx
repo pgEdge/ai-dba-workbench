@@ -30,6 +30,11 @@ export interface ScopeMultiSelectProps<T extends { id: string | number; _isAll?:
     getOptionLabel: (option: T) => string;
     /** The "All" sentinel option. */
     allOption: T;
+    /**
+     * Whether the "All" option is offered; withheld when the field may
+     * only narrow a restricted scope, which "All" would widen.
+     */
+    allowAll?: boolean;
     /** Whether the field is disabled. */
     disabled?: boolean;
     /** Helper text shown whilst nothing is selected. */
@@ -51,12 +56,14 @@ function ScopeMultiSelect<T extends { id: string | number; _isAll?: boolean }>({
     onChange,
     getOptionLabel,
     allOption,
+    allowAll = true,
     disabled = false,
     emptyHelperText,
 }: ScopeMultiSelectProps<T>): React.ReactElement {
     // Build the filtered options list based on current selection
     const filteredOptions = React.useMemo(() => {
-        const baseOptions: T[] = options.length > 0 ? [allOption, ...options] : [];
+        const leading: T[] = allowAll ? [allOption] : [];
+        const baseOptions: T[] = options.length > 0 ? [...leading, ...options] : [];
         return baseOptions.filter((p) => {
             // If "All" is currently selected, only show the All option
             if (value.some((s) => s._isAll)) {
@@ -68,7 +75,7 @@ function ScopeMultiSelect<T extends { id: string | number; _isAll?: boolean }>({
             }
             return true;
         });
-    }, [options, value, allOption]);
+    }, [options, value, allOption, allowAll]);
 
     // Handle selection changes with All option logic
     const handleChange = useCallback(

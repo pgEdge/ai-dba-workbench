@@ -71,8 +71,17 @@ type tokenScopeStep struct {
 // When superuserOwnerAllowed is false it refuses, with
 // ErrSuperuserTargetForbidden, a token whose owner is a superuser when
 // the transaction reads the owner (see guardSuperuserOwnedTokenTx).
+//
+// owner refuses, with ErrTokenNotOwned, a change that widens a token it
+// does not own (see guardTokenOwnerTx).
+//
+// judged is the scope a ceiling check approved the change against
+// (RBACChecker.JudgeTokenScopeChange), or nil when none judged it; a
+// write whose token's scope has since changed is refused with
+// ErrTokenScopeChanged (see guardJudgedTokenScopeTx).
 func (s *AuthStore) setTokenScope(actor Actor, tokenID int64,
-	change TokenScopeChange, superuserOwnerAllowed bool) (err error) {
+	change TokenScopeChange, superuserOwnerAllowed bool,
+	owner TokenOwnerGuard, judged *TokenScopeSnapshot) (err error) {
 
 	if change.Connections != nil {
 		if err := ValidateScopedConnections(change.Connections); err != nil {
@@ -114,8 +123,8 @@ func (s *AuthStore) setTokenScope(actor Actor, tokenID int64,
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	tx, target, err := s.beginTokenScopeChange(actor, tokenID,
-		steps[0].action, superuserOwnerAllowed)
+	tx, target, err := s.beginGuardedTokenScopeChange(actor, tokenID,
+		steps[0].action, superuserOwnerAllowed, owner, &change, judged)
 	if err != nil {
 		return err
 	}

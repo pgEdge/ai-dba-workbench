@@ -73,8 +73,12 @@ moved.
   a record the caller cannot see, as for one that does not exist:
   clusters and cluster groups whose members the caller cannot see, the
   target cluster of `PUT /api/v1/connections/{id}/cluster` (a missing
-  cluster id answers 404 too, not 500 from the foreign key), and
-  blackouts and blackout schedules outside a token's connection scope.
+  cluster id answers 404 too, not 500 from the foreign key),
+  blackouts and blackout schedules outside a token's connection scope,
+  and probe configs: `GET /api/v1/probe-configs?connection_id=N`,
+  `GET /api/v1/probe-configs/{id}` and `PUT /api/v1/probe-configs/{id}`
+  answer 404 for a server, cluster or group config the caller cannot
+  see, PUT before the token scope or the body is checked (#647).
   Judge an enumeration concern against the convention of the endpoint
   in question rather than assuming either model throughout.
 - The MCP tools that go through `resolveAccessibleConnection` in
@@ -132,7 +136,33 @@ moved.
   a read-level token with `manage_permissions` can revoke another
   group's read_write. Known gaps, which do not widen anyone's reach:
   revoking a group's MCP privileges or admin permissions, editing or
-  disabling a user, and deleting a token are not ceiling-gated.
+  disabling a user, and deleting a token are not ceiling-gated. Token
+  deletion stays open to any holder of `manage_token_scopes` (bar the
+  superuser-owned rule below), deliberately, since revoking narrows.
+- `manage_token_scopes` is not a route to another user's access
+  (#522). A caller who is not a superuser (`RBACChecker.IsSuperuser`)
+  may create a token only for the user it acts as, and may widen or
+  clear only that user's tokens; to any other token it may only narrow
+  the scope (every kind a subset of the stored one) or delete it. The
+  handler checks the owner name first (`requireOwnTokenOwner`, 403
+  `refuseTokenForOtherOwner`), and the store re-checks inside the write
+  transaction: `TokenOwnerGuard` (`AnyTokenOwner()` for a superuser and
+  the CLI, `TokensOwnedBy(userID)` otherwise; the zero value owns
+  nothing) is passed to `ActorStore.CreateTokenFor`, which compares the
+  owner id the insert reads, and to `SetTokenScope` / `ClearTokenScope`,
+  whose `guardTokenOwnerTx` refuses a widening or clear of a token the
+  guard does not own; both return `ErrTokenNotOwned`. Scope writes
+  validate MCP names against the registered set first
+  (`requireKnownMCPPrivileges`, 400). The ceiling (#528) still bounds
+  token callers, siblings included, and its judgement is pinned to the
+  write: the handler passes the `TokenScopeSnapshot` it judged, and
+  `guardJudgedTokenScopeTx` refuses with `ErrTokenScopeChanged` (409)
+  if the stored rows differ in the write's transaction. The owner's
+  reach a clear is judged against is still read outside it. The
+  single-kind setters (`SetTokenConnectionScope`, `SetTokenMCPScope`,
+  `SetTokenMCPScopeByNames`, `SetTokenAdminScope`) and
+  `ActorStore.CreateToken` apply neither guard and are CLI-only; a
+  handler calling one is a finding.
 - A token owned by a superuser is bounded by its scope alone, so
   minting one, setting or clearing its scope, and deleting it, needs a
   superuser (session, or a superuser's token with an unrestricted admin

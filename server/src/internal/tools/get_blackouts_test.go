@@ -19,7 +19,7 @@ import (
 // ---------------------------------------------------------------------------
 
 func TestGetBlackoutsToolDefinition(t *testing.T) {
-	tool := GetBlackoutsTool(nil, nil, nil)
+	tool := GetBlackoutsTool(nil, nil, nil, nil)
 
 	if tool.Definition.Name != "get_blackouts" {
 		t.Errorf("expected tool name 'get_blackouts', got %q", tool.Definition.Name)
@@ -52,7 +52,7 @@ func TestGetBlackoutsToolDefinition(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGetBlackoutsNilPool(t *testing.T) {
-	tool := GetBlackoutsTool(nil, nil, nil)
+	tool := GetBlackoutsTool(nil, nil, nil, nil)
 
 	response, err := tool.Handler(map[string]any{})
 	if err != nil {
@@ -75,7 +75,7 @@ func TestGetBlackoutsNilPool(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGetBlackoutsInvalidConnectionID(t *testing.T) {
-	tool := GetBlackoutsTool(nil, nil, nil)
+	tool := GetBlackoutsTool(nil, nil, nil, nil)
 
 	tests := []struct {
 		name string
@@ -104,7 +104,7 @@ func TestGetBlackoutsInvalidConnectionID(t *testing.T) {
 }
 
 func TestGetBlackoutsDefaultValues(t *testing.T) {
-	tool := GetBlackoutsTool(nil, nil, nil)
+	tool := GetBlackoutsTool(nil, nil, nil, nil)
 
 	// Verify active_only default
 	activeOnlyProp, ok := tool.Definition.InputSchema.Properties["active_only"].(map[string]any)

@@ -30,10 +30,10 @@ import (
 func connectionScopedTools(ds *database.Datastore, rbac *auth.RBACChecker, lister auth.ConnectionVisibilityLister) map[string]Tool {
 	pool := ds.GetPool()
 	return map[string]Tool{
-		"get_alert_history":    GetAlertHistoryTool(pool, rbac, lister),
-		"get_blackouts":        GetBlackoutsTool(pool, rbac, lister),
-		"get_metric_baselines": GetMetricBaselinesTool(pool, rbac, lister),
-		"get_timeline_events":  GetTimelineEventsTool(ds, rbac, lister),
+		"get_alert_history":    GetAlertHistoryTool(pool, rbac, lister, nil),
+		"get_blackouts":        GetBlackoutsTool(pool, rbac, lister, nil),
+		"get_metric_baselines": GetMetricBaselinesTool(pool, rbac, lister, nil),
+		"get_timeline_events":  GetTimelineEventsTool(ds, rbac, lister, nil),
 	}
 }
 
@@ -145,14 +145,14 @@ func TestResolveAccessibleConnection(t *testing.T) {
 	checker := testRBACChecker(t)
 
 	t.Run("granted returns the name", func(t *testing.T) {
-		name, resp := resolveAccessibleConnection(super, pool, checker, lister, f.forbidden)
+		name, resp := resolveAccessibleConnection(super, pool, checker, lister, nil, deniedActionConnectionRead, f.forbidden)
 		if resp != nil || name != "alice-private" {
 			t.Errorf("expected alice-private, got name=%q resp=%+v", name, resp)
 		}
 	})
 
 	t.Run("superuser missing ID lists every connection", func(t *testing.T) {
-		_, resp := resolveAccessibleConnection(super, pool, checker, lister, f.missing)
+		_, resp := resolveAccessibleConnection(super, pool, checker, lister, nil, deniedActionConnectionRead, f.missing)
 		if resp == nil {
 			t.Fatal("expected a response")
 		}
@@ -165,7 +165,7 @@ func TestResolveAccessibleConnection(t *testing.T) {
 	})
 
 	t.Run("nil pool skips the lookup", func(t *testing.T) {
-		name, resp := resolveAccessibleConnection(super, nil, checker, lister, f.missing)
+		name, resp := resolveAccessibleConnection(super, nil, checker, lister, nil, deniedActionConnectionRead, f.missing)
 		if resp != nil || name != "" {
 			t.Errorf("expected an empty grant, got name=%q resp=%+v", name, resp)
 		}
@@ -174,21 +174,21 @@ func TestResolveAccessibleConnection(t *testing.T) {
 	plain := "connection not found or not accessible. Use list_connections to see the connections you can access."
 
 	t.Run("nil pool denial has no suggestions", func(t *testing.T) {
-		_, resp := resolveAccessibleConnection(f.bobCtx, nil, nil, lister, f.visible)
+		_, resp := resolveAccessibleConnection(f.bobCtx, nil, nil, lister, nil, deniedActionConnectionRead, f.visible)
 		if resp == nil || resp.Content[0].Text != plain {
 			t.Errorf("expected %q, got %+v", plain, resp)
 		}
 	})
 
 	t.Run("visibility failure has no suggestions", func(t *testing.T) {
-		_, resp := resolveAccessibleConnection(f.bobCtx, pool, privateChecker(t), failingLister(), f.forbidden)
+		_, resp := resolveAccessibleConnection(f.bobCtx, pool, privateChecker(t), failingLister(), nil, deniedActionConnectionRead, f.forbidden)
 		if resp == nil || resp.Content[0].Text != plain {
 			t.Errorf("expected %q, got %+v", plain, resp)
 		}
 	})
 
 	t.Run("no visible connections has no suggestions", func(t *testing.T) {
-		_, resp := resolveAccessibleConnection(f.bobCtx, pool, privateChecker(t), sharedLister(), f.forbidden)
+		_, resp := resolveAccessibleConnection(f.bobCtx, pool, privateChecker(t), sharedLister(), nil, deniedActionConnectionRead, f.forbidden)
 		if resp == nil || resp.Content[0].Text != plain {
 			t.Errorf("expected %q, got %+v", plain, resp)
 		}
@@ -197,7 +197,7 @@ func TestResolveAccessibleConnection(t *testing.T) {
 	t.Run("query failure has no suggestions", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(super)
 		cancel()
-		_, resp := resolveAccessibleConnection(ctx, pool, checker, lister, f.visible)
+		_, resp := resolveAccessibleConnection(ctx, pool, checker, lister, nil, deniedActionConnectionRead, f.visible)
 		if resp == nil || resp.Content[0].Text != plain {
 			t.Errorf("expected %q, got %+v", plain, resp)
 		}

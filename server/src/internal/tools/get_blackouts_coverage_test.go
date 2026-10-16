@@ -115,7 +115,7 @@ func TestGetBlackoutsTool_Results(t *testing.T) {
 
 	conn := float64(connID)
 	quiet := float64(quietID)
-	tool := GetBlackoutsTool(pool, testRBACChecker(t), sharedLister(connID))
+	tool := GetBlackoutsTool(pool, testRBACChecker(t), sharedLister(connID), nil)
 	runToolCases(t, tool, []toolCase{
 		{name: "single connection every scope", args: map[string]any{"connection_id": conn},
 			want: "(3 rows)"},
@@ -175,7 +175,7 @@ func TestGetBlackoutsTool_ScanFailures(t *testing.T) {
 	pool := newBlackoutsPool(t)
 	connID, _ := seedBlackoutFixtures(t, pool)
 	conn := float64(connID)
-	tool := GetBlackoutsTool(pool, testRBACChecker(t), nil)
+	tool := GetBlackoutsTool(pool, testRBACChecker(t), nil, nil)
 
 	// A NULL schedule name cannot be scanned into a string.
 	execSQL(t, pool, `
@@ -209,7 +209,7 @@ func TestGetBlackoutsTool_ScheduleQueryFailure(t *testing.T) {
 	pool := newBlackoutsPool(t)
 	connID, _ := seedBlackoutFixtures(t, pool)
 	execSQL(t, pool, "DROP TABLE blackout_schedules")
-	tool := GetBlackoutsTool(pool, testRBACChecker(t), nil)
+	tool := GetBlackoutsTool(pool, testRBACChecker(t), nil, nil)
 
 	runToolCases(t, tool, []toolCase{
 		{name: "all connections", args: map[string]any{"include_schedules": true},

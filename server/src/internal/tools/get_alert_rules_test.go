@@ -19,7 +19,7 @@ import (
 // ---------------------------------------------------------------------------
 
 func TestGetAlertRulesToolDefinition(t *testing.T) {
-	tool := GetAlertRulesTool(nil, nil)
+	tool := GetAlertRulesTool(nil, nil, nil)
 
 	if tool.Definition.Name != "get_alert_rules" {
 		t.Errorf("expected tool name 'get_alert_rules', got %q", tool.Definition.Name)
@@ -52,7 +52,7 @@ func TestGetAlertRulesToolDefinition(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGetAlertRulesNilPool(t *testing.T) {
-	tool := GetAlertRulesTool(nil, nil)
+	tool := GetAlertRulesTool(nil, nil, nil)
 
 	response, err := tool.Handler(map[string]any{})
 	if err != nil {
@@ -75,7 +75,7 @@ func TestGetAlertRulesNilPool(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGetAlertRulesInvalidConnectionID(t *testing.T) {
-	tool := GetAlertRulesTool(nil, nil)
+	tool := GetAlertRulesTool(nil, nil, nil)
 
 	tests := []struct {
 		name string
@@ -112,7 +112,7 @@ func TestGetAlertRulesInvalidConnectionID(t *testing.T) {
 }
 
 func TestGetAlertRulesInvalidCategory(t *testing.T) {
-	tool := GetAlertRulesTool(nil, nil)
+	tool := GetAlertRulesTool(nil, nil, nil)
 
 	// Since pool is nil, we cannot test the category validation path
 	// fully. This test verifies the tool handles the nil pool case.
@@ -139,7 +139,7 @@ func TestGetAlertRulesInvalidCategory(t *testing.T) {
 
 func TestGetAlertRulesEnabledOnlyDefault(t *testing.T) {
 	// Verify the schema indicates default is true
-	tool := GetAlertRulesTool(nil, nil)
+	tool := GetAlertRulesTool(nil, nil, nil)
 
 	enabledOnlyProp, ok := tool.Definition.InputSchema.Properties["enabled_only"].(map[string]any)
 	if !ok {

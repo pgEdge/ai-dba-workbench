@@ -191,7 +191,7 @@ To avoid rate limits when calling this tool:
 
 			if ca.HasConnID {
 				// Explicit connection_id: use full resolver path
-				resolved, errResp := resolver.Resolve(ctx, args, dbClient)
+				resolved, errResp := resolver.Resolve(ctx, deniedActionConnectionRead, args, dbClient)
 				if errResp != nil {
 					return *errResp, nil
 				}

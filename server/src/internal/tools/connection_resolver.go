@@ -28,6 +28,7 @@ type ConnectionResolver struct {
 	clientManager *database.ClientManager
 	datastore     *database.Datastore
 	rbacChecker   *auth.RBACChecker
+	record        DenialRecorder
 }
 
 // ResolvedConnection holds the resolved database client, pool, and
@@ -42,16 +43,19 @@ type ResolvedConnection struct {
 
 // NewConnectionResolver creates a ConnectionResolver. All parameters
 // are required for explicit connection_id resolution; pass nil only in
-// tests that do not exercise connection resolution.
+// tests that do not exercise connection resolution. record audits a
+// connection_id the caller may not access, and may be nil.
 func NewConnectionResolver(
 	clientManager *database.ClientManager,
 	datastore *database.Datastore,
 	rbacChecker *auth.RBACChecker,
+	record DenialRecorder,
 ) *ConnectionResolver {
 	return &ConnectionResolver{
 		clientManager: clientManager,
 		datastore:     datastore,
 		rbacChecker:   rbacChecker,
+		record:        record,
 	}
 }
 
@@ -92,9 +96,12 @@ func parseConnectionArgs(args map[string]any) connectionArgs {
 // When connection_id is absent, the resolver falls back to
 // fallbackClient. If the resolver itself is nil and connection_id is
 // absent, the fallback client is used directly. If the resolver is nil
-// and connection_id is present, an error is returned.
+// and connection_id is present, an error is returned. action is the
+// fixed audit action the calling tool records when the caller may not
+// access the connection_id it names, such as connection.query.
 func (r *ConnectionResolver) Resolve(
 	ctx context.Context,
+	action string,
 	args map[string]any,
 	fallbackClient *database.Client,
 ) (*ResolvedConnection, *mcp.ToolResponse) {
@@ -112,7 +119,7 @@ func (r *ConnectionResolver) Resolve(
 			}
 			return nil, &resp
 		}
-		return r.resolveExplicit(ctx, ca)
+		return r.resolveExplicit(ctx, action, ca)
 	}
 
 	// No connection_id: fall back to the captured per-token client.
@@ -122,6 +129,7 @@ func (r *ConnectionResolver) Resolve(
 // resolveExplicit handles the case where connection_id is provided.
 func (r *ConnectionResolver) resolveExplicit(
 	ctx context.Context,
+	action string,
 	ca connectionArgs,
 ) (*ResolvedConnection, *mcp.ToolResponse) {
 	// Validate the optional database override before any other work.
@@ -153,6 +161,8 @@ func (r *ConnectionResolver) resolveExplicit(
 	canAccess, _ := r.rbacChecker.CanAccessConnection(ctx, ca.ConnectionID)
 	if !canAccess {
 		fmt.Fprintf(os.Stderr, "WARNING: connection_resolver: RBAC denied access to connection %d\n", ca.ConnectionID)
+		r.record.deny(ctx, action, connectionDenialTarget(ca.ConnectionID),
+			connectionAccessDenied)
 		resp := mcp.ToolResponse{
 			Content: []mcp.ContentItem{{
 				Type: "text",

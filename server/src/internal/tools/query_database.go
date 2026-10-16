@@ -147,7 +147,7 @@ To avoid rate limits (30,000 input tokens/minute):
 			// The target is the explicit connection_id, resolved with its
 			// RBAC check, or else the caller's selected connection. The
 			// query text never chooses the target (issue #662).
-			resolved, errResp := resolver.Resolve(ctx, args, dbClient)
+			resolved, errResp := resolver.Resolve(ctx, deniedActionConnectionQuery, args, dbClient)
 			if errResp != nil {
 				return *errResp, nil
 			}

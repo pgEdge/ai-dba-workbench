@@ -162,7 +162,7 @@ func TestQueryDatabase_SelectedConnectionPath(t *testing.T) {
 	ctx := superuserContext()
 	dsn := os.Getenv("TEST_AI_WORKBENCH_SERVER")
 
-	resolved, errResp := env.resolver.Resolve(ctx, map[string]any{
+	resolved, errResp := env.resolver.Resolve(ctx, deniedActionConnectionQuery, map[string]any{
 		"connection_id": float64(env.connID),
 	}, nil)
 	if errResp != nil {

@@ -27,7 +27,7 @@ import (
 // the caller may see. It may be nil in unit tests or when no datastore is
 // configured; auth.RBACChecker.VisibleConnectionIDs tolerates a nil lister
 // by falling back to group/token-granted IDs only.
-func GetAlertHistoryTool(pool *pgxpool.Pool, rbacChecker *auth.RBACChecker, visibilityLister auth.ConnectionVisibilityLister) Tool {
+func GetAlertHistoryTool(pool *pgxpool.Pool, rbacChecker *auth.RBACChecker, visibilityLister auth.ConnectionVisibilityLister, record DenialRecorder) Tool {
 	return Tool{
 		Definition: mcp.Tool{
 			Name: "get_alert_history",
@@ -177,7 +177,7 @@ Returns TSV data with:
 
 				// RBAC: check access before looking the connection up, so
 				// missing and forbidden IDs give the same response.
-				name, resp := resolveAccessibleConnection(ctx, pool, rbacChecker, visibilityLister, connectionID)
+				name, resp := resolveAccessibleConnection(ctx, pool, rbacChecker, visibilityLister, record, deniedActionConnectionRead, connectionID)
 				if resp != nil {
 					return *resp, nil
 				}

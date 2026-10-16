@@ -20,7 +20,7 @@ import (
 // ---------------------------------------------------------------------------
 
 func TestGetAlertHistoryToolDefinition(t *testing.T) {
-	tool := GetAlertHistoryTool(nil, nil, nil)
+	tool := GetAlertHistoryTool(nil, nil, nil, nil)
 
 	if tool.Definition.Name != "get_alert_history" {
 		t.Errorf("expected tool name 'get_alert_history', got %q", tool.Definition.Name)
@@ -53,7 +53,7 @@ func TestGetAlertHistoryToolDefinition(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGetAlertHistoryNilPool(t *testing.T) {
-	tool := GetAlertHistoryTool(nil, nil, nil)
+	tool := GetAlertHistoryTool(nil, nil, nil, nil)
 
 	response, err := tool.Handler(map[string]any{})
 	if err != nil {
@@ -76,7 +76,7 @@ func TestGetAlertHistoryNilPool(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGetAlertHistoryInvalidStatus(t *testing.T) {
-	tool := GetAlertHistoryTool(nil, nil, nil)
+	tool := GetAlertHistoryTool(nil, nil, nil, nil)
 
 	args := map[string]any{
 		"status": "invalid_status",
@@ -94,7 +94,7 @@ func TestGetAlertHistoryInvalidStatus(t *testing.T) {
 
 func TestGetAlertHistoryValidStatusValues(t *testing.T) {
 	// Verify the schema has the correct enum values
-	tool := GetAlertHistoryTool(nil, nil, nil)
+	tool := GetAlertHistoryTool(nil, nil, nil, nil)
 
 	statusProp, ok := tool.Definition.InputSchema.Properties["status"].(map[string]any)
 	if !ok {

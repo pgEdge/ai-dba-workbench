@@ -238,6 +238,16 @@ func (h *ConnectionHandler) createConnection(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// A new connection, shared or not, changes the estate every caller
+	// sees, so, as for creating a cluster or a cluster group, an API
+	// token must cover every connection at read_write (issues #471 and
+	// #668). A token confined to some servers, or to read-only access,
+	// may not add one. The refusal is audited as connection.create.
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker,
+		denialRecorder(h.denialRecorder)) {
+		return
+	}
+
 	// Parse request body
 	req, ok := decodeBody[ConnectionCreateRequest](w, r)
 	if !ok {

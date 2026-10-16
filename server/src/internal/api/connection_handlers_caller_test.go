@@ -95,3 +95,74 @@ func TestConnectionLifecycleForEachCaller(t *testing.T) {
 		})
 	}
 }
+
+// TestCreateConnectionNeedsWholeTokenScope is the regression test for
+// the connection-create gap the #688 review found: a token for an owner
+// holding manage_connections, but scoped to one connection read-only,
+// could create a shared connection. Connection create now needs a
+// token whose scope covers every connection at read_write, as cluster
+// and cluster group creation do, and the refusal is audited as
+// connection.create. A token covering every connection, and the owner's
+// session, may still create one.
+func TestCreateConnectionNeedsWholeTokenScope(t *testing.T) {
+	f := newConnCovFixture(t, connCovSecret)
+	f.handler.SetDenialRecorder(NewRBACHandler(f.store,
+		auth.NewRBACChecker(f.store)).RecordDenial)
+	owner := f.newCaller(t, "create_scope_owner", auth.PermManageConnections)
+	existing := f.seed(t, "create-scope-existing", owner.username, true)
+
+	tokenWith := func(note string, conns []auth.ScopedConnection) string {
+		t.Helper()
+		raw, stored, err := f.store.AsActor(auth.SystemActor()).CreateToken(
+			owner.username, note, nil, false)
+		if err != nil {
+			t.Fatalf("CreateToken failed: %v", err)
+		}
+		if err := f.store.AsActor(auth.SystemActor()).SetTokenConnectionScope(
+			stored.ID, conns, true); err != nil {
+			t.Fatalf("SetTokenConnectionScope failed: %v", err)
+		}
+		return raw
+	}
+	create := func(bearer, name string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := withAuth(t, f.store, connCovRequest(t, http.MethodPost,
+			"/api/v1/connections", ConnectionCreateRequest{
+				Name:         name,
+				Host:         connCovAllowedHost,
+				Port:         5432,
+				DatabaseName: "postgres",
+				Username:     "app",
+				Password:     "example-password",
+				IsShared:     true,
+			}), bearer)
+		rec := httptest.NewRecorder()
+		f.handler.createConnection(rec, req)
+		return rec
+	}
+	countNamed := func(name string) int {
+		t.Helper()
+		var n int
+		if err := f.pool.QueryRow(context.Background(),
+			"SELECT count(*) FROM connections WHERE name = $1", name).Scan(&n); err != nil {
+			t.Fatalf("count connections: %v", err)
+		}
+		return n
+	}
+
+	narrow := tokenWith("narrow", []auth.ScopedConnection{
+		{ConnectionID: existing, AccessLevel: auth.AccessLevelRead},
+	})
+	rec := create(narrow, "create-scope-refused")
+	assertOutOfTokenScope(t, rec)
+	assertDenialRecorded(t, f.store, "connection.create", targetOutOfTokenScope)
+	if n := countNamed("create-scope-refused"); n != 0 {
+		t.Errorf("refused create left %d rows", n)
+	}
+
+	wildcard := tokenWith("wildcard", []auth.ScopedConnection{
+		{ConnectionID: auth.ConnectionIDAll, AccessLevel: auth.AccessLevelReadWrite},
+	})
+	assertStatus(t, create(wildcard, "create-scope-wildcard"), http.StatusCreated)
+	assertStatus(t, create(owner.token, "create-scope-session"), http.StatusCreated)
+}

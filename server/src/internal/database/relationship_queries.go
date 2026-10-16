@@ -213,6 +213,25 @@ func (d *Datastore) SetNodeRelationships(ctx context.Context, clusterID int, sou
 	return nil
 }
 
+// AddNodeRelationship inserts one manual relationship without touching
+// the source's other rows. A row that already exists is left as it is.
+// Unlike SetNodeRelationships it never deletes, so writing the reverse
+// half of a replicates_with pair cannot discard the target's other
+// manual relationships.
+func (d *Datastore) AddNodeRelationship(ctx context.Context, clusterID int, sourceConnectionID int, rel RelationshipInput) error {
+	_, err := d.pool.Exec(ctx,
+		`INSERT INTO cluster_node_relationships
+         (cluster_id, source_connection_id, target_connection_id, relationship_type, is_auto_detected)
+         VALUES ($1, $2, $3, $4, FALSE)
+         ON CONFLICT (cluster_id, source_connection_id, target_connection_id, relationship_type) DO NOTHING`,
+		clusterID, sourceConnectionID, rel.TargetConnectionID, rel.RelationshipType,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to insert relationship: %w", err)
+	}
+	return nil
+}
+
 // SyncAutoDetectedRelationships replaces the auto-detected relationship
 // set for a cluster in a single transaction. All existing
 // is_auto_detected = TRUE rows for the cluster are deleted, then the

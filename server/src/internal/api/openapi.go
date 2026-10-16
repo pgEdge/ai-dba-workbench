@@ -2119,7 +2119,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/connections/{id}/cluster": {
 			Get: &OpenAPIOperation{
 				Summary:     "Get connection cluster assignment",
-				Description: "Returns the current cluster assignment for the connection together with the list of available clusters and any node relationships involving this connection.",
+				Description: "Returns the current cluster assignment for the connection together with the list of available clusters and any node relationships involving this connection. The cluster list includes only clusters with at least one connection the caller can see, and the relationships only those whose source and target connections are both visible to the caller.",
 				OperationID: "getConnectionCluster",
 				Tags:        []string{"Connections"},
 				Security:    bearerAuth,
@@ -2976,7 +2976,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/clusters/{id}/relationships": {
 			Get: &OpenAPIOperation{
 				Summary:     "List cluster relationships",
-				Description: "Returns replication relationships for a cluster",
+				Description: "Returns replication relationships for a cluster. A caller without unrestricted visibility gets 404 for a cluster with no visible member, and sees only relationships whose source and target connections are both visible.",
 				OperationID: "listClusterRelationships",
 				Tags:        []string{"Clusters"},
 				Security:    bearerAuth,
@@ -2989,6 +2989,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 						},
 					},
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"404": jsonResponse("ErrorResponse", "Cluster not found or not visible to the caller"),
 				},
 			},
 		},
@@ -2996,7 +2997,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/clusters/{id}/relationships/{relationshipId}": {
 			Delete: &OpenAPIOperation{
 				Summary:     "Delete cluster relationship",
-				Description: "Deletes a specific cluster relationship. Requires manage_connections permission.",
+				Description: "Deletes a specific cluster relationship. Requires manage_connections permission; a caller without unrestricted visibility gets 404 unless the relationship belongs to the cluster and both of its connections are visible.",
 				OperationID: "deleteClusterRelationship",
 				Tags:        []string{"Clusters"},
 				Security:    bearerAuth,
@@ -3009,6 +3010,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
 					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission, or the API token's connection scope does not cover the target"),
+					"404": jsonResponse("ErrorResponse", "Relationship not found or not visible to the caller"),
 				},
 			},
 		},
@@ -3017,7 +3019,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/clusters/{id}/connections/{connId}/relationships": {
 			Put: &OpenAPIOperation{
 				Summary:     "Set connection relationships",
-				Description: "Replaces the replication relationships for a connection within a cluster. Requires manage_connections permission.",
+				Description: "Replaces the replication relationships for a connection within a cluster and returns the cluster's relationships. Requires manage_connections permission; a caller without unrestricted visibility must also see the source connection, every requested target, and the target of every manual relationship the source already has.",
 				OperationID: "setConnectionRelationships",
 				Tags:        []string{"Clusters"},
 				Security:    bearerAuth,
@@ -3027,16 +3029,21 @@ func buildPaths() map[string]OpenAPIPathItem {
 				},
 				RequestBody: jsonRequestBody("SetRelationshipsRequest", "Relationship definitions", true),
 				Responses: map[string]OpenAPIResponse{
-					"204": {Description: "Relationships updated"},
+					"200": {
+						Description: "Relationships updated; the cluster's relationships visible to the caller",
+						Content: map[string]OpenAPIMediaType{
+							"application/json": {Schema: &OpenAPISchema{Type: "array", Items: &OpenAPISchema{Type: "object"}}},
+						},
+					},
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission, or the API token's connection scope does not cover the target"),
-					"404": jsonResponse("ErrorResponse", "Cluster or connection not found"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission, the API token's connection scope does not cover the target, or the rewrite would delete a relationship to a connection the caller cannot see"),
+					"404": jsonResponse("ErrorResponse", "Source connection not found or not visible to the caller"),
 				},
 			},
 			Delete: &OpenAPIOperation{
 				Summary:     "Clear connection relationships",
-				Description: "Removes all replication relationships for a connection within a cluster. Requires manage_connections permission.",
+				Description: "Removes all manual replication relationships for a connection within a cluster. Requires manage_connections permission; a caller without unrestricted visibility must also see the source connection and the target of every manual relationship it has.",
 				OperationID: "clearConnectionRelationships",
 				Tags:        []string{"Clusters"},
 				Security:    bearerAuth,
@@ -3048,8 +3055,8 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"204": {Description: "Relationships cleared"},
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission, or the API token's connection scope does not cover the target"),
-					"404": jsonResponse("ErrorResponse", "Cluster or connection not found"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission, the API token's connection scope does not cover the target, or the clear would delete a relationship to a connection the caller cannot see"),
+					"404": jsonResponse("ErrorResponse", "Source connection not found or not visible to the caller"),
 				},
 			},
 		},

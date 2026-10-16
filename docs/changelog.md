@@ -2659,6 +2659,24 @@ project adheres to
   confirm the target exists; a refused change to a visible target
   is still recorded.
 
+- Check connection visibility on the cluster relationship routes
+  (#678). `GET /api/v1/clusters/{id}/relationships` now returns 404
+  for a cluster with no member the caller can see, and lists only the
+  relationships whose source and target connections are both visible;
+  previously it returned every relationship in the cluster to any
+  authenticated caller. The relationship writes still require the
+  `manage_connections` permission, and a caller without unrestricted
+  visibility must now also see the source connection, every requested
+  target, and the target of any manual relationship that a rewrite or
+  clear would delete; deleting a relationship by id needs both of its
+  connections to be visible and the relationship to belong to the
+  addressed cluster. Saving a `replicates_with` relationship no longer
+  discards the target connection's other manual relationships when it
+  adds the reverse row. `GET /api/v1/connections/{id}/cluster` likewise
+  now omits relationships to connections the caller cannot see, and
+  lists only the clusters with a visible member, as
+  `GET /api/v1/clusters/list` already did.
+
 - Breaking: make the `query_datastore` MCP tool structured and limit
   the tool to the connections the caller can read (#566). The tool no
   longer accepts SQL and rejects a `sql` or `query` argument, so a

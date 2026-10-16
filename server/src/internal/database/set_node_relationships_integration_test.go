@@ -167,3 +167,55 @@ func TestSetNodeRelationships_ClosedPoolReturnsError(t *testing.T) {
 		t.Fatal("SetNodeRelationships against a closed pool returned nil; want error")
 	}
 }
+
+// TestAddNodeRelationship_KeepsOtherManualRows covers the insert-only
+// path the replicates_with reverse row uses: the target's existing
+// manual rows survive, and a duplicate insert is a no-op.
+func TestAddNodeRelationship_KeepsOtherManualRows(t *testing.T) {
+	ds, pool, cleanup := newSyncAutoDetectedTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	clusterID := insertSyncTestCluster(t, pool, "add-node-rel")
+	source := insertSyncTestConnection(t, pool, "add-source")
+	targetA := insertSyncTestConnection(t, pool, "add-target-a")
+	targetB := insertSyncTestConnection(t, pool, "add-target-b")
+
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO cluster_node_relationships
+			(cluster_id, source_connection_id, target_connection_id,
+			 relationship_type, is_auto_detected)
+		VALUES ($1, $2, $3, 'streams_from', FALSE)
+	`, clusterID, source, targetA); err != nil {
+		t.Fatalf("Failed to seed relationship: %v", err)
+	}
+
+	rel := RelationshipInput{TargetConnectionID: targetB,
+		RelationshipType: "replicates_with"}
+	for i := 0; i < 2; i++ {
+		if err := ds.AddNodeRelationship(ctx, clusterID, source, rel); err != nil {
+			t.Fatalf("AddNodeRelationship returned error: %v", err)
+		}
+	}
+
+	if got := countRelationships(t, pool, clusterID, false); got != 2 {
+		t.Errorf("manual rows = %d, want 2 (the seeded row and one added row)", got)
+	}
+}
+
+// TestAddNodeRelationship_InsertFailureReturnsError covers the failed
+// INSERT branch: a self-relationship violates the check constraint.
+func TestAddNodeRelationship_InsertFailureReturnsError(t *testing.T) {
+	ds, pool, cleanup := newSyncAutoDetectedTestDatastore(t)
+	defer cleanup()
+
+	clusterID := insertSyncTestCluster(t, pool, "add-node-rel-bad")
+	source := insertSyncTestConnection(t, pool, "add-source-bad")
+
+	err := ds.AddNodeRelationship(context.Background(), clusterID, source,
+		RelationshipInput{TargetConnectionID: source,
+			RelationshipType: "replicates_with"})
+	if err == nil {
+		t.Fatal("AddNodeRelationship with a self-relationship returned nil; want error")
+	}
+}

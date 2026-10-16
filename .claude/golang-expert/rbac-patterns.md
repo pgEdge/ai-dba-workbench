@@ -35,6 +35,25 @@ GET handlers gate on visibility (`resolveVisibleConnections` +
 admin permission; that is a different surface and is documented in
 the issue-#35 regression test files.
 
+A Variant 1 gate is not a visibility check: a restricted caller holding
+`manage_connections` must still see what they mutate. The cluster
+relationship routes (issue #678) are the reference. After the admin
+gate and the token-scope gate, and before `DecodeJSONBody`,
+`restrictedVisibleSet` resolves the visible set (nil means
+unrestricted) and `sourceRelationshipsVisible` answers 404 for a hidden
+source, 400 for a source outside the addressed cluster (checked before
+the existing rows, since a moved connection keeps stale rows in its old
+cluster), and 403 when a rewrite or clear would delete a manual
+relationship to a hidden target. A hidden requested target gets the
+same 400 as a non-member, a delete by id answers 404 unless the row is
+in the addressed cluster with both ends visible, and every response
+listing relationships goes through `filterRelationshipsByVisibility`
+(both ends visible), including `GET /connections/{id}/cluster`, whose
+cluster selector list goes through `filterClustersByVisibility` as
+`GET /clusters/list` does. Writes that add a row to a connection other than
+the source use the insert-only `AddNodeRelationship`, never the
+replacing `SetNodeRelationships`, so they cannot delete hidden rows.
+
 ## Variant 1: Plain Admin Gate
 
 Use this when the handler creates a new object (no owner yet), or

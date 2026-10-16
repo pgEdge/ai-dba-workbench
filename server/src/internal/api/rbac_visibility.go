@@ -93,6 +93,27 @@ func clusterConnectionMembershipFn(ctx context.Context, ds rbacVisibilityDatasto
 	return out, nil
 }
 
+// filterClustersByVisibility returns the clusters that have at least one
+// member connection in the visible set. It is used only for restricted
+// callers; unrestricted callers skip filtering entirely.
+func filterClustersByVisibility(ctx context.Context, ds rbacVisibilityDatastore, clusters []database.ClusterSummary, visible map[int]bool) ([]database.ClusterSummary, error) {
+	ids := make([]int, 0, len(clusters))
+	for i := range clusters {
+		ids = append(ids, clusters[i].ID)
+	}
+	membership, err := clusterConnectionMembershipFn(ctx, ds, ids)
+	if err != nil {
+		return nil, err
+	}
+	filtered := make([]database.ClusterSummary, 0, len(clusters))
+	for i := range clusters {
+		if clusterMembersVisible(membership[clusters[i].ID], visible) {
+			filtered = append(filtered, clusters[i])
+		}
+	}
+	return filtered, nil
+}
+
 // scopeVisibleToCaller reports whether the caller may see the given
 // scope and writes a 404 response when they cannot. The caller should
 // return immediately when this function returns false. The scope

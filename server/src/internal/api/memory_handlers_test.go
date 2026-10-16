@@ -30,6 +30,14 @@ import (
 // with the memory package's own tests on the same database.
 const memoryHandlerTestSchema = "api_memory_handler_test"
 
+// The schema statements are fully literal, naming the schema above, so
+// that no identifier is ever concatenated into SQL.
+const (
+	memoryHandlerSchemaCreate = `DROP SCHEMA IF EXISTS api_memory_handler_test CASCADE;
+CREATE SCHEMA api_memory_handler_test`
+	memoryHandlerSchemaDrop = `DROP SCHEMA IF EXISTS api_memory_handler_test CASCADE`
+)
+
 // memoryHandlerTestDDL creates chat_memories without the embedding
 // column, which none of the handler's queries read, so the tests do not
 // need pgvector. The trigger lets a test make one row fail to delete
@@ -93,9 +101,7 @@ func newMemoryHandlerFixture(t *testing.T) *memoryHandlerFixture {
 	}
 	defer func() { _ = admin.Close(ctx) }()
 
-	schema := pgx.Identifier{memoryHandlerTestSchema}.Sanitize()
-	if _, err := admin.Exec(ctx, "DROP SCHEMA IF EXISTS "+schema+
-		" CASCADE; CREATE SCHEMA "+schema); err != nil {
+	if _, err := admin.Exec(ctx, memoryHandlerSchemaCreate); err != nil {
 		t.Fatalf("Failed to create the test schema: %v", err)
 	}
 	t.Cleanup(func() {
@@ -106,7 +112,7 @@ func newMemoryHandlerFixture(t *testing.T) *memoryHandlerFixture {
 		}
 		defer func() { _ = conn.Close(context.Background()) }()
 		if _, err := conn.Exec(context.Background(),
-			"DROP SCHEMA IF EXISTS "+schema+" CASCADE"); err != nil {
+			memoryHandlerSchemaDrop); err != nil {
 			t.Logf("Failed to drop the test schema: %v", err)
 		}
 	})

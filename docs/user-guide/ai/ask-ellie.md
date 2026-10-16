@@ -126,6 +126,14 @@ table describes the available tools:
 | `get_blackouts` | Queries blackout periods and recurring schedules. |
 | `get_timeline_events` | Queries the unified incident-investigation timeline of configuration changes, restarts, extension changes, alerts, and blackouts. |
 
+Ellie treats a `SELECT` that calls a function with side
+effects, such as `pg_terminate_backend`, `pg_reload_conf`,
+`set_config` or `nextval`, as a write rather than a read.
+The `query_database` tool runs such a query only when you
+have read/write access to the connection, and the
+`execute_explain` tool shows its plan but will not run it
+with `EXPLAIN ANALYZE`.
+
 ## Chat Memory
 
 Ellie can store and recall information across

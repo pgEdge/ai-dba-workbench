@@ -2595,6 +2595,36 @@ project adheres to
   that change global defaults also matched cluster and group
   overrides, and now select only the global row. (#647)
 
+- Treat a `SELECT` that calls a function with side effects as a
+  write statement when running SQL from an AI report, so it needs
+  write access and the confirmation prompt. Statements such as
+  `SELECT pg_terminate_backend(...)`, `SELECT set_config(...)` or
+  `SELECT nextval(...)` were classified as reads from their leading
+  keyword alone, so they ran without confirmation and were open to
+  users with read-only access to the connection. The check recognises
+  the documented PostgreSQL functions that signal or change server
+  state, together with the management functions of `pg_stat_statements`,
+  `pg_buffercache`, `pg_prewarm`, `pg_surgery`, `pg_visibility`,
+  `postgres_fdw`, `adminpack`, `dblink`, `pg_background`, Spock,
+  pglogical and `pg_cron`, however the name is spelt, quoted or
+  schema-qualified, and whether it is called with parentheses or
+  through field selection, as in `(pid).pg_terminate_backend`.
+  Functions called through a user-defined wrapper or view are not
+  detected. The MCP tools that Ellie and other MCP clients use now
+  apply the same check: `query_database` treats such a `SELECT` as a
+  write, so it needs an explicit `connection_id` and read/write
+  access; `execute_explain` refuses to `EXPLAIN ANALYZE` it, although
+  the plan is still available with `analyze` set to false;
+  `test_query` refuses one prefixed with `ANALYZE` or other `EXPLAIN`
+  options, which previously ran it; and `count_rows` refuses it
+  outright in its `WHERE` clause. `test_query` and
+  the query validation endpoint now plan with a fixed `EXPLAIN` option
+  list, so a statement starting with `ANALYZE` or `VERBOSE` is a
+  syntax error rather than being run, and a `--` comment ending in a
+  carriage return no longer hides one. `execute_explain` with
+  `analyze` and `buffers` both false and text output no longer fails
+  with a syntax error. (#646)
+
 - Delete a user with `ai-dba-server -delete-user` only when the
   confirmation is an explicit `y` or `yes`. The answer was checked
   only when a whole line could be read, so input that ended without

@@ -34,22 +34,22 @@ func TestExplainCommand(t *testing.T) {
 		{
 			name:    "select",
 			stmt:    "SELECT 1",
-			wantSQL: "EXPLAIN SELECT 1",
+			wantSQL: "EXPLAIN (COSTS TRUE) SELECT 1",
 		},
 		{
 			name:    "leading line comment is stripped before EXPLAIN",
 			stmt:    "-- find the rows\nSELECT 1",
-			wantSQL: "EXPLAIN SELECT 1",
+			wantSQL: "EXPLAIN (COSTS TRUE) SELECT 1",
 		},
 		{
 			name:    "leading block comment is stripped before EXPLAIN",
 			stmt:    "/* note */ SELECT 1",
-			wantSQL: "EXPLAIN SELECT 1",
+			wantSQL: "EXPLAIN (COSTS TRUE) SELECT 1",
 		},
 		{
 			name:    "dollar-digit inside an identifier is not a placeholder",
 			stmt:    "SELECT col$1 FROM t",
-			wantSQL: "EXPLAIN SELECT col$1 FROM t",
+			wantSQL: "EXPLAIN (COSTS TRUE) SELECT col$1 FROM t",
 		},
 		{
 			name:    "caller's EXPLAIN with a dollar-digit identifier is planned",
@@ -65,7 +65,7 @@ func TestExplainCommand(t *testing.T) {
 		{
 			name:    "dollar-digit inside a string literal is not a placeholder",
 			stmt:    "SELECT 'costs $5' AS price",
-			wantSQL: "EXPLAIN SELECT 'costs $5' AS price",
+			wantSQL: "EXPLAIN (COSTS TRUE) SELECT 'costs $5' AS price",
 		},
 		{
 			name:        "placeholder after an operator is detected",
@@ -76,42 +76,42 @@ func TestExplainCommand(t *testing.T) {
 		{
 			name:    "dollar-digit after a non-ASCII identifier byte is not a placeholder",
 			stmt:    "SELECT caf\u00e9$1 FROM t",
-			wantSQL: "EXPLAIN SELECT caf\u00e9$1 FROM t",
+			wantSQL: "EXPLAIN (COSTS TRUE) SELECT caf\u00e9$1 FROM t",
 		},
 		{
 			name:    "common table expression",
 			stmt:    "WITH x AS (SELECT 1) SELECT * FROM x",
-			wantSQL: "EXPLAIN WITH x AS (SELECT 1) SELECT * FROM x",
+			wantSQL: "EXPLAIN (COSTS TRUE) WITH x AS (SELECT 1) SELECT * FROM x",
 		},
 		{
 			name:    "insert",
 			stmt:    "INSERT INTO t VALUES (1)",
-			wantSQL: "EXPLAIN INSERT INTO t VALUES (1)",
+			wantSQL: "EXPLAIN (COSTS TRUE) INSERT INTO t VALUES (1)",
 		},
 		{
 			name:    "update",
 			stmt:    "UPDATE t SET a = 1",
-			wantSQL: "EXPLAIN UPDATE t SET a = 1",
+			wantSQL: "EXPLAIN (COSTS TRUE) UPDATE t SET a = 1",
 		},
 		{
 			name:    "delete",
 			stmt:    "DELETE FROM t",
-			wantSQL: "EXPLAIN DELETE FROM t",
+			wantSQL: "EXPLAIN (COSTS TRUE) DELETE FROM t",
 		},
 		{
 			name:    "values",
 			stmt:    "VALUES (1)",
-			wantSQL: "EXPLAIN VALUES (1)",
+			wantSQL: "EXPLAIN (COSTS TRUE) VALUES (1)",
 		},
 		{
 			name:    "table",
 			stmt:    "TABLE pg_class",
-			wantSQL: "EXPLAIN TABLE pg_class",
+			wantSQL: "EXPLAIN (COSTS TRUE) TABLE pg_class",
 		},
 		{
 			name:    "merge",
 			stmt:    "MERGE INTO t USING s ON t.a = s.a WHEN MATCHED THEN DO NOTHING",
-			wantSQL: "EXPLAIN MERGE INTO t USING s ON t.a = s.a WHEN MATCHED THEN DO NOTHING",
+			wantSQL: "EXPLAIN (COSTS TRUE) MERGE INTO t USING s ON t.a = s.a WHEN MATCHED THEN DO NOTHING",
 		},
 		{
 			name:       "create table is not explainable",

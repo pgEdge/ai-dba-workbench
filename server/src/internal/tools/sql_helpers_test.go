@@ -109,32 +109,6 @@ func TestIsSelectQuery(t *testing.T) {
 	}
 }
 
-func TestFirstSQLKeyword(t *testing.T) {
-	tests := []struct {
-		name string
-		sql  string
-		want string
-	}{
-		{"simple keyword", "SELECT 1", "SELECT"},
-		{"lowercase", "select 1", "SELECT"},
-		{"leading whitespace", "  INSERT INTO t", "INSERT"},
-		{"line comment", "-- comment\nUPDATE t SET x=1", "UPDATE"},
-		{"block comment", "/* comment */ DELETE FROM t", "DELETE"},
-		{"empty", "", ""},
-		{"only whitespace", "   ", ""},
-		{"digit-leading token", "123abc", "123ABC"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := firstSQLKeyword(tt.sql)
-			if got != tt.want {
-				t.Errorf("firstSQLKeyword(%q) = %q, want %q", tt.sql, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestHasLimitClause(t *testing.T) {
 	tests := []struct {
 		name string

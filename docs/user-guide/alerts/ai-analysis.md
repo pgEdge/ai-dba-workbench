@@ -151,6 +151,25 @@ displays a confirmation prompt listing the detected
 statements. The user must click Execute to proceed or
 Cancel to abort.
 
+A `SELECT` statement that calls a function with side
+effects also counts as a write statement, even though it
+begins with `SELECT`. The system recognises the built-in
+PostgreSQL functions that change server state, such as
+`pg_terminate_backend`, `pg_cancel_backend`, `set_config`,
+`nextval`, the advisory lock and large object functions,
+and the replication slot and statistics reset functions,
+along with the management functions of extensions such as
+`pg_stat_statements`, `pg_prewarm`, `dblink`,
+`pg_background`, Spock, pglogical, and `pg_cron`. The
+check also catches a call written in field-selection
+notation, such as `(pid).pg_terminate_backend`, which
+PostgreSQL runs as `pg_terminate_backend(pid)`; a column
+that shares one of these names, such as `t.nextval`, also
+counts as a write. The
+system cannot see inside user-defined functions or views,
+so a statement that reaches a side effect through one of
+those still runs as a read.
+
 Confirmed statements run in order on a single database
 connection, so a `BEGIN` and its `COMMIT` in the same code
 block take effect together. If the statements leave a

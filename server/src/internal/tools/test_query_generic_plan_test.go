@@ -268,3 +268,50 @@ func TestQueryTool_UnparameterisedQueriesStillWork(t *testing.T) {
 		}
 	})
 }
+
+// TestQueryTool_LeadingOptionsCannotAnalyze verifies the fixed EXPLAIN
+// option list end to end: a statement that starts with ANALYZE or
+// VERBOSE, including one hidden behind a line comment that ends in a
+// lone carriage return (PostgreSQL ends a line comment there too), is a
+// syntax error rather than an EXPLAIN ANALYZE that runs it. A query that
+// also calls a side-effecting function is refused before it reaches the
+// server.
+func TestQueryTool_LeadingOptionsCannotAnalyze(t *testing.T) {
+	tool, cleanup := newTestQueryToolClient(t)
+	defer cleanup()
+
+	for _, q := range []string{
+		"ANALYZE SELECT 1",
+		"VERBOSE SELECT 1",
+		"-- x\rANALYZE\nSELECT 1",
+		"SELECT 1; -- x\rANALYZE SELECT 2",
+	} {
+		resp := runTestQuery(t, tool, q)
+		if !resp.IsError || !strings.Contains(responseText(resp), "syntax error") {
+			t.Errorf("test_query(%q) = %s, want a syntax error", q, responseText(resp))
+		}
+	}
+
+	resp := runTestQuery(t, tool, "-- x\rANALYZE\nSELECT pg_terminate_backend(1)")
+	if !resp.IsError || !strings.Contains(responseText(resp), "side effects") {
+		t.Errorf("carriage-return bypass = %s, want the side-effects refusal",
+			responseText(resp))
+	}
+
+	resp = runTestQuery(t, tool, "-- x\r\nSELECT 1")
+	if resp.IsError {
+		t.Errorf("a comment ending in CRLF broke a valid query: %s", responseText(resp))
+	}
+
+	// Without an injected context the handler falls back to its own,
+	// and the second of two statements is the one reported.
+	resp, err := tool.Handler(map[string]any{
+		"query": "SELECT 1; SELECT * FROM no_such_table_for_issue_646",
+	})
+	if err != nil {
+		t.Fatalf("test_query handler returned an error: %v", err)
+	}
+	if !resp.IsError || !strings.Contains(responseText(resp), "Statement 2 is invalid") {
+		t.Errorf("invalid second statement = %s, want it reported", responseText(resp))
+	}
+}

@@ -18,6 +18,7 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/database"
 	"github.com/pgedge/ai-workbench/server/internal/logging"
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
+	"github.com/pgedge/ai-workbench/server/internal/sqllex"
 )
 
 // ExecuteExplainTool creates the execute_explain tool for query performance analysis
@@ -163,26 +164,18 @@ READ ONLY transaction to prevent side effects. However, be cautious with:
 				return mcp.NewToolError("Only SELECT queries are supported. EXPLAIN ANALYZE executes the query, which could have side effects for INSERT/UPDATE/DELETE/DDL statements.")
 			}
 
-			// Build EXPLAIN command
-			var explainCmd strings.Builder
-			explainCmd.WriteString("EXPLAIN (")
-
-			var options []string
-			if analyze {
-				options = append(options, "ANALYZE TRUE")
-			}
-			if buffers {
-				options = append(options, "BUFFERS TRUE")
-			}
-			if format == "json" {
-				options = append(options, "FORMAT JSON")
+			// EXPLAIN ANALYZE runs the query, and a read-only
+			// transaction does not stop a side-effecting function such
+			// as pg_terminate_backend, so such a SELECT may only be
+			// planned (issue #646).
+			if analyze && sqllex.CallsSideEffectingFunctionUnderAnyReading(query) {
+				return mcp.NewToolError("The query calls a function with side effects " +
+					"(for example pg_terminate_backend, pg_reload_conf, set_config or " +
+					"nextval). EXPLAIN ANALYZE executes the query, so it is not " +
+					"allowed; set analyze to false to see the plan without running it.")
 			}
 
-			explainCmd.WriteString(strings.Join(options, ", "))
-			explainCmd.WriteString(") ")
-			explainCmd.WriteString(query)
-
-			explainQuery := explainCmd.String()
+			explainQuery := buildExplainCommand(query, analyze, buffers, format)
 
 			// Extract context from args (injected by registry.Execute)
 			ctx, ok := args["__context"].(context.Context)
@@ -390,6 +383,25 @@ func containsSQLKeyword(upperSQL, keyword string) bool {
 
 		idx = end
 	}
+}
+
+// buildExplainCommand returns the EXPLAIN command for query with the
+// requested options. The option list always names COSTS TRUE, which is
+// PostgreSQL's default, so that it is never empty: "EXPLAIN () ..." is a
+// syntax error. The closed option list also makes a query starting with
+// ANALYZE or VERBOSE a syntax error rather than an extra option.
+func buildExplainCommand(query string, analyze, buffers bool, format string) string {
+	options := []string{"COSTS TRUE"}
+	if analyze {
+		options = append(options, "ANALYZE TRUE")
+	}
+	if buffers {
+		options = append(options, "BUFFERS TRUE")
+	}
+	if format == "json" {
+		options = append(options, "FORMAT JSON")
+	}
+	return "EXPLAIN (" + strings.Join(options, ", ") + ") " + query
 }
 
 // isIdentChar returns true if the byte is a valid SQL identifier character

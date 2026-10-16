@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 )
@@ -555,42 +556,6 @@ func TestIssue530_SplitStatementsQuoting(t *testing.T) {
 	}
 }
 
-// TestIssue530_SkipQuoted covers the literal scanner directly, including
-// the prefixed forms and the unterminated cases that run to the end.
-func TestIssue530_SkipQuoted(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-		want  int
-	}{
-		{"plain literal", "'abc' rest", 5},
-		{"doubled quote", "'a''b' rest", 6},
-		{"quoted identifier", `"a b" rest`, 5},
-		{"doubled double quote", `"a""b" rest`, 6},
-		{"escape literal", `E'\'' rest`, 5},
-		{"escape literal lowercase", `e'\'' rest`, 5},
-		{"unicode literal", `U&'ab' rest`, 6},
-		{"unicode identifier", `U&"ab" rest`, 6},
-		{"bit string", "B'10' rest", 5},
-		{"hex string", "x'ff' rest", 5},
-		{"a quote ends a bit string even when another follows",
-			"B'1''0' rest", 4},
-		{"national string", "N'ab' rest", 5},
-		{"unterminated literal", "'abc", 4},
-		{"not a literal prefix", "abc", 1},
-		{"prefix letter at the end", "E", 1},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := skipQuoted(tt.input, 0, standardStrings); got != tt.want {
-				t.Errorf("skipQuoted(%q, 0) = %d, want %d",
-					tt.input, got, tt.want)
-			}
-		})
-	}
-}
-
 // TestIssue530_WritingSelectClauses covers the statements that read at
 // first glance but write: a writable CTE using MERGE, SELECT ... INTO,
 // which creates a table, and the row-locking clauses, which stamp the
@@ -763,47 +728,6 @@ func TestIssue530_KeywordScansIgnoreNonCode(t *testing.T) {
 	}
 }
 
-// TestIssue530_MaskNonCode pins the masking helper itself: every masked
-// region becomes spaces and the result keeps the original byte length.
-func TestIssue530_MaskNonCode(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-		want  string
-	}{
-		{"plain code is untouched", "SELECT a FROM t", "SELECT a FROM t"},
-		{"string literal", "SELECT 'into' FROM t", "SELECT        FROM t"},
-		{"quoted identifier", `SELECT "into" FROM t`, "SELECT        FROM t"},
-		{"line comment", "SELECT a -- into\nFROM t", "SELECT a        \nFROM t"},
-		{"block comment", "SELECT /* into */ a", "SELECT            a"},
-		{"unterminated literal", "SELECT 'into", "SELECT      "},
-		{"dollar-quoted literal", "SELECT $q$'$q$ AS c", "SELECT " + strings.Repeat(" ", 7) + " AS c"},
-		{"anonymous dollar quote", "SELECT $$x$$", "SELECT      "},
-		{"unterminated dollar quote", "SELECT $q$ into", "SELECT " + strings.Repeat(" ", 8)},
-		{"dollar continuing an identifier", "SELECT a$q$ FROM t", "SELECT a$q$ FROM t"},
-		{"non-ASCII dollar tag", "SELECT $é$'$é$ AS c", "SELECT " + strings.Repeat(" ", 9) + " AS c"},
-		{"E continuing a non-ASCII identifier", `SELECT éE'\' AS c`, `SELECT éE    AS c`},
-		{"E after an identifier dollar", `SELECT a$E'\' AS c`, `SELECT a$E    AS c`},
-		{"carriage return ends a line comment", "SELECT a -- x\rFROM t", "SELECT a     \rFROM t"},
-		{"placeholder is code", "SELECT $1", "SELECT $1"},
-		{"empty", "", ""},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := maskNonCode(tt.input, standardStrings)
-			if got != tt.want {
-				t.Errorf("maskNonCode(%q) = %q, want %q",
-					tt.input, got, tt.want)
-			}
-			if len(got) != len(tt.input) {
-				t.Errorf("maskNonCode(%q) changed length: %d, want %d",
-					tt.input, len(got), len(tt.input))
-			}
-		})
-	}
-}
-
 // TestIssue530_SetCurrentConnectionStoresValidDatabaseName checks the
 // database override on the path that saves it: a legitimate name is
 // stored and echoed back, and an unknown connection is still refused
@@ -875,62 +799,6 @@ func TestIssue530_SetCurrentConnectionStoresValidDatabaseName(t *testing.T) {
 	}
 }
 
-// TestIssue530_SkipQuotedReadings covers the literal scanner under both
-// readings of a plain '...' literal, and the continuation of a string
-// literal onto a later line, which keeps the state it started in.
-func TestIssue530_SkipQuotedReadings(t *testing.T) {
-	tests := []struct {
-		name    string
-		input   string
-		reading stringReading
-		want    int
-	}{
-		{"backslash is ordinary in a standard string",
-			`'a\' rest`, standardStrings, 4},
-		{"backslash escapes in an escape reading",
-			`'a\'' rest`, escapeStrings, 5},
-		{"doubled quote after a backslash in a standard string",
-			`'\'' rest`, standardStrings, len(`'\'' rest`)},
-		{"national literal follows the reading",
-			`N'\'' rest`, escapeStrings, 5},
-		{"E literal escapes under either reading",
-			`E'\'' rest`, standardStrings, 5},
-		{"unicode literal never takes a backslash escape",
-			`U&'\'' rest`, escapeStrings, len(`U&'\'' rest`)},
-		{"bit string never takes a backslash escape",
-			`B'\' rest`, escapeStrings, 4},
-		{"quoted identifier never takes a backslash escape",
-			`"\" rest`, escapeStrings, 3},
-		{"literal continued onto the next line", "'a'\n'b' rest", standardStrings, 7},
-		{"continuation after a carriage return", "'a'\r'b' rest", standardStrings, 7},
-		{"continuation after spaces and a line comment",
-			"'a' -- c\n  'b' rest", standardStrings, 14},
-		{"continuation after a comment on its own line",
-			"'a'\n-- c\n'b' rest", standardStrings, 12},
-		{"continuation keeps the escape state",
-			"E'a'\n'\\'' rest", standardStrings, 9},
-		{"continuation keeps the bit string state",
-			"B'1'\n'' rest", standardStrings, 7},
-		{"no continuation without a newline", "'a' 'b'", standardStrings, 3},
-		{"a block comment ends the continuation",
-			"'a' /* c */\n'b'", standardStrings, 3},
-		{"a line comment running to the end ends it",
-			"'a'\n-- c", standardStrings, 3},
-		{"a newline alone is no continuation", "'a'\n", standardStrings, 3},
-		{"a quoted identifier does not continue",
-			"\"a\"\n\"b\"", standardStrings, 3},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := skipQuoted(tt.input, 0, tt.reading); got != tt.want {
-				t.Errorf("skipQuoted(%q, 0, %d) = %d, want %d",
-					tt.input, tt.reading, got, tt.want)
-			}
-		})
-	}
-}
-
 // TestIssue530_ContainsDollarParamEitherReading pins that a placeholder
 // visible under only one reading of a plain '...' literal still counts.
 func TestIssue530_ContainsDollarParamEitherReading(t *testing.T) {
@@ -988,9 +856,12 @@ func TestIssue530_StandardConformingStringsOffRequiresConfirmation(t *testing.T)
 	if !resp.RequiresConfirmation {
 		t.Fatal("expected requires_confirmation for the hidden DELETE CTE")
 	}
-	if len(resp.WriteStatements) != 1 ||
-		!strings.Contains(resp.WriteStatements[0], "DELETE FROM t") {
-		t.Errorf("write statements = %q, want the WITH ... DELETE statement",
+	// The set_config call is a write in its own right (issue #646), so
+	// both statements are listed; the point here is that the hidden
+	// DELETE is among them.
+	if len(resp.WriteStatements) != 2 ||
+		!strings.Contains(resp.WriteStatements[1], "DELETE FROM t") {
+		t.Errorf("write statements = %q, want set_config and the WITH ... DELETE statement",
 			resp.WriteStatements)
 	}
 }
@@ -1095,10 +966,15 @@ func TestIssue530_LexerReadingsMatchPostgres(t *testing.T) {
 // TestIssue530_ClientEncodingChangeStopsReadOnlyBatch proves that a
 // statement which moves the connection off UTF8 ends the batch before
 // the next statement is lexed under the new encoding, on both the pgx
-// path and the simple-protocol path.
+// path and the simple-protocol path. A direct set_config call is now
+// classified as a write (issue #646), so the change is made through a
+// wrapper function the classifier cannot see into, which is how a
+// statement classified as read-only can still change the encoding.
 func TestIssue530_ClientEncodingChangeStopsReadOnlyBatch(t *testing.T) {
 	h, pool, target, cleanup := newQueryExecTestHandler(t)
 	defer cleanup()
+
+	defer createSetClientEncodingWrapper(t, pool)()
 
 	connID := seedQueryExecConnection(t, pool, target, target.host, target.port)
 
@@ -1107,12 +983,12 @@ func TestIssue530_ClientEncodingChangeStopsReadOnlyBatch(t *testing.T) {
 		query string
 	}{
 		{"pgx path",
-			"SELECT set_config('client_encoding', 'SJIS', false); SELECT 1"},
+			"SELECT issue530_set_client_encoding(false); SELECT 1"},
 		{"simple-protocol path",
-			"SELECT set_config('client_encoding', 'SJIS', false); " +
+			"SELECT issue530_set_client_encoding(false); " +
 				"EXPLAIN SELECT 1 WHERE 1 = $1"},
 		{"transaction-local change",
-			"SELECT set_config('client_encoding', 'SJIS', true); SELECT 1"},
+			"SELECT issue530_set_client_encoding(true); SELECT 1"},
 	}
 
 	for _, tt := range tests {
@@ -1139,6 +1015,26 @@ func TestIssue530_ClientEncodingChangeStopsReadOnlyBatch(t *testing.T) {
 	}
 }
 
+// createSetClientEncodingWrapper creates issue530_set_client_encoding,
+// a SQL function that switches client_encoding to SJIS. A direct
+// set_config call is classified as a write (issue #646), whereas a call
+// to a user-defined wrapper is not, so the tests use it to change the
+// encoding from a statement the classifier treats as read-only. The
+// returned function drops it, and must run before the pool closes.
+func createSetClientEncodingWrapper(t *testing.T, pool *pgxpool.Pool) func() {
+	t.Helper()
+	if _, err := pool.Exec(context.Background(), `CREATE OR REPLACE FUNCTION
+		issue530_set_client_encoding(is_local boolean) RETURNS text
+		LANGUAGE sql AS
+		$$SELECT set_config('client_encoding', 'SJIS', is_local)$$`); err != nil {
+		t.Fatalf("failed to create the wrapper function: %v", err)
+	}
+	return func() {
+		_, _ = pool.Exec(context.Background(),
+			"DROP FUNCTION IF EXISTS issue530_set_client_encoding(boolean)")
+	}
+}
+
 // TestIssue530_ClientEncodingChangeStopsConfirmedWriteBatch proves that
 // the confirmed write path also ends the batch once a statement moves
 // the connection off UTF8, so a statement after it is never lexed under
@@ -1148,6 +1044,8 @@ func TestIssue530_ClientEncodingChangeStopsReadOnlyBatch(t *testing.T) {
 func TestIssue530_ClientEncodingChangeStopsConfirmedWriteBatch(t *testing.T) {
 	h, pool, target, cleanup := newQueryExecTestHandler(t)
 	defer cleanup()
+
+	defer createSetClientEncodingWrapper(t, pool)()
 
 	connID := seedQueryExecConnection(t, pool, target, target.host, target.port)
 
@@ -1160,7 +1058,7 @@ func TestIssue530_ClientEncodingChangeStopsConfirmedWriteBatch(t *testing.T) {
 			"SET client_encoding = 'SJIS'; SELECT 1", 1},
 		{"read statement changes the encoding",
 			"CREATE TEMP TABLE issue530_enc (a int); " +
-				"SELECT set_config('client_encoding', 'SJIS', false); SELECT 1", 2},
+				"SELECT issue530_set_client_encoding(false); SELECT 1", 2},
 	}
 
 	for _, tt := range tests {

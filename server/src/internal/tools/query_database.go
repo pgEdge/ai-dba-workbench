@@ -66,6 +66,7 @@ DO NOT use for:
 <important>
 - SELECT queries run in READ-ONLY transactions for safety
 - Write operations (INSERT, UPDATE, DELETE, DDL) require read_write access to the connection
+- A SELECT that calls a side-effecting function (for example pg_terminate_backend, pg_cancel_backend, pg_reload_conf, set_config or nextval) is a write operation
 - Results are limited to prevent excessive token usage
 - Results are returned in TSV (tab-separated values) format for efficiency
 </important>

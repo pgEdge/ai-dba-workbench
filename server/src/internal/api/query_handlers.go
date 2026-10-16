@@ -24,6 +24,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/pkg/rollback"
 	"github.com/pgedge/ai-workbench/server/internal/database"
+	"github.com/pgedge/ai-workbench/server/internal/sqllex"
 	"github.com/pgedge/ai-workbench/server/internal/tsv"
 )
 
@@ -65,83 +66,10 @@ const maxRowLimit = 1000
 // queryTimeout is the context timeout for query execution
 const queryTimeout = 30 * time.Second
 
-// scanDollarTag checks whether sql[i] starts a dollar-quote tag. If a
-// valid tag is found (either $$ or $tag$), it returns the full tag
-// string. Otherwise it returns an empty string. The tag follows
-// PostgreSQL's lexer: it starts with a letter, an underscore or any byte
-// from 0x80 up, and continues with those or a digit, so $é$ is a tag
-// just as $q$ is. Missing one would leave a quote or comment marker
-// inside it to hide the code that follows from the classifier.
-//
-// A dollar sign that continues an identifier, as in foo$bar$ or é$bar$
-// (PostgreSQL allows $ after the first character of an unquoted
-// identifier), is part of that identifier rather than the start of a
-// dollar quote, so it yields no tag. Reading one there would let a later
-// $bar$ hide the code in between from the classifier.
-func scanDollarTag(sql string, i int) string {
-	if i >= len(sql) || sql[i] != '$' {
-		return ""
-	}
-	if continuesIdentifier(sql, i) {
-		return ""
-	}
-	// Check for $$ (empty tag)
-	if i+1 < len(sql) && sql[i+1] == '$' {
-		return "$$"
-	}
-	// Check for $tag$, where the tag is an identifier that does not
-	// start with a digit.
-	j := i + 1
-	if j >= len(sql) || !isIdentChar(sql[j]) ||
-		(sql[j] >= '0' && sql[j] <= '9') {
-		return ""
-	}
-	for j++; j < len(sql); j++ {
-		if sql[j] == '$' {
-			return sql[i : j+1]
-		}
-		if !isIdentChar(sql[j]) {
-			return ""
-		}
-	}
-	return ""
-}
-
 // hasOnlyComments returns true when the string contains only SQL
 // comments (line and block) and whitespace but no real SQL content.
 func hasOnlyComments(s string) bool {
-	i := 0
-	for i < len(s) {
-		ch := s[i]
-		if isSQLSpace(ch) {
-			i++
-			continue
-		}
-		if ch == '-' && i+1 < len(s) && s[i+1] == '-' {
-			for i < len(s) && !isSQLNewline(s[i]) {
-				i++
-			}
-			continue
-		}
-		if ch == '/' && i+1 < len(s) && s[i+1] == '*' {
-			depth := 1
-			i += 2
-			for i < len(s) && depth > 0 {
-				if s[i] == '/' && i+1 < len(s) && s[i+1] == '*' {
-					depth++
-					i += 2
-				} else if s[i] == '*' && i+1 < len(s) && s[i+1] == '/' {
-					depth--
-					i += 2
-				} else {
-					i++
-				}
-			}
-			continue
-		}
-		return false
-	}
-	return true
+	return sqllex.HasOnlyComments(s)
 }
 
 // splitStatements splits a SQL string into individual statements by
@@ -152,92 +80,13 @@ func hasOnlyComments(s string) bool {
 // string, which is how the statements are split for execution; the
 // classifier splits under both readings (see isReadOnlyStatement).
 func splitStatements(sql string) []string {
-	return splitStatementsAs(sql, standardStrings)
+	return splitStatementsAs(sql, sqllex.StandardStrings)
 }
 
 // splitStatementsAs is splitStatements with the given reading of a plain
 // '...' literal.
-func splitStatementsAs(sql string, reading stringReading) []string {
-	var statements []string
-	start := 0
-	i := 0
-
-	for i < len(sql) {
-		ch := sql[i]
-
-		// Quoted string or quoted identifier, including the prefixed
-		// forms E'...', U&'...' and U&"...".
-		if isQuoteStart(sql, i) {
-			i = skipQuoted(sql, i, reading)
-			continue
-		}
-
-		// Dollar-quoted string
-		if ch == '$' {
-			tag := scanDollarTag(sql, i)
-			if tag != "" {
-				i += len(tag)
-				closeIdx := strings.Index(sql[i:], tag)
-				if closeIdx < 0 {
-					i = len(sql)
-				} else {
-					i += closeIdx + len(tag)
-				}
-				continue
-			}
-			i++
-			continue
-		}
-
-		// Line comment
-		if ch == '-' && i+1 < len(sql) && sql[i+1] == '-' {
-			for i < len(sql) && !isSQLNewline(sql[i]) {
-				i++
-			}
-			continue
-		}
-
-		// Block comment (with nesting)
-		if ch == '/' && i+1 < len(sql) && sql[i+1] == '*' {
-			depth := 1
-			i += 2
-			for i < len(sql) && depth > 0 {
-				if sql[i] == '/' && i+1 < len(sql) && sql[i+1] == '*' {
-					depth++
-					i += 2
-				} else if sql[i] == '*' && i+1 < len(sql) && sql[i+1] == '/' {
-					depth--
-					i += 2
-				} else {
-					i++
-				}
-			}
-			continue
-		}
-
-		// Semicolon: split point
-		if ch == ';' {
-			part := strings.TrimSpace(sql[start:i])
-			if part != "" && !hasOnlyComments(part) {
-				statements = append(statements, part)
-			}
-			i++
-			start = i
-			continue
-		}
-
-		i++
-	}
-
-	// Handle trailing statement (no final semicolon)
-	if start < len(sql) {
-		part := strings.TrimSpace(sql[start:])
-		if part != "" && !hasOnlyComments(part) {
-			statements = append(statements, part)
-		}
-	}
-
-	return statements
+func splitStatementsAs(sql string, reading sqllex.StringReading) []string {
+	return sqllex.SplitStatements(sql, reading)
 }
 
 // executeQuery handles POST /api/v1/connections/{id}/query
@@ -495,52 +344,11 @@ func (h *ConnectionHandler) executeQuery(w http.ResponseWriter, r *http.Request,
 	RespondJSON(w, http.StatusOK, resp)
 }
 
-// stripLeadingComments removes leading SQL line comments (-- ...),
-// block comments (/* ... */ with nesting), and blank lines from a SQL
-// string, returning the remaining statement body. This allows
-// detection of the first SQL keyword even when the statement begins
-// with comments.
+// stripLeadingComments removes leading whitespace and SQL comments from
+// sql, returning the remaining statement body (see
+// sqllex.StripLeadingComments).
 func stripLeadingComments(sql string) string {
-	i := 0
-	for i < len(sql) {
-		ch := sql[i]
-
-		// Skip whitespace
-		if isSQLSpace(ch) {
-			i++
-			continue
-		}
-
-		// Line comment: skip to end of line
-		if ch == '-' && i+1 < len(sql) && sql[i+1] == '-' {
-			for i < len(sql) && !isSQLNewline(sql[i]) {
-				i++
-			}
-			continue
-		}
-
-		// Block comment with nesting
-		if ch == '/' && i+1 < len(sql) && sql[i+1] == '*' {
-			depth := 1
-			i += 2
-			for i < len(sql) && depth > 0 {
-				if sql[i] == '/' && i+1 < len(sql) && sql[i+1] == '*' {
-					depth++
-					i += 2
-				} else if sql[i] == '*' && i+1 < len(sql) && sql[i+1] == '/' {
-					depth--
-					i += 2
-				} else {
-					i++
-				}
-			}
-			continue
-		}
-
-		// Found a non-comment, non-whitespace character
-		return sql[i:]
-	}
-	return ""
+	return sqllex.StripLeadingComments(sql)
 }
 
 // maxExplainDepth bounds the recursion isReadOnlyStatement performs
@@ -553,8 +361,10 @@ const maxExplainDepth = 8
 // leading comments) begins with a read-only keyword: SELECT, WITH, SHOW,
 // EXPLAIN, or TABLE. Writable CTEs (WITH ... INSERT/UPDATE/DELETE/MERGE)
 // are classified as non-read-only, as are a query with a writing clause
-// (see hasWritingSelectClause) and an EXPLAIN that may execute a writing
-// inner statement (issue #530).
+// (see hasWritingSelectClause), a query that calls a side-effecting
+// function such as pg_terminate_backend or set_config (see
+// sqllex.CallsSideEffectingFunction, issue #646) and an EXPLAIN that may
+// execute a writing inner statement (issue #530).
 //
 // PostgreSQL lexes a plain '...' literal as a standard string when
 // standard_conforming_strings is on and as an escape string, in which a
@@ -575,7 +385,7 @@ const maxExplainDepth = 8
 // so that a semicolon only one reading treats as code is respected too;
 // it is read-only only when every statement is read-only under both.
 func isReadOnlyStatement(sql string) bool {
-	for _, reading := range stringReadings {
+	for _, reading := range sqllex.StringReadings {
 		pieces := splitStatementsAs(sql, reading)
 		if len(pieces) == 0 {
 			pieces = []string{sql}
@@ -592,7 +402,7 @@ func isReadOnlyStatement(sql string) bool {
 // isReadOnlyStatementAtDepth is isReadOnlyStatement for a single
 // statement, under one reading of a plain '...' literal, with the
 // EXPLAIN nesting depth reached so far.
-func isReadOnlyStatementAtDepth(sql string, depth int, reading stringReading) bool {
+func isReadOnlyStatementAtDepth(sql string, depth int, reading sqllex.StringReading) bool {
 	body := strings.TrimSpace(stripLeadingComments(sql))
 
 	// The EXPLAIN test runs against the original text rather than an
@@ -608,7 +418,7 @@ func isReadOnlyStatementAtDepth(sql string, depth int, reading stringReading) bo
 	// statement such as SELECT * FROM audit WHERE msg LIKE '%signed
 	// into%' is not classified as a write. The masking is for
 	// classification alone; the text that is executed is untouched.
-	upper := strings.ToUpper(maskNonCode(body, reading))
+	upper := strings.ToUpper(sqllex.MaskNonCode(body, reading))
 
 	if strings.HasPrefix(upper, "WITH") {
 		// Writable CTEs can perform data modification, e.g.
@@ -620,11 +430,13 @@ func isReadOnlyStatementAtDepth(sql string, depth int, reading stringReading) bo
 				return false
 			}
 		}
-		return !hasWritingSelectClause(upper)
+		return !hasWritingSelectClause(upper) &&
+			!sqllex.CallsSideEffectingFunction(body, reading)
 	}
 
 	if strings.HasPrefix(upper, "SELECT") || strings.HasPrefix(upper, "TABLE ") {
-		return !hasWritingSelectClause(upper)
+		return !hasWritingSelectClause(upper) &&
+			!sqllex.CallsSideEffectingFunction(body, reading)
 	}
 
 	return strings.HasPrefix(upper, "SHOW")
@@ -637,7 +449,7 @@ func isReadOnlyStatementAtDepth(sql string, depth int, reading stringReading) bo
 // PostgreSQL refuses both inside a read-only transaction, so classifying
 // them as writes makes this gate agree with the database rather than
 // leaving the transaction to reject them later. upperSQL must already
-// have had its non-code regions masked (see maskNonCode) and been
+// have had its non-code regions masked (see sqllex.MaskNonCode) and been
 // uppercased. Like the writable-CTE scan, this reads a keyword wherever
 // it appears in the remaining code, so it can only over-report, which is
 // the safe direction.
@@ -674,12 +486,12 @@ func sqlWords(s string) []string {
 	var words []string
 	i := 0
 	for i < len(s) {
-		if !isIdentChar(s[i]) {
+		if !sqllex.IsIdentChar(s[i]) {
 			i++
 			continue
 		}
 		start := i
-		for i < len(s) && isIdentChar(s[i]) {
+		for i < len(s) && sqllex.IsIdentChar(s[i]) {
 			i++
 		}
 		words = append(words, s[start:i])
@@ -720,7 +532,7 @@ var explainNonExecutingOptions = map[string]bool{
 // taken as an execution, and the inner statement then decides the
 // classification. The legacy form needs no such care, because its
 // option words are keywords that cannot be quoted or escaped.
-func isReadOnlyExplain(body string, depth int, reading stringReading) bool {
+func isReadOnlyExplain(body string, depth int, reading sqllex.StringReading) bool {
 	executes, rest, ok := parseExplainHead(body, reading)
 	if !ok {
 		// Malformed option list: fail closed rather than guess at it.
@@ -741,7 +553,7 @@ func isReadOnlyExplain(body string, depth int, reading stringReading) bool {
 // already start with the EXPLAIN keyword. ok is false when the option
 // list's parentheses do not balance. See isReadOnlyExplain for why the
 // two option forms are read as they are.
-func parseExplainHead(body string, reading stringReading) (executes bool, rest string, ok bool) {
+func parseExplainHead(body string, reading sqllex.StringReading) (executes bool, rest string, ok bool) {
 	rest = strings.TrimSpace(stripLeadingComments(body[len("EXPLAIN"):]))
 
 	if strings.HasPrefix(rest, "(") {
@@ -784,7 +596,7 @@ func parseExplainHead(body string, reading stringReading) (executes bool, rest s
 // leading comments stripped. A malformed option list counts as an
 // execution, so a caller that refuses executing EXPLAINs fails closed.
 func explainExecutes(body string) bool {
-	for _, reading := range stringReadings {
+	for _, reading := range sqllex.StringReadings {
 		executes, _, ok := parseExplainHead(body, reading)
 		if executes || !ok {
 			return true
@@ -797,7 +609,7 @@ func explainExecutes(body string) bool {
 // list may cause the inner statement to run. It inspects option names
 // only, never their values, and treats a name it cannot read as a bare
 // recognized identifier as an execution.
-func explainOptionsExecute(options string, reading stringReading) bool {
+func explainOptionsExecute(options string, reading sqllex.StringReading) bool {
 	entries := splitExplainOptionEntries(options, reading)
 	if len(entries) == 0 {
 		// EXPLAIN () is not valid SQL, so fail closed.
@@ -816,14 +628,14 @@ func explainOptionsExecute(options string, reading stringReading) bool {
 // that separate its entries. Quoted strings, quoted identifiers,
 // comments and nested parentheses are skipped so that a comma inside one
 // does not start an entry. The result is nil for an empty list.
-func splitExplainOptionEntries(options string, reading stringReading) []string {
+func splitExplainOptionEntries(options string, reading sqllex.StringReading) []string {
 	var entries []string
 	depth := 0
 	start := 0
 	i := 0
 
 	for i < len(options) {
-		if j := skipNonCode(options, i, reading); j != i {
+		if j := sqllex.SkipNonCode(options, i, reading); j != i {
 			i = j
 			continue
 		}
@@ -855,11 +667,11 @@ func splitExplainOptionEntries(options string, reading stringReading) []string {
 // parenthesis, and whether a matching parenthesis was found. Quoted
 // strings, quoted identifiers and comments are skipped so that a
 // parenthesis inside one does not end the list early.
-func splitExplainOptions(s string, reading stringReading) (options, remainder string, ok bool) {
+func splitExplainOptions(s string, reading sqllex.StringReading) (options, remainder string, ok bool) {
 	depth := 0
 	i := 0
 	for i < len(s) {
-		if j := skipNonCode(s, i, reading); j != i {
+		if j := sqllex.SkipNonCode(s, i, reading); j != i {
 			i = j
 			continue
 		}
@@ -878,273 +690,12 @@ func splitExplainOptions(s string, reading stringReading) (options, remainder st
 	return "", "", false
 }
 
-// stringReading is how PostgreSQL's lexer reads a plain '...' literal,
-// which depends on standard_conforming_strings when the statement is
-// lexed (xqstart in scan.l).
-type stringReading int
-
-const (
-	// standardStrings is standard_conforming_strings on, the default: a
-	// backslash in '...' is an ordinary character.
-	standardStrings stringReading = iota
-	// escapeStrings is standard_conforming_strings off: '...' is read as
-	// an E'...' escape string, so \' is an escaped quote.
-	escapeStrings
-)
-
-// stringReadings lists every reading the classifier must agree with.
-var stringReadings = []stringReading{standardStrings, escapeStrings}
-
-// literalKind is the kind of quoted text a quote or literal prefix
-// opens, which decides how the lexer finds its end.
-type literalKind int
-
-const (
-	// plainLiteral is '...' and N'...': PostgreSQL returns the N of the
-	// latter as a keyword and lexes the rest as a plain literal, so its
-	// escapes depend on the stringReading.
-	plainLiteral literalKind = iota
-	// escapeLiteral is E'...', where a backslash always escapes the
-	// next character.
-	escapeLiteral
-	// unicodeLiteral is U&'...': a doubled quote is a quote and a
-	// backslash starts a Unicode escape that cannot contain one.
-	// PostgreSQL rejects it outright when standard_conforming_strings is
-	// off, so its reading there does not matter.
-	unicodeLiteral
-	// bitLiteral is B'...' or X'...', which has no escapes at all:
-	// the next quote ends it, even when another quote follows.
-	bitLiteral
-	// quotedIdentifier is "..." or U&"...": a doubled double quote is
-	// part of the name, and it never continues onto another line.
-	quotedIdentifier
-)
-
-// literalPrefix reports the length and kind of the string-literal
-// prefix at s[i]. PostgreSQL accepts E'...' (backslash escapes), U&'...'
-// and U&"..." (Unicode escapes), and the B'...', X'...' and N'...'
-// forms, each of which introduces a literal that a bare quote scan would
-// start one or two bytes late. The length is zero when no prefix starts
-// here.
-func literalPrefix(s string, i int) (length int, kind literalKind) {
-	if i+1 >= len(s) {
-		return 0, plainLiteral
-	}
-	switch s[i] {
-	case 'E', 'e':
-		if s[i+1] == '\'' {
-			return 1, escapeLiteral
-		}
-	case 'B', 'b', 'X', 'x':
-		if s[i+1] == '\'' {
-			return 1, bitLiteral
-		}
-	case 'N', 'n':
-		if s[i+1] == '\'' {
-			return 1, plainLiteral
-		}
-	case 'U', 'u':
-		if s[i+1] == '&' && i+2 < len(s) {
-			switch s[i+2] {
-			case '\'':
-				return 2, unicodeLiteral
-			case '"':
-				return 2, quotedIdentifier
-			}
-		}
-	}
-	return 0, plainLiteral
-}
-
-// isQuoteStart reports whether a quoted string or quoted identifier
-// starts at s[i], either with the quote itself or with one of the
-// literal prefixes literalPrefix recognizes. A prefix letter only counts
-// when it does not continue an identifier, so the trailing e of a column
-// name is not mistaken for an E'...' literal.
-func isQuoteStart(s string, i int) bool {
-	if s[i] == '\'' || s[i] == '"' {
-		return true
-	}
-	if continuesIdentifier(s, i) {
-		return false
-	}
-	length, _ := literalPrefix(s, i)
-	return length > 0
-}
-
-// skipQuoted returns the index just past the quoted string or quoted
-// identifier starting at s[i], which must be a single or double quote or
-// the first character of a literal prefix (see literalPrefix), following
-// the string states of PostgreSQL's lexer. A doubled quote is an escaped
-// quote rather than a terminator, except in a bit string. A backslash
-// escapes the character that follows it in an E'...' literal, and in a
-// plain '...' or N'...' literal under escapeStrings. A string literal
-// that is followed by whitespace containing a newline and another quote
-// continues after that quote in the same state (quotecontinue in
-// scan.l), so this is a single escape string whose second part ends at
-// its last quote, not at the one after the backslash:
-//
-//	E'a'
-//	'\''
-//
-// An unterminated literal runs to the end of the string.
-func skipQuoted(s string, i int, reading stringReading) int {
-	kind := plainLiteral
-	switch s[i] {
-	case '\'':
-	case '"':
-		kind = quotedIdentifier
-	default:
-		length, prefixKind := literalPrefix(s, i)
-		if length == 0 {
-			return i + 1
-		}
-		kind = prefixKind
-		i += length
-	}
-
-	escapes := kind == escapeLiteral ||
-		(kind == plainLiteral && reading == escapeStrings)
-	doubles := kind != bitLiteral
-	continues := kind != quotedIdentifier
-
-	quote := s[i]
-	i++
-	for i < len(s) {
-		switch {
-		case escapes && s[i] == '\\':
-			i += 2
-		case s[i] == quote:
-			if doubles && i+1 < len(s) && s[i+1] == quote {
-				i += 2
-				continue
-			}
-			if continues {
-				if j := quoteContinuation(s, i+1); j > 0 {
-					i = j
-					continue
-				}
-			}
-			return i + 1
-		default:
-			i++
-		}
-	}
-	return len(s)
-}
-
-// quoteContinuation reports where a string literal resumes when the
-// text from s[i], just after its closing quote, continues it: whitespace
-// and line comments containing at least one newline, then a quote
-// (quotecontinue in scan.l). It returns the index just past that quote,
-// or -1 when the literal really ended. A line comment must itself end in
-// a newline, and a block comment ends the whitespace, as in scan.l.
-func quoteContinuation(s string, i int) int {
-	sawNewline := false
-	for i < len(s) {
-		switch {
-		case isSQLNewline(s[i]):
-			sawNewline = true
-			i++
-		case isSQLSpace(s[i]):
-			i++
-		case s[i] == '-' && i+1 < len(s) && s[i+1] == '-':
-			for i < len(s) && !isSQLNewline(s[i]) {
-				i++
-			}
-		case s[i] == '\'' && sawNewline:
-			return i + 1
-		default:
-			return -1
-		}
-	}
-	return -1
-}
-
-// skipBlockComment returns the index just past the (possibly nested)
-// block comment starting at s[i], which must be the opening slash.
-func skipBlockComment(s string, i int) int {
-	depth := 1
-	i += 2
-	for i < len(s) && depth > 0 {
-		if s[i] == '/' && i+1 < len(s) && s[i+1] == '*' {
-			depth++
-			i += 2
-		} else if s[i] == '*' && i+1 < len(s) && s[i+1] == '/' {
-			depth--
-			i += 2
-		} else {
-			i++
-		}
-	}
-	return i
-}
-
-// skipNonCode returns the index just past the quoted literal or comment
-// starting at s[i], or i itself when s[i] does not begin one. It is the
-// step every scan over statement text shares: a quoted string, a quoted
-// identifier (including the prefixed E'...', U&'...' and U&"..." forms),
-// a dollar-quoted string, a line comment or a block comment holds text
-// rather than SQL, so a comma, parenthesis, keyword or $N inside one
-// must not be read as code, and a quote or comment marker inside a
-// dollar-quoted string must not open a region that swallows the code
-// after it. An unterminated literal or comment runs to the end of the
-// string, which ends the caller's scan rather than resuming inside the
-// quoted text. A $N placeholder is not a dollar quote (see
-// scanDollarTag), so it is left for the caller to see. reading says how
-// a plain '...' literal is read (see stringReading).
-func skipNonCode(s string, i int, reading stringReading) int {
-	if isQuoteStart(s, i) {
-		return skipQuoted(s, i, reading)
-	}
-	if tag := scanDollarTag(s, i); tag != "" {
-		end := strings.Index(s[i+len(tag):], tag)
-		if end < 0 {
-			return len(s)
-		}
-		return i + len(tag) + end + len(tag)
-	}
-	if s[i] == '-' && i+1 < len(s) && s[i+1] == '-' {
-		j := i
-		for j < len(s) && !isSQLNewline(s[j]) {
-			j++
-		}
-		return j
-	}
-	if s[i] == '/' && i+1 < len(s) && s[i+1] == '*' {
-		return skipBlockComment(s, i)
-	}
-	return i
-}
-
-// maskNonCode replaces every quoted literal, quoted identifier and
-// comment in s with spaces, so a keyword scan reads code only. Each
-// masked byte becomes one space, leaving the result the same length as
-// s, which keeps any offset measured on the mask valid against the
-// original. Callers must mask before uppercasing, because
-// strings.ToUpper is not length-preserving for every input.
-func maskNonCode(s string, reading stringReading) string {
-	masked := []byte(s)
-	for i := 0; i < len(masked); {
-		j := skipNonCode(s, i, reading)
-		if j == i {
-			i++
-			continue
-		}
-		for k := i; k < j; k++ {
-			masked[k] = ' '
-		}
-		i = j
-	}
-	return string(masked)
-}
-
 // nextSQLWord splits the leading identifier-character run off s,
 // returning that word and the rest of the string. The word is empty
 // when s does not start with an identifier character.
 func nextSQLWord(s string) (word, rest string) {
 	i := 0
-	for i < len(s) && isIdentChar(s[i]) {
+	for i < len(s) && sqllex.IsIdentChar(s[i]) {
 		i++
 	}
 	return s[:i], s[i:]
@@ -1160,7 +711,7 @@ func hasKeywordPrefix(sql, keyword string) bool {
 		!strings.EqualFold(sql[:len(keyword)], keyword) {
 		return false
 	}
-	return len(sql) == len(keyword) || !isIdentChar(sql[len(keyword)])
+	return len(sql) == len(keyword) || !sqllex.IsIdentChar(sql[len(keyword)])
 }
 
 // containsSQLKeyword checks whether a SQL keyword appears as a standalone
@@ -1177,8 +728,8 @@ func containsSQLKeyword(upperSQL, keyword string) bool {
 		pos += idx
 		end := pos + len(keyword)
 
-		startOK := pos == 0 || !isIdentChar(upperSQL[pos-1])
-		endOK := end >= len(upperSQL) || !isIdentChar(upperSQL[end])
+		startOK := pos == 0 || !sqllex.IsIdentChar(upperSQL[pos-1])
+		endOK := end >= len(upperSQL) || !sqllex.IsIdentChar(upperSQL[end])
 
 		if startOK && endOK {
 			return true
@@ -1213,7 +764,7 @@ func needsSimpleProtocol(statements []string) bool {
 // the statement onto the simple-protocol path, which applies the same
 // read-only transaction and row limit as the pgx path.
 func containsDollarParam(s string) bool {
-	for _, reading := range stringReadings {
+	for _, reading := range sqllex.StringReadings {
 		if containsDollarParamAs(s, reading) {
 			return true
 		}
@@ -1223,15 +774,15 @@ func containsDollarParam(s string) bool {
 
 // containsDollarParamAs is containsDollarParam under one reading of a
 // plain '...' literal.
-func containsDollarParamAs(s string, reading stringReading) bool {
+func containsDollarParamAs(s string, reading sqllex.StringReading) bool {
 	i := 0
 	for i < len(s) {
-		if j := skipNonCode(s, i, reading); j != i {
+		if j := sqllex.SkipNonCode(s, i, reading); j != i {
 			i = j
 			continue
 		}
 
-		// skipNonCode has already stepped over any dollar-quoted
+		// sqllex.SkipNonCode has already stepped over any dollar-quoted
 		// string, so a dollar sign here is a placeholder or a bare one.
 		if s[i] != '$' {
 			i++
@@ -1252,73 +803,21 @@ func containsDollarParamAs(s string, reading stringReading) bool {
 // such as col$1, is not a placeholder: PostgreSQL allows $ in an
 // identifier after its first character, so it is part of the name.
 func containsBindPlaceholder(s string) bool {
-	for _, reading := range stringReadings {
+	for _, reading := range sqllex.StringReadings {
 		i := 0
 		for i < len(s) {
-			if j := skipNonCode(s, i, reading); j != i {
+			if j := sqllex.SkipNonCode(s, i, reading); j != i {
 				i = j
 				continue
 			}
 			if s[i] == '$' && i+1 < len(s) && s[i+1] >= '1' && s[i+1] <= '9' &&
-				!continuesIdentifier(s, i) {
+				!sqllex.ContinuesIdentifier(s, i) {
 				return true
 			}
 			i++
 		}
 	}
 	return false
-}
-
-// isIdentChar returns true if the byte is a valid SQL identifier
-// character: an ASCII letter, digit or underscore, or any byte from 0x80
-// up, which PostgreSQL's lexer treats as a letter (ident_start and
-// ident_cont in scan.l). Outside a quoted literal or comment such a byte
-// can only be part of an identifier, so a keyword, literal prefix or
-// dollar sign that touches one continues that identifier. ident_cont
-// also includes $, which cannot start an identifier and so is left out
-// here; continuesIdentifier covers it where a character that follows
-// one matters.
-func isIdentChar(b byte) bool {
-	return (b >= 'A' && b <= 'Z') ||
-		(b >= 'a' && b <= 'z') ||
-		(b >= '0' && b <= '9') ||
-		b == '_' ||
-		b >= 0x80
-}
-
-// continuesIdentifier reports whether s[i] would continue an unquoted
-// identifier, because the byte before it is an identifier character or
-// a $ (PostgreSQL's ident_cont includes $, as in a$b). A dollar sign
-// or literal prefix there is part of the identifier rather than the
-// start of a dollar quote or a prefixed literal, so in a$E'\' the
-// literal is a standard string rather than an escape string. A $ that
-// is not itself part of an identifier makes the statement a syntax
-// error, so treating every preceding $ this way cannot hide code that
-// runs.
-func continuesIdentifier(s string, i int) bool {
-	if i == 0 {
-		return false
-	}
-	prev := s[i-1]
-	return isIdentChar(prev) || prev == '$'
-}
-
-// isSQLSpace reports whether b is whitespace to PostgreSQL's lexer
-// (space in scan.l): space, tab, newline, carriage return, form feed or
-// vertical tab.
-func isSQLSpace(b byte) bool {
-	switch b {
-	case ' ', '\t', '\n', '\r', '\f', '\v':
-		return true
-	}
-	return false
-}
-
-// isSQLNewline reports whether b ends a -- line comment. PostgreSQL's
-// lexer ends one at a carriage return as well as a newline
-// (non_newline in scan.l), so code after a lone \r is code.
-func isSQLNewline(b byte) bool {
-	return b == '\n' || b == '\r'
 }
 
 // safeQueryError extracts a user-facing error message from a query error.
@@ -2201,7 +1700,7 @@ func explainCommand(stmt string, genericPlan bool) (string, string) {
 		return "EXPLAIN (GENERIC_PLAN) " + body, ""
 	}
 
-	return "EXPLAIN " + body, ""
+	return sqllex.PlainExplainPrefix + body, ""
 }
 
 // explainableStatements are the statement kinds this endpoint plans.
@@ -2238,7 +1737,7 @@ func isExplainableStatement(upper string) bool {
 // with something else, such as an opening parenthesis.
 func firstSQLWord(upper string) string {
 	end := 0
-	for end < len(upper) && isIdentChar(upper[end]) {
+	for end < len(upper) && sqllex.IsIdentChar(upper[end]) {
 		end++
 	}
 	if end == 0 {

@@ -172,6 +172,16 @@ func RedactValue(name, value string) string {
 // full, since its program name cannot be picked out with confidence.
 // A command of whitespace alone holds nothing and is returned unchanged.
 // The function is idempotent.
+//
+// Words are split as the shell splits them, so in
+//
+//	PGPASSWORD=foo bar pg_receivewal %p
+//
+// the shell sets PGPASSWORD to foo and runs bar, and bar is kept as the
+// program name. A credential containing a space works only when it is
+// quoted or escaped, and its whole value is then redacted; an unquoted
+// one leaves a command that does not run as intended, and the words
+// after its first are shown as the shell would read them.
 func RedactShellCommand(command string) string {
 	rest := strings.TrimLeft(command, " \t")
 	if rest == "" {
@@ -188,9 +198,11 @@ func RedactShellCommand(command string) string {
 
 		if envName, envValue, isAssignment := strings.Cut(word, "="); isAssignment {
 			// An empty value followed by a space, as in "PGPASSWORD= s3cret
-			// cmd", is most likely a typo that would otherwise expose the
-			// next word as the program name.
-			if !isShellVariableName(envName) || envValue == "" {
+			// cmd" or "PGPASSWORD='' s3cret cmd", is most likely a typo
+			// that would otherwise expose the next word as the program
+			// name. The value is checked after quote and escape removal,
+			// so '', "" and an escaped blank count as empty too.
+			if !isShellVariableName(envName) || isBlankShellWord(envValue) {
 				return RedactedValue
 			}
 			out = append(out, envName+"="+RedactedValue)
@@ -280,6 +292,40 @@ func skipDoubleQuoted(s string, i int) (int, bool) {
 		}
 	}
 	return 0, false
+}
+
+// isBlankShellWord reports whether word, a shell word or part of one
+// that nextShellWord accepted, holds nothing but blanks once its quotes
+// and backslash escapes are removed, as an empty quoted string or an
+// escaped space or tab is. It does not track which quotes are open, so a quote or
+// backslash that is itself quoted, as in '"' or '\ ', is read as syntax
+// too; that errs towards blank, which only ever redacts a command in
+// full.
+func isBlankShellWord(word string) bool {
+	for i := 0; i < len(word); i++ {
+		switch c := word[i]; c {
+		case '\'', '"':
+			// Quote characters are syntax, not content; what they
+			// enclose is checked like any other character.
+		case '\\':
+			// The escaped character, if any, is content. nextShellWord
+			// rejects a word that ends in an unpaired backslash.
+			i++
+			if i < len(word) && !isShellBlank(word[i]) {
+				return false
+			}
+		default:
+			if !isShellBlank(c) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// isShellBlank reports whether c is a space or a tab.
+func isShellBlank(c byte) bool {
+	return c == ' ' || c == '\t'
 }
 
 // isShellVariableName reports whether name is a valid shell variable

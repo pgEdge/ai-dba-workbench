@@ -2812,6 +2812,22 @@ project adheres to
   and masked in the same way as in `query_datastore`, on a best-effort
   basis.
 
+- Redact the arguments of collected shell-command settings. The
+  `pg_settings` probe stored `archive_command`,
+  `archive_cleanup_command`, `restore_command` and
+  `recovery_end_command` as PostgreSQL showed them, although they
+  commonly embed a credential such as a `PGPASSWORD=...` prefix, a
+  storage key or a password argument to a backup tool. The probe now
+  keeps each command's program name and replaces its arguments with
+  `********`, along with the value of any environment variable
+  assigned before the program, so `PGPASSWORD=s3cret pgbackrest
+  archive-push %p` is stored as `PGPASSWORD=******** pgbackrest
+  ********`; a command that does not start with a plain program name
+  is replaced in full. Collector schema migration 28 redacts the rows
+  already stored, and the server redacts the values again wherever it
+  redacts `primary_conninfo`. A change to a command's arguments alone
+  is no longer recorded as a configuration change. (#676)
+
 - Delete a user with `ai-dba-server -delete-user` only when the
   confirmation is an explicit `y` or `yes`. The answer was checked
   only when a whole line could be read, so input that ended without

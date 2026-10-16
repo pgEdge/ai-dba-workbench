@@ -234,6 +234,12 @@ func TestRedactCredentialSettings(t *testing.T) {
 			"boot_val":  "4096",
 		},
 		{"setting": "no name"},
+		{
+			"name":      "archive_command",
+			"setting":   "PGPASSWORD=s3cret pg_receivewal -d host=192.0.2.1 %p",
+			"reset_val": "(cp %p /archive/%f)",
+			"boot_val":  "",
+		},
 	}
 
 	redactCredentialSettings(settings)
@@ -265,6 +271,12 @@ func TestRedactCredentialSettings(t *testing.T) {
 			"boot_val":  "4096",
 		},
 		{"setting": "no name"},
+		{
+			"name":      "archive_command",
+			"setting":   "PGPASSWORD=******** pg_receivewal ********",
+			"reset_val": "********",
+			"boot_val":  "",
+		},
 	}
 
 	for i := range want {

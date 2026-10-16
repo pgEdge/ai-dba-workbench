@@ -4042,6 +4042,39 @@ func (sm *SchemaManager) registerMigrations() {
 			return maskConnectionAlertDescriptions(context.Background(), tx)
 		},
 	})
+
+	// Migration #28 removes credentials from the shell-command settings
+	// in pg_settings snapshots stored before the probe started redacting
+	// them. See GitHub issue #676.
+	//
+	// archive_command, archive_cleanup_command, restore_command and
+	// recovery_end_command commonly embed a credential, such as a
+	// PGPASSWORD=... prefix or a storage key, and migration 25 left them
+	// as stored. pgsettings.RedactValue now keeps each command's program
+	// name and redacts the rest, and this migration reruns the migration
+	// 25 rewrite so that it applies to the rows already stored. Values
+	// migration 25 redacted are unchanged, since redaction is idempotent.
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     28,
+		Description: "Redact shell-command settings in stored pg_settings values",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			if err := redactStoredPgSettings(ctx, tx); err != nil {
+				return fmt.Errorf("failed to redact stored pg_settings values: %w", err)
+			}
+
+			_, err := tx.Exec(ctx, `
+				COMMENT ON COLUMN metrics.pg_settings.setting IS
+					'Current value of the setting; credentials are redacted to ********: the password in primary_conninfo, everything but the program name and the names of leading environment variables in archive_command, archive_cleanup_command, restore_command and recovery_end_command, and the whole of ssl_passphrase_command and of extension settings named like a secret';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to comment pg_settings value columns: %w", err)
+			}
+
+			return nil
+		},
+	})
 }
 
 // statementTextUpdates holds, for each column that stores statement text,

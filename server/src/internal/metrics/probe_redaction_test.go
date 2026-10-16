@@ -29,6 +29,7 @@ func TestRedactSettingRows(t *testing.T) {
 		{"name": "ssl_passphrase_command", "setting": 7, "reset_val": nil},
 		{"name": "work_mem", "setting": "4096"},
 		{"setting": "password=kept-without-a-name"},
+		{"name": "restore_command", "setting": "AWS_SECRET_ACCESS_KEY=s3cret aws s3 cp s3://b/%f %p"},
 	}
 
 	redactSettingRows(rows)
@@ -45,6 +46,7 @@ func TestRedactSettingRows(t *testing.T) {
 		{1, "reset_val", nil},
 		{2, "setting", "4096"},
 		{3, "setting", "password=kept-without-a-name"},
+		{4, "setting", "AWS_SECRET_ACCESS_KEY=******** aws ********"},
 	}
 	for _, c := range checks {
 		if got := rows[c.row][c.col]; got != c.want {

@@ -82,6 +82,20 @@ func NonCredentialSettings() []string {
 	return slices.Clone(nonCredentialSettings)
 }
 
+// shellCommandSettings are the core settings whose value is a shell
+// command that PostgreSQL runs for WAL archiving and recovery. Such a
+// command commonly embeds a credential, for example a PGPASSWORD=...
+// prefix, a cloud storage key or a password argument to a backup tool,
+// so its arguments are redacted. The program name, and the names of any
+// environment variables assigned before it, are kept so that the stored
+// value still shows which tool the server runs.
+var shellCommandSettings = map[string]bool{
+	"archive_command":         true,
+	"archive_cleanup_command": true,
+	"restore_command":         true,
+	"recovery_end_command":    true,
+}
+
 // customSecretFragments mark an extension (dotted) setting name as
 // holding a secret. They are only applied to dotted names because core
 // settings such as password_encryption and md5_password_warnings contain
@@ -96,7 +110,7 @@ var customSecretFragments = []string{
 // credential and so has its values redacted.
 func IsCredentialSetting(name string) bool {
 	name = strings.ToLower(name)
-	if conninfoSettings[name] || wholeValueSettings[name] {
+	if conninfoSettings[name] || wholeValueSettings[name] || shellCommandSettings[name] {
 		return true
 	}
 	if !strings.Contains(name, ".") {
@@ -119,16 +133,152 @@ func RedactsWholeValue(name string) bool {
 
 // RedactValue returns value with any credential removed, given the name
 // of the setting it belongs to. A connection string keeps everything but
-// its passwords; any other credential-bearing setting is replaced by
-// RedactedValue in full. The empty string, which means the setting is
+// its passwords; a shell command keeps its program name and the names of
+// any leading environment variable assignments, as described for
+// RedactShellCommand; any other credential-bearing setting is replaced
+// by RedactedValue in full. The empty string, which means the setting is
 // unset, and values of other settings are returned unchanged. The
 // function is idempotent.
 func RedactValue(name, value string) string {
 	if value == "" || !IsCredentialSetting(name) {
 		return value
 	}
-	if conninfoSettings[strings.ToLower(name)] {
+	lower := strings.ToLower(name)
+	if conninfoSettings[lower] {
 		return connstring.RedactPasswords(value)
 	}
+	if shellCommandSettings[lower] {
+		return RedactShellCommand(value)
+	}
 	return RedactedValue
+}
+
+// RedactShellCommand returns a shell command with everything that can
+// hold a credential replaced by RedactedValue. The value of each leading
+// NAME=value environment variable assignment is replaced, the program
+// name that follows is kept, and all of its arguments are replaced by a
+// single RedactedValue, so
+//
+//	PGPASSWORD=s3cret pg_receivewal -d "host=192.0.2.1" %p
+//
+// becomes
+//
+//	PGPASSWORD=******** pg_receivewal ********
+//
+// A program name is kept only if it is a plain word of letters, digits
+// and the characters _ . / + - ~; a command that starts any other way, for
+// example with a quoted path, a subshell or a redirection, is replaced
+// in full, since its program name cannot be picked out with confidence.
+// A command of whitespace alone holds nothing and is returned unchanged.
+// The function is idempotent.
+func RedactShellCommand(command string) string {
+	rest := strings.TrimLeft(command, " \t")
+	if rest == "" {
+		return command
+	}
+
+	var out []string
+	for rest != "" {
+		word, after, ok := nextShellWord(rest)
+		if !ok {
+			return RedactedValue
+		}
+		rest = strings.TrimLeft(after, " \t")
+
+		if envName, _, isAssignment := strings.Cut(word, "="); isAssignment {
+			if !isShellVariableName(envName) {
+				return RedactedValue
+			}
+			out = append(out, envName+"="+RedactedValue)
+			continue
+		}
+
+		if !isPlainProgramName(word) {
+			return RedactedValue
+		}
+		out = append(out, word)
+		if rest != "" {
+			out = append(out, RedactedValue)
+		}
+		break
+	}
+	return strings.Join(out, " ")
+}
+
+// nextShellWord splits the first shell word from s, which must not start
+// with a space or tab, honoring single quotes, double quotes and
+// backslash escapes. It reports false if a quote is not closed, if the
+// word ends in an unpaired backslash, or if the word contains an
+// unquoted character that would end or redirect the command, since what
+// follows could then be a second command.
+func nextShellWord(s string) (word, rest string, ok bool) {
+	i := 0
+	for i < len(s) {
+		switch c := s[i]; c {
+		case ' ', '\t':
+			return s[:i], s[i:], true
+		case '\'':
+			end := strings.IndexByte(s[i+1:], '\'')
+			if end < 0 {
+				return "", "", false
+			}
+			i += end + 2
+		case '"':
+			i++
+			for i < len(s) && s[i] != '"' {
+				if s[i] == '\\' {
+					i++
+				}
+				i++
+			}
+			if i >= len(s) {
+				return "", "", false
+			}
+			i++
+		case '\\':
+			if i+1 >= len(s) {
+				return "", "", false
+			}
+			i += 2
+		case ';', '&', '|', '<', '>', '(', ')', '`', '\n', '\r':
+			return "", "", false
+		default:
+			i++
+		}
+	}
+	return s, "", true
+}
+
+// isShellVariableName reports whether name is a valid shell variable
+// name: a letter or underscore followed by letters, digits and
+// underscores.
+func isShellVariableName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i, c := range name {
+		switch {
+		case c == '_', c >= 'A' && c <= 'Z', c >= 'a' && c <= 'z':
+		case i > 0 && c >= '0' && c <= '9':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// isPlainProgramName reports whether word is a program name or path that
+// can be shown as it is: letters, digits and _ . / + - ~ only, so it
+// holds no quoting, variable expansion or glob that could hide an
+// argument.
+func isPlainProgramName(word string) bool {
+	for _, c := range word {
+		switch {
+		case c >= 'A' && c <= 'Z', c >= 'a' && c <= 'z', c >= '0' && c <= '9':
+		case strings.ContainsRune("_./+-~", c):
+		default:
+			return false
+		}
+	}
+	return true
 }

@@ -217,8 +217,9 @@ func (d *Datastore) GetAlerts(ctx context.Context, filter AlertListFilter) (*Ale
 
 	// Query alerts with connection name, metric unit, and acknowledgment info
 	// Uses DISTINCT ON to get only the most recent acknowledgment per alert.
-	// The description can quote a connection error holding a password, so
-	// it is masked as query_datastore masks it.
+	// The description can quote a connection error holding a password,
+	// and an AI analysis can repeat it, so both are masked as
+	// query_datastore masks them.
 	query := fmt.Sprintf(`
 		SELECT a.id, a.alert_type, a.rule_id, a.connection_id, a.database_name,
 		       a.object_name, a.probe_name, a.metric_name, a.metric_value, r.metric_unit,
@@ -228,7 +229,7 @@ func (d *Datastore) GetAlerts(ctx context.Context, filter AlertListFilter) (*Ale
 		       CASE WHEN a.alert_type = 'system' THEN ''
 		            ELSE COALESCE(c.name, 'Unknown') END as server_name,
 		       ack.acknowledged_at, ack.acknowledged_by, ack.message, ack.false_positive,
-		       a.ai_analysis, a.ai_analysis_metric_value
+		       %s, a.ai_analysis_metric_value
 		FROM alerts a
 		LEFT JOIN connections c ON a.connection_id = c.id
 		LEFT JOIN alert_rules r ON a.rule_id = r.id
@@ -242,7 +243,8 @@ func (d *Datastore) GetAlerts(ctx context.Context, filter AlertListFilter) (*Ale
 		%s
 		ORDER BY a.triggered_at DESC
 		LIMIT $%d OFFSET $%d
-	`, metrics.RedactedText("a.description"), whereClause, argNum, argNum+1)
+	`, metrics.RedactedText("a.description"), metrics.RedactedText("a.ai_analysis"),
+		whereClause, argNum, argNum+1)
 
 	args = append(args, limit, offset)
 

@@ -2790,10 +2790,11 @@ project adheres to
   acknowledged connection alert that still holds the unmasked text,
   including one on a connection in a blackout. Collector migration 24
   masks the stored descriptions of existing connection alerts, cleared
-  ones included, and the server masks alert descriptions in
-  `GET /api/v1/alerts` and the timeline's alert events on a
-  best-effort basis. Notifications already sent are not changed, and
-  stored AI analyses and chat history are not rewritten.
+  ones included, and the server masks alert descriptions and AI
+  analyses in `GET /api/v1/alerts`, and descriptions in the timeline's
+  alert events, on a best-effort basis. Notifications already sent are
+  not changed, and stored AI analyses and chat history are not
+  rewritten.
 
 - Delete a user with `ai-dba-server -delete-user` only when the
   confirmation is an explicit `y` or `yes`. The answer was checked

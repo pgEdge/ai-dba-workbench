@@ -164,21 +164,26 @@ settings:
    `connection_id`.
 2. Global default applies if no per-server
    configuration exists; the system uses the
-   `probe_configs` row where `connection_id IS NULL`.
+   `probe_configs` row where `scope = 'global'`;
+   cluster and group overrides also have a NULL
+   `connection_id`, so the global row is matched on
+   its scope.
 3. Hardcoded default applies if no database
    configuration exists.
 
 The table has the following indexes:
 
 - A primary key exists on `id`.
-- A composite unique index on
-  `(name, COALESCE(connection_id, 0))` allows one
-  configuration per probe per connection.
 - A partial unique index on
-  `name WHERE connection_id IS NULL` ensures only
-  one global default per probe.
-- A partial index on `is_enabled = TRUE` supports
-  fast enabled probe lookups.
+  `name WHERE scope = 'global'` ensures only one
+  global default per probe.
+- Partial unique indexes on `(name, connection_id)`,
+  `(name, cluster_id)` and `(name, group_id)`, each
+  limited to the matching `scope`, allow one
+  configuration per probe per server, cluster or
+  group.
+- An index on `is_enabled` supports enabled probe
+  lookups.
 
 ## Metrics Tables (metrics schema)
 

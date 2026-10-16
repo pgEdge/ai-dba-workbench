@@ -286,7 +286,12 @@ record first and then checks its target (`getProbeConfig`, via
 a record runs the same check after the permission gate and before the
 token-scope gate and the body decode, so neither a 403 nor the echoed
 record confirms a hidden one exists (`updateProbeConfig`, via
-`requireProbeConfigVisible`). Estate-wide (global) rows
+`requireProbeConfigVisible`). Only `updateProbeConfig` does this so
+far: the probe, alert and channel override writes (`upsertOverride`,
+`deleteOverride`) check the admin permission and the token scope but
+not visibility, so a permission holder with no grant can still write
+a hidden target's override and gets 400 rather than 404 for a missing
+one; do not assume every write is covered. Estate-wide (global) rows
 stay readable by every caller. An unrestricted superuser session gets
 200 with an empty list for a missing connection ID, since nothing is
 hidden from it. `probe_config_visibility_test.go` holds the

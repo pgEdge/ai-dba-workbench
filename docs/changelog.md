@@ -2591,9 +2591,9 @@ project adheres to
   made the same mistake when computing probe staleness: a cluster or
   group override duplicated each staleness row, and could supply the
   interval for a stalled probe's alert in place of the global
-  default. The SQL examples in the probe documentation that change
-  global defaults also matched cluster and group overrides, and now
-  select only the global row. (#647)
+  default. The SQL examples in the probe and collector documentation
+  that change global defaults also matched cluster and group
+  overrides, and now select only the global row. (#647)
 
 - Delete a user with `ai-dba-server -delete-user` only when the
   confirmation is an explicit `y` or `yes`. The answer was checked

@@ -294,10 +294,14 @@ moved.
   route returning credential-bearing metrics: `query_datastore`,
   `GET /api/v1/metrics/latest` (#670) and the latest-rows mode of
   `GET /api/v1/metrics/query` (through `ReturnableColumns` and
-  `MaskedProbeColumn`), the statement text of
+  `MaskedProbeColumn`, which uses `RedactedSetting`), the statement text of
   `GET /api/v1/metrics/top-queries` (`RedactedText`), and the old and
   new values of configuration-change events on
-  `GET /api/v1/timeline/events` (`MaskedSetting`; changes are detected
+  `GET /api/v1/timeline/events` (`RedactedSetting`, which masks only
+  the passwords in a connection string setting such as
+  `primary_conninfo`, as `pgsettings.RedactValue` does, and the whole
+  of any other credential setting; `query_datastore` keeps
+  `MaskedSetting`, which masks both whole; changes are detected
   on the raw values, and `get_timeline_events` lists no details).
   `datastore_masking_routes_test.go` runs the masked probes through all
   of them, so add a new route there. `TestCredentialTableReadersAreReviewed`

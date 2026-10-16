@@ -37,7 +37,7 @@ var probeTableRef = regexp.MustCompile(`(?i)(^|\b(from|join)\s+)metrics\.$|metri
 
 // maskingHelpers are the helpers in this package that mask a value read
 // from a credentialTableRef table.
-var maskingHelpers = []string{"RedactedText", "MaskedSetting", "MaskedWhole", "MaskedOptions", "MaskedProbeColumn"}
+var maskingHelpers = []string{"RedactedText", "RedactedSetting", "MaskedSetting", "MaskedWhole", "MaskedOptions", "MaskedProbeColumn"}
 
 // columnFilterHelpers are the helpers that choose which columns of a
 // probe's table may be returned, dropping secret columns and masking

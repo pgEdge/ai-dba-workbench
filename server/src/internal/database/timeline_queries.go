@@ -442,8 +442,8 @@ func buildConfigChangeQuery(whereClause string) string {
 		}
 		return "WHERE " + innerFilter
 	}(), extraFilter,
-		metrics.MaskedSetting("changes.prev_setting", "changes.name"),
-		metrics.MaskedSetting("changes.setting", "changes.name"))
+		metrics.RedactedSetting("changes.prev_setting", "changes.name"),
+		metrics.RedactedSetting("changes.setting", "changes.name"))
 }
 
 // buildConfigChangeCountQuery creates the count query for configuration

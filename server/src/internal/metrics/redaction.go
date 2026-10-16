@@ -203,6 +203,40 @@ func MaskedSetting(value, name string) string {
 		RedactedValue + "' ELSE " + value + " END"
 }
 
+// conninfoSettings are the credentialSettings whose value is a libpq
+// connection string, such as primary_conninfo, rather than a value
+// pgsettings.RedactValue replaces whole.
+var conninfoSettings = func() []string {
+	var out []string
+	for _, name := range credentialSettings {
+		if !pgsettings.RedactsWholeValue(name) {
+			out = append(out, name)
+		}
+	}
+	return out
+}()
+
+// RedactedSetting returns value with the same parts masked as
+// pgsettings.RedactValue masks, which the collector applies before
+// storing a setting and the server applies again to the rows it
+// returns: on a row whose setting name, the column reference name, is a
+// connection string setting, the passwords in it are masked
+// (RedactedText) and the host, user and other options kept; on a row
+// naming any other setting that can carry a credential, a non-empty
+// value is replaced by RedactedValue, as MaskedSetting replaces it. An
+// empty or NULL value is kept. GET /api/v1/metrics/latest, the
+// latest-rows mode of GET /api/v1/metrics/query and the timeline's
+// configuration changes use it, and query_datastore, which returns rows
+// with no further redaction, keeps MaskedSetting.
+func RedactedSetting(value, name string) string {
+	quoted := make([]string, len(conninfoSettings))
+	for i, v := range conninfoSettings {
+		quoted[i] = "'" + v + "'"
+	}
+	return "CASE WHEN lower(" + name + ") IN (" + strings.Join(quoted, ", ") + ") AND " + value +
+		" <> '' THEN " + RedactedText(value) + " ELSE " + MaskedSetting(value, name) + " END"
+}
+
 // ColumnMask is how a probe column is masked before it is returned.
 type ColumnMask int
 
@@ -272,14 +306,16 @@ func ReturnableColumns(probe string, columns []string) []string {
 // MaskedProbeColumn returns the expression that selects column of probe
 // with any credential masked, given all the probe's columns and ref,
 // which returns the SQL reference to a column. It returns false when
-// the column must not be returned at all.
+// the column must not be returned at all. A setting's value is masked
+// with RedactedSetting, so a connection string keeps all but its
+// passwords.
 func MaskedProbeColumn(probe, column string, columns []string, ref func(string) string) (string, bool) {
 	value := ref(column)
 	switch ProbeColumnMask(probe, column, columns) {
 	case MaskOmit:
 		return "", false
 	case MaskSetting:
-		return MaskedSetting(value, ref(ProbeRedactions[probe].KeyColumn)), true
+		return RedactedSetting(value, ref(ProbeRedactions[probe].KeyColumn)), true
 	case MaskOptions:
 		return MaskedOptions(value), true
 	case MaskText:

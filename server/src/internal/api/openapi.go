@@ -2631,7 +2631,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/timeline/events": {
 			Get: &OpenAPIOperation{
 				Summary:     "List timeline events",
-				Description: "Returns timeline events within a time range. A configuration change to a setting that can hold a credential, such as primary_conninfo, is still reported, with its old and new values masked as ********",
+				Description: "Returns timeline events within a time range. A configuration change to a setting that can hold a credential, such as primary_conninfo, is still reported, with the passwords in a connection string, or the whole of any other credential value, masked as ********",
 				OperationID: "listTimelineEvents",
 				Tags:        []string{"Timeline"},
 				Security:    bearerAuth,
@@ -3942,7 +3942,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/metrics/latest": {
 			Get: &OpenAPIOperation{
 				Summary:     "Get latest probe snapshot",
-				Description: "Returns the most recent collected row for each unique entity in a probe table, with optional filtering, sorting, and pagination. Credentials are masked on a best-effort basis: credential settings, secret hba options, non-empty hba errors and passwords in known forms in free text are replaced with ********, free text is cut to 65,536 characters, row images are returned as text, and secret-named columns are omitted. A password in another form is returned as stored",
+				Description: "Returns the most recent collected row for each unique entity in a probe table, with optional filtering, sorting, and pagination. Credentials are masked on a best-effort basis: the passwords in connection string settings such as primary_conninfo, other credential settings, secret hba options, non-empty hba errors and passwords in known forms in free text are replaced with ********, free text is cut to 65,536 characters, row images are returned as text, and secret-named columns are omitted. A password in another form is returned as stored",
 				OperationID: "getLatestSnapshot",
 				Tags:        []string{"Metrics"},
 				Security:    bearerAuth,

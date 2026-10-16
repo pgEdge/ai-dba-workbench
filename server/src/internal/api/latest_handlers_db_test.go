@@ -633,12 +633,14 @@ func TestLatestSnapshot_MasksCredentials(t *testing.T) {
 	}
 	resp := decodeLatest(t, rec)
 	// The two primary_conninfo rows differ only in the password, so once
-	// masked they are one entity.
+	// masked they are one entity. A connection string keeps everything
+	// but its password, as pgsettings.RedactValue leaves it.
 	if resp.TotalCount != 2 || len(resp.Rows) != 2 {
 		t.Fatalf("expected 2 rows, got %d (total %d): %v", len(resp.Rows), resp.TotalCount, resp.Rows)
 	}
-	if resp.Rows[0]["name"] != "primary_conninfo" || resp.Rows[0]["setting"] != metrics.RedactedValue ||
-		resp.Rows[1]["name"] != "work_mem" || resp.Rows[1]["setting"] != "4MB" {
+	if resp.Rows[0]["name"] != "work_mem" || resp.Rows[0]["setting"] != "4MB" ||
+		resp.Rows[1]["name"] != "primary_conninfo" ||
+		resp.Rows[1]["setting"] != "host=192.0.2.1 password="+metrics.RedactedValue {
 		t.Errorf("unexpected rows: %v", resp.Rows)
 	}
 

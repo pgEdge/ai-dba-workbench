@@ -535,8 +535,12 @@ The `/api/v1/metrics/latest` endpoint and the latest-rows mode
 of `/api/v1/metrics/query` mask credentials, on a best-effort
 basis, in the same way as the `query_datastore` MCP tool:
 
-- The value of a setting that can hold a credential, such as
-  `primary_conninfo`, is returned as `********`.
+- A connection string setting, such as `primary_conninfo`, is
+  returned with its passwords masked as `********` and its other
+  options kept; the value of any other setting that can hold a
+  credential, such as `restore_command`, is returned as
+  `********`. The `query_datastore` tool returns both kinds as
+  `********`.
 - Secret options in `pg_hba_file_rules.options`, such as
   `ldapbindpasswd`, have their values masked, and a non-empty
   `pg_hba_file_rules.error` is returned as `********`, since it
@@ -552,8 +556,8 @@ basis, in the same way as the `query_datastore` MCP tool:
 The statement text returned by `/api/v1/metrics/top-queries` is
 cut and masked in the same way. Configuration
 change events from `/api/v1/timeline/events` still report a
-change to a setting that can hold a credential, but show its old
-and new values as `********`. Alert descriptions returned by
+change to a setting that can hold a credential, but mask its old
+and new values in the same way as `/api/v1/metrics/latest`. Alert descriptions returned by
 `/api/v1/alerts` and in the alert events of
 `/api/v1/timeline/events` are cut and masked in the same way,
 since a connection alert quotes the connection error.

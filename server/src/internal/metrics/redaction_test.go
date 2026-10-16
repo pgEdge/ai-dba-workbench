@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pgedge/ai-workbench/pkg/pgsettings"
 	"github.com/pgedge/ai-workbench/pkg/redact"
 	"github.com/pgedge/ai-workbench/pkg/redact/redacttest"
 )
@@ -92,6 +93,48 @@ func TestRedactedTextIntegration(t *testing.T) {
 	}
 	var null *string
 	if err := pool.QueryRow(context.Background(), redactTextQuery, nil).Scan(&null); err != nil || null != nil {
+		t.Errorf("NULL should stay NULL: %v, %v", null, err)
+	}
+}
+
+// TestRedactedSettingIntegration runs RedactedSetting in PostgreSQL and
+// checks it masks each setting as pgsettings.RedactValue does: the
+// password in a connection string, and the whole of any other
+// credential-bearing value.
+func TestRedactedSettingIntegration(t *testing.T) {
+	if !slices.Contains(conninfoSettings, "primary_conninfo") {
+		t.Fatalf("conninfoSettings = %v, want primary_conninfo in it", conninfoSettings)
+	}
+	pool, cleanup := newLatestRowsTestPool(t)
+	defer cleanup()
+	query := "SELECT " + RedactedSetting("$2::text", "$1::text")
+	for _, tc := range []struct{ name, value string }{
+		{"primary_conninfo", "host=192.0.2.1 user=replicator password=example-secret"},
+		{"PRIMARY_CONNINFO", "postgresql://replicator:example-secret@192.0.2.1/db"},
+		{"primary_conninfo", "host=192.0.2.1"},
+		{"primary_conninfo", ""},
+		{"restore_command", "cp /archive/%f %p"},
+		{"ssl_passphrase_command", "echo example-secret"},
+		{"work_mem", "4MB"},
+		{"password_encryption", "scram-sha-256"},
+	} {
+		var got string
+		if err := pool.QueryRow(context.Background(), query, tc.name, tc.value).Scan(&got); err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if want := pgsettings.RedactValue(tc.name, tc.value); got != want {
+			t.Errorf("%s = %q: got %q, want %q", tc.name, tc.value, got, want)
+		}
+	}
+	// A custom setting whose name marks it as a secret is masked whole,
+	// which goes further than pgsettings.RedactValue's fixed list.
+	var custom string
+	if err := pool.QueryRow(context.Background(), query, "custom.api_key", "example-secret").Scan(&custom); err != nil ||
+		custom != RedactedValue {
+		t.Errorf("custom.api_key: got %q (%v), want %q", custom, err, RedactedValue)
+	}
+	var null *string
+	if err := pool.QueryRow(context.Background(), query, "primary_conninfo", nil).Scan(&null); err != nil || null != nil {
 		t.Errorf("NULL should stay NULL: %v, %v", null, err)
 	}
 }
@@ -241,7 +284,7 @@ func TestMaskedProbeColumn(t *testing.T) {
 		want          string
 		ok            bool
 	}{
-		{"pg_settings", "setting", MaskedSetting(`t."setting"`, `t."name"`), true},
+		{"pg_settings", "setting", RedactedSetting(`t."setting"`, `t."name"`), true},
 		{"pg_hba_file_rules", "options", MaskedOptions(`t."options"`), true},
 		{"pg_hba_file_rules", "error", `CASE WHEN t."error" <> '' THEN '` + RedactedValue + `' ELSE t."error" END`, true},
 		{"pg_stat_statements", "query", RedactedText(`t."query"`), true},
@@ -279,7 +322,7 @@ func TestBuildLatestRowsQueryMasks(t *testing.T) {
 		[]int{1}, MetricFilters{}, "setting", "asc", 10)
 	for _, want := range []string{
 		`SELECT "name", "setting", "sslkey"` + "\n",
-		MaskedSetting(`"setting"`, `"name"`) + ` AS "setting", NULL AS "sslkey", connection_id, collected_at`,
+		RedactedSetting(`"setting"`, `"name"`) + ` AS "setting", NULL AS "sslkey", connection_id, collected_at`,
 		`DISTINCT ON (connection_id, "name", "setting", "sslkey")`,
 	} {
 		if !strings.Contains(query, want) {

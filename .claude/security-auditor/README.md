@@ -233,7 +233,7 @@ moved.
   `alerts.ai_analysis`) pass through `RedactedText`:
   `left(value, 65536)` under a chain of `regexp_replace` calls built from
   `textRedactions` (URI userinfo, JSON keys, ALTER SYSTEM SET of a
-  `credentialSettings` entry, quoted name and value as in `set_config`,
+  `pgsettings.CredentialSettings` entry, quoted name and value as in `set_config`,
   name=value, and name followed by a string constant, with secret names
   derived from `textSecretNamePatterns`, the column fragments plus API
   and access key names, without `key$`/`pass$`/`salt`, which over-mask

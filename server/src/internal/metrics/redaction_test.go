@@ -152,8 +152,8 @@ func TestCredentialSettingLiteralsAreSafe(t *testing.T) {
 		t.Errorf("RedactedValue %q is not safe to write as a SQL literal", RedactedValue)
 	}
 	cond := credentialSettingCondition(`t."name"`)
-	for _, want := range []string{`lower(t."name") IN ('primary_conninfo', 'ssl_passphrase_command', 'archive_command', 'archive_cleanup_command', 'restore_command', 'recovery_end_command')`, `~ '(password|`, `|pass$|key$|api_?key|access_key|salt)'`,
-		`NOT IN ('password_encryption', 'md5_password_warnings', 'ssl_passphrase_command_supports_reload')`} {
+	for _, want := range []string{`lower(t."name") IN ('archive_cleanup_command', 'archive_command', 'primary_conninfo', 'recovery_end_command', 'restore_command', 'ssl_passphrase_command')`, `~ '(password|`, `|pass$|key$|api_?key|access_key|salt)'`,
+		`NOT IN ('md5_password_warnings', 'password_encryption', 'ssl_passphrase_command_supports_reload')`} {
 		if !strings.Contains(cond, want) {
 			t.Errorf("condition %s does not contain %s", cond, want)
 		}

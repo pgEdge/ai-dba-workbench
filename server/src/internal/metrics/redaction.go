@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/pgedge/ai-workbench/pkg/pgsettings"
 	"github.com/pgedge/ai-workbench/pkg/redact"
 )
 
@@ -49,12 +50,9 @@ var secretNamePatterns = append(slices.Clone(secretColumnFragments),
 var textSecretNamePatterns = redact.TextSecretNamePatterns()
 
 // nonCredentialSettings match secretNamePatterns but hold no secret, so
-// pg_settings shows their values.
-var nonCredentialSettings = []string{
-	"password_encryption",
-	"md5_password_warnings",
-	"ssl_passphrase_command_supports_reload",
-}
+// pg_settings shows their values. The list is pkg/pgsettings', which the
+// collector also uses.
+var nonCredentialSettings = pgsettings.NonCredentialSettings()
 
 // IsSecretColumnName reports whether a column name looks like it holds
 // a credential or other secret.
@@ -110,10 +108,11 @@ var ProbeRedactions = map[string]ProbeRedaction{
 }
 
 // credentialSettings are setting names whose value can carry a
-// credential (redact.CredentialSettings). Any setting whose name
-// contains a secretNamePatterns entry is masked as well, which covers
-// an extension setting such as myext.password.
-var credentialSettings = redact.CredentialSettings()
+// credential. Any setting whose name contains a secretNamePatterns entry
+// is masked as well, which covers an extension setting such as
+// myext.password. The list is pkg/pgsettings', from which the collector
+// redacts the same settings before storing them.
+var credentialSettings = pgsettings.CredentialSettings()
 
 // RedactedValue replaces a masked value, as PostgreSQL masks a password
 // in pg_stat_wal_receiver.conninfo.

@@ -19,6 +19,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/pgedge/ai-workbench/pkg/pgsettings"
 )
 
 // RedactedValue replaces a masked value, as PostgreSQL masks a password
@@ -42,22 +44,6 @@ var secretColumnFragments = []string{
 // catch ordinary identifiers such as sort_key or bypass, plus the API
 // and access key names.
 var textSecretNamePatterns = append(slices.Clone(secretColumnFragments), "api_?key", "access_key")
-
-// credentialSettings are setting names whose value can carry a
-// credential: primary_conninfo is a libpq connection string that may
-// hold password=, and the rest are shell commands that may carry a
-// passphrase or an inline secret such as PGPASSWORD=... or
-// AWS_SECRET_ACCESS_KEY=.... The server also masks any setting whose
-// name matches one of its secret name patterns, which covers an
-// extension setting such as myext.password.
-var credentialSettings = []string{
-	"primary_conninfo",
-	"ssl_passphrase_command",
-	"archive_command",
-	"archive_cleanup_command",
-	"restore_command",
-	"recovery_end_command",
-}
 
 // TextRedaction is one password form that Text, and the server's
 // RedactedText, mask: Pattern is a case-insensitive regular expression
@@ -192,9 +178,9 @@ var textRedactions = []TextRedaction{
 	},
 	{
 		// ALTER SYSTEM SET archive_command = '...' and the other
-		// credentialSettings.
+		// settings pgsettings.CredentialSettings lists.
 		Name: "SET credential setting",
-		Pattern: `(set` + sep1 + nameQuote + `(?:` + strings.Join(credentialSettings, "|") + `)` + nameQuote +
+		Pattern: `(set` + sep1 + nameQuote + `(?:` + strings.Join(pgsettings.CredentialSettings(), "|") + `)` + nameQuote +
 			`(?:` + sep + `=|` + sep1 + `to)` + sep + `)` + sqlConstant,
 		Replacement: `\1'` + RedactedValue + `'`,
 	},
@@ -258,9 +244,6 @@ func SecretColumnFragments() []string { return slices.Clone(secretColumnFragment
 
 // TextSecretNamePatterns returns a copy of textSecretNamePatterns.
 func TextSecretNamePatterns() []string { return slices.Clone(textSecretNamePatterns) }
-
-// CredentialSettings returns a copy of credentialSettings.
-func CredentialSettings() []string { return slices.Clone(credentialSettings) }
 
 // TextRedactions returns a copy of textRedactions, in the order they
 // are applied.

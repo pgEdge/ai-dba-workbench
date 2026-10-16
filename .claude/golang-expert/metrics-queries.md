@@ -230,9 +230,10 @@ decomposed into small, separately testable helpers:
   collector's migration 26 equivalent (a new migration). The list of
   credential settings lives only in `pkg/pgsettings`
   (`CredentialSettings`, `NonCredentialSettings`, `RedactsWholeValue`);
-  `pkg/sqlredact` and `query_datastore`'s SQL masking in
-  `server/src/internal/tools/datastore_catalog.go` build from it, so add
-  a setting there rather than to a copy. Each redacting probe has an
+  `pkg/sqlredact`, the `SET` pattern in `pkg/redact` and the SQL masking
+  in `server/src/internal/metrics/redaction.go` (used by
+  `query_datastore`, the latest-metrics routes and the timeline) build
+  from it, so add a setting there rather than to a copy. Each redacting probe has an
   `Execute` test in `collector/src/probes/redaction_wiring_test.go`.
 
 ### The /metrics/latest snapshot endpoint and its schema filters

@@ -17,6 +17,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/pgedge/ai-workbench/pkg/pgsettings"
 	"github.com/pgedge/ai-workbench/pkg/redact"
 	"github.com/pgedge/ai-workbench/pkg/redact/redacttest"
 )
@@ -185,17 +186,49 @@ func TestTextAdversarial(t *testing.T) {
 func TestAccessorsReturnCopies(t *testing.T) {
 	frags := redact.SecretColumnFragments()
 	names := redact.TextSecretNamePatterns()
-	settings := redact.CredentialSettings()
 	redactions := redact.TextRedactions()
-	if len(frags) == 0 || len(names) <= len(frags) || len(settings) == 0 || len(redactions) == 0 {
-		t.Fatalf("unexpected lengths %d, %d, %d, %d", len(frags), len(names), len(settings), len(redactions))
+	if len(frags) == 0 || len(names) <= len(frags) || len(redactions) == 0 {
+		t.Fatalf("unexpected lengths %d, %d, %d", len(frags), len(names), len(redactions))
 	}
-	frags[0], names[0], settings[0], redactions[0].Pattern = "x", "x", "x", "x"
+	frags[0], names[0], redactions[0].Pattern = "x", "x", "x"
 	if redact.SecretColumnFragments()[0] == "x" || redact.TextSecretNamePatterns()[0] == "x" ||
-		redact.CredentialSettings()[0] == "x" || redact.TextRedactions()[0].Pattern == "x" {
+		redact.TextRedactions()[0].Pattern == "x" {
 		t.Error("an accessor returned the shared slice")
 	}
 	if got := redact.Text("password=example-secret"); got != "password="+redact.RedactedValue {
 		t.Errorf("Text changed after editing a copy: %q", got)
+	}
+}
+
+// TestTextMasksEveryCredentialSetting checks that ALTER SYSTEM SET masks
+// the value of every setting pkg/pgsettings lists as holding a
+// credential, so that the list there is the only one to change. A name
+// such as primary_conninfo also matches the keyword=value pattern, which
+// can take the quotes with the value, so only the secret's absence is
+// checked.
+func TestTextMasksEveryCredentialSetting(t *testing.T) {
+	settings := pgsettings.CredentialSettings()
+	if len(settings) == 0 {
+		t.Fatal("pgsettings.CredentialSettings() is empty")
+	}
+	var setPattern *regexp.Regexp
+	for _, r := range redact.TextRedactions() {
+		if r.Name == "SET credential setting" {
+			setPattern = regexp.MustCompile("(?is)" + r.Pattern)
+		}
+	}
+	if setPattern == nil {
+		t.Fatal("no SET credential setting pattern")
+	}
+	for _, name := range settings {
+		in := "ALTER SYSTEM SET " + name + " TO 'example secret'"
+		if !setPattern.MatchString(in) {
+			t.Errorf("the SET credential setting pattern does not match %q", in)
+		}
+		got := redact.Text(in)
+		if strings.Contains(got, "example") || strings.Contains(got, "secret'") ||
+			!strings.Contains(got, name) || !strings.Contains(got, redact.RedactedValue) {
+			t.Errorf("Text(%q) = %q, want the value masked", in, got)
+		}
 	}
 }

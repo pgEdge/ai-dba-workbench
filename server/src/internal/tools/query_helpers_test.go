@@ -10,7 +10,13 @@
 package tools
 
 import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func TestInjectLimitOffset_SelectQueries(t *testing.T) {
@@ -194,5 +200,97 @@ func TestParseLimitOffset(t *testing.T) {
 				t.Errorf("parseLimitOffset() offset = %d, want %d", offset, tt.wantOffset)
 			}
 		})
+	}
+}
+
+func TestSafeToolQueryError(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"pg error", &pgconn.PgError{Message: "relation missing"}, "p: relation missing"},
+		{"pg error with detail", &pgconn.PgError{Message: "bad", Detail: "why"}, "p: bad (why)"},
+		{"wrapped pg error", fmt.Errorf("wrap: %w", &pgconn.PgError{Message: "inner"}), "p: inner"},
+		{"deadline", context.DeadlineExceeded, "p: query timed out"},
+		{"canceled", fmt.Errorf("x: %w", context.Canceled), "p: query was canceled"},
+		{"connection", errors.New("dial tcp 192.0.2.1:5432: Connection Refused"),
+			"p: connection error; the database may be unreachable"},
+		{"placeholders", errors.New("expected 1 arguments, got 0"), "p: query contains parameter placeholders"},
+		{"other", errors.New("secret internal detail"), "p: an internal error occurred"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := safeToolQueryError("p: ", tc.err)
+			if !strings.HasPrefix(got, tc.want) {
+				t.Errorf("got %q, want prefix %q", got, tc.want)
+			}
+			if strings.Contains(got, "secret") || strings.Contains(got, "192.0.2.1") {
+				t.Errorf("message leaks the underlying error: %q", got)
+			}
+		})
+	}
+}
+
+func TestFormatPaginatedResults(t *testing.T) {
+	rows := &queryResult{Rows: [][]any{{1}, {2}}, ResultsTSV: "n\n1\n2"}
+	truncated := &queryResult{Rows: [][]any{{1}, {2}}, ResultsTSV: "n\n1\n2", WasTruncated: true}
+	cases := []struct {
+		name   string
+		qr     *queryResult
+		offset int
+		want   string
+	}{
+		{"first page", rows, 0, "Results (2 rows):"},
+		{"first page truncated", truncated, 0,
+			"Results (2 rows shown, more available - use offset=2 for next page or increase limit):"},
+		{"later page", rows, 4, "Results (rows 5-6):"},
+		{"later page truncated", truncated, 4, "Results (rows 5-6, more available - use offset=6 for next page):"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var sb strings.Builder
+			formatPaginatedResults(&sb, tc.qr, "SELECT 1", 2, tc.offset, " or increase limit")
+			got := sb.String()
+			if !strings.HasPrefix(got, "SQL Query:\nSELECT 1\n\n") || !strings.Contains(got, tc.want) {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestExecuteQueryIntegration(t *testing.T) {
+	pool, _, cleanup := newToolsTestPool(t)
+	t.Cleanup(cleanup)
+	ctx := context.Background()
+	series := "SELECT g AS n FROM generate_series(1, $1::int) AS g"
+
+	qr, errResp := executeQuery(ctx, pool, series+" LIMIT 4", 3, false, "", false, 5)
+	if errResp != nil {
+		t.Fatalf("read-write query failed: %+v", errResp)
+	}
+	if !qr.WasTruncated || len(qr.Rows) != 3 || qr.ColumnNames[0] != "n" {
+		t.Errorf("expected three rows and truncation, got %+v", qr)
+	}
+
+	qr, errResp = executeReadOnlyQuery(ctx, pool, series, 3, true, "", 5)
+	if errResp != nil || qr.WasTruncated || len(qr.Rows) != 5 {
+		t.Errorf("an existing limit should skip truncation: %+v %+v", qr, errResp)
+	}
+
+	_, errResp = executeReadOnlyQuery(ctx, pool, "SELECT * FROM no_such_table_566", 0, false, "Query failed: ")
+	if errResp == nil || !strings.Contains(errResp.Content[0].Text, "Query failed: ") ||
+		!strings.Contains(errResp.Content[0].Text, "no_such_table_566") {
+		t.Errorf("expected the server's error message, got %+v", errResp)
+	}
+
+	_, errResp = executeReadOnlyQuery(ctx, pool, "CREATE TABLE ro_test_566 (id int)", 0, false, "")
+	if errResp == nil || !strings.Contains(errResp.Content[0].Text, "read-only") {
+		t.Errorf("a read-only transaction should refuse a write, got %+v", errResp)
+	}
+
+	_, errResp = executeReadOnlyQuery(ctx, pool, "SELECT 1/(n - 3) FROM generate_series(1, 5) AS n", 0, false, "")
+	if errResp == nil || !strings.Contains(errResp.Content[0].Text, "Error iterating rows") {
+		t.Errorf("an error mid-result should be reported, got %+v", errResp)
 	}
 }

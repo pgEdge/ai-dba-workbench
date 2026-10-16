@@ -275,6 +275,31 @@ func TestToolsConfig_IsToolEnabled(t *testing.T) {
 	}
 }
 
+// TestToolsConfig_DescribeDatastoreFlag checks that describe_datastore
+// defaults to enabled and that the YAML key turns it off.
+func TestToolsConfig_DescribeDatastoreFlag(t *testing.T) {
+	var defaults ToolsConfig
+	if !defaults.IsToolEnabled("describe_datastore") {
+		t.Error("describe_datastore should default to enabled")
+	}
+	for _, tc := range []struct {
+		yaml string
+		want bool
+	}{
+		{"describe_datastore: false\n", false},
+		{"describe_datastore: true\n", true},
+		{"query_datastore: false\n", true},
+	} {
+		var cfg ToolsConfig
+		if err := yaml.Unmarshal([]byte(tc.yaml), &cfg); err != nil {
+			t.Fatalf("unmarshal %q: %v", tc.yaml, err)
+		}
+		if got := cfg.IsToolEnabled("describe_datastore"); got != tc.want {
+			t.Errorf("%q: describe_datastore enabled = %v, want %v", tc.yaml, got, tc.want)
+		}
+	}
+}
+
 func TestResourcesConfig_IsResourceEnabled(t *testing.T) {
 	falseVal := false
 	trueVal := true

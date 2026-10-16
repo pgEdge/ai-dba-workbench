@@ -15,6 +15,10 @@ WORKDIR /build
 # Copy the shared pkg module
 COPY pkg/ /build/pkg/
 
+# The server's go.mod requires the collector module for its tests only, so
+# the module graph needs the collector's go.mod but no collector source
+COPY collector/go.mod collector/go.sum /build/collector/
+
 # Copy server module files and source
 COPY server/src/go.mod server/src/go.sum /build/server/src/
 COPY server/src/ /build/server/src/

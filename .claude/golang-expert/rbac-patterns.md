@@ -433,8 +433,8 @@ one in `internal/resources/context_aware_registry.go` short-circuits on
 `IsSuperuser` any more, because that flag comes from the admin scope
 and says nothing about tools; every caller goes through the per-item
 filter, which already admits sessions, unscoped tokens and wildcard
-scopes (a nil auth store denies, as above), and `rbacExemptTools` is
-still applied.
+scopes (a nil auth store denies, as above), and `rbacExemptTools` and
+`rbacCompanionTools` (through `canAccessTool`) are still applied.
 
 A token may change its own scope, under the same ceiling rule as any
 other scope change (below): narrowing is allowed, widening or clearing
@@ -639,9 +639,54 @@ exceeded "this token's access" (fixed so the denial audit coalesces).
   `internal/api/rbac_acting_token_deleted_test.go` and
   `internal/auth/token_scope_missing_token_test.go`.
 
-Known gaps, deliberately left: `query_datastore` reaches beyond any
-connection scope (#566), and editing or disabling a user and deleting a
-token not owned by a superuser are not ceiling-gated. Tests: `internal/auth/token_ceiling_test.go`
+Known gaps, deliberately left: editing or disabling a user and deleting
+a token not owned by a superuser are not ceiling-gated.
+
+`query_datastore` (#566) takes no SQL: `buildDatastoreQuery` in
+`internal/tools/datastore_query_builder.go` builds every statement from
+the source catalog in `datastore_catalog.go`, binding the caller's
+`VisibleConnectionIDs` set (and `CanSeeSystemAlerts`) as parameters
+under each source's scoping rule. A visibility error fails closed, a
+named inaccessible connection gets the generic not-found text, and an
+empty visible set returns no connection-scoped rows whilst `global`
+sources still return. A new datastore table becomes queryable only by
+adding a catalog entry with an explicit scope and column list; never
+add a credential column. A value that can hold a credential (the
+`pg_settings` value columns for `primary_conninfo` and similar, and
+secret entries in `pg_hba_file_rules.options`) is masked through
+`metricRedactions` and `innerSelectList` (`credentialSettingCondition`
+or `maskedOptions`), and `pg_hba_file_rules.error` is masked whole
+(`WholeColumns`/`MaskWhole`), inside the scoped subquery. Free-text columns that
+can quote a password (query text, Spock row images, connection errors,
+alert descriptions and AI analyses) are marked `RedactText` and pass
+through `redactedText`, which cuts the value to `maxTextLength`
+characters and applies `textRedactions`, whose patterns must stay
+within the regular expression syntax Go and PostgreSQL share, use
+greedy quantifiers only (the Go tests use `Longest`, as PostgreSQL
+takes the longest match), spell white space as the ASCII class `ws`,
+bound any repetition of comments, and have exactly one capturing
+group. A retyped column records its original type in `StoredType`,
+which `datastoreEntityKeys` uses.
+`TestMetricRedactionsMatchCollectorSchema` checks the real probe still
+has the columns each rule names.
+`TestConfigurationSourcesMatchCollectorSchema` checks every catalog
+table, column and type against the collector's real schema, and fails
+on a collector column of a catalogued table that is neither catalogued
+nor listed in `catalogOmittedColumns`. The scope and time window go in
+an inner `(SELECT ... WHERE <scope> OFFSET 0) t` (`scopedFrom`), and
+the caller's filters, shape, ordering and paging apply outside it, so
+no caller predicate is evaluated against a row the caller may not see;
+the time window stays inside so partition pruning and the
+`(connection_id, collected_at)` index still apply. Errors from a
+running statement go through `datastoreQueryErrorFormatter` (general
+message, detail logged). `explain` needs a visible set of All
+(`checkDatastoreExplain`), since plan row estimates span hidden rows.
+`describe_datastore` is admitted by a
+`query_datastore` grant (`rbacCompanionTools` and `canAccessTool` in
+`context_aware_provider.go`, one way only). Pinned by
+`datastore_query_builder_test.go`, `query_datastore_integration_test.go`,
+`query_datastore_scope_integration_test.go` and
+`describe_datastore_access_test.go`. Tests: `internal/auth/token_ceiling_test.go`
 and `internal/auth/grant_scope_test.go` (unit, table-driven),
 `internal/api/rbac_token_ceiling_test.go`,
 `internal/api/rbac_grant_scope_test.go`,

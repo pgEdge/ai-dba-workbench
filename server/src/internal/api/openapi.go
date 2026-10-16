@@ -184,10 +184,7 @@ func buildSecuritySchemes() map[string]*OpenAPISecurityScheme {
 				"reaching every MCP item and admin permission, since " +
 				"each lets its holder acquire the rest. A read entry allows alert " +
 				"acknowledgement and analysis, and blackout management, " +
-				"on that connection. The query_datastore tool still runs " +
-				"read-only SQL over the whole datastore, including every " +
-				"connection's stored credentials; issue #566 tracks " +
-				"limiting it to the connections the caller can read. " +
+				"on that connection. " +
 				"A token whose admin scope names specific " +
 				"permissions may exercise those permissions, but cannot " +
 				"pass a gate that requires superuser status outright, " +

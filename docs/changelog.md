@@ -45,6 +45,14 @@ project adheres to
   median latency of Claude Haiku 4.5, so `typesafe` is the
   recommended provider.
 
+- Add the `describe_datastore` MCP tool, which lists the sources
+  that `query_datastore` can read, with each source's kind, time
+  column and scoping rule, and describes one source's columns
+  (#566). The new `builtins.tools.describe_datastore` option
+  switches the tool off, the tool is a grantable MCP privilege that
+  anyone holding `query_datastore` also has, and Ellie can call the
+  tool.
+
 - Raise a system alert when anomaly detection is degraded by
   a failing embedding or reasoning provider (#582). The
   alerter counts consecutive failures for each tier (tier 2
@@ -471,6 +479,11 @@ project adheres to
   The developer guide now gives the reason each of the 11 remaining
   metrics stays out of anomaly detection.
 
+- Take `query_datastore` structured arguments instead of SQL (#566);
+  this is a breaking change described in full under Security. A
+  client that sent a `sql` or `query` argument must now name a
+  `source` and describe the query with structured parameters.
+
 - Apply the federated login policy under `http.auth.oidc` on a
   `SIGHUP` configuration reload instead of requiring a restart (#484).
   `provision_users`, `allowed_email_domains`, `superuser_group`,
@@ -829,11 +842,10 @@ project adheres to
   repeated refusals from one caller are folded into a single
   row per minute that lists up to 20 of the targets, so that a
   client cannot flood the log by varying the path or the HTTP
-  method. One MCP tool still
-  reaches beyond a connection scope: `query_datastore` runs read-only SQL over
-  the whole datastore, including every connection's host,
-  username and encrypted credentials, and #566 tracks limiting
-  it to the connections the caller can read. A `read` entry
+  method. The `query_datastore` tool, which reached beyond a
+  connection scope by running read-only SQL over the whole
+  datastore, is now limited to the connections the caller can
+  read as well (#566). A `read` entry
   means read-only access to the monitored server, so it still
   allows a token to acknowledge, unacknowledge and save an
   analysis of an alert on that connection, and to manage
@@ -1681,8 +1693,8 @@ project adheres to
   `list_connections`, `get_alert_history`, `get_alert_rules`,
   `get_metric_baselines`, `query_datastore` or `get_timeline_events`
   to `false` left the tool enabled. That mattered most for
-  `query_datastore`, which runs arbitrary read-only SQL against the
-  datastore and could not be switched off at all. Every switch now
+  `query_datastore`, which then ran arbitrary read-only SQL against
+  the datastore and could not be switched off at all. Every switch now
   takes effect. The `get_blackouts` tool, which the documentation and
   the example configuration both advertised as switchable, had no
   backing configuration field at all; the tool now has one and
@@ -2464,6 +2476,48 @@ project adheres to
   remains available to API consumers. (#387)
 
 ### Security
+
+- Breaking: make the `query_datastore` MCP tool structured and limit
+  the tool to the connections the caller can read (#566). The tool no
+  longer accepts SQL and rejects a `sql` or `query` argument, so a
+  client must name a `source` and describe the query with `columns`,
+  `connection_ids`, a time range, `filters`, a `shape` (`rows`,
+  `latest` or `aggregate`), `group_by`, `aggregation`, `buckets`,
+  `order_by` and paging instead. The tool previously ran read-only SQL over the whole
+  datastore, so any caller holding the tool privilege, including an
+  API token scoped to one connection, could read every connection's
+  host, username and encrypted credentials and every connection's
+  metrics. Connection-specific rows now cover only the connections
+  the caller can see, further limited to an API token's connection
+  scope, whilst estate-wide configuration rows, such as alert rules,
+  alerter settings and global thresholds, blackouts and probe
+  settings, remain readable; each configuration source exposes an
+  explicit list of columns, and stored connection passwords and
+  certificates are never available. In `pg_settings`, the values of
+  settings that can hold a credential, such as `primary_conninfo`,
+  are shown as `********`, as are the values of options such as
+  `ldapbindpasswd` in `pg_hba_file_rules`, a non-empty
+  `pg_hba_file_rules.error`, and, on a best-effort basis, passwords
+  in recognised forms in query text, Spock statements and row images,
+  connection errors, and alert descriptions and AI analyses, each cut
+  to its first 65,536 characters; such text may still hold other
+  sensitive data, including passwords in forms the masking does not
+  recognise, which read access to a connection makes visible. Other
+  tools and the web client may show this text as stored.
+  Metric sources default to the last hour for every shape, including
+  `latest`, so change-tracked probes need a wide `time_start`;
+  `page_size` defaults to 100 and is capped at 1000, `page` times
+  `page_size` is capped at 100000, and `filters`, `group_by` and
+  `order_by` take at most 20 entries each. Ties in ordering are broken
+  by key columns so pages are stable, and a failure at run time
+  returns a general message. A group grant or token scope that
+  includes `query_datastore` also gives access to `describe_datastore`,
+  but not the reverse. Counter rates and deltas remain the job of
+  `query_metrics`. Every query runs in a read-only transaction with
+  a statement timeout, and `explain` returns the plan from `EXPLAIN`
+  without executing the query; it is available only to callers who
+  can access every connection, because plan row estimates cover the
+  whole table.
 
 - Delete a user with `ai-dba-server -delete-user` only when the
   confirmation is an explicit `y` or `yes`. The answer was checked

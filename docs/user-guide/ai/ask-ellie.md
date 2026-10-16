@@ -107,7 +107,8 @@ table describes the available tools:
 | `count_rows` | Counts rows in a specified table with optional filtering. |
 | `test_query` | Validates SQL query syntax without executing the query. |
 | `query_metrics` | Queries historical metrics with time-based aggregation. |
-| `query_datastore` | Executes read-only SQL against the monitoring datastore. |
+| `query_datastore` | Runs a structured query against the monitoring datastore; connection-specific rows are limited to the connections the user can access. |
+| `describe_datastore` | Lists the datastore sources and describes their columns; available to anyone who can use `query_datastore`. |
 | `search_knowledgebase` | Searches the pgEdge documentation knowledge base. |
 | `read_resource` | Reads MCP resources for backward compatibility with older clients. |
 | `generate_embedding` | Generates text embeddings from input text. |

@@ -165,9 +165,84 @@ moved.
   Known exceptions, not yet ruled on: the lockout disable in
   `disableForLockout` and the federated login's `is_superuser` sync in
   `federation.go` both bypass the guard (raised on PR #528).
-  Separately, `query_datastore` reads beyond a token's connection
-  scope (read-only SQL over the whole datastore, `connections`
-  credentials included), which #566 tracks. A `read` connection entry
+  `query_datastore` no longer runs SQL (#566): it builds each query
+  from the source catalog in `internal/tools/datastore_catalog.go`,
+  limited to the caller's visible connections and to columns that
+  carry no credentials; review any new catalog entry's scope and
+  columns. Metric column names are matched by substring against
+  `secretColumnFragments` (passwords, tokens, connection strings, SSL
+  files). A credential can also sit inside a value (pg_settings'
+  `primary_conninfo` or `archive_command`, pg_hba_file_rules'
+  `ldapbindpasswd=` and `radiussecrets=` options), which no column-name
+  check catches, so `metricRedactions` masks such values, chosen by
+  setting or option name against the broader `secretNamePatterns`, in
+  the inner subquery, where the caller's filters cannot see the real
+  value. Free-text columns (`pg_stat_activity.query`,
+  `pg_stat_statements.query`, Spock exception and resolution
+  statements and row images, `connections.connection_error`,
+  `alerts.description` and `alerts.ai_analysis`) pass, in
+  `query_datastore` only, through `redactedText`: `left(value, 65536)`
+  under a chain of `regexp_replace` calls built from
+  `textRedactions` (URI userinfo, JSON keys, ALTER SYSTEM SET of a
+  `credentialSettings` entry, quoted name and value as in `set_config`,
+  name=value, and name followed by a string constant, with secret names
+  derived from `textSecretNamePatterns`, the column fragments plus API
+  and access key names, without `key$`/`pass$`/`salt`, which over-mask
+  identifiers). A value nested in another literal
+  (`CONNECTION 'password=''x'''`) is matched by `sqlNestedQuoted`, and
+  one in an escape string (`E'password=\'x\''`) by
+  `sqlBackslashQuoted`. Row images are masked as JSON text, where every
+  backslash is doubled and a line break is `\n`, so each escape
+  backslash (`escapeBackslash`) may be doubled and `blank` accepts
+  `\n`; `TestTextRedactionsInJSON` runs every case in that form and
+  requires the secret to be gone even for JSON inputs. White space is
+  the ASCII class `ws`, never `[[:space:]]`, so the engines agree. A
+  name may be followed by white space and at most two comments
+  (`sep`): a block comment must be closed and is bounded to 32 body
+  units, so a run of `/*` cannot make each match scan to the end of
+  the text (the 64 Ki cap bounds the rest; about 1 s worst case in
+  PostgreSQL, under the tools' 10 s `statement_timeout`). An unquoted
+  value after `=` is masked whatever it starts with (`--x`, `/*x*/x`);
+  comments after `=` are allowed only before a quoted value. `PASSWORD`
+  may be followed by `sep` or nothing, and may start a
+  quoted string (`'PASSWORD ''x'''` in a concatenated EXECUTE) when a
+  separator follows it; an unquoted `$n` value is kept only when white
+  space, a comma, a bracket, a semicolon, a double quote or a
+  backslash ends it.
+  `pg_hba_file_rules.error` is masked whole (`WholeColumns`,
+  `MaskWhole`), since PostgreSQL quotes an unparsable option there, and
+  `nonCredentialSettings` exempts `password_encryption` and similar
+  from the pg_settings mask. Each pattern accepts every SQL
+  string constant form (quoted with either escape style, E'', U&'',
+  dollar-quoted, truncated), keeps only capture group 1, and is applied
+  through E'' literals so `standard_conforming_strings` cannot change
+  it; add every bypass input to `textRedactionCases`, which run in both
+  Go and PostgreSQL, plain and as JSON, record forms left unmasked in
+  `textRedactionKnownLimits`, and keep the 1 MiB adversarial inputs
+  fast in both engines and, in PostgreSQL, in both forms
+  (`datastore_text_redaction_test.go`). A dollar-quoted value that
+  itself contains a `$name$` tag leaks its tail, since the patterns
+  cannot use back-references. Row images retyped to text keep their
+  stored type for entity-key selection (`StoredType`). The masking is best effort:
+  query text and row images can still carry sensitive data or a
+  password in an unrecognised form, and read access to a connection
+  grants that visibility, as the user guide states.
+  `GET /api/v1/metrics/latest` returns probe columns without this
+  masking (not yet ruled on). Scope predicates must be applied before
+  any caller
+  predicate can be evaluated: the builder puts the scope and time
+  window in an inner `OFFSET 0` subquery the planner cannot merge, and
+  the caller's filters outside it, because a caller expression that
+  errors on some values (a LIKE pattern ending in an escape, a bad
+  cast) is otherwise an oracle for hidden rows. Errors from a running
+  datastore statement reach the caller only as a general message (the
+  detail is logged). `explain` is refused unless the visible set is
+  All (`checkDatastoreExplain`), because planner row estimates are
+  computed over the whole table and count hidden connections' rows.
+  `describe_datastore` is admitted by a
+  `query_datastore` grant or token scope (`rbacCompanionTools` in
+  `internal/tools/context_aware_provider.go`), one way only.
+  A `read` connection entry
   allows acknowledging, unacknowledging and saving an analysis of an
   alert, and managing blackouts and blackout schedules on that server;
   the user ruled this intended, so do not report it as a finding.

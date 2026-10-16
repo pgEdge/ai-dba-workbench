@@ -9,6 +9,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import type { ToolInputProperty } from '../../../types/llm';
 import {
     SYSTEM_PROMPT,
     CHAT_TOOLS,
@@ -21,6 +22,16 @@ import {
 
 describe('chatConstants', () => {
     describe('SYSTEM_PROMPT', () => {
+        it('matches the server datastore guidance', () => {
+            expect(SYSTEM_PROMPT).not.toContain('notification channels');
+            expect(SYSTEM_PROMPT).toContain(
+                '[{"column": "end_time", "op": ">", "value": "now"}]'
+            );
+            expect(SYSTEM_PROMPT).toContain(
+                "A 'system' alert concerns the Workbench itself"
+            );
+        });
+
         it('is a non-empty string', () => {
             expect(typeof SYSTEM_PROMPT).toBe('string');
             expect(SYSTEM_PROMPT.length).toBeGreaterThan(0);
@@ -91,7 +102,7 @@ describe('chatConstants', () => {
     describe('CHAT_TOOLS', () => {
         it('is an array with the expected number of tools', () => {
             expect(Array.isArray(CHAT_TOOLS)).toBe(true);
-            expect(CHAT_TOOLS.length).toBe(11);
+            expect(CHAT_TOOLS.length).toBe(12);
         });
 
         it('each tool has required properties', () => {
@@ -188,7 +199,80 @@ describe('chatConstants', () => {
                 t => t.name === 'query_datastore'
             );
             expect(queryDatastore).toBeDefined();
-            expect(queryDatastore?.inputSchema.required).toContain('query');
+            expect(queryDatastore?.inputSchema.required).toEqual(['source']);
+            expect(queryDatastore?.inputSchema.properties).not.toHaveProperty(
+                'query'
+            );
+        });
+
+        it('declares a type on every property of every tool schema', () => {
+            const missing: string[] = [];
+            const walk = (node: ToolInputProperty, path: string) => {
+                if (!node.type) {
+                    missing.push(path);
+                }
+                if (node.items) {
+                    walk(node.items, `${path}[]`);
+                }
+                for (const [k, v] of Object.entries(node.properties ?? {})) {
+                    walk(v, `${path}.${k}`);
+                }
+            };
+            for (const tool of CHAT_TOOLS) {
+                for (const [k, v] of Object.entries(
+                    tool.inputSchema.properties
+                )) {
+                    walk(v, `${tool.name}.${k}`);
+                }
+            }
+            expect(missing).toEqual([]);
+        });
+
+        it('declares the query_datastore enums and bounds', () => {
+            const props = CHAT_TOOLS.find(t => t.name === 'query_datastore')
+                ?.inputSchema.properties as Record<string, ToolInputProperty>;
+            const filterProps = props.filters.items?.properties ?? {};
+            expect(filterProps.op.enum).toEqual([
+                '=', '!=', '<', '<=', '>', '>=', 'in', 'not in', 'like',
+                'is null', 'is not null',
+            ]);
+            expect(filterProps.value.type).toBe('string');
+            expect(filterProps.values.items?.type).toBe('string');
+            expect(props.shape.enum).toEqual(['rows', 'latest', 'aggregate']);
+            expect(props.aggregation.enum).toEqual([
+                'avg', 'sum', 'min', 'max', 'count',
+            ]);
+            expect(
+                props.order_by.items?.properties?.direction.enum
+            ).toEqual(['asc', 'desc']);
+            expect(props.buckets.maximum).toBe(500);
+            expect(props.page.default).toBe(1);
+            expect(props.page.maximum).toBe(100000);
+            expect(props.filters.maxItems).toBe(20);
+            expect(props.group_by.maxItems).toBe(20);
+            expect(props.order_by.maxItems).toBe(20);
+            expect(props.page_size.maximum).toBe(1000);
+            expect(props.page_size.default).toBe(100);
+        });
+
+        it('describes the time window for every shape', () => {
+            const props = CHAT_TOOLS.find(t => t.name === 'query_datastore')
+                ?.inputSchema.properties as Record<string, ToolInputProperty>;
+            expect(props.shape.description).toContain(
+                'The time window applies to every shape.'
+            );
+            expect(props.time_start.description).toContain('30d');
+        });
+
+        it('contains the describe_datastore tool', () => {
+            const describeDatastore = CHAT_TOOLS.find(
+                t => t.name === 'describe_datastore'
+            );
+            expect(describeDatastore).toBeDefined();
+            expect(describeDatastore?.inputSchema.required).toEqual([]);
+            expect(describeDatastore?.inputSchema.properties).toHaveProperty(
+                'source'
+            );
         });
 
         it('each tool inputSchema has type "object"', () => {

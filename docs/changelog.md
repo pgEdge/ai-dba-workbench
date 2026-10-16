@@ -2788,7 +2788,7 @@ project adheres to
   masks the error with the patterns the server uses for
   `query_datastore`, and on each evaluation rewrites any active or
   acknowledged connection alert that still holds the unmasked text,
-  including one on a connection in a blackout. Collector migration 24
+  including one on a connection in a blackout. Collector migration 27
   masks the stored descriptions of existing connection alerts, cleared
   ones included, and the server masks alert descriptions and AI
   analyses in `GET /api/v1/alerts`, and descriptions in the timeline's

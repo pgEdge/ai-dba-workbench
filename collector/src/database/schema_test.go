@@ -303,6 +303,11 @@ func TestNewSchemaManager(t *testing.T) {
 	}
 
 	for i, expectedVersion := range expectedVersions {
+		if i > 0 && sm.migrations[i].Version <= sm.migrations[i-1].Version {
+			t.Errorf("Migration %d: version %d does not follow version %d",
+				i, sm.migrations[i].Version, sm.migrations[i-1].Version)
+		}
+
 		if sm.migrations[i].Version != expectedVersion {
 			t.Errorf("Migration %d: expected version %d, got %d",
 				i, expectedVersion, sm.migrations[i].Version)

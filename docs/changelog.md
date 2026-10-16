@@ -1195,6 +1195,15 @@ project adheres to
   calls had no responses. The server now sends tool results to
   every provider as tool messages.
 
+- Store `pg_hba_file_rules` snapshots on PostgreSQL 16 and later
+  when `pg_hba.conf` contains a line PostgreSQL cannot parse
+  (#680). PostgreSQL reports no rule number for such a line, so
+  the insert of the whole snapshot failed and the last good
+  snapshot stayed as the latest, with no alert raised. The
+  collector now stores the line with a negative `rule_number`
+  (-1, -2 and so on, ordered by file name and then line number),
+  alongside the valid rules, which keep their own numbers.
+
 - Load every configured alerter API key file when one of them
   cannot be read (#626). The alerter previously stopped at the
   first unreadable file, so a bad OpenAI key file also left the
@@ -2506,6 +2515,18 @@ project adheres to
   remains available to API consumers. (#387)
 
 ### Security
+
+- Mask HBA secrets in the collector datastore (#680). The
+  `pg_hba_file_rules` probe now stores the `ldapbindpasswd` and
+  `radiussecrets` options as `name=********`, and cuts the
+  `error` text of an unparsable line at its first double quote
+  or colon, since PostgreSQL can quote a password there.
+  Collector schema migration 24 applies the same masking to the
+  rules already stored. The old values can survive in dead
+  tuples until the table is vacuumed, in the WAL and in earlier
+  backups of the datastore, so rotate any LDAP bind password or
+  RADIUS secret that appeared in a monitored server's
+  `pg_hba.conf`.
 
 - Breaking: make the `query_datastore` MCP tool structured and limit
   the tool to the connections the caller can read (#566). The tool no

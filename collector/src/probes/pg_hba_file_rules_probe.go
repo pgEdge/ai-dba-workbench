@@ -44,9 +44,10 @@ func (p *PgHbaFileRulesProbe) GetQueryForVersion(pgVersion int) string {
 		// PG16+ has a rule_number column, but it is NULL for a line
 		// PostgreSQL could not parse, and metrics.pg_hba_file_rules
 		// keys every row on rule_number. Such a row is given a negative
-		// key, numbered in file order, so it cannot collide with a
-		// valid rule's positive number (a line number could, and so
-		// could the same line in two included files), and a valid
+		// key, numbered in order of file name and then line number (not
+		// the order in which files are included), so it cannot collide
+		// with a valid rule's positive number (a line number could, and
+		// so could the same line in two included files), and a valid
 		// rule keeps its own number.
 		return `
             SELECT

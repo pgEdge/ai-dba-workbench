@@ -290,14 +290,17 @@ line_number, type, database, user_name, address,
 netmask, auth_method, options, error
 
 A line that PostgreSQL cannot parse is stored with
-its file name, line number and error, and with every
-other rule column empty. On PostgreSQL 16 and later,
+its line number and error, and with every other rule
+column empty; on PostgreSQL 16 and later its file
+name is stored as well. On PostgreSQL 16 and later,
 PostgreSQL gives such a line no rule number, so the
 collector stores a negative `rule_number` instead
-(-1, -2 and so on, in file and line order); a valid
-rule keeps the number PostgreSQL assigns. On
-PostgreSQL 14 and 15, `rule_number` holds the line
-number for every row.
+(-1, -2 and so on, ordered by file name and then
+line number, not by the order in which files are
+included); a valid rule keeps the number PostgreSQL
+assigns. On PostgreSQL 14 and 15, `rule_number`
+holds the line number for every row, and
+`file_name` is empty.
 
 The error text can quote a value from the line,
 such as a misspelt `ldapbindpasswd` option with its

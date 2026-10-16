@@ -100,8 +100,9 @@ func TestRedactedTextIntegration(t *testing.T) {
 // TestRedactedSettingIntegration runs RedactedSetting in PostgreSQL and
 // checks a connection string comes back either as stored, when the
 // credential patterns leave it unchanged, or masked whole, never partly
-// rewritten, and that every other setting is masked as
-// pgsettings.RedactValue masks it.
+// rewritten, that a shell-command setting is masked whole even though
+// pgsettings.RedactValue keeps its program name, and that every other
+// setting is masked as pgsettings.RedactValue masks it.
 func TestRedactedSettingIntegration(t *testing.T) {
 	if !slices.Contains(conninfoSettings, "primary_conninfo") {
 		t.Fatalf("conninfoSettings = %v, want primary_conninfo in it", conninfoSettings)
@@ -123,7 +124,7 @@ func TestRedactedSettingIntegration(t *testing.T) {
 		{"primary_conninfo", "host=192.0.2.1 options='" + strings.Repeat("x", redact.MaxTextLength) + "'",
 			RedactedValue},
 		{"primary_conninfo", "", ""},
-		{"restore_command", "cp /archive/%f %p", ""},
+		{"restore_command", "cp /archive/%f %p", RedactedValue},
 		{"ssl_passphrase_command", "echo example-secret", ""},
 		{"work_mem", "4MB", ""},
 		{"password_encryption", "scram-sha-256", ""},

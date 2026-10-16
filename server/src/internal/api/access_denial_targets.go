@@ -13,6 +13,8 @@ import (
 	"context"
 	"net/http"
 	"strconv"
+
+	"github.com/pgedge/ai-workbench/server/internal/auth"
 )
 
 // The reasons recorded for a refused request on an object the caller
@@ -25,6 +27,11 @@ const (
 	connectionAccessDenied = "Permission denied: you do not have access to this connection"
 	connectionWriteDenied  = "Permission denied: you do not have write access to this connection"
 	alertAccessDenied      = "Permission denied: you do not have access to this alert"
+	// systemAlertManageDenied is recorded when a caller may not act on
+	// a system alert, which needs manage_alert_rules rather than access
+	// to a connection. It matches the reason requirePermission records.
+	systemAlertManageDenied = "Permission denied: requires " +
+		auth.PermManageAlertRules + " permission"
 )
 
 // The audit actions recorded for refusals made through refuseTarget.

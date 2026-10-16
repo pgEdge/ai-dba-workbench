@@ -161,6 +161,10 @@ func accessRefusalCases() []accessRefusalCase {
 	alert := func(action string, id int64) recordedDenial {
 		return recordedDenial{action, alertDenialTarget(id), alertAccessDenied}
 	}
+	systemAlert := func(action string, id int64) recordedDenial {
+		return recordedDenial{action, alertDenialTarget(id),
+			systemAlertManageDenied}
+	}
 	withID := func(serve func(http.ResponseWriter, *http.Request, int)) func(http.ResponseWriter, *http.Request) {
 		return func(w http.ResponseWriter, r *http.Request) { serve(w, r, 7) }
 	}
@@ -227,6 +231,12 @@ func accessRefusalCases() []accessRefusalCase {
 		{"unacknowledge alert", alerts, alerts.handleAcknowledge,
 			http.MethodDelete, "/api/v1/alerts/acknowledge?alert_id=11", "",
 			"Access denied", alert(deniedActionAlertUnacknowledge, 11)},
+		{"acknowledge system alert", systemAlerts, systemAlerts.handleAcknowledge,
+			http.MethodPost, "/api/v1/alerts/acknowledge", `{"alert_id":12}`,
+			"Access denied", systemAlert(deniedActionAlertAcknowledge, 12)},
+		{"unacknowledge system alert", systemAlerts, systemAlerts.handleAcknowledge,
+			http.MethodDelete, "/api/v1/alerts/acknowledge?alert_id=12", "",
+			"Access denied", systemAlert(deniedActionAlertUnacknowledge, 12)},
 		{"save alert analysis", alerts, alerts.handleSaveAnalysis,
 			http.MethodPut, "/api/v1/alerts/analysis", `{"alert_id":11,"analysis":"x"}`,
 			"Access denied", alert(deniedActionAlertAnalysisUpdate, 11)},
@@ -310,5 +320,49 @@ func TestConnectionAccessRefusalReachesAuditLog(t *testing.T) {
 	if !strings.Contains(string(events[0].Details), `"connections/7"`) {
 		t.Errorf("Expected the first denial to name connections/7, got %s",
 			events[0].Details)
+	}
+}
+
+// TestQueryWriteRefusalReachesAuditLog checks, end to end, that a
+// caller with only read access to a connection who confirms a write
+// statement is refused, and that the refusal is written to the audit
+// log as connection.query.write on the connection.
+func TestQueryWriteRefusalReachesAuditLog(t *testing.T) {
+	_, store, cleanup := createTestRBACHandler(t)
+	defer cleanup()
+
+	const connID = 675
+	userID := newGroupGrantedUser(t, store, "issue675_reader", connID,
+		auth.AccessLevelRead)
+
+	h := NewConnectionHandlerWithSecurity(nil, store,
+		auth.NewRBACChecker(store), false, nil, nil)
+	h.SetDenialRecorder(NewRBACHandler(store, auth.NewRBACChecker(store)).RecordDenial)
+
+	r := withUser(httptest.NewRequest(http.MethodPost,
+		"/api/v1/connections/675/query",
+		strings.NewReader(`{"query":"DELETE FROM t","confirmed":true}`)),
+		userID)
+	r.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.executeQuery(rec, r, connID)
+	assertForbiddenMessage(t, rec, connectionWriteDenied)
+
+	assertDenialRecorded(t, store, deniedActionConnectionQueryWrite,
+		connectionWriteDenied)
+	events, _, err := store.ListAuditEvents(auth.AuditFilter{
+		Action:  deniedActionConnectionQueryWrite,
+		Outcome: string(auth.OutcomeDenied)})
+	if err != nil {
+		t.Fatalf("ListAuditEvents failed: %v", err)
+	}
+	var details struct {
+		Target string `json:"target"`
+	}
+	if err := json.Unmarshal(events[0].Details, &details); err != nil {
+		t.Fatalf("Failed to decode details %s: %v", events[0].Details, err)
+	}
+	if want := connectionDenialTarget(connID); details.Target != want {
+		t.Errorf("Expected target %q, got %q", want, details.Target)
 	}
 }

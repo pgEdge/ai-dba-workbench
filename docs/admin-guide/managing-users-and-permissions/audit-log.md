@@ -159,9 +159,15 @@ information. A request to acknowledge an alert, to clear its
 acknowledgement or to save its analysis, when the alert belongs to a
 connection the caller cannot access, is recorded as
 `alert.acknowledge`, `alert.unacknowledge` or `alert.analysis.update`,
-with the alert as the target. A current connection selected before the
-caller lost access to it is refused, and recorded as `connection.read`,
-each time the client reads it.
+with the alert as the target. A system alert belongs to no connection,
+so a request to acknowledge one or to clear its acknowledgement needs a
+superuser or the `manage_alert_rules` permission instead; a refused
+request is recorded as `alert.acknowledge` or `alert.unacknowledge`,
+with the alert as the target and an `error` of `Permission denied:
+requires manage_alert_rules permission`. A current connection selected
+before the caller lost access to it is refused when the client reads
+it, and recorded as `connection.read`; repeated reads are coalesced
+like any other denial, as described below.
 
 Each denial names the object the request was aimed at in
 `details.target`, as the kind of object followed by its numeric

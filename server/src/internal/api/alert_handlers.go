@@ -290,6 +290,16 @@ func (h *AlertHandler) canActOnAlert(ctx context.Context, connID *int) bool {
 	return canAccess
 }
 
+// alertRefusalReason is the reason recorded when canActOnAlert refuses
+// the caller: a system alert needs manage_alert_rules, and any other
+// alert needs access to its connection.
+func alertRefusalReason(connID *int) string {
+	if connID == nil {
+		return systemAlertManageDenied
+	}
+	return alertAccessDenied
+}
+
 // AcknowledgeRequest represents the request body for acknowledging an alert
 type AcknowledgeRequest struct {
 	AlertID       int64  `json:"alert_id"`
@@ -341,7 +351,8 @@ func (h *AlertHandler) acknowledgeAlert(w http.ResponseWriter, r *http.Request) 
 	}
 	if !h.canActOnAlert(r.Context(), connID) {
 		h.denialRecorder.refuseTarget(w, r, deniedActionAlertAcknowledge,
-			alertDenialTarget(req.AlertID), alertAccessDenied, "Access denied")
+			alertDenialTarget(req.AlertID), alertRefusalReason(connID),
+			"Access denied")
 		return
 	}
 
@@ -399,7 +410,8 @@ func (h *AlertHandler) unacknowledgeAlert(w http.ResponseWriter, r *http.Request
 	}
 	if !h.canActOnAlert(r.Context(), connID) {
 		h.denialRecorder.refuseTarget(w, r, deniedActionAlertUnacknowledge,
-			alertDenialTarget(alertID), alertAccessDenied, "Access denied")
+			alertDenialTarget(alertID), alertRefusalReason(connID),
+			"Access denied")
 		return
 	}
 

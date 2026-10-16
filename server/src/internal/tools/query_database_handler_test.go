@@ -11,10 +11,12 @@ package tools
 
 import (
 	"context"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/server/internal/database"
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
 )
@@ -232,5 +234,87 @@ func TestQueryDatabase_MetadataNotLoadedIntegration(t *testing.T) {
 	}
 	if text != mcp.DatabaseNotReadyError {
 		t.Errorf("got %q, want the not-ready error", text)
+	}
+}
+
+// TestQueryDatabase_RefusesMultipleStatementsIntegration checks that a
+// read followed by a second statement is refused by the extended
+// protocol rather than run, even when the connection string asks for
+// the simple protocol, so neither a write nor a COMMIT can follow the
+// read inside the read-only transaction.
+func TestQueryDatabase_RefusesMultipleStatementsIntegration(t *testing.T) {
+	if os.Getenv("SKIP_DB_TESTS") != "" {
+		t.Skip("Skipping database test (SKIP_DB_TESTS is set)")
+	}
+	baseConnStr := os.Getenv("TEST_AI_WORKBENCH_SERVER")
+	if baseConnStr == "" {
+		t.Skip("TEST_AI_WORKBENCH_SERVER not set, skipping integration test")
+	}
+
+	ctx := context.Background()
+	setup, err := pgxpool.New(ctx, baseConnStr)
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	defer setup.Close()
+	for _, stmt := range []string{
+		"CREATE TABLE IF NOT EXISTS qd_multi_stmt_probe (a int)",
+		"TRUNCATE qd_multi_stmt_probe",
+		"INSERT INTO qd_multi_stmt_probe VALUES (1)",
+	} {
+		if _, err := setup.Exec(ctx, stmt); err != nil {
+			t.Fatalf("%s: %v", stmt, err)
+		}
+	}
+	defer func() {
+		if _, err := setup.Exec(context.Background(), "DROP TABLE IF EXISTS qd_multi_stmt_probe"); err != nil {
+			t.Logf("drop probe table: %v", err)
+		}
+	}()
+
+	u, err := url.Parse(baseConnStr)
+	if err != nil {
+		t.Fatalf("parse connection string: %v", err)
+	}
+	q := u.Query()
+	q.Set("default_query_exec_mode", "simple_protocol")
+	u.RawQuery = q.Encode()
+
+	for _, connStr := range []string{baseConnStr, u.String()} {
+		client := database.NewClientWithConnectionString(connStr, nil)
+		if err := client.Connect(); err != nil {
+			t.Fatalf("Connect: %v", err)
+		}
+		if err := client.LoadMetadata(); err != nil {
+			client.Close()
+			t.Fatalf("LoadMetadata: %v", err)
+		}
+
+		for _, query := range []string{
+			// The queries carry their own LIMIT, so that no LIMIT is
+			// appended to the final statement.
+			"SELECT 1 LIMIT 1; DELETE FROM qd_multi_stmt_probe",
+			"SELECT 1 LIMIT 1; COMMIT",
+			// Under the simple protocol this would end the read-only
+			// transaction and delete the probe row in a new one.
+			"SELECT 1 LIMIT 1; COMMIT; BEGIN READ WRITE; " +
+				"DELETE FROM qd_multi_stmt_probe; COMMIT",
+		} {
+			resp, text := runQueryDatabase(t, client, map[string]any{"query": query})
+			if !resp.IsError {
+				t.Errorf("%q on %q: expected a refusal, got %q",
+					query, database.SanitizeConnStr(connStr), text)
+			}
+		}
+		client.Close()
+
+		var n int
+		if err := setup.QueryRow(ctx, "SELECT count(*) FROM qd_multi_stmt_probe").Scan(&n); err != nil {
+			t.Fatalf("count probe rows: %v", err)
+		}
+		if n != 1 {
+			t.Errorf("probe table has %d rows after queries on %q, want 1",
+				n, database.SanitizeConnStr(connStr))
+		}
 	}
 }

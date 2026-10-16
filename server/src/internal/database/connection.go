@@ -24,6 +24,7 @@ import (
 
 	"github.com/pgedge/ai-workbench/server/internal/config"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -166,6 +167,12 @@ func (c *Client) ConnectTo(connStr string) error {
 	// Reset each connection's session state before it rejoins the pool,
 	// so nothing one caller sets is seen by the next (issue #709).
 	poolConfig.AfterRelease = resetSessionOnRelease
+
+	// The extended protocol refuses a query holding several statements,
+	// so "SELECT 1; COMMIT" cannot escape the read-only transaction; set
+	// it here so a default_query_exec_mode in the connection string
+	// cannot switch it off.
+	poolConfig.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeCacheStatement
 
 	// Create pool with configured settings
 	pool, err := pgxpool.NewWithConfig(context.Background(), poolConfig)

@@ -159,9 +159,9 @@ To avoid rate limits (30,000 input tokens/minute):
 			}
 
 			limit, offset := parseLimitOffset(args)
-			sqlQuery, hadExistingLimit, _ := injectLimitOffset(sqlQuery, limit, offset)
+			sqlQuery, _, _ = injectLimitOffset(sqlQuery, limit, offset)
 
-			qr, errResp := executeReadOnlyQuery(ctx, resolved.Pool, sqlQuery, limit, hadExistingLimit, "")
+			qr, errResp := executeReadOnlyQuery(ctx, resolved.Pool, sqlQuery, limit, "")
 			if errResp != nil {
 				return *errResp, nil
 			}

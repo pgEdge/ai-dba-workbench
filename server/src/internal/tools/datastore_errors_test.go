@@ -94,7 +94,7 @@ func TestDatastoreDatabaseFailuresIntegration(t *testing.T) {
 	if _, err := datastoreConnectionsExist(done, pool, []int{1}); err == nil {
 		t.Error("datastoreConnectionsExist should fail once its context is done")
 	}
-	if _, resp := executeQueryWith(done, pool, "SELECT 1", 10, false,
+	if _, resp := executeQueryWith(done, pool, "SELECT 1", 10,
 		datastoreQueryErrorFormatter("alerts")); resp == nil || !resp.IsError {
 		t.Error("executeQueryWith should fail to begin once its context is done")
 	}
@@ -114,7 +114,7 @@ func TestDatastoreDatabaseFailuresIntegration(t *testing.T) {
 		stages = append(stages, stage)
 		return "failed"
 	}
-	if _, resp := executeQueryWith(ctx, tracedPool, "SELECT 1 AS ds_commit_check", 10, false,
+	if _, resp := executeQueryWith(ctx, tracedPool, "SELECT 1 AS ds_commit_check", 10,
 		record); resp == nil || !resp.IsError {
 		t.Error("executeQueryWith should report the failed commit")
 	}

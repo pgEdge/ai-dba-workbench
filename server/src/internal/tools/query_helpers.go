@@ -129,7 +129,6 @@ func executeQueryWith(
 	pool *pgxpool.Pool,
 	sqlQuery string,
 	limit int,
-	hadExistingLimit bool,
 	formatErr queryErrorFormatter,
 	queryArgs ...any,
 ) (*queryResult, *mcp.ToolResponse) {
@@ -153,9 +152,15 @@ func executeQueryWith(
 		columnNames = append(columnNames, string(fd.Name))
 	}
 
-	// Collect row data
+	// Collect row data, stopping once a row beyond limit shows that more
+	// exist.
 	var results [][]any
+	wasTruncated := false
 	for rows.Next() {
+		if limit > 0 && len(results) >= limit {
+			wasTruncated = true
+			break
+		}
 		values, err := rows.Values()
 		if err != nil {
 			resp, _ := mcp.NewToolError(formatErr(queryStageRow, err)) //nolint:errcheck // NewToolError always succeeds
@@ -163,17 +168,11 @@ func executeQueryWith(
 		}
 		results = append(results, values)
 	}
+	rows.Close()
 
 	if err := rows.Err(); err != nil {
 		resp, _ := mcp.NewToolError(formatErr(queryStageIterate, err)) //nolint:errcheck // NewToolError always succeeds
 		return nil, &resp
-	}
-
-	// Detect truncation (we fetched limit+1 to check)
-	wasTruncated := false
-	if !hadExistingLimit && limit > 0 && len(results) > limit {
-		wasTruncated = true
-		results = results[:limit]
 	}
 
 	resultsTSV := tsv.FormatResults(columnNames, results)
@@ -192,21 +191,21 @@ func executeQueryWith(
 }
 
 // executeReadOnlyQuery runs sqlQuery inside a read-only transaction on
-// pool, collects rows, detects truncation against limit, and formats
-// the result as TSV. The hadExistingLimit flag indicates whether the
-// original query already contained a LIMIT clause (in which case
-// truncation detection is skipped). queryArgs are bound to the
-// statement's placeholders.
+// pool, returns at most limit rows (0 means no cap), and formats the
+// result as TSV. The cap is enforced while reading rather than relying
+// on the LIMIT injectLimitOffset adds, which is absent when the caller
+// wrote their own and is lost behind a trailing comment; reading stops
+// at the first row beyond the cap, which marks the result truncated.
+// queryArgs are bound to the statement's placeholders.
 func executeReadOnlyQuery(
 	ctx context.Context,
 	pool *pgxpool.Pool,
 	sqlQuery string,
 	limit int,
-	hadExistingLimit bool,
 	errorPrefix string,
 	queryArgs ...any,
 ) (*queryResult, *mcp.ToolResponse) {
-	return executeQueryWith(ctx, pool, sqlQuery, limit, hadExistingLimit,
+	return executeQueryWith(ctx, pool, sqlQuery, limit,
 		defaultQueryErrorFormatter(errorPrefix), queryArgs...)
 }
 

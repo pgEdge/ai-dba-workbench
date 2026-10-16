@@ -258,6 +258,7 @@ func TestAlertHandler_UnacknowledgeAlert_Happy(t *testing.T) {
 	checker := mockSharingChecker(t, store, rbacUnsharedConnID, "alice", false)
 	handler := NewAlertHandler(nil, store, checker)
 	handler.setAlertResolver(&fakeAlertResolver{connID: rbacUnsharedConnID})
+	handler.setVisibilityLister(singleConnectionLister(rbacUnsharedConnID, "alice", false))
 	fake := &fakeUnacknowledger{}
 	handler.setUnacknowledgeFn(fake)
 
@@ -294,6 +295,7 @@ func TestAlertHandler_UnacknowledgeAlert_NotFound_Maps404(t *testing.T) {
 	checker := mockSharingChecker(t, store, rbacUnsharedConnID, "alice", false)
 	handler := NewAlertHandler(nil, store, checker)
 	handler.setAlertResolver(&fakeAlertResolver{connID: rbacUnsharedConnID})
+	handler.setVisibilityLister(singleConnectionLister(rbacUnsharedConnID, "alice", false))
 	fake := &fakeUnacknowledger{err: fmt.Errorf("wrapped: %w", database.ErrAlertNotFound)}
 	handler.setUnacknowledgeFn(fake)
 
@@ -331,6 +333,7 @@ func TestAlertHandler_UnacknowledgeAlert_NotAcknowledged_Maps409(t *testing.T) {
 	checker := mockSharingChecker(t, store, rbacUnsharedConnID, "alice", false)
 	handler := NewAlertHandler(nil, store, checker)
 	handler.setAlertResolver(&fakeAlertResolver{connID: rbacUnsharedConnID})
+	handler.setVisibilityLister(singleConnectionLister(rbacUnsharedConnID, "alice", false))
 	fake := &fakeUnacknowledger{
 		err: fmt.Errorf("unacknowledge alert 42 (status=%q): %w",
 			"active", database.ErrAlertNotAcknowledged),
@@ -370,6 +373,7 @@ func TestAlertHandler_UnacknowledgeAlert_OtherError_Maps500(t *testing.T) {
 	checker := mockSharingChecker(t, store, rbacUnsharedConnID, "alice", false)
 	handler := NewAlertHandler(nil, store, checker)
 	handler.setAlertResolver(&fakeAlertResolver{connID: rbacUnsharedConnID})
+	handler.setVisibilityLister(singleConnectionLister(rbacUnsharedConnID, "alice", false))
 	fake := &fakeUnacknowledger{err: errors.New("commit failed: connection reset")}
 	handler.setUnacknowledgeFn(fake)
 
@@ -407,6 +411,7 @@ func TestAlertHandler_UnacknowledgeAlert_MissingUnackFn_Maps500(t *testing.T) {
 	checker := mockSharingChecker(t, store, rbacUnsharedConnID, "alice", false)
 	handler := NewAlertHandler(nil, store, checker)
 	handler.setAlertResolver(&fakeAlertResolver{connID: rbacUnsharedConnID})
+	handler.setVisibilityLister(singleConnectionLister(rbacUnsharedConnID, "alice", false))
 	// Intentionally do NOT call setUnacknowledgeFn.
 
 	req := httptest.NewRequest(http.MethodDelete,

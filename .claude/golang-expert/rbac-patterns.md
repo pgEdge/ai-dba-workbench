@@ -264,9 +264,14 @@ decisions. Acknowledge and unacknowledge go through
 guard, so a superuser or a `manage_alert_rules` holder passes, a
 token's admin scope bounds it, and every lookup error denies) and
 anything else to `CanAccessConnection`; `GetAlertConnectionID`
-returns `*int` for this. `handleSaveAnalysis` never saves on a system
-alert: it answers 403 when `CanSeeSystemAlerts` denies and 400
-otherwise, because the refusal concerns the alert, not the caller. No
+returns `*int` for this. All three mutations first run
+`AlertHandler.resolveVisibleAlert`, which answers a system alert that
+`CanSeeSystemAlerts` denies, or a connection alert outside
+`VisibleConnectionIDs`, with the same 404 as a missing alert (#677);
+only a visible alert reaches `canActOnAlert`, whose 403 is audited
+through the embedded `denialAuditor`. `handleSaveAnalysis` never saves
+on a visible system alert and answers 400, because the refusal
+concerns the alert, not the caller. No
 MCP tool mutates alerts, so there is no tool-side counterpart. The
 `get_alert_history` MCP tool uses the same gate. The timeline count
 queries in `timeline_queries.go` add `connection_id IS NOT NULL` and
@@ -1548,3 +1553,20 @@ treats every connection as shared and unowned, as before;
 `TestConnectionAccessAndVisibilityAgree` in
 `internal/auth/connection_access_agreement_test.go` runs every case through
 both functions and fails if they disagree.
+
+## Override Writes Check Visibility Before Token Scope (Issue #672)
+
+The probe, alert and channel override `upsertOverride` and
+`deleteOverride` run, in order: the admin permission gate,
+`scopeVisibleToCaller` (404 with the same message as `listOverrides`),
+`requireTargetInTokenScope` (audited 403), then the body decode. A
+hidden scope must cost a caller nothing it could learn from a missing
+one, so keep visibility ahead of the token-scope 403 and the decode.
+Because `VisibleConnectionIDs` intersects with the token scope, a
+scoped token's out-of-scope server is hidden and gets 404; the 403
+remains for a visible target the token may not write (a read-only
+scope, or a cluster or group with any visible member). Cluster and
+group visibility queries the datastore, so tests need a real one
+(`newEstateGates` or `newCovFixture`); `runOverrideCoverage` in
+`coverage_fixture_test.go` asserts hidden equals missing for every
+override type and scope.

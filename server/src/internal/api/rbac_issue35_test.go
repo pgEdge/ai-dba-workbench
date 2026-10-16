@@ -65,6 +65,15 @@ func (s *stubVisibilityLister) GetAllConnections(_ context.Context) ([]auth.Conn
 	return s.connections, nil
 }
 
+// singleConnectionLister lists one connection with the given owner and
+// sharing, to agree with mockSharingChecker in tests whose handler
+// resolves the caller's visible connections.
+func singleConnectionLister(id int, owner string, shared bool) *stubVisibilityLister {
+	return &stubVisibilityLister{connections: []auth.ConnectionVisibilityInfo{
+		{ID: id, OwnerUsername: owner, IsShared: shared},
+	}}
+}
+
 // newTestUser creates a user and returns its ID.
 func newTestUser(t *testing.T, store *auth.AuthStore, username string) int64 {
 	t.Helper()
@@ -246,6 +255,10 @@ func TestConnectionHandler_PerConnection_Owner_NotDenied(t *testing.T) {
 			})
 
 			requireNotForbidden(t, rec, tc.name+"/owner")
+			if rec.Code == http.StatusNotFound {
+				t.Fatalf("Expected the alert to be visible, got 404: %s",
+					rec.Body.String())
+			}
 		})
 	}
 }
@@ -276,6 +289,10 @@ func TestConnectionHandler_PerConnection_SharedNonOwner_NotDenied(t *testing.T) 
 			})
 
 			requireNotForbidden(t, rec, tc.name+"/shared")
+			if rec.Code == http.StatusNotFound {
+				t.Fatalf("Expected the alert to be visible, got 404: %s",
+					rec.Body.String())
+			}
 		})
 	}
 }
@@ -308,6 +325,10 @@ func TestConnectionHandler_PerConnection_GroupGranted_NotDenied(t *testing.T) {
 			})
 
 			requireNotForbidden(t, rec, tc.name+"/group-granted")
+			if rec.Code == http.StatusNotFound {
+				t.Fatalf("Expected the alert to be visible, got 404: %s",
+					rec.Body.String())
+			}
 		})
 	}
 }
@@ -335,6 +356,10 @@ func TestConnectionHandler_PerConnection_Superuser_NotDenied(t *testing.T) {
 			})
 
 			requireNotForbidden(t, rec, tc.name+"/superuser")
+			if rec.Code == http.StatusNotFound {
+				t.Fatalf("Expected the alert to be visible, got 404: %s",
+					rec.Body.String())
+			}
 		})
 	}
 }
@@ -833,12 +858,13 @@ var alertMutationHandlers = []alertMutationCase{
 	},
 }
 
-// TestAlertHandler_Mutation_NonOwnerUnshared_403 verifies every alert
-// mutation handler returns 403 when a non-owner user with no group
-// grants targets an unshared connection. The nil datastore would panic
-// if the handler reached any mutation call after the RBAC gate; we do
-// NOT recover here because a panic would indicate a gate bypass.
-func TestAlertHandler_Mutation_NonOwnerUnshared_403(t *testing.T) {
+// TestAlertHandler_Mutation_NonOwnerUnshared_404 verifies every alert
+// mutation handler answers an alert on a connection the caller cannot
+// see exactly as a missing alert, with the same status and body, so the
+// response does not reveal that the alert exists (issue #677). The nil
+// datastore would panic if the handler went past the visibility check;
+// we do NOT recover here because a panic would indicate a gate bypass.
+func TestAlertHandler_Mutation_NonOwnerUnshared_404(t *testing.T) {
 	for _, tc := range alertMutationHandlers {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
@@ -850,6 +876,105 @@ func TestAlertHandler_Mutation_NonOwnerUnshared_403(t *testing.T) {
 			checker := mockSharingChecker(t, store,
 				rbacUnsharedConnID, "alice", false)
 			handler := NewAlertHandler(nil, store, checker)
+			handler.setVisibilityLister(singleConnectionLister(
+				rbacUnsharedConnID, "alice", false))
+			var denied []string
+			handler.SetDenialRecorder(func(_ *http.Request, reason string) {
+				denied = append(denied, reason)
+			})
+
+			serve := func(resolver *fakeAlertResolver) *httptest.ResponseRecorder {
+				handler.setAlertResolver(resolver)
+				req := httptest.NewRequest(tc.method, tc.url,
+					bytes.NewReader(tc.body))
+				req.Header.Set("Content-Type", "application/json")
+				req = withUser(req, bobID)
+				req = withUsername(req, "bob")
+				rec := httptest.NewRecorder()
+				tc.invoker(handler, rec, req)
+				return rec
+			}
+
+			resolver := &fakeAlertResolver{connID: rbacUnsharedConnID}
+			hidden := serve(resolver)
+			missing := serve(&fakeAlertResolver{err: errors.New("no rows")})
+
+			requireStatus(t, hidden, http.StatusNotFound)
+			if hidden.Code != missing.Code || hidden.Body.String() != missing.Body.String() {
+				t.Errorf("Hidden alert answered %d %q, missing alert %d %q",
+					hidden.Code, hidden.Body.String(),
+					missing.Code, missing.Body.String())
+			}
+			if resolver.calls != 1 {
+				t.Errorf("Expected resolver to run once, got %d calls",
+					resolver.calls)
+			}
+			if len(denied) != 0 {
+				t.Errorf("Expected no audited refusal for a hidden alert, got %v", denied)
+			}
+		})
+	}
+}
+
+// TestAlertHandler_Mutation_VisibleButDenied_403 covers the audited 403
+// for a connection alert the caller can see but may not act on. The
+// visibility lister reports the connection shared whilst the access
+// check reports it private, which the shared access rule does not
+// produce today; the refusal is kept as defense in depth.
+func TestAlertHandler_Mutation_VisibleButDenied_403(t *testing.T) {
+	for _, tc := range alertMutationHandlers {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			_, store, cleanup := createTestRBACHandler(t)
+			defer cleanup()
+
+			bobID := newTestUser(t, store, "bob")
+
+			checker := mockSharingChecker(t, store,
+				rbacUnsharedConnID, "alice", false)
+			handler := NewAlertHandler(nil, store, checker)
+			handler.setVisibilityLister(singleConnectionLister(
+				rbacUnsharedConnID, "alice", true))
+			handler.setAlertResolver(&fakeAlertResolver{connID: rbacUnsharedConnID})
+			var denied []string
+			handler.SetDenialRecorder(func(_ *http.Request, reason string) {
+				denied = append(denied, reason)
+			})
+
+			req := httptest.NewRequest(tc.method, tc.url,
+				bytes.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			req = withUser(req, bobID)
+			req = withUsername(req, "bob")
+			rec := httptest.NewRecorder()
+
+			tc.invoker(handler, rec, req)
+
+			requireStatus(t, rec, http.StatusForbidden)
+			if len(denied) != 1 || denied[0] != alertAccessDenied {
+				t.Errorf("Expected one audited %q refusal, got %v",
+					alertAccessDenied, denied)
+			}
+		})
+	}
+}
+
+// TestAlertHandler_Mutation_VisibilityError_500 covers a failure to
+// resolve the caller's visible connections, which must not be answered
+// as a missing alert, and must stop before the alert is looked up.
+func TestAlertHandler_Mutation_VisibilityError_500(t *testing.T) {
+	for _, tc := range alertMutationHandlers {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			_, store, cleanup := createTestRBACHandler(t)
+			defer cleanup()
+
+			bobID := newTestUser(t, store, "bob")
+
+			checker := mockSharingChecker(t, store,
+				rbacUnsharedConnID, "alice", false)
+			handler := NewAlertHandler(nil, store, checker)
+			handler.setVisibilityLister(&failingVisibilityLister{err: errors.New("listing failed")})
 			resolver := &fakeAlertResolver{connID: rbacUnsharedConnID}
 			handler.setAlertResolver(resolver)
 
@@ -862,10 +987,9 @@ func TestAlertHandler_Mutation_NonOwnerUnshared_403(t *testing.T) {
 
 			tc.invoker(handler, rec, req)
 
-			requireStatus(t, rec, http.StatusForbidden)
-
-			if resolver.calls != 1 {
-				t.Errorf("Expected resolver to run once, got %d calls",
+			requireStatus(t, rec, http.StatusInternalServerError)
+			if resolver.calls != 0 {
+				t.Errorf("Expected no alert lookup after the failure, got %d",
 					resolver.calls)
 			}
 		})
@@ -889,6 +1013,8 @@ func TestAlertHandler_Mutation_Owner_NotDenied(t *testing.T) {
 			checker := mockSharingChecker(t, store,
 				rbacUnsharedConnID, "alice", false)
 			handler := NewAlertHandler(nil, store, checker)
+			handler.setVisibilityLister(singleConnectionLister(
+				rbacUnsharedConnID, "alice", false))
 			handler.setAlertResolver(&fakeAlertResolver{
 				connID: rbacUnsharedConnID,
 			})
@@ -923,6 +1049,8 @@ func TestAlertHandler_Mutation_SharedNonOwner_NotDenied(t *testing.T) {
 			checker := mockSharingChecker(t, store,
 				rbacUnsharedConnID, "alice", true)
 			handler := NewAlertHandler(nil, store, checker)
+			handler.setVisibilityLister(singleConnectionLister(
+				rbacUnsharedConnID, "alice", true))
 			handler.setAlertResolver(&fakeAlertResolver{
 				connID: rbacUnsharedConnID,
 			})
@@ -958,6 +1086,8 @@ func TestAlertHandler_Mutation_GroupGranted_NotDenied(t *testing.T) {
 			checker := mockSharingChecker(t, store,
 				rbacUnsharedConnID, "alice", false)
 			handler := NewAlertHandler(nil, store, checker)
+			handler.setVisibilityLister(singleConnectionLister(
+				rbacUnsharedConnID, "alice", false))
 			handler.setAlertResolver(&fakeAlertResolver{
 				connID: rbacUnsharedConnID,
 			})

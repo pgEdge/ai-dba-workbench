@@ -315,12 +315,15 @@ func TestAlertHandler_Mutation_SystemAlert(t *testing.T) {
 	noAuth := NewAlertHandler(f.handler.datastore, nil, auth.NewRBACChecker(nil))
 
 	tests := []struct {
-		name      string
-		handler   *AlertHandler
-		as        func(*http.Request) *http.Request
+		name    string
+		handler *AlertHandler
+		as      func(*http.Request) *http.Request
+		// ackStatus is 403 for a caller who can see system alerts but
+		// may not manage them, and 404 for one who cannot see them.
 		ackStatus int
 		// saveStatus is 400 for a caller who can see system alerts and
-		// 403 for one who cannot.
+		// 404 for one who cannot, since a hidden alert answers exactly
+		// as a missing one (issue #677).
 		saveStatus int
 	}{
 		{"superuser", f.handler, withSuperuser, http.StatusOK, http.StatusBadRequest},
@@ -336,10 +339,17 @@ func TestAlertHandler_Mutation_SystemAlert(t *testing.T) {
 		{"plain user", f.handler, f.bob, http.StatusForbidden, http.StatusBadRequest},
 		// A checker without an auth store fails closed (issue #477),
 		// even for a superuser.
-		{"no auth store", noAuth, withSuperuser, http.StatusForbidden, http.StatusForbidden},
+		{"no auth store", noAuth, withSuperuser, http.StatusNotFound, http.StatusNotFound},
+	}
+	var denied []string
+	for _, h := range []*AlertHandler{f.handler, noAuth} {
+		h.SetDenialRecorder(func(_ *http.Request, reason string) {
+			denied = append(denied, reason)
+		})
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			denied = nil
 			call := func(invoke alertMutationInvoker, method, url, body string) *httptest.ResponseRecorder {
 				req := httptest.NewRequest(method, url, bytes.NewReader([]byte(body)))
 				req.Header.Set("Content-Type", "application/json")
@@ -353,6 +363,15 @@ func TestAlertHandler_Mutation_SystemAlert(t *testing.T) {
 				"/api/v1/alerts/acknowledge?alert_id="+sys, ""), tt.ackStatus)
 			requireStatus(t, call(save, http.MethodPut, "/api/v1/alerts/analysis",
 				`{"alert_id": `+sys+`, "analysis": "provider down"}`), tt.saveStatus)
+
+			// Only the refusal of an alert the caller can see is audited.
+			wantDenied := 0
+			if tt.ackStatus == http.StatusForbidden {
+				wantDenied = 2
+			}
+			if len(denied) != wantDenied {
+				t.Errorf("recorded %d refusals %v, want %d", len(denied), denied, wantDenied)
+			}
 		})
 	}
 
@@ -373,13 +392,14 @@ func TestAlertHandler_Mutation_SystemAlert(t *testing.T) {
 		bytes.NewReader([]byte(`{"alert_id": `+strconv.FormatInt(f.connAlert, 10)+`}`)))
 	rec := httptest.NewRecorder()
 	f.handler.acknowledgeAlert(rec, f.bob(req))
-	requireStatus(t, rec, http.StatusForbidden)
+	requireStatus(t, rec, http.StatusNotFound)
 }
 
-// TestAlertHandler_Mutation_SystemAlert_IncompleteToken_403 proves every
-// mutation handler refuses a system alert to a caller whose token context
-// is incomplete. The nil datastore would panic past the gate.
-func TestAlertHandler_Mutation_SystemAlert_IncompleteToken_403(t *testing.T) {
+// TestAlertHandler_Mutation_SystemAlert_IncompleteToken_404 proves every
+// mutation handler answers a system alert as missing to a caller whose
+// token context is incomplete, since that caller cannot see system
+// alerts. The nil datastore would panic past the gate.
+func TestAlertHandler_Mutation_SystemAlert_IncompleteToken_404(t *testing.T) {
 	for _, tc := range alertMutationHandlers {
 		t.Run(tc.name, func(t *testing.T) {
 			_, store, cleanup := createTestRBACHandler(t)
@@ -394,7 +414,7 @@ func TestAlertHandler_Mutation_SystemAlert_IncompleteToken_403(t *testing.T) {
 			rec := httptest.NewRecorder()
 			tc.invoker(handler, rec, withIncompleteToken(req))
 
-			requireStatus(t, rec, http.StatusForbidden)
+			requireStatus(t, rec, http.StatusNotFound)
 			if resolver.calls != 1 {
 				t.Errorf("resolver ran %d times, want 1", resolver.calls)
 			}

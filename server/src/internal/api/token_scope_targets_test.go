@@ -119,6 +119,9 @@ type scopeCase struct {
 	call    func(w http.ResponseWriter, caller scopeCaller)
 	allowed []scopeCaller
 	refused []scopeCaller
+	// hidden callers cannot see the target, so they must receive the
+	// 404 a missing target gets rather than the scope refusal.
+	hidden []scopeCaller
 }
 
 // runScopeCases checks each case: allowed callers must get past the
@@ -138,6 +141,15 @@ func runScopeCases(t *testing.T, cases []scopeCase) {
 				rec := httptest.NewRecorder()
 				tc.call(rec, caller)
 				assertOutOfTokenScope(t, rec)
+			})
+		}
+		for _, caller := range tc.hidden {
+			t.Run(tc.name+"/hidden/"+caller.name, func(t *testing.T) {
+				rec := httptest.NewRecorder()
+				tc.call(rec, caller)
+				if rec.Code != http.StatusNotFound {
+					t.Fatalf("Expected 404, got %d: %s", rec.Code, rec.Body.String())
+				}
 			})
 		}
 	}
@@ -192,14 +204,13 @@ func TestTargetInTokenScope(t *testing.T) {
 // TestOverrideWritesRespectTokenScope covers upsert and delete on the
 // alert, probe and channel override handlers.
 func TestOverrideWritesRespectTokenScope(t *testing.T) {
-	_, store, cleanup := createTestRBACHandler(t)
-	defer cleanup()
-	session, unscoped, wildcard, narrowed, readOnly := scopedCallers(t, store)
-	checker := auth.NewRBACChecker(store)
-
-	alert := NewAlertOverrideHandler(nil, store, checker)
-	probe := NewProbeOverrideHandler(nil, store, checker)
-	channel := NewChannelOverrideHandler(nil, store, checker)
+	// The writes resolve the caller's view of a cluster or group through
+	// the datastore before the token scope is checked, so these run over
+	// the seeded estate: connections 5, 6 and 7 in cluster 1, group 1.
+	g := newEstateGates(t)
+	session, unscoped, wildcard := g.callers["session"], g.callers["unscoped"], g.callers["wildcard"]
+	narrowed, readOnly := g.callers["narrowed"], g.callers["readOnly"]
+	alert, probe, channel := g.alertOverride, g.probeOverride, g.chanOverride
 
 	type overrideWrite func(w http.ResponseWriter, r *http.Request,
 		scope string, scopeID int)
@@ -240,19 +251,21 @@ func TestOverrideWritesRespectTokenScope(t *testing.T) {
 				refused: []scopeCaller{readOnly},
 			},
 			scopeCase{
-				name:    name + " server out of scope",
-				call:    at("server", 6),
-				refused: []scopeCaller{narrowed, readOnly},
+				// A connection outside the token's scope is hidden from
+				// it, so it is answered as missing (issue #672).
+				name:   name + " server out of scope",
+				call:   at("server", 6),
+				hidden: []scopeCaller{narrowed, readOnly},
 			},
 			scopeCase{
 				name:    name + " cluster",
-				call:    at("cluster", 5),
+				call:    at("cluster", 1),
 				allowed: []scopeCaller{session, unscoped, wildcard},
 				refused: []scopeCaller{narrowed},
 			},
 			scopeCase{
 				name:    name + " group",
-				call:    at("group", 5),
+				call:    at("group", 1),
 				allowed: []scopeCaller{wildcard},
 				refused: []scopeCaller{narrowed},
 			},

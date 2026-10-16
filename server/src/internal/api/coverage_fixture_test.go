@@ -423,6 +423,10 @@ func covAssertRouteRegistered(t *testing.T, mux *http.ServeMux, path string) {
 	}
 }
 
+// covMissingScopeID is a server, cluster and group ID the fixture never
+// creates.
+const covMissingScopeID = 987654
+
 // covOverrideSpec describes one of the scope-override handlers (alert,
 // probe and channel overrides share the same route shape).
 type covOverrideSpec struct {
@@ -489,6 +493,32 @@ func runOverrideCoverage(t *testing.T, f *covFixture, serve, broken http.Handler
 
 			// A restricted caller cannot see the other user's scope.
 			covExpect(t, covDo(serve, http.MethodGet, base+itoa(s.invisible), "", restricted), http.StatusNotFound)
+
+			// Nor write to it: a hidden scope answers a write exactly as
+			// a missing one, before the body is read, and nothing is
+			// written (issue #672). The visible scope stays writable.
+			hiddenURL := base + itoa(s.invisible) + "/" + spec.item
+			missingURL := base + itoa(covMissingScopeID) + "/" + spec.item
+			before := covDo(serve, http.MethodGet, base+itoa(s.invisible), "", withSuperuser).Body.String()
+			for _, w := range []struct{ method, body string }{
+				{http.MethodPut, spec.okBody},
+				{http.MethodPut, "{"},
+				{http.MethodDelete, ""},
+			} {
+				hidden := covDo(serve, w.method, hiddenURL, w.body, restricted)
+				missing := covDo(serve, w.method, missingURL, w.body, restricted)
+				covExpect(t, hidden, http.StatusNotFound)
+				covExpect(t, missing, http.StatusNotFound)
+				if hidden.Body.String() != missing.Body.String() {
+					t.Errorf("%s hidden scope body %q, missing scope body %q",
+						w.method, hidden.Body.String(), missing.Body.String())
+				}
+			}
+			if after := covDo(serve, http.MethodGet, base+itoa(s.invisible), "", withSuperuser).Body.String(); after != before {
+				t.Errorf("hidden scope overrides changed from %s to %s", before, after)
+			}
+			covExpect(t, covDo(serve, http.MethodPut, itemURL, spec.okBody, restricted), http.StatusOK)
+			covExpect(t, covDo(serve, http.MethodDelete, itemURL, "", restricted), http.StatusOK)
 
 			// Permission gate on writes.
 			noPerm := func(r *http.Request) *http.Request { return withUser(r, 424242) }

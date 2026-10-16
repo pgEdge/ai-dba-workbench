@@ -803,6 +803,14 @@ recorder); `cmd/mcp-server/handlers.go` wires them in one loop.
 403s record through `h.denialRecorder.refuse`, and
 `BlackoutHandler.refuseOutOfScope` records its 403 but not its 404
 for a record the token cannot see (issue #589).
+MCP tools have no HTTP request to map, so a tool records directly:
+`StoreMemoryTool` in `internal/tools/store_memory.go` takes a
+`DenialRecorder` (the `RecordCoalescedDenial` method, which
+`*auth.AuthStore` implements) and records its `store_system_memory`
+refusal as `memory.create` on target `memories`, attributed with
+`auth.ActorFromContext` (issue #674). The provider passes
+`denialRecorderFor(p.authStore)`, which returns a nil interface for a
+nil store so the method is never called through a nil pointer.
 `deniedConnectionAction` names the `connection.update`,
 `connection.delete` and `connection.cluster.update` actions, and
 `deniedAPIRoute` names `cluster.*`, `cluster_group.*`,

@@ -74,7 +74,7 @@ func TestToolSchemasDeclareTypes(t *testing.T) {
 	// These tools are registered only with a memory store or a
 	// knowledgebase file, so they are built directly here.
 	for _, tool := range []Tool{
-		StoreMemoryTool(nil, cfg, nil),
+		StoreMemoryTool(nil, cfg, nil, nil),
 		RecallMemoriesTool(nil, cfg),
 		DeleteMemoryTool(nil),
 		SearchKnowledgebaseTool("", cfg),

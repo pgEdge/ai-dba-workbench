@@ -1175,6 +1175,13 @@ project adheres to
 
 ### Fixed
 
+- Record a refused `store_memory` MCP tool call in the audit log
+  (#674). A caller without `store_system_memory` who asked the
+  tool to store a system-scoped memory was refused, but nothing
+  was written to the audit log; the refusal is now recorded as a
+  denied `memory.create` event with a target of `memories`, and
+  repeats are coalesced like every other denial.
+
 - Load every configured alerter API key file when one of them
   cannot be read (#626). The alerter previously stopped at the
   first unreadable file, so a bad OpenAI key file also left the

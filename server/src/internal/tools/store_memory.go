@@ -23,9 +23,60 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/memory"
 )
 
+// storeMemoryDeniedAction is the audit action recorded when store_memory
+// refuses a system-scoped memory, named for the change the caller would
+// have made had it been allowed.
+const storeMemoryDeniedAction = "memory.create"
+
+// storeMemoryDeniedTarget is the audit target of a refused store_memory
+// call: the kind of object alone, because a refused create names no
+// existing memory.
+const storeMemoryDeniedTarget = "memories"
+
+// storeSystemMemoryDeniedReason is the audit reason recorded for a
+// refused system-scoped store, worded as the REST permission refusals
+// word theirs.
+const storeSystemMemoryDeniedReason = "Permission denied: requires " +
+	auth.PermStoreSystemMemory + " permission"
+
+// DenialRecorder records an authorization refusal in the audit log
+// through the auth store's denial coalescer. *auth.AuthStore implements
+// it.
+type DenialRecorder interface {
+	RecordCoalescedDenial(actor auth.Actor, action, target,
+		reason string) error
+}
+
+// denialRecorderFor returns authStore as a DenialRecorder, or nil when
+// there is no store, so that a nil *auth.AuthStore never becomes a
+// non-nil interface whose method would dereference it.
+func denialRecorderFor(authStore *auth.AuthStore) DenialRecorder {
+	if authStore == nil {
+		return nil
+	}
+	return authStore
+}
+
+// recordStoreMemoryDenial audits a refused system-scoped store. A
+// recording failure is logged and otherwise ignored, because the caller
+// is refused either way and an audit error must not change what it
+// sees; a nil recorder audits nothing.
+func recordStoreMemoryDenial(ctx context.Context, recorder DenialRecorder) {
+	if recorder == nil {
+		return
+	}
+	if err := recorder.RecordCoalescedDenial(auth.ActorFromContext(ctx),
+		storeMemoryDeniedAction, storeMemoryDeniedTarget,
+		storeSystemMemoryDeniedReason); err != nil {
+		log.Printf("[ERROR] store_memory: failed to record denial: %v", err)
+	}
+}
+
 // StoreMemoryTool creates the store_memory tool for persisting memories
-// that Ellie can recall in future conversations.
-func StoreMemoryTool(memoryStore *memory.Store, cfg *config.Config, rbacChecker *auth.RBACChecker) Tool {
+// that Ellie can recall in future conversations. A refusal to store a
+// system-scoped memory is audited through recorder, which may be nil.
+func StoreMemoryTool(memoryStore *memory.Store, cfg *config.Config,
+	rbacChecker *auth.RBACChecker, recorder DenialRecorder) Tool {
 	return Tool{
 		Definition: mcp.Tool{
 			Name: "store_memory",
@@ -109,6 +160,7 @@ func StoreMemoryTool(memoryStore *memory.Store, cfg *config.Config, rbacChecker 
 			// Check RBAC permission for system-scoped memories
 			if scope == "system" {
 				if rbacChecker == nil || !rbacChecker.HasAdminPermission(ctx, auth.PermStoreSystemMemory) {
+					recordStoreMemoryDenial(ctx, recorder)
 					return mcp.NewToolError("Permission denied: you do not have permission to store system-scoped memories")
 				}
 			}

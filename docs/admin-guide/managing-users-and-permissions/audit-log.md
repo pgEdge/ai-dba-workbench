@@ -148,6 +148,11 @@ group, without the `manage_connections` permission, is recorded under
 on a connection the token cannot see is refused as though it did not
 exist, and, as with connections, that refusal is not recorded.
 
+Refusals by the `store_memory` MCP tool are recorded in the same way.
+A caller without the `store_system_memory` permission who asks the tool
+to store a system-scoped memory is recorded under `memory.create`, with
+a target of `memories`.
+
 Each denial names the object the request was aimed at in
 `details.target`, as the kind of object followed by its numeric
 identifier, such as `users/12` or `connections/7`, or as the kind alone,

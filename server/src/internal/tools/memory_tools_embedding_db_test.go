@@ -197,7 +197,7 @@ func TestStoreMemoryGeneratesEmbeddingIntegration(t *testing.T) {
 	defer srv.Close()
 
 	cfg := geminiEmbeddingConfig(srv.URL, apiKey)
-	tool := StoreMemoryTool(store, cfg, nil)
+	tool := StoreMemoryTool(store, cfg, nil, nil)
 
 	ctx := context.WithValue(context.Background(),
 		auth.UsernameContextKey, "embed-user")

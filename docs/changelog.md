@@ -1414,6 +1414,16 @@ project adheres to
   have named or ignoring it in favour of the selected connection. A
   `null` `connection_id` is treated as if it had been omitted. (#706)
 
+- Require the `store_system_memory` permission to pin or unpin a
+  system-scoped memory through `PATCH /api/v1/memories/{id}`;
+  previously any signed-in user could change whether a system
+  memory was injected into every user's assistant context. The
+  refusal answers 403 with `Permission denied: requires
+  store_system_memory permission` and is recorded in the audit
+  log as a denied `memory.update` on `memories/<id>`, as a
+  refused delete already is as `memory.delete`. Another user's
+  memory still answers 404, as a missing one does. (#704)
+
 - Fix the `probe_unavailable` alert firing on healthy Spock clusters
   with no recent apply exceptions or conflict resolutions. The
   collector could not tell an installed extension with nothing to

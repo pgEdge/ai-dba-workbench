@@ -1095,8 +1095,9 @@ share gate; the `manage_connections` gate on
 `ClusterHandler`,
 `AlertRuleHandler`, `NotificationChannelHandler`, `BlackoutHandler`,
 `ProbeConfigHandler`, the three override handlers and `MemoryHandler`
-(its `store_system_memory` gate on deleting a system-scoped memory,
-recorded as `memory.delete` on `memories/<id>`) embed
+(its `store_system_memory` gate, `checkSystemMemory`, on deleting,
+pinning or unpinning a system-scoped memory, recorded as
+`memory.delete` or `memory.update` on `memories/<id>`) embed
 `denialAuditor`, whose recorder they pass to
 `requireAllConnectionsInTokenScope`,
 `requireConnectionsInTokenScope`, `requireTargetInTokenScope` and
@@ -1240,6 +1241,17 @@ New tools that refuse on a connection must take the recorder and pass
 so a nil recorder fails them;
 `TestQueryDatastoreRecordsRefusedConnection` covers `query_datastore`
 on Postgres.
+
+`MemoryHandler`'s PATCH pin and DELETE routes (issue #704) both load
+the row with `GetByID` first: a system-scoped row needs
+`store_system_memory` (refused through `h.checkSystemMemory`) and is
+changed with `Store.UpdateSystemPinned` or `Store.DeleteByID`; the
+caller's own row uses `Store.UpdatePinned`, which only matches
+`scope = 'user'` rows owned by the username; anything else answers 404
+and records nothing. Tests: `memory_handlers_test.go` and
+`memory_handlers_system_test.go` (Postgres fixture schemas plus a
+SQLite auth store, asserting the audit rows) and
+`TestStore_UpdateSystemPinned` in `memory/store_db_test.go`.
 
 Mutations in these handlers go through `h.actorStore(r)` rather than
 `h.authStore`, so the audit row names the acting user or token:

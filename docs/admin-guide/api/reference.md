@@ -276,7 +276,7 @@ end in the future is clamped to the present moment.
 |--------|----------|-------------|
 | GET | `/api/v1/memories` | List pinned memories. |
 | DELETE | `/api/v1/memories/{id}` | Delete a memory. |
-| PATCH | `/api/v1/memories/{id}` | Update a memory pin status. |
+| PATCH | `/api/v1/memories/{id}` | Update a memory pin status; system memories need `store_system_memory`. |
 
 ### MCP Tools
 

@@ -118,20 +118,21 @@ func TestNonCredentialSettings(t *testing.T) {
 	}
 }
 
-func TestRedactsWholeValue(t *testing.T) {
+func TestIsConnectionStringSetting(t *testing.T) {
 	tests := []struct {
 		name string
 		want bool
 	}{
-		{"primary_conninfo", false},
-		{"restore_command", true},
-		{"ssl_passphrase_command", true},
-		{"myext.password", true},
+		{"primary_conninfo", true},
+		{"PRIMARY_CONNINFO", true},
+		{"restore_command", false},
+		{"ssl_passphrase_command", false},
+		{"myext.password", false},
 		{"work_mem", false},
 	}
 	for _, tt := range tests {
-		if got := RedactsWholeValue(tt.name); got != tt.want {
-			t.Errorf("RedactsWholeValue(%q) = %v, want %v", tt.name, got, tt.want)
+		if got := IsConnectionStringSetting(tt.name); got != tt.want {
+			t.Errorf("IsConnectionStringSetting(%q) = %v, want %v", tt.name, got, tt.want)
 		}
 	}
 }

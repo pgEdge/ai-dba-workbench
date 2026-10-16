@@ -71,14 +71,17 @@ var secretNameFragments = []string{
 // mapping option, which is a boolean.
 var nonSecretNames = append(pgsettings.NonCredentialSettings(), "password_required")
 
-// wholeValueSettings are the core settings whose value pkg/pgsettings
-// replaces in full, such as restore_command, which can carry an inline
-// secret such as PGPASSWORD=... and has no structure to parse. They name
-// a secret although no secretNameFragments entry matches them all.
+// wholeValueSettings are the core credential settings that do not hold
+// a connection string, such as restore_command, which can carry an
+// inline secret such as PGPASSWORD=.... A statement literal assigned to
+// one is replaced in full; the program-name-keeping redaction
+// pkg/pgsettings applies to a stored shell command is not attempted on
+// statement text. They name a secret although no secretNameFragments
+// entry matches them all.
 var wholeValueSettings = func() []string {
 	var names []string
 	for _, name := range pgsettings.CredentialSettings() {
-		if pgsettings.RedactsWholeValue(name) {
+		if !pgsettings.IsConnectionStringSetting(name) {
 			names = append(names, name)
 		}
 	}

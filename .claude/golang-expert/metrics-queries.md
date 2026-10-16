@@ -236,7 +236,8 @@ decomposed into small, separately testable helpers:
   `statementTextColumns` there and to `statementTextUpdates` in the
   collector's migration 26 equivalent (a new migration). The list of
   credential settings lives only in `pkg/pgsettings`
-  (`CredentialSettings`, `NonCredentialSettings`, `RedactsWholeValue`);
+  (`CredentialSettings`, `NonCredentialSettings`,
+  `IsConnectionStringSetting`);
   `pkg/sqlredact`, the `SET` pattern in `pkg/redact` and the SQL masking
   in `server/src/internal/metrics/redaction.go` (used by
   `query_datastore`, the latest-metrics routes and the timeline) build

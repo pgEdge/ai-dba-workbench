@@ -205,12 +205,12 @@ func MaskedSetting(value, name string) string {
 }
 
 // conninfoSettings are the credentialSettings whose value is a libpq
-// connection string, such as primary_conninfo, rather than a value
-// pgsettings.RedactValue replaces whole.
+// connection string, such as primary_conninfo, rather than a shell
+// command or an opaque secret.
 var conninfoSettings = func() []string {
 	var out []string
 	for _, name := range credentialSettings {
-		if !pgsettings.RedactsWholeValue(name) {
+		if pgsettings.IsConnectionStringSetting(name) {
 			out = append(out, name)
 		}
 	}

@@ -36,17 +36,12 @@ var conninfoSettings = map[string]bool{
 }
 
 // wholeValueSettings are the core settings whose entire value is
-// replaced. They are shell commands with no structure to parse:
-// ssl_passphrase_command commonly embeds the key passphrase, for example
-// as an echo, and the archive and recovery commands commonly carry an
-// inline secret such as PGPASSWORD=... or AWS_SECRET_ACCESS_KEY=... for
-// the tool they run.
+// replaced. ssl_passphrase_command is a shell command whose purpose is
+// to produce the key passphrase, and it commonly embeds it, for example
+// as an echo, so unlike the archive and recovery commands in
+// shellCommandSettings it keeps nothing, not even its program name.
 var wholeValueSettings = map[string]bool{
-	"ssl_passphrase_command":  true,
-	"archive_command":         true,
-	"archive_cleanup_command": true,
-	"restore_command":         true,
-	"recovery_end_command":    true,
+	"ssl_passphrase_command": true,
 }
 
 // nonCredentialSettings are the core settings whose names contain a
@@ -65,12 +60,12 @@ var nonCredentialSettings = []string{
 // credential settings too, but cannot be listed; IsCredentialSetting
 // recognises them.
 func CredentialSettings() []string {
-	names := make([]string, 0, len(conninfoSettings)+len(wholeValueSettings))
-	for name := range conninfoSettings {
-		names = append(names, name)
-	}
-	for name := range wholeValueSettings {
-		names = append(names, name)
+	names := make([]string, 0,
+		len(conninfoSettings)+len(wholeValueSettings)+len(shellCommandSettings))
+	for _, set := range []map[string]bool{conninfoSettings, wholeValueSettings, shellCommandSettings} {
+		for name := range set {
+			names = append(names, name)
+		}
 	}
 	slices.Sort(names)
 	return names
@@ -124,11 +119,12 @@ func IsCredentialSetting(name string) bool {
 	return false
 }
 
-// RedactsWholeValue reports whether RedactValue replaces the whole of a
-// non-empty value of the named setting, rather than only the passwords
-// inside a connection string.
-func RedactsWholeValue(name string) bool {
-	return IsCredentialSetting(name) && !conninfoSettings[strings.ToLower(name)]
+// IsConnectionStringSetting reports whether the named setting holds a
+// libpq connection string, such as primary_conninfo, from which
+// RedactValue removes only the passwords. Every other credential setting
+// holds a shell command or an opaque secret.
+func IsConnectionStringSetting(name string) bool {
+	return conninfoSettings[strings.ToLower(name)]
 }
 
 // RedactValue returns value with any credential removed, given the name

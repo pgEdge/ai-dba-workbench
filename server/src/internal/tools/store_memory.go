@@ -23,9 +23,18 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/memory"
 )
 
+// systemMemoryDenied is the refusal, and the audited reason, when the
+// caller lacks store_system_memory, in the form the REST permission
+// refusals use, so that both interfaces give the same audited reason.
+const systemMemoryDenied = "Permission denied: requires " +
+	auth.PermStoreSystemMemory + " permission"
+
 // StoreMemoryTool creates the store_memory tool for persisting memories
-// that Ellie can recall in future conversations.
-func StoreMemoryTool(memoryStore *memory.Store, cfg *config.Config, rbacChecker *auth.RBACChecker) Tool {
+// that Ellie can recall in future conversations. A system-scoped store
+// refused for want of store_system_memory is audited through record as
+// memory.create on memories.
+func StoreMemoryTool(memoryStore *memory.Store, cfg *config.Config,
+	rbacChecker *auth.RBACChecker, record DenialRecorder) Tool {
 	return Tool{
 		Definition: mcp.Tool{
 			Name: "store_memory",
@@ -109,7 +118,8 @@ func StoreMemoryTool(memoryStore *memory.Store, cfg *config.Config, rbacChecker 
 			// Check RBAC permission for system-scoped memories
 			if scope == "system" {
 				if rbacChecker == nil || !rbacChecker.HasAdminPermission(ctx, auth.PermStoreSystemMemory) {
-					return mcp.NewToolError("Permission denied: you do not have permission to store system-scoped memories")
+					return record.refuse(ctx, "memory.create", "memories",
+						systemMemoryDenied)
 				}
 			}
 

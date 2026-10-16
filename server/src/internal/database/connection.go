@@ -211,25 +211,6 @@ func addApplicationName(connStr, appName string) (string, error) {
 	return u.String(), nil
 }
 
-// SetDefaultConnection sets the default connection string to use for queries
-func (c *Client) SetDefaultConnection(connStr string) error {
-	// Ensure the connection exists
-	if err := c.ConnectTo(connStr); err != nil {
-		return err
-	}
-
-	c.mu.Lock()
-	c.defaultConnStr = connStr
-	c.mu.Unlock()
-
-	// Load metadata if not already loaded
-	if !c.IsMetadataLoadedFor(connStr) {
-		return c.LoadMetadataFor(connStr)
-	}
-
-	return nil
-}
-
 // GetDefaultConnection returns the current default connection string
 func (c *Client) GetDefaultConnection() string {
 	c.mu.RLock()

@@ -127,13 +127,12 @@ To avoid rate limits (30,000 input tokens/minute):
 			ca := parseConnectionArgs(args)
 
 			var connStr string
-			var connectionMessage string
 			var resolvedClient *database.Client
 			var sqlQuery string
 			var connID int
 
 			if ca.HasConnID {
-				// Explicit connection_id: use resolver, skip ParseQueryForConnection
+				// Explicit connection_id: use the resolver, which checks RBAC
 				resolved, errResp := resolver.Resolve(ctx, args, dbClient)
 				if errResp != nil {
 					return *errResp, nil
@@ -149,53 +148,23 @@ To avoid rate limits (30,000 input tokens/minute):
 					return mcp.NewToolError(mcp.DatabaseNotReadyError)
 				}
 			} else {
-				// No connection_id: use legacy ParseQueryForConnection path
-				queryCtx := database.ParseQueryForConnection(query)
-
-				// Determine which connection to use
+				// No connection_id: use the currently selected connection.
+				// The query text is never inspected for a connection string;
+				// connection_id or the selected connection is the only way to
+				// choose a target, so per-connection RBAC cannot be bypassed
+				// by naming an arbitrary host in the SQL (issue #662).
+				if dbClient == nil {
+					return mcp.NewToolError("No database connection available. Specify connection_id or select a connection first.")
+				}
 				connStr = dbClient.GetDefaultConnection()
 				resolvedClient = dbClient
-
-				// Handle connection string changes
-				if queryCtx.ConnectionString != "" {
-					if queryCtx.SetAsDefault {
-						err := dbClient.SetDefaultConnection(queryCtx.ConnectionString)
-						if err != nil {
-							return mcp.NewToolError(fmt.Sprintf("Failed to set default connection to %s: %v", database.SanitizeConnStr(queryCtx.ConnectionString), err))
-						}
-
-						return mcp.NewToolSuccess(fmt.Sprintf("Successfully set default database connection to:\n%s\n\nMetadata loaded: %d tables/views available.",
-							database.SanitizeConnStr(queryCtx.ConnectionString),
-							len(dbClient.GetMetadata())))
-					} else {
-						err := dbClient.ConnectTo(queryCtx.ConnectionString)
-						if err != nil {
-							return mcp.NewToolError(fmt.Sprintf("Failed to connect to %s: %v", database.SanitizeConnStr(queryCtx.ConnectionString), err))
-						}
-
-						if !dbClient.IsMetadataLoadedFor(queryCtx.ConnectionString) {
-							err = dbClient.LoadMetadataFor(queryCtx.ConnectionString)
-							if err != nil {
-								return mcp.NewToolError(fmt.Sprintf("Failed to load metadata from %s: %v", database.SanitizeConnStr(queryCtx.ConnectionString), err))
-							}
-						}
-
-						connStr = queryCtx.ConnectionString
-						connectionMessage = fmt.Sprintf("Using connection: %s\n\n", database.SanitizeConnStr(connStr))
-					}
-				}
-
-				// If the cleaned query is empty (e.g., just a connection command), we're done
-				if strings.TrimSpace(queryCtx.CleanedQuery) == "" {
-					return mcp.NewToolSuccess("Connection command executed successfully. No query to run.")
-				}
 
 				// Check if metadata is loaded for the target connection
 				if !resolvedClient.IsMetadataLoadedFor(connStr) {
 					return mcp.NewToolError(mcp.DatabaseNotReadyError)
 				}
 
-				sqlQuery = strings.TrimSpace(queryCtx.CleanedQuery)
+				sqlQuery = strings.TrimSpace(query)
 			}
 
 			readOnly := isSelectQuery(sqlQuery)
@@ -230,20 +199,15 @@ To avoid rate limits (30,000 input tokens/minute):
 				return mcp.NewToolError(fmt.Sprintf("Connection pool not found for: %s", database.SanitizeConnStr(connStr)))
 			}
 
-			qr, errResp := executeQuery(ctx, dbPool, sqlQuery, limit, hadExistingLimit, connectionMessage, readOnly)
+			qr, errResp := executeQuery(ctx, dbPool, sqlQuery, limit, hadExistingLimit, "", readOnly)
 			if errResp != nil {
 				return *errResp, nil
 			}
 
 			var sb strings.Builder
 
-			// Always show current database context (unless already shown via connection message)
-			if connectionMessage == "" {
-				sanitizedConn := database.SanitizeConnStr(connStr)
-				fmt.Fprintf(&sb, "Database: %s\n\n", sanitizedConn)
-			} else {
-				sb.WriteString(connectionMessage)
-			}
+			// Always show the current database context
+			fmt.Fprintf(&sb, "Database: %s\n\n", database.SanitizeConnStr(connStr))
 
 			formatPaginatedResults(&sb, qr, sqlQuery, limit, offset, " or count_rows for total")
 

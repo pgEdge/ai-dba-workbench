@@ -2477,6 +2477,21 @@ project adheres to
 
 ### Security
 
+- Breaking: stop the `query_database` MCP tool connecting to a
+  connection string written in the query text (#662). Without a
+  `connection_id`, the tool used to take a `postgres://` or
+  `postgresql://` URI from phrases such as `at postgres://...` or
+  `set default database to postgres://...`, connect to it and, for
+  the latter, make it the default for later calls; nothing checked
+  that the target was a registered connection the caller could see,
+  so any caller holding the tool privilege could make the server open
+  connections to arbitrary hosts and ports and bypass the
+  per-connection grants for read queries. The query text is now always
+  run as SQL, and `connection_id` (or the currently selected
+  connection) is the only way to choose a target. The `get_schema_info`
+  empty-result hint now points at `list_connections` and
+  `connection_id` instead.
+
 - Breaking: make the `query_datastore` MCP tool structured and limit
   the tool to the connections the caller can read (#566). The tool no
   longer accepts SQL and rejects a `sql` or `query` argument, so a

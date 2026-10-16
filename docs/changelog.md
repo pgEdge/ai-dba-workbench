@@ -2536,6 +2536,23 @@ project adheres to
   can access every connection, because plan row estimates cover the
   whole table.
 
+- Quote untrusted text in the alerter's tier 3 classification and
+  re-evaluation prompts. Database, metric and connection names,
+  alert titles, node roles, acknowledgement notes and user names,
+  and the stored tier 3 result were written into the prompts
+  verbatim, so anyone able to create a database or acknowledge an
+  alert could add a line such as `## Instructions` and steer
+  whether an anomaly is suppressed or an acknowledged alert is
+  cleared. Each such value is now written as a double-quoted
+  string with line breaks and other non-printable characters
+  escaped, both prompts tell the model that quoted values are data
+  rather than instructions, and the tier 3 prompt lists each past
+  acknowledgement as named fields, as re-evaluation already did.
+  The re-evaluation fingerprint covers the prompt text, so after
+  upgrading, every acknowledged alert with a stored "keep" verdict
+  is sent back to the reasoning model once, the next time it falls
+  due. (#682)
+
 - Delete a user with `ai-dba-server -delete-user` only when the
   confirmation is an explicit `y` or `yes`. The answer was checked
   only when a whole line could be read, so input that ended without

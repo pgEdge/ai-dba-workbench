@@ -123,7 +123,7 @@ func TestBuildClassificationPrompt(t *testing.T) {
 		}{
 			{"feedback heading", "Past User Feedback"},
 			{"ack message", "Known maintenance window"},
-			{"false positive marker", "FALSE POSITIVE"},
+			{"false positive flag", "false_positive=true"},
 			{"ack user", "ops_user"},
 		}
 

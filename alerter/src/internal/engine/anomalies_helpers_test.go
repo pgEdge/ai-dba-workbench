@@ -549,7 +549,7 @@ func TestBuildClassificationPromptMinimal(t *testing.T) {
 	// Should contain basic sections
 	checks := []string{
 		"Current Anomaly",
-		"Metric: test_metric",
+		`Metric: "test_metric"`,
 		"Value: 100.0000",
 		"Z-Score: 3.00",
 		"Connection ID: 5",
@@ -641,7 +641,7 @@ func TestBuildClassificationPromptWithAllInputs(t *testing.T) {
 		"cpu_usage_percent",
 		"95.0000",
 		"4.50",
-		"Database: prod_db",
+		`Database: "prod_db"`,
 
 		// Similar anomalies
 		"Similar Past Anomalies",
@@ -651,7 +651,7 @@ func TestBuildClassificationPromptWithAllInputs(t *testing.T) {
 		// Ack history
 		"Past User Feedback",
 		"Known maintenance window",
-		"FALSE POSITIVE",
+		"false_positive=true",
 		"admin",
 
 		// Cluster context
@@ -691,7 +691,7 @@ func TestBuildClassificationPromptWithDatabaseName(t *testing.T) {
 
 	prompt := engine.buildClassificationPrompt(candidate, nil, nil, nil, nil)
 
-	if !strings.Contains(prompt, "Database: mydb") {
+	if !strings.Contains(prompt, `Database: "mydb"`) {
 		t.Error("prompt should include database name")
 	}
 }

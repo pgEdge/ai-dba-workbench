@@ -1205,6 +1205,7 @@ func (e *Engine) buildClassificationContext(
 	var sb strings.Builder
 
 	sb.WriteString("Analyze the following anomaly candidate and determine if it is a real issue that requires attention (alert) or a false positive that should be suppressed.\n\n")
+	sb.WriteString(promptDataNotice)
 
 	writeCurrentAnomaly(&sb, candidate)
 	writeSimilarAnomalies(&sb, similarAnomalies)
@@ -1221,13 +1222,13 @@ func (e *Engine) buildClassificationContext(
 // the baseline details carried in the candidate's JSON context.
 func writeCurrentAnomaly(sb *strings.Builder, candidate *database.AnomalyCandidate) {
 	sb.WriteString("## Current Anomaly\n")
-	fmt.Fprintf(sb, "- Metric: %s\n", candidate.MetricName)
+	fmt.Fprintf(sb, "- Metric: %s\n", promptValue(candidate.MetricName))
 	fmt.Fprintf(sb, "- Value: %.4f\n", candidate.MetricValue)
 	fmt.Fprintf(sb, "- Z-Score: %.2f (standard deviations from mean)\n", candidate.ZScore)
 	fmt.Fprintf(sb, "- Connection ID: %d\n", candidate.ConnectionID)
 
 	if candidate.DatabaseName != nil {
-		fmt.Fprintf(sb, "- Database: %s\n", *candidate.DatabaseName)
+		fmt.Fprintf(sb, "- Database: %s\n", promptValue(*candidate.DatabaseName))
 	}
 
 	fmt.Fprintf(sb, "- Detected at: %s\n", candidate.DetectedAt.Format(time.RFC3339))
@@ -1270,7 +1271,7 @@ func writeSimilarAnomalies(sb *strings.Builder, similarAnomalies []*database.Sim
 			decision = *sa.FinalDecision
 		}
 		fmt.Fprintf(sb, "- Similarity: %.2f%%, Decision: %s, Metric: %s\n",
-			sa.Similarity*100, decision, sa.MetricName)
+			sa.Similarity*100, decision, promptValue(sa.MetricName))
 	}
 }
 
@@ -1288,23 +1289,16 @@ func writeAckHistory(sb *strings.Builder, ackHistory []*database.AcknowledgedAno
 	}
 }
 
-// writeAckEntry appends one acknowledgement: its note, any false
-// positive marker, who acknowledged it and when, and the original alert.
+// writeAckEntry appends one acknowledgement as named fields (its note,
+// false positive flag, who acknowledged it and when), then the original
+// alert. Named fields, as in buildReevaluationPrompt, keep a quoted note
+// from reading like a marker or attribution that follows it.
 func writeAckEntry(sb *strings.Builder, ack *database.AcknowledgedAnomalyAlert) {
-	if ack.AckMessage != nil && *ack.AckMessage != "" {
-		fmt.Fprintf(sb, "- Note: %s", *ack.AckMessage)
-	} else {
-		sb.WriteString("- (no message)")
-	}
-	if ack.FalsePositive {
-		sb.WriteString(" [MARKED AS FALSE POSITIVE]")
-	}
-	if ack.AcknowledgedBy != nil {
-		fmt.Fprintf(sb, " (by %s", *ack.AcknowledgedBy)
-		if ack.AcknowledgedAt != nil {
-			fmt.Fprintf(sb, " at %s", ack.AcknowledgedAt.Format(time.RFC3339))
-		}
-		sb.WriteString(")")
+	msg, ackBy := ackNoteAndUser(ack)
+	fmt.Fprintf(sb, "- message=%s, false_positive=%t, acknowledged_by=%s",
+		msg, ack.FalsePositive, ackBy)
+	if ack.AcknowledgedAt != nil {
+		fmt.Fprintf(sb, ", acknowledged_at=%s", ack.AcknowledgedAt.Format(time.RFC3339))
 	}
 	sb.WriteString("\n")
 	if ack.MetricValue != nil {
@@ -1334,19 +1328,19 @@ func writeClusterContext(
 	// Build a lookup map from connection ID to peer name
 	peerNames := make(map[int]string, len(clusterPeers))
 	for _, peer := range clusterPeers {
-		fmt.Fprintf(sb, "- %s (%s)\n", peer.ConnectionName, peer.NodeRole)
+		fmt.Fprintf(sb, "- %s (%s)\n", promptValue(peer.ConnectionName), promptValue(peer.NodeRole))
 		peerNames[peer.ConnectionID] = peer.ConnectionName
 	}
 
 	if len(clusterAlerts) > 0 {
 		sb.WriteString("\nActive alerts on cluster peers:\n")
 		for _, alert := range clusterAlerts {
-			name := peerNames[alert.ConnectionID]
-			if name == "" {
-				name = fmt.Sprintf("connection %d", alert.ConnectionID)
+			name := fmt.Sprintf("connection %d", alert.ConnectionID)
+			if peerName := peerNames[alert.ConnectionID]; peerName != "" {
+				name = promptValue(peerName)
 			}
 			fmt.Fprintf(sb, "- %s (severity: %s, server: %s, triggered: %s)\n",
-				alert.Title, alert.Severity, name,
+				promptValue(alert.Title), alert.Severity, name,
 				alert.TriggeredAt.Format(time.RFC3339))
 		}
 	} else {

@@ -168,9 +168,9 @@ func TestBuildReevaluationPromptWithHistoricalAcks(t *testing.T) {
 		"2 past acknowledgements",
 		"Maintenance window",
 		"false_positive=true",
-		"acknowledged_by=admin",
+		`acknowledged_by="admin"`,
 		"(none)",
-		"acknowledged_by=dba",
+		`acknowledged_by="dba"`,
 	}
 
 	for _, check := range checks {

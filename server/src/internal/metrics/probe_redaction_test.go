@@ -82,7 +82,7 @@ func TestQueryLatestRows_RedactsPgSettings(t *testing.T) {
 			(connection_id, collected_at, name, setting, reset_val, boot_val)
 		VALUES
 			(1, $1, 'primary_conninfo', 'host=192.0.2.1 password=s3cret',
-			 'host=192.0.2.1 password=s3cret', ''),
+			 'host=192.0.2.1 password=********', ''),
 			(1, $1, 'work_mem', '4096', '4096', '4096')
 	`, time.Now().UTC()); err != nil {
 		t.Fatalf("insert pg_settings: %v", err)
@@ -102,12 +102,40 @@ func TestQueryLatestRows_RedactsPgSettings(t *testing.T) {
 				t.Errorf("%v.%s leaks the password: %q", row["name"], col, s)
 			}
 		}
+		// A connection string the patterns would rewrite is masked
+		// whole; one the collector already redacted is kept.
 		if row["name"] == "primary_conninfo" &&
-			row["setting"] != "host=192.0.2.1 password=********" {
-			t.Errorf("primary_conninfo setting = %#v", row["setting"])
+			(row["setting"] != RedactedValue || row["reset_val"] != "host=192.0.2.1 password=********") {
+			t.Errorf("primary_conninfo setting = %#v, reset_val = %#v", row["setting"], row["reset_val"])
 		}
 		if row["name"] == "work_mem" && row["setting"] != "4096" {
 			t.Errorf("work_mem setting = %#v, want 4096", row["setting"])
+		}
+	}
+
+	// A setting's value column is refused as order_by.
+	for _, col := range settingValueColumns {
+		_, err := QueryLatestRows(ctx, pool, pgSettingsProbe, []int{1}, MetricFilters{}, col, "asc", 10)
+		if err == nil || err.Error() != UnsortableColumnError(pgSettingsProbe, col) {
+			t.Errorf("order_by %s: got %v, want the unsortable column error", col, err)
+		}
+	}
+}
+
+func TestSortableColumn(t *testing.T) {
+	for _, tc := range []struct {
+		probe, column string
+		want          bool
+	}{
+		{"pg_settings", "setting", false},
+		{"pg_settings", "reset_val", false},
+		{"pg_settings", "boot_val", false},
+		{"pg_settings", "name", true},
+		{"pg_stat_statements", "query", true},
+		{"pg_stat_activity", "setting", true},
+	} {
+		if got := SortableColumn(tc.probe, tc.column); got != tc.want {
+			t.Errorf("SortableColumn(%q, %q) = %v, want %v", tc.probe, tc.column, got, tc.want)
 		}
 	}
 }

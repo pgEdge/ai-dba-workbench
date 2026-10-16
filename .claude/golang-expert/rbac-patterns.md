@@ -799,9 +799,13 @@ rules live in `internal/metrics/redaction.go`, shared with
 `MaskedProbeColumn`), `GET /api/v1/metrics/top-queries`
 (`RedactedText`) and the timeline's configuration change events;
 `MaskedProbeColumn` and the timeline use `metrics.RedactedSetting`,
-which masks only the passwords in a connection string setting such as
-`primary_conninfo` (matching `pgsettings.RedactValue`, which the Go
-post-pass applies to the same rows), whilst `query_datastore`, which has
+which returns a connection string setting such as `primary_conninfo`
+as stored when the patterns leave it unchanged (as they leave a value
+the collector redacted) and whole as `********` otherwise, never partly
+rewritten, because the Go `pgsettings.RedactValue` post-pass sees the
+SQL's output and a rewritten quote can hide a password from it; the
+latest routes refuse `order_by` on setting value columns
+(`metrics.SortableColumn`). `query_datastore`, which has
 no Go post-pass, keeps `MaskedSetting` and masks it whole; any new route returning probe rows must use them
 and join `datastore_masking_routes_test.go`, and
 `TestCredentialTableReadersAreReviewed` (`metrics/source_guard_test.go`)

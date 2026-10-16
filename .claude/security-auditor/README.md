@@ -249,8 +249,14 @@ moved.
   the engines agree. A name may be followed by white space and at most
   two comments (`sep`, not nested): a block comment must be closed and
   is bounded to 32 body units, so a run of `/*` cannot make each match
-  scan to the end of the text (the 64 Ki cap bounds the rest; about 1 s
-  worst case in PostgreSQL, under the tools' 10 s `statement_timeout`).
+  scan to the end of the text (for `Text` and `RedactedText` the 64 Ki
+  cap bounds the rest; about 1 s worst case in PostgreSQL, under the
+  tools' 10 s `statement_timeout`). `TextUncut` and `SettledUncut` have
+  no cap: their time is linear in the input, about 2.5 s per MiB per
+  pass for the worst `AdversarialInputs` (fifteen times that under
+  `-race`), and `MaskStoredText` replaces stored text over
+  `MaxRewriteLength` (1 MiB) whole instead of masking it;
+  `TestUncutAdversarial` runs them at 4 MiB, or 64 KiB under `-race`.
   An unquoted value after `=` is masked whatever it starts with (`--x`,
   `/*x*/x`); comments after `=` are allowed only before a quoted value.
   `PASSWORD` may be followed by `sep` or nothing, and may start a
@@ -281,13 +287,15 @@ moved.
   evaluation loop, each pass also rewrites every other open (active or
   acknowledged) connection alert holding maskable text, blackouts
   included; it skips the alerts the loop raised or compared, and masks
-  with `redact.SettledUncut`, which reapplies the patterns until the
-  text stops changing, for at most three passes, because `Text` is not
+  with `redact.MaskStoredText` (`SettledUncut`, or the whole value
+  replaced over 1 MiB), which reapplies the patterns until the text
+  stops changing, for at most three passes, and logs an alert whose
+  text would still change on a fourth, because `Text` is not
   idempotent (a second pass can take the quote after a masked value
   into the next value; `TestSettledUncut` pins the cases) and the two
   stages would otherwise rewrite the same alert on every pass. Collector
   migration 27 masks the stored descriptions of all connection alerts
-  once, with `SettledUncut` too. Unlike `Text`, `TextUncut` and
+  once, with `MaskStoredText` too. Unlike `Text`, `TextUncut` and
   `SettledUncut` do not cut the value to `MaxTextLength` (Go's engine is
   linear), so a rewrite in place never loses the end of a long
   description; use them, never `Text`, for any in-place rewrite. The server masks `alerts.description`
@@ -301,12 +309,22 @@ moved.
   `MaskedProbeColumn`, which uses `RedactedSetting`), the statement text of
   `GET /api/v1/metrics/top-queries` (`RedactedText`), and the old and
   new values of configuration-change events on
-  `GET /api/v1/timeline/events` (`RedactedSetting`, which masks only
-  the passwords in a connection string setting such as
-  `primary_conninfo`, as `pgsettings.RedactValue` does, and the whole
-  of any other credential setting; `query_datastore` keeps
-  `MaskedSetting`, which masks both whole; changes are detected
-  on the raw values, and `get_timeline_events` lists no details).
+  `GET /api/v1/timeline/events` (`RedactedSetting`, which returns a
+  connection string setting such as `primary_conninfo` as stored when
+  `RedactedText` leaves it unchanged, as it leaves one the collector
+  redacted, and whole as `********` otherwise, never partly rewritten,
+  and masks the whole of any other credential setting;
+  `query_datastore` keeps `MaskedSetting`, which masks both whole;
+  changes are detected on the raw values, and `get_timeline_events`
+  lists no details). The latest routes and the timeline then run a Go
+  `pgsettings.RedactValue` pass (`metrics.RedactProbeRows`,
+  `redactTimelineEvents`) over what the SQL returned, so that pass sees
+  the string SQL already rewrote: a partial SQL rewrite that takes a
+  quote moves libpq's quote boundaries and can hide a password from it,
+  which is why `RedactedSetting` is all or nothing for connection
+  strings. For the same reason the latest routes refuse `order_by` on a
+  setting value column (`SortableColumn`: `setting`, `reset_val`,
+  `boot_val`), since the sort runs before the Go pass.
   `datastore_masking_routes_test.go` runs the masked probes through all
   of them, so add a new route there. `TestCredentialTableReadersAreReviewed`
   in `internal/metrics/source_guard_test.go` checks each SQL string

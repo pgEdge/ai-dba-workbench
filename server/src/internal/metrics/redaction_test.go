@@ -98,9 +98,10 @@ func TestRedactedTextIntegration(t *testing.T) {
 }
 
 // TestRedactedSettingIntegration runs RedactedSetting in PostgreSQL and
-// checks it masks each setting as pgsettings.RedactValue does: the
-// password in a connection string, and the whole of any other
-// credential-bearing value.
+// checks a connection string comes back either as stored, when the
+// credential patterns leave it unchanged, or masked whole, never partly
+// rewritten, and that every other setting is masked as
+// pgsettings.RedactValue masks it.
 func TestRedactedSettingIntegration(t *testing.T) {
 	if !slices.Contains(conninfoSettings, "primary_conninfo") {
 		t.Fatalf("conninfoSettings = %v, want primary_conninfo in it", conninfoSettings)
@@ -108,22 +109,35 @@ func TestRedactedSettingIntegration(t *testing.T) {
 	pool, cleanup := newLatestRowsTestPool(t)
 	defer cleanup()
 	query := "SELECT " + RedactedSetting("$2::text", "$1::text")
-	for _, tc := range []struct{ name, value string }{
-		{"primary_conninfo", "host=192.0.2.1 user=replicator password=example-secret"},
-		{"PRIMARY_CONNINFO", "postgresql://replicator:example-secret@192.0.2.1/db"},
-		{"primary_conninfo", "host=192.0.2.1"},
-		{"primary_conninfo", ""},
-		{"restore_command", "cp /archive/%f %p"},
-		{"ssl_passphrase_command", "echo example-secret"},
-		{"work_mem", "4MB"},
-		{"password_encryption", "scram-sha-256"},
+	// An empty want means pgsettings.RedactValue's result.
+	for _, tc := range []struct{ name, value, want string }{
+		{"primary_conninfo", "host=192.0.2.1 user=replicator password=example-secret", RedactedValue},
+		{"PRIMARY_CONNINFO", "postgresql://replicator:example-secret@192.0.2.1/db", RedactedValue},
+		{"primary_conninfo", `application_name='app.token=a' password=$1,example-secret options=' port=5432'`,
+			RedactedValue},
+		{"primary_conninfo", "host=192.0.2.1 user=replicator password=" + RedactedValue,
+			"host=192.0.2.1 user=replicator password=" + RedactedValue},
+		{"primary_conninfo", "postgresql://replicator:" + RedactedValue + "@192.0.2.1/db",
+			"postgresql://replicator:" + RedactedValue + "@192.0.2.1/db"},
+		{"primary_conninfo", "host=192.0.2.1", "host=192.0.2.1"},
+		{"primary_conninfo", "host=192.0.2.1 options='" + strings.Repeat("x", redact.MaxTextLength) + "'",
+			RedactedValue},
+		{"primary_conninfo", "", ""},
+		{"restore_command", "cp /archive/%f %p", ""},
+		{"ssl_passphrase_command", "echo example-secret", ""},
+		{"work_mem", "4MB", ""},
+		{"password_encryption", "scram-sha-256", ""},
 	} {
 		var got string
 		if err := pool.QueryRow(context.Background(), query, tc.name, tc.value).Scan(&got); err != nil {
 			t.Fatalf("%s: %v", tc.name, err)
 		}
-		if want := pgsettings.RedactValue(tc.name, tc.value); got != want {
-			t.Errorf("%s = %q: got %q, want %q", tc.name, tc.value, got, want)
+		want := tc.want
+		if want == "" {
+			want = pgsettings.RedactValue(tc.name, tc.value)
+		}
+		if got != want {
+			t.Errorf("%s = %.80q: got %.80q, want %.80q", tc.name, tc.value, got, want)
 		}
 	}
 	// A custom setting whose name marks it as a secret is masked whole,

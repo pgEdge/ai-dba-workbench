@@ -3720,7 +3720,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/metrics/query": {
 			Get: &OpenAPIOperation{
 				Summary:     "Query metrics",
-				Description: "Queries time-series metrics for one or more connections. When limit or order_by is given, the latest rows are returned with credentials masked, on a best-effort basis, as for /metrics/latest",
+				Description: "Queries time-series metrics for one or more connections. When limit or order_by is given, the latest rows are returned with credentials masked, on a best-effort basis, as for /metrics/latest, and the setting, reset_val and boot_val columns of pg_settings cannot be named in order_by",
 				OperationID: "queryMetrics",
 				Tags:        []string{"Metrics"},
 				Security:    bearerAuth,
@@ -3942,7 +3942,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/metrics/latest": {
 			Get: &OpenAPIOperation{
 				Summary:     "Get latest probe snapshot",
-				Description: "Returns the most recent collected row for each unique entity in a probe table, with optional filtering, sorting, and pagination. Credentials are masked on a best-effort basis: the passwords in connection string settings such as primary_conninfo, other credential settings, secret hba options, non-empty hba errors and passwords in known forms in free text are replaced with ********, free text is cut to 65,536 characters, row images are returned as text, and secret-named columns are omitted. A password in another form is returned as stored",
+				Description: "Returns the most recent collected row for each unique entity in a probe table, with optional filtering, sorting, and pagination. Credentials are masked on a best-effort basis: a connection string setting such as primary_conninfo is returned as stored only when the masking finds no password in it (as when the collector has already masked its passwords), other credential settings, secret hba options, non-empty hba errors and passwords in known forms in free text are replaced with ********, free text is cut to 65,536 characters, row images are returned as text, and secret-named columns are omitted. A password in another form is returned as stored",
 				OperationID: "getLatestSnapshot",
 				Tags:        []string{"Metrics"},
 				Security:    bearerAuth,
@@ -3952,7 +3952,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					queryParamString("database_name", "Filter by database name"),
 					queryParamString("exclude_schemas", "Comma-separated schema names to exclude (probes with a schemaname column only; 'none' excludes nothing)"),
 					queryParamBool("exclude_system_schemas", "Exclude pg_catalog, information_schema and pg_toast* schemas, as pg_stat_user_tables does (probes with a schemaname column only)"),
-					queryParamString("order_by", "Column to sort by (default: the first entity key column)"),
+					queryParamString("order_by", "Column to sort by (default: the first entity key column that can be sorted on); the setting, reset_val and boot_val columns of pg_settings are refused"),
 					queryParamString("order", "Sort order: asc or desc (default: desc)"),
 					queryParamInt("limit", "Maximum rows to return (default 20, max 100)"),
 				},

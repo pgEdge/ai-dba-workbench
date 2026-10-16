@@ -11,6 +11,7 @@ package metrics
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -2298,6 +2299,9 @@ func discoverLatestRowColumns(
 	orderCol, err := ResolveOrderByColumn(orderBy, outputCols)
 	if err != nil {
 		return nil, nil, "", err
+	}
+	if !SortableColumn(probeName, orderCol) {
+		return nil, nil, "", errors.New(UnsortableColumnError(probeName, orderCol))
 	}
 
 	if filters.DatabaseName != "" && filters.DatabaseColumn == "" {

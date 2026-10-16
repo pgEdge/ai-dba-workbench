@@ -251,10 +251,14 @@ func (h *LatestSnapshotHandler) handleLatestSnapshot(
 	// Resolve the default order_by after column discovery. The
 	// DISTINCT ON query already selects the latest row, so ordering
 	// by collected_at is meaningless (and collected_at is excluded
-	// from the output). Default to the first dimension column.
+	// from the output). Default to the first dimension column that may
+	// be sorted on.
 	if orderBy == "" || (orderBy == "collected_at" && internalColumns[orderBy]) {
-		if len(dimensionCols) > 0 {
-			orderBy = dimensionCols[0]
+		for _, col := range dimensionCols {
+			if metrics.SortableColumn(probeName, col) {
+				orderBy = col
+				break
+			}
 		}
 	}
 
@@ -271,6 +275,10 @@ func (h *LatestSnapshotHandler) handleLatestSnapshot(
 		RespondError(w, http.StatusBadRequest,
 			fmt.Sprintf("Invalid order_by: column %q does not exist in probe %q output",
 				orderBy, probeName))
+		return
+	}
+	if !metrics.SortableColumn(probeName, orderBy) {
+		RespondError(w, http.StatusBadRequest, metrics.UnsortableColumnError(probeName, orderBy))
 		return
 	}
 

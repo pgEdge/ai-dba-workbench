@@ -65,7 +65,7 @@ func TestLatestSnapshot_RedactsSecrets(t *testing.T) {
             (connection_id, collected_at, name, setting, reset_val, boot_val)
         VALUES
             (1, $1, 'primary_conninfo', 'host=192.0.2.1 password=s3cret',
-             'host=192.0.2.1 password=s3cret', ''),
+             'host=192.0.2.1 password=********', ''),
             (1, $1, 'work_mem', '4096', '4096', '4096')
     `, now); err != nil {
 		t.Fatalf("failed to seed pg_settings: %v", err)
@@ -90,15 +90,17 @@ func TestLatestSnapshot_RedactsSecrets(t *testing.T) {
 	if len(settings.Rows) != 2 {
 		t.Fatalf("pg_settings rows = %d, want 2", len(settings.Rows))
 	}
-	wantSettings := map[string]string{
-		"primary_conninfo": "host=192.0.2.1 password=********",
-		"work_mem":         "4096",
+	// A stored password is masked with the whole connection string; a
+	// value the collector already redacted is returned as stored.
+	wantSettings := map[string]map[string]string{
+		"primary_conninfo": {"setting": "********", "reset_val": "host=192.0.2.1 password=********"},
+		"work_mem":         {"setting": "4096", "reset_val": "4096"},
 	}
 	for _, row := range settings.Rows {
 		name, _ := row["name"].(string)
-		for _, col := range []string{"setting", "reset_val"} {
-			if got := row[col]; got != wantSettings[name] {
-				t.Errorf("%s.%s = %#v, want %q", name, col, got, wantSettings[name])
+		for col, want := range wantSettings[name] {
+			if got := row[col]; got != want {
+				t.Errorf("%s.%s = %#v, want %q", name, col, got, want)
 			}
 		}
 	}

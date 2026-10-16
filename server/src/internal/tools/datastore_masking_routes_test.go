@@ -295,3 +295,81 @@ func TestMaskedQueryTextAndSettingChangesIntegration(t *testing.T) {
 		t.Errorf("timeline/events should report both setting changes:\n%s", out)
 	}
 }
+
+// quoteShiftConninfo is a primary_conninfo value whose masking in SQL,
+// if it rewrote only part of the value, would take the quote after
+// "token=a" with the masked text and leave the password inside what
+// libpq then reads as application_name's quoted value, where
+// pgsettings.RedactValue does not look.
+const quoteShiftConninfo = `application_name='app.token=a' password=$1,hunter2 options=' port=5432'`
+
+// TestConninfoQuoteShiftIntegration is the regression test for the
+// partial masking of a connection string setting (VULN-001): the
+// latest routes and the timeline's configuration change details must
+// either leave such a value as it is or mask it whole, so the password
+// never reaches a response.
+func TestConninfoQuoteShiftIntegration(t *testing.T) {
+	f := newDatastoreFixture(t)
+	ctx := context.Background()
+	for _, sql := range []string{`DROP TABLE IF EXISTS metrics.pg_settings`,
+		`CREATE TABLE metrics.pg_settings (connection_id integer NOT NULL,
+            collected_at timestamptz NOT NULL, name text, setting text, reset_val text, boot_val text)`} {
+		if _, err := f.pool.Exec(ctx, sql); err != nil {
+			t.Fatalf("%s: %v", sql, err)
+		}
+	}
+	t.Cleanup(func() {
+		if _, err := f.pool.Exec(context.Background(), `DROP TABLE IF EXISTS metrics.pg_settings`); err != nil {
+			t.Logf("drop: %v", err)
+		}
+	})
+	if _, err := f.pool.Exec(ctx, `INSERT INTO metrics.pg_settings VALUES
+        ($1, now() - interval '10 minutes', 'primary_conninfo', 'host=192.0.2.1', '', ''),
+        ($1, now() - interval '1 minute', 'primary_conninfo', $2, $2, $2)`,
+		f.visible, quoteShiftConninfo); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	noAuth := func(h http.HandlerFunc) http.HandlerFunc { return h }
+	api.NewLatestSnapshotHandler(f.ds, f.store).RegisterRoutes(mux, noAuth)
+	api.NewMetricsHandler(f.ds, f.store).RegisterRoutes(mux, noAuth)
+	api.NewTimelineHandler(f.ds, f.store, f.checker).RegisterRoutes(mux, noAuth)
+
+	conn := strconv.Itoa(f.visible)
+	params := "probe_name=pg_settings&connection_id=" + conn
+	window := "&start_time=" + time.Now().Add(-time.Hour).UTC().Format(time.RFC3339) +
+		"&end_time=" + time.Now().UTC().Format(time.RFC3339)
+	for route, target := range map[string]string{
+		"metrics/latest":  "/api/v1/metrics/latest?" + params,
+		"metrics/query":   "/api/v1/metrics/query?limit=10&" + params,
+		"timeline/events": "/api/v1/timeline/events?event_types=config_change&connection_id=" + conn + window,
+	} {
+		req := httptest.NewRequest(http.MethodGet, target, nil).WithContext(superuserContext())
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		out := rec.Body.String()
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s returned %d: %s", route, rec.Code, out)
+		}
+		if strings.Contains(out, "hunter2") {
+			t.Errorf("%s returned the password:\n%s", route, out)
+		}
+		if !strings.Contains(out, "primary_conninfo") || !strings.Contains(out, metrics.RedactedValue) {
+			t.Errorf("%s should report the setting with its value masked:\n%s", route, out)
+		}
+	}
+
+	// Neither latest route sorts on a setting's value.
+	for _, target := range []string{
+		"/api/v1/metrics/latest?order_by=setting&" + params,
+		"/api/v1/metrics/query?limit=10&order_by=reset_val&" + params,
+	} {
+		req := httptest.NewRequest(http.MethodGet, target, nil).WithContext(superuserContext())
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "cannot be sorted on") {
+			t.Errorf("%s: got %d (%s), want 400", target, rec.Code, rec.Body.String())
+		}
+	}
+}

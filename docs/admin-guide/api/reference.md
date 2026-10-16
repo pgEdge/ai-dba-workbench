@@ -536,11 +536,17 @@ of `/api/v1/metrics/query` mask credentials, on a best-effort
 basis, in the same way as the `query_datastore` MCP tool:
 
 - A connection string setting, such as `primary_conninfo`, is
-  returned with its passwords masked as `********` and its other
-  options kept; the value of any other setting that can hold a
+  returned as stored when the masking finds no password in it,
+  as when the collector has already masked its passwords, and
+  as `********` otherwise, so the value is never returned partly
+  rewritten; the value of any other setting that can hold a
   credential, such as `restore_command`, is returned as
   `********`. The `query_datastore` tool returns both kinds as
   `********`.
+- The `setting`, `reset_val` and `boot_val` columns of
+  `pg_settings` cannot be named in `order_by`, since sorting on
+  them could reveal the order of masked values; such a request
+  returns `400 Bad Request`.
 - Secret options in `pg_hba_file_rules.options`, such as
   `ldapbindpasswd`, have their values masked, and a non-empty
   `pg_hba_file_rules.error` is returned as `********`, since it

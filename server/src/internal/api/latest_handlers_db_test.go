@@ -606,9 +606,10 @@ const (
 
 // TestLatestSnapshot_MasksCredentials is the regression test for issue
 // #670: the latest snapshot masks a credential as query_datastore does,
-// in the inner query, so the DISTINCT ON and the sort see only the
-// masked value, and a column whose name marks it as a secret is neither
-// returned nor accepted as order_by.
+// in the inner query, so the DISTINCT ON sees only the masked value, a
+// column whose name marks it as a secret is neither returned nor
+// accepted as order_by, and a setting's value column is not accepted as
+// order_by either.
 func TestLatestSnapshot_MasksCredentials(t *testing.T) {
 	pool := openLatestTestPool(t)
 	t.Cleanup(pool.Close)
@@ -626,22 +627,38 @@ func TestLatestSnapshot_MasksCredentials(t *testing.T) {
 		authStore: newTestAuthStore(t),
 	}
 
-	rec := getLatest(t, h, "connection_id=1&probe_name=pg_settings&order_by=setting&order=asc")
+	rec := getLatest(t, h, "connection_id=1&probe_name=pg_settings&order_by=name&order=desc")
 	body := rec.Body.String()
 	if strings.Contains(body, "example-") || strings.Contains(body, "ssl_passphrase") {
 		t.Fatalf("a credential reached the response: %s", body)
 	}
 	resp := decodeLatest(t, rec)
 	// The two primary_conninfo rows differ only in the password, so once
-	// masked they are one entity. A connection string keeps everything
-	// but its password, as pgsettings.RedactValue leaves it.
+	// masked they are one entity. A connection string the credential
+	// patterns would rewrite is masked whole, never partly.
 	if resp.TotalCount != 2 || len(resp.Rows) != 2 {
 		t.Fatalf("expected 2 rows, got %d (total %d): %v", len(resp.Rows), resp.TotalCount, resp.Rows)
 	}
 	if resp.Rows[0]["name"] != "work_mem" || resp.Rows[0]["setting"] != "4MB" ||
-		resp.Rows[1]["name"] != "primary_conninfo" ||
-		resp.Rows[1]["setting"] != "host=192.0.2.1 password="+metrics.RedactedValue {
+		resp.Rows[1]["name"] != "primary_conninfo" || resp.Rows[1]["setting"] != metrics.RedactedValue {
 		t.Errorf("unexpected rows: %v", resp.Rows)
+	}
+
+	// With no order_by the default sort column is the first entity key
+	// column that may be sorted on.
+	rec = getLatest(t, h, "connection_id=1&probe_name=pg_settings")
+	if rec.Code != http.StatusOK || len(decodeLatest(t, rec).Rows) != 2 {
+		t.Errorf("default order: got %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	// Sorting on a setting's value would order the rows by the value
+	// before the server's last masking pass, so it is refused.
+	rec = getLatest(t, h, "connection_id=1&probe_name=pg_settings&order_by=setting")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("order_by on a setting value: expected 400, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if got, want := decodeError(t, rec).Error, metrics.UnsortableColumnError("pg_settings", "setting"); got != want {
+		t.Errorf("order_by on a setting value: got %q, want %q", got, want)
 	}
 
 	rec = getLatest(t, h, "connection_id=1&probe_name=pg_settings&order_by=ssl_passphrase")

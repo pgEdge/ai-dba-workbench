@@ -10,6 +10,7 @@
 package metrics
 
 import (
+	"fmt"
 	"slices"
 	"strconv"
 	"strings"
@@ -216,25 +217,30 @@ var conninfoSettings = func() []string {
 	return out
 }()
 
-// RedactedSetting returns value with the same parts masked as
-// pgsettings.RedactValue masks, which the collector applies before
-// storing a setting and the server applies again to the rows it
-// returns: on a row whose setting name, the column reference name, is a
-// connection string setting, the passwords in it are masked
-// (RedactedText) and the host, user and other options kept; on a row
-// naming any other setting that can carry a credential, a non-empty
-// value is replaced by RedactedValue, as MaskedSetting replaces it. An
-// empty or NULL value is kept. GET /api/v1/metrics/latest, the
-// latest-rows mode of GET /api/v1/metrics/query and the timeline's
-// configuration changes use it, and query_datastore, which returns rows
-// with no further redaction, keeps MaskedSetting.
+// RedactedSetting returns SQL that masks a pg_settings value: on a row
+// whose setting name, the column reference name, is a connection string
+// setting, the value is kept as stored when the credential patterns
+// (RedactedText) leave it unchanged, as they leave a value the collector
+// already redacted with pgsettings.RedactValue, and is otherwise
+// replaced whole by RedactedValue; on a row naming any other setting
+// that can carry a credential, a non-empty value is replaced by
+// RedactedValue, as MaskedSetting replaces it. An empty or NULL value is
+// kept. A connection string is never returned partly rewritten, because
+// a pattern that takes a quote with the text it masks moves libpq's
+// quote boundaries, so the pgsettings.RedactValue pass the server runs
+// on the result could then read a password as part of another option's
+// quoted value and miss it. GET /api/v1/metrics/latest, the latest-rows
+// mode of GET /api/v1/metrics/query and the timeline's configuration
+// changes use it, and query_datastore, which returns rows with no
+// further redaction, keeps MaskedSetting.
 func RedactedSetting(value, name string) string {
 	quoted := make([]string, len(conninfoSettings))
 	for i, v := range conninfoSettings {
 		quoted[i] = "'" + v + "'"
 	}
 	return "CASE WHEN lower(" + name + ") IN (" + strings.Join(quoted, ", ") + ") AND " + value +
-		" <> '' THEN " + RedactedText(value) + " ELSE " + MaskedSetting(value, name) + " END"
+		" <> '' THEN CASE WHEN " + RedactedText(value) + " = " + value + "::text THEN " + value +
+		" ELSE '" + RedactedValue + "' END ELSE " + MaskedSetting(value, name) + " END"
 }
 
 // ColumnMask is how a probe column is masked before it is returned.
@@ -301,6 +307,23 @@ func ReturnableColumns(probe string, columns []string) []string {
 		}
 	}
 	return out
+}
+
+// SortableColumn reports whether column of probe may be an order_by
+// column on the latest routes. A setting's value column (a
+// ProbeRedactions Columns entry, such as pg_settings.setting) may not:
+// the rows are sorted on the value as SQL masked it, before the
+// pgsettings.RedactValue pass the server runs on the result, so sorting
+// on it could tell a caller the order of a password that pass masks.
+func SortableColumn(probe, column string) bool {
+	return !slices.Contains(ProbeRedactions[probe].Columns, column)
+}
+
+// UnsortableColumnError is the message a latest route returns for an
+// order_by column SortableColumn refuses.
+func UnsortableColumnError(probe, column string) string {
+	return fmt.Sprintf("Invalid order_by: column %q of probe %q holds a masked setting value and cannot be sorted on",
+		column, probe)
 }
 
 // MaskedProbeColumn returns the expression that selects column of probe

@@ -5967,7 +5967,7 @@
     "/metrics/latest": {
       "get": {
         "summary": "Get latest probe snapshot",
-        "description": "Returns the most recent collected row for each unique entity in a probe table, with optional filtering, sorting, and pagination. Credentials are masked on a best-effort basis: the passwords in connection string settings such as primary_conninfo, other credential settings, secret hba options, non-empty hba errors and passwords in known forms in free text are replaced with ********, free text is cut to 65,536 characters, row images are returned as text, and secret-named columns are omitted. A password in another form is returned as stored",
+        "description": "Returns the most recent collected row for each unique entity in a probe table, with optional filtering, sorting, and pagination. Credentials are masked on a best-effort basis: a connection string setting such as primary_conninfo is returned as stored only when the masking finds no password in it (as when the collector has already masked its passwords), other credential settings, secret hba options, non-empty hba errors and passwords in known forms in free text are replaced with ********, free text is cut to 65,536 characters, row images are returned as text, and secret-named columns are omitted. A password in another form is returned as stored",
         "operationId": "getLatestSnapshot",
         "tags": [
           "Metrics"
@@ -6018,7 +6018,7 @@
           {
             "name": "order_by",
             "in": "query",
-            "description": "Column to sort by (default: the first entity key column)",
+            "description": "Column to sort by (default: the first entity key column that can be sorted on); the setting, reset_val and boot_val columns of pg_settings are refused",
             "schema": {
               "type": "string"
             }
@@ -6191,7 +6191,7 @@
     "/metrics/query": {
       "get": {
         "summary": "Query metrics",
-        "description": "Queries time-series metrics for one or more connections. When limit or order_by is given, the latest rows are returned with credentials masked, on a best-effort basis, as for /metrics/latest",
+        "description": "Queries time-series metrics for one or more connections. When limit or order_by is given, the latest rows are returned with credentials masked, on a best-effort basis, as for /metrics/latest, and the setting, reset_val and boot_val columns of pg_settings cannot be named in order_by",
         "operationId": "queryMetrics",
         "tags": [
           "Metrics"

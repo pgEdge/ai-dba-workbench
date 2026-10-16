@@ -80,6 +80,8 @@ var reviewedCredentialTableReaders = map[string]string{
 // helper, each reviewed as returning only columns that cannot hold a
 // credential.
 var reviewedProbeTableReaders = map[string]string{
+	"internal/database/connection_purge.go:Datastore.purgeMetricsTable": "deletes a purged " +
+		"connection's rows and returns only the affected-row count",
 	"internal/metrics/probe_interval.go:ObserveSampleSpacing": "reads only connection_id and collected_at",
 	"internal/metrics/query.go:BuildMetricsQuery": "aggregates only the numeric columns " +
 		"GetProbeMetricColumns returns (IsMetricColumn)",

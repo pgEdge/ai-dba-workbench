@@ -21,13 +21,20 @@
 //
 //   - A string constant that follows a name suggesting a secret, such as
 //     PASSWORD in CREATE ROLE, password or sslpassword in the OPTIONS of
-//     a user mapping or server, or a column or setting named like a
-//     secret, is replaced in full. An optional =, =>, := or TO may sit
-//     between them.
+//     a user mapping or server, a column or setting named like a secret,
+//     or a setting such as restore_command whose value pkg/pgsettings
+//     redacts in full, is replaced in full. An optional =, =>, := or TO
+//     may sit between them. The same applies to a string constant that
+//     follows such a name given as a string constant and a comma, as in
+//     set_config('myext.password', '...', false). After a separator, a
+//     double-quoted identifier is replaced too, and in a SET command an
+//     unquoted value is.
 //   - Any other string constant that mentions a password or is a
 //     postgres:// URI is treated as a libpq connection string, as in
 //     CREATE SUBSCRIPTION ... CONNECTION or dblink_connect, and has its
-//     password and sslpassword values replaced, keeping the rest.
+//     password and sslpassword values replaced, keeping the rest. A
+//     truncated URI that ends before its host is replaced to the end of
+//     the text, since the cut may fall inside the password.
 //
 // Where the meaning is uncertain the redaction errs towards removing
 // more. Parameter placeholders such as $1, which pg_stat_statements
@@ -35,9 +42,11 @@
 package sqlredact
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/pgedge/ai-workbench/pkg/connstring"
+	"github.com/pgedge/ai-workbench/pkg/pgsettings"
 )
 
 // Redacted replaces a secret. It matches the placeholder used for
@@ -56,15 +65,35 @@ var secretNameFragments = []string{
 	"credential", "private_key",
 }
 
+// nonSecretNames contain a secretNameFragments entry but hold no secret,
+// so their values stay readable: the core settings pkg/pgsettings lists
+// as holding no credential, and postgres_fdw's password_required user
+// mapping option, which is a boolean.
+var nonSecretNames = append(pgsettings.NonCredentialSettings(), "password_required")
+
+// wholeValueSettings are the core settings whose value pkg/pgsettings
+// replaces in full, such as restore_command, which can carry an inline
+// secret such as PGPASSWORD=... and has no structure to parse. They name
+// a secret although no secretNameFragments entry matches them all.
+var wholeValueSettings = func() []string {
+	var names []string
+	for _, name := range pgsettings.CredentialSettings() {
+		if pgsettings.RedactsWholeValue(name) {
+			names = append(names, name)
+		}
+	}
+	return names
+}()
+
 // triggerFragments are lower-case substrings at least one of which every
 // statement text that RedactQuery changes contains: each secret name
-// fragment contains "pass" or appears here itself, and a connection
-// string is only redacted when it mentions "password" or starts with a
-// URI prefix.
-var triggerFragments = []string{
+// fragment contains "pass" or appears here itself, each of the
+// wholeValueSettings appears here, and a connection string is only
+// redacted when it mentions "password" or starts with a URI prefix.
+var triggerFragments = append([]string{
 	"pass", "secret", "token", "credential", "private_key",
 	"postgres://", "postgresql://",
-}
+}, wholeValueSettings...)
 
 // MightContainSecret reports whether RedactQuery could change s. It is a
 // cheap check that lets callers skip the lexer for most statements.
@@ -116,34 +145,76 @@ func RedactQuery(query string) string {
 		last = end
 	}
 
+	// redactValueAt replaces the string constant at sig[m], with any
+	// constants continuing it, and returns the index of the last one and
+	// whether the replacement ran to the end of the text.
+	redactValueAt := func(m int) (int, bool) {
+		first := toks[sig[m]]
+		// A string constant continued over whitespace is one value to
+		// PostgreSQL, so every part goes.
+		for m+1 < len(sig) && toks[sig[m+1]].isLiteral() {
+			m++
+		}
+		end := toks[sig[m]].end
+		if first.ambiguousEscapes(query) {
+			end = len(query)
+		}
+		emit(first.start, end, redactedLiteral)
+		return m, end == len(query)
+	}
+
 	for k := 0; k < len(sig); k++ {
 		t := toks[sig[k]]
 		if t.isName() && isSecretName(t.name(query)) {
 			m := k + 1
-			if m < len(sig) && toks[sig[m]].isSeparator(query) {
+			separated := m < len(sig) && toks[sig[m]].isSeparator(query)
+			if separated {
 				m++
 			}
-			if m < len(sig) && toks[sig[m]].isLiteral() {
-				first := toks[sig[m]]
-				// A string constant continued over whitespace is one
-				// value to PostgreSQL, so every part goes.
-				for m+1 < len(sig) && toks[sig[m+1]].isLiteral() {
-					m++
+			if m >= len(sig) {
+				continue
+			}
+			v := toks[sig[m]]
+			switch {
+			case v.isLiteral():
+				last, toEnd := redactValueAt(m)
+				if toEnd {
+					k = len(sig)
+					continue
 				}
-				end := toks[sig[m]].end
-				if first.ambiguousEscapes(query) {
-					end = len(query)
-				}
-				emit(first.start, end, redactedLiteral)
-				if end == len(query) {
-					break
-				}
+				k = last
+			case separated && v.kind == tokQuotedIdent:
+				emit(v.start, v.end, `"`+Redacted+`"`)
 				k = m
+			case separated && isSetTarget(query, toks, sig, k):
+				if stop := setValueEnd(query, toks, sig, m); stop > m {
+					emit(v.start, toks[sig[stop-1]].end, redactedLiteral)
+					k = stop - 1
+				}
 			}
 			continue
 		}
 		if !t.isLiteral() {
 			continue
+		}
+		if name, ok := t.constantName(query); ok {
+			// A secret's name given as a constant, as set_config's
+			// first argument, is kept and the value after it goes. A
+			// name that holds no secret is kept as well; any other
+			// constant that mentions a password, even one shaped like
+			// a name, is left to the connection-string rule below.
+			if m := k + 2; m < len(sig) && isSecretName(name) &&
+				toks[sig[k+1]].is(query, tokOther, ",") && toks[sig[m]].isLiteral() {
+				last, toEnd := redactValueAt(m)
+				if toEnd {
+					break
+				}
+				k = last
+				continue
+			}
+			if slices.Contains(nonSecretNames, strings.ToLower(name)) {
+				continue
+			}
 		}
 		repl, toEnd, changed := redactConnString(query, t)
 		if !changed {
@@ -166,12 +237,52 @@ func RedactQuery(query string) string {
 // isSecretName reports whether an identifier names a secret.
 func isSecretName(name string) bool {
 	name = strings.ToLower(name)
+	if slices.Contains(nonSecretNames, name) {
+		return false
+	}
+	if slices.Contains(wholeValueSettings, name) {
+		return true
+	}
 	for _, f := range secretNameFragments {
 		if strings.Contains(name, f) {
 			return true
 		}
 	}
 	return false
+}
+
+// isSetTarget reports whether the name at sig[k] is the last part of the
+// setting a SET command assigns, as in SET myext.api_token = ..., SET
+// LOCAL ... or ALTER ROLE r SET ....
+func isSetTarget(query string, toks []token, sig []int, k int) bool {
+	j := k
+	for j >= 2 && toks[sig[j-1]].is(query, tokOther, ".") && toks[sig[j-2]].isName() {
+		j -= 2
+	}
+	if j >= 1 && (toks[sig[j-1]].is(query, tokIdent, "local") ||
+		toks[sig[j-1]].is(query, tokIdent, "session")) {
+		j--
+	}
+	return j >= 1 && toks[sig[j-1]].is(query, tokIdent, "set")
+}
+
+// setValueEnd returns the index in sig just past the value of a SET
+// command that starts at sig[m], which runs to the next semicolon or the
+// end of the text. It returns m when the value is DEFAULT or a parameter
+// placeholder, which hold no secret.
+func setValueEnd(query string, toks []token, sig []int, m int) int {
+	stop := m
+	for stop < len(sig) && !toks[sig[stop]].is(query, tokOther, ";") {
+		stop++
+	}
+	if stop == m+1 {
+		v := toks[sig[m]]
+		text := query[v.start:v.end]
+		if v.is(query, tokIdent, "default") || len(text) > 1 && text[0] == '$' && isDigit(text[1]) {
+			return m
+		}
+	}
+	return stop
 }
 
 // mentionsConnSecret reports whether a string constant's raw text might
@@ -190,6 +301,9 @@ func redactConnString(query string, t token) (repl string, toEnd, changed bool) 
 	body := query[t.bodyStart:t.bodyEnd]
 	if !mentionsConnSecret(body) {
 		return "", false, false
+	}
+	if !t.terminated && truncatedInURIHost(body) {
+		return redactedLiteral, true, true
 	}
 	switch {
 	case t.kind == tokDollar:
@@ -224,6 +338,29 @@ func redactConnString(query string, t token) (repl string, toEnd, changed bool) 
 	return query[t.start:t.bodyStart] + strings.ReplaceAll(red, "'", "''") + closing, false, true
 }
 
+// truncatedInURIHost reports whether body, the text of an unterminated
+// constant, holds a URI cut off before the end of its user information
+// or host. libpq takes everything before an @ to be user information,
+// so the cut may have removed the @ that would mark user:password; the
+// text after the scheme is safe only once a / shows the host has ended.
+func truncatedInURIHost(body string) bool {
+	// Only ASCII letters are folded, so that byte offsets in lower match
+	// those in body; strings.ToLower can change the length of invalid
+	// UTF-8.
+	lower := []byte(body)
+	for i, c := range lower {
+		if c >= 'A' && c <= 'Z' {
+			lower[i] = c + 'a' - 'A'
+		}
+	}
+	for _, prefix := range []string{"postgresql://", "postgres://"} {
+		if i := strings.Index(string(lower), prefix); i >= 0 {
+			return !strings.ContainsAny(body[i+len(prefix):], "@/")
+		}
+	}
+	return false
+}
+
 type tokenKind int
 
 const (
@@ -253,6 +390,28 @@ type token struct {
 
 func (t token) isLiteral() bool {
 	return t.kind == tokString || t.kind == tokDollar
+}
+
+// is reports whether the token has the given kind and text, ignoring
+// case.
+func (t token) is(query string, kind tokenKind, text string) bool {
+	return t.kind == kind && strings.EqualFold(query[t.start:t.end], text)
+}
+
+// constantName returns the text of a plain string constant that holds
+// nothing but a name, possibly dotted, such as 'myext.password' as the
+// first argument of set_config, and whether the constant is one.
+func (t token) constantName(query string) (string, bool) {
+	if t.kind != tokString || t.start != t.bodyStart-1 || !t.terminated {
+		return "", false
+	}
+	body := query[t.bodyStart:t.bodyEnd]
+	for i := 0; i < len(body); i++ {
+		if !isIdentCont(body[i]) && body[i] != '.' {
+			return "", false
+		}
+	}
+	return body, body != ""
 }
 
 func (t token) isName() bool {

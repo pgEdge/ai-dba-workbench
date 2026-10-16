@@ -19,6 +19,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pgedge/ai-workbench/pkg/pgsettings"
 	"github.com/pgedge/ai-workbench/server/internal/metrics"
 )
 
@@ -658,12 +659,9 @@ var secretNamePatterns = append(slices.Clone(secretColumnFragments),
 var textSecretNamePatterns = append(slices.Clone(secretColumnFragments), "api_?key", "access_key")
 
 // nonCredentialSettings match secretNamePatterns but hold no secret, so
-// pg_settings shows their values.
-var nonCredentialSettings = []string{
-	"password_encryption",
-	"md5_password_warnings",
-	"ssl_passphrase_command_supports_reload",
-}
+// pg_settings shows their values. The list is pkg/pgsettings', which the
+// collector also uses.
+var nonCredentialSettings = pgsettings.NonCredentialSettings()
 
 // isSecretColumnName reports whether a column name looks like it holds
 // a credential or other secret.
@@ -720,15 +718,9 @@ var metricRedactions = map[string]struct {
 // passphrase or an inline secret such as PGPASSWORD=... or
 // AWS_SECRET_ACCESS_KEY=.... Any setting whose name contains a
 // secretNamePatterns entry is masked as well, which covers an extension
-// setting such as myext.password.
-var credentialSettings = []string{
-	"primary_conninfo",
-	"ssl_passphrase_command",
-	"archive_command",
-	"archive_cleanup_command",
-	"restore_command",
-	"recovery_end_command",
-}
+// setting such as myext.password. The list is pkg/pgsettings', from
+// which the collector redacts the same settings before storing them.
+var credentialSettings = pgsettings.CredentialSettings()
 
 // redactedValue replaces a masked value, as PostgreSQL masks a password
 // in pg_stat_wal_receiver.conninfo.

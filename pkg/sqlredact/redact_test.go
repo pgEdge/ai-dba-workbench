@@ -11,6 +11,7 @@
 package sqlredact
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -233,6 +234,151 @@ func TestRedactQuery(t *testing.T) {
 			`SELECT dblink('host=x password=a\', 'SELECT 1')`,
 			"SELECT dblink('********'",
 		},
+		// Archive and recovery commands.
+		{
+			"alter system archive_command",
+			"ALTER SYSTEM SET archive_command = 'AWS_SECRET_ACCESS_KEY=k aws s3 cp %p s3://b/%f'",
+			"ALTER SYSTEM SET archive_command = '********'",
+		},
+		{
+			"restore_command with to",
+			"ALTER SYSTEM SET restore_command TO 'PGPASSWORD=k pg_receivewal'",
+			"ALTER SYSTEM SET restore_command TO '********'",
+		},
+		{
+			"recovery commands are matched ignoring case",
+			"ALTER SYSTEM SET Archive_Cleanup_Command = 'a'; ALTER SYSTEM SET RECOVERY_END_COMMAND = 'b'",
+			"ALTER SYSTEM SET Archive_Cleanup_Command = '********'; ALTER SYSTEM SET RECOVERY_END_COMMAND = '********'",
+		},
+
+		// Names that look like a secret but hold none.
+		{
+			"password_encryption",
+			"SET password_encryption = 'scram-sha-256'",
+			"SET password_encryption = 'scram-sha-256'",
+		},
+		{
+			"password_required",
+			"ALTER USER MAPPING FOR app SERVER s OPTIONS (ADD password_required 'false')",
+			"ALTER USER MAPPING FOR app SERVER s OPTIONS (ADD password_required 'false')",
+		},
+		{
+			"md5_password_warnings in set_config",
+			"SELECT set_config('md5_password_warnings', 'off', false)",
+			"SELECT set_config('md5_password_warnings', 'off', false)",
+		},
+
+		// Names given as string constants.
+		{
+			"set_config of an extension secret",
+			"SELECT set_config('myext.password', 'S3CRET', false)",
+			"SELECT set_config('myext.password', '********', false)",
+		},
+		{
+			"set_config of a recovery command",
+			"SELECT set_config('restore_command', 'PGPASSWORD=k cp', false)",
+			"SELECT set_config('restore_command', '********', false)",
+		},
+		{
+			"set_config value continued to the end",
+			`SELECT set_config('myext.token', 'a\b`,
+			"SELECT set_config('myext.token', '********'",
+		},
+		{
+			"name-shaped constant mentioning a password",
+			"INSERT INTO users VALUES ('bob', 'password123')",
+			"INSERT INTO users VALUES ('bob', '********')",
+		},
+		{
+			"secret name constant not followed by a comma",
+			"SELECT 'myext.token' || 'x'",
+			"SELECT 'myext.token' || 'x'",
+		},
+		{
+			"empty constant before a comma",
+			"SELECT f('', 'password=x')",
+			"SELECT f('', 'password=********')",
+		},
+		{
+			"secret name constant followed by a non-constant",
+			"SELECT set_config('myext.token', $1, false)",
+			"SELECT set_config('myext.token', $1, false)",
+		},
+
+		// Values that are not string constants.
+		{
+			"unquoted set value",
+			"SET myext.api_token = S3CRET",
+			"SET myext.api_token = '********'",
+		},
+		{
+			"unquoted set value before another statement",
+			"SET LOCAL myext.api_token TO abc-123; SELECT 1",
+			"SET LOCAL myext.api_token TO '********'; SELECT 1",
+		},
+		{
+			"unquoted numeric set value in alter role",
+			"ALTER ROLE app SET myext.secret = 12345",
+			"ALTER ROLE app SET myext.secret = '********'",
+		},
+		{
+			"set session value",
+			"SET SESSION myext.password = pw",
+			"SET SESSION myext.password = '********'",
+		},
+		{
+			"set to default",
+			"SET myext.password TO DEFAULT",
+			"SET myext.password TO DEFAULT",
+		},
+		{
+			"set to a placeholder",
+			"SET myext.password = $1",
+			"SET myext.password = $1",
+		},
+		{
+			"unquoted value outside set",
+			"SELECT 1 FROM users WHERE password = other",
+			"SELECT 1 FROM users WHERE password = other",
+		},
+		{
+			"quoted identifier value",
+			`SELECT 1 FROM users WHERE password = "S3CRET"`,
+			`SELECT 1 FROM users WHERE password = "********"`,
+		},
+		{
+			"quoted identifier without a separator",
+			`CREATE TABLE t (password "char")`,
+			`CREATE TABLE t (password "char")`,
+		},
+
+		// Truncated URIs.
+		{
+			"URI truncated inside the password",
+			"SELECT 'postgresql://u:S3CRET_TRUNC",
+			"SELECT '********'",
+		},
+		{
+			"URI truncated inside the user name",
+			"SELECT dblink_connect($$postgres://rep",
+			"SELECT dblink_connect('********'",
+		},
+		{
+			"URI truncated after invalid UTF-8",
+			"SELECT '\x86POSTGRES://u:pw",
+			"SELECT '********'",
+		},
+		{
+			"URI truncated after the host",
+			"SELECT 'postgresql://rep@192.0.2.1/d",
+			"SELECT 'postgresql://rep@192.0.2.1/d",
+		},
+		{
+			"URI truncated after the path",
+			"SELECT 'postgresql://192.0.2.1/db?sslmode=re",
+			"SELECT 'postgresql://192.0.2.1/db?sslmode=re",
+		},
+
 		{
 			"text that mentions a password is replaced",
 			"SELECT 'reset your password'",
@@ -316,6 +462,10 @@ func TestRedactQuery_NeverLeaksAPassword(t *testing.T) {
 		"CREATE SUBSCRIPTION s CONNECTION 'password=" + secret + "' PUBLICATION p",
 		"CREATE SUBSCRIPTION s CONNECTION 'postgres://u:" + secret + "@h/d' PUBLICATION p",
 		"CREATE ROLE r PASSWORD '" + secret[:4],
+		"SELECT 'postgresql://u:" + secret[:6],
+		"ALTER SYSTEM SET restore_command = 'PGPASSWORD=" + secret + " cp'",
+		"SELECT set_config('myext.password', '" + secret + "', false)",
+		"SET myext.api_token = " + secret,
 	} {
 		if got := RedactQuery(q); strings.Contains(got, secret[:4]) {
 			t.Errorf("RedactQuery(%q) = %q leaks the secret", q, got)
@@ -346,9 +496,12 @@ func TestCandidatePatterns(t *testing.T) {
 	}
 	// Every secret name must be caught by the cheap check, or RedactQuery
 	// would skip a statement it should redact.
-	for _, f := range secretNameFragments {
+	for _, f := range append(slices.Clone(secretNameFragments), wholeValueSettings...) {
 		if !MightContainSecret(f) {
-			t.Errorf("secret name fragment %q not covered by the trigger fragments", f)
+			t.Errorf("secret name %q not covered by the trigger fragments", f)
 		}
+	}
+	if len(wholeValueSettings) == 0 {
+		t.Error("no whole-value settings were taken from pkg/pgsettings")
 	}
 }

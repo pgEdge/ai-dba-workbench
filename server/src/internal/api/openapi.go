@@ -2054,7 +2054,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 			},
 			Post: &OpenAPIOperation{
 				Summary:     "Create a connection",
-				Description: "Creates a new database connection. Requires manage_connections permission.",
+				Description: "Creates a new database connection. Requires manage_connections permission; an API token also needs a connection scope covering every connection at read_write. A connection a token creates is owned by the token's owner.",
 				OperationID: "createConnection",
 				Tags:        []string{"Connections"},
 				Security:    bearerAuth,
@@ -2063,7 +2063,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"201": jsonResponse("Connection", "Connection created"),
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission, or the API token's connection scope does not cover every connection"),
 					"503": jsonResponse("ErrorResponse", "Datastore not configured"),
 				},
 			},

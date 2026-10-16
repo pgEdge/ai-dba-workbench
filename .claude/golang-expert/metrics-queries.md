@@ -29,7 +29,7 @@ through a long retention history could outlast any request budget.
 
 1. `Datastore.DeleteConnection` (server) marks the row: in one
    transaction it sets `connections.deleted_at` (collector migration
-   24), turns `is_monitored` and `enabled` off, clears `cluster_id`,
+   29), turns `is_monitored` and `enabled` off, clears `cluster_id`,
    and deletes the rows of every non-`metrics` table that cascades
    from the connection (found in `pg_constraint`, so a new dependent
    table needs no code change). A row already marked counts as
@@ -56,6 +56,26 @@ each registry entry filtering for itself. A marked connection's metric rows stil
 reaches them, which is one more reason to keep the orphan joins below
 and to join on `c.deleted_at IS NULL` where the connection must be
 live.
+
+Rows keyed by `connection_id` that a collector or alerter write lands
+after the mark (alerts, timeline events, relationships) are not
+cascaded until the purge removes the row, so readers of those tables
+filter by connection too: `liveAlertConnectionCondition` in
+`alert_queries.go` (keeps system alerts with no connection) for
+`GetAlerts` and the alert counts, `timelineLiveConnectionCondition` in
+`timeline_queries.go` for the timeline total, and `deleted_at IS NULL`
+beside `cluster_id` in the cluster and group connection-ID lookups of
+`estate_queries.go`, as defence in depth against a racing update that
+re-sets `cluster_id`. Each reader is pinned by a marked-connection test:
+`topology_estate_collector_schema_integration_test.go` (server
+database), `marked_connection_readers_integration_test.go` (server
+tools and alerter database), and
+`TestMonitoredConnectionReaders_SkipMarkedConnection` (collector).
+`TestMetricRegistryJoinsSkipMarkedConnections` (alerter) fails on any
+registry `JOIN connections` without `AND c.deleted_at IS NULL` and on a
+historical query with no such join, so a new metric must carry it.
+`UpdateConnectionFull` returns `ErrConnectionNotFound` for a marked
+connection, which the handler answers with 404.
 
 The mark step still runs under `database.ConnectionDeleteTimeout`,
 both as the handler deadline (`connectionDeleteContext` in

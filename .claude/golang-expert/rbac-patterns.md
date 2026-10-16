@@ -298,6 +298,25 @@ get past the check use `asSuperuser(Tool(..., testRBACChecker(t), ...))`
 from `rbac_helpers_test.go`; nil-checker denial tests are in
 `nil_rbac_test.go`.
 
+### A marked connection is refused even to a superuser
+
+`CanAccessConnection`'s superuser bypass (`internal/auth/access.go`)
+still calls the checker's connection sharing lookup, which finds
+neither a missing connection nor one marked for deletion, so a
+superuser gets the same 403 as anyone else between a delete and its
+purge (issue #669). A checker built without a sharing lookup cannot
+make that test, so a handler that reads a connection's data must build
+its checker with one: the metric, latest-snapshot and
+performance-summary handlers go through `metricAccessChecker`, which
+uses the handler's `sharingLookupFn` when a test sets one and the
+datastore's lookup otherwise. Database-free handler tests set
+`sharingLookupFn: liveConnectionLookup` (`metrics_handlers_test.go`).
+Because the lookup refuses a missing connection first, a connection
+handler's own not-found branch after the access check is reachable only
+when the purge races the check; `connCovFixture.racingPurge`
+(`connection_handlers_rbac_coverage_test.go`) simulates that by
+swapping in a checker without the lookup.
+
 The overview stream in `internal/overview/handler.go` uses the empty
 scope key for the estate-wide feed, so a restricted caller must always
 get a `connections:` key, even when their visible set is empty; an
@@ -1006,6 +1025,12 @@ for a known scope and a positive id, and never the free-text item.
 `IPExtractor.ExtractIP` returns only a parseable address (forwarded
 entries go through `parseForwardedIP`, which strips a port), falling
 back to the direct peer address.
+`createConnection` calls `requireAllConnectionsInTokenScope` after the
+`manage_connections` gate, as cluster and cluster-group creation do,
+so a token scoped to part of the estate cannot add a shared connection;
+the refusal is recorded as `connection.create`
+(`TestCreateConnectionNeedsWholeTokenScope` in
+`connection_handlers_caller_test.go`).
 `updateConnection` and `deleteConnection` admit API tokens since
 issue #668, so their connection token-scope refusals are reachable and
 audited, as is the cluster move;

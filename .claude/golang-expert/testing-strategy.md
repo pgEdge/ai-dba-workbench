@@ -106,14 +106,17 @@ are editing.
   example `clusterGroupsTestSchema` in
   `server/src/internal/api/cluster_handlers_test.go`, rather than the
   full collector schema. `internal/metrics` tests build a fixture probe
-  table under the `metrics` schema and drop it on cleanup. The one
-  exception is `internal/tools/datastore_catalog_schema_integration_test.go`
-  (#645), which imports the collector's `SchemaManager` (the server
+  table under the `metrics` schema and drop it on cleanup. The
+  exceptions are `internal/database`'s `newCollectorSchemaDatastore`
+  (`collector_schema_helpers_test.go`, scratch database suffix
+  `_db_schema`), used by the topology, estate and marked-connection
+  tests that need every real table, and
+  `internal/tools/datastore_catalog_schema_integration_test.go`
+  (#645). Both import the collector's `SchemaManager` (the server
   `go.mod` requires the collector module through a `replace`, and
-  `server/Dockerfile` copies `collector/go.mod` for it) and migrates a
-  scratch database named after the test database plus
-  `_catalog_schema` (for example `ai_workbench_pr652_catalog_schema`),
-  so concurrent runs against per-session test databases do not
+  `server/Dockerfile` copies `collector/go.mod` for it) and migrate a
+  scratch database named after the test database plus their suffix
+  (for example `ai_workbench_pr652_catalog_schema`), so concurrent runs against per-session test databases do not
   collide. The server builds the name and quotes it with
   `format('%I')`, so the SQL text sent from Go stays constant.
 - Collector packages create a fresh database per run named

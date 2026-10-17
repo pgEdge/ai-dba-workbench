@@ -646,7 +646,7 @@ func (d *Datastore) GetOverrideContext(ctx context.Context, connectionID int, ru
 		FROM connections c
 		LEFT JOIN clusters cl ON c.cluster_id = cl.id
 		LEFT JOIN cluster_groups cg ON cl.group_id = cg.id
-		WHERE c.id = $1`, connectionID).Scan(
+		WHERE c.id = $1 AND c.deleted_at IS NULL`, connectionID).Scan(
 		&hierarchy.ConnectionID, &hierarchy.ClusterID, &hierarchy.GroupID,
 		&hierarchy.ServerName, &hierarchy.ClusterName, &hierarchy.GroupName,
 	)

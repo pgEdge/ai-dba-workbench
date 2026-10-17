@@ -41,6 +41,7 @@ const (
 	mistypedConnectionsTableSQL = `
         DROP TABLE connections CASCADE;
         CREATE TABLE connections (
+            deleted_at TIMESTAMPTZ,
             id TEXT PRIMARY KEY,
             name VARCHAR(255) NOT NULL,
             is_monitored BOOLEAN NOT NULL DEFAULT TRUE

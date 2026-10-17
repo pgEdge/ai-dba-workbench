@@ -54,6 +54,7 @@ CREATE TABLE clusters (
 );
 
 CREATE TABLE connections (
+    deleted_at TIMESTAMPTZ,
     id SERIAL PRIMARY KEY,
     owner_username VARCHAR(255),
     owner_token VARCHAR(255),

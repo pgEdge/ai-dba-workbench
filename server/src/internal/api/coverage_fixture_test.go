@@ -57,6 +57,7 @@ CREATE TABLE clusters (
 );
 
 CREATE TABLE connections (
+    deleted_at TIMESTAMPTZ,
     id SERIAL PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     description TEXT DEFAULT '',

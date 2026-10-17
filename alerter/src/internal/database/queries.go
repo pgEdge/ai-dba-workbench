@@ -30,7 +30,7 @@ func (d *Datastore) GetMonitoredConnectionErrors(ctx context.Context) ([]Monitor
 	rows, err := d.pool.Query(ctx, `
 		SELECT id, name, connection_error
 		FROM connections
-		WHERE is_monitored = true
+		WHERE is_monitored = true AND deleted_at IS NULL
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get monitored connection errors: %w", err)
@@ -469,7 +469,7 @@ func (d *Datastore) CreateBlackout(ctx context.Context, blackout *Blackout) erro
 // GetActiveConnections retrieves all active monitored connections
 func (d *Datastore) GetActiveConnections(ctx context.Context) ([]int, error) {
 	rows, err := d.pool.Query(ctx, `
-		SELECT id FROM connections WHERE enabled = true ORDER BY id
+		SELECT id FROM connections WHERE enabled = true AND deleted_at IS NULL ORDER BY id
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get active connections: %w", err)
@@ -497,14 +497,14 @@ func (d *Datastore) GetActiveConnections(ctx context.Context) ([]int, error) {
 //
 // The alert cleaner needs the whole set once per pass rather than a
 // lookup per alert, and it needs the name so that the alert it closes can
-// say which server stopped being monitored. A connection that has been
-// deleted outright is absent here, as it is from the connections table;
-// its alerts go with it through the foreign key.
+// say which server stopped being monitored. A deleted connection is
+// absent here: the server deletes its alerts when it marks the row
+// deleted (deleted_at), and its purge then removes the row (issue #669).
 func (d *Datastore) GetUnmonitoredConnections(ctx context.Context) (map[int]string, error) {
 	rows, err := d.pool.Query(ctx, `
 		SELECT id, name
 		FROM connections
-		WHERE is_monitored = FALSE
+		WHERE is_monitored = FALSE AND deleted_at IS NULL
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get unmonitored connections: %w", err)
@@ -600,7 +600,7 @@ func (d *Datastore) GetProbeStalenessContext(ctx context.Context, connectionID i
 		SELECT c.name, pc.collection_interval_seconds
 		FROM connections c
 		JOIN probe_configs pc ON pc.name = $2 AND pc.scope = 'global'
-		WHERE c.id = $1
+		WHERE c.id = $1 AND c.deleted_at IS NULL
 	`, connectionID, probeName).Scan(&connectionName, &collectionInterval)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

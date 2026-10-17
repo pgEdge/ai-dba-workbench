@@ -114,7 +114,8 @@ func TestHandleMetricsQuery_LatestRowsMode_ScopesToMountPoint(t *testing.T) {
 	pool, cleanup := setupMountFixture(t)
 	defer cleanup()
 
-	handler := &MetricsHandler{datastore: database.NewTestDatastore(pool), authStore: newTestAuthStore(t)}
+	handler := &MetricsHandler{datastore: database.NewTestDatastore(pool), authStore: newTestAuthStore(t),
+		sharingLookupFn: liveConnectionLookup}
 
 	req := withSuperuser(httptest.NewRequest(http.MethodGet,
 		"/api/v1/metrics/query?connection_id=1&probe_name="+mountProbeTable+
@@ -156,7 +157,8 @@ func TestHandleMetricsQuery_LatestRowsMode_UnfilteredReturnsEveryMount(t *testin
 	pool, cleanup := setupMountFixture(t)
 	defer cleanup()
 
-	handler := &MetricsHandler{datastore: database.NewTestDatastore(pool), authStore: newTestAuthStore(t)}
+	handler := &MetricsHandler{datastore: database.NewTestDatastore(pool), authStore: newTestAuthStore(t),
+		sharingLookupFn: liveConnectionLookup}
 
 	req := withSuperuser(httptest.NewRequest(http.MethodGet,
 		"/api/v1/metrics/query?connection_id=1&probe_name="+mountProbeTable+
@@ -186,7 +188,8 @@ func TestHandleMetricsQuery_LatestRowsMode_UnknownProbe(t *testing.T) {
 	pool, cleanup := setupMountFixture(t)
 	defer cleanup()
 
-	handler := &MetricsHandler{datastore: database.NewTestDatastore(pool), authStore: newTestAuthStore(t)}
+	handler := &MetricsHandler{datastore: database.NewTestDatastore(pool), authStore: newTestAuthStore(t),
+		sharingLookupFn: liveConnectionLookup}
 
 	req := withSuperuser(httptest.NewRequest(http.MethodGet,
 		"/api/v1/metrics/query?connection_id=1"+

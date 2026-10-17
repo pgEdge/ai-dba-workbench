@@ -384,6 +384,7 @@ func TestGetSeverityColor(t *testing.T) {
 		expected string
 	}{
 		{"critical", SeverityColorCritical},
+		{"high", SeverityColorHigh},
 		{"warning", SeverityColorWarning},
 		{"info", SeverityColorInfo},
 		{"unknown", SeverityColorInfo},
@@ -406,6 +407,7 @@ func TestGetSeverityEmoji(t *testing.T) {
 		expected string
 	}{
 		{"critical", SeverityEmojiCritical},
+		{"high", SeverityEmojiHigh},
 		{"warning", SeverityEmojiWarning},
 		{"info", SeverityEmojiInfo},
 		{"unknown", SeverityEmojiInfo},

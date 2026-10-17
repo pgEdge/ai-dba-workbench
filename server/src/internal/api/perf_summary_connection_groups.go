@@ -20,7 +20,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/pgedge/ai-workbench/pkg/rollback"
-	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/logging"
 	"github.com/pgedge/ai-workbench/server/internal/metrics"
 )
@@ -248,7 +247,7 @@ func (h *PerfSummaryHandler) handleConnectionGroups(
 	}
 	connID := connectionIDs[0]
 
-	rbacChecker := auth.NewRBACCheckerWithSharing(h.authStore, h.datastore.GetConnectionSharingInfo)
+	rbacChecker := h.accessChecker()
 	canAccess, _ := rbacChecker.CanAccessConnection(r.Context(), connID)
 	if !canAccess {
 		RespondError(w, http.StatusForbidden,

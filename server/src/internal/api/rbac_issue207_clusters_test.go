@@ -182,7 +182,7 @@ func TestClusterHandler_CreateClusterGroup_Issue207_SuperuserAllowed(t *testing.
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster-groups",
 		bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = withBearer(req, token)
+	req = withAuth(t, handler.authStore, req, token)
 	req = withSuperuser(req)
 	rec := httptest.NewRecorder()
 
@@ -473,7 +473,7 @@ func TestClusterHandler_DeleteClusterGroup_Issue207_Denied(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodDelete,
 		"/api/v1/cluster-groups/"+strconv.Itoa(created.ID), nil)
-	req = withBearer(req, token)
+	req = withAuth(t, handler.authStore, req, token)
 	req = withUser(req, userID)
 	rec := httptest.NewRecorder()
 
@@ -543,7 +543,7 @@ func TestClusterHandler_DeleteClusterGroup_Issue207_OwnerAllowed(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodDelete,
 		"/api/v1/cluster-groups/"+strconv.Itoa(created.ID), nil)
-	req = withBearer(req, token)
+	req = withAuth(t, handler.authStore, req, token)
 	req = withUser(req, userID)
 	// VisibleConnectionIDs reads the username from the request context to
 	// apply the owner-visible rule for unshared connections. Production
@@ -610,7 +610,7 @@ func TestClusterHandler_DeleteClusterGroup_Issue207_AdminAllowed(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodDelete,
 		"/api/v1/cluster-groups/"+strconv.Itoa(created.ID), nil)
-	req = withBearer(req, token)
+	req = withAuth(t, handler.authStore, req, token)
 	req = withUser(req, userID)
 	rec := httptest.NewRecorder()
 

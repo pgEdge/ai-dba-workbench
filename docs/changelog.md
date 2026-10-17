@@ -1188,6 +1188,39 @@ project adheres to
 
 ### Fixed
 
+- Accept API tokens when creating, updating or deleting a
+  connection or a cluster group (#668). These endpoints looked
+  the caller up as a browser session, so a token the server had
+  already authenticated was answered with `401 Unauthorized`; a
+  token now acts as its owner, so a connection or cluster group
+  it creates is owned by the token's owner. The token's
+  administrative and connection scopes still apply, and creating
+  a connection, like any cluster group write, needs a connection
+  scope covering every connection at `read_write`.
+
+- Delete a connection with a long metrics history without timing
+  out (#669). The delete removed the connection's metrics in the
+  request through `ON DELETE CASCADE`, which could take longer
+  than the request deadline, so the server answered `500` and
+  the connection stayed in place and monitored. The server now
+  marks the connection deleted and answers `204` straight away;
+  from then on the connection is hidden from every listing, the
+  API and the MCP tools, even for a superuser, and the collector
+  and alerter stop monitoring and alerting on it. The server then
+  removes its metrics in the background, in bounded batches, and
+  finally the connection row, retrying a failed batch after 15
+  seconds (backing off to five minutes if it keeps failing) and
+  resuming after a restart. Collector schema migration 29 adds
+  the `deleted_at` column the mark uses.
+
+- Answer `404 Not Found` when updating or deleting a connection
+  the caller cannot see, exactly as for a missing one, so the
+  answer no longer reveals whether the connection exists; a
+  caller who can see the connection but may not change it still
+  gets the audited `403 Forbidden` (part of #677). An update
+  whose connection is deleted whilst the request is in flight
+  also answers `404` rather than `500`.
+
 - Fix Ask Ellie tool calls failing with the OpenAI provider
   (#686). The web client returns tool results in a user
   message, which the OpenAI provider dropped, so OpenAI

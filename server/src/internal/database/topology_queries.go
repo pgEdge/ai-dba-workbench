@@ -388,7 +388,7 @@ func (d *Datastore) populateTopologyRelationships(ctx context.Context, groups []
                r.target_connection_id, tc.name AS target_name,
                r.relationship_type, r.is_auto_detected
         FROM cluster_node_relationships r
-        JOIN connections tc ON tc.id = r.target_connection_id
+        JOIN connections tc ON tc.id = r.target_connection_id AND tc.deleted_at IS NULL
         ORDER BY r.cluster_id, r.source_connection_id
     `)
 	if err != nil {

@@ -632,6 +632,11 @@ func serverConditions(q *datastoreQuery, src datastoreSource, req datastoreReque
 	if scope != "" {
 		inner = append(inner, scope)
 	}
+	if src.LiveColumn != "" {
+		inner = append(inner, qualified(datastoreTableAlias, src.LiveColumn)+" IS NULL")
+	} else if cond := liveConnectionCondition(src); cond != "" {
+		inner = append(inner, cond)
+	}
 
 	window, err := resolveDatastoreWindow(src, req, now)
 	if err != nil {
@@ -649,6 +654,24 @@ func serverConditions(q *datastoreQuery, src datastoreSource, req datastoreReque
 		inner = append(inner, timeCol+" <= "+q.bind(*window.end))
 	}
 	return inner, window, nil
+}
+
+// liveConnectionCondition returns the predicate that keeps a
+// connection-scoped source to rows whose connection is live, or "" for
+// a source with no connection column. The visible set already leaves
+// out a connection marked deleted, but a caller who may read every
+// connection is not scoped by it at all, and a connection marked after
+// the set was read would otherwise slip through; this holds for every
+// caller (issue #669). It also hides rows a metrics table without a
+// foreign key still holds for a connection already purged. It binds
+// nothing, so it leaves the parameter numbering alone.
+func liveConnectionCondition(src datastoreSource) string {
+	if src.Scope != scopeConnection || src.ConnectionColumn == "" {
+		return ""
+	}
+	return "EXISTS (SELECT 1 FROM public.connections lc WHERE lc.id = " +
+		qualified(datastoreTableAlias, src.ConnectionColumn) +
+		" AND lc.deleted_at IS NULL)"
 }
 
 // filterConditions renders the caller's filters, binding their values

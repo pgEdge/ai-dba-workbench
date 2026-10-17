@@ -151,7 +151,8 @@ func (d *Datastore) GetAlerts(ctx context.Context, filter AlertListFilter) (*Ale
 		connConditions = append(connConditions, fmt.Sprintf("a.connection_id IN (%s)", strings.Join(placeholders, ", ")))
 	}
 
-	conditions = append(conditions, alertConnectionCondition(connConditions, filter.IncludeSystem, filter.SystemOnly))
+	conditions = append(conditions, alertConnectionCondition(connConditions, filter.IncludeSystem, filter.SystemOnly),
+		liveAlertConnectionCondition)
 
 	if filter.Status != nil {
 		conditions = append(conditions, fmt.Sprintf("a.status = $%d", argNum))
@@ -231,7 +232,7 @@ func (d *Datastore) GetAlerts(ctx context.Context, filter AlertListFilter) (*Ale
 		       ack.acknowledged_at, ack.acknowledged_by, ack.message, ack.false_positive,
 		       %s, a.ai_analysis_metric_value
 		FROM alerts a
-		LEFT JOIN connections c ON a.connection_id = c.id
+		LEFT JOIN connections c ON a.connection_id = c.id AND c.deleted_at IS NULL
 		LEFT JOIN alert_rules r ON a.rule_id = r.id
 		LEFT JOIN LATERAL (
 			SELECT acknowledged_at, acknowledged_by, message, false_positive
@@ -310,6 +311,16 @@ func alertConnectionCondition(connConditions []string, includeSystem, systemOnly
 	return joined
 }
 
+// liveAlertConnectionCondition leaves out an alert whose connection is
+// marked for deletion. DeleteConnection deletes a connection's alerts
+// when it marks it, but an alerter evaluation already in flight can
+// still insert one afterwards; the purge removes it later. NOT EXISTS
+// rather than a join keeps system alerts (NULL connection_id) and alerts
+// whose connection row has gone. Issue #668.
+const liveAlertConnectionCondition = `NOT EXISTS (
+			SELECT 1 FROM connections dc
+			WHERE dc.id = a.connection_id AND dc.deleted_at IS NOT NULL)`
+
 // alertCountsSQL counts the active alerts per connection. $1 is the
 // caller's connection allow-list, or NULL for every connection; $2 adds
 // the system alerts, which have a NULL connection_id and so come back as
@@ -321,6 +332,9 @@ const alertCountsSQL = `
 		  AND ((connection_id IS NOT NULL
 		        AND ($1::int[] IS NULL OR connection_id = ANY($1)))
 		       OR ($2 AND alert_type = 'system'))
+		  AND NOT EXISTS (
+		        SELECT 1 FROM connections dc
+		        WHERE dc.id = alerts.connection_id AND dc.deleted_at IS NOT NULL)
 		GROUP BY connection_id
 	`
 

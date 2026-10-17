@@ -676,13 +676,11 @@ func assertDenialRecorded(t *testing.T, store *auth.AuthStore, action, reason st
 
 // TestConnectionScopeRefusalIsAudited checks that the connection
 // handler's token-scope refusals on update and delete are written to
-// the audit log through the RBAC handler's denial recorder. Both
-// handlers accept only a session bearer today (getUserInfoCompat
-// answers 401 to an API token), so no real token reaches these gates;
-// the test pairs a session bearer with an incomplete token context to
-// exercise the defensive check that stands ready should that change.
-// TestConnectionClusterMoveScopeRefusalIsAudited covers the refusal a
-// real token does reach.
+// the audit log through the RBAC handler's denial recorder. A real API
+// token always carries its id, so the test marks an authenticated
+// session as a token that has lost its id, which drives the fail-closed
+// branch; TestConnectionMutationHonoursTokenConnectionScope covers the
+// refusal a real token reaches.
 func TestConnectionScopeRefusalIsAudited(t *testing.T) {
 	rbac, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
@@ -703,7 +701,7 @@ func TestConnectionScopeRefusalIsAudited(t *testing.T) {
 		{http.MethodPut, "connection.update", h.updateConnection},
 		{http.MethodDelete, "connection.delete", h.deleteConnection},
 	} {
-		req := withBearer(httptest.NewRequest(tc.method, "/api/v1/connections/9", nil), session)
+		req := withAuth(t, store, httptest.NewRequest(tc.method, "/api/v1/connections/9", nil), session)
 		req = withTokenMissingID(req)
 		rec := httptest.NewRecorder()
 		tc.serve(rec, req, 9)

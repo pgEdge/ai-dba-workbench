@@ -128,9 +128,17 @@ moved.
   cluster's definition or relationships, need every connection in the
   token's scope; adding a server to or removing one from a cluster, or
   moving it between clusters, needs that connection at `read_write`.
-  The cluster-group create, update and delete routes accept session
-  tokens only (`getUserInfoCompat` answers 401 to an API token), and
-  carry the same all-connections gate in case that ever changes.
+  The cluster-group create, update and delete routes, and connection
+  create, update and delete, accept API tokens acting as their owner
+  (since #668 `getUserInfoCompat` reads the identity the auth wrapper
+  put in the context, never the bearer directly); the cluster-group
+  routes and connection create need every connection in the token's
+  scope.
+- A connection marked for deletion (`connections.deleted_at`, #669) is
+  as inaccessible as a missing one, to a superuser too
+  (`CanAccessConnection` asks the sharing lookup even on the superuser
+  path), and every `query_datastore` source drops its rows for every
+  caller until the background purge removes them.
 - Grants made with an API token are bounded by the token's effective
   access, its owner's privileges narrowed by its scope, per connection
   and level, MCP item and admin permission (ruling of 06-10-2026;

@@ -53,6 +53,8 @@ CREATE TABLE clusters (
     dismissed BOOLEAN NOT NULL DEFAULT FALSE
 );
 CREATE TABLE connections (
+    deleted_at TIMESTAMPTZ,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
     id SERIAL PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     description TEXT,
@@ -464,7 +466,7 @@ func TestConnectionCoverage_UpdateConnection(t *testing.T) {
 	}{
 		{"missing authentication", nil, path, ConnectionFullUpdateRequest{}, http.StatusUnauthorized, ""},
 		{"not found", &h.admin, "/api/v1/connections/8999", ConnectionFullUpdateRequest{}, http.StatusNotFound, "Connection not found"},
-		{"non-owner forbidden", &h.other, path, ConnectionFullUpdateRequest{}, http.StatusForbidden, ""},
+		{"unseen connection is not found", &h.other, path, ConnectionFullUpdateRequest{}, http.StatusNotFound, "Connection not found"},
 		{"invalid JSON", &h.owner, path, "{not json", http.StatusBadRequest, "Invalid request body"},
 		{"invalid name", &h.owner, path, ConnectionFullUpdateRequest{Name: str("")}, http.StatusBadRequest, ""},
 		{"owner cannot share", &h.owner, path, ConnectionFullUpdateRequest{IsShared: &yes}, http.StatusForbidden,
@@ -500,6 +502,29 @@ func TestConnectionCoverage_UpdateConnection(t *testing.T) {
 	if name != "owner-renamed" || port != 5433 || !shared {
 		t.Fatalf("row not updated: name=%q port=%d shared=%v", name, port, shared)
 	}
+}
+
+// TestConnectionCoverage_UpdateRacesDelete covers an update whose
+// connection is deleted after the handler's lookup: a BEFORE UPDATE
+// trigger that skips the row stands in for the concurrent mark, so the
+// UPDATE returns no row and the handler answers 404, not 500.
+func TestConnectionCoverage_UpdateRacesDelete(t *testing.T) {
+	h := newConnCoverageHarness(t)
+	h.exec(`CREATE FUNCTION cov_skip_update() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN RETURN NULL; END $$`)
+	h.exec(`CREATE TRIGGER cov_skip_update BEFORE UPDATE ON connections
+        FOR EACH ROW EXECUTE FUNCTION cov_skip_update()`)
+	t.Cleanup(func() {
+		ctx := context.Background()
+		_, _ = h.pool.Exec(ctx, `DROP TRIGGER IF EXISTS cov_skip_update ON connections`) //nolint:errcheck // best-effort cleanup
+		_, _ = h.pool.Exec(ctx, `DROP FUNCTION IF EXISTS cov_skip_update()`)             //nolint:errcheck // best-effort cleanup
+	})
+
+	name := "race-renamed"
+	rec := h.serve(h.request(http.MethodPut, "/api/v1/connections/8100",
+		ConnectionFullUpdateRequest{Name: &name}, &h.owner))
+	assertStatus(t, rec, http.StatusNotFound)
+	assertErrorMessage(t, rec, "Connection not found")
 }
 
 func TestConnectionCoverage_ListDatabases(t *testing.T) {

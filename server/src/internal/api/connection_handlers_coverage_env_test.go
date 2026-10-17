@@ -50,6 +50,8 @@ CREATE TABLE clusters (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE connections (
+    deleted_at TIMESTAMPTZ,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
     id SERIAL PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     description TEXT DEFAULT '',
@@ -84,14 +86,14 @@ CREATE TABLE cluster_node_relationships (
 );
 CREATE FUNCTION conn_handler_cov_block_delete() RETURNS trigger AS $$
 BEGIN
-    IF OLD.name = 'undeletable' THEN
+    IF OLD.name = 'undeletable' AND NEW.deleted_at IS NOT NULL THEN
         RAISE EXCEPTION 'delete blocked for test';
     END IF;
-    RETURN OLD;
+    RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 CREATE TRIGGER conn_handler_cov_block_delete
-    BEFORE DELETE ON connections
+    BEFORE UPDATE ON connections
     FOR EACH ROW EXECUTE FUNCTION conn_handler_cov_block_delete();
 `
 
@@ -287,7 +289,7 @@ func TestConnectionHandlerCoverage_GetConnection(t *testing.T) {
 	expectConnHandlerStatus(t, e.serve(e.asOwner(http.MethodGet, "/api/v1/connections/32", nil)),
 		http.StatusForbidden)
 	expectConnHandlerStatus(t, e.serve(e.asSuperuser(http.MethodGet, "/api/v1/connections/999", nil)),
-		http.StatusNotFound)
+		http.StatusForbidden)
 }
 
 func TestConnectionHandlerCoverage_UpdateConnection(t *testing.T) {
@@ -313,8 +315,8 @@ func TestConnectionHandlerCoverage_UpdateConnection(t *testing.T) {
 		{"datastore rejects over-long value", e.asAdmin(http.MethodPut, path,
 			map[string]any{"database_name": strings.Repeat("d", 300)}),
 			http.StatusInternalServerError},
-		{"non-owner denied", e.asOwner(http.MethodPut, "/api/v1/connections/32",
-			map[string]any{"name": "x"}), http.StatusForbidden},
+		{"unseen connection is not found", e.asOwner(http.MethodPut, "/api/v1/connections/32",
+			map[string]any{"name": "x"}), http.StatusNotFound},
 		{"missing connection", e.asAdmin(http.MethodPut, "/api/v1/connections/999",
 			map[string]any{"name": "x"}), http.StatusNotFound},
 	}
@@ -340,8 +342,10 @@ func TestConnectionHandlerCoverage_DeleteConnection(t *testing.T) {
 	unauth := httptest.NewRequest(http.MethodDelete, "/api/v1/connections/31", nil)
 	expectConnHandlerStatus(t, e.serve(unauth), http.StatusUnauthorized)
 
+	// The owner cannot see another user's private connection, so it is
+	// not found, exactly as a missing one is (issue #677).
 	expectConnHandlerStatus(t, e.serve(e.asOwner(http.MethodDelete, "/api/v1/connections/32", nil)),
-		http.StatusForbidden)
+		http.StatusNotFound)
 	expectConnHandlerStatus(t, e.serve(e.asAdmin(http.MethodDelete, "/api/v1/connections/999", nil)),
 		http.StatusNotFound)
 	expectConnHandlerStatus(t, e.serve(e.asOwner(http.MethodDelete, "/api/v1/connections/33", nil)),
@@ -349,13 +353,14 @@ func TestConnectionHandlerCoverage_DeleteConnection(t *testing.T) {
 	expectConnHandlerStatus(t, e.serve(e.asOwner(http.MethodDelete, "/api/v1/connections/31", nil)),
 		http.StatusNoContent)
 
-	var n int
+	// The row stays, marked, until the background purge removes it.
+	var marked bool
 	if err := e.pool.QueryRow(context.Background(),
-		"SELECT count(*) FROM connections WHERE id = 31").Scan(&n); err != nil {
-		t.Fatalf("Count: %v", err)
+		"SELECT deleted_at IS NOT NULL FROM connections WHERE id = 31").Scan(&marked); err != nil {
+		t.Fatalf("Read back: %v", err)
 	}
-	if n != 0 {
-		t.Errorf("connection 31 should have been deleted")
+	if !marked {
+		t.Errorf("connection 31 should have been marked deleted")
 	}
 }
 
@@ -412,7 +417,7 @@ func TestConnectionHandlerCoverage_ConnectionContext(t *testing.T) {
 	expectConnHandlerStatus(t, e.serve(e.asOwner(http.MethodGet, "/api/v1/connections/32/context", nil)),
 		http.StatusForbidden)
 	expectConnHandlerStatus(t, e.serve(e.asSuperuser(http.MethodGet, "/api/v1/connections/999/context", nil)),
-		http.StatusNotFound)
+		http.StatusForbidden)
 	expectConnHandlerStatus(t, e.serve(e.asOwner(http.MethodPost, "/api/v1/connections/31/context", nil)),
 		http.StatusMethodNotAllowed)
 }
@@ -443,7 +448,7 @@ func TestConnectionHandlerCoverage_CurrentConnection(t *testing.T) {
 	expectConnHandlerStatus(t, e.serve(e.asOwner(http.MethodPost, path,
 		CurrentConnectionRequest{ConnectionID: foreignConnID})), http.StatusForbidden)
 	expectConnHandlerStatus(t, e.serve(e.asSuperuser(http.MethodPost, path,
-		CurrentConnectionRequest{ConnectionID: missingConnID})), http.StatusBadRequest)
+		CurrentConnectionRequest{ConnectionID: missingConnID})), http.StatusForbidden)
 
 	expectConnHandlerStatus(t, e.serve(e.asOwner(http.MethodDelete, path, nil)), http.StatusNoContent)
 	expectConnHandlerStatus(t, e.serve(e.asOwner(http.MethodGet, path, nil)), http.StatusNotFound)
@@ -456,13 +461,14 @@ func TestConnectionHandlerCoverage_CurrentConnection(t *testing.T) {
 	}
 	expectConnHandlerStatus(t, e.serve(e.asOwner(http.MethodGet, path, nil)), http.StatusForbidden)
 
-	// A selection whose connection has since disappeared is a 500.
+	// A selection whose connection has since disappeared is refused,
+	// even to a superuser, as a missing connection is (issue #669).
 	adminHash := auth.GetTokenHashByRawToken(e.adminToken)
 	if err := e.store.SetConnectionSession(adminHash, missingConnID, nil); err != nil {
 		t.Fatalf("SetConnectionSession: %v", err)
 	}
 	expectConnHandlerStatus(t, e.serve(e.asSuperuser(http.MethodGet, path, nil)),
-		http.StatusInternalServerError)
+		http.StatusForbidden)
 }
 
 func TestConnectionHandlerCoverage_GetCluster(t *testing.T) {
@@ -512,7 +518,7 @@ func TestConnectionHandlerCoverage_GetCluster(t *testing.T) {
 	expectConnHandlerStatus(t, e.serve(e.asOwner(http.MethodGet, "/api/v1/connections/32/cluster", nil)),
 		http.StatusForbidden)
 	expectConnHandlerStatus(t, e.serve(e.asSuperuser(http.MethodGet, "/api/v1/connections/999/cluster", nil)),
-		http.StatusNotFound)
+		http.StatusForbidden)
 	expectConnHandlerStatus(t, e.serve(e.asOwner(http.MethodPatch, "/api/v1/connections/31/cluster", nil)),
 		http.StatusMethodNotAllowed)
 
@@ -569,11 +575,11 @@ func TestConnectionHandlerCoverage_UpdateCluster(t *testing.T) {
 			http.StatusNotFound},
 		{"reset missing connection", e.asSuperuser(http.MethodPut,
 			"/api/v1/connections/999/cluster", ConnectionClusterUpdateRequest{}),
-			http.StatusInternalServerError},
+			http.StatusForbidden},
 		{"assign missing connection", e.asSuperuser(http.MethodPut,
 			"/api/v1/connections/999/cluster",
 			ConnectionClusterUpdateRequest{ClusterID: &clusterID}),
-			http.StatusNotFound},
+			http.StatusForbidden},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

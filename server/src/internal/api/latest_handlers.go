@@ -31,6 +31,19 @@ import (
 type LatestSnapshotHandler struct {
 	datastore *database.Datastore
 	authStore *auth.AuthStore
+
+	// sharingLookupFn reports whether a connection is live, shared and
+	// owned by whom. When nil the handler asks the datastore, as in
+	// production; a test whose datastore cannot answer substitutes one.
+	sharingLookupFn auth.ConnectionSharingLookupFunc
+}
+
+// accessChecker returns the RBAC checker for one request. It carries a
+// sharing lookup whenever one is available, because that lookup is what
+// refuses a connection marked for deletion, even to a superuser (issue
+// #669).
+func (h *LatestSnapshotHandler) accessChecker() *auth.RBACChecker {
+	return metricAccessChecker(h.authStore, h.datastore, h.sharingLookupFn)
 }
 
 // LatestSnapshotResponse holds the paginated result of a latest-snapshot
@@ -121,7 +134,7 @@ func (h *LatestSnapshotHandler) handleLatestSnapshot(
 	}
 
 	// RBAC check
-	rbacChecker := auth.NewRBACCheckerWithSharing(h.authStore, h.datastore.GetConnectionSharingInfo)
+	rbacChecker := h.accessChecker()
 	canAccess, _ := rbacChecker.CanAccessConnection(r.Context(), connectionID)
 	if !canAccess {
 		RespondError(w, http.StatusForbidden,

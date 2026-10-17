@@ -124,19 +124,17 @@ func TestSetTokenScopeRejectsInvalidAccessLevelBeforeWriting(t *testing.T) {
 	}
 }
 
-// connectionMutationRequest issues a PUT or DELETE against a connection
-// with the given session bearer, acting as the given superuser API
-// token.
+// connectionMutationRequest issues a PUT or DELETE against a connection,
+// authenticated as the given raw API token.
 func connectionMutationRequest(t *testing.T, h *ConnectionHandler,
-	method, rawToken string, tokenID int64, connID int) *httptest.ResponseRecorder {
+	method, rawAPIToken string, connID int) *httptest.ResponseRecorder {
 
 	t.Helper()
 	req := httptest.NewRequest(method,
 		"/api/v1/connections/"+strconv.Itoa(connID),
 		strings.NewReader(`{}`))
 	req.Header.Set("Content-Type", "application/json")
-	req = withBearer(req, rawToken)
-	req = withSuperuserToken(req, tokenID)
+	req = withAuth(t, h.authStore, req, rawAPIToken)
 	rec := httptest.NewRecorder()
 	if method == http.MethodDelete {
 		h.deleteConnection(rec, req, connID)
@@ -157,20 +155,16 @@ func TestConnectionMutationHonoursTokenConnectionScope(t *testing.T) {
 	_, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
-	// These handlers identify the caller from a session bearer, so an
-	// API token is refused with 401 before reaching them today. The
-	// scope check reads the acting token from the context instead, so
-	// the test pairs a session bearer with a token context, which pins
-	// the check independently of how the caller was identified.
+	// The caller authenticates with a real API token owned by a
+	// superuser, so only the token's connection scope can refuse it.
 	const owner = "conn-scope-owner"
 	if err := store.CreateUser(owner, "Password1234", "", "", ""); err != nil {
 		t.Fatalf("CreateUser failed: %v", err)
 	}
-	rawToken, _, err := store.AuthenticateUser(owner, "Password1234")
-	if err != nil {
-		t.Fatalf("AuthenticateUser failed: %v", err)
+	if err := store.SetUserSuperuser(owner, true); err != nil {
+		t.Fatalf("SetUserSuperuser failed: %v", err)
 	}
-	_, token, err := store.AsActor(auth.SystemActor()).CreateToken(owner, "connection scope test", nil, true)
+	rawAPIToken, token, err := store.AsActor(auth.SystemActor()).CreateToken(owner, "connection scope test", nil, true)
 	if err != nil {
 		t.Fatalf("CreateToken failed: %v", err)
 	}
@@ -188,8 +182,8 @@ func TestConnectionMutationHonoursTokenConnectionScope(t *testing.T) {
 		auth.NewRBACChecker(store), false, nil, nil)
 
 	for _, method := range []string{http.MethodPut, http.MethodDelete} {
-		rec := connectionMutationRequest(t, handler, method, rawToken,
-			token.ID, outOfScope)
+		rec := connectionMutationRequest(t, handler, method, rawAPIToken,
+			outOfScope)
 		if rec.Code != http.StatusForbidden ||
 			!strings.Contains(rec.Body.String(), connectionOutOfTokenScope) {
 			t.Errorf("%s out of scope: expected the 403 scope refusal, got %d: %s",
@@ -200,13 +194,13 @@ func TestConnectionMutationHonoursTokenConnectionScope(t *testing.T) {
 		t.Errorf("Out-of-scope connection should still exist: %v", err)
 	}
 
-	if rec := connectionMutationRequest(t, handler, http.MethodPut, rawToken,
-		token.ID, inScope); rec.Code != http.StatusOK {
+	if rec := connectionMutationRequest(t, handler, http.MethodPut, rawAPIToken,
+		inScope); rec.Code != http.StatusOK {
 		t.Errorf("PUT in scope: expected 200, got %d: %s", rec.Code,
 			rec.Body.String())
 	}
-	if rec := connectionMutationRequest(t, handler, http.MethodDelete, rawToken,
-		token.ID, inScope); rec.Code != http.StatusNoContent {
+	if rec := connectionMutationRequest(t, handler, http.MethodDelete, rawAPIToken,
+		inScope); rec.Code != http.StatusNoContent {
 		t.Errorf("DELETE in scope: expected 204, got %d: %s", rec.Code,
 			rec.Body.String())
 	}

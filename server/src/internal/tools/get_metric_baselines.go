@@ -325,7 +325,7 @@ func baselinesAllConnections(
                mb.metric_name, mb.period_type, mb.day_of_week, mb.hour_of_day,
                mb.mean, mb.stddev, mb.min, mb.max, mb.sample_count, mb.last_calculated
         FROM metric_baselines mb
-        JOIN connections c ON c.id = mb.connection_id
+        JOIN connections c ON c.id = mb.connection_id AND c.deleted_at IS NULL
         WHERE %s
           AND ($%d::text IS NULL OR mb.metric_name ILIKE $%d ESCAPE '\')
         ORDER BY c.name, mb.metric_name, mb.period_type, mb.day_of_week, mb.hour_of_day

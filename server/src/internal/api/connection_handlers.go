@@ -42,6 +42,10 @@ type ConnectionHandler struct {
 	// When nil, refusals are not audited (for example, when the server
 	// runs without an auth store).
 	denialRecorder func(*http.Request, string)
+
+	// purgeNudge starts the background purge of a deleted connection's
+	// metrics; see SetPurgeNudge. It may be nil.
+	purgeNudge func()
 }
 
 // SetDenialRecorder installs the function used to audit refused
@@ -53,10 +57,15 @@ func (h *ConnectionHandler) SetDenialRecorder(record func(*http.Request, string)
 // refuseOutOfTokenScope audits a connection token-scope refusal and
 // responds 403 with connectionOutOfTokenScope.
 func (h *ConnectionHandler) refuseOutOfTokenScope(w http.ResponseWriter, r *http.Request) {
+	h.refuse(w, r, connectionOutOfTokenScope)
+}
+
+// refuse audits a refused request and responds 403 with msg.
+func (h *ConnectionHandler) refuse(w http.ResponseWriter, r *http.Request, msg string) {
 	if h.denialRecorder != nil {
-		h.denialRecorder(r, connectionOutOfTokenScope)
+		h.denialRecorder(r, msg)
 	}
-	RespondError(w, http.StatusForbidden, connectionOutOfTokenScope)
+	RespondError(w, http.StatusForbidden, msg)
 }
 
 // NewConnectionHandlerWithSecurity creates a new connection handler with custom security settings
@@ -211,7 +220,7 @@ func (h *ConnectionHandler) listConnections(w http.ResponseWriter, r *http.Reque
 func (h *ConnectionHandler) createConnection(w http.ResponseWriter, r *http.Request) {
 	// Get current user info. The username is stamped onto the row as
 	// owner_username, so we authenticate before the permission gate.
-	username, _, err := getUserInfoCompat(r, h.authStore)
+	username, _, err := getUserInfoCompat(r)
 	if err != nil {
 		RespondError(w, http.StatusUnauthorized, "Invalid or missing authentication token")
 		return
@@ -226,6 +235,16 @@ func (h *ConnectionHandler) createConnection(w http.ResponseWriter, r *http.Requ
 	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections) {
 		RespondError(w, http.StatusForbidden,
 			"Permission denied: requires manage_connections permission")
+		return
+	}
+
+	// A new connection, shared or not, changes the estate every caller
+	// sees, so, as for creating a cluster or a cluster group, an API
+	// token must cover every connection at read_write (issues #471 and
+	// #668). A token confined to some servers, or to read-only access,
+	// may not add one. The refusal is audited as connection.create.
+	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker,
+		denialRecorder(h.denialRecorder)) {
 		return
 	}
 
@@ -443,7 +462,7 @@ const connectionOutOfTokenScope = "Permission denied: this token's scope does no
 // updateConnection handles PUT /api/v1/connections/{id}
 func (h *ConnectionHandler) updateConnection(w http.ResponseWriter, r *http.Request, id int) {
 	// Get current user info for permission check
-	username, _, err := getUserInfoCompat(r, h.authStore)
+	username, _, err := getUserInfoCompat(r)
 	if err != nil {
 		RespondError(w, http.StatusUnauthorized, "Invalid or missing authentication token")
 		return
@@ -464,19 +483,15 @@ func (h *ConnectionHandler) updateConnection(w http.ResponseWriter, r *http.Requ
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	// Get connection to check ownership
-	conn, err := h.datastore.GetConnection(ctx, id)
-	if err != nil {
-		log.Printf("[ERROR] Connection not found for update (id=%d): %v", id, err)
-		RespondError(w, http.StatusNotFound, "Connection not found")
+	conn, ok := h.loadConnectionForChange(ctx, w, r, id, hasManageConns, "update")
+	if !ok {
 		return
 	}
 
 	// Permission check: must be owner or have manage_connections permission
 	isOwner := conn.OwnerUsername.Valid && conn.OwnerUsername.String == username
 	if !hasManageConns && !isOwner {
-		RespondError(w, http.StatusForbidden,
-			"Permission denied: you must be the owner or have the manage_connections permission to update this connection")
+		h.refuse(w, r, connectionUpdateDenied)
 		return
 	}
 
@@ -540,6 +555,11 @@ func (h *ConnectionHandler) updateConnection(w http.ResponseWriter, r *http.Requ
 
 	conn, err = h.datastore.UpdateConnectionFull(ctx, id, params)
 	if err != nil {
+		// The connection was deleted after the lookup above.
+		if errors.Is(err, database.ErrConnectionNotFound) {
+			RespondError(w, http.StatusNotFound, "Connection not found")
+			return
+		}
 		log.Printf("[ERROR] Failed to update connection (id=%d): %v", id, err)
 		RespondError(w, http.StatusInternalServerError,
 			"Failed to update connection")
@@ -552,7 +572,7 @@ func (h *ConnectionHandler) updateConnection(w http.ResponseWriter, r *http.Requ
 // deleteConnection handles DELETE /api/v1/connections/{id}
 func (h *ConnectionHandler) deleteConnection(w http.ResponseWriter, r *http.Request, id int) {
 	// Get current user info for permission check
-	username, _, err := getUserInfoCompat(r, h.authStore)
+	username, _, err := getUserInfoCompat(r)
 	if err != nil {
 		RespondError(w, http.StatusUnauthorized, "Invalid or missing authentication token")
 		return
@@ -573,44 +593,92 @@ func (h *ConnectionHandler) deleteConnection(w http.ResponseWriter, r *http.Requ
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	// Get connection to check ownership
-	conn, err := h.datastore.GetConnection(ctx, id)
-	if err != nil {
-		log.Printf("[ERROR] Connection not found for delete (id=%d): %v", id, err)
-		RespondError(w, http.StatusNotFound, "Connection not found")
+	conn, ok := h.loadConnectionForChange(ctx, w, r, id, hasManageConns, "delete")
+	if !ok {
 		return
 	}
 
 	// Permission check: must be owner or have manage_connections permission
 	isOwner := conn.OwnerUsername.Valid && conn.OwnerUsername.String == username
 	if !hasManageConns && !isOwner {
-		RespondError(w, http.StatusForbidden,
-			"Permission denied: you must be the owner or have the manage_connections permission to delete this connection")
+		h.refuse(w, r, connectionDeleteDenied)
 		return
 	}
 
-	// Delete the connection under its own, much longer budget; see
-	// connectionDeleteContext.
+	// Mark the connection deleted under its own, longer budget; see
+	// connectionDeleteContext. The metrics go afterwards, in the
+	// background (issue #669).
 	deleteCtx, deleteCancel := connectionDeleteContext(r.Context())
 	defer deleteCancel()
 	if err := h.datastore.DeleteConnection(deleteCtx, id); err != nil {
+		// A concurrent delete of the same connection can win the race
+		// after the lookup above; that caller's request succeeded, so
+		// this one answers as for any other missing connection.
+		if errors.Is(err, database.ErrConnectionNotFound) {
+			RespondError(w, http.StatusNotFound, "Connection not found")
+			return
+		}
 		log.Printf("[ERROR] Failed to delete connection (id=%d): %v", id, err)
 		RespondError(w, http.StatusInternalServerError,
 			"Failed to delete connection")
 		return
 	}
 
+	if h.purgeNudge != nil {
+		h.purgeNudge()
+	}
+
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// connectionDeleteContext returns the context for the DELETE itself. It
-// carries database.ConnectionDeleteTimeout rather than the ten seconds
-// the ownership lookup gets, because the delete cascades through the
-// connection's whole metrics history (issue #480). It is also detached
-// from the request's cancellation: a browser or reverse proxy that gives
-// up waiting would otherwise roll the delete back, and every retry would
-// fail the same way at whatever size the history had reached. The
-// deadline still bounds the work.
+// Refusal messages for a caller who can see a connection but may not
+// change it.
+const (
+	connectionUpdateDenied = "Permission denied: you must be the owner or have the manage_connections permission to update this connection"
+	connectionDeleteDenied = "Permission denied: you must be the owner or have the manage_connections permission to delete this connection"
+)
+
+// loadConnectionForChange loads connection id for an update or a
+// delete, answering 404 when the caller cannot see it, exactly as when
+// it does not exist (issue #677). The visibility check runs whether or
+// not the connection exists, and both refusals are the same response,
+// so neither the body nor the work done tells a caller which it was;
+// an unseen connection is not audited, as there is nothing the caller
+// was refused that it could know of. A caller holding manage_connections
+// (canManage) may change any connection, so it is not limited to the
+// ones it can see. The bool is false when the response has been written.
+func (h *ConnectionHandler) loadConnectionForChange(ctx context.Context, w http.ResponseWriter,
+	r *http.Request, id int, canManage bool, action string) (*database.MonitoredConnection, bool) {
+	if canAccess, _ := h.rbacChecker.CanAccessConnection(r.Context(), id); !canManage && !canAccess {
+		RespondError(w, http.StatusNotFound, "Connection not found")
+		return nil, false
+	}
+
+	conn, err := h.datastore.GetConnection(ctx, id)
+	if err != nil {
+		log.Printf("[ERROR] Connection not found for %s (id=%d): %v", action, id, err)
+		RespondError(w, http.StatusNotFound, "Connection not found")
+		return nil, false
+	}
+	return conn, true
+}
+
+// SetPurgeNudge installs the function deleteConnection calls once a
+// connection is marked deleted, to start the background purge of its
+// metrics straight away. A nil function leaves the purge to its own
+// interval.
+func (h *ConnectionHandler) SetPurgeNudge(nudge func()) {
+	h.purgeNudge = nudge
+}
+
+// connectionDeleteContext returns the context for marking a connection
+// deleted. It carries database.ConnectionDeleteTimeout rather than the
+// ten seconds the ownership lookup gets, because the mark step also
+// deletes the connection's alerts and other dependent rows, which can
+// be many for a connection monitored for a long time (issues #480 and
+// #669). It is also detached from the request's cancellation, so a
+// browser or reverse proxy that gives up waiting does not roll the
+// delete back. The deadline still bounds the work.
 func connectionDeleteContext(parent context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.WithoutCancel(parent), database.ConnectionDeleteTimeout)
 }

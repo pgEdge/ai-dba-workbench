@@ -498,6 +498,8 @@ func TestDenialTargetNormalization(t *testing.T) {
 		{http.MethodPost, "/api/v1/rbac/users", "user.create", "users"},
 		{http.MethodDelete, "/api/v1/rbac/groups/5/members/user/3",
 			"group.member.remove", "groups/5"},
+		{http.MethodPost, "/api/v1/connections", "connection.create", "connections"},
+		{http.MethodPost, "/api/v1/connections/", "connection.create", "connections"},
 		{http.MethodPut, "/api/v1/connections/7", "connection.update", "connections/7"},
 		{http.MethodPut, "/api/v1/connections/7/cluster", "connection.cluster.update",
 			"connections/7"},
@@ -566,6 +568,8 @@ func TestDeniedConnectionAction(t *testing.T) {
 	tests := []struct {
 		method, path, want string
 	}{
+		{http.MethodPost, "/api/v1/connections", "connection.create"},
+		{http.MethodGet, "/api/v1/connections", "rbac.get"},
 		{http.MethodPut, "/api/v1/connections/5", "connection.update"},
 		{http.MethodDelete, "/api/v1/connections/5", "connection.delete"},
 		{http.MethodPut, "/api/v1/connections/5/cluster", "connection.cluster.update"},

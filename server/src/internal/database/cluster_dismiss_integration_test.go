@@ -52,10 +52,12 @@ CREATE TABLE clusters (
 );
 
 CREATE TABLE connections (
+    deleted_at TIMESTAMPTZ,
     id SERIAL PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     cluster_id INTEGER REFERENCES clusters(id) ON DELETE SET NULL,
     membership_source VARCHAR(16) NOT NULL DEFAULT 'auto',
+    is_monitored BOOLEAN NOT NULL DEFAULT TRUE,
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

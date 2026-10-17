@@ -32,6 +32,8 @@ const queryExecTestSchema = `
 DROP TABLE IF EXISTS connections CASCADE;
 
 CREATE TABLE connections (
+    deleted_at TIMESTAMPTZ,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
     id SERIAL PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     description TEXT NOT NULL DEFAULT '',

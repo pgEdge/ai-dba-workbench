@@ -114,7 +114,8 @@ DROP TABLE IF EXISTS connections CASCADE;
 CREATE SCHEMA IF NOT EXISTS metrics;
 CREATE TABLE connections (
     id SERIAL PRIMARY KEY,
-    name VARCHAR(255) NOT NULL
+    name VARCHAR(255) NOT NULL,
+    deleted_at TIMESTAMPTZ
 );
 CREATE TABLE metrics.pg_settings (
     connection_id INTEGER NOT NULL,

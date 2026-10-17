@@ -63,10 +63,15 @@ func TestConnectionDeleteContext(t *testing.T) {
 
 // deleteConnectionHarness wires a real datastore and auth store for the
 // deleteConnection handler tests, seeding connection id owned by owner.
+// Without a sharing lookup the RBAC checker treats every connection as
+// shared, so another user can see it; withSharingLookup makes the
+// checker respect the seeded row's is_shared = FALSE.
 type deleteConnectionHarness struct {
 	handler *ConnectionHandler
+	ds      *database.Datastore
 	pool    *pgxpool.Pool
 	store   *auth.AuthStore
+	checker *auth.RBACChecker
 }
 
 func newDeleteConnectionHarness(t *testing.T, id int, owner string) *deleteConnectionHarness {
@@ -74,17 +79,28 @@ func newDeleteConnectionHarness(t *testing.T, id int, owner string) *deleteConne
 
 	ds, pool, cleanupDS := newIssue269ConnectionDatastore(t)
 	t.Cleanup(cleanupDS)
-	_, store, cleanupStore := createTestRBACHandler(t)
+	rbac, store, cleanupStore := createTestRBACHandler(t)
 	t.Cleanup(cleanupStore)
 
 	seedIssue269Connection(t, pool, id, owner, "delete-target")
 
+	checker := auth.NewRBACChecker(store)
+	handler := NewConnectionHandlerWithSecurity(ds, store, checker, false, nil, nil)
+	handler.SetDenialRecorder(rbac.RecordDenial)
 	return &deleteConnectionHarness{
-		handler: NewConnectionHandlerWithSecurity(ds, store,
-			auth.NewRBACChecker(store), false, nil, nil),
-		pool:  pool,
-		store: store,
+		handler: handler,
+		ds:      ds,
+		pool:    pool,
+		store:   store,
+		checker: checker,
 	}
+}
+
+// withSharingLookup makes the checker read sharing and ownership from
+// the datastore, as the server does.
+func (h *deleteConnectionHarness) withSharingLookup() *deleteConnectionHarness {
+	h.checker.SetConnectionSharingLookup(h.ds.GetConnectionSharingInfo)
+	return h
 }
 
 // request builds an authenticated DELETE for the named user, creating
@@ -93,65 +109,86 @@ func (h *deleteConnectionHarness) request(t *testing.T, ctx context.Context,
 	username string, permissions []string) *http.Request {
 	t.Helper()
 
-	userID := setupUserWithPermissions(t, h.store, username, permissions)
+	setupUserWithPermissions(t, h.store, username, permissions)
 	token, _, err := h.store.AuthenticateUser(username, "Password1234")
 	if err != nil {
 		t.Fatalf("AuthenticateUser: %v", err)
 	}
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/connections/1", nil).
 		WithContext(ctx)
-	return withUser(withBearer(req, token), userID)
+	return withAuth(t, h.store, req, token)
 }
 
-func (h *deleteConnectionHarness) rowCount(t *testing.T, id int) int {
+// marked reports whether connection id has been marked deleted. The row
+// itself stays until the background purge removes it (issue #669).
+func (h *deleteConnectionHarness) marked(t *testing.T, id int) bool {
 	t.Helper()
-	var n int
+	var marked bool
 	if err := h.pool.QueryRow(context.Background(),
-		`SELECT COUNT(*) FROM connections WHERE id = $1`, id,
-	).Scan(&n); err != nil {
-		t.Fatalf("counting connection rows: %v", err)
+		`SELECT deleted_at IS NOT NULL FROM connections WHERE id = $1`, id,
+	).Scan(&marked); err != nil {
+		t.Fatalf("reading connection %d: %v", id, err)
 	}
-	return n
+	return marked
 }
 
-// Trigger functions for installDeleteTrigger: one slows every DELETE on
-// connections, the other makes it fail.
+// deleteDenials counts the audited connection.delete refusals.
+func (h *deleteConnectionHarness) deleteDenials(t *testing.T) int {
+	t.Helper()
+	events, _, err := h.store.ListAuditEvents(auth.AuditFilter{
+		Action: "connection.delete", Outcome: string(auth.OutcomeDenied)})
+	if err != nil {
+		t.Fatalf("ListAuditEvents failed: %v", err)
+	}
+	return len(events)
+}
+
+// Trigger functions for installMarkTrigger: one slows the UPDATE that
+// marks a connection deleted, one makes it fail, and one skips it, as a
+// concurrent delete that won the race would.
 const (
-	issue480SlowDeleteFunction = `
-        CREATE OR REPLACE FUNCTION issue480_connection_delete()
+	issue480SlowMarkFunction = `
+        CREATE OR REPLACE FUNCTION issue480_connection_mark()
         RETURNS trigger LANGUAGE plpgsql AS $$
         BEGIN
             PERFORM pg_sleep(0.6);
-            RETURN OLD;
+            RETURN NEW;
         END;
         $$;`
-	issue480FailingDeleteFunction = `
-        CREATE OR REPLACE FUNCTION issue480_connection_delete()
+	issue480FailingMarkFunction = `
+        CREATE OR REPLACE FUNCTION issue480_connection_mark()
         RETURNS trigger LANGUAGE plpgsql AS $$
         BEGIN
             RAISE EXCEPTION 'blocked by test';
         END;
         $$;`
+	issue480SkippingMarkFunction = `
+        CREATE OR REPLACE FUNCTION issue480_connection_mark()
+        RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+            RETURN NULL;
+        END;
+        $$;`
 )
 
-// installDeleteTrigger runs function (one of the constants above) and
-// attaches it as a BEFORE DELETE trigger on connections.
-func (h *deleteConnectionHarness) installDeleteTrigger(t *testing.T, function string) {
+// installMarkTrigger runs function (one of the constants above) and
+// attaches it as a BEFORE UPDATE trigger on connections.
+func (h *deleteConnectionHarness) installMarkTrigger(t *testing.T, function string) {
 	t.Helper()
 	ctx := context.Background()
 	if _, err := h.pool.Exec(ctx, function); err != nil {
-		t.Fatalf("creating delete trigger function: %v", err)
+		t.Fatalf("creating mark trigger function: %v", err)
 	}
 	if _, err := h.pool.Exec(ctx, `
-        CREATE TRIGGER issue480_conn_delete
-        BEFORE DELETE ON connections
-        FOR EACH ROW EXECUTE FUNCTION issue480_connection_delete();
+        CREATE TRIGGER issue480_conn_mark
+        BEFORE UPDATE ON connections
+        FOR EACH ROW EXECUTE FUNCTION issue480_connection_mark();
     `); err != nil {
-		t.Fatalf("installing delete trigger: %v", err)
+		t.Fatalf("installing mark trigger: %v", err)
 	}
 	t.Cleanup(func() {
 		_, _ = h.pool.Exec(context.Background(),
-			`DROP FUNCTION IF EXISTS issue480_connection_delete() CASCADE`)
+			`DROP FUNCTION IF EXISTS issue480_connection_mark() CASCADE`)
 	})
 }
 
@@ -162,7 +199,7 @@ func (h *deleteConnectionHarness) installDeleteTrigger(t *testing.T, function st
 func TestDeleteConnection_SurvivesRequestCancellation(t *testing.T) {
 	const id, owner = 7480, "issue480_owner"
 	h := newDeleteConnectionHarness(t, id, owner)
-	h.installDeleteTrigger(t, issue480SlowDeleteFunction)
+	h.installMarkTrigger(t, issue480SlowMarkFunction)
 
 	reqCtx, cancelReq := context.WithCancel(context.Background())
 	defer cancelReq()
@@ -181,8 +218,8 @@ func TestDeleteConnection_SurvivesRequestCancellation(t *testing.T) {
 	if reqCtx.Err() == nil {
 		t.Fatal("request context was not canceled during the delete; test proves nothing")
 	}
-	if n := h.rowCount(t, id); n != 0 {
-		t.Fatalf("connection %d still present (%d rows)", id, n)
+	if !h.marked(t, id) {
+		t.Fatalf("connection %d not marked deleted", id)
 	}
 }
 
@@ -191,8 +228,35 @@ func TestDeleteConnection_SurvivesRequestCancellation(t *testing.T) {
 func TestDeleteConnection_HandlerResponses(t *testing.T) {
 	const id, owner = 7481, "issue480_resp_owner"
 
-	t.Run("manage_connections deletes another user's connection", func(t *testing.T) {
+	t.Run("owner delete marks the row and nudges the purge", func(t *testing.T) {
 		h := newDeleteConnectionHarness(t, id, owner)
+		nudges := 0
+		h.handler.SetPurgeNudge(func() { nudges++ })
+		req := h.request(t, context.Background(), owner, nil)
+		rec := httptest.NewRecorder()
+		h.handler.deleteConnection(rec, req, id)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("status = %d, want 204. Body: %s", rec.Code, rec.Body.String())
+		}
+		if !h.marked(t, id) {
+			t.Fatal("connection not marked deleted")
+		}
+		if nudges != 1 {
+			t.Fatalf("purge nudged %d times, want 1", nudges)
+		}
+
+		// The connection is now gone to callers, so a second delete
+		// answers as for any missing connection.
+		rec = httptest.NewRecorder()
+		h.handler.deleteConnection(rec, req, id)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("repeat delete status = %d, want 404. Body: %s",
+				rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("manage_connections deletes another user's private connection", func(t *testing.T) {
+		h := newDeleteConnectionHarness(t, id, owner).withSharingLookup()
 		req := h.request(t, context.Background(), "issue480_admin",
 			[]string{auth.PermManageConnections})
 		rec := httptest.NewRecorder()
@@ -200,21 +264,34 @@ func TestDeleteConnection_HandlerResponses(t *testing.T) {
 		if rec.Code != http.StatusNoContent {
 			t.Fatalf("status = %d, want 204. Body: %s", rec.Code, rec.Body.String())
 		}
-		if n := h.rowCount(t, id); n != 0 {
-			t.Fatalf("connection still present (%d rows)", n)
+		if !h.marked(t, id) {
+			t.Fatal("connection not marked deleted")
 		}
 	})
 
-	t.Run("non-owner without permission is forbidden", func(t *testing.T) {
+	t.Run("visible connection without permission is an audited 403", func(t *testing.T) {
 		h := newDeleteConnectionHarness(t, id, owner)
 		req := h.request(t, context.Background(), "issue480_other", nil)
 		rec := httptest.NewRecorder()
 		h.handler.deleteConnection(rec, req, id)
-		if rec.Code != http.StatusForbidden {
-			t.Fatalf("status = %d, want 403. Body: %s", rec.Code, rec.Body.String())
+		assertError(t, rec, http.StatusForbidden, connectionDeleteDenied)
+		if h.marked(t, id) {
+			t.Fatal("connection marked deleted despite 403")
 		}
-		if n := h.rowCount(t, id); n != 1 {
-			t.Fatalf("connection deleted despite 403 (%d rows)", n)
+		assertDenialRecorded(t, h.store, "connection.delete", connectionDeleteDenied)
+	})
+
+	t.Run("unseen connection is an unaudited 404", func(t *testing.T) {
+		h := newDeleteConnectionHarness(t, id, owner).withSharingLookup()
+		req := h.request(t, context.Background(), "issue480_stranger", nil)
+		rec := httptest.NewRecorder()
+		h.handler.deleteConnection(rec, req, id)
+		assertError(t, rec, http.StatusNotFound, "Connection not found")
+		if h.marked(t, id) {
+			t.Fatal("connection marked deleted despite 404")
+		}
+		if n := h.deleteDenials(t); n != 0 {
+			t.Fatalf("recorded %d denials for an unseen connection, want 0", n)
 		}
 	})
 
@@ -228,17 +305,31 @@ func TestDeleteConnection_HandlerResponses(t *testing.T) {
 		}
 	})
 
+	t.Run("a delete that loses the race is not found", func(t *testing.T) {
+		h := newDeleteConnectionHarness(t, id, owner)
+		nudges := 0
+		h.handler.SetPurgeNudge(func() { nudges++ })
+		h.installMarkTrigger(t, issue480SkippingMarkFunction)
+		req := h.request(t, context.Background(), owner, nil)
+		rec := httptest.NewRecorder()
+		h.handler.deleteConnection(rec, req, id)
+		assertError(t, rec, http.StatusNotFound, "Connection not found")
+		if nudges != 0 {
+			t.Fatalf("purge nudged %d times after a 404, want 0", nudges)
+		}
+	})
+
 	t.Run("datastore failure is a 500", func(t *testing.T) {
 		h := newDeleteConnectionHarness(t, id, owner)
-		h.installDeleteTrigger(t, issue480FailingDeleteFunction)
+		h.installMarkTrigger(t, issue480FailingMarkFunction)
 		req := h.request(t, context.Background(), owner, nil)
 		rec := httptest.NewRecorder()
 		h.handler.deleteConnection(rec, req, id)
 		if rec.Code != http.StatusInternalServerError {
 			t.Fatalf("status = %d, want 500. Body: %s", rec.Code, rec.Body.String())
 		}
-		if n := h.rowCount(t, id); n != 1 {
-			t.Fatalf("connection deleted despite failure (%d rows)", n)
+		if h.marked(t, id) {
+			t.Fatal("connection marked deleted despite failure")
 		}
 	})
 

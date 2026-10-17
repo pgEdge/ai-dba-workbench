@@ -389,10 +389,16 @@ func deniedScopedRoute(method, resource string,
 const connectionPathPrefix = "/api/v1/connections/"
 
 // deniedConnectionAction maps the connection routes whose token-scope
-// refusals are audited: PUT and DELETE /connections/{id}, and PUT
-// /connections/{id}/cluster. It returns an empty string for any other
-// request.
+// refusals are audited: POST /connections, PUT and DELETE
+// /connections/{id}, and PUT /connections/{id}/cluster. It returns an
+// empty string for any other request.
 func deniedConnectionAction(method, path string) string {
+	if strings.TrimSuffix(path, "/")+"/" == connectionPathPrefix {
+		if method == http.MethodPost {
+			return "connection.create"
+		}
+		return ""
+	}
 	if !strings.HasPrefix(path, connectionPathPrefix) {
 		return ""
 	}

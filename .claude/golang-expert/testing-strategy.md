@@ -106,14 +106,17 @@ are editing.
   example `clusterGroupsTestSchema` in
   `server/src/internal/api/cluster_handlers_test.go`, rather than the
   full collector schema. `internal/metrics` tests build a fixture probe
-  table under the `metrics` schema and drop it on cleanup. The one
-  exception is `internal/tools/datastore_catalog_schema_integration_test.go`
-  (#645), which imports the collector's `SchemaManager` (the server
+  table under the `metrics` schema and drop it on cleanup. The
+  exceptions are `internal/database`'s `newCollectorSchemaDatastore`
+  (`collector_schema_helpers_test.go`, scratch database suffix
+  `_db_schema`), used by the topology, estate and marked-connection
+  tests that need every real table, and
+  `internal/tools/datastore_catalog_schema_integration_test.go`
+  (#645). Both import the collector's `SchemaManager` (the server
   `go.mod` requires the collector module through a `replace`, and
-  `server/Dockerfile` copies `collector/go.mod` for it) and migrates a
-  scratch database named after the test database plus
-  `_catalog_schema` (for example `ai_workbench_pr652_catalog_schema`),
-  so concurrent runs against per-session test databases do not
+  `server/Dockerfile` copies `collector/go.mod` for it) and migrate a
+  scratch database named after the test database plus their suffix
+  (for example `ai_workbench_pr652_catalog_schema`), so concurrent runs against per-session test databases do not
   collide. The server builds the name and quotes it with
   `format('%I')`, so the SQL text sent from Go stays constant.
 - Collector packages create a fresh database per run named
@@ -232,14 +235,17 @@ resolution itself restores `resolveCLIAuditKey` for its own scope.
 
 ## Handler Tests: Bearer Plus Context
 
-Authenticated handlers in `server/src/internal/api` use two independent
-surfaces: `getUserInfoCompat` validates the bearer token from the
-`Authorization` header, and `rbacChecker.HasAdminPermission` reads the
-user from the request context that middleware normally populates.
-Handler-level tests bypass the middleware, so set both with the
-existing helpers: `withBearer` (`cluster_handlers_test.go`) and
-`withUser` or `withSuperuser` (`rbac_handlers_test.go`). Setting only
-one produces 401s or 403s that look like permission bugs.
+Authenticated handlers in `server/src/internal/api` read the caller
+from the request context that `auth.AuthenticateRequest` populates:
+`getUserInfoCompat` for the username (since #668 it no longer
+re-validates the `Authorization` header) and `rbacChecker` for
+permissions. Handler-level tests bypass the middleware, so use
+`withAuth(t, store, req, token)` (`cluster_handlers_test.go`), which
+sets the bearer header and authenticates it as the middleware does;
+apply `withUser` or `withSuperuser` (`rbac_handlers_test.go`) after it,
+because authentication overwrites their keys. A bare `withBearer`
+leaves the context empty and produces 401s that look like permission
+bugs.
 `setupUserWithPermission` in `rbac_integration_test.go` creates a user
 holding a named permission. The gate-ordering tests for mutating
 handlers are described in `rbac-patterns.md`.

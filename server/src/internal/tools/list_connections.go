@@ -140,6 +140,7 @@ CRITICAL: Never silently analyze multiple connections. Always get explicit user 
                     COALESCE(c.connection_error, '') as connection_error
                 FROM public.connections c
                 LEFT JOIN latest_connectivity lc ON c.id = lc.connection_id
+                WHERE c.deleted_at IS NULL
                 ORDER BY c.name, c.host
             `
 

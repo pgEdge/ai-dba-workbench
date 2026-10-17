@@ -262,6 +262,7 @@ func newPerfSummaryTestHandler(
 	}
 
 	handler := NewPerfSummaryHandler(database.NewTestDatastore(pool), newTestAuthStore(t))
+	handler.sharingLookupFn = liveConnectionLookup
 	cleanup := func() {
 		_, _ = pool.Exec(context.Background(), perfSummaryTestSchemaTeardown)
 		pool.Close()

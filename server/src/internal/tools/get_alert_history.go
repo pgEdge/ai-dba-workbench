@@ -424,7 +424,7 @@ func alertHistoryAllConnections(
                a.metric_value, a.threshold_value, a.operator, a.status, a.cleared_at,
                ack.false_positive, ack.acknowledged_by, ack.message
         FROM alerts a
-        LEFT JOIN connections c ON c.id = a.connection_id
+        LEFT JOIN connections c ON c.id = a.connection_id AND c.deleted_at IS NULL
         LEFT JOIN LATERAL (
             SELECT acknowledged_at, acknowledged_by, message, false_positive
             FROM alert_acknowledgments

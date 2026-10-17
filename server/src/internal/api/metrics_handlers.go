@@ -49,6 +49,30 @@ type MetricsHandler struct {
 	// handler falls back to metrics.QueryTimeSeries; tests substitute a
 	// fake to capture the MetricFilters reaching the query layer.
 	queryTimeSeriesFn timeSeriesQueryFunc
+
+	// sharingLookupFn reports whether a connection is live, shared and
+	// owned by whom. When nil the handler asks the datastore, as in
+	// production; tests without a database substitute a fake.
+	sharingLookupFn auth.ConnectionSharingLookupFunc
+}
+
+// accessChecker returns the RBAC checker for one request. It always
+// carries a sharing lookup when one is available, because that lookup
+// is what refuses a connection marked for deletion, even to a
+// superuser (issue #669).
+func (h *MetricsHandler) accessChecker() *auth.RBACChecker {
+	return metricAccessChecker(h.authStore, h.datastore, h.sharingLookupFn)
+}
+
+// metricAccessChecker builds the per-request RBAC checker the metric
+// handlers share: lookup when a test substitutes one, otherwise the
+// datastore's own sharing lookup, or none when there is no datastore.
+func metricAccessChecker(store *auth.AuthStore, ds *database.Datastore,
+	lookup auth.ConnectionSharingLookupFunc) *auth.RBACChecker {
+	if lookup != nil {
+		return auth.NewRBACCheckerWithSharing(store, lookup)
+	}
+	return auth.NewRBACCheckerForDatastore(store, ds)
 }
 
 // NewMetricsHandler creates a new MetricsHandler.
@@ -144,7 +168,7 @@ func (h *MetricsHandler) handleMetricsQuery(
 	}
 
 	// RBAC check for each connection
-	rbacChecker := auth.NewRBACCheckerWithSharing(h.authStore, h.datastore.GetConnectionSharingInfo)
+	rbacChecker := h.accessChecker()
 	for _, connID := range connectionIDs {
 		canAccess, _ := rbacChecker.CanAccessConnection(r.Context(), connID)
 		if !canAccess {
@@ -351,7 +375,7 @@ func (h *MetricsHandler) handleMetricsBaselines(
 	}
 
 	// RBAC check
-	rbacChecker := auth.NewRBACCheckerWithSharing(h.authStore, h.datastore.GetConnectionSharingInfo)
+	rbacChecker := h.accessChecker()
 	canAccess, _ := rbacChecker.CanAccessConnection(r.Context(), connectionID)
 	if !canAccess {
 		RespondError(w, http.StatusForbidden,

@@ -172,6 +172,12 @@ type datastoreSource struct {
 	// Kind is datastoreKindMetric or datastoreKindConfiguration.
 	Kind  string
 	Scope datastoreScope
+	// LiveColumn, when set, names a column that is NULL on a live row.
+	// Rows where it is set are hidden from every caller, including one
+	// who may read every connection: a connection marked deleted
+	// (issue #669) is gone as far as the rest of the product is
+	// concerned, even before the purge removes it.
+	LiveColumn string
 	// Columns is the explicit allow-list of readable columns. Nothing
 	// outside it can be selected, filtered, grouped or ordered on.
 	Columns []datastoreColumn
@@ -261,6 +267,7 @@ func connectionsSource() datastoreSource {
 		ConnectionColumn: "id",
 		Kind:             datastoreKindConfiguration,
 		Scope:            scopeConnection,
+		LiveColumn:       "deleted_at",
 		Columns: []datastoreColumn{
 			col("id", typeInteger),
 			col("name", typeVarchar),

@@ -298,7 +298,7 @@ func buildUnionQuery(connCondition, timeCondition, typeCondition string, filter 
 
 // buildCountQuery constructs the count query for total events
 func buildCountQuery(connCondition, timeCondition, typeCondition string, filter TimelineFilter) string {
-	whereClause := buildWhereClause(connCondition, timeCondition, "")
+	whereClause := buildWhereClause(connCondition, timeCondition, timelineLiveConnectionCondition)
 
 	// Determine which event types to include
 	includeTypes := make(map[string]bool)
@@ -363,6 +363,14 @@ func buildCountQuery(connCondition, timeCondition, typeCondition string, filter 
 
 	return fmt.Sprintf("SELECT %s AS total_count", strings.Join(countQueries, " + "))
 }
+
+// timelineLiveConnectionCondition keeps a connection marked for deletion
+// out of the event counts, as the event queries keep it out by joining
+// live connections, so TotalCount matches the events it totals (issue
+// #668). The count builders rewrite connection_id with their own table
+// alias, which is why the subquery names no column of that spelling;
+// connections.id is NOT NULL, so NOT IN is safe here.
+const timelineLiveConnectionCondition = "connection_id NOT IN (SELECT id FROM connections WHERE deleted_at IS NOT NULL)"
 
 // buildWhereClause combines conditions into a WHERE clause
 func buildWhereClause(connCondition, timeCondition, extraCondition string) string {
@@ -431,7 +439,7 @@ func buildConfigChangeQuery(whereClause string) string {
             FROM metrics.pg_settings
             %[2]s
         ) changes
-        JOIN connections c ON changes.connection_id = c.id
+        JOIN connections c ON changes.connection_id = c.id AND c.deleted_at IS NULL
         WHERE changes.rn > 1
           AND changes.setting IS DISTINCT FROM changes.prev_setting
           %[3]s
@@ -551,7 +559,7 @@ func buildHBAChangeQuery(whereClause string) string {
             %[2]s
             WINDOW w AS (PARTITION BY connection_id, rule_number ORDER BY collected_at)
         ) changes
-        JOIN connections c ON changes.connection_id = c.id
+        JOIN connections c ON changes.connection_id = c.id AND c.deleted_at IS NULL
         WHERE changes.rn > 1
           AND (changes.type IS DISTINCT FROM changes.prev_type
                OR changes.database IS DISTINCT FROM changes.prev_database
@@ -646,7 +654,7 @@ func buildIdentChangeQuery(whereClause string) string {
                 ) ORDER BY i.map_number) FILTER (WHERE i.map_number IS NOT NULL)
             )::TEXT AS details
         FROM metrics.pg_ident_file_mappings i
-        JOIN connections c ON i.connection_id = c.id
+        JOIN connections c ON i.connection_id = c.id AND c.deleted_at IS NULL
         %s
         AND i.collected_at > (
             SELECT MIN(collected_at)
@@ -720,7 +728,7 @@ func buildRestartQuery(whereClause string) string {
             WHERE postmaster_start_time IS NOT NULL
               %[2]s
         ) r
-        JOIN connections c ON r.connection_id = c.id
+        JOIN connections c ON r.connection_id = c.id AND c.deleted_at IS NULL
         WHERE r.prev_start_time IS NOT NULL
           AND r.postmaster_start_time IS NOT NULL
           AND r.prev_start_time != r.postmaster_start_time
@@ -803,7 +811,7 @@ func buildAlertFiredQuery(whereClause string) string {
                 'probe_name', a.probe_name
             )::TEXT AS details
         FROM alerts a
-        JOIN connections c ON a.connection_id = c.id
+        JOIN connections c ON a.connection_id = c.id AND c.deleted_at IS NULL
         LEFT JOIN alert_rules r ON a.rule_id = r.id
         %s
     `, EventTypeAlertFired, metrics.RedactedText("a.description"), tableWhere)
@@ -859,7 +867,7 @@ func buildAlertClearedQuery(whereClause string) string {
                 'duration_seconds', EXTRACT(EPOCH FROM (a.cleared_at - a.triggered_at))
             )::TEXT AS details
         FROM alerts a
-        JOIN connections c ON a.connection_id = c.id
+        JOIN connections c ON a.connection_id = c.id AND c.deleted_at IS NULL
         %s
     `, EventTypeAlertCleared, alertClearedDurationSQL, metrics.RedactedText("a.description"), tableWhere)
 }
@@ -956,7 +964,7 @@ func buildAlertAcknowledgedQuery(whereClause string) string {
             )::TEXT AS details
         FROM alert_acknowledgments ack
         JOIN alerts a ON ack.alert_id = a.id
-        JOIN connections c ON a.connection_id = c.id
+        JOIN connections c ON a.connection_id = c.id AND c.deleted_at IS NULL
         %s
     `, EventTypeAlertAcknowledged, tableWhere)
 }
@@ -1023,7 +1031,7 @@ func buildExtensionChangeQuery(whereClause string) string {
             %[2]s
             WINDOW w AS (PARTITION BY connection_id, database_name, extname ORDER BY collected_at)
         ) changes
-        JOIN connections c ON changes.connection_id = c.id
+        JOIN connections c ON changes.connection_id = c.id AND c.deleted_at IS NULL
         WHERE changes.rn > 1
           AND changes.extversion IS DISTINCT FROM changes.prev_extversion
           %[3]s

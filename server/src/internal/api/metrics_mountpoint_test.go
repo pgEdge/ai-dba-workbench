@@ -98,8 +98,9 @@ func TestHandleMetricsQuery_TimeSeriesMode_ParsesMountPointFilter(t *testing.T) 
 	var gotFilters metrics.MetricFilters
 	called := false
 	handler := &MetricsHandler{
-		authStore: newTestAuthStore(t),
-		datastore: &database.Datastore{},
+		authStore:       newTestAuthStore(t),
+		datastore:       &database.Datastore{},
+		sharingLookupFn: liveConnectionLookup,
 		queryTimeSeriesFn: func(
 			_ context.Context,
 			_ *pgxpool.Pool,

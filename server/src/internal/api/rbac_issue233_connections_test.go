@@ -114,7 +114,7 @@ func TestConnectionHandler_CreateConnection_Issue233_DeniedNonShared(t *testing.
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections",
 		bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = withBearer(req, token)
+	req = withAuth(t, handler.authStore, req, token)
 	req = withUser(req, userID)
 	rec := httptest.NewRecorder()
 
@@ -144,7 +144,7 @@ func TestConnectionHandler_CreateConnection_Issue233_DeniedShared(t *testing.T) 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections",
 		bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = withBearer(req, token)
+	req = withAuth(t, handler.authStore, req, token)
 	req = withUser(req, userID)
 	rec := httptest.NewRecorder()
 
@@ -166,7 +166,7 @@ func TestConnectionHandler_CreateConnection_Issue233_DeniedSkipsDecode(t *testin
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections",
 		bytes.NewBufferString("not json"))
 	req.Header.Set("Content-Type", "application/json")
-	req = withBearer(req, token)
+	req = withAuth(t, handler.authStore, req, token)
 	req = withUser(req, userID)
 	rec := httptest.NewRecorder()
 
@@ -199,7 +199,7 @@ func TestConnectionHandler_CreateConnection_Issue233_AdminAllowed(t *testing.T) 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections",
 		bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = withBearer(req, token)
+	req = withAuth(t, handler.authStore, req, token)
 	req = withUser(req, userID)
 	rec := httptest.NewRecorder()
 
@@ -245,7 +245,7 @@ func TestConnectionHandler_CreateConnection_Issue233_SuperuserAllowed(t *testing
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections",
 		bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = withBearer(req, token)
+	req = withAuth(t, handler.authStore, req, token)
 	req = withSuperuser(req)
 	rec := httptest.NewRecorder()
 
@@ -339,7 +339,7 @@ func TestConnectionHandler_UpdateConnectionCluster_Issue233(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPut,
 			"/api/v1/connections/4242/cluster", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
-		req = withBearer(req, token)
+		req = withAuth(t, handler.authStore, req, token)
 		req = withUser(req, userID)
 		rec := httptest.NewRecorder()
 
@@ -357,7 +357,7 @@ func TestConnectionHandler_UpdateConnectionCluster_Issue233(t *testing.T) {
 			"/api/v1/connections/4242/cluster",
 			bytes.NewBufferString("not json"))
 		req.Header.Set("Content-Type", "application/json")
-		req = withBearer(req, token)
+		req = withAuth(t, handler.authStore, req, token)
 		req = withUser(req, userID)
 		rec := httptest.NewRecorder()
 
@@ -380,7 +380,7 @@ func TestConnectionHandler_UpdateConnectionCluster_Issue233(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPut,
 			"/api/v1/connections/4242/cluster", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
-		req = withBearer(req, token)
+		req = withAuth(t, handler.authStore, req, token)
 		req = withUser(req, userID)
 		rec := httptest.NewRecorder()
 
@@ -422,7 +422,7 @@ func TestConnectionHandler_UpdateConnectionCluster_Issue233(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPut,
 			"/api/v1/connections/4242/cluster", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
-		req = withBearer(req, token)
+		req = withAuth(t, handler.authStore, req, token)
 		req = withSuperuser(req)
 		rec := httptest.NewRecorder()
 

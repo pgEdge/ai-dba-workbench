@@ -182,13 +182,18 @@ func (ds *Datastore) Close() {
 // tagged as Workbench-internal to keep them out of the server's Top
 // Queries panel when monitoring queries are hidden. See sqlmarker.Tag
 // for why the marker sits immediately after the leading keyword.
+//
+// deleted_at IS NULL skips a connection the server is purging after a
+// delete (issue #669). Marking it deleted also clears is_monitored, but
+// a later update must not be able to bring a deleted connection back
+// into collection.
 var (
 	monitoredConnectionsQuery = sqlmarker.Tag(`
         SELECT id, name, host, hostaddr, port, database_name, username,
                password_encrypted, sslmode, sslcert, sslkey, sslrootcert,
                owner_username, owner_token, updated_at, connection_error
         FROM connections
-        WHERE is_monitored = TRUE
+        WHERE is_monitored = TRUE AND deleted_at IS NULL
     `)
 
 	monitoredConnectionByIDQuery = sqlmarker.Tag(`
@@ -196,12 +201,12 @@ var (
                password_encrypted, sslmode, sslcert, sslkey, sslrootcert,
                owner_username, owner_token, updated_at, connection_error
         FROM connections
-        WHERE id = $1 AND is_monitored = TRUE
+        WHERE id = $1 AND is_monitored = TRUE AND deleted_at IS NULL
     `)
 
 	setConnectionErrorStatement = sqlmarker.Tag(
 		"UPDATE connections SET connection_error = $1, " +
-			"updated_at = NOW() WHERE id = $2")
+			"updated_at = NOW() WHERE id = $2 AND deleted_at IS NULL")
 )
 
 // GetMonitoredConnections returns all connections that should be monitored

@@ -253,8 +253,8 @@ func TestUpdateConnectionFullErrorPaths(t *testing.T) {
 	}
 
 	_, err := ds.UpdateConnectionFull(ctx, 999999, ConnectionUpdateParams{Name: &name})
-	if !errors.Is(err, pgx.ErrNoRows) || !strings.Contains(err.Error(), "failed to update connection") {
-		t.Errorf("UpdateConnectionFull(999999) error = %v, want a wrapped pgx.ErrNoRows", err)
+	if !errors.Is(err, ErrConnectionNotFound) {
+		t.Errorf("UpdateConnectionFull(999999) error = %v, want ErrConnectionNotFound", err)
 	}
 }
 

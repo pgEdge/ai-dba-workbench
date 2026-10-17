@@ -92,6 +92,7 @@ func (d *Datastore) getAllConnectionsWithRoles(ctx context.Context) ([]connectio
         LEFT JOIN latest_os_info loi ON c.id = loi.connection_id
         LEFT JOIN latest_spock_version lsv ON c.id = lsv.connection_id
         LEFT JOIN active_alerts aa ON c.id = aa.connection_id
+        WHERE c.deleted_at IS NULL
         ORDER BY c.name
     `, serverStatusCaseSQL("lc.collected_at", "lc.connection_id IS NULL"))
 
@@ -462,6 +463,7 @@ func (d *Datastore) syncAutoDetectedClusterAssignments(ctx context.Context, auto
 				`UPDATE connections
                  SET cluster_id = $1, role = $2, updated_at = CURRENT_TIMESTAMP
                  WHERE id = $3
+                   AND deleted_at IS NULL
                    AND (cluster_id IS NULL OR cluster_id = $1 OR membership_source = 'auto')`,
 				clusterID, sr.Role, sr.ID,
 			)
@@ -717,10 +719,19 @@ func (d *Datastore) createShellClustersForUnmerged(ctx context.Context, groups [
 	var shells []shellInfo
 	for rows.Next() {
 		var s shellInfo
-		if err := rows.Scan(&s.dbID, &s.name, &s.description, &s.replicationType, &s.autoClusterKey, &s.groupID); err != nil {
+		// group_id is nullable. Scan it through a pointer: a scan error
+		// closes rows in pgx, so failing on one group-less cluster would
+		// silently drop every shell cluster after it.
+		var groupID *int
+		if err := rows.Scan(&s.dbID, &s.name, &s.description, &s.replicationType, &s.autoClusterKey, &groupID); err != nil {
 			logger.Errorf("createShellClustersForUnmerged: failed to scan cluster: %v", err)
 			continue
 		}
+		if groupID == nil {
+			logger.Errorf("createShellClustersForUnmerged: cluster %q has no group", s.autoClusterKey)
+			continue
+		}
+		s.groupID = *groupID
 		shells = append(shells, s)
 	}
 	if err := rows.Err(); err != nil {

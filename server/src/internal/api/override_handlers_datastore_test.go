@@ -50,6 +50,7 @@ CREATE TABLE clusters (
 );
 
 CREATE TABLE connections (
+    deleted_at TIMESTAMPTZ,
     id SERIAL PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     cluster_id INTEGER REFERENCES clusters(id) ON DELETE SET NULL

@@ -5712,7 +5712,7 @@
     "/memories/{id}": {
       "patch": {
         "summary": "Update memory pin status",
-        "description": "Updates the pinned status of a memory",
+        "description": "Updates the pinned status of the caller's own memory, or of a system-scoped memory when the caller holds the store_system_memory permission",
         "operationId": "updateMemoryPinned",
         "tags": [
           "Memory"
@@ -5778,8 +5778,18 @@
               }
             }
           },
+          "403": {
+            "description": "Permission denied: a system-scoped memory requires the store_system_memory permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "404": {
-            "description": "Memory not found",
+            "description": "Memory not found or not accessible",
             "content": {
               "application/json": {
                 "schema": {

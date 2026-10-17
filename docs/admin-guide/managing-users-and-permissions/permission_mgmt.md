@@ -131,7 +131,7 @@ permissions available:
 | `manage_probes` | Allows configuring probe frequency, retention, and enabled state. |
 | `manage_alert_rules` | Allows configuring alert rule defaults and per-connection overrides. |
 | `manage_notification_channels` | Allows creating, editing, and deleting alert notification channels. |
-| `store_system_memory` | Allows storing and deleting system-scoped chat memories visible to all users. |
+| `store_system_memory` | Allows storing, pinning, unpinning and deleting system-scoped chat memories visible to all users. |
 
 To grant an administrative permission, select the `+ Grant Permission` icon
 across from the `Admin Permissions` heading. When the `Grant admin permission`

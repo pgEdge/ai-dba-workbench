@@ -76,7 +76,7 @@ func TestToolSchemasDeclareTypes(t *testing.T) {
 	for _, tool := range []Tool{
 		StoreMemoryTool(nil, cfg, nil, nil),
 		RecallMemoriesTool(nil, cfg),
-		DeleteMemoryTool(nil),
+		DeleteMemoryTool(nil, nil, nil),
 		SearchKnowledgebaseTool("", cfg),
 	} {
 		defs = append(defs, tool.Definition)

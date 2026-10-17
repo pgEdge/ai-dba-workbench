@@ -281,6 +281,48 @@ func TestStore_Delete(t *testing.T) {
 			t.Errorf("expected ErrNotFound, got %v", err)
 		}
 	})
+
+	t.Run("creator cannot delete a system-scoped memory", func(t *testing.T) {
+		// A system memory carries its creator's username, but Delete
+		// matches user-scoped rows only, so deleting one always goes
+		// through the store_system_memory check and DeleteByID.
+		truncateMemories(t, pool)
+		mem, err := store.Store(ctx, "admin", "system", "policy",
+			"shared", false, nil, "")
+		if err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+		if err := store.Delete(ctx, mem.ID, "admin"); !errors.Is(err, ErrNotFound) {
+			t.Errorf("expected ErrNotFound, got %v", err)
+		}
+		if _, err := store.GetByID(ctx, mem.ID); err != nil {
+			t.Errorf("system memory should remain, got %v", err)
+		}
+	})
+}
+
+// TestStore_WriteErrors checks that the deletes and the pinned updates
+// report a failed statement as an error rather than as ErrNotFound.
+func TestStore_WriteErrors(t *testing.T) {
+	_, pool, cleanup := newMemoryTestStore(t)
+	cleanup()
+	store := NewStore(pool)
+	ctx := context.Background()
+
+	if err := store.Delete(ctx, 1, "alice"); err == nil || errors.Is(err, ErrNotFound) {
+		t.Errorf("Delete on a closed pool: got %v", err)
+	}
+	if err := store.DeleteByID(ctx, 1); err == nil || errors.Is(err, ErrNotFound) {
+		t.Errorf("DeleteByID on a closed pool: got %v", err)
+	}
+	if err := store.UpdatePinned(ctx, 1, "alice", true); err == nil ||
+		errors.Is(err, ErrNotFound) {
+		t.Errorf("UpdatePinned on a closed pool: got %v", err)
+	}
+	if err := store.UpdateSystemPinned(ctx, 1, true); err == nil ||
+		errors.Is(err, ErrNotFound) {
+		t.Errorf("UpdateSystemPinned on a closed pool: got %v", err)
+	}
 }
 
 func TestStore_DeleteByID(t *testing.T) {
@@ -337,7 +379,6 @@ func TestStore_UpdatePinned(t *testing.T) {
 	})
 
 	t.Run("non-owner cannot pin user-scoped memory", func(t *testing.T) {
-		// UPDATE matches WHERE id=? AND (username=? OR scope='system').
 		// For a user-scoped row owned by alice, bob's update affects 0
 		// rows so the call returns ErrNotFound.
 		truncateMemories(t, pool)
@@ -352,16 +393,55 @@ func TestStore_UpdatePinned(t *testing.T) {
 		}
 	})
 
-	t.Run("any user can pin a system-scoped memory", func(t *testing.T) {
-		// system scope short-circuits the username check by design.
+	t.Run("no user can pin a system-scoped memory", func(t *testing.T) {
+		// A system memory is pinned only through UpdateSystemPinned,
+		// which the caller gates on store_system_memory (issue #704),
+		// even by the user who created it.
+		truncateMemories(t, pool)
+		mem, err := store.Store(ctx, "admin", "system", "policy",
+			"shared", false, nil, "")
+		if err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+		for _, username := range []string{"anyone", "admin"} {
+			err := store.UpdatePinned(ctx, mem.ID, username, true)
+			if !errors.Is(err, ErrNotFound) {
+				t.Errorf("UpdatePinned as %s: expected ErrNotFound, got %v",
+					username, err)
+			}
+		}
+		got, err := store.GetByID(ctx, mem.ID)
+		if err != nil {
+			t.Fatalf("GetByID: %v", err)
+		}
+		if got.Pinned {
+			t.Errorf("system memory should not be pinned")
+		}
+	})
+
+	t.Run("missing id returns ErrNotFound", func(t *testing.T) {
+		truncateMemories(t, pool)
+		err := store.UpdatePinned(ctx, 9999, "alice", true)
+		if !errors.Is(err, ErrNotFound) {
+			t.Errorf("expected ErrNotFound, got %v", err)
+		}
+	})
+}
+
+func TestStore_UpdateSystemPinned(t *testing.T) {
+	store, pool, cleanup := newMemoryTestStore(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	t.Run("toggles a system-scoped memory", func(t *testing.T) {
 		truncateMemories(t, pool)
 		mem, err := store.Store(ctx, "", "system", "policy",
 			"shared", false, nil, "")
 		if err != nil {
 			t.Fatalf("seed: %v", err)
 		}
-		if err := store.UpdatePinned(ctx, mem.ID, "anyone", true); err != nil {
-			t.Fatalf("UpdatePinned system: %v", err)
+		if err := store.UpdateSystemPinned(ctx, mem.ID, true); err != nil {
+			t.Fatalf("UpdateSystemPinned: %v", err)
 		}
 		got, err := store.GetByID(ctx, mem.ID)
 		if err != nil {
@@ -372,9 +452,22 @@ func TestStore_UpdatePinned(t *testing.T) {
 		}
 	})
 
+	t.Run("does not match a user-scoped memory", func(t *testing.T) {
+		truncateMemories(t, pool)
+		mem, err := store.Store(ctx, "alice", "user", "k", "v",
+			false, nil, "")
+		if err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+		err = store.UpdateSystemPinned(ctx, mem.ID, true)
+		if !errors.Is(err, ErrNotFound) {
+			t.Errorf("expected ErrNotFound, got %v", err)
+		}
+	})
+
 	t.Run("missing id returns ErrNotFound", func(t *testing.T) {
 		truncateMemories(t, pool)
-		err := store.UpdatePinned(ctx, 9999, "alice", true)
+		err := store.UpdateSystemPinned(ctx, 9999, true)
 		if !errors.Is(err, ErrNotFound) {
 			t.Errorf("expected ErrNotFound, got %v", err)
 		}

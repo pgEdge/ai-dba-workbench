@@ -272,7 +272,9 @@ in the search results regardless of the query.
 
 The `delete_memory` tool removes a memory by its
 numeric ID. A user can only delete memories that the
-user owns.
+user owns, and deleting a system memory requires the
+`store_system_memory` permission, even for the user
+who created it.
 
 ### Example Interactions
 
@@ -329,8 +331,8 @@ The panel provides the following actions:
 - Delete memories that are no longer needed using the
   delete button.
 
-Deleting system-scoped memories requires the
-`store_system_memory` admin permission.
+Pinning, unpinning or deleting a system-scoped memory
+requires the `store_system_memory` admin permission.
 
 ## Running Without AI
 

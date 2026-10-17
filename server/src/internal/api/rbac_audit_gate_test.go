@@ -515,6 +515,8 @@ func TestDenialTargetNormalization(t *testing.T) {
 		{http.MethodPut, "/api/v1/alert-rules/8", "alert_rule.update", "alert-rules/8"},
 		{http.MethodGet, "/api/v1/alert-rules/8", "alert_rule.read", "alert-rules/8"},
 		{http.MethodOptions, "/api/v1/alert-rules/8", "rbac.options", unmatchedDenialTarget},
+		{http.MethodPatch, "/api/v1/memories/4", "memory.update", "memories/4"},
+		{http.MethodDelete, "/api/v1/memories/4", "memory.delete", "memories/4"},
 		{http.MethodPut, "/api/v1/widgets/8", "rbac.put", unmatchedDenialTarget},
 		{http.MethodPut, "/elsewhere", "rbac.put", unmatchedDenialTarget},
 		{http.MethodGet, "/api/v1/rbac/users/" + strings.Repeat("x", 300), "rbac.get",

@@ -1053,14 +1053,19 @@ resolver says no) are audited too since issue #675, through
 the object outside the path (a query parameter or the body), so the
 refusing handler calls `denialRecorder.refuseConnection` or
 `refuseTarget`, which attach the action and a `connections/<id>` or
-`alerts/<id>` target to the request context; `deniedRoute` returns
-that before its path mapping. The reason passed is one of the fixed
-constants `connectionAccessDenied`, `connectionWriteDenied` and
-`alertAccessDenied`, never the formatted response message, because the
-reason is in the coalescer key and an id in it would write a row per
-probed id. The actions are the `deniedAction*` constants in that file
-(`connection.read`, `connection.query`, `metrics.read`,
-`server_info.read`, `alert.acknowledge` and so on).
+`alerts/<id>` target to the request context; `deniedRoute` returns that
+before its path mapping. The reason passed is one of the fixed constants
+`connectionAccessDenied`, `connectionWriteDenied`, `alertAccessDenied`
+and `systemAlertManageDenied`, never the formatted response message,
+because the reason is in the coalescer key and an id in it would write a
+row per probed id. `alertRefusalReason` returns
+`systemAlertManageDenied` for a system alert (`connection_id` NULL),
+because acting on one needs `manage_alert_rules` rather than access to a
+connection, and the constant matches the reason `requirePermission`
+records; any other alert gets `alertAccessDenied`. The actions are the
+`deniedAction*` constants in that file (`connection.read`,
+`connection.query`, `metrics.read`, `server_info.read`,
+`alert.acknowledge` and so on).
 `MetricsHandler`, `LatestSnapshotHandler`, `PerfSummaryHandler`,
 `ServerInfoHandler` and `AlertHandler` embed `denialAuditor` and are in
 the wiring loop, which `TestSetupHandlersWiresDenialRecorders` pins.

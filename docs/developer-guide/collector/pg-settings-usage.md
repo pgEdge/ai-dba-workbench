@@ -45,12 +45,23 @@ and `boot_val` columns before storing them:
   parses both the keyword/value and the URI forms, and
   stores `********` in place of a value it cannot
   parse.
-- `ssl_passphrase_command`, `archive_command`,
-  `archive_cleanup_command`, `restore_command` and
-  `recovery_end_command` are replaced with `********`
-  in full, since a command can embed a passphrase or
-  an inline secret such as `PGPASSWORD=...` and has no
-  structure to parse.
+- `archive_command`, `archive_cleanup_command`,
+  `restore_command` and `recovery_end_command` keep
+  the program name and have its arguments replaced
+  with a single `********`; the value of each
+  environment variable assigned before the program,
+  such as `PGPASSWORD=...`, is replaced as well, but
+  the variable's name is kept. For example,
+  `PGPASSWORD=s3cret pgbackrest archive-push %p` is
+  stored as `PGPASSWORD=******** pgbackrest ********`.
+  A command that does not start with a plain program
+  name, such as one starting with a quoted path or a
+  subshell, or that uses `$` expansion or an empty
+  value in an assignment before the program, is
+  replaced with `********` in full.
+- `ssl_passphrase_command` is replaced with
+  `********` in full, since the command commonly
+  embeds the passphrase.
 - An extension setting (one with a dot in its name)
   whose name contains `password`, `passwd`,
   `passphrase`, `secret`, `token`, `credential` or
@@ -64,15 +75,19 @@ the list the collector uses.
 
 An empty value, meaning the setting is unset, is
 stored as it is. Because the probe compares redacted
-values, a change to the password alone does not store
-a new snapshot.
+values, a change to the password alone, or to the
+arguments of a shell command alone, does not store a
+new snapshot.
 
 Collector schema migration 25 applies the same
 redaction to rows stored by earlier versions, and the
 server redacts these values again when it returns
 them in timeline configuration change events, from
 `GET /api/v1/metrics/latest` and in the latest-row
-mode of `GET /api/v1/metrics/query`.
+mode of `GET /api/v1/metrics/query`. Those routes and
+the `query_datastore` tool return the archive and
+recovery commands as `********` in full; only the
+stored rows keep the program name.
 
 ## Common Queries
 

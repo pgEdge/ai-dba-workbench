@@ -41,6 +41,11 @@ func TestRedactConfigChangeDetails(t *testing.T) {
 			want: `{"changes":[{"name":"ssl_passphrase_command","new_value":"********","old_value":null}]}`,
 		},
 		{
+			name: "shell command keeps its program name",
+			in:   `{"changes":[{"name":"archive_command","old_value":"","new_value":"PGPASSWORD=s3cret pgbackrest archive-push %p"}]}`,
+			want: `{"changes":[{"name":"archive_command","new_value":"PGPASSWORD=******** pgbackrest ********","old_value":""}]}`,
+		},
+		{
 			name: "missing value key is not added",
 			in:   `{"changes":[{"name":"myext.password","new_value":"s3cret"}]}`,
 			want: `{"changes":[{"name":"myext.password","new_value":"********"}]}`,

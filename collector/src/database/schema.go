@@ -4042,6 +4042,37 @@ func (sm *SchemaManager) registerMigrations() {
 			return maskConnectionAlertDescriptions(context.Background(), tx)
 		},
 	})
+
+	// Migration #28 describes the redaction of the shell-command settings
+	// on metrics.pg_settings.setting. See GitHub issue #676.
+	//
+	// pgsettings.RedactValue now keeps the program name of
+	// archive_command, archive_cleanup_command, restore_command and
+	// recovery_end_command, and the names of the environment variables
+	// assigned before it, rather than replacing the whole value. No
+	// stored row needs rewriting: migration 25 applies RedactValue from
+	// the collector that runs it, so a database it reaches in this
+	// version is redacted the new way, and one it reached in an earlier
+	// version holds these values replaced in full, which cannot be
+	// restored and which RedactValue leaves as they are. Only the column
+	// comment changes.
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     28,
+		Description: "Describe the shell-command redaction of pg_settings values",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			_, err := tx.Exec(ctx, `
+				COMMENT ON COLUMN metrics.pg_settings.setting IS
+					'Current value of the setting; credentials are redacted to ********: the password in primary_conninfo, everything but the program name and the names of leading environment variables in archive_command, archive_cleanup_command, restore_command and recovery_end_command, and the whole of ssl_passphrase_command and of extension settings named like a secret';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to comment pg_settings value columns: %w", err)
+			}
+
+			return nil
+		},
+	})
 }
 
 // statementTextUpdates holds, for each column that stores statement text,

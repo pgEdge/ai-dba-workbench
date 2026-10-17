@@ -2731,19 +2731,17 @@ project adheres to
   `primary_conninfo` with `********` in the `setting`, `reset_val`
   and `boot_val` columns, parsing both the keyword/value and URI
   forms and keeping the rest of the string. It replaces in full
-  `ssl_passphrase_command`, `archive_command`,
-  `archive_cleanup_command`, `restore_command` and
-  `recovery_end_command`, any of which can embed a secret such as
-  `PGPASSWORD=...`, and any extension setting named like a secret.
-  Collector schema migration 25 redacts the rows already stored, and
-  the server redacts the timeline and latest-row values again for a
-  datastore the collector has not yet migrated; the structured
-  `query_datastore` tool masks the same settings, using the same
-  list. A change to the password alone is no longer recorded as a
-  configuration change. Redaction cannot recall a password that has
-  already been read from the datastore, so rotate any password that
-  these settings or the statement text below held whilst an earlier
-  version was collecting. (#643)
+  `ssl_passphrase_command` and any extension setting named like a
+  secret, and redacts the archive and recovery commands as described
+  for #676 below. Collector schema migration 25 redacts the rows
+  already stored, and the server redacts the timeline and latest-row
+  values again for a datastore the collector has not yet migrated;
+  the structured `query_datastore` tool masks the same settings,
+  using the same list. A change to the password alone is no longer
+  recorded as a configuration change. Redaction cannot recall a
+  password that has already been read from the datastore, so rotate
+  any password that these settings or the statement text below held
+  whilst an earlier version was collecting. (#643)
 
 - Redact passwords in collected statement text. PostgreSQL keeps the
   text of statements such as `ALTER ROLE ... PASSWORD`, `CREATE USER
@@ -2811,6 +2809,30 @@ project adheres to
   and, through `list_connections`, the chat model. The error is now cut
   and masked in the same way as in `query_datastore`, on a best-effort
   basis.
+
+- Redact the arguments of collected shell-command settings. The
+  `pg_settings` probe stored `archive_command`,
+  `archive_cleanup_command`, `restore_command` and
+  `recovery_end_command` as PostgreSQL showed them, although they
+  commonly embed a credential such as a `PGPASSWORD=...` prefix, a
+  storage key or a password argument to a backup tool. The probe now
+  keeps each command's program name and replaces its arguments with
+  `********`, along with the value of any environment variable
+  assigned before the program, so
+  `PGPASSWORD=s3cret pgbackrest archive-push %p` is stored as
+  `PGPASSWORD=******** pgbackrest ********`. A command that does not
+  start with a plain program name, that uses `$` expansion or an
+  empty assignment before it, or that holds a backslash line
+  continuation is replaced in full. Collector schema migration 25
+  redacts the rows already stored in the same way when it runs in
+  this release; a datastore already past migration 25 keeps these
+  values as `********`, so the first collection after the upgrade
+  records one configuration change for each server that sets one of
+  these commands. The server's REST routes, timeline events and
+  `query_datastore` still return these settings as `********` in
+  full, as does the redaction of collected statement text. A change
+  to a command's arguments alone is not recorded as a configuration
+  change. (#676)
 
 - Delete a user with `ai-dba-server -delete-user` only when the
   confirmation is an explicit `y` or `yes`. The answer was checked

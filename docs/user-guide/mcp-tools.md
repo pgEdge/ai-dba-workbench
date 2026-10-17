@@ -332,7 +332,7 @@ assistant can store and recall across conversations.
 |------|-------------|
 | `store_memory` | Stores a persistent memory with a category, scope, and optional pinned flag. |
 | `recall_memories` | Searches stored memories using semantic similarity; pinned memories are always included. |
-| `delete_memory` | Deletes a stored memory by its ID; only the owning user can delete a memory. |
+| `delete_memory` | Deletes a stored memory by its ID; only the owning user can delete a memory, and deleting a system memory requires the `store_system_memory` permission. |
 
 ## Utility Tools
 

@@ -498,6 +498,19 @@ moved.
   `server/src/internal/api` and the two copies must stay byte-identical
   below the copyright header; check with
   `diff <(tail -n +11 <a>) <(tail -n +11 <b>)`.
+- Chat memories (`internal/memory`, the `/api/v1/memories` routes in
+  `api/memory_handlers.go` and the MCP memory tools): a system-scoped
+  memory is visible to every user, so answering 403 for one leaks
+  nothing, whilst another user's memory answers 404 exactly as a
+  missing one does and runs no write. Every pin, unpin or delete of a
+  system memory, through REST or MCP, needs `store_system_memory`,
+  because a pinned system memory is injected into every user's
+  assistant context. A system memory carries its creator's username,
+  so a store method matching on username alone would let the creator
+  bypass the permission: `Store.Delete` and `Store.UpdatePinned` match
+  `scope = 'user'` rows only, and system rows are changed only through
+  `DeleteByID` and `UpdateSystemPinned` after the permission check
+  (issue #704).
 
 ## The RBAC Audit Log
 

@@ -17,12 +17,11 @@ BINARY := ai-dba-server
 
 # Minimum acceptable total statement coverage, in percent; the coverage
 # target fails below it. The project floor is 90% (see CLAUDE.md, Tests);
-# this default is pinned at the total measured on 16 October 2026
-# (88.0%, the lowest total across CI's PostgreSQL 14 to 18 matrix) so
-# the gate holds the line today, and it should be raised towards 90 as
-# coverage grows. Override for local experiments with
-# `make coverage COVERAGE_MIN=80`.
-COVERAGE_MIN ?= 90.2
+# this ratchet is pinned at the lowest total across CI's PostgreSQL 14
+# to 18 matrix, measured on 17 October 2026 (91.9%).
+# Raise it whenever a change lifts the total and never lower it.
+# Override for local experiments with `make coverage COVERAGE_MIN=80`.
+COVERAGE_MIN ?= 91.9
 
 # Get absolute path to output directory
 ABS_BIN_DIR := $(abspath $(BIN_DIR))

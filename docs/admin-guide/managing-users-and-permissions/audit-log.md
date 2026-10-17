@@ -195,6 +195,11 @@ target such as `memories/42`. A server running without its
 authentication store still refuses these requests, but has nowhere to
 record them, so no event is written.
 
+Refusals by MCP tools are recorded too. A `store_memory` call that asks
+for a system-scoped memory without the `store_system_memory` permission
+is recorded as `memory.create` with a target of `memories`, and is
+coalesced with repeated denials in the same way as a refused request.
+
 Each denial names the object the request was aimed at in
 `details.target`, as the kind of object followed by its numeric
 identifier, such as `users/12` or `connections/7`, or as the kind alone,

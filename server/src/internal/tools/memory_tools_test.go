@@ -24,7 +24,7 @@ import (
 // ---------------------------------------------------------------------------
 
 func TestStoreMemoryToolDefinition(t *testing.T) {
-	tool := StoreMemoryTool(nil, &config.Config{}, nil)
+	tool := StoreMemoryTool(nil, &config.Config{}, nil, nil)
 
 	if tool.Definition.Name != "store_memory" {
 		t.Errorf("expected tool name 'store_memory', got %q",
@@ -125,7 +125,7 @@ func TestDeleteMemoryToolDefinition(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestStoreMemoryMissingContent(t *testing.T) {
-	tool := StoreMemoryTool(nil, &config.Config{}, nil)
+	tool := StoreMemoryTool(nil, &config.Config{}, nil, nil)
 
 	tests := []struct {
 		name string
@@ -174,7 +174,7 @@ func TestStoreMemoryMissingContent(t *testing.T) {
 }
 
 func TestStoreMemoryWhitespaceOnlyContent(t *testing.T) {
-	tool := StoreMemoryTool(nil, &config.Config{}, nil)
+	tool := StoreMemoryTool(nil, &config.Config{}, nil, nil)
 
 	args := map[string]any{
 		"content":  "   \t\n   ",
@@ -198,7 +198,7 @@ func TestStoreMemoryWhitespaceOnlyContent(t *testing.T) {
 }
 
 func TestStoreMemoryMissingCategory(t *testing.T) {
-	tool := StoreMemoryTool(nil, &config.Config{}, nil)
+	tool := StoreMemoryTool(nil, &config.Config{}, nil, nil)
 
 	tests := []struct {
 		name string
@@ -247,7 +247,7 @@ func TestStoreMemoryMissingCategory(t *testing.T) {
 }
 
 func TestStoreMemoryWhitespaceOnlyCategory(t *testing.T) {
-	tool := StoreMemoryTool(nil, &config.Config{}, nil)
+	tool := StoreMemoryTool(nil, &config.Config{}, nil, nil)
 
 	args := map[string]any{
 		"content":  "Remember this fact.",
@@ -271,7 +271,7 @@ func TestStoreMemoryWhitespaceOnlyCategory(t *testing.T) {
 }
 
 func TestStoreMemoryInvalidScope(t *testing.T) {
-	tool := StoreMemoryTool(nil, &config.Config{}, nil)
+	tool := StoreMemoryTool(nil, &config.Config{}, nil, nil)
 
 	args := map[string]any{
 		"content":  "Remember this fact.",
@@ -299,7 +299,7 @@ func TestStoreMemoryValidScopeValues(t *testing.T) {
 	// Both "user" and "system" should pass scope validation.
 	// They will fail later because there is no authenticated user in
 	// the context, but they must not fail on the scope check itself.
-	tool := StoreMemoryTool(nil, &config.Config{}, nil)
+	tool := StoreMemoryTool(nil, &config.Config{}, nil, nil)
 
 	for _, scope := range []string{"user", "system"} {
 		t.Run("scope="+scope, func(t *testing.T) {
@@ -326,7 +326,7 @@ func TestStoreMemoryValidScopeValues(t *testing.T) {
 
 func TestStoreMemorySystemScopeRequiresPermission(t *testing.T) {
 	// When rbacChecker is nil, storing with scope "system" must be denied.
-	tool := StoreMemoryTool(nil, &config.Config{}, nil)
+	tool := StoreMemoryTool(nil, &config.Config{}, nil, nil)
 
 	ctx := context.WithValue(context.Background(),
 		auth.UsernameContextKey, "testuser")
@@ -354,7 +354,7 @@ func TestStoreMemorySystemScopeRequiresPermission(t *testing.T) {
 }
 
 func TestStoreMemoryNoAuthContext(t *testing.T) {
-	tool := StoreMemoryTool(nil, &config.Config{}, nil)
+	tool := StoreMemoryTool(nil, &config.Config{}, nil, nil)
 
 	// Provide valid params but no __context with a username
 	args := map[string]any{
@@ -381,7 +381,7 @@ func TestStoreMemoryNoAuthContext(t *testing.T) {
 func TestStoreMemoryWithAuthContextButNilStore(t *testing.T) {
 	// Verify that passing valid params and a valid user context but a
 	// nil memory store returns a tool error instead of panicking.
-	tool := StoreMemoryTool(nil, &config.Config{}, nil)
+	tool := StoreMemoryTool(nil, &config.Config{}, nil, nil)
 
 	ctx := context.WithValue(context.Background(),
 		auth.UsernameContextKey, "testuser")

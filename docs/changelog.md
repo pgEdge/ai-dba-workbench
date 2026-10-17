@@ -1382,6 +1382,16 @@ project adheres to
   server now also stops cleanly if the signal arrives before it has
   started listening.
 
+- Record the `store_memory` MCP tool's refusal of a system-scoped
+  memory, for a caller without the `store_system_memory`
+  permission, in the audit log as a denied `memory.create` on
+  `memories`, coalesced with repeated denials in the same way as
+  the REST refusals. The refusal text the tool returns changes
+  from `Permission denied: you do not have permission to store
+  system-scoped memories` to `Permission denied: requires
+  store_system_memory permission`, matching the REST permission
+  refusals. (#674)
+
 - Fix the `probe_unavailable` alert firing on healthy Spock clusters
   with no recent apply exceptions or conflict resolutions. The
   collector could not tell an installed extension with nothing to

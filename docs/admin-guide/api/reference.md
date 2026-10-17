@@ -567,7 +567,8 @@ and new values in the same way as `/api/v1/metrics/latest`.
 Alert descriptions returned by `/api/v1/alerts` and in the
 alert events of `/api/v1/timeline/events` are cut and masked
 in the same way as query text, since a connection alert quotes
-the connection error.
+the connection error, as is the `connection_error` of each
+server in the cluster topology from `/api/v1/clusters`.
 
 The masking cannot recognise every form a password can take,
 so query text and replicated row data may still contain

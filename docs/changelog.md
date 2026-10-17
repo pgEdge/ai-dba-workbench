@@ -2803,6 +2803,15 @@ project adheres to
   not changed, and stored AI analyses and chat history are not
   rewritten.
 
+- Mask passwords in the connection error that the `list_connections`
+  MCP tool and the cluster topology from `GET /api/v1/clusters`
+  return (#683). Both returned the collector's last connection error
+  for each server as it was stored, so a libpq error quoting a
+  connection string or URI with its password reached the web client
+  and, through `list_connections`, the chat model. The error is now cut
+  and masked in the same way as in `query_datastore`, on a best-effort
+  basis.
+
 - Delete a user with `ai-dba-server -delete-user` only when the
   confirmation is an explicit `y` or `yes`. The answer was checked
   only when a whole line could be read, so input that ended without

@@ -20,6 +20,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/pgedge/ai-workbench/pkg/redact"
 	"github.com/pgedge/ai-workbench/pkg/rollback"
 )
 
@@ -1048,14 +1049,17 @@ func (d *Datastore) getUngroupedServersInternal(ctx context.Context) ([]ServerIn
 	// The connection_error column is nullable in the DB, so we scan it
 	// into a sql.NullString and map it to the *string field only when
 	// the value is non-null; otherwise the field stays nil to signal
-	// "no recorded error" rather than "empty error string".
+	// "no recorded error" rather than "empty error string". The driver's
+	// error text can hold a connection string and its password, so it
+	// is masked before it leaves the datastore (issue #683).
 	servers, err := scanAll(rows, func(r pgx.Rows, s *ServerInfo) error {
 		var connErr sql.NullString
 		if err := r.Scan(&s.ID, &s.Name, &s.Host, &s.Port, &s.Role, &s.Status, &connErr); err != nil {
 			return err
 		}
 		if connErr.Valid {
-			s.ConnectionError = &connErr.String
+			masked := redact.Text(connErr.String)
+			s.ConnectionError = &masked
 		}
 		return nil
 	})
@@ -1141,7 +1145,8 @@ func (d *Datastore) getServersInClusterInternal(ctx context.Context, clusterID i
 	// role and connection_error are both nullable columns. We scan
 	// them into sql.NullString locals and only populate the *string
 	// fields when the corresponding value is non-null so callers can
-	// distinguish "missing" from "empty string".
+	// distinguish "missing" from "empty string". connection_error is
+	// masked as in getUngroupedServersInternal.
 	servers, err := scanAll(rows, func(r pgx.Rows, s *ServerInfo) error {
 		var role sql.NullString
 		var connErr sql.NullString
@@ -1152,7 +1157,8 @@ func (d *Datastore) getServersInClusterInternal(ctx context.Context, clusterID i
 			s.Role = &role.String
 		}
 		if connErr.Valid {
-			s.ConnectionError = &connErr.String
+			masked := redact.Text(connErr.String)
+			s.ConnectionError = &masked
 		}
 		return nil
 	})

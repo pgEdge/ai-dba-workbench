@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pgedge/ai-workbench/pkg/redact"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
 )
@@ -154,6 +155,10 @@ CRITICAL: Never silently analyze multiple connections. Always get explicit user 
 				if err := rows.Scan(&conn.ID, &conn.Name, &conn.Host, &conn.Port, &conn.DatabaseName, &conn.IsMonitored, &conn.Status, &conn.ConnectionError); err != nil {
 					return mcp.NewToolError(fmt.Sprintf("Failed to scan connection: %v", err))
 				}
+				// The driver's error text can hold a connection string
+				// and its password, and this output reaches the LLM
+				// (issue #683).
+				conn.ConnectionError = redact.Text(conn.ConnectionError)
 				connections = append(connections, conn)
 			}
 

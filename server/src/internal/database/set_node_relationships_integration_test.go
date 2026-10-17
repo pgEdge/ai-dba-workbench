@@ -13,6 +13,8 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // TestSetNodeRelationships_ReplacesManualRowsOnly covers the
@@ -27,6 +29,7 @@ func TestSetNodeRelationships_ReplacesManualRowsOnly(t *testing.T) {
 	source := insertSyncTestConnection(t, pool, "source")
 	targetA := insertSyncTestConnection(t, pool, "target-a")
 	targetB := insertSyncTestConnection(t, pool, "target-b")
+	joinSyncTestCluster(t, pool, clusterID, source, targetA, targetB)
 
 	// Seed one auto-detected row that must survive, and one manual row
 	// that must be replaced.
@@ -83,6 +86,7 @@ func TestSetNodeRelationships_EmptyInputClearsManualRows(t *testing.T) {
 	clusterID := insertSyncTestCluster(t, pool, "set-node-rels-empty")
 	source := insertSyncTestConnection(t, pool, "source-empty")
 	target := insertSyncTestConnection(t, pool, "target-empty")
+	joinSyncTestCluster(t, pool, clusterID, source, target)
 
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO cluster_node_relationships
@@ -114,6 +118,7 @@ func TestSetNodeRelationships_InsertFailureRollsBack(t *testing.T) {
 	clusterID := insertSyncTestCluster(t, pool, "set-node-rels-bad-insert")
 	source := insertSyncTestConnection(t, pool, "source-bad")
 	target := insertSyncTestConnection(t, pool, "target-bad")
+	joinSyncTestCluster(t, pool, clusterID, source, target)
 
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO cluster_node_relationships
@@ -183,6 +188,8 @@ func TestSetNodeRelationships_PermittedSet(t *testing.T) {
 	visible := insertSyncTestConnection(t, pool, "permitted-visible")
 	hiddenManual := insertSyncTestConnection(t, pool, "permitted-hidden-manual")
 	hiddenAuto := insertSyncTestConnection(t, pool, "permitted-hidden-auto")
+	joinSyncTestCluster(t, pool, clusterID, source, visible, hiddenManual,
+		hiddenAuto)
 
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO cluster_node_relationships
@@ -290,6 +297,7 @@ func TestNodeRelationships_CommitFailureReturnsError(t *testing.T) {
 	clusterID := insertSyncTestCluster(t, pool, "node-rels-commit")
 	source := insertSyncTestConnection(t, pool, "commit-source")
 	target := insertSyncTestConnection(t, pool, "commit-target")
+	joinSyncTestCluster(t, pool, clusterID, source, target)
 
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO cluster_node_relationships
@@ -357,6 +365,7 @@ func TestAddNodeRelationship_KeepsOtherManualRows(t *testing.T) {
 	source := insertSyncTestConnection(t, pool, "add-source")
 	targetA := insertSyncTestConnection(t, pool, "add-target-a")
 	targetB := insertSyncTestConnection(t, pool, "add-target-b")
+	joinSyncTestCluster(t, pool, clusterID, source, targetA, targetB)
 
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO cluster_node_relationships
@@ -388,11 +397,164 @@ func TestAddNodeRelationship_InsertFailureReturnsError(t *testing.T) {
 
 	clusterID := insertSyncTestCluster(t, pool, "add-node-rel-bad")
 	source := insertSyncTestConnection(t, pool, "add-source-bad")
+	joinSyncTestCluster(t, pool, clusterID, source)
 
 	err := ds.AddNodeRelationship(context.Background(), clusterID, source,
 		RelationshipInput{TargetConnectionID: source,
 			RelationshipType: "replicates_with"})
 	if err == nil {
 		t.Fatal("AddNodeRelationship with a self-relationship returned nil; want error")
+	}
+}
+
+// joinSyncTestCluster makes the given connections members of the
+// cluster, as the relationship writes require.
+func joinSyncTestCluster(t *testing.T, pool *pgxpool.Pool, clusterID int, ids ...int) {
+	t.Helper()
+	if _, err := pool.Exec(context.Background(),
+		`UPDATE connections SET cluster_id = $1 WHERE id = ANY($2)`,
+		clusterID, ids); err != nil {
+		t.Fatalf("Failed to join connections to the cluster: %v", err)
+	}
+}
+
+// TestNodeRelationships_RefuseNonMembers covers the membership recheck
+// both writes make under a lock (issue #707): a source or target that is
+// not a member of the cluster is refused with the matching sentinel, and
+// nothing is written or deleted.
+func TestNodeRelationships_RefuseNonMembers(t *testing.T) {
+	ds, pool, cleanup := newSyncAutoDetectedTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	clusterID := insertSyncTestCluster(t, pool, "node-rels-members")
+	member := insertSyncTestConnection(t, pool, "members-member")
+	other := insertSyncTestConnection(t, pool, "members-other")
+	outsider := insertSyncTestConnection(t, pool, "members-outsider")
+	joinSyncTestCluster(t, pool, clusterID, member, other)
+
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO cluster_node_relationships
+			(cluster_id, source_connection_id, target_connection_id,
+			 relationship_type, is_auto_detected)
+		VALUES ($1, $2, $3, 'streams_from', FALSE)
+	`, clusterID, member, other); err != nil {
+		t.Fatalf("Failed to seed relationship: %v", err)
+	}
+
+	toOutsider := RelationshipInput{TargetConnectionID: outsider,
+		RelationshipType: "streams_from"}
+	toMember := RelationshipInput{TargetConnectionID: member,
+		RelationshipType: "streams_from"}
+	tests := []struct {
+		name string
+		call func() error
+		want error
+	}{
+		{"set, source outside", func() error {
+			return ds.SetNodeRelationships(ctx, clusterID, outsider,
+				[]RelationshipInput{toMember}, nil)
+		}, ErrSourceNotInCluster},
+		{"set, target outside", func() error {
+			return ds.SetNodeRelationships(ctx, clusterID, member,
+				[]RelationshipInput{toOutsider}, nil)
+		}, ErrTargetNotInCluster},
+		{"add, source outside", func() error {
+			return ds.AddNodeRelationship(ctx, clusterID, outsider, toMember)
+		}, ErrSourceNotInCluster},
+		{"add, target outside", func() error {
+			return ds.AddNodeRelationship(ctx, clusterID, member, toOutsider)
+		}, ErrTargetNotInCluster},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := tt.call(); !errors.Is(err, tt.want) {
+				t.Fatalf("error = %v, want %v", err, tt.want)
+			}
+			if got := countRelationships(t, pool, clusterID, false); got != 1 {
+				t.Errorf("manual rows = %d, want the original 1", got)
+			}
+		})
+	}
+}
+
+// TestNodeRelationships_LockFailureReturnsError covers the failed
+// membership lock, reached when the connections table is absent.
+func TestNodeRelationships_LockFailureReturnsError(t *testing.T) {
+	ds, pool, cleanup := newSyncAutoDetectedTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `DROP TABLE connections CASCADE`); err != nil {
+		t.Fatalf("Failed to drop connections table: %v", err)
+	}
+	rel := RelationshipInput{TargetConnectionID: 2,
+		RelationshipType: "streams_from"}
+	if err := ds.SetNodeRelationships(ctx, 1, 1,
+		[]RelationshipInput{rel}, nil); err == nil {
+		t.Error("SetNodeRelationships without the connections table returned nil; want error")
+	}
+	if err := ds.AddNodeRelationship(ctx, 1, 1, rel); err == nil {
+		t.Error("AddNodeRelationship without the connections table returned nil; want error")
+	}
+}
+
+// TestAddNodeRelationship_ClosedPoolReturnsError covers the
+// begin-transaction failure branch.
+func TestAddNodeRelationship_ClosedPoolReturnsError(t *testing.T) {
+	ds, pool, cleanup := newSyncAutoDetectedTestDatastore(t)
+	if _, err := pool.Exec(context.Background(), syncAutoDetectedTestTeardown); err != nil {
+		t.Fatalf("teardown: %v", err)
+	}
+	pool.Close()
+	_ = cleanup
+
+	if err := ds.AddNodeRelationship(context.Background(), 1, 1,
+		RelationshipInput{TargetConnectionID: 2,
+			RelationshipType: "streams_from"}); err == nil {
+		t.Fatal("AddNodeRelationship against a closed pool returned nil; want error")
+	}
+}
+
+// TestAddNodeRelationship_CommitFailureReturnsError covers the failed
+// COMMIT branch: a deferred constraint trigger that raises on INSERT
+// fails the commit, and no row is written.
+func TestAddNodeRelationship_CommitFailureReturnsError(t *testing.T) {
+	ds, pool, cleanup := newSyncAutoDetectedTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	clusterID := insertSyncTestCluster(t, pool, "add-node-rel-commit")
+	source := insertSyncTestConnection(t, pool, "add-commit-source")
+	target := insertSyncTestConnection(t, pool, "add-commit-target")
+	joinSyncTestCluster(t, pool, clusterID, source, target)
+
+	if _, err := pool.Exec(ctx, `
+		CREATE FUNCTION fail_relationship_insert() RETURNS trigger
+		LANGUAGE plpgsql AS $$
+		BEGIN
+			RAISE EXCEPTION 'injected commit failure';
+		END $$;
+		CREATE CONSTRAINT TRIGGER fail_relationship_insert
+			AFTER INSERT ON cluster_node_relationships
+			DEFERRABLE INITIALLY DEFERRED
+			FOR EACH ROW EXECUTE FUNCTION fail_relationship_insert();
+	`); err != nil {
+		t.Fatalf("Failed to create the failing trigger: %v", err)
+	}
+	// A deferred drop runs before the earlier deferred cleanup closes the
+	// pool; t.Cleanup would run after it and leave the function behind.
+	defer func() {
+		_, _ = pool.Exec(context.Background(),
+			`DROP FUNCTION IF EXISTS fail_relationship_insert() CASCADE`)
+	}()
+
+	if err := ds.AddNodeRelationship(ctx, clusterID, source,
+		RelationshipInput{TargetConnectionID: target,
+			RelationshipType: "replicates_with"}); err == nil {
+		t.Error("AddNodeRelationship with a failing commit returned nil; want error")
+	}
+	if got := countRelationships(t, pool, clusterID, false); got != 0 {
+		t.Errorf("manual rows = %d, want 0", got)
 	}
 }

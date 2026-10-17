@@ -209,19 +209,76 @@ func deleteManualRelationships(ctx context.Context, tx pgx.Tx, clusterID, source
 	return nil
 }
 
+// ErrSourceNotInCluster and ErrTargetNotInCluster are returned by
+// SetNodeRelationships and AddNodeRelationship when the source, or a
+// target, is not a member of the cluster once the write transaction has
+// locked it; nothing is changed.
+var (
+	ErrSourceNotInCluster = errors.New("source connection does not belong to the cluster")
+	ErrTargetNotInCluster = errors.New("target connection does not belong to the cluster")
+)
+
+// lockClusterMembers takes a FOR SHARE lock, within tx, on the
+// connection rows of the source and every target that are members of
+// the cluster, in id order, and returns ErrSourceNotInCluster or
+// ErrTargetNotInCluster when one of them is not a member. The lock
+// conflicts with the UPDATE that moves a connection to another cluster,
+// so a move either commits first and is seen here, or waits for tx and
+// then deletes the rows tx wrote (see dropRelationshipsOutsideCluster);
+// a relationship row naming a connection outside its cluster cannot
+// survive either order (issue #707).
+func lockClusterMembers(ctx context.Context, tx pgx.Tx, clusterID, sourceID int, targetIDs []int) error {
+	ids := append([]int{sourceID}, targetIDs...)
+	var locked []int
+	err := tx.QueryRow(ctx, `
+        SELECT array_agg(id) FROM (
+            SELECT id FROM connections
+            WHERE id = ANY($1) AND cluster_id = $2
+            ORDER BY id
+            FOR SHARE
+        ) AS members`,
+		ids, clusterID,
+	).Scan(&locked)
+	if err != nil {
+		return fmt.Errorf("failed to lock cluster members: %w", err)
+	}
+	members := make(map[int]bool, len(locked))
+	for _, id := range locked {
+		members[id] = true
+	}
+	if !members[sourceID] {
+		return ErrSourceNotInCluster
+	}
+	for _, id := range targetIDs {
+		if !members[id] {
+			return ErrTargetNotInCluster
+		}
+	}
+	return nil
+}
+
 // SetNodeRelationships replaces manual (non-auto-detected) relationships
 // for a given source node in a cluster. This runs in a transaction:
-// first deleting existing manual rows for the source, then inserting
-// the new ones with is_auto_detected = FALSE. A nil permitted set allows
-// any target; otherwise, when a deleted row targets a connection outside
-// permitted, the transaction is rolled back and ErrHiddenRelationship is
-// returned.
+// first locking the source and targets as cluster members (see
+// lockClusterMembers), then deleting existing manual rows for the
+// source, then inserting the new ones with is_auto_detected = FALSE. A
+// nil permitted set allows any target; otherwise, when a deleted row
+// targets a connection outside permitted, the transaction is rolled
+// back and ErrHiddenRelationship is returned.
 func (d *Datastore) SetNodeRelationships(ctx context.Context, clusterID int, sourceConnectionID int, relationships []RelationshipInput, permitted map[int]bool) error {
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer rollback.Tx(ctx, tx) //nolint:errcheck // no-op after commit
+
+	targets := make([]int, 0, len(relationships))
+	for _, rel := range relationships {
+		targets = append(targets, rel.TargetConnectionID)
+	}
+	if err := lockClusterMembers(ctx, tx, clusterID, sourceConnectionID, targets); err != nil {
+		return err
+	}
 
 	if err := deleteManualRelationships(ctx, tx, clusterID, sourceConnectionID, permitted); err != nil {
 		return err
@@ -252,9 +309,20 @@ func (d *Datastore) SetNodeRelationships(ctx context.Context, clusterID int, sou
 // the source's other rows. A row that already exists is left as it is.
 // Unlike SetNodeRelationships it never deletes, so writing the reverse
 // half of a replicates_with pair cannot discard the target's other
-// manual relationships.
+// manual relationships. The source and target are locked as cluster
+// members first, as in SetNodeRelationships.
 func (d *Datastore) AddNodeRelationship(ctx context.Context, clusterID int, sourceConnectionID int, rel RelationshipInput) error {
-	_, err := d.pool.Exec(ctx,
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer rollback.Tx(ctx, tx) //nolint:errcheck // no-op after commit
+
+	if err := lockClusterMembers(ctx, tx, clusterID, sourceConnectionID, []int{rel.TargetConnectionID}); err != nil {
+		return err
+	}
+
+	_, err = tx.Exec(ctx,
 		`INSERT INTO cluster_node_relationships
          (cluster_id, source_connection_id, target_connection_id, relationship_type, is_auto_detected)
          VALUES ($1, $2, $3, $4, FALSE)
@@ -263,6 +331,10 @@ func (d *Datastore) AddNodeRelationship(ctx context.Context, clusterID int, sour
 	)
 	if err != nil {
 		return fmt.Errorf("failed to insert relationship: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 	return nil
 }
@@ -412,6 +484,12 @@ func (d *Datastore) AddServerToCluster(ctx context.Context, clusterID int, conne
 		return ErrConnectionNotFound
 	}
 
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to add server to cluster: %w", err)
+	}
+	defer rollback.Tx(ctx, tx) //nolint:errcheck // no-op after commit
+
 	query := `
         UPDATE connections
         SET cluster_id = $2, role = $3, membership_source = 'manual',
@@ -419,8 +497,18 @@ func (d *Datastore) AddServerToCluster(ctx context.Context, clusterID int, conne
         WHERE id = $1 AND deleted_at IS NULL
     `
 
-	_, err = d.pool.Exec(ctx, query, connectionID, clusterID, role)
+	_, err = tx.Exec(ctx, query, connectionID, clusterID, role)
 	if err != nil {
+		return fmt.Errorf("failed to add server to cluster: %w", err)
+	}
+
+	// Adding a member of another cluster moves it, so its rows in the
+	// old cluster go in the same transaction (issue #707).
+	if err := dropRelationshipsOutsideCluster(ctx, tx, connectionID, &clusterID); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("failed to add server to cluster: %w", err)
 	}
 

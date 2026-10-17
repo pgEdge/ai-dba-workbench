@@ -42,8 +42,9 @@ gate and the token-scope gate, and before `DecodeJSONBody`,
 `restrictedVisibleSet` resolves the visible set (nil means
 unrestricted) and `visibleSourceInCluster` answers 404 for a hidden
 source and 400 for a source outside the addressed cluster (checked
-before any existing row is considered, since a moved connection keeps
-stale rows in its old cluster). The visible set is then passed to
+before any existing row is considered, since rows a move left behind
+before issue #707 may still name it in another cluster). The visible
+set is then passed to
 `SetNodeRelationships` / `ClearNodeRelationships` as `permitted`; the
 delete checks the targets in its own `RETURNING` list and rolls back
 with `database.ErrHiddenRelationship` if one is hidden, so a hidden row
@@ -63,6 +64,28 @@ cluster selector list goes through `filterClustersByVisibility` as
 `GET /clusters/list` does. Writes that add a row to a connection other than
 the source use the insert-only `AddNodeRelationship`, never the
 replacing `SetNodeRelationships`, so they cannot delete hidden rows.
+
+Changing a connection's cluster (`AssignConnectionToCluster` behind
+`PUT /connections/{id}/cluster`, `AddServerToCluster` behind
+`POST /clusters/{id}/servers`) deletes, in the same transaction, every
+row naming the connection, as source or target, manual or
+auto-detected, whose `cluster_id` is not the new one
+(`dropRelationshipsOutsideCluster`, issue #707). That delete takes no
+`permitted` set, as `RemoveServerFromCluster` takes none: the caller
+has passed the gates for moving the connection, and a row in a cluster
+the connection has left describes a node that is no longer a member.
+The handler's `IsConnectionInCluster` checks run outside the write, so
+`SetNodeRelationships` and `AddNodeRelationship` recheck membership
+inside their transaction with `lockClusterMembers` (`FOR SHARE` on the
+source and targets, which conflicts with the move's `UPDATE`) and roll
+back with `database.ErrSourceNotInCluster` / `ErrTargetNotInCluster`,
+which `refuseDepartedMember` turns into the usual 400s; without it a
+move landing between check and write left a stale row
+(`TestIssue707_RelationshipWriteRacingMove`).
+`SyncAutoDetectedRelationships` does not take that lock yet.
+`TestIssue707_*` in `cluster_move_relationships_test.go` and the
+datastore tests in `cluster_move_relationships_integration_test.go`
+lock this in.
 
 ## Variant 1: Plain Admin Gate
 

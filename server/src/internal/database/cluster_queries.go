@@ -1174,9 +1174,20 @@ func (d *Datastore) getServersInClusterInternal(ctx context.Context, clusterID i
 // id that names no cluster fails the connections.cluster_id foreign
 // key and is reported as ErrClusterNotFound, and a connection id that
 // names no connection as ErrConnectionNotFound.
+//
+// The move and the removal of the connection's relationship rows in any
+// other cluster (see dropRelationshipsOutsideCluster) commit together,
+// so the old cluster's topology never keeps edges to a node that has
+// left it (issue #707).
 func (d *Datastore) AssignConnectionToCluster(ctx context.Context, connectionID int, clusterID *int, role *string, membershipSource string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to assign connection to cluster: %w", err)
+	}
+	defer rollback.Tx(ctx, tx) //nolint:errcheck // no-op after commit
 
 	query := `
         UPDATE connections
@@ -1184,7 +1195,7 @@ func (d *Datastore) AssignConnectionToCluster(ctx context.Context, connectionID 
         WHERE id = $1 AND deleted_at IS NULL
     `
 
-	result, err := d.pool.Exec(ctx, query, connectionID, clusterID, role, membershipSource)
+	result, err := tx.Exec(ctx, query, connectionID, clusterID, role, membershipSource)
 	if err != nil {
 		// cluster_id is the only foreign key this statement sets.
 		var pgErr *pgconn.PgError
@@ -1198,5 +1209,34 @@ func (d *Datastore) AssignConnectionToCluster(ctx context.Context, connectionID 
 		return ErrConnectionNotFound
 	}
 
+	if err := dropRelationshipsOutsideCluster(ctx, tx, connectionID, clusterID); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to assign connection to cluster: %w", err)
+	}
+
+	return nil
+}
+
+// dropRelationshipsOutsideCluster deletes every cluster_node_relationships
+// row in which connectionID is the source or the target and whose
+// cluster_id is not clusterID; a nil clusterID drops them all. Rows are
+// keyed by cluster, so once a connection changes cluster its rows in
+// the old one describe a node that is no longer a member. Manual and
+// auto-detected rows go alike, as in RemoveServerFromCluster: the
+// caller has already passed the gates for moving the connection, and a row
+// in a cluster the connection has left constrains nothing.
+func dropRelationshipsOutsideCluster(ctx context.Context, tx pgx.Tx, connectionID int, clusterID *int) error {
+	_, err := tx.Exec(ctx,
+		`DELETE FROM cluster_node_relationships
+         WHERE (source_connection_id = $1 OR target_connection_id = $1)
+           AND cluster_id IS DISTINCT FROM $2`,
+		connectionID, clusterID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to delete relationships in the previous cluster: %w", err)
+	}
 	return nil
 }

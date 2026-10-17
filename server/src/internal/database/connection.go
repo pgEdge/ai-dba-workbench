@@ -163,6 +163,10 @@ func (c *Client) ConnectTo(connStr string) error {
 	}
 	poolConfig.ConnConfig.RuntimeParams["default_transaction_read_only"] = "on"
 
+	// Reset each connection's session state before it rejoins the pool,
+	// so nothing one caller sets is seen by the next (issue #709).
+	poolConfig.AfterRelease = resetSessionOnRelease
+
 	// Create pool with configured settings
 	pool, err := pgxpool.NewWithConfig(context.Background(), poolConfig)
 	if err != nil {

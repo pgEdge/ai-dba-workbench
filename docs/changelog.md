@@ -2527,6 +2527,14 @@ project adheres to
 
 ### Security
 
+- Reset the session on each pooled connection to a monitored
+  database when a tool call releases it (#709). A tool call could
+  previously leave settings such as `search_path`, temporary
+  tables, prepared statements or advisory locks on a shared
+  connection, where the next caller to borrow it would see them.
+  The server now runs `DISCARD ALL` as each connection returns to
+  the pool, and closes the connection instead if the reset fails.
+
 - Mask HBA secrets in the collector datastore (#680). The
   `pg_hba_file_rules` probe now stores the `ldapbindpasswd` and
   `radiussecrets` options as `name=********`, and cuts the

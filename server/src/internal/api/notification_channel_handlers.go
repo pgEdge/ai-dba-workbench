@@ -32,7 +32,8 @@ type NotificationChannelHandler struct {
 	hostValidator   *HostValidator
 	checkPermission func(http.ResponseWriter, *http.Request) bool
 
-	// denialAuditor audits this handler's token-scope refusals.
+	// denialAuditor audits this handler's token-scope and
+	// permission refusals.
 	denialAuditor
 }
 
@@ -45,7 +46,7 @@ func NewNotificationChannelHandlerWithSecurity(datastore *database.Datastore, au
 		rbacChecker:   rbacChecker,
 		hostValidator: NewHostValidator(allowInternal, allowedHosts, blockedHosts),
 	}
-	h.checkPermission = RequireAdminPermission(rbacChecker, auth.PermManageNotificationChannels, "manage notification channels")
+	h.checkPermission = requireAdminPermission(rbacChecker, &h.denialAuditor, auth.PermManageNotificationChannels)
 	return h
 }
 

@@ -126,14 +126,16 @@ action the request would have used had it been allowed, so that a denial
 and the change it was refused share a vocabulary. Two action names
 appear only on denials: `audit.read`, for a refused read of the audit
 log itself, and `token.scope.set`, for a refused scope update, because a
-single endpoint covers all three scope types. A token refused a cluster
-move of a connection that its connection scope names only at `read` is
-recorded as `connection.cluster.update`, as is a cluster move of a
-connection the caller cannot see at all. A refused request that matches
-no known route records `rbac.`
-followed by the lower-case HTTP method, so that the denial is kept rather
-than dropped, and any method outside the standard HTTP set records
-`rbac.other`.
+single endpoint covers all three scope types. A refused read of a
+configuration object, such as a notification channel, is recorded as
+the object's kind followed by `.read`, such as
+`notification_channel.read` or `alert_override.read`. A token refused
+a cluster move of a connection that its connection scope names only at
+`read` is recorded as `connection.cluster.update`, as is a cluster move
+of a connection the caller cannot see at all. A refused request that
+matches no known route records `rbac.` followed by the lower-case HTTP
+method, so that the denial is kept rather than dropped, and any method
+outside the standard HTTP set records `rbac.other`.
 
 Refusals of configuration changes are recorded in the same way. A token
 whose connection scope does not cover the target of a blackout, a
@@ -168,6 +170,27 @@ requires manage_alert_rules permission`. A current connection selected
 before the caller lost access to it is refused when the client reads
 it, and recorded as `connection.read`; repeated reads are coalesced
 like any other denial, as described below.
+
+A request refused because the caller lacks the admin permission it
+needs is recorded in the same way, with a reason that names the
+permission, such as
+`Permission denied: requires manage_blackouts permission`. This
+covers blackouts and blackout schedules (`manage_blackouts`), alert
+rules and alert overrides (`manage_alert_rules`), probe configurations
+and probe overrides (`manage_probes`), notification channels, their
+recipients and channel overrides (`manage_notification_channels`), and
+clusters, cluster relationships and connections
+(`manage_connections`), and system-scoped chat memories
+(`store_system_memory`). A request to create a connection without
+`manage_connections` is recorded as `connection.create`, and one to
+change or delete a connection that the caller neither owns nor may
+manage as `connection.update` or `connection.delete`; an owner who
+tries to share a connection without `manage_connections` is recorded
+as `connection.update` too. A request to delete a system-scoped memory
+without `store_system_memory` is recorded as `memory.delete`, with a
+target such as `memories/42`. A server running without its
+authentication store still refuses these requests, but has nowhere to
+record them, so no event is written.
 
 Each denial names the object the request was aimed at in
 `details.target`, as the kind of object followed by its numeric

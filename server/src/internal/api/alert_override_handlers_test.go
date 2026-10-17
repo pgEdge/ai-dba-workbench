@@ -270,7 +270,7 @@ func TestAlertOverrideHandler_UpsertRequiresPermission(t *testing.T) {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
 
-	expectedError := "Permission denied: you do not have permission to manage alert rules"
+	expectedError := "Permission denied: requires manage_alert_rules permission"
 	if response.Error != expectedError {
 		t.Errorf("Expected error %q, got %q", expectedError, response.Error)
 	}
@@ -297,7 +297,7 @@ func TestAlertOverrideHandler_DeleteRequiresPermission(t *testing.T) {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
 
-	expectedError := "Permission denied: you do not have permission to manage alert rules"
+	expectedError := "Permission denied: requires manage_alert_rules permission"
 	if response.Error != expectedError {
 		t.Errorf("Expected error %q, got %q", expectedError, response.Error)
 	}
@@ -465,7 +465,7 @@ func TestAlertOverrideHandler_ContextEndpoint_RequiresPermission(t *testing.T) {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
 
-	expectedError := "Permission denied: you do not have permission to manage alert rules"
+	expectedError := "Permission denied: requires manage_alert_rules permission"
 	if response.Error != expectedError {
 		t.Errorf("Expected error %q, got %q", expectedError, response.Error)
 	}

@@ -289,8 +289,8 @@ func denialResourceTarget(kind, rest string) string {
 const apiPathPrefix = "/api/v1/"
 
 // deniedAPIResources maps the first path segment of the non-RBAC routes
-// whose token-scope refusals are audited to the resource name their
-// actions use.
+// whose token-scope and permission refusals are audited to the resource
+// name their actions use.
 var deniedAPIResources = map[string]string{
 	"clusters":              "cluster",
 	"cluster-groups":        "cluster_group",
@@ -302,6 +302,7 @@ var deniedAPIResources = map[string]string{
 	"alert-overrides":       "alert_override",
 	"probe-overrides":       "probe_override",
 	"channel-overrides":     "channel_override",
+	"memories":              "memory",
 }
 
 // deniedScopedResources lists the deniedAPIResources whose routes name
@@ -322,10 +323,12 @@ var deniedOverrideScopes = map[string]bool{
 }
 
 // deniedAPIRoute maps a write on one of deniedAPIResources to
-// "<resource>.create", ".update" or ".delete" and the object it names.
-// A write below an object, such as adding a server to a cluster, is
-// recorded as an update of that object. It returns an empty action for
-// any other request.
+// "<resource>.create", ".update" or ".delete", and a read to
+// "<resource>.read", together with the object it names. A write below
+// an object, such as adding a server to a cluster, is recorded as an
+// update of that object, and a read below one, such as listing a
+// notification channel's recipients, as a read of it. It returns an
+// empty action for any other request.
 func deniedAPIRoute(method, path string) (action, target string) {
 	if !strings.HasPrefix(path, apiPathPrefix) {
 		return "", ""
@@ -349,6 +352,8 @@ func deniedAPIRoute(method, path string) (action, target string) {
 	case method == http.MethodPost || method == http.MethodPut ||
 		method == http.MethodPatch || method == http.MethodDelete:
 		verb = "update"
+	case method == http.MethodGet:
+		verb = "read"
 	default:
 		return "", ""
 	}
@@ -359,13 +364,15 @@ func deniedAPIRoute(method, path string) (action, target string) {
 
 // deniedScopedRoute maps a write on an override route,
 // PUT or DELETE /{kind}/{scope}/{scopeId}/{item}, to
-// "<resource>.update" or "<resource>.delete". The target names the
-// object the override is attached to, such as
-// "alert-overrides/server/5", since that is what the token-scope check
-// refuses; the item is left out because a probe name is free text. A
-// scope outside deniedOverrideScopes, or an id that does not parse,
-// leaves the kind alone as the target. It returns an empty action for
-// any other request.
+// "<resource>.update" or "<resource>.delete", and a read of the
+// override context for one connection,
+// GET /{kind}/context/{connectionId}/{item}, to "<resource>.read" on
+// the server scope. The target names the object the override is
+// attached to, such as "alert-overrides/server/5", since that is what
+// the token-scope check refuses; the item is left out because a probe
+// name is free text. A scope outside deniedOverrideScopes, or an id
+// that does not parse, leaves the kind alone as the target. It returns
+// an empty action for any other request.
 func deniedScopedRoute(method, resource string,
 	parts []string) (action, target string) {
 
@@ -374,19 +381,23 @@ func deniedScopedRoute(method, resource string,
 	}
 
 	var verb string
-	switch method {
-	case http.MethodPut:
+	scope := parts[1]
+	switch {
+	case method == http.MethodPut:
 		verb = "update"
-	case http.MethodDelete:
+	case method == http.MethodDelete:
 		verb = "delete"
+	case method == http.MethodGet && scope == "context":
+		verb = "read"
+		scope = "server"
 	default:
 		return "", ""
 	}
 
 	target = parts[0]
 	id, err := strconv.ParseInt(parts[2], 10, 64)
-	if deniedOverrideScopes[parts[1]] && err == nil && id > 0 {
-		target = parts[0] + "/" + parts[1] + "/" + strconv.FormatInt(id, 10)
+	if deniedOverrideScopes[scope] && err == nil && id > 0 {
+		target = parts[0] + "/" + scope + "/" + strconv.FormatInt(id, 10)
 	}
 
 	return resource + "." + verb, target
@@ -395,10 +406,10 @@ func deniedScopedRoute(method, resource string,
 // connectionPathPrefix is the prefix of the per-connection REST routes.
 const connectionPathPrefix = "/api/v1/connections/"
 
-// deniedConnectionAction maps the connection routes whose token-scope
-// refusals are audited: POST /connections, PUT and DELETE
-// /connections/{id}, and PUT /connections/{id}/cluster. It returns an
-// empty string for any other request.
+// deniedConnectionAction maps the connection routes whose refusals are
+// audited: POST /connections, PUT and DELETE /connections/{id}, and PUT
+// /connections/{id}/cluster. It returns an empty string for any other
+// request.
 func deniedConnectionAction(method, path string) string {
 	if strings.TrimSuffix(path, "/")+"/" == connectionPathPrefix {
 		if method == http.MethodPost {

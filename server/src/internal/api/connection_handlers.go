@@ -37,8 +37,9 @@ type ConnectionHandler struct {
 	visibilityListerFn func() auth.ConnectionVisibilityLister
 
 	// denialRecorder writes a refused request to the audit log through
-	// the RBAC handler's coalescing denial recorder, so a token-scope
-	// refusal here is audited the same way as one on an RBAC route.
+	// the RBAC handler's coalescing denial recorder, so a token-scope,
+	// ownership or permission refusal here is audited the same way as
+	// one on an RBAC route.
 	// When nil, refusals are not audited (for example, when the server
 	// runs without an auth store).
 	denialRecorder denialRecorder
@@ -232,8 +233,9 @@ func (h *ConnectionHandler) createConnection(w http.ResponseWriter, r *http.Requ
 	// could create a non-shared server connection and silently expand
 	// their visible topology. Check before decoding the body so denied
 	// callers cannot probe payload shape via validation error messages.
+	// The refusal is audited (issue #648).
 	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections) {
-		RespondError(w, http.StatusForbidden,
+		h.denialRecorder.refuse(w, r,
 			"Permission denied: requires manage_connections permission")
 		return
 	}
@@ -512,7 +514,7 @@ func (h *ConnectionHandler) updateConnection(w http.ResponseWriter, r *http.Requ
 
 	// Only users with manage_connections permission can make connections shared
 	if req.IsShared != nil && *req.IsShared && !hasManageConns {
-		RespondError(w, http.StatusForbidden,
+		h.denialRecorder.refuse(w, r,
 			"Permission denied: you do not have permission to make connections shared")
 		return
 	}

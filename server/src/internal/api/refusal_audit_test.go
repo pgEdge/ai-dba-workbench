@@ -349,14 +349,26 @@ func TestDeniedScopedRoute(t *testing.T) {
 			"rbac.put", unmatchedDenialTarget},
 		{http.MethodPost, "/api/v1/alert-overrides/server/5/3",
 			"rbac.post", unmatchedDenialTarget},
+		// A read of one connection's override context names that
+		// connection as the server scope (issue #648).
 		{http.MethodGet, "/api/v1/alert-overrides/context/5/3",
-			"rbac.get", unmatchedDenialTarget},
+			"alert_override.read", "alert-overrides/server/5"},
+		{http.MethodGet, "/api/v1/alert-overrides/context/x/3",
+			"alert_override.read", "alert-overrides"},
 		// The blackout and probe config routes take the generic shape.
 		{http.MethodPost, "/api/v1/blackouts", "blackout.create", "blackouts"},
 		{http.MethodPost, "/api/v1/blackouts/4/stop", "blackout.update", "blackouts/4"},
 		{http.MethodDelete, "/api/v1/blackout-schedules/4",
 			"blackout_schedule.delete", "blackout-schedules/4"},
 		{http.MethodPut, "/api/v1/probe-configs/2", "probe_config.update", "probe-configs/2"},
+		// Reads, and the connection create, are named too (issue #648).
+		{http.MethodGet, "/api/v1/notification-channels",
+			"notification_channel.read", "notification-channels"},
+		{http.MethodGet, "/api/v1/notification-channels/3/recipients",
+			"notification_channel.read", "notification-channels/3"},
+		{http.MethodPost, "/api/v1/connections", "connection.create", "connections"},
+		{http.MethodGet, "/api/v1/connections", "rbac.get", unmatchedDenialTarget},
+		{http.MethodHead, "/api/v1/blackouts", "rbac.head", unmatchedDenialTarget},
 	}
 	for _, tt := range tests {
 		req := httptest.NewRequest(tt.method, tt.path, nil)

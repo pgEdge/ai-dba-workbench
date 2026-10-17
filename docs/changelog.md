@@ -1254,6 +1254,23 @@ project adheres to
   takes time in proportion to the entries dropped rather than to
   the number it holds, as the denial coalescer already did. (#651)
 
+- Fix requests refused for a missing admin permission leaving
+  no audit event (#648). A caller without `manage_blackouts`,
+  `manage_alert_rules`, `manage_probes`,
+  `manage_notification_channels` or `manage_connections` who
+  tried to create, change, delete or read a blackout, schedule,
+  alert rule, override, probe configuration, notification
+  channel, cluster or connection, or a caller without
+  `store_system_memory` who tried to delete a system-scoped
+  memory, was refused with a 403 but nothing was written to
+  the audit log. Each such refusal is
+  now recorded as a denied event under the action the request
+  would have used, such as `blackout.create` or
+  `notification_channel.read`, and coalesced with repeated
+  denials in the usual way. The refusal message now names the
+  missing permission, for example
+  `Permission denied: requires manage_blackouts permission`.
+
 - Fix the anomaly detection baselines for
   `pg_stat_database.deadlocks_delta` and
   `pg_stat_database.temp_files_delta`, which counted one more

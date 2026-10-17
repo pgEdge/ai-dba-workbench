@@ -50,17 +50,28 @@ func HandleNotConfigured(service string) http.HandlerFunc {
 	}
 }
 
-// RequireAdminPermission returns a function that checks whether the caller
-// has the specified admin permission. If the check fails it sends a 403
-// response and returns false; otherwise it returns true. A nil rbac
-// denies every caller (issue #561).
-func RequireAdminPermission(rbac *auth.RBACChecker, permission string, description string) func(http.ResponseWriter, *http.Request) bool {
+// requireAdminPermission returns a function that checks whether the
+// caller has the specified admin permission. If the check fails it
+// audits the refusal through auditor's denial recorder, sends a 403
+// response naming the permission and returns false; otherwise it
+// returns true. The recorder is read on each refusal rather than when
+// the gate is built, because the server installs it with
+// SetDenialRecorder after the handler is constructed (issue #648). A
+// nil auditor, or one with no recorder, still refuses but audits
+// nothing, and a nil rbac denies every caller (issue #561).
+func requireAdminPermission(rbac *auth.RBACChecker, auditor *denialAuditor,
+	permission string) func(http.ResponseWriter, *http.Request) bool {
+
+	reason := "Permission denied: requires " + permission + " permission"
 	return func(w http.ResponseWriter, r *http.Request) bool {
-		if !rbac.HasAdminPermission(r.Context(), permission) {
-			RespondError(w, http.StatusForbidden,
-				"Permission denied: you do not have permission to "+description)
-			return false
+		if rbac.HasAdminPermission(r.Context(), permission) {
+			return true
 		}
-		return true
+		var record denialRecorder
+		if auditor != nil {
+			record = auditor.denialRecorder
+		}
+		record.refuse(w, r, reason)
+		return false
 	}
 }

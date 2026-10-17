@@ -92,8 +92,14 @@ func requireBlackoutTargetInTokenScope(w http.ResponseWriter, r *http.Request,
 // case when the server runs without an auth store.
 type denialRecorder func(*http.Request, string)
 
-// denialAuditor is embedded by the handlers whose token-scope refusals
-// are audited, and holds the recorder they pass to the scope checks.
+// denialAuditor is embedded by the handlers whose token-scope and
+// permission refusals are audited, and holds the recorder they pass to
+// the scope checks.
+//
+// A handler that embeds it must not be copied by value once built:
+// requireAdminPermission keeps a pointer to the embedded field, so a
+// copy's gate would keep reading the original handler's recorder, and
+// SetDenialRecorder on the copy would not reach it.
 type denialAuditor struct {
 	denialRecorder denialRecorder
 }

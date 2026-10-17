@@ -25,7 +25,8 @@ type ChannelOverrideHandler struct {
 	authStore       *auth.AuthStore
 	rbacChecker     *auth.RBACChecker
 	checkPermission func(http.ResponseWriter, *http.Request) bool
-	// denialAuditor audits this handler's token-scope refusals.
+	// denialAuditor audits this handler's token-scope and
+	// permission refusals.
 	denialAuditor
 }
 
@@ -36,7 +37,7 @@ func NewChannelOverrideHandler(datastore *database.Datastore, authStore *auth.Au
 		authStore:   authStore,
 		rbacChecker: rbacChecker,
 	}
-	h.checkPermission = RequireAdminPermission(rbacChecker, auth.PermManageNotificationChannels, "manage notification channels")
+	h.checkPermission = requireAdminPermission(rbacChecker, &h.denialAuditor, auth.PermManageNotificationChannels)
 	return h
 }
 

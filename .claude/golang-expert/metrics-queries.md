@@ -217,7 +217,11 @@ decomposed into small, separately testable helpers:
   `boot_val` of credential-bearing settings with `pkg/pgsettings`; for
   `pg_stat_activity`/`pg_stat_statements` (`query`) and
   `spock_exception_log` (`ddl_statement`, `error_message`) it runs
-  `pkg/sqlredact.RedactQuery` over the statement text. The collector
+  `RedactStatementText` (`sqlredact.RedactQuery`, then `redact.Text`)
+  over the stored text the query selected under `RawStatementAlias`
+  (see `RawStatementColumns`), never over the column `RedactedText`
+  masked in SQL, and deletes the alias; a statement with no stored
+  value beside it becomes `********` (#670). The collector
   already redacts at collection time and migrations 25 (settings) and 26
   (statement text) scrub older rows; this is the read-side backstop.
   `/api/v1/metrics/latest` (`queryLatestSnapshot`) calls

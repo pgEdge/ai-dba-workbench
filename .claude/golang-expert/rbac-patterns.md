@@ -797,7 +797,14 @@ rules live in `internal/metrics/redaction.go`, shared with
 `GET /api/v1/metrics/latest` and the latest-rows mode of
 `GET /api/v1/metrics/query` (`ReturnableColumns`,
 `MaskedProbeColumn`), `GET /api/v1/metrics/top-queries`
-(`RedactedText`) and the timeline's configuration change events;
+(`RedactStatementText`) and the timeline's configuration change events.
+Statement text is lexed by `sqlredact.RedactQuery` as stored, never
+after `RedactedText`, since a quote the patterns move lets the lexer
+return the secret after it (#670): the latest routes select each
+`metrics.RawStatementColumns` entry under `RawStatementAlias` beside
+the masked column, which stays for `DISTINCT ON` and sorting, and
+`RedactProbeRows` masks from it and deletes it; top-queries selects
+`pss.query` as stored for `RedactStatementText`;
 `MaskedProbeColumn` and the timeline use `metrics.RedactedSetting`,
 which returns a connection string setting such as `primary_conninfo`
 as stored when the patterns leave it unchanged (as they leave a value

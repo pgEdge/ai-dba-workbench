@@ -55,6 +55,9 @@ var reviewedCredentialTableReaders = map[string]string{
 		"returns counts per group",
 	"internal/api/perf_summary_handlers.go:statementDatabaseLookupSQL": "reads only collected_at from " +
 		"pg_stat_statements and datid and datname from pg_stat_activity",
+	"internal/api/perf_summary_handlers.go:buildTopQueriesSQL": "selects pg_stat_statements.query as " +
+		"stored, which handleTopQueries masks with RedactStatementText before returning it, since the " +
+		"lexer must read the text unmasked (GitHub issue #670)",
 	"internal/api/perf_summary_handlers.go:queryStatsSQLTemplate": "reads only identity columns, calls " +
 		"and total_exec_time from pg_stat_statements, and returns sums",
 	"internal/api/server_info_handlers.go:ServerInfoHandler.queryKeySettings": "reads pg_settings for the " +

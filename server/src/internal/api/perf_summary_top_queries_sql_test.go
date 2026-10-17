@@ -198,11 +198,12 @@ const topQueriesPageSelect = "SELECT " +
 	"page.client_addr, page.client_hostname, page.client_observed_at " +
 	"FROM ( SELECT * FROM deduped"
 
-// topQueriesPageLateral selects the statement text with its passwords
-// masked.
+// topQueriesPageLateral selects the statement text as stored, for
+// handleTopQueries to mask with metrics.RedactStatementText (GitHub issue
+// #670).
 var topQueriesPageLateral = ") page " +
 	"LEFT JOIN LATERAL ( " +
-	"SELECT " + normaliseSQL(metrics.RedactedText("pss.query")) + " AS query " +
+	"SELECT pss.query " +
 	"FROM metrics.pg_stat_statements pss " +
 	"WHERE pss.connection_id = $1 " +
 	"AND pss.database_name = page.sample_database_name " +

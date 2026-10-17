@@ -486,6 +486,13 @@ func queryLatestSnapshot(
 		returnCols = append(returnCols, col)
 		selectParts = append(selectParts, expr)
 	}
+	// Each statement-text column is also selected as stored, for
+	// RedactProbeRows to mask in Go and then remove from the row.
+	for _, col := range metrics.RawStatementColumns(probeName, returnCols) {
+		alias := metrics.RawStatementAlias(col)
+		returnCols = append(returnCols, alias)
+		selectParts = append(selectParts, metrics.QuoteIdentifier(col)+" AS "+metrics.QuoteIdentifier(alias))
+	}
 
 	if len(dimensionCols) == 0 {
 		return nil, 0, fmt.Errorf(
@@ -631,7 +638,8 @@ func queryLatestSnapshot(
 
 	// Strip credentials from pg_settings values and passwords from
 	// statement text that a collector stored before redacting them
-	// (GitHub issue #643).
+	// (GitHub issue #643). This also removes the stored statement text
+	// selected under the RawStatementAlias columns.
 	metrics.RedactProbeRows(probeName, result)
 
 	return result, totalCount, nil

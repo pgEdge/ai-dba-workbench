@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 	"time"
 
@@ -2116,6 +2117,14 @@ func buildLatestRowsQuery(
 		}
 		innerParts = append(innerParts, expr)
 	}
+	// Each statement-text column is also selected as stored, for
+	// RedactProbeRows to mask in Go (RawStatementColumns); the scan
+	// columns QueryLatestRows passes end with the same aliases.
+	for _, col := range RawStatementColumns(probeName, outputCols) {
+		alias := QuoteIdentifier(RawStatementAlias(col))
+		selectParts = append(selectParts, alias)
+		innerParts = append(innerParts, QuoteIdentifier(col)+" AS "+alias)
+	}
 	selectClause := strings.Join(selectParts, ", ")
 
 	var whereClauses []string
@@ -2393,10 +2402,16 @@ func QueryLatestRows(
 	}
 	defer rows.Close()
 
-	result, err := scanLatestRows(rows, outputCols)
+	scanCols := slices.Clone(outputCols)
+	for _, col := range RawStatementColumns(probeName, outputCols) {
+		scanCols = append(scanCols, RawStatementAlias(col))
+	}
+	result, err := scanLatestRows(rows, scanCols)
 	if err != nil {
 		return nil, err
 	}
+	// RedactProbeRows also removes the stored statement text under the
+	// RawStatementAlias columns, which must never be returned.
 	RedactProbeRows(probeName, result)
 	return result, nil
 }

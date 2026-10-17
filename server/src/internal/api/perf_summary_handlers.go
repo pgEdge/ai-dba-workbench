@@ -1939,7 +1939,9 @@ func buildTopQueriesSQL(
 	// the collector records as NULL, still appears on the page with an
 	// empty query; sample_queryid and sample_database_name carry the raw
 	// values the lookup needs, since the projected database_name may have
-	// been resolved to a different name through db_names.
+	// been resolved to a different name through db_names. The text is
+	// selected as stored and masked in Go by metrics.RedactStatementText,
+	// whose lexer must read it unmasked (GitHub issue #670).
 	pageSQL = fmt.Sprintf(`%s
         SELECT
             page.queryid, page.database_name,
@@ -1955,7 +1957,7 @@ func buildTopQueriesSQL(
             LIMIT $%d OFFSET $%d
         ) page
         LEFT JOIN LATERAL (
-            SELECT %s AS query
+            SELECT pss.query
             FROM metrics.pg_stat_statements pss
             WHERE pss.connection_id = $1
               AND pss.database_name = page.sample_database_name
@@ -1965,7 +1967,7 @@ func buildTopQueriesSQL(
             ORDER BY pss.collected_at DESC
             LIMIT 1
         ) qtext ON TRUE
-    `, cte, orderCol, orderDir, limitPos, limitPos+1, metrics.RedactedText("pss.query"))
+    `, cte, orderCol, orderDir, limitPos, limitPos+1)
 
 	return countSQL, pageSQL, filterArgs, pageArgs
 }

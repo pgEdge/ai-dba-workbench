@@ -664,7 +664,8 @@ func stalenessAlertDescription(probeName, connectionName string,
 
 // maskStoredText masks a stored alert description. It is a variable so
 // a test can give maskOpenConnectionAlerts a description that does not
-// settle, which no known input does.
+// settle without depending on which inputs redact.SettledUncut leaves
+// unsettled, such as strings.Repeat("password-- password='x'", 3).
 var maskStoredText = redact.MaskStoredText
 
 // maskOpenConnectionAlerts rewrites the description of every connection

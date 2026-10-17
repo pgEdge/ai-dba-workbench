@@ -258,8 +258,9 @@ func TestEvaluateConnectionErrors_MasksOpenAlerts(t *testing.T) {
 }
 
 // TestMaskOpenConnectionAlerts_LogsUnsettled checks a description whose
-// masking has not settled is logged, and still written. No known input
-// fails to settle, so the masker is replaced with one that never does.
+// masking has not settled is logged, and still written. The masker is
+// replaced with one that never settles, so the test does not depend on
+// which inputs redact.SettledUncut leaves unsettled.
 func TestMaskOpenConnectionAlerts_LogsUnsettled(t *testing.T) {
 	engine, _, pool, cleanup := newEngineSpockTestEnv(t)
 	defer cleanup()

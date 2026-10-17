@@ -301,7 +301,9 @@ func TextUncut(s string) string {
 
 // maxSettlePasses bounds how many times SettledUncut applies
 // TextUncut. Every redacttest case settles within two passes, and of
-// 50,000 fuzzed inputs one needed three; TestSettledUncut pins both.
+// 50,000 fuzzed inputs one needed three; some text never settles, such
+// as a password form repeated so that each pass masks one more.
+// TestSettledUncut pins all three.
 const maxSettlePasses = 3
 
 // SettledUncut returns s masked with TextUncut and then masked again

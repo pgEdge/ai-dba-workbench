@@ -31,6 +31,10 @@ type maskedProbe struct {
 	name, drop, create, insert string
 	// hidden is a column that must not be returned at all.
 	hidden string
+	// statement, when set, seeds each quoteShiftStatements entry: $1 is
+	// the visible connection's ID, $2 a distinct number and $3 the
+	// statement.
+	statement string
 }
 
 // maskedProbes seed their rows a minute in the past, so that a database
@@ -52,12 +56,14 @@ var maskedProbes = []maskedProbe{
 		create: `CREATE TABLE metrics.pg_stat_activity (connection_id integer NOT NULL,
             collected_at timestamptz NOT NULL, datname text, query text)`,
 		insert: `INSERT INTO metrics.pg_stat_activity VALUES ($1, now() - interval '1 minute', 'appdb',
-            'ALTER ROLE app PASSWORD ''example-secret''')`},
+            'ALTER ROLE app PASSWORD ''example-secret''')`,
+		statement: `INSERT INTO metrics.pg_stat_activity VALUES ($1, now() - interval '1 minute', concat('appdb', $2::integer), $3)`},
 	{name: "pg_stat_statements", drop: `DROP TABLE IF EXISTS metrics.pg_stat_statements`,
 		create: `CREATE TABLE metrics.pg_stat_statements (connection_id integer NOT NULL,
             collected_at timestamptz NOT NULL, datname text, queryid bigint, query text)`,
 		insert: `INSERT INTO metrics.pg_stat_statements VALUES ($1, now() - interval '1 minute', 'appdb', 1,
-            'CREATE USER app WITH PASSWORD ''example-secret''')`},
+            'CREATE USER app WITH PASSWORD ''example-secret''')`,
+		statement: `INSERT INTO metrics.pg_stat_statements VALUES ($1, now() - interval '1 minute', 'appdb', $2, $3)`},
 	{name: "spock_exception_log", drop: `DROP TABLE IF EXISTS metrics.spock_exception_log`,
 		create: `CREATE TABLE metrics.spock_exception_log (connection_id integer NOT NULL,
             collected_at timestamptz NOT NULL, id integer, local_tup jsonb, remote_old_tup jsonb,
@@ -121,7 +127,8 @@ func TestMaskedProbesCoverProbeRedactions(t *testing.T) {
 // TestMaskedProbesOnEveryRouteIntegration runs every probe that holds a
 // credential through query_datastore, GET /api/v1/metrics/latest and the
 // latest-rows mode of GET /api/v1/metrics/query, and checks none returns
-// the credential.
+// the credential, a quoteShiftStatements secret or the stored statement
+// text the latest routes select beside a masked statement column.
 func TestMaskedProbesOnEveryRouteIntegration(t *testing.T) {
 	f := newDatastoreFixture(t)
 	ctx := context.Background()
@@ -145,6 +152,13 @@ func TestMaskedProbesOnEveryRouteIntegration(t *testing.T) {
 			})
 			if _, err := f.pool.Exec(ctx, p.insert, f.visible); err != nil {
 				t.Fatalf("seed: %v", err)
+			}
+			if p.statement != "" {
+				for i, st := range quoteShiftStatements {
+					if _, err := f.pool.Exec(ctx, p.statement, f.visible, 2+i, st.query); err != nil {
+						t.Fatalf("seed %q: %v", st.query, err)
+					}
+				}
 			}
 
 			outputs := map[string]string{}
@@ -172,6 +186,17 @@ func TestMaskedProbesOnEveryRouteIntegration(t *testing.T) {
 			for route, out := range outputs {
 				if strings.Contains(out, "example-secret") || strings.Contains(out, "31337") {
 					t.Errorf("%s returned a credential:\n%s", route, out)
+				}
+				// query_datastore masks statement text with the SQL
+				// patterns alone, which miss these forms, as its
+				// TextRedactionNote says; the latest routes also lex it.
+				for _, st := range quoteShiftStatements {
+					if !strings.HasPrefix(route, "query_datastore") && strings.Contains(out, st.secret) {
+						t.Errorf("%s returned %s:\n%s", route, st.secret, out)
+					}
+				}
+				if strings.Contains(out, "_raw_statement_") {
+					t.Errorf("%s returned the stored statement text column:\n%s", route, out)
 				}
 				if p.hidden != "" {
 					if strings.Contains(out, p.hidden) || !strings.Contains(out, "calls") {
@@ -209,7 +234,8 @@ var collectorShapeTables = []struct{ drop, create string }{
 }
 
 // TestMaskedQueryTextAndSettingChangesIntegration checks that the
-// top-queries route returns masked statement text, and that a change to
+// top-queries route returns masked statement text, including the
+// quoteShiftStatements, and that a change to
 // a credential setting still appears on the timeline, through both
 // GET /api/v1/timeline/events and get_timeline_events, with its old and
 // new values masked (get_timeline_events lists no details).
@@ -246,6 +272,15 @@ func TestMaskedQueryTextAndSettingChangesIntegration(t *testing.T) {
 			t.Fatalf("seed: %v\n%s", err, sql)
 		}
 	}
+	for i, st := range quoteShiftStatements {
+		if _, err := f.pool.Exec(ctx, `INSERT INTO metrics.pg_stat_statements (connection_id, collected_at,
+            queryid, userid, dbid, database_name, query, calls, total_exec_time, mean_exec_time) VALUES
+            ($1, now() - interval '6 minutes', $2, 10, 100, 'appdb', $3, 0, 0, 0),
+            ($1, now() - interval '1 minute', $2, 10, 100, 'appdb', $3, 5, 50, 10)`,
+			f.visible, 2001+i, st.query); err != nil {
+			t.Fatalf("seed %q: %v", st.query, err)
+		}
+	}
 
 	mux := http.NewServeMux()
 	noAuth := func(h http.HandlerFunc) http.HandlerFunc { return h }
@@ -279,6 +314,11 @@ func TestMaskedQueryTextAndSettingChangesIntegration(t *testing.T) {
 	for route, out := range outputs {
 		if strings.Contains(out, "example-secret") {
 			t.Errorf("%s returned a credential:\n%s", route, out)
+		}
+		for _, st := range quoteShiftStatements {
+			if strings.Contains(out, st.secret) {
+				t.Errorf("%s returned %s:\n%s", route, st.secret, out)
+			}
 		}
 		// get_timeline_events lists events without their details.
 		if route != "get_timeline_events" && !strings.Contains(out, metrics.RedactedValue) {
@@ -372,4 +412,14 @@ func TestConninfoQuoteShiftIntegration(t *testing.T) {
 			t.Errorf("%s: got %d (%s), want 400", target, rec.Code, rec.Body.String())
 		}
 	}
+}
+
+// quoteShiftStatements are statements, as a collector stored them
+// before migration 26 scrubbed them, whose secret came back on the
+// latest and top-queries routes when the server masked the text in SQL
+// (RedactedText) before lexing it (GitHub issue #670).
+var quoteShiftStatements = []struct{ query, secret string }{
+	{`ALTER SYSTEM SET restore_command = 'PGPASSWORD=\''PSSLEAKsecret17 cp %f %p'`, "PSSLEAKsecret17"},
+	{`ALTER SYSTEM SET primary_conninfo = 'host=h user=rep password=\''PSSLEAKsecret18'`, "PSSLEAKsecret18"},
+	{`ALTER ROLE app PASSWORD '\''WFLEAKsecret19'`, "WFLEAKsecret19"},
 }

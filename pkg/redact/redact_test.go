@@ -142,6 +142,12 @@ func TestSettledUncut(t *testing.T) {
 		t.Errorf("the third-pass input did not settle: %q, settled %v", settled, ok)
 	}
 
+	// Each pass masks one more of the repeated passwords, so this input
+	// is still changing after maxSettlePasses passes.
+	unsettled := strings.Repeat("password-- password='x'", 3)
+	if settled, ok := redact.SettledUncut(unsettled); ok || redact.TextUncut(settled) == settled {
+		t.Errorf("SettledUncut(%q) = %q, settled %v; want not settled", unsettled, settled, ok)
+	}
 }
 
 // TestMaskStoredText checks stored text is masked as SettledUncut masks

@@ -57,7 +57,6 @@ const (
 	deniedActionConnectionRead          = "connection.read"
 	deniedActionConnectionQuery         = "connection.query"
 	deniedActionConnectionQueryValidate = "connection.query.validate"
-	deniedActionConnectionQueryWrite    = "connection.query.write"
 	deniedActionMetricsRead             = "metrics.read"
 )
 
@@ -71,7 +70,6 @@ const (
 const (
 	toolAccessDenied       = "Access denied: you do not have permission to use this tool"
 	connectionAccessDenied = "Permission denied: you do not have access to this connection"
-	connectionWriteDenied  = "Permission denied: you do not have write access to this connection"
 )
 
 // The denial targets that name no single object. unmatchedToolTarget is

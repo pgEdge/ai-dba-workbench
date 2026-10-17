@@ -1400,14 +1400,12 @@ project adheres to
   know. A tool refused a `connection_id` the caller cannot access
   records a denied `connection.read`, `metrics.read`,
   `connection.query` or `connection.query.validate` on
-  `connections/<id>`, depending on the tool; a `query_database`
-  write refused for want of `read_write` access is a denied
-  `connection.query.write`; a `query_datastore` call naming a
-  connection in `connection_ids` that the caller cannot access is a
-  denied `connection.read` on `connections`; and a selected
-  connection the caller has since lost access to is a denied
-  `connection.read`, whether a tool or `read_resource` falls back to
-  it. A call that names a `connection_id` no longer resolves the
+  `connections/<id>`, depending on the tool; a `query_datastore`
+  call naming a connection in `connection_ids` that the caller
+  cannot access is a denied `connection.read` on `connections`;
+  and a selected connection the caller has since lost access to is
+  a denied `connection.read`, whether a tool or `read_resource`
+  falls back to it. A call that names a `connection_id` no longer resolves the
   selected connection first, so it records a refusal only of the
   connection it names. The messages the tools return are unchanged,
   except that every tool taking a `connection_id` now refuses one

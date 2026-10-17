@@ -1263,12 +1263,20 @@ its provider wiring.
 the row with `GetByID` first: a system-scoped row needs
 `store_system_memory` (refused through `h.checkSystemMemory`) and is
 changed with `Store.UpdateSystemPinned` or `Store.DeleteByID`; the
-caller's own row uses `Store.UpdatePinned`, which only matches
-`scope = 'user'` rows owned by the username; anything else answers 404
-and records nothing. Tests: `memory_handlers_test.go` and
-`memory_handlers_system_test.go` (Postgres fixture schemas plus a
-SQLite auth store, asserting the audit rows) and
-`TestStore_UpdateSystemPinned` in `memory/store_db_test.go`.
+caller's own row uses `Store.UpdatePinned` or `Store.Delete`, which
+only match `scope = 'user'` rows owned by the username, since a system
+row carries its creator's username; anything else answers 404, runs
+no write and records nothing. The MCP `delete_memory` tool
+(`tools/delete_memory.go`) applies the same rule, taking the RBAC
+checker and `p.record` and refusing a system memory as
+`memory.delete` on `memoriesTarget/<id>` (`memoryDenialTarget`).
+Tests: `memory_handlers_test.go` and `memory_handlers_system_test.go`
+(Postgres fixture schemas plus a SQLite auth store, asserting the
+audit rows; the latter has a statement-level trigger counting DELETE
+statements), `delete_memory_db_test.go`
+(`TestProviderDeleteMemoryRefusalReachesAuditLog` drives the
+provider) and `TestStore_Delete` and `TestStore_UpdateSystemPinned`
+in `memory/store_db_test.go`.
 
 Mutations in these handlers go through `h.actorStore(r)` rather than
 `h.authStore`, so the audit row names the acting user or token:

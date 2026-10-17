@@ -1440,7 +1440,12 @@ project adheres to
   store_system_memory permission` and is recorded in the audit
   log as a denied `memory.update` on `memories/<id>`, as a
   refused delete already is as `memory.delete`. Another user's
-  memory still answers 404, as a missing one does. (#704)
+  memory still answers 404, as a missing one does, and no longer
+  runs a delete. The MCP `delete_memory` tool previously let the
+  user who created a system memory delete it without
+  `store_system_memory`; it now requires the permission as the
+  REST route does, and records a refusal as a denied
+  `memory.delete` on `memories/<id>`. (#704)
 
 - Fix the `probe_unavailable` alert firing on healthy Spock clusters
   with no recent apply exceptions or conflict resolutions. The

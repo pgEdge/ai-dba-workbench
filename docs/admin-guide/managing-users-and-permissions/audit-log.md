@@ -204,6 +204,11 @@ Refusals by MCP tools are recorded too. A `store_memory` call that asks
 for a system-scoped memory without the `store_system_memory` permission
 is recorded as `memory.create` with a target of `memories`, and is
 coalesced with repeated denials in the same way as a refused request.
+A `delete_memory` call that targets a system-scoped memory without that
+permission is recorded as `memory.delete`, with a target of `memories/`
+followed by the memory's identifier, exactly as the REST route records
+it; a call aimed at another user's memory is answered as though the
+memory did not exist, and is not recorded.
 
 A call to a tool that the caller has no privilege to use is recorded as
 `mcp.tool.call`, with a target of `tools/` followed by the tool's name,

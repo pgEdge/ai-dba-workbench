@@ -15,7 +15,9 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
@@ -73,44 +75,34 @@ func injectLimitOffset(sqlQuery string, limit, offset int) (modified string, had
 	hadLimit = hasLimitClause(sqlQuery)
 	hadOffset = hasOffsetClause(sqlQuery)
 
+	// Each clause starts on a new line so that a trailing -- comment in
+	// the caller's query cannot comment it out.
 	modified = sqlQuery
-	if limit > 0 && !hadLimit {
-		modified = fmt.Sprintf("%s LIMIT %d", modified, limit+1)
+	injectLimit := limit > 0 && !hadLimit
+	injectOffset := offset > 0 && !hadOffset
+	if injectLimit || injectOffset {
+		// A clause appended after the statement's terminating semicolon
+		// is a syntax error, so drop trailing semicolons and whitespace
+		// first. A semicolon that ends a trailing -- comment is dropped
+		// with it, which leaves the comment's meaning unchanged.
+		modified = strings.TrimRight(modified, "; \t\r\n")
 	}
-	if offset > 0 && !hadOffset {
-		modified = fmt.Sprintf("%s OFFSET %d", modified, offset)
+	if injectLimit {
+		modified = fmt.Sprintf("%s\nLIMIT %d", modified, limit+1)
+	}
+	if injectOffset {
+		modified = fmt.Sprintf("%s\nOFFSET %d", modified, offset)
 	}
 
 	return modified, hadLimit, hadOffset
 }
 
-// queryResult holds the output of executeQuery / executeReadOnlyQuery.
+// queryResult holds the output of executeReadOnlyQuery.
 type queryResult struct {
 	ColumnNames  []string
 	Rows         [][]any
 	WasTruncated bool
 	ResultsTSV   string
-}
-
-// executeQuery runs sqlQuery inside a transaction on pool, collects
-// rows, detects truncation against limit, and formats the result as
-// TSV. When readOnly is true a read-only transaction is used;
-// otherwise a regular read-write transaction is started. The
-// hadExistingLimit flag indicates whether the original query already
-// contained a LIMIT clause (in which case truncation detection is
-// skipped). queryArgs are bound to the statement's placeholders.
-func executeQuery(
-	ctx context.Context,
-	pool *pgxpool.Pool,
-	sqlQuery string,
-	limit int,
-	hadExistingLimit bool,
-	errorPrefix string,
-	readOnly bool,
-	queryArgs ...any,
-) (*queryResult, *mcp.ToolResponse) {
-	return executeQueryWith(ctx, pool, sqlQuery, limit, hadExistingLimit, readOnly,
-		defaultQueryErrorFormatter(errorPrefix), queryArgs...)
 }
 
 // Stages of executeQueryWith at which a statement can fail.
@@ -125,7 +117,7 @@ const (
 // statement into the message the tool returns.
 type queryErrorFormatter func(stage string, err error) string
 
-// defaultQueryErrorFormatter gives the messages executeQuery has always
+// defaultQueryErrorFormatter gives the messages executeReadOnlyQuery has always
 // returned.
 func defaultQueryErrorFormatter(errorPrefix string) queryErrorFormatter {
 	return func(stage string, err error) string {
@@ -142,33 +134,29 @@ func defaultQueryErrorFormatter(errorPrefix string) queryErrorFormatter {
 	}
 }
 
-// executeQueryWith is executeQuery with the error messages chosen by
-// formatErr. Errors starting the transaction keep their usual messages.
+// executeQueryWith is executeReadOnlyQuery with the error messages
+// chosen by formatErr. Errors starting the transaction keep their
+// usual messages.
 func executeQueryWith(
 	ctx context.Context,
 	pool *pgxpool.Pool,
 	sqlQuery string,
 	limit int,
-	hadExistingLimit bool,
-	readOnly bool,
 	formatErr queryErrorFormatter,
 	queryArgs ...any,
 ) (*queryResult, *mcp.ToolResponse) {
-	var mt *ManagedTx
-	var errResp *mcp.ToolResponse
-	var cleanup func()
-
-	if readOnly {
-		mt, errResp, cleanup = BeginReadOnlyTx(ctx, pool)
-	} else {
-		mt, errResp, cleanup = BeginTx(ctx, pool)
-	}
+	mt, errResp, cleanup := BeginReadOnlyTx(ctx, pool)
 	if errResp != nil {
 		return nil, errResp
 	}
 	defer cleanup()
 
-	rows, err := mt.Tx.Query(ctx, sqlQuery, queryArgs...)
+	// The statement runs under its own context so that it can be stopped
+	// once the row cap is reached; see stopAfterCap.
+	queryCtx, cancelQuery := context.WithCancel(ctx)
+	defer cancelQuery()
+
+	rows, err := mt.Tx.Query(queryCtx, sqlQuery, queryArgs...)
 	if err != nil {
 		resp, _ := mcp.NewToolError(formatErr(queryStageExecute, err)) //nolint:errcheck // NewToolError always succeeds
 		return nil, &resp
@@ -182,9 +170,15 @@ func executeQueryWith(
 		columnNames = append(columnNames, string(fd.Name))
 	}
 
-	// Collect row data
+	// Collect row data, stopping once a row beyond limit shows that more
+	// exist.
 	var results [][]any
+	wasTruncated := false
 	for rows.Next() {
+		if limit > 0 && len(results) >= limit {
+			wasTruncated = true
+			break
+		}
 		values, err := rows.Values()
 		if err != nil {
 			resp, _ := mcp.NewToolError(formatErr(queryStageRow, err)) //nolint:errcheck // NewToolError always succeeds
@@ -192,20 +186,33 @@ func executeQueryWith(
 		}
 		results = append(results, values)
 	}
+	if wasTruncated {
+		stopAfterCap(rows, cancelQuery)
+	} else {
+		rows.Close()
+	}
 
-	if err := rows.Err(); err != nil {
+	// stoppedAtCap is true when the cap's cancellation, rather than the
+	// caller's context, ended the statement: the rows already read are
+	// the result, and the connection has been closed under the
+	// transaction, so there is nothing to commit and cleanup's rollback
+	// releases it to the pool to be discarded.
+	stoppedAtCap := wasTruncated && queryCtx.Err() != nil && ctx.Err() == nil
+	if err := rows.Err(); err != nil && !stoppedAtCap {
 		resp, _ := mcp.NewToolError(formatErr(queryStageIterate, err)) //nolint:errcheck // NewToolError always succeeds
 		return nil, &resp
 	}
 
-	// Detect truncation (we fetched limit+1 to check)
-	wasTruncated := false
-	if !hadExistingLimit && limit > 0 && len(results) > limit {
-		wasTruncated = true
-		results = results[:limit]
-	}
-
 	resultsTSV := tsv.FormatResults(columnNames, results)
+
+	if stoppedAtCap {
+		return &queryResult{
+			ColumnNames:  columnNames,
+			Rows:         results,
+			WasTruncated: true,
+			ResultsTSV:   resultsTSV,
+		}, nil
+	}
 
 	if err := mt.Commit(); err != nil {
 		resp, _ := mcp.NewToolError(formatErr(queryStageCommit, err)) //nolint:errcheck // NewToolError always succeeds
@@ -220,19 +227,45 @@ func executeQueryWith(
 	}, nil
 }
 
+// capDrainGrace is how long closing a capped result may spend reading
+// the rows beyond the cap before the statement is canceled. A statement
+// bounded by the LIMIT injectLimitOffset adds has at most the one extra
+// row the cap has already read, so it finishes well inside the grace
+// and keeps its pooled connection; one without, such as a caller's
+// LIMIT 50000000, is stopped rather than run to completion.
+var capDrainGrace = 200 * time.Millisecond
+
+// stopAfterCap closes rows once the row cap has been reached. pgx's
+// rows.Close reads every remaining row, so the statement's context is
+// canceled if closing has not finished within capDrainGrace. pgx
+// answers the cancellation by setting an immediate deadline on the
+// socket, which ends the read and closes the connection, and the
+// server abandons the statement when it can no longer send rows.
+func stopAfterCap(rows pgx.Rows, cancelQuery context.CancelFunc) {
+	timer := time.AfterFunc(capDrainGrace, cancelQuery)
+	rows.Close()
+	timer.Stop()
+}
+
 // executeReadOnlyQuery runs sqlQuery inside a read-only transaction on
-// pool. This is a convenience wrapper around executeQuery with
-// readOnly=true, kept for backward compatibility with other tools.
+// pool, returns at most limit rows (0 means no cap), and formats the
+// result as TSV. The cap is enforced while reading rather than relying
+// on the LIMIT injectLimitOffset adds, which is absent when the caller
+// wrote their own (or when hasLimitClause matches the word LIMIT
+// anywhere else in the text); reading stops at the first row beyond the
+// cap, which marks the result truncated, and stopAfterCap then stops
+// the statement rather than reading the rest of its rows. queryArgs are
+// bound to the statement's placeholders.
 func executeReadOnlyQuery(
 	ctx context.Context,
 	pool *pgxpool.Pool,
 	sqlQuery string,
 	limit int,
-	hadExistingLimit bool,
 	errorPrefix string,
 	queryArgs ...any,
 ) (*queryResult, *mcp.ToolResponse) {
-	return executeQuery(ctx, pool, sqlQuery, limit, hadExistingLimit, errorPrefix, true, queryArgs...)
+	return executeQueryWith(ctx, pool, sqlQuery, limit,
+		defaultQueryErrorFormatter(errorPrefix), queryArgs...)
 }
 
 // formatPaginatedResults writes the results header with pagination

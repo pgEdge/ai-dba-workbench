@@ -76,9 +76,9 @@ already knows the session's string reading; it fails closed.
   call makes the statement a write, so it needs write access and the
   confirmation prompt.
 - `tools.isSelectQuery` (`sql_helpers.go`): returns false for such a
-  statement, so `query_database` sends it down its write path
-  (explicit `connection_id` and `read_write` access required) and
-  injects no `LIMIT`.
+  statement, so `query_database`, which is read-only for every
+  caller (#663), refuses it before resolving a connection, and
+  `injectLimitOffset` injects no `LIMIT`.
 - `execute_explain`: refuses `analyze` for such a query.
 - `test_query`: refuses when the statement, or any statement in it,
   does not start with a keyword EXPLAIN only plans (`explainOnlyPlans`),

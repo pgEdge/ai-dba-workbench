@@ -206,35 +206,6 @@ func TestBeginReadOnlyTxCleanupIgnoresCanceledContext(t *testing.T) {
 	assertCleanRollback(t, tracer, pool, pidBefore, start)
 }
 
-// TestBeginTxCleanupIgnoresCanceledContext mirrors the read-only case
-// for the read-write constructor.
-func TestBeginTxCleanupIgnoresCanceledContext(t *testing.T) {
-	tracer := &txRollbackTracer{cancelAfter: "set local statement_timeout"}
-	pool, closePool := newTracedToolsPool(t, tracer)
-	defer closePool()
-
-	pidBefore := toolsBackendPID(t, pool)
-	start := time.Now()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	tracer.mu.Lock()
-	tracer.cancel = cancel
-	tracer.mu.Unlock()
-
-	mt, errResp, cleanup := BeginTx(ctx, pool)
-	if errResp != nil {
-		t.Fatalf("BeginTx returned error response: %v", errResp)
-	}
-	if mt == nil {
-		t.Fatal("expected non-nil ManagedTx")
-	}
-
-	cleanup()
-
-	assertCleanRollback(t, tracer, pool, pidBefore, start)
-}
-
 // TestBeginReadOnlyTxSetupFailureRollsBackCleanly covers the
 // setup-failure rollback: canceling the context immediately after BEGIN
 // makes "SET TRANSACTION READ ONLY" fail, so the constructor rolls back
@@ -261,36 +232,6 @@ func TestBeginReadOnlyTxSetupFailureRollsBackCleanly(t *testing.T) {
 		t.Fatal("expected an error response when transaction setup fails")
 	}
 	if rot != nil {
-		t.Error("expected a nil ManagedTx when transaction setup fails")
-	}
-
-	assertCleanRollback(t, tracer, pool, pidBefore, start)
-}
-
-// TestBeginTxSetupFailureRollsBackCleanly covers the same setup-failure
-// rollback for the read-write constructor, where the failing statement
-// is the statement_timeout guard.
-func TestBeginTxSetupFailureRollsBackCleanly(t *testing.T) {
-	tracer := &txRollbackTracer{cancelAfter: "begin"}
-	pool, closePool := newTracedToolsPool(t, tracer)
-	defer closePool()
-
-	pidBefore := toolsBackendPID(t, pool)
-	start := time.Now()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	tracer.mu.Lock()
-	tracer.cancel = cancel
-	tracer.mu.Unlock()
-
-	mt, errResp, cleanup := BeginTx(ctx, pool)
-	defer cleanup()
-
-	if errResp == nil {
-		t.Fatal("expected an error response when transaction setup fails")
-	}
-	if mt != nil {
 		t.Error("expected a nil ManagedTx when transaction setup fails")
 	}
 
@@ -328,10 +269,10 @@ func TestBeginReadOnlyTxTimeoutSetupFailureRollsBackCleanly(t *testing.T) {
 	assertCleanRollback(t, tracer, pool, pidBefore, start)
 }
 
-// TestBeginTxConstructorsRejectClosedPool covers the begin-failure
-// branch of both constructors, where no transaction exists yet and the
-// returned cleanup must be a harmless no-op.
-func TestBeginTxConstructorsRejectClosedPool(t *testing.T) {
+// TestBeginReadOnlyTxRejectsClosedPool covers the begin-failure branch
+// of the constructor, where no transaction exists yet and the returned
+// cleanup must be a harmless no-op.
+func TestBeginReadOnlyTxRejectsClosedPool(t *testing.T) {
 	tracer := &txRollbackTracer{}
 	pool, _ := newTracedToolsPool(t, tracer)
 	pool.Close()
@@ -344,15 +285,6 @@ func TestBeginTxConstructorsRejectClosedPool(t *testing.T) {
 	}
 	if rot != nil {
 		t.Error("BeginReadOnlyTx on a closed pool returned a ManagedTx")
-	}
-	cleanup()
-
-	mt, errResp, cleanup := BeginTx(ctx, pool)
-	if errResp == nil {
-		t.Error("BeginTx on a closed pool returned no error response")
-	}
-	if mt != nil {
-		t.Error("BeginTx on a closed pool returned a ManagedTx")
 	}
 	cleanup()
 
@@ -385,41 +317,6 @@ func TestBeginReadOnlyTxCleanupRollsBackOnPanic(t *testing.T) {
 		_, errResp, cleanup := BeginReadOnlyTx(ctx, pool)
 		if errResp != nil {
 			t.Fatalf("BeginReadOnlyTx returned error response: %v", errResp)
-		}
-		defer cleanup()
-
-		panic("tool handler exploded")
-	}()
-
-	if recovered != "tool handler exploded" {
-		t.Fatalf("recovered value = %v, want the original panic to be re-raised", recovered)
-	}
-
-	assertCleanRollback(t, tracer, pool, pidBefore, start)
-}
-
-// TestBeginTxCleanupRollsBackOnPanic mirrors the panic path for the
-// read-write constructor.
-func TestBeginTxCleanupRollsBackOnPanic(t *testing.T) {
-	tracer := &txRollbackTracer{cancelAfter: "set local statement_timeout"}
-	pool, closePool := newTracedToolsPool(t, tracer)
-	defer closePool()
-
-	pidBefore := toolsBackendPID(t, pool)
-	start := time.Now()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	tracer.mu.Lock()
-	tracer.cancel = cancel
-	tracer.mu.Unlock()
-
-	recovered := func() (r any) {
-		defer func() { r = recover() }()
-
-		_, errResp, cleanup := BeginTx(ctx, pool)
-		if errResp != nil {
-			t.Fatalf("BeginTx returned error response: %v", errResp)
 		}
 		defer cleanup()
 

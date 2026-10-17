@@ -172,7 +172,7 @@ func QueryDatastoreTool(pool *pgxpool.Pool, rbacChecker *auth.RBACChecker, visib
 				return explainDatastoreQuery(ctx, pool, src, sql, queryArgs)
 			}
 
-			qr, errResp := executeQueryWith(ctx, pool, sql, req.PageSize, false, true,
+			qr, errResp := executeQueryWith(ctx, pool, sql, req.PageSize,
 				datastoreQueryErrorFormatter(src.Name), queryArgs...)
 			if errResp != nil {
 				return *errResp, nil
@@ -267,7 +267,7 @@ func writeDatastorePage(sb *strings.Builder, qr *queryResult, req datastoreReque
 // planned but not executed) with the statement's own parameters and
 // returns the plan text.
 func explainDatastoreQuery(ctx context.Context, pool *pgxpool.Pool, src datastoreSource, sql string, queryArgs []any) (mcp.ToolResponse, error) {
-	qr, errResp := executeQueryWith(ctx, pool, "EXPLAIN "+sql, 0, true, true,
+	qr, errResp := executeQueryWith(ctx, pool, "EXPLAIN "+sql, 0,
 		datastoreQueryErrorFormatter(src.Name), queryArgs...)
 	if errResp != nil {
 		return *errResp, nil

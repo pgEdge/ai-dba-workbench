@@ -94,28 +94,27 @@ func TestDatastoreDatabaseFailuresIntegration(t *testing.T) {
 	if _, err := datastoreConnectionsExist(done, pool, []int{1}); err == nil {
 		t.Error("datastoreConnectionsExist should fail once its context is done")
 	}
-	if _, resp := executeQueryWith(done, pool, "SELECT 1", 10, false, true,
+	if _, resp := executeQueryWith(done, pool, "SELECT 1", 10,
 		datastoreQueryErrorFormatter("alerts")); resp == nil || !resp.IsError {
 		t.Error("executeQueryWith should fail to begin once its context is done")
 	}
 
-	// A deferred constraint is checked only at commit, so the statement
-	// runs and the commit fails.
-	ctx := context.Background()
-	if _, err := pool.Exec(ctx, `CREATE TABLE ds_commit_check (id int UNIQUE DEFERRABLE INITIALLY DEFERRED)`); err != nil {
-		t.Fatalf("create: %v", err)
-	}
-	defer func() {
-		if _, err := pool.Exec(context.Background(), `DROP TABLE IF EXISTS ds_commit_check`); err != nil {
-			t.Logf("drop: %v", err)
-		}
-	}()
+	// Cancel the context once the statement has finished, so that the
+	// statement runs and the commit fails.
+	tracer := &txRollbackTracer{cancelAfter: "ds_commit_check"}
+	tracedPool, closeTraced := newTracedToolsPool(t, tracer)
+	defer closeTraced()
+	ctx, cancelCtx := context.WithCancel(context.Background())
+	defer cancelCtx()
+	tracer.mu.Lock()
+	tracer.cancel = cancelCtx
+	tracer.mu.Unlock()
 	var stages []string
 	record := func(stage string, err error) string {
 		stages = append(stages, stage)
 		return "failed"
 	}
-	if _, resp := executeQueryWith(ctx, pool, "INSERT INTO ds_commit_check VALUES (1), (1) RETURNING id", 10, false, false,
+	if _, resp := executeQueryWith(ctx, tracedPool, "SELECT 1 AS ds_commit_check", 10,
 		record); resp == nil || !resp.IsError {
 		t.Error("executeQueryWith should report the failed commit")
 	}

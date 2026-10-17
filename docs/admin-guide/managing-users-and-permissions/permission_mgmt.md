@@ -162,7 +162,7 @@ every tool in the table:
 
 | Group | Tool | Description |
 |---|---|---|
-| Monitored Database | `query_database` | Executes SQL queries against a monitored database. |
+| Monitored Database | `query_database` | Executes read-only SQL queries against a monitored database and refuses write statements. |
 | Monitored Database | `get_schema_info` | Retrieves table and column information from a database. |
 | Monitored Database | `execute_explain` | Runs EXPLAIN or EXPLAIN ANALYZE on a query. |
 | Monitored Database | `similarity_search` | Performs vector similarity search using pgvector. |

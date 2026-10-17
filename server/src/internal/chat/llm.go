@@ -67,7 +67,7 @@ You have access to TWO types of database connections:
    The datastore contains metrics collected from monitored servers over time.
 
 2. MONITORED DATABASES (live connections) - Use these tools for live queries:
-   - query_database: Execute SQL queries on a monitored database
+   - query_database: Execute read-only SQL queries on a monitored database (write statements are refused)
    - get_schema_info: Get schema information
    - execute_explain: Analyze query execution plans
    - similarity_search: Semantic search on vector columns

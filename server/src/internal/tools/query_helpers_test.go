@@ -34,7 +34,7 @@ func TestInjectLimitOffset_SelectQueries(t *testing.T) {
 			query:        "SELECT * FROM users",
 			limit:        100,
 			offset:       0,
-			wantModified: "SELECT * FROM users LIMIT 101",
+			wantModified: "SELECT * FROM users\nLIMIT 101",
 			wantHadLimit: false,
 		},
 		{
@@ -50,7 +50,7 @@ func TestInjectLimitOffset_SelectQueries(t *testing.T) {
 			query:         "SELECT * FROM users",
 			limit:         100,
 			offset:        50,
-			wantModified:  "SELECT * FROM users LIMIT 101 OFFSET 50",
+			wantModified:  "SELECT * FROM users\nLIMIT 101\nOFFSET 50",
 			wantHadLimit:  false,
 			wantHadOffset: false,
 		},
@@ -59,7 +59,7 @@ func TestInjectLimitOffset_SelectQueries(t *testing.T) {
 			query:         "SELECT * FROM users OFFSET 10",
 			limit:         100,
 			offset:        50,
-			wantModified:  "SELECT * FROM users OFFSET 10 LIMIT 101",
+			wantModified:  "SELECT * FROM users OFFSET 10\nLIMIT 101",
 			wantHadLimit:  false,
 			wantHadOffset: true,
 		},
@@ -68,7 +68,7 @@ func TestInjectLimitOffset_SelectQueries(t *testing.T) {
 			query:        "WITH cte AS (SELECT 1) SELECT * FROM cte",
 			limit:        100,
 			offset:       0,
-			wantModified: "WITH cte AS (SELECT 1) SELECT * FROM cte LIMIT 101",
+			wantModified: "WITH cte AS (SELECT 1) SELECT * FROM cte\nLIMIT 101",
 			wantHadLimit: false,
 		},
 		{
@@ -76,7 +76,7 @@ func TestInjectLimitOffset_SelectQueries(t *testing.T) {
 			query:        "EXPLAIN SELECT * FROM users",
 			limit:        100,
 			offset:       0,
-			wantModified: "EXPLAIN SELECT * FROM users LIMIT 101",
+			wantModified: "EXPLAIN SELECT * FROM users\nLIMIT 101",
 			wantHadLimit: false,
 		},
 		{
@@ -84,8 +84,55 @@ func TestInjectLimitOffset_SelectQueries(t *testing.T) {
 			query:        "SHOW work_mem",
 			limit:        100,
 			offset:       0,
-			wantModified: "SHOW work_mem LIMIT 101",
+			wantModified: "SHOW work_mem\nLIMIT 101",
 			wantHadLimit: false,
+		},
+		{
+			name:         "trailing line comment",
+			query:        "SELECT * FROM users -- every user",
+			limit:        100,
+			offset:       50,
+			wantModified: "SELECT * FROM users -- every user\nLIMIT 101\nOFFSET 50",
+			wantHadLimit: false,
+		},
+		{
+			name:         "trailing semicolon dropped before limit",
+			query:        "SELECT 1;",
+			limit:        100,
+			offset:       0,
+			wantModified: "SELECT 1\nLIMIT 101",
+		},
+		{
+			name:         "trailing semicolons and whitespace dropped",
+			query:        "SELECT * FROM users ; ;\n\t ",
+			limit:        100,
+			offset:       50,
+			wantModified: "SELECT * FROM users\nLIMIT 101\nOFFSET 50",
+		},
+		{
+			name:          "trailing semicolon dropped before offset alone",
+			query:         "SELECT * FROM users LIMIT 10;",
+			limit:         100,
+			offset:        5,
+			wantModified:  "SELECT * FROM users LIMIT 10\nOFFSET 5",
+			wantHadLimit:  true,
+			wantHadOffset: false,
+		},
+		{
+			name:          "trailing semicolon kept when nothing is injected",
+			query:         "SELECT * FROM users LIMIT 10 OFFSET 2;",
+			limit:         100,
+			offset:        5,
+			wantModified:  "SELECT * FROM users LIMIT 10 OFFSET 2;",
+			wantHadLimit:  true,
+			wantHadOffset: true,
+		},
+		{
+			name:         "semicolon inside a string literal kept",
+			query:        "SELECT ';'",
+			limit:        100,
+			offset:       0,
+			wantModified: "SELECT ';'\nLIMIT 101",
 		},
 	}
 
@@ -265,31 +312,36 @@ func TestExecuteQueryIntegration(t *testing.T) {
 	ctx := context.Background()
 	series := "SELECT g AS n FROM generate_series(1, $1::int) AS g"
 
-	qr, errResp := executeQuery(ctx, pool, series+" LIMIT 4", 3, false, "", false, 5)
+	qr, errResp := executeReadOnlyQuery(ctx, pool, series+" LIMIT 4", 3, "", 5)
 	if errResp != nil {
-		t.Fatalf("read-write query failed: %+v", errResp)
+		t.Fatalf("query failed: %+v", errResp)
 	}
 	if !qr.WasTruncated || len(qr.Rows) != 3 || qr.ColumnNames[0] != "n" {
 		t.Errorf("expected three rows and truncation, got %+v", qr)
 	}
 
-	qr, errResp = executeReadOnlyQuery(ctx, pool, series, 3, true, "", 5)
-	if errResp != nil || qr.WasTruncated || len(qr.Rows) != 5 {
-		t.Errorf("an existing limit should skip truncation: %+v %+v", qr, errResp)
+	qr, errResp = executeReadOnlyQuery(ctx, pool, series, 3, "", 5)
+	if errResp != nil || !qr.WasTruncated || len(qr.Rows) != 3 {
+		t.Errorf("the cap should apply without an injected limit: %+v %+v", qr, errResp)
 	}
 
-	_, errResp = executeReadOnlyQuery(ctx, pool, "SELECT * FROM no_such_table_566", 0, false, "Query failed: ")
+	qr, errResp = executeReadOnlyQuery(ctx, pool, series, 0, "", 5)
+	if errResp != nil || qr.WasTruncated || len(qr.Rows) != 5 {
+		t.Errorf("a zero limit should not cap rows: %+v %+v", qr, errResp)
+	}
+
+	_, errResp = executeReadOnlyQuery(ctx, pool, "SELECT * FROM no_such_table_566", 0, "Query failed: ")
 	if errResp == nil || !strings.Contains(errResp.Content[0].Text, "Query failed: ") ||
 		!strings.Contains(errResp.Content[0].Text, "no_such_table_566") {
 		t.Errorf("expected the server's error message, got %+v", errResp)
 	}
 
-	_, errResp = executeReadOnlyQuery(ctx, pool, "CREATE TABLE ro_test_566 (id int)", 0, false, "")
+	_, errResp = executeReadOnlyQuery(ctx, pool, "CREATE TABLE ro_test_566 (id int)", 0, "")
 	if errResp == nil || !strings.Contains(errResp.Content[0].Text, "read-only") {
 		t.Errorf("a read-only transaction should refuse a write, got %+v", errResp)
 	}
 
-	_, errResp = executeReadOnlyQuery(ctx, pool, "SELECT 1/(n - 3) FROM generate_series(1, 5) AS n", 0, false, "")
+	_, errResp = executeReadOnlyQuery(ctx, pool, "SELECT 1/(n - 3) FROM generate_series(1, 5) AS n", 0, "")
 	if errResp == nil || !strings.Contains(errResp.Content[0].Text, "Error iterating rows") {
 		t.Errorf("an error mid-result should be reported, got %+v", errResp)
 	}

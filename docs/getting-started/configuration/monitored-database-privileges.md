@@ -298,7 +298,7 @@ data:
 
 | Tool | Access to user data |
 |------|---------------------|
-| query_database | Executes arbitrary SQL supplied by the user |
+| query_database | Executes read-only SQL supplied by the user, refusing write statements |
 | execute_explain | Runs EXPLAIN ANALYZE, which executes the query |
 | test_query | Runs EXPLAIN only, without executing the query |
 | count_rows | Runs SELECT COUNT(*) against a table |

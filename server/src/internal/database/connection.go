@@ -24,6 +24,7 @@ import (
 
 	"github.com/pgedge/ai-workbench/server/internal/config"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -167,6 +168,12 @@ func (c *Client) ConnectTo(connStr string) error {
 	// so nothing one caller sets is seen by the next (issue #709).
 	poolConfig.AfterRelease = resetSessionOnRelease
 
+	// The extended protocol refuses a query holding several statements,
+	// so "SELECT 1; COMMIT" cannot escape the read-only transaction; set
+	// it here so a default_query_exec_mode in the connection string
+	// cannot switch it off.
+	poolConfig.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeCacheStatement
+
 	// Create pool with configured settings
 	pool, err := pgxpool.NewWithConfig(context.Background(), poolConfig)
 	if err != nil {
@@ -213,25 +220,6 @@ func addApplicationName(connStr, appName string) (string, error) {
 	}
 
 	return u.String(), nil
-}
-
-// SetDefaultConnection sets the default connection string to use for queries
-func (c *Client) SetDefaultConnection(connStr string) error {
-	// Ensure the connection exists
-	if err := c.ConnectTo(connStr); err != nil {
-		return err
-	}
-
-	c.mu.Lock()
-	c.defaultConnStr = connStr
-	c.mu.Unlock()
-
-	// Load metadata if not already loaded
-	if !c.IsMetadataLoadedFor(connStr) {
-		return c.LoadMetadataFor(connStr)
-	}
-
-	return nil
 }
 
 // GetDefaultConnection returns the current default connection string

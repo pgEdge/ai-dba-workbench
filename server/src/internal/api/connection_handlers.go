@@ -926,7 +926,19 @@ func (h *ConnectionHandler) handleGetConnectionCluster(w http.ResponseWriter, r 
 		return
 	}
 
+	// Issue #678: a restricted caller sees only the clusters, and the
+	// relationships, whose connections they can see.
+	visible, allConnections, err := resolveVisibleConnectionSet(ctx, h.rbacChecker, h.datastore)
+	if err != nil {
+		log.Printf("[ERROR] Failed to resolve visible connections for connection %d: %v", connectionID, err)
+		RespondError(w, http.StatusInternalServerError, "Failed to list clusters")
+		return
+	}
+
 	clusters, err := h.datastore.ListClustersForAutocomplete(ctx)
+	if err == nil && !allConnections {
+		clusters, err = filterClustersByVisibility(ctx, h.datastore, clusters, visible)
+	}
 	if err != nil {
 		log.Printf("[ERROR] Failed to list clusters for autocomplete: %v", err)
 		RespondError(w, http.StatusInternalServerError, "Failed to list clusters")
@@ -934,7 +946,7 @@ func (h *ConnectionHandler) handleGetConnectionCluster(w http.ResponseWriter, r 
 	}
 
 	// Fetch relationships for this connection's cluster if assigned
-	var connRelationships []database.NodeRelationship
+	connRelationships := []database.NodeRelationship{}
 	if info.ClusterID != nil {
 		allRels, err := h.datastore.GetClusterRelationships(ctx, *info.ClusterID)
 		if err != nil {
@@ -947,9 +959,8 @@ func (h *ConnectionHandler) handleGetConnectionCluster(w http.ResponseWriter, r 
 			}
 		}
 	}
-
-	if connRelationships == nil {
-		connRelationships = []database.NodeRelationship{}
+	if !allConnections {
+		connRelationships = filterRelationshipsByVisibility(connRelationships, visible)
 	}
 
 	RespondJSON(w, http.StatusOK, connectionClusterResponse{

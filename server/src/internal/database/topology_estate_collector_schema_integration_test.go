@@ -308,7 +308,7 @@ func buildCSFixture(e *csEnv) *csFixture {
 		e.t.Fatalf("AddServerToCluster man-b: %v", err)
 	}
 	if err := e.ds.SetNodeRelationships(e.ctx, f.manualCluster, f.manB,
-		[]RelationshipInput{{TargetConnectionID: f.manA, RelationshipType: "streams_from"}}); err != nil {
+		[]RelationshipInput{{TargetConnectionID: f.manA, RelationshipType: "streams_from"}}, nil); err != nil {
 		e.t.Fatalf("SetNodeRelationships man-b: %v", err)
 	}
 
@@ -370,7 +370,7 @@ func buildCSFixture(e *csEnv) *csFixture {
 		{f.binCluster, f.ghostC, f.binStandby},
 	} {
 		if err := e.ds.SetNodeRelationships(e.ctx, rel.cluster, rel.source,
-			[]RelationshipInput{{TargetConnectionID: rel.target, RelationshipType: "streams_from"}}); err != nil {
+			[]RelationshipInput{{TargetConnectionID: rel.target, RelationshipType: "streams_from"}}, nil); err != nil {
 			e.t.Fatalf("SetNodeRelationships %d: %v", rel.source, err)
 		}
 	}
@@ -386,11 +386,11 @@ func buildCSFixture(e *csEnv) *csFixture {
 	// vanish when the second refresh replaces the auto-detected rows,
 	// leaving the source side of the relationship readers untested.
 	if err := e.ds.SetNodeRelationships(e.ctx, f.binCluster, f.gone,
-		[]RelationshipInput{{TargetConnectionID: f.binPrimary, RelationshipType: "replicates_with"}}); err != nil {
+		[]RelationshipInput{{TargetConnectionID: f.binPrimary, RelationshipType: "replicates_with"}}, nil); err != nil {
 		e.t.Fatalf("SetNodeRelationships gone: %v", err)
 	}
 	if err := e.ds.SetNodeRelationships(e.ctx, f.binCluster, f.binStandby2,
-		[]RelationshipInput{{TargetConnectionID: f.gone, RelationshipType: "replicates_with"}}); err != nil {
+		[]RelationshipInput{{TargetConnectionID: f.gone, RelationshipType: "replicates_with"}}, nil); err != nil {
 		e.t.Fatalf("SetNodeRelationships to gone: %v", err)
 	}
 
@@ -825,7 +825,7 @@ func TestCollectorSchema_TopologyEstateAndRelationships(t *testing.T) {
 		}
 
 		if err := ds.SetNodeRelationships(ctx, f.defCluster, f.defX,
-			[]RelationshipInput{{TargetConnectionID: f.defX, RelationshipType: "streams_from"}}); err == nil {
+			[]RelationshipInput{{TargetConnectionID: f.defX, RelationshipType: "streams_from"}}, nil); err == nil {
 			t.Errorf("SetNodeRelationships accepted a self-relationship")
 		}
 		if err := ds.SyncAutoDetectedRelationships(ctx, 999999, nil); !errors.Is(err, ErrClusterNotFound) {
@@ -836,7 +836,7 @@ func TestCollectorSchema_TopologyEstateAndRelationships(t *testing.T) {
 			t.Errorf("SyncAutoDetectedRelationships accepted a self-relationship")
 		}
 
-		if err := ds.ClearNodeRelationships(ctx, f.manualCluster, f.manB); err != nil {
+		if err := ds.ClearNodeRelationships(ctx, f.manualCluster, f.manB, nil); err != nil {
 			t.Errorf("ClearNodeRelationships: %v", err)
 		}
 		if err := ds.RemoveNodeRelationship(ctx, rels[0].ID); err != nil {
@@ -963,7 +963,7 @@ func TestCollectorSchema_ClosedPoolErrors(t *testing.T) {
 	if _, err := ds.GetClusterRelationships(ctx, 1); err == nil {
 		t.Error("GetClusterRelationships succeeded")
 	}
-	if err := ds.SetNodeRelationships(ctx, 1, 1, nil); err == nil {
+	if err := ds.SetNodeRelationships(ctx, 1, 1, nil, nil); err == nil {
 		t.Error("SetNodeRelationships succeeded")
 	}
 	if err := ds.SyncAutoDetectedRelationships(ctx, 1, nil); err == nil {
@@ -972,7 +972,7 @@ func TestCollectorSchema_ClosedPoolErrors(t *testing.T) {
 	if err := ds.RemoveNodeRelationship(ctx, 1); err == nil {
 		t.Error("RemoveNodeRelationship succeeded")
 	}
-	if err := ds.ClearNodeRelationships(ctx, 1, 1); err == nil {
+	if err := ds.ClearNodeRelationships(ctx, 1, 1, nil); err == nil {
 		t.Error("ClearNodeRelationships succeeded")
 	}
 	if err := ds.AddServerToCluster(ctx, 1, 1, nil); err == nil {

@@ -488,11 +488,15 @@ func TestConnectionHandlerCoverage_GetCluster(t *testing.T) {
 	if resp.Relationships == nil || len(resp.Relationships) != 0 {
 		t.Errorf("expected an empty relationship list, got %+v", resp.Relationships)
 	}
-	if len(resp.Clusters) != 1 {
-		t.Errorf("expected the fixture cluster in the list, got %+v", resp.Clusters)
+	// Issue #678: the fixture cluster has no member yet, so the owner
+	// cannot see it.
+	if resp.Clusters == nil || len(resp.Clusters) != 0 {
+		t.Errorf("expected no visible cluster, got %+v", resp.Clusters)
 	}
 
-	// Assigned with relationships: only those touching 31 come back.
+	// Assigned with relationships: only those touching 31 come back, and
+	// of those only the ones whose peer the owner can see (issue #678):
+	// 32 belongs to someone else.
 	if _, err := e.pool.Exec(ctx, `
         UPDATE connections SET cluster_id = $1 WHERE id IN (31, 32, 33);
         `, fixtureClusterID); err != nil {
@@ -501,7 +505,8 @@ func TestConnectionHandlerCoverage_GetCluster(t *testing.T) {
 	if _, err := e.pool.Exec(ctx, `
         INSERT INTO cluster_node_relationships
             (cluster_id, source_connection_id, target_connection_id, relationship_type)
-        VALUES ($1, 31, 32, 'replicates_with'), ($1, 32, 33, 'replicates_with');
+        VALUES ($1, 31, 32, 'replicates_with'), ($1, 32, 33, 'replicates_with'),
+               ($1, 31, 33, 'streams_from');
         `, fixtureClusterID); err != nil {
 		t.Fatalf("Seed relationships: %v", err)
 	}
@@ -511,8 +516,11 @@ func TestConnectionHandlerCoverage_GetCluster(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
-	if len(resp.Relationships) != 1 || resp.Relationships[0].TargetConnectionID != foreignConnID {
-		t.Errorf("expected only the 31 -> 32 relationship, got %+v", resp.Relationships)
+	if len(resp.Relationships) != 1 || resp.Relationships[0].TargetConnectionID != 33 {
+		t.Errorf("expected only the 31 -> 33 relationship, got %+v", resp.Relationships)
+	}
+	if len(resp.Clusters) != 1 || resp.Clusters[0].ID != fixtureClusterID {
+		t.Errorf("expected the fixture cluster in the list, got %+v", resp.Clusters)
 	}
 
 	expectConnHandlerStatus(t, e.serve(e.asOwner(http.MethodGet, "/api/v1/connections/32/cluster", nil)),

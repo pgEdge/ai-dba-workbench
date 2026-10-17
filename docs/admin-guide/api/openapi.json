@@ -3293,7 +3293,7 @@
     "/clusters/{id}/connections/{connId}/relationships": {
       "put": {
         "summary": "Set connection relationships",
-        "description": "Replaces the replication relationships for a connection within a cluster. Requires manage_connections permission.",
+        "description": "Replaces the replication relationships for a connection within a cluster and returns the cluster's relationships. Requires manage_connections permission; a caller without unrestricted visibility must also see the source connection, every requested target, and the target of every manual relationship the source already has.",
         "operationId": "setConnectionRelationships",
         "tags": [
           "Clusters"
@@ -3330,8 +3330,18 @@
           }
         },
         "responses": {
-          "204": {
-            "description": "Relationships updated"
+          "200": {
+            "description": "Relationships updated; the cluster's relationships visible to the caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
           },
           "400": {
             "description": "Invalid request",
@@ -3354,7 +3364,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_connections permission, or the API token's connection scope does not cover the target",
+            "description": "Requires manage_connections permission, the API token's connection scope does not cover the target, or the rewrite would delete a relationship to a connection the caller cannot see",
             "content": {
               "application/json": {
                 "schema": {
@@ -3364,7 +3374,7 @@
             }
           },
           "404": {
-            "description": "Cluster or connection not found",
+            "description": "Source connection not found or not visible to the caller",
             "content": {
               "application/json": {
                 "schema": {
@@ -3382,7 +3392,7 @@
       },
       "delete": {
         "summary": "Clear connection relationships",
-        "description": "Removes all replication relationships for a connection within a cluster. Requires manage_connections permission.",
+        "description": "Removes all manual replication relationships for a connection within a cluster. Requires manage_connections permission; a caller without unrestricted visibility must also see the source connection and the target of every manual relationship it has.",
         "operationId": "clearConnectionRelationships",
         "tags": [
           "Clusters"
@@ -3432,7 +3442,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_connections permission, or the API token's connection scope does not cover the target",
+            "description": "Requires manage_connections permission, the API token's connection scope does not cover the target, or the clear would delete a relationship to a connection the caller cannot see",
             "content": {
               "application/json": {
                 "schema": {
@@ -3442,7 +3452,7 @@
             }
           },
           "404": {
-            "description": "Cluster or connection not found",
+            "description": "Source connection not found or not visible to the caller",
             "content": {
               "application/json": {
                 "schema": {
@@ -3462,7 +3472,7 @@
     "/clusters/{id}/relationships": {
       "get": {
         "summary": "List cluster relationships",
-        "description": "Returns replication relationships for a cluster",
+        "description": "Returns replication relationships for a cluster. A caller without unrestricted visibility gets 404 for a cluster with no visible member, and sees only relationships whose source and target connections are both visible.",
         "operationId": "listClusterRelationships",
         "tags": [
           "Clusters"
@@ -3501,6 +3511,16 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "Cluster not found or not visible to the caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -3513,7 +3533,7 @@
     "/clusters/{id}/relationships/{relationshipId}": {
       "delete": {
         "summary": "Delete cluster relationship",
-        "description": "Deletes a specific cluster relationship. Requires manage_connections permission.",
+        "description": "Deletes a specific cluster relationship. Requires manage_connections permission; a caller without unrestricted visibility gets 404 unless the relationship belongs to the cluster and both of its connections are visible.",
         "operationId": "deleteClusterRelationship",
         "tags": [
           "Clusters"
@@ -3564,6 +3584,16 @@
           },
           "403": {
             "description": "Requires manage_connections permission, or the API token's connection scope does not cover the target",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Relationship not found or not visible to the caller",
             "content": {
               "application/json": {
                 "schema": {
@@ -4265,7 +4295,7 @@
     "/connections/{id}/cluster": {
       "get": {
         "summary": "Get connection cluster assignment",
-        "description": "Returns the current cluster assignment for the connection together with the list of available clusters and any node relationships involving this connection.",
+        "description": "Returns the current cluster assignment for the connection together with the list of available clusters and any node relationships involving this connection. The cluster list includes only clusters with at least one connection the caller can see, and the relationships only those whose source and target connections are both visible to the caller.",
         "operationId": "getConnectionCluster",
         "tags": [
           "Connections"

@@ -745,8 +745,10 @@ func TestConnectionCoverage_GetConnectionCluster(t *testing.T) {
 		if got.Info == nil || got.Info.ClusterID == nil || *got.Info.ClusterID != 500 {
 			t.Fatalf("unexpected info: %+v", got.Info)
 		}
-		if len(got.Clusters) != 2 {
-			t.Fatalf("clusters = %+v, want 2", got.Clusters)
+		// Issue #678: the empty cluster beta has no member the owner can
+		// see, so it is left out, as GET /api/v1/clusters/list does.
+		if len(got.Clusters) != 1 || got.Clusters[0].ID != 500 {
+			t.Fatalf("clusters = %+v, want only alpha", got.Clusters)
 		}
 		// Only the two relationships involving 8100 are returned.
 		if len(got.Relationships) != 2 {

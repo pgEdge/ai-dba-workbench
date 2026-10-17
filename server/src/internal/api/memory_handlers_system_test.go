@@ -62,6 +62,20 @@ CREATE TRIGGER refuse_write
     BEFORE UPDATE OR DELETE ON ai_wb_memory_handler_fixture.chat_memories
     FOR EACH ROW WHEN (OLD.content = 'refuse-write')
     EXECUTE FUNCTION ai_wb_memory_handler_fixture.refuse_write();
+CREATE TABLE ai_wb_memory_handler_fixture.delete_statements (
+    at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE FUNCTION ai_wb_memory_handler_fixture.log_delete() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    INSERT INTO ai_wb_memory_handler_fixture.delete_statements DEFAULT VALUES;
+    RETURN NULL;
+END;
+$$;
+CREATE TRIGGER log_delete
+    AFTER DELETE ON ai_wb_memory_handler_fixture.chat_memories
+    FOR EACH STATEMENT
+    EXECUTE FUNCTION ai_wb_memory_handler_fixture.log_delete();
 `
 
 // memoryHandlerEnv is a memory handler over a Postgres memory store and
@@ -194,6 +208,19 @@ func (e *memoryHandlerEnv) serve(username, method, path, body string) *httptest.
 	return rec
 }
 
+// deleteStatements counts the DELETE statements run against the memory
+// table, including those that matched no row.
+func (e *memoryHandlerEnv) deleteStatements(t *testing.T) int {
+	t.Helper()
+	var n int
+	if err := e.pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM ai_wb_memory_handler_fixture.delete_statements`,
+	).Scan(&n); err != nil {
+		t.Fatalf("count delete statements: %v", err)
+	}
+	return n
+}
+
 // assertMemoryDenial checks the single denied row for action: its
 // reason, its actor and the memory it names.
 func assertMemoryDenial(t *testing.T, store *auth.AuthStore, action, reason string, id int64) {
@@ -285,7 +312,9 @@ func TestMemoryHandler_UpdatePinned(t *testing.T) {
 }
 
 // TestMemoryHandler_Delete covers DELETE /api/v1/memories/{id}, whose
-// refusal of a system memory is now recorded as memory.delete.
+// refusal of a system memory is now recorded as memory.delete. Another
+// user's memory answers exactly as a missing one, and neither runs a
+// DELETE statement, as for PATCH.
 func TestMemoryHandler_Delete(t *testing.T) {
 	env := newMemoryHandlerEnv(t)
 	own := env.seed(t, "alice", "user")
@@ -296,10 +325,18 @@ func TestMemoryHandler_Delete(t *testing.T) {
 	assertError(t, rec, http.StatusForbidden, systemMemoryRefusal)
 	assertMemoryDenial(t, env.auth, "memory.delete", systemMemoryRefusal, system)
 
+	before := env.deleteStatements(t)
 	rec = env.serve("alice", http.MethodDelete, memoryPath(others), "")
 	assertError(t, rec, http.StatusNotFound, "Memory not found")
 	rec = env.serve("alice", http.MethodDelete, memoryPath(999999), "")
 	assertError(t, rec, http.StatusNotFound, "Memory not found")
+	if after := env.deleteStatements(t); after != before {
+		t.Errorf("Expected no DELETE for another user's or a missing "+
+			"memory, got %d", after-before)
+	}
+	if _, err := env.store.GetByID(context.Background(), others); err != nil {
+		t.Errorf("Expected another user's memory to remain: %v", err)
+	}
 
 	rec = env.serve("alice", http.MethodDelete, memoryPath(own), "")
 	assertStatus(t, rec, http.StatusOK)

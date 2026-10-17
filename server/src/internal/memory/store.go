@@ -115,12 +115,15 @@ func (s *Store) Store(
 	return mem, nil
 }
 
-// Delete removes a memory by ID. The caller must own the memory
-// (username must match the stored username).
+// Delete removes a user-scoped memory by ID. The caller must own the
+// memory (username must match the stored username). A system-scoped
+// memory is never matched, although it carries its creator's username,
+// so that deleting one always needs the store_system_memory permission
+// and DeleteByID; see issue #704.
 func (s *Store) Delete(ctx context.Context, id int64, username string) error {
 	tag, err := s.pool.Exec(ctx,
 		`DELETE FROM chat_memories
-         WHERE id = $1 AND username = $2`,
+         WHERE id = $1 AND username = $2 AND scope = 'user'`,
 		id, username,
 	)
 	if err != nil {

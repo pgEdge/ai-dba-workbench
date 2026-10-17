@@ -94,7 +94,7 @@ func TestRecallMemoriesToolDefinition(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestDeleteMemoryToolDefinition(t *testing.T) {
-	tool := DeleteMemoryTool(nil)
+	tool := DeleteMemoryTool(nil, nil, nil)
 
 	if tool.Definition.Name != "delete_memory" {
 		t.Errorf("expected tool name 'delete_memory', got %q",
@@ -507,7 +507,7 @@ func TestRecallMemoriesNoAuthContext(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestDeleteMemoryMissingID(t *testing.T) {
-	tool := DeleteMemoryTool(nil)
+	tool := DeleteMemoryTool(nil, nil, nil)
 
 	tests := []struct {
 		name string
@@ -552,7 +552,7 @@ func TestDeleteMemoryMissingID(t *testing.T) {
 }
 
 func TestDeleteMemoryNoAuthContext(t *testing.T) {
-	tool := DeleteMemoryTool(nil)
+	tool := DeleteMemoryTool(nil, nil, nil)
 
 	// Provide a valid numeric id but no authenticated user in context
 	args := map[string]any{

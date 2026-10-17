@@ -1194,8 +1194,9 @@ recorder (no auth store) records nothing. Action, reason and target
 strings are the constants in `denial_recorder.go`, never tool
 arguments; connection targets come from `connectionDenialTarget(id)`
 on a parsed integer (an ID that is not positive names the bare
-`connections`, as REST `denialResourceTarget` does), and the tool gate in `Execute` names
-`tools/<registry name>` or `unmatched` via `toolDenialTarget`.
+`connections`, as REST `denialResourceTarget` does), and the tool gate
+in `Execute` names `tools/<registry name>` or `unmatched` via
+`toolDenialTarget`.
 Recorded refusals (issues #674, #706): `store_memory` system scope as
 `memory.create` on `memories`; the tool gate as `mcp.tool.call`;
 `ConnectionResolver.Resolve(ctx, action, args, fallback)` records the
@@ -1226,9 +1227,9 @@ int64 in 1..`MaxInt32` is valid, range-checked before conversion, so
 ignored; never use `parseIntArg` for it. `parseConnectionArgs` sets
 `InvalidConnID` for any present but invalid value, and `Resolve`
 answers it with `invalidConnectionIDMessage`, recording nothing, before
-any lookup. Messages returned to the caller are otherwise unchanged. New tools that refuse
-on a connection must take the recorder and pass `p.record` from the
-provider. Tests: `denial_recorder_test.go`
+any lookup. Messages returned to the caller are otherwise unchanged.
+New tools that refuse on a connection must take the recorder and pass
+`p.record` from the provider. Tests: `denial_recorder_test.go`
 (`TestProviderWiresStoreMemoryDenialRecorder`) and
 `tool_refusal_audit_test.go` (`TestProviderRecordsToolAccessRefusal`,
 `TestProviderWiresConnectionDenialRecorder`,
@@ -1238,8 +1239,7 @@ provider. Tests: `denial_recorder_test.go`
 `TestProviderNullConnectionFallsBackToSession`) drive the provider,
 so a nil recorder fails them;
 `TestQueryDatastoreRecordsRefusedConnection` covers `query_datastore`
-on Postgres; `tool_refusal_audit_db_test.go` covers the
-write gate on Postgres.
+on Postgres.
 
 Mutations in these handlers go through `h.actorStore(r)` rather than
 `h.authStore`, so the audit row names the acting user or token:

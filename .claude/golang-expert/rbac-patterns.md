@@ -1207,11 +1207,9 @@ caller's action on an RBAC deny (`connection.query`,
 `connection.query.validate`, `connection.read`);
 `resolveAccessibleConnection` takes the recorder and action
 (`metrics.read` for metrics tools, otherwise `connection.read`);
-`query_metrics` and `get_alert_rules` record directly; the
-`query_database` write gate records `connection.query.write`, gating
-on `ResolvedConnection.AccessLevel`, the level from the resolver's own
-`CanAccessConnection` decision, rather than checking a second time; and
-`query_datastore` records a refused `connection_ids` entry as
+`query_metrics` and `get_alert_rules` record directly
+(`query_database` is read-only since #663, so it has no write refusal
+to record); and `query_datastore` records a refused `connection_ids` entry as
 `connection.read` on the constant `connectionsTarget` (one call can
 name several IDs); and the provider sets `database.ClientResolver.Denied`
 to `sessionConnectionDenied(record)` on its own resolver and, through

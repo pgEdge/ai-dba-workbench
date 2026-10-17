@@ -40,11 +40,6 @@ type ResolvedConnection struct {
 	ConnStr string
 	ConnID  int
 	DBName  string
-	// AccessLevel is the caller's level on ConnID from the same RBAC
-	// decision that admitted the call, so a tool gating a write on it
-	// does not ask again and race a concurrent grant change. It is
-	// empty for the fallback client, which names no connection.
-	AccessLevel string
 }
 
 // NewConnectionResolver creates a ConnectionResolver. All parameters
@@ -219,7 +214,7 @@ func (r *ConnectionResolver) resolveExplicit(
 	// connection ID so operators can correlate without widening the
 	// surface the caller sees. Fail-closed: we keep the deny even if
 	// the underlying cause was a transient lookup error.
-	canAccess, accessLevel := r.rbacChecker.CanAccessConnection(ctx, ca.ConnectionID)
+	canAccess, _ := r.rbacChecker.CanAccessConnection(ctx, ca.ConnectionID)
 	if !canAccess {
 		fmt.Fprintf(os.Stderr, "WARNING: connection_resolver: RBAC denied access to connection %d\n", ca.ConnectionID)
 		r.record.deny(ctx, action, connectionDenialTarget(ca.ConnectionID),
@@ -300,12 +295,11 @@ func (r *ConnectionResolver) resolveExplicit(
 	}
 
 	return &ResolvedConnection{
-		Client:      client,
-		Pool:        pool,
-		ConnStr:     connStr,
-		ConnID:      ca.ConnectionID,
-		DBName:      effectiveDB,
-		AccessLevel: accessLevel,
+		Client:  client,
+		Pool:    pool,
+		ConnStr: connStr,
+		ConnID:  ca.ConnectionID,
+		DBName:  effectiveDB,
 	}, nil
 }
 

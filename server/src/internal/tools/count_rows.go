@@ -129,7 +129,7 @@ Use count_rows to efficiently determine data volume:
 			}
 
 			// Resolve connection (explicit connection_id or fallback)
-			resolved, errResp := resolver.Resolve(ctx, args, dbClient)
+			resolved, errResp := resolver.Resolve(ctx, deniedActionConnectionQuery, args, dbClient)
 			if errResp != nil {
 				return *errResp, nil
 			}

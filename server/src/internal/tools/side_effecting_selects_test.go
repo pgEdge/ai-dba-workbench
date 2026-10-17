@@ -305,7 +305,7 @@ func TestQueryDatabase_SideEffectingSelects(t *testing.T) {
 	}
 	readerResolver := NewConnectionResolver(env.clients,
 		database.NewTestDatastoreWithSecret(env.pool, resolverTestSecret),
-		auth.NewRBACChecker(store))
+		auth.NewRBACChecker(store), nil)
 
 	run := func(t *testing.T, tool Tool, callCtx context.Context, args map[string]any) mcp.ToolResponse {
 		t.Helper()
@@ -361,7 +361,7 @@ func TestQueryDatabase_SideEffectingSelects(t *testing.T) {
 	})
 
 	t.Run("selected connection refused too", func(t *testing.T) {
-		resolved, errResp := env.resolver.Resolve(superCtx, map[string]any{
+		resolved, errResp := env.resolver.Resolve(superCtx, deniedActionConnectionQuery, map[string]any{
 			"connection_id": float64(env.connID),
 		}, nil)
 		if errResp != nil {

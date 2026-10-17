@@ -1184,18 +1184,62 @@ though the client reads it on every load; the coalescer bounds it. The
 tests are in `access_denial_targets_test.go`.
 
 MCP tools record refusals through `tools.DenialRecorder`
-(`internal/tools/denial_recorder.go`), built by
-`NewDenialRecorder(p.authStore)` in `registerDatastoreTools`
-(`context_aware_provider.go`); it calls `RecordCoalescedDenial` with
-`auth.ActorFromContext(ctx)`, and `record.refuse(ctx, action, target,
-reason)` writes the row and returns the tool error. A nil recorder
-(no auth store) refuses without recording. `store_memory` records
-`memory.create` on `memories` with reason `Permission denied: requires
-store_system_memory permission` (issue #674). Action and target must
-be constants, never tool arguments. `denial_recorder_test.go` pins
-the tool, the real audit row, and the provider wiring
-(`TestProviderWiresStoreMemoryDenialRecorder`, which fails if the
-provider passes a nil recorder).
+(`internal/tools/denial_recorder.go`), built once by
+`NewDenialRecorder(authStore)` in `NewContextAwareProvider` and held
+as `p.record` (`context_aware_provider.go`); it calls
+`RecordCoalescedDenial` with `auth.ActorFromContext(ctx)`.
+`record.deny(ctx, action, target, reason)` only records;
+`record.refuse(...)` records and returns the tool error. A nil
+recorder (no auth store) records nothing. Action, reason and target
+strings are the constants in `denial_recorder.go`, never tool
+arguments; connection targets come from `connectionDenialTarget(id)`
+on a parsed integer (an ID that is not positive names the bare
+`connections`, as REST `denialResourceTarget` does), and the tool gate
+in `Execute` names `tools/<registry name>` or `unmatched` via
+`toolDenialTarget`.
+Recorded refusals (issues #674, #706): `store_memory` system scope as
+`memory.create` on `memories`; the tool gate as `mcp.tool.call`;
+`ConnectionResolver.Resolve(ctx, action, args, fallback)` records the
+caller's action on an RBAC deny (`connection.query`,
+`connection.query.validate`, `connection.read`);
+`resolveAccessibleConnection` takes the recorder and action
+(`metrics.read` for metrics tools, otherwise `connection.read`);
+`query_metrics` and `get_alert_rules` record directly
+(`query_database` is read-only since #663, so it has no write refusal
+to record); and `query_datastore` records a refused `connection_ids` entry as
+`connection.read` on the constant `connectionsTarget` (one call can
+name several IDs); and the provider sets `database.ClientResolver.Denied`
+to `sessionConnectionDenied(record)` on its own resolver and, through
+`resources.ContextAwareRegistry.SetConnectionDenied`, on the resources
+registry's (resources cannot import tools), so a lost selected
+connection is `connection.read` from a tool or `read_resource`.
+Reasons mirror the REST ones. `Execute` sends any call whose args hold
+a non-null `connection_id` straight to the base registry before
+`getClient`, so naming a connection never resolves, or records a
+refusal of, the selected one. A null `connection_id` (LLM providers
+send null for omitted optional parameters) is absent everywhere: test
+presence with `hasConnectionID(args)`, never `_, ok := args[...]`;
+`query_datastore` likewise ignores null `connection_ids` and null
+`connection_id`. Every tool validates a present `connection_id` with
+`connectionIDValue` (`connection_resolver.go`): only a float64, int or
+int64 in 1..`MaxInt32` is valid, range-checked before conversion, so
+1.5, 2^63, `"5"`, booleans and objects are refused, never truncated or
+ignored; never use `parseIntArg` for it. `parseConnectionArgs` sets
+`InvalidConnID` for any present but invalid value, and `Resolve`
+answers it with `invalidConnectionIDMessage`, recording nothing, before
+any lookup. Messages returned to the caller are otherwise unchanged.
+New tools that refuse on a connection must take the recorder and pass
+`p.record` from the provider. Tests: `denial_recorder_test.go`
+(`TestProviderWiresStoreMemoryDenialRecorder`) and
+`tool_refusal_audit_test.go` (`TestProviderRecordsToolAccessRefusal`,
+`TestProviderWiresConnectionDenialRecorder`,
+`TestProviderRecordsLostSessionConnection`,
+`TestProviderRecordsLostSessionConnectionOnReadResource`,
+`TestProviderExplicitConnectionSkipsSessionClient`,
+`TestProviderNullConnectionFallsBackToSession`) drive the provider,
+so a nil recorder fails them;
+`TestQueryDatastoreRecordsRefusedConnection` covers `query_datastore`
+on Postgres.
 
 Mutations in these handlers go through `h.actorStore(r)` rather than
 `h.authStore`, so the audit row names the acting user or token:

@@ -140,7 +140,7 @@ func (f *alertHistoryFixture) superuserTool(t *testing.T) Tool {
 	store, authCleanup := newRBACTestStore(t)
 	t.Cleanup(authCleanup)
 	return asSuperuser(GetAlertHistoryTool(f.pool,
-		auth.NewRBACCheckerForDatastore(store, f.ds), database.NewVisibilityLister(f.ds)))
+		auth.NewRBACCheckerForDatastore(store, f.ds), database.NewVisibilityLister(f.ds), nil))
 }
 
 // TestGetAlertHistorySystemAlertsNilCheckerIntegration proves a nil
@@ -149,7 +149,7 @@ func (f *alertHistoryFixture) superuserTool(t *testing.T) Tool {
 // receiver.
 func TestGetAlertHistorySystemAlertsNilCheckerIntegration(t *testing.T) {
 	f := newAlertHistoryFixture(t)
-	tool := GetAlertHistoryTool(f.pool, nil, nil)
+	tool := GetAlertHistoryTool(f.pool, nil, nil, nil)
 
 	body := mustSuccess(t, tool, map[string]any{"__context": superuserContext(), "status": "active"})
 	if !strings.Contains(body, "You do not have access to any connections") {
@@ -196,7 +196,7 @@ func TestGetAlertHistorySystemAlertsScopedUserIntegration(t *testing.T) {
 	ctx := bobContext(t, store)
 
 	tool := GetAlertHistoryTool(f.pool, auth.NewRBACCheckerForDatastore(store, f.ds),
-		database.NewVisibilityLister(f.ds))
+		database.NewVisibilityLister(f.ds), nil)
 	body := mustSuccess(t, tool, map[string]any{"__context": ctx})
 	if !strings.Contains(body, "Shared connection alert") ||
 		!strings.Contains(body, "Tier 2 embedding provider failing") {
@@ -221,7 +221,7 @@ func TestGetAlertHistorySystemAlertsNoConnectionsIntegration(t *testing.T) {
 	ctx := bobContext(t, store)
 
 	tool := GetAlertHistoryTool(f.pool, auth.NewRBACCheckerForDatastore(store, f.ds),
-		database.NewVisibilityLister(f.ds))
+		database.NewVisibilityLister(f.ds), nil)
 	body := mustSuccess(t, tool, map[string]any{"__context": ctx, "status": "active"})
 	if !strings.Contains(body, "Tier 2 embedding provider failing") || !strings.Contains(body, "(1 rows)") {
 		t.Errorf("expected only the system alert:\n%s", body)
@@ -242,7 +242,7 @@ func TestGetAlertHistorySystemAlertsDeniedIntegration(t *testing.T) {
 
 	ctx := context.WithValue(context.Background(), auth.IsSuperuserContextKey, false)
 	tool := GetAlertHistoryTool(f.pool, auth.NewRBACCheckerForDatastore(store, f.ds),
-		database.NewVisibilityLister(f.ds))
+		database.NewVisibilityLister(f.ds), nil)
 	body := mustSuccess(t, tool, map[string]any{"__context": ctx})
 	if !strings.Contains(body, "You do not have access to any connections") {
 		t.Errorf("expected the no-access answer:\n%s", body)
@@ -362,7 +362,7 @@ func TestGetAlertHistorySingleConnectionDeniedIntegration(t *testing.T) {
 	ctx := bobContext(t, store)
 
 	tool := GetAlertHistoryTool(f.pool, auth.NewRBACCheckerForDatastore(store, f.ds),
-		database.NewVisibilityLister(f.ds))
+		database.NewVisibilityLister(f.ds), nil)
 	resp, err := tool.Handler(map[string]any{"__context": ctx, "connection_id": f.privConn})
 	if err != nil {
 		t.Fatalf("handler error: %v", err)

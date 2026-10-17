@@ -12,6 +12,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -28,6 +29,7 @@ type ConnectionResolver struct {
 	clientManager *database.ClientManager
 	datastore     *database.Datastore
 	rbacChecker   *auth.RBACChecker
+	record        DenialRecorder
 }
 
 // ResolvedConnection holds the resolved database client, pool, and
@@ -42,16 +44,19 @@ type ResolvedConnection struct {
 
 // NewConnectionResolver creates a ConnectionResolver. All parameters
 // are required for explicit connection_id resolution; pass nil only in
-// tests that do not exercise connection resolution.
+// tests that do not exercise connection resolution. record audits a
+// connection_id the caller may not access, and may be nil.
 func NewConnectionResolver(
 	clientManager *database.ClientManager,
 	datastore *database.Datastore,
 	rbacChecker *auth.RBACChecker,
+	record DenialRecorder,
 ) *ConnectionResolver {
 	return &ConnectionResolver{
 		clientManager: clientManager,
 		datastore:     datastore,
 		rbacChecker:   rbacChecker,
+		record:        record,
 	}
 }
 
@@ -59,24 +64,69 @@ func NewConnectionResolver(
 type connectionArgs struct {
 	ConnectionID int
 	HasConnID    bool
-	DatabaseName string
+	// InvalidConnID is set when connection_id is present but not a
+	// positive integer; ConnectionID is then zero, and Resolve refuses
+	// the call before any lookup.
+	InvalidConnID bool
+	DatabaseName  string
+}
+
+// invalidConnectionIDMessage answers a connection_id that is not a
+// positive integer.
+const invalidConnectionIDMessage = "connection_id must be a positive integer"
+
+// connectionIDValue validates a connection_id argument and returns it
+// as an int, reporting false for anything but a positive integer no
+// larger than math.MaxInt32. The range is checked on the value as it
+// arrived, before any conversion, so a fractional value such as 1.5 can
+// never name connection 1 and a huge one such as 2^63 never converts to
+// a platform-dependent ID. A string, even "5", a null and any other
+// type are invalid; callers treat a null as an absent key before
+// calling it. JSON numbers arrive as float64; int and int64 are
+// accepted for callers inside the server.
+func connectionIDValue(raw any) (int, bool) {
+	switch v := raw.(type) {
+	case float64:
+		if math.IsNaN(v) || math.IsInf(v, 0) || v != math.Trunc(v) ||
+			v < 1 || v > math.MaxInt32 {
+			return 0, false
+		}
+		return int(v), true
+	case int:
+		if v < 1 || v > math.MaxInt32 {
+			return 0, false
+		}
+		return v, true
+	case int64:
+		if v < 1 || v > math.MaxInt32 {
+			return 0, false
+		}
+		return int(v), true
+	}
+	return 0, false
+}
+
+// hasConnectionID reports whether args name a connection_id. A null
+// connection_id counts as absent, since several LLM providers send null
+// for an optional parameter they mean to omit.
+func hasConnectionID(args map[string]any) bool {
+	return args["connection_id"] != nil
 }
 
 // parseConnectionArgs extracts connection_id and database_name from the
-// tool argument map. connection_id arrives as float64 from JSON
-// unmarshalling.
+// tool argument map. A null connection_id is treated as absent. Any
+// other connection_id that connectionIDValue rejects is marked invalid
+// rather than truncated or ignored, so that, for example, 3.7 can never
+// name connection 3 and "5" never falls back to the selected connection.
 func parseConnectionArgs(args map[string]any) connectionArgs {
 	var ca connectionArgs
 
-	if raw, ok := args["connection_id"]; ok {
-		switch v := raw.(type) {
-		case float64:
-			ca.ConnectionID = int(v)
-			ca.HasConnID = true
-		case int:
-			ca.ConnectionID = v
-			ca.HasConnID = true
-		}
+	if hasConnectionID(args) {
+		raw := args["connection_id"]
+		ca.HasConnID = true
+		id, valid := connectionIDValue(raw)
+		ca.ConnectionID = id
+		ca.InvalidConnID = !valid
 	}
 
 	if dbName, ok := args["database_name"].(string); ok && dbName != "" {
@@ -92,9 +142,12 @@ func parseConnectionArgs(args map[string]any) connectionArgs {
 // When connection_id is absent, the resolver falls back to
 // fallbackClient. If the resolver itself is nil and connection_id is
 // absent, the fallback client is used directly. If the resolver is nil
-// and connection_id is present, an error is returned.
+// and connection_id is present, an error is returned. action is the
+// fixed audit action the calling tool records when the caller may not
+// access the connection_id it names, such as connection.query.
 func (r *ConnectionResolver) Resolve(
 	ctx context.Context,
+	action string,
 	args map[string]any,
 	fallbackClient *database.Client,
 ) (*ResolvedConnection, *mcp.ToolResponse) {
@@ -102,6 +155,16 @@ func (r *ConnectionResolver) Resolve(
 
 	// When connection_id is provided, resolve explicitly.
 	if ca.HasConnID {
+		if ca.InvalidConnID {
+			resp := mcp.ToolResponse{
+				Content: []mcp.ContentItem{{
+					Type: "text",
+					Text: invalidConnectionIDMessage,
+				}},
+				IsError: true,
+			}
+			return nil, &resp
+		}
 		if r == nil {
 			resp := mcp.ToolResponse{
 				Content: []mcp.ContentItem{{
@@ -112,7 +175,7 @@ func (r *ConnectionResolver) Resolve(
 			}
 			return nil, &resp
 		}
-		return r.resolveExplicit(ctx, ca)
+		return r.resolveExplicit(ctx, action, ca)
 	}
 
 	// No connection_id: fall back to the captured per-token client.
@@ -122,6 +185,7 @@ func (r *ConnectionResolver) Resolve(
 // resolveExplicit handles the case where connection_id is provided.
 func (r *ConnectionResolver) resolveExplicit(
 	ctx context.Context,
+	action string,
 	ca connectionArgs,
 ) (*ResolvedConnection, *mcp.ToolResponse) {
 	// Validate the optional database override before any other work.
@@ -153,6 +217,8 @@ func (r *ConnectionResolver) resolveExplicit(
 	canAccess, _ := r.rbacChecker.CanAccessConnection(ctx, ca.ConnectionID)
 	if !canAccess {
 		fmt.Fprintf(os.Stderr, "WARNING: connection_resolver: RBAC denied access to connection %d\n", ca.ConnectionID)
+		r.record.deny(ctx, action, connectionDenialTarget(ca.ConnectionID),
+			connectionAccessDenied)
 		resp := mcp.ToolResponse{
 			Content: []mcp.ContentItem{{
 				Type: "text",

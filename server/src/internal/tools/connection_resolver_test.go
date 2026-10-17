@@ -70,9 +70,22 @@ func TestParseConnectionArgs(t *testing.T) {
 			wantDBName:  "otherdb",
 		},
 		{
-			name: "connection_id as string is not parsed",
+			// A string is present but invalid, so it is refused
+			// rather than ignored so the call falls back to the selected connection.
+			name: "connection_id as string is refused",
 			args: map[string]any{
 				"connection_id": "42",
+			},
+			wantConnID:  0,
+			wantHasConn: true,
+			wantDBName:  "",
+		},
+		{
+			// A null is an omitted parameter, as several LLM
+			// providers send it, not an invalid one.
+			name: "connection_id null is absent",
+			args: map[string]any{
+				"connection_id": nil,
 			},
 			wantConnID:  0,
 			wantHasConn: false,
@@ -122,7 +135,7 @@ func TestResolve_NilResolver_NoConnectionID(t *testing.T) {
 	var resolver *ConnectionResolver
 	fallbackClient := database.NewClient(nil)
 
-	resolved, errResp := resolver.Resolve(context.Background(), map[string]any{}, fallbackClient)
+	resolved, errResp := resolver.Resolve(context.Background(), deniedActionConnectionQuery, map[string]any{}, fallbackClient)
 
 	if resolved != nil {
 		t.Fatal("Expected nil resolved connection")
@@ -146,7 +159,7 @@ func TestResolve_NilResolver_WithConnectionID(t *testing.T) {
 		"connection_id": float64(1),
 	}
 
-	resolved, errResp := resolver.Resolve(context.Background(), args, nil)
+	resolved, errResp := resolver.Resolve(context.Background(), deniedActionConnectionQuery, args, nil)
 
 	if resolved != nil {
 		t.Fatal("Expected nil resolved connection")
@@ -200,7 +213,7 @@ func TestResolveFallback_EmptyDefaultConnection(t *testing.T) {
 }
 
 func TestNewConnectionResolver(t *testing.T) {
-	resolver := NewConnectionResolver(nil, nil, nil)
+	resolver := NewConnectionResolver(nil, nil, nil, nil)
 
 	if resolver == nil {
 		t.Fatal("Expected non-nil resolver")
@@ -221,7 +234,7 @@ func TestNewConnectionResolver(t *testing.T) {
 // lookup, which is why a resolver with no datastore or RBAC checker can
 // answer it without panicking (issue #530).
 func TestResolve_RejectsInvalidDatabaseName(t *testing.T) {
-	resolver := NewConnectionResolver(nil, nil, nil)
+	resolver := NewConnectionResolver(nil, nil, nil, nil)
 
 	names := map[string]string{
 		"whitespace only":  "   ",
@@ -237,7 +250,7 @@ func TestResolve_RejectsInvalidDatabaseName(t *testing.T) {
 				"database_name": dbName,
 			}
 
-			resolved, errResp := resolver.Resolve(context.Background(), args, nil)
+			resolved, errResp := resolver.Resolve(context.Background(), deniedActionConnectionQuery, args, nil)
 
 			if resolved != nil {
 				t.Fatal("Expected nil resolved connection")

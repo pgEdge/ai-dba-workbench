@@ -19,7 +19,7 @@ import (
 // query_datastore_integration_test.go.
 
 func TestQueryDatastoreToolDefinition(t *testing.T) {
-	tool := QueryDatastoreTool(nil, nil, nil)
+	tool := QueryDatastoreTool(nil, nil, nil, nil)
 	def := tool.Definition
 
 	if def.Name != "query_datastore" {
@@ -67,7 +67,7 @@ func TestQueryDatastoreToolDefinition(t *testing.T) {
 func TestQueryDatastoreRejectsSQL(t *testing.T) {
 	// The rejection comes before the pool check, so a caller is told the
 	// tool changed whether or not a datastore is configured.
-	tool := QueryDatastoreTool(nil, nil, nil)
+	tool := QueryDatastoreTool(nil, nil, nil, nil)
 	for _, key := range []string{"sql", "query"} {
 		t.Run(key, func(t *testing.T) {
 			resp, err := tool.Handler(map[string]any{key: "SELECT * FROM connections"})
@@ -88,7 +88,7 @@ func TestQueryDatastoreRejectsSQL(t *testing.T) {
 }
 
 func TestQueryDatastoreValidationBeforePool(t *testing.T) {
-	runToolCases(t, QueryDatastoreTool(nil, nil, nil), []toolCase{
+	runToolCases(t, QueryDatastoreTool(nil, nil, nil, nil), []toolCase{
 		{name: "missing source", raw: true, wantErr: true, want: "source is required"},
 		{name: "unknown parameter", raw: true, args: map[string]any{"source": "alerts", "limit": float64(5)},
 			wantErr: true, want: `unknown parameter "limit"`},

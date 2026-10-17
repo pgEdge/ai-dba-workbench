@@ -195,7 +195,7 @@ func TestGetAlertHistoryInvalidStatusIntegration(t *testing.T) {
 	pool, _, cleanup := newToolsTestPool(t)
 	defer cleanup()
 
-	tool := asSuperuser(GetAlertHistoryTool(pool, testRBACChecker(t), nil))
+	tool := asSuperuser(GetAlertHistoryTool(pool, testRBACChecker(t), nil, nil))
 
 	response, err := tool.Handler(map[string]any{
 		"status": "invalid_status",
@@ -228,7 +228,7 @@ func TestGetAlertRulesInvalidConnectionIDIntegration(t *testing.T) {
 	pool, _, cleanup := newToolsTestPool(t)
 	defer cleanup()
 
-	tool := asSuperuser(GetAlertRulesTool(pool, testRBACChecker(t)))
+	tool := asSuperuser(GetAlertRulesTool(pool, testRBACChecker(t), nil))
 
 	tests := []struct {
 		name  string
@@ -267,7 +267,7 @@ func TestGetAlertRulesInvalidCategoryIntegration(t *testing.T) {
 	pool, _, cleanup := newToolsTestPool(t)
 	defer cleanup()
 
-	tool := asSuperuser(GetAlertRulesTool(pool, testRBACChecker(t)))
+	tool := asSuperuser(GetAlertRulesTool(pool, testRBACChecker(t), nil))
 
 	response, err := tool.Handler(map[string]any{
 		"category": "not_a_real_category",
@@ -298,7 +298,7 @@ func TestGetBlackoutsInvalidConnectionIDIntegration(t *testing.T) {
 	pool, _, cleanup := newToolsTestPool(t)
 	defer cleanup()
 
-	tool := asSuperuser(GetBlackoutsTool(pool, testRBACChecker(t), nil))
+	tool := asSuperuser(GetBlackoutsTool(pool, testRBACChecker(t), nil, nil))
 
 	response, err := tool.Handler(map[string]any{
 		"connection_id": "abc",
@@ -329,7 +329,7 @@ func TestGetMetricBaselinesInvalidConnectionIDIntegration(t *testing.T) {
 	pool, _, cleanup := newToolsTestPool(t)
 	defer cleanup()
 
-	tool := asSuperuser(GetMetricBaselinesTool(pool, testRBACChecker(t), nil))
+	tool := asSuperuser(GetMetricBaselinesTool(pool, testRBACChecker(t), nil, nil))
 
 	tests := []struct {
 		name  string

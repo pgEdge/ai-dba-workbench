@@ -184,7 +184,7 @@ READ ONLY transaction to prevent side effects. However, be cautious with:
 			}
 
 			// Resolve connection (explicit connection_id or fallback)
-			resolved, errResp := resolver.Resolve(ctx, args, dbClient)
+			resolved, errResp := resolver.Resolve(ctx, deniedActionConnectionQuery, args, dbClient)
 			if errResp != nil {
 				return *errResp, nil
 			}

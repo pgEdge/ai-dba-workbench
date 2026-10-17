@@ -29,7 +29,7 @@ import (
 // ---------------------------------------------------------------------------
 
 func TestGetTimelineEventsToolDefinition(t *testing.T) {
-	tool := GetTimelineEventsTool(nil, nil, nil)
+	tool := GetTimelineEventsTool(nil, nil, nil, nil)
 
 	if tool.Definition.Name != "get_timeline_events" {
 		t.Errorf("expected tool name 'get_timeline_events', got %q", tool.Definition.Name)
@@ -100,7 +100,7 @@ func TestGetTimelineEventsToolDescriptionMentionsAlertSemantics(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGetTimelineEventsNilDatastore(t *testing.T) {
-	tool := GetTimelineEventsTool(nil, nil, nil)
+	tool := GetTimelineEventsTool(nil, nil, nil, nil)
 
 	response, err := tool.Handler(map[string]any{})
 	if err != nil {
@@ -464,7 +464,7 @@ func TestGetTimelineEventsIntegrationHappyPath(t *testing.T) {
 
 	connID, _ := seedTimelineFixtures(t, pool)
 
-	tool := asSuperuser(GetTimelineEventsTool(ds, testRBACChecker(t), nil))
+	tool := asSuperuser(GetTimelineEventsTool(ds, testRBACChecker(t), nil, nil))
 	resp, err := tool.Handler(map[string]any{
 		"connection_id": float64(connID),
 	})
@@ -509,7 +509,7 @@ func TestGetTimelineEventsIntegrationClearedSummaryEnrichment(t *testing.T) {
 	// mirror what the helper actually writes.
 	connID, base := seedTimelineFixtures(t, pool)
 
-	tool := asSuperuser(GetTimelineEventsTool(ds, testRBACChecker(t), nil))
+	tool := asSuperuser(GetTimelineEventsTool(ds, testRBACChecker(t), nil, nil))
 	resp, err := tool.Handler(map[string]any{
 		"connection_id": float64(connID),
 		"event_types":   "alert_fired,alert_cleared",
@@ -548,7 +548,7 @@ func TestGetTimelineEventsIntegrationEventTypeFilter(t *testing.T) {
 
 	connID, _ := seedTimelineFixtures(t, pool)
 
-	tool := asSuperuser(GetTimelineEventsTool(ds, testRBACChecker(t), nil))
+	tool := asSuperuser(GetTimelineEventsTool(ds, testRBACChecker(t), nil, nil))
 	resp, err := tool.Handler(map[string]any{
 		"connection_id": float64(connID),
 		"event_types":   "restart, config_change",
@@ -586,7 +586,7 @@ func TestGetTimelineEventsIntegrationExplicitTimeRange(t *testing.T) {
 	start := base.Add(-5 * time.Minute)
 	end := base.Add(-4 * time.Minute)
 
-	tool := asSuperuser(GetTimelineEventsTool(ds, testRBACChecker(t), nil))
+	tool := asSuperuser(GetTimelineEventsTool(ds, testRBACChecker(t), nil, nil))
 	resp, err := tool.Handler(map[string]any{
 		"connection_id": float64(connID),
 		"start_time":    start.Format(time.RFC3339),
@@ -612,7 +612,7 @@ func TestGetTimelineEventsIntegrationDefaultRangeCoversFixtures(t *testing.T) {
 
 	// No start_time / end_time means default last 24h, which includes
 	// all fixtures (anchored at now-2h).
-	tool := asSuperuser(GetTimelineEventsTool(ds, testRBACChecker(t), nil))
+	tool := asSuperuser(GetTimelineEventsTool(ds, testRBACChecker(t), nil, nil))
 	resp, err := tool.Handler(map[string]any{
 		"connection_id": float64(connID),
 	})
@@ -634,7 +634,7 @@ func TestGetTimelineEventsIntegrationLimitClamped(t *testing.T) {
 
 	connID, _ := seedTimelineFixtures(t, pool)
 
-	tool := asSuperuser(GetTimelineEventsTool(ds, testRBACChecker(t), nil))
+	tool := asSuperuser(GetTimelineEventsTool(ds, testRBACChecker(t), nil, nil))
 	resp, err := tool.Handler(map[string]any{
 		"connection_id": float64(connID),
 		"limit":         float64(timelineMaxLimit + 100),
@@ -659,7 +659,7 @@ func TestGetTimelineEventsIntegrationLimitDefault(t *testing.T) {
 
 	connID, _ := seedTimelineFixtures(t, pool)
 
-	tool := asSuperuser(GetTimelineEventsTool(ds, testRBACChecker(t), nil))
+	tool := asSuperuser(GetTimelineEventsTool(ds, testRBACChecker(t), nil, nil))
 	resp, err := tool.Handler(map[string]any{
 		"connection_id": float64(connID),
 	})
@@ -678,7 +678,7 @@ func TestGetTimelineEventsIntegrationInvalidConnectionID(t *testing.T) {
 	_, ds, cleanup := newTimelineTestEnv(t)
 	defer cleanup()
 
-	tool := asSuperuser(GetTimelineEventsTool(ds, testRBACChecker(t), nil))
+	tool := asSuperuser(GetTimelineEventsTool(ds, testRBACChecker(t), nil, nil))
 	resp, err := tool.Handler(map[string]any{
 		"connection_id": "abc",
 	})
@@ -698,7 +698,7 @@ func TestGetTimelineEventsIntegrationUnknownConnectionID(t *testing.T) {
 	_, ds, cleanup := newTimelineTestEnv(t)
 	defer cleanup()
 
-	tool := asSuperuser(GetTimelineEventsTool(ds, testRBACChecker(t), nil))
+	tool := asSuperuser(GetTimelineEventsTool(ds, testRBACChecker(t), nil, nil))
 	resp, err := tool.Handler(map[string]any{
 		"connection_id": float64(99999),
 	})
@@ -717,7 +717,7 @@ func TestGetTimelineEventsIntegrationInvalidEventType(t *testing.T) {
 	_, ds, cleanup := newTimelineTestEnv(t)
 	defer cleanup()
 
-	tool := asSuperuser(GetTimelineEventsTool(ds, testRBACChecker(t), nil))
+	tool := asSuperuser(GetTimelineEventsTool(ds, testRBACChecker(t), nil, nil))
 	resp, err := tool.Handler(map[string]any{
 		"event_types": "config_change,bogus_event",
 	})
@@ -736,7 +736,7 @@ func TestGetTimelineEventsIntegrationInvalidLimit(t *testing.T) {
 	_, ds, cleanup := newTimelineTestEnv(t)
 	defer cleanup()
 
-	tool := asSuperuser(GetTimelineEventsTool(ds, testRBACChecker(t), nil))
+	tool := asSuperuser(GetTimelineEventsTool(ds, testRBACChecker(t), nil, nil))
 	cases := []struct {
 		name string
 		val  any
@@ -765,7 +765,7 @@ func TestGetTimelineEventsIntegrationInvalidStartTime(t *testing.T) {
 	_, ds, cleanup := newTimelineTestEnv(t)
 	defer cleanup()
 
-	tool := asSuperuser(GetTimelineEventsTool(ds, testRBACChecker(t), nil))
+	tool := asSuperuser(GetTimelineEventsTool(ds, testRBACChecker(t), nil, nil))
 	resp, err := tool.Handler(map[string]any{
 		"start_time": "not-a-time",
 	})
@@ -784,7 +784,7 @@ func TestGetTimelineEventsIntegrationInvalidEndTime(t *testing.T) {
 	_, ds, cleanup := newTimelineTestEnv(t)
 	defer cleanup()
 
-	tool := asSuperuser(GetTimelineEventsTool(ds, testRBACChecker(t), nil))
+	tool := asSuperuser(GetTimelineEventsTool(ds, testRBACChecker(t), nil, nil))
 	resp, err := tool.Handler(map[string]any{
 		"end_time": "not-a-time",
 	})
@@ -803,7 +803,7 @@ func TestGetTimelineEventsIntegrationInvertedTimeRange(t *testing.T) {
 	_, ds, cleanup := newTimelineTestEnv(t)
 	defer cleanup()
 
-	tool := asSuperuser(GetTimelineEventsTool(ds, testRBACChecker(t), nil))
+	tool := asSuperuser(GetTimelineEventsTool(ds, testRBACChecker(t), nil, nil))
 	resp, err := tool.Handler(map[string]any{
 		"start_time": "2026-05-02T00:00:00Z",
 		"end_time":   "2026-05-01T00:00:00Z",
@@ -829,7 +829,7 @@ func TestGetTimelineEventsIntegrationMultiConnectionAllAccess(t *testing.T) {
 	// nil RBACChecker path treats access as unrestricted.
 	seedTimelineFixtures(t, pool)
 
-	tool := asSuperuser(GetTimelineEventsTool(ds, testRBACChecker(t), nil))
+	tool := asSuperuser(GetTimelineEventsTool(ds, testRBACChecker(t), nil, nil))
 	resp, err := tool.Handler(map[string]any{})
 	if err != nil {
 		t.Fatalf("handler: %v", err)
@@ -887,7 +887,7 @@ func TestGetTimelineEventsRBACDeniesNoAccess(t *testing.T) {
 		},
 	}
 	rbac := auth.NewRBACChecker(store)
-	tool := GetTimelineEventsTool(ds, rbac, lister)
+	tool := GetTimelineEventsTool(ds, rbac, lister, nil)
 
 	ctx := nonSuperuserContext(userID, "bob")
 	resp, err := tool.Handler(map[string]any{"__context": ctx})
@@ -947,7 +947,7 @@ func TestGetTimelineEventsRBACDeniesExplicitConnectionID(t *testing.T) {
 	}
 
 	rbac := auth.NewRBACCheckerForDatastore(store, ds)
-	tool := GetTimelineEventsTool(ds, rbac, database.NewVisibilityLister(ds))
+	tool := GetTimelineEventsTool(ds, rbac, database.NewVisibilityLister(ds), nil)
 
 	ctx := nonSuperuserContext(userID, "bob")
 	resp, err := tool.Handler(map[string]any{

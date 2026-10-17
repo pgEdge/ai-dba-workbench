@@ -23,8 +23,9 @@ import (
 // GetAlertRulesTool creates the get_alert_rules tool for querying alert rules and thresholds.
 // When the caller supplies a connection_id, rbacChecker is consulted before
 // the datastore is read so that a caller cannot use the effective-threshold
-// lookup to probe connections they are not permitted to see.
-func GetAlertRulesTool(pool *pgxpool.Pool, rbacChecker *auth.RBACChecker) Tool {
+// lookup to probe connections they are not permitted to see; a denied
+// connection is audited through record as connection.read (issue #706).
+func GetAlertRulesTool(pool *pgxpool.Pool, rbacChecker *auth.RBACChecker, record DenialRecorder) Tool {
 	return Tool{
 		Definition: mcp.Tool{
 			Name: "get_alert_rules",
@@ -105,16 +106,18 @@ Returns TSV data with:
 
 			// Parse optional connection_id
 			var connectionID *int
-			if _, ok := args["connection_id"]; ok {
-				cid, err := parseIntArg(args, "connection_id")
-				if err != nil {
-					return mcp.NewToolError("Invalid 'connection_id' parameter: must be an integer")
+			if hasConnectionID(args) {
+				cid, valid := connectionIDValue(args["connection_id"])
+				if !valid {
+					return mcp.NewToolError("Invalid 'connection_id' parameter: must be a positive integer")
 				}
 				// RBAC: verify the caller may access this connection before
 				// reading its effective thresholds. Missing and denied cases
 				// share a message to avoid an existence oracle.
 				canAccess, _ := rbacChecker.CanAccessConnection(ctx, cid)
 				if !canAccess {
+					record.deny(ctx, deniedActionConnectionRead,
+						connectionDenialTarget(cid), connectionAccessDenied)
 					return mcp.NewToolError("connection not found or not accessible")
 				}
 				connectionID = &cid

@@ -184,6 +184,11 @@ func checkDatastoreRequestKeys(args map[string]any) error {
 		if strings.HasPrefix(key, "__") || datastoreRequestKeys[key] {
 			continue
 		}
+		// A null connection_id names nothing, so it is ignored as it
+		// is by the other tools rather than refused as unknown.
+		if key == "connection_id" && args[key] == nil {
+			continue
+		}
 		if key == "query" || key == "sql" {
 			return errors.New("query_datastore no longer accepts SQL; describe the query with source, columns, filters and the other parameters, and call describe_datastore to list the sources")
 		}
@@ -394,8 +399,10 @@ func parseStringList(args map[string]any, name string) ([]string, error) {
 }
 
 func parseConnectionIDs(args map[string]any) ([]int, error) {
-	v, ok := args["connection_ids"]
-	if !ok {
+	// A null counts as absent, as several LLM providers send null for
+	// an optional parameter they mean to omit.
+	v := args["connection_ids"]
+	if v == nil {
 		return nil, nil
 	}
 	const msg = "connection_ids must be an array of positive integers"

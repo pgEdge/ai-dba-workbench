@@ -231,7 +231,7 @@ To avoid rate limits (30,000 input tokens/minute):
 			}
 
 			// Resolve connection (explicit connection_id or fallback)
-			resolved, resolveErrResp := resolver.Resolve(ctx, args, dbClient)
+			resolved, resolveErrResp := resolver.Resolve(ctx, deniedActionConnectionQuery, args, dbClient)
 			if resolveErrResp != nil {
 				return *resolveErrResp, nil
 			}

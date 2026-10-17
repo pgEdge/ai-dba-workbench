@@ -20,7 +20,7 @@ import (
 // ---------------------------------------------------------------------------
 
 func TestGetMetricBaselinesToolDefinition(t *testing.T) {
-	tool := GetMetricBaselinesTool(nil, nil, nil)
+	tool := GetMetricBaselinesTool(nil, nil, nil, nil)
 
 	if tool.Definition.Name != "get_metric_baselines" {
 		t.Errorf("expected tool name 'get_metric_baselines', got %q", tool.Definition.Name)
@@ -53,7 +53,7 @@ func TestGetMetricBaselinesToolDefinition(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGetMetricBaselinesNilPool(t *testing.T) {
-	tool := GetMetricBaselinesTool(nil, nil, nil)
+	tool := GetMetricBaselinesTool(nil, nil, nil, nil)
 
 	response, err := tool.Handler(map[string]any{})
 	if err != nil {
@@ -76,7 +76,7 @@ func TestGetMetricBaselinesNilPool(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGetMetricBaselinesInvalidConnectionID(t *testing.T) {
-	tool := GetMetricBaselinesTool(nil, nil, nil)
+	tool := GetMetricBaselinesTool(nil, nil, nil, nil)
 
 	tests := []struct {
 		name string
@@ -111,7 +111,7 @@ func TestGetMetricBaselinesInvalidConnectionID(t *testing.T) {
 }
 
 func TestGetMetricBaselinesWithMetricName(t *testing.T) {
-	tool := GetMetricBaselinesTool(nil, nil, nil)
+	tool := GetMetricBaselinesTool(nil, nil, nil, nil)
 
 	args := map[string]any{
 		"metric_name": "cpu_usage",

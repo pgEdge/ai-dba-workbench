@@ -305,7 +305,7 @@ func TestMaskedQueryTextAndSettingChangesIntegration(t *testing.T) {
 		}
 		outputs[route] = rec.Body.String()
 	}
-	tool := GetTimelineEventsTool(f.ds, f.checker, database.NewVisibilityLister(f.ds))
+	tool := GetTimelineEventsTool(f.ds, f.checker, database.NewVisibilityLister(f.ds), nil)
 	text, isErr := call(t, tool, superuserContext(), map[string]any{
 		"connection_id": f.visible, "event_types": "config_change", "start_time": "1h"})
 	if isErr {

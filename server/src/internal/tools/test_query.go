@@ -108,7 +108,7 @@ DO NOT use for:
 			}
 
 			// Resolve connection (explicit connection_id or fallback)
-			resolved, errResp := resolver.Resolve(ctx, args, dbClient)
+			resolved, errResp := resolver.Resolve(ctx, deniedActionConnectionQueryValidate, args, dbClient)
 			if errResp != nil {
 				return *errResp, nil
 			}

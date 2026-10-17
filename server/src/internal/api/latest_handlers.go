@@ -240,16 +240,25 @@ func (h *LatestSnapshotHandler) handleLatestSnapshot(
 		return
 	}
 
+	// Leave out the columns that are never returned, such as one whose
+	// name marks it as a secret, so they cannot be an entity key or a
+	// sort column either.
+	allColumns = metrics.ReturnableColumns(probeName, allColumns)
+
 	// Determine dimension (entity key) columns for DISTINCT ON
 	dimensionCols := BuildDimensionColumns(allColumns, colTypes)
 
 	// Resolve the default order_by after column discovery. The
 	// DISTINCT ON query already selects the latest row, so ordering
 	// by collected_at is meaningless (and collected_at is excluded
-	// from the output). Default to the first dimension column.
+	// from the output). Default to the first dimension column that may
+	// be sorted on.
 	if orderBy == "" || (orderBy == "collected_at" && internalColumns[orderBy]) {
-		if len(dimensionCols) > 0 {
-			orderBy = dimensionCols[0]
+		for _, col := range dimensionCols {
+			if metrics.SortableColumn(probeName, col) {
+				orderBy = col
+				break
+			}
 		}
 	}
 
@@ -266,6 +275,10 @@ func (h *LatestSnapshotHandler) handleLatestSnapshot(
 		RespondError(w, http.StatusBadRequest,
 			fmt.Sprintf("Invalid order_by: column %q does not exist in probe %q output",
 				orderBy, probeName))
+		return
+	}
+	if !metrics.SortableColumn(probeName, orderBy) {
+		RespondError(w, http.StatusBadRequest, metrics.UnsortableColumnError(probeName, orderBy))
 		return
 	}
 
@@ -435,7 +448,10 @@ const systemSchemaPredicate = `"schemaname" NOT IN ('pg_catalog', 'information_s
 
 // queryLatestSnapshot builds and executes the DISTINCT ON query that
 // returns the latest row for each unique entity, then applies sorting
-// and pagination. It uses a single query with COUNT(*) OVER() to
+// and pagination. Columns that can carry a credential are masked in the
+// inner query, as query_datastore masks them, under their own names, so
+// DISTINCT ON, the sort and the response all see only the masked value;
+// a column that must never be returned is left out. It uses a single query with COUNT(*) OVER() to
 // retrieve both rows and the total count, and moves schema exclusion
 // to the outer query for better index utilization.
 func queryLatestSnapshot(
@@ -454,11 +470,28 @@ func queryLatestSnapshot(
 	schemas latestSchemaFilter,
 ) ([]map[string]any, int, error) {
 	// Build the list of columns to return (exclude internal columns)
-	var returnCols []string
+	// and the masked expression that selects each.
+	var returnCols, selectParts []string
 	for _, col := range allColumns {
-		if !internalColumns[col] {
-			returnCols = append(returnCols, col)
+		if internalColumns[col] {
+			continue
 		}
+		expr, ok := metrics.MaskedProbeColumn(probeName, col, allColumns, metrics.QuoteIdentifier)
+		if !ok {
+			continue
+		}
+		if quoted := metrics.QuoteIdentifier(col); expr != quoted {
+			expr += " AS " + quoted
+		}
+		returnCols = append(returnCols, col)
+		selectParts = append(selectParts, expr)
+	}
+	// Each statement-text column is also selected as stored, for
+	// RedactProbeRows to mask in Go and then remove from the row.
+	for _, col := range metrics.RawStatementColumns(probeName, returnCols) {
+		alias := metrics.RawStatementAlias(col)
+		returnCols = append(returnCols, alias)
+		selectParts = append(selectParts, metrics.QuoteIdentifier(col)+" AS "+metrics.QuoteIdentifier(alias))
 	}
 
 	if len(dimensionCols) == 0 {
@@ -483,11 +516,6 @@ func queryLatestSnapshot(
 	distinctOrderParts = append(distinctOrderParts, "collected_at DESC")
 	distinctOrderClause := strings.Join(distinctOrderParts, ", ")
 
-	// Build SELECT column list for the inner query
-	var selectParts []string
-	for _, col := range returnCols {
-		selectParts = append(selectParts, metrics.QuoteIdentifier(col))
-	}
 	selectClause := strings.Join(selectParts, ", ")
 
 	// Build inner WHERE clause: connection_id, database_name, and
@@ -610,7 +638,8 @@ func queryLatestSnapshot(
 
 	// Strip credentials from pg_settings values and passwords from
 	// statement text that a collector stored before redacting them
-	// (GitHub issue #643).
+	// (GitHub issue #643). This also removes the stored statement text
+	// selected under the RawStatementAlias columns.
 	metrics.RedactProbeRows(probeName, result)
 
 	return result, totalCount, nil

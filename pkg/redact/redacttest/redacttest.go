@@ -1,0 +1,362 @@
+/*-------------------------------------------------------------------------
+ *
+ * pgEdge AI DBA Workbench
+ *
+ * Copyright (c) 2025 - 2026, pgEdge, Inc.
+ * This software is released under The PostgreSQL License
+ *
+ *-------------------------------------------------------------------------
+ */
+// Package redacttest holds the inputs the redaction patterns are
+// tested on, shared by the redact package's tests and the server's
+// PostgreSQL tests so both sides are checked against the same cases.
+package redacttest
+
+import (
+	"bytes"
+	"encoding/json"
+	"strings"
+)
+
+// Case is one input and the text redact.Text, and the server's
+// RedactedText, should turn it into. Every secret is one SecretLeft
+// finds, so a test can check none survives.
+type Case struct {
+	Name, In, Want string
+}
+
+// Cases are the inputs both the Go and the PostgreSQL side are tested
+// on.
+var Cases = []Case{
+	{"create role", "CREATE ROLE app LOGIN PASSWORD 'example-secret'",
+		"CREATE ROLE app LOGIN PASSWORD '********'"},
+	{"alter user encrypted", "alter user app with encrypted password 'example-secret' valid until 'infinity'",
+		"alter user app with encrypted password '********' valid until 'infinity'"},
+	{"escaped quote", "ALTER ROLE app PASSWORD 'exa''mple-secret'",
+		"ALTER ROLE app PASSWORD '********'"},
+	{"backslash escaped quote", `ALTER ROLE app PASSWORD 'exa\'mple-secret' VALID UNTIL 'infinity'`,
+		"ALTER ROLE app PASSWORD '********' VALID UNTIL 'infinity'"},
+	{"escape string", "ALTER ROLE app PASSWORD E'example-secret'",
+		"ALTER ROLE app PASSWORD '********'"},
+	{"unicode escape string", "ALTER ROLE app PASSWORD U&'example-secret'",
+		"ALTER ROLE app PASSWORD '********'"},
+	{"dollar quoted", "ALTER ROLE app PASSWORD $$exam$ple-secret$$ VALID UNTIL 'infinity'",
+		"ALTER ROLE app PASSWORD '********' VALID UNTIL 'infinity'"},
+	{"tagged dollar quoted", "ALTER ROLE app PASSWORD $pw$exa$mple $$secret$pw$;",
+		"ALTER ROLE app PASSWORD '********';"},
+	{"truncated statement", "CREATE ROLE app PASSWORD 'example-sec",
+		"CREATE ROLE app PASSWORD '********'"},
+	{"truncated after escaped quote", "CREATE ROLE app PASSWORD 'exa''mple-sec",
+		"CREATE ROLE app PASSWORD '********'"},
+	{"truncated dollar quoted", "CREATE ROLE app PASSWORD $$example-sec",
+		"CREATE ROLE app PASSWORD '********'"},
+	{"password null kept", "ALTER ROLE app PASSWORD NULL", "ALTER ROLE app PASSWORD NULL"},
+	{"user mapping", "CREATE USER MAPPING FOR app SERVER remote OPTIONS (user 'app', password 'example-secret')",
+		"CREATE USER MAPPING FOR app SERVER remote OPTIONS (user 'app', password '********')"},
+	{"set to", "SET app.password TO 'example-secret'", "SET app.password TO '********'"},
+	{"set quoted name", `SET "app.api_key" TO E'example-secret'`, `SET "app.api_key" TO '********'`},
+	{"set equals", "SET app.password = 'example secret'", "SET app.password = ********"},
+	{"set_config", "SELECT set_config('app.password', 'example-secret', false)",
+		"SELECT set_config('app.password', '********', false)"},
+	{"alter system command", "ALTER SYSTEM SET archive_command TO 'curl -u app:example-secret -T %p https://backup.example.com'",
+		"ALTER SYSTEM SET archive_command TO '********'"},
+	{"alter system conninfo", "ALTER SYSTEM SET primary_conninfo = $$host=192.0.2.1 password=example-secret$$",
+		"ALTER SYSTEM SET primary_conninfo = ********"},
+	{"conninfo unquoted", "CREATE SUBSCRIPTION s CONNECTION 'host=192.0.2.1 user=app password=example-secret dbname=db' PUBLICATION p",
+		"CREATE SUBSCRIPTION s CONNECTION 'host=192.0.2.1 user=app password=******** dbname=db' PUBLICATION p"},
+	{"dblink", "SELECT dblink_connect('host=192.0.2.1 password = s3cret')",
+		"SELECT dblink_connect('host=192.0.2.1 password = ********"},
+	{"unquoted value with brackets", "SELECT dblink_connect('password=s3cr)e;t\"x rest')",
+		"SELECT dblink_connect('password=******** rest')"},
+	{"conninfo quoted", `primary_conninfo = host=192.0.2.1 password='example\'secret' port=5432`,
+		`primary_conninfo = ******** password=******** port=5432`},
+	{"escape string after equals", "host=192.0.2.1 password=E'example secret' dbname=db",
+		"host=192.0.2.1 password=******** dbname=db"},
+	{"named argument", "SELECT f(password => 'example secret')", "SELECT f(password => ********)"},
+	{"double quoted shell value", `PGPASSWORD="example secret" pg_dump db`, "PGPASSWORD=******** pg_dump db"},
+	{"cloud key", "AWS_SECRET_ACCESS_KEY=example-secret aws s3 cp %p s3://bucket/%f",
+		"AWS_SECRET_ACCESS_KEY=******** aws s3 cp %p s3://bucket/%f"},
+	{"token", "curl -H token=s3cret-token https://api.example.com", "curl -H token=******** https://api.example.com"},
+	{"ldapbindpasswd", "ldapserver=ldap.example.com ldapbindpasswd=example-secret",
+		"ldapserver=ldap.example.com ldapbindpasswd=********"},
+	{"radiussecrets", "radiusservers=192.0.2.1 radiussecrets=s3cr,s3cr2",
+		"radiusservers=192.0.2.1 radiussecrets=********"},
+	{"uri", "could not connect to postgresql://app:example-secret@192.0.2.1:5432/db",
+		"could not connect to postgresql://app:********@192.0.2.1:5432/db"},
+	{"uri postgres scheme", "postgres://app:s3cret@db.example.com/x", "postgres://app:********@db.example.com/x"},
+	{"uri other scheme", "redis://app:s3cr/et@cache.example.com:6379", "redis://app:********@cache.example.com:6379"},
+	{"uri truncated", "connect to postgresql://app:example-sec", "connect to postgresql://app:********@"},
+	{"uri without password", "postgresql://app@192.0.2.1/db", "postgresql://app@192.0.2.1/db"},
+	{"json row image", `{"id": 1, "user_password": "example-secret", "note": "password"}`,
+		`{"id": 1, "user_password": "********", "note": "password"}`},
+	{"json escaped quote", `{"api_secret":"ex\"ample-secret","n":2}`, `{"api_secret":"********","n":2}`},
+	{"json other secret keys", `{"api_key": "example-secret", "token": 31337, "creds": {"private_key": "example-secret"}}`,
+		`{"api_key": "********", "token": "********", "creds": {"private_key": "********"}}`},
+	{"json object value", `{"secret": {"value": "example-secret"}, "n": 1}`, `{"secret": "********", "n": 1}`},
+	{"json array value", `{"passwords": ["s3cr1", "s3cr2"], "n": 1}`, `{"passwords": "********", "n": 1}`},
+	{"doubled quote conninfo", "CREATE SUBSCRIPTION s CONNECTION 'host=192.0.2.1 password=''s3cret a b''' PUBLICATION p",
+		"CREATE SUBSCRIPTION s CONNECTION 'host=192.0.2.1 password=********' PUBLICATION p"},
+	{"doubled quote with escaped quote", "CREATE SUBSCRIPTION s CONNECTION 'password=''s3cr''''et x'' dbname=db' PUBLICATION p",
+		"CREATE SUBSCRIPTION s CONNECTION 'password=******** dbname=db' PUBLICATION p"},
+	{"doubled quote backslash escape", `SELECT dblink_connect('password=''s3cr\''et x'' dbname=db')`,
+		"SELECT dblink_connect('password=******** dbname=db')"},
+	{"positional node_create", "SELECT spock.node_create('n1', 'host=192.0.2.1 password=''s3cret x''')",
+		"SELECT spock.node_create('n1', 'host=192.0.2.1 password=********')"},
+	{"nested role password", "EXECUTE 'ALTER ROLE app PASSWORD ''s3cret x'''",
+		"EXECUTE 'ALTER ROLE app PASSWORD '********''"},
+	{"unquoted dollar value", "host=192.0.2.1 password=$s3cret dbname=db", "host=192.0.2.1 password=******** dbname=db"},
+	{"ordinary identifiers kept", "UPDATE t SET sort_key = 42, bypass = true, primary_key = 'abc' WHERE salt = 1",
+		"UPDATE t SET sort_key = 42, bypass = true, primary_key = 'abc' WHERE salt = 1"},
+	{"ordinary json keys kept", `{"cache_key": "abc", "sort_key": 1, "id": 2}`, `{"cache_key": "abc", "sort_key": 1, "id": 2}`},
+	{"password with no space", "ALTER ROLE app PASSWORD'example-secret' LOGIN", "ALTER ROLE app PASSWORD'********' LOGIN"},
+	{"password after comment", "ALTER ROLE app PASSWORD/**/'example-secret'", "ALTER ROLE app PASSWORD/**/'********'"},
+	{"password after comments and space", "ALTER ROLE app PASSWORD /* x */ /*y*/E'example-secret'",
+		"ALTER ROLE app PASSWORD /* x */ /*y*/'********'"},
+	{"unquoted value like a parameter", "host=192.0.2.1 password=$9s3cret dbname=db", "host=192.0.2.1 password=******** dbname=db"},
+	{"parameter before a bracket kept", "SELECT dblink_connect(password=$1)", "SELECT dblink_connect(password=$1)"},
+	{"backslash quoted conninfo", `CREATE SUBSCRIPTION s CONNECTION E'host=192.0.2.1 password=\'s3cret a b\'' PUBLICATION p`,
+		`CREATE SUBSCRIPTION s CONNECTION E'host=192.0.2.1 password=********' PUBLICATION p`},
+	{"backslash quoted with escaped quote", `SELECT dblink_connect(E'password=\'s3cr\\\'et x\' dbname=db')`,
+		`SELECT dblink_connect(E'password=******** dbname=db')`},
+	{"backslash quoted role password", `EXECUTE E'ALTER ROLE app PASSWORD \'s3cret x\''`,
+		`EXECUTE E'ALTER ROLE app PASSWORD '********''`},
+	{"backslash and newline in a quoted password", "ALTER ROLE app PASSWORD E's3cr\\\net x' LOGIN",
+		"ALTER ROLE app PASSWORD '********' LOGIN"},
+	{"backslash quoted with escaped backslash", `SELECT dblink_connect(E'password=\'s3cr\\et x\' dbname=db')`,
+		`SELECT dblink_connect(E'password=******** dbname=db')`},
+	// The conninfo password hunter2\'Secret123 battery: its escaped
+	// backslash is \\\\ and its escaped quote \\\' in the escape string.
+	{"backslash quoted with escaped backslash and quote",
+		`CREATE SUBSCRIPTION s CONNECTION E'host=h password=\'hunter2\\\\\\\'Secret123 battery\'' PUBLICATION p`,
+		`CREATE SUBSCRIPTION s CONNECTION E'host=h password=********' PUBLICATION p`},
+	// The conninfo password hunter2\Secret123 battery.
+	{"backslash quoted with a lone escaped backslash",
+		`CREATE SUBSCRIPTION s CONNECTION E'host=h password=\'hunter2\\\\Secret123 battery\'' PUBLICATION p`,
+		`CREATE SUBSCRIPTION s CONNECTION E'host=h password=********' PUBLICATION p`},
+	// Not a secret, but a quoted word password followed by a quote
+	// reads as PASSWORD '...', so the rest is masked: more than the
+	// value, never less.
+	{"password word before concatenation", `SELECT 'password ' || name FROM users WHERE id = 1`,
+		`SELECT 'password '********'`},
+	{"quoted role password after concatenation", "EXECUTE 'ALTER ROLE app ' || 'PASSWORD ''s3cret a b'''",
+		"EXECUTE 'ALTER ROLE app ' || 'PASSWORD '********''"},
+	{"quoted role password after a comment", "EXECUTE 'PASSWORD/* c */''s3cret a b'''", "EXECUTE 'PASSWORD/* c */'********''"},
+	{"set to after a comment", "SET app.password TO /* c */ 'example-secret'", "SET app.password TO /* c */ '********'"},
+	{"set to with no space", "SET app.password TO'example-secret'", "SET app.password TO'********'"},
+	{"comment holding stars and a slash", "ALTER ROLE app PASSWORD /* ** / */ 'example-secret'",
+		"ALTER ROLE app PASSWORD /* ** / */ '********'"},
+	{"line comment", "ALTER ROLE app PASSWORD -- set it\n'example-secret' LOGIN", "ALTER ROLE app PASSWORD -- set it\n'********' LOGIN"},
+	{"equals after a comment", "SET app.password = /* c */ 'example secret'", "SET app.password = ********"},
+	{"json escape string conninfo", `{"stmt": "CONNECTION E'host=192.0.2.1 password=\\'s3cret a b\\''"}`,
+		`{"stmt": "CONNECTION E'host=192.0.2.1 password=********'"}`},
+	{"json escape string with escaped quote", `{"stmt": "SELECT dblink_connect(E'password=\\'s3cr\\\\\\'et x\\' dbname=db')"}`,
+		`{"stmt": "SELECT dblink_connect(E'password=******** dbname=db')"}`},
+	{"json role password with escaped quote", `{"stmt": "ALTER ROLE app PASSWORD E's3cr\\'et x'"}`,
+		`{"stmt": "ALTER ROLE app PASSWORD '********'"}`},
+	{"json conninfo with escaped quote", `{"c": "host=192.0.2.1 password='s3cr\\'et x' port=5432"}`,
+		`{"c": "host=192.0.2.1 password=******** port=5432"}`},
+	{"json double quoted shell value", `{"cmd": "PGPASSWORD=\"example secret\" pg_dump db"}`, `{"cmd": "PGPASSWORD=******** pg_dump db"}`},
+	{"json quoted name", `{"stmt": "SET \"app.api_key\" TO 'example-secret'"}`, `{"stmt": "SET \"app.api_key\" TO '********'"}`},
+	{"json parameter kept", `{"stmt": "SELECT 1 WHERE password_encryption = $1"}`, `{"stmt": "SELECT 1 WHERE password_encryption = $1"}`},
+	{"plain text kept", "SELECT * FROM t WHERE password_encryption = $1", "SELECT * FROM t WHERE password_encryption = $1"},
+	{"normalised parameter", "ALTER ROLE app PASSWORD $1", "ALTER ROLE app PASSWORD $1"},
+	{"normalised set parameter", "SELECT set_config('app.password', $1, false)",
+		"SELECT set_config('app.password', $1, false)"},
+	// The inputs below are from the fourth security review, which
+	// tested the patterns in both engines; the review's case numbers
+	// are kept in the names.
+	{"C1: conninfo value starting with --", "CREATE SUBSCRIPTION s CONNECTION 'host=192.0.2.1 password=--Secret123 dbname=d' PUBLICATION p",
+		"CREATE SUBSCRIPTION s CONNECTION 'host=192.0.2.1 password=******** dbname=d' PUBLICATION p"},
+	{"C1b: bare conninfo --", "host=192.0.2.1 password=--Secret123 dbname=d",
+		"host=192.0.2.1 password=******** dbname=d"},
+	{"C1c: value starting /*", "host=192.0.2.1 password=/*x*/hunter2 dbname=d",
+		"host=192.0.2.1 password=******** dbname=d"},
+	{"C1d: PGPASSWORD --", "PGPASSWORD=--hunter2 pg_dump -h 192.0.2.1 db",
+		"PGPASSWORD=******** pg_dump -h 192.0.2.1 db"},
+	{"C2: set_config cast", "SELECT set_config('app.password'::text, 'hunter2', false)",
+		"SELECT set_config('app.password'::text, '********', false)"},
+	{"C3: set_config comment", "SELECT set_config('app.password',/**/'hunter2', false)",
+		"SELECT set_config('app.password',/**/'********', false)"},
+	{"C4: set_config line comment", "SELECT set_config('app.password', --c\n'hunter2', false)",
+		"SELECT set_config('app.password', --c\n'********', false)"},
+	{"C5: set_config named", "SELECT set_config(setting_name => 'app.password', new_value => 'hunter2', is_local => false)",
+		"SELECT set_config(setting_name => 'app.password', new_value => '********', is_local => false)"},
+	{"C6: alter system comment before =", "ALTER SYSTEM SET archive_command /* x */ = 'curl -u admin:hunter2 -T %p https://backup.example.com'",
+		"ALTER SYSTEM SET archive_command /* x */ = '********'"},
+	{"C7: alter system comment after SET", "ALTER SYSTEM SET/**/archive_command = 'sshpass -p hunter2 scp %p backup:'",
+		"ALTER SYSTEM SET/**/archive_command = '********'"},
+	{"C7b: alter system newline", "ALTER SYSTEM SET\narchive_command = 'sshpass -p hunter2 scp %p backup:'",
+		"ALTER SYSTEM SET\narchive_command = '********'"},
+	{"C8: uri user with quote", "SELECT dblink_connect('postgresql://o''brien:hunter2@db.example.com/app')",
+		"SELECT dblink_connect('postgresql://o''brien:********@db.example.com/app')"},
+	{"C8b: uri user with double quote", "postgresql://a\"b:hunter2@db.example.com/app",
+		"postgresql://a\"b:********@db.example.com/app"},
+	{"C9: libpq backslash space", "host=192.0.2.1 password=correct\\ horse\\ battery dbname=d",
+		"host=192.0.2.1 password=******** dbname=d"},
+	{"C12: json pass key", "{\"user\": \"app\", \"pass\": \"hunter2\", \"pwd\": \"hunter2\"}",
+		"{\"user\": \"app\", \"pass\": \"********\", \"pwd\": \"********\"}"},
+	{"C13: concat after PASSWORD", "EXECUTE 'ALTER ROLE app PASSWORD ' || '''hunter2''';",
+		"EXECUTE 'ALTER ROLE app PASSWORD '********'********''';"},
+	{"C13b: concat split", "EXECUTE 'ALTER ROLE app PASSWORD' || ' ''hunter2''';",
+		"EXECUTE 'ALTER ROLE app PASSWORD'********' ''********''';"},
+	{"C14: crlf", "ALTER ROLE app PASSWORD\r\n'hunter2'",
+		"ALTER ROLE app PASSWORD\r\n'********'"},
+	{"C15: E string escaped quote", "ALTER ROLE app PASSWORD E'hun\\'ter2'",
+		"ALTER ROLE app PASSWORD '********'"},
+	{"C16: user mapping quoted option", "CREATE USER MAPPING FOR u SERVER s OPTIONS (user 'u', \"password\" 'hunter2')",
+		"CREATE USER MAPPING FOR u SERVER s OPTIONS (user 'u', \"password\" '********')"},
+	{"C20: E string trailing escaped backslash", "ALTER ROLE app PASSWORD E'hunter2\\\\' LOGIN",
+		"ALTER ROLE app PASSWORD '********'"},
+	{"C21: E conninfo escaped backslash then quote", "SELECT dblink_connect(E'password=\\'hun\\\\\\\\\\'ter2 x\\' dbname=db')",
+		"SELECT dblink_connect(E'password=******** dbname=db')"},
+	{"C22: PASSWORD after quote char", "EXECUTE 'ALTER ROLE app'||'PASSWORD ''hunter2'''",
+		"EXECUTE 'ALTER ROLE app'||'PASSWORD '********''"},
+	{"C23: tab sep in E-string", "EXECUTE E'ALTER ROLE app PASSWORD\\t\\'hunter2\\''",
+		"EXECUTE E'ALTER ROLE app PASSWORD\\t'********''"},
+	{"C24: alter role password then comment then dollar", "ALTER ROLE app PASSWORD --x\n$q$hunter2$q$",
+		"ALTER ROLE app PASSWORD --x\n'********'"},
+	{"C26: SET var TO without space via comment", "SET app.password/**/TO/**/'hunter2'",
+		"SET app.password/**/TO/**/'********'"},
+	{"C27: quoted name value with space before comma in JSON", "{\"stmt\": \"SELECT set_config('app.password', 'hunter2', false)\"}",
+		"{\"stmt\": \"SELECT set_config('app.password', '********', false)\"}"},
+	{"C28: URI with @ in user via percent", "postgresql://app%40x:hunter2@db.example.com/app",
+		"postgresql://app%40x:********@db.example.com/app"},
+	{"C29: conninfo keyword uppercase with spaces", "HOST=h PASSWORD = 'hunter2'",
+		"HOST=h PASSWORD = ********"},
+	{"C30: password value then multiline", "CREATE SUBSCRIPTION s CONNECTION 'host=h\npassword=hunter2\ndbname=d' PUBLICATION p",
+		"CREATE SUBSCRIPTION s CONNECTION 'host=h\npassword=********\ndbname=d' PUBLICATION p"},
+	{"C31: PASSWORD followed by U& UESCAPE", "ALTER ROLE app PASSWORD U&'hunter2!0032' UESCAPE '!'",
+		"ALTER ROLE app PASSWORD '********' UESCAPE '!'"},
+	{"C32: SET credential with E", "ALTER SYSTEM SET restore_command = E'sshpass -p hunter2 scp backup:%f %p'",
+		"ALTER SYSTEM SET restore_command = '********'"},
+	{"C33: ALTER ROLE SET", "ALTER ROLE app SET archive_command = 'sshpass -p hunter2 x'",
+		"ALTER ROLE app SET archive_command = '********'"},
+	{"C35: em space", "host=h password=hunter2\u2003rest",
+		"host=h password=********"},
+}
+
+// KnownLimits are forms the patterns do not mask, each with the text
+// both engines return, so that a change in what they do is noticed:
+// format() fills %L from an argument the patterns cannot tie to
+// PASSWORD; a value starting with a $1-style parameter is kept, as
+// statements normalised by pg_stat_statements hold them; a quoted
+// value followed directly by more text, as a shell joins 'abc'secret,
+// is masked only to its closing quote; YAML and HTTP header syntax and
+// hyphenated names are not matched; a value nested in a JSON object
+// under a secret key is masked only to the first closing brace; and a
+// no-break space is not white space, as it is not to PostgreSQL's own
+// parser.
+var KnownLimits = []Case{
+	{"C10: format %L", "DO $$BEGIN EXECUTE format('ALTER ROLE %I PASSWORD %L', 'app', 'hunter2'); END$$",
+		"DO $$BEGIN EXECUTE format('ALTER ROLE %I PASSWORD %L', '********', 'hunter2'); END$$"},
+	{"C11: dollar digits comma", "host=192.0.2.1 password=$12,hunter2 dbname=d",
+		"host=192.0.2.1 password=$12,hunter2 dbname=d"},
+	{"C11b: dollar digits end", "host=192.0.2.1 password=$42",
+		"host=192.0.2.1 password=$42"},
+	{"C17: shell quote suffix", "PGPASSWORD='abc'hunter2 pg_dump db",
+		"PGPASSWORD=********hunter2 pg_dump db"},
+	{"C17b: shell dq suffix", "PGPASSWORD=\"abc\"hunter2 pg_dump db",
+		"PGPASSWORD=********hunter2 pg_dump db"},
+	{"C18: yaml colon", "password: hunter2",
+		"password: hunter2"},
+	{"C19: json nested object", "{\"password\": {\"a\": \"}\", \"b\": \"hunter2\"}}",
+		"{\"password\": \"********\"\", \"b\": \"hunter2\"}}"},
+	{"C25: secret key with hyphen header", "curl -H 'X-Api-Key: hunter2' https://api.example.com",
+		"curl -H 'X-Api-Key: hunter2' https://api.example.com"},
+	{"C34: PASSWORD with non-breaking space", "ALTER ROLE app PASSWORD\u00a0'hunter2'",
+		"ALTER ROLE app PASSWORD\u00a0'hunter2'"},
+}
+
+// JSONText returns s as a JSON string, as to_jsonb(s)::text writes it
+// in a row image: quotes and backslashes are escaped.
+func JSONText(s string) string {
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(s) // a string always encodes
+	return string(bytes.TrimSuffix(b.Bytes(), []byte("\n")))
+}
+
+// JSONWants are the JSON forms of cases whose masked JSON form is not
+// the JSON form of Want, keyed by case name: in JSON text a backslash
+// escape is doubled, so the patterns there mask more than the value,
+// but never less.
+var JSONWants = map[string]string{
+	// The line break is \n in JSON text, which an unquoted value
+	// takes as an escape, so the value runs to the next space.
+	"C30: password value then multiline": JSONText("CREATE SUBSCRIPTION s CONNECTION 'host=h\npassword=******** PUBLICATION p"),
+}
+
+// JSONFormOK reports whether got, the masked JSON form of c.In, holds
+// no secret and matches the JSON form of c.Want, or the JSONWants
+// entry for c. A value at the end of the text may also take the
+// closing JSON quote, since an unquoted or truncated value is masked
+// to the next white space or the end. A case whose input is already
+// JSON text need only hold no secret: escaped twice, its exact form is
+// not one a row image holds.
+func JSONFormOK(c Case, got string) bool {
+	if SecretLeft(got) || strings.Contains(got, "secret a b") {
+		return false
+	}
+	if strings.HasPrefix(c.In, "{") {
+		return true
+	}
+	want, ok := JSONWants[c.Name]
+	if !ok {
+		want = JSONText(c.Want)
+	}
+	return got == want || got == strings.TrimSuffix(want, `"`)
+}
+
+// secretMarkers are the secrets the cases hold, other than
+// example-secret, which SecretLeft finds by its two halves so that
+// example.com is not taken for one.
+var secretMarkers = []string{"s3cr", "31337", "hunter2", "Secret123", "horse", "battery"}
+
+// SecretLeft reports whether s still holds one of the test secrets.
+func SecretLeft(s string) bool {
+	if strings.Contains(s, "example") && strings.Contains(s, "secret") && !strings.Contains(s, "example.com") {
+		return true
+	}
+	for _, m := range secretMarkers {
+		if strings.Contains(s, m) {
+			return true
+		}
+	}
+	return false
+}
+
+// AdversarialInputs returns inputs of about size bytes built to make a
+// regular expression engine backtrack: runs of quotes, backslashes,
+// dollar signs and comments, repeated secret names and long runs of the
+// characters that may surround a secret name.
+func AdversarialInputs(size int) map[string]string {
+	return map[string]string{
+		"quote pairs":        "password '" + strings.Repeat("''", size/2),
+		"nested quotes":      "password=''" + strings.Repeat("''''", size/4),
+		"lone quotes":        "password ''" + strings.Repeat("'", size),
+		"backslashes":        "password='" + strings.Repeat(`\'`, size/3),
+		"dollar signs":       "PASSWORD $pw$" + strings.Repeat("$a", size/2),
+		"repeated keywords":  strings.Repeat("password=", size/9),
+		"json keys":          `{"password": ` + strings.Repeat(`"password": `, size/12),
+		"uri":                "postgresql://" + strings.Repeat("a:", size/2),
+		"identifier run":     strings.Repeat("a.b_1", size/5) + " password",
+		"identifier quotes":  strings.Repeat("a_password'", size/11),
+		"quotes and dollars": strings.Repeat("'$", size/2),
+		"dollar digits":      "password=" + strings.Repeat("$1", size/2),
+		"comments":           "PASSWORD" + strings.Repeat("/*/*", size/4),
+		"backslash quotes":   `password=\'` + strings.Repeat(`\\'`, size/3),
+		// Runs of comments after a secret name, which once made every
+		// match scan to the end of the text, and comments before
+		// another secret name.
+		"open comments after equals":   strings.Repeat("password=/* ", size/12),
+		"open comments after PASSWORD": strings.Repeat("PASSWORD /* ", size/12),
+		"line comments after equals":   strings.Repeat("password=-- ", size/12),
+		"comment then name":            strings.Repeat("password /* password='x' ", size/25),
+		"line comment then name":       strings.Repeat("password-- password='x' ", size/24),
+		"comment then SET":             strings.Repeat("set /* set archive_command='x' ", size/31),
+		"comment then quoted name":     strings.Repeat("'password' /* 'password', 'x' ", size/31),
+		"comment then unquoted value":  strings.Repeat("password=/* password=x ", size/23),
+		"comment then concatenation":   strings.Repeat(`password ' /* password ' || ''\'x'' `, size/36),
+	}
+}

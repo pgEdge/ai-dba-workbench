@@ -43,7 +43,7 @@ func TestConfigurationSourcesExposeNoSecrets(t *testing.T) {
 					t.Errorf("source %q exposes secret column %q", src.Name, c.Name)
 				}
 			}
-			if isSecretColumnName(c.Name) {
+			if metrics.IsSecretColumnName(c.Name) {
 				t.Errorf("source %q exposes secret-looking column %q", src.Name, c.Name)
 			}
 		}
@@ -156,31 +156,6 @@ func TestDatastoreScopeStrings(t *testing.T) {
 	}
 	if datastoreScope(99).Description() != "No rows." {
 		t.Error("unknown scope should describe no rows")
-	}
-}
-
-func TestIsSecretColumnName(t *testing.T) {
-	for name, want := range map[string]bool{
-		"conninfo":           true,
-		"SSLKEY":             true,
-		"password_encrypted": true,
-		"db_passwd":          true,
-		"client_secret":      true,
-		"api_token":          true,
-		"subconninfo":        true,
-		"ssl_passphrase":     true,
-		"primary_connstr":    true,
-		"connection_string":  true,
-		"target_dsn":         true,
-		"sslrootcert_path":   true,
-		"subscription_name":  false,
-		"auto_group_key":     false,
-		"xact_commit":        false,
-		"datname":            false,
-	} {
-		if got := isSecretColumnName(name); got != want {
-			t.Errorf("isSecretColumnName(%q) = %v, want %v", name, got, want)
-		}
 	}
 }
 

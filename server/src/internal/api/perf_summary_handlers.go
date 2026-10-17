@@ -1939,7 +1939,9 @@ func buildTopQueriesSQL(
 	// the collector records as NULL, still appears on the page with an
 	// empty query; sample_queryid and sample_database_name carry the raw
 	// values the lookup needs, since the projected database_name may have
-	// been resolved to a different name through db_names.
+	// been resolved to a different name through db_names. The text is
+	// selected as stored and masked in Go by metrics.RedactStatementText,
+	// whose lexer must read it unmasked (GitHub issue #670).
 	pageSQL = fmt.Sprintf(`%s
         SELECT
             page.queryid, page.database_name,

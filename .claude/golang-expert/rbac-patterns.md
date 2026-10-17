@@ -777,28 +777,56 @@ adding a catalog entry with an explicit scope and column list; never
 add a credential column. A value that can hold a credential (the
 `pg_settings` value columns for `primary_conninfo` and similar, and
 secret entries in `pg_hba_file_rules.options`) is masked through
-`metricRedactions` and `innerSelectList` (`credentialSettingCondition`
-or `maskedOptions`), and `pg_hba_file_rules.error` is masked whole
-(`WholeColumns`/`MaskWhole`), inside the scoped subquery. Free-text columns that
+`metrics.ProbeRedactions` and `innerSelectList` (`metrics.MaskedSetting`
+or `metrics.MaskedOptions`), and `pg_hba_file_rules.error` is masked whole
+(`WholeColumns`/`metrics.MaskWhole`), inside the scoped subquery. Free-text columns that
 can quote a password (query text, Spock row images, connection errors,
 alert descriptions and AI analyses) are marked `RedactText` and pass
-through `redactedText`, which cuts the value to `maxTextLength`
-characters and applies `textRedactions`, whose patterns must stay
-within the regular expression syntax Go and PostgreSQL share, use
-greedy quantifiers only (the Go tests use `Longest`, as PostgreSQL
-takes the longest match), spell white space as the ASCII class `ws`,
-bound any repetition of comments, and have exactly one capturing
-group. A retyped column records its original type in `StoredType`,
-which `datastoreEntityKeys` uses.
+through `metrics.RedactedText`, which cuts the value to
+`redact.MaxTextLength` characters and builds its `regexp_replace` chain
+from `pkg/redact`'s `textRedactions` (also applied in Go by
+`redact.Text`, which the alerter uses on connection errors). Those
+patterns must stay within the regular expression syntax Go and
+PostgreSQL share, use greedy quantifiers only (`redact.Text` compiles
+them with `Longest`, as PostgreSQL takes the longest match), spell
+white space as the ASCII class `ws`, bound any repetition of comments,
+and have exactly one capturing group; their test inputs are
+`redacttest.Cases`. A retyped column records its original type in
+`StoredType`, which `datastoreEntityKeys` uses. The column masking
+rules live in `internal/metrics/redaction.go`, shared with
+`GET /api/v1/metrics/latest` and the latest-rows mode of
+`GET /api/v1/metrics/query` (`ReturnableColumns`,
+`MaskedProbeColumn`), `GET /api/v1/metrics/top-queries`
+(`RedactStatementText`) and the timeline's configuration change events.
+Statement text is lexed by `sqlredact.RedactQuery` as stored, never
+after `RedactedText`, since a quote the patterns move lets the lexer
+return the secret after it (#670): the latest routes select each
+`metrics.RawStatementColumns` entry under `RawStatementAlias` beside
+the masked column, which stays for `DISTINCT ON` and sorting, and
+`RedactProbeRows` masks from it and deletes it; top-queries selects
+`pss.query` as stored for `RedactStatementText`;
+`MaskedProbeColumn` and the timeline use `metrics.RedactedSetting`,
+which returns a connection string setting such as `primary_conninfo`
+as stored when the patterns leave it unchanged (as they leave a value
+the collector redacted) and whole as `********` otherwise, never partly
+rewritten, because the Go `pgsettings.RedactValue` post-pass sees the
+SQL's output and a rewritten quote can hide a password from it; the
+latest routes refuse `order_by` on setting value columns
+(`metrics.SortableColumn`). `query_datastore`, which has
+no Go post-pass, keeps `MaskedSetting` and masks it whole; any new route returning probe rows must use them
+and join `datastore_masking_routes_test.go`, and
+`TestCredentialTableReadersAreReviewed` (`metrics/source_guard_test.go`)
+fails on a SQL string literal that reads a credential table without
+them unless it is on its reviewed list.
 `TestMetricRedactionsMatchCollectorSchema` checks the real probe still
-has the columns each rule names.
+has the columns each `metrics.ProbeRedactions` rule names.
 `TestConfigurationSourcesMatchCollectorSchema` checks every catalog
 table, column and type against the collector's real schema, and fails
 on a collector column of a catalogued table that is neither catalogued
-nor listed in `catalogOmittedColumns`. The scope and time window go in
-an inner `(SELECT ... WHERE <scope> OFFSET 0) t` (`scopedFrom`), and
-the caller's filters, shape, ordering and paging apply outside it, so
-no caller predicate is evaluated against a row the caller may not see;
+nor listed in `catalogOmittedColumns`. The scope and time window go in an inner
+`(SELECT ... WHERE <scope> OFFSET 0) t` (`scopedFrom`), and the
+caller's filters, shape, ordering and paging apply outside it, so no
+caller predicate is evaluated against a row the caller may not see;
 the time window stays inside so partition pruning and the
 `(connection_id, collected_at)` index still apply. Errors from a
 running statement go through `datastoreQueryErrorFormatter` (general

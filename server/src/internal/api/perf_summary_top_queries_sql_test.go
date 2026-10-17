@@ -198,7 +198,10 @@ const topQueriesPageSelect = "SELECT " +
 	"page.client_addr, page.client_hostname, page.client_observed_at " +
 	"FROM ( SELECT * FROM deduped"
 
-const topQueriesPageLateral = ") page " +
+// topQueriesPageLateral selects the statement text as stored, for
+// handleTopQueries to mask with metrics.RedactStatementText (GitHub issue
+// #670).
+var topQueriesPageLateral = ") page " +
 	"LEFT JOIN LATERAL ( " +
 	"SELECT pss.query " +
 	"FROM metrics.pg_stat_statements pss " +

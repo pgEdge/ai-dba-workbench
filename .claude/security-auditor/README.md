@@ -223,17 +223,17 @@ moved.
   files). A credential can also sit inside a value (pg_settings'
   `primary_conninfo` or `archive_command`, pg_hba_file_rules'
   `ldapbindpasswd=` and `radiussecrets=` options), which no column-name
-  check catches, so `metricRedactions` masks such values, chosen by
+  check catches, so `ProbeRedactions` masks such values, chosen by
   setting or option name against the broader `secretNamePatterns`, in
   the inner subquery, where the caller's filters cannot see the real
   value. Free-text columns (`pg_stat_activity.query`,
   `pg_stat_statements.query`, Spock exception and resolution
-  statements and row images, `connections.connection_error`,
-  `alerts.description` and `alerts.ai_analysis`) pass, in
-  `query_datastore` only, through `redactedText`: `left(value, 65536)`
-  under a chain of `regexp_replace` calls built from
+  statements and row images and, in `query_datastore` only,
+  `connections.connection_error`, `alerts.description` and
+  `alerts.ai_analysis`) pass through `RedactedText`:
+  `left(value, 65536)` under a chain of `regexp_replace` calls built from
   `textRedactions` (URI userinfo, JSON keys, ALTER SYSTEM SET of a
-  `credentialSettings` entry, quoted name and value as in `set_config`,
+  `pgsettings.CredentialSettings` entry, quoted name and value as in `set_config`,
   name=value, and name followed by a string constant, with secret names
   derived from `textSecretNamePatterns`, the column fragments plus API
   and access key names, without `key$`/`pass$`/`salt`, which over-mask
@@ -243,17 +243,23 @@ moved.
   `sqlBackslashQuoted`. Row images are masked as JSON text, where every
   backslash is doubled and a line break is `\n`, so each escape
   backslash (`escapeBackslash`) may be doubled and `blank` accepts
-  `\n`; `TestTextRedactionsInJSON` runs every case in that form and
-  requires the secret to be gone even for JSON inputs. White space is
-  the ASCII class `ws`, never `[[:space:]]`, so the engines agree. A
-  name may be followed by white space and at most two comments
-  (`sep`): a block comment must be closed and is bounded to 32 body
-  units, so a run of `/*` cannot make each match scan to the end of
-  the text (the 64 Ki cap bounds the rest; about 1 s worst case in
-  PostgreSQL, under the tools' 10 s `statement_timeout`). An unquoted
-  value after `=` is masked whatever it starts with (`--x`, `/*x*/x`);
-  comments after `=` are allowed only before a quoted value. `PASSWORD`
-  may be followed by `sep` or nothing, and may start a
+  `\n`; `TestTextInJSON` and `TestRedactedTextIntegration` run every
+  case in that form and require the secret to be gone even for JSON
+  inputs. White space is the ASCII class `ws`, never `[[:space:]]`, so
+  the engines agree. A name may be followed by white space and at most
+  two comments (`sep`, not nested): a block comment must be closed and
+  is bounded to 32 body units, so a run of `/*` cannot make each match
+  scan to the end of the text (for `Text` and `RedactedText` the 64 Ki
+  cap bounds the rest; about 1 s worst case in PostgreSQL, under the
+  tools' 10 s `statement_timeout`). `TextUncut` and `SettledUncut` have
+  no cap: their time is linear in the input, about 2.5 s per MiB per
+  pass for the worst `AdversarialInputs` (fifteen times that under
+  `-race`), and `MaskStoredText` replaces stored text over
+  `MaxRewriteLength` (1 MiB) whole instead of masking it;
+  `TestUncutAdversarial` runs them at 4 MiB, or 64 KiB under `-race`.
+  An unquoted value after `=` is masked whatever it starts with (`--x`,
+  `/*x*/x`); comments after `=` are allowed only before a quoted value.
+  `PASSWORD` may be followed by `sep` or nothing, and may start a
   quoted string (`'PASSWORD ''x'''` in a concatenated EXECUTE) when a
   separator follows it; an unquoted `$n` value is kept only when white
   space, a comma, a bracket, a semicolon, a double quote or a
@@ -265,21 +271,74 @@ moved.
   string constant form (quoted with either escape style, E'', U&'',
   dollar-quoted, truncated), keeps only capture group 1, and is applied
   through E'' literals so `standard_conforming_strings` cannot change
-  it; add every bypass input to `textRedactionCases`, which run in both
-  Go and PostgreSQL, plain and as JSON, record forms left unmasked in
-  `textRedactionKnownLimits`, and keep the 1 MiB adversarial inputs
-  fast in both engines and, in PostgreSQL, in both forms
-  (`datastore_text_redaction_test.go`). A dollar-quoted value that
+  it; add every bypass input to `redacttest.Cases`, which run in both
+  Go (`pkg/redact`) and PostgreSQL (`internal/metrics/redaction_test.go`),
+  and keep `redacttest.AdversarialInputs` fast in both. A dollar-quoted value that
   itself contains a `$name$` tag leaks its tail, since the patterns
   cannot use back-references. Row images retyped to text keep their
   stored type for entity-key selection (`StoredType`). The masking is best effort:
   query text and row images can still carry sensitive data or a
   password in an unrecognised form, and read access to a connection
   grants that visibility, as the user guide states.
-  `GET /api/v1/metrics/latest` returns probe columns without this
-  masking (not yet ruled on). Scope predicates must be applied before
-  any caller
-  predicate can be evaluated: the builder puts the scope and time
+  The free-text patterns themselves live in `pkg/redact` (with the
+  shared test inputs in `pkg/redact/redacttest`), so the alerter masks
+  `connections.connection_error` with `redact.Text` before it becomes an
+  alert description, notification or LLM prompt (#679). After the
+  evaluation loop, each pass also rewrites every other open (active or
+  acknowledged) connection alert holding maskable text, blackouts
+  included; it skips the alerts the loop raised or compared, and masks
+  with `redact.MaskStoredText` (`SettledUncut`, or the whole value
+  replaced over 1 MiB), which reapplies the patterns until the text
+  stops changing, for at most three passes, and logs an alert whose
+  text would still change on a fourth, because `Text` is not
+  idempotent (a second pass can take the quote after a masked value
+  into the next value; `TestSettledUncut` pins the cases) and the two
+  stages would otherwise rewrite the same alert on every pass. Collector
+  migration 27 masks the stored descriptions of all connection alerts
+  once, with `MaskStoredText` too. Unlike `Text`, `TextUncut` and
+  `SettledUncut` do not cut the value to `MaxTextLength` (Go's engine is
+  linear), so a rewrite in place never loses the end of a long
+  description; use them, never `Text`, for any in-place rewrite. The server masks `alerts.description`
+  and `alerts.ai_analysis` with `RedactedText` in `GET /api/v1/alerts`,
+  and the description in the timeline fired and cleared summaries
+  (`get_alert_history` reads the description but does not return it).
+  The SQL rules live in `internal/metrics/redaction.go` and apply on every
+  route returning credential-bearing metrics: `query_datastore`,
+  `GET /api/v1/metrics/latest` (#670) and the latest-rows mode of
+  `GET /api/v1/metrics/query` (through `ReturnableColumns` and
+  `MaskedProbeColumn`, which uses `RedactedSetting`), the statement text of
+  `GET /api/v1/metrics/top-queries` (`RedactedText`), and the old and
+  new values of configuration-change events on
+  `GET /api/v1/timeline/events` (`RedactedSetting`, which returns a
+  connection string setting such as `primary_conninfo` as stored when
+  `RedactedText` leaves it unchanged, as it leaves one the collector
+  redacted, and whole as `********` otherwise, never partly rewritten,
+  and masks the whole of any other credential setting;
+  `query_datastore` keeps `MaskedSetting`, which masks both whole;
+  changes are detected on the raw values, and `get_timeline_events`
+  lists no details). The latest routes and the timeline then run a Go
+  `pgsettings.RedactValue` pass (`metrics.RedactProbeRows`,
+  `redactTimelineEvents`) over what the SQL returned, so that pass sees
+  the string SQL already rewrote: a partial SQL rewrite that takes a
+  quote moves libpq's quote boundaries and can hide a password from it,
+  which is why `RedactedSetting` is all or nothing for connection
+  strings. For the same reason the latest routes refuse `order_by` on a
+  setting value column (`SortableColumn`: `setting`, `reset_val`,
+  `boot_val`), since the sort runs before the Go pass.
+  `datastore_masking_routes_test.go` runs the masked probes through all
+  of them, so add a new route there. `TestCredentialTableReadersAreReviewed`
+  in `internal/metrics/source_guard_test.go` checks each SQL string
+  literal: one naming `pg_settings`, `pg_hba_file_rules`,
+  `pg_stat_activity`, `pg_stat_statements`, `spock_exception_log`,
+  `spock_resolutions` or `pg_stat_replication` fails unless the
+  function (or package-level constant) holding it calls a masking
+  helper or is a reviewed allow-list entry, and one naming a probe
+  table chosen at run time (`metrics.%s`, `"metrics." + ...`) fails
+  unless its function calls `ReturnableColumns` or `MaskedProbeColumn`
+  or is reviewed. A function that masks one value and returns another
+  raw still passes, so review what each helper-using function returns.
+  Scope predicates must be applied before any caller predicate can be
+  evaluated: the builder puts the scope and time
   window in an inner `OFFSET 0` subquery the planner cannot merge, and
   the caller's filters outside it, because a caller expression that
   errors on some values (a LIKE pattern ending in an escape, a bad

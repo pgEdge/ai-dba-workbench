@@ -529,6 +529,50 @@ back. An instance holding a few hours of history therefore
 draws a 30-day request as a mostly empty 30-day axis, rather
 than as the same chart a one-hour request produces.
 
+### Masked Credentials
+
+The `/api/v1/metrics/latest` endpoint and the latest-rows mode
+of `/api/v1/metrics/query` mask credentials, on a best-effort
+basis, in the same way as the `query_datastore` MCP tool:
+
+- A connection string setting, such as `primary_conninfo`, is
+  returned as stored when the masking finds no password in it,
+  as when the collector has already masked its passwords, and
+  as `********` otherwise, so the value is never returned partly
+  rewritten; the value of any other setting that can hold a
+  credential, such as `restore_command`, is returned as
+  `********`. The `query_datastore` tool returns both kinds as
+  `********`.
+- The `setting`, `reset_val` and `boot_val` columns of
+  `pg_settings` cannot be named in `order_by`, since sorting on
+  them could reveal the order of masked values; such a request
+  returns `400 Bad Request`.
+- Secret options in `pg_hba_file_rules.options`, such as
+  `ldapbindpasswd`, have their values masked, and a non-empty
+  `pg_hba_file_rules.error` is returned as `********`, since it
+  can quote an option.
+- Passwords in known forms in query text, Spock DDL
+  statements, error messages and row images are masked; each
+  value is first cut to 65,536 characters, and row images are
+  returned as text, since masking can leave them invalid as
+  JSON.
+- A column whose name marks it as a secret is never returned
+  and cannot be named in `order_by`.
+
+The statement text returned by `/api/v1/metrics/top-queries` is
+cut and masked in the same way. Configuration
+change events from `/api/v1/timeline/events` still report a
+change to a setting that can hold a credential, but mask its old
+and new values in the same way as `/api/v1/metrics/latest`.
+Alert descriptions returned by `/api/v1/alerts` and in the
+alert events of `/api/v1/timeline/events` are cut and masked
+in the same way as query text, since a connection alert quotes
+the connection error.
+
+The masking cannot recognise every form a password can take,
+so query text and replicated row data may still contain
+sensitive values, including passwords in other forms.
+
 ## Error Responses
 
 All API errors return a consistent JSON format.

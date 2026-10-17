@@ -2768,6 +2768,41 @@ project adheres to
   and `GET /api/v1/metrics/latest` now redacts `pg_settings` rows in
   the same way. (#643)
 
+- Mask credentials in `GET /api/v1/metrics/latest` and in the
+  latest-rows mode of `GET /api/v1/metrics/query` in the same way as
+  `query_datastore` (#670). Both routes returned credential settings
+  such as `primary_conninfo`, secret `pg_hba_file_rules` options,
+  passwords quoted in query text and Spock row images, and columns
+  named as secrets without masking. The statement text from
+  `GET /api/v1/metrics/top-queries` and the old and new values of
+  configuration change events from `GET /api/v1/timeline/events` are
+  masked in the same way, except that these routes return a
+  connection string setting such as `primary_conninfo` as the
+  collector stores it, with its passwords already masked, and mask
+  the whole value if it still holds a password. The latest routes
+  refuse an `order_by` on the `setting`, `reset_val` and `boot_val`
+  columns of `pg_settings`. As in `query_datastore`, free text is cut to
+  its first 65,536 characters and masked on a best-effort basis, so a
+  password in a form the masking does not recognise is still returned.
+
+- Mask passwords in the descriptions of connection error alerts
+  (#679). The alerter copied the collector's connection error into the
+  alert description as it was, so a libpq error quoting a connection
+  string or URI with its password carried the password into the
+  alert, its notifications and any AI analysis of it. The alerter now
+  masks the error with the patterns the server uses for
+  `query_datastore`, and on each evaluation rewrites any active or
+  acknowledged connection alert that still holds the unmasked text,
+  including one on a connection in a blackout. Collector migration 27
+  masks the stored descriptions of existing connection alerts, cleared
+  ones included; both replace a stored description longer than 1 MiB
+  with `********` rather than mask it. The server masks alert
+  descriptions and AI
+  analyses in `GET /api/v1/alerts`, and descriptions in the timeline's
+  alert events, on a best-effort basis. Notifications already sent are
+  not changed, and stored AI analyses and chat history are not
+  rewritten.
+
 - Delete a user with `ai-dba-server -delete-user` only when the
   confirmation is an explicit `y` or `yes`. The answer was checked
   only when a whole line could be read, so input that ended without

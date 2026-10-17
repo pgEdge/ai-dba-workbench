@@ -18,6 +18,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	collectordb "github.com/pgedge/ai-workbench/collector/src/database"
+	"github.com/pgedge/ai-workbench/server/internal/metrics"
 )
 
 // These tests check the query_datastore catalog against the schema the
@@ -270,7 +271,7 @@ func TestMetricSourcesResolveAgainstCollectorSchema(t *testing.T) {
 }
 
 // TestMetricRedactionsMatchCollectorSchema checks that every probe in
-// metricRedactions still has the setting-name column and every column
+// metrics.ProbeRedactions still has the setting-name column and every column
 // it masks, and that each is masked the way the rule says, so a
 // collector rename cannot leave a credential unmasked or quietly drop a
 // column.
@@ -278,7 +279,7 @@ func TestMetricRedactionsMatchCollectorSchema(t *testing.T) {
 	pool := newCollectorSchemaPool(t)
 	ctx := context.Background()
 
-	for name, rule := range metricRedactions {
+	for name, rule := range metrics.ProbeRedactions {
 		src, err := lookupDatastoreSource(ctx, pool, name)
 		if err != nil {
 			t.Errorf("redacted probe %q cannot be looked up: %v", name, err)

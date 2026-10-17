@@ -11,7 +11,10 @@
 package metrics
 
 import (
+	"slices"
+
 	"github.com/pgedge/ai-workbench/pkg/pgsettings"
+	"github.com/pgedge/ai-workbench/pkg/redact"
 	"github.com/pgedge/ai-workbench/pkg/sqlredact"
 )
 
@@ -30,6 +33,37 @@ var statementTextColumns = map[string][]string{
 	"spock_exception_log": {"ddl_statement", "error_message"},
 }
 
+// rawStatementPrefix starts the alias under which a latest query
+// selects a statement-text column as stored, beside the column masked
+// in SQL (RedactedText) under its own name. A probe column cannot clash
+// with it, since none begins with an underscore.
+const rawStatementPrefix = "_raw_statement_"
+
+// RawStatementAlias returns the alias under which a latest query selects
+// column, a statement-text column, as stored. RedactProbeRows masks the
+// column from the value under this alias and removes the alias from the
+// row.
+func RawStatementAlias(column string) string {
+	return rawStatementPrefix + column
+}
+
+// RawStatementColumns returns the statement-text columns of probe, among
+// columns, that MaskedProbeColumn returns. A latest query selects each as
+// stored under RawStatementAlias, beside its masked value, so that
+// RedactProbeRows can run sqlredact.RedactQuery over the stored text: run
+// over the text RedactedText masked, the lexer can read a quote that
+// masking moved as the end of a literal and return the secret after it
+// (GitHub issue #670).
+func RawStatementColumns(probe string, columns []string) []string {
+	var out []string
+	for _, col := range statementTextColumns[probe] {
+		if slices.Contains(columns, col) && ProbeColumnMask(probe, col, columns) != MaskOmit {
+			out = append(out, col)
+		}
+	}
+	return out
+}
+
 // RedactProbeRows removes secrets from rows read from a probe table
 // before they are returned: credentials in pg_settings values, such as
 // the password in primary_conninfo, and passwords in statement text,
@@ -37,6 +71,11 @@ var statementTextColumns = map[string][]string{
 // storing and migrates rows stored earlier (GitHub issue #643); this
 // covers a datastore it has not migrated yet. Rows of other probes are
 // left as they are. Every path that returns raw probe rows calls it.
+//
+// A statement-text column is masked from the stored value the query
+// selected under RawStatementAlias, never from the column's own value,
+// which SQL has already masked; a row with a non-NULL statement and no
+// stored value beside it has the statement replaced whole.
 func RedactProbeRows(probeName string, rows []map[string]any) {
 	if probeName == pgSettingsProbe {
 		redactSettingRows(rows)
@@ -48,9 +87,14 @@ func RedactProbeRows(probeName string, rows []map[string]any) {
 }
 
 // RedactStatementText removes passwords and other secrets from a single
-// SQL statement text before it is returned. See RedactProbeRows.
+// SQL statement text, as stored, before it is returned: it masks the
+// statement with sqlredact.RedactQuery and then the result as
+// RedactedText masks text in SQL, cut to redact.MaxTextLength. The order
+// matters, since the lexer must read the text as stored; masking only
+// replaces text, so the second pass cannot restore what the first
+// masked. See RedactProbeRows.
 func RedactStatementText(text string) string {
-	return sqlredact.RedactQuery(text)
+	return redact.Text(sqlredact.RedactQuery(text))
 }
 
 // redactSettingRows removes credentials from pg_settings rows. A value of
@@ -74,15 +118,22 @@ func redactSettingRows(rows []map[string]any) {
 }
 
 // redactStatementRows removes secrets from the named statement-text
-// columns. A value of an unexpected type is replaced outright, since it
-// cannot be lexed.
+// columns, masking each from the stored value under RawStatementAlias
+// and removing that alias from the row. A statement with no stored
+// value beside it, or a stored value of an unexpected type, which
+// cannot be lexed, is replaced outright.
 func redactStatementRows(rows []map[string]any, columns []string) {
 	for _, row := range rows {
 		for _, col := range columns {
-			switch v := row[col].(type) {
-			case nil:
+			alias := RawStatementAlias(col)
+			raw := row[alias]
+			delete(row, alias)
+			if row[col] == nil {
+				continue
+			}
+			switch v := raw.(type) {
 			case string:
-				row[col] = sqlredact.RedactQuery(v)
+				row[col] = RedactStatementText(v)
 			default:
 				row[col] = sqlredact.Redacted
 			}

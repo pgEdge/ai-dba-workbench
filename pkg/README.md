@@ -17,6 +17,14 @@ See [embedding/README.md](embedding/README.md) for detailed documentation.
 The logger package provides a simple logging interface with verbosity control
 for consistent logging across all components.
 
+### redact
+
+The redact package holds the patterns that mask passwords in free text, such
+as SQL statements, connection strings and error messages. The server applies
+them in SQL to the text that `query_datastore` and the metrics routes return,
+and the alerter applies them in Go with `redact.Text` to connection errors
+before they reach an alert.
+
 ## Usage
 
 Import packages using the module path:

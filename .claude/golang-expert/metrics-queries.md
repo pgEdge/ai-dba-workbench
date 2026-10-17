@@ -217,7 +217,11 @@ decomposed into small, separately testable helpers:
   `boot_val` of credential-bearing settings with `pkg/pgsettings`; for
   `pg_stat_activity`/`pg_stat_statements` (`query`) and
   `spock_exception_log` (`ddl_statement`, `error_message`) it runs
-  `pkg/sqlredact.RedactQuery` over the statement text. The collector
+  `RedactStatementText` (`sqlredact.RedactQuery`, then `redact.Text`)
+  over the stored text the query selected under `RawStatementAlias`
+  (see `RawStatementColumns`), never over the column `RedactedText`
+  masked in SQL, and deletes the alias; a statement with no stored
+  value beside it becomes `********` (#670). The collector
   already redacts at collection time and migrations 25 (settings) and 26
   (statement text) scrub older rows; this is the read-side backstop.
   `/api/v1/metrics/latest` (`queryLatestSnapshot`) calls
@@ -230,9 +234,10 @@ decomposed into small, separately testable helpers:
   collector's migration 26 equivalent (a new migration). The list of
   credential settings lives only in `pkg/pgsettings`
   (`CredentialSettings`, `NonCredentialSettings`, `RedactsWholeValue`);
-  `pkg/sqlredact` and `query_datastore`'s SQL masking in
-  `server/src/internal/tools/datastore_catalog.go` build from it, so add
-  a setting there rather than to a copy. Each redacting probe has an
+  `pkg/sqlredact`, the `SET` pattern in `pkg/redact` and the SQL masking
+  in `server/src/internal/metrics/redaction.go` (used by
+  `query_datastore`, the latest-metrics routes and the timeline) build
+  from it, so add a setting there rather than to a copy. Each redacting probe has an
   `Execute` test in `collector/src/probes/redaction_wiring_test.go`.
 
 ### The /metrics/latest snapshot endpoint and its schema filters

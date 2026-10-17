@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
+	"github.com/pgedge/ai-workbench/pkg/redact"
 )
 
 // evaluateThresholds checks all threshold rules against current metrics
@@ -661,6 +662,46 @@ func stalenessAlertDescription(probeName, connectionName string,
 		probeName, connectionName, elapsedMinutes, thresholdMinutes)
 }
 
+// maskStoredText masks a stored alert description. It is a variable so
+// a test can give maskOpenConnectionAlerts a description that does not
+// settle without depending on which inputs redact.SettledUncut leaves
+// unsettled, such as strings.Repeat("password-- password='x'", 3).
+var maskStoredText = redact.MaskStoredText
+
+// maskOpenConnectionAlerts rewrites the description of every connection
+// alert that has not been cleared, and holds text the server's rules
+// mask, with the masked text, skipping the alerts in owned, whose
+// description evaluateConnectionErrors has just set from the connection
+// error. It masks with redact.MaskStoredText, because redact.Text can
+// mask its own output further and the next pass would otherwise rewrite
+// the alert again, and because a stored description longer than
+// redact.MaxTextLength must keep its end; a description longer than
+// redact.MaxRewriteLength bytes is replaced whole. A description that
+// masking has not settled, which the next pass would rewrite again, is
+// logged. A failure is logged and left for the next pass.
+func (e *Engine) maskOpenConnectionAlerts(ctx context.Context, owned map[int64]bool) {
+	alerts, err := e.datastore.GetOpenConnectionAlertDescriptions(ctx)
+	if err != nil {
+		e.log("ERROR: Failed to get open connection alerts: %v", err)
+		return
+	}
+	for _, a := range alerts {
+		if owned[a.ID] {
+			continue
+		}
+		masked, settled := maskStoredText(a.Description)
+		if masked == a.Description {
+			continue
+		}
+		if !settled {
+			e.log("WARNING: Masking connection alert %d did not settle; the next pass will mask it again", a.ID)
+		}
+		if err := e.datastore.UpdateAlertDescription(ctx, a.ID, masked); err != nil {
+			e.log("ERROR: Failed to mask connection alert %d: %v", a.ID, err)
+		}
+	}
+}
+
 // evaluateConnectionErrors checks monitored connections for error states
 func (e *Engine) evaluateConnectionErrors(ctx context.Context) {
 	e.debugLog("Evaluating connection errors...")
@@ -671,12 +712,22 @@ func (e *Engine) evaluateConnectionErrors(ctx context.Context) {
 		return
 	}
 
+	// owned holds the alerts the loop below raised or compared with a
+	// connection error, which the masking pass after it leaves alone, so
+	// that the two never rewrite the same alert in turn.
+	owned := map[int64]bool{}
 	for _, conn := range connections {
 		if ctx.Err() != nil {
 			return
 		}
 
 		if conn.ConnectionError != nil {
+			// A libpq error can quote the connection string, password
+			// included, so mask it with the server's rules before it
+			// reaches the alert, the log, a notification or an LLM
+			// prompt.
+			connError := redact.Text(*conn.ConnectionError)
+
 			// Check if there's a blackout active for this connection
 			connID := conn.ConnectionID
 			active, err := e.datastore.IsBlackoutActive(ctx, &connID, nil)
@@ -696,17 +747,21 @@ func (e *Engine) evaluateConnectionErrors(ctx context.Context) {
 			}
 
 			if !found {
-				alert, err := e.datastore.CreateConnectionAlert(ctx, conn.ConnectionID, conn.Name, *conn.ConnectionError)
+				alert, err := e.datastore.CreateConnectionAlert(ctx, conn.ConnectionID, conn.Name, connError)
 				if err != nil {
 					e.log("ERROR: Failed to create connection alert for connection %d: %v", conn.ConnectionID, err)
 					continue
 				}
-				e.log("Connection error alert created for %s: %s", conn.Name, *conn.ConnectionError)
+				owned[alert.ID] = true
+				e.log("Connection error alert created for %s: %s", conn.Name, connError)
 
 				// Queue notification for async processing
 				e.queueNotification(alert, database.NotificationTypeAlertFire)
-			} else if desc != *conn.ConnectionError {
-				if err := e.datastore.UpdateConnectionAlertDescription(ctx, alertID, *conn.ConnectionError); err != nil {
+				continue
+			}
+			owned[alertID] = true
+			if desc != connError {
+				if err := e.datastore.UpdateConnectionAlertDescription(ctx, alertID, connError); err != nil {
 					e.log("ERROR: Failed to update connection alert description for connection %d: %v", conn.ConnectionID, err)
 				} else {
 					e.debugLog("Updated connection error description for %s", conn.Name)
@@ -735,4 +790,10 @@ func (e *Engine) evaluateConnectionErrors(ctx context.Context) {
 			}
 		}
 	}
+
+	// Then mask every other open connection alert, including acknowledged
+	// alerts and alerts on a connection in a blackout, which the loop
+	// skips, so that one raised before the masking does not keep the raw
+	// text until it is cleared.
+	e.maskOpenConnectionAlerts(ctx, owned)
 }

@@ -634,6 +634,56 @@ func TestCreateAndUpdateConnectionAlert(t *testing.T) {
 	}
 }
 
+// TestGetOpenConnectionAlertDescriptions checks that active and
+// acknowledged connection alerts are returned, and cleared alerts and
+// alerts of other types are not.
+func TestGetOpenConnectionAlertDescriptions(t *testing.T) {
+	ds, pool, cleanup := newFullTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	connID := insertTestConnection(t, pool, "conn-open-alerts")
+
+	ids := map[string]int64{}
+	for _, a := range []struct{ alertType, status string }{
+		{"connection", "active"}, {"connection", "acknowledged"},
+		{"connection", "cleared"}, {"threshold", "active"},
+	} {
+		var id int64
+		if err := pool.QueryRow(ctx, `
+			INSERT INTO alerts (alert_type, connection_id, severity, title, description, status, triggered_at)
+			VALUES ($1, $2, 'critical', 't', $3, $4, NOW()) RETURNING id`,
+			a.alertType, connID, a.alertType+" "+a.status, a.status).Scan(&id); err != nil {
+			t.Fatalf("insert %s %s alert: %v", a.alertType, a.status, err)
+		}
+		ids[a.alertType+" "+a.status] = id
+	}
+
+	got, err := ds.GetOpenConnectionAlertDescriptions(ctx)
+	if err != nil {
+		t.Fatalf("GetOpenConnectionAlertDescriptions: %v", err)
+	}
+	want := []AlertDescription{
+		{ID: ids["connection active"], Description: "connection active"},
+		{ID: ids["connection acknowledged"], Description: "connection acknowledged"},
+	}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("got %+v, want %+v", got, want)
+	}
+
+	// A description column of the wrong type cannot be scanned.
+	if _, err := pool.Exec(ctx, `ALTER TABLE alerts ALTER COLUMN description DROP NOT NULL`); err != nil {
+		t.Fatalf("drop not null: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE alerts SET description = NULL WHERE id = $1`,
+		ids["connection active"]); err != nil {
+		t.Fatalf("null description: %v", err)
+	}
+	if _, err := ds.GetOpenConnectionAlertDescriptions(ctx); err == nil {
+		t.Errorf("a NULL description should fail the scan")
+	}
+}
+
 func TestGetAlerterSettings(t *testing.T) {
 	ds, _, cleanup := newFullTestDatastore(t)
 	defer cleanup()

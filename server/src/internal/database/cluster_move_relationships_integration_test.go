@@ -286,21 +286,23 @@ func TestMoveConnection_RelationshipDeleteFailure(t *testing.T) {
 }
 
 // TestMoveConnection_CommitFailure covers the commit failure branch
-// through a deferred constraint trigger that raises at commit time.
+// through a deferred constraint trigger on the connections UPDATE that
+// raises at commit time, so it fires whether or not the move deletes
+// any relationship rows.
 func TestMoveConnection_CommitFailure(t *testing.T) {
 	ctx := context.Background()
 	f := newMoveFixture(t)
 	defer f.cleanup()
 	if _, err := f.pool.Exec(ctx, `
-		CREATE FUNCTION fail_move_relationship_delete() RETURNS trigger
+		CREATE FUNCTION fail_move_connection_update() RETURNS trigger
 		LANGUAGE plpgsql AS $$
 		BEGIN
 			RAISE EXCEPTION 'injected commit failure';
 		END $$;
-		CREATE CONSTRAINT TRIGGER fail_move_relationship_delete
-			AFTER DELETE ON cluster_node_relationships
+		CREATE CONSTRAINT TRIGGER fail_move_connection_update
+			AFTER UPDATE ON connections
 			DEFERRABLE INITIALLY DEFERRED
-			FOR EACH ROW EXECUTE FUNCTION fail_move_relationship_delete();
+			FOR EACH ROW EXECUTE FUNCTION fail_move_connection_update();
 	`); err != nil {
 		t.Fatalf("Create the failing trigger: %v", err)
 	}
@@ -308,7 +310,7 @@ func TestMoveConnection_CommitFailure(t *testing.T) {
 	// pool; t.Cleanup would run after it and leave the function behind.
 	defer func() {
 		_, _ = f.pool.Exec(context.Background(),
-			`DROP FUNCTION IF EXISTS fail_move_relationship_delete() CASCADE`)
+			`DROP FUNCTION IF EXISTS fail_move_connection_update() CASCADE`)
 	}()
 
 	if err := f.ds.AssignConnectionToCluster(ctx, f.moved, &f.newCluster, nil, "manual"); err == nil {

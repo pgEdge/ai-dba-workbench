@@ -2504,7 +2504,11 @@ project adheres to
   kept showing edges to a server that was no longer a member. Both
   now delete those relationships, whichever end the connection is
   on, in the same transaction as the move, and keep any it already
-  has in its new cluster. Relationships left behind by earlier moves
+  has in its new cluster. Saving a server's relationships now
+  rechecks, under a row lock, that the server and every target are
+  still members of the cluster, so a move made whilst the save is in
+  progress can no longer leave a relationship behind; the save
+  answers 400 instead. Relationships left behind by earlier moves
   are not removed retrospectively. (#707)
 
 ### Removed

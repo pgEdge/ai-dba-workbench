@@ -74,6 +74,15 @@ auto-detected, whose `cluster_id` is not the new one
 `permitted` set, as `RemoveServerFromCluster` takes none: the caller
 has passed the gates for moving the connection, and a row in a cluster
 the connection has left describes a node that is no longer a member.
+The handler's `IsConnectionInCluster` checks run outside the write, so
+`SetNodeRelationships` and `AddNodeRelationship` recheck membership
+inside their transaction with `lockClusterMembers` (`FOR SHARE` on the
+source and targets, which conflicts with the move's `UPDATE`) and roll
+back with `database.ErrSourceNotInCluster` / `ErrTargetNotInCluster`,
+which `refuseDepartedMember` turns into the usual 400s; without it a
+move landing between check and write left a stale row
+(`TestIssue707_RelationshipWriteRacingMove`).
+`SyncAutoDetectedRelationships` does not take that lock yet.
 `TestIssue707_*` in `cluster_move_relationships_test.go` and the
 datastore tests in `cluster_move_relationships_integration_test.go`
 lock this in.

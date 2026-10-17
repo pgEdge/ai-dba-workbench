@@ -301,7 +301,7 @@ func TestStore_Delete(t *testing.T) {
 	})
 }
 
-// TestStore_WriteErrors checks that DeleteByID and the pinned updates
+// TestStore_WriteErrors checks that the deletes and the pinned updates
 // report a failed statement as an error rather than as ErrNotFound.
 func TestStore_WriteErrors(t *testing.T) {
 	_, pool, cleanup := newMemoryTestStore(t)
@@ -309,6 +309,9 @@ func TestStore_WriteErrors(t *testing.T) {
 	store := NewStore(pool)
 	ctx := context.Background()
 
+	if err := store.Delete(ctx, 1, "alice"); err == nil || errors.Is(err, ErrNotFound) {
+		t.Errorf("Delete on a closed pool: got %v", err)
+	}
 	if err := store.DeleteByID(ctx, 1); err == nil || errors.Is(err, ErrNotFound) {
 		t.Errorf("DeleteByID on a closed pool: got %v", err)
 	}

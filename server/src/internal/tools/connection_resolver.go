@@ -86,7 +86,8 @@ const invalidConnectionIDMessage = "connection_id must be a positive integer"
 // arrived, before any conversion, so a fractional value such as 1.5 can
 // never name connection 1 and a huge one such as 2^63 never converts to
 // a platform-dependent ID. A string, even "5", a null and any other
-// type are invalid. JSON numbers arrive as float64; int and int64 are
+// type are invalid; callers treat a null as an absent key before
+// calling it. JSON numbers arrive as float64; int and int64 are
 // accepted for callers inside the server.
 func connectionIDValue(raw any) (int, bool) {
 	switch v := raw.(type) {
@@ -110,15 +111,23 @@ func connectionIDValue(raw any) (int, bool) {
 	return 0, false
 }
 
+// hasConnectionID reports whether args name a connection_id. A null
+// connection_id counts as absent, since several LLM providers send null
+// for an optional parameter they mean to omit.
+func hasConnectionID(args map[string]any) bool {
+	return args["connection_id"] != nil
+}
+
 // parseConnectionArgs extracts connection_id and database_name from the
-// tool argument map. A connection_id that connectionIDValue rejects is
-// marked invalid rather than truncated or ignored, so that, for
-// example, 3.7 can never name connection 3 and "5" never falls back to
-// the selected connection.
+// tool argument map. A null connection_id is treated as absent. Any
+// other connection_id that connectionIDValue rejects is marked invalid
+// rather than truncated or ignored, so that, for example, 3.7 can never
+// name connection 3 and "5" never falls back to the selected connection.
 func parseConnectionArgs(args map[string]any) connectionArgs {
 	var ca connectionArgs
 
-	if raw, ok := args["connection_id"]; ok {
+	if hasConnectionID(args) {
+		raw := args["connection_id"]
 		ca.HasConnID = true
 		id, valid := connectionIDValue(raw)
 		ca.ConnectionID = id

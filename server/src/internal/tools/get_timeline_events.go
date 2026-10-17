@@ -315,7 +315,7 @@ func resolveTimelineConnection(
 	visibilityLister auth.ConnectionVisibilityLister,
 	record DenialRecorder,
 ) (bool, int, string, *mcp.ToolResponse, error) {
-	if _, hasConnID := args["connection_id"]; !hasConnID {
+	if !hasConnectionID(args) {
 		return false, 0, "", nil, nil
 	}
 

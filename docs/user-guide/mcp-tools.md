@@ -18,9 +18,10 @@ These tools operate on monitored database connections.
 Each tool accepts optional `connection_id` and
 `database_name` parameters to target a specific
 database; the tool uses the currently selected connection
-when these parameters are omitted. A `connection_id` must
-be a positive integer; any other value, including a string
-such as `"5"` or `null`, is refused rather than ignored.
+when these parameters are omitted or `null`. A
+`connection_id` must otherwise be a positive integer; any
+other value, including a string such as `"5"`, is refused
+rather than ignored.
 
 | Tool | Description |
 |------|-------------|

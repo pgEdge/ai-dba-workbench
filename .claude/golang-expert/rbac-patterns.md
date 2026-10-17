@@ -1219,13 +1219,17 @@ to `sessionConnectionDenied(record)` on its own resolver and, through
 registry's (resources cannot import tools), so a lost selected
 connection is `connection.read` from a tool or `read_resource`.
 Reasons mirror the REST ones. `Execute` sends any call whose args hold
-a `connection_id` key straight to the base registry before
+a non-null `connection_id` straight to the base registry before
 `getClient`, so naming a connection never resolves, or records a
-refusal of, the selected one. Every tool validates `connection_id`
-with `connectionIDValue` (`connection_resolver.go`): only a float64,
-int or int64 in 1..`MaxInt32` is valid, range-checked before
-conversion, so 1.5, 2^63, `"5"` and null are refused, never truncated
-or ignored; never use `parseIntArg` for it. `parseConnectionArgs` sets
+refusal of, the selected one. A null `connection_id` (LLM providers
+send null for omitted optional parameters) is absent everywhere: test
+presence with `hasConnectionID(args)`, never `_, ok := args[...]`;
+`query_datastore` likewise ignores null `connection_ids` and null
+`connection_id`. Every tool validates a present `connection_id` with
+`connectionIDValue` (`connection_resolver.go`): only a float64, int or
+int64 in 1..`MaxInt32` is valid, range-checked before conversion, so
+1.5, 2^63, `"5"`, booleans and objects are refused, never truncated or
+ignored; never use `parseIntArg` for it. `parseConnectionArgs` sets
 `InvalidConnID` for any present but invalid value, and `Resolve`
 answers it with `invalidConnectionIDMessage`, recording nothing, before
 any lookup. Messages returned to the caller are otherwise unchanged. New tools that refuse
@@ -1236,7 +1240,8 @@ provider. Tests: `denial_recorder_test.go`
 `TestProviderWiresConnectionDenialRecorder`,
 `TestProviderRecordsLostSessionConnection`,
 `TestProviderRecordsLostSessionConnectionOnReadResource`,
-`TestProviderExplicitConnectionSkipsSessionClient`) drive the provider,
+`TestProviderExplicitConnectionSkipsSessionClient`,
+`TestProviderNullConnectionFallsBackToSession`) drive the provider,
 so a nil recorder fails them;
 `TestQueryDatastoreRecordsRefusedConnection` covers `query_datastore`
 on Postgres; `tool_refusal_audit_db_test.go` covers the

@@ -1421,10 +1421,10 @@ project adheres to
   selected connection first, so it records a refusal only of the
   connection it names. The messages the tools return are unchanged,
   except that every tool taking a `connection_id` now refuses one
-  that is not a positive integer, such as `3.7`, `2^63`, the string
-  `"5"` or `null`, rather than truncating it to the connection it
-  would have named or ignoring it in favour of the selected
-  connection. (#706)
+  that is not a positive integer, such as `3.7`, `2^63` or the
+  string `"5"`, rather than truncating it to the connection it would
+  have named or ignoring it in favour of the selected connection. A
+  `null` `connection_id` is treated as if it had been omitted. (#706)
 
 - Fix the `probe_unavailable` alert firing on healthy Spock clusters
   with no recent apply exceptions or conflict resolutions. The

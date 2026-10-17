@@ -130,7 +130,7 @@ Returns TSV data with:
 			singleConnection := false
 			var connectionID int
 			var connName string
-			if _, hasConnID := args["connection_id"]; hasConnID {
+			if hasConnectionID(args) {
 				var valid bool
 				connectionID, valid = connectionIDValue(args["connection_id"])
 				if !valid {

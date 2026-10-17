@@ -129,10 +129,12 @@ table describes the available tools:
 Ellie treats a `SELECT` that calls a function with side
 effects, such as `pg_terminate_backend`, `pg_reload_conf`,
 `set_config` or `nextval`, as a write rather than a read.
-The `query_database` tool runs such a query only when you
-have read/write access to the connection, and the
-`execute_explain` tool shows its plan but will not run it
-with `EXPLAIN ANALYZE`.
+The `query_database` tool is read-only: it refuses such a
+query, as it refuses every write, whatever access you hold
+on the connection, and runs every other query in a
+read-only transaction. The `execute_explain` tool shows the
+plan of such a query but will not run it with
+`EXPLAIN ANALYZE`.
 
 ## Running SQL from Replies
 

@@ -2478,7 +2478,7 @@
     "/cluster-groups": {
       "get": {
         "summary": "List all cluster groups",
-        "description": "Returns all cluster groups",
+        "description": "Returns the cluster groups visible to the caller: those with a visible member connection. A group with no member connections is visible only to its owner and to callers who see every connection.",
         "operationId": "listClusterGroups",
         "tags": [
           "Cluster Groups"
@@ -2594,7 +2594,7 @@
     "/cluster-groups/{id}": {
       "get": {
         "summary": "Get cluster group by ID",
-        "description": "Returns a specific cluster group",
+        "description": "Returns a specific cluster group. A group the caller cannot see is answered with 404, as a missing one is. A group with no member connections is visible only to its owner and to callers who see every connection.",
         "operationId": "getClusterGroup",
         "tags": [
           "Cluster Groups"
@@ -2632,7 +2632,7 @@
             }
           },
           "404": {
-            "description": "Group not found",
+            "description": "Group not found, or not visible to the caller",
             "content": {
               "application/json": {
                 "schema": {
@@ -2650,7 +2650,7 @@
       },
       "put": {
         "summary": "Update a cluster group",
-        "description": "Updates a cluster group. Requires manage_connections permission or ownership of the cluster group. A group the caller cannot see is answered with 404, as a missing one is.",
+        "description": "Updates a cluster group. Requires manage_connections permission or ownership of the cluster group. A group the caller cannot see is answered with 404, as a missing one is. A group with no member connections is visible only to its owner and to callers who see every connection.",
         "operationId": "updateClusterGroup",
         "tags": [
           "Cluster Groups"
@@ -2737,7 +2737,7 @@
       },
       "delete": {
         "summary": "Delete a cluster group",
-        "description": "Deletes a cluster group. Requires manage_connections permission or ownership of the cluster group. A group the caller cannot see is answered with 404, as a missing one is; a group with no member connections is visible only to a caller who sees every connection.",
+        "description": "Deletes a cluster group. Requires manage_connections permission or ownership of the cluster group. A group the caller cannot see is answered with 404, as a missing one is. A group with no member connections is visible only to its owner and to callers who see every connection.",
         "operationId": "deleteClusterGroup",
         "tags": [
           "Cluster Groups"
@@ -2798,7 +2798,7 @@
     "/cluster-groups/{id}/clusters": {
       "get": {
         "summary": "List clusters in a group",
-        "description": "Returns all clusters belonging to a group",
+        "description": "Returns the clusters in a group that are visible to the caller. A missing group, or one the caller cannot see, is answered with 404. A group with no member connections is visible only to its owner and to callers who see every connection.",
         "operationId": "listGroupClusters",
         "tags": [
           "Cluster Groups"
@@ -2830,6 +2830,16 @@
           },
           "401": {
             "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Group not found, or not visible to the caller",
             "content": {
               "application/json": {
                 "schema": {

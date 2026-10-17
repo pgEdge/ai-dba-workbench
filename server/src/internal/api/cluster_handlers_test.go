@@ -1205,6 +1205,11 @@ func newTestDatastore(t *testing.T) (*database.Datastore, *pgxpool.Pool, func())
 // the Authorization header (via withBearer) AND the user context (via
 // withUser). The returned userID lets callers do the latter.
 //
+// The user is not a superuser, so sees only some connections, and a
+// group with no members is visible to such a caller only when they own
+// it (issue #705); tests that update an empty group therefore create it
+// owned by "group_updater".
+//
 // Returns the handler, the auth store, the user's ID, the user's session
 // token, and a cleanup function for the auth store.
 func setupGroupUpdateHandler(t *testing.T, ds *database.Datastore) (*ClusterHandler, *auth.AuthStore, int64, string, func()) {
@@ -1258,7 +1263,7 @@ func TestClusterHandler_UpdateClusterGroup_Integration_HappyPath(t *testing.T) {
 
 	ctx := context.Background()
 	originalDesc := "original description"
-	created, err := ds.CreateClusterGroup(ctx, "Integration Original", &originalDesc)
+	created, err := ds.CreateClusterGroupWithOwner(ctx, "Integration Original", &originalDesc, strPtr("group_updater"), false)
 	if err != nil {
 		t.Fatalf("Failed to create cluster group: %v", err)
 	}
@@ -1325,7 +1330,7 @@ func TestClusterHandler_UpdateClusterGroup_Integration_NameOnly(t *testing.T) {
 
 	ctx := context.Background()
 	origDesc := "keep me"
-	created, err := ds.CreateClusterGroup(ctx, "Name Only Original", &origDesc)
+	created, err := ds.CreateClusterGroupWithOwner(ctx, "Name Only Original", &origDesc, strPtr("group_updater"), false)
 	if err != nil {
 		t.Fatalf("Failed to create cluster group: %v", err)
 	}
@@ -1377,7 +1382,7 @@ func TestClusterHandler_UpdateClusterGroup_Integration_MissingName(t *testing.T)
 	defer cleanupStore()
 
 	ctx := context.Background()
-	created, err := ds.CreateClusterGroup(ctx, "Needs Name", nil)
+	created, err := ds.CreateClusterGroupWithOwner(ctx, "Needs Name", nil, strPtr("group_updater"), false)
 	if err != nil {
 		t.Fatalf("Failed to create cluster group: %v", err)
 	}
@@ -2749,7 +2754,7 @@ func TestClusterHandler_UpdateClusterGroup_Issue304_InvalidName(t *testing.T) {
 	defer cleanupStore()
 
 	ctx := context.Background()
-	created, err := ds.CreateClusterGroup(ctx, "Valid Original", nil)
+	created, err := ds.CreateClusterGroupWithOwner(ctx, "Valid Original", nil, strPtr("group_updater"), false)
 	if err != nil {
 		t.Fatalf("Failed to create cluster group: %v", err)
 	}
@@ -2815,7 +2820,7 @@ func TestClusterHandler_UpdateClusterGroup_Issue304_DuplicateNameError(t *testin
 	if _, err := ds.CreateClusterGroup(ctx, "Existing Name", nil); err != nil {
 		t.Fatalf("Failed to seed first group: %v", err)
 	}
-	target, err := ds.CreateClusterGroup(ctx, "Target Group", nil)
+	target, err := ds.CreateClusterGroupWithOwner(ctx, "Target Group", nil, strPtr("group_updater"), false)
 	if err != nil {
 		t.Fatalf("Failed to seed target group: %v", err)
 	}

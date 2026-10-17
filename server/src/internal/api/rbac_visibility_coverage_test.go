@@ -11,6 +11,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -69,13 +70,31 @@ func TestVisibilityFns_WithFakeDatastore(t *testing.T) {
 		t.Fatalf("membership = %v, want %v", membership, want)
 	}
 
-	groups := []database.ClusterGroup{{ID: 100}, {ID: 200}, {ID: 300}}
-	out, err := filterGroupsByVisibilityFn(ctx, ds, groups, visible)
-	if err != nil {
-		t.Fatalf("filter: %v", err)
-	}
-	if len(out) != 1 || out[0].ID != 100 {
-		t.Fatalf("filter = %v, want only group 100", out)
+	// Group 300 has no members and is owned by alice, so it is kept for
+	// her alone (issue #705); group 200 has a hidden member, so it is
+	// dropped for everyone.
+	alice := sql.NullString{String: "alice", Valid: true}
+	groups := []database.ClusterGroup{{ID: 100}, {ID: 200, OwnerUsername: alice},
+		{ID: 300, OwnerUsername: alice}}
+	for _, tc := range []struct {
+		owner string
+		want  []int
+	}{
+		{"", []int{100}},
+		{"bob", []int{100}},
+		{"alice", []int{100, 300}},
+	} {
+		out, err := filterGroupsByVisibilityFn(ctx, ds, groups, visible, tc.owner)
+		if err != nil {
+			t.Fatalf("filter: %v", err)
+		}
+		got := make([]int, 0, len(out))
+		for _, g := range out {
+			got = append(got, g.ID)
+		}
+		if !reflect.DeepEqual(got, tc.want) {
+			t.Fatalf("filter for owner %q = %v, want %v", tc.owner, got, tc.want)
+		}
 	}
 }
 
@@ -93,7 +112,7 @@ func TestVisibilityFns_PropagateErrors(t *testing.T) {
 	if _, err := clusterConnectionMembershipFn(ctx, ds, []int{1}); !errors.Is(err, boom) {
 		t.Fatalf("membership err = %v", err)
 	}
-	if _, err := filterGroupsByVisibilityFn(ctx, ds, []database.ClusterGroup{{ID: 1}}, nil); !errors.Is(err, boom) {
+	if _, err := filterGroupsByVisibilityFn(ctx, ds, []database.ClusterGroup{{ID: 1}}, nil, ""); !errors.Is(err, boom) {
 		t.Fatalf("filter err = %v", err)
 	}
 }

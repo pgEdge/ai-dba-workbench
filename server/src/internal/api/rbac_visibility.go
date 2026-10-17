@@ -163,20 +163,24 @@ func scopeVisibleToCaller(ctx context.Context, w http.ResponseWriter, rbac *auth
 }
 
 // filterGroupsByVisibilityFn drops cluster groups whose clusters contain
-// no visible member connections. It issues one datastore lookup per
-// group via GetConnectionIDsForGroup.
+// no visible member connections, keeping a group with no member
+// connections only when owner names its owner (issue #705), which is the
+// rule getClusterGroup applies to one group. An empty owner keeps no
+// empty group. It issues one datastore lookup per group via
+// GetConnectionIDsForGroup.
 //
 // TODO(#35 follow-up): the per-group lookup is intentional at
 // autocomplete scale (tens of groups per caller); batch via the
 // datastore if group count grows large enough to become a hot path.
-func filterGroupsByVisibilityFn(ctx context.Context, ds rbacVisibilityDatastore, groups []database.ClusterGroup, visible map[int]bool) ([]database.ClusterGroup, error) {
+func filterGroupsByVisibilityFn(ctx context.Context, ds rbacVisibilityDatastore, groups []database.ClusterGroup, visible map[int]bool, owner string) ([]database.ClusterGroup, error) {
 	out := make([]database.ClusterGroup, 0, len(groups))
 	for i := range groups {
-		ok, err := groupHasVisibleConnectionFn(ctx, ds, groups[i].ID, visible)
+		members, err := ds.GetConnectionIDsForGroup(ctx, groups[i].ID)
 		if err != nil {
 			return nil, err
 		}
-		if ok {
+		v := clusterGroupVisibility{visible: visible, members: members}
+		if !v.hidden(ownsClusterGroup(owner, &groups[i])) {
 			out = append(out, groups[i])
 		}
 	}

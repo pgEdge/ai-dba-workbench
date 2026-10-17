@@ -18,6 +18,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/database"
 	"github.com/pgedge/ai-workbench/server/internal/logging"
@@ -279,15 +281,38 @@ type clusterGroupVisibility struct {
 }
 
 // hidden reports whether the group must be answered as missing: it has
-// members and none is visible to the caller, or it has none and
-// emptyVisible is false. A caller who sees every connection sees every
-// group.
-func (v clusterGroupVisibility) hidden(emptyVisible bool) bool {
+// members and none is visible to the caller, or it has none and the
+// caller does not own it. A caller who sees every connection sees every
+// group. Every cluster-group route applies this one rule, so an empty
+// group is visible to its owner and to callers who see every
+// connection, and to nobody else whatever permissions they hold (issue
+// #705).
+func (v clusterGroupVisibility) hidden(isOwner bool) bool {
 	if v.all {
 		return false
 	}
 	return membersHidden(v.members, v.visible) ||
-		(len(v.members) == 0 && !emptyVisible)
+		(len(v.members) == 0 && !isOwner)
+}
+
+// ownsClusterGroup reports whether username, when set, is the group's
+// recorded owner.
+func ownsClusterGroup(username string, group *database.ClusterGroup) bool {
+	return username != "" && group.OwnerUsername.Valid &&
+		group.OwnerUsername.String == username
+}
+
+// emptyGroupOwnerName returns the name the cluster-group reads match a
+// group's owner against: the context username, which an API token
+// carries as its owner's. A token narrowed to some connections gets "",
+// so it is never treated as an owner and an empty group stays hidden
+// from it; the write routes refuse such a token before their lookup
+// instead.
+func (h *ClusterHandler) emptyGroupOwnerName(r *http.Request) string {
+	if !h.rbacChecker.AllConnectionsInTokenScope(r.Context()) {
+		return ""
+	}
+	return auth.GetUsernameFromContext(r.Context())
 }
 
 // loadClusterGroupVisibility resolves the caller's visible connections
@@ -320,8 +345,8 @@ func (h *ClusterHandler) loadClusterGroupVisibility(ctx context.Context,
 }
 
 // filterGroupsByVisibility delegates to the package-level helper.
-func (h *ClusterHandler) filterGroupsByVisibility(ctx context.Context, groups []database.ClusterGroup, visible map[int]bool) ([]database.ClusterGroup, error) {
-	return filterGroupsByVisibilityFn(ctx, h.datastore, groups, visible)
+func (h *ClusterHandler) filterGroupsByVisibility(ctx context.Context, groups []database.ClusterGroup, visible map[int]bool, owner string) ([]database.ClusterGroup, error) {
+	return filterGroupsByVisibilityFn(ctx, h.datastore, groups, visible, owner)
 }
 
 // handleClusterSubpath handles /api/v1/clusters/{id}
@@ -529,7 +554,8 @@ func (h *ClusterHandler) listClusterGroups(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if !allConnections {
-		filtered, err := h.filterGroupsByVisibility(ctx, groups, visible)
+		filtered, err := h.filterGroupsByVisibility(ctx, groups, visible,
+			h.emptyGroupOwnerName(r))
 		if err != nil {
 			log.Printf("[ERROR] Failed to filter cluster groups by visibility: %v", err)
 			RespondError(w, http.StatusInternalServerError, "Failed to filter cluster groups")
@@ -546,20 +572,20 @@ func (h *ClusterHandler) getClusterGroup(w http.ResponseWriter, r *http.Request,
 	defer cancel()
 
 	// Visibility first, so a missing id and a hidden group cost the
-	// same queries (issue #649); a group with no members is hidden from
-	// every restricted caller.
+	// same queries (issue #649); a group with no members is visible only
+	// to its owner among restricted callers (issue #705).
 	v, ok := h.loadClusterGroupVisibility(ctx, w, id, "Failed to load cluster group")
 	if !ok {
-		return
-	}
-	if v.hidden(false) {
-		RespondError(w, http.StatusNotFound, "Cluster group not found")
 		return
 	}
 
 	group, err := h.datastore.GetClusterGroup(ctx, id)
 	if err != nil {
 		log.Printf("[ERROR] Cluster group not found (id=%d): %v", id, err)
+		RespondError(w, http.StatusNotFound, "Cluster group not found")
+		return
+	}
+	if v.hidden(ownsClusterGroup(h.emptyGroupOwnerName(r), group)) {
 		RespondError(w, http.StatusNotFound, "Cluster group not found")
 		return
 	}
@@ -666,13 +692,12 @@ func (h *ClusterHandler) updateClusterGroup(w http.ResponseWriter, r *http.Reque
 
 	// Visibility comes before ownership, so that a group the caller
 	// cannot see gets the same 404 as a missing one rather than a 403
-	// that confirms it exists (issue #649). A group with no members
-	// stays visible to its owner and to a manage_connections holder, so
-	// its owner can still rename a group they have just created (issue
-	// #58); anyone else would only be refused below, so is told it is
-	// not found.
-	isOwner := existingGroup.OwnerUsername.Valid && existingGroup.OwnerUsername.String == username
-	if v.hidden(hasManageConns || isOwner) {
+	// that confirms it exists (issue #649). A group with no members is
+	// visible to its owner, who can still rename a group they have just
+	// created (issue #58), and to no other restricted caller, as for the
+	// GET: manage_connections does not make it visible (issue #705).
+	isOwner := ownsClusterGroup(username, existingGroup)
+	if v.hidden(isOwner) {
 		RespondError(w, http.StatusNotFound, "Cluster group not found")
 		return
 	}
@@ -756,15 +781,15 @@ func (h *ClusterHandler) deleteClusterGroup(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// An empty group is hidden from every restricted caller here, as it
-	// is from the GET.
-	if v.hidden(false) {
+	// An empty group is visible to its owner, who can therefore delete
+	// it, and hidden from every other restricted caller, as for the GET
+	// (issue #705).
+	isOwner := ownsClusterGroup(username, existingGroup)
+	if v.hidden(isOwner) {
 		RespondError(w, http.StatusNotFound, "Cluster group not found")
 		return
 	}
 
-	isOwner := existingGroup.OwnerUsername.Valid &&
-		existingGroup.OwnerUsername.String == username
 	if !hasManageConns && !isOwner {
 		h.denialRecorder.refuse(w, r,
 			"You do not have permission to delete this cluster group")
@@ -812,14 +837,25 @@ func (h *ClusterHandler) listClustersInGroup(w http.ResponseWriter, r *http.Requ
 
 	// Gate on parent-group visibility before reading the clusters, so
 	// the response mirrors getClusterGroup: callers who cannot see the
-	// group at all receive 404 rather than an empty list that leaks the
-	// group's existence, and a missing id costs the same queries as a
-	// hidden group (issue #649).
+	// group at all, or name one that does not exist, receive 404 rather
+	// than an empty list that leaks the group's existence, and a missing
+	// id costs the same queries as a hidden group (issues #649 and
+	// #705).
 	v, ok := h.loadClusterGroupVisibility(ctx, w, groupID, "Failed to filter clusters")
 	if !ok {
 		return
 	}
-	if v.hidden(false) {
+	group, err := h.datastore.GetClusterGroup(ctx, groupID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			RespondError(w, http.StatusNotFound, "Cluster group not found")
+			return
+		}
+		log.Printf("[ERROR] Failed to load cluster group (id=%d): %v", groupID, err)
+		RespondError(w, http.StatusInternalServerError, "Failed to list clusters")
+		return
+	}
+	if v.hidden(ownsClusterGroup(h.emptyGroupOwnerName(r), group)) {
 		RespondError(w, http.StatusNotFound, "Cluster group not found")
 		return
 	}

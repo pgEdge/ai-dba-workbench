@@ -75,10 +75,8 @@ func (h *ClusterHandler) requireVisibleTargetGroup(ctx context.Context,
 		return true
 	}
 
-	username := auth.GetUsernameFromContext(r.Context())
-	isOwner := username != "" && group.OwnerUsername.Valid &&
-		group.OwnerUsername.String == username
-	if membersHidden(members, visible) || (len(members) == 0 && !isOwner) {
+	v := clusterGroupVisibility{visible: visible, members: members}
+	if v.hidden(ownsClusterGroup(auth.GetUsernameFromContext(r.Context()), group)) {
 		RespondError(w, http.StatusNotFound, "Cluster group not found")
 		return false
 	}

@@ -2697,6 +2697,21 @@ project adheres to
   Superusers, and callers who can see every connection, are
   unaffected.
 
+- Apply one visibility rule to cluster groups with no member
+  connections (#705). Such a group is now visible to its owner and
+  to callers who can see every connection, and answered with the
+  same 404 as a missing group for everyone else, on
+  `GET /api/v1/cluster-groups`, `GET /api/v1/cluster-groups/{id}`,
+  `GET /api/v1/cluster-groups/{id}/clusters`, and `PUT` and
+  `DELETE` on `/api/v1/cluster-groups/{id}`. Previously any caller
+  holding `manage_connections` could rename another user's empty
+  group that the `GET` hid from them, whilst the group's own owner
+  could neither see nor delete it. An API token whose connection
+  scope does not cover every connection is not treated as its
+  owner's. `GET /api/v1/cluster-groups/{id}/clusters` now also
+  answers 404 for a group that does not exist, where callers who
+  can see every connection previously got an empty list.
+
 - Breaking: make the `query_datastore` MCP tool structured and limit
   the tool to the connections the caller can read (#566). The tool no
   longer accepts SQL and rejects a `sql` or `query` argument, so a

@@ -15,6 +15,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/pgedge/ai-workbench/pkg/logger"
 )
 
@@ -493,6 +495,33 @@ func (d *Datastore) GetConnectionIDsForCluster(ctx context.Context, clusterID in
 // GetConnectionIDsForCluster for group-scoped RBAC checks.
 func (d *Datastore) GetConnectionIDsForGroup(ctx context.Context, groupID int) ([]int, error) {
 	return d.getConnectionIDsForGroup(ctx, groupID)
+}
+
+// GetConnectionIDsForAutoClusterKey returns the IDs of the connections
+// assigned to the cluster with the given auto_cluster_key, so that the
+// API handlers can check a caller's visibility of an auto-detected
+// cluster addressed by its topology ID. An unknown key has no members.
+func (d *Datastore) GetConnectionIDsForAutoClusterKey(ctx context.Context, autoKey string) ([]int, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	rows, err := d.pool.Query(ctx, `
+        SELECT c.id
+        FROM connections c
+        JOIN clusters cl ON cl.id = c.cluster_id
+        WHERE cl.auto_cluster_key = $1
+        ORDER BY c.id
+    `, autoKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query connections for cluster key: %w", err)
+	}
+	ids, err := scanAll(rows, func(r pgx.Rows, id *int) error {
+		return r.Scan(id)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to scan connection id: %w", err)
+	}
+	return ids, nil
 }
 
 // gatherScopedServerData populates server status counts for a specific

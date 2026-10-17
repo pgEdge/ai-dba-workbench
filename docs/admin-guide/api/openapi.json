@@ -2857,7 +2857,7 @@
       },
       "post": {
         "summary": "Create a cluster in a group",
-        "description": "Creates a new cluster within a group. Requires manage_connections permission.",
+        "description": "Creates a new cluster within a group. Requires manage_connections permission. A group the caller cannot see is answered with 404, as a missing one is.",
         "operationId": "createClusterInGroup",
         "tags": [
           "Cluster Groups"
@@ -2924,6 +2924,26 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "Group not found, or not visible to the caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to create cluster",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -2981,7 +3001,7 @@
       },
       "post": {
         "summary": "Create a cluster",
-        "description": "Creates a new cluster, optionally assigned to a group. Requires manage_connections permission.",
+        "description": "Creates a new cluster, optionally assigned to a group; without group_id it goes into the default group. Requires manage_connections permission. A group the caller cannot see is answered with 404, as a missing one is; the default group is always writable.",
         "operationId": "createCluster",
         "tags": [
           "Clusters"
@@ -3030,6 +3050,16 @@
           },
           "403": {
             "description": "Requires manage_connections permission, or the API token's connection scope does not cover every connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Group not found, or not visible to the caller",
             "content": {
               "application/json": {
                 "schema": {
@@ -3145,7 +3175,7 @@
       },
       "put": {
         "summary": "Update a cluster",
-        "description": "Updates cluster name, description, or group assignment. Requires manage_connections permission.",
+        "description": "Updates cluster name, description, or group assignment. Also accepts the transient auto-detected IDs server-{id} and cluster-spock-{prefix}, with an optional auto_cluster_key that must name the same cluster. Requires manage_connections permission. A cluster or group the caller cannot see is answered with 404, as a missing one is; the default group is always writable.",
         "operationId": "updateCluster",
         "tags": [
           "Clusters"
@@ -3214,7 +3244,7 @@
             }
           },
           "404": {
-            "description": "Cluster not found",
+            "description": "Cluster not found or not visible to the caller, or group not found or not visible to the caller",
             "content": {
               "application/json": {
                 "schema": {
@@ -3232,7 +3262,7 @@
       },
       "delete": {
         "summary": "Delete a cluster",
-        "description": "Deletes a cluster. Manually created clusters are hard-deleted. Auto-detected clusters are soft-deleted by setting dismissed=true so they do not reappear in topology. This applies to persisted auto-detected clusters addressed by numeric ID and to transient auto-detected IDs (server-{id} or cluster-spock-{prefix}). Requires manage_connections permission.",
+        "description": "Deletes a cluster. Manually created clusters are hard-deleted. Auto-detected clusters are soft-deleted by setting dismissed=true so they do not reappear in topology. This applies to persisted auto-detected clusters addressed by numeric ID and to transient auto-detected IDs (server-{id} or cluster-spock-{prefix}). Requires manage_connections permission. A cluster the caller cannot see is answered with 404, as a missing one is.",
         "operationId": "deleteCluster",
         "tags": [
           "Clusters"
@@ -3273,7 +3303,7 @@
             }
           },
           "404": {
-            "description": "Cluster not found",
+            "description": "Cluster not found, or not visible to the caller",
             "content": {
               "application/json": {
                 "schema": {
@@ -11589,7 +11619,7 @@
           },
           "group_id": {
             "type": "integer",
-            "description": "Group ID to assign cluster to"
+            "description": "Group ID to assign cluster to. A new cluster without one goes into the default group, which any caller with manage_connections may write to whether or not they can see a connection in it."
           },
           "name": {
             "type": "string",

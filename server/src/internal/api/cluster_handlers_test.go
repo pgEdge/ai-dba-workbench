@@ -2220,8 +2220,11 @@ func TestClusterHandler_DeleteAutoDetectedCluster_WithPermission(t *testing.T) {
 		t.Fatalf("Failed to seed cluster: %v", err)
 	}
 
+	// Connection 99 does not exist, so only a caller who sees every
+	// connection may dismiss its cluster (issue #673); the restricted
+	// path is covered in cluster_write_visibility_auto_test.go.
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/clusters/server-99", nil)
-	req = withUser(req, userID)
+	req = withSuperuser(withUser(req, userID))
 	rec := httptest.NewRecorder()
 
 	handler.handleClusterSubpath(rec, req)

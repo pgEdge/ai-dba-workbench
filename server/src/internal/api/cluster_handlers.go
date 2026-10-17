@@ -887,6 +887,10 @@ func (h *ClusterHandler) createClusterInGroup(w http.ResponseWriter, r *http.Req
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
+	if !h.requireVisibleTargetGroup(ctx, w, r, groupID, "Failed to create cluster") {
+		return
+	}
+
 	cluster, err := h.datastore.CreateCluster(ctx, groupID, req.Name, req.Description)
 	if err != nil {
 		log.Printf("[ERROR] Failed to create cluster %s in group %d: %v", req.Name, groupID, err)
@@ -991,6 +995,10 @@ func (h *ClusterHandler) updateCluster(w http.ResponseWriter, r *http.Request, i
 			RespondError(w, http.StatusNotFound, "Cluster not found")
 			return
 		}
+	}
+
+	if req.GroupID != nil && !h.requireVisibleTargetGroup(ctx, w, r, *req.GroupID, "Failed to update cluster") {
+		return
 	}
 
 	cluster, err := h.datastore.UpdateClusterPartial(ctx, id, req.GroupID, req.Name, req.Description, req.ReplicationType)
@@ -1118,6 +1126,16 @@ func (h *ClusterHandler) updateAutoDetectedCluster(w http.ResponseWriter, r *htt
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
+	// A caller who cannot see the cluster, or whose auto_cluster_key
+	// names a different cluster, gets the answer for a missing one; the
+	// target group must be visible too (issue #673).
+	if !h.requireVisibleAutoDetectedCluster(ctx, w, clusterID, autoKey, "Failed to update auto-detected cluster") {
+		return
+	}
+	if req.GroupID != nil && !h.requireVisibleTargetGroup(ctx, w, r, *req.GroupID, "Failed to update auto-detected cluster") {
+		return
+	}
+
 	// Update cluster record (name and/or group_id)
 	cluster, err := h.datastore.UpsertAutoDetectedCluster(ctx, autoKey, req.Name, req.Description, req.GroupID)
 	if err != nil {
@@ -1148,6 +1166,12 @@ func (h *ClusterHandler) deleteAutoDetectedCluster(w http.ResponseWriter, r *htt
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
+
+	// A caller who cannot see the cluster gets the answer for a missing
+	// one (issue #673).
+	if !h.requireVisibleAutoDetectedCluster(ctx, w, clusterID, "", "Failed to delete auto-detected cluster") {
+		return
+	}
 
 	// For Spock clusters, the key is unambiguous
 	if strings.HasPrefix(clusterID, "cluster-spock-") {
@@ -1515,6 +1539,16 @@ func (h *ClusterHandler) handleCreateCluster(w http.ResponseWriter, r *http.Requ
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
+
+	// With no group_id the cluster goes into the default group, which
+	// every caller holding manage_connections may write to on purpose:
+	// requiring visibility of it would hide it from a restricted caller
+	// whose connections all sit in other groups, and they could then
+	// create no clusters at all. requireVisibleTargetGroup admits an
+	// explicit default group id for the same reason.
+	if req.GroupID != nil && !h.requireVisibleTargetGroup(ctx, w, r, *req.GroupID, "Failed to create cluster") {
+		return
+	}
 
 	clusterID, err := h.datastore.CreateManualCluster(ctx, req.Name, req.Description, req.ReplicationType, req.GroupID)
 	if err != nil {

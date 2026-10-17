@@ -546,7 +546,7 @@ func (p *ContextAwareProvider) Execute(ctx context.Context, name string, args ma
 			"query_metrics": true,
 		}
 		if connectionIDTools[name] {
-			if _, hasConnID := args["connection_id"]; !hasConnID && p.authStore != nil {
+			if !hasConnectionID(args) && p.authStore != nil {
 				if tokenHash != "" {
 					session, err := p.authStore.GetConnectionSession(tokenHash)
 					if err == nil && session != nil {
@@ -565,7 +565,7 @@ func (p *ContextAwareProvider) Execute(ctx context.Context, name string, args ma
 		return logAndReturn(response, err)
 	}
 
-	// When connection_id is present in args, the ConnectionResolver inside
+	// When a non-null connection_id is in args, the ConnectionResolver inside
 	// each tool handler resolves the connection independently and does
 	// not need the per-session client, so the base registry, whose
 	// database tools have a nil fallback client, runs the call. Resolving

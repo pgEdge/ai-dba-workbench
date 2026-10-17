@@ -100,8 +100,8 @@ func TestParseConnectionArgsRejectsInvalidIDs(t *testing.T) {
 		"int64 large":   int64(math.MaxInt32) + 1,
 		"int64 zero":    int64(0),
 		"string":        "5",
-		"null":          nil,
 		"bool":          true,
+		"object":        map[string]any{"id": 1},
 	}
 	capture := &toolDenialCapture{}
 	resolver := NewConnectionResolver(nil, nil, nil, capture.record)
@@ -133,6 +133,14 @@ func TestParseConnectionArgsRejectsInvalidIDs(t *testing.T) {
 		if ca.InvalidConnID || ca.ConnectionID < 1 {
 			t.Errorf("Expected %v accepted, got %+v", raw, ca)
 		}
+	}
+
+	// A null connection_id is an omitted one, as several LLM providers
+	// send it, so the call falls back to the selected connection.
+	ca := parseConnectionArgs(map[string]any{"connection_id": nil})
+	if ca.HasConnID || ca.InvalidConnID || ca.ConnectionID != 0 {
+		t.Errorf("Expected a null connection_id treated as absent, got %+v",
+			ca)
 	}
 }
 
@@ -313,6 +321,37 @@ func TestDatastoreToolsRecordRefusedConnection(t *testing.T) {
 				}
 			})
 		}
+
+		// A null connection_id behaves exactly as an omitted one.
+		t.Run(tt.name+" treats null as absent", func(t *testing.T) {
+			absent := map[string]any{"__context": context.Background()}
+			null := map[string]any{"__context": context.Background(),
+				"connection_id": nil}
+			for k, v := range tt.args {
+				if k != "connection_id" && k != "__context" {
+					absent[k] = v
+					null[k] = v
+				}
+			}
+			capture := &toolDenialCapture{}
+			want, err := tt.build(capture.record).Handler(absent)
+			if err != nil {
+				t.Fatalf("Handler returned a Go error: %v", err)
+			}
+			got, err := tt.build(capture.record).Handler(null)
+			if err != nil {
+				t.Fatalf("Handler returned a Go error: %v", err)
+			}
+			if got.IsError != want.IsError ||
+				responseText(got) != responseText(want) {
+				t.Errorf("Expected %+v for a null connection_id, got %+v",
+					want, got)
+			}
+			if strings.Contains(responseText(got), "'connection_id' parameter: must") {
+				t.Errorf("Expected a null connection_id accepted, got %s",
+					responseText(got))
+			}
+		})
 	}
 }
 
@@ -655,5 +694,71 @@ func TestProviderExplicitConnectionSkipsSessionClient(t *testing.T) {
 	}
 	if got := denialTarget(t, events[0]); got != "connections/1" {
 		t.Errorf("Expected target connections/1, got %q", got)
+	}
+}
+
+// TestProviderNullConnectionFallsBackToSession checks that a null
+// connection_id, which several LLM providers send for an omitted
+// parameter, is treated as absent by the provider: the call falls back
+// to the selected connection, so a selection the caller has since lost
+// is recorded as connection.read of that connection, and query_metrics
+// has the selected connection injected rather than refusing the call
+// (issue #706).
+func TestProviderNullConnectionFallsBackToSession(t *testing.T) {
+	provider, store := newWiredTestProvider(t)
+	for _, tool := range []string{"get_schema_info", "query_metrics"} {
+		if _, err := store.RegisterMCPPrivilege(tool,
+			auth.MCPPrivilegeTypeTool, "Public tool", true); err != nil {
+			t.Fatalf("RegisterMCPPrivilege: %v", err)
+		}
+	}
+	if err := store.CreateUser("plain_user", "Password-123!", "", "", ""); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	userID, err := store.GetUserID("plain_user")
+	if err != nil {
+		t.Fatalf("GetUserID: %v", err)
+	}
+	const tokenHash = "null-connection-hash"
+	if err := store.SetConnectionSession(tokenHash, refusedConnectionID,
+		nil); err != nil {
+		t.Fatalf("SetConnectionSession: %v", err)
+	}
+	ctx := context.WithValue(userContext("plain_user", userID),
+		auth.TokenHashContextKey, tokenHash)
+
+	resp, err := provider.Execute(ctx, "get_schema_info",
+		map[string]any{"connection_id": nil})
+	if err != nil {
+		t.Fatalf("Execute returned a Go error: %v", err)
+	}
+	if !resp.IsError || strings.Contains(responseText(resp), "'connection_id'") {
+		t.Fatalf("Expected the lost selection refused, got %+v", resp)
+	}
+	events := deniedRows(t, store, deniedActionConnectionRead)
+	if len(events) != 1 || denialTarget(t, events[0]) != "connections/4242" {
+		t.Fatalf("Expected 1 connection.read on connections/4242, got %+v",
+			events)
+	}
+
+	// The refusal cleared the selection. Once it is selected again and
+	// shared, query_metrics has it injected in place of the null and
+	// goes on to the datastore.
+	if err := store.SetConnectionSession(tokenHash, refusedConnectionID,
+		nil); err != nil {
+		t.Fatalf("SetConnectionSession: %v", err)
+	}
+	provider.rbacChecker.SetConnectionSharingLookup(
+		func(context.Context, int) (bool, string, error) {
+			return true, "", nil
+		})
+	args := map[string]any{"probe_name": "pg_stat_database",
+		"connection_id": nil}
+	if _, err := provider.Execute(ctx, "query_metrics", args); err != nil {
+		t.Fatalf("Execute returned a Go error: %v", err)
+	}
+	if args["connection_id"] != float64(refusedConnectionID) {
+		t.Errorf("Expected the selected connection injected, got %v",
+			args["connection_id"])
 	}
 }

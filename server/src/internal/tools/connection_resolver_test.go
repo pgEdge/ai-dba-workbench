@@ -81,6 +81,17 @@ func TestParseConnectionArgs(t *testing.T) {
 			wantDBName:  "",
 		},
 		{
+			// A null is an omitted parameter, as several LLM
+			// providers send it, not an invalid one.
+			name: "connection_id null is absent",
+			args: map[string]any{
+				"connection_id": nil,
+			},
+			wantConnID:  0,
+			wantHasConn: false,
+			wantDBName:  "",
+		},
+		{
 			name: "empty database_name is ignored",
 			args: map[string]any{
 				"database_name": "",

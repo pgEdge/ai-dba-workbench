@@ -143,6 +143,8 @@ func (h *MemoryHandler) deleteMemory(
 		return
 	}
 
+	// Another user's memory is answered exactly as a missing one, and
+	// neither issues a write, as for PATCH.
 	switch {
 	case mem == nil:
 		err = memory.ErrNotFound
@@ -153,8 +155,10 @@ func (h *MemoryHandler) deleteMemory(
 			return
 		}
 		err = h.memoryStore.DeleteByID(r.Context(), id)
+	case mem.Username != username:
+		err = memory.ErrNotFound
 	default:
-		// User-scoped memory: must be owned by the caller
+		// User-scoped memory owned by the caller
 		err = h.memoryStore.Delete(r.Context(), id, username)
 	}
 	if err != nil {

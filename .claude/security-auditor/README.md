@@ -94,10 +94,13 @@ moved.
   target cluster of `PUT /api/v1/connections/{id}/cluster` (a missing
   cluster id answers 404 too, not 500 from the foreign key),
   blackouts and blackout schedules outside a token's connection scope,
-  and probe configs: `GET /api/v1/probe-configs?connection_id=N`,
+  probe configs: `GET /api/v1/probe-configs?connection_id=N`,
   `GET /api/v1/probe-configs/{id}` and `PUT /api/v1/probe-configs/{id}`
   answer 404 for a server, cluster or group config the caller cannot
-  see, PUT before the token scope or the body is checked (#647).
+  see, PUT before the token scope or the body is checked (#647), and
+  `PUT` and `DELETE /api/v1/connections/{id}` for a caller without
+  `manage_connections` (#677; a `manage_connections` holder may change
+  a connection they cannot see, so is not answered 404 for one).
   Judge an enumeration concern against the convention of the endpoint
   in question rather than assuming either model throughout.
 - The MCP tools that go through `resolveAccessibleConnection` in

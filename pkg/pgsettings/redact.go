@@ -165,7 +165,11 @@ func RedactValue(name, value string) string {
 // and the characters _ . / + - ~; a command that starts any other way, for
 // example with a quoted path, a subshell or a redirection, or that uses
 // $ expansion or an empty value in a leading assignment, is replaced in
-// full, since its program name cannot be picked out with confidence.
+// full, since its program name cannot be picked out with confidence. So
+// is any command holding a backslash-newline: the shell removes the pair
+// as a line continuation, so PGPASSWORD=\<newline> s3cret cmd assigns an
+// empty value and runs s3cret, which the lexer cannot tell from an
+// escaped character.
 // A command of whitespace alone holds nothing and is returned unchanged.
 // The function is idempotent.
 //
@@ -179,6 +183,9 @@ func RedactValue(name, value string) string {
 // one leaves a command that does not run as intended, and the words
 // after its first are shown as the shell would read them.
 func RedactShellCommand(command string) string {
+	if strings.Contains(command, "\\\n") {
+		return RedactedValue
+	}
 	rest := strings.TrimLeft(command, " \t")
 	if rest == "" {
 		return command

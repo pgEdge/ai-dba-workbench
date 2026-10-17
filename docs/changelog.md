@@ -2737,11 +2737,11 @@ project adheres to
   already stored, and the server redacts the timeline and latest-row
   values again for a datastore the collector has not yet migrated;
   the structured `query_datastore` tool masks the same settings,
-  using the same list. A change to the password alone is no longer recorded as a
-  configuration change. Redaction cannot recall a password that has
-  already been read from the datastore, so rotate any password that
-  these settings or the statement text below held whilst an earlier
-  version was collecting. (#643)
+  using the same list. A change to the password alone is no longer
+  recorded as a configuration change. Redaction cannot recall a
+  password that has already been read from the datastore, so rotate
+  any password that these settings or the statement text below held
+  whilst an earlier version was collecting. (#643)
 
 - Redact passwords in collected statement text. PostgreSQL keeps the
   text of statements such as `ALTER ROLE ... PASSWORD`, `CREATE USER
@@ -2821,13 +2821,18 @@ project adheres to
   assigned before the program, so
   `PGPASSWORD=s3cret pgbackrest archive-push %p` is stored as
   `PGPASSWORD=******** pgbackrest ********`. A command that does not
-  start with a plain program name, or that uses `$` expansion or an
-  empty assignment before it, is replaced in full. Collector schema
-  migration 25 redacts the rows already stored in the same way. The
-  server's REST routes, timeline events and `query_datastore` still
-  return these settings as `********` in full, as does the redaction
-  of collected statement text. A change to a command's arguments
-  alone is not recorded as a configuration change. (#676)
+  start with a plain program name, that uses `$` expansion or an
+  empty assignment before it, or that holds a backslash line
+  continuation is replaced in full. Collector schema migration 25
+  redacts the rows already stored in the same way when it runs in
+  this release; a datastore already past migration 25 keeps these
+  values as `********`, so the first collection after the upgrade
+  records one configuration change for each server that sets one of
+  these commands. The server's REST routes, timeline events and
+  `query_datastore` still return these settings as `********` in
+  full, as does the redaction of collected statement text. A change
+  to a command's arguments alone is not recorded as a configuration
+  change. (#676)
 
 - Delete a user with `ai-dba-server -delete-user` only when the
   confirmation is an explicit `y` or `yes`. The answer was checked

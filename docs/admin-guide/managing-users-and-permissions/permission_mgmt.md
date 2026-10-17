@@ -122,7 +122,7 @@ permissions available:
 
 | Permission | Description |
 |---|---|
-| `manage_connections` | Allows creating, editing, and deleting monitored database connections. |
+| `manage_connections` | Allows creating monitored database connections, and editing and deleting those that you can see. |
 | `manage_groups` | Allows creating, editing, and deleting groups and their memberships. |
 | `manage_permissions` | Allows granting and revoking privileges on groups. |
 | `manage_users` | Allows creating, editing, and deleting user accounts and service accounts. |

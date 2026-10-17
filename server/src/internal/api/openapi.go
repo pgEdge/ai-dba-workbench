@@ -2086,7 +2086,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 			},
 			Put: &OpenAPIOperation{
 				Summary:     "Update a connection",
-				Description: "Updates an existing connection. Requires ownership of the connection or the manage_connections permission. A connection the caller cannot see answers 404, exactly as a missing one does.",
+				Description: "Updates an existing connection. Requires ownership of the connection or the manage_connections permission. A connection the caller cannot see answers 404, exactly as a missing one does, even to a manage_connections holder.",
 				OperationID: "updateConnection",
 				Tags:        []string{"Connections"},
 				Security:    bearerAuth,
@@ -2102,7 +2102,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 			},
 			Delete: &OpenAPIOperation{
 				Summary:     "Delete a connection",
-				Description: "Deletes a connection. Requires ownership of the connection or the manage_connections permission. The connection disappears from every listing and its monitoring and alerting stop as soon as the request returns; the server then removes its collected metrics in the background, in bounded batches, and finally the connection row itself. A connection the caller cannot see answers 404, exactly as a missing one does.",
+				Description: "Deletes a connection. Requires ownership of the connection or the manage_connections permission. The connection disappears from every listing and its monitoring and alerting stop as soon as the request returns; the server then removes its collected metrics in the background, in bounded batches, and finally the connection row itself. A connection the caller cannot see answers 404, exactly as a missing one does, even to a manage_connections holder.",
 				OperationID: "deleteConnection",
 				Tags:        []string{"Connections"},
 				Security:    bearerAuth,

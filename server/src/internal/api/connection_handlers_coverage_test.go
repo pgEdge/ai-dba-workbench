@@ -455,6 +455,7 @@ func TestConnectionCoverage_UpdateConnection(t *testing.T) {
 	str := func(s string) *string { return &s }
 	num := func(n int) *int { return &n }
 	yes := true
+	su := h.superuser()
 
 	tests := []struct {
 		name string
@@ -479,7 +480,11 @@ func TestConnectionCoverage_UpdateConnection(t *testing.T) {
 		{"owner updates", &h.owner, path,
 			ConnectionFullUpdateRequest{Name: str("owner-renamed"), Host: str(covAllowed), Port: num(5433)},
 			http.StatusOK, ""},
-		{"admin shares", &h.admin, path, ConnectionFullUpdateRequest{IsShared: &yes}, http.StatusOK, ""},
+		// manage_connections does not reach a connection the caller
+		// cannot see (issue #710); a superuser sees every connection.
+		{"admin cannot reach unseen connection", &h.admin, path,
+			ConnectionFullUpdateRequest{IsShared: &yes}, http.StatusNotFound, "Connection not found"},
+		{"superuser shares", &su, path, ConnectionFullUpdateRequest{IsShared: &yes}, http.StatusOK, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

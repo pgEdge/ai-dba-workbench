@@ -11,17 +11,20 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 )
 
-// Tests for issue #677: PUT and DELETE /api/v1/connections/{id} answer a
-// caller without manage_connections exactly as for a missing connection
-// when the caller cannot see the connection, so the ownership 403 no
-// longer confirms that an ID exists. A visible connection the caller does
-// not own still draws the 403.
+// Tests for issues #677 and #710: PUT and DELETE /api/v1/connections/{id}
+// answer a caller exactly as for a missing connection when the caller
+// cannot see the connection, so the ownership 403 no longer confirms that
+// an ID exists, and manage_connections does not reach a connection the
+// caller cannot see. A visible connection the caller does not own still
+// draws the 403 without manage_connections.
 
 // connWriteVisibilityCase is one PUT or DELETE request against
 // /api/v1/connections/{id}.
@@ -54,6 +57,22 @@ func (f *connCovFixture) newGroupGrantedCaller(t *testing.T, username string, co
 		t.Fatalf("AuthenticateUser(%s): %v", username, err)
 	}
 	return connCovCaller{id: id, username: username, token: token}
+}
+
+// grantAdminPermission gives the caller an admin permission through a
+// group of its own.
+func (f *connCovFixture) grantAdminPermission(t *testing.T, c connCovCaller, permission string) {
+	t.Helper()
+	groupID, err := f.store.CreateGroup(c.username+"_admin", "")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	if err := f.store.AddUserToGroup(groupID, c.id); err != nil {
+		t.Fatalf("AddUserToGroup: %v", err)
+	}
+	if err := f.store.GrantAdminPermission(groupID, permission); err != nil {
+		t.Fatalf("GrantAdminPermission: %v", err)
+	}
 }
 
 // connectionName returns the stored name of a connection.
@@ -159,29 +178,128 @@ func TestConnectionWritesRefuseVisibleUnownedConnections(t *testing.T) {
 	}
 }
 
-// TestConnectionWritesManagerReachesInvisibleConnection checks that the
-// visibility check does not apply to a manage_connections holder, who may
-// change a connection they cannot see, and that a superuser's missing ID
-// still answers 404 from the lookup.
-func TestConnectionWritesManagerReachesInvisibleConnection(t *testing.T) {
+// TestConnectionWritesHideInvisibleConnectionsFromManagers checks that
+// manage_connections does not reach a connection the caller cannot see
+// (issue #710): PUT and DELETE answer exactly as for a missing ID, record
+// no refusal, write nothing, and return nothing of the connection.
+func TestConnectionWritesHideInvisibleConnectionsFromManagers(t *testing.T) {
 	f := newConnCovFixture(t, connCovSecret)
-	manager := f.newCaller(t, "vis677_manager", auth.PermManageConnections)
-	su := f.newCaller(t, "vis677_su")
-	id := f.seed(t, "elsewhere", "vis677_absent_owner", false)
+	var recorded []string
+	f.handler.SetDenialRecorder(func(_ *http.Request, reason string) {
+		recorded = append(recorded, reason)
+	})
 
-	name := "managed"
-	rec := f.serve(asCaller(connCovRequest(t, http.MethodPut, connCovPath(id, ""),
-		ConnectionFullUpdateRequest{Name: &name}), manager))
+	owner := f.newCaller(t, "vis710_owner")
+	manager := f.newCaller(t, "vis710_manager", auth.PermManageConnections)
+	private := f.seed(t, "vis710-private", owner.username, false)
+	restricted := f.seed(t, "vis710-restricted", owner.username, true)
+	missing := restricted + 1000
+	_ = f.newGroupGrantedCaller(t, "vis710_granted", restricted, auth.AccessLevelRead)
+
+	shared := true
+	for _, tc := range connWriteVisibilityCases() {
+		bodies := []any{tc.body, ConnectionFullUpdateRequest{IsShared: &shared}, "{not json"}
+		if tc.method == http.MethodDelete {
+			bodies = []any{nil}
+		}
+		for _, body := range bodies {
+			missingRec := f.serve(asCaller(connCovRequest(t, tc.method,
+				connCovPath(missing, ""), body), manager))
+			assertError(t, missingRec, http.StatusNotFound, "Connection not found")
+
+			for _, id := range []int{private, restricted} {
+				rec := f.serve(asCaller(connCovRequest(t, tc.method,
+					connCovPath(id, ""), body), manager))
+				if rec.Code != missingRec.Code || rec.Body.String() != missingRec.Body.String() {
+					t.Errorf("%s connection %d (body %v): got %d %q, want the missing-ID answer %d %q",
+						tc.method, id, body, rec.Code, rec.Body.String(),
+						missingRec.Code, missingRec.Body.String())
+				}
+				for _, secret := range []string{"vis710-", "db.example.com", owner.username} {
+					if strings.Contains(rec.Body.String(), secret) {
+						t.Errorf("%s connection %d leaked %q: %s", tc.method, id, secret, rec.Body.String())
+					}
+				}
+			}
+		}
+	}
+
+	if len(recorded) != 0 {
+		t.Errorf("Hidden connections recorded refusals: %v", recorded)
+	}
+	for _, id := range []int{private, restricted} {
+		if !f.rowExists(t, id) {
+			t.Fatalf("Connection %d was deleted", id)
+		}
+		if got := f.connectionName(t, id); got == "renamed" {
+			t.Errorf("Connection %d was renamed", id)
+		}
+	}
+	var privateShared bool
+	if err := f.pool.QueryRow(context.Background(),
+		"SELECT is_shared FROM connections WHERE id = $1", private).Scan(&privateShared); err != nil {
+		t.Fatalf("Read is_shared: %v", err)
+	}
+	if privateShared {
+		t.Error("Private connection was made shared")
+	}
+}
+
+// TestConnectionWritesManagerChangesVisibleConnection checks that a
+// manage_connections holder may still change and delete a connection it
+// can see but does not own, whether through sharing or a read grant.
+func TestConnectionWritesManagerChangesVisibleConnection(t *testing.T) {
+	f := newConnCovFixture(t, connCovSecret)
+	owner := f.newCaller(t, "vis710_vowner")
+	shared := f.seed(t, "vis710-shared", owner.username, true)
+	granted := f.seed(t, "vis710-granted", owner.username, false)
+	manager := f.newGroupGrantedCaller(t, "vis710_vmanager", granted, auth.AccessLevelRead)
+	f.grantAdminPermission(t, manager, auth.PermManageConnections)
+
+	for _, id := range []int{shared, granted} {
+		name := fmt.Sprintf("managed-%d", id)
+		rec := f.serve(asCaller(connCovRequest(t, http.MethodPut, connCovPath(id, ""),
+			ConnectionFullUpdateRequest{Name: &name}), manager))
+		assertStatus(t, rec, http.StatusOK)
+		if got := f.connectionName(t, id); got != name {
+			t.Errorf("Connection %d: name = %q, want %q", id, got, name)
+		}
+
+		rec = f.serve(asCaller(connCovRequest(t, http.MethodDelete, connCovPath(id, ""), nil), manager))
+		assertStatus(t, rec, http.StatusNoContent)
+		if f.rowExists(t, id) {
+			t.Errorf("Connection %d was not deleted", id)
+		}
+	}
+}
+
+// TestConnectionWritesSuperuserReachesAnyConnection checks that a
+// superuser still changes and deletes a private connection another user
+// owns, and that a missing ID still answers 404.
+func TestConnectionWritesSuperuserReachesAnyConnection(t *testing.T) {
+	f := newConnCovFixture(t, connCovSecret)
+	su := f.newCaller(t, "vis710_su")
+	id := f.seed(t, "vis710-elsewhere", "vis710_absent_owner", false)
+
+	name := "superuser-renamed"
+	rec := f.serve(asSuperuserCaller(connCovRequest(t, http.MethodPut, connCovPath(id, ""),
+		ConnectionFullUpdateRequest{Name: &name}), su))
 	assertStatus(t, rec, http.StatusOK)
 	if got := f.connectionName(t, id); got != name {
 		t.Errorf("Name = %q, want %q", got, name)
 	}
 
-	rec = f.serve(asSuperuserCaller(connCovRequest(t, http.MethodDelete,
-		connCovPath(id+1000, ""), nil), su))
-	assertError(t, rec, http.StatusNotFound, "Connection not found")
+	for _, method := range []string{http.MethodPut, http.MethodDelete} {
+		var body any
+		if method == http.MethodPut {
+			body = ConnectionFullUpdateRequest{Name: &name}
+		}
+		rec = f.serve(asSuperuserCaller(connCovRequest(t, method,
+			connCovPath(id+1000, ""), body), su))
+		assertError(t, rec, http.StatusNotFound, "Connection not found")
+	}
 
-	rec = f.serve(asCaller(connCovRequest(t, http.MethodDelete, connCovPath(id, ""), nil), manager))
+	rec = f.serve(asSuperuserCaller(connCovRequest(t, http.MethodDelete, connCovPath(id, ""), nil), su))
 	assertStatus(t, rec, http.StatusNoContent)
 	if f.rowExists(t, id) {
 		t.Error("Connection was not deleted")

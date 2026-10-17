@@ -195,7 +195,11 @@ Response: `204 No Content`
 
 The following endpoint deletes a connection; the caller
 must own the connection or hold the `manage_connections`
-permission:
+permission, and must be able to see the connection. A
+connection the caller cannot see answers `404 Not Found`,
+exactly as a missing one does, even to a holder of
+`manage_connections`; updating a connection follows the
+same rule:
 
 ```
 DELETE /api/v1/connections/{id}

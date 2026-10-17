@@ -42,8 +42,8 @@ icon, and confirm the deletion. The server disappears from the
 Workbench straight away and its monitoring and alerting stop; the
 Workbench then clears the server's collected metrics in the
 background, which can take a while for a server with a long history.
-You can delete a server you own, or any server if you hold the
-`manage_connections` permission.
+You can delete a server you own, or any server you can see if you
+hold the `manage_connections` permission.
 
 For detailed information about the monitoring dashboards, see
 [Dashboards](dashboards/index.md).

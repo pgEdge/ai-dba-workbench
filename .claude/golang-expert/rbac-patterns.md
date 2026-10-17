@@ -230,8 +230,9 @@ the connection (`CanAccessConnection`), whether or not it holds
 `manage_connections` (issue #710, matching the cluster group handlers
 of issue #649); only then the ownership check, which
 `manage_connections` passes and whose 403 is audited through
-`h.refuse`. A superuser sees every live connection, so is unaffected. `CanAccessConnection` runs whether or not
-the row exists, so the work done does not reveal it either. For that
+`h.refuse`. A superuser sees every live connection, so is unaffected.
+`CanAccessConnection` runs whether or not the row exists, so the work
+done does not reveal it either. For that
 to hold, `CanAccessConnection` reads the caller's group privileges
 before the sharing lookup, which fails for a missing id; keep that
 order, so a missing and a hidden connection run the same queries.

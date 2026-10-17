@@ -1047,6 +1047,32 @@ audited, as is the cluster move;
 `TestConnectionMutationHonoursTokenConnectionScope` and
 `TestConnectionScopeRefusalIsAudited` cover them.
 
+Connection-access refusals (`CanAccessConnection` or the alert
+resolver says no) are audited too since issue #675, through
+`server/src/internal/api/access_denial_targets.go`. Their routes name
+the object outside the path (a query parameter or the body), so the
+refusing handler calls `denialRecorder.refuseConnection` or
+`refuseTarget`, which attach the action and a `connections/<id>` or
+`alerts/<id>` target to the request context; `deniedRoute` returns that
+before its path mapping. The reason passed is one of the fixed constants
+`connectionAccessDenied`, `connectionWriteDenied`, `alertAccessDenied`
+and `systemAlertManageDenied`, never the formatted response message,
+because the reason is in the coalescer key and an id in it would write a
+row per probed id. `alertRefusalReason` returns
+`systemAlertManageDenied` for a system alert (`connection_id` NULL),
+because acting on one needs `manage_alert_rules` rather than access to a
+connection, and the constant matches the reason `requirePermission`
+records; any other alert gets `alertAccessDenied`. The actions are the
+`deniedAction*` constants in that file (`connection.read`,
+`connection.query`, `metrics.read`, `server_info.read`,
+`alert.acknowledge` and so on).
+`MetricsHandler`, `LatestSnapshotHandler`, `PerfSummaryHandler`,
+`ServerInfoHandler` and `AlertHandler` embed `denialAuditor` and are in
+the wiring loop, which `TestSetupHandlersWiresDenialRecorders` pins.
+`GET /connections/current` is audited as `connection.read` even
+though the client reads it on every load; the coalescer bounds it. The
+tests are in `access_denial_targets_test.go`.
+
 Mutations in these handlers go through `h.actorStore(r)` rather than
 `h.authStore`, so the audit row names the acting user or token:
 `actorStore` wraps `auth.ActorFromContext(r.Context())`, which reads

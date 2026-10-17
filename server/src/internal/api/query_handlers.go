@@ -100,8 +100,8 @@ func (h *ConnectionHandler) executeQuery(w http.ResponseWriter, r *http.Request,
 	// Check RBAC access to this connection
 	canAccess, _ := h.rbacChecker.CanAccessConnection(r.Context(), connectionID)
 	if !canAccess {
-		RespondError(w, http.StatusForbidden,
-			"Permission denied: you do not have access to this connection")
+		h.denialRecorder.refuseConnection(w, r, deniedActionConnectionQuery,
+			connectionID, connectionAccessDenied)
 		return
 	}
 
@@ -164,8 +164,9 @@ func (h *ConnectionHandler) executeQuery(w http.ResponseWriter, r *http.Request,
 	// For write statements, enforce RBAC write access
 	if !allReadOnly {
 		if !h.rbacChecker.HasWriteAccess(r.Context(), connectionID) {
-			RespondError(w, http.StatusForbidden,
-				"Permission denied: you do not have write access to this connection")
+			h.denialRecorder.refuseTarget(w, r, deniedActionConnectionQueryWrite,
+				connectionDenialTarget(connectionID), connectionWriteDenied,
+				connectionWriteDenied)
 			return
 		}
 	}
@@ -1389,8 +1390,8 @@ func (h *ConnectionHandler) validateQuery(w http.ResponseWriter, r *http.Request
 	// Check RBAC access to this connection, before the body is decoded.
 	canAccess, _ := h.rbacChecker.CanAccessConnection(r.Context(), connectionID)
 	if !canAccess {
-		RespondError(w, http.StatusForbidden,
-			"Permission denied: you do not have access to this connection")
+		h.denialRecorder.refuseConnection(w, r, deniedActionConnectionQueryValidate,
+			connectionID, connectionAccessDenied)
 		return
 	}
 

@@ -46,6 +46,9 @@ type AlertHandler struct {
 	rbacChecker     *auth.RBACChecker
 	alertResolver   alertConnectionResolver
 	unacknowledgeFn alertUnacknowledger
+
+	// denialAuditor audits this handler's connection-access refusals.
+	denialAuditor
 }
 
 // NewAlertHandler creates a new alert handler
@@ -287,6 +290,16 @@ func (h *AlertHandler) canActOnAlert(ctx context.Context, connID *int) bool {
 	return canAccess
 }
 
+// alertRefusalReason is the reason recorded when canActOnAlert refuses
+// the caller: a system alert needs manage_alert_rules, and any other
+// alert needs access to its connection.
+func alertRefusalReason(connID *int) string {
+	if connID == nil {
+		return systemAlertManageDenied
+	}
+	return alertAccessDenied
+}
+
 // AcknowledgeRequest represents the request body for acknowledging an alert
 type AcknowledgeRequest struct {
 	AlertID       int64  `json:"alert_id"`
@@ -337,7 +350,9 @@ func (h *AlertHandler) acknowledgeAlert(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if !h.canActOnAlert(r.Context(), connID) {
-		RespondError(w, http.StatusForbidden, "Access denied")
+		h.denialRecorder.refuseTarget(w, r, deniedActionAlertAcknowledge,
+			alertDenialTarget(req.AlertID), alertRefusalReason(connID),
+			"Access denied")
 		return
 	}
 
@@ -394,7 +409,9 @@ func (h *AlertHandler) unacknowledgeAlert(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if !h.canActOnAlert(r.Context(), connID) {
-		RespondError(w, http.StatusForbidden, "Access denied")
+		h.denialRecorder.refuseTarget(w, r, deniedActionAlertUnacknowledge,
+			alertDenialTarget(alertID), alertRefusalReason(connID),
+			"Access denied")
 		return
 	}
 
@@ -477,14 +494,16 @@ func (h *AlertHandler) handleSaveAnalysis(w http.ResponseWriter, r *http.Request
 	// still gets 403 first, as for any alert beyond their reach.
 	if connID == nil {
 		if !h.rbacChecker.CanSeeSystemAlerts(r.Context()) {
-			RespondError(w, http.StatusForbidden, "Access denied")
+			h.denialRecorder.refuseTarget(w, r, deniedActionAlertAnalysisUpdate,
+				alertDenialTarget(req.AlertID), alertAccessDenied, "Access denied")
 			return
 		}
 		RespondError(w, http.StatusBadRequest, "AI analysis cannot be saved on a system alert")
 		return
 	}
 	if !h.canActOnAlert(r.Context(), connID) {
-		RespondError(w, http.StatusForbidden, "Access denied")
+		h.denialRecorder.refuseTarget(w, r, deniedActionAlertAnalysisUpdate,
+			alertDenialTarget(req.AlertID), alertAccessDenied, "Access denied")
 		return
 	}
 

@@ -45,6 +45,9 @@ type MetricsHandler struct {
 	datastore *database.Datastore
 	authStore *auth.AuthStore
 
+	// denialAuditor audits this handler's connection-access refusals.
+	denialAuditor
+
 	// queryTimeSeriesFn performs the time-series query. When nil the
 	// handler falls back to metrics.QueryTimeSeries; tests substitute a
 	// fake to capture the MetricFilters reaching the query layer.
@@ -172,7 +175,7 @@ func (h *MetricsHandler) handleMetricsQuery(
 	for _, connID := range connectionIDs {
 		canAccess, _ := rbacChecker.CanAccessConnection(r.Context(), connID)
 		if !canAccess {
-			RespondError(w, http.StatusForbidden,
+			h.denialRecorder.refuseConnection(w, r, deniedActionMetricsRead, connID,
 				fmt.Sprintf("Permission denied: you do not have access to connection %d", connID))
 			return
 		}
@@ -378,7 +381,7 @@ func (h *MetricsHandler) handleMetricsBaselines(
 	rbacChecker := h.accessChecker()
 	canAccess, _ := rbacChecker.CanAccessConnection(r.Context(), connectionID)
 	if !canAccess {
-		RespondError(w, http.StatusForbidden,
+		h.denialRecorder.refuseConnection(w, r, deniedActionMetricsRead, connectionID,
 			fmt.Sprintf("Permission denied: you do not have access to connection %d", connectionID))
 		return
 	}

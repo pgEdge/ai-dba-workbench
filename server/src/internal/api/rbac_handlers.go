@@ -217,8 +217,15 @@ func deniedAction(r *http.Request) string {
 // example "groups/5" or "connections/7"); a route the mapper does not
 // recognize records unmatchedDenialTarget, and an action of
 // "rbac.<method>" in lower case, or "rbac.other" for a method outside
-// the standard set, which keeps the event rather than dropping it.
+// the standard set, which keeps the event rather than dropping it. A
+// handler whose route names its object outside the path attaches the
+// action and target itself through refuseTarget, from the same fixed
+// vocabulary, and those take precedence.
 func deniedRoute(r *http.Request) (action, target string) {
+	if d, ok := deniedTargetFrom(r); ok {
+		return d.action, d.target
+	}
+
 	if action := deniedConnectionAction(r.Method, r.URL.Path); action != "" {
 		return action, denialResourceTarget("connections",
 			strings.TrimPrefix(r.URL.Path, connectionPathPrefix))

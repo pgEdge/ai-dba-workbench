@@ -95,6 +95,45 @@ func TestInjectLimitOffset_SelectQueries(t *testing.T) {
 			wantModified: "SELECT * FROM users -- every user\nLIMIT 101\nOFFSET 50",
 			wantHadLimit: false,
 		},
+		{
+			name:         "trailing semicolon dropped before limit",
+			query:        "SELECT 1;",
+			limit:        100,
+			offset:       0,
+			wantModified: "SELECT 1\nLIMIT 101",
+		},
+		{
+			name:         "trailing semicolons and whitespace dropped",
+			query:        "SELECT * FROM users ; ;\n\t ",
+			limit:        100,
+			offset:       50,
+			wantModified: "SELECT * FROM users\nLIMIT 101\nOFFSET 50",
+		},
+		{
+			name:          "trailing semicolon dropped before offset alone",
+			query:         "SELECT * FROM users LIMIT 10;",
+			limit:         100,
+			offset:        5,
+			wantModified:  "SELECT * FROM users LIMIT 10\nOFFSET 5",
+			wantHadLimit:  true,
+			wantHadOffset: false,
+		},
+		{
+			name:          "trailing semicolon kept when nothing is injected",
+			query:         "SELECT * FROM users LIMIT 10 OFFSET 2;",
+			limit:         100,
+			offset:        5,
+			wantModified:  "SELECT * FROM users LIMIT 10 OFFSET 2;",
+			wantHadLimit:  true,
+			wantHadOffset: true,
+		},
+		{
+			name:         "semicolon inside a string literal kept",
+			query:        "SELECT ';'",
+			limit:        100,
+			offset:       0,
+			wantModified: "SELECT ';'\nLIMIT 101",
+		},
 	}
 
 	for _, tt := range tests {

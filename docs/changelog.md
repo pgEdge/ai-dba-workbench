@@ -2523,7 +2523,10 @@ project adheres to
   tool also stops a statement once it has read `limit` rows rather
   than reading the rest of its result, and starts the `LIMIT` and
   `OFFSET` it adds on a new line, so a trailing `--` comment no
-  longer hides them and asking for the next page now advances.
+  longer hides them and asking for the next page now advances. A
+  query ending in a semicolon, such as `SELECT 1;`, no longer fails
+  with a syntax error, because the tool drops the trailing semicolon
+  before adding its `LIMIT`.
 
 ### Removed
 
@@ -2687,12 +2690,12 @@ project adheres to
   Functions called through a user-defined wrapper or view are not
   detected. The MCP tools that Ellie and other MCP clients use now
   apply the same check: `query_database` refuses such a `SELECT`, as
-  it now refuses every write; `execute_explain` refuses to `EXPLAIN ANALYZE` it, although
-  the plan is still available with `analyze` set to false;
-  `test_query` refuses one prefixed with `ANALYZE` or other `EXPLAIN`
-  options, which previously ran it; and `count_rows` refuses it
-  outright in its `WHERE` clause. `test_query` and
-  the query validation endpoint now plan with a fixed `EXPLAIN` option
+  it now refuses every write; `execute_explain` refuses to
+  `EXPLAIN ANALYZE` it, although the plan is still available with
+  `analyze` set to false; `test_query` refuses one prefixed with
+  `ANALYZE` or other `EXPLAIN` options, which previously ran it; and
+  `count_rows` refuses it outright in its `WHERE` clause. `test_query`
+  and the query validation endpoint now plan with a fixed `EXPLAIN` option
   list, so a statement starting with `ANALYZE` or `VERBOSE` is a
   syntax error rather than being run, and a `--` comment ending in a
   carriage return no longer hides one. `execute_explain` with

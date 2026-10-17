@@ -78,10 +78,19 @@ func injectLimitOffset(sqlQuery string, limit, offset int) (modified string, had
 	// Each clause starts on a new line so that a trailing -- comment in
 	// the caller's query cannot comment it out.
 	modified = sqlQuery
-	if limit > 0 && !hadLimit {
+	injectLimit := limit > 0 && !hadLimit
+	injectOffset := offset > 0 && !hadOffset
+	if injectLimit || injectOffset {
+		// A clause appended after the statement's terminating semicolon
+		// is a syntax error, so drop trailing semicolons and whitespace
+		// first. A semicolon that ends a trailing -- comment is dropped
+		// with it, which leaves the comment's meaning unchanged.
+		modified = strings.TrimRight(modified, "; \t\r\n")
+	}
+	if injectLimit {
 		modified = fmt.Sprintf("%s\nLIMIT %d", modified, limit+1)
 	}
-	if offset > 0 && !hadOffset {
+	if injectOffset {
 		modified = fmt.Sprintf("%s\nOFFSET %d", modified, offset)
 	}
 

@@ -74,6 +74,12 @@ func TestExecuteReadOnlyQueryIntegration(t *testing.T) {
 			wantRows:      3,
 			wantTruncated: true,
 		},
+		{
+			name:          "runs a query that ends in a semicolon",
+			query:         "SELECT g FROM generate_series(1, 5) g;\n",
+			wantRows:      3,
+			wantTruncated: true,
+		},
 	}
 	for _, tt := range capTests {
 		t.Run(tt.name, func(t *testing.T) {

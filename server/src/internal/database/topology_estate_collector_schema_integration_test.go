@@ -380,8 +380,13 @@ func buildCSFixture(e *csEnv) *csFixture {
 	e.markLate(f.gone)
 	e.live(f.gone, csRole{primary: "binary_standby", streaming: true, upHost: "192.0.2.10", upPort: 5432}, "17.2", int64(111))
 	e.alert(f.gone, "critical", "active", "Late alert", "1 minute", nil)
+	// The manual row sourced from gone uses replicates_with: the first
+	// refresh auto-detected gone streams_from bin-primary, so a manual
+	// streams_from row would hit that key, be skipped by ON CONFLICT and
+	// vanish when the second refresh replaces the auto-detected rows,
+	// leaving the source side of the relationship readers untested.
 	if err := e.ds.SetNodeRelationships(e.ctx, f.binCluster, f.gone,
-		[]RelationshipInput{{TargetConnectionID: f.binPrimary, RelationshipType: "streams_from"}}); err != nil {
+		[]RelationshipInput{{TargetConnectionID: f.binPrimary, RelationshipType: "replicates_with"}}); err != nil {
 		e.t.Fatalf("SetNodeRelationships gone: %v", err)
 	}
 	if err := e.ds.SetNodeRelationships(e.ctx, f.binCluster, f.binStandby2,
@@ -394,6 +399,10 @@ func buildCSFixture(e *csEnv) *csFixture {
 	}
 	if n := e.queryInt(`SELECT count(*) FROM connections WHERE id = $1 AND cluster_id IS NOT NULL`, f.gone); n != 0 {
 		e.t.Fatalf("refresh reassigned the marked connection to a cluster")
+	}
+	if n := e.queryInt(`SELECT count(*) FROM cluster_node_relationships
+            WHERE cluster_id = $1 AND source_connection_id = $2`, f.binCluster, f.gone); n != 1 {
+		e.t.Fatalf("fixture holds %d relationships sourced from the marked connection, want 1", n)
 	}
 	return f
 }

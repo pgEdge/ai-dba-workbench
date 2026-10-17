@@ -37,10 +37,12 @@ through a long retention history could outlast any request budget.
 2. `database.ConnectionPurger`, started by `startConnectionPurger` in
    `cmd/mcp-server/server.go`, runs at startup, every
    `DefaultConnectionPurgeInterval` (five minutes) and on the nudge
-   the delete handler sends. `PurgeConnection` deletes the
-   connection's rows from each leaf partition under `metrics` in
-   committed batches of `DefaultConnectionPurgeBatchSize` (ctid
-   batches, never one big transaction), then removes the row. A leaf
+   the delete handler sends; after a pass with a failure it retries
+   after `DefaultConnectionPurgeRetryDelay` (15 seconds), doubling on
+   each consecutive failure up to the interval. `PurgeConnection`
+   deletes the connection's rows from each leaf partition under
+   `metrics` in committed batches of `DefaultConnectionPurgeBatchSize`
+   (ctid batches, never one big transaction), then removes the row. A leaf
    with no foreign key to `connections` is swept once more after the
    row is gone, because an in-flight collector write can land there
    after its batch loop and nothing would cascade it. It is

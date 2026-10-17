@@ -45,9 +45,16 @@ const (
 
 	// DefaultConnectionPurgeInterval is how often the purge looks for
 	// marked connections when nothing nudges it. The nudge from the
-	// delete handler starts most purges; the ticker picks up the rest,
-	// such as one interrupted by a failed batch.
+	// delete handler starts most purges; the ticker picks up the rest.
 	DefaultConnectionPurgeInterval = 5 * time.Minute
+
+	// DefaultConnectionPurgeRetryDelay is how long the purge waits after
+	// a pass with a failure (a batch that timed out on a lock, say)
+	// before trying again, rather than leaving the space unreclaimed
+	// until the next interval. The delay doubles on each consecutive
+	// failed pass, up to the interval, so a lasting fault does not
+	// fill the log.
+	DefaultConnectionPurgeRetryDelay = 15 * time.Second
 
 	// connectionPurgeBatchTimeout bounds one batch DELETE. The pool's
 	// statement_timeout applies too; this also covers acquiring a
@@ -317,11 +324,12 @@ type connectionPurgeStore interface {
 // background: it purges every connection marked deleted, at startup,
 // whenever Nudge is called, and every interval in between.
 type ConnectionPurger struct {
-	store     connectionPurgeStore
-	interval  time.Duration
-	batchSize int
-	nudge     chan struct{}
-	logf      func(format string, args ...any)
+	store      connectionPurgeStore
+	interval   time.Duration
+	retryDelay time.Duration
+	batchSize  int
+	nudge      chan struct{}
+	logf       func(format string, args ...any)
 }
 
 // NewConnectionPurger returns a purger for the datastore's deleted
@@ -334,9 +342,10 @@ func NewConnectionPurger(ds *Datastore) *ConnectionPurger {
 func newConnectionPurger(store connectionPurgeStore, interval time.Duration,
 	batchSize int, logf func(string, ...any)) *ConnectionPurger {
 	return &ConnectionPurger{
-		store:     store,
-		interval:  interval,
-		batchSize: batchSize,
+		store:      store,
+		interval:   interval,
+		retryDelay: min(DefaultConnectionPurgeRetryDelay, interval),
+		batchSize:  batchSize,
 		// One buffered slot coalesces the nudges that arrive whilst a
 		// pass is running into a single follow-up pass.
 		nudge: make(chan struct{}, 1),
@@ -355,40 +364,73 @@ func (p *ConnectionPurger) Nudge() {
 }
 
 // Run purges marked connections until ctx is canceled: once straight
-// away, then on every nudge and every interval.
+// away, then on every nudge and every interval. After a pass that
+// failed it also retries once the retry delay has passed, doubling the
+// delay on each consecutive failure up to the interval.
 func (p *ConnectionPurger) Run(ctx context.Context) {
 	ticker := time.NewTicker(p.interval)
 	defer ticker.Stop()
 
+	delay := p.retryDelay
 	for {
-		p.RunOnce(ctx)
+		var retry <-chan time.Time
+		var timer *time.Timer
+		if p.runPass(ctx) {
+			delay = p.retryDelay
+		} else {
+			timer = time.NewTimer(delay)
+			retry = timer.C
+			delay = p.nextRetryDelay(delay)
+		}
 		select {
 		case <-ctx.Done():
-			return
 		case <-ticker.C:
 		case <-p.nudge:
+		case <-retry:
+		}
+		if timer != nil {
+			timer.Stop()
+		}
+		if ctx.Err() != nil {
+			return
 		}
 	}
 }
 
+// nextRetryDelay returns the delay to use after another failed pass:
+// double the current one, but never more than the interval.
+func (p *ConnectionPurger) nextRetryDelay(cur time.Duration) time.Duration {
+	return min(2*cur, p.interval)
+}
+
 // RunOnce purges every connection currently marked deleted. A failure
-// on one connection is logged and the pass moves on to the next; the
-// next pass retries it.
+// on one connection is logged and the pass moves on to the next; a
+// later pass retries it.
 func (p *ConnectionPurger) RunOnce(ctx context.Context) {
+	p.runPass(ctx)
+}
+
+// runPass is RunOnce, reporting whether the pass finished without a
+// failure. A pass cut short by cancellation counts as finished, since
+// Run returns straight after it.
+func (p *ConnectionPurger) runPass(ctx context.Context) bool {
 	if ctx.Err() != nil {
-		return
+		return true
 	}
 	ids, err := p.store.ListDeletedConnectionIDs(ctx)
 	if err != nil {
 		p.logf("[ERROR] Connection purge: %v", err)
-		return
+		return false
 	}
+	ok := true
 	for _, id := range ids {
 		if ctx.Err() != nil {
-			return
+			return true
 		}
 		if err := p.store.PurgeConnection(ctx, id, p.batchSize); err != nil {
 			p.logf("[ERROR] Connection purge: %v", err)
+			ok = false
 		}
 	}
+	return ok
 }

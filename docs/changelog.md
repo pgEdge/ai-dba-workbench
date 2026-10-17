@@ -1208,7 +1208,8 @@ project adheres to
   API and the MCP tools, even for a superuser, and the collector
   and alerter stop monitoring and alerting on it. The server then
   removes its metrics in the background, in bounded batches, and
-  finally the connection row, retrying every five minutes and
+  finally the connection row, retrying a failed batch after 15
+  seconds (backing off to five minutes if it keeps failing) and
   resuming after a restart. Collector schema migration 29 adds
   the `deleted_at` column the mark uses.
 

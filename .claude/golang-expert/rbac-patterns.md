@@ -1207,22 +1207,35 @@ caller's action on an RBAC deny (`connection.query`,
 `query_database` write gate records `connection.query.write`, gating
 on `ResolvedConnection.AccessLevel`, the level from the resolver's own
 `CanAccessConnection` decision, rather than checking a second time; and
-the
-provider sets `database.ClientResolver.Denied` to record a lost
-selected connection as `connection.read`. Reasons mirror the REST
-ones. The resources registry's `ClientResolver` has no `Denied` hook.
-`parseConnectionArgs` marks a NaN, infinite, fractional,
-non-positive or above-`MaxInt32` `connection_id` invalid rather than
-truncating it, and `Resolve` answers it with
-`invalidConnectionIDMessage`, recording nothing, before any lookup.
-Messages returned to the caller are otherwise unchanged. New tools that refuse
+`query_datastore` records a refused `connection_ids` entry as
+`connection.read` on the constant `connectionsTarget` (one call can
+name several IDs); and the provider sets `database.ClientResolver.Denied`
+to `sessionConnectionDenied(record)` on its own resolver and, through
+`resources.ContextAwareRegistry.SetConnectionDenied`, on the resources
+registry's (resources cannot import tools), so a lost selected
+connection is `connection.read` from a tool or `read_resource`.
+Reasons mirror the REST ones. `Execute` sends any call whose args hold
+a `connection_id` key straight to the base registry before
+`getClient`, so naming a connection never resolves, or records a
+refusal of, the selected one. Every tool validates `connection_id`
+with `connectionIDValue` (`connection_resolver.go`): only a float64,
+int or int64 in 1..`MaxInt32` is valid, range-checked before
+conversion, so 1.5, 2^63, `"5"` and null are refused, never truncated
+or ignored; never use `parseIntArg` for it. `parseConnectionArgs` sets
+`InvalidConnID` for any present but invalid value, and `Resolve`
+answers it with `invalidConnectionIDMessage`, recording nothing, before
+any lookup. Messages returned to the caller are otherwise unchanged. New tools that refuse
 on a connection must take the recorder and pass `p.record` from the
 provider. Tests: `denial_recorder_test.go`
 (`TestProviderWiresStoreMemoryDenialRecorder`) and
 `tool_refusal_audit_test.go` (`TestProviderRecordsToolAccessRefusal`,
 `TestProviderWiresConnectionDenialRecorder`,
-`TestProviderRecordsLostSessionConnection`) drive the provider, so a
-nil recorder fails them; `tool_refusal_audit_db_test.go` covers the
+`TestProviderRecordsLostSessionConnection`,
+`TestProviderRecordsLostSessionConnectionOnReadResource`,
+`TestProviderExplicitConnectionSkipsSessionClient`) drive the provider,
+so a nil recorder fails them;
+`TestQueryDatastoreRecordsRefusedConnection` covers `query_datastore`
+on Postgres; `tool_refusal_audit_db_test.go` covers the
 write gate on Postgres.
 
 Mutations in these handlers go through `h.actorStore(r)` rather than

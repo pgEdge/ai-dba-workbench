@@ -219,14 +219,18 @@ connection's identifier, under an action that depends on the tool:
 | `query_database`, `execute_explain`, `count_rows`, `similarity_search` | `connection.query` |
 | `test_query` | `connection.query.validate` |
 | `query_metrics`, `get_metric_baselines` | `metrics.read` |
-| `get_schema_info`, `get_alert_rules`, `get_alert_history`, `get_blackouts`, `get_timeline_events` | `connection.read` |
+| `get_schema_info`, `get_alert_rules`, `get_alert_history`, `get_blackouts`, `get_timeline_events`, `query_datastore` | `connection.read` |
+
+A `query_datastore` call can name several connections in
+`connection_ids`, so its refusal is recorded with a target of
+`connections` alone rather than naming one of them.
 
 A `query_database` write refused because the caller has only `read`
 access to the connection is recorded as `connection.query.write`, with
 the reason `Permission denied: you do not have write access to this
-connection`. A tool that falls back to the caller's selected connection,
-when the caller has since lost access to it, records a
-`connection.read` on that connection, as the REST API does when it
+connection`. A tool, or `read_resource`, that falls back to the
+caller's selected connection, when the caller has since lost access to
+it, records a `connection.read` on that connection, as the REST API does when it
 refuses a read of the selected connection. In every case the message the
 tool returns to the caller is unchanged.
 

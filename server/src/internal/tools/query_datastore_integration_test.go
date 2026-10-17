@@ -225,7 +225,7 @@ func newDatastoreFixture(t *testing.T) *datastoreFixture {
 // tool returns query_datastore with the fixture's real checker and
 // visibility lister.
 func (f *datastoreFixture) tool() Tool {
-	return QueryDatastoreTool(f.pool, f.checker, database.NewVisibilityLister(f.ds))
+	return QueryDatastoreTool(f.pool, f.checker, database.NewVisibilityLister(f.ds), nil)
 }
 
 // userCtx is a signed-in non-superuser with no grants, who can read the
@@ -597,7 +597,7 @@ func TestQueryDatastoreFailuresIntegration(t *testing.T) {
 		})
 	}
 
-	runCase("visibility failure", QueryDatastoreTool(f.pool, f.checker, failingLister()), user,
+	runCase("visibility failure", QueryDatastoreTool(f.pool, f.checker, failingLister(), nil), user,
 		map[string]any{"source": "alerts"}, "Failed to resolve accessible connections")
 	runCase("unknown source", f.tool(), user,
 		map[string]any{"source": "email_recipients"}, "call describe_datastore")
@@ -614,7 +614,7 @@ func TestQueryDatastoreFailuresIntegration(t *testing.T) {
 
 	// A nil checker sees nothing, so a connection-scoped source is empty
 	// rather than unscoped.
-	text, isErr := call(t, QueryDatastoreTool(f.pool, nil, nil), superuserContext(), map[string]any{"source": "connections"})
+	text, isErr := call(t, QueryDatastoreTool(f.pool, nil, nil, nil), superuserContext(), map[string]any{"source": "connections"})
 	if isErr || !strings.Contains(text, "Results (0 rows)") {
 		t.Errorf("nil checker: %s", text)
 	}
@@ -741,5 +741,52 @@ func TestDescribeDatastoreSkipsMetricTableNamedLikeConfigSource(t *testing.T) {
 	src, err := lookupDatastoreSource(ctx, f.pool, "alerts")
 	if err != nil || src.Kind != datastoreKindConfiguration {
 		t.Errorf("lookup alerts: kind %q, err %v", src.Kind, err)
+	}
+}
+
+// TestQueryDatastoreRecordsRefusedConnection checks that a refused
+// connection_ids entry, hidden or missing and through either refusal
+// path, is recorded once per call as connection.read on the bare
+// connections target, since one call may name several IDs, and that a
+// call naming a visible connection records nothing (issue #706).
+func TestQueryDatastoreRecordsRefusedConnection(t *testing.T) {
+	f := newDatastoreFixture(t)
+	capture := &toolDenialCapture{}
+	tool := QueryDatastoreTool(f.pool, f.checker,
+		database.NewVisibilityLister(f.ds), capture.record)
+	want := toolDenial{deniedActionConnectionRead, connectionsTarget,
+		connectionAccessDenied}
+
+	cases := []struct {
+		name string
+		ctx  context.Context
+		id   int
+	}{
+		{"hidden for a restricted user", f.userCtx(), f.hidden},
+		{"missing for a restricted user", f.userCtx(), 99999},
+		{"missing for a superuser", superuserContext(), 99999},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			capture.denials = nil
+			text, isErr := call(t, tool, tc.ctx, map[string]any{
+				"source": "ds_probe", "connection_ids": []any{float64(tc.id)}})
+			if !isErr || !strings.Contains(text, connectionNotAccessibleMsg) {
+				t.Fatalf("expected the generic denial, got: %s", text)
+			}
+			if len(capture.denials) != 1 || capture.denials[0] != want {
+				t.Errorf("expected %v recorded once, got %v", want,
+					capture.denials)
+			}
+		})
+	}
+
+	capture.denials = nil
+	if _, isErr := call(t, tool, f.userCtx(), map[string]any{
+		"source": "ds_probe", "connection_ids": []any{float64(f.visible)}}); isErr {
+		t.Fatal("expected a visible connection to be queried")
+	}
+	if len(capture.denials) != 0 {
+		t.Errorf("expected nothing recorded, got %v", capture.denials)
 	}
 }

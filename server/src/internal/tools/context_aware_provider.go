@@ -128,7 +128,7 @@ func (p *ContextAwareProvider) registerDatastoreTools(registry *Registry) {
 			registry.Register("get_metric_baselines", GetMetricBaselinesTool(datastorePool, p.rbacChecker, visibilityLister, p.record))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("query_datastore") {
-			registry.Register("query_datastore", QueryDatastoreTool(datastorePool, p.rbacChecker, visibilityLister))
+			registry.Register("query_datastore", QueryDatastoreTool(datastorePool, p.rbacChecker, visibilityLister, p.record))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("get_blackouts") {
 			registry.Register("get_blackouts", GetBlackoutsTool(datastorePool, p.rbacChecker, visibilityLister, p.record))
@@ -175,7 +175,7 @@ func (p *ContextAwareProvider) registerDatastoreTools(registry *Registry) {
 			registry.Register("get_metric_baselines", GetMetricBaselinesTool(nil, p.rbacChecker, nil, p.record))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("query_datastore") {
-			registry.Register("query_datastore", QueryDatastoreTool(nil, p.rbacChecker, nil))
+			registry.Register("query_datastore", QueryDatastoreTool(nil, p.rbacChecker, nil, p.record))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("get_blackouts") {
 			registry.Register("get_blackouts", GetBlackoutsTool(nil, p.rbacChecker, nil, p.record))
@@ -233,6 +233,9 @@ func NewContextAwareProvider(clientManager *database.ClientManager, resourceReg 
 			clientResolver.ConnInfo = datastore
 			clientResolver.Denied = sessionConnectionDenied(record)
 		}
+	}
+	if resourceReg != nil {
+		resourceReg.SetConnectionDenied(sessionConnectionDenied(record))
 	}
 
 	provider := &ContextAwareProvider{
@@ -562,44 +565,43 @@ func (p *ContextAwareProvider) Execute(ctx context.Context, name string, args ma
 		return logAndReturn(response, err)
 	}
 
+	// When connection_id is present in args, the ConnectionResolver inside
+	// each tool handler resolves the connection independently and does
+	// not need the per-session client, so the base registry, whose
+	// database tools have a nil fallback client, runs the call. Resolving
+	// the session client first would audit a refusal of the selected
+	// connection, which the caller did not name.
+	if parseConnectionArgs(args).HasConnID {
+		response, err := p.baseRegistry.Execute(ctx, name, args)
+		return logAndReturn(response, err)
+	}
+
 	// Get the appropriate database client for this request
 	dbClient, err := p.getClient(ctx)
 	if err != nil {
-		// When connection_id is present in args, the ConnectionResolver inside
-		// each tool handler resolves the connection independently - it does not
-		// need the per-session fallback client. Fall through to baseRegistry so
-		// the resolver gets a chance to run.
-		ca := parseConnectionArgs(args)
-		if !ca.HasConnID {
-			// Extract the root cause error for cleaner display
-			rootErr := err
-			for {
-				if unwrapped := errors.Unwrap(rootErr); unwrapped != nil {
-					rootErr = unwrapped
-				} else {
-					break
-				}
+		// Extract the root cause error for cleaner display
+		rootErr := err
+		for {
+			if unwrapped := errors.Unwrap(rootErr); unwrapped != nil {
+				rootErr = unwrapped
+			} else {
+				break
 			}
-
-			// Log the full error chain for debugging
-			fmt.Fprintf(os.Stderr, "ERROR: Failed to get database client for tool '%s': %v\n", name, err)
-
-			// Show the root cause to the client for actionable feedback
-			return logAndReturn(mcp.ToolResponse{
-				Content: []mcp.ContentItem{
-					{
-						Type: "text",
-						Text: fmt.Sprintf("Database connection error: %v", rootErr),
-					},
-				},
-				IsError: true,
-			}, nil) // Don't return error, just error response
 		}
 
-		// connection_id is present - use baseRegistry which has database tools
-		// registered with nil fallback client; the resolver handles everything
-		response, err := p.baseRegistry.Execute(ctx, name, args)
-		return logAndReturn(response, err)
+		// Log the full error chain for debugging
+		fmt.Fprintf(os.Stderr, "ERROR: Failed to get database client for tool '%s': %v\n", name, err)
+
+		// Show the root cause to the client for actionable feedback
+		return logAndReturn(mcp.ToolResponse{
+			Content: []mcp.ContentItem{
+				{
+					Type: "text",
+					Text: fmt.Sprintf("Database connection error: %v", rootErr),
+				},
+			},
+			IsError: true,
+		}, nil) // Don't return error, just error response
 	}
 
 	// Get the cached registry for this client (or create if first use)

@@ -93,6 +93,18 @@ func NewContextAwareRegistry(clientManager *database.ClientManager, cfg *config.
 	}
 }
 
+// SetConnectionDenied sets the hook the registry's client resolver
+// calls when a token's selected connection is no longer accessible, so
+// that read_resource audits the refusal as the tools do. Call it while
+// the registry is being built, before it serves any request; it does
+// nothing when the registry resolves no sessions.
+func (r *ContextAwareRegistry) SetConnectionDenied(denied func(context.Context, int)) {
+	if r.clientResolver == nil || r.clientResolver.Sessions == nil {
+		return
+	}
+	r.clientResolver.Denied = denied
+}
+
 // List returns all available resource definitions
 // Note: This returns ALL resources without RBAC filtering. Use ListForContext for filtered results.
 func (r *ContextAwareRegistry) List() []mcp.Resource {

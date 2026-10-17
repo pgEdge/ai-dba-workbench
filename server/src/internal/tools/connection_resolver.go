@@ -69,7 +69,7 @@ func NewConnectionResolver(
 type connectionArgs struct {
 	ConnectionID int
 	HasConnID    bool
-	// InvalidConnID is set when connection_id is numeric but not a
+	// InvalidConnID is set when connection_id is present but not a
 	// positive integer; ConnectionID is then zero, and Resolve refuses
 	// the call before any lookup.
 	InvalidConnID bool
@@ -80,32 +80,49 @@ type connectionArgs struct {
 // positive integer.
 const invalidConnectionIDMessage = "connection_id must be a positive integer"
 
+// connectionIDValue validates a connection_id argument and returns it
+// as an int, reporting false for anything but a positive integer no
+// larger than math.MaxInt32. The range is checked on the value as it
+// arrived, before any conversion, so a fractional value such as 1.5 can
+// never name connection 1 and a huge one such as 2^63 never converts to
+// a platform-dependent ID. A string, even "5", a null and any other
+// type are invalid. JSON numbers arrive as float64; int and int64 are
+// accepted for callers inside the server.
+func connectionIDValue(raw any) (int, bool) {
+	switch v := raw.(type) {
+	case float64:
+		if math.IsNaN(v) || math.IsInf(v, 0) || v != math.Trunc(v) ||
+			v < 1 || v > math.MaxInt32 {
+			return 0, false
+		}
+		return int(v), true
+	case int:
+		if v < 1 || v > math.MaxInt32 {
+			return 0, false
+		}
+		return v, true
+	case int64:
+		if v < 1 || v > math.MaxInt32 {
+			return 0, false
+		}
+		return int(v), true
+	}
+	return 0, false
+}
+
 // parseConnectionArgs extracts connection_id and database_name from the
-// tool argument map. connection_id arrives as float64 from JSON
-// unmarshalling; a NaN, infinite, fractional or non-positive value is
-// marked invalid rather than truncated, so that, for example, 3.7 can
-// never name connection 3.
+// tool argument map. A connection_id that connectionIDValue rejects is
+// marked invalid rather than truncated or ignored, so that, for
+// example, 3.7 can never name connection 3 and "5" never falls back to
+// the selected connection.
 func parseConnectionArgs(args map[string]any) connectionArgs {
 	var ca connectionArgs
 
 	if raw, ok := args["connection_id"]; ok {
-		switch v := raw.(type) {
-		case float64:
-			ca.HasConnID = true
-			if math.IsNaN(v) || math.IsInf(v, 0) || v != math.Trunc(v) ||
-				v < 1 || v > math.MaxInt32 {
-				ca.InvalidConnID = true
-			} else {
-				ca.ConnectionID = int(v)
-			}
-		case int:
-			ca.HasConnID = true
-			if v < 1 {
-				ca.InvalidConnID = true
-			} else {
-				ca.ConnectionID = v
-			}
-		}
+		ca.HasConnID = true
+		id, valid := connectionIDValue(raw)
+		ca.ConnectionID = id
+		ca.InvalidConnID = !valid
 	}
 
 	if dbName, ok := args["database_name"].(string); ok && dbName != "" {

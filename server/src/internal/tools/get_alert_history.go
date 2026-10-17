@@ -168,10 +168,10 @@ Returns TSV data with:
 			var connectionID int
 			var connName string
 			if _, hasConnID := args["connection_id"]; hasConnID {
-				var err error
-				connectionID, err = parseIntArg(args, "connection_id")
-				if err != nil {
-					return mcp.NewToolError("Invalid 'connection_id' parameter: must be an integer. Use list_connections to find available connection IDs.")
+				var valid bool
+				connectionID, valid = connectionIDValue(args["connection_id"])
+				if !valid {
+					return mcp.NewToolError("Invalid 'connection_id' parameter: must be a positive integer. Use list_connections to find available connection IDs.")
 				}
 				singleConnection = true
 

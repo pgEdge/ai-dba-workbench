@@ -12,7 +12,9 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -94,6 +96,12 @@ func TestParseConnectionArgsRejectsInvalidIDs(t *testing.T) {
 		"int zero":      0,
 		"int negative":  -1,
 		"tiny fraction": 0.5,
+		"two to the 63": math.Pow(2, 63),
+		"int64 large":   int64(math.MaxInt32) + 1,
+		"int64 zero":    int64(0),
+		"string":        "5",
+		"null":          nil,
+		"bool":          true,
 	}
 	capture := &toolDenialCapture{}
 	resolver := NewConnectionResolver(nil, nil, nil, capture.record)
@@ -119,7 +127,8 @@ func TestParseConnectionArgsRejectsInvalidIDs(t *testing.T) {
 		t.Errorf("Expected nothing recorded, got %v", capture.denials)
 	}
 
-	for _, raw := range []any{float64(1), float64(math.MaxInt32), 9} {
+	for _, raw := range []any{float64(1), float64(math.MaxInt32), 9,
+		int64(12)} {
 		ca := parseConnectionArgs(map[string]any{"connection_id": raw})
 		if ca.InvalidConnID || ca.ConnectionID < 1 {
 			t.Errorf("Expected %v accepted, got %+v", raw, ca)
@@ -274,6 +283,36 @@ func TestDatastoreToolsRecordRefusedConnection(t *testing.T) {
 					capture.denials)
 			}
 		})
+
+		// A connection_id that is not a positive integer is refused
+		// before any access check, rather than truncated to name
+		// another connection, and records nothing; 2^63 must not
+		// become a platform-dependent ID either.
+		for _, raw := range []any{1.5, math.Pow(2, 63), "1"} {
+			t.Run(fmt.Sprintf("%s rejects %v", tt.name, raw), func(t *testing.T) {
+				capture := &toolDenialCapture{}
+				args := map[string]any{"__context": context.Background(),
+					"connection_id": raw}
+				for k, v := range tt.args {
+					if k != "connection_id" && k != "__context" {
+						args[k] = v
+					}
+				}
+				resp, err := tt.build(capture.record).Handler(args)
+				if err != nil {
+					t.Fatalf("Handler returned a Go error: %v", err)
+				}
+				if !resp.IsError || !strings.Contains(responseText(resp),
+					"'connection_id' parameter") {
+					t.Fatalf("Expected an invalid connection_id, got %+v",
+						resp)
+				}
+				if len(capture.denials) != 0 {
+					t.Errorf("Expected nothing recorded, got %v",
+						capture.denials)
+				}
+			})
+		}
 	}
 }
 
@@ -502,5 +541,119 @@ func TestProviderRecordsLostSessionConnection(t *testing.T) {
 		events[0].Error != connectionAccessDenied ||
 		denialTarget(t, events[0]) != "connections/4242" {
 		t.Errorf("Unexpected denial %+v", events[0])
+	}
+}
+
+// TestProviderRecordsLostSessionConnectionOnReadResource checks that
+// read_resource, whose client the resources registry resolves through
+// its own client resolver, records a selected connection the caller
+// can no longer access as connection.read of that connection, as the
+// tools do (issue #706).
+func TestProviderRecordsLostSessionConnectionOnReadResource(t *testing.T) {
+	store := newExecuteTestAuthStore(t)
+	clientManager := database.NewClientManager(nil)
+	t.Cleanup(func() {
+		if err := clientManager.CloseAll(); err != nil {
+			t.Logf("CloseAll: %v", err)
+		}
+	})
+	cfg := &config.Config{}
+	datastore := database.NewTestDatastore(unreachablePool(t))
+	provider := NewContextAwareProvider(clientManager,
+		resources.NewContextAwareRegistry(clientManager, cfg, store, datastore),
+		nil, cfg, store, nil, datastore)
+
+	if _, err := store.RegisterMCPPrivilege("read_resource",
+		auth.MCPPrivilegeTypeTool, "Public tool", true); err != nil {
+		t.Fatalf("RegisterMCPPrivilege: %v", err)
+	}
+	if _, err := store.RegisterMCPPrivilege(resources.URISystemInfo,
+		auth.MCPPrivilegeTypeResource, "Public resource", true); err != nil {
+		t.Fatalf("RegisterMCPPrivilege: %v", err)
+	}
+	if err := store.CreateUser("plain_user", "Password-123!", "", "", ""); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	userID, err := store.GetUserID("plain_user")
+	if err != nil {
+		t.Fatalf("GetUserID: %v", err)
+	}
+	const tokenHash = "lost-resource-hash"
+	if err := store.SetConnectionSession(tokenHash, refusedConnectionID,
+		nil); err != nil {
+		t.Fatalf("SetConnectionSession: %v", err)
+	}
+	ctx := context.WithValue(userContext("plain_user", userID),
+		auth.TokenHashContextKey, tokenHash)
+
+	if _, err := provider.Execute(ctx, "read_resource",
+		map[string]any{"uri": resources.URISystemInfo}); err != nil {
+		t.Fatalf("Execute returned a Go error: %v", err)
+	}
+
+	events := deniedRows(t, store, deniedActionConnectionRead)
+	if len(events) != 1 {
+		t.Fatalf("Expected 1 connection.read denial, got %d", len(events))
+	}
+	if events[0].ActorName != "plain_user" ||
+		events[0].Error != connectionAccessDenied ||
+		denialTarget(t, events[0]) != "connections/4242" {
+		t.Errorf("Unexpected denial %+v", events[0])
+	}
+}
+
+// TestProviderExplicitConnectionSkipsSessionClient checks that a call
+// naming a connection_id is resolved from that ID alone: the selected
+// connection, which the caller can no longer access, is not resolved
+// and so not recorded, and only the named connection's refusal is. A
+// connection_id that is not a number is refused outright rather than
+// ignored so the call falls back to the selected connection (issue #706).
+func TestProviderExplicitConnectionSkipsSessionClient(t *testing.T) {
+	provider, store := newWiredTestProvider(t)
+	if _, err := store.RegisterMCPPrivilege("get_schema_info",
+		auth.MCPPrivilegeTypeTool, "Public tool", true); err != nil {
+		t.Fatalf("RegisterMCPPrivilege: %v", err)
+	}
+	if err := store.CreateUser("plain_user", "Password-123!", "", "", ""); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	userID, err := store.GetUserID("plain_user")
+	if err != nil {
+		t.Fatalf("GetUserID: %v", err)
+	}
+	const tokenHash = "explicit-connection-hash"
+	if err := store.SetConnectionSession(tokenHash, 2, nil); err != nil {
+		t.Fatalf("SetConnectionSession: %v", err)
+	}
+	ctx := context.WithValue(userContext("plain_user", userID),
+		auth.TokenHashContextKey, tokenHash)
+
+	resp, err := provider.Execute(ctx, "get_schema_info",
+		map[string]any{"connection_id": "2"})
+	if err != nil {
+		t.Fatalf("Execute returned a Go error: %v", err)
+	}
+	if !resp.IsError || !strings.Contains(responseText(resp), "connection_id") {
+		t.Fatalf("Expected a string connection_id refused, got %+v", resp)
+	}
+	if events := deniedRows(t, store, deniedActionConnectionRead); len(events) != 0 {
+		t.Fatalf("Expected nothing recorded for a string ID, got %d",
+			len(events))
+	}
+
+	resp, err = provider.Execute(ctx, "get_schema_info",
+		map[string]any{"connection_id": float64(1)})
+	if err != nil {
+		t.Fatalf("Execute returned a Go error: %v", err)
+	}
+	if !resp.IsError {
+		t.Fatalf("Expected a refusal, got %+v", resp)
+	}
+	events := deniedRows(t, store, deniedActionConnectionRead)
+	if len(events) != 1 {
+		t.Fatalf("Expected 1 connection.read denial, got %d", len(events))
+	}
+	if got := denialTarget(t, events[0]); got != "connections/1" {
+		t.Errorf("Expected target connections/1, got %q", got)
 	}
 }

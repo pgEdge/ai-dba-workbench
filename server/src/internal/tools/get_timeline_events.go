@@ -319,9 +319,9 @@ func resolveTimelineConnection(
 		return false, 0, "", nil, nil
 	}
 
-	cid, err := parseIntArg(args, "connection_id")
-	if err != nil {
-		resp, rerr := mcp.NewToolError("Invalid 'connection_id' parameter: must be an integer. Use list_connections to find available connection IDs.")
+	cid, valid := connectionIDValue(args["connection_id"])
+	if !valid {
+		resp, rerr := mcp.NewToolError("Invalid 'connection_id' parameter: must be a positive integer. Use list_connections to find available connection IDs.")
 		return false, 0, "", &resp, rerr
 	}
 

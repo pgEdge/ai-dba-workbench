@@ -1402,12 +1402,19 @@ project adheres to
   `connection.query` or `connection.query.validate` on
   `connections/<id>`, depending on the tool; a `query_database`
   write refused for want of `read_write` access is a denied
-  `connection.query.write`; and a selected connection the caller
-  has since lost access to is a denied `connection.read`. The
-  messages the tools return are unchanged, except that a
-  `connection_id` that is not a positive integer, such as `3.7`, is
-  now refused rather than truncated to the connection it would
-  have named. (#706)
+  `connection.query.write`; a `query_datastore` call naming a
+  connection in `connection_ids` that the caller cannot access is a
+  denied `connection.read` on `connections`; and a selected
+  connection the caller has since lost access to is a denied
+  `connection.read`, whether a tool or `read_resource` falls back to
+  it. A call that names a `connection_id` no longer resolves the
+  selected connection first, so it records a refusal only of the
+  connection it names. The messages the tools return are unchanged,
+  except that every tool taking a `connection_id` now refuses one
+  that is not a positive integer, such as `3.7`, `2^63`, the string
+  `"5"` or `null`, rather than truncating it to the connection it
+  would have named or ignoring it in favour of the selected
+  connection. (#706)
 
 - Fix the `probe_unavailable` alert firing on healthy Spock clusters
   with no recent apply exceptions or conflict resolutions. The

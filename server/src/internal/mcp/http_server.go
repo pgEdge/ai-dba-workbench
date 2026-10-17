@@ -55,6 +55,13 @@ type HTTPConfig struct {
 	TrustedProxies []string                       // CIDR ranges of trusted reverse proxies for secure IP extraction
 	CORSOrigin     string                         // Allowed CORS origin; empty disables CORS headers (same-origin deployment)
 	HSTSEnabled    bool                           // Enable Strict-Transport-Security header
+
+	// OnShutdown, if set, runs when Shutdown begins draining the
+	// server. Shutdown waits for every active request but cancels
+	// none, so a handler that holds a request open until its client
+	// leaves, such as an SSE stream, must be ended through this hook
+	// or the drain runs to its deadline.
+	OnShutdown func()
 }
 
 // RunHTTP starts the MCP server in HTTP/HTTPS mode
@@ -115,12 +122,19 @@ func (s *Server) RunHTTP(config *HTTPConfig) error {
 		WriteTimeout: 300 * time.Second, // Must accommodate long LLM agentic loops (e.g. server analysis)
 		IdleTimeout:  120 * time.Second, // Limits keep-alive connection duration
 	}
+	if config.OnShutdown != nil {
+		httpServer.RegisterOnShutdown(config.OnShutdown)
+	}
 
 	// Publish the server so callers (notably the SIGTERM handler in
 	// cmd/mcp-server) can invoke Shutdown. Clear the reference on the
 	// way out so a subsequent Shutdown call is a harmless no-op once
-	// the listener has already stopped.
-	s.setHTTPServer(httpServer)
+	// the listener has already stopped. A Shutdown that ran before
+	// this point stops the server here, as it would have stopped it
+	// once listening.
+	if !s.setHTTPServer(httpServer) {
+		return nil
+	}
 	defer s.setHTTPServer(nil)
 
 	// Start server with or without TLS. Treat http.ErrServerClosed as a

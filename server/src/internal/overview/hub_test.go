@@ -248,3 +248,36 @@ func TestCountAccuracy(t *testing.T) {
 		t.Fatalf("expected 0, got %d", hub.Count())
 	}
 }
+
+// TestCloseAllEndsEverySubscription checks that CloseAll closes and
+// removes every subscriber, that a later Unsubscribe and Broadcast are
+// harmless, and that a subscriber added afterwards starts closed.
+func TestCloseAllEndsEverySubscription(t *testing.T) {
+	hub := NewHub()
+	estate := hub.Subscribe("")
+	scoped := hub.Subscribe("server:1")
+
+	hub.CloseAll()
+
+	if hub.Count() != 0 {
+		t.Fatalf("expected 0 subscribers after CloseAll, got %d", hub.Count())
+	}
+	for name, sub := range map[string]*Subscriber{"estate": estate, "scoped": scoped} {
+		if _, open := <-sub.C; open {
+			t.Errorf("%s subscriber channel still open after CloseAll", name)
+		}
+	}
+
+	// Neither may panic on a closed channel.
+	hub.Unsubscribe(estate)
+	hub.Broadcast(newTestOverview("after"), "")
+
+	late := hub.Subscribe("")
+	if _, open := <-late.C; open {
+		t.Error("subscriber added after CloseAll has an open channel")
+	}
+	if hub.Count() != 0 {
+		t.Errorf("subscriber added after CloseAll was registered; count = %d", hub.Count())
+	}
+	hub.Unsubscribe(late)
+}

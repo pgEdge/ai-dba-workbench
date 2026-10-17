@@ -961,6 +961,36 @@ func TestShutdown_NoActiveServer(t *testing.T) {
 	}
 }
 
+// TestShutdown_BeforeRunHTTPStopsIt checks that a Shutdown which lands
+// before RunHTTP has published its server still stops it: RunHTTP
+// returns nil without listening rather than serving after a SIGTERM.
+func TestShutdown_BeforeRunHTTPStopsIt(t *testing.T) {
+	server := NewServer(&mockToolProvider{})
+	if err := server.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown with no active server returned %v", err)
+	}
+
+	runErr := make(chan error, 1)
+	go func() {
+		runErr <- server.RunHTTP(&HTTPConfig{Addr: "127.0.0.1:0"})
+	}()
+
+	select {
+	case err := <-runErr:
+		if err != nil {
+			t.Errorf("RunHTTP after Shutdown returned %v, want nil", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("RunHTTP served after Shutdown instead of returning")
+	}
+
+	server.httpMu.Lock()
+	defer server.httpMu.Unlock()
+	if server.httpServer != nil {
+		t.Error("RunHTTP published its server after Shutdown")
+	}
+}
+
 // TestShutdown_DrainsRunningServer is an end-to-end check: spin up
 // RunHTTP in a goroutine on an ephemeral port, hit /health to prove
 // the listener is live, then Shutdown and confirm RunHTTP returned

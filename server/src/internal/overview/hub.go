@@ -16,6 +16,7 @@ import "sync"
 type Hub struct {
 	mu          sync.RWMutex
 	subscribers map[*Subscriber]struct{}
+	closed      bool // Set by CloseAll; later subscribers start closed
 }
 
 // Subscriber represents a single SSE client listening for Overview updates.
@@ -34,16 +35,37 @@ func NewHub() *Hub {
 }
 
 // Subscribe registers a new subscriber scoped to scopeKey and returns it.
-// An empty scopeKey subscribes to estate-wide broadcasts.
+// An empty scopeKey subscribes to estate-wide broadcasts. Once CloseAll
+// has run, the subscriber is returned with its channel already closed,
+// so a stream that starts during a shutdown ends at once.
 func (h *Hub) Subscribe(scopeKey string) *Subscriber {
 	sub := &Subscriber{
 		C:        make(chan *Overview, 1),
 		scopeKey: scopeKey,
 	}
 	h.mu.Lock()
-	h.subscribers[sub] = struct{}{}
+	if h.closed {
+		close(sub.C)
+	} else {
+		h.subscribers[sub] = struct{}{}
+	}
 	h.mu.Unlock()
 	return sub
+}
+
+// CloseAll closes every subscriber's channel and removes it from the
+// hub, so that each open SSE stream returns and the HTTP server's
+// graceful shutdown need not wait out its grace period for them;
+// http.Server.Shutdown does not cancel the requests it waits on. A
+// later Unsubscribe of a removed subscriber is a no-op.
+func (h *Hub) CloseAll() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.closed = true
+	for sub := range h.subscribers {
+		delete(h.subscribers, sub)
+		close(sub.C)
+	}
 }
 
 // Unsubscribe removes a subscriber from the hub and closes its channel.

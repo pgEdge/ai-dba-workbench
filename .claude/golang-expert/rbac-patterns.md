@@ -911,9 +911,22 @@ window's fields, in three ways: when eviction at the cap drops it;
 on the five-minute cleanup tick (`runCleanupTick` in
 `cmd/mcp-server/server.go`), where `SweepCoalescedAudit` drains every
 closed window; and at shutdown, where `FlushCoalescedAudit` drains
-every window, open or not. `AuthStore.Close` calls the flush, and so
-does the SIGTERM handler's closer; the two can race, and whichever
-runs second finds nothing to write. Sweep and flush live in
+every window, open or not. `AuthStore.Close` calls the flush, from
+main's deferred `Server.Close`; `Server.serveHTTP` waits on the
+`shutdownHandle` (`cmd/mcp-server/shutdown.go`) until the HTTP drain
+has finished or `shutdownGracePeriod` lapsed, so that flush runs after
+the last in-flight handler has recorded (issue #650). Do not let the
+run path return before `waitForDrain`. `http.Server.Shutdown` cancels
+no request, so a handler that waits for its client, such as the
+overview SSE stream, must be ended through `mcp.HTTPConfig.OnShutdown`
+(`Server.newHTTPConfig`, which builds the config `Run` serves, sets it
+to `overviewHub.CloseAll` through `overviewStreamCloser`, and
+`TestNewHTTPConfigInstallsTheOverviewStreamCloser` locks that in), or
+every drain runs the full grace period.
+The SIGTERM handler's closer flushes too, but only as a fallback when
+main has not returned within `shutdownCleanupGrace` of the drain or a
+further signal arrives; whichever flush runs second finds nothing to
+write. Sweep and flush live in
 `internal/auth/audit_coalesce.go` and write the closed denial and
 failure summaries of one pass in a single transaction, putting the
 entries back if it fails (and logging them with `[ERROR]` if a flush

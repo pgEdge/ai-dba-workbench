@@ -165,11 +165,15 @@ because handler packages such as `internal/api` are not in
 the default instrumentation set.
 
 The server installs a SIGTERM and SIGINT handler in
-`cmd/mcp-server` that calls `coverage.WriteCountersDir` before
-the process exits. The flush is necessary because Go's cover
-runtime writes counter data on normal exit but not on signal
-termination; the stack-tear-down script sends SIGTERM, so
-without the handler the per-run coverage data is lost.
+`cmd/mcp-server` that drains the HTTP server and lets `main`
+return normally, which writes the counter data; if the cleanup
+in `main` has not finished two seconds after the drain, or a
+further signal arrives, the handler calls
+`coverage.WriteCountersDir` itself and exits. The
+handler is necessary because Go's cover runtime writes counter
+data on normal exit but not on signal termination; the
+stack-tear-down script sends SIGTERM, so without the handler
+the per-run coverage data is lost.
 
 The chromium leg of the CI matrix uploads the
 `${GOCOVERDIR}` directory as the `server-coverage-e2e`

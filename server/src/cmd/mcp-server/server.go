@@ -695,8 +695,37 @@ func (s *Server) cleanupExpiredConnections(hashes []string) {
 
 // Run starts the HTTP server and blocks until shutdown
 func (s *Server) Run(flags *Flags, configPath string) error {
-	// Create HTTP server configuration
-	httpConfig := &mcp.HTTPConfig{
+	// The reloadable configuration is created before the handlers so
+	// that those which apply a reload live can read through it; the
+	// SIGHUP listener below is what drives it.
+	reloadableCfg := config.NewReloadableConfig(s.cfg, configPath, flags.ToReloadCLIFlags())
+
+	httpConfig := s.newHTTPConfig(reloadableCfg)
+
+	// Log startup information
+	s.logStartupInfo()
+
+	// Setup SIGHUP handler for configuration reload; Close stops it.
+	s.registerHandlerCloser(s.setupSIGHUP(reloadableCfg))
+
+	// Setup SIGTERM/SIGINT handler for graceful shutdown and Go
+	// coverage-counter flush.
+	shutdown := s.setupShutdownHandler()
+
+	// Run the server
+	return s.serveHTTP(httpConfig, shutdown)
+}
+
+// newHTTPConfig builds the HTTP server configuration Run serves,
+// including the handlers and the hook that ends the open overview SSE
+// streams when the drain starts. It is separate from Run so that tests
+// can check the wiring without starting a listener.
+func (s *Server) newHTTPConfig(reloadableCfg *config.ReloadableConfig) *mcp.HTTPConfig {
+	// Create secure IP extractor for rate limiting
+	// This ensures X-Forwarded-For headers are only trusted from configured proxies
+	ipExtractor := auth.NewIPExtractor(s.cfg.HTTP.TrustedProxies)
+
+	return &mcp.HTTPConfig{
 		Addr:           s.cfg.HTTP.Address,
 		TLSEnable:      s.cfg.HTTP.TLS.Enabled,
 		CertFile:       s.cfg.HTTP.TLS.CertFile,
@@ -707,32 +736,34 @@ func (s *Server) Run(flags *Flags, configPath string) error {
 		TrustedProxies: s.cfg.HTTP.TrustedProxies,
 		CORSOrigin:     s.cfg.HTTP.CORSOrigin,
 		HSTSEnabled:    s.cfg.HTTP.HSTSEnabled,
+		SetupHandlers:  SetupHandlers(s.handlerDependencies(ipExtractor, reloadableCfg)),
+		// End the open overview SSE streams when the drain starts.
+		OnShutdown: s.overviewStreamCloser(),
 	}
+}
 
-	// Create secure IP extractor for rate limiting
-	// This ensures X-Forwarded-For headers are only trusted from configured proxies
-	ipExtractor := auth.NewIPExtractor(s.cfg.HTTP.TrustedProxies)
+// serveHTTP runs the HTTP server until it stops, and returns only once
+// a shutdown requested through h has finished draining. RunHTTP
+// returns as soon as a signal starts the drain, but main's deferred
+// Close writes the coalesced audit counts, so it must not run while a
+// handler can still record one (issue #650).
+func (s *Server) serveHTTP(httpConfig *mcp.HTTPConfig, h *shutdownHandle) error {
+	err := s.mcpServer.RunHTTP(httpConfig)
+	h.waitForDrain()
+	return err
+}
 
-	// The reloadable configuration is created before the handlers so
-	// that those which apply a reload live can read through it; the
-	// SIGHUP listener below is what drives it.
-	reloadableCfg := config.NewReloadableConfig(s.cfg, configPath, flags.ToReloadCLIFlags())
-
-	// Setup HTTP handlers
-	httpConfig.SetupHandlers = SetupHandlers(s.handlerDependencies(ipExtractor, reloadableCfg))
-
-	// Log startup information
-	s.logStartupInfo()
-
-	// Setup SIGHUP handler for configuration reload; Close stops it.
-	s.registerHandlerCloser(s.setupSIGHUP(reloadableCfg))
-
-	// Setup SIGTERM/SIGINT handler for graceful shutdown and Go
-	// coverage-counter flush.
-	s.setupShutdownHandler()
-
-	// Run the server
-	return s.mcpServer.RunHTTP(httpConfig)
+// overviewStreamCloser returns the function that ends every open
+// overview SSE stream, or nil when the overview generator is not
+// running. An SSE handler returns only when its client leaves or its
+// subscription closes, and http.Server.Shutdown cancels neither, so
+// without this one open AI Overview panel holds every shutdown to the
+// full grace period.
+func (s *Server) overviewStreamCloser() func() {
+	if s.overviewHub == nil {
+		return nil
+	}
+	return s.overviewHub.CloseAll
 }
 
 // handlerDependencies builds the HTTP handlers' dependencies. The
@@ -796,8 +827,9 @@ func (s *Server) logStartupInfo() {
 }
 
 // setupShutdownHandler registers a SIGTERM/SIGINT handler that drains
-// the active HTTP server and, when the binary was built with -cover,
-// flushes coverage counters to $GOCOVERDIR before exit.
+// the active HTTP server so that main can return normally, which
+// writes coverage counters to $GOCOVERDIR when the binary was built
+// with -cover; the handler's own fallback exit flushes them itself.
 //
 // Without this, the Go runtime kills the process on SIGTERM without
 // running the -cover atexit hook, so E2E coverage reports come back
@@ -805,18 +837,22 @@ func (s *Server) logStartupInfo() {
 // not call this helper; its short-lived os.Exit(0) already triggers
 // the runtime's normal counter flush.
 //
-// The closer is deliberately not s.Close: main.go already defers
-// s.Close on a clean RunHTTP return, and racing that defer against
-// a goroutine-driven Close has caused double-close panics in past
-// graceful-shutdown implementations. RunHTTP returns as soon as
-// Shutdown starts, so main usually returns through that defer, which
-// flushes the auth store, before the handler finishes draining; the
-// handler's closer also writes the suppressed counts of coalesced
-// audit failures and denials, for when it gets there first. Both take
-// the auth store's lock, so whichever runs second finds nothing to
-// write.
-func (s *Server) setupShutdownHandler() {
-	installShutdownHandler(s.shutdownDeps())
+// RunHTTP returns as soon as Shutdown starts, so Run waits on the
+// returned handle until the drain has finished, or its grace period
+// has lapsed, before returning; main then returns through its deferred
+// s.Close, whose AuthStore.Close writes the suppressed counts of
+// coalesced audit failures and denials after the last in-flight
+// handler has recorded its own.
+//
+// The closer is deliberately not s.Close: racing main's deferred
+// Close against a goroutine-driven one has caused double-close panics
+// in past graceful-shutdown implementations. The handler runs its
+// closer, which only writes the coalesced audit counts, if main has
+// not returned within shutdownCleanupGrace of the drain or a further
+// signal arrives, and then exits; both flushes take the auth store's
+// lock, so whichever runs second finds nothing to write.
+func (s *Server) setupShutdownHandler() *shutdownHandle {
+	return installShutdownHandler(s.shutdownDeps())
 }
 
 // shutdownDeps returns the production dependencies for the

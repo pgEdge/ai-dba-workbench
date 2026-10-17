@@ -405,3 +405,32 @@ func TestHandleSSE_SubscriptionClosed(t *testing.T) {
 		t.Errorf("stream did not end when the subscription closed")
 	}
 }
+
+// TestHandleSSE_EndsOnCloseAll checks that the stream ends when the
+// server's shutdown hook closes every subscription, and that a stream
+// opened afterwards ends at once.
+func TestHandleSSE_EndsOnCloseAll(t *testing.T) {
+	hub := NewHub()
+	h := newTestHandlerFor(t, cachedGenerator(t, nil, false), hub)
+
+	go func() {
+		for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+			if hub.Count() > 0 {
+				hub.CloseAll()
+				return
+			}
+		}
+	}()
+
+	start := time.Now()
+	serveSSE(t, h, superuserContext(), "/api/v1/overview/stream", 5*time.Second)
+	if elapsed := time.Since(start); elapsed >= 5*time.Second {
+		t.Errorf("stream did not end when CloseAll ran")
+	}
+
+	start = time.Now()
+	serveSSE(t, h, superuserContext(), "/api/v1/overview/stream", 5*time.Second)
+	if elapsed := time.Since(start); elapsed >= 5*time.Second {
+		t.Errorf("stream opened after CloseAll did not end at once")
+	}
+}

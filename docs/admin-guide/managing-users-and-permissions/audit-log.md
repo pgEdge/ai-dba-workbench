@@ -147,8 +147,9 @@ the caller does not own, or to create a group, or a cluster within a
 group, without the `manage_connections` permission, is recorded under
 `cluster_group.create`, `cluster_group.update` or
 `cluster_group.delete`. A blackout or schedule
-on a connection the token cannot see is refused as though it did not
-exist, and that refusal is not recorded.
+on a connection the token cannot see, or an override on a server,
+cluster or group the caller cannot see, is refused as though it did
+not exist, and that refusal is not recorded.
 
 A request to read or act on a connection that the caller has no access
 to is recorded as well, under `connection.read` for the connection's
@@ -159,17 +160,19 @@ validating a query on it, `metrics.read` for its metrics, baselines and
 performance summaries, and `server_info.read` for its server
 information. A request to acknowledge an alert, to clear its
 acknowledgement or to save its analysis, when the alert belongs to a
-connection the caller cannot access, is recorded as
-`alert.acknowledge`, `alert.unacknowledge` or `alert.analysis.update`,
-with the alert as the target. A system alert belongs to no connection,
-so a request to acknowledge one or to clear its acknowledgement needs a
-superuser or the `manage_alert_rules` permission instead; a refused
-request is recorded as `alert.acknowledge` or `alert.unacknowledge`,
-with the alert as the target and an `error` of `Permission denied:
-requires manage_alert_rules permission`. A current connection selected
-before the caller lost access to it is refused when the client reads
-it, and recorded as `connection.read`; repeated reads are coalesced
-like any other denial, as described below.
+connection the caller cannot see, is refused as though the alert did
+not exist, and that refusal is not recorded; any such refusal of an
+alert the caller can see is recorded as `alert.acknowledge`,
+`alert.unacknowledge` or `alert.analysis.update`, with the alert as
+the target. A system alert belongs to no connection, so a request to
+acknowledge one or to clear its acknowledgement needs a superuser or
+the `manage_alert_rules` permission instead; a refused request from a
+caller who can see system alerts is recorded as `alert.acknowledge` or
+`alert.unacknowledge`, with the alert as the target and an `error` of
+`Permission denied: requires manage_alert_rules permission`. A current
+connection selected before the caller lost access to it is refused when
+the client reads it, and recorded as `connection.read`; repeated reads
+are coalesced like any other denial, as described below.
 
 A request refused because the caller lacks the admin permission it
 needs is recorded in the same way, with a reason that names the

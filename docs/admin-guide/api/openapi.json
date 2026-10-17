@@ -192,7 +192,7 @@
     "/alert-overrides/{scope}/{scopeId}/{ruleId}": {
       "put": {
         "summary": "Create or update alert override",
-        "description": "Creates or updates an alert threshold override at the specified scope for a rule",
+        "description": "Creates or updates an alert threshold override at the specified scope for a rule. A scope the caller cannot see is answered with 404, exactly as a missing one",
         "operationId": "upsertAlertOverride",
         "tags": [
           "Alert Overrides"
@@ -278,6 +278,26 @@
               }
             }
           },
+          "404": {
+            "description": "Scope not found, or not visible to the caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to check scope visibility",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "503": {
             "description": "Datastore not configured",
             "content": {
@@ -297,7 +317,7 @@
       },
       "delete": {
         "summary": "Delete alert override",
-        "description": "Removes an alert threshold override, reverting to the inherited or default value",
+        "description": "Removes an alert threshold override, reverting to the inherited or default value. A scope the caller cannot see is answered with 404, exactly as a missing one",
         "operationId": "deleteAlertOverride",
         "tags": [
           "Alert Overrides"
@@ -354,6 +374,26 @@
           },
           "403": {
             "description": "Permission denied, or the API token's connection scope does not cover the target",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Scope not found, or not visible to the caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to check scope visibility",
             "content": {
               "application/json": {
                 "schema": {
@@ -697,7 +737,7 @@
     "/alerts/acknowledge": {
       "post": {
         "summary": "Acknowledge an alert",
-        "description": "Acknowledges an alert with an optional message. An alert on a connection needs access to that connection; a system alert, which has no connection, needs a superuser or the manage_alert_rules admin permission, and an API token must also hold manage_alert_rules in its admin scope if it has one",
+        "description": "Acknowledges an alert with an optional message. An alert on a connection needs access to that connection; a system alert, which has no connection, needs a superuser or the manage_alert_rules admin permission, and an API token must also hold manage_alert_rules in its admin scope if it has one. An alert the caller cannot see is answered with 404, exactly as a missing one",
         "operationId": "acknowledgeAlert",
         "tags": [
           "Alerts"
@@ -751,7 +791,17 @@
             }
           },
           "403": {
-            "description": "Access denied",
+            "description": "Access denied to an alert the caller can see but may not change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Alert not found, or not visible to the caller",
             "content": {
               "application/json": {
                 "schema": {
@@ -779,7 +829,7 @@
       },
       "delete": {
         "summary": "Unacknowledge an alert",
-        "description": "Removes acknowledgement from an alert. An alert on a connection needs access to that connection; a system alert needs a superuser or the manage_alert_rules admin permission, bounded by an API token's admin scope as for acknowledgement",
+        "description": "Removes acknowledgement from an alert. An alert on a connection needs access to that connection; a system alert needs a superuser or the manage_alert_rules admin permission, bounded by an API token's admin scope as for acknowledgement. An alert the caller cannot see is answered with 404, exactly as a missing one",
         "operationId": "unacknowledgeAlert",
         "tags": [
           "Alerts"
@@ -833,7 +883,7 @@
             }
           },
           "403": {
-            "description": "Access denied",
+            "description": "Access denied to an alert the caller can see but may not change",
             "content": {
               "application/json": {
                 "schema": {
@@ -843,7 +893,7 @@
             }
           },
           "404": {
-            "description": "Alert not found",
+            "description": "Alert not found, or not visible to the caller",
             "content": {
               "application/json": {
                 "schema": {
@@ -883,7 +933,7 @@
     "/alerts/analysis": {
       "put": {
         "summary": "Save AI analysis for alert",
-        "description": "Saves an AI-generated analysis for a specific alert, which needs access to the alert's connection. A system alert has no connection or metric to explain, so saving analysis on one is refused with 400 to every caller who may see system alerts, and with 403 to any caller who may not",
+        "description": "Saves an AI-generated analysis for a specific alert, which needs access to the alert's connection. A system alert has no connection or metric to explain, so saving analysis on one is refused with 400 to every caller who may see system alerts. An alert the caller cannot see, system or otherwise, is answered with 404, exactly as a missing one",
         "operationId": "saveAlertAnalysis",
         "tags": [
           "Alerts"
@@ -936,7 +986,27 @@
             }
           },
           "403": {
-            "description": "Access denied",
+            "description": "Access denied to an alert the caller can see but may not change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Alert not found, or not visible to the caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to save analysis",
             "content": {
               "application/json": {
                 "schema": {
@@ -2129,7 +2199,7 @@
     "/channel-overrides/{scope}/{scopeId}/{channelId}": {
       "put": {
         "summary": "Upsert channel override",
-        "description": "Creates or updates a channel override at the specified scope",
+        "description": "Creates or updates a channel override at the specified scope. A scope the caller cannot see is answered with 404, exactly as a missing one",
         "operationId": "upsertChannelOverride",
         "tags": [
           "Notification Channels"
@@ -2219,6 +2289,26 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "Scope not found, or not visible to the caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to check scope visibility",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -2229,7 +2319,7 @@
       },
       "delete": {
         "summary": "Delete channel override",
-        "description": "Deletes a channel override at the specified scope",
+        "description": "Deletes a channel override at the specified scope. A scope the caller cannot see is answered with 404, exactly as a missing one",
         "operationId": "deleteChannelOverride",
         "tags": [
           "Notification Channels"
@@ -2291,6 +2381,26 @@
           },
           "403": {
             "description": "Requires manage_notification_channels permission, or the API token's connection scope does not cover the target",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Scope not found, or not visible to the caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to check scope visibility",
             "content": {
               "application/json": {
                 "schema": {
@@ -7795,7 +7905,7 @@
     "/probe-overrides/{scope}/{scopeId}/{probeName}": {
       "put": {
         "summary": "Upsert probe override",
-        "description": "Creates or updates a probe override at the specified scope",
+        "description": "Creates or updates a probe override at the specified scope. A scope the caller cannot see is answered with 404, exactly as a missing one",
         "operationId": "upsertProbeOverride",
         "tags": [
           "Probe Configuration"
@@ -7885,6 +7995,26 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "Scope not found, or not visible to the caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to check scope visibility",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -7895,7 +8025,7 @@
       },
       "delete": {
         "summary": "Delete probe override",
-        "description": "Deletes a probe override at the specified scope",
+        "description": "Deletes a probe override at the specified scope. A scope the caller cannot see is answered with 404, exactly as a missing one",
         "operationId": "deleteProbeOverride",
         "tags": [
           "Probe Configuration"
@@ -7957,6 +8087,26 @@
           },
           "403": {
             "description": "Requires manage_probes permission, or the API token's connection scope does not cover the target",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Scope not found, or not visible to the caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to check scope visibility",
             "content": {
               "application/json": {
                 "schema": {

@@ -264,9 +264,14 @@ decisions. Acknowledge and unacknowledge go through
 guard, so a superuser or a `manage_alert_rules` holder passes, a
 token's admin scope bounds it, and every lookup error denies) and
 anything else to `CanAccessConnection`; `GetAlertConnectionID`
-returns `*int` for this. `handleSaveAnalysis` never saves on a system
-alert: it answers 403 when `CanSeeSystemAlerts` denies and 400
-otherwise, because the refusal concerns the alert, not the caller. No
+returns `*int` for this. All three mutations first run
+`AlertHandler.resolveVisibleAlert`, which answers a system alert that
+`CanSeeSystemAlerts` denies, or a connection alert outside
+`VisibleConnectionIDs`, with the same 404 as a missing alert (#677);
+only a visible alert reaches `canActOnAlert`, whose 403 is audited
+through the embedded `denialAuditor`. `handleSaveAnalysis` never saves
+on a visible system alert and answers 400, because the refusal
+concerns the alert, not the caller. No
 MCP tool mutates alerts, so there is no tool-side counterpart. The
 `get_alert_history` MCP tool uses the same gate. The timeline count
 queries in `timeline_queries.go` add `connection_id IS NOT NULL` and
@@ -361,12 +366,9 @@ record first and then checks its target (`getProbeConfig`, via
 a record runs the same check after the permission gate and before the
 token-scope gate and the body decode, so neither a 403 nor the echoed
 record confirms a hidden one exists (`updateProbeConfig`, via
-`requireProbeConfigVisible`). Only `updateProbeConfig` does this so
-far: the probe, alert and channel override writes (`upsertOverride`,
-`deleteOverride`) check the admin permission and the token scope but
-not visibility, so a permission holder with no grant can still write
-a hidden target's override and gets 400 rather than 404 for a missing
-one; do not assume every write is covered. Estate-wide (global) rows
+`requireProbeConfigVisible`). The probe, alert and channel override
+writes do the same (see "Override Writes Check Visibility Before Token
+Scope" below). Estate-wide (global) rows
 stay readable by every caller. An unrestricted superuser session gets
 200 with an empty list for a missing connection ID, since nothing is
 hidden from it. `probe_config_visibility_test.go` holds the
@@ -1071,8 +1073,8 @@ audited, as is the cluster move;
 `TestConnectionMutationHonoursTokenConnectionScope` and
 `TestConnectionScopeRefusalIsAudited` cover them.
 
-Connection-access refusals (`CanAccessConnection` or the alert
-resolver says no) are audited too since issue #675, through
+Connection-access refusals (`CanAccessConnection` or
+`canActOnAlert` says no) are audited too since issue #675, through
 `server/src/internal/api/access_denial_targets.go`. Their routes name
 the object outside the path (a query parameter or the body), so the
 refusing handler calls `denialRecorder.refuseConnection` or
@@ -1093,6 +1095,15 @@ records; any other alert gets `alertAccessDenied`. The actions are the
 `MetricsHandler`, `LatestSnapshotHandler`, `PerfSummaryHandler`,
 `ServerInfoHandler` and `AlertHandler` embed `denialAuditor` and are in
 the wiring loop, which `TestSetupHandlersWiresDenialRecorders` pins.
+An alert mutation refuses, and records, only an alert the caller can
+see (`resolveVisibleAlert` answers a hidden one 404 with no row,
+issue #677), so the alert cases are not in `accessRefusalCases`, whose
+nil-store checker hides everything: `TestAlertRefusalsAreAudited` and
+`TestHiddenAlertIsNotAudited` in `alert_refusal_audit_test.go` cover
+them. `TestRefusalWritesOneAuditRow` (`admin_refusal_audit_test.go`)
+runs each alert and override write refusal through the real
+`RecordDenial` and asserts one row with its action and target, and
+none for a hidden target.
 `GET /connections/current` is audited as `connection.read` even
 though the client reads it on every load; the coalescer bounds it. The
 tests are in `access_denial_targets_test.go`.
@@ -1548,3 +1559,20 @@ treats every connection as shared and unowned, as before;
 `TestConnectionAccessAndVisibilityAgree` in
 `internal/auth/connection_access_agreement_test.go` runs every case through
 both functions and fails if they disagree.
+
+## Override Writes Check Visibility Before Token Scope (Issue #672)
+
+The probe, alert and channel override `upsertOverride` and
+`deleteOverride` run, in order: the admin permission gate,
+`scopeVisibleToCaller` (404 with the same message as `listOverrides`),
+`requireTargetInTokenScope` (audited 403), then the body decode. A
+hidden scope must cost a caller nothing it could learn from a missing
+one, so keep visibility ahead of the token-scope 403 and the decode.
+Because `VisibleConnectionIDs` intersects with the token scope, a
+scoped token's out-of-scope server is hidden and gets 404; the 403
+remains for a visible target the token may not write (a read-only
+scope, or a cluster or group with any visible member). Cluster and
+group visibility queries the datastore, so tests need a real one
+(`newEstateGates` or `newCovFixture`); `runOverrideCoverage` in
+`coverage_fixture_test.go` asserts hidden equals missing for every
+override type and scope.

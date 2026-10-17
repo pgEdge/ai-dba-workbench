@@ -14,6 +14,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"slices"
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/database"
@@ -46,23 +47,35 @@ type AlertHandler struct {
 	rbacChecker     *auth.RBACChecker
 	alertResolver   alertConnectionResolver
 	unacknowledgeFn alertUnacknowledger
-
-	// denialAuditor audits this handler's connection-access refusals.
+	// visibilityLister enumerates connections for the mutation
+	// handlers' visibility check; tests replace it so the check can run
+	// without a real database.
+	visibilityLister auth.ConnectionVisibilityLister
+	// denialAuditor audits this handler's connection-access refusals,
+	// and the refusal of an alert the caller can see but may not
+	// change.
 	denialAuditor
 }
 
 // NewAlertHandler creates a new alert handler
 func NewAlertHandler(datastore *database.Datastore, authStore *auth.AuthStore, rbacChecker *auth.RBACChecker) *AlertHandler {
 	h := &AlertHandler{
-		datastore:   datastore,
-		authStore:   authStore,
-		rbacChecker: rbacChecker,
+		datastore:        datastore,
+		authStore:        authStore,
+		rbacChecker:      rbacChecker,
+		visibilityLister: database.NewVisibilityLister(datastore),
 	}
 	if datastore != nil {
 		h.alertResolver = datastore
 		h.unacknowledgeFn = datastore
 	}
 	return h
+}
+
+// setVisibilityLister overrides the connection lister the mutation
+// handlers' visibility check uses, for tests.
+func (h *AlertHandler) setVisibilityLister(l auth.ConnectionVisibilityLister) {
+	h.visibilityLister = l
 }
 
 // setAlertResolver overrides the alert-connection resolver for tests. The
@@ -300,6 +313,53 @@ func alertRefusalReason(connID *int) string {
 	return alertAccessDenied
 }
 
+// resolveVisibleAlert looks up the connection an alert belongs to and
+// checks that the caller may see the alert, writing the response and
+// returning false when they may not. An alert the caller cannot see
+// answers 404 exactly as a missing one, so the mutation handlers do not
+// reveal which alert IDs exist (issue #677); only a visible alert can
+// draw the audited 403 from canActOnAlert. The visible connections are
+// resolved before the lookup, so a missing ID costs the same queries as
+// an alert on a hidden connection. A connection alert is visible when
+// its connection is (VisibleConnectionIDs, as the alert list applies),
+// and a system alert when CanSeeSystemAlerts allows it. failMsg is the
+// 500 message for a failed visibility check.
+func (h *AlertHandler) resolveVisibleAlert(w http.ResponseWriter, r *http.Request,
+	alertID int64, failMsg string) (*int, bool) {
+
+	if h.alertResolver == nil {
+		log.Printf("[ERROR] Alert resolver is not configured")
+		RespondError(w, http.StatusInternalServerError, failMsg)
+		return nil, false
+	}
+	ids, allConnections, err := h.rbacChecker.VisibleConnectionIDs(r.Context(), h.visibilityLister)
+	if err != nil {
+		log.Printf("[ERROR] Failed to resolve visible connections for alert %d: %v", alertID, err) //nolint:gosec // G706: alertID is an integer, cannot contain newlines; err is a wrapped DB error
+		RespondError(w, http.StatusInternalServerError, failMsg)
+		return nil, false
+	}
+	connID, err := h.alertResolver.GetAlertConnectionID(r.Context(), alertID)
+	if err != nil {
+		log.Printf("[ERROR] Failed to look up alert connection: %v", err)
+		RespondError(w, http.StatusNotFound, "Alert not found")
+		return nil, false
+	}
+	var visible bool
+	switch {
+	case connID == nil:
+		visible = h.rbacChecker.CanSeeSystemAlerts(r.Context())
+	case allConnections:
+		visible = true
+	default:
+		visible = slices.Contains(ids, *connID)
+	}
+	if !visible {
+		RespondError(w, http.StatusNotFound, "Alert not found")
+		return nil, false
+	}
+	return connID, true
+}
+
 // AcknowledgeRequest represents the request body for acknowledging an alert
 type AcknowledgeRequest struct {
 	AlertID       int64  `json:"alert_id"`
@@ -333,20 +393,10 @@ func (h *AlertHandler) acknowledgeAlert(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Resolve the alert's connection via the narrow resolver interface so
-	// tests can inject a fake without stubbing the full datastore. This
-	// is the minimum datastore work required before the RBAC gate; the
-	// gate runs immediately after so no mutation datastore call executes
-	// for a denied caller.
-	if h.alertResolver == nil {
-		log.Printf("[ERROR] acknowledgeAlert: alert resolver is not configured")
-		RespondError(w, http.StatusInternalServerError, "Failed to acknowledge alert")
-		return
-	}
-	connID, err := h.alertResolver.GetAlertConnectionID(r.Context(), req.AlertID)
-	if err != nil {
-		log.Printf("[ERROR] Failed to look up alert connection: %v", err)
-		RespondError(w, http.StatusNotFound, "Alert not found")
+	// The visibility check and the RBAC gate run before any mutation
+	// datastore call, so a denied caller changes nothing.
+	connID, ok := h.resolveVisibleAlert(w, r, req.AlertID, "Failed to acknowledge alert")
+	if !ok {
 		return
 	}
 	if !h.canActOnAlert(r.Context(), connID) {
@@ -393,19 +443,10 @@ func (h *AlertHandler) unacknowledgeAlert(w http.ResponseWriter, r *http.Request
 		return // Error already sent
 	}
 
-	// Resolve the alert's connection via the narrow resolver interface so
-	// tests can inject a fake without stubbing the full datastore. The
-	// RBAC gate runs immediately after so no mutation datastore call
-	// executes for a denied caller.
-	if h.alertResolver == nil {
-		log.Printf("[ERROR] unacknowledgeAlert: alert resolver is not configured")
-		RespondError(w, http.StatusInternalServerError, "Failed to unacknowledge alert")
-		return
-	}
-	connID, err := h.alertResolver.GetAlertConnectionID(r.Context(), alertID)
-	if err != nil {
-		log.Printf("[ERROR] Failed to look up alert connection: %v", err)
-		RespondError(w, http.StatusNotFound, "Alert not found")
+	// The visibility check and the RBAC gate run before any mutation
+	// datastore call, so a denied caller changes nothing.
+	connID, ok := h.resolveVisibleAlert(w, r, alertID, "Failed to unacknowledge alert")
+	if !ok {
 		return
 	}
 	if !h.canActOnAlert(r.Context(), connID) {
@@ -472,32 +513,18 @@ func (h *AlertHandler) handleSaveAnalysis(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Resolve the alert's connection via the narrow resolver interface so
-	// tests can inject a fake without stubbing the full datastore. The
-	// RBAC gate runs immediately after so no write call executes for a
-	// denied caller.
-	if h.alertResolver == nil {
-		log.Printf("[ERROR] handleSaveAnalysis: alert resolver is not configured")
-		RespondError(w, http.StatusInternalServerError, "Failed to save analysis")
-		return
-	}
-	connID, err := h.alertResolver.GetAlertConnectionID(r.Context(), req.AlertID)
-	if err != nil {
-		log.Printf("[ERROR] Failed to look up alert connection: %v", err)
-		RespondError(w, http.StatusNotFound, "Alert not found")
+	// The visibility check and the RBAC gate run before the write, so a
+	// denied caller changes nothing.
+	connID, ok := h.resolveVisibleAlert(w, r, req.AlertID, "Failed to save analysis")
+	if !ok {
 		return
 	}
 	// AI analysis explains a metric on a monitored connection, and a
-	// system alert has neither, so saving one is refused for everybody.
-	// The refusal is about the alert rather than the caller, hence 400
-	// rather than 403; a caller who may not see system alerts at all
-	// still gets 403 first, as for any alert beyond their reach.
+	// system alert has neither, so saving one is refused for everybody
+	// who can see it. The refusal is about the alert rather than the
+	// caller, hence 400 rather than 403; a caller who may not see system
+	// alerts at all got the not-found answer above.
 	if connID == nil {
-		if !h.rbacChecker.CanSeeSystemAlerts(r.Context()) {
-			h.denialRecorder.refuseTarget(w, r, deniedActionAlertAnalysisUpdate,
-				alertDenialTarget(req.AlertID), alertAccessDenied, "Access denied")
-			return
-		}
 		RespondError(w, http.StatusBadRequest, "AI analysis cannot be saved on a system alert")
 		return
 	}

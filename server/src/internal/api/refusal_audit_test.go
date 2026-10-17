@@ -135,7 +135,7 @@ func TestOverrideAndProbeConfigRefusalsAreAudited(t *testing.T) {
 	const probeBody = `{"is_enabled":false,"collection_interval_seconds":30,"retention_days":7}`
 
 	g := newEstateGates(t)
-	narrowed := g.callers["narrowed"]
+	narrowed, readOnly := g.callers["narrowed"], g.callers["readOnly"]
 	capture := &routedCapture{}
 	g.alertOverride.SetDenialRecorder(capture.record)
 	g.probeOverride.SetDenialRecorder(capture.record)
@@ -149,37 +149,56 @@ func TestOverrideAndProbeConfigRefusalsAreAudited(t *testing.T) {
 		path     string
 		body     string
 		want     routedDenial
+		// caller defaults to the narrowed token.
+		caller *scopeCaller
 	}{
 		{"alert override upsert", g.alertOverride.RegisterRoutes, http.MethodPut,
 			"/api/v1/alert-overrides/group/1/1", alertBody,
-			routedDenial{"alert_override.update", "alert-overrides/group/1", targetOutOfTokenScope}},
+			routedDenial{"alert_override.update", "alert-overrides/group/1", targetOutOfTokenScope}, nil},
 		{"alert override delete", g.alertOverride.RegisterRoutes, http.MethodDelete,
 			"/api/v1/alert-overrides/cluster/1/1", "",
-			routedDenial{"alert_override.delete", "alert-overrides/cluster/1", targetOutOfTokenScope}},
+			routedDenial{"alert_override.delete", "alert-overrides/cluster/1", targetOutOfTokenScope}, nil},
 		{"probe override upsert", g.probeOverride.RegisterRoutes, http.MethodPut,
 			"/api/v1/probe-overrides/cluster/1/pg_stat_activity", probeBody,
-			routedDenial{"probe_override.update", "probe-overrides/cluster/1", targetOutOfTokenScope}},
+			routedDenial{"probe_override.update", "probe-overrides/cluster/1", targetOutOfTokenScope}, nil},
+		// A read-only token sees connection 5 but may not change it.
 		{"probe override delete", g.probeOverride.RegisterRoutes, http.MethodDelete,
-			"/api/v1/probe-overrides/server/6/pg_stat_activity", "",
-			routedDenial{"probe_override.delete", "probe-overrides/server/6", targetOutOfTokenScope}},
+			"/api/v1/probe-overrides/server/5/pg_stat_activity", "",
+			routedDenial{"probe_override.delete", "probe-overrides/server/5", targetOutOfTokenScope},
+			&readOnly},
 		{"channel override upsert", g.chanOverride.RegisterRoutes, http.MethodPut,
 			"/api/v1/channel-overrides/group/1/1", `{"enabled":false}`,
-			routedDenial{"channel_override.update", "channel-overrides/group/1", targetOutOfTokenScope}},
+			routedDenial{"channel_override.update", "channel-overrides/group/1", targetOutOfTokenScope}, nil},
 		{"channel override delete", g.chanOverride.RegisterRoutes, http.MethodDelete,
 			"/api/v1/channel-overrides/group/1/1", "",
-			routedDenial{"channel_override.delete", "channel-overrides/group/1", targetOutOfTokenScope}},
+			routedDenial{"channel_override.delete", "channel-overrides/group/1", targetOutOfTokenScope}, nil},
 		{"probe config update", g.probeConfig.RegisterRoutes, http.MethodPut,
 			"/api/v1/probe-configs/1", `{"is_enabled":false}`,
-			routedDenial{"probe_config.update", "probe-configs/1", targetOutOfTokenScope}},
+			routedDenial{"probe_config.update", "probe-configs/1", targetOutOfTokenScope}, nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			capture.denials = nil
-			rec := serveRoutes(tc.register, narrowed, tc.method, tc.path, tc.body)
+			caller := narrowed
+			if tc.caller != nil {
+				caller = *tc.caller
+			}
+			rec := serveRoutes(tc.register, caller, tc.method, tc.path, tc.body)
 			assertOutOfTokenScope(t, rec)
 			capture.expect(t, tc.want)
 		})
 	}
+
+	// A connection outside the token's scope is hidden from it, so the
+	// write is answered as missing and no refusal is recorded, since a
+	// recorded 403 would itself confirm the target exists (issue #672).
+	t.Run("hidden target records nothing", func(t *testing.T) {
+		capture.denials = nil
+		rec := serveRoutes(g.probeOverride.RegisterRoutes, narrowed,
+			http.MethodDelete, "/api/v1/probe-overrides/server/6/pg_stat_activity", "")
+		expectStatus(t, rec, http.StatusNotFound)
+		capture.expect(t)
+	})
 
 	t.Run("admitted write records nothing", func(t *testing.T) {
 		capture.denials = nil

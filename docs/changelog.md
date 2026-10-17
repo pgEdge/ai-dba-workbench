@@ -2633,6 +2633,22 @@ project adheres to
   coalesced like other denials, so probing many connections in a loop
   writes one event per minute rather than one per request.
 
+- Answer a write to a hidden override scope or alert exactly as a
+  write to a missing one (#672). The probe, alert and channel
+  override `PUT` and `DELETE` routes checked the admin permission,
+  the token scope and the request body before checking that the
+  caller could see the server, cluster or group named, so a hidden
+  target answered 403 or 400, or was changed, where a missing one
+  answered 404. They now answer 404 for any target the caller cannot
+  see, and an API token writing to a server outside its connection
+  scope gets 404 rather than 403. Acknowledging, clearing the
+  acknowledgement of, or saving the analysis of an alert on a
+  connection the caller cannot see, or a system alert they may not
+  see, likewise answers 404 rather than 403. These refusals are no
+  longer recorded in the audit log, since the record would itself
+  confirm the target exists; a refused change to a visible target
+  is still recorded.
+
 - Breaking: make the `query_datastore` MCP tool structured and limit
   the tool to the connections the caller can read (#566). The tool no
   longer accepts SQL and rejects a `sql` or `query` argument, so a

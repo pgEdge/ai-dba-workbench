@@ -144,6 +144,12 @@ func (h *ChannelOverrideHandler) upsertOverride(w http.ResponseWriter, r *http.R
 	if !h.checkPermission(w, r) {
 		return
 	}
+	// A target the caller cannot see answers 404 exactly as a missing
+	// one, before the token scope or the body is checked, so neither a
+	// 403 nor a write confirms that it exists (issue #672).
+	if !scopeVisibleToCaller(r.Context(), w, h.rbacChecker, h.datastore, scope, scopeID, "Channel override scope not found") {
+		return
+	}
 	if !requireTargetInTokenScope(w, r, h.rbacChecker, h.denialRecorder, scope, &scopeID) {
 		return
 	}
@@ -166,6 +172,12 @@ func (h *ChannelOverrideHandler) upsertOverride(w http.ResponseWriter, r *http.R
 // deleteOverride handles DELETE /api/v1/channel-overrides/{scope}/{scopeId}/{channelId}
 func (h *ChannelOverrideHandler) deleteOverride(w http.ResponseWriter, r *http.Request, scope string, scopeID int, channelID int64) {
 	if !h.checkPermission(w, r) {
+		return
+	}
+	// A target the caller cannot see answers 404 exactly as a missing
+	// one, before the token scope or the body is checked, so neither a
+	// 403 nor a write confirms that it exists (issue #672).
+	if !scopeVisibleToCaller(r.Context(), w, h.rbacChecker, h.datastore, scope, scopeID, "Channel override scope not found") {
 		return
 	}
 	if !requireTargetInTokenScope(w, r, h.rbacChecker, h.denialRecorder, scope, &scopeID) {

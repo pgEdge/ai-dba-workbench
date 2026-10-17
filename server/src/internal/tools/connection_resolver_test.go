@@ -70,12 +70,14 @@ func TestParseConnectionArgs(t *testing.T) {
 			wantDBName:  "otherdb",
 		},
 		{
-			name: "connection_id as string is not parsed",
+			// A string is present but invalid, so it is refused
+			// rather than ignored so the call falls back to the selected connection.
+			name: "connection_id as string is refused",
 			args: map[string]any{
 				"connection_id": "42",
 			},
 			wantConnID:  0,
-			wantHasConn: false,
+			wantHasConn: true,
 			wantDBName:  "",
 		},
 		{

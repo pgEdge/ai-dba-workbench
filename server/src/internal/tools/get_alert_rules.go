@@ -107,9 +107,9 @@ Returns TSV data with:
 			// Parse optional connection_id
 			var connectionID *int
 			if _, ok := args["connection_id"]; ok {
-				cid, err := parseIntArg(args, "connection_id")
-				if err != nil {
-					return mcp.NewToolError("Invalid 'connection_id' parameter: must be an integer")
+				cid, valid := connectionIDValue(args["connection_id"])
+				if !valid {
+					return mcp.NewToolError("Invalid 'connection_id' parameter: must be a positive integer")
 				}
 				// RBAC: verify the caller may access this connection before
 				// reading its effective thresholds. Missing and denied cases

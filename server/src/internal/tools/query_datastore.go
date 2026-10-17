@@ -102,8 +102,10 @@ database. It holds two kinds of source:
 // structured, server-built query against one datastore source. Results
 // are limited to the connections rbacChecker reports the caller can
 // read, and to the columns the source catalog permits. visibilityLister
-// may be nil when no datastore is configured.
-func QueryDatastoreTool(pool *pgxpool.Pool, rbacChecker *auth.RBACChecker, visibilityLister auth.ConnectionVisibilityLister) Tool {
+// may be nil when no datastore is configured. record audits a refused
+// connection_ids entry as connection.read on the bare connections
+// target, since one call may name several IDs, and may be nil.
+func QueryDatastoreTool(pool *pgxpool.Pool, rbacChecker *auth.RBACChecker, visibilityLister auth.ConnectionVisibilityLister, record DenialRecorder) Tool {
 	return Tool{
 		Definition: mcp.Tool{
 			Name:               "query_datastore",
@@ -149,6 +151,8 @@ func QueryDatastoreTool(pool *pgxpool.Pool, rbacChecker *auth.RBACChecker, visib
 			sql, queryArgs, err := buildDatastoreQuery(src, req, vis, time.Now())
 			if err != nil {
 				if errors.Is(err, errConnectionNotAccessible) {
+					record.deny(ctx, deniedActionConnectionRead,
+						connectionsTarget, connectionAccessDenied)
 					return connectionNotAccessibleResponse(ctx, pool, rbacChecker, visibilityLister), nil
 				}
 				return mcp.NewToolError(err.Error())
@@ -164,6 +168,8 @@ func QueryDatastoreTool(pool *pgxpool.Pool, rbacChecker *auth.RBACChecker, visib
 					return mcp.NewToolError("Failed to resolve accessible connections")
 				}
 				if !exist {
+					record.deny(ctx, deniedActionConnectionRead,
+						connectionsTarget, connectionAccessDenied)
 					return connectionNotAccessibleResponse(ctx, pool, rbacChecker, visibilityLister), nil
 				}
 			}

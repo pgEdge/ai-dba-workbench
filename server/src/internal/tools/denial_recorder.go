@@ -78,7 +78,10 @@ const (
 // recorded for a refused call to a name that is not a registered tool,
 // as REST records an unmatched route, so that the caller's text never
 // reaches the log.
+// connectionsTarget is recorded where a refusal names no one
+// connection, such as a query_datastore call that may name several.
 const (
+	connectionsTarget   = "connections"
 	memoriesTarget      = "memories"
 	unmatchedToolTarget = "unmatched"
 )
@@ -90,9 +93,9 @@ const (
 // REST denialResourceTarget does.
 func connectionDenialTarget(connectionID int) string {
 	if connectionID <= 0 {
-		return "connections"
+		return connectionsTarget
 	}
-	return "connections/" + strconv.Itoa(connectionID)
+	return connectionsTarget + "/" + strconv.Itoa(connectionID)
 }
 
 // deny audits a refusal, when a recorder is set, for a caller that

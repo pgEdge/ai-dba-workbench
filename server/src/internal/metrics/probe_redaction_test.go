@@ -356,6 +356,22 @@ func TestRedactStatementTextQuoteShift(t *testing.T) {
 	}
 }
 
+func TestRedactStatementValue(t *testing.T) {
+	const stored = `ALTER ROLE app PASSWORD 'hunter2'`
+	for name, tc := range map[string]struct {
+		masked, raw, want any
+	}{
+		"NULL stays NULL":          {nil, stored, nil},
+		"masked from stored text":  {"masked in SQL", stored, RedactStatementText(stored)},
+		"no stored text":           {"masked in SQL", nil, RedactedValue},
+		"stored text not a string": {"masked in SQL", int64(7), RedactedValue},
+	} {
+		if got := RedactStatementValue(tc.masked, tc.raw); got != tc.want {
+			t.Errorf("%s: RedactStatementValue() = %v, want %v", name, got, tc.want)
+		}
+	}
+}
+
 func TestRedactStatementTextCutsLongText(t *testing.T) {
 	long := strings.Repeat("x", redact.MaxTextLength+10)
 	if got := RedactStatementText(long); len(got) != redact.MaxTextLength {

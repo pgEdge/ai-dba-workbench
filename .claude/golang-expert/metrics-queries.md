@@ -278,7 +278,8 @@ decomposed into small, separately testable helpers:
   shell-command settings keep their program name only in stored rows.
   `/api/v1/metrics/latest` (`queryLatestSnapshot`) calls
   `RedactProbeRows` too, top-queries uses `metrics.RedactStatementText`,
-  and timeline `config_change` events use
+  `query_datastore` uses `metrics.RedactStatementValue` from the same
+  stored-text alias (`redactDatastoreStatements`, #724), and timeline `config_change` events use
   `server/src/internal/database/settings_redaction.go`. Any new path that
   returns stored settings values or statement text must redact the same
   way; when adding a probe that stores statement text, add its columns to

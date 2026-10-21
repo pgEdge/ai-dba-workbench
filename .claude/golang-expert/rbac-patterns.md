@@ -927,7 +927,15 @@ return the secret after it (#670): the latest routes select each
 `metrics.RawStatementColumns` entry under `RawStatementAlias` beside
 the masked column, which stays for `DISTINCT ON` and sorting, and
 `RedactProbeRows` masks from it and deletes it; top-queries selects
-`pss.query` as stored for `RedactStatementText`;
+`pss.query` as stored for `RedactStatementText`; `query_datastore`
+marks those columns `RedactStatement`, `innerSelectList` selects each
+as stored under `RawStatementAlias` too, every shape carries it beside
+each output holding statement text (`rawStatementNames`, and
+`aggregateRawStatements`: `min` of the stored text for a `group_by`
+column, the same `min`/`max` for those aggregations), and
+`redactDatastoreStatements` masks each `datastoreStatementOutputs`
+entry with `metrics.RedactStatementValue` and drops every
+`_raw_statement_` column before the TSV is formatted (#724);
 `MaskedProbeColumn` and the timeline use `metrics.RedactedSetting`,
 which returns a connection string setting such as `primary_conninfo`
 as stored when the patterns leave it unchanged (as they leave a value

@@ -127,10 +127,11 @@ func TestMaskedProbesCoverProbeRedactions(t *testing.T) {
 }
 
 // TestMaskedProbesOnEveryRouteIntegration runs every probe that holds a
-// credential through query_datastore, GET /api/v1/metrics/latest and the
-// latest-rows mode of GET /api/v1/metrics/query, and checks none returns
-// the credential, a quoteShiftStatements secret or the stored statement
-// text the latest routes select beside a masked statement column.
+// credential through query_datastore (in every shape that can return
+// statement text), GET /api/v1/metrics/latest and the latest-rows mode
+// of GET /api/v1/metrics/query, and checks none returns the credential,
+// a quoteShiftStatements secret or the stored statement text each route
+// selects beside a masked statement column (issues #670 and #724).
 func TestMaskedProbesOnEveryRouteIntegration(t *testing.T) {
 	f := newDatastoreFixture(t)
 	ctx := context.Background()
@@ -171,6 +172,23 @@ func TestMaskedProbesOnEveryRouteIntegration(t *testing.T) {
 				}
 				outputs["query_datastore "+shape] = text
 			}
+			// A statement fixture's query column is also returned by
+			// the aggregate shape, as a group and as a min or max.
+			if p.statement != "" {
+				for name, args := range map[string]map[string]any{
+					"group_by": {"group_by": []any{"query"}, "aggregation": "count"},
+					"min":      {"columns": []any{"query"}, "aggregation": "min"},
+					"max":      {"columns": []any{"query"}, "aggregation": "max"},
+				} {
+					args["source"] = p.name
+					args["shape"] = "aggregate"
+					text, isErr := call(t, f.tool(), superuserContext(), args)
+					if isErr {
+						t.Fatalf("query_datastore aggregate %s: %s", name, text)
+					}
+					outputs["query_datastore aggregate "+name] = text
+				}
+			}
 			params := "probe_name=" + p.name + "&connection_id=" + strconv.Itoa(f.visible)
 			for route, target := range map[string]string{
 				"metrics/latest": "/api/v1/metrics/latest?" + params,
@@ -189,11 +207,8 @@ func TestMaskedProbesOnEveryRouteIntegration(t *testing.T) {
 				if strings.Contains(out, "example-secret") || strings.Contains(out, "31337") {
 					t.Errorf("%s returned a credential:\n%s", route, out)
 				}
-				// query_datastore masks statement text with the SQL
-				// patterns alone, which miss these forms, as its
-				// TextRedactionNote says; the latest routes also lex it.
 				for _, st := range quoteShiftStatements {
-					if !strings.HasPrefix(route, "query_datastore") && strings.Contains(out, st.secret) {
+					if strings.Contains(out, st.secret) {
 						t.Errorf("%s returned %s:\n%s", route, st.secret, out)
 					}
 				}
@@ -419,7 +434,8 @@ func TestConninfoQuoteShiftIntegration(t *testing.T) {
 // quoteShiftStatements are statements, as a collector stored them
 // before migration 26 scrubbed them, whose secret came back on the
 // latest and top-queries routes when the server masked the text in SQL
-// (RedactedText) before lexing it (GitHub issue #670).
+// (RedactedText) before lexing it (GitHub issue #670), and through
+// query_datastore, which masked it in SQL alone (GitHub issue #724).
 var quoteShiftStatements = []struct{ query, secret string }{
 	{`ALTER SYSTEM SET restore_command = 'PGPASSWORD=\''PSSLEAKsecret17 cp %f %p'`, "PSSLEAKsecret17"},
 	{`ALTER SYSTEM SET primary_conninfo = 'host=h user=rep password=\''PSSLEAKsecret18'`, "PSSLEAKsecret18"},

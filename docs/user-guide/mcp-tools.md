@@ -151,9 +151,16 @@ In free text, the names that suggest a secret are those containing
 `access_key`; the shorter endings used for `pg_settings`, such as `key` and
 `pass`, are left out, so ordinary identifiers such as `sort_key` and `bypass`
 are kept. White space or up to two short comments may separate a name from its
-value. Filters and aggregates see only the masked text. Each free-text value is
-cut to its first 65,536 characters before it is masked, so that a crafted value
-cannot make masking slow; a longer value is returned cut short. The replicated
+value. Statement text, meaning the `query` column of `pg_stat_activity` and
+`pg_stat_statements` and the `ddl_statement` and `error_message` columns of
+`spock_exception_log`, is also split into SQL tokens as it is stored before
+it is returned, so that a string constant following `PASSWORD` or a setting
+such as `restore_command` is replaced in full even when the text quotes it in
+an unusual way. Filters and aggregates see only the masked text; a statement
+returned by `group_by` or by `min` or `max` is masked from one of the stored
+statements in its group. Each free-text value is cut to its first 65,536
+characters before it is masked, so that a crafted value cannot make masking
+slow; a longer value is returned cut short. The replicated
 row images in `spock_exception_log` are returned as text rather than JSON,
 because masking can leave them invalid as JSON.
 

@@ -128,15 +128,24 @@ func redactStatementRows(rows []map[string]any, columns []string) {
 			alias := RawStatementAlias(col)
 			raw := row[alias]
 			delete(row, alias)
-			if row[col] == nil {
-				continue
-			}
-			switch v := raw.(type) {
-			case string:
-				row[col] = RedactStatementText(v)
-			default:
-				row[col] = sqlredact.Redacted
-			}
+			row[col] = RedactStatementValue(row[col], raw)
 		}
 	}
+}
+
+// RedactStatementValue returns the value to return for a statement-text
+// column, given masked, the column's value as SQL masked it
+// (RedactedText), and raw, the text as stored, selected beside it under
+// RawStatementAlias. A NULL statement stays NULL; otherwise the result is
+// RedactStatementText over raw, or sqlredact.Redacted when raw is not
+// text, as when no stored value was selected, since masked alone cannot
+// be lexed safely.
+func RedactStatementValue(masked, raw any) any {
+	if masked == nil {
+		return nil
+	}
+	if v, ok := raw.(string); ok {
+		return RedactStatementText(v)
+	}
+	return sqlredact.Redacted
 }

@@ -139,6 +139,13 @@ type datastoreColumn struct {
 	// replicated row image, whose text has known password forms masked
 	// (metrics.RedactedText).
 	RedactText bool
+	// RedactStatement marks a statement-text column, one of
+	// metrics.RawStatementColumns, which is RedactText too. The query
+	// also selects it as stored under metrics.RawStatementAlias, and
+	// redactDatastoreStatements masks it in Go from that value
+	// (metrics.RedactStatementValue), since the SQL patterns alone miss
+	// forms the lexer catches (GitHub issue #724).
+	RedactStatement bool
 	// StoredType is the column's type in its table when DataType differs
 	// from it, as for a row image returned as text. Whether the column
 	// is an entity key follows the stored type, so masking a column
@@ -644,8 +651,10 @@ func redactMetricColumns(name string, columns []datastoreColumn) []datastoreColu
 	for i, c := range columns {
 		names[i] = c.Name
 	}
+	statements := metrics.RawStatementColumns(name, names)
 	out := make([]datastoreColumn, 0, len(columns))
 	for _, c := range columns {
+		c.RedactStatement = slices.Contains(statements, c.Name)
 		switch metrics.ProbeColumnMask(name, c.Name, names) {
 		case metrics.MaskOmit:
 			continue

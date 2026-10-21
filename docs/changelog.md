@@ -2695,6 +2695,19 @@ project adheres to
   returns statement text, including `group_by` and the `min` and
   `max` aggregations.
 
+- Refuse a probe, alert or notification channel override written
+  at cluster or group scope unless the caller can see every
+  connection in that cluster or group (#716). Seeing one member
+  was previously enough to change the overrides that apply to
+  all of them, including connections the caller cannot see. Such
+  a write, through the override endpoints or through
+  `PUT /api/v1/probe-configs/{id}` on a cluster or group
+  configuration, now answers 403 with the same message and audit
+  record as a caller without the permission, so the refusal does
+  not reveal that hidden members exist. Superusers and users
+  with a grant on all connections are unaffected, and reading
+  cluster and group overrides is unchanged.
+
 - Reset the session on each pooled connection to a monitored
   database when a tool call releases it (#709). A tool call could
   previously leave settings such as `search_path`, temporary

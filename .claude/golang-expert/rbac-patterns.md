@@ -1767,19 +1767,40 @@ treats every connection as shared and unowned, as before;
 `internal/auth/connection_access_agreement_test.go` runs every case through
 both functions and fails if they disagree.
 
-## Override Writes Check Visibility Before Token Scope (Issue #672)
+## Override Writes Check Visibility Before Token Scope (Issues #672, #716)
 
 The probe, alert and channel override `upsertOverride` and
 `deleteOverride` run, in order: the admin permission gate,
 `scopeVisibleToCaller` (404 with the same message as `listOverrides`),
-`requireTargetInTokenScope` (audited 403), then the body decode. A
-hidden scope must cost a caller nothing it could learn from a missing
-one, so keep visibility ahead of the token-scope 403 and the decode.
-Because `VisibleConnectionIDs` intersects with the token scope, a
-scoped token's out-of-scope server is hidden and gets 404; the 403
-remains for a visible target the token may not write (a read-only
-scope, or a cluster or group with any visible member). Cluster and
-group visibility queries the datastore, so tests need a real one
-(`newEstateGates` or `newCovFixture`); `runOverrideCoverage` in
-`coverage_fixture_test.go` asserts hidden equals missing for every
-override type and scope.
+`requireTargetInTokenScope` (audited 403), `requireScopeMembersVisible`
+(below), then the body decode. A hidden scope must cost a caller
+nothing it could learn from a missing one, so keep visibility ahead of
+the 403s and the decode. Because `VisibleConnectionIDs` intersects with
+the token scope, a scoped token's out-of-scope server is hidden and
+gets 404; the token-scope 403 remains for a visible target the token
+may not write (a read-only scope, or any cluster or group, which needs
+`AllConnectionsInTokenScope`). Cluster and group visibility queries the
+datastore, so tests need a real one (`newEstateGates` or
+`newCovFixture`); `runOverrideCoverage` in `coverage_fixture_test.go`
+asserts hidden equals missing for every override type and scope.
+
+Reading a cluster or group scope needs one visible member, but writing
+one needs every member visible (#716), because the override applies to
+all of them. `requireScopeMembersVisible` in `rbac_visibility.go` passes
+server scopes and unrestricted callers (superuser, wildcard grant),
+otherwise lists members with `GetConnectionIDsForCluster` or
+`GetConnectionIDsForGroup` and, if any is hidden, calls
+`denialRecorder.refuse` with `adminPermissionRefusal(permission)`, the
+exact body and audit reason `requireAdminPermission` gives a caller
+without the permission, so the refusal says nothing about hidden
+members. It runs after the token-scope check so narrowed tokens keep the
+token-scope message. `PUT /probe-configs/{id}` edits the same cluster
+and group rows by ID, so `updateProbeConfig` applies the same rule via
+`requireProbeConfigMembersVisible` and `checkScopeMembersVisible`. Any
+new write path that reaches cluster or group override rows must call
+one of these. Reads (`listOverrides`, `GET /probe-configs/{id}`) are
+unchanged. Tests: `override_scope_members_test.go` covers visible,
+hidden and mixed members, a group split across a visible and a hidden
+cluster, sessions, unscoped, wildcard-scope and narrowed tokens,
+superusers and all-connections grants, and asserts the refusal is
+byte-identical to the missing-permission one and audited once.

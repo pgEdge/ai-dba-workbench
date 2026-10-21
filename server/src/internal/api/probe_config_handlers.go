@@ -176,6 +176,35 @@ func (h *ProbeConfigHandler) requireProbeConfigVisible(
 	return ok
 }
 
+// requireProbeConfigMembersVisible applies requireScopeMembersVisible to
+// the cluster or group a probe config names, since a cluster or group
+// config is the same override PUT /probe-overrides writes (issue #716).
+// A caller who sees every connection needs no lookup; a missing config
+// is then reported by the update itself.
+func (h *ProbeConfigHandler) requireProbeConfigMembersVisible(
+	w http.ResponseWriter, r *http.Request, id int64) bool {
+
+	visible, all, err := resolveVisibleConnectionSet(r.Context(), h.rbacChecker, h.datastore)
+	if err != nil {
+		log.Printf("[ERROR] Failed to resolve visible connections: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to check scope visibility")
+		return false
+	}
+	if all {
+		return true
+	}
+	config, ok := h.loadVisibleProbeConfig(w, r, id)
+	if !ok {
+		return false
+	}
+	scope, scopeID, scoped := probeConfigVisibilityTarget(config)
+	if !scoped || scope == "server" {
+		return true
+	}
+	return checkScopeMembersVisible(w, r, h.datastore, h.denialRecorder,
+		auth.PermManageProbes, scope, scopeID, visible)
+}
+
 // probeConfigVisibilityTarget returns the scope and scope ID that decide
 // who may see a probe config, in the form scopeVisibleToCaller takes.
 // scoped is false for a global config, which names no target.
@@ -203,6 +232,9 @@ func (h *ProbeConfigHandler) updateProbeConfig(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if !h.requireProbeConfigInTokenScope(w, r, id) {
+		return
+	}
+	if !h.requireProbeConfigMembersVisible(w, r, id) {
 		return
 	}
 

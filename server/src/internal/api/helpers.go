@@ -50,6 +50,14 @@ func HandleNotConfigured(service string) http.HandlerFunc {
 	}
 }
 
+// adminPermissionRefusal is the refusal requireAdminPermission gives a
+// caller who does not hold permission. requireScopeMembersVisible gives
+// the same answer, so that it discloses nothing a missing permission
+// would not (issue #716).
+func adminPermissionRefusal(permission string) string {
+	return "Permission denied: requires " + permission + " permission"
+}
+
 // requireAdminPermission returns a function that checks whether the
 // caller has the specified admin permission. If the check fails it
 // audits the refusal through auditor's denial recorder, sends a 403
@@ -62,7 +70,7 @@ func HandleNotConfigured(service string) http.HandlerFunc {
 func requireAdminPermission(rbac *auth.RBACChecker, auditor *denialAuditor,
 	permission string) func(http.ResponseWriter, *http.Request) bool {
 
-	reason := "Permission denied: requires " + permission + " permission"
+	reason := adminPermissionRefusal(permission)
 	return func(w http.ResponseWriter, r *http.Request) bool {
 		if rbac.HasAdminPermission(r.Context(), permission) {
 			return true

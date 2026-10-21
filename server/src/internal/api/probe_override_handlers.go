@@ -153,6 +153,12 @@ func (h *ProbeOverrideHandler) upsertOverride(w http.ResponseWriter, r *http.Req
 	if !requireTargetInTokenScope(w, r, h.rbacChecker, h.denialRecorder, scope, &scopeID) {
 		return
 	}
+	// A cluster or group write reaches every member, so a member the
+	// caller cannot see refuses it (issue #716).
+	if !requireScopeMembersVisible(w, r, h.rbacChecker, h.datastore, h.denialRecorder,
+		auth.PermManageProbes, scope, scopeID) {
+		return
+	}
 
 	var req database.ProbeOverrideUpdate
 	if !DecodeJSONBody(w, r, &req) {
@@ -181,6 +187,12 @@ func (h *ProbeOverrideHandler) deleteOverride(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if !requireTargetInTokenScope(w, r, h.rbacChecker, h.denialRecorder, scope, &scopeID) {
+		return
+	}
+	// A cluster or group write reaches every member, so a member the
+	// caller cannot see refuses it (issue #716).
+	if !requireScopeMembersVisible(w, r, h.rbacChecker, h.datastore, h.denialRecorder,
+		auth.PermManageProbes, scope, scopeID) {
 		return
 	}
 

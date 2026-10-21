@@ -20,17 +20,13 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/memory"
 )
 
-// systemMemoryDeleteDenied is the refusal, and the audited reason, when
-// the caller lacks store_system_memory, in the words the REST delete
-// route uses, so that both interfaces coalesce alike.
-const systemMemoryDeleteDenied = "Permission denied: you do not have " +
-	"permission to delete system memories"
-
 // DeleteMemoryTool creates the delete_memory tool for removing a stored
 // memory by ID. A system-scoped memory needs store_system_memory, as on
 // the REST route, and a refusal is audited through record as
 // memory.delete on memories/<id>; another user's memory is answered as
-// a missing one, and neither is written or audited (issue #704).
+// a missing one, and neither is written or audited (issue #704). The
+// refusal is systemMemoryDenied, the reason the REST delete route and
+// store_memory record, so that both interfaces coalesce alike.
 func DeleteMemoryTool(memoryStore *memory.Store,
 	rbacChecker *auth.RBACChecker, record DenialRecorder) Tool {
 
@@ -90,7 +86,7 @@ func DeleteMemoryTool(memoryStore *memory.Store,
 			case mem.Scope == "system":
 				if !rbacChecker.HasAdminPermission(ctx, auth.PermStoreSystemMemory) {
 					return record.refuse(ctx, deniedActionMemoryDelete,
-						memoryDenialTarget(id), systemMemoryDeleteDenied)
+						memoryDenialTarget(id), systemMemoryDenied)
 				}
 				err = memoryStore.DeleteByID(ctx, id)
 			case mem.Username != username:

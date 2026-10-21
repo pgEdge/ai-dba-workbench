@@ -95,12 +95,12 @@ func TestDeleteMemoryToolScopes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Handler: %v", err)
 	}
-	if !resp.IsError || responseText(resp) != systemMemoryDeleteDenied {
-		t.Fatalf("Expected the refusal %q, got %+v", systemMemoryDeleteDenied,
+	if !resp.IsError || responseText(resp) != systemMemoryDenied {
+		t.Fatalf("Expected the refusal %q, got %+v", systemMemoryDenied,
 			resp)
 	}
 	want := toolDenial{"memory.delete", fmt.Sprintf("memories/%d", system),
-		systemMemoryDeleteDenied}
+		systemMemoryDenied}
 	if len(capture.denials) != 1 || capture.denials[0] != want {
 		t.Errorf("Expected %v recorded once, got %v", want, capture.denials)
 	}
@@ -205,8 +205,8 @@ func TestProviderDeleteMemoryRefusalReachesAuditLog(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 	if !resp.IsError || !strings.Contains(responseText(resp),
-		systemMemoryDeleteDenied) {
-		t.Fatalf("Expected the refusal %q, got %+v", systemMemoryDeleteDenied,
+		systemMemoryDenied) {
+		t.Fatalf("Expected the refusal %q, got %+v", systemMemoryDenied,
 			resp)
 	}
 	if !memoryExists(t, store, system) {
@@ -222,7 +222,7 @@ func TestProviderDeleteMemoryRefusalReachesAuditLog(t *testing.T) {
 		t.Fatalf("Expected 1 memory.delete denial, got %d", len(events))
 	}
 	if events[0].ActorName != "creator" ||
-		events[0].Error != systemMemoryDeleteDenied {
+		events[0].Error != systemMemoryDenied {
 		t.Errorf("Unexpected denial: actor %q, reason %q",
 			events[0].ActorName, events[0].Error)
 	}

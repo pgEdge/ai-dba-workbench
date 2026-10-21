@@ -1732,13 +1732,24 @@ func (h *ClusterHandler) refuseHiddenRelationship(w http.ResponseWriter, r *http
 // write names left the cluster after those checks; the write
 // transaction rechecks membership under a lock (issue #707). reversed
 // is true for the reverse half of a replicates_with pair, whose source
-// is the request's target.
+// is the request's target; by then the forward rows have committed, so
+// the message says they were saved.
 func refuseDepartedMember(w http.ResponseWriter, err error, reversed bool) bool {
 	source := errors.Is(err, database.ErrSourceNotInCluster)
 	if !source && !errors.Is(err, database.ErrTargetNotInCluster) {
 		return false
 	}
-	if source != reversed {
+	if reversed {
+		which := "target"
+		if !source {
+			which = "source"
+		}
+		RespondError(w, http.StatusBadRequest,
+			"Relationships saved, but the reverse replicates_with relationship was not: the "+
+				which+" connection no longer belongs to this cluster")
+		return true
+	}
+	if source {
 		RespondError(w, http.StatusBadRequest, "Source connection does not belong to this cluster")
 	} else {
 		RespondError(w, http.StatusBadRequest, "Target connection does not belong to this cluster")

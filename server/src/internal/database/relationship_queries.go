@@ -227,7 +227,20 @@ var (
 // then deletes the rows tx wrote (see dropRelationshipsOutsideCluster);
 // a relationship row naming a connection outside its cluster cannot
 // survive either order (issue #707).
+//
+// The cluster row is locked FOR KEY SHARE first, before the connection
+// rows. Hard-deleting a cluster locks its row and then, through the
+// ON DELETE SET NULL cascade, updates its member connection rows; the
+// INSERT that follows here would otherwise take FOR KEY SHARE on the
+// cluster row only after holding the connection rows, the opposite
+// order, and the two could deadlock.
 func lockClusterMembers(ctx context.Context, tx pgx.Tx, clusterID, sourceID int, targetIDs []int) error {
+	if _, err := tx.Exec(ctx,
+		`SELECT 1 FROM clusters WHERE id = $1 FOR KEY SHARE`,
+		clusterID,
+	); err != nil {
+		return fmt.Errorf("failed to lock cluster: %w", err)
+	}
 	ids := append([]int{sourceID}, targetIDs...)
 	var locked []int
 	err := tx.QueryRow(ctx, `

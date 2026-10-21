@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -556,5 +557,146 @@ func TestAddNodeRelationship_CommitFailureReturnsError(t *testing.T) {
 	}
 	if got := countRelationships(t, pool, clusterID, false); got != 0 {
 		t.Errorf("manual rows = %d, want 0", got)
+	}
+}
+
+// waitForLockWait waits until a backend in the test database whose
+// query contains fragment is waiting on a lock, or until done is
+// closed, and reports whether the lock wait was seen.
+func waitForLockWait(t *testing.T, pool *pgxpool.Pool, fragment string, done <-chan error) bool {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		select {
+		case <-done:
+			return false
+		default:
+		}
+		var n int
+		if err := pool.QueryRow(context.Background(), `
+			SELECT count(*) FROM pg_stat_activity
+			WHERE datname = current_database()
+			  AND wait_event_type = 'Lock'
+			  AND position($1 IN query) > 0`, fragment).Scan(&n); err != nil {
+			t.Fatalf("Failed to read pg_stat_activity: %v", err)
+		}
+		if n > 0 {
+			return true
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("no backend running %q waited on a lock", fragment)
+	return false
+}
+
+// TestNodeRelationships_WaitForUncommittedMove pins the FOR SHARE lock
+// both writes take on the member connection rows (issue #707). A move's
+// UPDATE is left uncommitted whilst the write starts; the write must
+// wait for it and, once it commits, refuse the departed target rather
+// than insert a row naming a connection outside its cluster.
+func TestNodeRelationships_WaitForUncommittedMove(t *testing.T) {
+	ds, pool, cleanup := newSyncAutoDetectedTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	clusterID := insertSyncTestCluster(t, pool, "node-rels-move")
+	otherCluster := insertSyncTestCluster(t, pool, "node-rels-move-dest")
+	source := insertSyncTestConnection(t, pool, "move-source")
+	target := insertSyncTestConnection(t, pool, "move-target")
+
+	rel := RelationshipInput{TargetConnectionID: target,
+		RelationshipType: "streams_from"}
+	tests := []struct {
+		name string
+		call func() error
+	}{
+		{"set", func() error {
+			return ds.SetNodeRelationships(ctx, clusterID, source,
+				[]RelationshipInput{rel}, nil)
+		}},
+		{"add", func() error {
+			return ds.AddNodeRelationship(ctx, clusterID, source, rel)
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			joinSyncTestCluster(t, pool, clusterID, source, target)
+
+			move, err := pool.Begin(ctx)
+			if err != nil {
+				t.Fatalf("Failed to begin the move: %v", err)
+			}
+			defer move.Rollback(ctx) //nolint:errcheck // no-op after commit
+			if _, err := move.Exec(ctx,
+				`UPDATE connections SET cluster_id = $1 WHERE id = $2`,
+				otherCluster, target); err != nil {
+				t.Fatalf("Failed to move the target: %v", err)
+			}
+
+			done := make(chan error, 1)
+			go func() { done <- tt.call() }()
+			if !waitForLockWait(t, pool, "FOR SHARE", done) {
+				t.Fatal("the write finished without waiting for the uncommitted move")
+			}
+			if err := move.Commit(ctx); err != nil {
+				t.Fatalf("Failed to commit the move: %v", err)
+			}
+			if err := <-done; !errors.Is(err, ErrTargetNotInCluster) {
+				t.Fatalf("error = %v, want %v", err, ErrTargetNotInCluster)
+			}
+			if got := countRelationships(t, pool, clusterID, false); got != 0 {
+				t.Errorf("manual rows = %d, want 0", got)
+			}
+		})
+	}
+}
+
+// TestNodeRelationships_DeleteClusterNoDeadlock pins the lock order in
+// lockClusterMembers. A write holds its locks whilst a hard delete of
+// the cluster starts; the write then inserts and commits. Locking the
+// member connections before the cluster row deadlocked here, since the
+// delete holds the cluster row and its ON DELETE SET NULL cascade waits
+// on the connection rows whilst the INSERT waits on the cluster row.
+func TestNodeRelationships_DeleteClusterNoDeadlock(t *testing.T) {
+	ds, pool, cleanup := newSyncAutoDetectedTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	clusterID := insertSyncTestCluster(t, pool, "node-rels-delete")
+	source := insertSyncTestConnection(t, pool, "delete-source")
+	target := insertSyncTestConnection(t, pool, "delete-target")
+	joinSyncTestCluster(t, pool, clusterID, source, target)
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("Failed to begin the write: %v", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // no-op after commit
+	if err := lockClusterMembers(ctx, tx, clusterID, source,
+		[]int{target}); err != nil {
+		t.Fatalf("lockClusterMembers: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- ds.DeleteCluster(ctx, clusterID) }()
+	if !waitForLockWait(t, pool, "DELETE FROM clusters", done) {
+		t.Fatal("DeleteCluster finished without waiting for the write")
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO cluster_node_relationships
+			(cluster_id, source_connection_id, target_connection_id,
+			 relationship_type, is_auto_detected)
+		VALUES ($1, $2, $3, 'streams_from', FALSE)`,
+		clusterID, source, target); err != nil {
+		t.Fatalf("Failed to insert the relationship: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("Failed to commit the write: %v", err)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("DeleteCluster: %v", err)
+	}
+	if got := countRelationships(t, pool, clusterID, false); got != 0 {
+		t.Errorf("manual rows = %d, want 0 after the cascade", got)
 	}
 }

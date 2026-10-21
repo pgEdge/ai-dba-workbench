@@ -79,9 +79,14 @@ The handler's `IsConnectionInCluster` checks run outside the write, so
 inside their transaction with `lockClusterMembers` (`FOR SHARE` on the
 source and targets, which conflicts with the move's `UPDATE`) and roll
 back with `database.ErrSourceNotInCluster` / `ErrTargetNotInCluster`,
-which `refuseDepartedMember` turns into the usual 400s; without it a
-move landing between check and write left a stale row
-(`TestIssue707_RelationshipWriteRacingMove`).
+which `refuseDepartedMember` turns into the usual 400s (for the
+reverse `replicates_with` row, a 400 saying the forward rows were
+saved); without it a move landing between check and write left a
+stale row (`TestIssue707_RelationshipWriteRacingMove`,
+`TestNodeRelationships_WaitForUncommittedMove`). `lockClusterMembers`
+locks the `clusters` row `FOR KEY SHARE` before the connection rows,
+the order a hard `DeleteCluster` takes them in; the reverse order
+deadlocked (`TestNodeRelationships_DeleteClusterNoDeadlock`).
 `SyncAutoDetectedRelationships` does not take that lock yet.
 `TestIssue707_*` in `cluster_move_relationships_test.go` and the
 datastore tests in `cluster_move_relationships_integration_test.go`

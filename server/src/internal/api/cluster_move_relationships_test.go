@@ -143,8 +143,10 @@ func TestIssue707_SameClusterKeepsRows(t *testing.T) {
 // request's target.
 func TestRefuseDepartedMember(t *testing.T) {
 	const (
-		source = "Source connection does not belong to this cluster"
-		target = "Target connection does not belong to this cluster"
+		source    = "Source connection does not belong to this cluster"
+		target    = "Target connection does not belong to this cluster"
+		revTarget = "Relationships saved, but the reverse replicates_with relationship was not: the target connection no longer belongs to this cluster"
+		revSource = "Relationships saved, but the reverse replicates_with relationship was not: the source connection no longer belongs to this cluster"
 	)
 	tests := []struct {
 		name     string
@@ -154,8 +156,8 @@ func TestRefuseDepartedMember(t *testing.T) {
 	}{
 		{"source", database.ErrSourceNotInCluster, false, source},
 		{"target", database.ErrTargetNotInCluster, false, target},
-		{"reversed source", database.ErrSourceNotInCluster, true, target},
-		{"reversed target", database.ErrTargetNotInCluster, true, source},
+		{"reversed source", database.ErrSourceNotInCluster, true, revTarget},
+		{"reversed target", database.ErrTargetNotInCluster, true, revSource},
 		{"wrapped", fmt.Errorf("x: %w", database.ErrTargetNotInCluster), false, target},
 		{"other error", fmt.Errorf("boom"), false, ""},
 		{"nil", nil, false, ""},
@@ -189,7 +191,9 @@ func TestRefuseDepartedMember(t *testing.T) {
 // write transactions rechecked membership under a lock, a move landing
 // at acquisition 3 (the forward write's transaction) left the row that
 // write inserted, and one landing before the reverse insert left the
-// reverse row, with the PUT answering 200 each time.
+// reverse row, with the PUT answering 200 each time. The
+// replicates_with PUT also saves 5 -> 7, so a 400 from the reverse
+// write must say the relationships were saved exactly when 5 -> 7 was.
 func TestIssue707_RelationshipWriteRacingMove(t *testing.T) {
 	f := newClusterCovFixture(t)
 	ctx := context.Background()
@@ -227,7 +231,9 @@ func TestIssue707_RelationshipWriteRacingMove(t *testing.T) {
 				`"relationship_type":"streams_from"}]}`},
 		{"replicates_with target 6",
 			"/api/v1/clusters/1/connections/5/relationships",
-			`{"relationships":[{"target_connection_id":6,` +
+			`{"relationships":[{"target_connection_id":7,` +
+				`"relationship_type":"streams_from"},` +
+				`{"target_connection_id":6,` +
 				`"relationship_type":"replicates_with"}]}`},
 	} {
 		t.Run(req.name, func(t *testing.T) {
@@ -246,6 +252,21 @@ func TestIssue707_RelationshipWriteRacingMove(t *testing.T) {
 					rec.Code, rec.Body.String())
 				if rec.Code != http.StatusOK && rec.Code != http.StatusBadRequest {
 					t.Errorf("%s: unexpected status", label)
+				}
+				if rec.Code == http.StatusBadRequest {
+					var saved int
+					if err := f.pool.QueryRow(ctx, `
+                        SELECT count(*) FROM cluster_node_relationships
+                        WHERE cluster_id = 1 AND source_connection_id = 5
+                          AND target_connection_id = 7`).Scan(&saved); err != nil {
+						t.Fatalf("Count saved rows: %v", err)
+					}
+					says := strings.Contains(rec.Body.String(),
+						"Relationships saved")
+					if says != (saved > 0) {
+						t.Errorf("%s: says saved = %v, 5 -> 7 rows = %d",
+							label, says, saved)
+					}
 				}
 				if n := staleRows(); n != 0 {
 					t.Errorf("%s: %d rows naming 6 remain outside cluster 4",

@@ -405,12 +405,18 @@ func TestUpdateProbeConfigNeedsEveryMemberVisible(t *testing.T) {
 	h.SetDenialRecorder(func(_ *http.Request, reason string) { audited = append(audited, reason) })
 	restricted := covRestrictedUser(t, store, auth.PermManageProbes)
 
-	seed := func(scope, column string, id int) int64 {
+	// One fixed statement per scope; the scope picks the column the ID
+	// fills.
+	seedSQL := map[string]string{
+		"server":  `INSERT INTO probe_configs (name, description, scope, connection_id) VALUES ($1, 'd', 'server', $2) RETURNING id`,
+		"cluster": `INSERT INTO probe_configs (name, description, scope, cluster_id) VALUES ($1, 'd', 'cluster', $2) RETURNING id`,
+		"group":   `INSERT INTO probe_configs (name, description, scope, group_id) VALUES ($1, 'd', 'group', $2) RETURNING id`,
+	}
+	seed := func(scope string, id int) int64 {
 		t.Helper()
 		var cfgID int64
-		if err := f.pool.QueryRow(context.Background(),
-			`INSERT INTO probe_configs (name, description, scope, `+column+`) VALUES ($1, 'd', $2, $3) RETURNING id`,
-			f.probeName, scope, id).Scan(&cfgID); err != nil {
+		if err := f.pool.QueryRow(context.Background(), seedSQL[scope],
+			f.probeName, id).Scan(&cfgID); err != nil {
 			t.Fatalf("seed probe config: %v", err)
 		}
 		return cfgID
@@ -427,14 +433,14 @@ func TestUpdateProbeConfigNeedsEveryMemberVisible(t *testing.T) {
 		id   int64
 		want int
 	}{
-		{"full cluster", seed("cluster", "cluster_id", m.fullCluster), http.StatusOK},
-		{"full group", seed("group", "group_id", m.fullGroup), http.StatusOK},
-		{"server", seed("server", "connection_id", m.ownedFull), http.StatusOK},
+		{"full cluster", seed("cluster", m.fullCluster), http.StatusOK},
+		{"full group", seed("group", m.fullGroup), http.StatusOK},
+		{"server", seed("server", m.ownedFull), http.StatusOK},
 		{"global", globalID, http.StatusOK},
-		{"mixed cluster", seed("cluster", "cluster_id", m.mixedCluster), http.StatusForbidden},
-		{"mixed group", seed("group", "group_id", m.mixedGroup), http.StatusForbidden},
-		{"split group", seed("group", "group_id", m.splitGroup), http.StatusForbidden},
-		{"hidden cluster", seed("cluster", "cluster_id", m.splitHidden), http.StatusNotFound},
+		{"mixed cluster", seed("cluster", m.mixedCluster), http.StatusForbidden},
+		{"mixed group", seed("group", m.mixedGroup), http.StatusForbidden},
+		{"split group", seed("group", m.splitGroup), http.StatusForbidden},
+		{"hidden cluster", seed("cluster", m.splitHidden), http.StatusNotFound},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

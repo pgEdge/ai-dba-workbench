@@ -17,6 +17,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/config"
 	"github.com/pgedge/ai-workbench/server/internal/database"
@@ -48,6 +49,33 @@ func memoryExists(t *testing.T, store *memory.Store, id int64) bool {
 	return true
 }
 
+// deleteCounterFixture counts the DELETE statements run against the
+// test schema's chat_memories table, including those that match no row.
+// The names are unqualified, so they land in the test's own schema,
+// which is first on the pool's search_path.
+const deleteCounterFixture = `
+CREATE TABLE delete_statements (at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+CREATE FUNCTION log_delete() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    INSERT INTO delete_statements DEFAULT VALUES;
+    RETURN NULL;
+END;
+$$;
+CREATE TRIGGER log_delete AFTER DELETE ON chat_memories
+    FOR EACH STATEMENT EXECUTE FUNCTION log_delete();
+`
+
+// deleteStatements returns the DELETE statements counted so far.
+func deleteStatements(t *testing.T, pool *pgxpool.Pool) int {
+	t.Helper()
+	var n int
+	if err := pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM delete_statements`).Scan(&n); err != nil {
+		t.Fatalf("count delete statements: %v", err)
+	}
+	return n
+}
+
 // deleteArgs returns delete_memory arguments for id, called with ctx.
 func deleteArgs(ctx context.Context, id int64) map[string]any {
 	return map[string]any{"id": float64(id), "__context": ctx}
@@ -57,10 +85,13 @@ func deleteArgs(ctx context.Context, id int64) map[string]any {
 // memory and caller (issue #704): a system memory, even the caller's
 // own, needs store_system_memory and its refusal is recorded once as
 // memory.delete on memories/<id>; another user's memory and a missing
-// one answer alike, are left alone and record nothing.
+// one answer alike, run no DELETE statement and record nothing.
 func TestDeleteMemoryToolScopes(t *testing.T) {
-	store, _, cleanup := newMemoryEmbeddingStore(t)
+	store, pool, cleanup := newMemoryEmbeddingStore(t)
 	defer cleanup()
+	if _, err := pool.Exec(context.Background(), deleteCounterFixture); err != nil {
+		t.Fatalf("create the delete counter: %v", err)
+	}
 
 	authStore := newExecuteTestAuthStore(t)
 	for _, name := range []string{"creator", "keeper"} {
@@ -109,6 +140,7 @@ func TestDeleteMemoryToolScopes(t *testing.T) {
 	}
 
 	capture.denials = nil
+	before := deleteStatements(t, pool)
 	for _, id := range []int64{others, 999999} {
 		resp, err = tool.Handler(deleteArgs(creator, id))
 		if err != nil {
@@ -122,6 +154,10 @@ func TestDeleteMemoryToolScopes(t *testing.T) {
 	}
 	if len(capture.denials) != 0 {
 		t.Errorf("Expected nothing recorded, got %v", capture.denials)
+	}
+	if after := deleteStatements(t, pool); after != before {
+		t.Errorf("Expected no DELETE for another user's or a missing "+
+			"memory, got %d", after-before)
 	}
 	if !memoryExists(t, store, others) {
 		t.Error("Expected another user's memory to remain")

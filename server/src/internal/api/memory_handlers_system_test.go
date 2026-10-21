@@ -76,6 +76,20 @@ CREATE TRIGGER log_delete
     AFTER DELETE ON ai_wb_memory_handler_fixture.chat_memories
     FOR EACH STATEMENT
     EXECUTE FUNCTION ai_wb_memory_handler_fixture.log_delete();
+CREATE TABLE ai_wb_memory_handler_fixture.update_statements (
+    at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE FUNCTION ai_wb_memory_handler_fixture.log_update() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    INSERT INTO ai_wb_memory_handler_fixture.update_statements DEFAULT VALUES;
+    RETURN NULL;
+END;
+$$;
+CREATE TRIGGER log_update
+    AFTER UPDATE ON ai_wb_memory_handler_fixture.chat_memories
+    FOR EACH STATEMENT
+    EXECUTE FUNCTION ai_wb_memory_handler_fixture.log_update();
 `
 
 // memoryHandlerEnv is a memory handler over a Postgres memory store and
@@ -221,6 +235,19 @@ func (e *memoryHandlerEnv) deleteStatements(t *testing.T) int {
 	return n
 }
 
+// updateStatements counts the UPDATE statements run against the memory
+// table, including those that matched no row.
+func (e *memoryHandlerEnv) updateStatements(t *testing.T) int {
+	t.Helper()
+	var n int
+	if err := e.pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM ai_wb_memory_handler_fixture.update_statements`,
+	).Scan(&n); err != nil {
+		t.Fatalf("count update statements: %v", err)
+	}
+	return n
+}
+
 // assertMemoryDenial checks the single denied row for action: its
 // reason, its actor and the memory it names.
 func assertMemoryDenial(t *testing.T, store *auth.AuthStore, action, reason string, id int64) {
@@ -265,7 +292,8 @@ func assertNoDenial(t *testing.T, store *auth.AuthStore, action string) {
 // each kind of memory and caller (issue #704): the caller's own memory,
 // another user's memory and a missing one, which answer alike, and a
 // system memory with and without store_system_memory, whose refusal is
-// recorded as memory.update on the memory.
+// recorded as memory.update on the memory. Neither another user's nor a
+// missing memory runs an UPDATE statement.
 func TestMemoryHandler_UpdatePinned(t *testing.T) {
 	env := newMemoryHandlerEnv(t)
 	own := env.seed(t, "alice", "user")
@@ -279,9 +307,14 @@ func TestMemoryHandler_UpdatePinned(t *testing.T) {
 		t.Error("Expected the caller's own memory pinned")
 	}
 
+	before := env.updateStatements(t)
 	for _, id := range []int64{others, 999999} {
 		rec = env.serve("alice", http.MethodPatch, memoryPath(id), pin)
 		assertError(t, rec, http.StatusNotFound, "Memory not found or not accessible")
+	}
+	if after := env.updateStatements(t); after != before {
+		t.Errorf("Expected no UPDATE for another user's or a missing "+
+			"memory, got %d", after-before)
 	}
 	if env.pinned(t, others) {
 		t.Error("Expected another user's memory left unpinned")

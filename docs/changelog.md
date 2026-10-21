@@ -1445,7 +1445,8 @@ project adheres to
   user who created a system memory delete it without
   `store_system_memory`; it now requires the permission as the
   REST route does, and records a refusal as a denied
-  `memory.delete` on `memories/<id>`. (#704)
+  `memory.delete` on `memories/<id>` with the same reason as the
+  REST route. (#704)
 
 - Fix the `probe_unavailable` alert firing on healthy Spock clusters
   with no recent apply exceptions or conflict resolutions. The

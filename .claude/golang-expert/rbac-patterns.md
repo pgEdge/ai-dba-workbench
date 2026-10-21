@@ -1269,12 +1269,15 @@ row carries its creator's username; anything else answers 404, runs
 no write and records nothing. The MCP `delete_memory` tool
 (`tools/delete_memory.go`) applies the same rule, taking the RBAC
 checker and `p.record` and refusing a system memory as
-`memory.delete` on `memoriesTarget/<id>` (`memoryDenialTarget`).
+`memory.delete` on `memoriesTarget/<id>` (`memoryDenialTarget`) with
+`systemMemoryDenied`, the REST and `store_memory` reason, so both
+interfaces coalesce into one row.
 Tests: `memory_handlers_test.go` and `memory_handlers_system_test.go`
 (Postgres fixture schemas plus a SQLite auth store, asserting the
-audit rows; the latter has a statement-level trigger counting DELETE
-statements), `delete_memory_db_test.go`
-(`TestProviderDeleteMemoryRefusalReachesAuditLog` drives the
+audit rows; the latter has statement-level triggers counting UPDATE
+and DELETE statements), `delete_memory_db_test.go` (which counts
+DELETE statements the same way;
+`TestProviderDeleteMemoryRefusalReachesAuditLog` drives the
 provider) and `TestStore_Delete` and `TestStore_UpdateSystemPinned`
 in `memory/store_db_test.go`.
 

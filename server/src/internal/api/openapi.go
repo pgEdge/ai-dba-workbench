@@ -2276,7 +2276,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 			},
 			Put: &OpenAPIOperation{
 				Summary:     "Update a cluster",
-				Description: "Updates cluster name, description, or group assignment. Also accepts the transient auto-detected IDs server-{id} and cluster-spock-{prefix}, with an optional auto_cluster_key that must name the same cluster. Requires manage_connections permission. A cluster or group the caller cannot see is answered with 404, as a missing one is; the default group is always writable.",
+				Description: "Updates cluster name, description, or group assignment. Also accepts the transient auto-detected IDs server-{id} and cluster-spock-{prefix}, with an optional auto_cluster_key that must name the same cluster. Requires manage_connections permission. A cluster or group the caller cannot see is answered with 404, as a missing one is; the default group is always writable. A change of group requires the caller to see every member connection of the cluster being moved.",
 				OperationID: "updateCluster",
 				Tags:        []string{"Clusters"},
 				Security:    bearerAuth,
@@ -2286,13 +2286,13 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"200": jsonResponse("Cluster", "Updated cluster"),
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission, or the API token's connection scope does not cover the target"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission, or the API token's connection scope does not cover the target, or the request changes the group of a cluster with a member connection the caller cannot see"),
 					"404": jsonResponse("ErrorResponse", "Cluster not found or not visible to the caller, or group not found or not visible to the caller"),
 				},
 			},
 			Delete: &OpenAPIOperation{
 				Summary:     "Delete a cluster",
-				Description: "Deletes a cluster. Manually created clusters are hard-deleted. Auto-detected clusters are soft-deleted by setting dismissed=true so they do not reappear in topology. This applies to persisted auto-detected clusters addressed by numeric ID and to transient auto-detected IDs (server-{id} or cluster-spock-{prefix}). Requires manage_connections permission. A cluster the caller cannot see is answered with 404, as a missing one is.",
+				Description: "Deletes a cluster. Manually created clusters are hard-deleted. Auto-detected clusters are soft-deleted by setting dismissed=true so they do not reappear in topology. This applies to persisted auto-detected clusters addressed by numeric ID and to transient auto-detected IDs (server-{id} or cluster-spock-{prefix}). Requires manage_connections permission, and the caller must see every member connection of the cluster. A cluster the caller cannot see is answered with 404, as a missing one is.",
 				OperationID: "deleteCluster",
 				Tags:        []string{"Clusters"},
 				Security:    bearerAuth,
@@ -2300,7 +2300,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 				Responses: map[string]OpenAPIResponse{
 					"204": {Description: "Cluster deleted"},
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission, or the API token's connection scope does not cover the target"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission, or the API token's connection scope does not cover the target, or the cluster has a member connection the caller cannot see"),
 					"404": jsonResponse("ErrorResponse", "Cluster not found, or not visible to the caller"),
 				},
 			},
@@ -2399,7 +2399,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 			},
 			Delete: &OpenAPIOperation{
 				Summary:     "Delete a cluster group",
-				Description: "Deletes a cluster group. Requires manage_connections permission or ownership of the cluster group. A group the caller cannot see is answered with 404, as a missing one is. A group with no member connections is visible only to its owner and to callers who see every connection.",
+				Description: "Deletes a cluster group. Requires manage_connections permission or ownership of the cluster group, and the caller must see every member connection of the group. A group the caller cannot see is answered with 404, as a missing one is. A group with no member connections is visible only to its owner and to callers who see every connection.",
 				OperationID: "deleteClusterGroup",
 				Tags:        []string{"Cluster Groups"},
 				Security:    bearerAuth,
@@ -2407,7 +2407,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 				Responses: map[string]OpenAPIResponse{
 					"204": {Description: "Group deleted"},
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission or ownership of the cluster group, or the API token's connection scope does not cover every connection"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission or ownership of the cluster group, or the API token's connection scope does not cover every connection, or the group has a member connection the caller cannot see"),
 					"404": jsonResponse("ErrorResponse", "Group not found, or not visible to the caller"),
 				},
 			},
@@ -2959,7 +2959,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/clusters/{id}/servers/{connectionId}": {
 			Delete: &OpenAPIOperation{
 				Summary:     "Remove server from cluster",
-				Description: "Removes a server connection from a cluster. Requires manage_connections permission.",
+				Description: "Removes a server connection from a cluster. Requires manage_connections permission. A connection the caller cannot see is answered with 404, as one that is not a member is.",
 				OperationID: "removeServerFromCluster",
 				Tags:        []string{"Clusters"},
 				Security:    bearerAuth,
@@ -2972,6 +2972,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
 					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission, or the API token's connection scope does not cover the target"),
+					"404": jsonResponse("ErrorResponse", "Cluster not found or not visible to the caller, or connection not found in the cluster or not visible to the caller"),
 				},
 			},
 		},

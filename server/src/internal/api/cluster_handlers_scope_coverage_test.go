@@ -468,15 +468,16 @@ func TestClusterCov_DeleteCluster(t *testing.T) {
 		{name: "manual cluster deleted", caller: f.session,
 			method: http.MethodDelete, path: "/api/v1/clusters/4",
 			status: http.StatusNoContent},
-		{name: "visible cluster deleted", caller: f.admin,
+		{name: "cluster with a hidden member", caller: f.admin,
 			method: http.MethodDelete, path: "/api/v1/clusters/1",
-			status: http.StatusNoContent},
+			status: http.StatusForbidden,
+			msg:    "Permission denied: requires manage_connections permission"},
 	})
 
 	f.expectValue(t, "cluster dismissed", 2, "true")
 	f.expectValue(t, "conn cluster", 9, "none")
 	f.expectValue(t, "cluster exists", 4, "false")
-	f.expectValue(t, "cluster exists", 1, "false")
+	f.expectValue(t, "cluster exists", 1, "true")
 	f.expectValue(t, "cluster exists", 3, "true")
 }
 

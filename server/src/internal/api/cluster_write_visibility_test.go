@@ -22,14 +22,17 @@ import (
 // In clusterCovSchema the admin caller (a non-superuser holding
 // manage_connections) sees connections 5, 6 and 9, clusters 1 and 2 and
 // groups 1 and 2; group 3 and cluster 3 hold only the private
-// connection 8, and connection 7 in cluster 1 is private.
+// connection 8. The setup detaches the private connection 7 from
+// cluster 1, so that moving cluster 1 is not refused for a hidden member
+// (issue #716) and these tests reach the target group's check.
 // =============================================================================
 
 // clusterWriteVisibilitySetup adds two groups with no member
 // connections, 50 owned by the admin caller and 51 by someone else, and
 // the auto-detected Spock cluster 60 (key spock:priv) in group 3, whose
-// only member is the private connection 61.
+// only member is the private connection 61, and detaches connection 7.
 const clusterWriteVisibilitySetup = `
+UPDATE connections SET cluster_id = NULL WHERE id = 7;
 INSERT INTO cluster_groups (id, name, owner_username) VALUES
     (50, 'Empty owned', 'cov_cl_admin'),
     (51, 'Empty unowned', 'someone-else');

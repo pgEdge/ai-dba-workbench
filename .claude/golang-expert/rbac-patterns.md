@@ -1804,3 +1804,28 @@ hidden and mixed members, a group split across a visible and a hidden
 cluster, sessions, unscoped, wildcard-scope and narrowed tokens,
 superusers and all-connections grants, and asserts the refusal is
 byte-identical to the missing-permission one and audited once.
+
+The rule also covers writes that change hidden members' effective
+overrides by cascade, each as the last check after permission, token
+scope and the 404 visibility check, refusing with
+`adminPermissionRefusal(auth.PermManageConnections)`:
+`DELETE /cluster-groups/{id}` (reuses the members
+`loadClusterGroupVisibility` already loaded), `DELETE /clusters/{id}`
+(`checkScopeMembersVisible` on the cluster, which also covers the
+auto-cluster dismiss inside `DeleteCluster`), `PUT /clusters/{id}` only
+when `group_id` differs from the cluster's current group
+(`requireClusterMoveMembersVisible`; the client resends the current
+group on a rename, and the old and new groups are not checked), and the
+auto-detected `server-{id}`/`cluster-spock-{prefix}` PUT (when
+`group_id` is set) and DELETE (`requireAutoClusterMembersVisible` over
+`autoDetectedClusterKeys`; there is no key-to-group lookup, so any
+supplied `group_id` is checked). In `handleRemoveServerFromCluster` a
+connection hidden from a restricted caller answers 404 "Connection not
+found in this cluster", the non-member answer, mirroring
+`addServerToCluster`. Tests: `cluster_members_visibility_test.go`.
+
+The check reads members then writes, unlocked. The race is accepted: a
+connection that joins in between inherits the override anyway, and only
+a caller who can see it can move it in. The 403 tells a permission
+holder that at least one member is hidden, which is inherent in the
+rule; it never says which or how many.

@@ -2704,9 +2704,18 @@ project adheres to
   `PUT /api/v1/probe-configs/{id}` on a cluster or group
   configuration, now answers 403 with the same message and audit
   record as a caller without the permission, so the refusal does
-  not reveal that hidden members exist. Superusers and users
-  with a grant on all connections are unaffected, and reading
-  cluster and group overrides is unchanged.
+  not reveal that hidden members exist. The same rule now
+  applies to deleting a cluster or cluster group and to moving a
+  cluster to another group, including the auto-detected
+  `server-{id}` and `cluster-spock-{prefix}` clusters, since each
+  changes the overrides reaching every member. Removing a
+  connection the caller cannot see from a cluster, through
+  `DELETE /api/v1/clusters/{id}/servers/{connectionId}`, now
+  answers 404 as for a connection that is not a member, rather
+  than detaching it and revealing that it belonged to the
+  cluster. Superusers and users with a grant on all connections
+  are unaffected, and reading cluster and group overrides is
+  unchanged.
 
 - Reset the session on each pooled connection to a monitored
   database when a tool call releases it (#709). A tool call could

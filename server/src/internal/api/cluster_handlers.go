@@ -796,6 +796,16 @@ func (h *ClusterHandler) deleteClusterGroup(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// Deleting the group drops the group overrides, and through the
+	// cascade the clusters and cluster overrides, that reach each of its
+	// members, so a restricted caller must see every member (issue
+	// #716). The refusal says nothing about which members are hidden.
+	if !v.all && !allMembersVisible(v.members, v.visible) {
+		h.denialRecorder.refuse(w, r,
+			adminPermissionRefusal(auth.PermManageConnections))
+		return
+	}
+
 	// Protect the default group from deletion
 	defaultGroupID, err := h.datastore.GetDefaultGroupID(ctx)
 	if err == nil && defaultGroupID == id {
@@ -1036,6 +1046,10 @@ func (h *ClusterHandler) updateCluster(w http.ResponseWriter, r *http.Request, i
 	if req.GroupID != nil && !h.requireVisibleTargetGroup(ctx, w, r, *req.GroupID, "Failed to update cluster") {
 		return
 	}
+	if req.GroupID != nil && !allConnections &&
+		!h.requireClusterMoveMembersVisible(ctx, w, r, id, *req.GroupID, visible) {
+		return
+	}
 
 	cluster, err := h.datastore.UpdateClusterPartial(ctx, id, req.GroupID, req.Name, req.Description, req.ReplicationType)
 	if err != nil {
@@ -1084,6 +1098,13 @@ func (h *ClusterHandler) deleteCluster(w http.ResponseWriter, r *http.Request, i
 		}
 		if !ok {
 			RespondError(w, http.StatusNotFound, "Cluster not found")
+			return
+		}
+		// Deleting or dismissing the cluster detaches every member and
+		// drops the cluster overrides that reach it, so a restricted
+		// caller must see every member (issue #716).
+		if !checkScopeMembersVisible(w, r, h.datastore, h.denialRecorder,
+			auth.PermManageConnections, "cluster", id, visible) {
 			return
 		}
 	}
@@ -1171,6 +1192,11 @@ func (h *ClusterHandler) updateAutoDetectedCluster(w http.ResponseWriter, r *htt
 	if req.GroupID != nil && !h.requireVisibleTargetGroup(ctx, w, r, *req.GroupID, "Failed to update auto-detected cluster") {
 		return
 	}
+	// Moving the cluster changes which group overrides reach each of its
+	// members, so a restricted caller must see every member (issue #716).
+	if req.GroupID != nil && !h.requireAutoClusterMembersVisible(ctx, w, r, []string{autoKey}, "Failed to update auto-detected cluster") {
+		return
+	}
 
 	// Update cluster record (name and/or group_id)
 	cluster, err := h.datastore.UpsertAutoDetectedCluster(ctx, autoKey, req.Name, req.Description, req.GroupID)
@@ -1208,12 +1234,17 @@ func (h *ClusterHandler) deleteAutoDetectedCluster(w http.ResponseWriter, r *htt
 	if !h.requireVisibleAutoDetectedCluster(ctx, w, clusterID, "", "Failed to delete auto-detected cluster") {
 		return
 	}
+	// Dismissing the cluster detaches every member and drops the cluster
+	// overrides that reach it, so a restricted caller must see every
+	// member (issue #716).
+	keys := autoDetectedClusterKeys(clusterID)
+	if !h.requireAutoClusterMembersVisible(ctx, w, r, keys, "Failed to delete auto-detected cluster") {
+		return
+	}
 
 	// For Spock clusters, the key is unambiguous
 	if strings.HasPrefix(clusterID, "cluster-spock-") {
-		prefix := strings.TrimPrefix(clusterID, "cluster-spock-")
-		autoKey := "spock:" + prefix
-		if err := h.datastore.DeleteAutoDetectedCluster(ctx, autoKey); err != nil {
+		if err := h.datastore.DeleteAutoDetectedCluster(ctx, keys[0]); err != nil {
 			log.Printf("[ERROR] Failed to delete auto-detected cluster %s: %v", logging.SanitizeForLog(clusterID), err) //nolint:gosec // G706: clusterID passed through logging.SanitizeForLog
 			RespondError(w, http.StatusInternalServerError, "Failed to delete auto-detected cluster")
 			return
@@ -1227,13 +1258,7 @@ func (h *ClusterHandler) deleteAutoDetectedCluster(w http.ResponseWriter, r *htt
 	// cluster depending on the connection's replication role. Since we cannot
 	// know which type it was from the ID alone, we dismiss all candidate keys.
 	if strings.HasPrefix(clusterID, "server-") {
-		idStr := strings.TrimPrefix(clusterID, "server-")
-		candidates := []string{
-			"binary:" + idStr,
-			"standalone:" + idStr,
-			"logical:" + idStr,
-		}
-		if err := h.datastore.DismissAutoDetectedClusterKeys(ctx, candidates); err != nil {
+		if err := h.datastore.DismissAutoDetectedClusterKeys(ctx, keys); err != nil {
 			log.Printf("[ERROR] Failed to delete auto-detected cluster %s: %v", logging.SanitizeForLog(clusterID), err) //nolint:gosec // G706: clusterID passed through logging.SanitizeForLog
 			RespondError(w, http.StatusInternalServerError, "Failed to delete auto-detected cluster")
 			return
@@ -1482,6 +1507,14 @@ func (h *ClusterHandler) handleRemoveServerFromCluster(w http.ResponseWriter, r 
 		}
 		if !ok {
 			RespondError(w, http.StatusNotFound, "Cluster not found")
+			return
+		}
+		// A hidden connection gets the answer for one that is not a
+		// member, so the response neither detaches it (dropping its
+		// cluster overrides and relationships) nor reveals whether it
+		// belongs to the cluster (issue #716).
+		if !visible[connectionID] {
+			RespondError(w, http.StatusNotFound, "Connection not found in this cluster")
 			return
 		}
 	}

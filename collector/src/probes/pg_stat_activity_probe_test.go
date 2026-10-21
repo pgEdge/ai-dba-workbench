@@ -162,11 +162,32 @@ func TestPgStatActivityProbe_StoresQueryID(t *testing.T) {
 		}
 	})
 
-	// Wait until the sleeper shows up as active, then take its query_id
-	// as the expected value. The column does not exist before PG14.
-	// Both branches are complete literal statements rather than one
-	// statement with the column spliced in, so that no query text is
-	// ever built by concatenation.
+	// A backend reports state 'active' before parse analysis publishes
+	// its query_id (pgstat_report_activity zeroes the identifier when a
+	// statement starts), so seeing the sleeper active is not enough: the
+	// probe could still sample the NULL left in that window (issue
+	// #714). Whether the server computes identifiers at all is learned
+	// from this session's own query_id, which a plain SELECT always has
+	// by the time it executes when they are enabled. The column does not
+	// exist before PG14.
+	computesQueryID := false
+	if pgVersion >= 14 {
+		var ownQueryID *int64
+		if err := conn.QueryRow(ctx,
+			"SELECT query_id FROM pg_stat_activity "+
+				"WHERE pid = pg_backend_pid()").Scan(&ownQueryID); err != nil {
+			t.Fatalf("own query_id: %v", err)
+		}
+		computesQueryID = ownQueryID != nil
+	}
+
+	// Wait until the sleeper shows up as active and, where identifiers
+	// are computed, until its query_id is published, then take that as
+	// the expected value. The sleeper runs a single statement, so the
+	// identifier never changes again once set. Both branches are
+	// complete literal statements rather than one statement with the
+	// column spliced in, so that no query text is ever built by
+	// concatenation.
 	sleeperQuery := "SELECT state, query_id FROM pg_stat_activity " +
 		"WHERE pid = $1"
 	if pgVersion < 14 {
@@ -179,11 +200,14 @@ func TestPgStatActivityProbe_StoresQueryID(t *testing.T) {
 		var state *string
 		err := conn.QueryRow(ctx, sleeperQuery, sleeperPID).
 			Scan(&state, &expected)
-		if err == nil && state != nil && *state == "active" {
+		if err == nil && state != nil && *state == "active" &&
+			(!computesQueryID || expected != nil) {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("sleeper pid %d never became active: %v", sleeperPID, err)
+			t.Fatalf("sleeper pid %d never became active with a "+
+				"published query_id (computed: %t): %v",
+				sleeperPID, computesQueryID, err)
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
@@ -205,17 +229,6 @@ func TestPgStatActivityProbe_StoresQueryID(t *testing.T) {
 		t.Fatalf("read back sleeper row: %v", err)
 	}
 
-	// A backend can report state 'active' a moment before its query_id
-	// is published, so a NULL seen while polling may be stale. The
-	// sleeper runs a single statement, so its identifier only ever moves
-	// from NULL to one fixed value; re-read it once the probe has run.
-	if expected == nil {
-		if err := conn.QueryRow(ctx, sleeperQuery, sleeperPID).
-			Scan(new(*string), &expected); err != nil {
-			t.Fatalf("re-read sleeper query_id: %v", err)
-		}
-	}
-
 	switch {
 	case expected == nil && stored != nil:
 		t.Errorf("stored query_id = %d, want NULL", *stored)
@@ -224,7 +237,7 @@ func TestPgStatActivityProbe_StoresQueryID(t *testing.T) {
 	case expected != nil && stored != nil && *expected != *stored:
 		t.Errorf("stored query_id = %d, want %d", *stored, *expected)
 	}
-	if pgVersion >= 14 && expected == nil {
+	if pgVersion >= 14 && !computesQueryID {
 		t.Logf("server does not compute query identifiers; NULL round trip verified")
 	}
 }

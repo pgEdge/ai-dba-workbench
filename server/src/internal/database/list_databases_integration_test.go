@@ -16,7 +16,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -109,6 +108,16 @@ func TestScanDatabasesSkipsNullSize(t *testing.T) {
 	})
 }
 
+// listDatabasesVictim is the scratch database TestQueryDatabasesRetriesAfterDrop
+// creates and drops; the statements below name it literally.
+const (
+	listDatabasesVictim             = "ai_workbench_listdb_victim"
+	createListDatabasesVictim       = "CREATE DATABASE ai_workbench_listdb_victim"
+	dropListDatabasesVictim         = "DROP DATABASE ai_workbench_listdb_victim"
+	dropListDatabasesVictimIfExists = "DROP DATABASE IF EXISTS ai_workbench_listdb_victim"
+	victimExistsQuery               = "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_database WHERE datname = $1)"
+)
+
 // staleThenFreshQuerier sends its first query to a transaction whose
 // snapshot predates a DROP DATABASE, and every later query to the pool.
 type staleThenFreshQuerier struct {
@@ -135,14 +144,18 @@ func TestQueryDatabasesRetriesAfterDrop(t *testing.T) {
 	pool := newListDatabasesTestPool(t)
 	ctx := context.Background()
 
-	victim := fmt.Sprintf("ai_workbench_listdb_victim_%d", time.Now().UnixNano())
-	ident := pgx.Identifier{victim}.Sanitize()
-	if _, err := pool.Exec(ctx, "CREATE DATABASE "+ident); err != nil {
-		t.Fatalf("create %s: %v", victim, err)
+	// CREATE and DROP DATABASE take no parameters, so the statements are
+	// literals naming a fixed scratch database. Any copy left by an
+	// interrupted run is dropped first.
+	if _, err := pool.Exec(ctx, dropListDatabasesVictimIfExists); err != nil {
+		t.Fatalf("drop leftover %s: %v", listDatabasesVictim, err)
+	}
+	if _, err := pool.Exec(ctx, createListDatabasesVictim); err != nil {
+		t.Fatalf("create %s: %v", listDatabasesVictim, err)
 	}
 	t.Cleanup(func() {
-		if _, err := pool.Exec(context.Background(), "DROP DATABASE IF EXISTS "+ident); err != nil {
-			t.Logf("drop %s: %v", victim, err)
+		if _, err := pool.Exec(context.Background(), dropListDatabasesVictimIfExists); err != nil {
+			t.Logf("drop %s: %v", listDatabasesVictim, err)
 		}
 	})
 
@@ -157,17 +170,15 @@ func TestQueryDatabasesRetriesAfterDrop(t *testing.T) {
 		}
 	}()
 	var seen bool
-	if err := tx.QueryRow(ctx,
-		`SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_database WHERE datname = $1)`,
-		victim).Scan(&seen); err != nil {
+	if err := tx.QueryRow(ctx, victimExistsQuery, listDatabasesVictim).Scan(&seen); err != nil {
 		t.Fatalf("take snapshot: %v", err)
 	}
 	if !seen {
-		t.Fatalf("snapshot does not see %s", victim)
+		t.Fatalf("snapshot does not see %s", listDatabasesVictim)
 	}
 
-	if _, err := pool.Exec(ctx, "DROP DATABASE "+ident); err != nil {
-		t.Fatalf("drop %s: %v", victim, err)
+	if _, err := pool.Exec(ctx, dropListDatabasesVictim); err != nil {
+		t.Fatalf("drop %s: %v", listDatabasesVictim, err)
 	}
 
 	q := &staleThenFreshQuerier{stale: tx, fresh: pool}
@@ -179,8 +190,8 @@ func TestQueryDatabasesRetriesAfterDrop(t *testing.T) {
 		t.Fatalf("queryDatabases ran the query %d times, want 2", q.calls)
 	}
 	for _, db := range databases {
-		if db.Name == victim {
-			t.Fatalf("queryDatabases listed the dropped database %q", victim)
+		if db.Name == listDatabasesVictim {
+			t.Fatalf("queryDatabases listed the dropped database %q", listDatabasesVictim)
 		}
 	}
 }

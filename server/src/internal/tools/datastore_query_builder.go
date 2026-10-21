@@ -1414,7 +1414,7 @@ func latestStatement(src datastoreSource, req datastoreRequest, columns []string
 
 // aggregateRawStatements selects, after the aggregate's outputs, the
 // stored text for each output holding statement text
-// (datastoreStatementOutputs), under metrics.RawStatementAlias of the
+// (statementOutput), under metrics.RawStatementAlias of the
 // output's name: the least stored text of the group for a group_by
 // column, and the least or greatest for min or max. The output itself
 // is computed from the masked text, so the stored text chosen is a

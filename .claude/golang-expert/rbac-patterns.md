@@ -933,9 +933,13 @@ as stored under `RawStatementAlias` too, every shape carries it beside
 each output holding statement text (`rawStatementNames`, and
 `aggregateRawStatements`: `min` of the stored text for a `group_by`
 column, the same `min`/`max` for those aggregations), and
-`redactDatastoreStatements` masks each `datastoreStatementOutputs`
-entry with `metrics.RedactStatementValue` and drops every
-`_raw_statement_` column before the TSV is formatted (#724);
+`redactDatastoreStatements` masks, with `metrics.RedactStatementValue`,
+every result column whose `RawStatementAlias` is also in the result,
+fails closed by replacing whole any `statementOutput` column (a
+statement column or its `min_`/`max_` form) with no stored text
+beside it, and drops every `_raw_statement_` column before the TSV is
+formatted (#724); filters, ordering and grouping still see only the
+SQL-masked text, an accepted risk;
 `MaskedProbeColumn` and the timeline use `metrics.RedactedSetting`,
 which returns a connection string setting such as `primary_conninfo`
 as stored when the patterns leave it unchanged (as they leave a value

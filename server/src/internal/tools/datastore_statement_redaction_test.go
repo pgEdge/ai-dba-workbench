@@ -56,29 +56,21 @@ func TestRedactMetricColumnsMarksStatements(t *testing.T) {
 	}
 }
 
-func TestDatastoreStatementOutputs(t *testing.T) {
+func TestStatementOutput(t *testing.T) {
 	src := testStatementSource()
-	for name, tc := range map[string]struct {
-		args map[string]any
-		want []string
-	}{
-		"rows, every column":   {map[string]any{}, []string{"query"}},
-		"rows, chosen columns": {map[string]any{"columns": []any{"queryid", "calls"}}, nil},
-		"latest":               {map[string]any{"shape": "latest", "columns": []any{"query"}}, []string{"query"}},
-		"aggregate group_by": {map[string]any{"shape": "aggregate", "aggregation": "count",
-			"group_by": []any{"queryid", "query"}}, []string{"query"}},
-		"aggregate max": {map[string]any{"shape": "aggregate", "aggregation": "max",
-			"columns": []any{"query", "calls"}}, []string{"max_query"}},
-		"aggregate count": {map[string]any{"shape": "aggregate", "aggregation": "count",
-			"columns": []any{"query"}}, nil},
+	for name, want := range map[string]bool{
+		"query":       true,
+		"min_query":   true,
+		"max_query":   true,
+		"count_query": false,
+		"queryid":     false,
+		"max_calls":   false,
+		"min_":        false,
+		"bucket":      false,
 	} {
-		t.Run(name, func(t *testing.T) {
-			tc.args["source"] = src.Name
-			got := datastoreStatementOutputs(src, mustParse(t, tc.args))
-			if !slices.Equal(got, tc.want) {
-				t.Errorf("got %v, want %v", got, tc.want)
-			}
-		})
+		if got := statementOutput(src, name); got != want {
+			t.Errorf("statementOutput(%q) = %v, want %v", name, got, want)
+		}
 	}
 }
 
@@ -138,7 +130,7 @@ func TestRedactDatastoreStatements(t *testing.T) {
 		},
 		ResultsTSV: "stale",
 	}
-	redactDatastoreStatements(qr, []string{"query", "max_query", "absent"})
+	redactDatastoreStatements(qr, testStatementSource())
 
 	if !slices.Equal(qr.ColumnNames, []string{"queryid", "query", "max_query"}) {
 		t.Fatalf("columns = %v", qr.ColumnNames)
@@ -160,9 +152,43 @@ func TestRedactDatastoreStatements(t *testing.T) {
 
 	// A result with no stored text is left as it is, bar formatting.
 	plain := &queryResult{ColumnNames: []string{"calls"}, Rows: [][]any{{int64(5)}}}
-	redactDatastoreStatements(plain, nil)
+	redactDatastoreStatements(plain, testStatementSource())
 	if !slices.Equal(plain.ColumnNames, []string{"calls"}) || plain.Rows[0][0] != int64(5) ||
 		!strings.Contains(plain.ResultsTSV, "calls") {
 		t.Errorf("unexpected result: %+v", plain)
+	}
+}
+
+// TestRedactDatastoreStatementsFailsClosed checks the masking when the
+// names the query builder gives its outputs and stored text drift from
+// those this file expects: a column with stored text beside it is masked
+// from that text whatever its name, and a statement output with none is
+// replaced whole rather than returned with only the SQL patterns applied.
+func TestRedactDatastoreStatementsFailsClosed(t *testing.T) {
+	const leak = `ALTER ROLE app PASSWORD '\''WFLEAKsecret19'`
+	qr := &queryResult{
+		ColumnNames: []string{"query_max", "min_query", "query", "calls",
+			metrics.RawStatementAlias("query_max"), metrics.RawStatementAlias("query_min")},
+		Rows: [][]any{
+			{"masked max", "WFLEAKmin", "WFLEAKrows", int64(5), leak, leak},
+			{nil, nil, nil, int64(6), nil, nil},
+		},
+	}
+	redactDatastoreStatements(qr, testStatementSource())
+
+	if !slices.Equal(qr.ColumnNames, []string{"query_max", "min_query", "query", "calls"}) {
+		t.Fatalf("columns = %v", qr.ColumnNames)
+	}
+	want := [][]any{
+		{metrics.RedactStatementText(leak), sqlredact.Redacted, sqlredact.Redacted, int64(5)},
+		{nil, nil, nil, int64(6)},
+	}
+	for i, row := range qr.Rows {
+		if !slices.Equal(row, want[i]) {
+			t.Errorf("row %d = %v, want %v", i, row, want[i])
+		}
+	}
+	if strings.Contains(qr.ResultsTSV, "WFLEAK") {
+		t.Errorf("statement text leaked:\n%s", qr.ResultsTSV)
 	}
 }

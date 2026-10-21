@@ -158,7 +158,11 @@ it is returned, so that a string constant following `PASSWORD` or a setting
 such as `restore_command` is replaced in full even when the text quotes it in
 an unusual way. Filters and aggregates see only the masked text; a statement
 returned by `group_by` or by `min` or `max` is masked from one of the stored
-statements in its group. Each free-text value is cut to its first 65,536
+statements in its group. Filters, ordering and grouping on statement text
+work on the text as the patterns above mask it, not as it is masked from its
+SQL tokens, so they can reveal, one character at a time, a secret that the
+patterns miss even though the returned text hides it; like the rest of this
+masking, that protection is best effort. Each free-text value is cut to its first 65,536
 characters before it is masked, so that a crafted value cannot make masking
 slow; a longer value is returned cut short. The replicated
 row images in `spock_exception_log` are returned as text rather than JSON,

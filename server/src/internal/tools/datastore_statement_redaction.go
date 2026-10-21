@@ -52,52 +52,41 @@ func rawStatementNames(src datastoreSource, columns []string) []string {
 	return out
 }
 
-// datastoreStatementOutputs returns the result columns of req that hold
-// statement text: each statement-text column the rows and latest shapes
-// select, and for aggregate each such group_by column and each min or
-// max of one. count of one is a number and needs no masking, and avg and
-// sum refuse it.
-func datastoreStatementOutputs(src datastoreSource, req datastoreRequest) []string {
-	var out []string
-	if req.Shape != datastoreShapeAggregate {
-		columns := req.Columns
-		if len(columns) == 0 {
-			columns = src.columnNames()
-		}
-		for _, name := range columns {
-			if statementColumn(src, name) {
-				out = append(out, name)
-			}
-		}
-		return out
+// statementOutput reports whether name, a result column of a query on
+// src, may hold statement text: a statement-text column of src, as the
+// rows and latest shapes and group_by select it, or the min or max of
+// one. It reads the result's own column names rather than the request,
+// so that masking does not depend on the query builder naming outputs in
+// the same way. count of one is a number, and avg and sum refuse it.
+func statementOutput(src datastoreSource, name string) bool {
+	if statementColumn(src, name) {
+		return true
 	}
-	for _, name := range req.GroupBy {
-		if statementColumn(src, name) {
-			out = append(out, name)
+	for _, agg := range []string{"min_", "max_"} {
+		if rest, ok := strings.CutPrefix(name, agg); ok && statementColumn(src, rest) {
+			return true
 		}
 	}
-	if req.Aggregation == "min" || req.Aggregation == "max" {
-		for _, name := range req.Columns {
-			if statementColumn(src, name) {
-				out = append(out, req.Aggregation+"_"+name)
-			}
-		}
-	}
-	return out
+	return false
 }
 
-// redactDatastoreStatements masks each of outputs, the result columns of
-// qr holding statement text, from the stored text the statement selected
-// beside it (metrics.RedactStatementValue), which replaces a statement
-// whole when there is none. It then drops every stored-text column and
-// formats the result again.
-func redactDatastoreStatements(qr *queryResult, outputs []string) {
-	for _, name := range outputs {
-		i := slices.Index(qr.ColumnNames, name)
-		if i < 0 {
+// redactDatastoreStatements masks the statement text in qr, a result of
+// a query on src, in Go from the text as stored. Every result column X
+// for which the result also holds metrics.RawStatementAlias(X) is masked
+// from that stored text (metrics.RedactStatementValue). It fails closed:
+// a column that may hold statement text (statementOutput) but has no
+// stored text beside it is replaced whole with sqlredact.Redacted,
+// rather than returned with only the SQL patterns applied. It then drops
+// every stored-text column and formats the result again.
+func redactDatastoreStatements(qr *queryResult, src datastoreSource) {
+	for i, name := range qr.ColumnNames {
+		if strings.HasPrefix(name, rawStatementPrefix) {
 			continue
 		}
 		raw := slices.Index(qr.ColumnNames, metrics.RawStatementAlias(name))
+		if raw < 0 && !statementOutput(src, name) {
+			continue
+		}
 		for _, row := range qr.Rows {
 			var stored any
 			if raw >= 0 {

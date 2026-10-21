@@ -18,6 +18,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
+	"github.com/pgedge/ai-workbench/server/internal/config"
 	"github.com/pgedge/ai-workbench/server/internal/database"
 )
 
@@ -788,5 +789,49 @@ func TestQueryDatastoreRecordsRefusedConnection(t *testing.T) {
 	}
 	if len(capture.denials) != 0 {
 		t.Errorf("expected nothing recorded, got %v", capture.denials)
+	}
+}
+
+// TestProviderWiresQueryDatastoreDenialRecorder drives query_datastore
+// through ContextAwareProvider.Execute with a hidden connection_ids
+// entry and checks the denied row it leaves, so a provider that builds
+// the tool without the recorder fails (issue #706).
+func TestProviderWiresQueryDatastoreDenialRecorder(t *testing.T) {
+	f := newDatastoreFixture(t)
+	provider := NewContextAwareProvider(nil, nil, nil, &config.Config{},
+		f.store, nil, f.ds)
+
+	if _, err := f.store.RegisterMCPPrivilege("query_datastore",
+		auth.MCPPrivilegeTypeTool, "Public tool", true); err != nil {
+		t.Fatalf("RegisterMCPPrivilege: %v", err)
+	}
+	const username = "datastore_user"
+	if err := f.store.CreateUser(username, "Password-123!", "", "", ""); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	userID, err := f.store.GetUserID(username)
+	if err != nil {
+		t.Fatalf("GetUserID: %v", err)
+	}
+	ctx := context.WithValue(userContext(username, userID),
+		auth.TokenHashContextKey, "hash-query-datastore")
+
+	resp, err := provider.Execute(ctx, "query_datastore", map[string]any{
+		"source": "ds_probe", "connection_ids": []any{float64(f.hidden)}})
+	if err != nil {
+		t.Fatalf("Execute returned a Go error: %v", err)
+	}
+	if !resp.IsError {
+		t.Fatalf("Expected a refusal, got %+v", resp)
+	}
+
+	events := deniedRows(t, f.store, deniedActionConnectionRead)
+	if len(events) != 1 {
+		t.Fatalf("Expected 1 connection.read denial, got %d", len(events))
+	}
+	if events[0].ActorName != username ||
+		events[0].Error != connectionAccessDenied ||
+		denialTarget(t, events[0]) != connectionsTarget {
+		t.Errorf("Unexpected denial %+v", events[0])
 	}
 }

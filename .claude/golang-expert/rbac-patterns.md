@@ -1243,7 +1243,8 @@ New tools that refuse on a connection must take the recorder and pass
 `TestProviderNullConnectionFallsBackToSession`) drive the provider,
 so a nil recorder fails them;
 `TestQueryDatastoreRecordsRefusedConnection` covers `query_datastore`
-on Postgres.
+on Postgres, and `TestProviderWiresQueryDatastoreDenialRecorder` pins
+its provider wiring.
 
 Mutations in these handlers go through `h.actorStore(r)` rather than
 `h.authStore`, so the audit row names the acting user or token:

@@ -2653,6 +2653,18 @@ project adheres to
 
 ### Security
 
+- Mask statement text returned by `query_datastore` in the same way
+  as the metrics routes (#724). The tool masked the `query` column
+  of `pg_stat_activity` and `pg_stat_statements`, and the statements
+  and error messages of `spock_exception_log`, with the SQL text
+  patterns alone, so a password quoted in an unusual way, as in
+  `ALTER ROLE app PASSWORD '\''secret'`, or in an `ALTER SYSTEM SET`
+  of `restore_command` or `primary_conninfo`, was returned in full.
+  The tool now also splits the statement into SQL tokens as it is
+  stored and replaces each secret constant, in every shape that
+  returns statement text, including `group_by` and the `min` and
+  `max` aggregations.
+
 - Reset the session on each pooled connection to a monitored
   database when a tool call releases it (#709). A tool call could
   previously leave settings such as `search_path`, temporary

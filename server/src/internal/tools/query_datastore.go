@@ -183,6 +183,7 @@ func QueryDatastoreTool(pool *pgxpool.Pool, rbacChecker *auth.RBACChecker, visib
 			if errResp != nil {
 				return *errResp, nil
 			}
+			redactDatastoreStatements(qr, src)
 
 			var sb strings.Builder
 			fmt.Fprintf(&sb, "Datastore Query: %s\n\n", src.Name)

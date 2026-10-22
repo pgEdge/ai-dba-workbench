@@ -238,11 +238,29 @@ moved.
   check catches, so `ProbeRedactions` masks such values, chosen by
   setting or option name against the broader `secretNamePatterns`, in
   the inner subquery, where the caller's filters cannot see the real
-  value. Free-text columns (`pg_stat_activity.query`,
+  value (this holds for those settings columns, not for statement text
+  the `RedactedText` patterns miss; see below). Free-text columns (`pg_stat_activity.query`,
   `pg_stat_statements.query`, Spock exception and resolution
   statements and row images and, in `query_datastore` only,
   `connections.connection_error`, `alerts.description` and
-  `alerts.ai_analysis`) pass through `RedactedText`:
+  `alerts.ai_analysis`) pass through `RedactedText`. Statement text
+  (`metrics.RawStatementColumns`: the `query` columns and Spock
+  `ddl_statement`/`error_message`) is then masked again in Go on every
+  route, `query_datastore` included (#724), by
+  `metrics.RedactStatementText` (`sqlredact.RedactQuery`, then
+  `redact.Text`) over the text as stored, selected beside the masked
+  column under `RawStatementAlias`; lexing the `RedactedText` output
+  instead lets a quote the patterns moved return the secret (#670).
+  In `query_datastore`, `redactDatastoreStatements` fails closed: it
+  masks every result column with a stored-text alias beside it, and
+  replaces whole any statement output (`statementOutput`, including
+  `min_`/`max_` forms) that has none. Filters, `order_by` and
+  `group_by` on statement columns still see only the `RedactedText`
+  output, so the Go pass does not protect them, and a `like` or
+  range filter is an oracle for a secret the patterns miss, one
+  character at a time; the user accepted this risk on 2026-10-21
+  (PR #730), so do not re-raise it as a new finding.
+  `RedactedText` is
   `left(value, 65536)` under a chain of `regexp_replace` calls built from
   `textRedactions` (URI userinfo, JSON keys, ALTER SYSTEM SET of a
   `pgsettings.CredentialSettings` entry, quoted name and value as in `set_config`,
@@ -319,7 +337,7 @@ moved.
   `GET /api/v1/metrics/latest` (#670) and the latest-rows mode of
   `GET /api/v1/metrics/query` (through `ReturnableColumns` and
   `MaskedProbeColumn`, which uses `RedactedSetting`), the statement text of
-  `GET /api/v1/metrics/top-queries` (`RedactedText`), and the old and
+  `GET /api/v1/metrics/top-queries` (`RedactStatementText`), and the old and
   new values of configuration-change events on
   `GET /api/v1/timeline/events` (`RedactedSetting`, which returns a
   connection string setting such as `primary_conninfo` as stored when

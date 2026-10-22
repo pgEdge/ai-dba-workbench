@@ -829,7 +829,8 @@ func scopedFrom(src datastoreSource, inner []string) (string, error) {
 // name a credential-bearing setting, and the credential-bearing options
 // in an options column masked, and known password forms in free text
 // masked. An empty or NULL value is kept, since it shows only that the
-// setting is unset.
+// setting is unset. Each statement-text column follows, as stored, under
+// metrics.RawStatementAlias.
 func innerSelectList(src datastoreSource) string {
 	parts := make([]string, len(src.Columns))
 	for i, c := range src.Columns {
@@ -852,6 +853,15 @@ func innerSelectList(src datastoreSource) string {
 		}
 		parts[i] = metrics.MaskedSetting(value, qualified(datastoreTableAlias, c.RedactBy)) + " AS " +
 			metrics.QuoteIdentifier(c.Name)
+	}
+	// Each statement-text column is also selected as stored, for
+	// redactDatastoreStatements to mask in Go. No caller-supplied name
+	// can refer to it, since checkColumn accepts only source columns.
+	for _, c := range src.Columns {
+		if c.RedactStatement {
+			parts = append(parts, qualified(datastoreTableAlias, c.Name)+" AS "+
+				metrics.QuoteIdentifier(metrics.RawStatementAlias(c.Name)))
+		}
 	}
 	return strings.Join(parts, ", ")
 }
@@ -1379,7 +1389,8 @@ func rowsStatement(src datastoreSource, req datastoreRequest, columns []string, 
 	}
 	name := func(c string) string { return qualified(datastoreTableAlias, c) }
 	order = tieBreakTerms(order, datastoreRowKey(src), name)
-	return "SELECT " + selectList(datastoreTableAlias, columns) + " FROM " + from + where +
+	selected := append(slices.Clone(columns), rawStatementNames(src, columns)...)
+	return "SELECT " + selectList(datastoreTableAlias, selected) + " FROM " + from + where +
 		" ORDER BY " + strings.Join(order, ", "), nil
 }
 
@@ -1391,6 +1402,7 @@ func rowsStatement(src datastoreSource, req datastoreRequest, columns []string, 
 // result.
 func latestStatement(src datastoreSource, req datastoreRequest, columns []string, from, where string) (string, error) {
 	all := src.columnNames()
+	all = append(all, rawStatementNames(src, all)...)
 	distinct := append([]string{src.ConnectionColumn}, datastoreEntityKeys(src)...)
 
 	inner := "SELECT DISTINCT ON (" + selectList(datastoreTableAlias, distinct) + ") " +
@@ -1403,7 +1415,37 @@ func latestStatement(src datastoreSource, req datastoreRequest, columns []string
 		return "", err
 	}
 	order = tieBreakTerms(order, distinct, metrics.QuoteIdentifier)
-	return "SELECT " + selectList("", columns) + " FROM (" + inner + ") latest ORDER BY " + strings.Join(order, ", "), nil
+	selected := append(slices.Clone(columns), rawStatementNames(src, columns)...)
+	return "SELECT " + selectList("", selected) + " FROM (" + inner + ") latest ORDER BY " + strings.Join(order, ", "), nil
+}
+
+// aggregateRawStatements selects, after the aggregate's outputs, the
+// stored text for each output holding statement text
+// (statementOutput), under metrics.RawStatementAlias of the
+// output's name: the least stored text of the group for a group_by
+// column, and the least or greatest for min or max. The output itself
+// is computed from the masked text, so the stored text chosen is a
+// representative of the group, masked in Go, and need not be from the
+// row the output came from.
+func aggregateRawStatements(src datastoreSource, req datastoreRequest) []string {
+	var selects []string
+	add := func(fn, column, output string) {
+		selects = append(selects, fn+"("+qualified(datastoreTableAlias, metrics.RawStatementAlias(column))+") AS "+
+			metrics.QuoteIdentifier(metrics.RawStatementAlias(output)))
+	}
+	for _, g := range req.GroupBy {
+		if statementColumn(src, g) {
+			add("min", g, g)
+		}
+	}
+	if req.Aggregation == "min" || req.Aggregation == "max" {
+		for _, name := range req.Columns {
+			if statementColumn(src, name) {
+				add(req.Aggregation, name, req.Aggregation+"_"+name)
+			}
+		}
+	}
+	return selects
 }
 
 // aggregateStatement groups rows and applies req.Aggregation to the
@@ -1458,6 +1500,7 @@ func aggregateStatement(q *datastoreQuery, src datastoreSource, req datastoreReq
 		selects = append(selects, req.Aggregation+"("+qualified(datastoreTableAlias, name)+") AS "+metrics.QuoteIdentifier(alias))
 		outputs = append(outputs, alias)
 	}
+	selects = append(selects, aggregateRawStatements(src, req)...)
 
 	sql := "SELECT " + strings.Join(selects, ", ") + " FROM " + from + where
 	if groupCount > 0 {

@@ -554,18 +554,11 @@ func (d *Datastore) RemoveServerFromCluster(ctx context.Context, clusterID int, 
 	}
 	defer rollback.Tx(ctx, tx) //nolint:errcheck // no-op after commit
 
-	// Delete all relationships where this connection is source or target
-	_, err = tx.Exec(ctx,
-		`DELETE FROM cluster_node_relationships
-         WHERE cluster_id = $1
-           AND (source_connection_id = $2 OR target_connection_id = $2)`,
-		clusterID, connectionID,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to delete relationships: %w", err)
-	}
-
-	// Clear cluster assignment and reset membership source
+	// Clear cluster assignment and reset membership source. This runs
+	// before the relationship delete so that the connection row is
+	// locked before the relationship rows, the order lockClusterMembers
+	// and the write that follows it use; the reverse order could
+	// deadlock with a relationship write (issue #707).
 	_, err = tx.Exec(ctx,
 		`UPDATE connections
          SET cluster_id = NULL, role = NULL, membership_source = 'auto',
@@ -575,6 +568,17 @@ func (d *Datastore) RemoveServerFromCluster(ctx context.Context, clusterID int, 
 	)
 	if err != nil {
 		return fmt.Errorf("failed to clear cluster assignment: %w", err)
+	}
+
+	// Delete all relationships where this connection is source or target
+	_, err = tx.Exec(ctx,
+		`DELETE FROM cluster_node_relationships
+         WHERE cluster_id = $1
+           AND (source_connection_id = $2 OR target_connection_id = $2)`,
+		clusterID, connectionID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to delete relationships: %w", err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {

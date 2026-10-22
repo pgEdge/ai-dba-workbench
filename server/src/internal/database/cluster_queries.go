@@ -449,7 +449,7 @@ func (d *Datastore) DeleteCluster(ctx context.Context, id int) error {
 		// Detach connections since the FK ON DELETE SET NULL won't
 		// fire for a soft delete
 		_, err = d.pool.Exec(ctx,
-			`UPDATE connections SET cluster_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE cluster_id = $1`,
+			detachClusterMembersSQL,
 			id,
 		)
 		if err != nil {
@@ -468,6 +468,19 @@ func (d *Datastore) DeleteCluster(ctx context.Context, id int) error {
 
 	return nil
 }
+
+// detachClusterMembersSQL detaches every member of the cluster $1. It
+// locks the member rows in id order first, as lockClusterMembers does:
+// a plain UPDATE ... WHERE cluster_id = $1 walks the heap, which stops
+// matching id order once a member row has been updated, and could then
+// deadlock with a relationship write holding some members FOR SHARE.
+const detachClusterMembersSQL = `
+        UPDATE connections SET cluster_id = NULL, updated_at = CURRENT_TIMESTAMP
+        WHERE id IN (
+            SELECT id FROM connections WHERE cluster_id = $1
+            ORDER BY id
+            FOR NO KEY UPDATE
+        )`
 
 // deriveClusterNameFromKey produces a human-readable name from an
 // auto_cluster_key. The result is used when creating a dismissed
@@ -539,7 +552,7 @@ func (d *Datastore) DeleteAutoDetectedCluster(ctx context.Context, autoKey strin
 	}
 
 	_, err = tx.Exec(ctx,
-		`UPDATE connections SET cluster_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE cluster_id = $1`,
+		detachClusterMembersSQL,
 		clusterID,
 	)
 	if err != nil {
@@ -599,7 +612,7 @@ func (d *Datastore) DismissAutoDetectedClusterKeys(ctx context.Context, autoKeys
 		}
 
 		_, err = tx.Exec(ctx,
-			`UPDATE connections SET cluster_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE cluster_id = $1`,
+			detachClusterMembersSQL,
 			clusterID,
 		)
 		if err != nil {

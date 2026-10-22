@@ -856,3 +856,71 @@ func TestClusterQueries_ExistingClusterErrorPaths(t *testing.T) {
 		t.Errorf("DismissAutoDetectedClusterKeys: expected the detach to fail")
 	}
 }
+
+// TestDeleteCluster_StatementFailures covers the failed dismiss UPDATE
+// of an auto-detected cluster, the failed hard DELETE of a user-created
+// one, and a hard DELETE that removes no row, using triggers that raise
+// or skip the statement.
+func TestDeleteCluster_StatementFailures(t *testing.T) {
+	ds, pool, cleanup := newSyncAutoDetectedTestDatastore(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	mustExecClusterQueries(t, pool, `
+		CREATE OR REPLACE FUNCTION raise_on_clusters() RETURNS trigger
+		LANGUAGE plpgsql AS $$
+		BEGIN
+			RAISE EXCEPTION 'injected clusters failure';
+		END $$;
+		CREATE OR REPLACE FUNCTION skip_on_clusters() RETURNS trigger
+		LANGUAGE plpgsql AS $$
+		BEGIN
+			RETURN NULL;
+		END $$;`)
+	// The functions outlive the tables the cleanup drops.
+	defer mustExecClusterQueries(t, pool, `
+		DROP FUNCTION IF EXISTS raise_on_clusters() CASCADE;
+		DROP FUNCTION IF EXISTS skip_on_clusters() CASCADE;`)
+
+	t.Run("dismiss update fails", func(t *testing.T) {
+		var id int
+		if err := pool.QueryRow(ctx, `
+			INSERT INTO clusters (name, auto_cluster_key)
+			VALUES ('auto', 'spock:fail') RETURNING id`).Scan(&id); err != nil {
+			t.Fatalf("Failed to insert cluster: %v", err)
+		}
+		mustExecClusterQueries(t, pool, `
+			CREATE TRIGGER raise_on_update BEFORE UPDATE ON clusters
+			FOR EACH ROW EXECUTE FUNCTION raise_on_clusters()`)
+		defer mustExecClusterQueries(t, pool,
+			`DROP TRIGGER raise_on_update ON clusters`)
+		if err := ds.DeleteCluster(ctx, id); err == nil {
+			t.Error("DeleteCluster: expected the dismiss to fail")
+		}
+	})
+
+	t.Run("hard delete fails", func(t *testing.T) {
+		id := insertSyncTestCluster(t, pool, "user-fail")
+		mustExecClusterQueries(t, pool, `
+			CREATE TRIGGER raise_on_delete BEFORE DELETE ON clusters
+			FOR EACH ROW EXECUTE FUNCTION raise_on_clusters()`)
+		defer mustExecClusterQueries(t, pool,
+			`DROP TRIGGER raise_on_delete ON clusters`)
+		if err := ds.DeleteCluster(ctx, id); err == nil ||
+			errors.Is(err, ErrClusterNotFound) {
+			t.Errorf("DeleteCluster: error = %v, want the delete failure", err)
+		}
+	})
+
+	t.Run("hard delete removes nothing", func(t *testing.T) {
+		id := insertSyncTestCluster(t, pool, "user-skip")
+		mustExecClusterQueries(t, pool, `
+			CREATE TRIGGER skip_on_delete BEFORE DELETE ON clusters
+			FOR EACH ROW EXECUTE FUNCTION skip_on_clusters()`)
+		defer mustExecClusterQueries(t, pool,
+			`DROP TRIGGER skip_on_delete ON clusters`)
+		if err := ds.DeleteCluster(ctx, id); !errors.Is(err, ErrClusterNotFound) {
+			t.Errorf("DeleteCluster: error = %v, want %v", err, ErrClusterNotFound)
+		}
+	})
+}

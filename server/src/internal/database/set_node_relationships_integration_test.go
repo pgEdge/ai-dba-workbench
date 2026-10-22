@@ -700,3 +700,156 @@ func TestNodeRelationships_DeleteClusterNoDeadlock(t *testing.T) {
 		t.Errorf("manual rows = %d, want 0 after the cascade", got)
 	}
 }
+
+// TestNodeRelationships_RemoveServerNoDeadlock pins the statement order
+// in RemoveServerFromCluster. A write holds its member locks whilst the
+// remove starts and waits on the connection row; the write then
+// deletes its manual rows and commits. Deleting the relationship rows
+// before updating the connection row deadlocked here, since the remove
+// held the row the write's delete needed.
+func TestNodeRelationships_RemoveServerNoDeadlock(t *testing.T) {
+	for _, removeSource := range []bool{false, true} {
+		name := "remove target"
+		if removeSource {
+			name = "remove source"
+		}
+		t.Run(name, func(t *testing.T) {
+			ds, pool, cleanup := newSyncAutoDetectedTestDatastore(t)
+			defer cleanup()
+
+			ctx := context.Background()
+			// RemoveServerFromCluster also clears the role.
+			if _, err := pool.Exec(ctx,
+				`ALTER TABLE connections ADD COLUMN role VARCHAR(50)`); err != nil {
+				t.Fatalf("Failed to add the role column: %v", err)
+			}
+			clusterID := insertSyncTestCluster(t, pool, "node-rels-remove")
+			source := insertSyncTestConnection(t, pool, "remove-source")
+			target := insertSyncTestConnection(t, pool, "remove-target")
+			joinSyncTestCluster(t, pool, clusterID, source, target)
+			if _, err := pool.Exec(ctx, `
+				INSERT INTO cluster_node_relationships
+					(cluster_id, source_connection_id, target_connection_id,
+					 relationship_type, is_auto_detected)
+				VALUES ($1, $2, $3, 'streams_from', FALSE)`,
+				clusterID, source, target); err != nil {
+				t.Fatalf("Failed to seed relationship: %v", err)
+			}
+			removed := target
+			if removeSource {
+				removed = source
+			}
+
+			tx, err := pool.Begin(ctx)
+			if err != nil {
+				t.Fatalf("Failed to begin the write: %v", err)
+			}
+			defer tx.Rollback(ctx) //nolint:errcheck // no-op after commit
+			if err := lockClusterMembers(ctx, tx, clusterID, source,
+				[]int{target}); err != nil {
+				t.Fatalf("lockClusterMembers: %v", err)
+			}
+
+			done := make(chan error, 1)
+			go func() { done <- ds.RemoveServerFromCluster(ctx, clusterID, removed) }()
+			if !waitForLockWait(t, pool, "UPDATE connections", done) {
+				t.Fatal("RemoveServerFromCluster finished without waiting for the write")
+			}
+			if err := deleteManualRelationships(ctx, tx, clusterID, source,
+				nil); err != nil {
+				t.Fatalf("deleteManualRelationships: %v", err)
+			}
+			if err := tx.Commit(ctx); err != nil {
+				t.Fatalf("Failed to commit the write: %v", err)
+			}
+			if err := <-done; err != nil {
+				t.Fatalf("RemoveServerFromCluster: %v", err)
+			}
+		})
+	}
+}
+
+// TestNodeRelationships_DismissClusterNoDeadlock pins the id-order lock
+// in detachClusterMembersSQL. The members are stored in the heap as cc,
+// b, a whilst their ids run a < b < cc. A third transaction holds b, so
+// the write (holding a, waiting on b) and the dismiss both queue on it
+// before it is released. Detaching in heap order made the dismiss take
+// cc first and then need a, whilst the write needed cc, and the two
+// deadlocked.
+func TestNodeRelationships_DismissClusterNoDeadlock(t *testing.T) {
+	tests := []struct {
+		name    string
+		dismiss func(ds *Datastore, clusterID int, key string) error
+	}{
+		{"DeleteCluster", func(ds *Datastore, clusterID int, _ string) error {
+			return ds.DeleteCluster(context.Background(), clusterID)
+		}},
+		{"DeleteAutoDetectedCluster", func(ds *Datastore, _ int, key string) error {
+			return ds.DeleteAutoDetectedCluster(context.Background(), key)
+		}},
+		{"DismissAutoDetectedClusterKeys", func(ds *Datastore, _ int, key string) error {
+			return ds.DismissAutoDetectedClusterKeys(context.Background(),
+				[]string{key})
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ds, pool, cleanup := newSyncAutoDetectedTestDatastore(t)
+			defer cleanup()
+
+			ctx := context.Background()
+			const key = "spock:dismiss-deadlock"
+			var clusterID int
+			if err := pool.QueryRow(ctx, `
+				INSERT INTO clusters (name, auto_cluster_key)
+				VALUES ('dismiss-deadlock', $1) RETURNING id`,
+				key).Scan(&clusterID); err != nil {
+				t.Fatalf("Failed to insert cluster: %v", err)
+			}
+			a := insertSyncTestConnection(t, pool, "dismiss-a")
+			b := insertSyncTestConnection(t, pool, "dismiss-b")
+			cc := insertSyncTestConnection(t, pool, "dismiss-cc")
+			joinSyncTestCluster(t, pool, clusterID, cc)
+			// Updating b and then a moves their live tuples after cc.
+			joinSyncTestCluster(t, pool, clusterID, b)
+			joinSyncTestCluster(t, pool, clusterID, a)
+
+			holder, err := pool.Begin(ctx)
+			if err != nil {
+				t.Fatalf("Failed to begin the holder: %v", err)
+			}
+			defer holder.Rollback(ctx) //nolint:errcheck // no-op after rollback
+			if _, err := holder.Exec(ctx,
+				`SELECT 1 FROM connections WHERE id = $1 FOR NO KEY UPDATE`,
+				b); err != nil {
+				t.Fatalf("Failed to lock b: %v", err)
+			}
+
+			write := make(chan error, 1)
+			go func() {
+				write <- ds.SetNodeRelationships(ctx, clusterID, a,
+					[]RelationshipInput{
+						{TargetConnectionID: b, RelationshipType: "streams_from"},
+						{TargetConnectionID: cc, RelationshipType: "streams_from"},
+					}, nil)
+			}()
+			if !waitForLockWait(t, pool, "FOR SHARE", write) {
+				t.Fatal("the write finished without waiting for b")
+			}
+			dismiss := make(chan error, 1)
+			go func() { dismiss <- tt.dismiss(ds, clusterID, key) }()
+			if !waitForLockWait(t, pool, "UPDATE connections", dismiss) {
+				t.Fatal("the dismiss finished without waiting")
+			}
+			if err := holder.Rollback(ctx); err != nil {
+				t.Fatalf("Failed to release b: %v", err)
+			}
+			if err := <-write; err != nil {
+				t.Errorf("SetNodeRelationships: %v", err)
+			}
+			if err := <-dismiss; err != nil {
+				t.Errorf("dismiss: %v", err)
+			}
+		})
+	}
+}

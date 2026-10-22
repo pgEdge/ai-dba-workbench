@@ -86,7 +86,13 @@ stale row (`TestIssue707_RelationshipWriteRacingMove`,
 `TestNodeRelationships_WaitForUncommittedMove`). `lockClusterMembers`
 locks the `clusters` row `FOR KEY SHARE` before the connection rows,
 the order a hard `DeleteCluster` takes them in; the reverse order
-deadlocked (`TestNodeRelationships_DeleteClusterNoDeadlock`).
+deadlocked (`TestNodeRelationships_DeleteClusterNoDeadlock`). Anything
+else that changes member connection rows must lock them in the same
+order: `RemoveServerFromCluster` updates the connection row before
+deleting its relationship rows, and the dismiss paths detach members
+with `detachClusterMembersSQL`, which locks them in id order
+(`TestNodeRelationships_RemoveServerNoDeadlock`,
+`TestNodeRelationships_DismissClusterNoDeadlock`).
 `SyncAutoDetectedRelationships` does not take that lock yet.
 `TestIssue707_*` in `cluster_move_relationships_test.go` and the
 datastore tests in `cluster_move_relationships_integration_test.go`

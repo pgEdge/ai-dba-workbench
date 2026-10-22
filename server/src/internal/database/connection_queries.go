@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/pkg/crypto"
 	"github.com/pgedge/ai-workbench/pkg/rollback"
@@ -834,8 +835,14 @@ func (d *Datastore) ListDatabases(ctx context.Context, connectionID int) ([]Data
 	}
 	defer tempPool.Close()
 
-	// Query databases
-	query := `
+	return queryDatabases(ctx, tempPool)
+}
+
+// listDatabasesQuery lists the databases a user can connect to. When a
+// database is dropped part way through, pg_database_size returns NULL for
+// it while the drop is still in progress, or raises invalid_catalog_name
+// once the drop has committed; queryDatabases handles both.
+const listDatabasesQuery = `
         SELECT
             d.datname AS name,
             pg_catalog.pg_get_userbyid(d.datdba) AS owner,
@@ -847,17 +854,82 @@ func (d *Datastore) ListDatabases(ctx context.Context, connectionID int) ([]Data
         ORDER BY d.datname
     `
 
-	rows, err := tempPool.Query(ctx, query)
+// listDatabasesAttempts bounds how many times queryDatabases runs the
+// query when a database disappears between the catalog scan and the size
+// calculation. Each retry takes a fresh snapshot that no longer sees the
+// dropped database, so one retry normally suffices.
+const listDatabasesAttempts = 3
+
+// sqlStateInvalidCatalogName is the SQLSTATE PostgreSQL raises when a
+// database named or identified in a query does not exist.
+const sqlStateInvalidCatalogName = "3D000"
+
+// rowQuerier is the subset of pgxpool.Pool and pgx.Tx that queryDatabases
+// needs.
+type rowQuerier interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+}
+
+// queryDatabases runs listDatabasesQuery, retrying when a database is
+// dropped while it runs so that a concurrent DROP DATABASE does not fail
+// the whole listing.
+func queryDatabases(ctx context.Context, q rowQuerier) ([]DatabaseInfo, error) {
+	var err error
+	for attempt := 0; attempt < listDatabasesAttempts; attempt++ {
+		var databases []DatabaseInfo
+		databases, err = queryDatabasesOnce(ctx, q)
+		if !isDatabaseDroppedError(err) {
+			return databases, err
+		}
+	}
+	return nil, err
+}
+
+// queryDatabasesOnce runs listDatabasesQuery a single time.
+func queryDatabasesOnce(ctx context.Context, q rowQuerier) ([]DatabaseInfo, error) {
+	rows, err := q.Query(ctx, listDatabasesQuery)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query databases: %w", err)
 	}
-	databases, err := scanAll(rows, func(r pgx.Rows, db *DatabaseInfo) error {
-		return r.Scan(&db.Name, &db.Owner, &db.Encoding, &db.Size)
-	})
+	databases, err := scanDatabases(rows)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read databases: %w", err)
 	}
 	return databases, nil
+}
+
+// databaseRow is one row of listDatabasesQuery, with the size kept
+// nullable so that a database dropped mid-query can be recognized.
+type databaseRow struct {
+	info DatabaseInfo
+	size *string
+}
+
+// scanDatabases reads the rows of listDatabasesQuery, leaving out any
+// database whose size is NULL because it was dropped while being listed.
+func scanDatabases(rows pgx.Rows) ([]DatabaseInfo, error) {
+	scanned, err := scanAll(rows, func(r pgx.Rows, row *databaseRow) error {
+		return r.Scan(&row.info.Name, &row.info.Owner, &row.info.Encoding, &row.size)
+	})
+	if err != nil {
+		return nil, err
+	}
+	databases := make([]DatabaseInfo, 0, len(scanned))
+	for _, row := range scanned {
+		if row.size == nil {
+			continue
+		}
+		row.info.Size = *row.size
+		databases = append(databases, row.info)
+	}
+	return databases, nil
+}
+
+// isDatabaseDroppedError reports whether err is PostgreSQL saying that a
+// database does not exist.
+func isDatabaseDroppedError(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == sqlStateInvalidCatalogName
 }
 
 // GetPool returns the underlying connection pool (for future metrics access)

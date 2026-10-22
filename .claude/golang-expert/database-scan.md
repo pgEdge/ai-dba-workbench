@@ -118,6 +118,14 @@ Three categories of caller stay on the hand-written loop:
   rows" from "empty result set". This is rare and currently has no
   in-tree caller; the non-nil contract is preferred otherwise.
 
+## Filtering Rows By Value
+
+`scanAll` cannot skip a row, but a row that should be left out
+because of its values (rather than a scan error) can be scanned
+into a private row type and filtered afterwards. `scanDatabases` in
+`connection_queries.go` does this to leave out a database whose
+`pg_database_size` is NULL because it is being dropped (#723).
+
 ## Adjacent Packages
 
 `alerter/src/internal/database/queries.go` and

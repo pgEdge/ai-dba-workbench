@@ -1188,6 +1188,14 @@ project adheres to
 
 ### Fixed
 
+- List a server's databases when one of them is dropped whilst
+  the list is being built (#723). The size lookup for the
+  dropped database returned NULL, or failed because the database
+  no longer existed, and either failed the whole request; a
+  database dropped part way through is now left out of the list,
+  and the listing is retried, up to three times in all, when the
+  drop has already completed.
+
 - Accept API tokens when creating, updating or deleting a
   connection or a cluster group (#668). These endpoints looked
   the caller up as a browser session, so a token the server had

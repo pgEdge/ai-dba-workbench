@@ -144,7 +144,8 @@ func (p *ContextAwareProvider) registerDatastoreTools(registry *Registry) {
 			registry.Register("recall_memories", RecallMemoriesTool(p.memoryStore, p.cfg))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("delete_memory") && p.memoryStore != nil {
-			registry.Register("delete_memory", DeleteMemoryTool(p.memoryStore))
+			registry.Register("delete_memory", DeleteMemoryTool(p.memoryStore, p.rbacChecker,
+				p.record))
 		}
 	} else {
 		// Register tools with nil pool - they'll return helpful errors.

@@ -54,6 +54,7 @@ func NewDenialRecorder(store *auth.AuthStore) DenialRecorder {
 const (
 	deniedActionToolCall                = "mcp.tool.call"
 	deniedActionMemoryCreate            = "memory.create"
+	deniedActionMemoryDelete            = "memory.delete"
 	deniedActionConnectionRead          = "connection.read"
 	deniedActionConnectionQuery         = "connection.query"
 	deniedActionConnectionQueryValidate = "connection.query.validate"
@@ -94,6 +95,13 @@ func connectionDenialTarget(connectionID int) string {
 		return connectionsTarget
 	}
 	return connectionsTarget + "/" + strconv.Itoa(connectionID)
+}
+
+// memoryDenialTarget names a memory as a denial target, in the
+// memories/<id> form the REST routes record. The ID is an integer the
+// tool has already validated.
+func memoryDenialTarget(id int64) string {
+	return memoriesTarget + "/" + strconv.FormatInt(id, 10)
 }
 
 // deny audits a refusal, when a recorder is set, for a caller that

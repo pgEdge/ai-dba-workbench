@@ -160,7 +160,7 @@ written for release 1.0.0:
   a time range, `filters` and `shape`. The new `describe_datastore`
   tool lists the sources, and a grant of `query_datastore` also grants
   `describe_datastore`. See
-  [Querying the Datastore](../user-guide/mcp-tools.md#querying-the-datastore)
+  [Querying the Datastore](../user-guide/ai/mcp-tools.md#querying-the-datastore)
   for the arguments.
 - The `query_database` tool is read-only for every caller, including a
   superuser, and refuses a query that holds more than one statement.
@@ -183,7 +183,7 @@ delivers a Slack, Mattermost, Telegram or webhook notification; a
 delivery that receives a `3xx` response fails. Before you upgrade,
 check that the URL of each notification channel is the final URL, and
 not a URL that the provider redirects. See
-[Notification Channels](notification-channels.md) for the channel
+[Managing Notification Channels](notification-channels/index.md) for the channel
 settings.
 
 ### Retired Alert Rule
@@ -329,7 +329,7 @@ for a description of the `-check-config` option.
 
 This procedure upgrades an installation set up with the
 [binary installation](../getting-started/binary_install.md) guide and
-the [systemd units](../getting-started/configuration/configure_systemd.md),
+the [systemd units](../configuration/configure_systemd.md),
 with the binaries in `/opt/ai-workbench`. Replace `user_name` with the
 account that runs the services, and replace `linux-amd64` with the
 platform of the release archives you use.

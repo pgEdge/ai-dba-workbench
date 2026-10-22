@@ -53,7 +53,7 @@ go build -o ai-dba-alerter ./cmd/ai-dba-alerter
 > **Note:** The source build paths above apply to local development only.
 > Production deployments place binaries in different locations depending on
 > the installation method. See the
-> [Installation Guide](../docs/getting-started/installation.md) for
+> [Installation Guide](https://github.com/pgEdge/ai-dba-workbench/blob/main/docs/getting-started/installation_overview.md) for
 > production paths.
 
 ## Configuration
@@ -111,7 +111,7 @@ The following table lists all command-line flags:
 | `-db-sslmode` | Database SSL mode (overrides config) | None |
 
 For complete configuration documentation, see
-[docs/getting-started/configuration/alerter.md](../docs/getting-started/configuration/alerter.md).
+[docs/configuration/alerter/index.md](https://github.com/pgEdge/ai-dba-workbench/blob/main/docs/configuration/alerter/index.md).
 
 ## Running
 
@@ -163,13 +163,13 @@ provides the most sophisticated analysis for difficult cases.
 ## Documentation
 
 For detailed documentation, see the
-[Developer's Guide](../docs/developer-guide/index.md).
+[Developer's Guide](https://github.com/pgEdge/ai-dba-workbench/blob/main/docs/developer-guide/index.md).
 
 The documentation includes the following topics:
 
-- [Configuration](../docs/getting-started/configuration/alerter.md)
+- [Configuration](https://github.com/pgEdge/ai-dba-workbench/blob/main/docs/configuration/alerter/index.md)
   covers all configuration options and command-line flags.
-- [Cron Expressions](../docs/developer-guide/alerter/cron-expressions.md)
+- [Cron Expressions](https://github.com/pgEdge/ai-dba-workbench/blob/main/docs/developer-guide/alerter/cron-expressions.md)
   explains cron syntax for scheduling blackout periods.
 
 ## Testing and Linting
@@ -200,7 +200,7 @@ To report an issue with the software, visit:
 [GitHub Issues](https://github.com/pgEdge/ai-dba-workbench/issues)
 
 We welcome your project contributions; for more information, see
-[docs/developer-guide/contributing.md](../docs/developer-guide/contributing.md).
+[docs/developer-guide/contributing.md](https://github.com/pgEdge/ai-dba-workbench/blob/main/docs/developer-guide/contributing.md).
 
 For more information, visit [docs.pgedge.com](https://docs.pgedge.com).
 

@@ -7,22 +7,17 @@ power the built-in Ask Ellie assistant. The MCP
 server uses HTTP transport with Bearer token
 authentication.
 
-## Prerequisites
+You must meet the following requirements before configuring a client:
 
-Ensure the following requirements are met before
-configuring a client.
-
-- The Workbench server must be running and accessible
-  from the machine where the MCP client operates.
-- An API token is required for authentication. Create
-  a token by selecting the `Settings` icon, then
-  selecting `Tokens` from the `Administration`
-  console's left navigation pane, or use the REST
-  API. See
+- The Workbench server must be running and accessible from the machine where
+  the MCP client operates.
+- Authentication requires an API token. Create a token by selecting the
+  `Settings` icon, then selecting `Tokens` from the `Administration` console's
+  left navigation pane, or use the REST API. See
   [Managing Users and Permissions](../../admin-guide/managing-users-and-permissions/permission_model.md)
   for details on token management.
 
-## Endpoint
+## Finding the Server Endpoint
 
 The MCP server exposes a JSON-RPC 2.0 endpoint at
 `/mcp/v1` on the server's HTTP address.
@@ -51,7 +46,7 @@ curl -X POST http://localhost:8080/mcp/v1 \
 Replace the URL and token with values that match your
 environment.
 
-## Client Configuration
+## Configuring Popular Clients
 
 The following sections describe how to configure
 popular MCP clients. Each example connects to
@@ -186,11 +181,9 @@ to the Workbench.
 
 ## Verification
 
-Once configured, the MCP client should discover the
-Workbench's tools automatically. Verify the connection
-by asking your AI assistant to list the available MCP
-tools or to run a simple query such as listing
-database connections.
+Configured clients should discover the Workbench's tools automatically. Verify
+a connection by asking your AI assistant to list the available MCP tools or to
+run a simple query such as listing database connections.
 
 If the client does not discover the tools, confirm
 that the server is running, the URL is correct, and
@@ -198,12 +191,6 @@ the token is valid.
 
 ## Available Tools
 
-The full list of tools and resources is documented on
-the [MCP Tools](../mcp-tools.md) page.
+The [Using Workbench with MCP Tools](mcp-tools.md) page documents the full list
+of tools and resources.
 
-## Related Documentation
-
-- [Ask Ellie](ask-ellie.md) describes the built-in
-  AI assistant that uses these tools internally.
-- [AI Overview](overview.md) covers AI-powered
-  summaries of database health and status.

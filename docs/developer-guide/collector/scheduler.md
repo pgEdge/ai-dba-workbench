@@ -144,6 +144,12 @@ func (ps *ProbeScheduler) scheduleProbe(
 }
 ```
 
+The example omits the configuration reload, which runs every 5 minutes. The
+reload replaces a probe whose interval changed with a new instance and removes
+a probe that is now disabled; each scheduling goroutine calls `isCurrentProbe`
+after its initial wait and on every tick, and exits without running when its
+probe instance is no longer the one registered for the connection.
+
 ## Probe Execution
 
 The scheduler executes each probe against all
@@ -461,9 +467,8 @@ slot.
 
 ### Connection Pool Limits
 
-The datastore uses a global limit of 25 connections
-by default. Monitored servers use a per-server limit
-of 5 connections each by default.
+The datastore uses a global limit of 25 connections by default. Monitored
+servers use a per-server limit of 3 connections each by default.
 
 ### Semaphores
 
@@ -505,18 +510,16 @@ The scheduler applies timeouts at two stages.
 
 ### Execution Timeout
 
-Each probe execution has a timeout equal to
-`monitored_pool_max_wait_seconds`. If the timeout
-is exceeded, the probe execution is cancelled and
-the error is logged. The probe retries on the next
-interval.
+Each probe execution has a timeout equal to `pool.monitored_max_wait_seconds`.
+If the timeout is exceeded, the probe execution is cancelled and the error is
+logged. The probe retries on the next interval.
 
 ### Storage Timeout
 
-Metric storage has its own timeout equal to
-`datastore_pool_max_wait_seconds`. The system
-applies this timeout independently from the
-execution timeout.
+Before storing metrics, the scheduler waits at most
+`pool.datastore_max_wait_seconds` for a datastore connection, independently
+of the execution timeout. The timeout covers only that wait; the write that
+follows does not have its own timeout, so a slow write can take longer.
 
 ## Error Handling
 
@@ -623,43 +626,58 @@ for optimal performance.
 
 ### Adjusting Collection Intervals
 
-Balance data freshness against system load by
-adjusting collection intervals. In the following
-example, the commands adjust intervals for specific
-probes:
+Balance data freshness against system load by adjusting collection intervals.
+The Collector gives each monitored connection its own server-level row in
+`probe_configs` when the connection first needs the probe, copying the values
+from the cluster, group, or global row, or from the Collector's hardcoded
+defaults when no such row exists. At each configuration reload, the Collector
+copies the parent settings onto every server-level row whose `user_modified`
+column is `FALSE`, so a change to the global row reaches every connection
+without an override within 5 minutes. In the Workbench, the `Probe Defaults`
+tab of the Administration console edits the global rows, and the
+`PROBE CONFIGURATION` tab of the server, cluster, or group settings dialog
+edits the rows at that level; see
+[Managing Probes](../../admin-guide/probes/index.md).
+
+In the following example, the commands change the global default for each
+probe; server-level rows with `user_modified` set keep their custom values:
 
 ```sql
 -- Reduce frequency for low-priority probes
-UPDATE probes
+UPDATE probe_configs
 SET collection_interval_seconds = 900
-WHERE name = 'pg_stat_io';
+WHERE name = 'pg_stat_io'
+    AND scope = 'global';
 
 -- Increase frequency for critical probes
-UPDATE probes
+UPDATE probe_configs
 SET collection_interval_seconds = 30
-WHERE name = 'pg_stat_replication';
+WHERE name = 'pg_stat_replication'
+    AND scope = 'global';
 ```
 
 ### Adjusting Timeouts
 
-Increase timeouts if the logs show timeout errors.
-In the following example, the configuration file
-settings increase both timeouts:
+Increase timeouts if the logs show timeout errors. In the following example,
+the `pool` section of the configuration file raises both timeouts above their
+defaults of 120 and 60 seconds:
 
-```ini
-monitored_pool_max_wait_seconds = 120
-datastore_pool_max_wait_seconds = 90
+```yaml
+pool:
+  monitored_max_wait_seconds: 180
+  datastore_max_wait_seconds: 90
 ```
 
 ### Adjusting Concurrency
 
-Increase pool sizes for better parallelism. In the
-following example, the configuration file settings
-increase both pool sizes:
+Increase pool sizes for better parallelism. In the following example, the
+`pool` section of the configuration file raises both connection limits above
+their defaults of 3 and 25:
 
-```ini
-monitored_pool_max_connections = 10
-datastore_pool_max_connections = 50
+```yaml
+pool:
+  max_connections_per_server: 5
+  datastore_max_connections: 50
 ```
 
 ## See Also

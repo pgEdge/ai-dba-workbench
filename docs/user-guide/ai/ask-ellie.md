@@ -5,8 +5,6 @@ assistant within the workbench. Ellie answers questions
 about PostgreSQL databases, analyzes performance, and
 searches the pgEdge knowledge base.
 
-## Overview
-
 Ellie uses a large language model with access to
 monitoring tools. The assistant can query databases,
 analyze metrics, inspect schemas, and search
@@ -32,12 +30,17 @@ capabilities:
 - The assistant stores and recalls persistent memories
   across conversations.
 
+The Workbench's AI features are available only when the server has a configured
+LLM provider. See [Enabling AI Mode](enabling_ai.md) for configuration details.
+
 ## Opening the Chat
 
 Click the chat button in the bottom-right corner of
 the workbench to open the Ask Ellie panel. The panel
 appears alongside the current view without replacing
 existing content.
+
+![Opening the Ask Ellie panel](../../images/ask_ellie_button.png)
 
 Type a question in the input field and press Enter to
 send. The assistant processes the question and may
@@ -53,9 +56,8 @@ message.
 
 ## Conversation History
 
-The workbench stores conversation history in the
-PostgreSQL datastore. Each conversation is associated
-with the authenticated user.
+The workbench stores conversation history in the PostgreSQL datastore and
+associates each conversation with the authenticated user.
 
 Click the history button in the chat panel header to
 view previous conversations. The history overlay
@@ -90,9 +92,8 @@ The workbench saves the file with the name format
 `ellie-chat-{YYYY-MM-DD}.md`, where the date reflects
 the day of the download.
 
-The download button is disabled when the conversation
-contains no messages. The button is also disabled while
-the assistant is generating a response.
+The interface disables the download button when the conversation contains no
+messages, or while the assistant is generating a response.
 
 ## Available Tools
 
@@ -183,20 +184,16 @@ Some blocks offer only the copy button:
 - No block offers the play button when you can see no
   servers.
 
-Other queries are checked against the target server
-before the play button is enabled. Running a query from
-the chat applies the same checks as the AI alert
-analysis: your access to the connection, the read-only
-check, and the confirmation prompt for statements that
-modify data, which names the server and database the
-statements will run on, as described in
-[AI Alert Analysis](../alerts/ai-analysis.md). A query
-that calls a function with side effects, such as
-`pg_terminate_backend` or `pg_reload_conf`, counts as a
-write and also needs confirmation. A view or a
-user-defined function that calls one of these functions
-is not detected, so review queries against unfamiliar
-views and functions before running them.
+Other queries are checked against the target server before the play button is
+enabled. Running a query from the chat applies the same checks as the AI alert
+analysis: your access to the connection, the read-only check, and the
+confirmation prompt for statements that modify data, which names the server and
+database the statements will run on, as described in
+[AI Alert Analysis](ai-analysis.md). A query that calls a function with side
+effects, such as `pg_terminate_backend` or `pg_reload_conf`, counts as a write
+and also needs confirmation. A view or a user-defined function that calls one
+of these functions is not detected, so review queries against unfamiliar views
+and functions before running them.
 
 ## Chat Memory
 
@@ -240,7 +237,7 @@ can access the memory. The two available scopes are:
 - The `system` scope makes a memory visible to all
   users in the organization.
 
-The default scope is `user` when no scope is specified.
+The default scope is `user` when you don't specify a scope.
 
 Storing system-scoped memories requires the
 `store_system_memory` admin permission. Administrators
@@ -249,11 +246,10 @@ panel.
 
 ### Pinned Memories
 
-A pinned memory is automatically included in every
-conversation. The server appends pinned memories to
-the system prompt so that Ellie always has access to
-the pinned content. Use pinned memories for critical
-information that should inform every response.
+The server automatically includes a pinned memory in every conversation by
+appending it to the system prompt, so Ellie always has access to the pinned
+content. Use pinned memories for critical information that should inform every
+response.
 
 ### Memory Tools
 
@@ -264,11 +260,10 @@ The `store_memory` tool saves a new memory to the
 datastore. The tool requires a content string and a
 category. The scope and pinned parameters are optional.
 
-The `recall_memories` tool searches stored memories
-using semantic similarity when embeddings are enabled.
-The tool falls back to text matching when embeddings
-are unavailable. Pinned memories are always included
-in the search results regardless of the query.
+The `recall_memories` tool searches stored memories using semantic similarity
+when the system has embeddings enabled. The tool falls back to text matching
+when embeddings are unavailable. The search always includes pinned memories
+regardless of the query.
 
 The `delete_memory` tool removes a memory by its
 numeric ID. A user can only delete memories that the
@@ -326,26 +321,17 @@ user-scoped memories and shared system-scoped memories.
 
 The panel provides the following actions:
 
-- Toggle the pinned switch to control whether a memory
-  is automatically included in every conversation.
-- Delete memories that are no longer needed using the
-  delete button.
+- Toggle the pinned switch to control whether the server automatically includes
+  a memory in every conversation.
+- Delete memories that you no longer need using the delete button.
 
-Pinning, unpinning or deleting a system-scoped memory
-requires the `store_system_memory` admin permission.
+Pinning, unpinning, or deleting a system-scoped memory requires the
+`store_system_memory` admin permission.
 
 ## Running Without AI
 
-The Ask Ellie chat button and panel are automatically
-hidden when the server starts without valid LLM
-credentials. The web client detects the server's
-capabilities at startup and removes all chat UI
-elements. Users do not see any error or disabled state;
-the chat feature is simply absent from the interface.
-
-## Related Documentation
-
-- [AI Overview](overview.md) covers AI-powered summaries
-  of database health and status.
-- [AI Alert Analysis](../alerts/ai-analysis.md) describes
-  the AI analysis feature for individual alerts.
+When the server starts without the LLM credentials that the configured
+provider needs, the Workbench automatically hides the Ask Ellie chat button and
+panel. The web client detects the server's capabilities at startup and removes
+all chat UI elements. Users do not see any error or disabled state; the chat
+feature is simply absent from the interface.

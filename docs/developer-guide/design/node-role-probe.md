@@ -442,24 +442,29 @@ ORDER BY r.primary_role, c.name;
 
 ### Detect Role Changes
 
-The following query identifies nodes that changed roles
-within the past seven days.
+The following query identifies nodes that changed roles within the past seven
+days. The query compares each sample with the previous one before it applies
+the seven-day filter, so a change at the start of the window is not missed.
 
 ```sql
 SELECT
-    c.name,
-    r.primary_role,
-    r.collected_at,
-    LAG(r.primary_role) OVER (
-        PARTITION BY r.connection_id
-        ORDER BY r.collected_at
-    ) AS previous_role
-FROM metrics.pg_node_role r
-JOIN connections c ON c.id = r.connection_id
-WHERE r.collected_at > NOW() - INTERVAL '7 days'
-HAVING r.primary_role != LAG(r.primary_role)
-    OVER (
-        PARTITION BY r.connection_id
-        ORDER BY r.collected_at
-    );
+    name,
+    primary_role,
+    collected_at,
+    previous_role
+FROM (
+    SELECT
+        c.name,
+        r.primary_role,
+        r.collected_at,
+        LAG(r.primary_role) OVER (
+            PARTITION BY r.connection_id
+            ORDER BY r.collected_at
+        ) AS previous_role
+    FROM metrics.pg_node_role r
+    JOIN connections c ON c.id = r.connection_id
+) AS role_history
+WHERE collected_at > NOW() - INTERVAL '7 days'
+    AND previous_role IS NOT NULL
+    AND primary_role IS DISTINCT FROM previous_role;
 ```

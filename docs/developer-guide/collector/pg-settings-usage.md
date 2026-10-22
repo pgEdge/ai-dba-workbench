@@ -566,12 +566,13 @@ This section covers common issues with the
 If no `pg_settings` data appears, check the
 following:
 
-1. Verify the probe is enabled:
+1. Verify the probe is enabled; the server-level row for each connection
+   decides whether the probe runs on that server:
    ```sql
-   SELECT is_enabled
+   SELECT connection_id, is_enabled
    FROM probe_configs
    WHERE name = 'pg_settings'
-     AND scope = 'global';
+     AND scope IN ('global', 'server');
    ```
 
 2. Check the Collector logs for errors related to

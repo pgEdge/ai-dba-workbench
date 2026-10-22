@@ -116,12 +116,12 @@ Alerts progress through several states during their lifecycle:
 - Acknowledged alerts have been reviewed by an operator.
 - Cleared alerts indicate the condition has resolved.
 
-The alerter automatically clears threshold alerts when the
-triggering condition returns to normal. The anomaly detector clears
-an active anomaly alert once Tier 1 scores
-`anomaly.tier1.clear_count` consecutive samples of its metric back
-inside the sensitivity band; the Anomaly Detection document
-describes the recovery check.
+The alerter automatically clears threshold alerts when the triggering condition
+returns to normal. The anomaly detector clears an active anomaly alert when
+Tier 1 scores `anomaly.tier1.clear_count` consecutive samples of its metric
+back inside the sensitivity band;
+[Anomaly Alert Recovery](anomaly-detection.md#anomaly-alert-recovery) describes
+the recovery check.
 
 ## High-Level Architecture
 
@@ -166,21 +166,18 @@ evaluator performs these steps:
 5. Compare metric values against thresholds.
 6. Create or update alerts for threshold violations.
 
-The evaluator creates a new alert only once the threshold has
-been violated on `threshold.trigger_count` consecutive metric
-samples, where a sample is a distinct `collected_at` value for
-one rule, connection and database. The object name is not part
-of the key, because an alert is keyed on the rule, connection and
-database, and metrics such as `dead_tuple_percent` report the
-worst table in each database, which may change from one sample
-to the next. The counts live in
-memory in `internal/engine/hysteresis.go`; a key that a cycle
-does not judge, because of a blackout, a disabled override or a
-missing row, starts again from zero. An existing alert is
-updated on every cycle regardless of the count. Each metric
-registry query must therefore report the sample's own
-`collected_at` rather than `NOW()`, or every cycle would look
-like a new sample.
+The evaluator creates a new alert only when the threshold has been violated on
+`threshold.trigger_count` consecutive metric samples, where a sample is a
+distinct `collected_at` value for one rule, connection and database. The object
+name is not part of the key, because an alert is keyed on the rule, connection
+and database, and metrics such as `dead_tuple_percent` report the worst table
+in each database, which may change from one sample to the next. The counts live
+in memory in `internal/engine/hysteresis.go`; a key that a cycle does not
+judge, because of a blackout, a disabled override or a missing row, starts
+again from zero. An existing alert is updated on every cycle regardless of the
+count. Each metric registry query must therefore report the sample's own
+`collected_at` rather than `NOW()`, or every cycle would look like a new
+sample.
 
 ### Baseline Calculator
 
@@ -231,34 +228,32 @@ duration.
 
 ### Alert Cleaner
 
-The alert cleaner runs every 30 seconds to check for resolved
-conditions. The cleaner retrieves active threshold alerts and
-re-evaluates the triggering conditions. When a condition no longer
-violates the threshold on `threshold.clear_count` consecutive
-samples, the cleaner marks the alert as cleared. A violating sample
-resets the count, and the count is dropped once the alert is no
-longer active. Missing data for a metric that reports a value for
-every connection neither advances nor resets the count. For a
-metric that reports only whilst its condition holds, each probe
-collection that returns no row counts as one resolved sample, so
-an inactive replication slot alert clears on the third
-`pg_replication_slots` collection after recovery at the default
+The alert cleaner runs every 30 seconds to check for resolved conditions. The
+cleaner retrieves active threshold alerts and re-evaluates the triggering
+conditions. When a condition no longer violates the threshold on
+`threshold.clear_count` consecutive samples, the cleaner marks the alert as
+cleared. A violating sample resets the count, and the count is dropped when the
+alert is no longer active. Missing data for a metric that reports a value for
+every connection neither advances nor resets the count. For a metric that
+reports only whilst its condition holds, each probe collection that returns no
+row counts as one resolved sample, so an inactive replication slot alert clears
+on the third `pg_replication_slots` collection after recovery at the default
 `clear_count`.
 
-A metric that returns no value for an alert is a separate case from
-a metric that returns a value below the threshold. The metric
-registry records, for each metric, whether a missing row means the
-condition has ended or that the data has stopped arriving; the
-cleaner clears the alert only in the first case, and then only when the
-collector probe behind the metric last collected inside the window that
-metric's query reads, so a stopped collector cannot look like a
+A metric that returns no value for an alert is a separate case from a metric
+that returns a value below the threshold. The metric registry records, for each
+metric, whether a missing row means the condition has ended or that the data
+has stopped arriving; the cleaner clears the alert only in the first case, and
+then only when the collector probe behind the metric last collected inside the
+window that metric's query reads, so a stopped collector cannot look like a
 recovery. The window, rather than a multiple of the probe's configured
-collection interval, is the yardstick, because outside it the query
-returns nothing whatever the monitored server is doing, and because an
-operator may change the interval at any time. The Adding Alert Rules
-document describes the `clearWhenAbsent` field that carries this
-classification, the `probeName` field that names the probe and the
-`absenceWindow` field that records the window.
+collection interval, is the yardstick, because outside it the query returns
+nothing whatever the monitored server is doing, and because an operator may
+change the interval at any time.
+[Clearing on Missing Data](adding-rules.md#clearing-on-missing-data) describes
+the `clearWhenAbsent` field that carries this classification, the `probeName`
+field that names the probe and the `absenceWindow` field that records the
+window.
 
 ### Retention Manager
 

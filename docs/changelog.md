@@ -21,6 +21,16 @@ project adheres to
 
 ### Changed
 
+- Reorganise the documentation by task. Configuration reference pages
+  for the server, collector, alerter and web client moved from
+  `getting-started/configuration/` to a new top-level Configuration
+  section (`configuration/`), with separate pages for configuration file
+  properties, command-line options and environment variables.
+  Troubleshooting moved to a new `troubleshooting/` section with one
+  page per problem. The probe, alert rule and notification channel
+  pages in the Administrator's Guide are now split into one page per
+  topic or channel type.
+
 - Run the server and alerter test packages in parallel; each package
   that uses the database now creates its own `<database>_pkg_<package>`
   database, and the alerter's test database check accepts those names.
@@ -172,7 +182,7 @@ project adheres to
   ColdFront 1.0.0-beta3 or later, prepared before the collector's
   first start; the operator must schedule ColdFront's compactor, and
   an existing datastore cannot switch between storage modes. The
-  [Storing Metrics in pgEdge ColdFront](getting-started/configuration/coldfront-metrics.md)
+  [Storing Metrics in pgEdge ColdFront](configuration/collector/coldfront-metrics.md)
   page describes the prerequisites, the setup and every difference
   from a standard datastore.
 
@@ -1049,7 +1059,7 @@ project adheres to
   provider directly, as the alerter's deliveries always have, so that
   the server can check the address it connects to. A server that
   reaches a provider only through a proxy now fails the test. See
-  [Test Sends](admin-guide/notification-channels.md#test-sends).
+  [Test Sends](admin-guide/notification-channels/index.md#test-sends).
 
 ### Fixed
 
@@ -2722,7 +2732,7 @@ project adheres to
   `169.254.0.0/16` or is `100.100.100.200`. A test send uses the server's `connection_security` settings and a delivery
   uses the alerter's `notifications.allow_internal_networks` option, so
   one can succeed where the other is refused; see
-  [Test Sends](admin-guide/notification-channels.md#test-sends).
+  [Test Sends](admin-guide/notification-channels/index.md#test-sends).
 
 - [GHSA-cj7p-8h5w-c4xr](https://github.com/pgEdge/ai-dba-workbench/security/advisories/GHSA-cj7p-8h5w-c4xr)
   (Medium): stop a user who can create a connection making the server open any

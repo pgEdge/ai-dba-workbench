@@ -40,7 +40,7 @@ Before installing the Collector, ensure you have the following:
 - A PostgreSQL login role on each monitored server that holds the
   `pg_monitor` predefined role and `CONNECT` on every database you want
   to probe. The
-  [Monitored Database Privileges](https://github.com/pgEdge/ai-dba-workbench/blob/main/docs/getting-started/configuration/monitored-database-privileges.md)
+  [Preparing Monitored Servers](https://github.com/pgEdge/ai-dba-workbench/blob/main/docs/admin-guide/monitored-database-privileges.md)
   document describes the least-privilege grants and their caveats.
 
 ## Installation
@@ -60,7 +60,7 @@ directory.
 > **Note:** The source build paths above apply to local development only.
 > Production deployments place binaries in different locations depending on
 > the installation method. See the
-> [Installation Guide](../docs/getting-started/installation.md) for
+> [Installation Guide](https://github.com/pgEdge/ai-dba-workbench/blob/main/docs/getting-started/installation_overview.md) for
 > production paths.
 
 ## Configuration
@@ -70,13 +70,19 @@ using command-line flags, which take precedence over the configuration file.
 
 ### Configuration File
 
-By default, the Collector searches for its configuration file in these
-locations (in order):
+When you omit the `-config` flag, the Collector searches for its
+configuration file in these locations (in order):
 
-1. `/etc/pgedge/ai-dba-collector.yaml`
-2. `ai-dba-collector.yaml` in the same directory as the binary
+1. The per-user config directory: `~/.config/pgedge/ai-dba-collector.yaml`
+   on Linux, `~/Library/Application Support/pgedge/ai-dba-collector.yaml`
+   on macOS, or `%AppData%\pgedge\ai-dba-collector.yaml` on Windows.
+2. `/etc/pgedge/ai-dba-collector.yaml`
 
-Copy the example configuration file to get started:
+The Collector does not search the directory that holds the binary or the
+current working directory, so pass `-config` to use a file elsewhere.
+
+Copy the example configuration file to get started, then pass the copy with
+`-config`:
 
 ```bash
 cp ../examples/ai-dba-collector.yaml ./ai-dba-collector.yaml
@@ -112,8 +118,12 @@ openssl rand -base64 32 > ./ai-dba-collector.secret
 chmod 600 ./ai-dba-collector.secret
 ```
 
+The Collector searches for `ai-dba-collector.secret` in the same locations as
+the configuration file, so set `secret_file` to the path of a secret file that
+you keep elsewhere.
+
 For detailed configuration options, see
-[Configuration Guide](../docs/getting-started/configuration/collector.md).
+[Configuration Guide](https://github.com/pgEdge/ai-dba-workbench/blob/main/docs/configuration/collector/index.md).
 
 ### Command-Line Flags
 
@@ -151,8 +161,8 @@ Enable verbose logging for troubleshooting:
 Verbose mode displays detailed operational information including probe
 initialization, connection management, and data collection activities.
 
-For detailed usage instructions, see
-[Quick Start Guide](../docs/getting-started/quick-start.md).
+For configuration settings, reload behavior, and probe configuration, see
+[Configuring the Collector](https://github.com/pgEdge/ai-dba-workbench/blob/main/docs/configuration/collector/index.md).
 
 ## Testing
 
@@ -201,19 +211,19 @@ make help       # Show all available targets
 ## Documentation
 
 For complete documentation, see the
-[Developer's Guide](../docs/developer-guide/index.md).
+[Developer's Guide](https://github.com/pgEdge/ai-dba-workbench/blob/main/docs/developer-guide/index.md).
 
 The documentation covers the following topics:
 
-- [Configuration](../docs/getting-started/configuration/collector.md)
+- [Configuration](https://github.com/pgEdge/ai-dba-workbench/blob/main/docs/configuration/collector/index.md)
   covers configuration options and examples.
-- [Storing Metrics in pgEdge ColdFront](../docs/getting-started/configuration/coldfront-metrics.md)
+- [Storing Metrics in pgEdge ColdFront](https://github.com/pgEdge/ai-dba-workbench/blob/main/docs/configuration/collector/coldfront-metrics.md)
   covers storing metrics tables in Apache Iceberg on object storage.
-- [Architecture](../docs/developer-guide/collector/architecture.md)
+- [Architecture](https://github.com/pgEdge/ai-dba-workbench/blob/main/docs/developer-guide/collector/architecture.md)
   covers system design and components.
-- [Probes](../docs/developer-guide/collector/probes.md) covers
+- [Probes](https://github.com/pgEdge/ai-dba-workbench/blob/main/docs/developer-guide/collector/probes.md) covers
   available probes and customization.
-- [Probe Reference](../docs/developer-guide/collector/probe-reference.md)
+- [Probe Reference](https://github.com/pgEdge/ai-dba-workbench/blob/main/docs/developer-guide/collector/probe-reference.md)
   covers all probe details.
 
 ---
@@ -222,7 +232,7 @@ To report an issue with the software, visit:
 [GitHub Issues](https://github.com/pgEdge/ai-dba-workbench/issues)
 
 We welcome your project contributions; for more information, see
-[docs/developer-guide/contributing.md](../docs/developer-guide/contributing.md).
+[docs/developer-guide/contributing.md](https://github.com/pgEdge/ai-dba-workbench/blob/main/docs/developer-guide/contributing.md).
 
 For more information, visit [docs.pgedge.com](https://docs.pgedge.com).
 

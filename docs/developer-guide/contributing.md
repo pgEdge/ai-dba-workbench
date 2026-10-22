@@ -24,7 +24,7 @@ Install the Go linter with the following command:
 
 ```bash
 go install \
-  github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+  github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
 ```
 
 Add the Go bin directory to your PATH:

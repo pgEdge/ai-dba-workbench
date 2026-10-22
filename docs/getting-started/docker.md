@@ -1,4 +1,4 @@
-# Docker Deployment
+# Deploying the Workbench with Docker
 
 Docker provides a straightforward way to deploy all four services of the
 pgEdge AI DBA Workbench using pre-built container images for production or
@@ -28,14 +28,22 @@ The quickest way to deploy uses pre-built images from the GitHub
 Container Registry.
 
 !!! warning "Add TLS before exposing the deployment"
-    The default Compose configuration publishes the client container
-    on plain HTTP at `http://localhost:3000` for first-run
-    convenience. Any deployment reachable from a network other than
-    the host loopback must terminate TLS in front of the client
-    container. Place an external reverse proxy (or TLS sidecar) in
-    front of the published port, configure HTTP-to-HTTPS redirection
-    and HSTS on the proxy, and restrict the published port to the
-    proxy. See the [TLS and reverse proxy requirements](../admin-guide/tls-and-reverse-proxy.md)
+    The default Compose configuration publishes the client container's
+    plain-HTTP port (`3000`), the server's plain-HTTP port (`8080`), and the
+    datastore's PostgreSQL port (`5432`) on every host interface, so each
+    port is reachable from the network as well as at `localhost`. Before you
+    start the services, bind the port mappings in
+    `examples/docker-compose.production.yml` to the loopback interface, for
+    example `"127.0.0.1:3000:8080"` for the client and
+    `"127.0.0.1:8080:8080"` for the server, or remove the server and datastore
+    mappings if you do not need to reach those ports from the host. Any
+    deployment reachable from a network other than the host loopback must
+    terminate TLS in front of the client container. Place an external reverse
+    proxy (or TLS sidecar) in front of the client port, configure
+    HTTP-to-HTTPS redirection and HSTS on the proxy, and restrict the client
+    port to the proxy.
+    See the
+    [TLS and reverse proxy requirements](../admin-guide/tls-and-reverse-proxy.md)
     for the full operator checklist.
 
 1. Clone the repository to obtain the configuration files.
@@ -114,15 +122,16 @@ Container Registry.
       -f examples/docker-compose.production.yml ps
     ```
 
-    The output from a healthy cluster resembles the following.
+    With the port mappings bound to the loopback interface, the output
+    resembles the following.
 
     ```text
     NAME                   IMAGE                                               COMMAND                  SERVICE     CREATED          STATUS                     PORTS
     examples-alerter-1     ghcr.io/pgedge/ai-dba-alerter:latest                "/usr/local/bin/ai-d…"   alerter     13 minutes ago   Up 13 minutes              
-    examples-client-1      ghcr.io/pgedge/ai-dba-client:latest                 "/docker-entrypoint.…"   client      13 minutes ago   Up 3 minutes (unhealthy)   0.0.0.0:3000->8080/tcp, [::]:3000->8080/tcp
+    examples-client-1      ghcr.io/pgedge/ai-dba-client:latest                 "/docker-entrypoint.…"   client      13 minutes ago   Up 3 minutes (unhealthy)   127.0.0.1:3000->8080/tcp
     examples-collector-1   ghcr.io/pgedge/ai-dba-collector:latest              "/usr/local/bin/ai-d…"   collector   13 minutes ago   Up 13 minutes              
-    examples-postgres-1    ghcr.io/pgedge/pgedge-postgres:18-spock5-standard   "/usr/local/bin/dock…"   postgres    13 minutes ago   Up 13 minutes (healthy)    0.0.0.0:5432->5432/tcp, [::]:5432->5432/tcp
-    examples-server-1      ghcr.io/pgedge/ai-dba-server:latest                 "/usr/local/bin/ai-d…"   server      13 minutes ago   Up 10 minutes (healthy)    0.0.0.0:8080->8080/tcp, [::]:8080->8080/tcp
+    examples-postgres-1    ghcr.io/pgedge/pgedge-postgres:18-spock5-standard   "/usr/local/bin/dock…"   postgres    13 minutes ago   Up 13 minutes (healthy)    127.0.0.1:5432->5432/tcp
+    examples-server-1      ghcr.io/pgedge/ai-dba-server:latest                 "/usr/local/bin/ai-d…"   server      13 minutes ago   Up 10 minutes (healthy)    127.0.0.1:8080->8080/tcp
     ```
 
 7. Create a user account for the Workbench. The password must be at
@@ -167,10 +176,11 @@ Container Registry.
     ======================================================================
     ```
 
-8. Open a browser and navigate to `http://localhost:3000` to access
-   the web client. Select the `+` icon to the right of the DATABASE
-   SERVERS label; then add the connection details for the PostgreSQL
-   database you wish to monitor.
+8. Open a browser and navigate to `http://localhost:3000` to access the web
+   client. Select the `+` icon to the right of the DATABASE SERVERS label; then
+   add the connection details for the PostgreSQL database you wish to monitor.
+   Before you add a server, prepare it for monitoring as described in
+   [Preparing Monitored Servers](../admin-guide/monitored-database-privileges.md).
 
 ![Adding a server definition](../images/add_server.png)
 
@@ -230,11 +240,11 @@ VERSION=edge docker compose \
 The `docker/config/` directory contains configuration files for each service.
 
 - The `ai-dba-server.yaml` file configures the MCP server; see
-  [Server Configuration](configuration/server.md) for details.
+  [Server Configuration](../configuration/server/index.md) for details.
 - The `ai-dba-collector.yaml` file configures the metrics collector; see
-  [Collector Configuration](configuration/collector.md) for details.
-- The `ai-dba-alerter.yaml` file configures the alert monitoring service;
-  see [Alerter Configuration](configuration/alerter.md) for details.
+  [Collector Configuration](../configuration/collector/index.md) for details.
+- The `ai-dba-alerter.yaml` file configures the alert monitoring service; see
+  [Configuring the Alerter](../configuration/alerter/index.md) for details.
 - The `nginx.conf` file configures the reverse proxy for the web client.
 
 The production Compose file mounts these configuration files into the

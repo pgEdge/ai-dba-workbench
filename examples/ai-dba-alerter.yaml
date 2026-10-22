@@ -560,7 +560,7 @@ llm:
     # api_key_file: /etc/ai-workbench/voyage-api-key.txt
 
     # Base URL for the Voyage AI API
-    # base_url: https://api.voyageai.com/v1/embeddings
+    # base_url: https://api.voyageai.com/v1
 
     # Model to use for embeddings
     # Default: voyage-3-lite

@@ -1,4 +1,4 @@
-# Developer Guide
+# Developer's Guide
 
 The Developer Guide provides architecture documentation,
 development workflows, and contribution guidelines for the
@@ -40,7 +40,7 @@ Install the Go linter with the following command:
 
 ```bash
 go install \
-  github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+  github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
 ```
 
 ## Getting Started

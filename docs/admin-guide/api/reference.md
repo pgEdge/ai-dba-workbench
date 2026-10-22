@@ -253,7 +253,7 @@ generate. A caller over the limit receives the cached summary
 for the scope, even if it is stale; when none exists, the
 endpoint returns `429 Too Many Requests` with a `Retry-After`
 header giving the wait in seconds. The
-[server configuration](../../getting-started/configuration/server.md#ai-overview-rate-limits-rate_limitoverview)
+[server configuration](../../configuration/server/configuration_file.md#using-the-ai-overview-rate-limit-properties)
 describes the limits.
 
 ### Conversations

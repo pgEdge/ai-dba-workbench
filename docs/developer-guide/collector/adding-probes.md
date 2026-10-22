@@ -308,7 +308,7 @@ into the database. In the following example, the
 INSERT statement adds the probe configuration:
 
 ```sql
-INSERT INTO probes (
+INSERT INTO probe_configs (
     name,
     description,
     collection_interval_seconds,

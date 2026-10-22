@@ -24,11 +24,9 @@ architecture:
 
 ### list_probes
 
-The `list_probes` tool lists all available metrics
-probes in the datastore. The tool lists only the
-probes that the collector writes; the metrics tools
-do not list or serve any other table, partition or
-view in the `metrics` schema.
+The `list_probes` tool lists all available metrics probes in the datastore.
+The tool lists only the probes that the collector writes; the metrics tools do
+not list or serve any other table, partition, or view in the `metrics` schema.
 
 **Parameters**: None
 
@@ -562,13 +560,6 @@ builtins:
     query_metrics: false
 ```
 
-The tools require the server to be configured with a
-datastore connection. For configuration details, see
-[Server Configuration](../../getting-started/configuration/server.md).
-
-## Related Documentation
-
-- [Server Information](server-info.md) describes the
-  server details endpoint.
-- [Probes](../probes.md) covers probe management and
-  configuration.
+The tools require the server to be configured with a datastore connection. For
+configuration details, see
+[Server Configuration](../../configuration/server/index.md).

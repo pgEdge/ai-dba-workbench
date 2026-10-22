@@ -209,7 +209,7 @@ following conditions:
 
 Set `http.trusted_proxies` to the address ranges of the reverse proxy
 to resolve the error; the
-[Requiring a Trusted Proxy List](managing-users-and-permissions/sso.md#requiring-a-trusted-proxy-list)
+[Requiring a Trusted Proxy List](../configuration/server/single_sign_on.md#requiring-a-trusted-proxy-list)
 section explains the setting. Setting
 `http.auth.oidc.allow_unprefixed_state_cookie` to `true` also resolves
 the error, but accepts the login CSRF risk that the rule exists to

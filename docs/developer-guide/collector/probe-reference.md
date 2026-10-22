@@ -3,12 +3,11 @@
 This document provides a complete reference for all
 built-in probes in the Collector.
 
-Each probe reads its source views with the credentials
-stored against the monitored connection. The
-[Monitored Database Privileges](../../getting-started/configuration/monitored-database-privileges.md)
-document describes the PostgreSQL grants those probes
-require, and lists the probes that return no data when
-the monitoring role lacks them.
+Each probe reads its source views with the credentials stored against the
+monitored connection. The
+[Preparing Monitored Servers](../../admin-guide/monitored-database-privileges.md)
+document describes the PostgreSQL grants those probes require, and lists the
+probes that return no data when the monitoring role lacks them.
 
 ## Probe Categories
 
@@ -1002,9 +1001,9 @@ and when it returns query text from
 
 ## System Limits and Constants
 
-The Collector enforces several limits to ensure
-stable operation and prevent resource exhaustion.
-These limits are hard-coded in the implementation.
+The Collector enforces several limits to ensure stable operation and prevent
+resource exhaustion. Some of these limits are hard-coded in the implementation;
+others are settings in the collector configuration file.
 
 ### Query Collection Limits
 
@@ -1018,36 +1017,43 @@ modification to change.
 
 ### Connection Pool Limits
 
-The datastore pool has a default maximum of 25
-connections, defined as `DefaultPoolMaxConnections`
-in `src/constants.go`. The monitored pool has a
-default maximum of 5 connections per server, defined
-as `DefaultMonitoredPoolMaxConnections`. The idle
-connection timeout defaults to 300 seconds, defined
-as `DefaultPoolIdleSeconds`.
+The datastore pool has a default maximum of 25 connections, set by
+`pool.datastore_max_connections`. The monitored pools have a default maximum of
+3 connections per server, set by `pool.max_connections_per_server`. The idle
+connection timeout defaults to 300 seconds for both, set by
+`pool.datastore_max_idle_seconds` and `pool.monitored_max_idle_seconds`. The
+defaults are defined in `NewConfig` in `src/config.go`.
 
 ### Operation Timeouts
 
 The system enforces the following timeouts:
 
-- Connection timeout is 10 seconds for initial
-  database connection establishment.
-- Context timeout is 30 seconds for general context
-  operations.
-- Probe execution timeout is 60 seconds for
-  individual probe query execution.
-- Datastore wait timeout is 5 seconds for waiting
-  for a datastore connection from the pool.
-- Monitored pool wait timeout is 120 seconds for
-  waiting for a monitored connection from the pool.
+- The connection timeout is 10 seconds for establishing a connection to a
+  monitored server.
+- The probe collection deadline defaults to 120 seconds, set by
+  `pool.monitored_max_wait_seconds`; the deadline covers acquiring each
+  monitored connection and running the probe's queries in every database the
+  probe visits.
+- Storing a probe's metrics waits up to 60 seconds by default for a datastore
+  connection, set by `pool.datastore_max_wait_seconds`.
+- Other datastore operations, such as loading probe configurations and
+  recording probe availability, wait up to 5 seconds for a datastore
+  connection; this timeout is hard-coded.
 
 ### Configuration Reload
 
-Probe configurations automatically reload from the
-database every 5 minutes. Changes to
-`collection_interval_seconds`, `retention_days`, or
-`is_enabled` take effect within 5 minutes without
-a restart.
+Probe configurations automatically reload from the database every 5 minutes.
+Each reload first runs `SyncInheritedProbeConfigs`, which copies `is_enabled`,
+`collection_interval_seconds`, and `retention_days` from the nearest cluster,
+group, or global row onto every server-level row whose `user_modified` column
+is `FALSE`, and then loads the global and server-level rows, disabled rows
+included. Changes to `collection_interval_seconds` and `is_enabled` take effect
+within 5 minutes without a restart. The reload drops a disabled probe from the
+scheduler; the probe's scheduling goroutine checks that its probe is still
+current after its initial wait and on every tick, so it exits at its next
+scheduled run, and the next reload after the probe is re-enabled starts it
+again. The collector reads `retention_days` on the next garbage collection
+pass, normally within 24 hours; garbage collection skips disabled rows.
 
 ### Modifying Limits
 

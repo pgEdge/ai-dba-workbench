@@ -1,9 +1,8 @@
-# Alert Rule Reference
+# Alert Reference
 
-This document lists all built-in alert rules included
-with the alerter. Each rule monitors a specific
-PostgreSQL metric and triggers an alert when the
-threshold is exceeded.
+This document lists all built-in alert rules included with the alerter. Each
+rule monitors a specific PostgreSQL metric and triggers an alert when the
+metric exceeds the threshold.
 
 ## Connection Rules
 
@@ -23,13 +22,11 @@ A high connection utilization indicates the database may
 run out of available connections. Consider increasing
 `max_connections` or implementing connection pooling.
 
-The rule divides the most recent client session count by
-the `max_connections` value in force when that count was
-collected, which is the newest settings snapshot at or
-before it. When the count predates every settings
-snapshot, as just after a connection is added, the rule
-uses the earliest snapshot instead. The settings probe
-only stores a snapshot when the configuration changes, so
+The rule divides the most recent client session count by the `max_connections`
+value in force when that count was collected, which is the newest settings
+snapshot at or before it. When the count predates every settings snapshot, as
+just after a connection is added, the rule uses the earliest snapshot instead.
+The settings probe stores a snapshot only when the configuration changes, so
 that snapshot may be days or weeks old on a stable server.
 
 ### High Max Connections
@@ -54,8 +51,7 @@ changes.
 
 ### Blocked Sessions
 
-This rule alerts when sessions are waiting for locks
-held by other sessions.
+This rule alerts when sessions are waiting for locks that other sessions hold.
 
 | Property | Value |
 |----------|-------|
@@ -146,17 +142,14 @@ extension.
 | Default Severity | warning |
 | Required Extension | `pg_stat_statements` |
 
-A high slow query count indicates performance problems
-that should be investigated.
+A high slow query count indicates performance problems that need investigation.
 
-The alerter counts the queries whose mean execution time
-over the most recent probe interval exceeded 1000 ms. It
-derives that mean from the change in total execution time
-divided by the change in call count between the two most
-recent samples, so a query counts only whilst it is
-actually running slowly. A query that ran slowly once no
-longer keeps the count elevated after the query stops
-running.
+The alerter counts the queries whose mean execution time over the most recent
+probe interval exceeded 1000 ms. The alerter derives that mean from the change
+in total execution time divided by the change in call count between the two
+most recent samples, so a query counts only while it is actually running
+slowly. A query that ran slowly once no longer keeps the count elevated after
+the query stops running.
 
 The count covers the whole server, so the rule raises at
 most one alert per server. Each statement is counted once,
@@ -167,13 +160,11 @@ the extension is not installed.
 
 ### Replication Lag in Seconds (Custom Rule)
 
-The alerter does not seed a built-in rule for replication
-lag measured in time; the High Replication Lag (Bytes)
-rule below covers replication lag by default. To alert
-on time-based lag, create a custom rule on the
-`pg_stat_replication.replay_lag_seconds` metric, for
-example with the `>` operator and a threshold of 30
-seconds.
+The alerter does not seed a built-in rule for replication lag measured in time;
+the High Replication Lag (Bytes) rule covers replication lag by default. To
+alert on time-based lag, create a custom rule on the
+`pg_stat_replication.replay_lag_seconds` metric, for example with the `>`
+operator and a threshold of 30 seconds.
 
 The metric reports, for each primary, the largest
 `replay_lag` across its standbys in the most recent
@@ -182,6 +173,9 @@ the time between the primary flushing recent WAL and
 learning that a standby has replayed it, so the value
 approximates how long recent transactions take to become
 visible on the standby.
+
+Replication lag can indicate network issues, replica resource constraints, or
+write-heavy workloads.
 
 PostgreSQL resets `replay_lag` to NULL a short while
 after an idle standby has fully caught up. The metric
@@ -281,12 +275,12 @@ receiver process.
 | Default Threshold | 1 |
 | Default Severity | critical |
 
-A disconnected standby is in recovery mode but not
-receiving WAL from the primary. The standby will fall
-further behind until the WAL receiver is restarted and
-replication resumes. Check the PostgreSQL log on the
-standby for connection errors and verify that the
-primary server is accessible.
+A disconnected standby is in recovery mode but not receiving WAL from the
+primary, and falls further behind while the condition lasts. PostgreSQL retries
+WAL retrieval automatically, so replication can resume on its own after a
+transient connection failure. If the standby does not reconnect, check the
+PostgreSQL log on the standby for connection errors and verify that the primary
+server is accessible.
 
 ### Subscription Worker Down
 
@@ -354,14 +348,12 @@ Dead tuples indicate vacuum is not keeping up with
 updates. Check vacuum settings and consider running
 manual vacuum.
 
-The alerter only evaluates tables with at least 10,000
-dead tuples and at least 1,000 tuples in total, judged on
-each table's most recent sample. A high percentage on a
-smaller table costs little, and autovacuum normally
-reaches the table on its next pass. The default threshold
-of 50 percent sits well above autovacuum's own default
-trigger of 20 percent, so the rule fires when vacuum has
-fallen behind rather than when it is about to run.
+The alerter evaluates only tables with at least 10,000 dead tuples and at least
+1,000 tuples in total, judged on each table's most recent sample. A high
+percentage on a smaller table costs little, and autovacuum normally reaches the
+table on its next pass. The default threshold of 50 percent sits well above
+autovacuum's own default trigger of 20 percent, so the rule fires when vacuum
+has fallen behind rather than when it is about to run.
 
 When autovacuum cleans the table, the table drops below
 the 10,000 dead tuple floor and the alert clears.
@@ -379,18 +371,15 @@ metric, so enabling the rule produces no alerts.
 | Default Threshold | 50 |
 | Default Severity | warning |
 
-The rule duplicated the High Dead Tuple Percentage rule
-with a different denominator, so the two rules fired on
-the same tables at different thresholds. The rule
-definition remains in the datastore so that historical
-alerts stay attributable, and any alerts that were active
-at upgrade time are cleared. Use the High Dead Tuple
-Percentage rule to monitor table maintenance.
+The rule duplicated the High Dead Tuple Percentage rule with a different
+denominator, so the two rules fired on the same tables at different thresholds.
+The rule definition remains in the datastore so that historical alerts stay
+attributable; the upgrade clears any alerts that were active at upgrade time.
+Use the High Dead Tuple Percentage rule to monitor table maintenance.
 
 ### Stale Autovacuum
 
-This rule alerts when a table has not been autovacuumed
-recently.
+This rule alerts when autovacuum has not processed a table recently.
 
 | Property | Value |
 |----------|-------|
@@ -405,16 +394,13 @@ which is `autovacuum_vacuum_threshold` plus
 `autovacuum_vacuum_scale_factor` times the live tuple
 count, using the server's current settings.
 
-A table only counts once it has been past its trigger in
-every sample collected over at least the last 30 minutes.
-The alerter reads an hour of table statistics, requires
-the most recent sample at or before the 30 minute mark to
-be past the trigger, and requires every later sample to
-be past it as well. A table that crosses its trigger
-shortly before autovacuum's next pass therefore does not
-raise an alert; a table that stays past its trigger for
-half an hour without being vacuumed suggests autovacuum
-is blocked or cannot keep up.
+A table counts only when it has been past its trigger in every sample collected
+over at least the last 30 minutes. The alerter reads an hour of table
+statistics, requires the most recent sample at or before the 30 minute mark to
+be past the trigger, and requires every later sample to be past it as well. A
+table that crosses its trigger shortly before autovacuum's next pass therefore
+does not raise an alert; a table that stays past its trigger for half an hour
+without being vacuumed suggests autovacuum is blocked or cannot keep up.
 
 The alert clears when autovacuum processes the table.
 
@@ -430,19 +416,16 @@ wraparound.
 | Default Threshold | 75 |
 | Default Severity | critical |
 
-The value is the transaction ID age of the oldest database
-on the server, expressed as a percentage of the 2147483647
-wraparound limit. It comes from `age(datfrozenxid)` in
-`pg_database`, which the collector samples every 300
-seconds.
+The value is the transaction ID age of the oldest database on the server,
+expressed as a percentage of the 2147483647 wraparound limit. The value comes
+from `age(datfrozenxid)` in `pg_database`, which the collector samples every
+300 seconds.
 
-Template databases count towards this metric, because
-wraparound is decided by the oldest transaction ID age in
-the cluster regardless of which database holds it. This
-matters in practice: `template0` does not allow
-connections, so autovacuum only reaches it on the
-anti-wraparound path, which makes it the database most
-likely to age while every user database stays fresh.
+Template databases count toward this metric, because the oldest transaction ID
+age in the cluster determines wraparound, regardless of which database holds
+it. This matters in practice: `template0` does not allow connections, so
+autovacuum reaches it only on the anti-wraparound path, which makes it the
+database most likely to age while every user database stays fresh.
 
 Transaction ID wraparound prevention requires aggressive
 vacuuming. Monitor this metric carefully on busy
@@ -469,15 +452,13 @@ change in block reads between collection intervals. This
 delta-based approach reflects recent performance rather
 than cumulative counters.
 
-An interval only counts when the database accessed at
-least 10,000 blocks and read at least 100 blocks per
-second from outside shared buffers. At the default 8 KiB
-block size, 100 blocks per second is about 800 KiB per
-second; some of those reads are served by the operating
-system's page cache, so even in the worst case the load
-is about 100 I/O operations per second. Below that rate a
-poor ratio has no material cost, so idle and lightly used
-databases do not raise alerts.
+An interval counts only when the database accessed at least 10,000 blocks and
+read at least 100 blocks per second from outside shared buffers. At the default
+8 KiB block size, 100 blocks per second is about 800 KiB per second. The
+operating system's page cache serves some of those reads, so even in the worst
+case the load is about 100 I/O operations per second. Below that rate a poor
+ratio has no material cost, so idle and lightly used databases do not raise
+alerts.
 
 Both the threshold evaluator and the alert cleaner read
 the most recent interval that passes both checks, so the
@@ -540,9 +521,8 @@ the threshold by 3600 divided by the sampling interval
 in seconds; at the default interval, that gives a
 threshold of 1200.
 
-Temporary files are created when `work_mem` is
-insufficient for sort and hash operations. Consider
-increasing `work_mem`.
+PostgreSQL creates temporary files when `work_mem` is insufficient for sort and
+hash operations. Consider increasing `work_mem`.
 
 ## System Resource Rules
 
@@ -593,9 +573,8 @@ the threshold.
 | Default Threshold | 4 |
 | Default Severity | warning |
 
-High system load indicates the server is overloaded.
-Investigate the source of the load and consider scaling
-resources.
+High system load indicates that the current workload has overloaded the server.
+Investigate the source of the load and consider scaling resources.
 
 ## Archive Rules
 
@@ -622,8 +601,7 @@ Check the archive command and destination storage.
 
 ### Frequent Requested Checkpoints
 
-This rule alerts when checkpoints are requested too
-frequently.
+This rule alerts when PostgreSQL requests too many checkpoints.
 
 | Property | Value |
 |----------|-------|
@@ -632,22 +610,18 @@ frequently.
 | Default Threshold | 12 |
 | Default Severity | warning |
 
-The value counts the requested checkpoints recorded in
-the last hour, so the default threshold corresponds to an
-average of one requested checkpoint every five minutes.
-Timed checkpoints are not counted.
+The value counts the requested checkpoints recorded in the last hour, so the
+default threshold corresponds to an average of one requested checkpoint every
+five minutes. The value does not count timed checkpoints.
 
-The rule only evaluates servers that are not in recovery.
-A standby's requested restartpoints follow the write
-volume of its primary, so the alert belongs on the
-primary. The alerter uses the most recent recovery state
-the collector recorded in the last hour; a server with no
-recorded state is evaluated. This applies to every
-supported PostgreSQL version, because the collector reads
-`pg_stat_bgwriter` on PostgreSQL 16 and earlier and
-`pg_stat_checkpointer` on PostgreSQL 17 and later, and
-stores both in the same metric. When a primary becomes a
-standby, any open alert for it clears.
+The rule evaluates only servers that are not in recovery. A standby's requested
+restartpoints follow the write volume of its primary, so the alert belongs on
+the primary. The alerter uses the most recent recovery state the collector
+recorded in the last hour; a server with no recorded state is evaluated. This
+applies to every supported PostgreSQL version, because the collector reads
+`pg_stat_bgwriter` on PostgreSQL 16 and earlier and `pg_stat_checkpointer` on
+PostgreSQL 17 and later, and stores both in the same metric. When a primary
+becomes a standby, any open alert for it clears.
 
 Frequent requested checkpoints indicate
 `checkpoint_segments` or `max_wal_size` may be too low
@@ -688,23 +662,53 @@ directly from the recorded probe collection times, so the
 rule needs no entry in the metric registry and no
 PostgreSQL extension.
 
-The alert clears once the probe collects again and the
-ratio falls back to the threshold or below, and it also
-clears when an operator disables the probe or stops
-monitoring the connection, because both are deliberate
-changes rather than faults. A probe that has become
-unavailable is the exception: the alert stays active, and
-its description changes to report that collection has
-stopped and why, until the probe collects again. The
-alerter never raises this alert for a probe that is already
-unavailable, since an unavailable probe is the normal
-steady state on a server that lacks the extension the probe
-reads.
+The alert clears when the probe collects again and the ratio falls back to the
+threshold or below, and it also clears when an operator disables the probe or
+stops monitoring the connection, because both are deliberate changes rather
+than faults. A probe that has become unavailable is the exception: the alert
+stays active, and its description changes to report that collection has stopped
+and why, until the probe collects again. The alerter never raises this alert
+for a probe that is already unavailable, since an unavailable probe is the
+normal steady state on a server that lacks the extension the probe reads.
+
+### Probe Unavailable
+
+This rule alerts when a probe that had been collecting stops being available.
+
+| Property | Value |
+|----------|-------|
+| Rule Name | `probe_unavailable` |
+| Metric | `probe_available` |
+| Operator | `<` |
+| Default Threshold | 1 |
+| Default Severity | warning |
+
+The rule reports the transition from collecting to unavailable. The collector
+records a probe as unavailable on the first probe run after the extension the
+probe reads, the privilege the probe needs, or the connection itself goes away.
+The metric is the availability flag; the alerter reports 0 while the probe is
+unavailable and 1 while the probe collects, so the default condition of less
+than 1 holds for as long as collection stays stopped. The rule requires no
+extension and is enabled by default.
+
+The rule fires only for a probe that has collected at least once. A probe whose
+extension was never installed has never collected, so the rule never fires for
+that probe and no permanent alert is pinned to it. A probe whose extension is
+installed but has nothing to report, such as a Spock probe on a cluster with no
+recent apply exceptions or conflict resolutions, remains available, so the rule
+does not fire for a quiet cluster.
+
+The alerter clears the alert when the probe collects again. The alerter also
+clears the alert when an operator retires the probe by disabling the probe, by
+no longer monitoring the connection, or by removing the availability row,
+because each of those actions is a deliberate change rather than a fault. A
+held Stale Metrics alert and a Probe Unavailable alert can be active on the
+same probe at the same time; the first records that the data went stale, the
+second records why, and each alert clears on its own terms.
 
 ## Customizing Rules
 
-All built-in rules can be customized through
-per-connection overrides. Administrators configure
-overrides through the admin panel. See the
-[Alerts](index.md) documentation for details on the
-alert lifecycle and management.
+Administrators can customize all built-in rules through per-connection
+overrides, which they configure through the admin panel. See the
+[Monitoring Alerts](index.md) documentation for details on the alert lifecycle
+and management.

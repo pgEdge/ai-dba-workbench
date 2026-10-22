@@ -214,11 +214,10 @@ configured. The server also returns `null` when the
 connection has no databases to analyze, and when the
 call to the provider fails.
 
-The server returns `502` when the provider answers
-with no usable text. A reasoning model produces this
-result when its thinking tokens exhaust the configured
-`llm.max_tokens` budget. Raise the budget, or select a
-model that emits less reasoning.
+The server returns a `502` status when the provider answers with no usable
+text. A reasoning model produces this result when its thinking tokens exhaust
+the configured `llm.max_tokens` budget; raise the budget, or select a model
+that emits less reasoning.
 
 ### Caching
 
@@ -273,15 +272,7 @@ to be gathering metrics for the specified connection.
 The endpoint returns empty fields when the collector
 has not yet gathered data for a metric category.
 
-The AI analysis endpoint requires an LLM provider to
-be configured in the server settings. The `llm.max_tokens`
-setting caps the length of each analysis response. For
-LLM provider setup instructions, see
-[Server Configuration](../../getting-started/configuration/server.md).
-
-## Related Documentation
-
-- [Connections](../connections.md) describes how to
-  manage database connections.
-- [Metrics](metrics.md) documents the metrics
-  collection endpoints.
+The AI analysis endpoint requires an LLM provider to be configured in the
+server settings. The `llm.max_tokens` setting caps the length of each analysis
+response. For LLM provider setup instructions, see
+[Server Configuration](../../configuration/server/index.md).

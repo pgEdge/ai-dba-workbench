@@ -223,12 +223,11 @@ entry is allowed; the registry treats it as a metric that is not
 baselined. The test compares the historical SQL, scan layout and
 probe name only for baselined metrics.
 
-A metric without a historical query is skipped by both baseline
-calculation and anomaly detection; the alerter does not build a
-baseline from the current value in its place. Threshold rules for
-the metric still work. See the
-[Anomaly Detection](anomaly-detection.md) page for the list of
-built-in metrics that are excluded on this basis.
+A metric without a historical query is skipped by both baseline calculation and
+anomaly detection; the alerter does not build a baseline from the current value
+in its place. Threshold rules for the metric still work.
+[Supported Metrics](anomaly-detection.md#supported-metrics) lists the built-in
+metrics that are excluded on this basis.
 
 The historical query must join `connections` as shown below.
 Metric rows can outlive the connection that produced them, and

@@ -1,11 +1,10 @@
-# Group Management
+# Managing Groups
 
 A group is a named collection of users and service accounts that share
 access to a set of permissions assigned by the group manager (an
 administrative user). This keeps permission management consistent and
 auditable; for a full description of how groups fit into the Workbench
-access model, see
-[Understanding the Workbench Permission Model](permission_model.md).
+access model, see [Understanding the Permission Model](permission_model.md).
 
 ## Creating a Group
 
@@ -130,7 +129,7 @@ The expanded view displays:
 - The MCP permissions the group holds in the `MCP` section.
 
 These sections reflect the group's current grants; to modify them, use the
-`Permissions` dialog described in [Permission Management](permission_mgmt.md).
+`Permissions` dialog described in [Managing Permissions](permission_mgmt.md).
 
 To add a member from this view, select `+ Add Member` in the `MEMBERS`
 section; see [Adding Members](#adding-members).
@@ -195,6 +194,15 @@ MCP Privileges: None
 Connection Privileges: None
 ======================================================================
 ```
+
+## Editing a Group
+
+You can change a group's name or description in the Workbench console. To
+edit a group, select the edit icon in the group's row on the `Groups` page.
+In the `Edit group` dialog, update the `Name` or `Description` field and
+select `Save`.
+
+![Editing a group in the console](../../images/edit_group.png)
 
 ## Removing Members
 
@@ -270,4 +278,4 @@ The server records every group and membership change in the audit log,
 naming the user, token or command-line operator that made it. The
 `-list-audit` command prints the recorded events and the
 `-verify-audit-log` command checks the log's hash chain; for details of
-both, see [Audit Log](audit-log.md).
+both, see [Managing the Audit Log](../audit-log.md).

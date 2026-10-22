@@ -54,7 +54,7 @@ In the following example, the command installs
 
 ```bash
 go install \
-    github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+    github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
 ```
 
 Ensure `$(go env GOPATH)/bin` is in your PATH. In
@@ -67,15 +67,15 @@ export PATH="$PATH:$(go env GOPATH)/bin"
 
 ### 4. Set Up Test Database
 
-Create a test database. In the following example,
-the SQL commands create the database and user:
+Create a test database. In the following example, the SQL commands create the
+user and a database that the user owns, so the collector can create its tables
+on PostgreSQL 15 and later:
 
 ```sql
-CREATE DATABASE ai_workbench_dev;
 CREATE USER collector_dev
     WITH PASSWORD 'dev-password';
-GRANT ALL PRIVILEGES ON DATABASE ai_workbench_dev
-    TO collector_dev;
+CREATE DATABASE ai_workbench_dev
+    OWNER collector_dev;
 ```
 
 ### 5. Create Development Config
@@ -85,7 +85,7 @@ following example, the command copies the example
 configuration file:
 
 ```bash
-cp ../examples/ai-dba-collector.yaml \
+cp ../../examples/ai-dba-collector.yaml \
     ai-dba-collector-dev.yaml
 ```
 
@@ -95,11 +95,20 @@ Edit the configuration with your settings:
 datastore:
   host: localhost
   database: ai_workbench_dev
-  username: ai_workbench_dev
+  username: collector_dev
   password_file: dev-password.txt
   sslmode: disable
 
 secret_file: ./ai-dba-collector.secret
+```
+
+The `password_file:` entry is also a relative path. In the following example,
+the commands write the password from the previous step to the file and restrict
+the file's permissions:
+
+```bash
+echo "dev-password" > dev-password.txt
+chmod 600 dev-password.txt
 ```
 
 The collector does not auto-discover a YAML file in
@@ -188,7 +197,7 @@ builds the Collector directly:
 
 ```bash
 cd src
-go build -o collector
+go build -o ai-dba-collector
 ```
 
 ## Running
@@ -198,13 +207,19 @@ development mode.
 
 ### Development Mode
 
-In the following example, the command starts the
-Collector with a development configuration:
+In the following example, the command starts the Collector with a development
+configuration; run the command from the `collector/src` directory, where the
+setup steps created the development configuration and secret file:
 
 ```bash
 ./ai-dba-collector \
     -config ai-dba-collector-dev.yaml
 ```
+
+The example runs the binary that the `go build` command creates in
+`collector/src`. The `make build` command writes the binary to the `collector`
+directory instead; from `collector/src`, run that binary as
+`../ai-dba-collector -config ai-dba-collector-dev.yaml`.
 
 ### With Verbose Logging
 
@@ -611,7 +626,7 @@ go install \
     github.com/go-delve/delve/cmd/dlv@latest
 cd src
 dlv debug -- \
-    -config ../ai-dba-collector-dev.yaml
+    -config ai-dba-collector-dev.yaml
 ```
 
 Set breakpoints and step through code:
@@ -630,7 +645,7 @@ the following example, the queries check probe and
 connection status:
 
 ```sql
-SELECT * FROM probes WHERE is_enabled = TRUE;
+SELECT * FROM probe_configs WHERE is_enabled = TRUE;
 
 SELECT * FROM connections
     WHERE is_monitored = TRUE;
@@ -840,7 +855,7 @@ command:
 
 ```bash
 go install \
-    github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+    github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
 ```
 
 ### "Test database connection failed"
